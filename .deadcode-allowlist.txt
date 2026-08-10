@@ -1,0 +1,251 @@
+# .deadcode-allowlist.txt
+#
+# Allowlist for `make deadcode` (golang.org/x/tools/cmd/deadcode).
+#
+# Each non-comment, non-blank line is the EXACT fully-qualified symbol name as
+# emitted by deadcode after "unreachable func: " (e.g. "aiCommand.notifyAIText"
+# or "tmuxTruthy"). A finding is suppressed only when its symbol matches a line
+# here exactly; matching is on the symbol, not the file:line, so the baseline
+# survives line-number drift. New dead code that is NOT listed here makes
+# `make deadcode` exit non-zero.
+#
+# Lines starting with '#' are comments; blank lines are ignored.
+#
+# This baseline was captured from `go tool deadcode ./...` at the time the
+# detector was introduced. The goal of this phase is to STAND UP detection so
+# only NEW dead code shows up red -- NOT to remove the existing findings.
+# Entries are grouped by intent below.
+
+# ---------------------------------------------------------------------------
+# MUST-KEEP: deliberately retained legacy / migration / planned-consumer
+# symbols. These read old persisted state, clean stale bindings, or are
+# planned future consumers. deadcode may flag them as unreachable in some
+# builds, but they MUST NOT be removed. Listed explicitly even when not
+# currently flagged, so a future refactor that makes them unreachable does
+# not turn the baseline red and tempt their removal.
+# ---------------------------------------------------------------------------
+MigrateProjectLegacyScripts
+MigrateGlobalLegacyScripts
+legacyDesktopAppID
+CleanupLegacyArtifacts
+legacyWindowAttentionRows
+formatLegacyPaneSummary
+tmuxRetiredKeyUnbindLines
+# "last-pane" action handler: audit shows it as dead but it is a PLANNED
+# consumer and must stay (it is a keybinding catalog string ID, not a func,
+# so deadcode does not flag it by name -- recorded here for intent).
+
+# ---------------------------------------------------------------------------
+# Baseline findings captured at detector introduction. Intentional / false
+# positive / not-yet-wired surfaces; retained as the clean baseline so only
+# NEW dead code is reported. Grouped loosely by package.
+# ---------------------------------------------------------------------------
+
+# internal/i18n -- string-audit and catalog helpers (audit tooling surface)
+All
+AuditGoStringLiterals
+AuditGoStringLiteralsInDir
+AuditGoStrings
+RuntimeKoreanStringAuditOptions
+PickerChromeStringAuditOptions
+StringAuditFinding.IsCandidate
+auditGoStringLiteralsInFile
+classifyStringLiteral
+containsASCIILetter
+containsHangul
+isDataStringLiteral
+isDebugStringContext
+isDebugStringLiteral
+isEnglishUserFacingCandidate
+isPickerChromeFieldContext
+isPreservedLiteralString
+shouldKeepStringAuditFinding
+sortStringAuditFindings
+Catalog.Keys
+Catalog.LocaleKeys
+Catalog.MissingFallbackKeys
+Catalog.MissingLocaleKeys
+FoundationKeys
+Localizer.Locale
+Localizer.Styled
+StyledFragment.IsANSI
+StyledFragment.IsStyledKind
+StyledFragment.IsTmuxStyle
+StyledFragment.Key
+StyledFragment.Kind
+StyledFragment.Locale
+StyledFragment.String
+Text.Key
+Text.Locale
+FormatList
+firstRune
+runeLen
+
+# internal/ui/picker, pickercompat, projmuxpicker, render -- native picker
+# rendering surface kept for parity with the legacy fzf backend.
+BuildSwitchPickerItems
+ChromeLine
+FooterBlockLines
+HeaderLine
+InteractiveListLines
+InteractiveRowLines
+InverseSelectedContent
+InverseSelectedContentWithTheme
+ListLinesWithScrollbar
+PromptLine
+PromptLineWithCursor
+PromptLineWithCursorLabel
+PromptLineWithRenderedQuery
+PromptLineWithRenderedQueryLabel
+QueryWithCursor
+RenderBar
+RenderFullFrameUpdate
+RenderInlinePreview
+RenderSplitPreview
+RenderSwitchPreview
+RenderWindowsCommandLine
+RenderableListLine
+RenderableListLines
+RenderableListLinesWithTheme
+Renderer.ContentLayout
+Renderer.RenderFrame
+ResolveBackend
+ResultToPicker
+SelectedContent
+SelectedContentWithTheme
+SelectedLine
+WriteContentWithFooter
+nativeAppendPartialNextItemLines
+nativeFooterBlockLines
+nativeHeaderLine
+nativeHighlightANSIVisiblePositions
+nativeHighlightSimpleItems
+nativeInteractiveItemLines
+nativeInteractiveListLines
+nativeInverseSelectedContent
+nativeLinesBeforeItem
+nativeListLinesWithScrollbar
+nativeListLinesWithScrollbarRows
+nativeLocalizedText
+nativePadRight
+nativePadStyledLine
+nativePartialNextItemLines
+nativePrependPartialPreviousItemLines
+nativePromptLine
+nativePromptLineWithCursor
+nativePromptLineWithCursorAndTheme
+nativePromptLineWithRenderedQuery
+nativeQueryWithCursor
+nativeRenderableListLine
+nativeRenderableListLines
+nativeSearchSeparatorLine
+nativeSelectedContent
+nativeTruncateANSI
+nativeVisibleLen
+renderNativeFrame
+renderNativeInteractive
+renderNativeInteractiveWithCursor
+padsInsideFinalStyle
+joinFinal
+selectionMarker
+writeNativeContentWithFooter
+formatPopupSummary
+formatSelectedSummary
+formatTargetSummary
+sanitizeSwitchPreviewPath
+
+# internal/integrations/mux, psmux, tmux -- mux abstraction methods kept for
+# the pluggable backend surface (not all wired by the live tmux path).
+Command.WindowsCommandLine
+Run
+CapturePane
+ClosePopup
+DisplayMessage
+DisplayMessageTrimmed
+DisplayPaneFields
+DisplayPopup
+ListPanes
+ListWindows
+NewSession
+NewWindow
+NextPane
+NextWindow
+PreviousPane
+PreviousWindow
+Read
+ReadTrimmed
+Runner.ListWindows
+Runner.NewWindow
+SelectPane
+SelectWindow
+SetHook
+SetOption
+SetPaneOption
+ShowPaneOption
+SplitWindow
+SwitchClient
+UnsetPaneOption
+NewWithConfig
+NewWithRoot
+NewWithSocketName
+WithFileReader
+WithSocketName
+newClientWithEnv
+RenderWindowsCommandLine
+windowsCommandLineArg
+effectivePaneCount
+
+# internal/config -- config readers / trust helpers retained for callers.
+IsProjectConfigTrusted
+LoadSessionStateToggleFile
+
+# internal/core/usage -- adapter / store / registry surface.
+NewState
+Registry.Lookup
+Registry.Replace
+RedactToken
+Store.SaveAll
+UsageSupported
+
+# internal/integrations/hooks -- hook install / trust helpers.
+
+# internal/app -- AI / notify / status / settings / tmux / switch surfaces
+# that are not currently reachable from the wired command paths.
+aiCommand.agentLaunchCommand
+aiSummaryForKind
+callName
+codexHooksBlock
+defaultAIHookInstallEvents
+formatRelativeAge
+formatStatusNotify
+formatStatusNotifyWithLive
+buildPopupToggle
+buildPopupToggleWithPickerBackend
+notifyCommand.buildNotifyLiveReport
+notifyCommand.listNotifyLivePanes
+notifySidebarAgentBadge
+notifySidebarAgentOpen
+notifySidebarEntriesWithLive
+notifySidebarEntriesWithLiveLocale
+notifySidebarReadModel.CollapsedEntries
+notifySidebarStateBadge
+pickerOptionsFromCompatPicker
+renderNotifyBadge
+renderThemeSource.tmuxAppConfig
+renderThemeSource.tmuxAppConfigWithAIBadgeStyle
+renderThemeSource.tmuxStandaloneConfig
+renderThemeSource.tmuxStandaloneConfigWithAIBadgeStyle
+settingsCommand.rootEntries
+settingsCommand.rootEntriesForAxis
+sortedProbeLabels
+statusbarDecorationSetFromGlobal
+tmuxAppConfig
+tmuxAppConfigWithKeymap
+tmuxAppConfigWithKeymapTheme
+tmuxAppConfigWithKeymapThemeAndAIBadgeStyle
+tmuxPaneBorderFormat
+tmuxStandaloneConfig
+tmuxStandaloneConfigWithKeymap
+tmuxStandaloneConfigWithKeymapTheme
+tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle
+tmuxStyledVisiblePaneLabelFormat

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -229,6 +230,37 @@ FOO = "bar"
 	if !hasEntryValue(startupEntries, settingsActionPrefixProjectConfig+"startup:clear") {
 		t.Fatalf("startup detail entries = %#v, want clear action", startupEntries)
 	}
+}
+
+func TestSettingsHookmakerAndProjectRecipeStateColors(t *testing.T) {
+	t.Parallel()
+
+	addRow := settingsHookAddRow(settingsHookRow{
+		Event:      "post-create",
+		Scope:      hookScopeProject,
+		ConfigPath: "/repo/.projmux/config.toml",
+	})
+	if !strings.Contains(addRow.Label, settingsColorAdd+"post-create") {
+		t.Fatalf("hook add label = %q, want action color %q", addRow.Label, settingsColorAdd)
+	}
+
+	activeRow := settingsHookActiveEntry(settingsHookRow{
+		Event:    "post-create",
+		Scope:    hookScopeProject,
+		Declared: "echo ok",
+	})
+	if !strings.Contains(activeRow.Label, settingsColorAdd+"post-create") {
+		t.Fatalf("hook active label = %q, want action/add color %q", activeRow.Label, settingsColorAdd)
+	}
+
+	startupEntries := projectConfigStartupEntries(hooks.ProjectConfig{StartupRun: "make dev"})
+	assertEntryColorForValue(t, startupEntries, settingsActionPrefixProjectConfig+"startup:set", settingsColorType)
+	assertEntryColorForValue(t, startupEntries, settingsActionPrefixProjectConfig+"startup:clear", settingsColorRemove)
+
+	envEntries := projectConfigEnvEntries(hooks.ProjectConfig{Env: map[string]string{"FOO": "bar"}})
+	assertEntryColorForValue(t, envEntries, settingsActionPrefixProjectConfig+"env:add", settingsColorAdd)
+	assertEntryColorForValue(t, envEntries, settingsActionPrefixProjectConfig+"env:FOO:set", settingsColorType)
+	assertEntryColorForValue(t, envEntries, settingsActionPrefixProjectConfig+"env:FOO:remove", settingsColorRemove)
 }
 
 func TestSettingsProjectHooksListWithDeclarativeContext(t *testing.T) {
@@ -795,6 +827,20 @@ func assertEntryLabelContainsAll(t *testing.T, entries []intpickercompat.Entry, 
 		}
 	}
 	t.Fatalf("entries = %#v, want one label containing all %#v", entries, parts)
+}
+
+func assertEntryColorForValue(t *testing.T, entries []intpickercompat.Entry, value, color string) {
+	t.Helper()
+	for _, entry := range entries {
+		if entry.Value != value {
+			continue
+		}
+		if !strings.Contains(entry.Label, color) {
+			t.Fatalf("entry %q label = %q, want color %q", value, entry.Label, color)
+		}
+		return
+	}
+	t.Fatalf("entries = %#v, want entry value %q", entries, value)
 }
 
 // hookMakerTestSettings builds a settingsCommand wired so it can drive the

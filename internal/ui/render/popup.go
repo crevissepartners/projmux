@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/preview"
 )
 
@@ -146,7 +147,7 @@ func formatWindowSummary(window preview.Window, panes []preview.Pane) string {
 }
 
 func formatPaneSummary(pane preview.Pane) string {
-	title := displayPaneTitle(pane)
+	title := displayPaneTitlePlain(pane)
 	if title == "" {
 		title = "-"
 	}
@@ -154,14 +155,23 @@ func formatPaneSummary(pane preview.Pane) string {
 	if command == "" {
 		command = "-"
 	}
-	line := "[" + sanitizeCell(pane.WindowIndex) + "." + sanitizeCell(pane.Index) + "] " + padRight(truncateText(title, 18), 18) + " " + truncateText(command, 10)
+	titleCell := styleLeadTopicPrefix(padRight(truncateText(title, 18), 18))
+	line := "[" + sanitizeCell(pane.WindowIndex) + "." + sanitizeCell(pane.Index) + "] " + titleCell + " " + truncateText(command, 10)
 	if status := formatPaneStatus(pane); status != "" {
-		line += "  " + ansiDim + status + ansiReset
+		if strings.Contains(status, "\x1b[") {
+			line += "  " + status
+		} else {
+			line += "  " + ansiDim + status + ansiReset
+		}
 	}
 	return line
 }
 
 func displayPaneTitle(pane preview.Pane) string {
+	return styleLeadTopicPrefix(displayPaneTitlePlain(pane))
+}
+
+func displayPaneTitlePlain(pane preview.Pane) string {
 	if strings.TrimSpace(pane.AIAgent) != "" {
 		if topic := sanitizeCell(pane.AITopic); topic != "" {
 			return topic
@@ -196,17 +206,19 @@ func isShellCommand(command string) bool {
 
 func formatPaneStatus(pane preview.Pane) string {
 	parts := make([]string, 0, 6)
-	if state := sanitizeCell(pane.AttentionState); state != "" {
-		parts = append(parts, "badge="+humanAttentionState(state))
+	if kind := aibadge.Normalize(pane.AIBadgeKind); kind != "" {
+		parts = append(parts, formatPaneAIBadgeStatusPart(kind))
+	} else if state := sanitizeCell(pane.AttentionState); state != "" {
+		parts = append(parts, formatPaneStatusPart("badge", humanAttentionState(state), state == "busy"))
 	}
 	if state := sanitizeCell(pane.AIState); state != "" {
-		parts = append(parts, "state="+humanAIState(state))
+		parts = append(parts, formatPaneStatusPart("state", humanAIState(state), state == "thinking"))
 	}
 	if agent := sanitizeCell(pane.AIAgent); agent != "" {
 		parts = append(parts, "assistant="+agent)
 	}
 	if topic := truncateText(pane.AITopic, 24); topic != "" {
-		parts = append(parts, "topic="+topic)
+		parts = append(parts, "topic="+styleLeadTopicPrefix(topic))
 	}
 	if ack := sanitizeCell(pane.AttentionAck); ack != "" {
 		parts = append(parts, "seen="+humanBoolOption(ack))
@@ -217,34 +229,32 @@ func formatPaneStatus(pane preview.Pane) string {
 	return strings.Join(parts, " ")
 }
 
-func windowAttentionRank(windowIndex string, panes []preview.Pane) int {
-	rank := 0
-	for _, pane := range panes {
-		if strings.TrimSpace(pane.WindowIndex) != windowIndex {
-			continue
-		}
-		if paneAttentionRank(pane) == 2 {
-			return 2
-		}
-		if paneAttentionRank(pane) == 1 {
-			rank = 1
-		}
+func formatPaneStatusPart(key, value string, progress bool) string {
+	if !progress {
+		return key + "=" + value
 	}
-	return rank
+	return key + "=" + ansiProgress + value + ansiReset
 }
 
-func formatWindowAttentionPrefix(rank int) string {
-	switch rank {
-	case 2:
-		return ansiYellow + "●" + ansiReset
-	case 1:
-		return ansiGreen + "●" + ansiReset
+func formatPaneAIBadgeStatusPart(kind string) string {
+	value := humanAIBadgeKind(kind)
+	switch aibadge.Normalize(kind) {
+	case aibadge.ApprovalRequired, aibadge.InputRequired:
+		return "badge=" + ansiWarning + value + ansiReset
+	case aibadge.InProgress:
+		return "badge=" + ansiProgress + value + ansiReset
 	default:
-		return ""
+		return "badge=" + value
 	}
 }
 
 func paneAttentionRank(pane preview.Pane) int {
+	switch aibadge.Normalize(pane.AIBadgeKind) {
+	case aibadge.ApprovalRequired, aibadge.InputRequired, aibadge.ResponseComplete:
+		return 1
+	case aibadge.InProgress:
+		return 2
+	}
 	if strings.TrimSpace(pane.AttentionState) == "busy" || strings.TrimSpace(pane.AIState) == "thinking" || hasBraillePrefix(pane.Title) {
 		return 2
 	}
@@ -252,6 +262,21 @@ func paneAttentionRank(pane preview.Pane) int {
 		return 1
 	}
 	return 0
+}
+
+func humanAIBadgeKind(kind string) string {
+	switch aibadge.Normalize(kind) {
+	case aibadge.ApprovalRequired:
+		return "approval-required"
+	case aibadge.InputRequired:
+		return "input-required"
+	case aibadge.ResponseComplete:
+		return "response-complete"
+	case aibadge.InProgress:
+		return "working"
+	default:
+		return kind
+	}
 }
 
 func hasAttentionTitlePrefix(title string) bool {
@@ -322,6 +347,9 @@ func highlightPreviewLine(line string) string {
 }
 
 func formatLegacyPaneSummary(model preview.PopupReadModel) string {
+	// Legacy: retained for old popup pane summary formatting shim; sunset when
+	// popup state/summary producers no longer emit the legacy shape and the
+	// compatibility window is closed.
 	pane := sanitizeCell(model.SelectedPaneIndex)
 	if pane == "" {
 		pane = "?"

@@ -4,8 +4,9 @@
   <img src="docs/assets/projmux-icon.png" alt="projmux icon" width="112">
 </p>
 
-프로젝트별 tmux workspace를 빠르게 전환하고, preview/status context/AI pane
-attention까지 함께 다루는 터미널 workspace 도구입니다.
+프로젝트별 tmux workspace를 빠르게 전환하고, Claude Code, Codex,
+Antigravity pane의 preview/status context/attention까지 함께 다루는 터미널
+workspace 도구입니다.
 
 [![npm version](https://img.shields.io/npm/v/projmux?logo=npm)](https://www.npmjs.com/package/projmux)
 [![CI](https://github.com/crevissepartners/projmux/actions/workflows/ci.yml/badge.svg)](https://github.com/crevissepartners/projmux/actions/workflows/ci.yml)
@@ -15,7 +16,7 @@ attention까지 함께 다루는 터미널 workspace 도구입니다.
 <p align="center">
   <img src="docs/assets/projmux-ai-attention.gif" alt="projmux AI attention demo" width="820">
   <br>
-  <em>다른 프로젝트에서 일하는 동안 agent 작업이 끝나면 notification에서 바로 해당 pane으로 돌아갑니다.</em>
+  <em>기존 AI session을 이어서 열고 다른 project에서 작업하다가, permission이 필요하면 notification list에서 managed pane으로 돌아갑니다.</em>
 </p>
 
 ## 무엇인가
@@ -23,6 +24,8 @@ attention까지 함께 다루는 터미널 workspace 도구입니다.
 `projmux`는 프로젝트 디렉터리를 오래 유지되는 tmux session으로 연결합니다.
 프로젝트 전환, session preview, AI split 실행, tmux 안의 상태 표시를 한
 키보드 중심 workspace 앱으로 묶습니다.
+Claude Code와 Codex hook event를 직접 수집하고, 수동으로 연결한 Antigravity
+hook/statusline event도 같은 notification 흐름으로 다룹니다.
 
 터미널 workspace를 한 명령으로 열고, 한 세트의 키로 project/window/pane,
 notification, settings 사이를 오가고 싶을 때 사용합니다.
@@ -59,14 +62,18 @@ projmux shell
 
 - `Alt-1`: project sidebar.
 - `Alt-2`: notification list.
-- `Alt-3`: existing-session picker.
-- `Alt-4`: AI split picker.
+- `Alt-3`: Recent Windows.
+- `Alt-4`: AI resume session picker.
 - `Alt-5`: settings.
-- `Alt-6`: project switcher popup.
+- `Alt-7`: AI split picker.
 
-전체 key map은 [Terminal Keybindings](docs/keybindings.md)를 참고하세요. 키가
-동작하지 않으면 tmux 밖에서 `projmux setup`을 실행한 뒤,
-지원 터미널에서는 `projmux init [terminal] --apply`를 사용하세요.
+`Alt-1`부터 `Alt-5`까지는 zero-config 보장 기본값이고, `Alt-7`은 추가로
+편집 가능한 built-in 기본값입니다. 전체 key map은
+[Terminal Keybindings](docs/keybindings.md)를 참고하세요. 키가 동작하지 않으면
+Darwin 배포본의 `projmux shell`에서는 macOS 접근성 권한을 한 번 승인하면
+물리 키 어댑터가 자동으로 동작합니다. 그 밖의 경로에서는 tmux 밖에서
+`projmux setup`을 실행한 뒤, 지원 터미널에서는
+`projmux init [terminal] --apply`를 사용하세요.
 
 ## 일상 사용
 
@@ -74,25 +81,58 @@ projmux shell
 - 중요한 project는 pin으로 고정합니다.
 - 전환 전에 window, pane, git branch, Kubernetes context, AI pane state를
   preview합니다.
+- 기존 Claude/Codex conversation을 resume하거나 새 managed AI split을 엽니다.
+- permission/completion event를 하나의 notification queue에서 확인하고 바로
+  attention이 필요한 pane으로 이동합니다.
 - env var를 직접 편집하지 않고 Settings > Project Picker에서 root와 workdir을
   추가할 수 있습니다.
 - Settings > About > Update 또는 `projmux update apply`로 업그레이드합니다.
 
+<p align="center">
+  <img src="docs/assets/projmux-shell-sidebar.gif" alt="projmux project 전환 및 managed Codex 데모" width="820">
+  <br>
+  <em>project를 전환하고 managed Codex pane을 연 뒤 completion notification을 확인합니다.</em>
+</p>
+
 `PROJMUX_PROJDIR`, managed roots, notification, usage tracking 같은 자세한
 설정은 [Configuration](docs/configuration.md)을 참고하세요. installer별 update
 동작은 [Upgrading](docs/upgrading.md)에 있습니다.
+
+## 멀티 에이전트 워크플로
+
+하나의 tmux window에 shell과 여러 managed agent를 함께 띄워 둡니다. pane을
+이동하며 독립 작업을 시작하면 projmux가 permission/completion event를 하나의
+notification queue에 모읍니다.
+
+<p align="center">
+  <img src="docs/assets/projmux-three-pane-workflow.gif" alt="projmux shell, Codex, Claude 3-pane workflow 데모" width="820">
+  <br>
+  <em>동일 폭의 shell, Codex, Claude pane을 이동하며 독립 작업의 완료 알림을 하나의 notification queue에서 확인합니다.</em>
+</p>
+
+## 에이전트 스킬 자동화
+
+AI 도구도 같은 projmux CLI를 호출해 managed pane을 열고 prompt를 전달할 수
+있습니다:
+
+```sh
+projmux ai split --agent codex right -- "Review the retry logic."
+```
+
+Claude, Codex와 다른 agent용 template 및 naming convention은
+[AI Agent Shortcuts](docs/ai-agent-shortcuts.md)에 정리되어 있습니다.
 
 ## 추가 문서
 
 - [Install](docs/install.md)
 - [Configuration](docs/configuration.md)
 - [Terminal Keybindings](docs/keybindings.md)
+- [AI Agent Shortcuts](docs/ai-agent-shortcuts.md)
 - [CLI Reference](docs/cli.md)
 - [Statusbar](docs/statusbar.md)
 - [Hooks](docs/hooks.md)
 - [Usage tracking](docs/usage-tracking.md)
 - [Agent Workflow](docs/agent-workflow.md)
-- [README Hero GIF Recording](docs/readme-hero-gif-recording.md)
 
 ## 개발
 

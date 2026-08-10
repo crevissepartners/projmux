@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -49,6 +52,16 @@ func newStatusbarTestCommand(runner *statusbarFakeRunner, store notifyStore) *st
 		c.notifyStoreFn = func() (notifyStore, error) { return store, nil }
 	}
 	return c
+}
+
+func TestStatusbarBadgeStyleDefaultIsDot(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	got := loadAIBadgeStyle(func() (string, error) { return home, nil }, func(string) string { return "" })
+	if got != config.AIBadgeStyleDot {
+		t.Fatalf("loadAIBadgeStyle(missing) = %q, want %q", got, config.AIBadgeStyleDot)
+	}
 }
 
 func TestStatusbarDispatchTableCoversAllKnownRanges(t *testing.T) {
@@ -256,6 +269,14 @@ func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 	if !slices.Contains(popupArgs, "-B") {
 		t.Fatalf("path popup must pass tmux `-B` to suppress tmux's popup border; args = %#v", popupArgs)
 	}
+	expectedPathPopup := statusbarPathPopup(
+		"/home/es5h/source/repos/projmux",
+		statusbarPathMetadata{Project: "projmux", Git: "ship/statusbar-cwd-popup-phase2"},
+		"/usr/local/bin/projmux",
+	)
+	if got, ok := tmuxPopupArgValue(popupArgs, "-h"); !ok || got != strconv.Itoa(expectedPathPopup.Height) {
+		t.Fatalf("path popup -h = %q (ok=%v), want %d; args = %#v", got, ok, expectedPathPopup.Height, popupArgs)
+	}
 	if !sawTmuxPopupCommandContaining(runner.calls, "Current path") {
 		t.Fatalf("missing inline frame title `Current path`; calls = %#v", runner.calls)
 	}
@@ -302,21 +323,19 @@ func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 	if strings.Contains(command, "printf '%s\\n'") || strings.Contains(command, "read -n1") {
 		t.Fatalf("popup command uses brittle output/read shape: %q", command)
 	}
-	// Frame chrome regression guard: the payload now renders the native
-	// picker frame so the outer box glyphs must appear, paired with the
-	// title bar (`TitlebarStart`) and divider (`TitlebarRule`) the picker
-	// uses for the input variants. Missing any of these means we lost
-	// alignment with the picker visual language.
-	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+	// Frame chrome regression guard: the payload renders the native picker
+	// frame, including title row and divider geometry, without borrowing
+	// separate titlebar overlay ANSI.
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│", "├", "┤"} {
 		if !strings.Contains(command, glyph) {
 			t.Fatalf("path popup missing frame glyph %q: %q", glyph, command)
 		}
 	}
-	if !strings.Contains(command, projmuxpicker.TitlebarStart) {
-		t.Fatalf("path popup missing frame titlebar ANSI: %q", command)
+	if strings.Contains(command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("path popup must not contain frame titlebar overlay ANSI: %q", command)
 	}
-	if !strings.Contains(command, projmuxpicker.TitlebarRule) {
-		t.Fatalf("path popup missing frame divider ANSI: %q", command)
+	if strings.Contains(command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("path popup must not contain frame divider overlay ANSI: %q", command)
 	}
 }
 
@@ -471,6 +490,11 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
 	cmd.now = func() time.Time { return now }
+	refreshCalls := 0
+	cmd.usageRefreshFn = func(context.Context) (bool, error) {
+		refreshCalls++
+		return true, nil
+	}
 	cmd.usageStateFn = func(context.Context) (statusbarUsageState, error) {
 		return statusbarUsageState{
 			LastSync:       now.Add(-45 * time.Second),
@@ -497,6 +521,9 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if err := cmd.Run([]string{"click", "usage"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+	if refreshCalls != 0 {
+		t.Fatalf("usage click refresh calls = %d, want 0", refreshCalls)
+	}
 	if !sawTmuxSubcommand(runner.calls, "display-popup") {
 		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
 	}
@@ -512,10 +539,34 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if !slices.Contains(popupArgs, "-B") {
 		t.Fatalf("usage popup must pass tmux `-B` to suppress tmux's popup border; args = %#v", popupArgs)
 	}
+	expectedUsageState := statusbarUsageState{
+		LastSync:       now.Add(-45 * time.Second),
+		LastSyncSource: "last collect",
+		Snapshots: []coreusage.Snapshot{
+			{
+				Model:    "claude",
+				Window:   coreusage.Window5h,
+				Tokens:   800,
+				Limit:    1000,
+				Pct:      80,
+				ResetsAt: now.Add(2 * time.Hour),
+			},
+			{
+				Model:    "codex",
+				Window:   coreusage.WindowWeekly,
+				Pct:      12,
+				ResetsAt: time.Time{},
+			},
+		},
+	}
+	expectedUsagePopup := statusbarUsagePopup(expectedUsageState, now, "/usr/local/bin/projmux")
+	if got, ok := tmuxPopupArgValue(popupArgs, "-h"); !ok || got != strconv.Itoa(expectedUsagePopup.Height) {
+		t.Fatalf("usage popup -h = %q (ok=%v), want %d; args = %#v", got, ok, expectedUsagePopup.Height, popupArgs)
+	}
 	if !sawTmuxPopupCommandContaining(runner.calls, "Usage") {
 		t.Fatalf("missing inline frame title `Usage`; calls = %#v", runner.calls)
 	}
-	if !sawTmuxPopupCommandContaining(runner.calls, "Press any key to close.") {
+	if !sawTmuxPopupCommandContaining(runner.calls, displayOnlyPopupClosePrompt) {
 		t.Fatalf("missing any-key-to-close prompt; calls = %#v", runner.calls)
 	}
 	if sawTmuxPopupCommandContaining(runner.calls, "Enter closes this popup.") {
@@ -558,24 +609,91 @@ func TestStatusbarClickUsageOpensNativeHUDPopup(t *testing.T) {
 	if !strings.Contains(command, "popup-wait-key") {
 		t.Fatalf("usage popup command = %q, want any-key helper invocation", command)
 	}
-	// Native picker frame chrome must wrap the body: outer glyphs, title
-	// bar ANSI, divider ANSI all required so the popup mirrors the picker
-	// surface one-to-one.
-	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+	// Native picker frame chrome must wrap the body: outer glyphs and title
+	// divider geometry are required, while titlebar overlay ANSI stays out.
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│", "├", "┤"} {
 		if !strings.Contains(command, glyph) {
 			t.Fatalf("usage popup missing frame glyph %q: %q", glyph, command)
 		}
 	}
-	if !strings.Contains(command, projmuxpicker.TitlebarStart) {
-		t.Fatalf("usage popup missing frame titlebar ANSI: %q", command)
+	if strings.Contains(command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("usage popup must not contain frame titlebar overlay ANSI: %q", command)
 	}
-	if !strings.Contains(command, projmuxpicker.TitlebarRule) {
-		t.Fatalf("usage popup missing frame divider ANSI: %q", command)
+	if strings.Contains(command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("usage popup must not contain frame divider overlay ANSI: %q", command)
 	}
 	for _, call := range runner.calls {
 		if call.name == "/usr/local/bin/projmux" || sawArgsContain(call.args, "popup-toggle") {
 			t.Fatalf("usage click must remain direct display-popup, not popup-toggle; calls = %#v", runner.calls)
 		}
+	}
+}
+
+func TestStatusbarUsageRefreshCollectsThenReopensHUD(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	refreshed := false
+	cmd.usageRefreshFn = func(context.Context) (bool, error) {
+		refreshed = true
+		return true, nil
+	}
+	cmd.usageStateFn = func(context.Context) (statusbarUsageState, error) {
+		if !refreshed {
+			return statusbarUsageState{}, errors.New("usage state loaded before refresh")
+		}
+		return statusbarUsageState{
+			Snapshots: []coreusage.Snapshot{
+				{Model: "codex", Window: coreusage.Window5h, Pct: 73},
+			},
+		}, nil
+	}
+
+	if err := cmd.Run([]string{"usage-refresh"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !refreshed {
+		t.Fatal("usage refresh did not invoke MaybeCollect entry point")
+	}
+	if !sawTmuxSubcommand(runner.calls, "display-popup") {
+		t.Fatalf("missing display-popup; calls = %#v", runner.calls)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Codex") ||
+		!sawTmuxPopupCommandContaining(runner.calls, "73%") {
+		t.Fatalf("refreshed popup missing updated usage; calls = %#v", runner.calls)
+	}
+}
+
+func TestStatusbarUsageRefreshRerendersCacheWhenThrottled(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	refreshCalls := 0
+	stateLoads := 0
+	cmd.usageRefreshFn = func(context.Context) (bool, error) {
+		refreshCalls++
+		return false, nil
+	}
+	cmd.usageStateFn = func(context.Context) (statusbarUsageState, error) {
+		stateLoads++
+		return statusbarUsageState{
+			Snapshots: []coreusage.Snapshot{
+				{Model: "claude", Window: coreusage.Window5h, Pct: 41},
+			},
+		}, nil
+	}
+
+	if err := cmd.Run([]string{"usage-refresh"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if refreshCalls != 1 || stateLoads != 1 {
+		t.Fatalf("refresh calls/state loads = %d/%d, want 1/1", refreshCalls, stateLoads)
+	}
+	if !sawTmuxPopupCommandContaining(runner.calls, "Claude") ||
+		!sawTmuxPopupCommandContaining(runner.calls, "41%") {
+		t.Fatalf("throttled refresh did not rerender cached popup; calls = %#v", runner.calls)
 	}
 }
 
@@ -593,10 +711,13 @@ func TestStatusbarUsagePopupColorsThresholdsAndStaleSync(t *testing.T) {
 	}, now, "/usr/local/bin/projmux")
 
 	if !strings.Contains(popup.Command, "\x1b[38;5;214m") {
-		t.Fatalf("popup missing amber ANSI for stale sync / >=80%% usage: %q", popup.Command)
+		t.Fatalf("popup missing amber ANSI for >=80%% usage: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, "\x1b[38;5;196m") {
+	if !strings.Contains(popup.Command, "\x1b[38;5;160m") {
 		t.Fatalf("popup missing red ANSI for >=95%% usage: %q", popup.Command)
+	}
+	if !strings.Contains(popup.Command, projmuxpicker.MutedStart) || !strings.Contains(popup.Command, "2m ago") {
+		t.Fatalf("popup missing muted stale sync: %q", popup.Command)
 	}
 	if !strings.Contains(popup.Command, "2m ago") {
 		t.Fatalf("popup missing sync age: %q", popup.Command)
@@ -635,6 +756,103 @@ func TestStatusbarUsageStateSyncPrefersLastCollectThenCacheMTime(t *testing.T) {
 	}
 	if fromMTime.LastSyncSource != "cache mtime" {
 		t.Fatalf("LastSyncSource = %q, want cache mtime", fromMTime.LastSyncSource)
+	}
+}
+
+func TestStatusbarDefaultUsageStateFiltersDisabledProviders(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, "xdg-config")
+	stateHome := filepath.Join(home, "xdg-state")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("PROJMUX_USAGE_STATE_DIR", "")
+
+	paths := config.DefaultPaths(configHome, stateHome)
+	if err := config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile: %v", err)
+	}
+
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	claudeCollect := now.Add(-4 * time.Minute)
+	codexCollect := now.Add(-time.Minute)
+	store := coreusage.NewStore(filepath.Join(paths.StateDir, "usage"))
+	if err := store.SaveState(coreusage.State{
+		LastCollect: map[string]time.Time{
+			"claude": claudeCollect,
+			"codex":  codexCollect,
+		},
+		Snapshots: []coreusage.Snapshot{
+			{Model: "claude", Window: coreusage.Window5h, Pct: 31, ResetsAt: now.Add(time.Hour), UpdatedAt: claudeCollect},
+			{Model: "codex", Window: coreusage.Window5h, Pct: 92, ResetsAt: now.Add(time.Hour), UpdatedAt: codexCollect},
+		},
+	}); err != nil {
+		t.Fatalf("seed usage state: %v", err)
+	}
+
+	cmd := newStatusbarCommand()
+	cmd.now = func() time.Time { return now }
+	state, err := cmd.defaultUsageState(context.Background())
+	if err != nil {
+		t.Fatalf("defaultUsageState: %v", err)
+	}
+	if len(state.Snapshots) != 1 || state.Snapshots[0].Model != "claude" {
+		t.Fatalf("Snapshots = %#v, want only enabled claude row", state.Snapshots)
+	}
+	if !state.LastSync.Equal(claudeCollect) {
+		t.Fatalf("LastSync = %v, want enabled claude collect %v", state.LastSync, claudeCollect)
+	}
+	if state.LastSyncSource != "last collect" {
+		t.Fatalf("LastSyncSource = %q, want last collect", state.LastSyncSource)
+	}
+
+	popup := statusbarUsagePopup(state, now, "/usr/local/bin/projmux")
+	if !strings.Contains(popup.Command, "Claude") || strings.Contains(popup.Command, "Codex") {
+		t.Fatalf("popup command = %q, want Claude only", popup.Command)
+	}
+}
+
+func TestStatusbarDefaultUsageStateShowsAntigravityContext(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, "xdg-config")
+	stateHome := filepath.Join(home, "xdg-state")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("PROJMUX_USAGE_STATE_DIR", "")
+
+	paths := config.DefaultPaths(configHome, stateHome)
+	if err := config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), []config.AIAgentProvider{config.AIAgentAntigravity}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile: %v", err)
+	}
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	if err := coreusage.NewStore(filepath.Join(paths.StateDir, "usage")).SaveState(coreusage.State{
+		Snapshots: []coreusage.Snapshot{
+			{Model: "antigravity", Window: coreusage.WindowContext, Pct: 42, UpdatedAt: now},
+		},
+	}); err != nil {
+		t.Fatalf("seed usage state: %v", err)
+	}
+
+	cmd := newStatusbarCommand()
+	cmd.now = func() time.Time { return now }
+	state, err := cmd.defaultUsageState(context.Background())
+	if err != nil {
+		t.Fatalf("defaultUsageState: %v", err)
+	}
+	if len(state.Unsupported) != 0 {
+		t.Fatalf("Unsupported = %#v, want none now that Antigravity usage is supported", state.Unsupported)
+	}
+	if len(state.Snapshots) != 1 || state.Snapshots[0].Model != "antigravity" || state.Snapshots[0].Window != coreusage.WindowContext {
+		t.Fatalf("Snapshots = %#v, want single Antigravity context row", state.Snapshots)
+	}
+
+	popup := statusbarUsagePopup(state, now, "/usr/local/bin/projmux")
+	if !strings.Contains(popup.Command, "Antigravity") || !strings.Contains(popup.Command, "42%") {
+		t.Fatalf("popup command = %q, want Antigravity context row", popup.Command)
+	}
+	if toast := statusbarUsageToast(state); !strings.Contains(toast, "Antigravity") || !strings.Contains(toast, "42%") {
+		t.Fatalf("toast = %q, want Antigravity context usage", toast)
 	}
 }
 
@@ -1256,6 +1474,15 @@ func firstTmuxPopupArgs(calls []statusbarFakeCall) ([]string, bool) {
 	return nil, false
 }
 
+func tmuxPopupArgValue(args []string, flag string) (string, bool) {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
 func lastDisplayMessage(calls []statusbarFakeCall) (string, bool) {
 	for i := len(calls) - 1; i >= 0; i-- {
 		c := calls[i]
@@ -1319,10 +1546,9 @@ func (e *fakeExitError) Error() string { return e.msg }
 func (e *fakeExitError) ExitCode() int { return e.code }
 
 // TestStatusbarPathPopupWearsFrameChrome locks in the picker frame chrome
-// wrap: the popup payload must include the native frame title bar (so the
-// surface reads as a picker, not a bare text dump) but must still not
-// borrow the picker active-row highlight ANSI for any body row (that would
-// misrepresent a non-input popup as a selected picker row).
+// wrap: the popup payload must include the native frame title row and
+// divider geometry (so the surface reads as a picker, not a bare text dump)
+// but must still not borrow picker titlebar or active-row overlay ANSI.
 func TestStatusbarPathPopupWearsFrameChrome(t *testing.T) {
 	t.Parallel()
 
@@ -1333,13 +1559,13 @@ func TestStatusbarPathPopupWearsFrameChrome(t *testing.T) {
 	if !strings.Contains(popup.Command, "Current path") {
 		t.Fatalf("path popup body must render the frame title bar: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, projmuxpicker.TitlebarStart) {
-		t.Fatalf("path popup missing frame titlebar ANSI: %q", popup.Command)
+	if strings.Contains(popup.Command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("path popup must not contain frame titlebar overlay ANSI: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
-		t.Fatalf("path popup missing frame divider ANSI: %q", popup.Command)
+	if strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("path popup must not contain frame divider overlay ANSI: %q", popup.Command)
 	}
-	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│", "├", "┤"} {
 		if !strings.Contains(popup.Command, glyph) {
 			t.Fatalf("path popup missing frame glyph %q: %q", glyph, popup.Command)
 		}
@@ -1347,9 +1573,8 @@ func TestStatusbarPathPopupWearsFrameChrome(t *testing.T) {
 }
 
 // TestStatusbarUsagePopupWearsFrameChrome locks in the picker frame chrome
-// wrap: the native frame title bar is drawn inline, but no body row may
-// borrow the picker active-row highlight ANSI (display-only popup, not a
-// picker surface).
+// wrap: the native frame title row is drawn inline, but no row may borrow
+// picker titlebar or active-row overlay ANSI.
 func TestStatusbarUsagePopupWearsFrameChrome(t *testing.T) {
 	t.Parallel()
 
@@ -1363,16 +1588,97 @@ func TestStatusbarUsagePopupWearsFrameChrome(t *testing.T) {
 	if !strings.Contains(popup.Command, "Usage") {
 		t.Fatalf("usage popup body must render the frame title `Usage`: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, projmuxpicker.TitlebarStart) {
-		t.Fatalf("usage popup missing frame titlebar ANSI: %q", popup.Command)
+	if strings.Contains(popup.Command, projmuxpicker.TitlebarStart) {
+		t.Fatalf("usage popup must not contain frame titlebar overlay ANSI: %q", popup.Command)
 	}
-	if !strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
-		t.Fatalf("usage popup missing frame divider ANSI: %q", popup.Command)
+	if strings.Contains(popup.Command, projmuxpicker.TitlebarRule) {
+		t.Fatalf("usage popup must not contain frame divider overlay ANSI: %q", popup.Command)
 	}
-	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│", "├", "┤"} {
 		if !strings.Contains(popup.Command, glyph) {
 			t.Fatalf("usage popup missing frame glyph %q: %q", glyph, popup.Command)
 		}
+	}
+}
+
+func TestStatusbarDisplayOnlyPopupsShareCommandAndFitHeightBudget(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	binaryPath := "/usr/local/bin/projmux"
+	tests := []struct {
+		name  string
+		title string
+		view  struct {
+			payload string
+			command string
+			height  int
+		}
+	}{
+		{
+			name:  "path",
+			title: "Current path",
+			view: func() struct {
+				payload string
+				command string
+				height  int
+			} {
+				popup := statusbarPathPopup(
+					"/tmp/example",
+					statusbarPathMetadata{Project: "example", Git: "main in example"},
+					binaryPath,
+				)
+				return struct {
+					payload string
+					command string
+					height  int
+				}{payload: popup.Payload, command: popup.Command, height: popup.Height}
+			}(),
+		},
+		{
+			name:  "usage",
+			title: "Usage",
+			view: func() struct {
+				payload string
+				command string
+				height  int
+			} {
+				popup := statusbarUsagePopup(statusbarUsageState{
+					LastSync:       now.Add(-30 * time.Second),
+					LastSyncSource: "last collect",
+					Snapshots: []coreusage.Snapshot{
+						{Model: "claude", Window: coreusage.Window5h, Tokens: 800, Limit: 1000, Pct: 80, ResetsAt: now.Add(time.Hour)},
+						{Model: "claude", Window: coreusage.WindowWeekly, Tokens: 2000, Limit: 4000, Pct: 50, ResetsAt: now.Add(24 * time.Hour)},
+						{Model: "codex", Window: coreusage.Window5h, Pct: 12, ResetsAt: now.Add(2 * time.Hour)},
+						{Model: "codex", Window: coreusage.WindowWeekly, Pct: 25, ResetsAt: now.Add(7 * 24 * time.Hour)},
+					},
+				}, now, binaryPath)
+				return struct {
+					payload string
+					command string
+					height  int
+				}{payload: popup.Payload, command: popup.Command, height: popup.Height}
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if strings.HasSuffix(tt.view.payload, "\n") {
+				t.Fatalf("%s popup payload has trailing newline: %q", tt.name, tt.view.payload)
+			}
+			if got := projmuxpicker.RenderedTextLineCount(tt.view.payload); got != tt.view.height {
+				t.Fatalf("%s popup payload lines = %d, want height budget %d", tt.name, got, tt.view.height)
+			}
+			if want := statusbarPopupCommand(tt.view.payload, binaryPath); tt.view.command != want {
+				t.Fatalf("%s popup command does not use shared statusbarPopupCommand\n got: %q\nwant: %q", tt.name, tt.view.command, want)
+			}
+			if !strings.Contains(tt.view.payload, tt.title) {
+				t.Fatalf("%s popup payload missing title %q: %q", tt.name, tt.title, tt.view.payload)
+			}
+		})
 	}
 }
 
@@ -1382,8 +1688,12 @@ func TestStatusbarUsagePopupWearsFrameChrome(t *testing.T) {
 func TestStatusbarPopupFooterReadsAsAnyKey(t *testing.T) {
 	t.Parallel()
 
-	footer := strings.Join(statusbarPopupFooterLines(60), "\n")
-	if !strings.Contains(footer, "Press any key to close.") {
+	lines := statusbarPopupFooterLines(60)
+	if got, want := len(lines), 3; got != want {
+		t.Fatalf("footer line count = %d, want %d: %#v", got, want, lines)
+	}
+	footer := strings.Join(lines, "\n")
+	if !strings.Contains(footer, displayOnlyPopupClosePrompt) {
 		t.Fatalf("footer missing any-key prompt: %q", footer)
 	}
 	if strings.Contains(footer, "Enter closes this popup.") {
@@ -1393,12 +1703,17 @@ func TestStatusbarPopupFooterReadsAsAnyKey(t *testing.T) {
 
 // TestStatusbarPopupCommandPrefersHelperSubcommand locks in that the popup
 // payload routes its close path through the hidden `popup-wait-key` helper
-// rather than `IFS= read -r _`, removing the popup shell's dependency on
-// bash/zsh-specific `read -n1` semantics.
+// without printing a newline after the payload. That keeps the helper from
+// shifting the display-only frame down while avoiding shell-specific
+// `read -n1` semantics.
 func TestStatusbarPopupCommandPrefersHelperSubcommand(t *testing.T) {
 	t.Parallel()
 
-	cmd := statusbarPopupCommand("hello", "/usr/local/bin/projmux")
+	cmd := statusbarPopupCommand("top\nbottom\n", "/usr/local/bin/projmux")
+	want := "printf %s 'top\nbottom'; '/usr/local/bin/projmux' popup-wait-key"
+	if cmd != want {
+		t.Fatalf("popup command = %q, want %q", cmd, want)
+	}
 	if strings.Contains(cmd, "IFS= read -r _") {
 		t.Fatalf("popup command must not retain Enter-only read: %q", cmd)
 	}
@@ -1408,20 +1723,37 @@ func TestStatusbarPopupCommandPrefersHelperSubcommand(t *testing.T) {
 	if !strings.Contains(cmd, "'/usr/local/bin/projmux'") {
 		t.Fatalf("popup command missing quoted binary path: %q", cmd)
 	}
+	if strings.Contains(cmd, "\n'; ") {
+		t.Fatalf("popup command leaves cursor on an extra line before wait helper: %q", cmd)
+	}
+	if strings.Contains(cmd, "read -n1") {
+		t.Fatalf("popup command must not regress to shell-specific read -n1: %q", cmd)
+	}
 }
 
 // TestStatusbarPopupCommandFallsBackWhenBinaryUnknown documents that the
 // helper invocation degrades to the legacy Enter-only read when the
-// projmux binary path could not be resolved — the popup still has *a*
-// close path even in that degraded state.
+// projmux binary path could not be resolved. That fallback still has the
+// old Enter-only behavior, but it must share the no-extra-newline payload
+// shape so it does not add another printable row to the popup.
 func TestStatusbarPopupCommandFallsBackWhenBinaryUnknown(t *testing.T) {
 	t.Parallel()
 
-	cmd := statusbarPopupCommand("hello", "")
+	cmd := statusbarPopupCommand("top\nbottom\n", "")
+	want := "printf %s 'top\nbottom'; IFS= read -r _"
+	if cmd != want {
+		t.Fatalf("fallback command = %q, want %q", cmd, want)
+	}
 	if !strings.Contains(cmd, "IFS= read -r _") {
 		t.Fatalf("popup command must retain Enter fallback when binary path is empty: %q", cmd)
 	}
 	if strings.Contains(cmd, "popup-wait-key") {
 		t.Fatalf("popup command must not reference helper when binary is unknown: %q", cmd)
+	}
+	if strings.Contains(cmd, "\n'; IFS= read -r _") {
+		t.Fatalf("fallback command leaves cursor on an extra line before read: %q", cmd)
+	}
+	if strings.Contains(cmd, "read -n1") {
+		t.Fatalf("fallback command must not use shell-specific read -n1: %q", cmd)
 	}
 }

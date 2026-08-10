@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,7 +15,10 @@ import (
 	"testing"
 	"time"
 
+	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/theme"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -40,6 +45,7 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
+		goos:       func() string { return "linux" },
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -63,16 +69,9 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"set -ga update-environment \"PROJMUX_WELCOME\"",
 		"set-hook -g client-attached",
 		"'/tmp/proj mux/bin/projmux' welcome --popup >/dev/null 2>&1",
-		"set -s user-keys[7] \"\\033[9008u\"",
-		"bind-key -n C-n new-window -c \"#{pane_current_path}\"",
-		"bind-key -n M-r command-prompt",
-		"bind-key -n M-S-Left previous-window",
-		"bind-key -n M-S-Right next-window",
-		"bind-key -n User10 command-prompt",
-		"bind-key -n User11 command-prompt",
 		"set -g status-left-length 20",
-		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] \"",
-		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
+		"set -g status-left \"#[range=user|session]#[bold,fg=colour254,bg=colour60] #('/tmp/proj mux/bin/projmux' status project) #[default]#[norange] \"",
+		"#[bold,fg=colour254,bg=colour60] #('/tmp/proj mux/bin/projmux' status project) #[default]",
 		"#{n:window_name}",
 		"#{=/7/...:window_name}",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
@@ -97,16 +96,14 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"set -g status 3",
 		"set -g status-format[2] \"",
 		"range=user|sessionstate",
-		// Phase 2.8 regression guard: alt-shift-arrow chords now bind to the
-		// xterm-standard `M-S-Left/Right` form. Their `User8`/`User9` detour
-		// is gone; if the generator regresses, popup-inside chords break in
-		// Ghostty (the original bug).
-		"set -s user-keys[8]",
-		"set -s user-keys[9]",
-		"\\033[9009u",
-		"\\033[9010u",
-		"bind-key -n User8",
-		"bind-key -n User9",
+		"$env:PROJMUX_MUX_BACKEND",
+		"$env:PROJMUX_PICKER_BACKEND",
+		"$env:PROJMUX_NATIVE_LINE_MODE",
+		"psmux",
+		"set -s user-keys",
+		"\\033[900",
+		"\\033[901",
+		"bind-key -n User",
 	} {
 		if strings.Contains(config, banned) {
 			t.Fatalf("config = %q, did not expect substring %q", config, banned)
@@ -165,6 +162,295 @@ func TestShellAppConfigCanonicalizesNpmStagingBinaryPath(t *testing.T) {
 	}
 	if strings.Contains(config, ".projmux-lvpOxyM9") {
 		t.Fatalf("config = %q, did not expect npm retire/staging segment %q", config, ".projmux-lvpOxyM9")
+	}
+}
+
+func TestShellWriteAppConfigAppliesGlobalThemeToPaneChrome(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#0000ff"
+pane_active_bg = "#41eb3a"
+focus = "#ff0000"
+`)
+	cmd := &shellCommand{
+		lookupEnv: func(name string) string {
+			if name == "HOME" {
+				return home
+			}
+			return ""
+		},
+		homeDir:   func() (string, error) { return home, nil },
+		readFile:  os.ReadFile,
+		writeFile: os.WriteFile,
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	if err := cmd.writeAppConfig(configPath, "/tmp/projmux"); err != nil {
+		t.Fatalf("writeAppConfig() error = %v", err)
+	}
+	got := readFile(t, configPath)
+
+	globalRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{
+		Background: "#0000ff", PaneActiveBg: "#41eb3a", Focus: "#ff0000",
+	}))
+	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+	for _, want := range []string{
+		"set -g pane-active-border-style \"fg=" + globalRoles.FocusBorder + ",bold\"",
+		"set -g window-active-style \"bg=" + globalRoles.FocusPaneActiveBg + "\"",
+		"set -g window-style \"bg=" + globalRoles.PaneInactiveBg + "\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("shell app config missing global-theme chrome line %q\n--- got ---\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{
+		"set -g window-active-style \"bg=" + fallbackRoles.FocusPaneActiveBg + "\"",
+		"set -g pane-active-border-style \"fg=" + fallbackRoles.FocusBorder + ",bold\"",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("shell app config leaked fallback chrome line %q\n--- got ---\n%s", unwanted, got)
+		}
+	}
+}
+
+func TestShellWriteAppConfigUnsetThemeMatchesFallback(t *testing.T) {
+	home := t.TempDir()
+	cmd := &shellCommand{
+		lookupEnv: func(name string) string {
+			if name == "HOME" {
+				return home
+			}
+			return ""
+		},
+		homeDir:   func() (string, error) { return home, nil },
+		readFile:  os.ReadFile,
+		writeFile: os.WriteFile,
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	if err := cmd.writeAppConfig(configPath, "/tmp/projmux"); err != nil {
+		t.Fatalf("writeAppConfig() error = %v", err)
+	}
+	got := readFile(t, configPath)
+
+	// With no global theme, the shell-start writer must be byte-identical to the
+	// built-in fallback render (the pre-change behavior).
+	catalog, present, err := loadMergedKeyBindingCatalog(keymapLoader{
+		homeDir:   cmd.homeDir,
+		lookupEnv: cmd.lookupEnv,
+		readFile:  cmd.readFile,
+	})
+	if err != nil {
+		t.Fatalf("loadMergedKeyBindingCatalog() error = %v", err)
+	}
+	want := fallbackRenderThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(
+		"/tmp/projmux", cmd.defaultShell(),
+		loadStatusbarDecorationSet(cmd.homeDir, cmd.lookupEnv),
+		loadAIBadgeStyle(cmd.homeDir, cmd.lookupEnv),
+		loadDesktopNotifyModeForTmuxConfig(cmd.homeDir, cmd.lookupEnv),
+		catalog, present,
+	)
+	if got != want {
+		t.Fatalf("shell app config unset theme is not byte-identical to fallback\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestShellNativeWindowsWritesPSMuxConfigAndRunsIsolatedPSMux(t *testing.T) {
+	t.Setenv("TMUX", `/tmp/default-tmux`)
+
+	home := `C:\Users\Ada Lovelace`
+	configPath := `C:\Users\Ada Lovelace\AppData\Local\projmux\ps mux.conf`
+	binaryPath := `C:\Program Files\projmux weird\projmux.exe`
+	recorder := &recordingShellRunner{}
+	writes := map[string][]byte{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return binaryPath, nil },
+		lookupEnv: func(name string) string {
+			return os.Getenv(name)
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  recordShellWrite(writes),
+		runCommand: recorder.run,
+		goos:       func() string { return "windows" },
+	}
+
+	if err := cmd.Run([]string{"--config", configPath}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	config := string(writes[configPath])
+	for _, want := range []string{
+		"Generated by projmux. Used by native Windows `projmux.exe shell` with psmux",
+		"Phase 4B includes only the minimal project switch popup",
+		"set -g @projmux_app 1",
+		"set -g status-left \" #{session_name} \"",
+		"#(& 'C:\\Program Files\\projmux weird\\projmux.exe' 'status' 'git' '#{pane_current_path}')",
+		"bind-key -n C-n new-window -c \"#{pane_current_path}\"",
+		"bind-key -n M-1 display-popup -d \"#{pane_current_path}\" -x 0 -y 0 -w 42% -h 100% -T \"Projects\" -E powershell -NoProfile -Command \"$env:PROJMUX_MUX_BACKEND = 'psmux'; $env:PROJMUX_PICKER_BACKEND = 'native'; $env:PROJMUX_NATIVE_LINE_MODE = '1'; & 'C:\\Program Files\\projmux weird\\projmux.exe' 'switch' '--ui=sidebar'\"",
+	} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("psmux config = %q, want substring %q", config, want)
+		}
+	}
+	for _, banned := range []string{
+		"tmux popup-toggle",
+		"set-hook",
+		"set-option -p",
+		"@projmux_ai_",
+		"sh -c",
+		`'\''`,
+	} {
+		if strings.Contains(config, banned) {
+			t.Fatalf("psmux config = %q, did not expect substring %q", config, banned)
+		}
+	}
+
+	wantArgs := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "home", "-c", home}
+	if recorder.name != "psmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
+		t.Fatalf("command = %s %#v, want psmux %#v", recorder.name, recorder.args, wantArgs)
+	}
+	for _, env := range recorder.env {
+		if strings.HasPrefix(env, "TMUX=") {
+			t.Fatalf("runner env contains TMUX: %#v", recorder.env)
+		}
+	}
+}
+
+func TestShellBackendEnvCanSelectPSMuxOffWindows(t *testing.T) {
+	t.Setenv(muxBackendEnvVar, "psmux")
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, "psmux.conf")
+	recorder := &recordingShellRunner{}
+	writes := map[string][]byte{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return ""
+			}
+			return os.Getenv(name)
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  recordShellWrite(writes),
+		runCommand: recorder.run,
+		goos:       func() string { return "linux" },
+	}
+
+	if err := cmd.Run([]string{"--config", configPath}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if recorder.name != "psmux" {
+		t.Fatalf("command = %s %#v, want psmux", recorder.name, recorder.args)
+	}
+	if !strings.Contains(string(writes[configPath]), "Used by native Windows `projmux.exe shell` with psmux") {
+		t.Fatalf("config = %q, want psmux config", string(writes[configPath]))
+	}
+}
+
+func TestShellBackendEnvCanKeepTmuxOnWindows(t *testing.T) {
+	t.Setenv(muxBackendEnvVar, "tmux")
+
+	home := t.TempDir()
+	configPath := filepath.Join(home, "tmux.conf")
+	recorder := &recordingShellRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "SHELL" {
+				return "/bin/bash"
+			}
+			if name == "TMUX" {
+				return ""
+			}
+			return os.Getenv(name)
+		},
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+		goos:       func() string { return "windows" },
+	}
+
+	if err := cmd.Run([]string{"--config", configPath}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if recorder.name != "tmux" {
+		t.Fatalf("command = %s %#v, want tmux", recorder.name, recorder.args)
+	}
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "Generated by projmux. Used by `projmux shell`.") {
+		t.Fatalf("config = %q, want tmux app config", string(content))
+	}
+}
+
+func TestPSMuxAppConfigRendersPowerShellCallbackWithSensitiveBinaryPath(t *testing.T) {
+	t.Parallel()
+
+	binaryPath := "C:\\Program Files\\projmux chars ' \" " + "`" + " $ & | < > ; ( ) { } ^ % !\\projmux.exe"
+	config, err := psmuxAppConfig(binaryPath)
+	if err != nil {
+		t.Fatalf("psmuxAppConfig() error = %v", err)
+	}
+	callback, err := intpsmux.ProjmuxCommand(binaryPath, "status", "git", "#{pane_current_path}").PowerShell()
+	if err != nil {
+		t.Fatalf("PowerShell() error = %v", err)
+	}
+	switchCallback, err := intpsmux.ProjmuxCommand(binaryPath, "switch", "--ui=sidebar").PowerShell()
+	if err != nil {
+		t.Fatalf("PowerShell() error = %v", err)
+	}
+	wantCallback := "#(" + strings.ReplaceAll(callback, `"`, `\"`) + ")"
+	if !strings.Contains(config, wantCallback) {
+		t.Fatalf("psmux config = %q, want PowerShell callback %q", config, wantCallback)
+	}
+	wantSwitchCallback := strings.Join([]string{
+		powerShellEnvAssignment(muxBackendEnvVar, string(muxBackendPSMux)),
+		powerShellEnvAssignment(intpicker.BackendEnv, string(intpicker.BackendNative)),
+		powerShellEnvAssignment("PROJMUX_NATIVE_LINE_MODE", "1"),
+		switchCallback,
+	}, "; ")
+	wantSwitch := "display-popup -d \"#{pane_current_path}\" -x 0 -y 0 -w 42% -h 100% -T \"Projects\" -E " + psmuxPowerShellCommandTail(wantSwitchCallback)
+	if !strings.Contains(config, wantSwitch) {
+		t.Fatalf("psmux config = %q, want project switch binding %q", config, wantSwitch)
+	}
+	for _, want := range []string{
+		"C:\\Program Files\\projmux chars",
+		"chars ''",
+		`\"`,
+		"`",
+		"$",
+		"&",
+		"|",
+		"<",
+		">",
+		";",
+		"(",
+		")",
+		"{",
+		"}",
+		"^",
+		"%",
+		"!",
+		"'status' 'git'",
+		"'switch' '--ui=sidebar'",
+		"'#{pane_current_path}'",
+	} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("psmux config = %q, want sensitive substring %q", config, want)
+		}
+	}
+	for _, banned := range []string{
+		"set-option -p",
+		"sh -c",
+		`'\''`,
+	} {
+		if strings.Contains(config, banned) {
+			t.Fatalf("psmux config = %q, did not expect substring %q", config, banned)
+		}
 	}
 }
 
@@ -412,26 +698,28 @@ func TestShellTmuxExecRunnerStripsNestedTmuxEnv(t *testing.T) {
 	}
 }
 
-func TestShellWelcomeShowsOncePerVersion(t *testing.T) {
+func TestShellWelcomeShowsUntilSkippedForVersion(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, _ := testUpdateCommand(t, now)
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		update:     update,
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
 	}
 
-	var first bytes.Buffer
-	if err := cmd.Run([]string{"--no-install"}, &first, &bytes.Buffer{}); err != nil {
+	var first, stderr bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &first, &stderr); err != nil {
 		t.Fatalf("first Run() error = %v", err)
 	}
-	if !strings.Contains(first.String(), "Welcome to projmux shell "+version.String()) {
-		t.Fatalf("first stdout = %q, want welcome", first.String())
+	assertWelcomeOutput(t, "first stdout", first.String())
+	if stderr.Len() != 0 {
+		t.Fatalf("first stderr = %q, want empty", stderr.String())
 	}
 	path, err := cmd.welcomeStatePath(version.String())
 	if err != nil {
@@ -448,20 +736,25 @@ func TestShellWelcomeShowsOncePerVersion(t *testing.T) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatalf("json.Unmarshal(welcome state) error = %v", err)
 	}
-	if !state.PendingAttachWelcome {
-		t.Fatalf("welcome state = %+v, want pending_attach_welcome=true", state)
+	if state.PendingAttachWelcome {
+		t.Fatalf("welcome state = %+v, did not want pending attach popup after shell prompt", state)
+	}
+	if state.SkipVersion != "" {
+		t.Fatalf("welcome state = %+v, did not want skip_version after Enter", state)
 	}
 
-	var second bytes.Buffer
-	if err := cmd.Run([]string{"--no-install"}, &second, &bytes.Buffer{}); err != nil {
+	cmd.welcomeInput = strings.NewReader("\n")
+	var second, secondStderr bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &second, &secondStderr); err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
-	if strings.Contains(second.String(), "Welcome to projmux shell") {
-		t.Fatalf("second stdout = %q, did not expect repeated welcome", second.String())
+	assertWelcomeOutput(t, "second stdout", second.String())
+	if secondStderr.Len() != 0 {
+		t.Fatalf("second stderr = %q, want empty", secondStderr.String())
 	}
 }
 
-func TestShellWelcomeShowsAfterVersionChange(t *testing.T) {
+func TestShellWelcomeLegacySkipVersionDoesNotSuppressShellEntry(t *testing.T) {
 	home := t.TempDir()
 	cmd := &shellCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -470,90 +763,22 @@ func TestShellWelcomeShowsAfterVersionChange(t *testing.T) {
 		writeFile:  os.WriteFile,
 		runCommand: (&recordingShellRunner{}).run,
 	}
-	path, err := cmd.welcomeStatePath(version.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	state := shellWelcomeState{
-		Version:             1,
-		LastWelcomedVersion: "0.0.1",
+	writeShellWelcomeState(t, cmd, shellWelcomeState{
+		Version:             welcomeStateVersion,
+		LastWelcomedVersion: version.String(),
 		WelcomedAt:          time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
-	}
-	data, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !strings.Contains(stdout.String(), "Welcome to projmux shell "+version.String()) {
-		t.Fatalf("stdout = %q, want version-bump welcome", stdout.String())
-	}
-}
-
-func TestShellWelcomeCorruptStateDoesNotBlockStartup(t *testing.T) {
-	home := t.TempDir()
-	recorder := &recordingShellRunner{}
-	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-	}
-	path, err := cmd.welcomeStatePath(version.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if strings.Contains(stdout.String(), "Welcome to projmux shell") {
-		t.Fatalf("stdout = %q, did not expect welcome with corrupt state", stdout.String())
-	}
-	if recorder.name != "tmux" {
-		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
-	}
-}
-
-func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
-	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
-	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
-		if name == "PROJMUX_INSTALLER" {
-			return "npm"
-		}
-		return ""
-	}
-	var updateCommands []string
-	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
-		updateCommands = append(updateCommands, updateApplyCommand{Name: name, Args: args}.String())
-		return nil
-	}
-	latest := testVersionTag(t, 1)
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Version:     1,
-		CheckedAt:   now,
-		TagName:     latest,
-		PublishedAt: now,
+		SkipVersion:         version.String(),
+		SkippedAt:           testTimePtr(time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)),
 	})
 
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
+}
+
+func TestShellWelcomeShowsWhenSkipVersionDiffers(t *testing.T) {
 	home := t.TempDir()
 	cmd := &shellCommand{
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
@@ -562,79 +787,46 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 		welcomeInput: strings.NewReader("\n"),
 		writeFile:    os.WriteFile,
 		runCommand:   (&recordingShellRunner{}).run,
-		update:       update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected daily update prompt: %#v", options)
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected daily update prompt: %#v", options)
-			return intpickercompat.Result{}, nil
-		})),
 	}
+	writeShellWelcomeState(t, cmd, shellWelcomeState{
+		Version:             welcomeStateVersion,
+		LastWelcomedVersion: "0.0.1",
+		WelcomedAt:          time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		SkipVersion:         "0.0.1",
+		SkippedAt:           testTimePtr(time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)),
+	})
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	wantCommands := []string{"npm update -g projmux", "projmux tmux apply"}
-	if !reflect.DeepEqual(updateCommands, wantCommands) {
-		t.Fatalf("update commands = %#v, want %#v", updateCommands, wantCommands)
-	}
-	if !strings.Contains(stdout.String(), "Update now? [Y/n") {
-		t.Fatalf("stdout = %q, want inline prompt", stdout.String())
-	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
 }
 
-func TestShellWelcomeDeclinePrintsUpdateCommand(t *testing.T) {
-	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
-	update, cacheDir := testUpdateCommand(t, now)
-	update.getenv = func(name string) string {
-		if name == "PROJMUX_INSTALLER" {
-			return "npm"
-		}
-		return ""
-	}
-	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
-		t.Fatalf("unexpected update command: %s %#v", name, args)
-		return nil
-	}
-	writeUpdateCacheFixture(t, cacheDir, updateCache{
-		Version:     1,
-		CheckedAt:   now,
-		TagName:     testVersionTag(t, 1),
-		PublishedAt: now,
-	})
-
+func TestShellWelcomeLegacyLastWelcomedVersionIsNotSkip(t *testing.T) {
 	home := t.TempDir()
 	cmd := &shellCommand{
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:    func(string) string { return "" },
 		homeDir:      func() (string, error) { return home, nil },
-		welcomeInput: strings.NewReader("n\n"),
+		welcomeInput: strings.NewReader("\n"),
 		writeFile:    os.WriteFile,
 		runCommand:   (&recordingShellRunner{}).run,
-		update:       update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected daily update prompt: %#v", options)
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected daily update prompt: %#v", options)
-			return intpickercompat.Result{}, nil
-		})),
 	}
+	writeShellWelcomeState(t, cmd, shellWelcomeState{
+		Version:             welcomeStateVersion,
+		LastWelcomedVersion: version.String(),
+		WelcomedAt:          time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+	})
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Run `projmux update apply` to upgrade.") {
-		t.Fatalf("stdout = %q, want manual update command", stdout.String())
-	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
 }
 
-func TestShellWelcomeSkipWritesUpdateSkipState(t *testing.T) {
+func TestShellWelcomeSkipInputStoresLatestUpdateTag(t *testing.T) {
 	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
@@ -677,7 +869,230 @@ func TestShellWelcomeSkipWritesUpdateSkipState(t *testing.T) {
 	if !strings.Contains(string(data), latest) {
 		t.Fatalf("skip state = %s, want %s", data, latest)
 	}
-	if !strings.Contains(stdout.String(), "Skipped "+latest) {
+	if !strings.Contains(stdout.String(), "Skipped "+latest+" until the next release.") {
+		t.Fatalf("stdout = %q, want skip confirmation", stdout.String())
+	}
+}
+
+func TestShellWelcomeEnterInputDoesNotStoreSkip(t *testing.T) {
+	home := t.TempDir()
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   (&recordingShellRunner{}).run,
+	}
+
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	state := readShellWelcomeState(t, cmd)
+	if state.SkipVersion != "" {
+		t.Fatalf("state = %+v, did not want skip_version after Enter", state)
+	}
+}
+
+func TestShellWelcomeDoesNotScheduleRedundantAttachPopup(t *testing.T) {
+	home := t.TempDir()
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   (&recordingShellRunner{}).run,
+	}
+
+	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	welcome := testWelcomePopupCommand(t, home)
+	if err := welcome.Run([]string{"--popup"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run(--popup) error = %v", err)
+	}
+	if calls := welcome.runner.(*recordingTmuxRunner).calls; len(calls) != 0 {
+		t.Fatalf("attach popup calls = %#v, want none after shell prompt", calls)
+	}
+}
+
+func TestShellWelcomeCorruptStateDoesNotBlockStartup(t *testing.T) {
+	home := t.TempDir()
+	recorder := &recordingShellRunner{}
+	cmd := &shellCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+		homeDir:    func() (string, error) { return home, nil },
+		writeFile:  os.WriteFile,
+		runCommand: recorder.run,
+	}
+	path, err := cmd.welcomeStatePath(version.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
+	if recorder.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
+	}
+}
+
+func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
+	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	var updateCommands []string
+	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		updateCommands = append(updateCommands, updateApplyCommand{Name: name, Args: args}.String())
+		return nil
+	}
+	latest := testVersionTag(t, 1)
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:     1,
+		CheckedAt:   now,
+		TagName:     latest,
+		PublishedAt: now,
+	})
+
+	home := t.TempDir()
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("u\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   (&recordingShellRunner{}).run,
+		update:       update,
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("unexpected separate update prompt: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	wantCommands := []string{"npm install -g projmux@latest", "projmux tmux apply"}
+	if !reflect.DeepEqual(updateCommands, wantCommands) {
+		t.Fatalf("update commands = %#v, want %#v", updateCommands, wantCommands)
+	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
+	for _, want := range []string{"Enter=Continue", "u=Upgrade", "s=Skip until next"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want inline prompt token %q", stdout.String(), want)
+		}
+	}
+	if strings.Contains(stdout.String(), "d=") {
+		t.Fatalf("stdout = %q, did not want retired daily skip action", stdout.String())
+	}
+}
+
+func TestShellWelcomeUnknownActionContinuesWithoutUpdating(t *testing.T) {
+	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		t.Fatalf("unexpected update command: %s %#v", name, args)
+		return nil
+	}
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:     1,
+		CheckedAt:   now,
+		TagName:     testVersionTag(t, 1),
+		PublishedAt: now,
+	})
+
+	home := t.TempDir()
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("n\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   (&recordingShellRunner{}).run,
+		update:       update,
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("unexpected separate update prompt: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if strings.Contains(stdout.String(), "Run `projmux update apply` to upgrade.") {
+		t.Fatalf("stdout = %q, did not want retired manual-command decline copy", stdout.String())
+	}
+}
+
+func TestShellWelcomeSkipUntilNextWritesUpdateSkipState(t *testing.T) {
+	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	latest := testVersionTag(t, 1)
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:     1,
+		CheckedAt:   now,
+		TagName:     latest,
+		PublishedAt: now,
+	})
+
+	home := t.TempDir()
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("s\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   (&recordingShellRunner{}).run,
+		update:       update,
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	skipPath, err := cmd.updateSkipPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(skipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), latest) {
+		t.Fatalf("skip state = %s, want %s", data, latest)
+	}
+	if !strings.Contains(stdout.String(), "Skipped "+latest+" until the next release.") {
 		t.Fatalf("stdout = %q, want skip confirmation", stdout.String())
 	}
 }
@@ -717,7 +1132,7 @@ func TestShellWelcomeSkipsStaleUpdateRow(t *testing.T) {
 	}
 }
 
-func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
+func TestShellDoesNotRunSeparateUpdatePicker(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
@@ -742,21 +1157,17 @@ func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
 
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
-	var promptOptions intpickercompat.Options
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			promptOptions = options
-			return intpickercompat.Result{Value: shellUpdateApply}, nil
-		}),
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
 		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			promptOptions = options
-			return intpickercompat.Result{Value: shellUpdateApply}, nil
+			t.Fatalf("unexpected separate update prompt: %#v", options)
+			return intpickercompat.Result{}, nil
 		})),
 	}
 	markShellWelcomed(t, cmd)
@@ -765,35 +1176,23 @@ func TestShellPromptsForCachedNPMUpdateAndApplies(t *testing.T) {
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := promptOptions.UI, "shell-update"; got != want {
-		t.Fatalf("prompt UI = %q, want %q", got, want)
-	}
-	if !strings.Contains(promptOptions.Header, latest) {
-		t.Fatalf("prompt header = %q, want latest %s", promptOptions.Header, latest)
-	}
-	for _, want := range []string{shellUpdateApply, shellUpdateLater, shellUpdateSkip} {
-		if !hasEntryValue(promptOptions.Entries, want) {
-			t.Fatalf("prompt entries = %#v, want %s", promptOptions.Entries, want)
-		}
-	}
-	wantCommands := []string{"npm update -g projmux", "projmux tmux apply"}
-	if !reflect.DeepEqual(updateCommands, wantCommands) {
-		t.Fatalf("update commands = %#v, want %#v", updateCommands, wantCommands)
-	}
 	if recorder.name != "tmux" {
 		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
 	}
-	if !strings.Contains(stdout.String(), ">> running: npm update -g projmux") {
-		t.Fatalf("stdout = %q, want npm update command", stdout.String())
+	if len(updateCommands) != 0 {
+		t.Fatalf("update commands = %#v, want none without inline u action", updateCommands)
+	}
+	if !strings.Contains(stdout.String(), latest) {
+		t.Fatalf("stdout = %q, want inline release prompt for %s", stdout.String(), latest)
 	}
 }
 
-func TestShellUpdatePromptLaterContinuesWithoutApplying(t *testing.T) {
+func TestShellWelcomeUnsupportedInstallerShowsGuidanceAndContinues(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
-			return "npm"
+			return "source"
 		}
 		return ""
 	}
@@ -811,30 +1210,83 @@ func TestShellUpdatePromptLaterContinuesWithoutApplying(t *testing.T) {
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			return intpickercompat.Result{Value: shellUpdateLater}, nil
-		}),
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("u\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
 		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			return intpickercompat.Result{Value: shellUpdateLater}, nil
+			t.Fatalf("unexpected separate update prompt: %#v", options)
+			return intpickercompat.Result{}, nil
 		})),
 	}
 	markShellWelcomed(t, cmd)
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if recorder.name != "tmux" {
 		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
 	}
+	for _, want := range []string{"Upgrade guidance", "source", "make install"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
 }
 
-func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
+func TestShellWelcomeSurfacesUpdateFailureAndContinues(t *testing.T) {
+	now := time.Date(2026, 5, 10, 12, 34, 56, 0, time.UTC)
+	update, cacheDir := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	update.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		return fmt.Errorf("npm registry unreachable")
+	}
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:     1,
+		CheckedAt:   now,
+		TagName:     testVersionTag(t, 1),
+		PublishedAt: now,
+	})
+
+	home := t.TempDir()
+	recorder := &recordingShellRunner{}
+	cmd := &shellCommand{
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("u\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
+		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			t.Fatalf("unexpected separate update prompt: %#v", options)
+			return intpickercompat.Result{}, nil
+		})),
+	}
+	markShellWelcomed(t, cmd)
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, update failure must not block shell entry", err)
+	}
+	if recorder.name != "tmux" {
+		t.Fatalf("shell did not continue into tmux after failed update, command = %q", recorder.name)
+	}
+	if !strings.Contains(stdout.String(), "Update failed") {
+		t.Fatalf("stdout = %q, want failure surfaced", stdout.String())
+	}
+}
+
+func TestShellWelcomeSkippedUpdateTagSuppressesActionsUntilNextTag(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
@@ -853,30 +1305,23 @@ func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
 
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
-	promptCalls := 0
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			promptCalls++
-			return intpickercompat.Result{Value: shellUpdateSkip}, nil
-		}),
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("s\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
 		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			promptCalls++
-			return intpickercompat.Result{Value: shellUpdateSkip}, nil
+			t.Fatalf("unexpected separate update prompt: %#v", options)
+			return intpickercompat.Result{}, nil
 		})),
 	}
 	markShellWelcomed(t, cmd)
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("first Run() error = %v", err)
-	}
-	if promptCalls != 1 {
-		t.Fatalf("prompt calls after first run = %d, want 1", promptCalls)
 	}
 	skipPath, err := cmd.updateSkipPath()
 	if err != nil {
@@ -890,55 +1335,64 @@ func TestShellUpdatePromptSkipsSelectedVersion(t *testing.T) {
 		t.Fatalf("skip state = %s, want %s", data, latest)
 	}
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	cmd.welcomeInput = strings.NewReader("u\n")
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
-	if promptCalls != 1 {
-		t.Fatalf("prompt calls after skipped run = %d, want 1", promptCalls)
+	if strings.Contains(stdout.String(), "u=Upgrade") {
+		t.Fatalf("stdout = %q, did not want upgrade action after skip", stdout.String())
+	}
+	if strings.Contains(stdout.String(), ">> running:") {
+		t.Fatalf("stdout = %q, did not want update apply after skip", stdout.String())
 	}
 }
 
-func TestShellSkipsPromptWithoutFreshSupportedUpdate(t *testing.T) {
+func TestShellWelcomeRefreshesStaleUpdateCacheBestEffort(t *testing.T) {
 	now := time.Date(2026, 5, 7, 4, 30, 0, 0, time.UTC)
 	update, cacheDir := testUpdateCommand(t, now)
 	update.getenv = func(name string) string {
 		if name == "PROJMUX_INSTALLER" {
-			return "source"
+			return "npm"
 		}
 		return ""
 	}
+	latest := testVersionTag(t, 2)
+	update.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := fmt.Sprintf(`{"tag_name":%q,"name":%q,"html_url":"https://github.com/crevissepartners/projmux/releases/tag/%s","published_at":"2026-05-06T10:00:00Z"}`, latest, latest, latest)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
 		Version:     1,
-		CheckedAt:   now,
+		CheckedAt:   now.Add(-25 * time.Hour),
 		TagName:     testVersionTag(t, 1),
-		PublishedAt: now,
+		PublishedAt: now.Add(-25 * time.Hour),
 	})
-
 	home := t.TempDir()
 	recorder := &recordingShellRunner{}
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		update:     update,
-		updatePromptRunner: shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected update prompt: %#v", options)
-			return intpickercompat.Result{}, nil
-		}),
-		nativePicker: nativePickerFromCompatRunner(shellUpdateRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-			t.Fatalf("unexpected update prompt: %#v", options)
-			return intpickercompat.Result{}, nil
-		})),
+		executable:   func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:    func(string) string { return "" },
+		homeDir:      func() (string, error) { return home, nil },
+		welcomeInput: strings.NewReader("\n"),
+		writeFile:    os.WriteFile,
+		runCommand:   recorder.run,
+		update:       update,
 	}
-	markShellWelcomed(t, cmd)
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if recorder.name != "tmux" {
 		t.Fatalf("shell did not continue into tmux, command = %q", recorder.name)
+	}
+	if !strings.Contains(stdout.String(), latest) {
+		t.Fatalf("stdout = %q, want refreshed latest %s", stdout.String(), latest)
 	}
 }
 
@@ -1000,6 +1454,100 @@ func TestShellRejectsInvalidUsage(t *testing.T) {
 	}
 }
 
+func TestShellNativeKeyBrokerPlatformBoundary(t *testing.T) {
+	tests := []struct {
+		name          string
+		goos          string
+		available     bool
+		psmux         string
+		nativeKeysEnv string
+		setting       string
+		wantStart     bool
+	}{
+		{name: "darwin native build", goos: "darwin", available: true, wantStart: true},
+		{name: "darwin env zero opt-out", goos: "darwin", available: true, nativeKeysEnv: "0"},
+		{name: "darwin env false opt-out", goos: "darwin", available: true, nativeKeysEnv: "false"},
+		{name: "darwin settings opt-out", goos: "darwin", available: true, setting: "false"},
+		{name: "darwin explicit settings on", goos: "darwin", available: true, setting: "true", wantStart: true},
+		{name: "darwin unreadable settings fail closed", goos: "darwin", available: true, setting: "invalid"},
+		{name: "darwin without cgo adapter", goos: "darwin", available: false},
+		{name: "linux", goos: "linux", available: true},
+		{name: "windows", goos: "windows", available: true},
+		{name: "psmux backend", goos: "darwin", available: true, psmux: "psmux"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tt.setting != "" {
+				writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"),
+					"[ui]\nnative_keys = "+tt.setting+"\n")
+			}
+			cmd := &shellCommand{
+				goos:       func() string { return tt.goos },
+				nativeKeys: func() bool { return tt.available },
+				homeDir:    func() (string, error) { return home, nil },
+				lookupEnv: func(name string) string {
+					if name == muxBackendEnvVar {
+						return tt.psmux
+					}
+					if name == nativeKeysEnvName {
+						return tt.nativeKeysEnv
+					}
+					return ""
+				},
+			}
+			if got := cmd.shouldStartNativeKeyBroker(); got != tt.wantStart {
+				t.Fatalf("shouldStartNativeKeyBroker() = %v, want %v", got, tt.wantStart)
+			}
+		})
+	}
+}
+
+func TestShellNativeKeyOptOutDoesNotStartBroker(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		env     string
+		setting bool
+	}{
+		{name: "environment", env: "0"},
+		{name: "settings", setting: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tc.setting {
+				writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"),
+					"[ui]\nnative_keys = false\n")
+			}
+			started := 0
+			cmd := &shellCommand{
+				executable: func() (string, error) { return "/tmp/projmux", nil },
+				lookupEnv: func(name string) string {
+					if name == nativeKeysEnvName {
+						return tc.env
+					}
+					return ""
+				},
+				homeDir:    func() (string, error) { return home, nil },
+				writeFile:  os.WriteFile,
+				runCommand: (&recordingShellRunner{}).run,
+				startCommand: func(context.Context, []string, string, ...string) error {
+					started++
+					return nil
+				},
+				goos:       func() string { return "darwin" },
+				nativeKeys: func() bool { return true },
+			}
+
+			if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if started != 0 {
+				t.Fatalf("native key broker starts = %d, want 0", started)
+			}
+		})
+	}
+}
+
 type recordingShellRunner struct {
 	env  []string
 	name string
@@ -1011,6 +1559,13 @@ func (r *recordingShellRunner) run(_ context.Context, env []string, name string,
 	r.name = name
 	r.args = append([]string(nil), args...)
 	return nil
+}
+
+func recordShellWrite(writes map[string][]byte) func(string, []byte, os.FileMode) error {
+	return func(path string, data []byte, _ os.FileMode) error {
+		writes[path] = append([]byte(nil), data...)
+		return nil
+	}
 }
 
 type scriptedShellTmuxRunner struct {
@@ -1073,8 +1628,50 @@ func (f shellUpdateRunnerFunc) Run(options intpickercompat.Options) (intpickerco
 
 func markShellWelcomed(t *testing.T, cmd *shellCommand) {
 	t.Helper()
-	_, ok := cmd.prepareWelcomeState()
-	if !ok {
-		t.Fatal("prepareWelcomeState did not write welcome state")
+	writeShellWelcomeState(t, cmd, shellWelcomeState{
+		Version:             welcomeStateVersion,
+		LastWelcomedVersion: version.String(),
+		WelcomedAt:          time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		SkipVersion:         version.String(),
+		SkippedAt:           testTimePtr(time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)),
+	})
+}
+
+func testTimePtr(value time.Time) *time.Time {
+	return &value
+}
+
+func writeShellWelcomeState(t *testing.T, cmd *shellCommand, state shellWelcomeState) {
+	t.Helper()
+	path, err := cmd.welcomeStatePath(version.String())
+	if err != nil {
+		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readShellWelcomeState(t *testing.T, cmd *shellCommand) shellWelcomeState {
+	t.Helper()
+	path, err := cmd.welcomeStatePath(version.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state shellWelcomeState
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	return state
 }

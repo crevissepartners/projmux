@@ -5,7 +5,8 @@
 // "#{mouse_status_range}" --client "#{client_tty}" --mouse-window
 // "#{mouse_window}"'` invokes us with the matching range id, client tty, and
 // the window id under the cursor, and the
-// `prefix s {u,n,g,k,p,s}` shortcuts call us with hard-coded ids.
+// `prefix s {u,n,g,k,p,s}` shortcuts call us with hard-coded ids, while
+// `prefix s r` invokes the dedicated throttled usage refresh subcommand.
 //
 // When the click lands outside any user-defined range (e.g. on a window-list
 // entry) we fall back to `select-window -t @<mouse_window>` so we restore
@@ -24,9 +25,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -54,13 +59,14 @@ type statusbarRunner interface {
 // clicks and keyboard shortcuts. The intentionally tiny surface keeps the
 // dispatcher cheap to call from a tmux status interval.
 type statusbarCommand struct {
-	runner        statusbarRunner
-	executable    func() (string, error)
-	notifyStoreFn func() (notifyStore, error)
-	usageStateFn  func(context.Context) (statusbarUsageState, error)
-	lookupEnv     func(string) string
-	homeDir       func() (string, error)
-	now           func() time.Time
+	runner         statusbarRunner
+	executable     func() (string, error)
+	notifyStoreFn  func() (notifyStore, error)
+	usageStateFn   func(context.Context) (statusbarUsageState, error)
+	usageRefreshFn func(context.Context) (bool, error)
+	lookupEnv      func(string) string
+	homeDir        func() (string, error)
+	now            func() time.Time
 }
 
 // newStatusbarCommand builds the production wiring: real tmux + projmux exec
@@ -90,9 +96,18 @@ func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printStatusbarUsage(stderr)
 		return usageError("statusbar requires a subcommand")
 	}
+	// Bright Phase 2 (B3): statusbar popups (pwd/usage/notify) render with the
+	// resolved effective theme instead of the fallback literals.
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	switch args[0] {
 	case "click":
 		return c.runClick(args[1:], stdout, stderr)
+	case "usage-refresh":
+		if len(args) != 1 {
+			printStatusbarUsage(stderr)
+			return usageError("statusbar usage-refresh does not accept arguments")
+		}
+		return c.handleUsage(true, statusbarClickOptions{}, stdout, stderr)
 	case "help", "--help", "-h":
 		printStatusbarUsage(stdout)
 		return nil
@@ -271,7 +286,7 @@ func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) err
 			return c.handleWindowListClick(opts, stderr)
 		}
 		if idx := windowIndexFromRangeToken(raw); idx != "" {
-			return c.runTmux(stderr, "select-window", "-t", ":"+idx)
+			return c.selectWindow(stderr, ":"+idx)
 		}
 		return nil
 	}
@@ -337,7 +352,7 @@ func (c *statusbarCommand) handleWindowListClick(opts statusbarClickOptions, std
 	if id == "" {
 		return nil
 	}
-	return c.runTmux(stderr, "select-window", "-t", "@"+id)
+	return c.selectWindow(stderr, "@"+id)
 }
 
 // dispatchTable maps each known range id to its click handler. A method on the
@@ -345,11 +360,13 @@ func (c *statusbarCommand) handleWindowListClick(opts statusbarClickOptions, std
 // state across goroutines.
 func (c *statusbarCommand) dispatchTable() map[statusbarRangeID]func(statusbarClickOptions, io.Writer, io.Writer) error {
 	return map[statusbarRangeID]func(statusbarClickOptions, io.Writer, io.Writer) error{
-		statusbarRangeSession:  c.handleSession,
-		statusbarRangePwd:      c.handlePwd,
-		statusbarRangeKube:     c.handleKube,
-		statusbarRangeGit:      c.handleGit,
-		statusbarRangeUsage:    c.handleUsage,
+		statusbarRangeSession: c.handleSession,
+		statusbarRangePwd:     c.handlePwd,
+		statusbarRangeKube:    c.handleKube,
+		statusbarRangeGit:     c.handleGit,
+		statusbarRangeUsage: func(opts statusbarClickOptions, stdout, stderr io.Writer) error {
+			return c.handleUsage(false, opts, stdout, stderr)
+		},
 		statusbarRangeNotify:   c.handleNotify,
 		statusbarRangeSettings: c.handleSettings,
 	}
@@ -395,14 +412,12 @@ func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Write
 	// `-T` border title — `frame.go` renders an identical title bar inline so
 	// duplicating it via tmux chrome would offset the visual header and
 	// double-decorate the surface.
-	if err := c.runTmuxNoFallback(stderr,
-		"display-popup",
-		"-E",
-		"-B",
-		"-w", strconv.Itoa(popup.Width),
-		"-h", strconv.Itoa(popup.Height),
-		popup.Command,
-	); err == nil {
+	if err := c.displayPopupNoFallback(popup.Command, intmux.PopupOptions{
+		NoBorder:      true,
+		Width:         strconv.Itoa(popup.Width),
+		Height:        strconv.Itoa(popup.Height),
+		CloseBehavior: intmux.PopupCloseOnExit,
+	}); err == nil {
 		return nil
 	}
 
@@ -451,8 +466,17 @@ func (c *statusbarCommand) handlePopupToggleWithClient(stderr io.Writer, label, 
 // per-window detail without leaving tmux. It stays a direct display-popup
 // action, not a popup-toggle mode, so the existing status key behaviour does
 // not introduce a new stacking popup surface.
-func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Writer) error {
+func (c *statusbarCommand) handleUsage(refresh bool, _ statusbarClickOptions, _, stderr io.Writer) error {
 	ctx := context.Background()
+	if refresh {
+		if _, err := c.maybeRefreshUsage(ctx); err != nil {
+			// A failed adapter must not prevent the cached HUD from reopening.
+			// MaybeCollect persists successful adapter rows before returning a
+			// joined error, so the subsequent cache load can still show partial
+			// progress.
+			fmt.Fprintf(stderr, "statusbar usage: refresh usage state: %v\n", err)
+		}
+	}
 	state, err := c.loadUsageState(ctx)
 	if err != nil {
 		fmt.Fprintf(stderr, "statusbar usage: load usage state: %v\n", err)
@@ -468,17 +492,22 @@ func (c *statusbarCommand) handleUsage(_ statusbarClickOptions, _, stderr io.Wri
 	// chrome (outer box + titlebar + divider) so we drop tmux's `-T` border
 	// title and pass `-B` to suppress tmux's popup border entirely. Mixing
 	// both would double-decorate the popup and offset the geometry.
-	if err := c.runTmuxNoFallback(stderr,
-		"display-popup",
-		"-E",
-		"-B",
-		"-w", strconv.Itoa(popup.Width),
-		"-h", strconv.Itoa(popup.Height),
-		popup.Command,
-	); err == nil {
+	if err := c.displayPopupNoFallback(popup.Command, intmux.PopupOptions{
+		NoBorder:      true,
+		Width:         strconv.Itoa(popup.Width),
+		Height:        strconv.Itoa(popup.Height),
+		CloseBehavior: intmux.PopupCloseOnExit,
+	}); err == nil {
 		return nil
 	}
 	return c.runTmux(stderr, "display-message", popup.Toast)
+}
+
+func (c *statusbarCommand) maybeRefreshUsage(ctx context.Context) (bool, error) {
+	if c.usageRefreshFn != nil {
+		return c.usageRefreshFn(ctx)
+	}
+	return usagecmd.New(c.nowTime).MaybeCollect(ctx)
 }
 
 func (c *statusbarCommand) loadUsageState(ctx context.Context) (statusbarUsageState, error) {
@@ -489,24 +518,13 @@ func (c *statusbarCommand) loadUsageState(ctx context.Context) (statusbarUsageSt
 }
 
 func (c *statusbarCommand) defaultUsageState(_ context.Context) (statusbarUsageState, error) {
-	cmd := newUsageCommand()
-	cmd.now = c.nowTime
-	mgr, err := cmd.managerFn()
+	state, unsupported, cacheMTime, err := usagecmd.New(c.nowTime).CachedState()
 	if err != nil {
 		return statusbarUsageState{}, err
 	}
-	state, err := mgr.LoadState()
-	if err != nil {
-		return statusbarUsageState{}, err
-	}
-	var cacheMTime time.Time
-	stateDir, err := cmd.resolveStateDir()
-	if err == nil {
-		if info, statErr := os.Stat(coreusage.NewStore(stateDir).FilePath()); statErr == nil {
-			cacheMTime = info.ModTime()
-		}
-	}
-	return statusbarUsageStateFromCache(state, cacheMTime), nil
+	out := statusbarUsageStateFromCache(state, cacheMTime)
+	out.Unsupported = unsupported
+	return out, nil
 }
 
 func statusbarUsageStateFromCache(state coreusage.State, cacheMTime time.Time) statusbarUsageState {
@@ -565,27 +583,22 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 		Window:  head.Window,
 		Pane:    head.Pane,
 	})
-	if strings.TrimSpace(target) == "" {
-		return c.runTmux(stderr, "display-message", "notification has no routable target")
-	}
 
-	// Stale/gone fast path: when we can read live tmux state and the head
-	// entry classifies as ack-only, skip the focus subprocess entirely. Round-
-	// tripping through `projmux focus` would only re-derive the same answer
-	// and toast the same message — short-circuiting saves a fork+exec and
-	// keeps the badge contract consistent (a STALE/GONE click toasts, never
-	// "succeeds").
+	// Gone fast path: when the head entry has no routable target, skip the
+	// focus subprocess entirely. Inactive/stale entries still try to focus
+	// because their pane can exist even though it no longer matches live
+	// reply+agent state.
 	//
 	// The fast path STILL acks the entry: "ack-only" means we skip the focus
 	// round-trip, *not* that we leave the row in the queue. Without the ack
-	// here the next click would re-classify the same head entry as stale/gone
+	// here the next click would re-classify the same head entry as gone
 	// and the user would be stuck repeatedly toasting the same row. The toast
 	// remains as a UX signal that the focus side of the click was skipped.
-	if display := c.classifyHeadDisplayBestEffort(head); display != notifyDisplayLive {
+	if display := c.classifyHeadDisplayBestEffort(head); display == notifyDisplayGone || strings.TrimSpace(target) == "" {
 		if ackErr := ackFocusedNotification(store, head, entries); ackErr != nil {
-			return c.runTmux(stderr, "display-message", fmt.Sprintf("%s; ack failed: %s", notifyAckOnlyToast(display), focusFailureSummary(ackErr)))
+			return c.runTmux(stderr, "display-message", fmt.Sprintf("%s; ack failed: %s", notifyAckOnlyToast(notifyDisplayGone), focusFailureSummary(ackErr)))
 		}
-		return c.runTmux(stderr, "display-message", notifyAckOnlyToast(display))
+		return c.runTmux(stderr, "display-message", notifyAckOnlyToast(notifyDisplayGone))
 	}
 
 	binaryPath, err := c.resolveBinary()
@@ -640,36 +653,40 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 // failure mode inside the docker e2e harness, which talks to a default tmux
 // socket with no projmux options registered server-side). Without this
 // nil/empty unification an `ai:`-prefixed head entry would be falsely tagged
-// STALE on every click, the focus round-trip would be skipped, and the entry
-// would never ack — exactly the regression the e2e smoke test guards against.
+// inactive on every click. Phase 6 still lets inactive entries attempt focus,
+// but the nil/empty unification also avoids showing an inactive target-state
+// hint when live data is unavailable.
 // The sidebar/`--live` surfaces keep their stricter contract (empty live map
 // means "no panes are in reply state, so anything ai-prefixed *is* stale")
 // because they have richer context and are not on the click critical path.
 func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notification) notifyRowDisplayState {
 	if c == nil || c.runner == nil {
-		return classifyNotifyRowState(head, nil)
+		return classifyNotifyRowState(head, nil, nil)
 	}
-	panes, err := (&notifyCommand{runner: c.runner}).listNotifyLivePanes()
+	panes, paneSet, err := (&notifyCommand{livePanes: newAttentionLivePaneLister(c.runner)}).listNotifyLivePanesAndSet()
 	if err != nil {
-		return classifyNotifyRowState(head, nil)
+		return classifyNotifyRowState(head, nil, nil)
 	}
+	// Real pane-inventory GONE is honoured even when no panes are in reply
+	// state: a click on a head whose pane truly disappeared takes the ack-only
+	// fast path. newNotifyLivePaneSet already returns nil for an empty/
+	// unrecognized tmux reply, so passing paneSet through preserves the
+	// docker-e2e best-effort fallback (nil paneSet ⇒ no membership GONE).
 	liveByID := notifyLiveShouldQueueByID(panes)
 	if len(liveByID) == 0 {
-		return classifyNotifyRowState(head, nil)
+		return classifyNotifyRowState(head, nil, paneSet)
 	}
-	return classifyNotifyRowState(head, liveByID)
+	return classifyNotifyRowState(head, liveByID, paneSet)
 }
 
 // notifyAckOnlyToast renders the fast-path toast surfaced when a click lands
-// on a stale or gone head entry. The message stays inside tmux's
+// on a gone head entry. The message stays inside tmux's
 // display-message length budget so the segment never overflows the status
 // line.
 func notifyAckOnlyToast(display notifyRowDisplayState) string {
 	switch display {
 	case notifyDisplayGone:
 		return "notify target gone; cleared"
-	case notifyDisplayStale:
-		return "notify pane no longer in reply state; cleared"
 	}
 	return "notify ack-only; cleared"
 }
@@ -728,11 +745,13 @@ type statusbarUsageState struct {
 	LastSyncSource string
 	CacheMTime     time.Time
 	LoadError      error
+	Unsupported    []usagecmd.UnsupportedProvider
 }
 
 type statusbarUsagePopupView struct {
 	Title   string
 	Toast   string
+	Payload string
 	Command string
 	Width   int
 	Height  int
@@ -763,11 +782,12 @@ func statusbarUsagePopup(state statusbarUsageState, now time.Time, binaryPath st
 
 	var framed strings.Builder
 	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&framed, bodyContent, title, outerLayout)
-	payload := strings.TrimRight(framed.String(), "\n") + "\n"
+	payload := framed.String()
 	command := statusbarPopupCommand(payload, binaryPath)
 	return statusbarUsagePopupView{
 		Title:   title,
 		Toast:   statusbarUsageToast(state),
+		Payload: payload,
 		Command: command,
 		Width:   width,
 		Height:  height,
@@ -790,11 +810,14 @@ func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int
 	}
 	if state.LoadError != nil {
 		lines = append(lines, dimANSI("usage data unavailable: "+statusbarUsageErrorSummary(state.LoadError)))
-	} else if len(rows) == 0 {
+	} else if len(rows) == 0 && len(state.Unsupported) == 0 {
 		lines = append(lines, dimANSI("No usage data available yet."))
 	} else {
 		for _, row := range rows {
 			lines = append(lines, row.render())
+		}
+		for _, provider := range state.Unsupported {
+			lines = append(lines, statusbarUnsupportedUsageLine(provider))
 		}
 	}
 	lines = append(lines, statusbarPopupFooterLines(cols)...)
@@ -807,6 +830,9 @@ func statusbarUsageToast(state statusbarUsageState) string {
 	}
 	rows := statusbarUsageRows(state.Snapshots)
 	if len(rows) == 0 {
+		if len(state.Unsupported) > 0 {
+			return "usage: " + state.Unsupported[0].Model + " unsupported"
+		}
 		return "usage: no data"
 	}
 	parts := make([]string, 0, min(len(rows), 2))
@@ -819,21 +845,29 @@ func statusbarUsageToast(state statusbarUsageState) string {
 	return "usage: " + strings.Join(parts, " · ")
 }
 
+func statusbarUnsupportedUsageLine(provider usagecmd.UnsupportedProvider) string {
+	label := strings.TrimSpace(provider.Label)
+	if label == "" {
+		label = provider.Model
+	}
+	return dimANSI(fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", label, "ctx", "-", "-", "-", "-", "unsupported"))
+}
+
 func statusbarUsageSyncLine(state statusbarUsageState, now time.Time) string {
-	label := projmuxpicker.MutedStart + "sync" + projmuxpicker.Reset + "  "
+	label := statusbarMutedANSI + "sync" + projmuxpicker.Reset + "  "
 	if state.LastSync.IsZero() {
 		return label + dimANSI("never")
 	}
 	local := state.LastSync.Local()
 	value := local.Format("2006-01-02 15:04:05")
 	if age := usageSyncAge(state.LastSync, now); age >= time.Second {
-		value += " (" + formatBackoffDuration(age.Round(time.Second)) + " ago)"
+		value += " (" + usagecmd.FormatBackoffDuration(age.Round(time.Second)) + " ago)"
 	}
 	if state.LastSyncSource == "cache mtime" {
 		value += " cache"
 	}
 	if usageSyncStale(state.LastSync, now) {
-		return label + amberANSI(value)
+		return label + dimANSI(value)
 	}
 	return label + value
 }
@@ -871,11 +905,11 @@ func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
 			continue
 		}
 		row := statusbarUsageRow{
-			model:    modelDisplayLabel(s.Model),
+			model:    usagecmd.ModelDisplayLabel(s.Model),
 			window:   string(s.Window),
 			used:     usageCountText(s.Tokens),
 			limit:    usageLimitText(s.Limit),
-			pct:      percentText(s.Pct),
+			pct:      usagecmd.PercentText(s.Pct),
 			pctValue: s.Pct,
 			reset:    usageResetText(s.ResetsAt),
 		}
@@ -890,7 +924,7 @@ func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
 }
 
 func statusbarUsageHeaderLine() string {
-	return projmuxpicker.MutedStart +
+	return statusbarMutedANSI +
 		fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", "MODEL", "WIN", "USED", "LIMIT", "LEFT", "PCT", "RESET") +
 		projmuxpicker.Reset
 }
@@ -972,7 +1006,7 @@ func statusbarUsagePctANSI(text string, pct float64, width int) string {
 	case pct >= 80:
 		return amberANSI(padded)
 	default:
-		return greenANSI(padded)
+		return tealANSI(padded)
 	}
 }
 
@@ -991,25 +1025,47 @@ func statusbarUsageErrorSummary(err error) string {
 }
 
 func dimANSI(value string) string {
-	return projmuxpicker.MutedStart + value + projmuxpicker.Reset
+	return statusbarMutedANSI + value + projmuxpicker.Reset
 }
 
+// statusbar popup text role escapes (bright Phase 2, B3). Defaults are the
+// historical fallback literals (byte-identical); applyNativeUITheme repoints
+// them at the resolved effective theme at command entry.
+var (
+	statusbarMutedANSI   = projmuxpicker.MutedStart
+	statusbarSevWarnANSI = theme.ANSI256FgStart(theme.TmuxStateWarningFg)
+	statusbarSevCritANSI = theme.ANSI256FgStart(theme.TmuxStateCriticalFg)
+	statusbarSevOKANSI   = theme.ANSI256FgStart(theme.TmuxStateSuccessFg)
+)
+
+// amberANSI/redANSI/tealANSI tint the native usage statusbar text from the
+// semantic state role map (single source shared with the notify/usage tmux
+// severity cluster), repointed at the resolved effective theme by
+// applyNativeUITheme; the fallback role values keep this byte-identical.
 func amberANSI(value string) string {
-	return "\x1b[38;5;214m" + value + projmuxpicker.Reset
+	return statusbarSevWarnANSI + value + projmuxpicker.Reset
 }
 
 func redANSI(value string) string {
-	return "\x1b[38;5;196m" + value + projmuxpicker.Reset
+	return statusbarSevCritANSI + value + projmuxpicker.Reset
 }
 
-func greenANSI(value string) string {
-	return "\x1b[38;5;82m" + value + projmuxpicker.Reset
+func tealANSI(value string) string {
+	return statusbarSevOKANSI + value + projmuxpicker.Reset
 }
 
 func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path string) statusbarPathMetadata {
 	metadata := statusbarPathMetadata{Project: filepath.Base(path)}
 	if metadata.Project == "." || metadata.Project == string(filepath.Separator) {
 		metadata.Project = path
+	}
+	// Preserve the raw cwd basename for the git "in <repo>" comparison below so
+	// routing the displayed project name through the unified resolver
+	// (worktree→main, drift-safe, de-slugged) does not change when the git
+	// segment appends the repo name.
+	cwdProject := metadata.Project
+	if display := c.resolveStatusbarProjectName(ctx, path); display != "" {
+		metadata.Project = display
 	}
 	if c.runner == nil {
 		return metadata
@@ -1027,7 +1083,7 @@ func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path strin
 		return metadata
 	}
 	repo := filepath.Base(root)
-	if repo != "" && repo != "." && repo != metadata.Project {
+	if repo != "" && repo != "." && repo != cwdProject {
 		metadata.Git = branch + " in " + repo
 	} else {
 		metadata.Git = branch
@@ -1035,9 +1091,32 @@ func (c *statusbarCommand) statusbarPathMetadata(ctx context.Context, path strin
 	return metadata
 }
 
+// resolveStatusbarProjectName resolves the path popup's project label via the
+// unified resolver. The active pane cwd is already known; the session name and
+// anchor (@projmux_project_path) are read from tmux best-effort, so any read
+// failure just contributes an empty signal and Resolve falls through its
+// priority chain.
+func (c *statusbarCommand) resolveStatusbarProjectName(ctx context.Context, path string) string {
+	sessionName, anchor := "", ""
+	if c.runner != nil {
+		if out, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "#{session_name}"); err == nil {
+			sessionName = strings.TrimSpace(string(out))
+		}
+		if out, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "#{@projmux_project_path}"); err == nil {
+			anchor = strings.TrimSpace(string(out))
+		}
+	}
+	return resolveProjectDisplayName(projectidentity.Inputs{
+		AnchorPath:  anchor,
+		PaneCWD:     path,
+		SessionName: sessionName,
+	}, projectidentity.OSFS)
+}
+
 type statusbarPathPopupView struct {
 	Title   string
 	Toast   string
+	Payload string
 	Command string
 	Width   int
 	Height  int
@@ -1083,11 +1162,12 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata, binaryPath 
 
 	var framed strings.Builder
 	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(&framed, bodyContent, title, outerLayout)
-	payload := strings.TrimRight(framed.String(), "\n") + "\n"
+	payload := framed.String()
 	command := statusbarPopupCommand(payload, binaryPath)
 	return statusbarPathPopupView{
 		Title:   title,
 		Toast:   "path",
+		Payload: payload,
 		Command: command,
 		Width:   width,
 		Height:  height,
@@ -1101,6 +1181,7 @@ func statusbarPathPopup(path string, metadata statusbarPathMetadata, binaryPath 
 // failed) we fall back to the legacy Enter-only `IFS= read -r _` shape so
 // the popup at least remains dismissable.
 func statusbarPopupCommand(payload, binaryPath string) string {
+	payload = strings.TrimRight(payload, "\r\n")
 	prefix := "printf %s " + tmuxShellQuote(payload)
 	binaryPath = strings.TrimSpace(binaryPath)
 	if binaryPath == "" {
@@ -1109,11 +1190,17 @@ func statusbarPopupCommand(payload, binaryPath string) string {
 	return prefix + "; " + tmuxShellQuote(binaryPath) + " popup-wait-key"
 }
 
+const displayOnlyPopupClosePrompt = "Press any key to close."
+
+func displayOnlyPopupClosePromptLine() string {
+	return statusbarMutedANSI + displayOnlyPopupClosePrompt + projmuxpicker.Reset
+}
+
 func statusbarPopupFooterLines(cols int) []string {
 	return []string{
 		"",
 		projmuxpicker.SeparatorLine(cols),
-		projmuxpicker.MutedStart + "Press any key to close." + projmuxpicker.Reset,
+		displayOnlyPopupClosePromptLine(),
 	}
 }
 
@@ -1130,7 +1217,7 @@ func statusbarFieldLines(label, value string, cols int) []string {
 		wrapped = []string{"-"}
 	}
 	lines := make([]string, 0, len(wrapped))
-	prefix := projmuxpicker.MutedStart + fmt.Sprintf("%-*s", labelWidth, label) + projmuxpicker.Reset + "  "
+	prefix := statusbarMutedANSI + fmt.Sprintf("%-*s", labelWidth, label) + projmuxpicker.Reset + "  "
 	continuation := strings.Repeat(" ", labelWidth+2)
 	for i, line := range wrapped {
 		if i == 0 {
@@ -1219,9 +1306,27 @@ func (c *statusbarCommand) runTmuxNoFallback(_ io.Writer, args ...string) error 
 	return err
 }
 
+func (c *statusbarCommand) selectWindow(stderr io.Writer, target string) error {
+	if c.runner == nil {
+		return c.runTmux(stderr, "select-window", "-t", target)
+	}
+	if err := intmux.NewRunner(c.runner).SelectWindow(context.Background(), intmux.SelectWindowOptions{Target: target}); err != nil {
+		fmt.Fprintf(stderr, "statusbar: tmux select-window -t %s: %v\n", target, err)
+	}
+	return nil
+}
+
+func (c *statusbarCommand) displayPopupNoFallback(command string, options intmux.PopupOptions) error {
+	if c.runner == nil {
+		return errors.New("statusbar runner is not configured")
+	}
+	return intmux.NewRunner(c.runner).DisplayPopup(context.Background(), command, options)
+}
+
 func printStatusbarUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-window <id>] [--mouse-x N] [--mouse-y N]")
+	fmt.Fprintln(w, "  projmux statusbar usage-refresh")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Range ids: session pwd kube git usage notify settings")
 }

@@ -75,6 +75,31 @@ func TestStoreWriteSelectionAddsAndUpdatesSessionRow(t *testing.T) {
 	}
 }
 
+func TestStoreDeleteRemovesOnlyNamedSessionRow(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "preview-state")
+	if err := os.WriteFile(path, []byte("app\t1\t2\nlib\t3\t4\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	store := NewStore(path)
+	if err := store.Delete("app"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if err := store.Delete("missing"); err != nil {
+		t.Fatalf("Delete() missing error = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got, want := string(raw), "lib\t3\t4\n"; got != want {
+		t.Fatalf("file contents = %q, want %q", got, want)
+	}
+}
+
 func TestStoreReadWindowIndexReturnsStoredValue(t *testing.T) {
 	t.Parallel()
 
@@ -155,6 +180,9 @@ func TestStoreRejectsInvalidSessionNames(t *testing.T) {
 	}
 	if err := store.WriteSelection(" ", "1", "2"); !errors.Is(err, ErrInvalidSessionName) {
 		t.Fatalf("WriteSelection() session error = %v, want %v", err, ErrInvalidSessionName)
+	}
+	if err := store.Delete("bad\nname"); !errors.Is(err, ErrInvalidSessionName) {
+		t.Fatalf("Delete() session error = %v, want %v", err, ErrInvalidSessionName)
 	}
 }
 

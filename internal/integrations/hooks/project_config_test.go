@@ -36,6 +36,17 @@ QUOTED = "a \"quoted\" value"
 [kube]
 context = "dev-cluster"
 namespace = "tools"
+
+[theme]
+font_family = "Cascadia Mono"
+font_size = 12
+
+[ui]
+locale = "ko-KR"
+native_keys = false
+
+[ai]
+resume_picker_limit = 50
 `)
 	if err != nil {
 		t.Fatalf("ParseProjectConfig() error = %v", err)
@@ -59,6 +70,235 @@ namespace = "tools"
 		if sessionEnv[key] != "tools" {
 			t.Fatalf("SessionEnv[%s] = %q", key, sessionEnv[key])
 		}
+	}
+	// Deprecated [theme] font keys are accepted for backward compatibility but
+	// ignored: they must not block parsing and must not be stored on the config.
+	if cfg.Theme.HasContent() {
+		t.Fatalf("Theme = %#v, want deprecated font keys ignored", cfg.Theme)
+	}
+	if cfg.UI.Locale != "ko-KR" {
+		t.Fatalf("UI.Locale = %q, want ko-KR", cfg.UI.Locale)
+	}
+	if cfg.UI.NativeKeys == nil || *cfg.UI.NativeKeys {
+		t.Fatalf("UI.NativeKeys = %#v, want explicit false", cfg.UI.NativeKeys)
+	}
+	if cfg.AI.ResumePickerLimit != 50 {
+		t.Fatalf("AI.ResumePickerLimit = %d, want 50", cfg.AI.ResumePickerLimit)
+	}
+}
+
+func TestProjectUINativeKeysRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig("[ui]\nnative_keys = false\n")
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.UI.NativeKeys == nil || *cfg.UI.NativeKeys {
+		t.Fatalf("UI.NativeKeys = %#v, want explicit false", cfg.UI.NativeKeys)
+	}
+
+	rendered := renderProjectConfig(cfg)
+	if rendered != "[ui]\nnative_keys = false\n" {
+		t.Fatalf("rendered = %q, want bare native_keys boolean", rendered)
+	}
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.UI.NativeKeys == nil || *reparsed.UI.NativeKeys {
+		t.Fatalf("re-parsed UI.NativeKeys = %#v, want explicit false", reparsed.UI.NativeKeys)
+	}
+}
+
+func TestProjectUINativeKeysRejectsNonBoolean(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ParseProjectConfig("[ui]\nnative_keys = \"off\"\n"); err == nil {
+		t.Fatal("expected quoted non-boolean native_keys to error")
+	}
+}
+
+func TestProjectAIConfigResumePickerLimitRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig("[ai]\nresume_picker_limit = 42\n")
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.AI.ResumePickerLimit != 42 {
+		t.Fatalf("AI.ResumePickerLimit = %d, want 42", cfg.AI.ResumePickerLimit)
+	}
+
+	rendered := renderProjectConfig(cfg)
+	if !strings.Contains(rendered, "[ai]") || !strings.Contains(rendered, "resume_picker_limit = 42") {
+		t.Fatalf("rendered = %q, want [ai] resume_picker_limit = 42", rendered)
+	}
+
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.AI != cfg.AI {
+		t.Fatalf("re-parsed AI = %#v, want %#v", reparsed.AI, cfg.AI)
+	}
+}
+
+func TestProjectAIConfigRejectsNonInteger(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ParseProjectConfig("[ai]\nresume_picker_limit = \"thirty\"\n"); err == nil {
+		t.Fatal("expected non-integer resume_picker_limit to error")
+	}
+	if _, err := ParseProjectConfig("[ai]\nresume_scan_depth = \"two\"\n"); err == nil {
+		t.Fatal("expected non-integer resume_scan_depth to error")
+	}
+	if _, err := ParseProjectConfig("[ai]\nunknown_key = 3\n"); err == nil {
+		t.Fatal("expected unsupported ai key to error")
+	}
+}
+
+func TestProjectAIConfigResumeScanDepthRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig("[ai]\nresume_scan_depth = 2\n")
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.AI.ResumeScanDepth != 2 {
+		t.Fatalf("AI.ResumeScanDepth = %d, want 2", cfg.AI.ResumeScanDepth)
+	}
+
+	rendered := renderProjectConfig(cfg)
+	if !strings.Contains(rendered, "[ai]") || !strings.Contains(rendered, "resume_scan_depth = 2") {
+		t.Fatalf("rendered = %q, want [ai] resume_scan_depth = 2", rendered)
+	}
+
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.AI != cfg.AI {
+		t.Fatalf("re-parsed AI = %#v, want %#v", reparsed.AI, cfg.AI)
+	}
+}
+
+func TestProjectAIConfigBothKeysShareOneSection(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig("[ai]\nresume_picker_limit = 50\nresume_scan_depth = 3\n")
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.AI.ResumePickerLimit != 50 || cfg.AI.ResumeScanDepth != 3 {
+		t.Fatalf("AI = %#v, want limit 50 depth 3", cfg.AI)
+	}
+
+	rendered := renderProjectConfig(cfg)
+	if strings.Count(rendered, "[ai]") != 1 {
+		t.Fatalf("rendered = %q, want a single [ai] section", rendered)
+	}
+	if !strings.Contains(rendered, "resume_picker_limit = 50") || !strings.Contains(rendered, "resume_scan_depth = 3") {
+		t.Fatalf("rendered = %q, want both ai keys", rendered)
+	}
+
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.AI != cfg.AI {
+		t.Fatalf("re-parsed AI = %#v, want %#v", reparsed.AI, cfg.AI)
+	}
+}
+
+func TestNormalizeClampsResumeScanDepth(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		in   int
+		want int
+	}{
+		{in: 0, want: 0},  // unset stays unset
+		{in: -3, want: 0}, // negative collapses to exact cwd
+		{in: 1, want: 1},  // in range
+		{in: 8, want: 8},  // max
+		{in: 99, want: AIResumeScanDepthMax},
+	} {
+		cfg := ProjectConfig{AI: AIConfig{ResumeScanDepth: tc.in}}
+		normalizeProjectConfig(&cfg)
+		if cfg.AI.ResumeScanDepth != tc.want {
+			t.Fatalf("normalize(%d) = %d, want %d", tc.in, cfg.AI.ResumeScanDepth, tc.want)
+		}
+	}
+}
+
+func TestNormalizeClampsResumePickerLimit(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		in   int
+		want int
+	}{
+		{in: 0, want: 0},     // unset stays unset
+		{in: 1, want: 1},     // min
+		{in: 50, want: 50},   // in range
+		{in: 100, want: 100}, // max
+		{in: 250, want: AIResumePickerLimitMax},
+		{in: -5, want: AIResumePickerLimitMin},
+	} {
+		cfg := ProjectConfig{AI: AIConfig{ResumePickerLimit: tc.in}}
+		normalizeProjectConfig(&cfg)
+		if cfg.AI.ResumePickerLimit != tc.want {
+			t.Fatalf("normalize(%d) = %d, want %d", tc.in, cfg.AI.ResumePickerLimit, tc.want)
+		}
+	}
+}
+
+func TestProjectThemeConfigRoundTripsPhase6Keys(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig(`
+[theme]
+chrome_foreground = "#010203"
+text_primary = "#040506"
+progress = "#112233"
+success = "#445566"
+action_required = "#778899"
+pane_active_bg = "#0a0b0c"
+focus = "#0d0e0f"
+`)
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.Theme.ChromeForeground != "#010203" || cfg.Theme.TextPrimary != "#040506" ||
+		cfg.Theme.Progress != "#112233" || cfg.Theme.Success != "#445566" ||
+		cfg.Theme.ActionRequired != "#778899" || cfg.Theme.PaneActiveBg != "#0a0b0c" ||
+		cfg.Theme.Focus != "#0d0e0f" {
+		t.Fatalf("Theme = %#v, want all public theme keys parsed", cfg.Theme)
+	}
+
+	rendered := renderThemeConfigSection(cfg.Theme)
+	for _, want := range []string{
+		`chrome_foreground = "#010203"`,
+		`text_primary = "#040506"`,
+		`progress = "#112233"`,
+		`success = "#445566"`,
+		`action_required = "#778899"`,
+		`pane_active_bg = "#0a0b0c"`,
+		`focus = "#0d0e0f"`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered theme section %q missing %q", rendered, want)
+		}
+	}
+
+	// Round-trip: re-parse the rendered output and confirm equality.
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.Theme != cfg.Theme {
+		t.Fatalf("re-parsed theme = %#v, want %#v", reparsed.Theme, cfg.Theme)
 	}
 }
 
@@ -348,6 +588,13 @@ run = "echo ready"
 	}
 	if file.SHA256 != wantSum {
 		t.Fatalf("stored sha256 = %q, want %q", file.SHA256, wantSum)
+	}
+	info, err := os.Stat(trustPath)
+	if err != nil {
+		t.Fatalf("Stat(trust store) error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("trust store mode = %#o, want 0600", got)
 	}
 }
 

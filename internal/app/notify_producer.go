@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -36,6 +37,7 @@ type attentionNotifyInput struct {
 	Metadata      map[string]string
 	Force         bool
 	SuppressHooks bool
+	BadgeKind     string
 }
 
 // attentionNotifyLookup is the minimal tmux read surface the producer needs.
@@ -60,9 +62,10 @@ func (noopAttentionNotifyProducer) AckReplyReady(attentionNotifyInput) {}
 // storeAttentionNotifyProducer is the production implementation that writes
 // to the shared notify queue file.
 type storeAttentionNotifyProducer struct {
-	store notifyStore
-	ttl   time.Duration
-	hooks *sendNotiHookDispatcher
+	store  notifyStore
+	ttl    time.Duration
+	hooks  *sendNotiHookDispatcher
+	events notifyQueueRefreshEvents
 }
 
 // newAttentionNotifyProducer builds a producer that uses the default notify
@@ -75,9 +78,10 @@ func newAttentionNotifyProducer() attentionNotifyProducer {
 		return noopAttentionNotifyProducer{}
 	}
 	return &storeAttentionNotifyProducer{
-		store: notify.NewDefaultStore(paths),
-		ttl:   attentionNotifyTTL,
-		hooks: newSendNotiHookDispatcher(),
+		store:  notify.NewDefaultStore(paths),
+		ttl:    attentionNotifyTTL,
+		hooks:  newSendNotiHookDispatcher(),
+		events: newNotifyQueueRefreshTransport(paths.StateDir),
 	}
 }
 
@@ -119,6 +123,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 	if severity == "" {
 		severity = notify.SeverityInfo
 	}
+	metadata := mergeAttentionNotifyMetadata(in.Metadata, agent, topic, severity)
 	id := strings.TrimSpace(in.ID)
 	if id == "" {
 		id = buildAttentionNotifyID(session, resolvedPane)
@@ -134,7 +139,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 		Text:     text,
 		Severity: severity,
 		Source:   notify.SourceAI,
-		Metadata: in.Metadata,
+		Metadata: metadata,
 		TTL:      ttl,
 		Target: notify.Target{
 			Socket:  socket,
@@ -159,6 +164,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 			_ = ackOlderSameTargetAINotifications(p.store, entry, entries)
 		}
 	}
+	p.publishNotifyQueueRefreshBestEffort()
 }
 
 // AckReplyReady is kept for the attention state-machine seam, but it no
@@ -167,25 +173,47 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 func (p *storeAttentionNotifyProducer) AckReplyReady(in attentionNotifyInput) {
 }
 
+func (p *storeAttentionNotifyProducer) publishNotifyQueueRefreshBestEffort() {
+	if p == nil || p.events == nil {
+		return
+	}
+	_ = p.events.Publish()
+}
+
 // buildAttentionNotifyID renders the composite id that pairs a push with its
 // ack. Trimmed values are used so callers do not need to normalize.
 func buildAttentionNotifyID(session, paneID string) string {
 	return fmt.Sprintf("ai:%s:%s", strings.TrimSpace(session), strings.TrimSpace(paneID))
 }
 
-// composeAttentionReplyText renders the queue-row text. The agent label is
-// lower-cased to match the existing AI desktop notification convention
-// (`claude:` / `codex:`), and the optional topic is appended after a
-// middle-dot separator. The store truncates to 80 runes; we let it do that
-// rather than duplicating the rule here.
+// composeAttentionReplyText renders the queue-row body text. Agent/category
+// information is carried in metadata so rendered notification bodies stay
+// focused on actionable context.
 func composeAttentionReplyText(agent, topic string) string {
-	label := strings.ToLower(strings.TrimSpace(agent))
-	if label == "" {
-		label = "agent"
-	}
-	text := label + ": reply ready"
 	if t := strings.TrimSpace(topic); t != "" {
-		text += " · " + t
+		return t
 	}
-	return text
+	return "Ready"
+}
+
+func mergeAttentionNotifyMetadata(metadata map[string]string, agent, topic, severity string) map[string]string {
+	merged := make(map[string]string, len(metadata)+3)
+	maps.Copy(merged, metadata)
+	if strings.TrimSpace(merged[notify.MetaAgent]) == "" {
+		merged[notify.MetaAgent] = strings.ToLower(strings.TrimSpace(agent))
+	}
+	if strings.TrimSpace(merged[notify.MetaTopic]) == "" {
+		merged[notify.MetaTopic] = strings.TrimSpace(topic)
+	}
+	if strings.TrimSpace(merged[notify.MetaCategory]) == "" {
+		if severity == notify.SeverityCritical {
+			merged[notify.MetaCategory] = "approval_required"
+		} else {
+			merged[notify.MetaCategory] = "response_complete"
+		}
+	}
+	if strings.TrimSpace(merged[notify.MetaState]) == "" {
+		merged[notify.MetaState] = "need"
+	}
+	return merged
 }

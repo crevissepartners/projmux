@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
@@ -296,7 +297,6 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		"-E",
 		"-B",
 		"-d", "/tmp/work tree",
-		"-e", "PROJMUX_HOOK_TRUST_INLINE=1",
 		"-e", "PROJMUX_HOOK_TRUST_TARGET_CLIENT=/dev/pts/projmux-test-sidebar",
 		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-1",
 		"-e", "PROJMUX_PICKER_BACKEND=native",
@@ -315,7 +315,6 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	command := got.args[len(got.args)-1]
 	for _, want := range []string{
 		"cd -- '/tmp/work tree'",
-		"PROJMUX_HOOK_TRUST_INLINE='1'",
 		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/projmux-test-sidebar'",
 		"PROJMUX_SWITCH_TARGET_CLIENT='/dev/pts/projmux-test-sidebar'",
 		"TMUX_SESSIONIZER_CONTEXT_SESSION='work'",
@@ -327,6 +326,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{
+		"PROJMUX_HOOK_TRUST_INLINE",
 		"PROJMUX_HOOK_TRUST_TARGET_PANE",
 	} {
 		if strings.Contains(command, unwanted) {
@@ -337,7 +337,7 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read marker error = %v", err)
 	}
-	if got, want := string(content), "%1\n"; got != want {
+	if got, want := string(content), "%1\nwork\n"; got != want {
 		t.Fatalf("marker content = %q, want %q", got, want)
 	}
 }
@@ -375,6 +375,178 @@ func TestAppRunTmuxPopupToggleUsesBorderlessPopupForNativeBackend(t *testing.T) 
 	}
 	if !containsTmuxArgPair(got.args, "-w", "40") {
 		t.Fatalf("display call = %#v, want native sidebar to keep compact responsive width", got)
+	}
+}
+
+func TestAppRunTmuxPopupToggleUsesNativePopupBodyStyleFromGlobalTheme(t *testing.T) {
+	t.Setenv("PROJMUX_PICKER_BACKEND", "native")
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#ff0000"
+foreground = "#00ff00"
+`)
+	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), `
+[theme]
+background = "#010203"
+foreground = "#aabbcc"
+`)
+
+	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-native-style"), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":        "/dev/pts/projmux-test-native-style",
+		"#{pane_id}":           "%1",
+		"#S":                   "work",
+		"#{pane_current_path}": filepath.Join(project, "subdir"),
+		"#{client_width}":      "200",
+		"#{client_height}":     "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Theme is global-only: the popup body style derives from the global
+	// theme and the project-local [theme] must be ignored.
+	wantStyle := nativePickerPopupBodyStyleFromEffective(theme.ResolveTheme(
+		theme.ThemeConfig{Background: "#ff0000", Foreground: "#00ff00"},
+	))
+	projectStyle := nativePickerPopupBodyStyleFromEffective(theme.ResolveTheme(
+		theme.ThemeConfig{Background: "#010203", Foreground: "#aabbcc"},
+	))
+	if wantStyle == "" || wantStyle == projectStyle {
+		t.Fatalf("test styles not distinct: global=%q project=%q", wantStyle, projectStyle)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	if !containsTmuxArgPair(got.args, "-s", wantStyle) {
+		t.Fatalf("display call = %#v, want native popup body style from global theme %q", got, wantStyle)
+	}
+	if containsTmuxArgPair(got.args, "-s", projectStyle) {
+		t.Fatalf("display call = %#v, leaked ignored project popup body style %q", got, projectStyle)
+	}
+}
+
+func TestTmuxPrintAppConfigAppliesGlobalThemeToPaneChrome(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, filepath.Join(project, ".git"))
+	// Global theme drives tmux pane chrome; the project-local [theme] is
+	// global-only-ignored migration data and must not leak into the config.
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#0000ff"
+pane_active_bg = "#41eb3a"
+focus = "#ff0000"
+`)
+	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), `
+[theme]
+background = "#102030"
+pane_active_bg = "#abcdef"
+focus = "#fedcba"
+`)
+
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := stdout.String()
+
+	globalRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{
+		Background: "#0000ff", PaneActiveBg: "#41eb3a", Focus: "#ff0000",
+	}))
+	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+	projectRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{
+		Background: "#102030", PaneActiveBg: "#abcdef", Focus: "#fedcba",
+	}))
+
+	// The global theme must repaint the active-pane border, the active-pane
+	// tint, and the inactive pane body — these used to be hardcoded to the
+	// fallback because config generation ignored the global config entirely.
+	for _, want := range []string{
+		"set -g pane-active-border-style \"fg=" + globalRoles.FocusBorder + ",bold\"",
+		"set -g window-active-style \"bg=" + globalRoles.FocusPaneActiveBg + "\"",
+		"set -g window-style \"bg=" + globalRoles.PaneInactiveBg + "\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("print-app-config missing global-theme chrome line %q\n--- got ---\n%s", want, got)
+		}
+	}
+
+	// Guard against regression to the fallback chrome and against the ignored
+	// project theme leaking in.
+	for _, unwanted := range []string{
+		"set -g window-active-style \"bg=" + fallbackRoles.FocusPaneActiveBg + "\"",
+		"set -g pane-active-border-style \"fg=" + fallbackRoles.FocusBorder + ",bold\"",
+		"set -g window-active-style \"bg=" + projectRoles.FocusPaneActiveBg + "\"",
+		"set -g pane-active-border-style \"fg=" + projectRoles.FocusBorder + ",bold\"",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("print-app-config leaked fallback/project chrome line %q\n--- got ---\n%s", unwanted, got)
+		}
+	}
+}
+
+func TestBuildPopupToggleWithPickerBackendStylesNativeOnly(t *testing.T) {
+	t.Parallel()
+
+	mode := tmuxPopupToggleMode{Raw: "sessionizer-sidebar", Canonical: "sessionizer-sidebar"}
+	ctx := tmuxPopupContext{
+		OriginPane:   "%1",
+		ContextDir:   "/workspace/project",
+		ClientWidth:  200,
+		ClientHeight: 50,
+	}
+
+	_, nativeOptions, err := buildPopupToggleWithPickerBackendAndStyle(
+		mode,
+		"/tmp/projmux",
+		"/tmp/marker",
+		ctx,
+		intpicker.BackendNative,
+		func(string) string { return "" },
+		" bg=colour235,fg=colour245 ",
+	)
+	if err != nil {
+		t.Fatalf("buildPopupToggleWithPickerBackendAndStyle(native) error = %v", err)
+	}
+	if got, want := nativeOptions.BodyStyle, "bg=colour235,fg=colour245"; got != want {
+		t.Fatalf("native BodyStyle = %q, want %q", got, want)
+	}
+
+	_, legacyOptions, err := buildPopupToggleWithPickerBackendAndStyle(
+		mode,
+		"/tmp/projmux",
+		"/tmp/marker",
+		ctx,
+		intpicker.Backend("fzf"),
+		func(string) string { return "" },
+		"bg=colour235,fg=colour245",
+	)
+	if err != nil {
+		t.Fatalf("buildPopupToggleWithPickerBackendAndStyle(non-native) error = %v", err)
+	}
+	if legacyOptions.BodyStyle != "" {
+		t.Fatalf("non-native BodyStyle = %q, want empty", legacyOptions.BodyStyle)
 	}
 }
 
@@ -639,6 +811,92 @@ func TestAppRunTmuxPopupToggleOpensSettingsHub(t *testing.T) {
 	}
 }
 
+func TestAppRunTmuxPopupToggleOpensRecentWindows(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-recent-windows"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "recent-windows")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":    clientKey,
+		"#{pane_id}":       "%1",
+		"#{client_width}":  "200",
+		"#{client_height}": "50",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "recent-windows"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	wantPrefix := []string{
+		"display-popup",
+		"-t", "%1",
+		"-E",
+		"-B",
+		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-3",
+		"-e", "PROJMUX_PICKER_BACKEND=native",
+		"-w", "160",
+		"-h", "35",
+	}
+	if got.name != "tmux" || len(got.args) < len(wantPrefix)+1 || !reflect.DeepEqual(got.args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
+	}
+	command := got.args[len(got.args)-1]
+	if !strings.Contains(command, "'/tmp/projmux' 'window' 'recent'") {
+		t.Fatalf("popup command = %q, want recent windows command", command)
+	}
+	if strings.Contains(command, "tmux popup-toggle") {
+		t.Fatalf("popup command = %q, want popup body to run native picker command directly", command)
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker error = %v", err)
+	}
+	if got, want := string(content), "%1\n\n"; got != want {
+		t.Fatalf("marker content = %q, want %q", got, want)
+	}
+}
+
+func TestAppRunTmuxPopupToggleClosesRecentWindowsWithClientMarker(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-recent-close"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "recent-windows")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}": clientKey,
+		"#{pane_id}":    "%active",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "recent-windows"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := runner.calls[len(runner.calls)-1]
+	want := recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-t", "%original", "-C"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("close call = %#v, want %#v", got, want)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want not exist", err)
+	}
+}
+
 func TestAppRunTmuxPopupToggleOpensWideAIPicker(t *testing.T) {
 	t.Parallel()
 
@@ -669,7 +927,7 @@ func TestAppRunTmuxPopupToggleOpensWideAIPicker(t *testing.T) {
 		"-E",
 		"-B",
 		"-d", "/tmp/work tree",
-		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-4",
+		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-7",
 		"-e", "PROJMUX_PICKER_BACKEND=native",
 		"-e", "TMUX_SPLIT_CONTEXT_DIR=/tmp/work tree",
 		"-e", "TMUX_SPLIT_TARGET_PANE=%1",
@@ -718,6 +976,112 @@ func TestAppRunTmuxPopupToggleClosesExistingMarkerWithClientOverride(t *testing.
 	}
 }
 
+func TestAppRunTmuxPopupToggleRecoversStaleSettingsMarkerAndReopens(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "exit status one", err: errors.New("tmux display-popup -t %20 -C: exit status 1")},
+		{name: "target not found", err: errors.New("tmux display-popup -t %20 -C: can't find pane: %20")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			clientKey := "/dev/pts/projmux-test-stale-settings-" + sanitizePopupKey(tt.name)
+			marker := popupMarkerPath(sanitizePopupKey(clientKey), "ai-split-settings")
+			_ = os.Remove(marker)
+			defer os.Remove(marker)
+			if err := os.WriteFile(marker, []byte("%20\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runner := &recordingTmuxRunner{
+				formats: map[string]string{
+					"#{client_tty}":    clientKey,
+					"#{pane_id}":       "%active",
+					"#{client_width}":  "200",
+					"#{client_height}": "50",
+				},
+				errors: map[string]error{
+					recordedTmuxCallKey("tmux", "display-popup", "-t", "%20", "-C"): tt.err,
+				},
+			}
+			cmd := &tmuxCommand{
+				runner:     runner,
+				executable: func() (string, error) { return "/tmp/projmux", nil },
+			}
+
+			if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "ai-split-settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v, want nil", err)
+			}
+
+			closeIdx := -1
+			openIdx := -1
+			for i, call := range runner.calls {
+				if reflect.DeepEqual(call, recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-t", "%20", "-C"}}) {
+					closeIdx = i
+					continue
+				}
+				if call.name == "tmux" && len(call.args) > 0 && call.args[0] == "display-popup" && !slices.Contains(call.args, "-C") {
+					openIdx = i
+				}
+			}
+			if closeIdx < 0 {
+				t.Fatalf("tmux calls = %#v, want stale close attempt", runner.calls)
+			}
+			if openIdx <= closeIdx {
+				t.Fatalf("tmux calls = %#v, want open display-popup after stale close recovery", runner.calls)
+			}
+			content, err := os.ReadFile(marker)
+			if err != nil {
+				t.Fatalf("read marker error = %v", err)
+			}
+			if got, want := string(content), "%active\n\n"; got != want {
+				t.Fatalf("marker content = %q, want recovered current pane marker %q", got, want)
+			}
+		})
+	}
+}
+
+func TestAppRunTmuxPopupToggleKeepsGenuineCloseFailure(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-settings-close-failure"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "ai-split-settings")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%20\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{
+		formats: map[string]string{
+			"#{client_tty}": clientKey,
+			"#{pane_id}":    "%active",
+		},
+		errors: map[string]error{
+			recordedTmuxCallKey("tmux", "display-popup", "-t", "%20", "-C"): errors.New("tmux display-popup -t %20 -C: exit status 2: bad command"),
+		},
+	}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "ai-split-settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("Run() error = nil, want close failure")
+	}
+	for _, call := range runner.calls {
+		if call.name == "tmux" && len(call.args) > 0 && call.args[0] == "display-popup" && !slices.Contains(call.args, "-C") {
+			t.Fatalf("tmux calls = %#v, want no reopen for genuine close failure", runner.calls)
+		}
+	}
+	if content, err := os.ReadFile(marker); err != nil || string(content) != "%20\n" {
+		t.Fatalf("marker content = %q, err = %v; want stale marker preserved on genuine close failure", string(content), err)
+	}
+}
+
 func TestAppRunTmuxPopupToggleTreatsClosedPopupAsNoOp(t *testing.T) {
 	t.Parallel()
 
@@ -746,9 +1110,12 @@ func TestNativeLaunchKeyForPopupMode(t *testing.T) {
 	}{
 		{mode: "sessionizer-sidebar", want: "alt-1"},
 		{mode: "notify-sidebar", want: "alt-2"},
-		{mode: "session-popup", want: "alt-3"},
-		{mode: "ai-split-picker-right", want: "alt-4"},
-		{mode: "ai-split-picker-down", want: "alt-4"},
+		{mode: "recent-windows", want: "alt-3"},
+		{mode: "session-popup", want: ""},
+		{mode: "ai-split-picker-right", want: "alt-7"},
+		{mode: "ai-split-picker-down", want: "alt-7"},
+		{mode: "ai-split-resume-right", want: "alt-4"},
+		{mode: "ai-split-resume-down", want: "alt-4"},
 		{mode: "ai-split-settings", want: "alt-5"},
 		{mode: "sessionizer", want: "alt-6"},
 		{mode: "unknown", want: ""},
@@ -794,7 +1161,6 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"PROJMUX_NATIVE_TTY_FALLBACK='0'",
 		"PROJMUX_PROJDIR='/workspace/projects'",
 		"PROJMUX_MANAGED_ROOTS='/workspace/projects'",
-		hookTrustInlineEnv + "='1'",
 		hookTrustPopupTargetClientEnv + "='/dev/pts/7'",
 		inttmux.SwitchTargetClientEnv + "='/dev/pts/7'",
 	} {
@@ -813,7 +1179,6 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 		"PROJMUX_NATIVE_TTY_FALLBACK": "0",
 		"PROJMUX_PROJDIR":             "/workspace/projects",
 		"PROJMUX_MANAGED_ROOTS":       "/workspace/projects",
-		hookTrustInlineEnv:            "1",
 		hookTrustPopupTargetClientEnv: "/dev/pts/7",
 		inttmux.SwitchTargetClientEnv: "/dev/pts/7",
 	} {
@@ -821,7 +1186,7 @@ func TestBuildPopupTogglePropagatesPickerEnvironment(t *testing.T) {
 			t.Fatalf("options.Env[%q] = %q, want %q", key, got, want)
 		}
 	}
-	for _, key := range []string{hookTrustPopupTargetPaneEnv} {
+	for _, key := range []string{hookTrustInlineEnv, hookTrustPopupTargetPaneEnv} {
 		if value, ok := options.Env[key]; ok {
 			t.Fatalf("options.Env[%q] = %q, want absent", key, value)
 		}
@@ -955,23 +1320,9 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		"bind-key -n M-2 run-shell",
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} notify-sidebar",
-		"bind-key -n User3 run-shell",
-		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} session-popup",
-		"bind-key -n User12 run-shell",
-		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer",
-		"bind-key -n User0 run-shell",
-		"'/tmp/proj mux/bin/projmux' ai split right",
-		"set -s user-keys[10] \"\\033[9011u\"",
-		"set -s user-keys[11] \"\\033[9012u\"",
-		"set -s user-keys[12] \"\\033[9013u\"",
-		"bind-key -n M-r command-prompt",
-		"rename-window -- '%%'",
-		"bind-key -n User10 command-prompt",
-		"bind-key -n User11 command-prompt",
-		"select-pane -T '%1'",
-		"set-option -p @projmux_ai_topic '%1'",
-		"set-option -p @projmux_ai_topic_manual 1",
-		"unbind-key -q R",
+		"bind-key -n M-3 run-shell",
+		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} recent-windows",
+		"unbind-key -q F",
 		"set-hook -g pane-focus-out",
 		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane} >/dev/null 2>&1 || true",
 		"set-hook -g pane-focus-in",
@@ -982,7 +1333,10 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"sleep 0.05; '/tmp/proj mux/bin/projmux' tmux rebalance-panes >/dev/null 2>&1 || true",
 		"set-hook -g after-kill-pane",
 		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",
-		"#[bold,fg=colour230,bg=colour31]#[range=user|settings]  projmux #[norange]#[default]",
+		"set-hook -g after-select-window",
+		"set-hook -g client-session-changed",
+		"run-shell -b \"'/tmp/proj mux/bin/projmux' window record >/dev/null 2>&1 || true\"",
+		"#[bold,fg=colour230,bg=colour29]#[range=user|settings]  projmux #[norange]#[default]",
 		"'/tmp/proj mux/bin/projmux' status kube",
 		"'/tmp/proj mux/bin/projmux' status git",
 		"set -g @projmux_statusbar_decoration off",
@@ -991,14 +1345,14 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set -g @projmux_statusbar_decoration_notify off",
 		"set -g status 2",
 		"set -g status-left-length 20",
-		"#[range=user|session][#S] #[norange] ",
+		"#[range=user|session]#[bold,fg=colour254,bg=colour60] #('/tmp/proj mux/bin/projmux' status project) #[default]#[norange] ",
 		"#{n:window_name}",
 		"#{=/7/...:window_name}",
 		"@projmux_statusbar_decoration_cwd",
 		"#[fg=colour220] ",
 		"#[fg=colour220]📁 ",
-		"#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
-		" %Y-%m-%d %H:%M",
+		"#[fg=colour245]#{=-28/...:pane_current_path}#[norange]",
+		"#[fg=colour245]   %Y-%m-%d %H:%M",
 		"range=user|notify",
 		"range=user|usage",
 		"set -g status-format[0]",
@@ -1007,6 +1361,10 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
+		"unbind-key -q -n M-6",
+		"unbind-key -q -n C-n",
+		"unbind-key -q -n M-r",
+		"unbind-key -q -n User11",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
@@ -1017,6 +1375,13 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set -g status-format[2] \"",
 		"tmux autosave-session-state --quiet",
 		"bind-key R command-prompt",
+		"'/tmp/proj mux/bin/projmux' window recent",
+		"bind-key -n M-3 run-shell \"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} session-popup\"",
+		"set-hook -g session-window-changed",
+		"set -s user-keys",
+		"bind-key -n User",
+		"\\033[900",
+		"\\033[901",
 		"range=user|sessionstate",
 		"statusbar click sessionstate",
 	} {
@@ -1046,6 +1411,26 @@ func TestTmuxPrintConfigCanonicalizesNpmStagingBinaryPath(t *testing.T) {
 	}
 }
 
+func TestStatusbarSettingsButtonPaintsCompactPaddingInsideRange(t *testing.T) {
+	t.Parallel()
+
+	got := statusbarSettingsButton(statusbarSettingsIcon, statusSegmentRoles)
+	want := "#[bold,fg=colour230,bg=colour29]#[range=user|settings]   #[norange]#[default]"
+	if got != want {
+		t.Fatalf("statusbarSettingsButton() = %q, want %q", got, want)
+	}
+}
+
+func TestStatusbarSettingsButtonPaintsStandalonePaddingInsideRange(t *testing.T) {
+	t.Parallel()
+
+	got := statusbarSettingsButton(statusbarSettingsIcon+" projmux", statusSegmentRoles)
+	want := "#[bold,fg=colour230,bg=colour29]#[range=user|settings]  projmux #[norange]#[default]"
+	if got != want {
+		t.Fatalf("statusbarSettingsButton() = %q, want %q", got, want)
+	}
+}
+
 func TestTmuxPrintConfigMissingKeymapKeepsDefaultOutput(t *testing.T) {
 	t.Parallel()
 
@@ -1064,6 +1449,101 @@ func TestTmuxPrintConfigMissingKeymapKeepsDefaultOutput(t *testing.T) {
 	want := tmuxStandaloneConfig("/tmp/projmux", loadStatusbarDecoration(cmd.homeDir, cmd.lookupEnv))
 	if got := stdout.String(); got != want {
 		t.Fatalf("print-config output changed without keymap\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestTmuxConfigWithFallbackEffectiveThemeMatchesDefaultOutput(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
+	got := tmuxStandaloneConfigWithKeymapTheme("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+	want := tmuxStandaloneConfigWithKeymap("/tmp/projmux", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
+	if got != want {
+		t.Fatalf("fallback themed standalone config changed\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+
+	gotApp := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+	wantApp := tmuxAppConfigWithKeymap("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false)
+	if gotApp != wantApp {
+		t.Fatalf("fallback themed app config changed\n--- got ---\n%s\n--- want ---\n%s", gotApp, wantApp)
+	}
+}
+
+func TestTmuxConfigThemeUsesGlobal256ColorBackgroundWithoutFallbackLeak(t *testing.T) {
+	t.Parallel()
+
+	globalCfg := theme.ThemeConfig{
+		Background:    "#010203",
+		SurfaceActive: "#040506",
+		Foreground:    "#aabbcc",
+	}
+	effective := theme.ResolveTheme(globalCfg)
+	tokens := theme.TmuxRenderTokensFromEffective(effective)
+
+	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+	for _, want := range []string{
+		"set -g status-style \"bg=" + tokens.StatusBg + ",fg=" + tokens.StatusFg + "\"",
+		"#[fg=" + tokens.WindowInactiveFg + ",bg=" + tokens.WindowInactiveBg + "] #('/tmp/projmux' attention window #{window_id} #{@projmux_ai_badge_style})",
+		"#[bold,fg=" + tokens.WindowActiveFg + ",bg=" + tokens.WindowActiveBg + "] #('/tmp/projmux' attention window #{window_id} #{@projmux_ai_badge_style})",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("themed app config missing %q\n%s", want, output)
+		}
+	}
+}
+
+// Phase 6b+: an explicit `background` (surface/status unset) must repaint the
+// inactive pane body (window-style follows PaneInactiveBg from background) while
+// the bottom status bg (status-style from StatusBg) stays at the fallback
+// literal, proving pane body and status bg are separated.
+func TestTmuxConfigExplicitBackgroundRepaintsWindowStyleNotStatus(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{Background: "#010203"})
+	roles := theme.RenderRolesFromEffective(effective)
+	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+
+	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+
+	// Pane body repaints: window-style carries the background-derived color,
+	// not the historical "bg=default".
+	if roles.PaneInactiveBg == "default" {
+		t.Fatalf("PaneInactiveBg = %q, want background-derived color", roles.PaneInactiveBg)
+	}
+	if want := "set -g window-style \"bg=" + roles.PaneInactiveBg + "\""; !strings.Contains(output, want) {
+		t.Fatalf("themed app config missing %q\n%s", want, output)
+	}
+	if strings.Contains(output, "set -g window-style \"bg=default\"") {
+		t.Fatalf("window-style still bg=default with explicit background\n%s", output)
+	}
+	// Popup/chrome bg does NOT follow background: status-style keeps the surface
+	// fallback literal.
+	if want := "set -g status-style \"bg=" + fallbackRoles.StatusBg + ",fg="; !strings.Contains(output, want) {
+		t.Fatalf("status-style should keep surface fallback bg %q (popup must not follow background)\n%s", fallbackRoles.StatusBg, output)
+	}
+}
+
+// An explicit `status_background` (background/surface unset) must repaint the
+// bottom status bg while the popup surface and general pane body stay separate.
+func TestTmuxConfigExplicitStatusBackgroundRepaintsStatusNotWindowStyle(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{StatusBackground: "#ff00ff"})
+	roles := theme.RenderRolesFromEffective(effective)
+	fallbackRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{}))
+
+	output := tmuxAppConfigWithKeymapTheme("/tmp/projmux", "/bin/sh", statusbarDecorationSetFromGlobal(config.StatusbarDecorationOff), defaultKeyBindingCatalog(), false, effective)
+
+	// Status repaints: status-style follows status_background, not the fallback.
+	if roles.StatusBg == fallbackRoles.StatusBg {
+		t.Fatalf("StatusBg = %q, want repainted from explicit status_background", roles.StatusBg)
+	}
+	if want := "set -g status-style \"bg=" + roles.StatusBg + ",fg="; !strings.Contains(output, want) {
+		t.Fatalf("themed app config missing status_background-driven status-style %q\n%s", want, output)
+	}
+	// Pane body untouched: window-style stays bg=default.
+	if want := "set -g window-style \"bg=default\""; !strings.Contains(output, want) {
+		t.Fatalf("window-style should stay bg=default with background unset\n%s", output)
 	}
 }
 
@@ -1116,7 +1596,7 @@ func TestTmuxPrintConfigKeymapOverrideChangesBindAndUnbindsStaleDefault(t *testi
 	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(keymapPath, []byte("[bindings.sessionizer-sidebar]\nplain = \"M-a\"\nprefix = \"A\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(keymapPath, []byte("[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\nprefix = \"A\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := &tmuxCommand{
@@ -1163,13 +1643,8 @@ func TestTmuxPrintConfigInvalidKeymapReportsUsefulErrors(t *testing.T) {
 		want string
 	}{
 		{
-			name: "unknown action",
-			body: "[bindings.no-such-action]\nplain = \"M-a\"\n",
-			want: "unknown action id",
-		},
-		{
 			name: "invalid chord",
-			body: "[bindings.sessionizer-sidebar]\nplain = \"M x\"\n",
+			body: "[bindings.ProjectSidebarToggle]\nplain = \"M x\"\n",
 			want: "contains unsupported tmux config characters",
 		},
 	}
@@ -1196,6 +1671,43 @@ func TestTmuxPrintConfigInvalidKeymapReportsUsefulErrors(t *testing.T) {
 				t.Fatalf("Run() error = %v, want %q with keymap path", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestTmuxPrintConfigGracefullyIgnoresDroppedLegacyIDs(t *testing.T) {
+	t.Parallel()
+
+	// An old keymap.toml referencing only hard-dropped legacy ids must not
+	// error or crash; the dropped bindings are silently ignored and the
+	// defaults are emitted unchanged.
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte("[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n\n[bindings.session-popup]\nplain = \"M-s\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want no error for dropped legacy ids", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "bind-key -n M-1 run-shell") {
+		t.Fatalf("print-config output = %q, want default M-1 sidebar binding", output)
+	}
+	if strings.Contains(output, "bind-key -n M-a") {
+		t.Fatalf("print-config output = %q, did not expect dropped legacy override M-a", output)
+	}
+	if strings.Contains(output, "bind-key -n M-s") {
+		t.Fatalf("print-config output = %q, did not expect dropped legacy override M-s", output)
 	}
 }
 
@@ -1278,6 +1790,125 @@ func TestTmuxPrintConfigShortCircuitsWindowListClicksToNativeSelectWindow(t *tes
 	}
 }
 
+func TestTmuxPrintConfigBindsHardcodedStatusbarUsageRefresh(t *testing.T) {
+	t.Parallel()
+
+	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil }}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := `bind-key -T projmux-status r run-shell "'/tmp/proj mux/bin/projmux' statusbar usage-refresh"`
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("print-config output = %q, want substring %q", stdout.String(), want)
+	}
+}
+
+func TestTmuxPrintConfigBindsPaneContextMenu(t *testing.T) {
+	t.Parallel()
+
+	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil }}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		// Stock-style guard: forward the click to mouse-aware applications and
+		// non-copy pane modes instead of opening the menu.
+		"bind-key -n MouseDown3Pane if-shell -F -t = \"#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}\"",
+		"{ select-pane -t = ; send-keys -M }",
+		// Menu chrome mirrors tmux 3.4's stock MouseDown3Pane menu.
+		"display-menu -T \"#[align=centre]#{pane_index} (#{pane_id})\" -t = -x M -y M",
+		// projmux entry: selects the clicked pane, then opens the AI resume
+		// picker via the same popup-toggle entrypoint as the C-r keybinding
+		// (`ai picker` directly would fail: run-shell has no TMUX env, so the
+		// picker cannot resolve its context cwd).
+		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
+		// Stock split items (stock names + key shortcuts).
+		"\"Horizontal Split\" h { split-window -h }",
+		"\"Vertical Split\" v { split-window -v }",
+		// A few more stock items with their dim/toggle format conditions.
+		"\"#{?#{>:#{window_panes},1},,-}Swap Up\" u { swap-pane -U }",
+		"\"#{?#{>:#{window_panes},1},,-}Swap Down\" d { swap-pane -D }",
+		"\"Kill\" X { kill-pane }",
+		"\"Respawn\" R { respawn-pane -k }",
+		"\"#{?pane_marked,Unmark,Mark}\" m { select-pane -m }",
+		"\"#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}\" z { resize-pane -Z }",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-config output = %q, want substring %q", output, want)
+		}
+	}
+}
+
+func TestTmuxPrintConfigUnbindsPaneContextMenuBeforeBinding(t *testing.T) {
+	t.Parallel()
+
+	// Same unbind-then-reinstall contract as the statusbar MouseDown1Status
+	// binding: the quiet unbind must precede the bind so re-sourcing the config
+	// on a live server deterministically replaces any stale handler.
+	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/projmux", nil }}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	unbindIdx := strings.Index(output, "unbind-key -q -n MouseDown3Pane")
+	bindIdx := strings.Index(output, "bind-key -n MouseDown3Pane")
+	if unbindIdx == -1 {
+		t.Fatalf("print-config output = %q, want substring %q", output, "unbind-key -q -n MouseDown3Pane")
+	}
+	if bindIdx == -1 {
+		t.Fatalf("print-config output = %q, want substring %q", output, "bind-key -n MouseDown3Pane")
+	}
+	if unbindIdx > bindIdx {
+		t.Fatalf("unbind-key -q -n MouseDown3Pane (index %d) must precede bind-key -n MouseDown3Pane (index %d)", unbindIdx, bindIdx)
+	}
+
+	// The statusbar binding follows the identical pattern; pin both so the
+	// surfaces cannot drift apart silently.
+	statusUnbindIdx := strings.Index(output, "unbind-key -q -n MouseDown1Status")
+	statusBindIdx := strings.Index(output, "bind-key -n MouseDown1Status")
+	if statusUnbindIdx == -1 || statusBindIdx == -1 || statusUnbindIdx > statusBindIdx {
+		t.Fatalf("statusbar unbind/bind ordering broken: unbind index %d, bind index %d", statusUnbindIdx, statusBindIdx)
+	}
+}
+
+func TestTmuxPrintAppConfigBindsPaneContextMenu(t *testing.T) {
+	t.Parallel()
+
+	// The app config embeds the standalone config lines, so `projmux shell`
+	// sessions must carry the same pane context menu.
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil },
+		homeDir:    func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"unbind-key -q -n MouseDown3Pane",
+		"bind-key -n MouseDown3Pane if-shell -F -t = ",
+		"display-menu -T \"#[align=centre]#{pane_index} (#{pane_id})\" -t = -x M -y M",
+		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
+		"\"Horizontal Split\" h { split-window -h }",
+		"\"Vertical Split\" v { split-window -v }",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
+		}
+	}
+}
+
 func TestTmuxRebalancePanesSelectsMultiPaneWindows(t *testing.T) {
 	t.Parallel()
 
@@ -1345,7 +1976,14 @@ func TestTmuxRenamePaneEmptyClearsManualAITopic(t *testing.T) {
 func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 	t.Parallel()
 
-	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/projmux", nil }}
+	// Isolate HOME so generated chrome derives from the built-in fallback, not
+	// from a developer's real global ~/.config/projmux/config.toml [theme].
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1366,44 +2004,36 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set-hook -g client-attached",
 		"run-shell -b",
 		"'/tmp/projmux' welcome --popup >/dev/null 2>&1",
+		"set-hook -g after-select-window",
+		"set-hook -g client-session-changed",
+		"run-shell -b \"'/tmp/projmux' window record >/dev/null 2>&1 || true\"",
 		"set -g status-position bottom",
 		"set -g status-keys vi",
 		"set -g window-status-separator \" \"",
+		"set -g allow-rename off",
 		"set -g automatic-rename on",
-		"set -g automatic-rename-format \"#{pane_title}\"",
-		"set -s user-keys[11] \"\\033[9012u\"",
+		"set -g automatic-rename-format " + tmuxConfigQuote(tmuxVisiblePaneLabelFormat()),
 		"set -g mode-keys vi",
 		"set -sg escape-time 100",
 		"set -g pane-border-style \"fg=colour236\"",
 		"set -g pane-active-border-style \"fg=colour51,bold\"",
 		"set -g pane-border-status top",
 		"set -g pane-border-format \"#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > ",
-		"#[bold#,fg=colour220] ● ",
-		"#[bold#,fg=colour46] ● ",
+		"#[bold#,fg=" + tmuxAIBadgeProgressFg + "] ● ",
+		"#[bold#,fg=" + tmuxAIBadgeSuccessFg + "] ● ",
+		"#[bold#,fg=" + tmuxAIBadgeActionRequiredFg + "] ● ",
 		"#[fg=colour244] ",
 		"#{@projmux_ai_topic}",
 		"#{pane_current_command},#{pane_title}",
-		"set -s user-keys[7] \"\\033[9008u\"",
-		"set -s user-keys[10] \"\\033[9011u\"",
-		"bind-key -n User11 command-prompt",
-		"select-pane -T '%1'",
-		"set-option -p @projmux_ai_topic '%1'",
-		"set-option -p @projmux_ai_topic_manual 1",
 		"bind-key -n M-Left select-pane -L",
 		"bind-key -n M-Right select-pane -R",
 		"bind-key -n M-Up select-pane -U",
 		"bind-key -n M-Down select-pane -D",
-		"bind-key -n C-n new-window -c \"#{pane_current_path}\"",
 		"bind-key -n M-S-Left previous-window",
 		"bind-key -n M-S-Right next-window",
-		"bind-key -n M-r command-prompt",
-		"bind-key -n User7 new-window -c \"#{pane_current_path}\"",
-		"bind-key -n User10 command-prompt",
-		"unbind-key -q R",
-		"unbind-key -q M",
 		"set -g status-left-length 20",
-		"set -g status-left \"#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] \"",
-		"#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]",
+		"set -g status-left \"#[range=user|session]#[bold,fg=colour254,bg=colour60] #('/tmp/projmux' status project) #[default]#[norange] \"",
+		"#[bold,fg=colour254,bg=colour60] #('/tmp/projmux' status project) #[default]",
 		"#{n:window_name}",
 		"#{=/7/...:window_name}",
 		"set -g @projmux_statusbar_decoration off",
@@ -1413,9 +2043,9 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"@projmux_statusbar_decoration_cwd",
 		"#[fg=colour220] ",
 		"#[fg=colour220]📁 ",
-		"#[fg=colour250]#{=-28/...:pane_current_path}#[norange]",
+		"#[fg=colour245]#{=-28/...:pane_current_path}#[norange]",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
-		" %Y-%m-%d %H:%M #[bold,fg=colour230,bg=colour31]#[range=user|settings]  #[norange]#[default]",
+		"#[fg=colour245]   %Y-%m-%d %H:%M #[bold,fg=colour230,bg=colour29]#[range=user|settings]   #[norange]#[default]",
 		"set -g status 2",
 		"range=user|notify",
 		"range=user|usage",
@@ -1426,6 +2056,10 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
+		"unbind-key -q -n M-6",
+		"unbind-key -q -n C-n",
+		"unbind-key -q -n M-r",
+		"unbind-key -q -n User11",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
@@ -1437,22 +2071,196 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 	for _, banned := range []string{
 		"set -g status 3",
 		"set -g status-format[2] \"",
-		// Phase 2.8 regression guard: prev/next window must rely on the
-		// xterm-standard M-S-Left/Right chord — the legacy `User8`/`User9`
-		// detour and its `9009u`/`9010u` user-keys CSI form are gone so
-		// Ghostty (which emits the xterm sequence by default) can drive
-		// the popup chord through the same parser as the rest of the app.
-		"set -s user-keys[8]",
-		"set -s user-keys[9]",
-		"\\033[9009u",
-		"\\033[9010u",
+		"set -s user-keys",
+		"set -s user-keys[",
+		"\\033[900",
+		"\\033[901",
+		"bind-key -n User",
 		"bind-key -n User8",
 		"bind-key -n User9",
+		"9009u",
+		"9010u",
+		"set-hook -g session-window-changed",
 		"range=user|sessionstate",
 		"statusbar click sessionstate",
+		"$env:PROJMUX_MUX_BACKEND",
+		"$env:PROJMUX_PICKER_BACKEND",
+		"$env:PROJMUX_NATIVE_LINE_MODE",
+		"psmux",
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-app-config output = %q, did not expect substring %q", output, banned)
+		}
+	}
+}
+
+func TestTmuxPrintConfigUsesSavedAIBadgeStyle(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveAIBadgeStyleFile(paths.AIBadgeStyleFile(), config.AIBadgeStyleEmoji); err != nil {
+		t.Fatalf("SaveAIBadgeStyleFile() error = %v", err)
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"set -g " + aiBadgeStyleTmuxOption + " emoji",
+		"⏳",
+		"✅",
+		"🔄",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
+		}
+	}
+}
+
+func TestTmuxAIBadgeStyleOffPreservesPaneBorderSpacing(t *testing.T) {
+	t.Parallel()
+
+	roles := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	dot := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot, roles)
+	off := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleOff, roles)
+
+	for _, banned := range []string{" ● ", "⏳", "✅", "🔄"} {
+		if strings.Contains(off, banned) {
+			t.Fatalf("off pane border format = %q, did not expect marker %q", off, banned)
+		}
+	}
+	if strings.Count(off, "]   ") < 3 {
+		t.Fatalf("off pane border format = %q, want blank marker lanes", off)
+	}
+	if got := len([]rune(off)) - len([]rune(dot)); got != 0 {
+		t.Fatalf("off pane border rune-length delta = %d, want stable marker lane width", got)
+	}
+}
+
+func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
+	t.Parallel()
+
+	visibleLabel := tmuxVisiblePaneLabelFormat()
+	styledVisibleLabel := tmuxStyledVisiblePaneLabelFormat()
+	shellLabel := tmuxShellPaneLabelFormat()
+	paneBorder := tmuxPaneBorderFormat()
+	configText := tmuxAppConfig("/tmp/projmux", "/bin/sh", config.StatusbarDecorationOff)
+
+	wantShellLabel := "#{?#{||:#{||:#{||:#{==:#{pane_current_command},zsh},#{==:#{pane_current_command},bash}},#{||:#{==:#{pane_current_command},fish},#{==:#{pane_current_command},sh}}},#{||:#{==:#{pane_current_command},nu},#{==:#{pane_current_command},xonsh}}},#{pane_current_command},#{pane_title}}"
+	if shellLabel != wantShellLabel {
+		t.Fatalf("shell label format = %q, want %q", shellLabel, wantShellLabel)
+	}
+	if zshIndex, titleIndex := strings.Index(shellLabel, "#{==:#{pane_current_command},zsh}"), strings.Index(shellLabel, "#{pane_title}"); zshIndex < 0 || titleIndex < 0 || zshIndex > titleIndex {
+		t.Fatalf("shell label format = %q, want zsh command match before raw pane_title fallback", shellLabel)
+	}
+
+	wantVisibleLabel := "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + shellLabel + "}"
+	if visibleLabel != wantVisibleLabel {
+		t.Fatalf("visible pane label format = %q, want AI topic before shell fallback: %q", visibleLabel, wantVisibleLabel)
+	}
+	if topicIndex, shellIndex := strings.Index(visibleLabel, "#{@projmux_ai_topic}"), strings.Index(visibleLabel, shellLabel); topicIndex < 0 || shellIndex < 0 || topicIndex > shellIndex {
+		t.Fatalf("visible pane label format = %q, want @projmux_ai_topic before shell/current-command fallback", visibleLabel)
+	}
+	if !strings.Contains(paneBorder, tmuxStyledVisiblePaneLabelFormatFor(tmuxAIBadgeProgressFg)) {
+		t.Fatalf("pane border format = %q, want progress-styled visible label", paneBorder)
+	}
+	if !strings.Contains(paneBorder, tmuxStyledVisiblePaneLabelFormatFor(tmuxAIBadgeSuccessFg)) {
+		t.Fatalf("pane border format = %q, want ready-styled visible label", paneBorder)
+	}
+	if !strings.Contains(paneBorder, tmuxStyledVisiblePaneLabelFormatFor(tmuxAIBadgeActionRequiredFg)) {
+		t.Fatalf("pane border format = %q, want prompt-styled visible label", paneBorder)
+	}
+	activePaneBorderPrefix := "#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > " + visibleLabel
+	if !strings.Contains(paneBorder, activePaneBorderPrefix) {
+		t.Fatalf("pane border format = %q, want active pane label to keep block chip surface %q", paneBorder, activePaneBorderPrefix)
+	}
+	if !strings.Contains(paneBorder, "#[bold#,fg="+tmuxAIBadgeProgressFg+"] ● ") {
+		t.Fatalf("pane border format = %q, want busy marker to use state.progress", paneBorder)
+	}
+	if !strings.Contains(paneBorder, "#[bold#,fg="+tmuxAIBadgeSuccessFg+"] ● ") {
+		t.Fatalf("pane border format = %q, want reply/ready marker to use state.success", paneBorder)
+	}
+	if !strings.Contains(paneBorder, "#[bold#,fg="+tmuxAIBadgeActionRequiredFg+"] ● ") {
+		t.Fatalf("pane border format = %q, want prompt marker to use state.action_required", paneBorder)
+	}
+	for _, want := range []string{aiBadgeKindApprovalRequired, aiBadgeKindInputRequired, aiBadgeKindResponseComplete, aiBadgeKindInProgress} {
+		if !strings.Contains(paneBorder, "@projmux_ai_badge_kind},"+want) {
+			t.Fatalf("pane border format = %q, want semantic badge kind %q", paneBorder, want)
+		}
+	}
+	if !strings.Contains(styledVisibleLabel, "#[bold#,fg="+tmuxAIBadgeProgressFg+"]#{@projmux_ai_topic}#[pop-default]") {
+		t.Fatalf("styled visible label format = %q, want renderer-level lead topic styling", styledVisibleLabel)
+	}
+	readyStyledVisibleLabel := tmuxStyledVisiblePaneLabelFormatFor(tmuxAIBadgeSuccessFg)
+	if !strings.Contains(readyStyledVisibleLabel, "#[bold#,fg="+tmuxAIBadgeSuccessFg+"]#{@projmux_ai_topic}#[pop-default]") {
+		t.Fatalf("ready styled visible label format = %q, want renderer-level lead topic styling to match ready marker", readyStyledVisibleLabel)
+	}
+	if !strings.Contains(styledVisibleLabel, `^\\[[Ll]ead:[Ss]hip\\]`) {
+		t.Fatalf("styled visible label format = %q, want literal bracket escapes to survive tmux config parsing", styledVisibleLabel)
+	}
+
+	wantPaneBorderLine := "set -g pane-border-format " + tmuxConfigQuote(paneBorder)
+	if !strings.Contains(configText, wantPaneBorderLine+"\n") {
+		t.Fatalf("app config = %q, want pane border to use exact shared visible label line %q", configText, wantPaneBorderLine)
+	}
+	wantAutomaticRenameLine := "set -g automatic-rename-format " + tmuxConfigQuote(visibleLabel)
+	if !strings.Contains(configText, wantAutomaticRenameLine+"\n") {
+		t.Fatalf("app config = %q, want automatic rename to use exact visible label helper line %q", configText, wantAutomaticRenameLine)
+	}
+	if strings.Contains(configText, "set -g automatic-rename-format \"#{pane_title}\"") {
+		t.Fatalf("app config = %q, automatic rename must not depend solely on raw pane_title", configText)
+	}
+}
+
+func TestTmuxPaneBorderAIBadgeRepaintsFromExplicitThemeKeepingActionRequiredSeparate(t *testing.T) {
+	t.Parallel()
+
+	fallbackRoles := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	fallbackBorder := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot, fallbackRoles)
+
+	// Fallback border keeps the historical literals (byte-identity).
+	if !strings.Contains(fallbackBorder, "#[bold#,fg="+fallbackRoles.AIProgress+"]") {
+		t.Fatalf("fallback pane border = %q, want progress role %q", fallbackBorder, fallbackRoles.AIProgress)
+	}
+
+	// An explicit critical/warning theme must NOT repaint action_required
+	// (Tier C, independent of critical) — its color stays the literal.
+	explicitRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{
+		Critical: "#0000ff",
+		Warning:  "#00ff00",
+	}))
+	if explicitRoles.AIActionRequired != fallbackRoles.AIActionRequired {
+		t.Fatalf("ai.action_required repainted to %q, must stay independent of critical at %q", explicitRoles.AIActionRequired, fallbackRoles.AIActionRequired)
+	}
+	explicitBorder := tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot, explicitRoles)
+	if !strings.Contains(explicitBorder, "#[bold#,fg="+fallbackRoles.AIActionRequired+"]") {
+		t.Fatalf("explicit pane border = %q, want action_required marker to keep literal %q", explicitBorder, fallbackRoles.AIActionRequired)
+	}
+}
+
+func TestTmuxAppShellTitlePolicyDisablesProgramWindowRename(t *testing.T) {
+	t.Parallel()
+
+	configText := tmuxAppConfig("/tmp/projmux", "/bin/sh", config.StatusbarDecorationOff)
+	for _, want := range []string{
+		"set -g allow-rename off",
+		"set -g automatic-rename on",
+		"set -g automatic-rename-format " + tmuxConfigQuote(tmuxVisiblePaneLabelFormat()),
+	} {
+		if !strings.Contains(configText, want) {
+			t.Fatalf("app config = %q, want shell title policy line %q", configText, want)
 		}
 	}
 }
@@ -1796,7 +2604,7 @@ func TestTmuxPrintAppConfigKeepsStandaloneAndAppKeymapScopesSeparated(t *testing
 	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(keymapPath, []byte("[bindings.sessionizer-sidebar]\nplain = \"M-a\"\n\n[bindings.new-window]\nplain = \"C-t\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(keymapPath, []byte("[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\n\n[bindings.new-window]\nplain = \"C-t\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := &tmuxCommand{
@@ -1815,7 +2623,6 @@ func TestTmuxPrintAppConfigKeepsStandaloneAndAppKeymapScopesSeparated(t *testing
 		"bind-key -n M-a run-shell",
 		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		"bind-key -n C-t new-window -c \"#{pane_current_path}\"",
-		"unbind-key -q -n C-n",
 		"unbind-key -q -n C-t",
 	} {
 		if !strings.Contains(output, want) {
@@ -1827,6 +2634,40 @@ func TestTmuxPrintAppConfigKeepsStandaloneAndAppKeymapScopesSeparated(t *testing
 	}
 	if strings.Contains(output, "bind-key -n M-a new-window") {
 		t.Fatalf("print-app-config output = %q, standalone chord unexpectedly used app action", output)
+	}
+}
+
+func TestTmuxPrintAppConfigAddsPlainAliasForTransportAction(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte("[bindings.previous-window]\nkeys = [\"M-[\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-app-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"bind-key -n M-S-Left previous-window",
+		"bind-key -n M-[ previous-window",
+		"bind-key -n M-S-Right next-window",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
+		}
 	}
 }
 
@@ -1940,6 +2781,40 @@ func TestTmuxApplySkipsReloadWhenServerMissing(t *testing.T) {
 		if len(c.args) >= 3 && c.args[2] == "source-file" {
 			t.Fatalf("source-file should not run when probe failed: %+v", c)
 		}
+	}
+}
+
+func TestTmuxApplyUsesSavedDesktopNotifyMode(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveDesktopNotifyModeFile(paths.DesktopNotifyModeFile(), config.DesktopNotifyModeOff); err != nil {
+		t.Fatalf("SaveDesktopNotifyModeFile() error = %v", err)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	runner := &recordingTmuxRunner{err: errors.New("no server running on /tmp/tmux-1000/projmux")}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		writeFile:  os.WriteFile,
+		runner:     runner,
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"apply", "--config", configPath}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), "set -g "+desktopNotifyModeTmuxOption+" off"; !strings.Contains(got, want) {
+		t.Fatalf("app config missing %q\n%s", want, got)
 	}
 }
 
@@ -2150,6 +3025,7 @@ func (s *stubTmuxPopupClient) DisplayPopupWithOptions(_ context.Context, command
 type recordingTmuxRunner struct {
 	formats map[string]string
 	outputs map[string]string
+	errors  map[string]error
 	calls   []recordedTmuxCall
 	err     error
 }
@@ -2164,13 +3040,21 @@ func (r *recordingTmuxRunner) Run(_ context.Context, name string, args ...string
 	if name == "tmux" && len(args) == 4 && reflect.DeepEqual(args[:3], []string{"display-message", "-p", "-F"}) {
 		return []byte(r.formats[args[3]] + "\n"), nil
 	}
-	if output, ok := r.outputs[strings.Join(append([]string{name}, args...), "\x00")]; ok {
+	key := recordedTmuxCallKey(name, args...)
+	if err, ok := r.errors[key]; ok {
+		return nil, err
+	}
+	if output, ok := r.outputs[key]; ok {
 		return []byte(output), nil
 	}
 	if r.err != nil {
 		return nil, r.err
 	}
 	return nil, nil
+}
+
+func recordedTmuxCallKey(name string, args ...string) string {
+	return strings.Join(append([]string{name}, args...), "\x00")
 }
 
 func containsTmuxArgPair(args []string, key, value string) bool {
@@ -2180,4 +3064,146 @@ func containsTmuxArgPair(args []string, key, value string) bool {
 		}
 	}
 	return false
+}
+
+func TestParsePopupMarkerContent(t *testing.T) {
+	t.Parallel()
+
+	pane, session := parsePopupMarkerContent([]byte("%1\nwork\n"))
+	if pane != "%1" || session != "work" {
+		t.Fatalf("parsePopupMarkerContent(two lines) = (%q, %q), want (%q, %q)", pane, session, "%1", "work")
+	}
+	pane, session = parsePopupMarkerContent([]byte("%1\n"))
+	if pane != "%1" || session != "" {
+		t.Fatalf("parsePopupMarkerContent(legacy single line) = (%q, %q), want (%q, %q)", pane, session, "%1", "")
+	}
+	pane, session = parsePopupMarkerContent(nil)
+	if pane != "" || session != "" {
+		t.Fatalf("parsePopupMarkerContent(empty) = (%q, %q), want empty", pane, session)
+	}
+}
+
+func TestIsSidebarPreviewActive(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	if isSidebarPreviewActive() {
+		t.Fatal("isSidebarPreviewActive() = true, want false without markers")
+	}
+	other := popupMarkerPath("tty0", "recent-windows")
+	if err := os.WriteFile(other, []byte("%1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if isSidebarPreviewActive() {
+		t.Fatal("isSidebarPreviewActive() = true, want false for non-sidebar popup markers")
+	}
+	marker := popupMarkerPath("tty0", "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\nwork\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !isSidebarPreviewActive() {
+		t.Fatal("isSidebarPreviewActive() = false, want true while a sidebar marker exists")
+	}
+}
+
+func TestAppRunTmuxPopupToggleCloseRestoresSidebarOriginSession(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-sidebar-cancel"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\nwork\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}": clientKey,
+		"#{pane_id}":    "%active",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want not exist", err)
+	}
+	var got []recordedTmuxCall
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && (call.args[0] == "has-session" || call.args[0] == "switch-client") {
+			got = append(got, call)
+		}
+	}
+	want := []recordedTmuxCall{
+		{name: "tmux", args: []string{"has-session", "-t", "=work"}},
+		{name: "tmux", args: []string{"switch-client", "-c", clientKey, "-t", "=work"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cancel restore calls = %#v, want origin has-session then switch-client %#v", got, want)
+	}
+}
+
+func TestAppRunTmuxPopupToggleCloseSkipsSidebarRestoreWhenOriginGone(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-sidebar-cancel-gone"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\nwork\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{
+		formats: map[string]string{
+			"#{client_tty}": clientKey,
+			"#{pane_id}":    "%active",
+		},
+		errors: map[string]error{
+			recordedTmuxCallKey("tmux", "has-session", "-t", "=work"): errors.New("can't find session"),
+		},
+	}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && call.args[0] == "switch-client" {
+			t.Fatalf("tmux calls = %#v, want no switch-client when origin session is gone", runner.calls)
+		}
+	}
+}
+
+func TestAppRunTmuxPopupToggleCloseSkipsSidebarRestoreForLegacyMarker(t *testing.T) {
+	t.Parallel()
+
+	clientKey := "/dev/pts/projmux-test-sidebar-cancel-legacy"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}": clientKey,
+		"#{pane_id}":    "%active",
+	}}
+	cmd := &tmuxCommand{
+		runner:     runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && (call.args[0] == "has-session" || call.args[0] == "switch-client") {
+			t.Fatalf("tmux calls = %#v, want no restore attempt without a recorded origin session", runner.calls)
+		}
+	}
 }

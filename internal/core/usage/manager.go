@@ -99,6 +99,9 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 
 	now := m.now().UTC()
 	// Best-effort cleanup of v1 artifacts. Cheap; safe to retry.
+	// Legacy: retained for usage v1/v2 cleanup; sunset when a post-0.7 review
+	// after two minor releases or 90 days intentionally ignores or removes v1
+	// artifacts.
 	m.store.CleanupLegacyArtifacts()
 
 	priorState, _ := m.store.LoadState()

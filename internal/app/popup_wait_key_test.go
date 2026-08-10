@@ -48,6 +48,7 @@ func TestPopupWaitKeyConsumesOneByte(t *testing.T) {
 
 	tty := &fakePopupTTY{readBuf: []byte("a"), name: "/dev/tty"}
 	restored := false
+	var stdout bytes.Buffer
 	cmd := &popupWaitKeyCommand{
 		openTTY: func() (popupTTY, error) { return tty, nil },
 		setRawMode: func(_ popupTTY) (func(), error) {
@@ -55,7 +56,7 @@ func TestPopupWaitKeyConsumesOneByte(t *testing.T) {
 		},
 	}
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if tty.readN != 1 {
@@ -66,6 +67,9 @@ func TestPopupWaitKeyConsumesOneByte(t *testing.T) {
 	}
 	if !restored {
 		t.Fatalf("setRawMode restore func not invoked")
+	}
+	if got, want := stdout.String(), popupCursorHide+popupCursorShow; got != want {
+		t.Fatalf("cursor escapes = %q, want %q", got, want)
 	}
 }
 
@@ -82,17 +86,21 @@ func TestPopupWaitKeyRecoversWhenTTYOpenFails(t *testing.T) {
 			return func() {}, nil
 		},
 	}
+	var stdout bytes.Buffer
 	// Use a goroutine + closed stdin sentinel: os.Stdin in `go test` is
 	// typically /dev/null, so Read returns 0, io.EOF immediately. That's
 	// the behavior we want — fallback returns nil without hanging.
 	done := make(chan error, 1)
-	go func() { done <- cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}) }()
+	go func() { done <- cmd.Run(nil, &stdout, &bytes.Buffer{}) }()
 
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatalf("Run() error = %v", err)
 		}
+	}
+	if got, want := stdout.String(), popupCursorHide+popupCursorShow; got != want {
+		t.Fatalf("cursor escapes = %q, want %q", got, want)
 	}
 }
 
@@ -112,6 +120,33 @@ func TestPopupWaitKeyTolerantOfSetRawModeFailure(t *testing.T) {
 	}
 	if tty.readN != 1 {
 		t.Fatalf("Read bytes = %d, want 1", tty.readN)
+	}
+}
+
+func TestPopupWaitKeyRestoresRawModeAndCursorOnReadError(t *testing.T) {
+	t.Parallel()
+
+	tty := &fakePopupTTY{readErr: errors.New("read failed"), name: "/dev/tty"}
+	restored := false
+	var stdout bytes.Buffer
+	cmd := &popupWaitKeyCommand{
+		openTTY: func() (popupTTY, error) { return tty, nil },
+		setRawMode: func(_ popupTTY) (func(), error) {
+			return func() { restored = true }, nil
+		},
+	}
+
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !restored {
+		t.Fatalf("setRawMode restore func not invoked after read error")
+	}
+	if !tty.closed {
+		t.Fatalf("Close() not called on tty after read error")
+	}
+	if got, want := stdout.String(), popupCursorHide+popupCursorShow; got != want {
+		t.Fatalf("cursor escapes = %q, want %q", got, want)
 	}
 }
 

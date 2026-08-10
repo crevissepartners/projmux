@@ -4,6 +4,7 @@ package layout
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,7 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/core/sessionstate"
+	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 )
 
 const (
@@ -31,6 +33,7 @@ var (
 	ErrInvalidName     = errors.New("invalid layout preset name")
 	ErrInvalidPreset   = errors.New("invalid layout preset")
 	ErrUnsupportedMode = errors.New("unsupported layout preset mode")
+	ErrUnsafeArtifact  = errors.New("unsafe layout artifact")
 
 	placeholderPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 )
@@ -79,6 +82,40 @@ type Entry struct {
 type Warning struct {
 	Path string
 	Err  error
+}
+
+// Artifact is one project-local layout file read from a verified regular-file
+// handle. Contents are the exact bytes used to parse Preset and must be reused
+// by callers for authorization.
+type Artifact struct {
+	Name         string
+	Path         string
+	RelativePath string
+	Contents     []byte
+	Preset       Preset
+}
+
+// ExecutableCommands returns the startup commands declared by the artifact.
+func (a Artifact) ExecutableCommands() []string {
+	var commands []string
+	for _, window := range a.Preset.Windows {
+		for _, pane := range window.Panes {
+			if pane.Recipe.Kind != sessionstate.RecipeKindStartup {
+				continue
+			}
+			command := strings.TrimSpace(pane.Recipe.Command)
+			if command == "" {
+				continue
+			}
+			commands = append(commands, fmt.Sprintf(
+				"window %d pane %d: %s",
+				window.Index,
+				pane.Index,
+				command,
+			))
+		}
+	}
+	return commands
 }
 
 // Store discovers and writes layouts below ProjectRoot/.projmux/layouts.
@@ -132,25 +169,112 @@ func (s Store) List() ([]Entry, []Warning, error) {
 }
 
 func (s Store) Load(name string) (Preset, error) {
-	path, err := s.Path(name)
+	artifact, err := s.LoadArtifact(name)
 	if err != nil {
 		return Preset{}, err
 	}
-	data, err := os.ReadFile(path)
+	return artifact.Preset, nil
+}
+
+// LoadArtifact reads and parses one layout while rejecting symlinks in the
+// project-local artifact path. The same read supplies both Contents and Preset,
+// allowing authorization and execution to share exact bytes.
+func (s Store) LoadArtifact(name string) (Artifact, error) {
+	path, err := s.Path(name)
+	if err != nil {
+		return Artifact{}, err
+	}
+	if err := rejectArtifactSymlinks(s.ProjectRoot, path); err != nil {
+		return Artifact{}, err
+	}
+	before, err := os.Lstat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return Preset{}, fmt.Errorf("%w: %s", ErrNotFound, path)
+			return Artifact{}, fmt.Errorf("%w: %s", ErrNotFound, path)
 		}
-		return Preset{}, fmt.Errorf("layout: read preset %s: %w", path, err)
+		return Artifact{}, fmt.Errorf("layout: inspect preset %s: %w", path, err)
+	}
+	if !before.Mode().IsRegular() {
+		return Artifact{}, fmt.Errorf("%w: preset is not a regular file: %s", ErrUnsafeArtifact, path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Artifact{}, fmt.Errorf("%w: %s", ErrNotFound, path)
+		}
+		return Artifact{}, fmt.Errorf("layout: open preset %s: %w", path, err)
+	}
+	defer file.Close()
+
+	opened, err := file.Stat()
+	if err != nil {
+		return Artifact{}, fmt.Errorf("layout: inspect opened preset %s: %w", path, err)
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(before, opened) {
+		return Artifact{}, fmt.Errorf("%w: preset changed while opening: %s", ErrUnsafeArtifact, path)
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return Artifact{}, fmt.Errorf("layout: read preset %s: %w", path, err)
+	}
+	openedAfter, err := file.Stat()
+	if err != nil {
+		return Artifact{}, fmt.Errorf("layout: re-inspect opened preset %s: %w", path, err)
+	}
+	after, err := os.Lstat(path)
+	if err != nil {
+		return Artifact{}, fmt.Errorf("%w: preset changed after reading %s: %v", ErrUnsafeArtifact, path, err)
+	}
+	if err := rejectArtifactSymlinks(s.ProjectRoot, path); err != nil {
+		return Artifact{}, err
+	}
+	if after.Mode()&os.ModeSymlink != 0 ||
+		!os.SameFile(openedAfter, after) ||
+		opened.ModTime() != openedAfter.ModTime() ||
+		opened.Size() != openedAfter.Size() {
+		return Artifact{}, fmt.Errorf("%w: preset changed while reading: %s", ErrUnsafeArtifact, path)
 	}
 	preset, err := Parse(string(data))
 	if err != nil {
-		return Preset{}, fmt.Errorf("layout: parse preset %s: %w", path, err)
+		return Artifact{}, fmt.Errorf("layout: parse preset %s: %w", path, err)
 	}
 	if err := preset.Validate(); err != nil {
-		return Preset{}, fmt.Errorf("layout: validate preset %s: %w", path, err)
+		return Artifact{}, fmt.Errorf("layout: validate preset %s: %w", path, err)
 	}
-	return preset.Normalize(), nil
+	return Artifact{
+		Name:         name,
+		Path:         path,
+		RelativePath: filepath.ToSlash(filepath.Join(dirName, name+".toml")),
+		Contents:     data,
+		Preset:       preset.Normalize(),
+	}, nil
+}
+
+func rejectArtifactSymlinks(projectRoot, path string) error {
+	root, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return err
+	}
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(root, absolutePath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%w: preset escapes project root: %s", ErrUnsafeArtifact, path)
+	}
+	current := root
+	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%w: symlink component %s", ErrUnsafeArtifact, current)
+		}
+	}
+	return nil
 }
 
 func (s Store) Save(name string, preset Preset) error {
@@ -195,35 +319,6 @@ func (s Store) Save(name string, preset Preset) error {
 	}
 	cleanup = false
 	return nil
-}
-
-func (s Store) Remove(name string) error {
-	path, err := s.Path(name)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%w: %s", ErrNotFound, path)
-		}
-		return fmt.Errorf("layout: remove preset %s: %w", path, err)
-	}
-	return nil
-}
-
-func (s Store) Show(name string) (string, error) {
-	path, err := s.Path(name)
-	if err != nil {
-		return "", err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("%w: %s", ErrNotFound, path)
-		}
-		return "", fmt.Errorf("layout: read preset %s: %w", path, err)
-	}
-	return string(data), nil
 }
 
 func FromSnapshot(snap sessionstate.Snapshot, projectRoot, description, mode string) Preset {
@@ -507,16 +602,20 @@ func ToSnapshot(p Preset, session, projectRoot string, now time.Time) (sessionst
 	for _, window := range p.Windows {
 		out := sessionstate.Window{
 			Index:           window.Index,
-			Name:            window.Name,
+			Name:            terminaltext.EscapeControls(window.Name),
 			Layout:          window.Layout,
 			ActivePaneIndex: window.ActivePaneIndex,
 			Panes:           make([]sessionstate.Pane, 0, len(window.Panes)),
 		}
 		for _, pane := range window.Panes {
+			recipe := pane.Recipe
+			if recipe.Kind == sessionstate.RecipeKindAgent {
+				recipe.Topic = terminaltext.EscapeControls(recipe.Topic)
+			}
 			out.Panes = append(out.Panes, sessionstate.Pane{
 				Index:  pane.Index,
 				CWD:    expandPath(pane.CWD, projectRoot, session),
-				Recipe: pane.Recipe,
+				Recipe: recipe,
 			})
 		}
 		snap.Windows = append(snap.Windows, out)

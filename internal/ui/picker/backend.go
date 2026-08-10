@@ -2,6 +2,7 @@ package picker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -43,11 +46,33 @@ type Action struct {
 	Label   string
 	Command string
 	Refresh bool
+	Mutate  func(ActionContext) (DeferredUpdate, error)
+}
+
+type ActionContext struct {
+	Key           string
+	Value         string
+	Query         string
+	SelectedIndex int
 }
 
 type Preview struct {
 	Command string
 	Window  string
+}
+
+type DeferredUpdate struct {
+	Items   []Item
+	Preview Preview
+	Result  *Result
+	// FocusValue, when non-empty, moves the selection cursor to the item
+	// whose Value matches it after the update is applied. It overrides the
+	// default behaviour of preserving the previously selected value, which
+	// breaks when that value was removed from the list (e.g. the sidebar
+	// row for a just-killed session). When empty, the previous value is
+	// preserved as before. Falls back safely (0/clamp) if the value is not
+	// present in the new item list.
+	FocusValue string
 }
 
 type Options struct {
@@ -58,6 +83,7 @@ type Options struct {
 	Prompt          string
 	Header          string
 	Footer          string
+	Locale          i18n.Locale
 	Actions         []Action
 	Preview         Preview
 	InitialQuery    string
@@ -66,6 +92,17 @@ type Options struct {
 	DisableSearch   bool
 	AcceptQuery     bool
 	MultiLine       bool
+	// ColorGrid switches runNativeInteractive into the xterm-256 color grid
+	// mode: a navigable swatch grid with a live preview instead of the list
+	// filter/preview machinery. Purely additive; ignored by list pickers.
+	ColorGrid bool
+	// Recorder turns the navigation/search surface into a purpose-built
+	// single-chord recorder while retaining this native picker's input reader
+	// and lifecycle. It is ignored by the color-grid mode.
+	Recorder              *RecorderOptions
+	Theme                 *theme.EffectiveTheme
+	DeferredUpdate        func() (DeferredUpdate, error)
+	DeferredUpdateTrigger <-chan struct{}
 }
 
 type Result struct {
@@ -84,6 +121,35 @@ func ResolveBackend(lookup func(string) string) Backend {
 		_ = lookup(BackendEnv)
 	}
 	return BackendNative
+}
+
+func nativeLocalizedText(key i18n.Key, fallback string) string {
+	text, err := i18n.NewLocalizer(nativeLocale()).Text(key)
+	if err != nil {
+		return fallback
+	}
+	return text.String()
+}
+
+func nativeLocalizedTextForOptions(options Options, key i18n.Key, fallback string) string {
+	locale := options.Locale
+	if locale == "" {
+		locale = nativeLocale()
+	}
+	text, err := i18n.NewLocalizer(locale).Text(key)
+	if err != nil {
+		return fallback
+	}
+	return text.String()
+}
+
+func nativeLocale() i18n.Locale {
+	return i18n.ResolveLocale(i18n.LocaleOptions{
+		LookupEnv: func(name string) (string, bool) {
+			value, ok := os.LookupEnv(name)
+			return value, ok && strings.TrimSpace(value) != ""
+		},
+	}).Locale
 }
 
 func CloseActions(keys ...string) []Action {
@@ -265,9 +331,23 @@ func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, er
 	if options.DisableSearch {
 		query = ""
 	}
+	if options.Recorder != nil && options.Recorder.State.Phase == "" {
+		options.Recorder.State = newRecorderState()
+	}
+	deferredApplied := false
 	for {
 		items := nativeFilteredItems(options, query)
 		renderNative(out, options, items, query)
+		if !deferredApplied && options.DeferredUpdate != nil {
+			deferredApplied = true
+			if update, err := options.DeferredUpdate(); err == nil {
+				options = applyNativeDeferredUpdate(options, update)
+				items = nativeFilteredItems(options, query)
+				renderNative(out, options, items, query)
+			} else {
+				nativeDebugLogf("line ui=%q deferred_update_error=%q", options.UI, err.Error())
+			}
+		}
 
 		line, err := readNativeLine(in)
 		if err != nil && !strings.HasSuffix(line, "\n") {
@@ -386,10 +466,38 @@ type nativeMouseEvent struct {
 	Release bool
 }
 
+type nativeKeyRead struct {
+	key nativeKey
+	err error
+}
+
+var errNativeKeyReaderStopped = errors.New("native key reader stopped")
+
+type nativeKeyReaderInput struct {
+	io.Reader
+	stop <-chan struct{}
+}
+
+type nativeKeyReaderLifecycle interface {
+	nativeKeyReaderStarted()
+	nativeKeyReaderStopped()
+}
+
+type nativeDeferredRead struct {
+	update DeferredUpdate
+	err    error
+}
+
 func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result, error) {
+	if options.ColorGrid {
+		return runNativeColorGrid(in, out, options)
+	}
 	query := strings.TrimSpace(options.InitialQuery)
 	if options.DisableSearch {
 		query = ""
+	}
+	if options.Recorder != nil && options.Recorder.State.Phase == "" {
+		options.Recorder.State = newRecorderState()
 	}
 	queryCursor := nativeRuneLen(query)
 	selected := options.InitialIndex
@@ -399,9 +507,24 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	launchKey := strings.ToLower(strings.TrimSpace(os.Getenv(NativeLaunchKeyEnv)))
 	layout := detectNativeLayout(in)
 	renderer := projmuxpicker.FrameUpdateRenderer{}
+	deferredStarted := false
+	var keyCh <-chan nativeKeyRead
+	var deferredCh <-chan nativeDeferredRead
+	var stopKeyReader chan struct{}
+	var stopDeferred chan struct{}
 	nativeDebugLogf("interactive ui=%q start items=%d launch_key=%q layout=%dx%d", options.UI, len(options.Items), launchKey, layout.Cols, layout.Rows)
 	fmt.Fprint(out, nativeScreenEnter)
 	defer leaveNativeInteractiveScreen(out)
+	defer func() {
+		if stopKeyReader != nil {
+			close(stopKeyReader)
+		}
+	}()
+	defer func() {
+		if stopDeferred != nil {
+			close(stopDeferred)
+		}
+	}()
 
 	for {
 		items := nativeFilteredItems(options, query)
@@ -421,8 +544,23 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		if focusChanged {
 			runNativeFocusAction(options.Actions, focusValue)
 		}
+		if !deferredStarted && options.DeferredUpdate != nil {
+			deferredStarted = true
+			stopKeyReader = make(chan struct{})
+			keyCh = startNativeKeyReader(in, stopKeyReader)
+			stopDeferred = make(chan struct{})
+			deferredCh = startNativeDeferredUpdate(options.DeferredUpdate, options.DeferredUpdateTrigger, stopDeferred)
+		}
 
-		key, err := readNativeKey(in)
+		key, err := nextNativeInteractiveKey(in, keyCh, &deferredCh, func(update DeferredUpdate) {
+			options = applyNativeDeferredUpdate(options, update)
+			nextItems := nativeFilteredItems(options, query)
+			selected = nativeSelectedIndexForValue(nextItems, nativeDeferredFocusValue(update, focusValue), selected)
+			previewOffset = 0
+		}, options.UI)
+		if key.Name == "" && key.Text == "" && err == nil {
+			continue
+		}
 		if err != nil {
 			if err == io.EOF {
 				nativeDebugLogf("interactive ui=%q result=closed reason=eof query=%q", options.UI, query)
@@ -481,9 +619,34 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			}
 			continue
 		}
+		if options.Recorder != nil && (key.Name == "enter" || key.Name == "esc") {
+			kind := recorderEnter
+			if key.Name == "esc" {
+				kind = recorderEscape
+			}
+			state, outcome := reduceRecorderState(options.Recorder.State, recorderEvent{kind: kind}, options.Recorder.Normalize, options.Recorder.Validate)
+			options.Recorder.State = state
+			switch outcome {
+			case recorderConfirm:
+				return Result{Key: "enter", Value: state.Candidate}, nil
+			case recorderCancel:
+				return Result{Key: "esc", Closed: true}, nil
+			default:
+				continue
+			}
+		}
 
 		if action, ok := findAction(options.Actions, key.Name); ok {
-			result, refresh := runNativePickerAction(action, options, items, selected, query)
+			result, refresh, update, err := runNativePickerAction(action, options, items, selected, query)
+			if err != nil {
+				return Result{}, err
+			}
+			if refresh {
+				options = applyNativeDeferredUpdate(options, update)
+				nextItems := nativeFilteredItems(options, query)
+				selected = nativeSelectedIndexForValue(nextItems, nativeDeferredFocusValue(update, selectedNativeValue(items, selected)), selected)
+				previewOffset = 0
+			}
 			nativeDebugLogf("interactive ui=%q action key=%q intent=%q refresh=%t result_key=%q closed=%t value=%q query=%q", options.UI, action.Key, action.Intent, refresh, result.Key, result.Closed, result.Value, result.Query)
 			if refresh {
 				continue
@@ -492,12 +655,35 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		}
 		if key.Text != "" {
 			if action, ok := findAction(options.Actions, key.Text); ok {
-				result, refresh := runNativePickerAction(action, options, items, selected, query)
+				result, refresh, update, err := runNativePickerAction(action, options, items, selected, query)
+				if err != nil {
+					return Result{}, err
+				}
+				if refresh {
+					options = applyNativeDeferredUpdate(options, update)
+					nextItems := nativeFilteredItems(options, query)
+					selected = nativeSelectedIndexForValue(nextItems, nativeDeferredFocusValue(update, selectedNativeValue(items, selected)), selected)
+					previewOffset = 0
+				}
 				nativeDebugLogf("interactive ui=%q text_action key=%q intent=%q refresh=%t result_key=%q closed=%t value=%q query=%q", options.UI, action.Key, action.Intent, refresh, result.Key, result.Closed, result.Value, result.Query)
 				if refresh {
 					continue
 				}
 				return result, nil
+			}
+		}
+
+		if options.Recorder != nil {
+			event := recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: key.Name, Text: key.Text}}
+			state, outcome := reduceRecorderState(options.Recorder.State, event, options.Recorder.Normalize, options.Recorder.Validate)
+			options.Recorder.State = state
+			switch outcome {
+			case recorderConfirm:
+				return Result{Key: "enter", Value: state.Candidate}, nil
+			case recorderCancel:
+				return Result{Key: "esc", Closed: true}, nil
+			default:
+				continue
 			}
 		}
 
@@ -608,6 +794,90 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	}
 }
 
+func startNativeKeyReader(in io.Reader, stop <-chan struct{}) <-chan nativeKeyRead {
+	ch := make(chan nativeKeyRead, 1)
+	go func() {
+		defer close(ch)
+		if lifecycle, ok := in.(nativeKeyReaderLifecycle); ok {
+			lifecycle.nativeKeyReaderStarted()
+			defer lifecycle.nativeKeyReaderStopped()
+		}
+		in := nativeKeyReaderInput{Reader: in, stop: stop}
+		for {
+			key, err := readNativeKey(in)
+			if errors.Is(err, errNativeKeyReaderStopped) {
+				return
+			}
+			select {
+			case ch <- nativeKeyRead{key: key, err: err}:
+			case <-stop:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return ch
+}
+
+func startNativeDeferredUpdate(update func() (DeferredUpdate, error), triggers <-chan struct{}, stop <-chan struct{}) <-chan nativeDeferredRead {
+	ch := make(chan nativeDeferredRead, 1)
+	go func() {
+		defer close(ch)
+		run := func() bool {
+			result, err := update()
+			select {
+			case ch <- nativeDeferredRead{update: result, err: err}:
+				return true
+			case <-stop:
+				return false
+			}
+		}
+		if triggers == nil {
+			_ = run()
+			return
+		}
+		for {
+			select {
+			case _, ok := <-triggers:
+				if !ok {
+					return
+				}
+				if !run() {
+					return
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return ch
+}
+
+func nextNativeInteractiveKey(in io.Reader, keyCh <-chan nativeKeyRead, deferredCh *<-chan nativeDeferredRead, applyDeferred func(DeferredUpdate), ui string) (nativeKey, error) {
+	if keyCh == nil {
+		return readNativeKey(in)
+	}
+	for {
+		select {
+		case deferred, ok := <-*deferredCh:
+			if !ok {
+				*deferredCh = nil
+				continue
+			}
+			if deferred.err != nil {
+				nativeDebugLogf("interactive ui=%q deferred_update_error=%q", ui, deferred.err.Error())
+				continue
+			}
+			applyDeferred(deferred.update)
+			return nativeKey{}, nil
+		case key := <-keyCh:
+			return key.key, key.err
+		}
+	}
+}
+
 func nativeAcceptSelectedResult(options Options, items []Item, selected int, query string) Result {
 	if options.AcceptQuery {
 		return Result{Key: "enter", Query: query}
@@ -629,24 +899,91 @@ func nativeFilteredItems(options Options, query string) []Item {
 	return FilterItems(options.Items, query)
 }
 
-func runNativePickerAction(action Action, options Options, items []Item, selected int, query string) (Result, bool) {
+func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
+	if update.Items != nil {
+		options.Items = append([]Item(nil), update.Items...)
+	}
+	if strings.TrimSpace(update.Preview.Command) != "" || strings.TrimSpace(update.Preview.Window) != "" {
+		options.Preview = update.Preview
+	}
+	return options
+}
+
+// nativeDeferredFocusValue resolves which item value the cursor should track
+// after a deferred update. An explicit DeferredUpdate.FocusValue wins so a
+// refresh can move the cursor to a specific row (e.g. the newly active session
+// after a sidebar kill); otherwise the previously focused value is preserved.
+func nativeDeferredFocusValue(update DeferredUpdate, fallbackValue string) string {
+	if value := strings.TrimSpace(update.FocusValue); value != "" {
+		return value
+	}
+	return fallbackValue
+}
+
+func nativeSelectedIndexForValue(items []Item, value string, fallback int) int {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		for idx, item := range items {
+			if strings.TrimSpace(item.Value) == value {
+				return idx
+			}
+		}
+	}
+	if len(items) == 0 {
+		return 0
+	}
+	if fallback < 0 {
+		return 0
+	}
+	if fallback >= len(items) {
+		return len(items) - 1
+	}
+	return fallback
+}
+
+func runNativePickerAction(action Action, options Options, items []Item, selected int, query string) (Result, bool, DeferredUpdate, error) {
 	value := selectedNativeValue(items, selected)
 	switch action.Intent {
 	case ActionClose:
-		return Result{Key: action.Key, Query: query, Closed: true}, false
+		return Result{Key: action.Key, Query: query, Closed: true}, false, DeferredUpdate{}, nil
 	case ActionCustom:
+		if action.Mutate != nil {
+			update, err := action.Mutate(ActionContext{
+				Key:           action.Key,
+				Value:         value,
+				Query:         query,
+				SelectedIndex: selected,
+			})
+			if err != nil {
+				return Result{}, false, DeferredUpdate{}, fmt.Errorf("run native picker action %q: %w", action.Key, err)
+			}
+			if update.Result != nil {
+				result := *update.Result
+				if result.Key == "" {
+					result.Key = action.Key
+				}
+				if result.Value == "" && !result.Closed {
+					result.Value = value
+				}
+				if result.Query == "" {
+					result.Query = query
+				}
+				return result, false, DeferredUpdate{}, nil
+			}
+			return Result{}, true, update, nil
+		}
 		if strings.TrimSpace(action.Command) != "" {
 			runNativeActionCommand(action.Command, value)
-			return Result{}, true
+			return Result{}, true, DeferredUpdate{}, nil
 		}
-		return Result{Key: action.Key, Value: value, Query: query}, false
+		return Result{Key: action.Key, Value: value, Query: query}, false, DeferredUpdate{}, nil
 	case ActionAccept:
 		if options.AcceptQuery {
-			return Result{Key: action.Key, Query: query}, false
+			return Result{Key: action.Key, Query: query}, false, DeferredUpdate{}, nil
 		}
-		return Result{Key: action.Key, Value: value, Query: query}, false
+		return Result{Key: action.Key, Value: value, Query: query}, false, DeferredUpdate{}, nil
 	default:
-		return Result{}, false
+		return Result{}, false, DeferredUpdate{}, nil
 	}
 }
 
@@ -864,6 +1201,9 @@ func readNativeKey(r io.Reader) (nativeKey, error) {
 	case 0x1b:
 		return readNativeEscapeKey(r)
 	default:
+		if b >= 0x01 && b <= 0x1a {
+			return nativeKey{Name: "ctrl-" + string(rune('a'+b-1))}, nil
+		}
 		return nativePrintableKey(b, r)
 	}
 }
@@ -1028,16 +1368,13 @@ func nativeKeyFromCSIu(params string) nativeKey {
 	}
 	switch codepoint {
 	case 9:
-		if mod == "2" {
-			return nativeKey{Name: "shift-tab"}
-		}
-		return nativeKey{Name: "tab"}
+		return nativeModifiedNamedKey("tab", mod)
 	case 13:
-		return nativeKey{Name: "enter"}
+		return nativeModifiedNamedKey("enter", mod)
 	case 27:
-		return nativeKey{Name: "esc"}
+		return nativeModifiedNamedKey("esc", mod)
 	case 127, 8:
-		return nativeKey{Name: "backspace"}
+		return nativeModifiedNamedKey("backspace", mod)
 	}
 	if codepoint >= 'a' && codepoint <= 'z' {
 		letter := string(rune(codepoint))
@@ -1082,6 +1419,27 @@ func nativeKeyFromCSIu(params string) nativeKey {
 		}
 	}
 	return nativeKey{Name: "esc"}
+}
+
+func nativeModifiedNamedKey(name, modifier string) nativeKey {
+	switch modifier {
+	case "2":
+		return nativeKey{Name: "shift-" + name}
+	case "3":
+		return nativeKey{Name: "alt-" + name}
+	case "4":
+		return nativeKey{Name: "alt-shift-" + name}
+	case "5":
+		return nativeKey{Name: "ctrl-" + name}
+	case "6":
+		return nativeKey{Name: "ctrl-shift-" + name}
+	case "7":
+		return nativeKey{Name: "ctrl-alt-" + name}
+	case "8":
+		return nativeKey{Name: "ctrl-alt-shift-" + name}
+	default:
+		return nativeKey{Name: name}
+	}
 }
 
 func nativeBaseCSIName(final byte, params string) string {
@@ -1183,12 +1541,15 @@ func nativePrintableKey(first byte, r io.Reader) (nativeKey, error) {
 func readNativeByte(r io.Reader) (byte, error) {
 	var buf [1]byte
 	for {
+		if nativeKeyReadStopped(r) {
+			return 0, errNativeKeyReaderStopped
+		}
 		n, err := r.Read(buf[:])
 		if n > 0 {
 			return buf[0], nil
 		}
 		if err == io.EOF {
-			if _, ok := r.(*os.File); ok {
+			if nativeReaderIsFile(r) {
 				time.Sleep(nativeReadPollDelay)
 				continue
 			}
@@ -1204,12 +1565,15 @@ func readNativeByte(r io.Reader) (byte, error) {
 func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 	var buf [1]byte
 	for range nativeMaybeReadAttempts {
+		if nativeKeyReadStopped(r) {
+			return 0, false, errNativeKeyReaderStopped
+		}
 		n, err := r.Read(buf[:])
 		if n > 0 {
 			return buf[0], true, nil
 		}
 		if err == io.EOF {
-			if _, ok := r.(*os.File); ok {
+			if nativeReaderIsFile(r) {
 				time.Sleep(nativeReadPollDelay)
 				continue
 			}
@@ -1221,6 +1585,31 @@ func readNativeByteMaybe(r io.Reader) (byte, bool, error) {
 		time.Sleep(nativeReadPollDelay)
 	}
 	return 0, false, nil
+}
+
+func nativeKeyReadStopped(r io.Reader) bool {
+	input, ok := r.(nativeKeyReaderInput)
+	if !ok || input.stop == nil {
+		return false
+	}
+	select {
+	case <-input.stop:
+		return true
+	default:
+		return false
+	}
+}
+
+func nativeReaderIsFile(r io.Reader) bool {
+	switch reader := r.(type) {
+	case *os.File:
+		return true
+	case nativeKeyReaderInput:
+		_, ok := reader.Reader.(*os.File)
+		return ok
+	default:
+		return false
+	}
 }
 
 func readNativeLine(r io.Reader) (string, error) {
@@ -1328,9 +1717,9 @@ func nativeInteractiveFrame(options Options, items []Item, query string, queryCu
 	renderNativeInteractiveContent(&body, options, items, query, queryCursor, selected, previewOffset, contentLayout)
 	var frame strings.Builder
 	if len(options.TitleChips) > 0 {
-		renderNativeFrameWithChips(&frame, body.String(), options.TitleChips, layout)
+		renderNativeFrameWithChips(&frame, body.String(), options.TitleChips, layout, options)
 	} else {
-		renderNativeFrameWithTitle(&frame, body.String(), options.Title, layout)
+		renderNativeFrameWithTitle(&frame, body.String(), options.Title, layout, options)
 	}
 	return frame.String()
 }
@@ -1350,16 +1739,21 @@ func nativeContentLayoutForOptions(layout nativeLayout, options Options) nativeL
 
 func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
 	var screen strings.Builder
+	pickerTheme := nativeTheme(options)
 	if header := strings.TrimSpace(options.Header); header != "" {
-		fmt.Fprintln(&screen, nativeHeaderLine(header, layout.Cols))
+		fmt.Fprintln(&screen, nativeHeaderLineWithTheme(pickerTheme, header, layout.Cols))
+	}
+	if options.Recorder != nil {
+		renderNativeRecorderContent(w, pickerTheme, screen.String(), options, layout)
+		return
 	}
 	if !options.DisableSearch {
 		prompt := strings.TrimSpace(options.Prompt)
 		if prompt == "" {
 			prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
 		}
-		fmt.Fprintln(&screen, nativePromptLineWithCursor(prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
-		fmt.Fprintln(&screen, nativeSearchSeparatorLine(layout.Cols))
+		fmt.Fprintln(&screen, nativePromptLineWithCursorAndThemeForOptions(pickerTheme, options, prompt, query, queryCursor, len(items), len(options.Items), layout.Cols))
+		fmt.Fprintln(&screen, nativeSearchSeparatorLineWithTheme(pickerTheme, layout.Cols))
 	}
 
 	placement := nativePreviewPlacement(options.Preview.Window)
@@ -1369,6 +1763,10 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		previewLimit = previewHeight
 	}
 	previewLines := nativePreviewLines(options, items, selected, previewOffset, previewLimit)
+	reservePreview := nativeReservePreviewFrame(options, placement)
+	if reservePreview && len(previewLines) == 0 {
+		previewLines = nativeBlankPreviewLines(previewHeight)
+	}
 	listLimit := nativeListLimit(options, layout, placement, previewHeight, len(previewLines) > 0)
 	start, end := nativeVisibleRange(len(items), selected, listLimit)
 	if options.MultiLine {
@@ -1376,18 +1774,18 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	}
 	displayItems := items
 	if !options.MultiLine {
-		displayItems = nativeHighlightSimpleItems(options, items, query)
+		displayItems = nativeHighlightSimpleItemsWithTheme(pickerTheme, options, items, query)
 	}
-	listLines := nativeInteractiveListLines(displayItems, start, end, selected, options.MultiLine)
+	listLines := nativeInteractiveListLinesWithTheme(pickerTheme, displayItems, start, end, selected, options.MultiLine)
 	prependedRows := 0
 	if options.MultiLine {
-		listLines = nativeAppendPartialNextItemLines(displayItems, listLines, end, selected, listLimit)
-		listLines, prependedRows = nativePrependPartialPreviousItemLines(displayItems, listLines, start, selected, listLimit)
+		listLines = nativeAppendPartialNextItemLinesWithTheme(pickerTheme, displayItems, listLines, end, selected, listLimit)
+		listLines, prependedRows = nativePrependPartialPreviousItemLinesWithTheme(pickerTheme, displayItems, listLines, start, selected, listLimit)
 	}
 	var main strings.Builder
 	if len(items) == 0 {
-		fmt.Fprintln(&main, "  no matches")
-		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
+		fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerEmptyNoMatches, "no matches"))
+		writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
 	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
@@ -1398,7 +1796,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 			scrollEnd = min(scrollStart+len(listLines), scrollTotal)
 		}
 		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, scrollTotal, scrollStart, scrollEnd, listLimit)
-		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
+		writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
 	scrollRows := listLimit
@@ -1410,19 +1808,41 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		scrollStart = max(scrollStart-prependedRows, 0)
 		scrollEnd = min(scrollStart+len(listLines), scrollTotal)
 	}
-	listLines = nativeListLinesWithScrollbarRows(listLines, scrollTotal, scrollStart, scrollEnd, layout.Cols, scrollRows)
+	listLines = nativeListLinesWithScrollbarRowsWithTheme(pickerTheme, listLines, scrollTotal, scrollStart, scrollEnd, layout.Cols, scrollRows)
 	for _, line := range listLines {
 		fmt.Fprintln(&main, line)
 	}
 	if len(previewLines) > 0 && placement == "down" {
 		renderNativeDownPreview(&main, previewLines, layout)
-		writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
+		writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
 		return
 	}
 	if len(previewLines) > 0 {
 		renderNativeInlinePreview(&main, previewLines, layout)
 	}
-	writeNativeContentWithFooter(w, screen.String(), main.String(), options.Footer, layout)
+	writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
+}
+
+func renderNativeRecorderContent(w io.Writer, pickerTheme projmuxpicker.Theme, top string, options Options, layout nativeLayout) {
+	state := options.Recorder.State
+	if state.Phase == "" {
+		state = newRecorderState()
+	}
+	var main strings.Builder
+	switch state.Phase {
+	case RecorderStaged, RecorderConfirmed:
+		fmt.Fprintln(&main, "  Staged: "+state.Candidate)
+		fmt.Fprintln(&main, "  Not saved yet. Press Enter to save and apply, or Esc to discard.")
+	default:
+		fmt.Fprintln(&main, "  Recording")
+		fmt.Fprintln(&main, "  Press a key combination")
+		fmt.Fprintln(&main, "  Not saved yet. Esc cancels without changes.")
+	}
+	if strings.TrimSpace(state.Message) != "" {
+		fmt.Fprintln(&main)
+		fmt.Fprintln(&main, "  "+state.Message)
+	}
+	writeNativeContentWithFooterWithTheme(w, pickerTheme, top, main.String(), options.Footer, layout)
 }
 
 func nativeListLimit(options Options, layout nativeLayout, previewPlacement string, previewHeight int, hasPreview bool) int {
@@ -1436,7 +1856,22 @@ func nativeListLimit(options Options, layout nativeLayout, previewPlacement stri
 	return available
 }
 
+func nativeReservePreviewFrame(options Options, placement string) bool {
+	return strings.TrimSpace(options.UI) == "sidebar" && placement == "down" && strings.TrimSpace(options.Preview.Window) != ""
+}
+
+func nativeBlankPreviewLines(height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	return make([]string, height)
+}
+
 func nativeAppendPartialNextItemLines(items []Item, lines []string, next, selected, limit int) []string {
+	return nativeAppendPartialNextItemLinesWithTheme(projmuxpicker.DefaultTheme, items, lines, next, selected, limit)
+}
+
+func nativeAppendPartialNextItemLinesWithTheme(pickerTheme projmuxpicker.Theme, items []Item, lines []string, next, selected, limit int) []string {
 	if limit <= 0 || len(lines) >= limit || next < 0 || next >= len(items) {
 		return lines
 	}
@@ -1445,7 +1880,7 @@ func nativeAppendPartialNextItemLines(items []Item, lines []string, next, select
 		return lines
 	}
 	out := append([]string(nil), lines...)
-	nextLines := nativePartialNextItemLines(items, next, selected)
+	nextLines := nativePartialNextItemLinesWithTheme(pickerTheme, items, next, selected)
 	if len(nextLines) > remaining {
 		nextLines = nextLines[:remaining]
 	}
@@ -1453,6 +1888,10 @@ func nativeAppendPartialNextItemLines(items []Item, lines []string, next, select
 }
 
 func nativePrependPartialPreviousItemLines(items []Item, lines []string, start, selected, limit int) ([]string, int) {
+	return nativePrependPartialPreviousItemLinesWithTheme(projmuxpicker.DefaultTheme, items, lines, start, selected, limit)
+}
+
+func nativePrependPartialPreviousItemLinesWithTheme(pickerTheme projmuxpicker.Theme, items []Item, lines []string, start, selected, limit int) ([]string, int) {
 	if limit <= 0 || len(lines) >= limit || start <= 0 || start > len(items) {
 		return lines, 0
 	}
@@ -1460,7 +1899,7 @@ func nativePrependPartialPreviousItemLines(items []Item, lines []string, start, 
 	if remaining <= 0 {
 		return lines, 0
 	}
-	prefix := nativeLinesBeforeItem(items, start, selected)
+	prefix := nativeLinesBeforeItemWithTheme(pickerTheme, items, start, selected)
 	if len(prefix) > remaining {
 		prefix = prefix[len(prefix)-remaining:]
 	}
@@ -1471,11 +1910,15 @@ func nativePrependPartialPreviousItemLines(items []Item, lines []string, start, 
 }
 
 func nativeLinesBeforeItem(items []Item, index, selected int) []string {
+	return nativeLinesBeforeItemWithTheme(projmuxpicker.DefaultTheme, items, index, selected)
+}
+
+func nativeLinesBeforeItemWithTheme(pickerTheme projmuxpicker.Theme, items []Item, index, selected int) []string {
 	if index <= 0 || index >= len(items) {
 		return nil
 	}
-	withCurrent := nativeInteractiveListLines(items, 0, index+1, selected, true)
-	current := nativeInteractiveListLines(items, index, index+1, selected, true)
+	withCurrent := nativeInteractiveListLinesWithTheme(pickerTheme, items, 0, index+1, selected, true)
+	current := nativeInteractiveListLinesWithTheme(pickerTheme, items, index, index+1, selected, true)
 	if len(current) == 0 || len(withCurrent) <= len(current) {
 		return nil
 	}
@@ -1483,16 +1926,20 @@ func nativeLinesBeforeItem(items []Item, index, selected int) []string {
 }
 
 func nativePartialNextItemLines(items []Item, next, selected int) []string {
+	return nativePartialNextItemLinesWithTheme(projmuxpicker.DefaultTheme, items, next, selected)
+}
+
+func nativePartialNextItemLinesWithTheme(pickerTheme projmuxpicker.Theme, items []Item, next, selected int) []string {
 	if next < 0 || next >= len(items) {
 		return nil
 	}
 	if next == 0 {
-		return nativeInteractiveItemLines(items[next], next == selected, true)
+		return nativeInteractiveItemLinesWithTheme(pickerTheme, items[next], next == selected, true)
 	}
-	withNext := nativeInteractiveListLines(items, next-1, next+1, selected, true)
-	withoutNext := nativeInteractiveListLines(items, next-1, next, selected, true)
+	withNext := nativeInteractiveListLinesWithTheme(pickerTheme, items, next-1, next+1, selected, true)
+	withoutNext := nativeInteractiveListLinesWithTheme(pickerTheme, items, next-1, next, selected, true)
 	if len(withNext) <= len(withoutNext) {
-		return nativeInteractiveItemLines(items[next], next == selected, true)
+		return nativeInteractiveItemLinesWithTheme(pickerTheme, items[next], next == selected, true)
 	}
 	return withNext[len(withoutNext):]
 }
@@ -1524,20 +1971,39 @@ func nativeSearchSeparatorLine(cols int) string {
 	return projmuxpicker.SeparatorLine(cols)
 }
 
+func nativeSearchSeparatorLineWithTheme(pickerTheme projmuxpicker.Theme, cols int) string {
+	return projmuxpicker.SeparatorLineWithTheme(pickerTheme, cols)
+}
+
 func nativeHeaderLine(header string, cols int) string {
 	return projmuxpicker.HeaderLine(header, cols)
+}
+
+func nativeHeaderLineWithTheme(pickerTheme projmuxpicker.Theme, header string, cols int) string {
+	return projmuxpicker.HeaderLineWithTheme(pickerTheme, header, cols)
 }
 
 func renderNativeFrame(w io.Writer, content string, layout nativeLayout) {
 	projmuxpicker.DefaultRenderer().RenderFrame(w, content, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
-func renderNativeFrameWithTitle(w io.Writer, content, title string, layout nativeLayout) {
-	projmuxpicker.DefaultRenderer().RenderFrameWithTitle(w, content, title, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+func renderNativeFrameWithTitle(w io.Writer, content, title string, layout nativeLayout, options Options) {
+	nativeRenderer(options).RenderFrameWithTitle(w, content, title, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
 }
 
-func renderNativeFrameWithChips(w io.Writer, content string, chips []projmuxpicker.Chip, layout nativeLayout) {
-	projmuxpicker.DefaultRenderer().RenderFrameWithChips(w, content, chips, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+func renderNativeFrameWithChips(w io.Writer, content string, chips []projmuxpicker.Chip, layout nativeLayout, options Options) {
+	nativeRenderer(options).RenderFrameWithChips(w, content, chips, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+}
+
+func nativeRenderer(options Options) projmuxpicker.Renderer {
+	return projmuxpicker.NewRenderer(nativeTheme(options))
+}
+
+func nativeTheme(options Options) projmuxpicker.Theme {
+	if options.Theme == nil {
+		return projmuxpicker.DefaultTheme
+	}
+	return projmuxpicker.ThemeFromEffective(*options.Theme)
 }
 
 func nativeTitlebarRowsForOptions(options Options) int {
@@ -1549,6 +2015,25 @@ func nativeTitlebarRowsForOptions(options Options) int {
 
 func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout nativeLayout) {
 	projmuxpicker.WriteContentWithFooter(w, top, main, footer, projmuxpicker.Layout{Rows: layout.Rows, Cols: layout.Cols})
+}
+
+func writeNativeContentWithFooterWithTheme(w io.Writer, pickerTheme projmuxpicker.Theme, top, main, footer string, layout nativeLayout) {
+	var screen strings.Builder
+	screen.WriteString(top)
+	screen.WriteString(main)
+	footerLines := projmuxpicker.FooterBlockLinesWithTheme(pickerTheme, footer, layout.Cols)
+	if len(footerLines) == 0 {
+		fmt.Fprint(w, screen.String())
+		return
+	}
+	remaining := layout.Rows - nativeRenderedTextLineCount(screen.String()) - len(footerLines)
+	for range remaining {
+		fmt.Fprintln(&screen)
+	}
+	for _, line := range footerLines {
+		fmt.Fprintln(&screen, line)
+	}
+	fmt.Fprint(w, screen.String())
 }
 
 func nativeFooterBlockLines(footer string, cols int) []string {
@@ -1564,11 +2049,19 @@ func nativePromptLine(prompt, query string, matches, total, cols int) string {
 }
 
 func nativePromptLineWithCursor(prompt, query string, cursor, matches, total, cols int) string {
-	return projmuxpicker.PromptLineWithCursor(prompt, query, cursor, matches, total, cols)
+	return projmuxpicker.PromptLineWithCursorLabel(nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, cursor, matches, total, cols)
+}
+
+func nativePromptLineWithCursorAndTheme(pickerTheme projmuxpicker.Theme, prompt, query string, cursor, matches, total, cols int) string {
+	return projmuxpicker.PromptLineWithRenderedQueryLabelAndTheme(pickerTheme, nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, projmuxpicker.QueryWithCursorAndTheme(pickerTheme, query, cursor), matches, total, cols)
+}
+
+func nativePromptLineWithCursorAndThemeForOptions(pickerTheme projmuxpicker.Theme, options Options, prompt, query string, cursor, matches, total, cols int) string {
+	return projmuxpicker.PromptLineWithRenderedQueryLabelAndTheme(pickerTheme, nativeLocalizedTextForOptions(options, i18n.KeyPickerPromptSearch, "Search"), prompt, query, projmuxpicker.QueryWithCursorAndTheme(pickerTheme, query, cursor), matches, total, cols)
 }
 
 func nativePromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {
-	return projmuxpicker.PromptLineWithRenderedQuery(prompt, query, renderedQuery, matches, total, cols)
+	return projmuxpicker.PromptLineWithRenderedQueryLabel(nativeLocalizedText(i18n.KeyPickerPromptSearch, "Search"), prompt, query, renderedQuery, matches, total, cols)
 }
 
 func nativeQueryWithCursor(query string, cursor int) string {
@@ -1648,12 +2141,20 @@ func nativeInteractiveListLines(items []Item, start, end, selected int, multiLin
 	return projmuxpicker.InteractiveListLines(nativeRows(items), start, end, selected, multiLine)
 }
 
+func nativeInteractiveListLinesWithTheme(pickerTheme projmuxpicker.Theme, items []Item, start, end, selected int, multiLine bool) []string {
+	return projmuxpicker.InteractiveListLinesWithTheme(pickerTheme, nativeRows(items), start, end, selected, multiLine)
+}
+
 func nativeListLinesWithScrollbar(lines []string, total, start, end, width int) []string {
 	return projmuxpicker.ListLinesWithScrollbar(lines, total, start, end, width)
 }
 
 func nativeListLinesWithScrollbarRows(lines []string, total, start, end, width, rows int) []string {
 	return projmuxpicker.ListLinesWithScrollbarRows(lines, total, start, end, width, rows)
+}
+
+func nativeListLinesWithScrollbarRowsWithTheme(pickerTheme projmuxpicker.Theme, lines []string, total, start, end, width, rows int) []string {
+	return projmuxpicker.ListLinesWithScrollbarRowsWithTheme(pickerTheme, lines, total, start, end, width, rows)
 }
 
 func nativeListScrollbarUnits(items []Item, start, end int, multiLine bool) (int, int, int) {
@@ -1686,6 +2187,10 @@ func nativeInteractiveItemLines(item Item, selected, multiLine bool) []string {
 	return projmuxpicker.InteractiveRowLines(nativeRow(item), selected, multiLine)
 }
 
+func nativeInteractiveItemLinesWithTheme(pickerTheme projmuxpicker.Theme, item Item, selected, multiLine bool) []string {
+	return projmuxpicker.InteractiveRowLinesWithTheme(pickerTheme, nativeRow(item), selected, multiLine)
+}
+
 func nativeSelectedContent(value string) string {
 	return projmuxpicker.SelectedContent(value)
 }
@@ -1710,6 +2215,10 @@ func nativeRow(item Item) projmuxpicker.Row {
 }
 
 func nativeHighlightSimpleItems(options Options, items []Item, query string) []Item {
+	return nativeHighlightSimpleItemsWithTheme(projmuxpicker.DefaultTheme, options, items, query)
+}
+
+func nativeHighlightSimpleItemsWithTheme(pickerTheme projmuxpicker.Theme, options Options, items []Item, query string) []Item {
 	query = strings.TrimSpace(query)
 	if query == "" || options.DisableSearch || hasNativeSearchKey(options.Items) {
 		return items
@@ -1724,7 +2233,7 @@ func nativeHighlightSimpleItems(options Options, items []Item, query string) []I
 		if !ok {
 			continue
 		}
-		highlighted[i].Label = nativeHighlightANSIVisiblePositions(label, positions)
+		highlighted[i].Label = nativeHighlightANSIVisiblePositionsWithTheme(pickerTheme, label, positions)
 	}
 	return highlighted
 }
@@ -1768,8 +2277,16 @@ func nativeFuzzyMatchPositions(source string, pattern []rune, caseSensitive bool
 }
 
 func nativeHighlightANSIVisiblePositions(value string, positions []int) string {
+	return nativeHighlightANSIVisiblePositionsWithTheme(projmuxpicker.DefaultTheme, value, positions)
+}
+
+func nativeHighlightANSIVisiblePositionsWithTheme(pickerTheme projmuxpicker.Theme, value string, positions []int) string {
 	if len(positions) == 0 || value == "" {
 		return value
+	}
+	highlightStart := pickerTheme.Highlight
+	if highlightStart == "" {
+		highlightStart = nativeHighlightStart
 	}
 	positionSet := make(map[int]struct{}, len(positions))
 	for _, position := range positions {
@@ -1801,7 +2318,7 @@ func nativeHighlightANSIVisiblePositions(value string, positions []int) string {
 			break
 		}
 		if _, ok := positionSet[visible]; ok {
-			out.WriteString(nativeHighlightStart)
+			out.WriteString(highlightStart)
 			out.WriteRune(r)
 			out.WriteString(nativeReset)
 			out.WriteString(activeSGR)
@@ -1962,7 +2479,7 @@ func renderNative(w io.Writer, options Options, items []Item, query string) {
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
 		fmt.Fprintln(w, footer)
 	}
-	fmt.Fprint(w, "number, search, or empty to close: ")
+	fmt.Fprint(w, nativeLocalizedTextForOptions(options, i18n.KeyPickerLinePrompt, "number, search, or empty to close: "))
 }
 
 func findAction(actions []Action, key string) (Action, bool) {

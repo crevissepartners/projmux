@@ -2,19 +2,25 @@ package app
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -27,10 +33,27 @@ const (
 	updateCacheMaxAge   = 24 * time.Hour
 	updateHTTPTimeout   = 10 * time.Second
 	updateReleaseURL    = "https://api.github.com/repos/crevissepartners/projmux/releases/latest"
+
+	updateMaxCompressedBytes   int64 = 64 << 20
+	updateMaxTarBytes          int64 = 256 << 20
+	updateMaxTotalRegularBytes int64 = 192 << 20
+	updateMaxRegularFileBytes  int64 = 128 << 20
+	updateMaxTarEntries              = 256
+	updateMaxRedirects               = 5
 )
+
+var errUpdateTarTooLarge = errors.New("release archive exceeded extracted byte limit")
 
 type updateHTTPClient interface {
 	Do(*http.Request) (*http.Response, error)
+}
+
+type updateArchiveLimits struct {
+	compressedBytes   int64
+	tarBytes          int64
+	totalRegularBytes int64
+	regularFileBytes  int64
+	entries           int
 }
 
 type updateCommand struct {
@@ -49,6 +72,9 @@ type updateCommand struct {
 	chmod       func(name string, mode os.FileMode) error
 	remove      func(name string) error
 	copyFile    func(src, dst string) error
+	buildInfo   func() (*debug.BuildInfo, bool)
+	userHomeDir func() (string, error)
+	limits      updateArchiveLimits
 }
 
 type updateCache struct {
@@ -87,6 +113,7 @@ type githubRelease struct {
 type githubReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+	Digest             string `json:"digest"`
 }
 
 func newUpdateCommand() *updateCommand {
@@ -106,6 +133,9 @@ func newUpdateCommand() *updateCommand {
 		chmod:       os.Chmod,
 		remove:      os.Remove,
 		copyFile:    copyRegularFile,
+		buildInfo:   debug.ReadBuildInfo,
+		userHomeDir: os.UserHomeDir,
+		limits:      defaultUpdateArchiveLimits(),
 	}
 }
 
@@ -185,7 +215,12 @@ func (c updateApplyCommand) String() string {
 func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateApplyCommand, error) {
 	switch source {
 	case "npm":
-		commands := []updateApplyCommand{{Name: "npm", Args: []string{"update", "-g", "projmux"}}}
+		// `npm update -g` honors the installed semver range and frequently
+		// refuses to cross into a newer minor/major, so global installs get
+		// stuck on an old version. `npm install -g projmux@latest` always
+		// pulls the newest published release and re-resolves the per-platform
+		// optionalDependency, which is what "update" must actually do.
+		commands := []updateApplyCommand{{Name: "npm", Args: []string{"install", "-g", "projmux@latest"}}}
 		if !noApply {
 			commands = append(commands, updateApplyCommand{Name: "projmux", Args: []string{"tmux", "apply"}})
 		}
@@ -203,9 +238,9 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 	case "github-release":
 		return nil, errors.New("update apply for github-release installs is handled by direct release binary replacement")
 	case "source":
-		return nil, errors.New("update apply for source installs is not supported; update the source checkout and rebuild")
+		return nil, errors.New("update apply is not available for source installs; update the checkout with `git pull --ff-only && make install`")
 	default:
-		return nil, errors.New("update apply requires PROJMUX_INSTALLER=npm, PROJMUX_INSTALLER=go, or PROJMUX_INSTALLER=github-release")
+		return nil, errors.New("update apply could not detect a supported installer; run from an npm/go/github-release install or set PROJMUX_INSTALLER=npm|go|github-release (source installs update with `git pull --ff-only && make install`)")
 	}
 }
 
@@ -266,7 +301,7 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 	if _, err := fmt.Fprintf(stdout, ">> downloading %s\n", asset.Name); err != nil {
 		return err
 	}
-	if err := c.downloadAndExtractReleaseAsset(context.Background(), asset.BrowserDownloadURL, extracted); err != nil {
+	if err := c.downloadAndExtractReleaseAsset(context.Background(), asset, extracted); err != nil {
 		return err
 	}
 	if err := c.atomicReplaceRelease(extracted, target); err != nil {
@@ -304,31 +339,156 @@ func (c *updateCommand) createReleaseScratchDir(target string) (string, error) {
 	return tmpDir, nil
 }
 
-func (c *updateCommand) downloadAndExtractReleaseAsset(ctx context.Context, url, dst string) error {
+func (c *updateCommand) downloadAndExtractReleaseAsset(ctx context.Context, asset githubReleaseAsset, dst string) error {
 	if c.client == nil {
 		return errors.New("update apply: HTTP client is not configured")
 	}
-	url = strings.TrimSpace(url)
-	if url == "" {
+	assetURL := strings.TrimSpace(asset.BrowserDownloadURL)
+	if assetURL == "" {
 		return errors.New("update apply: release asset did not include browser_download_url")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	parsedURL, err := url.Parse(assetURL)
+	if err != nil {
+		return fmt.Errorf("update apply: parse release asset URL: %w", err)
+	}
+	if err := validateReleaseAssetURL(parsedURL); err != nil {
+		return fmt.Errorf("update apply: release asset URL: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
 	if err != nil {
 		return fmt.Errorf("update apply: build release asset request: %w", err)
 	}
 	req.Header.Set("Accept", "application/octet-stream")
 	req.Header.Set("User-Agent", "projmux/"+version.String())
 
-	resp, err := c.client.Do(req)
+	resp, err := c.doReleaseAssetRequest(req)
 	if err != nil {
 		return fmt.Errorf("update apply: download release asset: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.Request != nil && resp.Request.URL != nil {
+		if err := validateReleaseAssetURL(resp.Request.URL); err != nil {
+			return fmt.Errorf("update apply: final release asset URL: %w", err)
+		}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("update apply: release asset request returned status %d", resp.StatusCode)
 	}
-	if err := extractProjmuxBinary(resp.Body, dst); err != nil {
+	limits := c.archiveLimits()
+	if resp.ContentLength > limits.compressedBytes {
+		return fmt.Errorf("update apply: release asset compressed size %d exceeds limit %d", resp.ContentLength, limits.compressedBytes)
+	}
+	archive, err := readBoundedBytes(resp.Body, limits.compressedBytes)
+	if err != nil {
+		return fmt.Errorf("update apply: read release asset: %w", err)
+	}
+	if err := verifyReleaseAssetDigest(archive, asset.Digest); err != nil {
+		return fmt.Errorf("update apply: verify release asset: %w", err)
+	}
+	if err := extractProjmuxBinaryWithLimits(archive, dst, limits); err != nil {
 		return fmt.Errorf("update apply: extract release asset: %w", err)
+	}
+	return nil
+}
+
+func (c *updateCommand) doReleaseAssetRequest(req *http.Request) (*http.Response, error) {
+	client, ok := c.client.(*http.Client)
+	if !ok {
+		return c.client.Do(req)
+	}
+	cloned := *client
+	originalCheckRedirect := client.CheckRedirect
+	cloned.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if len(via) > updateMaxRedirects {
+			return fmt.Errorf("release asset redirect limit exceeded")
+		}
+		if err := validateReleaseAssetURL(next.URL); err != nil {
+			return fmt.Errorf("release asset redirect URL: %w", err)
+		}
+		if originalCheckRedirect != nil {
+			return originalCheckRedirect(next, via)
+		}
+		return nil
+	}
+	return cloned.Do(req)
+}
+
+func validateReleaseAssetURL(u *url.URL) error {
+	if u == nil {
+		return errors.New("URL is missing")
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("scheme %q is not allowed", u.Scheme)
+	}
+	if u.User != nil {
+		return errors.New("userinfo is not allowed")
+	}
+	if port := u.Port(); port != "" && port != "443" {
+		return fmt.Errorf("port %q is not allowed", port)
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com":
+		return nil
+	default:
+		return fmt.Errorf("host %q is not allowed", u.Hostname())
+	}
+}
+
+func defaultUpdateArchiveLimits() updateArchiveLimits {
+	return updateArchiveLimits{
+		compressedBytes:   updateMaxCompressedBytes,
+		tarBytes:          updateMaxTarBytes,
+		totalRegularBytes: updateMaxTotalRegularBytes,
+		regularFileBytes:  updateMaxRegularFileBytes,
+		entries:           updateMaxTarEntries,
+	}
+}
+
+func (c *updateCommand) archiveLimits() updateArchiveLimits {
+	limits := c.limits
+	defaults := defaultUpdateArchiveLimits()
+	if limits.compressedBytes <= 0 {
+		limits.compressedBytes = defaults.compressedBytes
+	}
+	if limits.tarBytes <= 0 {
+		limits.tarBytes = defaults.tarBytes
+	}
+	if limits.totalRegularBytes <= 0 {
+		limits.totalRegularBytes = defaults.totalRegularBytes
+	}
+	if limits.regularFileBytes <= 0 {
+		limits.regularFileBytes = defaults.regularFileBytes
+	}
+	if limits.entries <= 0 {
+		limits.entries = defaults.entries
+	}
+	return limits
+}
+
+func readBoundedBytes(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("compressed size exceeds limit %d", limit)
+	}
+	return data, nil
+}
+
+func verifyReleaseAssetDigest(archive []byte, digest string) error {
+	digest = strings.TrimSpace(digest)
+	algorithm, encoded, ok := strings.Cut(digest, ":")
+	if !ok || !strings.EqualFold(strings.TrimSpace(algorithm), "sha256") {
+		return errors.New("release asset digest is missing or does not use sha256")
+	}
+	want, err := hex.DecodeString(strings.TrimSpace(encoded))
+	if err != nil || len(want) != sha256.Size {
+		return errors.New("release asset sha256 digest is malformed")
+	}
+	got := sha256.Sum256(archive)
+	if subtle.ConstantTimeCompare(got[:], want) != 1 {
+		return errors.New("release asset sha256 digest mismatch")
 	}
 	return nil
 }
@@ -395,22 +555,8 @@ func (c *updateCommand) runCheck(args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf("update check does not accept positional arguments")
 	}
 
-	rel, err := c.fetchLatestRelease(context.Background())
+	cache, err := c.fetchAndSaveLatestRelease(context.Background())
 	if err != nil {
-		return err
-	}
-	cache := updateCache{
-		Version:     1,
-		CheckedAt:   c.clock().UTC(),
-		TagName:     strings.TrimSpace(rel.TagName),
-		Name:        strings.TrimSpace(rel.Name),
-		HTMLURL:     strings.TrimSpace(rel.HTMLURL),
-		PublishedAt: rel.PublishedAt.UTC(),
-	}
-	if cache.TagName == "" {
-		return errors.New("update check: latest release response did not include tag_name")
-	}
-	if err := c.saveCache(cache); err != nil {
 		return err
 	}
 
@@ -443,6 +589,43 @@ func (c *updateCommand) status() (updateStatus, error) {
 		}, nil
 	}
 	return c.statusFromCache(cache)
+}
+
+func (c *updateCommand) refreshCacheIfNeeded(ctx context.Context) error {
+	cache, ok, err := c.loadCache()
+	if err != nil {
+		return err
+	}
+	if ok {
+		checked := cache.CheckedAt.UTC()
+		if !checked.IsZero() && c.clock().Sub(checked) <= updateCacheMaxAge {
+			return nil
+		}
+	}
+	_, err = c.fetchAndSaveLatestRelease(ctx)
+	return err
+}
+
+func (c *updateCommand) fetchAndSaveLatestRelease(ctx context.Context) (updateCache, error) {
+	rel, err := c.fetchLatestRelease(ctx)
+	if err != nil {
+		return updateCache{}, err
+	}
+	cache := updateCache{
+		Version:     1,
+		CheckedAt:   c.clock().UTC(),
+		TagName:     strings.TrimSpace(rel.TagName),
+		Name:        strings.TrimSpace(rel.Name),
+		HTMLURL:     strings.TrimSpace(rel.HTMLURL),
+		PublishedAt: rel.PublishedAt.UTC(),
+	}
+	if cache.TagName == "" {
+		return updateCache{}, errors.New("update check: latest release response did not include tag_name")
+	}
+	if err := c.saveCache(cache); err != nil {
+		return updateCache{}, err
+	}
+	return cache, nil
 }
 
 func (c *updateCommand) statusFromCache(cache updateCache) (updateStatus, error) {
@@ -519,14 +702,28 @@ func releaseArchiveVersion(tag string) string {
 	return version
 }
 
-func extractProjmuxBinary(r io.Reader, dst string) error {
-	gz, err := gzip.NewReader(r)
+func extractProjmuxBinaryWithLimits(archive []byte, dst string, limits updateArchiveLimits) (resultErr error) {
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return fmt.Errorf("open gzip stream: %w", err)
 	}
 	defer gz.Close()
 
-	tr := tar.NewReader(gz)
+	expanded := &updateMaxBytesReader{
+		r:         gz,
+		remaining: limits.tarBytes,
+	}
+	tr := tar.NewReader(expanded)
+	var (
+		entryCount       int
+		totalRegularSize int64
+		found            bool
+	)
+	defer func() {
+		if resultErr != nil {
+			_ = os.Remove(dst)
+		}
+	}()
 	for {
 		header, err := tr.Next()
 		if err != nil {
@@ -535,11 +732,25 @@ func extractProjmuxBinary(r io.Reader, dst string) error {
 			}
 			return fmt.Errorf("read tar entry: %w", err)
 		}
-		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+		entryCount++
+		if entryCount > limits.entries {
+			return fmt.Errorf("release archive contains more than %d entries", limits.entries)
+		}
+		if header.Typeflag != tar.TypeReg {
 			continue
 		}
+		if header.Size < 0 || header.Size > limits.regularFileBytes {
+			return fmt.Errorf("release archive regular file %q size %d exceeds limit %d", header.Name, header.Size, limits.regularFileBytes)
+		}
+		if header.Size > limits.totalRegularBytes-totalRegularSize {
+			return fmt.Errorf("release archive regular file bytes exceed total limit %d", limits.totalRegularBytes)
+		}
+		totalRegularSize += header.Size
 		if filepath.Base(header.Name) != "projmux" {
 			continue
+		}
+		if found {
+			return errors.New("release archive contained multiple projmux binaries")
 		}
 		out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
 		if err != nil {
@@ -552,9 +763,37 @@ func extractProjmuxBinary(r io.Reader, dst string) error {
 		if err := out.Close(); err != nil {
 			return fmt.Errorf("close extracted binary: %w", err)
 		}
-		return nil
+		found = true
 	}
-	return errors.New("release archive did not contain a projmux binary")
+	if _, err := io.Copy(io.Discard, expanded); err != nil {
+		return fmt.Errorf("read trailing archive data: %w", err)
+	}
+	if !found {
+		return errors.New("release archive did not contain a projmux binary")
+	}
+	return nil
+}
+
+type updateMaxBytesReader struct {
+	r         io.Reader
+	remaining int64
+}
+
+func (r *updateMaxBytesReader) Read(p []byte) (int, error) {
+	if r.remaining > 0 {
+		if int64(len(p)) > r.remaining {
+			p = p[:r.remaining]
+		}
+		n, err := r.r.Read(p)
+		r.remaining -= int64(n)
+		return n, err
+	}
+	var probe [1]byte
+	n, err := r.r.Read(probe[:])
+	if n > 0 {
+		return 0, errUpdateTarTooLarge
+	}
+	return 0, err
 }
 
 func (c *updateCommand) loadCache() (updateCache, bool, error) {
@@ -636,20 +875,134 @@ func (c *updateCommand) detectInstaller() updateInstaller {
 	if c.getenv != nil {
 		source = strings.TrimSpace(c.getenv("PROJMUX_INSTALLER"))
 	}
+	// An explicit PROJMUX_INSTALLER always wins. Only fall back to
+	// autodetection when it is unset so that update apply works even when the
+	// binary was not launched through the npm shim (which is the only path
+	// that exports the variable today).
+	autodetected := false
+	if source == "" {
+		source = c.autodetectInstaller()
+		autodetected = source != ""
+	}
 	switch source {
 	case "npm":
-		return updateInstaller{Source: source, Note: "Installed by npm shim; update with projmux update apply or npm update -g projmux."}
+		note := "Installed by npm; update apply runs `npm install -g projmux@latest`."
+		if autodetected {
+			note = "Detected npm install; update apply runs `npm install -g projmux@latest`."
+		}
+		return updateInstaller{Source: source, Note: note}
 	case "go":
-		return updateInstaller{Source: source, Note: "Installed with Go tooling; update apply delegates to projmux upgrade."}
+		note := "Installed with Go tooling; update apply delegates to projmux upgrade."
+		if autodetected {
+			note = "Detected `go install` binary; update apply delegates to projmux upgrade."
+		}
+		return updateInstaller{Source: source, Note: note}
 	case "github-release":
 		return updateInstaller{Source: source, Note: "Installed from a GitHub release binary; update apply replaces the current binary atomically."}
 	case "source":
-		return updateInstaller{Source: source, Note: "Installed from source; update from the source checkout until update apply exists."}
+		note := "Installed from source; update with `git pull --ff-only && make install`."
+		if autodetected {
+			note = "Detected source build; update with `git pull --ff-only && make install` (not auto-updated)."
+		}
+		return updateInstaller{Source: source, Note: note}
 	case "":
-		return updateInstaller{Source: "unknown", Note: "Set PROJMUX_INSTALLER=npm|go|github-release|source to make update guidance installer-aware."}
+		return updateInstaller{Source: "unknown", Note: "Could not detect the installer. Set PROJMUX_INSTALLER=npm|go|github-release, or update source builds with `git pull --ff-only && make install`."}
 	default:
 		return updateInstaller{Source: "unknown", Note: "Unrecognized PROJMUX_INSTALLER=" + source + "; expected npm|go|github-release|source."}
 	}
+}
+
+// autodetectInstaller infers the installer source from the running binary when
+// PROJMUX_INSTALLER is unset. It only recognizes the distribution channels that
+// can be updated in place (npm and go install) plus source builds, which it
+// reports so callers can print manual guidance instead of failing silently.
+// github-release installs are indistinguishable from a hand-placed binary
+// without a marker, so they continue to require an explicit PROJMUX_INSTALLER.
+func (c *updateCommand) autodetectInstaller() string {
+	exe := ""
+	if c.executable != nil {
+		if resolved, err := c.executable(); err == nil {
+			exe = strings.TrimSpace(resolved)
+		}
+	}
+	if exe != "" && isNpmExecutablePath(exe) {
+		return "npm"
+	}
+	// A binary produced by `go build`/`make install` from a local checkout
+	// reports a "(devel)" main module version, while `go install …@latest`
+	// stamps the resolved tag. This is the only reliable way to tell a source
+	// build apart from a go-install binary when both live in GOBIN/~/go/bin.
+	if c.isSourceBuild() {
+		return "source"
+	}
+	if exe != "" && c.isGoInstallPath(exe) {
+		return "go"
+	}
+	return ""
+}
+
+// isNpmExecutablePath reports whether the resolved binary lives inside an npm
+// install tree. The npm platform packages install the real binary at
+// node_modules/@projmux/<platform>/bin/projmux.
+func isNpmExecutablePath(exe string) bool {
+	normalized := filepath.ToSlash(exe)
+	if !strings.Contains(normalized, "node_modules/") {
+		return false
+	}
+	return strings.Contains(normalized, "/@projmux/") || strings.Contains(normalized, "node_modules/projmux/")
+}
+
+func (c *updateCommand) isSourceBuild() bool {
+	if c.buildInfo == nil {
+		return false
+	}
+	info, ok := c.buildInfo()
+	if !ok || info == nil {
+		return false
+	}
+	v := strings.TrimSpace(info.Main.Version)
+	return v == "" || v == "(devel)"
+}
+
+// isGoInstallPath reports whether exe sits in the directory `go install` writes
+// to: $GOBIN, else $GOPATH/bin, else ~/go/bin.
+func (c *updateCommand) isGoInstallPath(exe string) bool {
+	dir := filepath.Dir(exe)
+	for _, candidate := range c.goInstallDirs() {
+		if candidate == "" {
+			continue
+		}
+		if filepath.Clean(candidate) == filepath.Clean(dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *updateCommand) goInstallDirs() []string {
+	getenv := c.getenv
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
+	var dirs []string
+	if gobin := strings.TrimSpace(getenv("GOBIN")); gobin != "" {
+		dirs = append(dirs, gobin)
+	}
+	if gopath := strings.TrimSpace(getenv("GOPATH")); gopath != "" {
+		for _, p := range filepath.SplitList(gopath) {
+			if p = strings.TrimSpace(p); p != "" {
+				dirs = append(dirs, filepath.Join(p, "bin"))
+			}
+		}
+	}
+	if c.userHomeDir != nil {
+		if home, err := c.userHomeDir(); err == nil {
+			if home = strings.TrimSpace(home); home != "" {
+				dirs = append(dirs, filepath.Join(home, "go", "bin"))
+			}
+		}
+	}
+	return dirs
 }
 
 func (c *updateCommand) currentExecutable() (string, error) {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -12,7 +13,7 @@ import (
 func TestClassifyProbeInput(t *testing.T) {
 	t.Parallel()
 
-	keyAlt1 := probeKey{Label: "Alt-1", Action: "Open sidebar (User4)", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"}
+	keyAlt1 := probeKey{Label: "Alt-1", Action: "Open sidebar", Plain: "\x1b1"}
 	keyCtrlShiftR := probeKey{Label: "Ctrl-Shift-R", Action: "No projmux binding by default"}
 
 	cases := []struct {
@@ -22,7 +23,7 @@ func TestClassifyProbeInput(t *testing.T) {
 		wantStatus probeKeyStatus
 	}{
 		{name: "plain alt-1", key: keyAlt1, input: []byte("\x1b1"), wantStatus: probeStatusPlain},
-		{name: "csiu alt-1", key: keyAlt1, input: []byte("\x1b[9005u"), wantStatus: probeStatusCSIu},
+		{name: "legacy app csi-u alt-1 is not a success path", key: keyAlt1, input: []byte("\x1b[9900u"), wantStatus: probeStatusUnknown},
 		{name: "arrow key", key: keyAlt1, input: []byte("\x1b[A"), wantStatus: probeStatusUnknown},
 		{name: "empty input", key: keyAlt1, input: nil, wantStatus: probeStatusTimeout},
 		{name: "no plain, csi-u missing too", key: keyCtrlShiftR, input: []byte("\x1b[1;5R"), wantStatus: probeStatusUnknown},
@@ -50,7 +51,7 @@ func TestClassifyProbeInput(t *testing.T) {
 func TestClassifyProbeInputDoesNotAliasInput(t *testing.T) {
 	t.Parallel()
 
-	key := probeKey{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u"}
+	key := probeKey{Label: "Alt-1", Plain: "\x1b1"}
 	src := []byte("\x1b1")
 	res := classifyProbeInput(key, src)
 	src[0] = 'X'
@@ -62,13 +63,13 @@ func TestClassifyProbeInputDoesNotAliasInput(t *testing.T) {
 func TestRenderProbeStatusContainsSequence(t *testing.T) {
 	t.Parallel()
 
-	res := classifyProbeInput(probeKey{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"}, []byte("\x1b[9005u"))
+	res := classifyProbeInput(probeKey{Label: "Alt-1", Plain: "\x1b1"}, []byte("\x1b[9900u"))
 	rendered := renderProbeStatus(res)
-	if !strings.Contains(rendered, "csi-u") {
-		t.Fatalf("expected csi-u marker, got %q", rendered)
+	if !strings.Contains(rendered, "MISS unknown") {
+		t.Fatalf("expected unknown marker, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "User4") {
-		t.Fatalf("expected User4 reference, got %q", rendered)
+	if !strings.Contains(rendered, "\\x1b[9900u") {
+		t.Fatalf("expected captured sequence, got %q", rendered)
 	}
 }
 
@@ -79,7 +80,7 @@ func TestVisibleEscape(t *testing.T) {
 		"":             "\"\"",
 		"a":            "a",
 		"\x1b1":        "\\x1b1",
-		"\x1b[9005u":   "\\x1b[9005u",
+		"\x1b[9900u":   "\\x1b[9900u",
 		"\r":           "\\r",
 		"\n":           "\\n",
 		"\t":           "\\t",
@@ -231,7 +232,7 @@ func TestRenderProbeSummaryAllPass(t *testing.T) {
 	terminal := terminalInfo{Slug: "kitty", Name: "kitty", Source: "KITTY_WINDOW_ID", Raw: "1"}
 	results := []probeResult{
 		{Key: probeKey{Label: "Alt-1"}, Status: probeStatusPlain, Sequence: []byte("\x1b1")},
-		{Key: probeKey{Label: "Alt-2"}, Status: probeStatusCSIu, Sequence: []byte("\x1b[9003u")},
+		{Key: probeKey{Label: "Alt-2"}, Status: probeStatusPlain, Sequence: []byte("\x1b2")},
 	}
 	var buf bytes.Buffer
 	renderProbeSummary(&buf, terminal, results)
@@ -257,8 +258,13 @@ func TestSuggestedPlainChordForSequence(t *testing.T) {
 		{name: "alt printable", seq: []byte("\x1ba"), want: "M-a", ok: true},
 		{name: "alt digit", seq: []byte("\x1b7"), want: "M-7", ok: true},
 		{name: "control byte", seq: []byte{0x01}, want: "C-a", ok: true},
+		{name: "printable key", seq: []byte("p"), want: "p", ok: true},
+		{name: "printable uppercase key", seq: []byte("P"), want: "P", ok: true},
 		{name: "catalog plain sequence", seq: []byte("\x1b[1;4D"), want: "M-S-Left", ok: true},
 		{name: "enter is ambiguous", seq: []byte("\r"), ok: false},
+		{name: "space is not a keymap chord", seq: []byte(" "), ok: false},
+		{name: "unsupported printable config char", seq: []byte(`"`), ok: false},
+		{name: "raw multi-byte printable sequence", seq: []byte("pa"), ok: false},
 		{name: "arrow is not a plain tmux chord", seq: []byte("\x1b[A"), ok: false},
 	}
 
@@ -288,12 +294,14 @@ func TestSetupCommandRunNonInteractive(t *testing.T) {
 		"Detected terminal:",
 		"Expected key sequences:",
 		"Alt-1",
-		"\\x1b[9005u",
 		"Ctrl-N",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("non-interactive output missing %q\nfull:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "9900u") || strings.Contains(out, "User") {
+		t.Fatalf("non-interactive output should not mention app escape/User keys:\n%s", out)
 	}
 }
 
@@ -313,13 +321,13 @@ func TestSetupCommandRunInteractiveUsesProbeReader(t *testing.T) {
 	t.Parallel()
 
 	keys := []probeKey{
-		{Label: "Alt-1", Action: "sidebar", Plain: "\x1b1", CSIu: "\x1b[9005u", UserKey: "User4"},
-		{Label: "Alt-2", Action: "notify-sidebar", Plain: "\x1b2", CSIu: "\x1b[9003u", UserKey: "User2"},
-		{Label: "Ctrl-N", Action: "new-window", Plain: "\x0e", CSIu: "\x1b[9008u", UserKey: "User7"},
+		{Label: "Alt-1", Action: "sidebar", Plain: "\x1b1"},
+		{Label: "Alt-2", Action: "notify-sidebar", Plain: "\x1b2"},
+		{Label: "Ctrl-N", Action: "new-window", Plain: "\x0e"},
 	}
 	queue := [][]byte{
 		[]byte("\x1b1"),
-		[]byte("\x1b[9003u"),
+		[]byte("\x1b[9901u"),
 		nil,
 	}
 
@@ -346,9 +354,9 @@ func TestSetupCommandRunInteractiveUsesProbeReader(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"OK plain",
-		"OK csi-u",
+		"MISS unknown",
 		"MISS timeout",
-		"Pass / Fail   : 2 / 1",
+		"Pass / Fail   : 1 / 2",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("interactive output missing %q\nfull:\n%s", want, out)
@@ -360,7 +368,7 @@ func TestSetupCommandRunInteractivePropagatesReadError(t *testing.T) {
 	t.Parallel()
 
 	keys := []probeKey{
-		{Label: "Alt-1", Plain: "\x1b1", CSIu: "\x1b[9005u"},
+		{Label: "Alt-1", Plain: "\x1b1"},
 	}
 	cmd := newSetupCommand()
 	cmd.defaultKeys = keys
@@ -376,6 +384,109 @@ func TestSetupCommandRunInteractivePropagatesReadError(t *testing.T) {
 	err := cmd.Run(nil, &stdout, &stderr)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Run error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestSetupReadProbeKeyTimeoutReopensTTYWithoutStealingNextKey(t *testing.T) {
+	t.Parallel()
+
+	firstReader, firstWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("first Pipe() error = %v", err)
+	}
+	defer firstWriter.Close()
+	secondReader, secondWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("second Pipe() error = %v", err)
+	}
+	defer secondWriter.Close()
+	if _, err := secondWriter.Write([]byte("x")); err != nil {
+		t.Fatalf("write second key: %v", err)
+	}
+
+	opened := 0
+	cleaned := 0
+	cmd := &setupCommand{
+		openTTY: func() (*os.File, func() error, error) {
+			opened++
+			switch opened {
+			case 1:
+				return firstReader, func() error {
+					cleaned++
+					return firstReader.Close()
+				}, nil
+			case 2:
+				return secondReader, func() error {
+					cleaned++
+					return secondReader.Close()
+				}, nil
+			default:
+				t.Fatalf("openTTY called %d times, want two", opened)
+				return nil, nil, errors.New("unexpected open")
+			}
+		},
+	}
+
+	if _, err := cmd.readProbeKeyContext(context.Background(), 20*time.Millisecond); !errors.Is(err, errProbeTimeout) {
+		t.Fatalf("first read error = %v, want probe timeout", err)
+	}
+	got, err := cmd.readProbeKeyContext(context.Background(), time.Second)
+	if err != nil {
+		t.Fatalf("second read error = %v", err)
+	}
+	if string(got) != "x" {
+		t.Fatalf("second read = %q, want next key x", got)
+	}
+	if opened != 2 || cleaned != 2 {
+		t.Fatalf("TTY lifecycle opened/cleaned = %d/%d, want 2/2", opened, cleaned)
+	}
+}
+
+func TestSetupReadProbeKeyFallsBackToStdinWhenTTYOpenFails(t *testing.T) {
+	t.Parallel()
+
+	var opened bool
+	cmd := &setupCommand{
+		stdin: strings.NewReader("x"),
+		openTTY: func() (*os.File, func() error, error) {
+			opened = true
+			return nil, nil, errors.New("no controlling tty")
+		},
+	}
+	got, err := cmd.readProbeKeyContext(context.Background(), time.Second)
+	if err != nil {
+		t.Fatalf("readProbeKeyContext() error = %v", err)
+	}
+	if !opened {
+		t.Fatal("readProbeKeyContext() did not try the controlling TTY")
+	}
+	if string(got) != "x" {
+		t.Fatalf("readProbeKeyContext() = %q, want stdin key x", got)
+	}
+}
+
+func TestReadKeySequenceTimeoutDoesNotLeaveReaderToStealNextKey(t *testing.T) {
+	t.Parallel()
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+
+	if _, err := readKeySequenceContext(context.Background(), reader, 20*time.Millisecond); !errors.Is(err, errProbeTimeout) {
+		t.Fatalf("first read error = %v, want probe timeout", err)
+	}
+	if _, err := writer.Write([]byte("x")); err != nil {
+		t.Fatalf("write next key: %v", err)
+	}
+	got, err := readKeySequenceContext(context.Background(), reader, time.Second)
+	if err != nil {
+		t.Fatalf("second read error = %v", err)
+	}
+	if string(got) != "x" {
+		t.Fatalf("second read = %q, want next key x", got)
 	}
 }
 
@@ -404,7 +515,7 @@ func TestSetupProbeControllingTTYKeyReadsTTYFile(t *testing.T) {
 			return func() error { return nil }, nil
 		},
 	}
-	res, err := cmd.probeControllingTTYKey(probeKey{Label: "Alt-1", Plain: "\x1b1"}, time.Second)
+	res, err := cmd.probeControllingTTYKeyContext(context.Background(), probeKey{Label: "Alt-1", Plain: "\x1b1"}, time.Second)
 	if err != nil {
 		t.Fatalf("probeControllingTTYKey() error = %v", err)
 	}
@@ -422,7 +533,7 @@ func TestDefaultProbeKeysCoverSpec(t *testing.T) {
 	keys := defaultProbeKeys()
 	got := sortedProbeLabels(keys)
 	want := []string{
-		"Alt-1", "Alt-2", "Alt-3", "Alt-4", "Alt-5", "Alt-6",
+		"Alt-1", "Alt-2", "Alt-3", "Alt-4", "Alt-5", "Alt-6", "Alt-7",
 		"Alt-Shift-Left", "Alt-Shift-Right",
 		"Ctrl-M", "Ctrl-N", "Ctrl-Shift-L", "Ctrl-Shift-M", "Ctrl-Shift-R",
 	}
@@ -434,4 +545,30 @@ func TestDefaultProbeKeysCoverSpec(t *testing.T) {
 			t.Fatalf("default probe key[%d] = %q, want %q (full got=%v)", i, got[i], want[i], got)
 		}
 	}
+	alt3 := probeKeyByLabel(keys, "Alt-3")
+	if alt3.Action != "Recent windows" || alt3.ActionID != "RecentWindows:Open" || alt3.PlainChord != "M-3" {
+		t.Fatalf("Alt-3 probe = %#v, want RecentWindows:Open recent windows M-3 probe", alt3)
+	}
+	cmd := newSetupCommand()
+	cmd.defaultKeys = keys
+	cmd.lookupEnv = func(string) string { return "" }
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"--non-interactive"}, &stdout, &stderr); err != nil {
+		t.Fatalf("Run --non-interactive error = %v", err)
+	}
+	out := stdout.String()
+	for _, banned := range []string{"9900u", "User", "CSI-u"} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("default probe key output should not include legacy route %q:\n%s", banned, out)
+		}
+	}
+}
+
+func probeKeyByLabel(keys []probeKey, label string) probeKey {
+	for _, key := range keys {
+		if key.Label == label {
+			return key
+		}
+	}
+	return probeKey{}
 }

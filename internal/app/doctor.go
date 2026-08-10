@@ -99,7 +99,10 @@ type doctorReport struct {
 	Dependencies         []doctorResult                       `json:"dependencies"`
 	AINotifyIntegrations []doctorAINotifyIntegration          `json:"ai_notify_integrations"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
+	SessionStatePrune    string                               `json:"session_state_prune"`
 }
+
+const doctorSessionStatePruneGuidance = "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name."
 
 func doctorDeps() []doctorDep {
 	return []doctorDep{
@@ -113,6 +116,23 @@ func doctorDeps() []doctorDep {
 			OptionalNote: "optional; install if you use the kubectl switcher",
 		},
 	}
+}
+
+func doctorDepsForHost(host string) []doctorDep {
+	deps := doctorDeps()
+	if doctorUsesPsmuxTrack(host) {
+		for i, dep := range deps {
+			if dep.Category == doctorCategoryCore {
+				deps[i] = doctorDep{Name: "psmux", Required: true, Category: doctorCategoryCore, MinVersion: "3.3.4"}
+				break
+			}
+		}
+	}
+	return deps
+}
+
+func doctorUsesPsmuxTrack(host string) bool {
+	return host == "windows"
 }
 
 // Run executes the projmux doctor diagnostics flow.
@@ -141,6 +161,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 		Dependencies:         results,
 		AINotifyIntegrations: c.evaluateAINotifyIntegrations(),
 		SessionStateResume:   c.evaluateSessionStateResume(),
+		SessionStatePrune:    doctorSessionStatePruneGuidance,
 	}
 
 	if *jsonOut {
@@ -169,7 +190,7 @@ func (c *doctorCommand) evaluateAINotifyIntegrations() []doctorAINotifyIntegrati
 	if c.aiDiagnostics == nil {
 		return nil
 	}
-	return c.aiDiagnostics()
+	return doctorApplyMuxTrackToAINotify(c.hostGOOS(), c.aiDiagnostics())
 }
 
 func (c *doctorCommand) evaluateSessionStateResume() []doctorSessionStateResumeDiagnostic {
@@ -352,11 +373,32 @@ func runDoctorExternal(name string, args []string, stdout, stderr io.Writer) err
 }
 
 func (c *doctorCommand) evaluate() []doctorResult {
-	host := c.goos()
-	deps := doctorDeps()
+	host := c.hostGOOS()
+	deps := doctorDepsForHost(host)
 	out := make([]doctorResult, 0, len(deps))
 	for _, dep := range deps {
 		out = append(out, c.evaluateDep(dep, host))
+	}
+	return out
+}
+
+func (c *doctorCommand) hostGOOS() string {
+	if c.goos == nil {
+		return runtime.GOOS
+	}
+	return c.goos()
+}
+
+func doctorApplyMuxTrackToAINotify(host string, diagnostics []doctorAINotifyIntegration) []doctorAINotifyIntegration {
+	if !doctorUsesPsmuxTrack(host) || len(diagnostics) == 0 {
+		return diagnostics
+	}
+	out := make([]doctorAINotifyIntegration, 0, len(diagnostics))
+	for _, diag := range diagnostics {
+		if diag.ID == "tmux-bell" {
+			diag = doctorTmuxBellUnsupportedDiagnostic()
+		}
+		out = append(out, diag)
 	}
 	return out
 }
@@ -464,45 +506,55 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 		for _, r := range report.AINotifyIntegrations {
 			tag := fmt.Sprintf("[%s]", r.Status)
 			fmt.Fprintf(&buf, "  %-11s%-22s", tag, r.Name)
+			if r.ProviderID != "" {
+				state := "disabled"
+				if r.ProviderEnabled != nil && *r.ProviderEnabled {
+					state = "enabled"
+				}
+				fmt.Fprintf(&buf, "provider: %s (%s)", r.ProviderID, state)
+			}
 			if r.ConfigPath != "" {
+				if r.ProviderID != "" {
+					buf.WriteString("; ")
+				}
 				fmt.Fprintf(&buf, "config: %s", r.ConfigPath)
 			}
 			if r.ConflictReason != "" {
-				if r.ConfigPath != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString(r.ConflictReason)
 			}
 			if r.TestedVersion != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("tested: ")
 				buf.WriteString(r.TestedVersion)
 			}
 			if r.Guidance != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("notice: ")
 				buf.WriteString(r.Guidance)
 			}
 			if r.InstallCommand != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("install: ")
 				buf.WriteString(r.InstallCommand)
 			}
 			if r.DryRunCommand != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("dry-run: ")
 				buf.WriteString(r.DryRunCommand)
 			}
 			if r.RemoveCommand != "" {
-				if r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" || r.DryRunCommand != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" || r.DryRunCommand != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("remove: ")
@@ -533,6 +585,10 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 			}
 			buf.WriteString("\n")
 		}
+	}
+	if report.SessionStatePrune != "" {
+		buf.WriteString("\nSession State retention\n")
+		fmt.Fprintf(&buf, "  %s\n", report.SessionStatePrune)
 	}
 	_, err := w.Write(buf.Bytes())
 	return err

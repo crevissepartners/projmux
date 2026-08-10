@@ -227,7 +227,7 @@ func (c *sessionStateCommand) runPopup(args []string, stdout, stderr io.Writer) 
 }
 
 func (c *sessionStateCommand) runPopupPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, nil, options)
+	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, nil, options)
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return intpickercompat.Result{}, errSettingsClosed

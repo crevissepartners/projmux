@@ -1,8 +1,10 @@
 package app
 
 import (
-	"os/exec"
+	"context"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
 // notification_toggle.go owns the OS-desktop-notification mode selector.
@@ -22,11 +24,12 @@ import (
 // whether the toast is clickable, and whether to auto-raise on push.
 //
 // Resolution priority (highest first):
-//  1. env `PROJMUX_DESKTOP_NOTIFY_MODE=none|notify|raise` (case-insensitive)
+//  1. env `PROJMUX_DESKTOP_NOTIFY_MODE=off|none|notify|raise` (case-insensitive)
 //  2. env `PROJMUX_DESKTOP_NOTIFY` (legacy on/off, mapped: off→none, on→notify)
-//  3. tmux global option `@projmux_desktop_notify_mode`
-//  4. tmux global option `@projmux_desktop_notify` (legacy `1`/`0`, same mapping)
-//  5. default = `raise` if (isWSL && $WT_SESSION present), else `notify`
+//  3. saved config `~/.config/projmux/desktop-notify-mode`
+//  4. tmux global option `@projmux_desktop_notify_mode`
+//  5. tmux global option `@projmux_desktop_notify` (legacy `1`/`0`, same mapping)
+//  6. default = `raise` if (isWSL && $WT_SESSION present), else `notify`
 //
 // The Settings popup exposes a row whose info line surfaces the source
 // (`env` / `env (legacy)` / `setting` / `setting (legacy)` / `default`)
@@ -99,7 +102,10 @@ const (
 // processes or touching `/proc`.
 type desktopNotifyResolver struct {
 	lookupEnv func(string) string
-	// readTmuxOption reads a global user-option (`tmux show-option -gqv …`).
+	// readConfigMode reads the durable Settings value. The bool is false
+	// when no saved value exists so defaults can stay default-only.
+	readConfigMode func() (desktopNotifyMode, bool)
+	// readTmuxOption reads a global user-option (`tmux show-options -gqv …`).
 	// Must return the trimmed string, or empty when tmux is unavailable or
 	// the option is unset.
 	readTmuxOption func(name string) string
@@ -145,7 +151,7 @@ func parseLegacyDesktopNotify(raw string) (desktopNotifyMode, bool) {
 
 // resolveMode returns (mode, source). The cascade is:
 //
-//	new env → legacy env → new tmux option → legacy tmux option → default
+//	new env → legacy env → saved config → new tmux option → legacy tmux option → default
 //
 // The default rung uses `isWSL && wtPresent` to decide between `raise`
 // and `notify`.
@@ -156,6 +162,11 @@ func (r desktopNotifyResolver) resolveMode() (desktopNotifyMode, desktopNotifySo
 		}
 		if mode, ok := parseLegacyDesktopNotify(r.lookupEnv(desktopNotifyEnv)); ok {
 			return mode, desktopNotifySourceEnvLegacy
+		}
+	}
+	if r.readConfigMode != nil {
+		if mode, ok := r.readConfigMode(); ok {
+			return mode, desktopNotifySourceSetting
 		}
 	}
 	if r.readTmuxOption != nil {
@@ -189,14 +200,17 @@ func (c *aiCommand) desktopNotifyMode() desktopNotifyMode {
 func (c *aiCommand) desktopNotifyModeResolution() (desktopNotifyMode, desktopNotifySource) {
 	resolver := desktopNotifyResolver{
 		lookupEnv: c.lookupEnv,
+		readConfigMode: func() (desktopNotifyMode, bool) {
+			return loadSavedDesktopNotifyMode(c.homeDir, c.lookupEnv)
+		},
 		readTmuxOption: func(name string) string {
-			// tmux show-option only makes sense inside a tmux client
+			// tmux show-options only makes sense inside a tmux client
 			// (we follow the same TMUX gate used elsewhere in the
 			// codebase — see tmuxProjdirOption in switch.go).
 			if strings.TrimSpace(c.env("TMUX")) == "" {
 				return ""
 			}
-			return c.readTrimmed("tmux", "show-option", "-gqv", name)
+			return c.readTrimmed("tmux", "show-options", "-gqv", name)
 		},
 		isWSL:     c.isWSL(),
 		wtPresent: strings.TrimSpace(c.env("WT_SESSION")) != "",
@@ -205,13 +219,13 @@ func (c *aiCommand) desktopNotifyModeResolution() (desktopNotifyMode, desktopNot
 }
 
 // settingsDesktopNotifyResolver builds the same resolver from a
-// `settingsCommand`. settingsCommand uses raw `runCommand` / direct
-// `exec.Command` for its tmux reads, so we wire the lookup through
-// `exec.Command` directly (mirroring `tmuxProjdirOption`).
+// `settingsCommand`. settingsCommand does not own an injected tmux reader, so
+// production tmux reads go through the central mux runner while the pure
+// resolver remains unit-testable.
 //
 // isWSL and wtPresent are derived from the env lookup so the Settings
 // render path computes the same default as the runtime gate.
-func settingsDesktopNotifyResolver(lookupEnv func(string) string) desktopNotifyResolver {
+func settingsDesktopNotifyResolver(homeDir func() (string, error), lookupEnv func(string) string) desktopNotifyResolver {
 	wsl := false
 	wt := false
 	if lookupEnv != nil {
@@ -220,15 +234,23 @@ func settingsDesktopNotifyResolver(lookupEnv func(string) string) desktopNotifyR
 	}
 	return desktopNotifyResolver{
 		lookupEnv: lookupEnv,
+		readConfigMode: func() (desktopNotifyMode, bool) {
+			return loadSavedDesktopNotifyMode(homeDir, lookupEnv)
+		},
 		readTmuxOption: func(name string) string {
 			if lookupEnv == nil || strings.TrimSpace(lookupEnv("TMUX")) == "" {
 				return ""
 			}
-			out, err := exec.Command("tmux", "show-option", "-gqv", name).Output()
+			out, err := mux.ShowOption(context.Background(), mux.ShowOptionOptions{
+				Global:    true,
+				Quiet:     true,
+				ValueOnly: true,
+				Option:    name,
+			})
 			if err != nil {
 				return ""
 			}
-			return strings.TrimSpace(string(out))
+			return out
 		},
 		isWSL:     wsl,
 		wtPresent: wt,

@@ -1,0 +1,1 @@
+{"type":"user","message":{"role":"user","content":"<div class=\"x\">hello</div> is not rendering, why?"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555506","gitBranch":"fix/html"}

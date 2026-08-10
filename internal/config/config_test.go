@@ -4,7 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 )
 
 func TestDefaultPaths(t *testing.T) {
@@ -93,34 +96,15 @@ func TestHomesPathsRequiresHomeDirWhenFallbackNeeded(t *testing.T) {
 	}
 }
 
-func TestPathsProjdirFile(t *testing.T) {
-	t.Parallel()
-
-	paths := Paths{ConfigDir: "/tmp/config/projmux"}
-	if got, want := paths.ProjdirFile(), filepath.Join(paths.ConfigDir, ProjdirFileName); got != want {
-		t.Fatalf("ProjdirFile() = %q, want %q", got, want)
-	}
-}
-
-func TestPathsPostCreateHookPath(t *testing.T) {
-	t.Parallel()
-
-	paths := Paths{ConfigDir: "/tmp/config/projmux"}
-	want := filepath.Join(paths.ConfigDir, HooksDirName, PostCreateHookFileName)
-	if got := paths.PostCreateHookPath(); got != want {
-		t.Fatalf("PostCreateHookPath() = %q, want %q", got, want)
-	}
-	if want != filepath.Join("/tmp/config/projmux", "hooks", "post-create") {
-		t.Fatalf("PostCreateHookPath layout drifted: want %q", want)
-	}
-}
-
 func TestPathsStatusbarDecorationFile(t *testing.T) {
 	t.Parallel()
 
 	paths := Paths{ConfigDir: "/tmp/config/projmux"}
 	if got, want := paths.StatusbarDecorationFile(), filepath.Join(paths.ConfigDir, StatusbarDecorationFileName); got != want {
 		t.Fatalf("StatusbarDecorationFile() = %q, want %q", got, want)
+	}
+	if got, want := paths.AIBadgeStyleFile(), filepath.Join(paths.ConfigDir, AIBadgeStyleFileName); got != want {
+		t.Fatalf("AIBadgeStyleFile() = %q, want %q", got, want)
 	}
 }
 
@@ -157,6 +141,139 @@ func TestPathsNotificationFiles(t *testing.T) {
 	}
 	if got, want := paths.AIHookActionsFile(), filepath.Join(paths.ConfigDir, AIHookActionsFileName); got != want {
 		t.Fatalf("AIHookActionsFile() = %q, want %q", got, want)
+	}
+	if got, want := paths.DesktopNotifyModeFile(), filepath.Join(paths.ConfigDir, DesktopNotifyModeFileName); got != want {
+		t.Fatalf("DesktopNotifyModeFile() = %q, want %q", got, want)
+	}
+}
+
+func TestPathsAIEnabledAgentsFile(t *testing.T) {
+	t.Parallel()
+
+	paths := Paths{ConfigDir: "/tmp/config/projmux"}
+	if got, want := paths.AIEnabledAgentsFile(), filepath.Join(paths.ConfigDir, AIEnabledAgentsFileName); got != want {
+		t.Fatalf("AIEnabledAgentsFile() = %q, want %q", got, want)
+	}
+}
+
+func TestAIEnabledAgentsMissingDefaultsToKnownProviders(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", AIEnabledAgentsFileName)
+	got, err := LoadAIEnabledAgentsFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIEnabledAgentsFile(missing) error = %v", err)
+	}
+	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentClaude, AIAgentCodex, AIAgentAntigravity})
+}
+
+func TestAIProviderRegistryDrivesKnownEnabledAgentDefaults(t *testing.T) {
+	t.Parallel()
+
+	providers := aiprovider.SettingsVisible()
+	want := make([]AIAgentProvider, 0, len(providers))
+	for _, provider := range providers {
+		want = append(want, AIAgentProvider(provider.ID))
+	}
+
+	if got := KnownAIAgentProviders(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("KnownAIAgentProviders() = %#v, want registry order %#v", got, want)
+	}
+	if got := DefaultAIEnabledAgents; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DefaultAIEnabledAgents = %#v, want registry order %#v", got, want)
+	}
+	if got := NormalizeAIEnabledAgents([]string{" CODEX ", "antigravity", "CLAUDE", "codex"}); !reflect.DeepEqual(got, []AIAgentProvider{AIAgentCodex, AIAgentAntigravity, AIAgentClaude}) {
+		t.Fatalf("NormalizeAIEnabledAgents() = %#v, want codex, antigravity, then claude", got)
+	}
+}
+
+func TestAIEnabledAgentsRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", AIEnabledAgentsFileName)
+	if err := SaveAIEnabledAgentsFile(path, []AIAgentProvider{AIAgentCodex}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	got, err := LoadAIEnabledAgentsFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIEnabledAgentsFile() error = %v", err)
+	}
+	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentCodex})
+}
+
+func TestAIEnabledAgentsIgnoresUnknownProviderNames(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), AIEnabledAgentsFileName)
+	if err := os.WriteFile(path, []byte("unknownai,codex\nshell\nclaude\nantigravity\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadAIEnabledAgentsFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIEnabledAgentsFile() error = %v", err)
+	}
+	assertAIEnabledAgents(t, got, []AIAgentProvider{AIAgentCodex, AIAgentClaude, AIAgentAntigravity})
+}
+
+func TestAIEnabledAgentsCanPersistEmptySet(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", AIEnabledAgentsFileName)
+	if err := SaveAIEnabledAgentsFile(path, nil); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile(nil) error = %v", err)
+	}
+	got, err := LoadAIEnabledAgentsFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIEnabledAgentsFile() error = %v", err)
+	}
+	assertAIEnabledAgents(t, got, nil)
+}
+
+func TestDesktopNotifyModeRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", DesktopNotifyModeFileName)
+	if got, err := LoadDesktopNotifyModeFile(path); err != nil || got != DefaultDesktopNotifyMode {
+		t.Fatalf("LoadDesktopNotifyModeFile(missing) = %q, %v; want %q, nil", got, err, DefaultDesktopNotifyMode)
+	}
+
+	if err := SaveDesktopNotifyModeFile(path, DesktopNotifyModeOff); err != nil {
+		t.Fatalf("SaveDesktopNotifyModeFile() error = %v", err)
+	}
+	got, err := LoadDesktopNotifyModeFile(path)
+	if err != nil {
+		t.Fatalf("LoadDesktopNotifyModeFile() error = %v", err)
+	}
+	if got != DesktopNotifyModeOff {
+		t.Fatalf("LoadDesktopNotifyModeFile() = %q, want %q", got, DesktopNotifyModeOff)
+	}
+}
+
+func TestDesktopNotifyModeNormalizesInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), DesktopNotifyModeFileName)
+	if err := os.WriteFile(path, []byte("broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadDesktopNotifyModeFile(path)
+	if err != nil {
+		t.Fatalf("LoadDesktopNotifyModeFile() error = %v", err)
+	}
+	if got != DefaultDesktopNotifyMode {
+		t.Fatalf("LoadDesktopNotifyModeFile() = %q, want %q", got, DefaultDesktopNotifyMode)
+	}
+
+	// "none" is a dropped legacy alias; it now absorbs into the default.
+	if err := SaveDesktopNotifyModeFile(path, DesktopNotifyMode("none")); err != nil {
+		t.Fatalf("SaveDesktopNotifyModeFile() error = %v", err)
+	}
+	got, err = LoadDesktopNotifyModeFile(path)
+	if err != nil {
+		t.Fatalf("LoadDesktopNotifyModeFile() error = %v", err)
+	}
+	if got != DefaultDesktopNotifyMode {
+		t.Fatalf("LoadDesktopNotifyModeFile() after save = %q, want %q", got, DefaultDesktopNotifyMode)
 	}
 }
 
@@ -274,6 +391,18 @@ func TestProjectHooksNormalizesInvalidValues(t *testing.T) {
 	}
 }
 
+func assertAIEnabledAgents(t *testing.T, got, want []AIAgentProvider) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("AI enabled agents = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("AI enabled agents = %#v, want %#v", got, want)
+		}
+	}
+}
+
 func TestSessionStateToggleRoundtrip(t *testing.T) {
 	t.Parallel()
 
@@ -294,9 +423,11 @@ func TestSessionStateToggleRoundtrip(t *testing.T) {
 	}
 }
 
-func TestSessionStateToggleNormalizesBooleanValues(t *testing.T) {
+func TestSessionStateToggleDropsBooleanAliases(t *testing.T) {
 	t.Parallel()
 
+	// "false" was a legacy boolean-ish alias; it is now dropped and absorbs
+	// into the default (On).
 	path := filepath.Join(t.TempDir(), SessionStateAutosaveFileName)
 	if err := os.WriteFile(path, []byte("false\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -305,8 +436,20 @@ func TestSessionStateToggleNormalizesBooleanValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSessionStateToggleFile() error = %v", err)
 	}
+	if got != SessionStateToggleOn {
+		t.Fatalf("LoadSessionStateToggleFile(false) = %q, want %q", got, SessionStateToggleOn)
+	}
+
+	// The canonical "off" value still resolves to Off.
+	if err := os.WriteFile(path, []byte("off\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadSessionStateToggleFile(path)
+	if err != nil {
+		t.Fatalf("LoadSessionStateToggleFile() error = %v", err)
+	}
 	if got != SessionStateToggleOff {
-		t.Fatalf("LoadSessionStateToggleFile() = %q, want %q", got, SessionStateToggleOff)
+		t.Fatalf("LoadSessionStateToggleFile(off) = %q, want %q", got, SessionStateToggleOff)
 	}
 }
 
@@ -354,6 +497,54 @@ func TestStatusbarDecorationNormalizesInvalidValues(t *testing.T) {
 	}
 	if got != StatusbarDecorationOff {
 		t.Fatalf("LoadStatusbarDecorationFile() after save = %q, want %q", got, StatusbarDecorationOff)
+	}
+}
+
+func TestAIBadgeStyleRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config", AIBadgeStyleFileName)
+	if got, err := LoadAIBadgeStyleFile(path); err != nil || got != AIBadgeStyleDot {
+		t.Fatalf("LoadAIBadgeStyleFile(missing) = %q, %v; want %q, nil", got, err, AIBadgeStyleDot)
+	}
+
+	if err := SaveAIBadgeStyleFile(path, AIBadgeStyleEmoji); err != nil {
+		t.Fatalf("SaveAIBadgeStyleFile() error = %v", err)
+	}
+	got, err := LoadAIBadgeStyleFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIBadgeStyleFile() error = %v", err)
+	}
+	if got != AIBadgeStyleEmoji {
+		t.Fatalf("LoadAIBadgeStyleFile() = %q, want %q", got, AIBadgeStyleEmoji)
+	}
+}
+
+func TestAIBadgeStyleNormalizesInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), AIBadgeStyleFileName)
+	if err := os.WriteFile(path, []byte("minimal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadAIBadgeStyleFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIBadgeStyleFile() error = %v", err)
+	}
+	// "minimal" is a dropped legacy alias; it now absorbs into the default (dot).
+	if got != AIBadgeStyleDot {
+		t.Fatalf("LoadAIBadgeStyleFile(minimal) = %q, want %q", got, AIBadgeStyleDot)
+	}
+
+	if err := SaveAIBadgeStyleFile(path, AIBadgeStyle("also-broken")); err != nil {
+		t.Fatalf("SaveAIBadgeStyleFile() error = %v", err)
+	}
+	got, err = LoadAIBadgeStyleFile(path)
+	if err != nil {
+		t.Fatalf("LoadAIBadgeStyleFile() error = %v", err)
+	}
+	if got != AIBadgeStyleDot {
+		t.Fatalf("LoadAIBadgeStyleFile() after save = %q, want %q", got, AIBadgeStyleDot)
 	}
 }
 
@@ -415,6 +606,16 @@ func TestSaveProjdirCreatesParentDir(t *testing.T) {
 	if !info.IsDir() {
 		t.Fatalf("expected %q to be a directory", dir)
 	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("directory mode = %#o, want %#o", got, os.FileMode(0o700))
+	}
+	fileInfo, err := os.Stat(ProjdirFile(home))
+	if err != nil {
+		t.Fatalf("Stat(projdir) error = %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("projdir mode = %#o, want %#o", got, os.FileMode(0o600))
+	}
 }
 
 func TestSaveProjdirEmptyValueRemovesFile(t *testing.T) {
@@ -466,6 +667,22 @@ func TestLoadProjdirTrimsAndUsesFirstLine(t *testing.T) {
 	}
 	if got != "/first/line" {
 		t.Fatalf("LoadProjdir() = %q, want %q", got, "/first/line")
+	}
+	for range 2 {
+		if _, err := LoadProjdir(home); err != nil {
+			t.Fatalf("LoadProjdir() idempotent repair error = %v", err)
+		}
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("Stat(dir) error = %v", err)
+	}
+	fileInfo, err := os.Stat(filepath.Join(dir, ProjdirFileName))
+	if err != nil {
+		t.Fatalf("Stat(file) error = %v", err)
+	}
+	if dirInfo.Mode().Perm() != 0o700 || fileInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("repaired modes = dir %#o file %#o, want 0700/0600", dirInfo.Mode().Perm(), fileInfo.Mode().Perm())
 	}
 }
 

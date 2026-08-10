@@ -1,0 +1,893 @@
+{
+  "schema": 1,
+  "tool": "gosec",
+  "fingerprint": "rule + repository-relative path + normalized message + normalized source line",
+  "reviewed_suppressions": [
+    {
+      "rule": "G101",
+      "scope": "audit-parity catalog/theme token-name fixtures",
+      "reason": "reviewed non-secret identifiers; the 2026-07-29 audit did not enable gosec test-file scanning"
+    },
+    {
+      "rule": "G404",
+      "scope": "notify and recent-window store lock jitter",
+      "reason": "non-cryptographic retry timing"
+    },
+    {
+      "rule": "G110",
+      "scope": "internal/app/update.go release extraction",
+      "reason": "archive entry and total expanded bytes are bounded before io.Copy"
+    },
+    {
+      "rule": "G703",
+      "scope": "internal/app/ai.go isDir os.Stat",
+      "reason": "read-only directory existence check"
+    },
+    {
+      "rule": "G703",
+      "scope": "internal/ui/picker/backend.go native debug log",
+      "reason": "explicit operator-provided debug output path"
+    },
+    {
+      "rule": "G118",
+      "scope": "internal/app/setup.go key reader",
+      "reason": "reviewed in the completed resource-lifetime phase; no current finding"
+    }
+  ],
+  "entries": [
+    {
+      "rule": "G101",
+      "path": "internal/app/settings_i18n.go",
+      "message": "Potential hardcoded credentials",
+      "source": "var uiTextKeys = map[string]i18n.Key{",
+      "max_count": 1
+    },
+    {
+      "rule": "G101",
+      "path": "internal/theme/resolve.go",
+      "message": "Potential hardcoded credentials",
+      "source": "TokenChromeForeground ColorToken = \"chrome_foreground\"",
+      "max_count": 1
+    },
+    {
+      "rule": "G101",
+      "path": "internal/theme/resolve.go",
+      "message": "Potential hardcoded credentials",
+      "source": "TokenPaneActiveBg ColorToken = \"pane_active_bg\"",
+      "max_count": 1
+    },
+    {
+      "rule": "G101",
+      "path": "internal/theme/resolve.go",
+      "message": "Potential hardcoded credentials",
+      "source": "TokenStatusBackground ColorToken = \"status_background\"",
+      "max_count": 1
+    },
+    {
+      "rule": "G104",
+      "path": "internal/app/keymap.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 1
+    },
+    {
+      "rule": "G104",
+      "path": "internal/config/ai_agents.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 1
+    },
+    {
+      "rule": "G104",
+      "path": "internal/config/config.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 1
+    },
+    {
+      "rule": "G104",
+      "path": "internal/config/notification.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 3
+    },
+    {
+      "rule": "G104",
+      "path": "internal/config/picker.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 1
+    },
+    {
+      "rule": "G104",
+      "path": "internal/config/project_hooks.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 1
+    },
+    {
+      "rule": "G104",
+      "path": "internal/config/sessionstate.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 3
+    },
+    {
+      "rule": "G104",
+      "path": "internal/config/statusbar.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 2
+    },
+    {
+      "rule": "G104",
+      "path": "internal/config/workdirs.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 2
+    },
+    {
+      "rule": "G110",
+      "path": "internal/app/update.go",
+      "message": "Potential DoS vulnerability via decompression bomb",
+      "source": "if _, err := io.Copy(out, tr); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G122",
+      "path": "internal/i18n/audit.go",
+      "message": "Filesystem operation in filepath.Walk/WalkDir callback uses race-prone path; consider root-scoped APIs (e.g. os.Root) to prevent symlink TOCTOU traversal",
+      "source": "source, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/ai.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.CommandContext(ctx, name, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/ai.go",
+      "message": "Subprocess launched with variable",
+      "source": "return exec.CommandContext(ctx, name, args...).CombinedOutput()",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/doctor.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.Command(name, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/focus.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.CommandContext(ctx, name, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/hook.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.Command(command, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/initcmd/init_windows_terminal.go",
+      "message": "Subprocess launched with a potential tainted input or cmd arguments",
+      "source": "cmd := exec.Command(args[0], args[1:]...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/popup_wait_key.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.Command(\"stty\", args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/popup_wait_key.go",
+      "message": "Subprocess launched with variable",
+      "source": "if err := exec.Command(\"stty\", full...).Run(); err == nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/popup_wait_key.go",
+      "message": "Subprocess launched with variable",
+      "source": "saved, err := exec.Command(\"stty\", \"-g\", \"-F\", name).Output()",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/settings.go",
+      "message": "Subprocess launched with variable",
+      "source": "return exec.Command(name, args...).Output()",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/settings.go",
+      "message": "Subprocess launched with variable",
+      "source": "return exec.Command(name, args...).Run()",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/setup.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.Command(\"stty\", args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/shell.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.CommandContext(ctx, name, args...)",
+      "max_count": 3
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/statusbar.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.CommandContext(ctx, name, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/switch.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.CommandContext(ctx, \"kubectl\", fullArgs...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/switch.go",
+      "message": "Subprocess launched with variable",
+      "source": "return exec.CommandContext(ctx, name, args...).CombinedOutput()",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/update.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.Command(name, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/integrations/hooks/hooks.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.CommandContext(runCtx, name, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/integrations/mux/runner.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.CommandContext(ctx, name, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/integrations/osfocus/wt_wsl_posix.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.Command(\"bash\", \"-c\", quoted)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/integrations/psmux/client.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.CommandContext(ctx, name, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/integrations/tmux/client.go",
+      "message": "Subprocess launched with variable",
+      "source": "cmd := exec.CommandContext(ctx, name, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/ui/picker/backend.go",
+      "message": "Subprocess launched with variable",
+      "source": "_ = exec.CommandContext(ctx, \"sh\", \"-c\", command).Run()",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/ui/picker/backend.go",
+      "message": "Subprocess launched with variable",
+      "source": "out, err := exec.CommandContext(ctx, \"sh\", \"-c\", command).CombinedOutput()",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/ui/picker/backend.go",
+      "message": "Subprocess launched with variable",
+      "source": "restoreCmd := exec.Command(\"stty\", state)",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/ai.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/hook.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
+      "max_count": 2
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/keymap.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/native_keys.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/notification.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/shell.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
+      "max_count": 3
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/status.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "_ = os.MkdirAll(filepath.Dir(cacheFile), 0o755)",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/tmux.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(config), 0o755); err != nil {",
+      "max_count": 2
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/tmux.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(include), 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/update.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/app/welcome_state.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/config/ai_agents.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/config/notification.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 3
+    },
+    {
+      "rule": "G301",
+      "path": "internal/config/picker.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/config/project_hooks.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/config/sessionstate.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 3
+    },
+    {
+      "rule": "G301",
+      "path": "internal/config/statusbar.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 2
+    },
+    {
+      "rule": "G301",
+      "path": "internal/core/layout/layout.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(s.Dir(), 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
+      "path": "internal/integrations/hooks/project_config.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G302",
+      "path": "internal/app/keymap.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G302",
+      "path": "internal/app/update.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G302",
+      "path": "internal/app/update.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)",
+      "max_count": 1
+    },
+    {
+      "rule": "G302",
+      "path": "internal/app/upgrade.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)",
+      "max_count": 1
+    },
+    {
+      "rule": "G302",
+      "path": "internal/config/ai_agents.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G302",
+      "path": "internal/config/notification.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
+      "max_count": 3
+    },
+    {
+      "rule": "G302",
+      "path": "internal/config/picker.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G302",
+      "path": "internal/config/project_hooks.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G302",
+      "path": "internal/config/sessionstate.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
+      "max_count": 3
+    },
+    {
+      "rule": "G302",
+      "path": "internal/config/statusbar.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
+      "max_count": 2
+    },
+    {
+      "rule": "G302",
+      "path": "internal/ui/picker/backend.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/ai.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(filepath.Join(cacheDir, name))",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/ai_ingest.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/ai_ingest_claude.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.Open(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/hook_trust_popup.go",
+      "message": "Potential file inclusion via variable",
+      "source": "rawDecision, err := os.ReadFile(decisionPath)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/hookmaker.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 3
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/hookmaker.go",
+      "message": "Potential file inclusion via variable",
+      "source": "data, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/notification.go",
+      "message": "Potential file inclusion via variable",
+      "source": "if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, content) {",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/popup_wait_key.go",
+      "message": "Potential file inclusion via variable",
+      "source": "f, err := os.OpenFile(name, os.O_RDWR, 0)",
+      "max_count": 2
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/shell.go",
+      "message": "Potential file inclusion via variable",
+      "source": "data, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/status.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/tmux.go",
+      "message": "Potential file inclusion via variable",
+      "source": "if content, readErr := os.ReadFile(marker); readErr == nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/update.go",
+      "message": "Potential file inclusion via variable",
+      "source": "data, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/update.go",
+      "message": "Potential file inclusion via variable",
+      "source": "out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/upgrade.go",
+      "message": "Potential file inclusion via variable",
+      "source": "in, err := os.Open(src)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/upgrade.go",
+      "message": "Potential file inclusion via variable",
+      "source": "out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/welcome_command.go",
+      "message": "Potential file inclusion via variable",
+      "source": "lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/welcome_state.go",
+      "message": "Potential file inclusion via variable",
+      "source": "data, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/config/ai_agents.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/config/config.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.Open(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/config/notification.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 3
+    },
+    {
+      "rule": "G304",
+      "path": "internal/config/picker.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/config/project_hooks.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/config/sessionstate.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 3
+    },
+    {
+      "rule": "G304",
+      "path": "internal/config/statusbar.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 2
+    },
+    {
+      "rule": "G304",
+      "path": "internal/config/workdirs.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.Open(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/core/layout/layout.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.Open(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/core/projectidentity/projectidentity.go",
+      "message": "Potential file inclusion via variable",
+      "source": "func (osFS) ReadFile(name string) ([]byte, error) { return os.ReadFile(name) }",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/core/usage/adapters/antigravity/antigravity.go",
+      "message": "Potential file inclusion via variable",
+      "source": "data, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/core/usage/adapters/claude/claude.go",
+      "message": "Potential file inclusion via variable",
+      "source": "data, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/core/usage/adapters/codex/codex.go",
+      "message": "Potential file inclusion via variable",
+      "source": "f, err := os.Open(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/core/usage/store.go",
+      "message": "Potential file inclusion via variable",
+      "source": "data, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/i18n/audit.go",
+      "message": "Potential file inclusion via variable",
+      "source": "source, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/integrations/agents/aisessions/sessions.go",
+      "message": "Potential file inclusion via variable",
+      "source": "f, err := os.Open(historyPath)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/integrations/agents/aisessions/sessions.go",
+      "message": "Potential file inclusion via variable",
+      "source": "f, err := os.Open(path)",
+      "max_count": 2
+    },
+    {
+      "rule": "G304",
+      "path": "internal/integrations/hooks/effective.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/integrations/hooks/global_config.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/integrations/hooks/migration.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.Open(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/integrations/hooks/project_config.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 2
+    },
+    {
+      "rule": "G304",
+      "path": "internal/integrations/hooks/trust.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.Open(path)",
+      "max_count": 2
+    },
+    {
+      "rule": "G304",
+      "path": "internal/integrations/sessionstate/store.go",
+      "message": "Potential file inclusion via variable",
+      "source": "data, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/integrations/tmux/sessionstate.go",
+      "message": "Potential file inclusion via variable",
+      "source": "f, err := os.Open(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/ui/picker/backend.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)",
+      "max_count": 1
+    },
+    {
+      "rule": "G306",
+      "path": "internal/app/ai.go",
+      "message": "Expect WriteFile permissions to be 0600 or less",
+      "source": "if err := os.WriteFile(path, []byte(mode+\"\\n\"), 0o644); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G306",
+      "path": "internal/app/notification.go",
+      "message": "Expect WriteFile permissions to be 0600 or less",
+      "source": "if err := os.WriteFile(path, content, 0o644); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G306",
+      "path": "internal/app/status.go",
+      "message": "Expect WriteFile permissions to be 0600 or less",
+      "source": "_ = os.WriteFile(cacheFile, []byte(segment), 0o644)",
+      "max_count": 1
+    },
+    {
+      "rule": "G306",
+      "path": "internal/app/tmux.go",
+      "message": "Expect WriteFile permissions to be 0600 or less",
+      "source": "if err := os.WriteFile(marker, []byte(popupCtx.OriginPane+\"\\n\"+popupCtx.OriginSession+\"\\n\"), 0o644); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G404",
+      "path": "internal/core/notify/store.go",
+      "message": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+      "source": "rng: rand.New(rand.NewSource(time.Now().UnixNano())),",
+      "max_count": 1
+    },
+    {
+      "rule": "G404",
+      "path": "internal/core/recentwindows/store.go",
+      "message": "Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)",
+      "source": "rng: rand.New(rand.NewSource(time.Now().UnixNano())),",
+      "max_count": 1
+    },
+    {
+      "rule": "G602",
+      "path": "internal/theme/resolve.go",
+      "message": "slice index out of range",
+      "source": "c := base[index]",
+      "max_count": 1
+    },
+    {
+      "rule": "G602",
+      "path": "internal/ui/picker/colorgrid.go",
+      "message": "slice index out of range",
+      "source": "c := base[index]",
+      "max_count": 1
+    },
+    {
+      "rule": "G703",
+      "path": "internal/app/ai.go",
+      "message": "Path traversal via taint analysis",
+      "source": "info, err := os.Stat(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G703",
+      "path": "internal/ui/picker/backend.go",
+      "message": "Path traversal via taint analysis",
+      "source": "file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)",
+      "max_count": 1
+    }
+  ]
+}

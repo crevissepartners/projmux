@@ -80,7 +80,7 @@ func (c *upgradeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if source := c.installerSource(); source == "npm" {
-		return errors.New("projmux upgrade is for Go/source installs; npm installs should run 'projmux update apply' or 'npm update -g projmux'")
+		return errors.New("projmux upgrade is for Go/source installs; npm installs should run 'projmux update apply' or 'npm install -g projmux@latest'")
 	}
 
 	opts := upgradeOptions{

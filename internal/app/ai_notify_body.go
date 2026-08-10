@@ -1,6 +1,7 @@
 package app
 
 import (
+	"maps"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
@@ -9,6 +10,8 @@ import (
 type aiNotifyBody struct {
 	Text     string
 	Severity string
+	Agent    string
+	Category string
 }
 
 func formatCodexHookPermissionNotifyBody(p codexHookPayload) aiNotifyBody {
@@ -16,35 +19,43 @@ func formatCodexHookPermissionNotifyBody(p codexHookPayload) aiNotifyBody {
 	if toolName == "" {
 		toolName = "Tool"
 	}
-	text := joinAINotifyText("Codex", "승인 필요", toolName)
+	text := toolName
 	if summary := formatCodexToolInputSummary(toolName, p.ToolInput); summary != "" {
 		text += ": " + summary
 	}
 	return aiNotifyBody{
 		Text:     text,
 		Severity: notify.SeverityCritical,
+		Agent:    "codex",
+		Category: "approval_required",
 	}
 }
 
 func formatCodexHookStopNotifyBody(codexHookPayload) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Codex", "응답 완료"),
+		Text:     "Ready",
 		Severity: notify.SeverityInfo,
+		Agent:    "codex",
+		Category: "response_complete",
 	}
 }
 
 func formatCodexGenericHookNotifyBody(p codexHookPayload) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Codex", p.EventName, p.ToolName),
+		Text:     joinAINotifyText("", p.EventName, p.ToolName),
 		Severity: notify.SeverityInfo,
+		Agent:    "codex",
+		Category: strings.TrimSpace(p.EventName),
 	}
 }
 
 func formatClaudeNotificationNotifyBody(p claudeHookPayload) aiNotifyBody {
-	label, severity := claudeNotificationLabelSeverity(p.NotificationType)
+	category, severity := claudeNotificationCategorySeverity(p.NotificationType)
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Claude", label, p.Message),
+		Text:     defaultString(strings.TrimSpace(p.Message), "Ready"),
 		Severity: severity,
+		Agent:    "claude",
+		Category: category,
 	}
 }
 
@@ -53,46 +64,101 @@ func formatClaudePermissionNotifyBody(p claudeHookPayload) aiNotifyBody {
 	if toolName == "" {
 		toolName = "Tool"
 	}
-	text := joinAINotifyText("Claude", "승인 필요", toolName)
+	text := toolName
 	if summary := formatClaudeToolInputSummary(toolName, p.ToolInput, p.ToolUseID); summary != "" {
 		text += ": " + summary
 	}
 	return aiNotifyBody{
 		Text:     text,
 		Severity: notify.SeverityCritical,
+		Agent:    "claude",
+		Category: "approval_required",
 	}
 }
 
 func formatClaudeStopNotifyBody(message string) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Claude", "응답 완료", message),
+		Text:     defaultString(strings.TrimSpace(message), "Ready"),
 		Severity: notify.SeverityInfo,
+		Agent:    "claude",
+		Category: "response_complete",
 	}
 }
 
 func formatClaudeStopFailureNotifyBody(p claudeHookPayload) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Claude", "오류", p.ErrorType, p.ErrorMessage),
+		Text:     joinAINotifyText(p.ErrorType, p.ErrorMessage),
 		Severity: notify.SeverityCritical,
+		Agent:    "claude",
+		Category: "error",
 	}
 }
 
 func formatClaudeSubagentStopNotifyBody(p claudeHookPayload) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Claude", "서브에이전트 종료", p.SubagentType, p.SubagentID),
+		Text:     joinAINotifyText(p.SubagentType, p.SubagentID),
 		Severity: notify.SeverityInfo,
+		Agent:    "claude",
+		Category: "subagent_stopped",
 	}
 }
 
 func formatClaudeTeammateIdleNotifyBody(p claudeHookPayload) aiNotifyBody {
 	return aiNotifyBody{
-		Text:     joinAINotifyText("Claude", "팀메이트 대기", p.TeammateName, p.TeammateID, p.TeammateContext),
+		Text:     joinAINotifyText(p.TeammateName, p.TeammateID, p.TeammateContext),
 		Severity: notify.SeverityInfo,
+		Agent:    "claude",
+		Category: "teammate_waiting",
+	}
+}
+
+func formatAntigravityApprovalNotifyBody(p antigravityHookPayload) aiNotifyBody {
+	return aiNotifyBody{
+		Text:     defaultString(joinAINotifyText("Approval needed", p.AgentState), "Approval needed"),
+		Severity: notify.SeverityCritical,
+		Agent:    "antigravity",
+		Category: "approval_required",
+	}
+}
+
+func formatAntigravityStopNotifyBody(p antigravityHookPayload) aiNotifyBody {
+	if antigravityHookHasError(p) {
+		return aiNotifyBody{
+			Text:     defaultString(joinAINotifyText(p.TerminationReason, p.Error), "Error"),
+			Severity: notify.SeverityCritical,
+			Agent:    "antigravity",
+			Category: "error",
+		}
+	}
+	return aiNotifyBody{
+		Text:     "Ready",
+		Severity: notify.SeverityInfo,
+		Agent:    "antigravity",
+		Category: "response_complete",
+	}
+}
+
+func antigravityHookHasError(p antigravityHookPayload) bool {
+	if strings.TrimSpace(p.Error) != "" {
+		return true
+	}
+	reason := strings.ToLower(strings.TrimSpace(p.TerminationReason))
+	switch reason {
+	case "", "stop", "stopped", "complete", "completed", "success", "normal":
+		return false
+	default:
+		return true
 	}
 }
 
 func joinAINotifyText(agent, category string, values ...string) string {
-	parts := []string{strings.TrimSpace(agent), strings.TrimSpace(category)}
+	parts := []string{}
+	if trimmed := strings.TrimSpace(agent); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	if trimmed := strings.TrimSpace(category); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
 	for _, value := range values {
 		if trimmed := truncateRunes(value, 80); trimmed != "" {
 			parts = append(parts, trimmed)
@@ -101,17 +167,29 @@ func joinAINotifyText(agent, category string, values ...string) string {
 	return strings.Join(parts, " · ")
 }
 
-func claudeNotificationLabelSeverity(notificationType string) (string, string) {
+func claudeNotificationCategorySeverity(notificationType string) (string, string) {
 	switch strings.TrimSpace(notificationType) {
 	case "permission_prompt":
-		return "승인 필요", notify.SeverityCritical
+		return "approval_required", notify.SeverityCritical
 	case "elicitation_dialog":
-		return "입력 필요", notify.SeverityCritical
+		return "input_required", notify.SeverityCritical
 	case "idle_prompt":
-		return "응답 완료", notify.SeverityInfo
+		return "response_complete", notify.SeverityInfo
 	default:
-		return "응답 완료", notify.SeverityInfo
+		return "response_complete", notify.SeverityInfo
 	}
+}
+
+func mergeAINotifyBodyMetadata(metadata map[string]string, body aiNotifyBody) map[string]string {
+	merged := make(map[string]string, len(metadata)+2)
+	maps.Copy(merged, metadata)
+	if body.Agent != "" {
+		merged[notify.MetaAgent] = body.Agent
+	}
+	if body.Category != "" {
+		merged[notify.MetaCategory] = body.Category
+	}
+	return merged
 }
 
 func formatCodexToolInputSummary(toolName string, input map[string]any) string {

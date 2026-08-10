@@ -1,6 +1,11 @@
 package app
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/theme"
+)
 
 // settings_render.go centralizes the picker-row formatting used by every
 // settings entry builder. Keeping the glyph + color + padding in one place
@@ -20,16 +25,24 @@ const (
 	settingsGlyphOpen     = "▸" // ▸ open / navigate
 )
 
-// ANSI color sequences mapped per the design system.
+// ANSI color sequences mapped per the design system. These default to
+// historical foreground/state literals; applyNativeUITheme
+// (theme_render_native.go) repoints them at a resolved effective theme at
+// command entry so an explicit global theme repaints the settings/trust
+// surfaces. settingsColorActive/Reset are pure attributes (no color) and stay
+// constant.
+var (
+	settingsColorAdd    = theme.ANSIAccentActionStart  // additive / primary action
+	settingsColorType   = theme.ANSIAccentActionStart  // edit / navigate action
+	settingsColorRemove = theme.ANSIStateDangerStart   // destructive
+	settingsColorBack   = theme.ANSITextSecondaryStart // back / cancel
+	settingsColorDim    = theme.ANSITextDimStart       // descriptions, secondary text
+	settingsColorInfo   = theme.ANSITextPrimaryStart   // info / read-only label
+)
+
 const (
-	settingsColorAdd    = "\x1b[32m" // green: positive / additive action
-	settingsColorType   = "\x1b[36m" // cyan: typed / edit / navigate
-	settingsColorRemove = "\x1b[31m" // red: destructive
-	settingsColorBack   = "\x1b[90m" // dim: back / cancel
-	settingsColorActive = "\x1b[1m"  // bold: active / current value
-	settingsColorDim    = "\x1b[90m" // dim: descriptions, secondary text
-	settingsColorInfo   = "\x1b[37m" // muted white: info / read-only label
-	settingsColorReset  = "\x1b[0m"
+	settingsColorActive = theme.ANSIBold // active / current value
+	settingsColorReset  = theme.ANSIReset
 )
 
 // settingsLabelNameWidth is the byte width the name column is padded to.
@@ -41,6 +54,12 @@ const settingsLabelNameWidth = 24
 // without a glyph align with rows that use a single-cell glyph (followed by
 // the standard two-space gap before the name column).
 func settingsLabel(glyph, color, name, description string) string {
+	return settingsLabelLocale(settingsLocale(), glyph, color, name, description)
+}
+
+func settingsLabelLocale(locale i18n.Locale, glyph, color, name, description string) string {
+	name = settingsCatalogTextLocale(locale, name)
+	description = settingsCatalogExactTextOrFallbackLocale(locale, description)
 	var b strings.Builder
 
 	if glyph == "" {
@@ -72,6 +91,12 @@ func settingsLabel(glyph, color, name, description string) string {
 // is wrapped in the dim color so it visually recedes, and no action color
 // is applied to the name column.
 func settingsLabelDim(name, description string) string {
+	return settingsLabelDimLocale(settingsLocale(), name, description)
+}
+
+func settingsLabelDimLocale(locale i18n.Locale, name, description string) string {
+	name = settingsCatalogTextLocale(locale, name)
+	description = settingsCatalogExactTextOrFallbackLocale(locale, description)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
 	b.WriteString("  ")
@@ -95,6 +120,12 @@ func settingsLabelDim(name, description string) string {
 // name is a static label, the value is the resolved data, and the source
 // annotation explains where the value came from.
 func settingsLabelInfo(name, value, source string) string {
+	return settingsLabelInfoLocale(settingsLocale(), name, value, source)
+}
+
+func settingsLabelInfoLocale(locale i18n.Locale, name, value, source string) string {
+	name = settingsCatalogTextLocale(locale, name)
+	source = settingsCatalogExactTextOrFallbackLocale(locale, source)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
 	b.WriteString("  ")
@@ -116,12 +147,10 @@ func settingsLabelInfo(name, value, source string) string {
 	return b.String()
 }
 
-// padRight right-pads s with spaces so its byte length is at least width.
-// settings labels are ASCII, so byte-len matches display columns closely
-// enough for our purposes.
+// padRight right-pads s with spaces so its visible terminal width is at least width.
 func padRight(s string, width int) string {
-	if len(s) >= width {
+	if i18n.TerminalCellWidth(s) >= width {
 		return s
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-i18n.TerminalCellWidth(s))
 }

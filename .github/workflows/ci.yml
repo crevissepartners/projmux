@@ -11,6 +11,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes shellcheck
+          fi
+
+      - name: Run security gates
+        run: make security
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -45,9 +71,30 @@ jobs:
       - name: Run unit tests
         run: make test
 
+  darwin-native:
+    name: Darwin Native Key Adapter
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compile and test native key adapter
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test ./internal/platformkeys
+          go build ./cmd/projmux
+
   npm-pack:
     name: NPM Packages
-    runs-on: ubuntu-latest
+    runs-on: macos-15
 
     steps:
       - name: Checkout
@@ -109,6 +156,12 @@ jobs:
       - name: Validate npm package staging
         if: steps.package-scope.outputs.needed == '1'
         run: make npm-pack
+
+      - name: Verify npm Darwin native key adapters
+        if: steps.package-scope.outputs.needed == '1'
+        run: |
+          otool -L dist/npm/@projmux/darwin-x64/bin/projmux | grep -F ApplicationServices.framework
+          otool -L dist/npm/@projmux/darwin-arm64/bin/projmux | grep -F ApplicationServices.framework
 
   integration:
     name: Integration Tests

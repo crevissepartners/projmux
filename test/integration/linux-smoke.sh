@@ -25,7 +25,7 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "notify-sidebar
   --include "$XDG_CONFIG_HOME/tmux/projmux.conf" \
   >"$PROJMUX_SMOKE_WORKDIR/install.out"
 smoke_assert_file_contains "$HOME/.tmux.conf" "source-file"
-smoke_assert_file_contains "$XDG_CONFIG_HOME/tmux/projmux.conf" "unbind-key -q R"
+smoke_assert_file_contains "$XDG_CONFIG_HOME/tmux/projmux.conf" "unbind-key -q F"
 
 PROJMUX_SMOKE_TMUX_SOCKET="projmux-it"
 export PROJMUX_SMOKE_TMUX_SOCKET
@@ -34,7 +34,7 @@ tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s integration-smoke -c "$sm
 apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
 smoke_assert_output_contains "$apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
 
-app_flag="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-option -gqv @projmux_app)"
+app_flag="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_app)"
 if [[ "$app_flag" != "1" ]]; then
   echo "expected tmux apply to set @projmux_app=1, got: $app_flag" >&2
   exit 1

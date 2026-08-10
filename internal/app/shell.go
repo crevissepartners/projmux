@@ -10,39 +10,38 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/platformkeys"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
-	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 const (
 	defaultAppSocket  = "projmux"
 	defaultAppSession = "home"
-
-	shellUpdateApply = "update:apply"
-	shellUpdateLater = "update:later"
-	shellUpdateSkip  = "update:skip"
 )
 
 type shellCommand struct {
-	executable         func() (string, error)
-	lookupEnv          func(string) string
-	homeDir            func() (string, error)
-	welcomeInput       io.Reader
-	writeFile          func(string, []byte, os.FileMode) error
-	readFile           func(string) ([]byte, error)
-	runCommand         func(ctx context.Context, env []string, name string, args ...string) error
-	tmuxRunner         tmuxRunner
-	sessionStore       func() (sessionstate.Store, error)
-	update             *updateCommand
-	updatePromptRunner intpickercompat.Runner
-	nativePicker       intpicker.Runner
-	getwd              func() (string, error)
-	now                func() time.Time
+	executable   func() (string, error)
+	lookupEnv    func(string) string
+	homeDir      func() (string, error)
+	welcomeInput io.Reader
+	writeFile    func(string, []byte, os.FileMode) error
+	readFile     func(string) ([]byte, error)
+	runCommand   func(ctx context.Context, env []string, name string, args ...string) error
+	startCommand func(ctx context.Context, env []string, name string, args ...string) error
+	tmuxRunner   tmuxRunner
+	sessionStore func() (sessionstate.Store, error)
+	update       *updateCommand
+	nativePicker intpicker.Runner
+	getwd        func() (string, error)
+	goos         func() string
+	nativeKeys   func() bool
+	now          func() time.Time
 }
 
 type shellUpdateSkipState struct {
@@ -60,10 +59,13 @@ func newShellCommand(update *updateCommand) *shellCommand {
 		writeFile:    os.WriteFile,
 		readFile:     os.ReadFile,
 		runCommand:   runForegroundCommand,
+		startCommand: startBackgroundCommand,
 		tmuxRunner:   shellTmuxExecRunner{},
 		update:       update,
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		getwd:        os.Getwd,
+		goos:         func() string { return runtime.GOOS },
+		nativeKeys:   platformkeys.Available,
 		now:          time.Now,
 	}
 }
@@ -93,14 +95,8 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("projmux shell cannot run inside the %q projmux tmux server", socketName)
 	}
 
-	welcomeHandledUpdate, err := c.promptWelcome(stdout, stderr)
-	if err != nil {
+	if _, err := c.promptWelcome(stdout, stderr); err != nil {
 		return err
-	}
-	if !welcomeHandledUpdate {
-		if err := c.promptForUpdate(stdout, stderr); err != nil {
-			return err
-		}
 	}
 
 	binaryPath, err := c.resolveBinary(*binaryOverride)
@@ -111,7 +107,11 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if config == "" {
 		config = c.defaultConfigPath()
 	}
-	if !*noInstall {
+	if !*noInstall && c.usePSMuxShell() {
+		if err := c.writePSMuxAppConfig(config, binaryPath); err != nil {
+			return err
+		}
+	} else if !*noInstall {
 		if err := c.writeAppConfig(config, binaryPath); err != nil {
 			return err
 		}
@@ -120,11 +120,20 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	command := "tmux"
+	if c.usePSMuxShell() {
+		command = "psmux"
+	}
 	runArgs := []string{"-L", socketName, "-f", config, "new-session", "-A", "-s", target.SessionName}
 	if target.CWD != "" {
 		runArgs = append(runArgs, "-c", target.CWD)
 	}
-	return c.run(context.Background(), "tmux", runArgs...)
+	if c.shouldStartNativeKeyBroker() {
+		if err := c.start(context.Background(), binaryPath, "key-broker", "--socket", socketName); err != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: start native macOS keybindings: %v\n", err)
+		}
+	}
+	return c.run(context.Background(), command, runArgs...)
 }
 
 type shellTarget struct {
@@ -190,34 +199,6 @@ func (c *shellCommand) resolveShellProjectContext() (string, error) {
 	return "", nil
 }
 
-func (c *shellCommand) nowTime() time.Time {
-	if c.now == nil {
-		return time.Now()
-	}
-	return c.now()
-}
-
-type shellAppTmuxRunner struct {
-	runner     tmuxRunner
-	socketName string
-	configPath string
-}
-
-func (r shellAppTmuxRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if name != "tmux" {
-		return r.runner.Run(ctx, name, args...)
-	}
-	wrapped := make([]string, 0, len(args)+4)
-	if strings.TrimSpace(r.socketName) != "" {
-		wrapped = append(wrapped, "-L", r.socketName)
-	}
-	if strings.TrimSpace(r.configPath) != "" {
-		wrapped = append(wrapped, "-f", r.configPath)
-	}
-	wrapped = append(wrapped, args...)
-	return r.runner.Run(ctx, name, wrapped...)
-}
-
 func tmuxSessionExists(ctx context.Context, runner tmuxRunner, sessionName string) (bool, error) {
 	if runner == nil {
 		return false, errors.New("tmux runner is not configured")
@@ -258,39 +239,6 @@ func (r shellTmuxExecRunner) environ() []string {
 	return os.Environ()
 }
 
-func (c *shellCommand) promptForUpdate(stdout, stderr io.Writer) error {
-	if c.update == nil || c.nativePicker == nil {
-		return nil
-	}
-	status, err := c.update.status()
-	if err != nil || !shouldPromptShellUpdate(status) || c.updatePromptSkipped(status) {
-		return nil
-	}
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.updatePromptRunner, shellUpdatePromptOptions(status))
-	if err != nil {
-		if stderr != nil {
-			_, _ = fmt.Fprintf(stderr, "skipped update prompt: %v\n", err)
-		}
-		return nil
-	}
-
-	switch strings.TrimSpace(result.Value) {
-	case shellUpdateApply:
-		if err := c.update.Run([]string{"apply"}, stdout, stderr); err != nil {
-			return fmt.Errorf("run shell update: %w", err)
-		}
-	case shellUpdateSkip:
-		if err := c.writeUpdateSkip(status); err != nil {
-			return err
-		}
-	case "", shellUpdateLater:
-		return nil
-	default:
-		return fmt.Errorf("unknown shell update action: %s", result.Value)
-	}
-	return nil
-}
-
 func shouldPromptShellUpdate(status updateStatus) bool {
 	if status.UpdateState != "update_available" {
 		return false
@@ -298,41 +246,15 @@ func shouldPromptShellUpdate(status updateStatus) bool {
 	if status.CacheState != "fresh" {
 		return false
 	}
-	switch status.Installer.Source {
-	case "npm", "go", "github-release":
-		return strings.TrimSpace(status.LatestVersion) != ""
-	default:
-		return false
-	}
+	return strings.TrimSpace(status.LatestVersion) != ""
 }
 
-func shellUpdatePromptOptions(status updateStatus) intpickercompat.Options {
-	latest := strings.TrimSpace(status.LatestVersion)
-	current := strings.TrimSpace(status.CurrentVersion)
-	return intpickercompat.Options{
-		UI:     "shell-update",
-		Prompt: "Update > ",
-		Header: fmt.Sprintf("projmux %s is available (current %s)", latest, current),
-		Footer: "Enter: choose  |  Esc: continue shell",
-		Entries: []intpickercompat.Entry{
-			{
-				Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Update Now", "run projmux update apply"),
-				Value: shellUpdateApply,
-			},
-			{
-				Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Later", "continue without updating"),
-				Value: shellUpdateLater,
-			},
-			{
-				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Skip This Version", latest),
-				Value: shellUpdateSkip,
-			},
-			{
-				Label: settingsLabelInfo("Installer", status.Installer.Source, status.Installer.Note),
-				Value: shellUpdateLater,
-			},
-		},
-		Bindings: settingsCloseBindings(),
+func shellUpdateCanUpgrade(status updateStatus) bool {
+	switch status.Installer.Source {
+	case "npm", "go", "github-release":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -431,8 +353,43 @@ func (c *shellCommand) writeAppConfig(path, binaryPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.writeFile(path, []byte(tmuxAppConfigWithKeymap(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(path, []byte(c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return fmt.Errorf("write shell app config: %w", err)
+	}
+	return nil
+}
+
+// appConfigThemeSource resolves the global user theme for the shell-start writer,
+// mirroring tmuxCommand.appConfigThemeSource: an explicit global `[theme]`
+// repaints the generated tmux chrome on `projmux shell` start instead of
+// clobbering a themed config with the built-in fallback. It degrades to the
+// fallback when the global config cannot be read so shell start never fails on a
+// missing or malformed user config. Theme is global-only, so no project path
+// participates.
+func (c *shellCommand) appConfigThemeSource() renderThemeSource {
+	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, "")
+	if err != nil {
+		return fallbackRenderThemeSource()
+	}
+	return source
+}
+
+func (c *shellCommand) writePSMuxAppConfig(path, binaryPath string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("shell psmux app config path is required")
+	}
+	if c.writeFile == nil {
+		return errors.New("configure shell psmux app config writer: file writer is not configured")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create shell psmux app config directory: %w", err)
+	}
+	config, err := psmuxAppConfig(binaryPath)
+	if err != nil {
+		return err
+	}
+	if err := c.writeFile(path, []byte(config), 0o644); err != nil {
+		return fmt.Errorf("write shell psmux app config: %w", err)
 	}
 	return nil
 }
@@ -451,7 +408,11 @@ func (c *shellCommand) defaultConfigPath() string {
 			configHome = filepath.Join(homeDir, ".config")
 		}
 	}
-	return filepath.Join(configHome, "projmux", "tmux.conf")
+	name := "tmux.conf"
+	if c.usePSMuxShell() {
+		name = "psmux.conf"
+	}
+	return filepath.Join(configHome, "projmux", name)
 }
 
 func (c *shellCommand) expandHome(path string) string {
@@ -492,6 +453,26 @@ func (c *shellCommand) run(ctx context.Context, name string, args ...string) err
 	return c.runCommand(ctx, withoutEnv(os.Environ(), "TMUX"), name, args...)
 }
 
+func (c *shellCommand) start(ctx context.Context, name string, args ...string) error {
+	if c.startCommand == nil {
+		return errors.New("shell background command runner is not configured")
+	}
+	return c.startCommand(ctx, withoutEnv(os.Environ(), "TMUX"), name, args...)
+}
+
+func (c *shellCommand) shouldStartNativeKeyBroker() bool {
+	return c.goos != nil &&
+		c.goos() == "darwin" &&
+		c.nativeKeys != nil &&
+		c.nativeKeys() &&
+		nativeKeysEnabled(c.lookupEnv, c.homeDir) &&
+		!c.usePSMuxShell()
+}
+
+func (c *shellCommand) usePSMuxShell() bool {
+	return usePSMuxBackend(c.lookupEnv, c.goos)
+}
+
 func runForegroundCommand(ctx context.Context, env []string, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = env
@@ -499,6 +480,20 @@ func runForegroundCommand(ctx context.Context, env []string, name string, args .
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func startBackgroundCommand(ctx context.Context, env []string, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() {
+		_ = cmd.Wait()
+	}()
+	return nil
 }
 
 func withoutEnv(env []string, name string) []string {

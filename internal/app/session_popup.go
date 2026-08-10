@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -36,6 +37,19 @@ type sessionPopupCommand struct {
 func newSessionPopupCommand() *sessionPopupCommand {
 	paths, err := config.DefaultPathsFromEnv()
 	client := inttmux.NewClient(inttmux.ExecRunner{})
+	if usePSMuxBackend(os.Getenv, nil) {
+		client := newDefaultPSMuxClient()
+		cmd := &sessionPopupCommand{
+			inventory: tmuxPreviewInventory{client: client},
+			opener:    client,
+		}
+		if err != nil {
+			cmd.storeErr = fmt.Errorf("resolve default config paths: %w", err)
+			return cmd
+		}
+		cmd.store = corepreview.NewDefaultStore(paths)
+		return cmd
+	}
 
 	cmd := &sessionPopupCommand{
 		inventory: tmuxPreviewInventory{client: client},
@@ -52,6 +66,9 @@ func newSessionPopupCommand() *sessionPopupCommand {
 
 // Run manages session-popup subcommands.
 func (c *sessionPopupCommand) Run(args []string, stdout, stderr io.Writer) error {
+	// Bright Phase 2 (B3): the session-popup preview renders with the resolved
+	// effective theme instead of the fallback literals.
+	defer applyNativeUIThemeFromConfig(os.UserHomeDir, os.Getenv, "")()
 	fs := flag.NewFlagSet("session-popup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 

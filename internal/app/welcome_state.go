@@ -16,10 +16,12 @@ import (
 const welcomeStateVersion = 1
 
 type shellWelcomeState struct {
-	Version              int       `json:"version"`
-	LastWelcomedVersion  string    `json:"last_welcomed_version"`
-	WelcomedAt           time.Time `json:"welcomed_at"`
-	PendingAttachWelcome bool      `json:"pending_attach_welcome,omitempty"`
+	Version              int        `json:"version"`
+	LastWelcomedVersion  string     `json:"last_welcomed_version"`
+	WelcomedAt           time.Time  `json:"welcomed_at"`
+	PendingAttachWelcome bool       `json:"pending_attach_welcome,omitempty"`
+	SkipVersion          string     `json:"skip_version,omitempty"`
+	SkippedAt            *time.Time `json:"skipped_at,omitempty"`
 }
 
 func (c *shellCommand) prepareWelcomeState() (string, bool) {
@@ -31,41 +33,33 @@ func (c *shellCommand) prepareWelcomeState() (string, bool) {
 	if err != nil {
 		return current, false
 	}
+	state := shellWelcomeState{}
 	data, err := os.ReadFile(path)
-	switch {
-	case err == nil:
-		var state shellWelcomeState
-		if err := json.Unmarshal(data, &state); err != nil {
-			return current, false
-		}
-		if strings.TrimSpace(state.LastWelcomedVersion) == current {
-			return current, false
-		}
-	case errors.Is(err, os.ErrNotExist):
-		// First run for this version.
-	default:
+	if err == nil {
+		_ = json.Unmarshal(data, &state)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return current, false
 	}
+	state.Version = welcomeStateVersion
+	state.LastWelcomedVersion = current
+	state.WelcomedAt = c.welcomeClock().UTC()
+	state.PendingAttachWelcome = false
+	_ = c.writeWelcomeState(path, state)
+	return current, true
+}
+
+func (c *shellCommand) writeWelcomeState(path string, state shellWelcomeState) error {
 	if c.writeFile == nil {
-		return current, false
+		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return current, false
+		return err
 	}
-	state := shellWelcomeState{
-		Version:              welcomeStateVersion,
-		LastWelcomedVersion:  current,
-		WelcomedAt:           c.welcomeClock().UTC(),
-		PendingAttachWelcome: true,
-	}
-	data, err = json.MarshalIndent(state, "", "  ")
+	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		return current, false
+		return err
 	}
-	if err := c.writeFile(path, data, 0o644); err != nil {
-		return current, false
-	}
-	return current, true
+	return c.writeFile(path, data, 0o644)
 }
 
 func (c *shellCommand) welcomeStatePath(current string) (string, error) {

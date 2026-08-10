@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 const (
@@ -129,12 +130,12 @@ func statusbarDecorationTmuxOptionForTarget(target statusbarDecorationTarget) st
 	}
 }
 
-func statusbarCwdSegmentFormat() string {
-	return "#[range=user|pwd]" + statusbarCwdDecoratorFormat() + "#[fg=colour250]#{=-28/...:pane_current_path}#[norange]"
+func statusbarCwdSegmentFormat(roles theme.RenderRoles) string {
+	return "#[range=user|pwd]" + statusbarCwdDecoratorFormat(roles) + "#[fg=" + roles.StatusTextSecondary + "]#{=-28/...:pane_current_path}#[norange]"
 }
 
-func statusbarCwdDecoratorFormat() string {
-	return "#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + statusbarDecorationTmuxOption + "},symbol},#[fg=colour220] ,#{?#{==:#{" + statusbarDecorationTmuxOption + "},emoji},#[fg=colour220]📁 ,}},#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},symbol},#[fg=colour220] ,#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},emoji},#[fg=colour220]📁 ,}}}"
+func statusbarCwdDecoratorFormat(roles theme.RenderRoles) string {
+	return "#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},},#{?#{==:#{" + statusbarDecorationTmuxOption + "},symbol},#[fg=" + roles.DecorationCwd + "] ,#{?#{==:#{" + statusbarDecorationTmuxOption + "},emoji},#[fg=" + roles.DecorationCwd + "]📁 ,}},#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},symbol},#[fg=" + roles.DecorationCwd + "] ,#{?#{==:#{" + statusbarDecorationCwdTmuxOption + "},emoji},#[fg=" + roles.DecorationCwd + "]📁 ,}}}"
 }
 
 type gitRemoteProvider string
@@ -150,18 +151,18 @@ func statusbarGitDecorator(mode config.StatusbarDecoration, remoteURL string) st
 	case config.StatusbarDecorationSymbol:
 		switch provider {
 		case gitRemoteProviderGitLab:
-			return "#[fg=colour208] #[fg=colour16]"
+			return "#[fg=" + statusSegmentRoles.DecorationGitLab + "] #[fg=" + tmuxGitSegmentFg + "]"
 		default:
-			return "#[fg=colour17] #[fg=colour16]"
+			return "#[fg=" + statusSegmentRoles.GitAhead + "] #[fg=" + tmuxGitSegmentFg + "]"
 		}
 	case config.StatusbarDecorationEmoji:
 		switch provider {
 		case gitRemoteProviderGitHub:
-			return "#[fg=colour17]🐱 #[fg=colour16]"
+			return "#[fg=" + statusSegmentRoles.GitAhead + "]🐱 #[fg=" + tmuxGitSegmentFg + "]"
 		case gitRemoteProviderGitLab:
-			return "#[fg=colour208]🦊 #[fg=colour16]"
+			return "#[fg=" + statusSegmentRoles.DecorationGitLab + "]🦊 #[fg=" + tmuxGitSegmentFg + "]"
 		default:
-			return "#[fg=colour28]🌿 #[fg=colour16]"
+			return "#[fg=" + statusSegmentRoles.GitStaged + "]🌿 #[fg=" + tmuxGitSegmentFg + "]"
 		}
 	default:
 		return ""

@@ -47,6 +47,7 @@ func (c *welcomeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("welcome", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	popup := fs.Bool("popup", false, "show pending attach welcome in a tmux popup")
+	force := fs.Bool("force", false, "show popup even when no attach welcome is pending")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -54,36 +55,38 @@ func (c *welcomeCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printWelcomeUsage(stderr)
 		return errors.New("welcome does not accept positional arguments")
 	}
-	if *popup {
-		return c.runPopup()
+	if *popup || *force {
+		return c.runPopup(*force)
 	}
 	status, hasStatus := resolveWelcomeUpdateStatus(c.update)
-	return writeShellWelcome(stdout, strings.TrimSpace(version.String()), status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv))
+	return writeShellWelcome(stdout, strings.TrimSpace(version.String()), status, hasStatus, false, false, false, welcomeWidthFromEnv(c.lookupEnv), appLocale(c.homeDir, c.lookupEnv))
 }
 
 func printWelcomeUsage(w io.Writer) {
 	if w == nil {
 		return
 	}
-	_, _ = io.WriteString(w, "Usage:\n  projmux welcome\n")
+	_, _ = io.WriteString(w, "Usage:\n  projmux welcome [--popup [--force]]\n")
 }
 
-func (c *welcomeCommand) runPopup() error {
-	if welcomeAutoPopupDisabled(c.lookupEnv) {
+func (c *welcomeCommand) runPopup(force bool) error {
+	if !force && welcomeAutoPopupDisabled(c.lookupEnv) {
 		return nil
 	}
 	current := welcomeCurrentVersion()
-	claimed, err := c.claimPendingAttachWelcome(current)
-	if err != nil || !claimed {
-		return nil
+	if !force {
+		claimed, err := c.claimPendingAttachWelcome(current)
+		if err != nil || !claimed {
+			return nil
+		}
 	}
 
 	status, hasStatus := resolveWelcomeUpdateStatus(c.update)
 	var body bytes.Buffer
-	if err := writeShellWelcome(&body, current, status, hasStatus, false, false, welcomeWidthFromEnv(c.lookupEnv)); err != nil {
+	if err := writeShellWelcome(&body, current, status, hasStatus, false, false, false, welcomeWidthFromEnv(c.lookupEnv), appLocale(c.homeDir, c.lookupEnv)); err != nil {
 		return nil
 	}
-	body.WriteString(projmuxpicker.MutedStart + "Press any key to close." + projmuxpicker.Reset + "\n")
+	body.WriteString(displayOnlyPopupClosePromptLine() + "\n")
 
 	binaryPath := ""
 	if c.executable != nil {

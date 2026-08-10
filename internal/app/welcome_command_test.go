@@ -17,15 +17,12 @@ func TestWelcomeCommandWritesShellGuide(t *testing.T) {
 	t.Parallel()
 
 	cmd := newWelcomeCommand(nil)
-	cmd.lookupEnv = func(string) string { return "" }
 
 	var stdout, stderr bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Welcome to projmux shell") {
-		t.Fatalf("stdout = %q, want welcome heading", stdout.String())
-	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
@@ -53,15 +50,12 @@ func TestAppDispatchesWelcomeCommand(t *testing.T) {
 	t.Parallel()
 
 	app := New()
-	app.welcome.lookupEnv = func(string) string { return "" }
 
 	var stdout, stderr bytes.Buffer
 	if err := app.Run([]string{"welcome"}, &stdout, &stderr); err != nil {
 		t.Fatalf("Run(welcome) error = %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Welcome to projmux shell") {
-		t.Fatalf("stdout = %q, want welcome output", stdout.String())
-	}
+	assertWelcomeOutput(t, "stdout", stdout.String())
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
@@ -125,8 +119,26 @@ func TestWelcomePopupHonorsEnvSuppression(t *testing.T) {
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(stdout.String(), "Welcome to projmux shell") {
-		t.Fatalf("stdout = %q, want manual welcome despite env suppression", stdout.String())
+	assertWelcomeOutput(t, "stdout", stdout.String())
+}
+
+func TestWelcomePopupForceShowsWithoutPendingState(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := testWelcomePopupCommand(t, home)
+	cmd.lookupEnv = func(name string) string {
+		if name == "PROJMUX_WELCOME" {
+			return "off"
+		}
+		return ""
+	}
+
+	if err := cmd.Run([]string{"--popup", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run(--popup --force) error = %v", err)
+	}
+	if calls := cmd.runner.(*recordingTmuxRunner).calls; len(calls) != 1 {
+		t.Fatalf("calls = %#v, want forced popup without pending state", calls)
 	}
 }
 
@@ -195,15 +207,35 @@ func TestWelcomePopupDisplaysWelcomePayloadInTmux(t *testing.T) {
 		}
 	}
 	command := call.args[len(call.args)-1]
+	assertWelcomeOutput(t, "popup command", command)
 	for _, want := range []string{
-		"Welcome to projmux shell",
-		"shell bootstrap",
-		"Press any key to close.",
+		displayOnlyPopupClosePrompt,
 		"popup-wait-key",
 		"'/tmp/proj mux/bin/projmux'",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("popup command = %q, want substring %q", command, want)
+		}
+	}
+}
+
+func assertWelcomeOutput(t *testing.T, name, output string) {
+	t.Helper()
+
+	for _, want := range []string{"projmux", version.String()} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("%s = %q, want substring %q", name, output, want)
+		}
+	}
+	assertNoHardcodedWelcomeLaunchGuide(t, name, output)
+}
+
+func assertNoHardcodedWelcomeLaunchGuide(t *testing.T, name, output string) {
+	t.Helper()
+
+	for _, unwanted := range []string{"Alt-1", "Alt-3", "Alt-5"} {
+		if strings.Contains(output, unwanted) {
+			t.Fatalf("%s = %q, did not want hardcoded welcome key guide %q", name, output, unwanted)
 		}
 	}
 }

@@ -81,6 +81,37 @@ func TestSettingsLabelInfoOmitsEmptyValueAndSource(t *testing.T) {
 	}
 }
 
+func TestSettingsStateActionPaletteRolesDoNotAlias(t *testing.T) {
+	t.Parallel()
+
+	if settingsColorRemove == settingsColorAdd || settingsColorRemove == settingsColorType || settingsColorRemove == settingsColorDim {
+		t.Fatalf("destructive color aliases action or muted colors: remove=%q add=%q type=%q dim=%q", settingsColorRemove, settingsColorAdd, settingsColorType, settingsColorDim)
+	}
+	if settingsColorBack == settingsColorDim || settingsColorInfo == settingsColorDim {
+		t.Fatalf("back/info colors must not reuse muted description color: back=%q info=%q dim=%q", settingsColorBack, settingsColorInfo, settingsColorDim)
+	}
+
+	add := settingsLabel(settingsGlyphAdd, settingsColorAdd, "Add", "create")
+	typed := settingsLabel(settingsGlyphType, settingsColorType, "Set value", "edit")
+	remove := settingsLabel(settingsGlyphRemove, settingsColorRemove, "Remove", "delete")
+	back := settingsLabel(settingsGlyphBack, settingsColorBack, "Back", "return")
+	info := settingsLabelInfo("Path", "/repo", "source")
+	for name, label := range map[string]string{
+		"add":    add,
+		"type":   typed,
+		"remove": remove,
+		"back":   back,
+		"info":   info,
+	} {
+		if !strings.Contains(label, settingsColorReset) {
+			t.Fatalf("%s label = %q, want reset-delimited color run", name, label)
+		}
+	}
+	if !strings.Contains(remove, settingsColorRemove+"Remove") {
+		t.Fatalf("remove label = %q, want danger-colored destructive name", remove)
+	}
+}
+
 // visibleRuneColumn strips ANSI escape sequences from s and returns the rune
 // offset at which marker first appears. Returns -1 if not present.
 func visibleRuneColumn(s, marker string) int {

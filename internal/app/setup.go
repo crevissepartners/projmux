@@ -37,9 +37,6 @@ func newSetupCommand() *setupCommand {
 	c.enterRaw = func() (func() error, error) {
 		return enterTTYRawMode(c.lookupEnv)
 	}
-	c.readKey = func(timeout time.Duration) ([]byte, error) {
-		return readKeySequence(os.Stdin, timeout)
-	}
 	return c
 }
 
@@ -48,7 +45,6 @@ type probeKeyStatus string
 
 const (
 	probeStatusPlain   probeKeyStatus = "plain"
-	probeStatusCSIu    probeKeyStatus = "csi-u"
 	probeStatusUnknown probeKeyStatus = "unknown"
 	probeStatusTimeout probeKeyStatus = "timeout"
 )
@@ -63,17 +59,10 @@ type probeKey struct {
 	// Action describes the projmux behaviour bound to the key, used in the
 	// summary report.
 	Action string
-	// Plain is the byte sequence the terminal sends when no CSI-u layer is
-	// in play (e.g. "\x1b1" for Alt-1). Empty means projmux does not have a
+	// Plain is the byte sequence the terminal sends for the tmux binding
+	// (e.g. "\x1b1" for Alt-1). Empty means projmux does not have a
 	// direct plain bind for this key (Ctrl-Shift-{R,L}, etc).
 	Plain string
-	// CSIu is the CSI-u sequence the terminal sends once the user has
-	// configured an `ESC[NNNNu` mapping, matching the user-keys table tmux
-	// is configured with.
-	CSIu string
-	// UserKey is the tmux user-key index the CSI-u sequence resolves to
-	// (e.g. "User4" for 9005u). Empty when no CSI-u escape route exists.
-	UserKey string
 	// PlainChord is the current tmux plain chord for the action after keymap
 	// overrides have been merged. It is for reporting/saving, not raw bytes.
 	PlainChord string
@@ -97,6 +86,7 @@ func defaultProbeKeys() []probeKey {
 
 const (
 	defaultProbeTimeout = 5 * time.Second
+	probeReadPollDelay  = 5 * time.Millisecond
 )
 
 // Run executes the setup probe.
@@ -142,7 +132,7 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 	results := make([]probeResult, 0, len(c.defaultKeys))
 	for _, key := range c.defaultKeys {
 		fmt.Fprintf(stdout, "Press %-16s (%s) ... ", key.Label, key.Action)
-		seq, readErr := c.readKey(*timeout)
+		seq, readErr := c.readProbeKeyContext(context.Background(), *timeout)
 		if readErr != nil && !errors.Is(readErr, errProbeTimeout) {
 			fmt.Fprintln(stdout, "aborted")
 			return readErr
@@ -162,14 +152,38 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+func (c *setupCommand) readProbeKeyContext(ctx context.Context, timeout time.Duration) ([]byte, error) {
+	if c.readKey != nil {
+		return c.readKey(timeout)
+	}
+
+	openTTY := c.openTTY
+	if openTTY == nil {
+		openTTY = openControllingTTY
+	}
+	tty, cleanup, err := openTTY()
+	if err == nil {
+		if cleanup != nil {
+			defer cleanup() //nolint:errcheck // best-effort descriptor cleanup
+		}
+		return readKeySequenceContext(ctx, tty, timeout)
+	}
+
+	// Preserve the legacy stdin fallback for environments without /dev/tty.
+	stdin := c.stdin
+	if stdin == nil {
+		stdin = os.Stdin
+	}
+	return readKeySequenceContext(ctx, stdin, timeout)
+}
+
 func (c *setupCommand) printExpectedMap(stdout io.Writer) error {
 	terminal := detectTerminal(c.lookupEnv)
 	fmt.Fprintf(stdout, "Detected terminal: %s\n\n", terminal.Display())
 	fmt.Fprintln(stdout, "Expected key sequences:")
 	for _, key := range c.defaultKeys {
 		plain := visibleEscape(key.Plain)
-		csiu := visibleEscape(key.CSIu)
-		fmt.Fprintf(stdout, "  %-16s plain=%-12s csi-u=%-12s -> %s\n", key.Label, plain, csiu, key.Action)
+		fmt.Fprintf(stdout, "  %-16s plain=%-12s -> %s\n", key.Label, plain, key.Action)
 	}
 	return nil
 }
@@ -178,7 +192,7 @@ func (c *setupCommand) printExpectedMap(stdout io.Writer) error {
 // rather than process stdin. Settings runs inside tmux where stdin may be the
 // picker's pipe/pane path, so /dev/tty is the only reliable source for a raw
 // operator keypress. Tests can still inject openTTY/readKey/enterRaw.
-func (c *setupCommand) probeControllingTTYKey(key probeKey, timeout time.Duration) (probeResult, error) {
+func (c *setupCommand) probeControllingTTYKeyContext(ctx context.Context, key probeKey, timeout time.Duration) (probeResult, error) {
 	if c.readKey != nil && c.openTTY == nil {
 		seq, err := c.readKey(timeout)
 		if err != nil && !errors.Is(err, errProbeTimeout) {
@@ -219,7 +233,7 @@ func (c *setupCommand) probeControllingTTYKey(key probeKey, timeout time.Duratio
 	readKey := c.readKey
 	if readKey == nil {
 		readKey = func(timeout time.Duration) ([]byte, error) {
-			return readKeySequence(tty, timeout)
+			return readKeySequenceContext(ctx, tty, timeout)
 		}
 	}
 	seq, err := readKey(timeout)
@@ -231,8 +245,8 @@ func (c *setupCommand) probeControllingTTYKey(key probeKey, timeout time.Duratio
 
 // classifyProbeInput inspects the bytes captured for a single keystroke and
 // classifies whether the terminal delivered the plain sequence projmux
-// expects, the CSI-u escape sequence, an unrelated sequence (different action
-// in the host terminal), or nothing at all.
+// expects, an unrelated sequence (different action in the host terminal), or
+// nothing at all.
 func classifyProbeInput(key probeKey, seq []byte) probeResult {
 	res := probeResult{Key: key, Sequence: append([]byte(nil), seq...)}
 	if len(seq) == 0 {
@@ -246,11 +260,6 @@ func classifyProbeInput(key probeKey, seq []byte) probeResult {
 		res.Reason = "tmux's plain bind handles this directly"
 		return res
 	}
-	if key.CSIu != "" && got == key.CSIu {
-		res.Status = probeStatusCSIu
-		res.Reason = "terminal already routes the key via CSI-u (" + key.UserKey + ")"
-		return res
-	}
 	res.Status = probeStatusUnknown
 	res.Reason = "received an unexpected sequence " + visibleEscape(got) + "; terminal probably bound this key to its own action"
 	return res
@@ -262,8 +271,13 @@ func suggestedPlainChordForSequence(seq []byte) (string, bool) {
 	}
 	got := string(seq)
 	for _, action := range defaultKeyBindingCatalog() {
-		if action.ProbePlain != "" && action.PlainChord != "" && action.ProbePlain == got && !isAmbiguousEnterSequence([]byte(action.ProbePlain)) {
-			return action.PlainChord, true
+		if action.ProbePlain != "" && action.ProbePlain == got && !isAmbiguousEnterSequence([]byte(action.ProbePlain)) {
+			if chord := firstNonEmptyString(keyBindingEffectivePlainChords(action)); chord != "" {
+				return chord, true
+			}
+			if chord := probeLabelToTmuxChord(action.ProbeLabel); chord != "" {
+				return chord, true
+			}
 		}
 	}
 	if len(seq) == 2 && seq[0] == 0x1b && seq[1] >= 0x21 && seq[1] <= 0x7e {
@@ -272,7 +286,21 @@ func suggestedPlainChordForSequence(seq []byte) (string, bool) {
 	if len(seq) == 1 && seq[0] >= 0x01 && seq[0] <= 0x1a {
 		return fmt.Sprintf("C-%c", 'a'+seq[0]-1), true
 	}
+	if len(seq) == 1 && seq[0] >= 0x21 && seq[0] <= 0x7e {
+		chord := string(seq)
+		if err := validateKeymapChord(chord); err == nil {
+			return chord, true
+		}
+	}
 	return "", false
+}
+
+func probeLabelToTmuxChord(label string) string {
+	label = strings.TrimSpace(label)
+	label = strings.ReplaceAll(label, "Alt-Shift-", "M-S-")
+	label = strings.ReplaceAll(label, "Alt-", "M-")
+	label = strings.ReplaceAll(label, "Ctrl-", "C-")
+	return label
 }
 
 func isAmbiguousEnterSequence(seq []byte) bool {
@@ -283,8 +311,6 @@ func renderProbeStatus(res probeResult) string {
 	switch res.Status {
 	case probeStatusPlain:
 		return "OK plain (" + visibleEscape(string(res.Sequence)) + ")"
-	case probeStatusCSIu:
-		return "OK csi-u (" + visibleEscape(string(res.Sequence)) + " -> " + res.Key.UserKey + ")"
 	case probeStatusTimeout:
 		return "MISS timeout"
 	default:
@@ -298,7 +324,7 @@ func renderProbeSummary(w io.Writer, terminal terminalInfo, results []probeResul
 	fmt.Fprintf(w, "Terminal      : %s\n", terminal.Display())
 	pass, fail := 0, 0
 	for _, r := range results {
-		if r.Status == probeStatusPlain || r.Status == probeStatusCSIu {
+		if r.Status == probeStatusPlain {
 			pass++
 		} else {
 			fail++
@@ -308,13 +334,13 @@ func renderProbeSummary(w io.Writer, terminal terminalInfo, results []probeResul
 	fmt.Fprintln(w)
 
 	if fail == 0 {
-		fmt.Fprintln(w, "All probed keys reach this process. Alt-1..5 and the probed shortcuts should work in `projmux shell` with zero terminal config.")
+		fmt.Fprintln(w, "All probed keys reach this process. Alt-1..5 are guaranteed launch defaults; other probed keys are optional direct bindings or transport-dependent shortcuts.")
 		return
 	}
 
 	fmt.Fprintln(w, "Failures:")
 	for _, r := range results {
-		if r.Status == probeStatusPlain || r.Status == probeStatusCSIu {
+		if r.Status == probeStatusPlain {
 			continue
 		}
 		label := r.Key.Label
@@ -328,17 +354,16 @@ func renderProbeSummary(w io.Writer, terminal terminalInfo, results []probeResul
 	fmt.Fprintln(w, "Next steps:")
 	fmt.Fprintln(w, "  - Keep the keys marked OK as-is; they already work without terminal config.")
 	if cmd := terminal.InitCommand(); cmd != "" {
-		fmt.Fprintln(w, "  - Preview the terminal-specific fallback with:", strings.TrimSuffix(cmd, " --apply"))
+		fmt.Fprintln(w, "  - Preview the terminal-specific mappings with:", strings.TrimSuffix(cmd, " --apply"))
 		fmt.Fprintln(w, "  - Apply it with:", cmd)
 	}
 	if hint := terminal.RemediationHint(); hint != "" {
-		fmt.Fprintln(w, "  - Manual fallback:", hint)
+		fmt.Fprintln(w, "  - Manual setup:", hint)
 	}
 	if activation := terminal.ReloadCapability(); activation.Summary != "" {
-		fmt.Fprintln(w, "  - After applying fallback:", activation.Summary)
+		fmt.Fprintln(w, "  - After applying mappings:", activation.Summary)
 	}
-	fmt.Fprintln(w, "  - For unsupported terminals, bind each failing key to the matching CSI-u sequence")
-	fmt.Fprintln(w, "    from `projmux setup --non-interactive`.")
+	fmt.Fprintln(w, "  - For unsupported terminals, configure plain Meta sequences or a tmux keymap alias.")
 }
 
 // terminalInfo carries the best-effort terminal identification we managed to
@@ -366,7 +391,7 @@ func (t terminalInfo) Display() string {
 	return t.Name + " [" + src + "=" + t.Raw + "]" + suffix
 }
 
-// InitCommand returns the supported terminal-config fallback command, when
+// InitCommand returns the supported terminal-config mapping command, when
 // projmux knows how to apply one for the detected terminal.
 func (t terminalInfo) InitCommand() string {
 	switch t.Slug {
@@ -379,23 +404,23 @@ func (t terminalInfo) InitCommand() string {
 }
 
 // RemediationHint returns a short suggestion tailored to the detected
-// terminal for users who need or prefer a manual fallback.
+// terminal for users who need or prefer manual setup.
 func (t terminalInfo) RemediationHint() string {
 	switch t.Slug {
 	case "ghostty":
-		return "Ghostty: add `keybind = alt+one=csi:9005u` style entries to ~/.config/ghostty/config"
+		return "Ghostty: Alt-1..5 should work as Meta defaults; remove stale projmux escape overrides if present"
 	case "wezterm":
-		return "WezTerm: map keys to `Action SendString` with the CSI-u escape codes in wezterm.lua"
+		return "WezTerm: send plain Meta sequences such as ESC+1 for Alt-1, or add tmux aliases"
 	case "kitty":
-		return "kitty: add `map alt+1 send_text all \\x1b[9005u` (and friends) to kitty.conf"
+		return "kitty: ensure Alt sends ESC-prefixed Meta sequences, or add tmux aliases"
 	case "iterm2":
-		return "iTerm2: Profiles > Keys > add per-key Send Escape Sequence entries (e.g. [9005u for Alt-1)"
+		return "iTerm2: set Option/Alt to send Esc+ so Meta shortcuts reach tmux"
 	case "alacritty":
-		return "Alacritty: extend `key_bindings:` in alacritty.toml with `chars = \"\\u001b[9005u\"` style entries"
+		return "Alacritty: ensure Alt sends ESC-prefixed Meta sequences, or add tmux aliases"
 	case "windows-terminal":
-		return "Windows Terminal: edit settings.json `actions` with `sendInput` mappings for the CSI-u sequences"
+		return "Windows Terminal: edit settings.json `actions` with `sendInput` mappings for plain Meta or prefix sequences"
 	case "foot":
-		return "foot: define [key-bindings] entries that emit the CSI-u escapes via custom keymap"
+		return "foot: ensure Alt sends ESC-prefixed Meta sequences, or add tmux aliases"
 	case "vscode":
 		return "VS Code terminal swallows many shortcuts; consider running projmux in an external terminal"
 	}
@@ -539,7 +564,7 @@ func detectTerminal(lookup func(string) string) terminalInfo {
 }
 
 // visibleEscape renders byte sequences with control characters escaped so the
-// summary is readable on a normal terminal (e.g. "\x1b[9005u" instead of
+// summary is readable on a normal terminal (e.g. "\x1b[1;4D" instead of
 // emitting a literal escape that re-triggers the user's terminal).
 func visibleEscape(s string) string {
 	if s == "" {
@@ -568,62 +593,77 @@ func visibleEscape(s string) string {
 
 var errProbeTimeout = errors.New("probe key read timed out")
 
-// readKeySequence reads a single keystroke worth of bytes from the provided
-// stdin within timeout. It uses a short post-first-byte drain window to coal
-// CSI/multi-byte sequences (\x1b[9005u, \x1b[1;4D, ...) into one read.
-func readKeySequence(stdin io.Reader, timeout time.Duration) ([]byte, error) {
+// readKeySequenceContext reads a single keystroke worth of bytes from stdin.
+// It uses a short post-first-byte drain window to coalesce multi-byte escape
+// sequences (\x1b[1;4D, \x1b[A, ...) into one read.
+func readKeySequenceContext(ctx context.Context, stdin io.Reader, timeout time.Duration) ([]byte, error) {
 	if timeout <= 0 {
 		timeout = defaultProbeTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	type chunk struct {
-		buf []byte
-		err error
+	first, err := readKeyChunkContext(ctx, stdin, 1)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+			return nil, errProbeTimeout
+		}
+		return nil, err
+	}
+	if len(first) == 0 {
+		return nil, err
 	}
 
-	results := make(chan chunk, 1)
-	go func() {
-		// Read one byte first so we have something to time-bound against.
-		first := make([]byte, 1)
-		n, err := stdin.Read(first)
-		if err != nil || n == 0 {
-			results <- chunk{nil, err}
-			return
+	out := append([]byte(nil), first...)
+	// Drain whatever else arrived as part of the same escape sequence using
+	// a short per-byte budget. The read remains synchronous and deadline-aware,
+	// so a timeout cannot leave a goroutine behind to consume the next key.
+	drainCtx, drainCancel := context.WithTimeout(ctx, 30*time.Millisecond)
+	defer drainCancel()
+	extra, err := readKeyChunkContext(drainCtx, stdin, 31)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+			return out, nil
 		}
-		out := append([]byte(nil), first[:n]...)
-		// Drain whatever else arrived as part of the same escape sequence
-		// using a short blocking read with a per-byte budget. We use a
-		// small fixed buffer and stop as soon as the next read does not
-		// produce data within ~30ms.
-		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-		defer drainCancel()
+		if len(extra) == 0 {
+			return out, nil
+		}
+	}
+	return append(out, extra...), nil
+}
 
-		more := make(chan chunk, 1)
-		go func() {
-			buf := make([]byte, 31)
-			n, err := stdin.Read(buf)
-			more <- chunk{buf[:n], err}
-		}()
+type keyReadDeadliner interface {
+	io.Reader
+	SetReadDeadline(time.Time) error
+}
 
+func readKeyChunkContext(ctx context.Context, stdin io.Reader, size int) ([]byte, error) {
+	buf := make([]byte, size)
+	if reader, ok := stdin.(keyReadDeadliner); ok {
+		deadline, hasDeadline := ctx.Deadline()
+		if hasDeadline {
+			if err := reader.SetReadDeadline(deadline); err == nil {
+				defer reader.SetReadDeadline(time.Time{}) //nolint:errcheck // best-effort deadline cleanup
+			}
+		}
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, err := stdin.Read(buf)
+		if n > 0 {
+			return buf[:n], err
+		}
+		if err != nil {
+			return nil, err
+		}
 		select {
-		case extra := <-more:
-			out = append(out, extra.buf...)
-			results <- chunk{out, extra.err}
-		case <-drainCtx.Done():
-			results <- chunk{out, nil}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(probeReadPollDelay):
 		}
-	}()
-
-	select {
-	case r := <-results:
-		if r.err != nil && len(r.buf) == 0 {
-			return nil, r.err
-		}
-		return r.buf, nil
-	case <-ctx.Done():
-		return nil, errProbeTimeout
 	}
 }
 
@@ -643,7 +683,9 @@ func enterTTYRawMode(lookupEnv func(string) string) (func() error, error) {
 		return nil, err
 	}
 	saved = strings.TrimSpace(saved)
-	if _, err := runSttyOn(os.Stdin, "raw", "-echo", "-icanon", "min", "1", "time", "0"); err != nil {
+	// min=0 makes empty reads pollable so readKeySequenceContext can observe
+	// its deadline without leaving a blocking stdin.Read goroutine behind.
+	if _, err := runSttyOn(os.Stdin, "raw", "-echo", "-icanon", "min", "0", "time", "0"); err != nil {
 		return nil, err
 	}
 	restore := func() error {
@@ -668,7 +710,9 @@ func enterTTYRawModeFile(tty *os.File) (func() error, error) {
 		return nil, err
 	}
 	saved = strings.TrimSpace(saved)
-	if _, err := runSttyOn(tty, "raw", "-echo", "-icanon", "min", "1", "time", "0"); err != nil {
+	// Keep the Settings controlling-TTY path deadline-aware for the same
+	// reason as the standalone setup probe above.
+	if _, err := runSttyOn(tty, "raw", "-echo", "-icanon", "min", "0", "time", "0"); err != nil {
 		return nil, err
 	}
 	restore := func() error {

@@ -43,20 +43,35 @@ type sessionsRunner interface {
 }
 
 type sessionsCommand struct {
-	recent     sessionsRecentResolver
-	store      sessionsSelectionStore
-	opener     sessionsOpener
-	killer     sessionsKiller
-	runner     sessionsRunner
-	native     intpicker.Runner
-	executable func() (string, error)
-	lookupEnv  func(string) string
-	homeDir    func() (string, error)
-	stateStore func() (sessionstate.Store, error)
+	recent               sessionsRecentResolver
+	store                sessionsSelectionStore
+	opener               sessionsOpener
+	killer               sessionsKiller
+	runner               sessionsRunner
+	native               intpicker.Runner
+	executable           func() (string, error)
+	lookupEnv            func(string) string
+	homeDir              func() (string, error)
+	stateStore           func() (sessionstate.Store, error)
+	cleanupKilledSession func(string)
 }
 
 func newSessionsCommand() *sessionsCommand {
 	client := inttmux.NewClient(inttmux.ExecRunner{})
+	if usePSMuxBackend(os.Getenv, nil) {
+		client := newDefaultPSMuxClient()
+		return &sessionsCommand{
+			recent:     client,
+			store:      newSessionPopupCommand().store,
+			opener:     client,
+			killer:     client,
+			native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+			executable: resolveExecutablePath,
+			lookupEnv:  os.Getenv,
+			homeDir:    os.UserHomeDir,
+			stateStore: sessionstate.NewDefaultStoreFromEnv,
+		}
+	}
 	return &sessionsCommand{
 		recent:     client,
 		store:      newSessionPopupCommand().store,
@@ -91,6 +106,9 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printSessionsUsage(stderr)
 		return err
 	}
+	// Bright Phase 2 (B3): the sessions picker rows render with the resolved
+	// effective theme instead of the fallback literals.
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 
 	if c.recent == nil {
 		return fmt.Errorf("recent tmux session resolver is not configured")
@@ -141,15 +159,18 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.runner, intpickercompat.Options{
-			UI:             *ui,
-			Entries:        rowsToEntries(rows),
-			Prompt:         "› ",
-			Footer:         sessionsPickerFooter(),
-			ExpectKeys:     []string{sessionsKillExpectKey, sessionsStateExpectKey},
+		result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.native, c.runner, intpickercompat.Options{
+			UI:      *ui,
+			Entries: rowsToEntries(rows),
+			Prompt:  "› ",
+			Footer:  sessionsPickerFooter(),
+			ExpectKeys: append(
+				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"SessionPopup:KillSession"}, []string{sessionsKillExpectKey}),
+				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"SessionPopup:OpenState"}, []string{sessionsStateExpectKey})...,
+			),
 			PreviewCommand: previewCommand,
 			PreviewWindow:  sessionsPreviewWindow(*ui),
-			Bindings: append(pickerCloseBindings("esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
+			Bindings: append(pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, "session-popup", "esc", "ctrl-n"),
 				"left:execute-silent("+cycleWindowPrev+")+refresh-preview",
 				"right:execute-silent("+cycleWindowNext+")+refresh-preview",
 				"alt-up:execute-silent("+cyclePanePrev+")+refresh-preview",
@@ -162,13 +183,13 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if result.Value == "" {
 			return nil
 		}
-		if result.Key == sessionsStateExpectKey {
+		if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "SessionPopup:OpenState", sessionsStateExpectKey) {
 			if err := c.runSessionStateOverview(result.Value, summaries); err != nil {
 				return err
 			}
 			continue
 		}
-		if result.Key == sessionsKillExpectKey {
+		if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "SessionPopup:KillSession", sessionsKillExpectKey) {
 			nextSummaries, err := c.killFocusedSession(context.Background(), summaries, result.Value)
 			if err != nil {
 				return err
@@ -197,14 +218,14 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 func (c *sessionsCommand) runSessionStateOverview(sessionName string, summaries []inttmux.RecentSessionSummary) error {
 	entries := c.sessionStateOverviewEntries(sessionName, summaries)
-	result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.runner, intpickercompat.Options{
+	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.native, c.runner, intpickercompat.Options{
 		UI:            "projects-sessions-state",
 		Entries:       entries,
 		Title:         "Projects > Sessions > State",
 		Prompt:        "Projects > Sessions > State > ",
-		Footer:        projmuxFooter("Enter: details  |  Back row: sessions  |  Esc/Alt+3: sessions"),
+		Footer:        projmuxFooter("Session state overview is read-only here."),
 		ExpectKeys:    []string{"enter"},
-		Bindings:      pickerCloseBindings("esc", "alt-3"),
+		Bindings:      pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, "session-popup", "esc"),
 		DisableSearch: true,
 	})
 	if err != nil {
@@ -426,6 +447,9 @@ func (c *sessionsCommand) killFocusedSession(ctx context.Context, summaries []in
 	if err := c.killer.KillSession(ctx, sessionName); err != nil {
 		return nil, fmt.Errorf("kill tmux session %q: %w", sessionName, err)
 	}
+	if c.cleanupKilledSession != nil {
+		c.cleanupKilledSession(sessionName)
+	}
 
 	refreshed, err := c.recent.RecentSessionSummaries(ctx)
 	if err != nil {
@@ -455,11 +479,8 @@ func sessionsPreviewWindow(ui string) string {
 
 func sessionsPickerFooter() string {
 	return projmuxFooter(strings.Join([]string{
-		"Enter: switch to previewed target",
-		"Ctrl-S: state overview",
-		"Ctrl-X: kill focused session",
-		"Left/Right: preview window",
-		"Alt-Up/Alt-Down: preview pane",
+		"Preview follows the focused target.",
+		"Session state opens read-only; destructive actions keep the current confirmation policy.",
 	}, "\n"))
 }
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	antigravityagent "github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 )
 
@@ -31,6 +32,17 @@ func sessionStateRecipeResumeHealth(recipe sessionstate.Recipe, savedAt time.Tim
 			Source:     nonEmpty(source, "unknown"),
 			UpdatedAt:  nonEmpty(updatedAt, "unknown"),
 			Reason:     "resume id missing",
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(recipe.Agent), antigravityagent.AgentName) {
+		if _, err := antigravityagent.NormalizeResumeID(recipe.ResumeID); err != nil {
+			return sessionStateResumeHealth{
+				Status:     "unavailable",
+				Confidence: "none",
+				Source:     nonEmpty(source, "unknown"),
+				UpdatedAt:  nonEmpty(updatedAt, "unknown"),
+				Reason:     err.Error(),
+			}
 		}
 	}
 

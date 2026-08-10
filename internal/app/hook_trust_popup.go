@@ -11,13 +11,14 @@ import (
 	"os"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 const (
-	hookTrustPopupTitle           = "Trust project hooks"
+	hookTrustPopupTitle           = "Trust project automation"
 	hookTrustPopupWidth           = "90"
 	hookTrustPopupHeight          = "24"
 	hookTrustPopupContentWidth    = 86
@@ -150,6 +151,9 @@ func (c *tmuxCommand) runHookTrustPrompt(args []string, stdout, stderr io.Writer
 }
 
 func (c *tmuxCommand) runHookTrustPromptWithReader(args []string, reader io.Reader, stdout, stderr io.Writer) error {
+	// Bright Phase 2 (B3): the hook-trust popup renders with the resolved
+	// effective theme instead of the fallback literals.
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	fs := flag.NewFlagSet("tmux hook-trust-prompt", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	requestPath := fs.String("request", "", "path to project hook trust request JSON")
@@ -177,11 +181,12 @@ func (c *tmuxCommand) runHookTrustPromptWithReader(args []string, reader io.Read
 }
 
 func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectHookPromptRequest) hooks.ProjectHookDecision {
-	fmt.Fprintln(writer, projmuxpicker.CurrentStart+" Trust project hooks "+projmuxpicker.Reset)
-	fmt.Fprintln(writer, hookTrustMuted("Project-local automation is disabled until this file hash is trusted."))
+	fmt.Fprintln(writer, hookTrustHeaderStart+" Trust project automation "+projmuxpicker.Reset)
+	scope := hookTrustRequestScope(req)
+	fmt.Fprintln(writer, hookTrustMuted(scope.description))
 	fmt.Fprintln(writer)
 	writeHookTrustField(writer, "repo", req.RepoPath)
-	writeHookTrustField(writer, "hook", req.RelativePath)
+	writeHookTrustField(writer, scope.label, req.RelativePath)
 	if req.PreviousSHA256 != "" {
 		writeHookTrustField(writer, "trusted sha", req.PreviousSHA256)
 	}
@@ -191,7 +196,8 @@ func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectH
 		fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
 		fmt.Fprintln(writer, hookTrustMuted("preview"))
 		for line := range strings.SplitSeq(req.Preview, "\n") {
-			fmt.Fprintln(writer, "  "+projmuxpicker.TruncateANSI(line, hookTrustPopupContentWidth-2))
+			safeLine := terminaltext.EscapeControls(line)
+			fmt.Fprintln(writer, "  "+projmuxpicker.TruncateANSI(safeLine, hookTrustPopupContentWidth-2))
 		}
 	}
 
@@ -199,7 +205,7 @@ func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectH
 	fmt.Fprintln(writer, projmuxpicker.SeparatorLine(hookTrustPopupContentWidth))
 	fmt.Fprintln(writer, hookTrustActionLine("[o] Allow once", "run this time only"))
 	fmt.Fprintln(writer, hookTrustActionLine("[a] Allow always", "trust this exact file hash"))
-	fmt.Fprintln(writer, hookTrustActionLine("[d] Deny", "skip this hook"))
+	fmt.Fprintln(writer, hookTrustActionLine("[d] Deny", scope.denyDetail))
 
 	input := bufio.NewReader(reader)
 	for range 3 {
@@ -218,9 +224,38 @@ func hookTrustPopupPrompt(reader io.Reader, writer io.Writer, req hooks.ProjectH
 	return hooks.ProjectHookDeny
 }
 
+type hookTrustScopeCopy struct {
+	label       string
+	description string
+	denyDetail  string
+}
+
+func hookTrustRequestScope(req hooks.ProjectHookPromptRequest) hookTrustScopeCopy {
+	if strings.TrimSpace(req.ArtifactKind) == "project layout" ||
+		strings.HasPrefix(strings.TrimSpace(req.RelativePath), ".projmux/layouts/") {
+		return hookTrustScopeCopy{
+			label:       "layout",
+			description: "Project-local layout commands are disabled until this exact file hash is trusted.",
+			denyDetail:  "skip this layout",
+		}
+	}
+	if strings.TrimSpace(req.RelativePath) == ".projmux/config.toml" {
+		return hookTrustScopeCopy{
+			label:       "config",
+			description: "Project-local config is disabled until this file hash is trusted.",
+			denyDetail:  "skip project config",
+		}
+	}
+	return hookTrustScopeCopy{
+		label:       "hook",
+		description: "Project-local automation is disabled until this file hash is trusted.",
+		denyDetail:  "skip this hook",
+	}
+}
+
 func writeHookTrustField(w io.Writer, label, value string) {
 	label = strings.TrimSpace(label)
-	value = strings.TrimSpace(value)
+	value = strings.TrimSpace(terminaltext.EscapeControls(value))
 	if value == "" {
 		value = "-"
 	}
@@ -234,8 +269,16 @@ func hookTrustActionLine(action, detail string) string {
 	return fmt.Sprintf("  %-12s %s", action, hookTrustMuted(detail))
 }
 
+// hook-trust popup role escapes (bright Phase 2, B3). Defaults are the
+// historical fallback literals (byte-identical); applyNativeUITheme repoints
+// them at the resolved effective theme at command entry.
+var (
+	hookTrustHeaderStart = projmuxpicker.CurrentStart
+	hookTrustMutedStart  = projmuxpicker.MutedStart
+)
+
 func hookTrustMuted(value string) string {
-	return projmuxpicker.MutedStart + value + projmuxpicker.Reset
+	return hookTrustMutedStart + value + projmuxpicker.Reset
 }
 
 func parseHookTrustDecision(value string) hooks.ProjectHookDecision {

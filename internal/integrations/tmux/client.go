@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
 const SwitchTargetClientEnv = "PROJMUX_SWITCH_TARGET_CLIENT"
@@ -22,8 +23,8 @@ var (
 	errCurrentSessionUnavailable  = errors.New("tmux current session is unavailable")
 	errSessionNameRequired        = errors.New("tmux session name is required")
 	errSessionCWDRequired         = errors.New("tmux session cwd is required")
-	errPopupCommandRequired       = errors.New("tmux popup command is required")
-	errPopupCloseBehaviorInvalid  = errors.New("tmux popup close behavior is invalid")
+	errPopupCommandRequired       = intmux.ErrPopupCommandRequired
+	errPopupCloseBehaviorInvalid  = intmux.ErrPopupCloseBehaviorInvalid
 	errWindowIndexRequired        = errors.New("tmux window index is required when pane index is set")
 	errSessionActivityInvalid     = errors.New("tmux session activity is invalid")
 	errSessionAttachedInvalid     = errors.New("tmux session attached flag is invalid")
@@ -38,6 +39,12 @@ const (
 	tmuxFieldSep        = "\x1f"
 	tmuxEscapedFieldSep = "\\037"
 )
+
+// ProjectPathSessionOption stores the project cwd a session was created with.
+// It is written once at session creation and never drifts, so AI split/resume
+// can anchor to the project root even after a pane wanders via `cd`. Read back
+// by the app layer's resolveSessionProjectPath.
+const ProjectPathSessionOption = "@projmux_project_path"
 
 type commandRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -69,7 +76,7 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	return output, nil
 }
 
-// postCreateRunner is the subset of *hooks.PostCreateRunner that the tmux
+// postCreateRunner is the narrow post-create hook surface that the tmux
 // client invokes after creating a new session. The interface keeps the
 // dependency narrow and lets tests stub it without spinning up real exec.
 type postCreateRunner interface {
@@ -106,18 +113,6 @@ type Client struct {
 
 // ClientOption configures optional Client behavior.
 type ClientOption func(*Client)
-
-// WithPostCreateRunner attaches a hook runner that fires after a tmux
-// session is newly created. Pass nil to disable.
-func WithPostCreateRunner(r *hooks.PostCreateRunner) ClientOption {
-	return func(c *Client) {
-		if r == nil {
-			c.postCreate = nil
-			return
-		}
-		c.postCreate = r
-	}
-}
 
 // WithLifecycleHookRunner attaches the generic lifecycle hook runner.
 func WithLifecycleHookRunner(r *hooks.Runner) ClientOption {
@@ -169,6 +164,7 @@ type Pane struct {
 	Title               string
 	AttentionState      string
 	AIState             string
+	AIBadgeKind         string
 	AIAgent             string
 	AITopic             string
 	AttentionAck        string
@@ -184,26 +180,14 @@ type WindowPane struct {
 	Active bool
 }
 
-type PopupCloseBehavior string
+type PopupCloseBehavior = intmux.PopupCloseBehavior
 
 const (
-	PopupCloseOnExit PopupCloseBehavior = "close-on-exit"
-	PopupKeepOpen    PopupCloseBehavior = "keep-open"
+	PopupCloseOnExit = intmux.PopupCloseOnExit
+	PopupKeepOpen    = intmux.PopupKeepOpen
 )
 
-type PopupOptions struct {
-	Client        string
-	Target        string
-	Cwd           string
-	Env           map[string]string
-	NoBorder      bool
-	X             string
-	Y             string
-	Width         string
-	Height        string
-	Title         string
-	CloseBehavior PopupCloseBehavior
-}
+type PopupOptions = intmux.PopupOptions
 
 // RecentSessionSummary describes one recent tmux session with lightweight row
 // metadata for session pickers.
@@ -280,6 +264,18 @@ func (c *Client) RecentSessions(ctx context.Context) ([]string, error) {
 	}
 
 	return parseRecentSessions(output)
+}
+
+// ExistingSessions returns the current tmux session-name inventory as a set.
+func (c *Client) ExistingSessions(ctx context.Context) (map[string]bool, error) {
+	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		if isNoServerError(err) {
+			return map[string]bool{}, nil
+		}
+		return nil, fmt.Errorf("list tmux sessions: %w", err)
+	}
+	return parseExistingSessionSet(output), nil
 }
 
 // RecentSessionSummaries lists tmux session rows ordered by most-recent
@@ -382,6 +378,7 @@ func (c *Client) ListAllPanes(ctx context.Context) ([]Pane, error) {
 		"#{pane_title}",
 		"#{@projmux_attention_state}",
 		"#{@projmux_ai_state}",
+		"#{@projmux_ai_badge_kind}",
 		"#{@projmux_ai_agent}",
 		"#{@projmux_ai_topic}",
 		"#{@projmux_attention_ack}",
@@ -467,6 +464,7 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 	}
 
 	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
+	c.setProjectPathAnchor(ctx, sessionName, cwd)
 	c.runPostCreate(ctx, sessionName, cwd, "persistent")
 	c.runStartupCommand(ctx, sessionName, cwd, "persistent", paneID)
 	return nil
@@ -492,6 +490,7 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 		return fmt.Errorf("create tmux ephemeral session %q: %w", sessionName, err)
 	}
 	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
+	c.setProjectPathAnchor(ctx, sessionName, cwd)
 	if _, err := c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", "@projmux_ephemeral", "1"); err != nil {
 		// set-option failure is intentionally swallowed; the session is still
 		// usable. The post-create hook still runs so the session gets the same
@@ -504,20 +503,13 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 }
 
 func (c *Client) createDetachedSession(ctx context.Context, sessionName, cwd string, env map[string]string) (string, error) {
-	args := []string{"new-session", "-d", "-s", sessionName, "-c", cwd}
-	for _, key := range sortedMapKeys(env) {
-		args = append(args, "-e", key+"="+env[key])
-	}
-	if c.lifecycle == nil {
-		_, err := c.runner.Run(ctx, "tmux", args...)
-		return "", err
-	}
-	args = append(args, "-P", "-F", "#{pane_id}")
-	output, err := c.runner.Run(ctx, "tmux", args...)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
+	return intmux.NewRunner(c.runner).NewSession(ctx, intmux.NewSessionOptions{
+		Detached:     true,
+		Session:      sessionName,
+		Cwd:          cwd,
+		Env:          env,
+		ReturnPaneID: c.lifecycle != nil,
+	})
 }
 
 func (c *Client) projectSessionEnv(cwd string) map[string]string {
@@ -535,6 +527,18 @@ func (c *Client) applyProjectSessionEnv(ctx context.Context, sessionName string,
 	for _, key := range sortedMapKeys(env) {
 		_, _ = c.runner.Run(ctx, "tmux", "set-environment", "-t", sessionName, key, env[key])
 	}
+}
+
+// setProjectPathAnchor records the project cwd on the freshly created session
+// so AI split/resume can anchor to the project root even after a pane drifts
+// via `cd`. Failures are swallowed (matching the ephemeral marker): the session
+// is still usable and simply falls back to the live pane cwd when the anchor is
+// missing.
+func (c *Client) setProjectPathAnchor(ctx context.Context, sessionName, cwd string) {
+	if strings.TrimSpace(cwd) == "" {
+		return
+	}
+	_, _ = c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", ProjectPathSessionOption, cwd)
 }
 
 func (c *Client) runPreCreate(ctx context.Context, sessionName, cwd, kind string) error {
@@ -800,52 +804,7 @@ func (c *Client) DisplayPopupWithOptions(ctx context.Context, command string, op
 
 // BuildDisplayPopupArgs maps structured popup options to tmux display-popup args.
 func BuildDisplayPopupArgs(command string, options PopupOptions) ([]string, error) {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return nil, errPopupCommandRequired
-	}
-
-	resolved, err := resolvePopupOptions(options)
-	if err != nil {
-		return nil, err
-	}
-
-	args := []string{"display-popup"}
-	if resolved.Client != "" {
-		args = append(args, "-c", resolved.Client)
-	}
-	if resolved.Target != "" {
-		args = append(args, "-t", resolved.Target)
-	}
-	if resolved.CloseBehavior == PopupCloseOnExit {
-		args = append(args, "-E")
-	}
-	if resolved.NoBorder {
-		args = append(args, "-B")
-	}
-	if resolved.Cwd != "" {
-		args = append(args, "-d", resolved.Cwd)
-	}
-	for _, key := range sortedEnvKeys(resolved.Env) {
-		args = append(args, "-e", key+"="+resolved.Env[key])
-	}
-	if resolved.X != "" {
-		args = append(args, "-x", resolved.X)
-	}
-	if resolved.Y != "" {
-		args = append(args, "-y", resolved.Y)
-	}
-	if resolved.Width != "" {
-		args = append(args, "-w", resolved.Width)
-	}
-	if resolved.Height != "" {
-		args = append(args, "-h", resolved.Height)
-	}
-	if resolved.Title != "" {
-		args = append(args, "-T", resolved.Title)
-	}
-	args = append(args, command)
-	return args, nil
+	return intmux.BuildDisplayPopupArgs(command, options)
 }
 
 // InsideSession reports whether the caller is already running inside tmux.
@@ -1127,66 +1086,6 @@ func exactSessionTarget(sessionName string) string {
 	return "=" + sessionName
 }
 
-func resolvePopupOptions(options PopupOptions) (PopupOptions, error) {
-	resolved := PopupOptions{
-		Client:        strings.TrimSpace(options.Client),
-		Target:        strings.TrimSpace(options.Target),
-		Cwd:           strings.TrimSpace(options.Cwd),
-		Env:           cleanPopupEnv(options.Env),
-		NoBorder:      options.NoBorder,
-		X:             strings.TrimSpace(options.X),
-		Y:             strings.TrimSpace(options.Y),
-		Width:         strings.TrimSpace(options.Width),
-		Height:        strings.TrimSpace(options.Height),
-		Title:         strings.TrimSpace(options.Title),
-		CloseBehavior: options.CloseBehavior,
-	}
-
-	if resolved.Width == "" {
-		resolved.Width = "80%"
-	}
-	if resolved.Height == "" {
-		resolved.Height = "80%"
-	}
-	if resolved.CloseBehavior == "" {
-		resolved.CloseBehavior = PopupCloseOnExit
-	}
-
-	switch resolved.CloseBehavior {
-	case PopupCloseOnExit, PopupKeepOpen:
-		return resolved, nil
-	default:
-		return PopupOptions{}, errPopupCloseBehaviorInvalid
-	}
-}
-
-func cleanPopupEnv(env map[string]string) map[string]string {
-	if len(env) == 0 {
-		return nil
-	}
-	cleaned := make(map[string]string, len(env))
-	for key, value := range env {
-		key = strings.TrimSpace(key)
-		if key == "" {
-			continue
-		}
-		cleaned[key] = value
-	}
-	if len(cleaned) == 0 {
-		return nil
-	}
-	return cleaned
-}
-
-func sortedEnvKeys(env map[string]string) []string {
-	keys := make([]string, 0, len(env))
-	for key := range env {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func tmuxFormat(fields ...string) string {
 	return strings.Join(fields, tmuxFieldSep)
 }
@@ -1277,7 +1176,7 @@ func recentSessionFields(rawLine string) []string {
 func splitTmuxFields(rawLine string, expected int) []string {
 	for _, sep := range []string{tmuxFieldSep, tmuxEscapedFieldSep, "\t"} {
 		fields := strings.SplitN(rawLine, sep, expected)
-		if len(fields) == expected {
+		if len(fields) == expected || len(fields) > 1 {
 			return fields
 		}
 	}
@@ -1296,6 +1195,18 @@ func parseRecentSessions(output []byte) ([]string, error) {
 	}
 
 	return names, nil
+}
+
+func parseExistingSessionSet(output []byte) map[string]bool {
+	sessions := map[string]bool{}
+	for line := range strings.SplitSeq(string(output), "\n") {
+		sessionName := strings.TrimSpace(line)
+		if sessionName == "" {
+			continue
+		}
+		sessions[sessionName] = true
+	}
+	return sessions
 }
 
 type paneSessionSummary struct {
@@ -1381,8 +1292,8 @@ func parseAllPanes(output []byte) ([]Pane, error) {
 			continue
 		}
 
-		fields := normalizeAllPaneFields(splitTmuxFields(rawLine, 14))
-		if len(fields) != 14 {
+		fields := normalizeAllPaneFields(splitTmuxFields(rawLine, 15))
+		if len(fields) != 15 {
 			return nil, fmt.Errorf("parse tmux panes: malformed row %q", rawLine)
 		}
 
@@ -1412,12 +1323,13 @@ func parseAllPanes(output []byte) ([]Pane, error) {
 			Title:               strings.TrimSpace(fields[5]),
 			AttentionState:      strings.TrimSpace(fields[6]),
 			AIState:             strings.TrimSpace(fields[7]),
-			AIAgent:             strings.TrimSpace(fields[8]),
-			AITopic:             strings.TrimSpace(fields[9]),
-			AttentionAck:        strings.TrimSpace(fields[10]),
-			AttentionFocusArmed: strings.TrimSpace(fields[11]),
-			Command:             strings.TrimSpace(fields[12]),
-			Path:                strings.TrimSpace(fields[13]),
+			AIBadgeKind:         strings.TrimSpace(fields[8]),
+			AIAgent:             strings.TrimSpace(fields[9]),
+			AITopic:             strings.TrimSpace(fields[10]),
+			AttentionAck:        strings.TrimSpace(fields[11]),
+			AttentionFocusArmed: strings.TrimSpace(fields[12]),
+			Command:             strings.TrimSpace(fields[13]),
+			Path:                strings.TrimSpace(fields[14]),
 			Active:              active,
 		})
 	}
@@ -1431,7 +1343,9 @@ func normalizeAllPaneFields(fields []string) []string {
 		fields = append(fields[:6], append([]string{""}, fields[6:]...)...)
 		fallthrough
 	case 9:
-		return append(fields[:7], append([]string{"", "", "", "", ""}, fields[7:]...)...)
+		return append(fields[:7], append([]string{"", "", "", "", "", ""}, fields[7:]...)...)
+	case 14:
+		return append(fields[:8], append([]string{""}, fields[8:]...)...)
 	default:
 		return fields
 	}

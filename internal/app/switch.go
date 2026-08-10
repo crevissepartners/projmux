@@ -14,10 +14,14 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	coretags "github.com/crevissepartners/projmux/internal/core/tags"
+	"github.com/crevissepartners/projmux/internal/integrations/mux"
+	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -25,16 +29,20 @@ import (
 )
 
 const (
-	switchUIFlag             = "ui"
-	switchUIPopup            = "popup"
-	switchUISidebar          = "sidebar"
-	switchKillExpectKey      = "ctrl-x"
-	switchPinExpectKey       = "alt-p"
-	switchSettingsSentinel   = "__projmux_settings__"
-	switchContextSessionEnv  = "TMUX_SESSIONIZER_CONTEXT_SESSION"
-	managedRootsEnvVar       = "PROJMUX_MANAGED_ROOTS"
-	legacyManagedRootsEnvVar = "TMUX_SESSIONIZER_ROOTS"
-	projdirEnvVar            = "PROJMUX_PROJDIR"
+	switchUIFlag                 = "ui"
+	switchUIPopup                = "popup"
+	switchUISidebar              = "sidebar"
+	switchKillExpectKey          = "ctrl-x"
+	switchPinExpectKey           = "alt-p"
+	switchSettingsSentinel       = "__projmux_settings__"
+	switchContextSessionEnv      = "TMUX_SESSIONIZER_CONTEXT_SESSION"
+	switchInitialQueryEnv        = "PROJMUX_SWITCH_INITIAL_QUERY"
+	switchInitialSelectionEnv    = "PROJMUX_SWITCH_INITIAL_SELECTION"
+	switchStatusMessageEnv       = "PROJMUX_SWITCH_STATUS_MESSAGE"
+	managedRootsEnvVar           = "PROJMUX_MANAGED_ROOTS"
+	legacyManagedRootsEnvVar     = "TMUX_SESSIONIZER_ROOTS"
+	projdirEnvVar                = "PROJMUX_PROJDIR"
+	defaultSwitchGitCommandLimit = 500 * time.Millisecond
 )
 
 var switchPinHiddenWhitelist = []string{
@@ -78,6 +86,10 @@ type switchSessionInspector interface {
 	SessionExists(ctx context.Context, sessionName string) (bool, error)
 }
 
+type switchBulkSessionInspector interface {
+	ExistingSessions(ctx context.Context) (map[string]bool, error)
+}
+
 type switchSessionKiller interface {
 	KillSession(ctx context.Context, sessionName string) error
 }
@@ -93,31 +105,33 @@ type switchPreviewStore interface {
 }
 
 type switchCommand struct {
-	discover        candidateDiscoverer
-	pinStore        switchPinStoreFactory
-	tagStore        switchTagStoreFactory
-	runner          switchRunner
-	tmuxRunner      tmuxRunner
-	sessions        switchSessionExecutor
-	previewStore    switchPreviewStore
-	previewStoreErr error
-	inventory       previewInventory
-	inventoryErr    error
-	executable      func() (string, error)
-	identity        sessionIdentityResolver
-	identityErr     error
-	validate        func(path string) error
-	homeDir         func() (string, error)
-	workingDir      func() (string, error)
-	lookupEnv       func(string) string
-	gitBranch       func(string) string
-	kubeInfo        func(sessionName string) switchKubeInfo
-	loadProjdir     func(homeDir string) (string, error)
-	saveProjdir     func(homeDir, value string) error
-	loadWorkdirs    func(homeDir string) ([]string, error)
-	tmuxProjdir     func() string
-	nativePicker    intpicker.Runner
-	focusSession    string
+	discover             candidateDiscoverer
+	pinStore             switchPinStoreFactory
+	tagStore             switchTagStoreFactory
+	runner               switchRunner
+	tmuxRunner           tmuxRunner
+	sessions             switchSessionExecutor
+	previewStore         switchPreviewStore
+	previewStoreErr      error
+	inventory            previewInventory
+	inventoryErr         error
+	executable           func() (string, error)
+	identity             sessionIdentityResolver
+	identityErr          error
+	validate             func(path string) error
+	homeDir              func() (string, error)
+	workingDir           func() (string, error)
+	lookupEnv            func(string) string
+	gitBranch            func(string) string
+	kubeInfo             func(sessionName string) switchKubeInfo
+	loadProjdir          func(homeDir string) (string, error)
+	saveProjdir          func(homeDir, value string) error
+	loadWorkdirs         func(homeDir string) ([]string, error)
+	tmuxProjdir          func() string
+	nativePicker         intpicker.Runner
+	focusSession         string
+	sidebarResume        switchSidebarResume
+	cleanupKilledSession func(string)
 }
 
 type switchKubeInfo struct {
@@ -126,21 +140,35 @@ type switchKubeInfo struct {
 }
 
 type switchPlan struct {
-	UI            string
-	Candidates    []string
-	Rows          []intpickercompat.Entry
-	Items         []intpicker.Item
-	SessionNames  map[string]string
-	Action        string
-	Selection     string
-	SessionName   string
-	HomeDir       string
-	CurrentPath   string
-	OriginSession string
+	UI             string
+	Candidates     []string
+	Rows           []intpickercompat.Entry
+	Items          []intpicker.Item
+	SessionNames   map[string]string
+	Action         string
+	Selection      string
+	SessionName    string
+	HomeDir        string
+	CurrentPath    string
+	OriginSession  string
+	Query          string
+	InitialQuery   string
+	StatusMessage  string
+	DeferredUpdate func() (intpicker.DeferredUpdate, error)
+}
+
+type switchSidebarResume struct {
+	Query     string
+	Selection string
+	Message   string
 }
 
 func newSwitchCommand() *switchCommand {
 	client := defaultTmuxClient()
+	psmuxClient := (*intpsmux.Client)(nil)
+	if usePSMuxBackend(os.Getenv, nil) {
+		psmuxClient = newDefaultPSMuxClient()
+	}
 	identity, err := newDefaultCurrentIdentityResolver()
 	paths, pathsErr := config.DefaultPathsFromEnv()
 
@@ -165,6 +193,10 @@ func newSwitchCommand() *switchCommand {
 		loadWorkdirs: config.LoadWorkdirs,
 		tmuxProjdir:  tmuxProjdirOption,
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+	}
+	if psmuxClient != nil {
+		cmd.sessions = psmuxClient
+		cmd.inventory = tmuxPreviewInventory{client: psmuxClient}
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)
@@ -196,6 +228,7 @@ func newDefaultSwitchTagStore() (switchTagStore, error) {
 // Run resolves the first sessionizer candidate list and opens the first
 // interactive picker surface.
 func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
 		case "toggle-tag":
@@ -206,6 +239,8 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return c.runKill(args[1:], stdout, stderr)
 		case "open":
 			return c.runOpen(args[1:], stderr)
+		case "sidebar-open":
+			return c.runSidebarOpen(args[1:], stderr)
 		case "settings":
 			return c.runSettings(stdout, stderr)
 		case "preview":
@@ -416,7 +451,7 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 
-	_, err = io.WriteString(stdout, intrender.RenderSwitchPreview(model, *ui))
+	_, err = io.WriteString(stdout, intrender.RenderSwitchPreviewWithAIBadgeStyle(model, *ui, string(loadAIBadgeStyle(c.homeDir, c.lookupEnv))))
 	return err
 }
 
@@ -431,7 +466,7 @@ func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
 			return err
 		}
 
-		result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
+		result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
 			UI:      "settings",
 			Entries: entries,
 		})
@@ -487,7 +522,7 @@ func (c *switchCommand) runAddPinInteractive(stdout io.Writer) error {
 		return nil
 	}
 
-	result, err := runPickerOptionBackend(c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
+	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
 		UI:      "pin",
 		Entries: entries,
 	})
@@ -528,6 +563,23 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 	if inputs.HomeDir == "" {
 		inputs.HomeDir = homeDir
 	}
+	resume := switchSidebarResume{}
+	if ui == switchUISidebar && c.sidebarResume != (switchSidebarResume{}) {
+		resume = c.sidebarResume
+		c.sidebarResume = switchSidebarResume{}
+	}
+	if ui == switchUISidebar && resume == (switchSidebarResume{}) && c.lookupEnv != nil {
+		resume = switchSidebarResume{
+			Query:     strings.TrimSpace(c.lookupEnv(switchInitialQueryEnv)),
+			Selection: cleanOptionalPath(c.lookupEnv(switchInitialSelectionEnv)),
+			Message:   strings.TrimSpace(c.lookupEnv(switchStatusMessageEnv)),
+		}
+	}
+	if ui == switchUISidebar {
+		if strings.TrimSpace(resume.Selection) != "" {
+			inputs.CurrentPath = resume.Selection
+		}
+	}
 
 	paths, err := c.discover(inputs)
 	if err != nil {
@@ -540,6 +592,8 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 		HomeDir:       homeDir,
 		CurrentPath:   cleanOptionalPath(inputs.CurrentPath),
 		OriginSession: c.originSession(),
+		InitialQuery:  strings.TrimSpace(resume.Query),
+		StatusMessage: strings.TrimSpace(resume.Message),
 	}
 
 	return c.completePlan(plan)
@@ -547,10 +601,6 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 
 func (c *switchCommand) candidateInputs(currentPath string) (candidates.Inputs, error) {
 	return c.candidateInputsWithMemoize(currentPath, true)
-}
-
-func (c *switchCommand) candidateInputsNoMemoize(currentPath string) (candidates.Inputs, error) {
-	return c.candidateInputsWithMemoize(currentPath, false)
 }
 
 func (c *switchCommand) candidateInputsWithMemoize(currentPath string, memoize bool) (candidates.Inputs, error) {
@@ -1166,18 +1216,26 @@ func extraProjdirRoots(lookup func(string) string) []string {
 
 // tmuxProjdirOption returns the tmux user-option @projmux_projdir value when
 // running inside a tmux client. The TMUX env gate keeps us off the default
-// socket when projmux runs outside tmux, where show-option may either fail
+// socket when projmux runs outside tmux, where the option read may either fail
 // or return a stale value from another server. Errors are swallowed because
 // the caller falls through to the next priority source.
 func tmuxProjdirOption() string {
+	if usePSMuxBackend(os.Getenv, nil) {
+		return ""
+	}
 	if os.Getenv("TMUX") == "" {
 		return ""
 	}
-	out, err := exec.Command("tmux", "show-option", "-gqv", "@projmux_projdir").Output()
+	out, err := mux.ShowOption(context.Background(), mux.ShowOptionOptions{
+		Global:    true,
+		Quiet:     true,
+		ValueOnly: true,
+		Option:    "@projmux_projdir",
+	})
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return out
 }
 
 // memoizeProjdir best-effort persists value to the saved-projdir file. It
@@ -1298,21 +1356,35 @@ func cleanOptionalPath(path string) string {
 	return filepath.Clean(path)
 }
 
+// bestSwitchCandidateMatch finds the candidate whose directory contains (or
+// equals) path, comparing on canonical real paths so a session cwd spelled via
+// a symlink matches its real-path candidate row (and vice versa). The returned
+// value is the candidate's original display spelling, never the resolved real
+// path, so callers keep the user's form for display and cd.
 func bestSwitchCandidateMatch(path string, candidatePaths []string) string {
-	cleanPath := filepath.Clean(path)
+	canonicalPath := candidates.CanonicalPath(path)
+	if canonicalPath == "" {
+		return ""
+	}
+
 	best := ""
+	bestLen := -1
 
 	for _, candidatePath := range candidatePaths {
-		candidatePath = filepath.Clean(candidatePath)
-		if candidatePath == cleanPath {
+		canonicalCandidate := candidates.CanonicalPath(candidatePath)
+		if canonicalCandidate == "" {
+			continue
+		}
+		if canonicalCandidate == canonicalPath {
 			return candidatePath
 		}
 
-		prefix := candidatePath + string(filepath.Separator)
-		if !strings.HasPrefix(cleanPath, prefix) {
+		prefix := canonicalCandidate + string(filepath.Separator)
+		if !strings.HasPrefix(canonicalPath, prefix) {
 			continue
 		}
-		if len(candidatePath) > len(best) {
+		if len(canonicalCandidate) > bestLen {
+			bestLen = len(canonicalCandidate)
 			best = candidatePath
 		}
 	}
@@ -1347,12 +1419,31 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 	plan.Rows = rows
 	plan.Items = items
 	plan.SessionNames = sessionNames
+	if plan.UI == switchUISidebar {
+		candidates := append([]string(nil), plan.Candidates...)
+		plan.DeferredUpdate = func() (intpicker.DeferredUpdate, error) {
+			_, fullItems, _, err := c.renderFullRows(context.Background(), switchUISidebar, candidates)
+			if err != nil {
+				return intpicker.DeferredUpdate{}, err
+			}
+			surface, err := c.switchPickerSurface(plan, true)
+			if err != nil {
+				return intpicker.DeferredUpdate{}, err
+			}
+			update := intpicker.DeferredUpdate{Items: fullItems}
+			if surface.PreviewCommand != "" {
+				update.Preview = intpicker.Preview{Command: surface.PreviewCommand, Window: switchPreviewWindow(plan.UI)}
+			}
+			return update, nil
+		}
+	}
 
 	result, err := c.runPicker(plan)
 	if err != nil {
 		return switchPlan{}, err
 	}
 	plan.Action = strings.TrimSpace(result.Key)
+	plan.Query = strings.TrimSpace(result.Query)
 	selection := result.Value
 	selection = cleanOptionalPath(selection)
 	plan.Selection = selection
@@ -1381,6 +1472,9 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 
 func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.Writer) (bool, error) {
 	if plan.Selection == "" {
+		if plan.UI == switchUISidebar {
+			c.cancelSidebarPreview(ctx, plan.OriginSession)
+		}
 		return false, nil
 	}
 	if plan.Selection == switchSettingsSentinel {
@@ -1389,7 +1483,7 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		}
 		return false, nil
 	}
-	if plan.Action == switchKillExpectKey {
+	if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, plan.Action, "Sidebar:KillSession", switchKillExpectKey) {
 		if cleanOptionalPath(plan.Selection) == cleanOptionalPath(plan.HomeDir) {
 			return true, nil
 		}
@@ -1406,7 +1500,7 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		c.focusSession = fallbackSession
 		return true, nil
 	}
-	if plan.Action == switchPinExpectKey {
+	if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, plan.Action, "Sidebar:PinProject", switchPinExpectKey) {
 		if plan.Selection == switchSettingsSentinel {
 			return false, nil
 		}
@@ -1423,7 +1517,7 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 	}
 
 	if plan.UI == switchUISidebar {
-		if err := c.openProjectTargetPath(ctx, plan.Selection); err != nil {
+		if err := c.openProjectTargetPathFromSidebar(ctx, plan); err != nil {
 			if errors.Is(err, errProjectStartupBack) {
 				return true, nil
 			}
@@ -1433,6 +1527,9 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 	}
 
 	if err := c.openTarget(ctx, plan.Selection); err != nil {
+		if errors.Is(err, errProjectTrustDenied) {
+			return false, nil
+		}
 		return false, err
 	}
 	return false, nil
@@ -1488,6 +1585,235 @@ func (c *switchCommand) openProjectTargetPath(ctx context.Context, target string
 	return c.openProjectTarget(ctx, target, sessionName)
 }
 
+func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, plan switchPlan) error {
+	target := cleanOptionalPath(plan.Selection)
+	if target == "" {
+		return nil
+	}
+	sessionName := strings.TrimSpace(plan.SessionName)
+	if sessionName == "" {
+		var err error
+		sessionName, err = c.resolveTargetSession(target)
+		if err != nil || sessionName == "" {
+			return err
+		}
+	}
+	plan.SessionName = sessionName
+	exists, err := c.switchSessionExists(ctx, sessionName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		if err := c.openProjectSession(ctx, sessionName); err != nil {
+			return err
+		}
+		c.commitSidebarPreview(ctx)
+		return nil
+	}
+	mode := projectStartupCandidate{Kind: projectStartupKindEmpty}
+	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
+		mode = c.pickProjectStartupMode(sessionName, target)
+	}
+	if mode.Kind == projectStartupKindBack {
+		return errProjectStartupBack
+	}
+	return c.launchSidebarOpenContinuation(ctx, plan, mode)
+}
+
+func (c *switchCommand) launchSidebarOpenContinuation(ctx context.Context, plan switchPlan, mode projectStartupCandidate) error {
+	if c.tmuxRunner == nil {
+		return fmt.Errorf("switch sidebar continuation runner is not configured")
+	}
+	if c.executable == nil {
+		return fmt.Errorf("switch sidebar continuation executable is not configured")
+	}
+	binaryPath, err := c.executable()
+	if err != nil {
+		return fmt.Errorf("resolve switch sidebar continuation executable: %w", err)
+	}
+	client := firstNonEmpty(
+		c.lookupEnvValue(inttmux.SwitchTargetClientEnv),
+		c.lookupEnvValue(hookTrustPopupTargetClientEnv),
+	)
+	args := []string{
+		"switch",
+		"sidebar-open",
+		"--path", cleanOptionalPath(plan.Selection),
+		"--session", strings.TrimSpace(plan.SessionName),
+		"--mode", strings.TrimSpace(mode.Kind),
+		"--query", strings.TrimSpace(plan.Query),
+	}
+	if strings.TrimSpace(mode.Name) != "" {
+		args = append(args, "--name", strings.TrimSpace(mode.Name))
+	}
+	if strings.TrimSpace(client) != "" {
+		args = append(args, "--client", strings.TrimSpace(client))
+	}
+	env := map[string]string{}
+	if strings.TrimSpace(client) != "" {
+		env[hookTrustPopupTargetClientEnv] = strings.TrimSpace(client)
+		env[inttmux.SwitchTargetClientEnv] = strings.TrimSpace(client)
+	}
+	command := buildShellCommand(binaryPath, args, env)
+	if _, err := c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", command); err != nil {
+		return fmt.Errorf("launch sidebar open continuation: %w", err)
+	}
+	return nil
+}
+
+func (c *switchCommand) lookupEnvValue(name string) string {
+	if c.lookupEnv == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.lookupEnv(name))
+}
+
+func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("switch sidebar-open", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	target := fs.String("path", "", "project path to open")
+	sessionName := fs.String("session", "", "target session name")
+	mode := fs.String("mode", projectStartupKindEmpty, "startup mode")
+	name := fs.String("name", "", "named snapshot name")
+	query := fs.String("query", "", "sidebar query to restore on deny")
+	client := fs.String("client", "", "tmux client to restore sidebar popup")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("switch sidebar-open does not accept positional arguments")
+	}
+	openTarget := cleanOptionalPath(*target)
+	if openTarget == "" {
+		return fmt.Errorf("switch sidebar-open requires --path")
+	}
+	openSession := strings.TrimSpace(*sessionName)
+	if openSession == "" {
+		var err error
+		openSession, err = c.resolveTargetSession(openTarget)
+		if err != nil || openSession == "" {
+			return err
+		}
+	}
+	targetClient := strings.TrimSpace(*client)
+	if targetClient != "" {
+		restoreLookup := c.withSidebarOpenClientEnv(targetClient)
+		defer restoreLookup()
+	}
+	c.closeSidebarPopupForTrust(context.Background(), targetClient)
+	openMode := projectStartupCandidate{Kind: strings.TrimSpace(*mode), Name: strings.TrimSpace(*name)}
+	if openMode.Kind == "" {
+		openMode.Kind = projectStartupKindEmpty
+	}
+	exists, err := c.switchSessionExists(context.Background(), openSession)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return c.openProjectSession(context.Background(), openSession)
+	}
+	err = c.authorizeAndContinueProjectOpen(context.Background(), openTarget, openSession, openMode)
+	if err == nil {
+		return nil
+	}
+	resume := switchSidebarResume{
+		Query:     strings.TrimSpace(*query),
+		Selection: openTarget,
+		Message:   sidebarTrustStatusMessage(err),
+	}
+	if reopenErr := c.reopenSidebarAfterTrust(context.Background(), targetClient, resume); reopenErr != nil {
+		return reopenErr
+	}
+	return nil
+}
+
+func (c *switchCommand) withSidebarOpenClientEnv(client string) func() {
+	previous := c.lookupEnv
+	c.lookupEnv = func(name string) string {
+		switch name {
+		case hookTrustPopupTargetClientEnv, inttmux.SwitchTargetClientEnv, "PROJMUX_POPUP_TARGET_CLIENT":
+			return client
+		default:
+			if previous == nil {
+				return ""
+			}
+			return previous(name)
+		}
+	}
+	return func() {
+		c.lookupEnv = previous
+	}
+}
+
+func sidebarTrustStatusMessage(err error) string {
+	if errors.Is(err, errProjectTrustDenied) {
+		return "Trust denied"
+	}
+	var trustErr errProjectTrustGate
+	if errors.As(err, &trustErr) {
+		return "Trust error: " + trustErr.Unwrap().Error()
+	}
+	if err != nil {
+		return "Project open error: " + err.Error()
+	}
+	return ""
+}
+
+func (c *switchCommand) reopenSidebarAfterTrust(ctx context.Context, client string, resume switchSidebarResume) error {
+	if c.tmuxRunner == nil {
+		return fmt.Errorf("switch sidebar reopen runner is not configured")
+	}
+	if c.executable == nil {
+		return fmt.Errorf("switch sidebar reopen executable is not configured")
+	}
+	binaryPath, err := c.executable()
+	if err != nil {
+		return fmt.Errorf("resolve switch sidebar reopen executable: %w", err)
+	}
+	if strings.TrimSpace(client) == "" {
+		_, _ = c.tmuxRunner.Run(ctx, "tmux", "display-message", strings.TrimSpace(resume.Message))
+		return nil
+	}
+	env := map[string]string{
+		switchInitialQueryEnv:     strings.TrimSpace(resume.Query),
+		switchInitialSelectionEnv: cleanOptionalPath(resume.Selection),
+		switchStatusMessageEnv:    strings.TrimSpace(resume.Message),
+	}
+	command := buildShellCommand(binaryPath, []string{"tmux", "popup-toggle", "--client", strings.TrimSpace(client), "sessionizer-sidebar"}, env)
+	if _, err := c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", command); err != nil {
+		return fmt.Errorf("reopen sidebar after trust: %w", err)
+	}
+	return nil
+}
+
+func (c *switchCommand) closeSidebarPopupForTrust(ctx context.Context, targetClient string) {
+	targetClient = strings.TrimSpace(targetClient)
+	if targetClient == "" || c.tmuxRunner == nil {
+		return
+	}
+	marker := popupMarkerPath(sanitizePopupKey(targetClient), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	_ = mux.NewRunner(c.tmuxRunner).ClosePopup(ctx, mux.ClosePopupOptions{
+		Client: targetClient,
+	})
+}
+
+func buildShellCommand(binaryPath string, args []string, env map[string]string) string {
+	command := []string{}
+	for _, key := range sortedStringKeys(env) {
+		value := env[key]
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		command = append(command, key+"="+tmuxShellQuote(value))
+	}
+	command = append(command, tmuxShellQuote(binaryPath))
+	for _, arg := range args {
+		command = append(command, tmuxShellQuote(arg))
+	}
+	return strings.Join(command, " ")
+}
+
 func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Writer) error {
 	if len(args) != 1 {
 		printSwitchUsage(stderr)
@@ -1526,35 +1852,105 @@ func (c *switchCommand) runSidebarFocus(args []string, _ io.Writer, stderr io.Wr
 	return nil
 }
 
+// sidebarPreviewMarkerPath resolves this client's sessionizer-sidebar popup
+// marker. Empty when the switch command runs outside a sidebar popup (no
+// target-client env), which disables the commit/cancel marker handling.
+func (c *switchCommand) sidebarPreviewMarkerPath() string {
+	client := strings.TrimSpace(c.env(inttmux.SwitchTargetClientEnv))
+	if client == "" {
+		return ""
+	}
+	return popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+}
+
+// removeSidebarPreviewMarker deletes this client's sidebar popup marker and
+// reports whether one was present. The marker gates `window record`, so it
+// must be gone before the commit/cancel paths trigger any recording.
+func (c *switchCommand) removeSidebarPreviewMarker() bool {
+	marker := c.sidebarPreviewMarkerPath()
+	if marker == "" {
+		return false
+	}
+	return os.Remove(marker) == nil
+}
+
+// commitSidebarPreview finalizes an Enter-confirmed sidebar selection. The
+// live preview already switched the client to that session, so no
+// session-changed hook fires on commit; record the window once explicitly
+// after the gating marker is removed, detached like the tmux record hooks.
+func (c *switchCommand) commitSidebarPreview(ctx context.Context) {
+	if !c.removeSidebarPreviewMarker() {
+		return
+	}
+	if c.tmuxRunner == nil || c.executable == nil {
+		return
+	}
+	binaryPath, err := c.executable()
+	if err != nil {
+		return
+	}
+	command := buildShellCommand(binaryPath, []string{"window", "record"}, nil)
+	_, _ = c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", command)
+}
+
+// cancelSidebarPreview restores the origin session after the sidebar closes
+// without a selection (Esc). The marker is removed first so the restore
+// switch records origin naturally via the session-changed hook while peeked
+// sessions stay unrecorded. No-op outside a sidebar popup; a missing origin
+// session (killed while peeking) keeps the client on its current session.
+func (c *switchCommand) cancelSidebarPreview(ctx context.Context, originSession string) {
+	hadMarker := c.removeSidebarPreviewMarker()
+	originSession = strings.TrimSpace(originSession)
+	if !hadMarker || originSession == "" || c.sessions == nil {
+		return
+	}
+	exists, err := c.switchSessionExists(ctx, originSession)
+	if err != nil || !exists {
+		return
+	}
+	_ = c.sessions.OpenSession(ctx, originSession)
+}
+
 func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 	if c.nativePicker == nil {
 		return intpicker.Result{}, fmt.Errorf("native picker is not configured")
 	}
 
+	sidebarKillActions := intpicker.CustomActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:KillSession"}, []string{switchKillExpectKey})...)
+	if plan.UI == switchUISidebar {
+		sidebarKillActions = c.switchSidebarKillActions()
+	}
 	options := intpicker.Options{
-		UI:        plan.UI,
-		Items:     plan.Items,
-		MultiLine: true,
-		Prompt:    "› ",
-		Footer:    switchPickerFooter(plan.UI),
-		Actions: append(
-			pickerCloseActions("esc", "ctrl-n", "alt-1", "alt-2", "alt-3"),
-			intpicker.CustomActions(switchKillExpectKey, switchPinExpectKey)...,
-		),
+		UI:             plan.UI,
+		Items:          plan.Items,
+		MultiLine:      true,
+		Prompt:         "› ",
+		Footer:         switchPickerFooter(plan.UI, plan.StatusMessage, c.homeDir, c.lookupEnv),
+		InitialQuery:   plan.InitialQuery,
+		DeferredUpdate: plan.DeferredUpdate,
+		Actions:        pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, popupToggleModeForSwitchUI(plan.UI), "esc", "ctrl-n"),
+	}
+	options.Actions = append(options.Actions, sidebarKillActions...)
+	options.Actions = append(options.Actions, intpicker.CustomActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:PinProject"}, []string{switchPinExpectKey})...)...)
+	if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, plan.CurrentPath); err == nil {
+		options = source.pickerOptions(options)
+	} else {
+		options = fallbackRenderThemeSource().pickerOptions(options)
 	}
 	if plan.UI == switchUISidebar {
 		options.Title = "Projects"
 	}
-	if surface, err := c.switchPickerSurface(plan); err != nil {
+	surface, err := c.switchPickerSurface(plan, !(plan.UI == switchUISidebar && plan.DeferredUpdate != nil))
+	if err != nil {
 		return intpicker.Result{}, err
-	} else if surface.PreviewCommand != "" {
+	}
+	options.Actions = append(options.Actions, surface.Actions...)
+	options.InitialIndex = surface.InitialIndex
+	options.InitialIndexSet = surface.InitialIndexSet
+	if surface.PreviewCommand != "" {
 		options.Preview = intpicker.Preview{Command: surface.PreviewCommand, Window: switchPreviewWindow(plan.UI)}
-		options.Actions = append(options.Actions, surface.Actions...)
-		options.InitialIndex = surface.InitialIndex
-		options.InitialIndexSet = surface.InitialIndexSet
-		compatOptions := intpickercompat.OptionsFromPicker(options)
-		compatOptions.Candidates = plan.Candidates
-		return c.runPickerBackend(compatOptions, options)
+	} else if plan.UI == switchUISidebar && plan.DeferredUpdate != nil {
+		options.Preview = intpicker.Preview{Window: switchPreviewWindow(plan.UI)}
 	}
 
 	compatOptions := intpickercompat.OptionsFromPicker(options)
@@ -1575,6 +1971,108 @@ func (c *switchCommand) runPickerBackend(compatOptions intpickercompat.Options, 
 	return result, nil
 }
 
+func (c *switchCommand) switchSidebarKillActions() []intpicker.Action {
+	keys := effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:KillSession"}, []string{switchKillExpectKey})
+	actions := make([]intpicker.Action, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		actions = append(actions, intpicker.Action{
+			Key:    key,
+			Intent: intpicker.ActionCustom,
+			Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+				return c.mutateSwitchSidebarKill(context.Background(), ctx)
+			},
+		})
+	}
+	return actions
+}
+
+func (c *switchCommand) mutateSwitchSidebarKill(ctx context.Context, action intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+	target := cleanOptionalPath(action.Value)
+	if target == "" || target == switchSettingsSentinel {
+		return c.switchSidebarRefreshUpdate(ctx)
+	}
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	if target == cleanOptionalPath(homeDir) {
+		return c.switchSidebarRefreshUpdate(ctx)
+	}
+	if c.validate == nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("switch directory validator is not configured")
+	}
+	if err := c.validate(target); err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	if c.identityErr != nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("configure session identity resolver: %w", c.identityErr)
+	}
+	if c.identity == nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("switch session identity resolver is not configured")
+	}
+	sessionName, err := c.identity.SessionIdentityForPath(target)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("resolve session identity: %w", err)
+	}
+	fallbackSession, err := c.previousActiveSession(ctx, sessionName)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	if fallbackSession == "" {
+		return c.switchSidebarRefreshUpdate(ctx)
+	}
+	if err := c.killFocusedSession(ctx, sessionName, fallbackSession, nil); err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	c.focusSession = fallbackSession
+	return c.switchSidebarRefreshUpdate(ctx)
+}
+
+func (c *switchCommand) switchSidebarRefreshUpdate(ctx context.Context) (intpicker.DeferredUpdate, error) {
+	inputs, err := c.candidateInputs("")
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	if c.discover == nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("switch candidate discovery is not configured")
+	}
+	paths, err := c.discover(inputs)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, fmt.Errorf("discover switch candidates: %w", err)
+	}
+	_, items, sessionNames, err := c.renderFullRows(ctx, switchUISidebar, paths)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	update := intpicker.DeferredUpdate{Items: items}
+	// After a kill, tmux switches to c.focusSession; move the sidebar cursor
+	// to match by reverse-mapping the active session name back to its row
+	// value. sessionNames is keyed by cleaned candidate path, so match items
+	// through the same cleaning to keep FocusValue byte-identical to the row
+	// Value the picker compares against. Empty focusSession or an absent row
+	// leaves FocusValue empty, preserving the prior cursor-follow behaviour.
+	if focus := strings.TrimSpace(c.focusSession); focus != "" {
+		for _, item := range items {
+			if strings.TrimSpace(sessionNames[cleanOptionalPath(item.Value)]) == focus {
+				update.FocusValue = item.Value
+				break
+			}
+		}
+	}
+	surface, err := c.switchPickerSurface(switchPlan{UI: switchUISidebar}, true)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	if surface.PreviewCommand != "" {
+		update.Preview = intpicker.Preview{Command: surface.PreviewCommand, Window: switchPreviewWindow(switchUISidebar)}
+	}
+	return update, nil
+}
+
 type switchPickerSurface struct {
 	PreviewCommand  string
 	Actions         []intpicker.Action
@@ -1582,7 +2080,7 @@ type switchPickerSurface struct {
 	InitialIndexSet bool
 }
 
-func (c *switchCommand) switchPickerSurface(plan switchPlan) (switchPickerSurface, error) {
+func (c *switchCommand) switchPickerSurface(plan switchPlan, includePreview bool) (switchPickerSurface, error) {
 	if c.executable == nil {
 		return switchPickerSurface{}, nil
 	}
@@ -1592,9 +2090,34 @@ func (c *switchCommand) switchPickerSurface(plan switchPlan) (switchPickerSurfac
 		return switchPickerSurface{}, fmt.Errorf("resolve switch preview executable: %w", err)
 	}
 
-	previewCommand, err := inttmux.BuildSwitchPreviewCommand(binaryPath, plan.UI)
-	if err != nil {
-		return switchPickerSurface{}, fmt.Errorf("build switch preview command: %w", err)
+	surface := switchPickerSurface{}
+	if includePreview {
+		previewCommand, err := inttmux.BuildSwitchPreviewCommand(binaryPath, plan.UI)
+		if err != nil {
+			return switchPickerSurface{}, fmt.Errorf("build switch preview command: %w", err)
+		}
+		surface.PreviewCommand = previewCommand
+	}
+
+	if plan.UI == switchUISidebar {
+		sidebarFocus, err := inttmux.BuildSwitchSidebarFocusCommand(binaryPath)
+		if err != nil {
+			return switchPickerSurface{}, fmt.Errorf("build switch sidebar-focus command: %w", err)
+		}
+		surface.Actions = append(surface.Actions, intpicker.Action{
+			Key:     "focus",
+			Intent:  intpicker.ActionCustom,
+			Command: sidebarFocus,
+		})
+		if pos := switchSidebarInitialPos(plan); pos > 0 {
+			surface.InitialIndex = pos - 1
+			surface.InitialIndexSet = true
+		}
+		if pos := switchSidebarInitialFilteredPos(plan); pos > 0 {
+			surface.InitialIndex = pos - 1
+			surface.InitialIndexSet = true
+		}
+		return surface, nil
 	}
 
 	windowPrev, err := inttmux.BuildSwitchCycleWindowCommand(binaryPath, string(corepreview.DirectionPrev))
@@ -1612,24 +2135,6 @@ func (c *switchCommand) switchPickerSurface(plan switchPlan) (switchPickerSurfac
 	paneNext, err := inttmux.BuildSwitchCyclePaneCommand(binaryPath, string(corepreview.DirectionNext))
 	if err != nil {
 		return switchPickerSurface{}, fmt.Errorf("build switch pane-next command: %w", err)
-	}
-
-	surface := switchPickerSurface{PreviewCommand: previewCommand}
-	if plan.UI == switchUISidebar {
-		sidebarFocus, err := inttmux.BuildSwitchSidebarFocusCommand(binaryPath)
-		if err != nil {
-			return switchPickerSurface{}, fmt.Errorf("build switch sidebar-focus command: %w", err)
-		}
-		surface.Actions = append(surface.Actions, intpicker.Action{
-			Key:     "focus",
-			Intent:  intpicker.ActionCustom,
-			Command: sidebarFocus,
-		})
-		if pos := switchSidebarInitialPos(plan); pos > 0 {
-			surface.InitialIndex = pos - 1
-			surface.InitialIndexSet = true
-		}
-		return surface, nil
 	}
 
 	surface.Actions = append(surface.Actions,
@@ -1654,6 +2159,100 @@ func pickerCloseBindings(keys ...string) []string {
 	return bindings
 }
 
+func pickerCloseActionsForPopupToggleMode(homeDir func() (string, error), lookupEnv func(string) string, mode string, fallback ...string) []intpicker.Action {
+	return pickerCloseActions(effectivePickerKeysForPopupToggleMode(homeDir, lookupEnv, mode, fallback)...)
+}
+
+func pickerCloseBindingsForPopupToggleMode(homeDir func() (string, error), lookupEnv func(string) string, mode string, fallback ...string) []string {
+	return pickerCloseBindings(effectivePickerKeysForPopupToggleMode(homeDir, lookupEnv, mode, fallback)...)
+}
+
+func popupToggleModeForSwitchUI(ui string) string {
+	if ui == switchUISidebar {
+		return "sessionizer-sidebar"
+	}
+	return "sessionizer"
+}
+
+func pickerKeyMatchesAction(homeDir func() (string, error), lookupEnv func(string) string, key, actionID string, fallback ...string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	return slices.Contains(effectivePickerKeysForActions(homeDir, lookupEnv, []string{actionID}, fallback), key)
+}
+
+func effectivePickerKeysForPopupToggleMode(homeDir func() (string, error), lookupEnv func(string) string, mode string, fallback []string) []string {
+	actionID, ok := popupToggleActionIDForMode(mode)
+	if !ok {
+		return uniqueNonEmptyStrings(fallback)
+	}
+	return effectivePickerKeysForActions(homeDir, lookupEnv, []string{actionID}, fallback)
+}
+
+func effectivePickerKeysForActions(homeDir func() (string, error), lookupEnv func(string) string, actionIDs []string, fallback []string) []string {
+	actions := defaultKeyBindingCatalog()
+	if homeDir != nil {
+		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv}); err == nil {
+			actions = merged
+		}
+	}
+	defaultActionKeys := map[string]bool{}
+	for _, id := range actionIDs {
+		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), id)
+		if !ok {
+			continue
+		}
+		for _, chord := range keyBindingEffectivePlainChords(action) {
+			if key := pickerKeyFromTmuxChord(chord); key != "" {
+				defaultActionKeys[key] = true
+			}
+		}
+	}
+	var keys []string
+	for _, key := range fallback {
+		if defaultActionKeys[key] {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	for _, id := range actionIDs {
+		action, ok := keyBindingActionByID(actions, id)
+		if !ok {
+			continue
+		}
+		for _, chord := range keyBindingEffectivePlainChords(action) {
+			if key := pickerKeyFromTmuxChord(chord); key != "" {
+				keys = append(keys, key)
+			}
+		}
+	}
+	return uniqueNonEmptyStrings(keys)
+}
+
+func pickerKeyFromTmuxChord(chord string) string {
+	chord = strings.TrimSpace(chord)
+	switch chord {
+	case "Enter":
+		return "enter"
+	case "Left", "Right", "Up", "Down":
+		return strings.ToLower(chord)
+	}
+	if after, ok := strings.CutPrefix(chord, "M-S-"); ok {
+		return "alt-shift-" + strings.ToLower(after)
+	}
+	if after, ok := strings.CutPrefix(chord, "M-"); ok {
+		return "alt-" + strings.ToLower(after)
+	}
+	if after, ok := strings.CutPrefix(chord, "C-"); ok {
+		return "ctrl-" + strings.ToLower(after)
+	}
+	if len(chord) == 1 && chord[0] >= 'A' && chord[0] <= 'Z' {
+		return chord
+	}
+	return strings.ToLower(chord)
+}
+
 func switchPreviewWindow(ui string) string {
 	switch ui {
 	case switchUISidebar:
@@ -1665,21 +2264,83 @@ func switchPreviewWindow(ui string) string {
 	}
 }
 
-func switchPickerFooter(ui string) string {
+func switchPickerFooter(ui, status string, homeDir func() (string, error), lookupEnv func(string) string) string {
+	status = strings.TrimSpace(status)
 	if ui == switchUISidebar {
-		return projmuxFooter("C-x: kill | M-p: pin")
+		footer := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
+			{ActionID: "Sidebar:PinProject", Label: "pin project"},
+			{ActionID: "Sidebar:KillSession", Label: "kill session"},
+		})
+		if status != "" {
+			footer += " | " + status
+		}
+		return projmuxFooter(footer)
 	}
-	return projmuxFooter(strings.Join([]string{
-		"Enter: switch to previewed target",
-		"Ctrl-X: kill focused session",
-		"Alt-P: pin/unpin focused directory",
-		"Left/Right: preview window",
-		"Alt-Up/Alt-Down: preview pane",
-	}, "\n"))
+	parts := []string{
+		"Preview follows the focused target.",
+		"Destructive actions keep the current confirmation policy.",
+	}
+	if status != "" {
+		parts = append(parts, status)
+	}
+	return projmuxFooter(strings.Join(parts, "\n"))
 }
 
 func projmuxFooter(text string) string {
-	return strings.TrimSpace(text)
+	return strings.TrimSpace(settingsCatalogText(text))
+}
+
+type pickerActionKeyGuideItem struct {
+	ActionID string
+	Label    string
+}
+
+func pickerActionKeyGuide(homeDir func() (string, error), lookupEnv func(string) string, items []pickerActionKeyGuideItem) string {
+	actions := defaultKeyBindingCatalog()
+	if homeDir != nil {
+		if merged, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: homeDir, lookupEnv: lookupEnv}); err == nil {
+			actions = merged
+		}
+	}
+	locale := appLocale(homeDir, lookupEnv)
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		chord := pickerActionGuideChord(actions, item.ActionID)
+		if chord == "" {
+			continue
+		}
+		label := strings.TrimSpace(item.Label)
+		if label == "" {
+			label = item.ActionID
+		}
+		label = localizeUIText(locale, label)
+		parts = append(parts, pickerActionGuideReadableChord(chord)+": "+label)
+	}
+	return strings.Join(parts, "  |  ")
+}
+
+func pickerActionGuideReadableChord(chord string) string {
+	chord = strings.TrimSpace(chord)
+	if len(chord) == 1 {
+		return chord
+	}
+	return keybindingReadableChord(chord)
+}
+
+func pickerActionGuideChord(actions []keyBindingAction, actionID string) string {
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return ""
+	}
+	chords := keyBindingEffectivePlainChords(action)
+	defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if ok {
+		defaultChord := firstNonEmptyString(keyBindingEffectivePlainChords(defaultAction))
+		if defaultChord != "" && slices.Contains(chords, defaultChord) {
+			return defaultChord
+		}
+	}
+	return firstNonEmptyString(chords)
 }
 
 func switchSidebarInitialPos(plan switchPlan) int {
@@ -1712,6 +2373,19 @@ func switchSidebarInitialPos(plan switchPlan) int {
 		return pathMatchIdx
 	}
 	return homeIdx
+}
+
+func switchSidebarInitialFilteredPos(plan switchPlan) int {
+	if strings.TrimSpace(plan.InitialQuery) == "" || strings.TrimSpace(plan.CurrentPath) == "" {
+		return 0
+	}
+	filtered := intpicker.FilterItems(plan.Items, plan.InitialQuery)
+	for idx, item := range filtered {
+		if cleanOptionalPath(item.Value) == cleanOptionalPath(plan.CurrentPath) {
+			return idx + 1
+		}
+	}
+	return 0
 }
 
 func switchSessionNameForRow(plan switchPlan, value string) string {
@@ -1779,6 +2453,9 @@ func (c *switchCommand) killFocusedSession(ctx context.Context, sessionName, fal
 	}
 	if err := killer.KillSession(ctx, sessionName); err != nil {
 		return fmt.Errorf("kill tmux session %q: %w", sessionName, err)
+	}
+	if c.cleanupKilledSession != nil {
+		c.cleanupKilledSession(sessionName)
 	}
 	if stdout != nil {
 		_, err := fmt.Fprintf(stdout, "killed: %s\n", sessionName)
@@ -1854,7 +2531,26 @@ func (c *switchCommand) addPin(target string, stdout io.Writer) error {
 	return err
 }
 
+type switchRowRenderMode int
+
+const (
+	switchRowRenderCheap switchRowRenderMode = iota
+	switchRowRenderFull
+)
+
 func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePaths []string) ([]intpickercompat.Entry, []intpicker.Item, map[string]string, error) {
+	mode := switchRowRenderFull
+	if ui == switchUISidebar {
+		mode = switchRowRenderCheap
+	}
+	return c.renderRowsWithMode(ctx, ui, candidatePaths, mode)
+}
+
+func (c *switchCommand) renderFullRows(ctx context.Context, ui string, candidatePaths []string) ([]intpickercompat.Entry, []intpicker.Item, map[string]string, error) {
+	return c.renderRowsWithMode(ctx, ui, candidatePaths, switchRowRenderFull)
+}
+
+func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candidatePaths []string, mode switchRowRenderMode) ([]intpickercompat.Entry, []intpicker.Item, map[string]string, error) {
 	renderCandidates := make([]intrender.SwitchCandidate, 0, len(candidatePaths))
 	existingBySession, err := c.lookupExistingSessions(ctx, candidatePaths)
 	if err != nil {
@@ -1871,8 +2567,10 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 	}
 	sessionNames := make(map[string]string, len(candidatePaths))
 	attentionRanks := map[string]int(nil)
-	if ui == switchUISidebar {
-		attentionRanks = c.switchAttentionRanks(ctx)
+	aiBadgeKinds := map[string]string(nil)
+	aiBadgeStyle := string(loadAIBadgeStyle(c.homeDir, c.lookupEnv))
+	if mode == switchRowRenderFull {
+		attentionRanks, aiBadgeKinds = c.switchAttentionBadges(ctx)
 	}
 
 	for _, candidatePath := range candidatePaths {
@@ -1903,16 +2601,24 @@ func (c *switchCommand) renderRows(ctx context.Context, ui string, candidatePath
 			continue
 		}
 
+		gitBranch := ""
+		var windowTabs []intrender.SwitchWindowTab
+		if mode == switchRowRenderFull {
+			gitBranch = c.resolveGitBranch(candidatePath)
+			windowTabs = c.switchCardWindowTabs(ctx, sessionName, modeLabel)
+		}
 		renderCandidates = append(renderCandidates, intrender.SwitchCandidate{
 			Path:          candidatePath,
 			DisplayPath:   intrender.PrettyPath(candidatePath, homeDir, repoRoot),
-			DisplayName:   switchProjectName(candidatePath),
+			DisplayName:   switchProjectName(candidatePath, sessionName),
 			SessionName:   sessionName,
 			ModeLabel:     modeLabel,
-			GitBranch:     c.resolveGitBranch(candidatePath),
-			WindowTabs:    c.switchCardWindowTabs(ctx, sessionName, modeLabel),
+			GitBranch:     gitBranch,
+			WindowTabs:    windowTabs,
 			UI:            ui,
 			AttentionRank: attentionRanks[sessionName],
+			AIBadgeKind:   aiBadgeKinds[sessionName],
+			AIBadgeStyle:  aiBadgeStyle,
 			Pinned:        pinnedSet[cleanOptionalPath(candidatePath)],
 		})
 	}
@@ -1954,7 +2660,8 @@ func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, m
 	if err != nil {
 		panes = nil
 	}
-	attentionRanks := switchWindowAttentionRanks(panes)
+	attentionRanks, aiBadgeKinds := switchWindowAttentionBadges(panes)
+	aiBadgeStyle := string(loadAIBadgeStyle(c.homeDir, c.lookupEnv))
 	tabs := make([]intrender.SwitchWindowTab, 0, len(windows))
 	for _, window := range windows {
 		name := strings.TrimSpace(window.Name)
@@ -1967,58 +2674,79 @@ func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, m
 		tabs = append(tabs, intrender.SwitchWindowTab{
 			Name:          name,
 			AttentionRank: attentionRanks[strings.TrimSpace(window.Index)],
+			AIBadgeKind:   aiBadgeKinds[strings.TrimSpace(window.Index)],
+			AIBadgeStyle:  aiBadgeStyle,
 			Active:        window.Active,
 		})
 	}
 	return tabs
 }
 
-func switchWindowAttentionRanks(panes []corepreview.Pane) map[string]int {
+func switchWindowAttentionBadges(panes []corepreview.Pane) (map[string]int, map[string]string) {
 	ranks := make(map[string]int)
+	kinds := make(map[string]string)
 	for _, pane := range panes {
 		windowIndex := strings.TrimSpace(pane.WindowIndex)
 		if windowIndex == "" {
 			continue
 		}
-		rank := ranks[windowIndex]
-		if pane.AttentionState == attentionStateBusy || hasBraillePrefix(pane.Title) {
-			ranks[windowIndex] = 2
-			continue
-		}
-		if rank < 1 && (pane.AttentionState == attentionStateReply || hasAttentionPrefix(pane.Title)) {
-			ranks[windowIndex] = 1
-		}
+		kinds[windowIndex] = aggregateAIBadgeKind(kinds[windowIndex], semanticBadgeKindForPreviewPane(pane))
+		ranks[windowIndex] = attentionRankForBadgeKind(kinds[windowIndex])
 	}
-	return ranks
+	return ranks, kinds
 }
 
-func (c *switchCommand) switchAttentionRanks(ctx context.Context) map[string]int {
+func (c *switchCommand) switchAttentionBadges(ctx context.Context) (map[string]int, map[string]string) {
 	inventory, err := c.requireSwitchPreviewInventory()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
 	panes, err := inventory.SessionPanes(ctx, "")
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
 	ranks := make(map[string]int)
+	kinds := make(map[string]string)
 	for _, pane := range panes {
 		sessionName := strings.TrimSpace(pane.SessionName)
 		if sessionName == "" {
 			continue
 		}
-		rank := ranks[sessionName]
-		if pane.AttentionState == attentionStateBusy || hasBraillePrefix(pane.Title) {
-			ranks[sessionName] = 2
-			continue
-		}
-		if rank < 1 && (pane.AttentionState == attentionStateReply || hasAttentionPrefix(pane.Title)) {
-			ranks[sessionName] = 1
-		}
+		kinds[sessionName] = aggregateAIBadgeKind(kinds[sessionName], semanticBadgeKindForPreviewPane(pane))
+		ranks[sessionName] = attentionRankForBadgeKind(kinds[sessionName])
 	}
-	return ranks
+	return ranks, kinds
+}
+
+func semanticBadgeKindForPreviewPane(pane corepreview.Pane) string {
+	if kind := normalizeAIBadgeKind(pane.AIBadgeKind); kind != "" {
+		return kind
+	}
+	switch {
+	case pane.AttentionState == attentionStateBusy || strings.TrimSpace(pane.AIState) == "thinking" || hasBraillePrefix(pane.Title):
+		return aiBadgeKindInProgress
+	case pane.AttentionState == attentionStateReply || strings.TrimSpace(pane.AIState) == "waiting" || hasAttentionPrefix(pane.Title):
+		return aiBadgeKindResponseComplete
+	default:
+		return ""
+	}
+}
+
+func aggregateAIBadgeKind(current, next string) string {
+	return aibadge.Aggregate(current, next)
+}
+
+func attentionRankForBadgeKind(kind string) int {
+	switch normalizeAIBadgeKind(kind) {
+	case aiBadgeKindApprovalRequired, aiBadgeKindInputRequired, aiBadgeKindResponseComplete:
+		return 1
+	case aiBadgeKindInProgress:
+		return 2
+	default:
+		return 0
+	}
 }
 
 func sortSwitchCandidates(candidates []intrender.SwitchCandidate, homeDir string) {
@@ -2076,8 +2804,21 @@ func sortSwitchCandidates(candidates []intrender.SwitchCandidate, homeDir string
 	})
 }
 
-func switchProjectName(path string) string {
+// switchProjectName resolves a switch sidebar row's project display name via
+// the unified project-identity resolver. The candidate path is the canonical
+// project directory (a sessionizer root, not a live drifting pane cwd), and the
+// row already knows the session name, so a worktree candidate normalizes to its
+// main repo and a regular-repo candidate shows the de-slugged session name —
+// the same name the statusbar and notify sidebar now show. Falls back to the
+// former cwd basename only when the resolver yields nothing.
+func switchProjectName(path, sessionName string) string {
 	path = cleanOptionalPath(path)
+	if name := resolveProjectDisplayName(projectidentity.Inputs{
+		PaneCWD:     path,
+		SessionName: sessionName,
+	}, projectidentity.OSFS); name != "" {
+		return name
+	}
 	if path == "" {
 		return ""
 	}
@@ -2100,32 +2841,8 @@ func (c *switchCommand) loadPinnedSet() (map[string]bool, error) {
 	return set, nil
 }
 
-func (c *switchCommand) loadTaggedSet() (map[string]bool, error) {
-	if c.tagStore == nil {
-		return map[string]bool{}, nil
-	}
-	store, err := c.loadTagStore()
-	if err != nil {
-		return nil, err
-	}
-	items, err := store.List()
-	if err != nil {
-		return nil, fmt.Errorf("load switch tags: %w", err)
-	}
-	set := make(map[string]bool, len(items))
-	for _, item := range items {
-		set[cleanOptionalPath(item)] = true
-	}
-	return set, nil
-}
-
 func (c *switchCommand) lookupExistingSessions(ctx context.Context, candidatePaths []string) (map[string]bool, error) {
-	inspector, ok := c.sessions.(switchSessionInspector)
-	if !ok || inspector == nil {
-		return nil, nil
-	}
-
-	existingBySession := make(map[string]bool)
+	sessionNames := make(map[string]struct{}, len(candidatePaths))
 	for _, candidatePath := range candidatePaths {
 		if candidatePath == switchSettingsSentinel {
 			continue
@@ -2134,10 +2851,33 @@ func (c *switchCommand) lookupExistingSessions(ctx context.Context, candidatePat
 		if err != nil {
 			return nil, fmt.Errorf("check existing switch sessions: resolve session identity for %q: %w", candidatePath, err)
 		}
-		if _, seen := existingBySession[sessionName]; seen {
+		if strings.TrimSpace(sessionName) == "" {
 			continue
 		}
+		sessionNames[sessionName] = struct{}{}
+	}
+	if len(sessionNames) == 0 {
+		return nil, nil
+	}
 
+	if bulk, ok := c.sessions.(switchBulkSessionInspector); ok && bulk != nil {
+		existing, err := bulk.ExistingSessions(ctx)
+		if err == nil {
+			existingBySession := make(map[string]bool, len(sessionNames))
+			for sessionName := range sessionNames {
+				existingBySession[sessionName] = existing[sessionName]
+			}
+			return existingBySession, nil
+		}
+	}
+
+	inspector, ok := c.sessions.(switchSessionInspector)
+	if !ok || inspector == nil {
+		return nil, nil
+	}
+
+	existingBySession := make(map[string]bool, len(sessionNames))
+	for sessionName := range sessionNames {
 		exists, err := inspector.SessionExists(ctx, sessionName)
 		if err != nil {
 			return nil, fmt.Errorf("check existing switch sessions for %q: %w", sessionName, err)
@@ -2180,27 +2920,28 @@ func (c *switchCommand) settingsEntries() ([]intpickercompat.Entry, error) {
 	}
 	repoRoot := c.switchRepoRoot(homeDir)
 
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	entries := make([]intpickercompat.Entry, 0, len(pins)+3)
 	entries = append(entries, intpickercompat.Entry{
-		Label: "+ Add pin...",
+		Label: localizeUIText(locale, "+ Add pin..."),
 		Value: "add-interactive",
 	})
 	currentTarget, err := c.resolveSwitchTarget(nil, "switch settings")
 	if err == nil && currentTarget != "" && currentTarget != switchSettingsSentinel && !containsString(pins, currentTarget) {
 		entries = append(entries, intpickercompat.Entry{
-			Label: "+ Add current pin  " + intrender.PrettyPath(currentTarget, homeDir, repoRoot),
+			Label: localizeUIText(locale, "+ Add current pin  ") + intrender.PrettyPath(currentTarget, homeDir, repoRoot),
 			Value: "add:" + currentTarget,
 		})
 	}
 	if len(pins) != 0 {
 		entries = append(entries, intpickercompat.Entry{
-			Label: "x Clear all pins",
+			Label: localizeUIText(locale, "x Clear all pins"),
 			Value: "clear",
 		})
 	}
 	for _, pin := range pins {
 		entries = append(entries, intpickercompat.Entry{
-			Label: "x Remove  " + intrender.PrettyPath(pin, homeDir, repoRoot),
+			Label: localizeUIText(locale, "x Remove  ") + intrender.PrettyPath(pin, homeDir, repoRoot),
 			Value: "pin:" + pin,
 		})
 	}
@@ -2563,13 +3304,31 @@ func detectGitBranch(path string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		return ""
 	}
-	if output, err := exec.Command("git", "-C", path, "symbolic-ref", "--quiet", "--short", "HEAD").CombinedOutput(); err == nil {
+	return detectGitBranchWithRunner(path, defaultSwitchGitCommandLimit, runSwitchGitCommand)
+}
+
+func detectGitBranchWithRunner(path string, limit time.Duration, runner func(context.Context, string, ...string) ([]byte, error)) string {
+	path = cleanOptionalPath(path)
+	if path == "" || runner == nil {
+		return ""
+	}
+	if limit <= 0 {
+		limit = defaultSwitchGitCommandLimit
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+
+	if output, err := runner(ctx, "git", "-C", path, "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil {
 		return strings.TrimSpace(string(output))
 	}
-	if output, err := exec.Command("git", "-C", path, "rev-parse", "--short", "HEAD").CombinedOutput(); err == nil {
+	if output, err := runner(ctx, "git", "-C", path, "rev-parse", "--short", "HEAD"); err == nil {
 		return strings.TrimSpace(string(output))
 	}
 	return ""
+}
+
+func runSwitchGitCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 func defaultSwitchKubeInfo(sessionName string) switchKubeInfo {

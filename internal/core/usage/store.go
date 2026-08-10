@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 // snapshotFileName is the on-disk JSON used by the v2 snapshot store. The
@@ -67,14 +69,6 @@ func (s *Store) FilePath() string {
 	return filepath.Join(s.baseDir, snapshotFileName)
 }
 
-// BaseDir returns the directory the Store is rooted at.
-func (s *Store) BaseDir() string {
-	if s == nil {
-		return ""
-	}
-	return s.baseDir
-}
-
 // State is the rich view the Manager and adapters need: snapshots plus
 // per-adapter throttle/backoff bookkeeping. Returned by LoadState; the
 // older LoadAll wrapper is kept for callers that only want the snapshot
@@ -108,6 +102,7 @@ func (s *Store) LoadAll() ([]Snapshot, time.Time, error) {
 // state. A missing file reads as zero-value State (no error).
 func (s *Store) LoadState() (State, error) {
 	path := s.FilePath()
+	localstate.RepairPrivateFile(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -174,13 +169,13 @@ func (s *Store) SaveAll(snaps []Snapshot, lastCollect time.Time) error {
 
 // SaveState persists the full per-adapter state to disk atomically.
 func (s *Store) SaveState(state State) error {
-	if err := os.MkdirAll(s.baseDir, 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(s.baseDir); err != nil {
 		return fmt.Errorf("usage: create cache dir %s: %w", s.baseDir, err)
 	}
 	// Stable ordering: model asc, window asc within model.
 	sorted := make([]Snapshot, len(state.Snapshots))
 	copy(sorted, state.Snapshots)
-	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1}
+	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1, WindowContext: 2}
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if sorted[i].Model != sorted[j].Model {
 			return sorted[i].Model < sorted[j].Model
@@ -231,13 +226,11 @@ func (s *Store) SaveState(state State) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("usage: close temp snapshots: %w", err)
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return fmt.Errorf("usage: chmod temp snapshots: %w", err)
-	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("usage: rename temp snapshots: %w", err)
 	}
 	cleanup = false
+	localstate.RepairPrivateFile(path)
 	return nil
 }
 
@@ -260,7 +253,7 @@ func (s *Store) CleanupLegacyArtifacts() {
 func SortedSnapshots(snaps []Snapshot) []Snapshot {
 	out := make([]Snapshot, len(snaps))
 	copy(out, snaps)
-	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1}
+	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1, WindowContext: 2}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Model != out[j].Model {
 			return out[i].Model < out[j].Model

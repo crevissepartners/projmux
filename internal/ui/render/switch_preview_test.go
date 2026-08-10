@@ -1,8 +1,10 @@
 package render
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 )
 
@@ -106,9 +108,75 @@ func TestRenderSwitchPreviewForSidebarMatchesLegacySections(t *testing.T) {
 		"k8s:\x1b[31mkind-dev\x1b[0m/\x1b[34mdefault\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
 		"[1] shell\n" +
-		"[2] server | \x1b[33m●\x1b[0m tests | \x1b[32m●\x1b[0m projmux-2\n"
+		"[2] server | \x1b[38;2;255;204;102m●\x1b[0m tests | \x1b[32m●\x1b[0m projmux-2\n"
 	if got != want {
 		t.Fatalf("RenderSwitchPreview() = %q, want %q", got, want)
+	}
+}
+
+func TestRenderSwitchPreviewForSidebarUsesSemanticPromptBadge(t *testing.T) {
+	t.Parallel()
+
+	got := RenderSwitchPreview(corepreview.SwitchReadModel{
+		SessionMode: "existing",
+		Windows: []corepreview.Window{
+			{Index: "1", Name: "app"},
+		},
+		Panes: []corepreview.Pane{
+			{WindowIndex: "1", Index: "0", Title: "agent", AIState: "waiting", AIAgent: "codex", AITopic: "approval needed", AIBadgeKind: "approval_required"},
+		},
+	}, "sidebar")
+
+	if !strings.Contains(got, "\x1b[38;5;214m●\x1b[0m approval needed") {
+		t.Fatalf("RenderSwitchPreview() = %q, want semantic prompt warning badge", got)
+	}
+}
+
+func TestRenderSwitchPreviewAIBadgeStyleEmoji(t *testing.T) {
+	t.Parallel()
+
+	got := RenderSwitchPreviewWithAIBadgeStyle(corepreview.SwitchReadModel{
+		SessionMode: "existing",
+		Windows: []corepreview.Window{
+			{Index: "1", Name: "app"},
+		},
+		Panes: []corepreview.Pane{
+			{WindowIndex: "1", Index: "0", Title: "agent", AIAgent: "codex", AITopic: "approval needed", AIBadgeKind: aibadge.ApprovalRequired},
+		},
+	}, "sidebar", aibadge.StyleEmoji)
+
+	if !strings.Contains(got, "\x1b[38;5;214m⏳\x1b[0m approval needed") {
+		t.Fatalf("RenderSwitchPreviewWithAIBadgeStyle() = %q, want emoji prompt badge", got)
+	}
+	if strings.Contains(got, "● approval needed") {
+		t.Fatalf("RenderSwitchPreviewWithAIBadgeStyle() = %q, want no dot prompt badge", got)
+	}
+}
+
+func TestRenderSwitchPreviewStylesLeadTopicPrefixOnlyInRenderer(t *testing.T) {
+	t.Parallel()
+
+	got := RenderSwitchPreview(corepreview.SwitchReadModel{
+		SessionMode: "existing",
+		Windows: []corepreview.Window{
+			{Index: "1", Name: "app"},
+		},
+		Panes: []corepreview.Pane{
+			{WindowIndex: "1", Index: "0", Title: "agent", AIAgent: "codex", AITopic: "[Lead:QA] review topic"},
+			{WindowIndex: "1", Index: "1", Title: "agent", AIAgent: "codex", AITopic: "[lead:poc] measure"},
+		},
+	}, "sidebar")
+
+	for _, want := range []string{
+		"\x1b[1m\x1b[38;2;255;204;102m[Lead:QA]\x1b[0m review topic",
+		"\x1b[1m\x1b[38;2;255;204;102m[lead:poc]\x1b[0m measure",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("RenderSwitchPreview() = %q, want styled lead prefix %q", got, want)
+		}
+	}
+	if strings.Contains(got, "@projmux_ai_topic") || strings.Contains(got, "#[") {
+		t.Fatalf("RenderSwitchPreview() = %q, want ANSI renderer styling only", got)
 	}
 }
 

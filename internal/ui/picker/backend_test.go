@@ -2,13 +2,19 @@ package picker
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -624,6 +630,475 @@ func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
 	}
 }
 
+func TestRecorderStateTransitions(t *testing.T) {
+	t.Parallel()
+
+	normalize := func(key RecorderKey) (string, error) {
+		if key.Name == "alt-r" {
+			return "M-r", nil
+		}
+		if key.Name == "alt-s" {
+			return "M-s", nil
+		}
+		return "", errors.New("unsupported chord")
+	}
+	state := newRecorderState()
+	if state.Phase != RecorderRecording || state.Candidate != "" {
+		t.Fatalf("initial state = %#v, want empty recording", state)
+	}
+
+	state, outcome := reduceRecorderState(state, recorderEvent{kind: recorderEnter}, normalize, nil)
+	if outcome != recorderContinue || state.Phase != RecorderRecording {
+		t.Fatalf("empty Enter = (%#v, %v), want recording no-op", state, outcome)
+	}
+	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "alt-r"}}, normalize, nil)
+	if outcome != recorderContinue || state.Phase != RecorderStaged || state.Candidate != "M-r" {
+		t.Fatalf("first candidate = (%#v, %v), want staged M-r", state, outcome)
+	}
+	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "alt-s"}}, normalize, nil)
+	if outcome != recorderContinue || state.Phase != RecorderStaged || state.Candidate != "M-s" {
+		t.Fatalf("replacement = (%#v, %v), want staged M-s", state, outcome)
+	}
+	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEnter}, normalize, nil)
+	if outcome != recorderConfirm || state.Phase != RecorderConfirmed || state.Candidate != "M-s" {
+		t.Fatalf("confirm = (%#v, %v), want confirmed M-s", state, outcome)
+	}
+
+	state, outcome = reduceRecorderState(newRecorderState(), recorderEvent{kind: recorderEscape}, normalize, nil)
+	if outcome != recorderCancel || state.Candidate != "" {
+		t.Fatalf("recording Esc = (%#v, %v), want unchanged cancel", state, outcome)
+	}
+}
+
+func TestRecorderStateKeepsActionableValidationAndNormalizationErrors(t *testing.T) {
+	t.Parallel()
+
+	state, outcome := reduceRecorderState(newRecorderState(), recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "mouse"}}, func(RecorderKey) (string, error) {
+		return "", errors.New("no stable tmux key name")
+	}, nil)
+	if outcome != recorderContinue || state.Candidate != "" || !strings.Contains(state.Message, "Advanced typed entry") {
+		t.Fatalf("invalid candidate = (%#v, %v), want actionable recording error", state, outcome)
+	}
+
+	state = RecorderState{Phase: RecorderStaged, Candidate: "C-x"}
+	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEnter}, nil, func(string) error {
+		return errors.New(`key "C-x" is already bound to Kill Session`)
+	})
+	if outcome != recorderContinue || state.Phase != RecorderStaged || state.Candidate != "C-x" ||
+		!strings.Contains(state.Message, "Cannot save") || !strings.Contains(state.Message, "Choose another key") {
+		t.Fatalf("conflict Enter = (%#v, %v), want actionable staged error", state, outcome)
+	}
+	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEscape}, nil, nil)
+	if outcome != recorderCancel || state.Candidate != "C-x" {
+		t.Fatalf("staged Esc = (%#v, %v), want discard outcome without mutation", state, outcome)
+	}
+}
+
+func TestNativeRecorderConsumesCandidateThenEnterInOneByteStream(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	var normalizeCalls, validateCalls int
+	result, err := runNativeInteractive(strings.NewReader("\r\x1br\r"), &out, Options{
+		UI:            "settings-keybinding-recorder",
+		DisableSearch: true,
+		Recorder: &RecorderOptions{
+			Normalize: func(key RecorderKey) (string, error) {
+				normalizeCalls++
+				if key.Name != "alt-r" {
+					t.Fatalf("recorder key = %#v, want alt-r", key)
+				}
+				return "M-r", nil
+			},
+			Validate: func(chord string) error {
+				validateCalls++
+				if chord != "M-r" {
+					t.Fatalf("validated chord = %q, want M-r", chord)
+				}
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "M-r" || normalizeCalls != 1 || validateCalls != 1 {
+		t.Fatalf("result = %#v, normalize/validate = %d/%d, want one staged candidate confirmed once", result, normalizeCalls, validateCalls)
+	}
+	rendered := out.String()
+	for _, want := range []string{"Recording", "Press a key combination", "Not saved yet", "Staged: M-r"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("native recorder output = %q, want %q", rendered, want)
+		}
+	}
+	for _, absent := range []string{"no matches", "Search", "Back"} {
+		if strings.Contains(rendered, absent) {
+			t.Fatalf("native recorder output = %q, did not want %q", rendered, absent)
+		}
+	}
+}
+
+func TestNativeRecorderCandidateReplaceConflictRecoveryAndEsc(t *testing.T) {
+	t.Parallel()
+
+	normalize := func(key RecorderKey) (string, error) {
+		return "M-" + strings.TrimPrefix(key.Name, "alt-"), nil
+	}
+	var out bytes.Buffer
+	result, err := runNativeInteractive(strings.NewReader("\x1br\r\x1bs\r"), &out, Options{
+		UI:            "settings-keybinding-recorder",
+		DisableSearch: true,
+		Recorder: &RecorderOptions{
+			Normalize: normalize,
+			Validate: func(chord string) error {
+				if chord == "M-r" {
+					return errors.New("already bound; remove the existing key or choose another")
+				}
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive(confirm) error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "M-s" {
+		t.Fatalf("confirm result = %#v, want replacement M-s", result)
+	}
+	if rendered := out.String(); !strings.Contains(rendered, "Cannot save") || !strings.Contains(rendered, "Staged: M-s") {
+		t.Fatalf("native recorder output = %q, want conflict then replacement preview", rendered)
+	}
+
+	result, err = runNativeInteractive(strings.NewReader("\x1br\x1b"), io.Discard, Options{
+		UI:            "settings-keybinding-recorder",
+		DisableSearch: true,
+		Actions:       CloseActions("esc"),
+		Recorder:      &RecorderOptions{Normalize: normalize},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive(cancel) error = %v", err)
+	}
+	if !result.Closed || result.Key != "esc" || result.Value != "" {
+		t.Fatalf("cancel result = %#v, want staged candidate discarded", result)
+	}
+}
+
+func TestNativeRecorderUsesOneReaderWithoutEventLeakage(t *testing.T) {
+	t.Parallel()
+
+	tracker := &nativeKeyReaderTracker{}
+	input := &trackedRecorderInput{tracker: tracker, data: []byte("a\r")}
+	var normalizeCalls, validateCalls atomic.Int64
+	result, err := runNativeInteractive(input, io.Discard, Options{
+		UI:            "settings-keybinding-recorder",
+		DisableSearch: true,
+		DeferredUpdate: func() (DeferredUpdate, error) {
+			return DeferredUpdate{}, nil
+		},
+		Recorder: &RecorderOptions{
+			Normalize: func(key RecorderKey) (string, error) {
+				normalizeCalls.Add(1)
+				return key.Text, nil
+			},
+			Validate: func(string) error {
+				validateCalls.Add(1)
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "a" || normalizeCalls.Load() != 1 || validateCalls.Load() != 1 {
+		t.Fatalf("result = %#v, normalize/validate = %d/%d, want candidate and later Enter handled once", result, normalizeCalls.Load(), validateCalls.Load())
+	}
+	waitForNativeReaderActiveCount(t, tracker, 0)
+	if tracker.maxActive.Load() != 1 || tracker.started.Load() != 1 || tracker.stopped.Load() != 1 {
+		t.Fatalf("reader lifecycle started/stopped/max = %d/%d/%d, want 1/1/1", tracker.started.Load(), tracker.stopped.Load(), tracker.maxActive.Load())
+	}
+}
+
+func TestNativeKeyReaderStopsWithoutAccumulatingAcrossReopen(t *testing.T) {
+	t.Parallel()
+
+	reader := &pollingNativeReader{}
+	for reopen := range 5 {
+		readsBeforeStart := reader.reads.Load()
+		stop := make(chan struct{})
+		keyCh := startNativeKeyReader(reader, stop)
+		waitForNativeReadCount(t, reader, readsBeforeStart+1)
+
+		close(stop)
+		select {
+		case _, ok := <-keyCh:
+			if ok {
+				t.Fatal("key reader produced an unexpected key while stopping")
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("key reader %d did not exit after stop", reopen+1)
+		}
+
+		stoppedAt := reader.reads.Load()
+		time.Sleep(3 * nativeReadPollDelay)
+		if got := reader.reads.Load(); got != stoppedAt {
+			t.Fatalf("key reader %d kept polling after stop: reads %d -> %d", reopen+1, stoppedAt, got)
+		}
+	}
+}
+
+func TestNativeInteractiveReturnStopsReaderAcrossReopen(t *testing.T) {
+	t.Parallel()
+
+	tracker := &nativeKeyReaderTracker{}
+	for reopen := range 5 {
+		result, err := runNativeInteractive(&trackedNativePickerInput{tracker: tracker}, io.Discard, Options{
+			UI:    "switch",
+			Items: []Item{{Title: "api", Value: "/repo/api"}},
+			DeferredUpdate: func() (DeferredUpdate, error) {
+				return DeferredUpdate{}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("runNativeInteractive() reopen %d error = %v", reopen+1, err)
+		}
+		if result.Value != "/repo/api" {
+			t.Fatalf("runNativeInteractive() reopen %d result = %#v, want api", reopen+1, result)
+		}
+		waitForNativeReaderActiveCount(t, tracker, 0)
+	}
+	if got := tracker.maxActive.Load(); got > 1 {
+		t.Fatalf("maximum concurrent key readers = %d, want at most one", got)
+	}
+	if got := tracker.started.Load(); got != 5 {
+		t.Fatalf("started key readers = %d, want 5", got)
+	}
+	if got := tracker.stopped.Load(); got != 5 {
+		t.Fatalf("stopped key readers = %d, want 5", got)
+	}
+}
+
+func TestNativeInteractiveDeferredUpdatePreservesMutatedFilterAndSelection(t *testing.T) {
+	t.Parallel()
+
+	reader, writer := io.Pipe()
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+	var out lockedBuffer
+	deferredStarted := make(chan struct{})
+	releaseDeferred := make(chan struct{})
+	resultCh := make(chan struct {
+		result Result
+		err    error
+	}, 1)
+
+	go func() {
+		result, err := runNativeInteractive(reader, &out, Options{
+			UI:        "switch",
+			MultiLine: true,
+			Items: []Item{
+				{Title: "api", Value: "/repo/api", SearchText: "svc api"},
+				{Title: "web", Value: "/repo/web", SearchText: "svc web"},
+				{Title: "worker", Value: "/repo/worker", SearchText: "svc worker"},
+			},
+			DeferredUpdate: func() (DeferredUpdate, error) {
+				close(deferredStarted)
+				<-releaseDeferred
+				return DeferredUpdate{Items: []Item{
+					{Title: "api", Value: "/repo/api", SearchText: "svc api", MetaLines: []string{"branch main"}},
+					{Title: "web", Value: "/repo/web", SearchText: "svc web", MetaLines: []string{"branch feature"}},
+					{Title: "worker", Value: "/repo/worker", SearchText: "svc worker", MetaLines: []string{"branch jobs"}},
+				}}, nil
+			},
+		})
+		resultCh <- struct {
+			result Result
+			err    error
+		}{result: result, err: err}
+	}()
+
+	select {
+	case <-deferredStarted:
+	case <-time.After(time.Second):
+		t.Fatal("deferred update did not start after first render")
+	}
+	if _, err := writer.Write([]byte("svc\x1b[6~")); err != nil {
+		t.Fatalf("write query/page-down input: %v", err)
+	}
+	close(releaseDeferred)
+	waitForNativeOutput(t, &out, "branch main", "branch feature", "branch jobs")
+	if _, err := writer.Write([]byte("\r")); err != nil {
+		t.Fatalf("write enter input: %v", err)
+	}
+
+	var got struct {
+		result Result
+		err    error
+	}
+	select {
+	case got = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("runNativeInteractive did not return after enter")
+	}
+	if got.err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", got.err)
+	}
+	if got.result.Key != "enter" || got.result.Value != "/repo/worker" || got.result.Query != "svc" {
+		t.Fatalf("result = %#v, want filtered selection to stay on worker", got.result)
+	}
+}
+
+func TestNativeInteractiveDeferredUpdateTriggerRefreshesRepeatedly(t *testing.T) {
+	t.Parallel()
+
+	reader, writer := io.Pipe()
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+	var out lockedBuffer
+	trigger := make(chan struct{}, 1)
+	var started sync.Once
+	deferredStarted := make(chan struct{})
+	calls := 0
+	resultCh := make(chan struct {
+		result Result
+		err    error
+	}, 1)
+
+	go func() {
+		result, err := runNativeInteractive(reader, &out, Options{
+			UI:            "notify-sidebar",
+			DisableSearch: true,
+			Items:         []Item{{Title: "alpha", Value: "alpha"}},
+			DeferredUpdate: func() (DeferredUpdate, error) {
+				started.Do(func() { close(deferredStarted) })
+				calls++
+				if calls == 1 {
+					return DeferredUpdate{Items: []Item{{Title: "beta", Value: "beta"}}}, nil
+				}
+				return DeferredUpdate{Items: []Item{{Title: "gamma", Value: "gamma"}}}, nil
+			},
+			DeferredUpdateTrigger: trigger,
+		})
+		resultCh <- struct {
+			result Result
+			err    error
+		}{result: result, err: err}
+	}()
+
+	waitForNativeOutput(t, &out, "alpha")
+	select {
+	case <-deferredStarted:
+		t.Fatal("deferred update started before trigger")
+	case <-time.After(20 * time.Millisecond):
+	}
+	trigger <- struct{}{}
+	select {
+	case <-deferredStarted:
+	case <-time.After(time.Second):
+		t.Fatal("deferred update did not start after trigger")
+	}
+	waitForNativeOutput(t, &out, "beta")
+	trigger <- struct{}{}
+	waitForNativeOutput(t, &out, "gamma")
+	if _, err := writer.Write([]byte("\r")); err != nil {
+		t.Fatalf("write enter input: %v", err)
+	}
+
+	var got struct {
+		result Result
+		err    error
+	}
+	select {
+	case got = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("runNativeInteractive did not return after enter")
+	}
+	if got.err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", got.err)
+	}
+	if got.result.Value != "gamma" {
+		t.Fatalf("result = %#v, want latest refreshed row", got.result)
+	}
+	if calls != 2 {
+		t.Fatalf("deferred calls = %d, want two event refreshes", calls)
+	}
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func waitForNativeOutput(t *testing.T, out *lockedBuffer, wants ...string) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		rendered := out.String()
+		all := true
+		for _, want := range wants {
+			if !strings.Contains(rendered, want) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("native output = %q, want metadata %q", rendered, wants)
+		case <-tick.C:
+		}
+	}
+}
+
+func TestNativeInteractiveUsesOptionsThemeForFrame(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{
+		Background: "#010203",
+		Surface:    "#040506",
+		Foreground: "#aabbcc",
+	})
+	var out bytes.Buffer
+	_, err := runNativeInteractive(strings.NewReader("\r"), &out, Options{
+		UI:    "switch",
+		Title: "Projects",
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+		},
+		Theme: &effective,
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	rendered := out.String()
+	for _, want := range []string{"\x1b[48;2;4;5;6m", "\x1b[38;2;170;187;204m"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("native interactive output = %q, want themed frame SGR %q", rendered, want)
+		}
+	}
+	if banned := "\x1b[48;2;1;2;3m"; strings.Contains(rendered, banned) {
+		t.Fatalf("native interactive output = %q, must not use pane background SGR %q", rendered, banned)
+	}
+}
+
 func TestNativeInteractiveSupportsFZFNavigationKeys(t *testing.T) {
 	t.Parallel()
 
@@ -837,13 +1312,13 @@ func TestNativeInteractiveRendersOptionalTitlebar(t *testing.T) {
 	if !strings.Contains(lines[1], " Projects ") {
 		t.Fatalf("native titlebar row = %q, want optional titlebar", lines[1])
 	}
-	if !strings.Contains(lines[1], projmuxpicker.TitlebarStart) {
-		t.Fatalf("native titlebar row = %q, want styled titlebar", lines[1])
+	if strings.Contains(lines[1], projmuxpicker.TitlebarStart) || strings.Contains(lines[1], projmuxpicker.TitlebarRule) {
+		t.Fatalf("native titlebar row = %q, want frame styling without titlebar overlay ANSI", lines[1])
 	}
 	if strings.Contains(lines[1], projmuxpicker.TitlebarRule+"─") || strings.Contains(lines[1], strings.Repeat("─", 2)) {
 		t.Fatalf("native titlebar row = %q, want no rule fill after title", lines[1])
 	}
-	if !strings.HasPrefix(lines[2], "├") || !strings.Contains(lines[2], projmuxpicker.TitlebarRule+"─") {
+	if !strings.HasPrefix(lines[2], "├") || !strings.HasSuffix(lines[2], "┤") {
 		t.Fatalf("native titlebar divider row = %q, want divider between title and search", lines[2])
 	}
 	if !strings.Contains(lines[3], "Search") {
@@ -875,6 +1350,324 @@ func TestNativeInteractiveSeparatesSearchHeaderFromList(t *testing.T) {
 	}
 	if !strings.Contains(lines[3], "api") {
 		t.Fatalf("first list line = %q, want item after search divider", lines[3])
+	}
+}
+
+func TestNativeInteractiveKoreanSearchEmptyAndFooterFitWidth(t *testing.T) {
+	t.Setenv("LANG", "ko_KR.UTF-8")
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:     "settings",
+		Title:  "설정",
+		Footer: "Enter: 열기  |  Esc: 닫기",
+	}, nil, "", 0, 0, nativeLayout{Rows: 10, Cols: 42})
+
+	rendered := out.String()
+	for _, want := range []string{"검색", "일치하는 항목 없음", "Enter: 열기", "Esc: 닫기"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("native output = %q, want localized %q", rendered, want)
+		}
+	}
+	for line := range strings.SplitSeq(rendered, "\r\n") {
+		if got := projmuxpicker.VisibleLen(line); got > 44 {
+			t.Fatalf("native localized line width = %d, want <= frame width 44: %q", got, line)
+		}
+	}
+}
+
+func TestNativeInteractiveExplicitLocaleOverridesEnvironmentChrome(t *testing.T) {
+	t.Setenv("LANG", "ko_KR.UTF-8")
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:     "settings",
+		Title:  "Settings",
+		Footer: "Enter: open",
+		Locale: i18n.FallbackLocale,
+	}, nil, "", 0, 0, nativeLayout{Rows: 10, Cols: 42})
+
+	rendered := out.String()
+	for _, want := range []string{"Search", "No matches"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("native output = %q, want explicit English chrome %q", rendered, want)
+		}
+	}
+	for _, reject := range []string{"검색", "일치하는 항목 없음"} {
+		if strings.Contains(rendered, reject) {
+			t.Fatalf("native output = %q, rejected env-derived Korean chrome %q", rendered, reject)
+		}
+	}
+}
+
+func TestNativeInteractiveGeneralPickerEmptyLocaleUsesEnvironmentFallback(t *testing.T) {
+	t.Setenv("LANG", "ko_KR.UTF-8")
+
+	var out bytes.Buffer
+	renderNativeInteractive(&out, Options{
+		UI:    "switch",
+		Title: "Projects",
+	}, nil, "", 0, 0, nativeLayout{Rows: 10, Cols: 42})
+
+	rendered := out.String()
+	for _, want := range []string{"검색", "일치하는 항목 없음"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("native output = %q, want environment fallback chrome %q", rendered, want)
+		}
+	}
+}
+
+func TestNativeLineModeExplicitLocaleOverridesEnvironmentPrompt(t *testing.T) {
+	t.Setenv("LANG", "en_US.UTF-8")
+
+	var out bytes.Buffer
+	renderNative(&out, Options{
+		UI:     "settings",
+		Prompt: "Settings > ",
+		Locale: i18n.Locale("ko-KR"),
+	}, nil, "")
+
+	if got := out.String(); !strings.Contains(got, "번호, 검색어, 빈 입력으로 닫기: ") {
+		t.Fatalf("native line mode output = %q, want Korean prompt from explicit locale", got)
+	}
+}
+
+func TestNativeInteractiveSettingsAIBadgeStyleLongPreviewClampsFrameRows(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
+	frameStyle := nativeFrameStyleForTest(t, effective)
+	label := "◉  " + theme.ANSIAccentActionStart + "Preview emoji" + theme.ANSIReset +
+		"  " + theme.ANSITextDimStart + "⏳ ✅ 🔄" + theme.ANSIReset
+	items := []Item{{Label: label, Value: "ai-badge-style:emoji"}}
+	frame := nativeInteractiveFrame(Options{
+		UI:    "settings-ai-badge-style",
+		Title: "모양 - AI 배지 스타일",
+		TitleChips: []projmuxpicker.Chip{
+			{Label: "전체", Active: true, ClickValue: "__settings_tab_global__"},
+			{Label: "프로젝트", Disabled: true, ClickValue: "__settings_tab_project__"},
+		},
+		Prompt: "설정 > 모양 > AI 배지 스타일 > ",
+		Footer: "Enter: apply  |  Back row: parent ",
+		Items:  items,
+		Theme:  &effective,
+	}, items, "", 0, 0, 0, nativeLayout{Rows: 10, Cols: 44})
+
+	lines := strings.Split(frame, "\r\n")
+	if len(lines) != 10 {
+		t.Fatalf("native frame rows = %d, want 10: %q", len(lines), frame)
+	}
+	for i, line := range lines {
+		if !strings.HasPrefix(line, frameStyle) {
+			t.Fatalf("frame row %d = %q, want app background style prefix %q", i, line, frameStyle)
+		}
+		assertNativeFrameResetsResumeStyleOrEnd(t, line, frameStyle)
+		if got, want := projmuxpicker.VisibleLen(line), 44; got != want {
+			t.Fatalf("frame row %d width = %d, want %d: %q", i, got, want, line)
+		}
+		plain := stripANSISequences(line)
+		if i > 0 && i < len(lines)-1 && strings.HasPrefix(plain, "│") && !strings.HasSuffix(plain, "│") {
+			t.Fatalf("frame row %d = %q, want stable vertical borders", i, line)
+		}
+	}
+	if chipRow := lines[1]; !strings.Contains(chipRow, "전체") || !strings.Contains(chipRow, "프로젝트") {
+		t.Fatalf("chip row = %q, want Korean Global/Project chips", chipRow)
+	}
+	for _, want := range []string{"설정 > 모양 > AI 배지 스타일 >", "⏳", "✅", "🔄"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("native frame = %q, want %q", frame, want)
+		}
+	}
+
+	var previewRow string
+	for _, line := range lines {
+		if strings.Contains(line, "Preview emoji") {
+			previewRow = line
+			break
+		}
+	}
+	if previewRow == "" {
+		t.Fatalf("native frame = %q, want rendered AI badge preview row", frame)
+	}
+	if !strings.Contains(previewRow, nativeReset+frameStyle+" │") {
+		t.Fatalf("preview row = %q, want reset to resume app background before marker lane and right border", previewRow)
+	}
+}
+
+func TestNativeInteractiveSettingsAppearanceParentLongPreviewRowsClampFrame(t *testing.T) {
+	t.Setenv("LANG", "ko_KR.UTF-8")
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
+	items := []Item{
+		{
+			Label: nativeSettingsAppearanceRowForTest("AI badge style", "emoji - ⏳ prompt ✅ complete 🔄 working extra tail that clamps"),
+			Value: "ai-badge-style:",
+		},
+		{
+			Label: nativeSettingsAppearanceRowForTest("Path icon", "emoji - 📂 ~/source/repos/projmux extra tail that clamps"),
+			Value: "statusbar:cwd",
+		},
+		{
+			Label: nativeSettingsAppearanceRowForTest("Git icon", "emoji - 🐙 main * ↑1 extra tail that clamps"),
+			Value: "statusbar:git",
+		},
+		{
+			Label: nativeSettingsAppearanceRowForTest("Notify icon", "emoji - 🔔 Pending Notifications extra tail that clamps"),
+			Value: "statusbar:notify",
+		},
+	}
+	options := Options{
+		UI:    "settings-statusbar",
+		Title: "모양 - 테마 글꼴 및 아이콘 장식",
+		TitleChips: []projmuxpicker.Chip{
+			{Label: "전체", Active: true},
+			{Label: "프로젝트", Disabled: true},
+		},
+		Prompt: "설정 > 모양 > ",
+		Footer: "Enter: open  |  Back row: parent ",
+		Items:  items,
+		Theme:  &effective,
+	}
+	layout := nativeLayout{Rows: 12, Cols: 72}
+
+	for _, selected := range []int{0, len(items) - 1} {
+		frame := nativeInteractiveFrame(options, items, "", 0, selected, 0, layout)
+		lines := strings.Split(frame, "\r\n")
+		if len(lines) != layout.Rows {
+			t.Fatalf("selected %d native frame rows = %d, want %d: %q", selected, len(lines), layout.Rows, frame)
+		}
+		for i, line := range lines {
+			if got := projmuxpicker.VisibleLen(line); got != layout.Cols {
+				t.Fatalf("selected %d frame row %d width = %d, want %d: %q", selected, i, got, layout.Cols, line)
+			}
+			plain := stripANSISequences(line)
+			if i > 0 && i < len(lines)-1 && strings.HasPrefix(plain, "│") && !strings.HasSuffix(plain, "│") {
+				t.Fatalf("selected %d frame row %d = %q, want stable right border", selected, i, line)
+			}
+			if settingsAppearanceParentRowForTest(plain) && !strings.HasSuffix(plain, " │") {
+				t.Fatalf("selected %d appearance row %d = %q, want marker lane before right border", selected, i, line)
+			}
+		}
+		for _, want := range []string{"검색", "설정 > 모양 >", "전체", "프로젝트", "⏳", "✅", "🔄", "📂", "🐙", "🔔"} {
+			if !strings.Contains(frame, want) {
+				t.Fatalf("selected %d native frame = %q, want %q", selected, frame, want)
+			}
+		}
+	}
+}
+
+func nativeSettingsAppearanceRowForTest(name, description string) string {
+	const nameWidth = 24
+	padding := max(nameWidth-len(name), 0)
+	return "▸  " + theme.ANSIAccentActionStart + name + strings.Repeat(" ", padding) + theme.ANSIReset +
+		"  " + theme.ANSITextDimStart + description + theme.ANSIReset
+}
+
+func settingsAppearanceParentRowForTest(plain string) bool {
+	for _, marker := range []string{"AI badge style", "Path icon", "Git icon", "Notify icon"} {
+		if strings.Contains(plain, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestNativeInteractiveNoFooterBlankRowsUseThemeBackground(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
+	frameStyle := nativeFrameStyleForTest(t, effective)
+	items := []Item{{Title: "\x1b[31mapi\x1b[0m", Value: "/repo/api"}}
+	frame := nativeInteractiveFrame(Options{
+		UI:    "switch",
+		Title: "Projects",
+		Items: items,
+		Theme: &effective,
+	}, items, "", 0, 0, 0, nativeLayout{Rows: 9, Cols: 32})
+
+	lines := strings.Split(frame, "\r\n")
+	if got, want := len(lines), 9; got != want {
+		t.Fatalf("native frame rows = %d, want %d: %q", got, want, frame)
+	}
+	blankRows := 0
+	for i, line := range lines {
+		if !strings.HasPrefix(line, frameStyle) {
+			t.Fatalf("frame row %d = %q, want app background style prefix %q", i, line, frameStyle)
+		}
+		assertNativeFrameResetsResumeStyleOrEnd(t, line, frameStyle)
+		if got, want := projmuxpicker.VisibleLen(line), 32; got != want {
+			t.Fatalf("frame row %d width = %d, want %d: %q", i, got, want, line)
+		}
+		if stripANSISequences(line) == "│"+strings.Repeat(" ", 30)+"│" {
+			blankRows++
+		}
+	}
+	if blankRows == 0 {
+		t.Fatalf("native frame = %q, want no-footer blank rows inside styled frame", frame)
+	}
+}
+
+func TestNativeInteractiveSplitPreviewGapsUseThemeBackground(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
+	frameStyle := nativeFrameStyleForTest(t, effective)
+	items := []Item{
+		{Title: "api", Value: "/repo/api", PreviewTarget: "/repo/api"},
+		{Title: "web", Value: "/repo/web", PreviewTarget: "/repo/web"},
+	}
+	frame := nativeInteractiveFrame(Options{
+		UI:    "switch",
+		Title: "Projects",
+		Items: items,
+		Preview: Preview{
+			Command: "printf '\\033[32mpreview\\033[0m\\n'",
+			Window:  "right,50%,border-left",
+		},
+		Theme: &effective,
+	}, items, "", 0, 0, 0, nativeLayout{Rows: 9, Cols: 96})
+
+	lines := strings.Split(frame, "\r\n")
+	if got, want := len(lines), 9; got != want {
+		t.Fatalf("native frame rows = %d, want %d: %q", got, want, frame)
+	}
+	if !strings.Contains(frame, "│") || !strings.Contains(frame, "preview") {
+		t.Fatalf("native frame = %q, want split preview separator and preview content", frame)
+	}
+	for i, line := range lines {
+		if !strings.HasPrefix(line, frameStyle) {
+			t.Fatalf("frame row %d = %q, want app background style prefix %q", i, line, frameStyle)
+		}
+		assertNativeFrameResetsResumeStyleOrEnd(t, line, frameStyle)
+		if got, want := projmuxpicker.VisibleLen(line), 96; got != want {
+			t.Fatalf("frame row %d width = %d, want %d: %q", i, got, want, line)
+		}
+	}
+}
+
+func nativeFrameStyleForTest(t *testing.T, effective theme.EffectiveTheme) string {
+	t.Helper()
+	nativeTheme := projmuxpicker.ThemeFromEffective(effective)
+	style := nativeTheme.Background + nativeTheme.Foreground
+	if style == "" {
+		t.Fatal("native frame style empty, want app background/chrome_foreground SGR")
+	}
+	return style
+}
+
+func assertNativeFrameResetsResumeStyleOrEnd(t *testing.T, line, style string) {
+	t.Helper()
+	for start := 0; ; {
+		idx := strings.Index(line[start:], nativeReset)
+		if idx < 0 {
+			return
+		}
+		after := start + idx + len(nativeReset)
+		if after == len(line) || strings.HasPrefix(line[after:], style) {
+			start = after
+			continue
+		}
+		t.Fatalf("line = %q, want reset followed by frame style %q or row end", line, style)
 	}
 }
 
@@ -1307,6 +2100,27 @@ func TestNativeInteractiveSupportsControlExpectKeys(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveDecodesPreviouslyUnboundControlLetters(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		input byte
+		want  string
+	}{
+		{input: 0x02, want: "ctrl-b"},
+		{input: 0x12, want: "ctrl-r"},
+		{input: 0x1a, want: "ctrl-z"},
+	} {
+		key, err := readNativeKey(bytes.NewReader([]byte{tc.input}))
+		if err != nil {
+			t.Fatalf("readNativeKey(%#x) error = %v", tc.input, err)
+		}
+		if key.Name != tc.want || key.Text != "" {
+			t.Fatalf("readNativeKey(%#x) = %#v, want %s", tc.input, key, tc.want)
+		}
+	}
+}
+
 func TestNativeInteractiveSupportsRawCtrlXCustomAction(t *testing.T) {
 	t.Parallel()
 
@@ -1375,7 +2189,10 @@ func TestNativeInteractiveSupportsCSIuAppKeyBindings(t *testing.T) {
 		{name: "ctrl-x generic csi", in: "\x1b[120;5u", want: "ctrl-x"},
 		{name: "ctrl-x control-code csi", in: "\x1b[24;5u", want: "ctrl-x"},
 		{name: "enter generic csi", in: "\x1b[13u", want: "enter"},
+		{name: "ctrl-enter generic csi", in: "\x1b[13;5u", want: "ctrl-enter"},
+		{name: "alt-enter generic csi", in: "\x1b[13;3u", want: "alt-enter"},
 		{name: "esc generic csi", in: "\x1b[27u", want: "esc"},
+		{name: "ctrl-esc generic csi", in: "\x1b[27;5u", want: "ctrl-esc"},
 		{name: "backspace generic csi", in: "\x1b[127u", want: "backspace"},
 		{name: "tab generic csi", in: "\x1b[9u", want: "tab"},
 		{name: "shift-tab generic csi", in: "\x1b[9;2u", want: "shift-tab"},
@@ -1548,6 +2365,32 @@ func TestNativeInteractiveRendersPreviewOffset(t *testing.T) {
 	rendered := out.String()
 	if strings.Contains(rendered, "\none") || !strings.Contains(rendered, "two") || !strings.Contains(rendered, "three") || !strings.Contains(rendered, "─") {
 		t.Fatalf("native output = %q, want preview scrolled by one line", rendered)
+	}
+}
+
+func TestNativeSidebarReservesBlankDownPreviewFrame(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{{Title: "api", Value: "/repo/api"}}
+	options := Options{
+		UI:        "sidebar",
+		Preview:   Preview{Window: "down,25%,border-top"},
+		Items:     items,
+		MultiLine: true,
+	}
+	layout := nativeLayout{Rows: 16, Cols: 48}
+	previewHeight := nativePreviewHeight(layout.Rows, options.Preview.Window)
+	listLimit := nativeListLimit(options, layout, "down", previewHeight, true)
+
+	var out bytes.Buffer
+	renderNativeInteractiveContent(&out, options, items, "", 0, 0, 0, layout)
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if got, want := len(lines), nativeChromeLineCount(options)+listLimit+1+previewHeight; got != want {
+		t.Fatalf("rendered line count = %d, want reserved preview frame height %d in %q", got, want, out.String())
+	}
+	if got := strings.Count(out.String(), projmuxpicker.SeparatorLine(layout.Cols)); got < 2 {
+		t.Fatalf("native output = %q, want search separator and reserved down-preview separator", out.String())
 	}
 }
 
@@ -1886,7 +2729,7 @@ func TestNativeInteractiveRendersFZFLikeMultilineSelection(t *testing.T) {
 	}}, "", 0, 0, nativeLayout{Rows: 24, Cols: 80})
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "▌") || !strings.Contains(rendered, "48;2;38;50;56") {
+	if !strings.Contains(rendered, "▌") || !strings.Contains(rendered, "48;2;44;56;61") {
 		t.Fatalf("native output = %q, want fzf-like pointer and current-row color", rendered)
 	}
 	if strings.Contains(rendered, "> api") {
@@ -2117,6 +2960,232 @@ func TestNativeInteractiveRunsCustomActionCommandAndRefreshes(t *testing.T) {
 	}
 }
 
+func TestNativeInteractiveCustomActionMutatesItemsAndRefreshes(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	result, err := runNativeInteractive(strings.NewReader("a\r"), io.Discard, Options{
+		UI:            "notify-sidebar",
+		DisableSearch: true,
+		Items: []Item{
+			{Title: "api", Value: "api"},
+			{Title: "web", Value: "web"},
+		},
+		Actions: []Action{{
+			Key:    "a",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				calls++
+				if ctx.Key != "a" || ctx.Value != "api" || ctx.SelectedIndex != 0 {
+					t.Fatalf("action context = %#v, want selected api", ctx)
+				}
+				return DeferredUpdate{Items: []Item{{Title: "web", Value: "web"}}}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("mutate calls = %d, want 1", calls)
+	}
+	if result.Value != "web" {
+		t.Fatalf("result = %#v, want web after in-session refresh", result)
+	}
+}
+
+func TestNativeInteractiveCustomActionCanReturnResult(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	result, err := runNativeInteractive(strings.NewReader("\r"), io.Discard, Options{
+		UI:            "notify-sidebar",
+		DisableSearch: true,
+		Items: []Item{
+			{Title: "child", Value: "child-id"},
+		},
+		Actions: []Action{{
+			Key:    "enter",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				calls++
+				if ctx.Value != "child-id" {
+					t.Fatalf("action context = %#v, want child-id", ctx)
+				}
+				return DeferredUpdate{Result: &Result{Key: ctx.Key, Value: ctx.Value, Query: ctx.Query}}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("mutate calls = %d, want 1", calls)
+	}
+	if result.Key != "enter" || result.Value != "child-id" {
+		t.Fatalf("result = %#v, want custom result for child-id", result)
+	}
+}
+
+func TestNativeInteractiveCustomActionRefreshPreservesSelectedValue(t *testing.T) {
+	t.Parallel()
+
+	result, err := runNativeInteractive(strings.NewReader("x\r"), io.Discard, Options{
+		UI:              "notify-sidebar",
+		DisableSearch:   true,
+		InitialIndex:    1,
+		InitialIndexSet: true,
+		Items: []Item{
+			{Title: "api", Value: "api"},
+			{Title: "web", Value: "web"},
+			{Title: "worker", Value: "worker"},
+		},
+		Actions: []Action{{
+			Key:    "x",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				if ctx.Value != "web" || ctx.SelectedIndex != 1 {
+					t.Fatalf("action context = %#v, want selected web", ctx)
+				}
+				return DeferredUpdate{Items: []Item{
+					{Title: "web", Value: "web"},
+					{Title: "worker", Value: "worker"},
+				}}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "web" {
+		t.Fatalf("result = %#v, want preserved web selection", result)
+	}
+}
+
+func TestNativeDeferredFocusValue(t *testing.T) {
+	t.Parallel()
+
+	if got := nativeDeferredFocusValue(DeferredUpdate{FocusValue: "  /repo/worker  "}, "/repo/api"); got != "/repo/worker" {
+		t.Fatalf("explicit FocusValue = %q, want trimmed /repo/worker", got)
+	}
+	if got := nativeDeferredFocusValue(DeferredUpdate{}, "/repo/api"); got != "/repo/api" {
+		t.Fatalf("unset FocusValue = %q, want fallback /repo/api", got)
+	}
+	if got := nativeDeferredFocusValue(DeferredUpdate{FocusValue: "   "}, "/repo/api"); got != "/repo/api" {
+		t.Fatalf("blank FocusValue = %q, want fallback /repo/api", got)
+	}
+}
+
+func TestNativeInteractiveDeferredFocusValueMovesCursor(t *testing.T) {
+	t.Parallel()
+
+	// Simulate a sidebar kill: the originally selected row (/repo/api) is
+	// gone from the refreshed list and FocusValue points at the newly
+	// active session, so the cursor must jump there instead of clamping.
+	result, err := runNativeInteractive(strings.NewReader("x\r"), io.Discard, Options{
+		UI:              "sidebar",
+		DisableSearch:   true,
+		InitialIndex:    0,
+		InitialIndexSet: true,
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+			{Title: "worker", Value: "/repo/worker"},
+		},
+		Actions: []Action{{
+			Key:    "x",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				return DeferredUpdate{
+					Items: []Item{
+						{Title: "web", Value: "/repo/web"},
+						{Title: "worker", Value: "/repo/worker"},
+					},
+					FocusValue: "/repo/worker",
+				}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "/repo/worker" {
+		t.Fatalf("result = %#v, want cursor moved to FocusValue /repo/worker", result)
+	}
+}
+
+func TestNativeInteractiveDeferredFocusValueUnsetPreservesLegacyFallback(t *testing.T) {
+	t.Parallel()
+
+	// Without FocusValue the removed previous value (/repo/api) is not
+	// found, so selection clamps to index 0 (/repo/web) — the pre-existing
+	// behaviour other pickers rely on must not regress.
+	result, err := runNativeInteractive(strings.NewReader("x\r"), io.Discard, Options{
+		UI:              "sidebar",
+		DisableSearch:   true,
+		InitialIndex:    0,
+		InitialIndexSet: true,
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+			{Title: "worker", Value: "/repo/worker"},
+		},
+		Actions: []Action{{
+			Key:    "x",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				return DeferredUpdate{Items: []Item{
+					{Title: "web", Value: "/repo/web"},
+					{Title: "worker", Value: "/repo/worker"},
+				}}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "/repo/web" {
+		t.Fatalf("result = %#v, want legacy fallback /repo/web", result)
+	}
+}
+
+func TestNativeInteractiveDeferredFocusValueMissingFallsBackSafely(t *testing.T) {
+	t.Parallel()
+
+	// FocusValue absent from the refreshed list must not panic or escape
+	// range; it clamps to the prior selected index (1 -> /repo/worker).
+	result, err := runNativeInteractive(strings.NewReader("x\r"), io.Discard, Options{
+		UI:              "sidebar",
+		DisableSearch:   true,
+		InitialIndex:    1,
+		InitialIndexSet: true,
+		Items: []Item{
+			{Title: "api", Value: "/repo/api"},
+			{Title: "web", Value: "/repo/web"},
+			{Title: "worker", Value: "/repo/worker"},
+		},
+		Actions: []Action{{
+			Key:    "x",
+			Intent: ActionCustom,
+			Mutate: func(ctx ActionContext) (DeferredUpdate, error) {
+				return DeferredUpdate{
+					Items: []Item{
+						{Title: "web", Value: "/repo/web"},
+						{Title: "worker", Value: "/repo/worker"},
+					},
+					FocusValue: "/repo/ghost",
+				}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Value != "/repo/worker" {
+		t.Fatalf("result = %#v, want safe fallback /repo/worker", result)
+	}
+}
+
 func TestNativeInteractiveRunsFocusActionOnSelectionChange(t *testing.T) {
 	t.Parallel()
 
@@ -2154,6 +3223,116 @@ type delayedByteReader struct {
 	zerosBeforeByte int
 	index           int
 	zeros           int
+}
+
+type pollingNativeReader struct {
+	reads atomic.Int64
+}
+
+func (r *pollingNativeReader) Read([]byte) (int, error) {
+	r.reads.Add(1)
+	return 0, nil
+}
+
+func waitForNativeReadCount(t *testing.T, reader *pollingNativeReader, want int64) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		if reader.reads.Load() >= want {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("native reader reads = %d, want at least %d", reader.reads.Load(), want)
+		case <-tick.C:
+		}
+	}
+}
+
+type nativeKeyReaderTracker struct {
+	active    atomic.Int64
+	maxActive atomic.Int64
+	started   atomic.Int64
+	stopped   atomic.Int64
+}
+
+func (t *nativeKeyReaderTracker) startedReader() {
+	active := t.active.Add(1)
+	t.started.Add(1)
+	for {
+		maxActive := t.maxActive.Load()
+		if active <= maxActive || t.maxActive.CompareAndSwap(maxActive, active) {
+			return
+		}
+	}
+}
+
+type trackedNativePickerInput struct {
+	tracker   *nativeKeyReaderTracker
+	delivered atomic.Bool
+}
+
+type trackedRecorderInput struct {
+	tracker *nativeKeyReaderTracker
+	mu      sync.Mutex
+	data    []byte
+	index   int
+}
+
+func (r *trackedRecorderInput) nativeKeyReaderStarted() {
+	r.tracker.startedReader()
+}
+
+func (r *trackedRecorderInput) nativeKeyReaderStopped() {
+	r.tracker.stopped.Add(1)
+	r.tracker.active.Add(-1)
+}
+
+func (r *trackedRecorderInput) Read(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.index >= len(r.data) {
+		return 0, nil
+	}
+	p[0] = r.data[r.index]
+	r.index++
+	return 1, nil
+}
+
+func (r *trackedNativePickerInput) nativeKeyReaderStarted() {
+	r.tracker.startedReader()
+}
+
+func (r *trackedNativePickerInput) nativeKeyReaderStopped() {
+	r.tracker.stopped.Add(1)
+	r.tracker.active.Add(-1)
+}
+
+func (r *trackedNativePickerInput) Read(p []byte) (int, error) {
+	if r.delivered.CompareAndSwap(false, true) {
+		p[0] = '\r'
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func waitForNativeReaderActiveCount(t *testing.T, tracker *nativeKeyReaderTracker, want int64) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		if tracker.active.Load() == want {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("active native key readers = %d, want %d", tracker.active.Load(), want)
+		case <-tick.C:
+		}
+	}
 }
 
 func (r *delayedByteReader) Read(p []byte) (int, error) {

@@ -15,6 +15,7 @@ import (
 
 	corefocus "github.com/crevissepartners/projmux/internal/core/focus"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
 // focusExitNotResolved is the exit code emitted when an explicit target cannot
@@ -39,6 +40,7 @@ type focusNotifier interface {
 type focusCommand struct {
 	runner        focusCommandRunner
 	lookupEnv     func(string) string
+	homeDir       func() (string, error)
 	stdout        io.Writer
 	stderr        io.Writer
 	notifierOnce  func(stderr io.Writer) focusNotifier
@@ -79,6 +81,7 @@ func newFocusCommand() *focusCommand {
 	return &focusCommand{
 		runner:        focusExecRunner{},
 		lookupEnv:     os.Getenv,
+		homeDir:       os.UserHomeDir,
 		notifyStoreFn: defaultStatusNotifyStore,
 		notifierOnce: func(stderr io.Writer) focusNotifier {
 			// Reuse the existing notifier chain (WSL toast, notify-send, hook).
@@ -492,26 +495,40 @@ func (c *focusCommand) listClients(ctx context.Context, socket string) ([]focusC
 }
 
 func (c *focusCommand) switchClient(ctx context.Context, socket, clientName, sessionName string) error {
-	tail := []string{"switch-client"}
-	if clientName != "" {
-		tail = append(tail, "-c", clientName)
+	if c.runner == nil {
+		return errors.New("focus runner is not configured")
 	}
-	tail = append(tail, "-t", sessionName)
-	if _, err := c.runner.Run(ctx, "tmux", c.tmuxArgs(socket, tail...)...); err != nil {
+	if err := intmux.NewRunner(c.runner).SwitchClient(ctx, intmux.SwitchClientOptions{
+		Socket: socket,
+		Client: clientName,
+		Target: sessionName,
+	}); err != nil {
 		return fmt.Errorf("focus: switch-client to %q: %w", sessionName, err)
 	}
 	return nil
 }
 
 func (c *focusCommand) selectWindow(ctx context.Context, socket, target string) error {
-	if _, err := c.runner.Run(ctx, "tmux", c.tmuxArgs(socket, "select-window", "-t", target)...); err != nil {
+	if c.runner == nil {
+		return errors.New("focus runner is not configured")
+	}
+	if err := intmux.NewRunner(c.runner).SelectWindow(ctx, intmux.SelectWindowOptions{
+		Socket: socket,
+		Target: target,
+	}); err != nil {
 		return fmt.Errorf("focus: select-window %q: %w", target, err)
 	}
 	return nil
 }
 
 func (c *focusCommand) selectPane(ctx context.Context, socket, target string) error {
-	if _, err := c.runner.Run(ctx, "tmux", c.tmuxArgs(socket, "select-pane", "-t", target)...); err != nil {
+	if c.runner == nil {
+		return errors.New("focus runner is not configured")
+	}
+	if err := intmux.NewRunner(c.runner).SelectPane(ctx, intmux.SelectPaneOptions{
+		Socket: socket,
+		Target: target,
+	}); err != nil {
 		return fmt.Errorf("focus: select-pane %q: %w", target, err)
 	}
 	return nil

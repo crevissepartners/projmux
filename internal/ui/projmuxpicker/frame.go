@@ -23,6 +23,15 @@ type Theme struct {
 	BottomRight string
 	Horizontal  string
 	Vertical    string
+	Background  string
+	Foreground  string
+	Selected    string
+	Muted       string
+	Accent      string
+	Highlight   string
+	Warning     string
+	Critical    string
+	Cursor      string
 }
 
 type Renderer struct {
@@ -46,6 +55,13 @@ var DefaultTheme = Theme{
 	BottomRight: "╯",
 	Horizontal:  "─",
 	Vertical:    "│",
+	Selected:    CurrentStart,
+	Muted:       MutedStart,
+	Accent:      themeAccentStart,
+	Highlight:   HighlightStart,
+	Warning:     themeWarningStart,
+	Critical:    themeCriticalStart,
+	Cursor:      CursorStart,
 }
 
 func NewRenderer(theme Theme) Renderer {
@@ -133,7 +149,7 @@ func ChipsHitRegions(chips []Chip, innerWidth int) []ChipHit {
 	// Column 1 is the left border, column 2 is the chip-strip leading
 	// padding cell, so the first chip body starts at column 3.
 	cursor := 3
-	maxBody := innerWidth - 1
+	maxBody := innerWidth - 2
 	used := 0
 	first := true
 	for index, chip := range chips {
@@ -255,7 +271,7 @@ func (r Renderer) renderFrame(w io.Writer, content string, layout Layout, header
 
 	theme := r.Theme
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	fmt.Fprintf(w, "%s%s%s\r\n", theme.TopLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.TopRight)
+	fmt.Fprintf(w, "%s\r\n", frameBackgroundLine(theme, theme.TopLeft+strings.Repeat(theme.Horizontal, innerWidth)+theme.TopRight))
 	if titlebarRows > 0 {
 		fmt.Fprint(w, header.titlebarLine(theme, innerWidth))
 		fmt.Fprint(w, "\r\n")
@@ -267,9 +283,9 @@ func (r Renderer) renderFrame(w io.Writer, content string, layout Layout, header
 		if i < len(lines) {
 			line = TruncateANSI(strings.TrimRight(lines[i], "\r"), innerWidth)
 		}
-		fmt.Fprintf(w, "%s%s%s\r\n", theme.Vertical, PadStyledLine(line, innerWidth), theme.Vertical)
+		fmt.Fprintf(w, "%s\r\n", frameBackgroundLine(theme, theme.Vertical+PadStyledLine(line, innerWidth)+theme.Vertical))
 	}
-	fmt.Fprintf(w, "%s%s%s", theme.BottomLeft, strings.Repeat(theme.Horizontal, innerWidth), theme.BottomRight)
+	fmt.Fprint(w, frameBackgroundLine(theme, theme.BottomLeft+strings.Repeat(theme.Horizontal, innerWidth)+theme.BottomRight))
 }
 
 func TitlebarRows(title string) int {
@@ -299,7 +315,6 @@ func frameTitlebarLine(theme Theme, innerWidth int, title string) string {
 	}
 	labelWidthLimit := max(innerWidth-2, 1)
 	label := TruncateANSI(title, labelWidthLimit)
-	label = strings.ReplaceAll(label, Reset, Reset+TitlebarStart)
 	titleBlock := " " + label + " "
 	titleBlockWidth := VisibleLen(titleBlock)
 	body := titleBlock + strings.Repeat(" ", max(innerWidth-titleBlockWidth, 0))
@@ -310,25 +325,32 @@ func frameTitlebarChipsLine(theme Theme, innerWidth int, chips []Chip) string {
 	if innerWidth < 4 {
 		return frameTitlebarStyledLine(theme, strings.Repeat(" ", innerWidth))
 	}
-	rendered, used := renderChipStrip(chips, innerWidth-1)
+	rendered, used := renderChipStrip(chips, innerWidth-2)
 	if used == 0 {
 		return frameTitlebarStyledLine(theme, strings.Repeat(" ", innerWidth))
 	}
 	leading := " "
 	pad := max(innerWidth-used-VisibleLen(leading), 0)
-	body := leading + rendered + TitlebarStart + strings.Repeat(" ", pad)
+	body := leading + rendered + strings.Repeat(" ", pad)
 	return frameTitlebarStyledLine(theme, body)
 }
 
 func frameTitlebarStyledLine(theme Theme, body string) string {
-	return Reset + theme.Vertical + TitlebarStart + body + Reset + theme.Vertical + Reset
+	return frameBackgroundLine(theme, theme.Vertical+body+theme.Vertical)
+}
+
+func frameBackgroundLine(theme Theme, line string) string {
+	style := theme.Background + theme.Foreground
+	if style == "" {
+		return line
+	}
+	return style + strings.ReplaceAll(line, Reset, Reset+style) + Reset
 }
 
 // renderChipStrip lays out the chip slice into a single visible-width-bound
 // string and returns the visible width consumed. Chips render with a single
 // cell of padding on each side ("[ Label ]") and are separated by a single
-// gap cell coloured with the inactive-chip background so the gap reads as
-// part of the tab strip rather than as titlebar void.
+// gap cell that inherits the frame row styling.
 func renderChipStrip(chips []Chip, maxWidth int) (string, int) {
 	if maxWidth <= 0 {
 		return "", 0
@@ -381,11 +403,11 @@ func chipSegment(chip Chip, label string) string {
 }
 
 func chipGapSegment() string {
-	return ChipInactiveStart + " " + Reset
+	return " "
 }
 
 func frameTitlebarDivider(theme Theme, innerWidth int) string {
-	return "├" + TitlebarRule + strings.Repeat(theme.Horizontal, innerWidth) + Reset + "┤"
+	return frameBackgroundLine(theme, "├"+strings.Repeat(theme.Horizontal, innerWidth)+"┤")
 }
 
 func writeFrameDiff(w io.Writer, previous, next string) {

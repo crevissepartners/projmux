@@ -2,8 +2,6 @@ package app
 
 import (
 	"bytes"
-	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +11,7 @@ import (
 
 // TestClassifyNotifyRowStateMatchesLiveReport pins the contract that the new
 // display classifier and the long-standing `--live` row state machine agree
-// on STALE/GONE/LIVE for every queue entry. Drift here means a sidebar/status
+// on inactive/gone/live for every queue entry. Drift here means a sidebar/status
 // badge that disagrees with `projmux notify list --live`.
 func TestClassifyNotifyRowStateMatchesLiveReport(t *testing.T) {
 	t.Parallel()
@@ -21,13 +19,23 @@ func TestClassifyNotifyRowStateMatchesLiveReport(t *testing.T) {
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entries := []notify.Notification{
 		{
-			ID: "ai:main:%2", Text: "codex: reply ready",
+			ID: "ai:main:%2", Text: "Ready", Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 			Severity: notify.SeverityInfo, Source: notify.SourceAI,
 			Session: "main", Window: "@1", Pane: "%2",
 			CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 		},
 		{
-			ID: "ai:gone:%9", Text: "claude: reply ready",
+			// Pane %5 EXISTS in tmux (it is in the inventory below) but is no
+			// longer in reply+agent state, so it is INACTIVE/queue-stale, not
+			// gone.
+			ID: "ai:main:%5", Text: "Ready", Metadata: map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
+			Severity: notify.SeverityInfo, Source: notify.SourceAI,
+			Session: "main", Window: "@1", Pane: "%5",
+			CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		},
+		{
+			// Pane %9 is NOT present in the live inventory → GONE/queue-gone.
+			ID: "ai:gone:%9", Text: "Ready", Metadata: map[string]string{"agent": "claude", "category": "response_complete", "state": "need"},
 			Severity: notify.SeverityInfo, Source: notify.SourceAI,
 			Session: "gone", Pane: "%9",
 			CreatedAt: now, ExpiresAt: now.Add(time.Hour),
@@ -50,14 +58,18 @@ func TestClassifyNotifyRowStateMatchesLiveReport(t *testing.T) {
 		respond: func(args []string) ([]byte, error) {
 			if containsArg(args, "list-panes") {
 				return notifyLivePaneRows(
+					// %2: reply + agent → ShouldQueue (live).
 					[]string{"main", "@1", "%2", "0", "codex", "reply", "waiting", "codex", "topic", "/tmp/tmux/default"},
+					// %5: exists but title-only attention, not reply → in the
+					// pane inventory but NOT in liveByID, so it is stale.
+					[]string{"main", "@1", "%5", "0", "✳ ready", "", "", "", "", "/tmp/tmux/default"},
 				), nil
 			}
 			return nil, nil
 		},
 	}
 	cmd := newCmd(store)
-	cmd.runner = runner
+	setNotifyLiveRunner(cmd, runner)
 
 	report, err := cmd.buildNotifyLiveReport(entries)
 	if err != nil {
@@ -70,6 +82,10 @@ func TestClassifyNotifyRowStateMatchesLiveReport(t *testing.T) {
 	}
 
 	liveByID := notifyLiveShouldQueueByID(report.Live)
+	_, paneSet, err := cmd.listNotifyLivePanesAndSet()
+	if err != nil {
+		t.Fatalf("listNotifyLivePanesAndSet error = %v", err)
+	}
 	cases := []struct {
 		id           string
 		wantDisplay  notifyRowDisplayState
@@ -77,16 +93,19 @@ func TestClassifyNotifyRowStateMatchesLiveReport(t *testing.T) {
 	}{
 		// AI entry matched to a live ShouldQueue pane → live both ways.
 		{"ai:main:%2", notifyDisplayLive, "live-ai-reply-queued"},
-		// AI entry without a live match → STALE both ways.
-		{"ai:gone:%9", notifyDisplayStale, "queue-stale"},
-		// External entry with a routable target stays live.
+		// AI entry whose pane EXISTS but no longer matches reply+agent →
+		// inactive display/queue-stale state.
+		{"ai:main:%5", notifyDisplayStale, "queue-stale"},
+		// AI entry whose pane is ABSENT from the live inventory → GONE.
+		{"ai:gone:%9", notifyDisplayGone, "queue-gone"},
+		// External entry with a routable target (no pane) stays live.
 		{"ext:1", notifyDisplayLive, "queue-only"},
 		// Empty session → GONE in both surfaces.
 		{"unroutable", notifyDisplayGone, "queue-gone"},
 	}
 	for _, tc := range cases {
 		entry := findEntryByIDOrFail(t, entries, tc.id)
-		gotDisplay := classifyNotifyRowState(entry, liveByID)
+		gotDisplay := classifyNotifyRowState(entry, liveByID, paneSet)
 		if gotDisplay != tc.wantDisplay {
 			t.Fatalf("classify(%s) = %v, want %v", tc.id, gotDisplay, tc.wantDisplay)
 		}
@@ -110,28 +129,113 @@ func TestClassifyNotifyRowStateFallsBackToLiveWhenLiveUnavailable(t *testing.T) 
 	entry := notify.Notification{
 		ID: "ai:main:%2", Session: "main", Pane: "%2",
 		Source: notify.SourceAI, Severity: notify.SeverityInfo,
-		Text: "codex: reply ready",
+		Text: "Ready", Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 	}
-	if got := classifyNotifyRowState(entry, nil); got != notifyDisplayLive {
+	if got := classifyNotifyRowState(entry, nil, nil); got != notifyDisplayLive {
 		t.Fatalf("classify with nil live map = %v, want live", got)
 	}
 	// Empty session still classifies as GONE even without live data,
 	// because that decision needs no tmux input.
 	gone := notify.Notification{ID: "x", Text: "no target"}
-	if got := classifyNotifyRowState(gone, nil); got != notifyDisplayGone {
+	if got := classifyNotifyRowState(gone, nil, nil); got != notifyDisplayGone {
 		t.Fatalf("classify gone with nil live map = %v, want gone", got)
 	}
 }
 
-// TestNotifySidebarStateBadgeStaleAndGonePalette pins the sidebar badge
-// renderer: STALE/GONE land in the muted grey palette so users can tell them
-// apart from the active info/warn/crit badges at a glance.
-func TestNotifySidebarStateBadgeStaleAndGonePalette(t *testing.T) {
+// TestClassifyNotifyRowStatePaneInventoryGone pins the concrete repro: a queue
+// row whose pane id is absent from the live tmux pane inventory classifies as
+// GONE, while a pane that IS present (but stale on reply+agent) stays
+// INACTIVE/stale. This is the core Phase 7 behavior.
+func TestClassifyNotifyRowStatePaneInventoryGone(t *testing.T) {
 	t.Parallel()
 
-	stale := notifySidebarStateBadge("STALE")
-	if !strings.HasPrefix(stale, notifySidebarStale) || !strings.Contains(stale, " STALE ") {
-		t.Fatalf("STALE badge = %q, want stale palette + label", stale)
+	now := time.Date(2026, time.June, 19, 12, 0, 0, 0, time.UTC)
+	// Live inventory has only %84 and %85 in repos-test-sample:@13.
+	paneSet := newNotifyLivePaneSet([]livePaneRow{
+		{Session: "repos-test-sample", Window: "@13", Pane: "%84"},
+		{Session: "repos-test-sample", Window: "@13", Pane: "%85"},
+	})
+	if paneSet == nil {
+		t.Fatal("expected non-nil pane inventory")
+	}
+
+	// The repro entry targets %83, which is no longer present in tmux.
+	goneEntry := notify.Notification{
+		ID: "ai:repos-test-sample:%83", Text: "Ready",
+		Severity: notify.SeverityInfo, Source: notify.SourceAI,
+		Session: "repos-test-sample", Window: "@13", Pane: "%83",
+		Metadata:  map[string]string{"agent": "codex", "category": "response_complete"},
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+	if got := classifyNotifyRowState(goneEntry, nil, paneSet); got != notifyDisplayGone {
+		t.Fatalf("classify(%%83 absent) = %v, want gone", got)
+	}
+	// Even with a live reply map that does not list this id, the pane-set miss
+	// is what makes it gone (membership beats stale in the fixed order).
+	if got := classifyNotifyRowState(goneEntry, map[string]notifyLivePane{}, paneSet); got != notifyDisplayGone {
+		t.Fatalf("classify(%%83 absent, empty liveByID) = %v, want gone", got)
+	}
+
+	// A pane that IS present but no longer in reply+agent state stays stale.
+	presentStale := notify.Notification{
+		ID: "ai:repos-test-sample:%84", Text: "Ready",
+		Severity: notify.SeverityInfo, Source: notify.SourceAI,
+		Session: "repos-test-sample", Window: "@13", Pane: "%84",
+		Metadata:  map[string]string{"agent": "codex", "category": "response_complete"},
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+	if got := classifyNotifyRowState(presentStale, map[string]notifyLivePane{}, paneSet); got != notifyDisplayStale {
+		t.Fatalf("classify(%%84 present, no reply match) = %v, want stale", got)
+	}
+	// A pane that is present AND in the reply map is live.
+	if got := classifyNotifyRowState(presentStale, map[string]notifyLivePane{presentStale.ID: {}}, paneSet); got != notifyDisplayLive {
+		t.Fatalf("classify(%%84 present + reply match) = %v, want live", got)
+	}
+}
+
+// TestClassifyNotifyRowStateNilInventoryNeverGone pins the best-effort
+// guarantee: when the pane inventory is unavailable (nil set), a routable
+// pane-target row is NOT classified gone just because membership cannot be
+// tested.
+func TestClassifyNotifyRowStateNilInventoryNeverGone(t *testing.T) {
+	t.Parallel()
+
+	entry := notify.Notification{
+		ID: "ai:repos-test-sample:%83", Text: "Ready",
+		Source: notify.SourceAI, Severity: notify.SeverityInfo,
+		Session: "repos-test-sample", Window: "@13", Pane: "%83",
+		Metadata: map[string]string{"agent": "codex", "category": "response_complete"},
+	}
+	// nil inventory + nil liveByID → live (no false gone, no false stale).
+	if got := classifyNotifyRowState(entry, nil, nil); got != notifyDisplayLive {
+		t.Fatalf("classify(nil inventory) = %v, want live", got)
+	}
+	// nil inventory + empty liveByID → stale (pane existence unknown, but the
+	// ai reply map says it is not live). This is the existing inactive path,
+	// unchanged: membership-based gone requires a non-nil inventory.
+	if got := classifyNotifyRowState(entry, map[string]notifyLivePane{}, nil); got != notifyDisplayStale {
+		t.Fatalf("classify(nil inventory, empty liveByID) = %v, want stale", got)
+	}
+	// An empty inventory built from zero usable rows is nil (unavailable), so
+	// it must not turn the row gone either.
+	emptySet := newNotifyLivePaneSet(nil)
+	if emptySet != nil {
+		t.Fatalf("newNotifyLivePaneSet(nil) = %v, want nil (unavailable)", emptySet)
+	}
+	if got := classifyNotifyRowState(entry, nil, emptySet); got != notifyDisplayLive {
+		t.Fatalf("classify(empty inventory) = %v, want live", got)
+	}
+}
+
+// TestNotifySidebarStateBadgeInactiveAndGonePalette pins the sidebar badge
+// renderer: inactive/gone land in the muted grey palette so users can tell them
+// apart from the active info/warn/crit badges at a glance.
+func TestNotifySidebarStateBadgeInactiveAndGonePalette(t *testing.T) {
+	t.Parallel()
+
+	inactive := notifySidebarStateBadge("INACTIVE")
+	if !strings.HasPrefix(inactive, notifySidebarStale) || !strings.Contains(inactive, " INACTIVE ") {
+		t.Fatalf("INACTIVE badge = %q, want inactive palette + label", inactive)
 	}
 	gone := notifySidebarStateBadge("GONE")
 	if !strings.HasPrefix(gone, notifySidebarGone) || !strings.Contains(gone, " GONE ") {
@@ -143,38 +247,36 @@ func TestNotifySidebarStateBadgeStaleAndGonePalette(t *testing.T) {
 	}
 }
 
-// TestNotifySidebarLabelDimsStaleAndGoneText pins that stale/gone rows
-// render their body text inside the dim escape so they visually recede.
-func TestNotifySidebarLabelDimsStaleAndGoneText(t *testing.T) {
+func TestNotifySidebarPaletteSeparatesAttentionAndAI(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	entry := notify.Notification{
-		ID:        "ai:gone:%2",
-		Text:      "codex: reply ready",
-		Severity:  notify.SeverityInfo,
-		Source:    notify.SourceAI,
-		Session:   "main",
-		Window:    "1",
-		Pane:      "%2",
-		CreatedAt: now.Add(-time.Minute),
+	need := notifySidebarStateBadge("NEED")
+	if !strings.HasPrefix(need, "\x1b[1;38;5;16;48;5;220m") {
+		t.Fatalf("NEED badge = %q, want amber pending palette", need)
 	}
+	warn := notifySidebarStateBadge("WARN")
+	if !strings.HasPrefix(warn, "\x1b[1;38;5;16;48;5;214m") {
+		t.Fatalf("WARN badge = %q, want amber warning palette", warn)
+	}
+	agent := notifySidebarAgentBadge("codex")
+	if !strings.HasPrefix(agent, "\x1b[1;38;5;16;48;5;37m") {
+		t.Fatalf("agent badge = %q, want AI palette", agent)
+	}
+	for _, label := range []string{need, warn, agent} {
+		for _, notWant := range []string{"48;5;29", "48;5;45", "48;5;51"} {
+			if strings.Contains(label, notWant) {
+				t.Fatalf("sidebar label = %q, must not use action/legacy color %q", label, notWant)
+			}
+		}
+	}
+}
 
-	live := notifySidebarLabelFor(entry, now, notifyDisplayLive)
-	stale := notifySidebarLabelFor(entry, now, notifyDisplayStale)
-	gone := notifySidebarLabelFor(entry, now, notifyDisplayGone)
+func TestNotifySidebarAgeUsesBluePalette(t *testing.T) {
+	t.Parallel()
 
-	if !strings.Contains(live, " NEED ") {
-		t.Fatalf("live label = %q, want NEED badge", live)
-	}
-	if strings.Contains(live, notifySidebarDimOpen+"reply ready") {
-		t.Fatalf("live label = %q, must not dim its text", live)
-	}
-	if !strings.Contains(stale, " STALE ") || !strings.Contains(stale, notifySidebarDimOpen) {
-		t.Fatalf("stale label = %q, want STALE badge + dim body", stale)
-	}
-	if !strings.Contains(gone, " GONE ") || !strings.Contains(gone, notifySidebarDimOpen) {
-		t.Fatalf("gone label = %q, want GONE badge + dim body", gone)
+	age := notifySidebarAge("11s ago")
+	if !strings.HasPrefix(age, "\x1b[38;5;153m") || !strings.Contains(age, " 11s ago ") {
+		t.Fatalf("age = %q, want blue age palette", age)
 	}
 }
 
@@ -186,8 +288,8 @@ func TestNotifySidebarEntriesWithLivePassesClassification(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entries := []notify.Notification{
-		{ID: "ai:live:%1", Text: "claude: reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "live", Pane: "%1", CreatedAt: now},
-		{ID: "ai:stale:%2", Text: "codex: reply ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "stale", Pane: "%2", CreatedAt: now},
+		{ID: "ai:live:%1", Text: "Ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "claude", "category": "response_complete", "state": "need"}, Session: "live", Pane: "%1", CreatedAt: now},
+		{ID: "ai:stale:%2", Text: "Ready", Severity: notify.SeverityInfo, Source: notify.SourceAI, Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"}, Session: "stale", Pane: "%2", CreatedAt: now},
 	}
 	liveByID := map[string]notifyLivePane{
 		"ai:live:%1": {ID: "ai:live:%1", Session: "live", Pane: "%1", ShouldQueue: true},
@@ -200,21 +302,22 @@ func TestNotifySidebarEntriesWithLivePassesClassification(t *testing.T) {
 	if !strings.Contains(out[0].Label, " NEED ") {
 		t.Fatalf("live entry label = %q, want NEED badge", out[0].Label)
 	}
-	if !strings.Contains(out[1].Label, " STALE ") {
-		t.Fatalf("stale entry label = %q, want STALE badge", out[1].Label)
+	if !strings.Contains(out[1].Label, " INACTIVE ") {
+		t.Fatalf("inactive entry label = %q, want INACTIVE badge", out[1].Label)
 	}
 }
 
-// TestFormatStatusNotifyWithLiveSubstitutesStaleBadge pins that the
-// statusbar segment swaps NEED → STL and uses the muted palette when the
-// head entry has no matching live pane.
-func TestFormatStatusNotifyWithLiveSubstitutesStaleBadge(t *testing.T) {
+// TestFormatStatusNotifyWithLiveSubstitutesInactiveBadge pins that the
+// statusbar uses INA as the short inactive target-state hint when a queued AI
+// row no longer matches live reply+agent state.
+func TestFormatStatusNotifyWithLiveSubstitutesInactiveBadge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entries := []notify.Notification{{
 		ID:        "ai:gone:%9",
-		Text:      "codex: reply ready",
+		Text:      "Ready",
+		Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need", "topic": "docker e2e"},
 		Severity:  notify.SeverityInfo,
 		Source:    notify.SourceAI,
 		Session:   "gone",
@@ -222,14 +325,14 @@ func TestFormatStatusNotifyWithLiveSubstitutesStaleBadge(t *testing.T) {
 		CreatedAt: now.Add(-30 * time.Second),
 	}}
 	out := formatStatusNotifyWithLive(entries, 80, now, map[string]notifyLivePane{})
-	if !strings.Contains(out, " STL ") {
-		t.Fatalf("stale status segment = %q, want STL abbreviation", out)
+	if !strings.Contains(out, " INA ") {
+		t.Fatalf("inactive status segment = %q, want INA abbreviation", out)
 	}
 	if !strings.Contains(out, notifyBadgeStaleOpen) {
-		t.Fatalf("stale status segment = %q, want stale palette", out)
+		t.Fatalf("inactive status segment = %q, want inactive palette", out)
 	}
-	if strings.Contains(out, " NEED ") {
-		t.Fatalf("stale status segment must not still carry the live NEED label: %q", out)
+	if strings.Contains(out, " NEED ") || strings.Contains(out, " codex ") {
+		t.Fatalf("inactive AI status segment must not carry live state/agent badges: %q", out)
 	}
 }
 
@@ -256,16 +359,16 @@ func TestFormatStatusNotifyWithLiveSubstitutesGoneBadge(t *testing.T) {
 	}
 }
 
-// TestFormatStatusNotifyLiveEntryKeepsExistingNeedBadge guards the
-// regression contract: live entries keep their original NEED/INFO/WARN/CRIT
-// labels.
-func TestFormatStatusNotifyLiveEntryKeepsExistingNeedBadge(t *testing.T) {
+// TestFormatStatusNotifyLiveAIEntryUsesTopicBadge guards the AI statusbar
+// contract: project/topic/body replace state and agent badges.
+func TestFormatStatusNotifyLiveAIEntryUsesTopicBadge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	entries := []notify.Notification{{
 		ID:        "ai:s:%1",
-		Text:      "claude: reply ready",
+		Text:      "Ready",
+		Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "review"},
 		Severity:  notify.SeverityInfo,
 		Source:    notify.SourceAI,
 		Session:   "s",
@@ -276,35 +379,37 @@ func TestFormatStatusNotifyLiveEntryKeepsExistingNeedBadge(t *testing.T) {
 		"ai:s:%1": {ID: "ai:s:%1", Session: "s", Pane: "%1", ShouldQueue: true},
 	}
 	out := formatStatusNotifyWithLive(entries, 80, now, liveByID)
-	if !strings.Contains(out, " NEED ") {
-		t.Fatalf("live status segment = %q, want NEED badge", out)
+	if !strings.Contains(out, renderNotifyTopicBadge(entries[0])) {
+		t.Fatalf("live status segment = %q, want topic badge", out)
 	}
-	if strings.Contains(out, " STL ") || strings.Contains(out, " GON ") {
-		t.Fatalf("live status segment must not carry stale/gone abbreviations: %q", out)
+	if strings.Contains(out, " NEED ") || strings.Contains(out, " INA ") || strings.Contains(out, " GON ") || strings.Contains(out, " claude ") {
+		t.Fatalf("live AI status segment must not carry state/agent abbreviations: %q", out)
 	}
 }
 
-// TestStatusbarClickNotifyStaleHeadSkipsFocus pins the click fast path:
-// when the head entry classifies as STALE the statusbar emits the ack-only
-// toast, skips the `projmux focus` subprocess, and still acks the entry so
-// the same row does not re-toast on the next click. The fast-path contract
-// is "skip the focus round-trip", not "leave the row pending forever" —
-// leaving it pending strands the user on a row they can no longer route to.
+// TestStatusbarClickNotifyStaleHeadStillFocuses pins the Phase 6 split:
+// inactive/queue-stale means live reply+agent mismatch, not an unroutable
+// target. The statusbar must still run the normal focus subprocess and only
+// ack after focus succeeds.
 //
 // We force the stale classification with a non-empty live response that
 // excludes the head entry. An empty live result is intentionally treated as
 // "no live data; fall back to live" by classifyHeadDisplayBestEffort (the
 // docker e2e harness hits that fallback), so we have to seed at least one
 // unrelated reply-state pane to keep the live map non-empty here.
-func TestStatusbarClickNotifyStaleHeadSkipsFocus(t *testing.T) {
+func TestStatusbarClickNotifyStaleHeadStillFocuses(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{
 		respond: func(name string, args []string) ([]byte, error) {
 			if name == "tmux" && containsArg(args, "list-panes") {
-				// One unrelated reply-state pane → liveByID is non-empty but
-				// does not contain the head id → ai-prefixed head is stale.
+				// The head pane main:%2 EXISTS in the inventory but is
+				// title-only attention (not reply+agent), so the head is stale
+				// (INACTIVE), not gone. One unrelated reply-state pane keeps
+				// liveByID non-empty so the classifier does not fall back to the
+				// nil/empty best-effort path.
 				return notifyLivePaneRows(
+					[]string{"main", "@1", "%2", "0", "✳ inactive", "", "idle", "codex", "topic", "/tmp/tmux/default"},
 					[]string{"other", "@9", "%9", "0", "claude", "reply", "waiting", "claude", "topic", "/tmp/tmux/default"},
 				), nil
 			}
@@ -315,7 +420,8 @@ func TestStatusbarClickNotifyStaleHeadSkipsFocus(t *testing.T) {
 	store := &stubNotifyStore{listEntries: []notify.Notification{
 		{
 			ID:        "ai:main:%2",
-			Text:      "codex: reply ready",
+			Text:      "Ready",
+			Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
 			Severity:  notify.SeverityCritical,
 			Source:    notify.SourceAI,
 			Session:   "main",
@@ -359,25 +465,29 @@ func TestStatusbarClickNotifyStaleHeadSkipsFocus(t *testing.T) {
 	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+	var focusCalls []statusbarFakeCall
 	for _, call := range runner.calls {
 		if call.name == "/usr/local/bin/projmux" {
-			t.Fatalf("focus subprocess was invoked despite stale head; call = %#v", call)
+			focusCalls = append(focusCalls, call)
 		}
 	}
-	if !sawTmuxDisplayMessage(runner.calls, notifyAckOnlyToast(notifyDisplayStale)) {
-		t.Fatalf("missing stale ack-only toast; calls = %#v", runner.calls)
+	if len(focusCalls) != 1 {
+		t.Fatalf("focus calls = %#v, want one focus subprocess for inactive head", focusCalls)
+	}
+	if !sliceContainsPair(focusCalls[0].args, "--target", "main:1.%2") {
+		t.Fatalf("focus args = %#v, want inactive routable target", focusCalls[0].args)
+	}
+	if sawTmuxDisplayMessage(runner.calls, notifyAckOnlyToast(notifyDisplayGone)) {
+		t.Fatalf("runner calls = %#v, did not expect gone ack-only toast for inactive target", runner.calls)
 	}
 	wantAcked := []string{"ai:main:%2", "ai:main:%2:older-info"}
 	if !equalStringSlices(store.ackedIDs, wantAcked) {
-		t.Fatalf("ackedIDs = %#v, want %#v (stale fast path must clear selected row and older same-pane non-critical AI rows)", store.ackedIDs, wantAcked)
+		t.Fatalf("ackedIDs = %#v, want %#v (inactive target should ack after focus and clear older same-pane non-critical AI rows)", store.ackedIDs, wantAcked)
 	}
 }
 
-// TestStatusbarClickNotifyGoneHeadSkipsFocus pins the same fast path for
-// the GONE classification (unroutable head). The legacy "target empty"
-// guard short-circuits with its own toast before the fast path runs; that
-// pre-existing toast does not ack, so we keep its semantics untouched here.
-// The new-style fast path is exercised by other tests.
+// TestStatusbarClickNotifyGoneHeadSkipsFocus pins the ack-only fast path for
+// the GONE classification (unroutable head).
 func TestStatusbarClickNotifyGoneHeadSkipsFocus(t *testing.T) {
 	t.Parallel()
 
@@ -397,13 +507,67 @@ func TestStatusbarClickNotifyGoneHeadSkipsFocus(t *testing.T) {
 			t.Fatalf("focus subprocess was invoked despite gone head; call = %#v", call)
 		}
 	}
+	if store.ackedID != "ext:orphan" {
+		t.Fatalf("store.ackedID = %q, want ext:orphan", store.ackedID)
+	}
+	if !sawTmuxDisplayMessage(runner.calls, "notify target gone; cleared") {
+		t.Fatalf("missing gone cleanup toast; calls = %#v", runner.calls)
+	}
+}
+
+// TestStatusbarClickNotifyPaneInventoryGoneHeadSkipsFocus pins Phase 7 on the
+// statusbar click path: an `ai:`-prefixed head whose pane is ABSENT from the
+// live tmux inventory takes the ack-only fast path (no focus subprocess),
+// because the pane really disappeared even though the id is routable.
+func TestStatusbarClickNotifyPaneInventoryGoneHeadSkipsFocus(t *testing.T) {
+	t.Parallel()
+
+	runner := &statusbarFakeRunner{
+		respond: func(name string, args []string) ([]byte, error) {
+			if name == "tmux" && containsArg(args, "list-panes") {
+				// Inventory has %84,%85 but NOT the head's %83. A second
+				// reply-state pane keeps liveByID non-empty so we exercise the
+				// real-inventory gone path rather than the nil/empty fallback.
+				return notifyLivePaneRows(
+					[]string{"repos-test-sample", "@13", "%84", "0", "✳ idle", "", "idle", "codex", "topic", "/tmp/tmux/default"},
+					[]string{"repos-test-sample", "@13", "%85", "0", "codex", "reply", "waiting", "codex", "topic", "/tmp/tmux/default"},
+				), nil
+			}
+			return nil, nil
+		},
+	}
+	store := &stubNotifyStore{listEntries: []notify.Notification{{
+		ID:       "ai:repos-test-sample:%83",
+		Text:     "Ready",
+		Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
+		Source:   notify.SourceAI,
+		Session:  "repos-test-sample",
+		Window:   "@13",
+		Pane:     "%83",
+	}}}
+	cmd := newStatusbarTestCommand(runner, store)
+
+	if err := cmd.Run([]string{"click", "notify"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, call := range runner.calls {
+		if call.name == "/usr/local/bin/projmux" {
+			t.Fatalf("focus subprocess was invoked despite pane-inventory gone head; call = %#v", call)
+		}
+	}
+	if store.ackedID != "ai:repos-test-sample:%83" {
+		t.Fatalf("store.ackedID = %q, want the gone head", store.ackedID)
+	}
+	if !sawTmuxDisplayMessage(runner.calls, "notify target gone; cleared") {
+		t.Fatalf("missing gone cleanup toast; calls = %#v", runner.calls)
+	}
 }
 
 // TestStatusbarClickNotifyEmptyLiveResultFallsBackToFocus pins the
 // best-effort safety net: when the live-pane probe returns *no* panes
 // (the docker e2e harness with a default tmux socket and no projmux
 // options registered server-side hits this shape), `ai:`-prefixed head
-// entries must NOT be falsely tagged STALE. Instead the click must
+// entries must NOT be falsely tagged inactive. Instead the click must
 // proceed through the normal focus subprocess → ack flow so the user's
 // queue actually drains.
 func TestStatusbarClickNotifyEmptyLiveResultFallsBackToFocus(t *testing.T) {
@@ -421,11 +585,12 @@ func TestStatusbarClickNotifyEmptyLiveResultFallsBackToFocus(t *testing.T) {
 		},
 	}
 	store := &stubNotifyStore{listEntries: []notify.Notification{{
-		ID:      "ai:e2e-alpha:%0",
-		Text:    "codex: reply ready · docker e2e",
-		Source:  notify.SourceAI,
-		Session: "e2e-alpha",
-		Pane:    "%0",
+		ID:       "ai:e2e-alpha:%0",
+		Text:     "docker e2e",
+		Metadata: map[string]string{"agent": "codex", "category": "response_complete", "state": "need"},
+		Source:   notify.SourceAI,
+		Session:  "e2e-alpha",
+		Pane:     "%0",
 	}}}
 	cmd := newStatusbarTestCommand(runner, store)
 
@@ -457,19 +622,4 @@ func findEntryByIDOrFail(t *testing.T, entries []notify.Notification, id string)
 	}
 	t.Fatalf("entry %q not in fixture", id)
 	return notify.Notification{}
-}
-
-// TestStatusCommandNotifyLiveByIDBestEffortSwallowsRunnerError pins that a
-// tmux failure during the status segment refresh degrades to nil (no live
-// data) instead of bubbling up. Status segments must never fail loudly.
-func TestStatusCommandNotifyLiveByIDBestEffortSwallowsRunnerError(t *testing.T) {
-	t.Parallel()
-
-	cmd := testStatusCommand("/tmp")
-	cmd.readCommand = func(context.Context, string, ...string) ([]byte, error) {
-		return nil, errors.New("tmux not running")
-	}
-	if got := cmd.notifyLiveByIDBestEffort(); got != nil {
-		t.Fatalf("notifyLiveByIDBestEffort = %v, want nil on runner error", got)
-	}
 }

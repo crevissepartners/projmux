@@ -39,7 +39,7 @@ func TestFrameChromeANSIGoldenLines(t *testing.T) {
 		{
 			name:      "title",
 			line:      frameTitlebarLine(DefaultTheme, 18, "\x1b[31mProjects\x1b[0m"),
-			want:      Reset + "│" + TitlebarStart + " \x1b[31mProjects" + Reset + TitlebarStart + strings.Repeat(" ", 9) + Reset + "│" + Reset,
+			want:      "│ \x1b[31mProjects" + Reset + strings.Repeat(" ", 9) + "│",
 			wantWidth: 20,
 		},
 		{
@@ -82,6 +82,30 @@ func TestFrameChromeANSIGoldenLines(t *testing.T) {
 		}
 		if got := VisibleLen(tt.line); got != tt.wantWidth {
 			t.Fatalf("%s width = %d, want %d: %q", tt.name, got, tt.wantWidth, tt.line)
+		}
+	}
+}
+
+func TestChromePalettePhase0GoldenTokens(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"current":      "\x1b[48;2;44;56;61m\x1b[38;2;255;255;255m",
+		"titlebar":     "\x1b[48;2;24;34;38m\x1b[38;2;216;224;228m",
+		"titlebarRule": "\x1b[48;2;24;34;38m\x1b[38;2;117;132;140m",
+		"muted":        "\x1b[38;2;117;132;140m",
+		"pointer":      CurrentStart + "\x1b[38;2;122;199;173m▌" + CurrentStart + " ",
+	}
+	got := map[string]string{
+		"current":      CurrentStart,
+		"titlebar":     TitlebarStart,
+		"titlebarRule": TitlebarRule,
+		"muted":        MutedStart,
+		"pointer":      Pointer,
+	}
+	for name, want := range cases {
+		if got[name] != want {
+			t.Fatalf("%s token = %q, want %q", name, got[name], want)
 		}
 	}
 }
@@ -134,6 +158,23 @@ func TestRenderableListLinePadsUnselectedStyleAfterReset(t *testing.T) {
 	}
 	if strings.Contains(rendered, "master"+padding+Reset) {
 		t.Fatalf("RenderableListLine() = %q, want inactive branch style not stretched", rendered)
+	}
+}
+
+func TestRenderableListLineTruncatesStyledRowsWithReset(t *testing.T) {
+	t.Parallel()
+
+	line := CurrentStart + "프로젝트 abcdefghijklmnopqrstuvwxyz" + Reset
+	rendered := RenderableListLine(line, 10)
+
+	if got, want := VisibleLen(rendered), 10; got != want {
+		t.Fatalf("VisibleLen(RenderableListLine()) = %d, want %d: %q", got, want, rendered)
+	}
+	if !strings.HasSuffix(rendered, Reset) {
+		t.Fatalf("RenderableListLine() = %q, want reset after truncating styled row", rendered)
+	}
+	if strings.Contains(rendered, "bcdef") {
+		t.Fatalf("RenderableListLine() = %q, want row clamped before overflow text", rendered)
 	}
 }
 
@@ -338,6 +379,32 @@ func TestListLinesWithScrollbarRowsKeepsViewportTrack(t *testing.T) {
 	}
 	if got := scrollbarCount(rendered); got == 0 {
 		t.Fatalf("scrollbar count = %d, want scrollbar on viewport track: %#v", got, rendered)
+	}
+}
+
+func TestListLinesWithScrollbarUsesSameContentBudgetWithoutScrollbar(t *testing.T) {
+	t.Parallel()
+
+	line := CurrentStart + "프로젝트 abcdefghijklmnopqrstuvwxyz" + Reset
+	noScrollbar := ListLinesWithScrollbarRows([]string{line}, 1, 0, 1, 12, 1)[0]
+	withScrollbar := ListLinesWithScrollbarRows([]string{line}, 10, 0, 1, 12, 1)[0]
+
+	if got, want := VisibleLen(noScrollbar), 12; got != want {
+		t.Fatalf("no-scrollbar row width = %d, want %d: %q", got, want, noScrollbar)
+	}
+	if got, want := VisibleLen(withScrollbar), 12; got != want {
+		t.Fatalf("scrollbar row width = %d, want %d: %q", got, want, withScrollbar)
+	}
+	noScrollbarContent := strings.TrimSuffix(noScrollbar, " ")
+	withScrollbarContent := strings.TrimSuffix(withScrollbar, Scrollbar)
+	if got, want := VisibleLen(noScrollbarContent), 11; got != want {
+		t.Fatalf("no-scrollbar content width = %d, want shared budget %d: %q", got, want, noScrollbarContent)
+	}
+	if got, want := stripANSIForSurfaceTest(noScrollbarContent), stripANSIForSurfaceTest(withScrollbarContent); got != want {
+		t.Fatalf("content budgets differ: no-scrollbar %q, scrollbar %q", got, want)
+	}
+	if !strings.HasSuffix(noScrollbarContent, Reset) || !strings.HasSuffix(withScrollbarContent, Reset) {
+		t.Fatalf("rendered rows = %#v, want reset before marker lane", []string{noScrollbar, withScrollbar})
 	}
 }
 

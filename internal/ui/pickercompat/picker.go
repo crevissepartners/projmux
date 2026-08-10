@@ -26,11 +26,15 @@ func OptionsFromPicker(options picker.Options) Options {
 		Prompt:         options.Prompt,
 		Header:         options.Header,
 		Footer:         options.Footer,
+		Locale:         options.Locale,
 		InitialQuery:   options.InitialQuery,
 		DisableSearch:  options.DisableSearch,
 		AcceptQuery:    options.AcceptQuery,
+		ColorGrid:      options.ColorGrid,
+		Recorder:       options.Recorder,
 		PreviewCommand: options.Preview.Command,
 		PreviewWindow:  options.Preview.Window,
+		Theme:          options.Theme,
 	}
 	for _, action := range options.Actions {
 		key := strings.TrimSpace(action.Key)
@@ -70,22 +74,36 @@ func ResultToPicker(result Result) picker.Result {
 func PickerOptions(options Options) picker.Options {
 	initialIndex, initialIndexSet := pickerInitialIndex(options)
 	return picker.Options{
-		UI:              options.UI,
-		Items:           pickerItems(options),
-		Title:           options.Title,
-		TitleChips:      options.TitleChips,
-		Prompt:          options.Prompt,
-		Header:          options.Header,
-		Footer:          options.Footer,
-		Actions:         pickerActions(options),
-		Preview:         picker.Preview{Command: options.PreviewCommand, Window: options.PreviewWindow},
-		InitialQuery:    options.InitialQuery,
-		InitialIndex:    initialIndex,
-		InitialIndexSet: initialIndexSet,
-		DisableSearch:   options.DisableSearch,
-		AcceptQuery:     options.AcceptQuery,
-		MultiLine:       options.Read0,
+		UI:                    options.UI,
+		Items:                 pickerItems(options),
+		Title:                 options.Title,
+		TitleChips:            options.TitleChips,
+		Prompt:                options.Prompt,
+		Header:                options.Header,
+		Footer:                options.Footer,
+		Locale:                options.Locale,
+		Actions:               pickerActions(options),
+		Preview:               picker.Preview{Command: options.PreviewCommand, Window: options.PreviewWindow},
+		Theme:                 options.Theme,
+		InitialQuery:          options.InitialQuery,
+		InitialIndex:          initialIndex,
+		InitialIndexSet:       initialIndexSet,
+		DisableSearch:         options.DisableSearch,
+		AcceptQuery:           options.AcceptQuery,
+		ColorGrid:             options.ColorGrid,
+		Recorder:              options.Recorder,
+		MultiLine:             options.Read0,
+		DeferredUpdate:        options.DeferredUpdate,
+		DeferredUpdateTrigger: options.DeferredUpdateTrigger,
 	}
+}
+
+// PickerItemsFromEntries converts compat entries to native picker items. It lets
+// a caller build a picker.DeferredUpdate (whose Items are native) from the same
+// Entry rows it renders initially, without duplicating the label/value/search
+// mapping.
+func PickerItemsFromEntries(entries []Entry) []picker.Item {
+	return pickerItemsFromEntries(entries)
 }
 
 func ResultFromPicker(result picker.Result) Result {

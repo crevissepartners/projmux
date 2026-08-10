@@ -34,12 +34,13 @@ type killTagStore interface {
 }
 
 type killCommand struct {
-	current  killCurrentSessionResolver
-	recent   killRecentSessionsResolver
-	exec     taggedKillExecutor
-	homeDir  func() (string, error)
-	tagStore killTagStore
-	storeErr error
+	current              killCurrentSessionResolver
+	recent               killRecentSessionsResolver
+	exec                 taggedKillExecutor
+	homeDir              func() (string, error)
+	tagStore             killTagStore
+	storeErr             error
+	cleanupKilledSession func(string)
 }
 
 func newKillCommand() *killCommand {
@@ -48,9 +49,16 @@ func newKillCommand() *killCommand {
 	cmd := &killCommand{
 		current: client,
 		recent:  client,
-		exec:    lifecycle.NewTaggedKiller(client, client),
 		homeDir: os.UserHomeDir,
 	}
+	cmd.exec = lifecycle.NewTaggedKiller(client, cleanupKillSessionExecutor{
+		delegate: client,
+		cleanup: func(sessionName string) {
+			if cmd.cleanupKilledSession != nil {
+				cmd.cleanupKilledSession(sessionName)
+			}
+		},
+	})
 
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
@@ -106,6 +114,21 @@ func (c *killCommand) runTagged(args []string, _ io.Writer, stderr io.Writer) er
 		return fmt.Errorf("kill tagged sessions: %w", err)
 	}
 
+	return nil
+}
+
+type cleanupKillSessionExecutor struct {
+	delegate pruneSessionKiller
+	cleanup  func(string)
+}
+
+func (e cleanupKillSessionExecutor) KillSession(ctx context.Context, sessionName string) error {
+	if err := e.delegate.KillSession(ctx, sessionName); err != nil {
+		return err
+	}
+	if e.cleanup != nil {
+		e.cleanup(sessionName)
+	}
 	return nil
 }
 

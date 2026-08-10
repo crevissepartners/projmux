@@ -4,31 +4,78 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	"github.com/crevissepartners/projmux/internal/theme"
 	"github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 const (
-	ansiReset  = "\x1b[0m"
-	ansiBold   = "\x1b[1m"
-	ansiDim    = "\x1b[2m"
-	ansiRed    = "\x1b[31m"
-	ansiBlue   = "\x1b[34m"
-	ansiGreen  = "\x1b[32m"
-	ansiYellow = "\x1b[33m"
-	ansiCyan   = "\x1b[36m"
+	ansiReset = theme.ANSIReset
+	ansiBold  = theme.ANSIBold
+	ansiDim   = theme.ANSIDim
 )
 
-const (
-	ansiStatusPath        = "\x1b[38;5;242m"
-	ansiStatusGitActive   = "\x1b[1;38;5;16;48;5;45m"
-	ansiStatusGitInactive = "\x1b[38;5;245;48;5;238m"
-	ansiTabActive         = "\x1b[1;38;5;231;48;5;238m"
-	ansiTabInactive       = "\x1b[38;5;245;48;5;235m"
+// ANSI role escapes consumed by the switch list renderer. They default to the
+// historical fallback literals (see internal/theme/palette.go) so a fallback
+// theme renders byte-identically. ApplyTheme repoints them at a resolved
+// effective theme so an explicit global theme repaints the switch surface.
+//
+// These are package-level vars rather than threaded parameters because the
+// switch formatter functions are called from 30+ stateless call sites; a
+// parameter thread would be far more invasive. The switch/recent CLI render is
+// single-threaded so there is no data race: ApplyTheme runs once at command
+// entry before any render.
+var (
+	ansiRed      = theme.ANSIStateTaggedStart
+	ansiBlue     = theme.ANSIStateInfoStart
+	ansiGreen    = theme.ANSIStateExistingStart
+	ansiYellow   = theme.ANSIStatePinnedStart
+	ansiProgress = theme.ANSIStateProgressStart
+	ansiCyan     = theme.ANSIAccentSettingsStart
+	ansiWarning  = theme.ANSIAIBadgeActionRequiredStart
+
+	ansiStatusPath        = theme.ANSISwitchPathStart
+	ansiStatusGitActive   = theme.ANSISwitchGitActiveStart
+	ansiStatusGitInactive = theme.ANSISwitchGitInactiveStart
+	ansiTabActive         = theme.ANSISwitchWindowTabActiveStart
+	ansiTabInactive       = theme.ANSISwitchWindowTabStart
+
+	ansiAIBadgeSuccess        = theme.ANSIAIBadgeSuccessStart
+	ansiAIBadgeActionRequired = theme.ANSIAIBadgeActionRequiredStart
+	ansiAIBadgeProgress       = theme.ANSIAIBadgeProgressStart
+	ansiAttentionNeeds        = theme.ANSISwitchAttentionNeedsStart
+	ansiAttentionReady        = theme.ANSISwitchAttentionReadyStart
 )
+
+// ApplyTheme repoints the switch renderer's ANSI role escapes at a resolved
+// effective theme. It must be called once at command entry, before any switch
+// row is formatted. Passing a fallback-sourced ANSIRoles restores byte-identity.
+func ApplyTheme(roles theme.ANSIRoles) {
+	ansiRed = roles.StateTagged
+	ansiBlue = roles.StateInfo
+	ansiGreen = roles.StateExisting
+	ansiYellow = roles.StatePinned
+	ansiProgress = roles.StateProgress
+	ansiCyan = roles.AccentSettings
+	ansiWarning = roles.AIBadgeActionRequired
+
+	ansiStatusPath = roles.SwitchPath
+	ansiStatusGitActive = roles.SwitchGitActive
+	ansiStatusGitInactive = roles.SwitchGitInactive
+	ansiTabActive = roles.SwitchWindowTabActive
+	ansiTabInactive = roles.SwitchWindowTab
+
+	ansiAIBadgeSuccess = roles.AIBadgeSuccess
+	ansiAIBadgeActionRequired = roles.AIBadgeActionRequired
+	ansiAIBadgeProgress = roles.AIBadgeProgress
+	ansiAttentionNeeds = roles.SwitchAttentionNeeds
+	ansiAttentionReady = roles.SwitchAttentionReady
+}
 
 const (
 	switchBranchBadgeMax     = 16
 	switchWindowTabNameWidth = 8
+	switchSidebarTabSlots    = 3
 )
 
 type SwitchRow struct {
@@ -47,6 +94,8 @@ type SwitchCandidate struct {
 	WindowTabs    []SwitchWindowTab
 	UI            string
 	AttentionRank int
+	AIBadgeKind   string
+	AIBadgeStyle  string
 	Pinned        bool
 	Tagged        bool
 }
@@ -54,6 +103,8 @@ type SwitchCandidate struct {
 type SwitchWindowTab struct {
 	Name          string
 	AttentionRank int
+	AIBadgeKind   string
+	AIBadgeStyle  string
 	Active        bool
 }
 
@@ -91,10 +142,16 @@ func PrettyPath(path, homeDir, repoRoot string) string {
 func BuildSwitchRows(candidates []SwitchCandidate) []SwitchRow {
 	rows := make([]SwitchRow, 0, len(candidates))
 	for _, candidate := range candidates {
+		label := formatSwitchLabel(candidate)
+		item := switchPickerItem(candidate)
+		if candidate.UI == "sidebar" {
+			item.Label = label
+			item.MetaLines = nil
+		}
 		rows = append(rows, SwitchRow{
-			Label: formatSwitchLabel(candidate),
+			Label: label,
 			Value: candidate.Path,
-			Item:  switchPickerItem(candidate),
+			Item:  item,
 		})
 	}
 	return rows
@@ -135,12 +192,14 @@ func switchPickerItem(candidate SwitchCandidate) picker.Item {
 	if meta := formatSwitchPathGitLine(candidate); meta != "" {
 		metaLines = append(metaLines, meta)
 	}
-	if windows := formatSwitchWindowTabs(candidate.WindowTabs); windows != "" {
+	if windows := formatSwitchWindowTabs(candidate.WindowTabs, candidate.AIBadgeStyle); windows != "" {
 		metaLines = append(metaLines, windows)
 	}
 
 	badges := make([]string, 0, 3)
-	if candidate.AttentionRank == 2 {
+	if badge := switchAttentionBadgeName(candidate.AIBadgeKind, candidate.AttentionRank); badge != "" {
+		badges = append(badges, badge)
+	} else if candidate.AttentionRank == 2 {
 		badges = append(badges, "needs review")
 	} else if candidate.AttentionRank == 1 {
 		badges = append(badges, "ready")
@@ -216,28 +275,72 @@ func truncateSwitchBadge(value string, max int) string {
 	return string(runes[:max-3]) + "..."
 }
 
-func formatSwitchWindowTabs(windows []SwitchWindowTab) string {
+func formatSwitchWindowTabs(windows []SwitchWindowTab, badgeStyle string) string {
 	tabs := make([]string, 0, len(windows))
 	for _, window := range windows {
 		name := sanitizeCell(window.Name)
 		if name == "" {
 			continue
 		}
-		tabs = append(tabs, formatSwitchWindowTab(name, window.AttentionRank, window.Active))
+		style := window.AIBadgeStyle
+		if strings.TrimSpace(style) == "" {
+			style = badgeStyle
+		}
+		tabs = append(tabs, formatSwitchWindowTab(name, window.AIBadgeKind, window.AttentionRank, style, window.Active))
 	}
 	return strings.Join(tabs, " ")
 }
 
-func formatSwitchWindowTab(name string, attentionRank int, active bool) string {
+func formatSwitchWindowTab(name, badgeKind string, attentionRank int, badgeStyle string, active bool) string {
 	style := ansiTabInactive
 	if active {
 		style = ansiTabActive
 	}
-	badge := formatInlineAttentionBadge(attentionRank)
+	badge := formatInlineAttentionBadge(badgeKind, attentionRank, badgeStyle)
 	if badge != "" {
 		badge += style
 	}
 	return style + " " + badge + centerSwitchTabName(name, switchWindowTabNameWidth) + " " + ansiReset
+}
+
+func formatSidebarSwitchWindowTabs(windows []SwitchWindowTab, badgeStyle string) string {
+	tabs := make([]string, 0, switchSidebarTabSlots)
+	for _, window := range windows {
+		if len(tabs) >= switchSidebarTabSlots {
+			break
+		}
+		name := sanitizeCell(window.Name)
+		if name == "" {
+			continue
+		}
+		style := window.AIBadgeStyle
+		if strings.TrimSpace(style) == "" {
+			style = badgeStyle
+		}
+		tabs = append(tabs, formatSidebarSwitchWindowTab(name, window.AIBadgeKind, window.AttentionRank, style, window.Active))
+	}
+	for len(tabs) < switchSidebarTabSlots {
+		tabs = append(tabs, formatSidebarBlankLane(sidebarSwitchWindowTabWidth()))
+	}
+	return strings.Join(tabs, " ")
+}
+
+func formatSidebarSwitchWindowTab(name, badgeKind string, attentionRank int, badgeStyle string, active bool) string {
+	style := ansiTabInactive
+	if active {
+		style = ansiTabActive
+	}
+	badge := formatInlineAttentionBadge(badgeKind, attentionRank, badgeStyle)
+	if badge == "" {
+		badge = "  "
+	} else {
+		badge += style
+	}
+	return style + " " + badge + centerSwitchTabName(name, switchWindowTabNameWidth) + " " + ansiReset
+}
+
+func sidebarSwitchWindowTabWidth() int {
+	return 1 + 2 + switchWindowTabNameWidth + 1
 }
 
 func centerSwitchTabName(name string, width int) string {
@@ -278,10 +381,14 @@ func formatSwitchCardStatusBadge(badges []string) string {
 	parts := make([]string, 0, len(badges))
 	for _, badge := range badges {
 		switch sanitizeCell(badge) {
+		case "needs input":
+			parts = append(parts, ansiWarning+"●"+ansiReset)
+		case "working":
+			parts = append(parts, ansiProgress+"●"+ansiReset)
 		case "needs review":
-			parts = append(parts, ansiYellow+"●"+ansiReset)
+			parts = append(parts, ansiProgress+"●"+ansiReset)
 		case "ready":
-			parts = append(parts, ansiGreen+"●"+ansiReset)
+			parts = append(parts, ansiAIBadgeSuccess+"●"+ansiReset)
 		case "tagged":
 			parts = append(parts, ansiRed+"x"+ansiReset)
 		case "pinned":
@@ -291,12 +398,19 @@ func formatSwitchCardStatusBadge(badges []string) string {
 	return strings.Join(parts, " ")
 }
 
-func formatInlineAttentionBadge(rank int) string {
+func formatInlineAttentionBadge(kind string, rank int, badgeStyle string) string {
+	if style := ansiAIBadgeKindStart(kind); style != "" {
+		glyph := aibadge.Glyph(kind, badgeStyle)
+		if strings.TrimSpace(glyph) == "" {
+			return "  "
+		}
+		return style + glyph + " " + ansiReset
+	}
 	switch rank {
 	case 2:
-		return "\x1b[38;5;220m● " + ansiReset
+		return ansiAttentionNeeds + "● " + ansiReset
 	case 1:
-		return "\x1b[38;5;82m● " + ansiReset
+		return ansiAttentionReady + "● " + ansiReset
 	default:
 		return ""
 	}
@@ -378,38 +492,42 @@ func formatPopupModeLabel(mode string) string {
 }
 
 func formatSidebarSwitchLabel(candidate SwitchCandidate) string {
-	parts := make([]string, 0, 5)
-	parts = append(parts, formatAttentionBadge(candidate.AttentionRank))
-	if candidate.Tagged {
-		parts = append(parts, formatTagBadge(candidate.Tagged))
-	}
-	if candidate.Pinned {
-		parts = append(parts, formatPinBadge(candidate.Pinned))
-	}
-
 	displayName := sanitizeCell(candidate.DisplayName)
 	if displayName == "" {
 		displayName = sanitizeCell(candidate.SessionName)
 	}
-	if displayName != "" {
-		parts = append(parts, formatSidebarSessionName(displayName, candidate.ModeLabel))
+	title := formatSidebarSessionName(displayName, candidate.ModeLabel)
+	if title == "" {
+		title = formatSidebarSessionName(sanitizeCell(candidate.Path), candidate.ModeLabel)
 	}
 
 	path := sanitizeCell(candidate.DisplayPath)
 	if path == "" {
 		path = sanitizeCell(candidate.Path)
 	}
-	if path != "" {
-		parts = append(parts, ansiDim+path+ansiReset)
+	lines := []string{
+		title + " " + formatSidebarStatusLane(candidate),
 	}
-
-	return strings.Join(parts, " ")
+	if path != "" {
+		lines = append(lines, ansiDim+path+ansiReset+" "+formatSidebarBranchLane(candidate))
+	} else {
+		lines = append(lines, formatSidebarBranchLane(candidate))
+	}
+	lines = append(lines, formatSidebarSwitchWindowTabs(candidate.WindowTabs, candidate.AIBadgeStyle))
+	return strings.Join(lines, "\n")
 }
 
-func formatAttentionBadge(rank int) string {
+func formatAttentionBadgeWithStyle(kind string, rank int, badgeStyle string) string {
+	if style := ansiAIBadgeKindStart(kind); style != "" {
+		glyph := aibadge.Glyph(kind, badgeStyle)
+		if strings.TrimSpace(glyph) == "" {
+			return " "
+		}
+		return style + glyph + ansiReset
+	}
 	switch rank {
 	case 2:
-		return ansiYellow + "●" + ansiReset
+		return ansiProgress + "●" + ansiReset
 	case 1:
 		return ansiGreen + "●" + ansiReset
 	default:
@@ -427,6 +545,65 @@ func formatSidebarSessionName(sessionName, mode string) string {
 	default:
 		return sessionName
 	}
+}
+
+func formatSidebarStatusLane(candidate SwitchCandidate) string {
+	return strings.Join([]string{
+		formatAttentionBadgeWithStyle(candidate.AIBadgeKind, candidate.AttentionRank, candidate.AIBadgeStyle),
+		formatTagBadge(candidate.Tagged),
+		formatPinBadge(candidate.Pinned),
+	}, " ")
+}
+
+func switchAttentionBadgeName(kind string, rank int) string {
+	switch aibadge.Normalize(kind) {
+	case aibadge.ApprovalRequired, aibadge.InputRequired:
+		return "needs input"
+	case aibadge.ResponseComplete:
+		return "ready"
+	case aibadge.InProgress:
+		return "working"
+	default:
+		if rank == 2 {
+			return "needs review"
+		}
+		if rank == 1 {
+			return "ready"
+		}
+		return ""
+	}
+}
+
+func ansiAIBadgeKindStart(kind string) string {
+	switch aibadge.ThemeRole(kind) {
+	case aibadge.RoleActionRequired:
+		return ansiAIBadgeActionRequired
+	case aibadge.RoleSuccess:
+		return ansiAIBadgeSuccess
+	case aibadge.RoleProgress:
+		return ansiAIBadgeProgress
+	default:
+		return ""
+	}
+}
+
+func formatSidebarBranchLane(candidate SwitchCandidate) string {
+	branch := truncateSwitchBadge(sanitizeCell(candidate.GitBranch), switchBranchBadgeMax)
+	style := ansiStatusGitInactive
+	if candidate.ModeLabel == "existing" {
+		style = ansiStatusGitActive
+	}
+	if branch == "" {
+		return formatSidebarBlankLane(switchBranchBadgeMax + 2)
+	}
+	return style + " " + branch + " " + ansiReset + formatSidebarBlankLane(switchBranchBadgeMax-len([]rune(branch)))
+}
+
+func formatSidebarBlankLane(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return ansiReset + strings.Repeat(" ", width) + ansiReset
 }
 
 func formatTagBadge(tagged bool) string {

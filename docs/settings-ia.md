@@ -15,8 +15,46 @@ view-first layout:
   actions live inside that view.
 - `Settings > Project Picker > Project Root` shows effective and saved values
   first, then the edit actions, then the explanatory hints.
-- `Settings > Keybindings` is the single entry point for keybinding work. The
-  page is split into four chips: `Bindings`, `Diagnostic`, `Probe`, and `Init`.
+- `Settings > Keybindings` is a single action list plus a simple action detail.
+  It does not expose `Bindings`, `Diagnostic`, `Probe`, or `Init` as first-class
+  chips/tabs in the Settings root flow.
+- `Settings > Keybindings` is a keybinding discovery surface, not only a
+  launch-toggle editor. It must show `Toggle Project Sidebar` with the
+  guaranteed `Alt-1` / `M-1` default, plus sidebar-local commands, picker-local
+  commands, `Pane navigation`, `Window navigation`, and `Rename` groups or
+  equivalent searchable rows.
+- `Settings > Keybindings > Action` keeps the user-facing edit path small:
+  action label, state, a flat Keys list, Options, and a collapsed
+  Troubleshooting row. Keys shows only currently active/effective keys plus
+  `+ Add key`. Pressing a key row opens key detail, where Remove key and Test
+  key live. Options offers Unbind and Reset to default/Use default when
+  state-appropriate. Add key opens the default Press a key flow with Cancel and
+  Advanced...; typed key-name entry and raw diagnostics live under Advanced. It
+  does not expose Default key, Apply State, Delivery, Advanced Delivery,
+  key-role replacement, terminal mapping preview, or terminal mapping apply
+  rows as always-visible sections.
+- Terminal delivery remediation lives outside Settings primary flow. The
+  supported order is `projmux shell` first, then `projmux setup`, then
+  `projmux init` for supported terminal adapters.
+- Rows that cannot safely be edited still stay visible. Mark diagnostic-only
+  rows with the delivery path and reason instead of hiding them or turning them
+  into unsupported editable keys. Transport-dependent rows stay visible with
+  their default transport key and additive custom-key entry; replacing or
+  disabling the transport default is not exposed.
+- `Alt-1..5` are the only guaranteed zero-config launch defaults. `UserN` and
+  `CSI-u` are legacy/removal/unsupported targets, not supported fallback
+  guidance for Settings, setup, init, or docs.
+- The launcher checkout policy applies in Settings: the project sidebar is a
+  first-class row, action rows use human-readable labels, internal IDs appear
+  only in detail/source/keymap contexts, and runtime footers are status hints,
+  not key discovery.
+- `Settings > Theme` (Global) is the single theme view. There is no separate
+  `Effective theme` item: the Global theme view shows each color token's value
+  inline. A token set globally (explicit value or via a global preset) shows its
+  set/override/preset summary; an UNSET token shows the resolved fallback value
+  with a dim swatch, a `(fallback)` label, and a `fallback` source. Resolver
+  warnings render as dim info rows after the token rows. Project `.projmux`
+  `[theme]` is never resolved or shown here.
 - `Settings > Notifications` owns notification delivery IA. Desktop notification
   mode, AI desktop notification dedupe duration, delivery source diagnostics,
   AI hook quiet policy, in-app queue status, and
@@ -37,9 +75,12 @@ view-first layout:
   runtime action values and writes only
   `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json`. It does not
   edit catalog `install` values or run agent install/remove commands.
+- `Settings > Session State > Sidebar startup picker` controls the Alt-1
+  project-open startup selector. The saved file remains
+  `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`.
 - `Settings > Labs` keeps experimental toggles, but keybindings no longer have a
-  visible Labs row. The hidden compatibility action still redirects to the
-  unified Keybindings page.
+  visible Labs row. The hidden compatibility action redirects to the
+  `Settings > Keybindings` action list, not to a diagnostic default.
 - `Settings > Labs > Project Hooks` is overview-first. The Labs root opens the
   overview, and the on/off mutation rows live one level deeper.
 - `Settings > AI Settings` is view-first. The root contains `Default split
@@ -54,6 +95,13 @@ view-first layout:
   and `Notify icon` details. Each detail shows the current mode plus
   immediately selectable off/symbol/emoji preview rows. There is no separate
   `Change` page for icon decoration.
+- `Settings > Appearance > Language / Locale` is the global/user language
+  detail. The root row shows the saved `[ui].locale` value and the currently
+  effective locale. The detail shows `Current`, `[ui].locale`, optional
+  `PROJMUX_LOCALE` env override, and direct choices for `auto`, `en-US`, and
+  `ko-KR`. When `auto` is active it must show the detected source (`LC_ALL`,
+  `LC_MESSAGES`, `LANG`, or fallback). Unsupported locale tags must remain
+  visible as warnings and fall back to `en-US`.
 
 Hooks remain the reference pattern for this IA:
 
@@ -68,8 +116,9 @@ Hooks remain the reference pattern for this IA:
 
 Shell bootstrap UX is phase-split:
 
-- Phase 1 is complete in this branch: `projmux welcome`, the About-screen
-  Welcome entry, and `pending_attach_welcome` state make the guide revisit-able.
-- Phase 2 is complete in this branch: the generated projmux shell tmux config
-  runs the low-noise `projmux welcome --popup` attach hook, which claims the
-  pending marker once and displays the welcome guide after attach.
+- `projmux welcome` remains the stdout revisit command.
+- `Settings > About > Welcome` opens a visible native viewer independent of
+  shell skip state.
+- Legacy shell `skip_version` state remains readable for compatibility but no
+  longer suppresses the automatic `projmux shell` prompt; release skips live in
+  `update-skip.json` and do not hide manual revisit surfaces.

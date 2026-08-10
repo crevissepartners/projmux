@@ -46,8 +46,9 @@ func TestSendNotiHookDispatcherDispatchesPayloadAndEnv(t *testing.T) {
 
 	dispatcher.Dispatch(notify.Notification{
 		ID:        "n_123",
-		Text:      "claude: reply ready",
+		Text:      "Ready",
 		Source:    notify.SourceAI,
+		Metadata:  map[string]string{"agent": "claude", "category": "response_complete"},
 		Socket:    "/tmp/tmux.sock",
 		Session:   "main",
 		Pane:      "%9",
@@ -56,7 +57,7 @@ func TestSendNotiHookDispatcherDispatchesPayloadAndEnv(t *testing.T) {
 		Type:    "ai-reply-ready",
 		Agent:   "claude",
 		Topic:   "worker loop",
-		Message: "claude: reply ready",
+		Message: "Ready",
 	})
 
 	if runner.calls != 1 {

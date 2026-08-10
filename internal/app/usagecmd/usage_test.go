@@ -1,0 +1,1387 @@
+package usagecmd
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/usage"
+	"github.com/crevissepartners/projmux/internal/theme"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
+)
+
+func TestFormatStatusUsageRendersBothModelsHUD(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42.0, ResetsAt: now.Add(5 * time.Hour), UpdatedAt: now},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 18.0, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
+		{Model: "codex", Window: usage.Window5h, Pct: 71.0, ResetsAt: now.Add(5 * time.Hour), UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 55.0, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+
+	if !strings.Contains(got, "Claude") || !strings.Contains(got, "Codex") {
+		t.Fatalf("missing model labels: %q", got)
+	}
+	if !strings.Contains(got, "5h ") || !strings.Contains(got, "weekly ") {
+		t.Fatalf("missing window labels: %q", got)
+	}
+	if !strings.Contains(got, "█") || !strings.Contains(got, "░") {
+		t.Fatalf("missing bar runes: %q", got)
+	}
+	for _, want := range []string{"42%", "18%", "71%", "55%"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %q", want, got)
+		}
+	}
+	if !strings.Contains(got, "#[fg="+theme.TmuxAccentAIFg+",bold]") {
+		t.Fatalf("missing AI label color: %q", got)
+	}
+	if !strings.HasSuffix(got, "#[default]") {
+		t.Fatalf("must end with #[default]: %q", got)
+	}
+}
+
+func TestFormatStatusUsageRendersAntigravityContext(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	// Antigravity exposes only a context-window gauge — no 5h/weekly quota.
+	// It must still render a `ctx` bar in the HUD.
+	snaps := []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 42, UpdatedAt: now},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+
+	if !strings.Contains(got, "Antigravity") {
+		t.Fatalf("missing Antigravity label: %q", got)
+	}
+	if !strings.Contains(got, "ctx ") {
+		t.Fatalf("missing ctx window label: %q", got)
+	}
+	if !strings.Contains(got, "42%") {
+		t.Fatalf("missing context percentage: %q", got)
+	}
+	if !strings.Contains(got, "█") || !strings.Contains(got, "░") {
+		t.Fatalf("missing bar runes: %q", got)
+	}
+}
+
+// TestFormatStatusUsageCanonicalOrder locks the HUD ordering: Claude,
+// Codex, then Antigravity, regardless of snapshot input order. This also
+// guards claude/codex against regression when a context-only model is
+// present.
+func TestFormatStatusUsageCanonicalOrder(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 42, UpdatedAt: now},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		{Model: "claude", Window: usage.Window5h, Pct: 12, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+
+	iClaude := strings.Index(got, "Claude")
+	iCodex := strings.Index(got, "Codex")
+	iAgy := strings.Index(got, "Antigravity")
+	if iClaude < 0 || iCodex < 0 || iAgy < 0 {
+		t.Fatalf("missing a model label: %q", got)
+	}
+	if !(iClaude < iCodex && iCodex < iAgy) {
+		t.Fatalf("canonical order Claude<Codex<Antigravity not held: claude=%d codex=%d agy=%d in %q", iClaude, iCodex, iAgy, got)
+	}
+}
+
+func TestFormatStatusUsageOmitsPlaceholderRows(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	// Claude rows here have Pct=0 AND ResetsAt zero AND Limit=0 → treated
+	// as "no data" placeholders that the HUD must skip. Codex has real
+	// percentages and must still appear.
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 0, UpdatedAt: now},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 0, UpdatedAt: now},
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 25, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if strings.Contains(got, "Claude") {
+		t.Fatalf("claude has no data but appears in output: %q", got)
+	}
+	if !strings.Contains(got, "Codex") {
+		t.Fatalf("codex must appear: %q", got)
+	}
+	if !strings.Contains(got, "50%") || !strings.Contains(got, "25%") {
+		t.Fatalf("missing codex percentages: %q", got)
+	}
+}
+
+func TestFormatStatusUsageRendersGenuineZeroWithResetTime(t *testing.T) {
+	t.Parallel()
+
+	// A genuine 0% from a healthy account (Pct=0 but ResetsAt is real)
+	// must still render — that's a real measurement, not a placeholder.
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 0, ResetsAt: now.Add(5 * time.Hour), UpdatedAt: now},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if !strings.Contains(got, "Claude") {
+		t.Fatalf("genuine 0%% must still render label: %q", got)
+	}
+	if !strings.Contains(got, "0%") {
+		t.Fatalf("missing 0%% text: %q", got)
+	}
+}
+
+func TestFormatStatusUsageAllEmpty(t *testing.T) {
+	t.Parallel()
+
+	if got := formatStatusUsage(nil, 0, time.Time{}); got != "" {
+		t.Fatalf("formatStatusUsage(nil) = %q, want empty", got)
+	}
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h},
+	}
+	if got := formatStatusUsage(snaps, 0, time.Time{}); got != "" {
+		t.Fatalf("formatStatusUsage(no data) = %q, want empty", got)
+	}
+}
+
+func TestFormatStatusUsageWidthTiers(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: now.Add(7 * 24 * time.Hour)},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour)},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour)},
+	}
+
+	// Tier 1: long HUD with both bars per model.
+	long := formatStatusUsage(snaps, 200, now)
+	if !strings.Contains(long, "Claude") || !strings.Contains(long, "weekly ") {
+		t.Fatalf("tier1 long HUD missing weekly bar: %q", long)
+	}
+	if intrender.VisualLen(long) > 200 {
+		t.Fatalf("tier1 visualLen=%d > 200", intrender.VisualLen(long))
+	}
+
+	// Tier 2: drop weekly bars (label + 5h only).
+	tier2 := formatStatusUsage(snaps, 60, now)
+	if intrender.VisualLen(tier2) > 60 {
+		t.Fatalf("tier2 visualLen=%d > 60: %q", intrender.VisualLen(tier2), tier2)
+	}
+	if !strings.Contains(tier2, "Claude") || !strings.Contains(tier2, "Codex") {
+		t.Fatalf("tier2 missing labels: %q", tier2)
+	}
+	if !strings.Contains(tier2, "5h ") {
+		t.Fatalf("tier2 must keep 5h bar: %q", tier2)
+	}
+	if strings.Contains(tier2, "weekly ") {
+		t.Fatalf("tier2 must drop weekly bar: %q", tier2)
+	}
+
+	// Tier 3: drop bars, keep long labels.
+	tier3 := formatStatusUsage(snaps, 50, now)
+	if intrender.VisualLen(tier3) > 50 {
+		t.Fatalf("tier3 visualLen=%d > 50: %q", intrender.VisualLen(tier3), tier3)
+	}
+	if !strings.Contains(tier3, "Claude 5h:42% weekly:18%") {
+		t.Fatalf("tier3 long-label form missing: %q", tier3)
+	}
+	if strings.Contains(tier3, "█") || strings.Contains(tier3, "░") {
+		t.Fatalf("tier3 must not contain bar runes: %q", tier3)
+	}
+
+	// Tier 4: single-letter labels.
+	tier4 := formatStatusUsage(snaps, 45, now)
+	if intrender.VisualLen(tier4) > 45 {
+		t.Fatalf("tier4 visualLen=%d > 45: %q", intrender.VisualLen(tier4), tier4)
+	}
+	if !strings.Contains(tier4, "C 5h:42%") || !strings.Contains(tier4, "X 5h:71%") {
+		t.Fatalf("tier4 short-label form missing: %q", tier4)
+	}
+	if strings.Contains(tier4, "Claude") {
+		t.Fatalf("tier4 must drop long labels: %q", tier4)
+	}
+
+	// Tier 5: hard truncate with ellipsis.
+	tier5 := formatStatusUsage(snaps, 15, now)
+	if intrender.VisualLen(tier5) > 15 {
+		t.Fatalf("tier5 visualLen=%d > 15: %q", intrender.VisualLen(tier5), tier5)
+	}
+	if !strings.HasSuffix(tier5, "…") {
+		t.Fatalf("tier5 must end with ellipsis: %q", tier5)
+	}
+}
+
+func TestFormatStatusUsageOverLimitShowsActualPercent(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 319, ResetsAt: now.Add(time.Hour)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 110, ResetsAt: now.Add(7 * 24 * time.Hour)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if !strings.Contains(got, "319%") {
+		t.Fatalf("missing actual over-limit percent: %q", got)
+	}
+	if !strings.Contains(got, theme.TmuxStateCriticalFg+",bold") {
+		t.Fatalf("over-limit must use critical color: %q", got)
+	}
+}
+
+func TestFilterSnapshotsByModelAndWindow(t *testing.T) {
+	t.Parallel()
+
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h},
+		{Model: "claude", Window: usage.WindowWeekly},
+		{Model: "codex", Window: usage.Window5h},
+		{Model: "codex", Window: usage.WindowWeekly},
+	}
+	got := filterSnapshots(snaps, "claude", "all")
+	if len(got) != 2 {
+		t.Fatalf("model=claude got %d, want 2", len(got))
+	}
+	got = filterSnapshots(snaps, "all", "5h")
+	if len(got) != 2 {
+		t.Fatalf("window=5h got %d, want 2", len(got))
+	}
+	got = filterSnapshots(snaps, "codex", "weekly")
+	if len(got) != 1 || got[0].Model != "codex" || got[0].Window != usage.WindowWeekly {
+		t.Fatalf("codex+weekly got %+v, want one codex weekly", got)
+	}
+}
+
+func TestUsageRunAllScopesToEnabledClaudeOnly(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	if err := store.SaveState(usage.State{
+		Snapshots: []usage.Snapshot{
+			{Model: "claude", Window: usage.Window5h, Pct: 12, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+			{Model: "codex", Window: usage.Window5h, Pct: 88, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		},
+		Backoff: map[string]usage.BackoffState{
+			"codex": {Until: now.Add(5 * time.Minute), Consecutive: 1},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 13, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+	codexAd := &stubAdapter{name: "codex", snaps: []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 89, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+
+	c := New(func() time.Time { return now })
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentClaude}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "all"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "claude") || !strings.Contains(out, "13%") {
+		t.Fatalf("expected enabled claude row: %q", out)
+	}
+	if strings.Contains(out, "codex") {
+		t.Fatalf("disabled codex leaked into all-model output: %q", out)
+	}
+	if strings.Contains(out, "codex is in backoff") {
+		t.Fatalf("disabled codex backoff leaked into all-model output: %q", out)
+	}
+	if claudeAd.collectCalls != 1 {
+		t.Fatalf("claude collect calls = %d, want 1", claudeAd.collectCalls)
+	}
+	if codexAd.collectCalls != 0 {
+		t.Fatalf("codex collect calls = %d, want 0 for disabled ambient scope", codexAd.collectCalls)
+	}
+}
+
+func TestUsageStatusScopesToEnabledCodexOnly(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	if err := store.SaveState(usage.State{
+		Snapshots: []usage.Snapshot{
+			{Model: "claude", Window: usage.Window5h, Pct: 44, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+			{Model: "codex", Window: usage.Window5h, Pct: 22, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 45, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+	codexAd := &stubAdapter{name: "codex", snaps: []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 23, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+
+	c := New(func() time.Time { return now })
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentCodex}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Codex") || !strings.Contains(out, "23%") {
+		t.Fatalf("expected enabled codex HUD: %q", out)
+	}
+	if strings.Contains(out, "Claude") {
+		t.Fatalf("disabled claude leaked into status HUD: %q", out)
+	}
+	if claudeAd.collectCalls != 0 {
+		t.Fatalf("claude collect calls = %d, want 0 for disabled ambient scope", claudeAd.collectCalls)
+	}
+	if codexAd.collectCalls != 1 {
+		t.Fatalf("codex collect calls = %d, want 1", codexAd.collectCalls)
+	}
+}
+
+func TestUsageStatusShowsAntigravityContext(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 63, UpdatedAt: now},
+	}}
+
+	c := New(func() time.Time { return now })
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"antigravity": agyAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Antigravity") || !strings.Contains(out, "63%") {
+		t.Fatalf("expected Antigravity context HUD: %q", out)
+	}
+	if agyAd.collectCalls != 1 {
+		t.Fatalf("antigravity collect calls = %d, want 1", agyAd.collectCalls)
+	}
+}
+
+func TestUsageRunShowsAntigravityContextUsage(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 55, UpdatedAt: now},
+	}}
+	c := New(func() time.Time { return now })
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"antigravity": agyAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "all"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "antigravity") || !strings.Contains(output, "context") || !strings.Contains(output, "55%") {
+		t.Fatalf("output = %q, want antigravity context row", output)
+	}
+	if strings.Contains(output, "unsupported") {
+		t.Fatalf("output = %q, Antigravity usage should no longer be unsupported", output)
+	}
+	if strings.Contains(output, "enable Claude or Codex") {
+		t.Fatalf("output = %q, should not imply Antigravity is not an enabled agent", output)
+	}
+	if agyAd.collectCalls != 1 {
+		t.Fatalf("antigravity collect calls = %d, want 1", agyAd.collectCalls)
+	}
+}
+
+func TestUsageRunExplicitAntigravityWorksWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 77, UpdatedAt: now},
+	}}
+	c := New(func() time.Time { return now })
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentClaude}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"antigravity": agyAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "antigravity"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "antigravity") || !strings.Contains(output, "77%") {
+		t.Fatalf("output = %q, want explicit antigravity context row", output)
+	}
+	if agyAd.collectCalls != 1 {
+		t.Fatalf("antigravity collect calls = %d, want 1 for explicit model", agyAd.collectCalls)
+	}
+}
+
+func TestUsageAllWithNoEnabledAgentsSkipsCollectAndShowsFallback(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	if err := store.SaveState(usage.State{
+		Snapshots: []usage.Snapshot{
+			{Model: "claude", Window: usage.Window5h, Pct: 44, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+			{Model: "codex", Window: usage.Window5h, Pct: 22, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	claudeAd := &stubAdapter{name: "claude"}
+	codexAd := &stubAdapter{name: "codex"}
+
+	c := New(func() time.Time { return now })
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return nil, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "all"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "no AI usage providers enabled") {
+		t.Fatalf("missing no-enabled-agents fallback: %q", out)
+	}
+	if strings.Contains(out, "claude") || strings.Contains(out, "codex") {
+		t.Fatalf("disabled cached rows leaked with no enabled agents: %q", out)
+	}
+	if claudeAd.collectCalls != 0 || codexAd.collectCalls != 0 {
+		t.Fatalf("collect calls with no enabled agents = claude:%d codex:%d, want 0/0", claudeAd.collectCalls, codexAd.collectCalls)
+	}
+
+	stdout.Reset()
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("status output with no enabled agents = %q, want empty", stdout.String())
+	}
+}
+
+func TestUsageExplicitClaudeWorksWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 31, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+	codexAd := &stubAdapter{name: "codex", snaps: []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 91, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+
+	c := New(func() time.Time { return now })
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentCodex}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "claude"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "claude") || !strings.Contains(out, "31%") {
+		t.Fatalf("explicit disabled claude should render read-only data: %q", out)
+	}
+	if strings.Contains(out, "codex") {
+		t.Fatalf("explicit claude output should not include codex: %q", out)
+	}
+	if claudeAd.collectCalls != 1 {
+		t.Fatalf("claude collect calls = %d, want 1 for explicit disabled model", claudeAd.collectCalls)
+	}
+	if codexAd.collectCalls != 0 {
+		t.Fatalf("codex collect calls = %d, want 0 for explicit claude scope", codexAd.collectCalls)
+	}
+}
+
+func TestUsageExplicitCodexWorksWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	claudeAd := &stubAdapter{name: "claude", snaps: []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 31, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+	codexAd := &stubAdapter{name: "codex", snaps: []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 91, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}}
+
+	c := New(func() time.Time { return now })
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentClaude}, nil
+	}
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"claude": claudeAd,
+		"codex":  codexAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "codex"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "codex") || !strings.Contains(out, "91%") {
+		t.Fatalf("explicit disabled codex should render read-only data: %q", out)
+	}
+	if strings.Contains(out, "claude") {
+		t.Fatalf("explicit codex output should not include claude: %q", out)
+	}
+	if codexAd.collectCalls != 1 {
+		t.Fatalf("codex collect calls = %d, want 1 for explicit disabled model", codexAd.collectCalls)
+	}
+	if claudeAd.collectCalls != 0 {
+		t.Fatalf("claude collect calls = %d, want 0 for explicit codex scope", claudeAd.collectCalls)
+	}
+}
+
+// stubAdapter emits Snapshots directly under the v2 contract.
+type stubAdapter struct {
+	name         string
+	snaps        []usage.Snapshot
+	err          error
+	collectCalls int
+}
+
+func (s *stubAdapter) Name() string { return s.name }
+func (s *stubAdapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
+	s.collectCalls++
+	return s.snaps, s.err
+}
+
+func newStubManager(t *testing.T, adapters []*stubAdapter) *usage.Manager {
+	t.Helper()
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	registry := usage.NewRegistry()
+	for _, a := range adapters {
+		_ = registry.Replace(a)
+	}
+	store := usage.NewStore(dir)
+	return usage.NewManager(registry, store, func() time.Time { return now })
+}
+
+func scopedUsageManagerFactory(t *testing.T, store *usage.Store, now time.Time, adapters map[string]*stubAdapter) func([]string) (*usage.Manager, error) {
+	t.Helper()
+	return func(scope []string) (*usage.Manager, error) {
+		registry := usage.NewRegistry()
+		for _, model := range normalizeUsageModelScope(scope) {
+			adapter, ok := adapters[model]
+			if !ok {
+				continue
+			}
+			if err := registry.Replace(adapter); err != nil {
+				return nil, err
+			}
+		}
+		return usage.NewManager(registry, store, func() time.Time { return now }), nil
+	}
+}
+
+func TestUsageRunJSONEmptyCacheReturnsArray(t *testing.T) {
+	t.Parallel()
+
+	c := New(nil)
+	c.managerFn = func([]string) (*usage.Manager, error) {
+		dir := t.TempDir()
+		registry := usage.NewRegistry()
+		_ = registry.Register(&stubAdapter{name: "claude"})
+		store := usage.NewStore(dir)
+		return usage.NewManager(registry, store, func() time.Time {
+			return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+		}), nil
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--json"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v err=%s", err, stderr.String())
+	}
+	if !strings.HasPrefix(strings.TrimSpace(stdout.String()), "[") {
+		t.Fatalf("stdout = %q, want JSON array", stdout.String())
+	}
+}
+
+func TestUsageStatusEmitsFormattedSegment(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	c := New(nil)
+	mgr := newStubManager(t, []*stubAdapter{
+		{name: "claude", snaps: []usage.Snapshot{
+			{Model: "claude", Window: usage.Window5h, Pct: 30, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		}},
+		{name: "codex", snaps: []usage.Snapshot{
+			{Model: "codex", Window: usage.Window5h, Pct: 70, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		}},
+	})
+	if _, err := mgr.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Claude") || !strings.Contains(out, "Codex") {
+		t.Fatalf("status output = %q, want HUD model labels", out)
+	}
+}
+
+func TestUsageStatusManagerErrorIsSilent(t *testing.T) {
+	t.Parallel()
+
+	c := New(nil)
+	c.managerFn = func([]string) (*usage.Manager, error) {
+		return nil, errors.New("boom")
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus must swallow error, got %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
+func TestUsageStatusMaybeCollectThrottledOnSecondCall(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	c := New(nil)
+	mgr := newStubManager(t, []*stubAdapter{
+		{name: "claude", snaps: []usage.Snapshot{
+			{Model: "claude", Window: usage.Window5h, Pct: 5, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		}},
+		{name: "codex", snaps: []usage.Snapshot{
+			{Model: "codex", Window: usage.Window5h, Pct: 10, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		}},
+	})
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("first RunStatus: %v", err)
+	}
+	first := stdout.String()
+	stdout.Reset()
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("second RunStatus: %v", err)
+	}
+	second := stdout.String()
+	if first == "" || second == "" {
+		t.Fatalf("expected non-empty status output, got %q / %q", first, second)
+	}
+}
+
+func TestUsageMaybeCollectManualRefreshThrottlesAllAdapters(t *testing.T) {
+	t.Parallel()
+
+	claude := &stubAdapter{
+		name: "claude",
+		snaps: []usage.Snapshot{
+			{Model: "claude", Window: usage.Window5h, Pct: 5},
+		},
+	}
+	codex := &stubAdapter{
+		name: "codex",
+		snaps: []usage.Snapshot{
+			{Model: "codex", Window: usage.Window5h, Pct: 10},
+		},
+	}
+	c := New(nil)
+	mgr := newStubManager(t, []*stubAdapter{claude, codex})
+	c.managerFn = func([]string) (*usage.Manager, error) {
+		return mgr, nil
+	}
+
+	ran, err := c.MaybeCollect(context.Background())
+	if err != nil {
+		t.Fatalf("first MaybeCollect: %v", err)
+	}
+	if !ran {
+		t.Fatal("first MaybeCollect ran = false, want true")
+	}
+	if claude.collectCalls != 1 || codex.collectCalls != 1 {
+		t.Fatalf("first collect calls: claude=%d codex=%d, want 1/1", claude.collectCalls, codex.collectCalls)
+	}
+
+	ran, err = c.MaybeCollect(context.Background())
+	if err != nil {
+		t.Fatalf("second MaybeCollect: %v", err)
+	}
+	if ran {
+		t.Fatal("second MaybeCollect ran = true within cooldown, want false")
+	}
+	if claude.collectCalls != 1 || codex.collectCalls != 1 {
+		t.Fatalf("second collect calls: claude=%d codex=%d, want throttle no-op at 1/1", claude.collectCalls, codex.collectCalls)
+	}
+}
+
+func TestUsageStatusSwallowsAdapterErrorByDefault(t *testing.T) {
+	t.Parallel()
+
+	c := New(nil)
+	dir := t.TempDir()
+	registry := usage.NewRegistry()
+	_ = registry.Replace(&stubAdapter{
+		name: "claude",
+		err:  errors.New("network down"),
+	})
+	store := usage.NewStore(dir)
+	mgr := usage.NewManager(registry, store, func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	})
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty (adapter failures must be silent)", stderr.String())
+	}
+}
+
+func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
+	t.Parallel()
+
+	c := New(nil)
+	c.lookupEnv = func(name string) string {
+		if name == usageDebugEnvVar {
+			return "1"
+		}
+		return ""
+	}
+	dir := t.TempDir()
+	registry := usage.NewRegistry()
+	_ = registry.Replace(&stubAdapter{
+		name: "claude",
+		err:  errors.New("network down"),
+	})
+	store := usage.NewStore(dir)
+	mgr := usage.NewManager(registry, store, func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	})
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.RunStatus(nil, stdout, stderr); err != nil {
+		t.Fatalf("RunStatus: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "network down") {
+		t.Fatalf("stderr = %q, want adapter error surfaced under PROJMUX_USAGE_DEBUG", stderr.String())
+	}
+}
+
+func TestFormatStatusUsageHUDOmitsTildeStaleMarker(t *testing.T) {
+	t.Parallel()
+
+	// Schema v3 of the HUD replaces the legacy `~` / `~~` stale
+	// markers with an explicit age indicator (see TestFormatStatusUsageAge*).
+	// The colored marker forms must never appear in the rendered output.
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-15 * time.Minute)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: stale},
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if strings.Contains(got, "~") {
+		t.Fatalf("HUD must not emit `~` stale marker: %q", got)
+	}
+	// Codex stays clean too — no age, no `~`.
+	if strings.Contains(got, "(") && strings.Contains(got, ")Codex") {
+		t.Fatalf("codex must not carry an age indicator: %q", got)
+	}
+}
+
+func TestFormatStatusUsageTextTiersOmitTildeMarker(t *testing.T) {
+	t.Parallel()
+
+	// Text tiers used to append `~` / `~~` to stale rows. Those
+	// markers are gone everywhere now (the long HUD tier carries the
+	// signal via the age indicator; verbose CLI inspection uses the
+	// `STALE` column in `projmux usage`'s table form).
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-15 * time.Minute)
+	veryStale := now.Add(-90 * time.Minute)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: veryStale},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: stale},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
+	}
+	// Width=45 lands us in the long-text tier. Width=30 lands us in
+	// the short-label tier. Both must be `~`-free.
+	for _, w := range []int{45, 30} {
+		got := formatStatusUsage(snaps, w, now)
+		if strings.Contains(got, "~") {
+			t.Fatalf("text tier (width=%d) emitted `~`: %q", w, got)
+		}
+	}
+}
+
+func TestUsageTableShowsStaleColumn(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-30 * time.Minute)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: stale},
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	out := &bytes.Buffer{}
+	if err := writeUsageTable(out, snaps, now); err != nil {
+		t.Fatalf("writeUsageTable: %v", err)
+	}
+	body := out.String()
+	if !strings.Contains(body, "STALE") {
+		t.Fatalf("table header missing STALE column: %q", body)
+	}
+	// Claude row must have a `*` in the STALE column; codex row must not.
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("table too short: %q", body)
+	}
+	var claudeLine, codexLine string
+	for _, l := range lines[1:] {
+		if strings.Contains(l, "claude") {
+			claudeLine = l
+		}
+		if strings.Contains(l, "codex") {
+			codexLine = l
+		}
+	}
+	if !strings.Contains(claudeLine, "*") {
+		t.Fatalf("claude row missing stale marker: %q", claudeLine)
+	}
+	if strings.Contains(codexLine, "*") {
+		t.Fatalf("codex row should be fresh, not stale-marked: %q", codexLine)
+	}
+}
+
+func TestUsageJSONIncludesStaleAndBackoff(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-30 * time.Minute)},
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	state := usage.State{
+		Backoff: map[string]usage.BackoffState{
+			"claude": {Until: now.Add(5 * time.Minute), Consecutive: 1},
+		},
+	}
+	out := &bytes.Buffer{}
+	if err := writeUsageJSON(out, snaps, state, now); err != nil {
+		t.Fatalf("writeUsageJSON: %v", err)
+	}
+	body := out.String()
+	if !strings.Contains(body, `"stale": true`) {
+		t.Fatalf("missing stale=true for claude row: %s", body)
+	}
+	if !strings.Contains(body, `"stale": false`) {
+		t.Fatalf("missing stale=false for codex row: %s", body)
+	}
+	if !strings.Contains(body, `"backoff"`) {
+		t.Fatalf("missing backoff block: %s", body)
+	}
+	if !strings.Contains(body, `"claude"`) {
+		t.Fatalf("backoff block missing claude entry: %s", body)
+	}
+}
+
+func TestUsageJSONHealthyOmitsBackoff(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}
+	out := &bytes.Buffer{}
+	if err := writeUsageJSON(out, snaps, usage.State{}, now); err != nil {
+		t.Fatalf("writeUsageJSON: %v", err)
+	}
+	body := strings.TrimSpace(out.String())
+	if !strings.HasPrefix(body, "[") {
+		t.Fatalf("healthy --json should emit bare array: %s", body)
+	}
+	if !strings.Contains(body, `"stale": false`) {
+		t.Fatalf("missing per-row stale field: %s", body)
+	}
+}
+
+// forceTrackingAdapter records whether ForceCollect was the entry
+// point: `--force` clears the persisted backoff via the Manager, so
+// the adapter sees an empty BackoffState even when one was on disk.
+// Save echoes whatever was loaded so the on-disk state round-trips
+// (mirroring how the real claude adapter preserves backoff during a
+// short-circuit).
+type forceTrackingAdapter struct {
+	stubAdapter
+	loadedBackoff usage.BackoffState
+	collectCalls  int
+}
+
+func (a *forceTrackingAdapter) LoadBackoff(state usage.BackoffState) {
+	a.loadedBackoff = state
+}
+func (a *forceTrackingAdapter) SaveBackoff() usage.BackoffState {
+	return a.loadedBackoff
+}
+func (a *forceTrackingAdapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
+	a.collectCalls++
+	return a.snaps, a.err
+}
+
+func TestUsageRunForceBypassesBackoffAndThrottle(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	store := usage.NewStore(dir)
+	// Seed: claude in active backoff.
+	if err := store.SaveState(usage.State{
+		Backoff: map[string]usage.BackoffState{
+			"claude": {Until: now.Add(30 * time.Minute), Consecutive: 4},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	registry := usage.NewRegistry()
+	claudeAd := &forceTrackingAdapter{
+		stubAdapter: stubAdapter{
+			name: "claude",
+			snaps: []usage.Snapshot{
+				{Model: "claude", Window: usage.Window5h, Pct: 9.0, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+			},
+		},
+	}
+	if err := registry.Replace(claudeAd); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	mgr := usage.NewManager(registry, store, func() time.Time { return now })
+
+	c := New(nil)
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
+	c.now = func() time.Time { return now }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--force"}, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	if claudeAd.collectCalls != 1 {
+		t.Fatalf("collect calls = %d, want 1 (--force must invoke despite backoff)", claudeAd.collectCalls)
+	}
+	if !claudeAd.loadedBackoff.Until.IsZero() {
+		t.Fatalf("LoadBackoff received Until=%v, want zero (--force clears)", claudeAd.loadedBackoff.Until)
+	}
+	if claudeAd.loadedBackoff.Consecutive != 0 {
+		t.Fatalf("LoadBackoff received Consecutive=%d, want 0 (--force clears)", claudeAd.loadedBackoff.Consecutive)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "claude") || !strings.Contains(out, "9%") {
+		t.Fatalf("expected refreshed claude row in output: %q", out)
+	}
+}
+
+func TestUsageRunDefaultRespectsBackoff(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	store := usage.NewStore(dir)
+	prior := usage.Snapshot{Model: "claude", Window: usage.Window5h, Pct: 18.0, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-time.Minute)}
+	if err := store.SaveState(usage.State{
+		Snapshots: []usage.Snapshot{prior},
+		Backoff: map[string]usage.BackoffState{
+			"claude": {Until: now.Add(30 * time.Minute), Consecutive: 1},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	registry := usage.NewRegistry()
+	claudeAd := &forceTrackingAdapter{
+		stubAdapter: stubAdapter{name: "claude"},
+	}
+	if err := registry.Replace(claudeAd); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	mgr := usage.NewManager(registry, store, func() time.Time { return now })
+
+	c := New(nil)
+	c.managerFn = func([]string) (*usage.Manager, error) { return mgr, nil }
+	c.now = func() time.Time { return now }
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run(nil, stdout, stderr); err != nil {
+		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
+	}
+	if !claudeAd.loadedBackoff.Until.Equal(now.Add(30 * time.Minute)) {
+		t.Fatalf("LoadBackoff Until = %v, want preserved 30m (no --force)", claudeAd.loadedBackoff.Until)
+	}
+	out := stdout.String()
+	// Output should still show prior 18% (preserved during backoff
+	// short-circuit) AND a backoff note pointing at --force.
+	if !strings.Contains(out, "18%") {
+		t.Fatalf("expected preserved 18%% in output: %q", out)
+	}
+	if !strings.Contains(out, "claude is in backoff") {
+		t.Fatalf("expected backoff note in output: %q", out)
+	}
+	if !strings.Contains(out, "--force") {
+		t.Fatalf("backoff note must mention --force: %q", out)
+	}
+}
+
+func TestWriteBackoffNoteEmitsWhenActive(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	state := usage.State{
+		Backoff: map[string]usage.BackoffState{
+			"claude": {Until: now.Add(12 * time.Minute), Consecutive: 2},
+		},
+	}
+	out := &bytes.Buffer{}
+	writeBackoffNote(out, state, now)
+	got := out.String()
+	if !strings.Contains(got, "claude is in backoff") {
+		t.Fatalf("missing backoff note: %q", got)
+	}
+	if !strings.Contains(got, "12m") {
+		t.Fatalf("missing remaining duration: %q", got)
+	}
+	if !strings.Contains(got, "--force") {
+		t.Fatalf("must point at --force: %q", got)
+	}
+}
+
+func TestWriteBackoffNoteSilentWhenHealthy(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	state := usage.State{Backoff: map[string]usage.BackoffState{}}
+	out := &bytes.Buffer{}
+	writeBackoffNote(out, state, now)
+	if out.Len() != 0 {
+		t.Fatalf("expected silent on healthy state, got %q", out.String())
+	}
+
+	// Expired backoff (Until in the past) is also no-op.
+	state = usage.State{Backoff: map[string]usage.BackoffState{
+		"claude": {Until: now.Add(-time.Minute), Consecutive: 1},
+	}}
+	out = &bytes.Buffer{}
+	writeBackoffNote(out, state, now)
+	if out.Len() != 0 {
+		t.Fatalf("expected silent on expired backoff, got %q", out.String())
+	}
+}
+
+func TestFormatBackoffDurationShapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{0, "1s"},
+		{45 * time.Second, "45s"},
+		{2 * time.Minute, "2m"},
+		{12 * time.Minute, "12m"},
+		{60 * time.Minute, "1h"},
+		{75 * time.Minute, "1h15m"},
+	}
+	for _, tc := range cases {
+		if got := FormatBackoffDuration(tc.in); got != tc.want {
+			t.Fatalf("FormatBackoffDuration(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestFormatStatusUsageAgeFreshOmitsIndicator covers the `now` case
+// from the spec: an age below 1 minute keeps the bar tight by
+// suppressing the `(<age>)` block entirely.
+func TestFormatStatusUsageAgeFreshOmitsIndicator(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-30 * time.Second)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-30 * time.Second)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if strings.Contains(got, "(") {
+		t.Fatalf("fresh data must not render an age indicator: %q", got)
+	}
+	// Sanity: the label and bar still render.
+	if !strings.Contains(got, "Claude") {
+		t.Fatalf("missing Claude label: %q", got)
+	}
+}
+
+// TestFormatStatusUsageAgeMinutesGrey covers the spec's `(3m)`
+// scenario — minute-scale age renders in dim grey.
+func TestFormatStatusUsageAgeMinutesGrey(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-3 * time.Minute)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-3 * time.Minute)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if !strings.Contains(got, "#[fg=colour245](3m)#[default]") {
+		t.Fatalf("missing dim-grey (3m) age indicator: %q", got)
+	}
+}
+
+// TestFormatStatusUsageAgeWarnMuted covers the >=1h band — the indicator
+// stays muted so warning colors remain reserved for usage thresholds.
+func TestFormatStatusUsageAgeWarnMuted(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-90 * time.Minute)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-90 * time.Minute)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if !strings.Contains(got, "#[fg=colour244](1h)#[default]") {
+		t.Fatalf("missing muted (1h) age indicator: %q", got)
+	}
+}
+
+// TestFormatStatusUsageAgeVeryStaleStaysMuted covers the >=6h band. The unit
+// stays the actual hours value, but the color remains muted rather than
+// escalating to critical red.
+func TestFormatStatusUsageAgeVeryStaleStaysMuted(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-8 * time.Hour)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-8 * time.Hour)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if !strings.Contains(got, "#[fg=colour244](8h)#[default]") {
+		t.Fatalf("missing muted (8h) age indicator: %q", got)
+	}
+}
+
+// TestFormatStatusUsageCodexNoAgeIndicator confirms the Codex block
+// never carries the age indicator (its rate_limits payload is sourced
+// from the latest rollout file every call — always near-current).
+func TestFormatStatusUsageCodexNoAgeIndicator(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	// Even a deliberately ancient Codex UpdatedAt must not produce
+	// an age block.
+	snaps := []usage.Snapshot{
+		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-12 * time.Hour)},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 25, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-12 * time.Hour)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if strings.Contains(got, "(") {
+		t.Fatalf("codex rendered an age indicator: %q", got)
+	}
+}
+
+// TestFormatStatusUsageAgeDropsOnTier2 verifies that when the budget
+// can't fit the long-with-age tier, the renderer falls back to the
+// (current default) long form WITHOUT the age block — rather than
+// jumping straight to the bar-less text tier. This matches the spec's
+// width-tier degradation table.
+func TestFormatStatusUsageAgeDropsOnTier2(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-3 * time.Minute)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: stale},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: stale},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
+	}
+	// Tier 1 (with age) renders to width 70.
+	tier1 := formatStatusUsage(snaps, 200, now)
+	if !strings.Contains(tier1, "(3m)") {
+		t.Fatalf("tier1 missing age indicator at unconstrained width: %q", tier1)
+	}
+	tier1Width := intrender.VisualLen(tier1)
+	// Pick a budget that fits tier 2 but not tier 1.
+	budget := tier1Width - 1
+	tier2 := formatStatusUsage(snaps, budget, now)
+	if strings.Contains(tier2, "(3m)") {
+		t.Fatalf("tier2 must drop age indicator: %q", tier2)
+	}
+	if !strings.Contains(tier2, "weekly ") {
+		t.Fatalf("tier2 must keep the weekly bar: %q", tier2)
+	}
+	if intrender.VisualLen(tier2) > budget {
+		t.Fatalf("tier2 visualLen=%d > budget=%d: %q", intrender.VisualLen(tier2), budget, tier2)
+	}
+}
+
+// TestFormatLastSyncAgeUnits covers the formatLastSyncAge unit
+// ladder: <1m → "" (omit), 1m..1h → minutes, 1h..24h → hours, >=24h
+// → days.
+func TestFormatLastSyncAgeUnits(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{30 * time.Second, ""},
+		{59 * time.Second, ""},
+		{60 * time.Second, "1m"},
+		{3 * time.Minute, "3m"},
+		{59 * time.Minute, "59m"},
+		{60 * time.Minute, "1h"},
+		{8 * time.Hour, "8h"},
+		{23 * time.Hour, "23h"},
+		{24 * time.Hour, "1d"},
+		{72 * time.Hour, "3d"},
+	}
+	for _, tc := range cases {
+		if got := formatLastSyncAge(tc.in); got != tc.want {
+			t.Fatalf("formatLastSyncAge(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestStaleLevelCorrectness(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		age  time.Duration
+		want int
+	}{
+		{"fresh", 1 * time.Minute, 0},
+		{"just under stale", 9 * time.Minute, 0},
+		{"stale", 30 * time.Minute, 1},
+		{"just under very stale", 59 * time.Minute, 1},
+		{"very stale", 2 * time.Hour, 2},
+	}
+	for _, tc := range cases {
+		s := usage.Snapshot{UpdatedAt: now.Add(-tc.age)}
+		if got := staleLevel(s, now); got != tc.want {
+			t.Fatalf("staleLevel(%s) = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestUsageHelpDocumentsForceFlag(t *testing.T) {
+	t.Parallel()
+
+	out := &bytes.Buffer{}
+	printUsageHelp(out)
+	body := out.String()
+	if !strings.Contains(body, "--force") {
+		t.Fatalf("help missing --force flag: %s", body)
+	}
+	if !strings.Contains(body, "-f") {
+		t.Fatalf("help missing -f shorthand: %s", body)
+	}
+}
+
+func TestResolveStateDirHonoursEnvOverride(t *testing.T) {
+	t.Parallel()
+
+	c := New(nil)
+	want := "/tmp/projmux-shared-usage"
+	c.lookupEnv = func(name string) string {
+		if name == StateDirEnvVar {
+			return want
+		}
+		return ""
+	}
+	got, err := c.resolveStateDir()
+	if err != nil {
+		t.Fatalf("resolveStateDir: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveStateDir = %q, want %q (env override)", got, want)
+	}
+}

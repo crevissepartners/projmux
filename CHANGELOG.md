@@ -1,5 +1,367 @@
 # Changelog
 
+## [0.8.1](https://github.com/crevissepartners/projmux/compare/v0.8.0...v0.8.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* **keybindings:** add staged key recorder ([#550](https://github.com/crevissepartners/projmux/issues/550)) ([a5d67ca](https://github.com/crevissepartners/projmux/commit/a5d67ca3f9ad2c71475407f6979a03a761e95316))
+* **keybindings:** allow typing in Add-key key-name entry ([#549](https://github.com/crevissepartners/projmux/issues/549)) ([34fb5fb](https://github.com/crevissepartners/projmux/commit/34fb5fbf0ee9d9ee749184bcd671a9f69d34c9d3))
+* **keybindings:** route Add key to typed entry when physical capture unavailable ([#547](https://github.com/crevissepartners/projmux/issues/547)) ([5820a9f](https://github.com/crevissepartners/projmux/commit/5820a9f9803ac182022937e4705101385cf3dda3))
+
+## [0.8.0](https://github.com/crevissepartners/projmux/compare/v0.7.6...v0.8.0) (2026-08-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* removes the [insert_file_text.<name>] config surface, InsertFileText action, and insert-file-text CLI command.
+
+### Features
+
+* add native macOS keybinding opt-out ([cebe16a](https://github.com/crevissepartners/projmux/commit/cebe16a60dacc831d8e188d287ec793377bb843c))
+* **macos:** add native keybinding opt-out ([#533](https://github.com/crevissepartners/projmux/issues/533)) ([cebe16a](https://github.com/crevissepartners/projmux/commit/cebe16a60dacc831d8e188d287ec793377bb843c))
+* remove InsertFileText generic pane insert ([#541](https://github.com/crevissepartners/projmux/issues/541)) ([81026e3](https://github.com/crevissepartners/projmux/commit/81026e387ce99508e07b07cc8d6b7df1c835bca2))
+* **theme:** add daylight fully-light builtin preset (bright preset Phase 1) ([#546](https://github.com/crevissepartners/projmux/issues/546)) ([3ae916c](https://github.com/crevissepartners/projmux/commit/3ae916cea6028fdcbf9269b08228c44f8773cab7))
+* **theme:** add daylight fully-light builtin preset (roadmap Phase 1) ([3ae916c](https://github.com/crevissepartners/projmux/commit/3ae916cea6028fdcbf9269b08228c44f8773cab7))
+* **tmux:** add right-click pane context menu with AI Resume Picker ([#543](https://github.com/crevissepartners/projmux/issues/543)) ([425d5d0](https://github.com/crevissepartners/projmux/commit/425d5d071ace0b4df3e022172904971e2e0a7cab))
+* **usage:** add throttled HUD refresh key (Phase 0) ([#528](https://github.com/crevissepartners/projmux/issues/528)) ([dcfe133](https://github.com/crevissepartners/projmux/commit/dcfe1336fbc98c1fca7ddba89f391c1caaa9954d))
+
+
+### Bug Fixes
+
+* **aisessions:** filter Claude resume-picker noise tags (Phase 0) ([#527](https://github.com/crevissepartners/projmux/issues/527)) ([b4f866b](https://github.com/crevissepartners/projmux/commit/b4f866b33cff3eb638cedee4123946f6dd36a843))
+* bound status and picker git commands ([7f7347b](https://github.com/crevissepartners/projmux/commit/7f7347bab0d21fea795eeca7180d5b813fa4a207))
+* clean stale state artifacts ([#542](https://github.com/crevissepartners/projmux/issues/542)) ([497eab4](https://github.com/crevissepartners/projmux/commit/497eab448d9e67c32ce95344b8fe38aeadbf0945))
+* **core:** serialize store lock jitter RNG ([#537](https://github.com/crevissepartners/projmux/issues/537)) ([b70555a](https://github.com/crevissepartners/projmux/commit/b70555a12993dc80fe96c08628aaad8e31a4d6a5))
+* filter Claude resume noise tags ([b4f866b](https://github.com/crevissepartners/projmux/commit/b4f866b33cff3eb638cedee4123946f6dd36a843))
+* **notify:** bound queue during reconcile ([#539](https://github.com/crevissepartners/projmux/issues/539)) ([2927ec0](https://github.com/crevissepartners/projmux/commit/2927ec0d09c522736e3d4b0e0f426daf229f1dbc))
+* **picker:** stop interactive input reader leaks ([#536](https://github.com/crevissepartners/projmux/issues/536)) ([edd59e9](https://github.com/crevissepartners/projmux/commit/edd59e9712ea0939a063e7607a72dc003be28aca))
+* **security:** gate project layout commands by content hash ([a4927b8](https://github.com/crevissepartners/projmux/commit/a4927b84af6f1aad232cc7b41bb6dd078a80fca2))
+* **security:** gate project layout commands by content hash (trust boundary) ([#529](https://github.com/crevissepartners/projmux/issues/529)) ([a4927b8](https://github.com/crevissepartners/projmux/commit/a4927b84af6f1aad232cc7b41bb6dd078a80fca2))
+* **security:** harden release updater boundaries ([#532](https://github.com/crevissepartners/projmux/issues/532)) ([18cddbe](https://github.com/crevissepartners/projmux/commit/18cddbef0e1440a4639f10d3c3f8d39479cf05bb))
+* **security:** harden sensitive local state permissions ([#535](https://github.com/crevissepartners/projmux/issues/535)) ([2173c74](https://github.com/crevissepartners/projmux/commit/2173c741ac9d8731f5e424f74e7fca87bf033a0e))
+* **security:** pin Go toolchain to go1.26.5 for stdlib vuln patches ([#525](https://github.com/crevissepartners/projmux/issues/525)) ([715a0e3](https://github.com/crevissepartners/projmux/commit/715a0e31d0784108850a4d86beff5657d73be116))
+* **status:** bound status/picker git commands with timeouts (Phase 0) ([#534](https://github.com/crevissepartners/projmux/issues/534)) ([7f7347b](https://github.com/crevissepartners/projmux/commit/7f7347bab0d21fea795eeca7180d5b813fa4a207))
+* **theme:** light-background contrast corrections for statusbar/notify/trust surfaces (bright preset phase 2) ([#545](https://github.com/crevissepartners/projmux/issues/545)) ([f97de18](https://github.com/crevissepartners/projmux/commit/f97de18ada2aeb643885498bb126c93b9cced886))
+* **tmux:** open pane menu resume picker via popup-toggle entrypoint ([#544](https://github.com/crevissepartners/projmux/issues/544)) ([fa3da53](https://github.com/crevissepartners/projmux/commit/fa3da53be7fe43fa9e5b7d4564a4377855a66d8a))
+
+## [0.7.6](https://github.com/crevissepartners/projmux/compare/v0.7.5...v0.7.6) (2026-07-28)
+
+
+### Features
+
+* **keybindings:** add native Darwin key transport ([#523](https://github.com/crevissepartners/projmux/issues/523)) ([57a07c8](https://github.com/crevissepartners/projmux/commit/57a07c8d6dd29aa031ed478a013006cb1ab9503c))
+
+## [0.7.5](https://github.com/crevissepartners/projmux/compare/v0.7.4...v0.7.5) (2026-07-27)
+
+
+### Bug Fixes
+
+* **aisessions:** unwrap codex XML context from resume titles ([005131c](https://github.com/crevissepartners/projmux/commit/005131ca9766ecb90eed3eedefef1e43618ce646))
+* **aisessions:** unwrap codex XML context from resume titles (Phase 0) ([#520](https://github.com/crevissepartners/projmux/issues/520)) ([005131c](https://github.com/crevissepartners/projmux/commit/005131ca9766ecb90eed3eedefef1e43618ce646))
+* classify Codex usage windows semantically ([e29263f](https://github.com/crevissepartners/projmux/commit/e29263fb7a50771f72172b36c7acee8673ab9d15))
+* **usage:** classify Codex rate-limit windows by window_minutes (Phase 0) ([#522](https://github.com/crevissepartners/projmux/issues/522)) ([e29263f](https://github.com/crevissepartners/projmux/commit/e29263fb7a50771f72172b36c7acee8673ab9d15))
+
+## [0.7.4](https://github.com/crevissepartners/projmux/compare/v0.7.3...v0.7.4) (2026-07-23)
+
+
+### Features
+
+* **keybindings:** move AI split picker to Alt-7 ([#514](https://github.com/crevissepartners/projmux/issues/514)) ([6a28b83](https://github.com/crevissepartners/projmux/commit/6a28b83d8b25384117719710e759dcd8e891ded7))
+
+
+### Bug Fixes
+
+* **attention:** skip focus-hook attention arm/clear during sidebar preview (Phase 1) ([cd28209](https://github.com/crevissepartners/projmux/commit/cd282099f0139dacf69fb43db986a8c4863908f4))
+* **attention:** suppress sidebar-preview attention arm/clear churn (Phase 1) ([#519](https://github.com/crevissepartners/projmux/issues/519)) ([cd28209](https://github.com/crevissepartners/projmux/commit/cd282099f0139dacf69fb43db986a8c4863908f4))
+* **sidebar:** make live switch a side-effect-free preview for recent-windows ([9af6dcb](https://github.com/crevissepartners/projmux/commit/9af6dcbec5a338cb0ffbd38b03d67c0f809c5119))
+* **sidebar:** sidebar live switch = preview, recent record on commit only (Phase 0) ([#518](https://github.com/crevissepartners/projmux/issues/518)) ([9af6dcb](https://github.com/crevissepartners/projmux/commit/9af6dcbec5a338cb0ffbd38b03d67c0f809c5119))
+* **switch:** dedup symlinked projects via canonical real-path identity ([#501](https://github.com/crevissepartners/projmux/issues/501)) ([0221702](https://github.com/crevissepartners/projmux/commit/02217027597edc6bfac28d1275561e159d245603))
+* **switch:** rebuild symlinked current-path candidate in alias form ([#503](https://github.com/crevissepartners/projmux/issues/503)) ([05a2537](https://github.com/crevissepartners/projmux/commit/05a253712caa3818dceed30a7bea2f3d48ec9e6a))
+
+## [0.7.3](https://github.com/crevissepartners/projmux/compare/v0.7.2...v0.7.3) (2026-07-07)
+
+
+### Features
+
+* **notify:** clear gone notifications via G key ([#499](https://github.com/crevissepartners/projmux/issues/499)) ([99e4f66](https://github.com/crevissepartners/projmux/commit/99e4f662a088d28d4d5a533ff8798c107931487b))
+
+
+### Bug Fixes
+
+* **notify:** rebind clear-gone to lowercase g ([#500](https://github.com/crevissepartners/projmux/issues/500)) ([907fcde](https://github.com/crevissepartners/projmux/commit/907fcde581dd5d57866d8414c1a5b18c6a0adbd6))
+* **recent-windows:** de-slug project badge via shared display-name wrapper ([#498](https://github.com/crevissepartners/projmux/issues/498)) ([91f94cd](https://github.com/crevissepartners/projmux/commit/91f94cdb9b00e8aad28a31cadb89b89f4b4b818e))
+* **recent-windows:** session over drifted cwd for anchor-less badge ([#493](https://github.com/crevissepartners/projmux/issues/493)) ([726a2c2](https://github.com/crevissepartners/projmux/commit/726a2c2fb58c8a6c27e09b0f451ee767d4fd7e70))
+* **update:** npm install -g [@latest](https://github.com/latest) + installer autodetect + surfaced feedback ([#495](https://github.com/crevissepartners/projmux/issues/495)) ([34c7d3e](https://github.com/crevissepartners/projmux/commit/34c7d3eee3cf858d0cfcdfe7fe85d6617bcb13fb))
+* **update:** npm install -g [@latest](https://github.com/latest), installer autodetect, surfaced feedback ([34c7d3e](https://github.com/crevissepartners/projmux/commit/34c7d3eee3cf858d0cfcdfe7fe85d6617bcb13fb))
+
+## [0.7.2](https://github.com/crevissepartners/projmux/compare/v0.7.1...v0.7.2) (2026-07-01)
+
+
+### Features
+
+* **ai:** antigravity resume discovery from history.jsonl (Phase 2) ([43acdbf](https://github.com/crevissepartners/projmux/commit/43acdbfabcc22b95a5ba46bd7d6839d36a0f081e))
+* **ai:** antigravity session inclusion in resume picker — disk discovery (Phase 2) ([#487](https://github.com/crevissepartners/projmux/issues/487)) ([43acdbf](https://github.com/crevissepartners/projmux/commit/43acdbfabcc22b95a5ba46bd7d6839d36a0f081e))
+* **ai:** antigravity usage parity — context-window HUD/status exposure (Phase 0) ([#486](https://github.com/crevissepartners/projmux/issues/486)) ([fb8822c](https://github.com/crevissepartners/projmux/commit/fb8822c87fc64ec3dee4ac2265ef2d9e9deb2f90))
+* **ai:** configurable resume picker limit (Phase 1) ([#480](https://github.com/crevissepartners/projmux/issues/480)) ([ca47811](https://github.com/crevissepartners/projmux/commit/ca47811a8c3761a255b22954859170dddc39e9aa))
+* **ai:** cwd-depth scope for resume picker (Phase 2) ([#481](https://github.com/crevissepartners/projmux/issues/481)) ([125dfc5](https://github.com/crevissepartners/projmux/commit/125dfc51da193906f4a8dead300b2a255ffa9e67))
+* **ai:** drill-in IA for resume picker settings (Phase 3) ([#482](https://github.com/crevissepartners/projmux/issues/482)) ([5f88b86](https://github.com/crevissepartners/projmux/commit/5f88b86516b2290143874097e6a3d015ffbd9630))
+* **ai:** fixed-column resume picker row view (Phase 0) ([#479](https://github.com/crevissepartners/projmux/issues/479)) ([3ffcd3e](https://github.com/crevissepartners/projmux/commit/3ffcd3e17003bf0a2151929b5adcb94eb2f5eae1))
+* **ai:** recency-anchored resume row with per-agent badge + turn count (Phase 0) ([#485](https://github.com/crevissepartners/projmux/issues/485)) ([3ac6e8a](https://github.com/crevissepartners/projmux/commit/3ac6e8a34135d47d9227067f6a88ff0893d6b47b))
+* **ai:** resume session split picker ([#476](https://github.com/crevissepartners/projmux/issues/476)) ([44edb99](https://github.com/crevissepartners/projmux/commit/44edb993fc6f4dc89e684f74316f1eacf867df81))
+* **ai:** session-anchored cwd for AI split/resume (Phase 1) ([#488](https://github.com/crevissepartners/projmux/issues/488)) ([2167fb8](https://github.com/crevissepartners/projmux/commit/2167fb8d8ca0e2bdceac88530adb5480a4c54366))
+* **ai:** symlink loop guard + session uniqueness for resume discovery (Phase 4) ([#483](https://github.com/crevissepartners/projmux/issues/483)) ([92b8241](https://github.com/crevissepartners/projmux/commit/92b82417e24683ef489be8830437f2ddeef279e1))
+
+
+### Bug Fixes
+
+* **ai:** accurate resume turn count via full-file deferred scan ([#490](https://github.com/crevissepartners/projmux/issues/490) follow-up) ([#492](https://github.com/crevissepartners/projmux/issues/492)) ([541b0a7](https://github.com/crevissepartners/projmux/commit/541b0a775f8dc5846acaf8d04ff9561b865b9d91))
+* **ai:** count resume turns over the whole log, not the 100-line window ([541b0a7](https://github.com/crevissepartners/projmux/commit/541b0a775f8dc5846acaf8d04ff9561b865b9d91))
+* close notify sidebar after child enter ([#475](https://github.com/crevissepartners/projmux/issues/475)) ([17330ad](https://github.com/crevissepartners/projmux/commit/17330ad4aac5cc61598be4d15f84078dcccec7ad))
+* keep notify sidebar open after child enter ([#473](https://github.com/crevissepartners/projmux/issues/473)) ([765f949](https://github.com/crevissepartners/projmux/commit/765f94981f6266081a77ab6d0266693e55c9aaaa))
+* **recent-windows:** project badge = session-anchor basename ([#489](https://github.com/crevissepartners/projmux/issues/489)) ([67c30c1](https://github.com/crevissepartners/projmux/commit/67c30c196ebc18af4f7e00b18af0c046a6f527ba))
+* **recent-windows:** resolve worktree cwd to main repo project badge ([6eb64e9](https://github.com/crevissepartners/projmux/commit/6eb64e9deea27690a34df119435548e8ac6222f1))
+* **recent-windows:** worktree cwd resolves to main repo project badge ([#489](https://github.com/crevissepartners/projmux/issues/489) follow-up) ([#491](https://github.com/crevissepartners/projmux/issues/491)) ([6eb64e9](https://github.com/crevissepartners/projmux/commit/6eb64e9deea27690a34df119435548e8ac6222f1))
+* **sidebar:** follow active session cursor after Ctrl-X kill ([#484](https://github.com/crevissepartners/projmux/issues/484)) ([3b270eb](https://github.com/crevissepartners/projmux/commit/3b270ebf1d46d43ee5481ef106f12a5b08ce322e))
+
+
+### Performance Improvements
+
+* **ai:** defer resume turn count so discovery renders fast again ([#490](https://github.com/crevissepartners/projmux/issues/490)) ([357a2ef](https://github.com/crevissepartners/projmux/commit/357a2efad166b65edee507b35efd8b1fb21d14d3))
+* **ai:** limit resume discovery to recent sessions ([#478](https://github.com/crevissepartners/projmux/issues/478)) ([703a1dd](https://github.com/crevissepartners/projmux/commit/703a1ddfc82476d97710bf1fdf9a7c9b0fe14184))
+* **ai:** speed up resume session discovery ([#477](https://github.com/crevissepartners/projmux/issues/477)) ([9fc6687](https://github.com/crevissepartners/projmux/commit/9fc66876a87ee7b86584f2430576510be89abbf6))
+
+## [0.7.1](https://github.com/crevissepartners/projmux/compare/v0.7.0...v0.7.1) (2026-06-21)
+
+
+### Features
+
+* add keybinding delivery diagnostics ([#440](https://github.com/crevissepartners/projmux/issues/440)) ([b601433](https://github.com/crevissepartners/projmux/commit/b6014334d62ca43225dcb4f40a14bc019bcc6370))
+* **i18n:** complete localization coverage for pickers and project settings ([#455](https://github.com/crevissepartners/projmux/issues/455)) ([dc2a8c1](https://github.com/crevissepartners/projmux/commit/dc2a8c10885dfa3a634c5a96ba687a2a393ad91c))
+* **theme:** 256-color grid picker with live preview (P4) ([#462](https://github.com/crevissepartners/projmux/issues/462)) ([8e90270](https://github.com/crevissepartners/projmux/commit/8e902702ca3bb34291f2445def37ae5c47d397dc))
+* **theme:** active pane & popup chrome correction (Phase 5.5) ([#449](https://github.com/crevissepartners/projmux/issues/449)) ([06eb530](https://github.com/crevissepartners/projmux/commit/06eb5307c3cb4f1ab7106d6f6862180335dcb6aa))
+* **theme:** add inspired preset pairs ([#465](https://github.com/crevissepartners/projmux/issues/465)) ([bf39737](https://github.com/crevissepartners/projmux/commit/bf3973743e0a0bb6878c7da38cd2d137f5f58035))
+* **theme:** add terminal and fixed background presets ([#464](https://github.com/crevissepartners/projmux/issues/464)) ([ea0ff8a](https://github.com/crevissepartners/projmux/commit/ea0ff8abfc89e3e6500e48e53aa4a78ad93032f3))
+* **theme:** add terminal-native preset using default backgrounds (P2) ([#460](https://github.com/crevissepartners/projmux/issues/460)) ([d192b0e](https://github.com/crevissepartners/projmux/commit/d192b0e746bc32dc8943a2d5ff0ea241bbff013c))
+* **theme:** close theme apply-path gaps and add terminal-default option ([#454](https://github.com/crevissepartners/projmux/issues/454)) ([20dac90](https://github.com/crevissepartners/projmux/commit/20dac90ee9c8163018e59378e9dce791e0d360e0))
+* **theme:** group theme editor tokens by priority (P3) ([#461](https://github.com/crevissepartners/projmux/issues/461)) ([2d1e914](https://github.com/crevissepartners/projmux/commit/2d1e91420469a869d91c67586006e1d6236f1fcc))
+* **theme:** migrate state/severity + AI status cluster to role map (Phase 3) ([1dc6fd8](https://github.com/crevissepartners/projmux/commit/1dc6fd8a7ce8d5aeac0ddf3ffde00dba2d827495))
+* **theme:** native UI semantic consolidation (Phase 5) ([#448](https://github.com/crevissepartners/projmux/issues/448)) ([8caf8b3](https://github.com/crevissepartners/projmux/commit/8caf8b36105b543b6cbaa5e92e476200baa9158f))
+* **theme:** pane vs popup background separation (Phase 6b) ([#451](https://github.com/crevissepartners/projmux/issues/451)) ([1d6926a](https://github.com/crevissepartners/projmux/commit/1d6926a91ce12c4e04afab8b2c951f0b4ced85b6))
+* **theme:** preset design rubric + fix midnight state-color collision (P1) ([#459](https://github.com/crevissepartners/projmux/issues/459)) ([e974e46](https://github.com/crevissepartners/projmux/commit/e974e46e59ee59596d01c8d92288e65350149205))
+* **theme:** public schema expansion + Settings merge (Phase 6) ([#450](https://github.com/crevissepartners/projmux/issues/450)) ([a3e195f](https://github.com/crevissepartners/projmux/commit/a3e195f9b196f86fd7248131ae7b68aefb379e60))
+* **theme:** semantic role map foundation + active pane tint (Phase 2) ([#445](https://github.com/crevissepartners/projmux/issues/445)) ([24146b0](https://github.com/crevissepartners/projmux/commit/24146b09773b02b1b52a4edc252841564ca4c604))
+* **theme:** split foreground theme roles ([#463](https://github.com/crevissepartners/projmux/issues/463)) ([80c213e](https://github.com/crevissepartners/projmux/commit/80c213eae28beb37307184e7e6b68d7a5d935169))
+* **theme:** split status background defaults ([#469](https://github.com/crevissepartners/projmux/issues/469)) ([0ae6e9d](https://github.com/crevissepartners/projmux/commit/0ae6e9d9875a59d4b5f92da16be3bee062843780))
+* **theme:** state/severity + AI status role migration (Phase 3) ([#446](https://github.com/crevissepartners/projmux/issues/446)) ([1dc6fd8](https://github.com/crevissepartners/projmux/commit/1dc6fd8a7ce8d5aeac0ddf3ffde00dba2d827495))
+* **theme:** statusbar segment role migration (Phase 4) ([#447](https://github.com/crevissepartners/projmux/issues/447)) ([68a8f77](https://github.com/crevissepartners/projmux/commit/68a8f7770f98d8731a847e7c1e95bb371ab198aa))
+* **theme:** theme remaining pickers by default at the choke point ([#458](https://github.com/crevissepartners/projmux/issues/458)) ([4a72eca](https://github.com/crevissepartners/projmux/commit/4a72ecab615a11771dfed023c32d92f08b6d1e6c))
+
+
+### Bug Fixes
+
+* couple settings keymap saves to tmux apply ([#437](https://github.com/crevissepartners/projmux/issues/437)) ([cb9317e](https://github.com/crevissepartners/projmux/commit/cb9317e4db63a4a4f660b46277a350a494428e65))
+* derive popup close aliases from keybinding catalog ([#435](https://github.com/crevissepartners/projmux/issues/435)) ([02404f3](https://github.com/crevissepartners/projmux/commit/02404f3211a81ff872b5ebb910fd499ad96f4a2f))
+* **i18n:** honor global config [ui] locale in picker chrome localization ([#456](https://github.com/crevissepartners/projmux/issues/456)) ([cbb6903](https://github.com/crevissepartners/projmux/commit/cbb6903527d514d23400fa5873215d5b2a671143))
+* **i18n:** settingsLocale honors global config [ui] locale (footers/labels) ([#457](https://github.com/crevissepartners/projmux/issues/457)) ([bf377f7](https://github.com/crevissepartners/projmux/commit/bf377f7039dda9869d1297f620916b865b64483c))
+* **theme:** apply global theme to generated tmux chrome ([#453](https://github.com/crevissepartners/projmux/issues/453)) ([b3399b6](https://github.com/crevissepartners/projmux/commit/b3399b68b2d97860949ffd2efa3c4aca5ec57131))
+* **theme:** clarify preset contrast intent ([#467](https://github.com/crevissepartners/projmux/issues/467)) ([bcd1c3e](https://github.com/crevissepartners/projmux/commit/bcd1c3e7924b47a2f581a65582547eae9a37c978))
+* **theme:** darken active surfaces ([#472](https://github.com/crevissepartners/projmux/issues/472)) ([fe33715](https://github.com/crevissepartners/projmux/commit/fe33715a32d4aea4e78a38788a7c905445770a07))
+* **theme:** darken readable preset surfaces ([#470](https://github.com/crevissepartners/projmux/issues/470)) ([3c98f4d](https://github.com/crevissepartners/projmux/commit/3c98f4d5134eab30491ed268ac03adbc7f87c8ba))
+* **theme:** retune blue hour pane contrast ([#471](https://github.com/crevissepartners/projmux/issues/471)) ([69f2178](https://github.com/crevissepartners/projmux/commit/69f2178fe51fd2a280d832ab6ffed02e9c105dc6))
+* **theme:** separate picker surface from pane background ([#468](https://github.com/crevissepartners/projmux/issues/468)) ([b8a8283](https://github.com/crevissepartners/projmux/commit/b8a82832b8b1822cf1f8c3a2589a4182a2d94069))
+* **theme:** tune inspired preset pane colors ([#466](https://github.com/crevissepartners/projmux/issues/466)) ([18808df](https://github.com/crevissepartners/projmux/commit/18808df033b672a4fe3869078e61fda11222db5e))
+* **ui:** align pane labels in tmux and recent windows ([#438](https://github.com/crevissepartners/projmux/issues/438)) ([75279ae](https://github.com/crevissepartners/projmux/commit/75279ae39af3dc92a6a218771f60925519c9c415))
+* **ui:** restore active pane border chip ([#439](https://github.com/crevissepartners/projmux/issues/439)) ([024711e](https://github.com/crevissepartners/projmux/commit/024711e0a958097639decf287a2430c865bdde0c))
+
+## [0.7.0](https://github.com/crevissepartners/projmux/compare/v0.6.7...v0.7.0) (2026-06-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **legacy:** Old keymap.toml entries using the dropped legacy action ids (sessionizer-sidebar, notify-sidebar, session-popup, ai-split-picker-right, ai-split-settings, sessionizer) no longer bind and are silently ignored; rebind under the canonical action ids. The catalog PrefixChord remnants for SessionPopupToggle (b), ProjectSwitcherToggle (f), rename-window (R), ai-split-right (r), ai-split-down (l), current-project-session (g), and toggle-mouse (M) are removed.
+
+### Features
+
+* add notify sidebar group fold and ack ([#413](https://github.com/crevissepartners/projmux/issues/413)) ([8da417a](https://github.com/crevissepartners/projmux/commit/8da417a09c5cc8561939742dead6664d3365b190))
+* add recent windows phase 0 model ([#415](https://github.com/crevissepartners/projmux/issues/415)) ([c9795fa](https://github.com/crevissepartners/projmux/commit/c9795faa10ca977d999cdede1ba36419106ec050))
+* add recent windows picker ([#418](https://github.com/crevissepartners/projmux/issues/418)) ([6f46cc5](https://github.com/crevissepartners/projmux/commit/6f46cc5ed965909e52fa1436c885e95601a54cb0))
+* clean stale notify groups on enter ([#417](https://github.com/crevissepartners/projmux/issues/417)) ([a26b03c](https://github.com/crevissepartners/projmux/commit/a26b03c684ac63d4bf3a1f8841491f44c3997321))
+* flatten settings keybinding keys ([#410](https://github.com/crevissepartners/projmux/issues/410)) ([5271b50](https://github.com/crevissepartners/projmux/commit/5271b50e2a341c954cf573c8ae8354ab1bb1f4bb))
+* focus and ack notify groups on enter ([#416](https://github.com/crevissepartners/projmux/issues/416)) ([940d2b1](https://github.com/crevissepartners/projmux/commit/940d2b155074921ea0cb356dfb9a6938b65a6a3e))
+* group notify sidebar by pane ([#411](https://github.com/crevissepartners/projmux/issues/411)) ([df41ceb](https://github.com/crevissepartners/projmux/commit/df41cebb44ee899996fd0b8b0c68310c908552a6))
+* **keybindings:** clean up settings edit keys coverage ([#407](https://github.com/crevissepartners/projmux/issues/407)) ([15596da](https://github.com/crevissepartners/projmux/commit/15596da0f802b17ffeae295d46833b2d0d833bc4))
+* **keybindings:** make Alt-3 open recent windows ([#420](https://github.com/crevissepartners/projmux/issues/420)) ([b95755a](https://github.com/crevissepartners/projmux/commit/b95755a047bba8ea0826a0fc75fdbdcf499aff23))
+* **keybindings:** preview-only action list hierarchy (Phase 0.7) ([#433](https://github.com/crevissepartners/projmux/issues/433)) ([dcca408](https://github.com/crevissepartners/projmux/commit/dcca40899d00e250809f7721349fd9646c5dddb2))
+* polish notify grouped sidebar card IA ([#412](https://github.com/crevissepartners/projmux/issues/412)) ([f100ef9](https://github.com/crevissepartners/projmux/commit/f100ef9fc67edd4b5c728021509546a9b9d3f8d8))
+* **recent-windows:** Alt-3 card badge visibility and visual polish (Phase 6) ([#426](https://github.com/crevissepartners/projmux/issues/426)) ([a8d123e](https://github.com/crevissepartners/projmux/commit/a8d123e114ea07428244f0cb4fab1ec393af9ade))
+* **recent-windows:** current window visible CURRENT no-op row (Phase 7) ([#427](https://github.com/crevissepartners/projmux/issues/427)) ([137dbc0](https://github.com/crevissepartners/projmux/commit/137dbc0501b4dbe8ad54e85e231be901489f4ab6))
+* **recent-windows:** default cursor to first non-current row, flat line-2 perceived titles (Phase 9) ([#429](https://github.com/crevissepartners/projmux/issues/429)) ([8a8c3e6](https://github.com/crevissepartners/projmux/commit/8a8c3e632edcb9c11ba48b37ea472298adbbbe85))
+* **recent-windows:** drop CURRENT badge, dedupe card context, richer pane preview (Phase 8) ([#428](https://github.com/crevissepartners/projmux/issues/428)) ([ddadc72](https://github.com/crevissepartners/projmux/commit/ddadc724ae2cb089c07277daf057fbabc9d110a2))
+* **recent-windows:** polish Alt-3 card badge visibility (Phase 6) ([a8d123e](https://github.com/crevissepartners/projmux/commit/a8d123e114ea07428244f0cb4fab1ec393af9ade))
+* **recent-windows:** polish Alt-3 picker card information hierarchy ([#425](https://github.com/crevissepartners/projmux/issues/425)) ([4f14ac2](https://github.com/crevissepartners/projmux/commit/4f14ac27d8bcee98f76489364eb58eac91be2c67))
+* **recent-windows:** show current window as CURRENT no-op row (Phase 7) ([137dbc0](https://github.com/crevissepartners/projmux/commit/137dbc0501b4dbe8ad54e85e231be901489f4ab6))
+* record recent windows at runtime ([#423](https://github.com/crevissepartners/projmux/issues/423)) ([0dfd859](https://github.com/crevissepartners/projmux/commit/0dfd85961263a7016addc991dce7c5d1e4c5dae6))
+
+
+### Bug Fixes
+
+* **notify:** clarify sidebar child counts ([#419](https://github.com/crevissepartners/projmux/issues/419)) ([4ab591e](https://github.com/crevissepartners/projmux/commit/4ab591e3ae7f52f1333d35cd4001639b875b4026))
+* **notify:** classify gone targets from real tmux inventory ([#424](https://github.com/crevissepartners/projmux/issues/424)) ([a4003e8](https://github.com/crevissepartners/projmux/commit/a4003e853c6d0face5ab3d6c200ce214ea5bd031))
+* **notify:** focus inactive targets ([#422](https://github.com/crevissepartners/projmux/issues/422)) ([b5c793f](https://github.com/crevissepartners/projmux/commit/b5c793fff0e3094d06fecab5c21b487fadc938c7))
+* **recent-windows:** show last-visit absolute time in local timezone (Phase 0) ([#432](https://github.com/crevissepartners/projmux/issues/432)) ([845e70e](https://github.com/crevissepartners/projmux/commit/845e70eda14d3213400c09b72badc230a1259320))
+* route recent windows through popup toggle ([#421](https://github.com/crevissepartners/projmux/issues/421)) ([fa36de8](https://github.com/crevissepartners/projmux/commit/fa36de8b1587f2b680b3fe059fd5d4479a228d61))
+* **settings:** simplify keybinding action detail UI ([#409](https://github.com/crevissepartners/projmux/issues/409)) ([c7ee35e](https://github.com/crevissepartners/projmux/commit/c7ee35e86496dca8224f10d473ba42ec16a75884))
+* stabilize notify sidebar group cards ([#414](https://github.com/crevissepartners/projmux/issues/414)) ([2d8a3f2](https://github.com/crevissepartners/projmux/commit/2d8a3f246588933900892ea0bdc847f94f1d6be2))
+
+
+### Miscellaneous Chores
+
+* **legacy:** drop keybinding LegacyIDs + PrefixChord remnants (Phase 4) ([#434](https://github.com/crevissepartners/projmux/issues/434)) ([0bf3819](https://github.com/crevissepartners/projmux/commit/0bf381972fd001c562382f5c883075ca7b45baa2))
+
+## [0.6.7](https://github.com/crevissepartners/projmux/compare/v0.6.6...v0.6.7) (2026-06-04)
+
+
+### Features
+
+* add AI provider metadata registry ([#392](https://github.com/crevissepartners/projmux/issues/392)) ([a957662](https://github.com/crevissepartners/projmux/commit/a957662ac58c585b90c09cb6c102f0af711e3df4))
+* **ai:** add antigravity launch support ([#391](https://github.com/crevissepartners/projmux/issues/391)) ([6946e1f](https://github.com/crevissepartners/projmux/commit/6946e1f9b6b9bc89ebbb73d7fd05b34695dee8f2))
+* **ai:** add antigravity notify ingest ([#398](https://github.com/crevissepartners/projmux/issues/398)) ([fa4cc21](https://github.com/crevissepartners/projmux/commit/fa4cc217b62324347f0803e0f50654f0b0bdebd4))
+* **ai:** add antigravity session state usage ([#400](https://github.com/crevissepartners/projmux/issues/400)) ([5e31d94](https://github.com/crevissepartners/projmux/commit/5e31d94578ebb0e41cb4764aa93a806cb4a6ec41))
+* propagate native picker badge styles ([#394](https://github.com/crevissepartners/projmux/issues/394)) ([d2d8cff](https://github.com/crevissepartners/projmux/commit/d2d8cff29dc207c8ce9e24d7567e347d6e0b26cf))
+* refresh notify sidebar actions in native picker ([#397](https://github.com/crevissepartners/projmux/issues/397)) ([23d34c4](https://github.com/crevissepartners/projmux/commit/23d34c405113893e80f6fcced6de6c55af55e7b9))
+* refresh notify sidebar on queue writes ([#402](https://github.com/crevissepartners/projmux/issues/402)) ([1e159b4](https://github.com/crevissepartners/projmux/commit/1e159b4e7fb5c19a29102aaa0606b1d06bc7e15b))
+* refresh sessionizer kill in native sidebar ([#399](https://github.com/crevissepartners/projmux/issues/399)) ([252cd33](https://github.com/crevissepartners/projmux/commit/252cd33f52132a50b43496c5c434ad401d2c83ab))
+* reuse existing AI split panes ([#388](https://github.com/crevissepartners/projmux/issues/388)) ([c3bb41e](https://github.com/crevissepartners/projmux/commit/c3bb41e383fb1809145b640c90ad4d1c0f2019f2))
+* **shell:** unify welcome update prompt ([#401](https://github.com/crevissepartners/projmux/issues/401)) ([1e328c2](https://github.com/crevissepartners/projmux/commit/1e328c27ef9fe2f2f37e1d259750b87901f224b6))
+
+
+### Bug Fixes
+
+* **ai:** restore split as new pane ([#403](https://github.com/crevissepartners/projmux/issues/403)) ([9971cc8](https://github.com/crevissepartners/projmux/commit/9971cc8246ad487df2cae5ee49b0ab890d3e3836))
+* consume response-complete live badges ([#395](https://github.com/crevissepartners/projmux/issues/395)) ([43fa936](https://github.com/crevissepartners/projmux/commit/43fa9364388ed4b5ac15ad283e7ade373e9f1677))
+* filter usage HUD by enabled agents ([#385](https://github.com/crevissepartners/projmux/issues/385)) ([cf1a1a7](https://github.com/crevissepartners/projmux/commit/cf1a1a732c031b116fdb9c54d0050f339e1ff08f))
+* gate focus osfocus by desktop notify mode ([#393](https://github.com/crevissepartners/projmux/issues/393)) ([d67f9bc](https://github.com/crevissepartners/projmux/commit/d67f9bc781da604bde0eb95f348892fadd8ff761))
+* **settings:** propagate saved locale to picker chrome ([#404](https://github.com/crevissepartners/projmux/issues/404)) ([0454884](https://github.com/crevissepartners/projmux/commit/04548844330e1e58b3c8b890f1c98c5a86cb348f))
+* style native picker popup predraw body ([#396](https://github.com/crevissepartners/projmux/issues/396)) ([d499251](https://github.com/crevissepartners/projmux/commit/d4992515cd1be2aa80c88b21b3e1ce4125508092))
+
+## [0.6.6](https://github.com/crevissepartners/projmux/compare/v0.6.5...v0.6.6) (2026-06-02)
+
+
+### Features
+
+* add AI agent enablement settings ([#381](https://github.com/crevissepartners/projmux/issues/381)) ([b7f72fb](https://github.com/crevissepartners/projmux/commit/b7f72fbb318dd8ec6b10e3c0642c0d316e03234b))
+* add AI badge display styles ([#374](https://github.com/crevissepartners/projmux/issues/374)) ([e9ca5e6](https://github.com/crevissepartners/projmux/commit/e9ca5e647c885eccfd496b8aaf91bb539beaf564))
+* add AI semantic badge state contract ([#370](https://github.com/crevissepartners/projmux/issues/370)) ([3b32f76](https://github.com/crevissepartners/projmux/commit/3b32f7679a6775daf20d6d83fee5f215ba19519c))
+* cover Settings picker i18n ([#359](https://github.com/crevissepartners/projmux/issues/359)) ([429f159](https://github.com/crevissepartners/projmux/commit/429f159d8b1454f0943a74fd87dcdc577e6ff11c))
+* gate AI split launches by enabled agents ([#382](https://github.com/crevissepartners/projmux/issues/382)) ([774e0dd](https://github.com/crevissepartners/projmux/commit/774e0dda9a3ae29408d206b81af2bd5990e6c731))
+* harden AI semantic badge theme roles ([#375](https://github.com/crevissepartners/projmux/issues/375)) ([8418c1a](https://github.com/crevissepartners/projmux/commit/8418c1a9d2ab383190eddc82c2d4926759b66e49))
+* render AI semantic status badges ([#371](https://github.com/crevissepartners/projmux/issues/371)) ([d910f4d](https://github.com/crevissepartners/projmux/commit/d910f4d01e5070a0a6f85047ee7a8f7970916076))
+
+
+### Bug Fixes
+
+* clamp native picker row width ([#380](https://github.com/crevissepartners/projmux/issues/380)) ([d5390d3](https://github.com/crevissepartners/projmux/commit/d5390d30b950e8a478c23643a25526ca1f8550dd))
+* drop sidebar switch metadata lines ([#366](https://github.com/crevissepartners/projmux/issues/366)) ([44eff9c](https://github.com/crevissepartners/projmux/commit/44eff9cc5dc2170cb99723665776f0210dbe1b38))
+* fill native picker app background ([#383](https://github.com/crevissepartners/projmux/issues/383)) ([8f0b984](https://github.com/crevissepartners/projmux/commit/8f0b984f8544691567f6c0440193435ea49064a3))
+* keep Alt-1 branch chip compact ([#369](https://github.com/crevissepartners/projmux/issues/369)) ([804135e](https://github.com/crevissepartners/projmux/commit/804135e6f7e88fe97b670f9ea8a263f5f03bb5dd))
+* keep Alt-1 sidebar rows compact ([#364](https://github.com/crevissepartners/projmux/issues/364)) ([75d9c82](https://github.com/crevissepartners/projmux/commit/75d9c82a8209be3f8f4431d806cf150a9de4a0a5))
+* keep appearance parent rows inside native frame ([#384](https://github.com/crevissepartners/projmux/issues/384)) ([c5886af](https://github.com/crevissepartners/projmux/commit/c5886afad1b6036bdabbeff251a848f30a8dd8ae))
+* **npm:** generate optional package metadata at staging ([#362](https://github.com/crevissepartners/projmux/issues/362)) ([3e1b10e](https://github.com/crevissepartners/projmux/commit/3e1b10e5f790aa7ae8d991a4a1a740b99c99688e))
+* persist desktop notification setting ([#379](https://github.com/crevissepartners/projmux/issues/379)) ([9dc71a0](https://github.com/crevissepartners/projmux/commit/9dc71a0bad724140d5ef8bf1f70b797dc5305a02))
+* preserve legacy attention window rows ([#373](https://github.com/crevissepartners/projmux/issues/373)) ([9e79302](https://github.com/crevissepartners/projmux/commit/9e793022cf22206e91361c7b0f96569c14c6c2a4))
+* reserve blank Alt-1 sidebar lanes ([#368](https://github.com/crevissepartners/projmux/issues/368)) ([d007ddb](https://github.com/crevissepartners/projmux/commit/d007ddbfa01b4597b886e6bbe6989a8990e17527))
+* restore Alt-1 sidebar card rows ([#367](https://github.com/crevissepartners/projmux/issues/367)) ([cf7c716](https://github.com/crevissepartners/projmux/commit/cf7c716ad7160088fb28bcf2b8f2ef761ad8790a))
+* reuse palette warning for AI badges ([#372](https://github.com/crevissepartners/projmux/issues/372)) ([e5b8031](https://github.com/crevissepartners/projmux/commit/e5b8031efcd4e3195e7a169c02829b29e7098384))
+* simplify native picker titlebar ANSI ([#358](https://github.com/crevissepartners/projmux/issues/358)) ([6942fd2](https://github.com/crevissepartners/projmux/commit/6942fd272503b13dcb49c0547f061940611cf796))
+* soften window-list attention badge ([#365](https://github.com/crevissepartners/projmux/issues/365)) ([a8db0d2](https://github.com/crevissepartners/projmux/commit/a8db0d2a1c92808e014870f5251d0a7886954996))
+* stabilize Alt-1 sidebar row geometry ([#360](https://github.com/crevissepartners/projmux/issues/360)) ([092fff9](https://github.com/crevissepartners/projmux/commit/092fff9dde41f8ce8b78b2e212fc4ab4e70a93da))
+* **statusbar:** clean visible notify settings chrome ([#355](https://github.com/crevissepartners/projmux/issues/355)) ([8bd4544](https://github.com/crevissepartners/projmux/commit/8bd4544118478bed01f120886a0857404fc5d99c))
+
+
+### Performance Improvements
+
+* improve Alt-1 sidebar first paint ([#357](https://github.com/crevissepartners/projmux/issues/357)) ([533f273](https://github.com/crevissepartners/projmux/commit/533f2733b9fd7ea87a018659f3bbc8e0bd89ff3b))
+
+## [0.6.5](https://github.com/crevissepartners/projmux/compare/v0.6.4...v0.6.5) (2026-05-21)
+
+
+### Features
+
+* add locale formatter primitives ([9c9ed25](https://github.com/crevissepartners/projmux/commit/9c9ed2593a234ddf86ba6747191598bfcf0df096))
+* add theme resolver foundation ([074eee8](https://github.com/crevissepartners/projmux/commit/074eee8b1944e8975c00b02faf97d12d303fca95))
+* **globalization:** add locale settings override ([#353](https://github.com/crevissepartners/projmux/issues/353)) ([eb363d3](https://github.com/crevissepartners/projmux/commit/eb363d33383666ca069624c54b69082474c72436))
+* **globalization:** add phase 2 locale format primitives ([#345](https://github.com/crevissepartners/projmux/issues/345)) ([9c9ed25](https://github.com/crevissepartners/projmux/commit/9c9ed2593a234ddf86ba6747191598bfcf0df096))
+* **globalization:** localize settings guidance ([#351](https://github.com/crevissepartners/projmux/issues/351)) ([18b84af](https://github.com/crevissepartners/projmux/commit/18b84af9f4bb55b8224f80173c913843670bcee1))
+* localize notify AI messages ([#348](https://github.com/crevissepartners/projmux/issues/348)) ([a141743](https://github.com/crevissepartners/projmux/commit/a14174359500d420f2d720082ea2189f34dcc055))
+* **theme:** add resolver foundation ([#347](https://github.com/crevissepartners/projmux/issues/347)) ([074eee8](https://github.com/crevissepartners/projmux/commit/074eee8b1944e8975c00b02faf97d12d303fca95))
+* **theme:** add settings editor ([#352](https://github.com/crevissepartners/projmux/issues/352)) ([db5678e](https://github.com/crevissepartners/projmux/commit/db5678e3c31f0db8d81c0b5b63ae0d840930eb85))
+* **theme:** apply background render tokens ([#349](https://github.com/crevissepartners/projmux/issues/349)) ([eb83444](https://github.com/crevissepartners/projmux/commit/eb83444a365f7488595c3cca71fa5585756276a4))
+* **theme:** surface desired font status ([#350](https://github.com/crevissepartners/projmux/issues/350)) ([a10ec9b](https://github.com/crevissepartners/projmux/commit/a10ec9b5c5399ba992762e1ff4dcfd9cae8aaa2c))
+
+## [0.6.4](https://github.com/crevissepartners/projmux/compare/v0.6.3...v0.6.4) (2026-05-21)
+
+
+### Features
+
+* add mux inventory read API ([#300](https://github.com/crevissepartners/projmux/issues/300)) ([8577bbd](https://github.com/crevissepartners/projmux/commit/8577bbd967ebfcc187112e5516b44710ffcb00dd))
+* add mux runner wrapper ([#297](https://github.com/crevissepartners/projmux/issues/297)) ([3bc6a71](https://github.com/crevissepartners/projmux/commit/3bc6a718172e54ebdc08d19b16854c8a0cba5779))
+* add native psmux shell entry smoke ([#308](https://github.com/crevissepartners/projmux/issues/308)) ([f4f48d3](https://github.com/crevissepartners/projmux/commit/f4f48d30d063f6dfa4b2d2904ca821817d86c083))
+* add psmux ai split mvp ([#311](https://github.com/crevissepartners/projmux/issues/311)) ([92b1bb8](https://github.com/crevissepartners/projmux/commit/92b1bb81f7d94117e9383c0831cd22242713a1a1))
+* add psmux app session foundation ([#310](https://github.com/crevissepartners/projmux/issues/310)) ([928ba75](https://github.com/crevissepartners/projmux/commit/928ba75415359ba7ccd4a8c084dec08cfba2099c))
+* add psmux project switch entrypoint ([#312](https://github.com/crevissepartners/projmux/issues/312)) ([83a3130](https://github.com/crevissepartners/projmux/commit/83a3130c61115d66053ed06f068f0ce107e4a844))
+* add semantic mux pane option API ([#299](https://github.com/crevissepartners/projmux/issues/299)) ([5264d41](https://github.com/crevissepartners/projmux/commit/5264d417c88cd5ec057e6b2a190b719239ee7b4c))
+* add semantic palette foundation ([#334](https://github.com/crevissepartners/projmux/issues/334)) ([701d606](https://github.com/crevissepartners/projmux/commit/701d6062ef327944336f821eeba5b9c2bf0a846f))
+* complete visual palette state slice ([#333](https://github.com/crevissepartners/projmux/issues/333)) ([af31f2b](https://github.com/crevissepartners/projmux/commit/af31f2b5187b7e71291d600a80ba5a773bbd056d))
+* complete visual palette theme handoff ([#335](https://github.com/crevissepartners/projmux/issues/335)) ([bb6f81f](https://github.com/crevissepartners/projmux/commit/bb6f81f052dd3f172bc0402eba9f1fd97eef602d))
+* define psmux command rendering policy ([#307](https://github.com/crevissepartners/projmux/issues/307)) ([4288410](https://github.com/crevissepartners/projmux/commit/4288410033ffa1ef70637bd789a430450b68e775))
+* extract interactive mux API ([#302](https://github.com/crevissepartners/projmux/issues/302)) ([fd7d23f](https://github.com/crevissepartners/projmux/commit/fd7d23f4166abc2b35053ce039dd4f11be5f3a3d))
+* extract mux lifecycle split hook APIs ([#303](https://github.com/crevissepartners/projmux/issues/303)) ([5e1a0ba](https://github.com/crevissepartners/projmux/commit/5e1a0baf87ff45a9728c6d1430895ba86c0c19ef))
+* **globalization:** add phase 1 catalog foundation ([#344](https://github.com/crevissepartners/projmux/issues/344)) ([7243f80](https://github.com/crevissepartners/projmux/commit/7243f8097f222fad6ef30c9277ff764d957dd224))
+* **globalization:** complete phase 0 inventory contract ([29f2129](https://github.com/crevissepartners/projmux/commit/29f21294880fa0f174de3e9101b99f0cef67aa09))
+* **keybindings:** reorganize keybinding surface ([#316](https://github.com/crevissepartners/projmux/issues/316)) ([d4e4af0](https://github.com/crevissepartners/projmux/commit/d4e4af098fd1a3eb82c039eb3cfd90710ab8af9b))
+
+
+### Bug Fixes
+
+* align pane border and git badge colors ([2649f6b](https://github.com/crevissepartners/projmux/commit/2649f6b98994b018e978c8082f4809db6ffd51cf))
+* align tmux window naming metadata ([#301](https://github.com/crevissepartners/projmux/issues/301)) ([0af72b6](https://github.com/crevissepartners/projmux/commit/0af72b665e5053a3407262b0c0f81edbfba5add8))
+* hide AI notify target labels ([#342](https://github.com/crevissepartners/projmux/issues/342)) ([7b8e393](https://github.com/crevissepartners/projmux/commit/7b8e39328b0f50bfa9566e700cfa23694d9aec8e))
+* improve AI notify sidebar layout ([#343](https://github.com/crevissepartners/projmux/issues/343)) ([e2f27ad](https://github.com/crevissepartners/projmux/commit/e2f27adb0839bfe53fe67a4c30c05151a42c96ff))
+* isolate trust gate popup from sidebar ([#314](https://github.com/crevissepartners/projmux/issues/314)) ([54dbf1d](https://github.com/crevissepartners/projmux/commit/54dbf1d7bf22127f0762ff7094e9ad63a9e179fe))
+* **keybindings:** allow plain aliases for transport actions ([#324](https://github.com/crevissepartners/projmux/issues/324)) ([a46a2ad](https://github.com/crevissepartners/projmux/commit/a46a2ad026ac829d33a9123b93e3b5374424ce57))
+* **keybindings:** prefix sidebar action labels ([#322](https://github.com/crevissepartners/projmux/issues/322)) ([272130d](https://github.com/crevissepartners/projmux/commit/272130dd14f0a4ae5f4eb23b44c31b98e93d9a3e))
+* **keybindings:** remove UserKey CSI-u route ([#319](https://github.com/crevissepartners/projmux/issues/319)) ([31e1f6e](https://github.com/crevissepartners/projmux/commit/31e1f6e65acfc0da486886a3f9f6f9d0ce2294a5))
+* **keybindings:** restore transport-dependent arrow binds ([#321](https://github.com/crevissepartners/projmux/issues/321)) ([769bf48](https://github.com/crevissepartners/projmux/commit/769bf486b0b19140dcd1bb9e3257e77c592d80a0))
+* **keybindings:** show readable settings labels ([#317](https://github.com/crevissepartners/projmux/issues/317)) ([3097b0f](https://github.com/crevissepartners/projmux/commit/3097b0fa43a41a26b06bfa8ee823eb9a86a7f920))
+* **keybindings:** surface picker and movement actions ([#318](https://github.com/crevissepartners/projmux/issues/318)) ([b7ffe1b](https://github.com/crevissepartners/projmux/commit/b7ffe1b617358581d39c4e5005429649690298ac))
+* **keybindings:** unbind retired key routes ([#326](https://github.com/crevissepartners/projmux/issues/326)) ([d04427c](https://github.com/crevissepartners/projmux/commit/d04427cb9ac3b6c278654ca226c56fc02adf1001))
+* prefer show-options for mux option reads ([#305](https://github.com/crevissepartners/projmux/issues/305)) ([f363f80](https://github.com/crevissepartners/projmux/commit/f363f8022791bfc3785ba7e81afad2746f0b49c2))
+* preserve lead topic pane color ([#337](https://github.com/crevissepartners/projmux/issues/337)) ([b8bbf6f](https://github.com/crevissepartners/projmux/commit/b8bbf6f7646a24fbe3a5224b31fe8bbaf989456b))
+* remove user-key csi-u route ([31e1f6e](https://github.com/crevissepartners/projmux/commit/31e1f6e65acfc0da486886a3f9f6f9d0ce2294a5))
+* render ready pane border green ([#338](https://github.com/crevissepartners/projmux/issues/338)) ([d69d98c](https://github.com/crevissepartners/projmux/commit/d69d98cd87eb54993b498127e4a0f3f8d7e4472e))
+* render sidebar footer key guides from keymap ([#341](https://github.com/crevissepartners/projmux/issues/341)) ([d0b2e52](https://github.com/crevissepartners/projmux/commit/d0b2e52cfbab1c7c36786a37850f057a95b03f45))
+* separate AI notification body labels ([#340](https://github.com/crevissepartners/projmux/issues/340)) ([b994b61](https://github.com/crevissepartners/projmux/commit/b994b613ad444ac6380be2f5e333c52a8d2f60f6))
+* separate attention palette from AI state ([#330](https://github.com/crevissepartners/projmux/issues/330)) ([6302ad4](https://github.com/crevissepartners/projmux/commit/6302ad4dbb9f0ab743a2a140ec3b9a29e8cb1d0d))
+* **settings:** show welcome in native viewer ([#331](https://github.com/crevissepartners/projmux/issues/331)) ([4f2a656](https://github.com/crevissepartners/projmux/commit/4f2a65617e8cb8fc6f4bbe90375df0d01156c34e))
+* stabilize psmux project switch and agent lookup ([#313](https://github.com/crevissepartners/projmux/issues/313)) ([d0270ae](https://github.com/crevissepartners/projmux/commit/d0270ae58251e0b7b5206ec0710bf99a9cdffcb6))
+* **statusbar:** prevent popup wait-key layout shift ([#315](https://github.com/crevissepartners/projmux/issues/315)) ([4c347f4](https://github.com/crevissepartners/projmux/commit/4c347f4d222060ee3e40158ca658774a27d4c4a5))
+* **tmux:** recover stale popup markers ([#323](https://github.com/crevissepartners/projmux/issues/323)) ([1c075da](https://github.com/crevissepartners/projmux/commit/1c075da082d28f7a737c2142a48c110781bed0f2))
+* **ui:** align picker and statusbar chrome ([#325](https://github.com/crevissepartners/projmux/issues/325)) ([8ba09f5](https://github.com/crevissepartners/projmux/commit/8ba09f5595fd4fddc35ea3af534b012f1b6ec270))
+* **ui:** align visual palette chrome ([#327](https://github.com/crevissepartners/projmux/issues/327)) ([c40b77e](https://github.com/crevissepartners/projmux/commit/c40b77ecc610bda63891937e9753de581d81e532))
+* **ui:** remove statusbar settings edge gap ([#332](https://github.com/crevissepartners/projmux/issues/332)) ([5ba58fc](https://github.com/crevissepartners/projmux/commit/5ba58fc6860dd18b244e14634798eddbf9f9d839))
+* **ui:** style settings chip row right edge ([#328](https://github.com/crevissepartners/projmux/issues/328)) ([ac873b1](https://github.com/crevissepartners/projmux/commit/ac873b13df33678c7e4fa7fe242cb9125f6eaa3a))
+* unblock native windows build ([#304](https://github.com/crevissepartners/projmux/issues/304)) ([ea44b0b](https://github.com/crevissepartners/projmux/commit/ea44b0b9f25c050687908343b52b41d4c8e2bde1))
+* update windows native doctor policy ([#306](https://github.com/crevissepartners/projmux/issues/306)) ([5bb9e55](https://github.com/crevissepartners/projmux/commit/5bb9e552038577d8e8b71f703f5954d4efb587f9))
+* **welcome:** revisit until version skip ([#329](https://github.com/crevissepartners/projmux/issues/329)) ([fcece33](https://github.com/crevissepartners/projmux/commit/fcece338a4e4cfcc9e3bc4a7deeb3db00847f95c))
+
+## [0.6.3](https://github.com/crevissepartners/projmux/compare/v0.6.2...v0.6.3) (2026-05-14)
+
+
+### Bug Fixes
+
+* clean up notify sidebar keymap ([#294](https://github.com/crevissepartners/projmux/issues/294)) ([ef11881](https://github.com/crevissepartners/projmux/commit/ef118812156a3724c36ae7f466451cddcfd142ba))
+
 ## [0.6.2](https://github.com/crevissepartners/projmux/compare/v0.6.1...v0.6.2) (2026-05-14)
 
 

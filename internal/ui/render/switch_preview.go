@@ -5,14 +5,19 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 )
 
 // RenderSwitchPreview renders sidebar/popup preview context for a switch
 // candidate.
 func RenderSwitchPreview(model corepreview.SwitchReadModel, ui string) string {
+	return RenderSwitchPreviewWithAIBadgeStyle(model, ui, aibadge.StyleDot)
+}
+
+func RenderSwitchPreviewWithAIBadgeStyle(model corepreview.SwitchReadModel, ui, badgeStyle string) string {
 	if strings.TrimSpace(ui) == "sidebar" {
-		return renderSidebarSwitchPreview(model)
+		return renderSidebarSwitchPreview(model, badgeStyle)
 	}
 
 	var builder strings.Builder
@@ -63,7 +68,7 @@ func formatPopupSwitchPreviewMode(mode string) string {
 	}
 }
 
-func renderSidebarSwitchPreview(model corepreview.SwitchReadModel) string {
+func renderSidebarSwitchPreview(model corepreview.SwitchReadModel, badgeStyle string) string {
 	var builder strings.Builder
 
 	if model.SessionMode != "existing" {
@@ -88,7 +93,7 @@ func renderSidebarSwitchPreview(model corepreview.SwitchReadModel) string {
 	}
 
 	for _, window := range model.Windows {
-		builder.WriteString(formatSidebarWindowSummary(window, model.Panes))
+		builder.WriteString(formatSidebarWindowSummary(window, model.Panes, badgeStyle))
 		builder.WriteString("\n")
 	}
 
@@ -115,8 +120,8 @@ func writeSidebarSection(builder *strings.Builder, title string) {
 	builder.WriteString("\n")
 }
 
-func formatSidebarWindowSummary(window corepreview.Window, panes []corepreview.Pane) string {
-	titles := sidebarWindowTitles(window.Index, panes)
+func formatSidebarWindowSummary(window corepreview.Window, panes []corepreview.Pane, badgeStyle string) string {
+	titles := sidebarWindowTitles(window.Index, panes, badgeStyle)
 	if len(titles) == 0 {
 		name := sanitizeCell(window.Name)
 		if name != "" {
@@ -130,7 +135,7 @@ func formatSidebarWindowSummary(window corepreview.Window, panes []corepreview.P
 	return fmt.Sprintf("[%s] %s", sanitizeCell(window.Index), strings.Join(titles, " | "))
 }
 
-func sidebarWindowTitles(windowIndex string, panes []corepreview.Pane) []string {
+func sidebarWindowTitles(windowIndex string, panes []corepreview.Pane, badgeStyle string) []string {
 	unique := make([]string, 0, 3)
 	extraCount := 0
 
@@ -139,7 +144,7 @@ func sidebarWindowTitles(windowIndex string, panes []corepreview.Pane) []string 
 			continue
 		}
 
-		title := formatSidebarPaneTitle(pane)
+		title := formatSidebarPaneTitle(pane, badgeStyle)
 		if title == "" || containsString(unique, title) {
 			continue
 		}
@@ -158,13 +163,13 @@ func sidebarWindowTitles(windowIndex string, panes []corepreview.Pane) []string 
 	return unique
 }
 
-func formatSidebarPaneTitle(pane corepreview.Pane) string {
+func formatSidebarPaneTitle(pane corepreview.Pane, badgeStyle string) string {
 	title := sidebarPaneLabel(pane)
 	if title == "" {
 		return ""
 	}
 
-	if badge := sidebarPaneBadge(pane); badge != "" {
+	if badge := sidebarPaneBadge(pane, badgeStyle); badge != "" {
 		return badge + " " + trimSidebarPaneTitleMarker(title)
 	}
 
@@ -172,25 +177,32 @@ func formatSidebarPaneTitle(pane corepreview.Pane) string {
 	case strings.HasPrefix(title, "✳"), strings.HasPrefix(title, "✔"):
 		return ansiGreen + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
 	case hasBraillePrefix(title):
-		return ansiYellow + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
+		return ansiProgress + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
 	default:
-		return title
+		return styleLeadTopicPrefix(title)
 	}
 }
 
 func sidebarPaneLabel(pane corepreview.Pane) string {
 	if strings.TrimSpace(pane.AIAgent) != "" {
 		if topic := sanitizeCell(pane.AITopic); topic != "" {
-			return topic
+			return styleLeadTopicPrefix(topic)
 		}
 	}
 	return sanitizeCell(pane.Title)
 }
 
-func sidebarPaneBadge(pane corepreview.Pane) string {
+func sidebarPaneBadge(pane corepreview.Pane, badgeStyle string) string {
+	if style := ansiAIBadgeKindStart(pane.AIBadgeKind); style != "" {
+		glyph := aibadge.Glyph(pane.AIBadgeKind, badgeStyle)
+		if strings.TrimSpace(glyph) == "" {
+			return ""
+		}
+		return style + glyph + ansiReset
+	}
 	switch paneAttentionRank(pane) {
 	case 2:
-		return ansiYellow + "●" + ansiReset
+		return ansiProgress + "●" + ansiReset
 	case 1:
 		return ansiGreen + "●" + ansiReset
 	default:

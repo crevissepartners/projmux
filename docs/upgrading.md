@@ -3,13 +3,14 @@
 projmux has two update surfaces:
 
 - `projmux shell` reads the cached release status before opening the app. When
-  the cache is fresh and a newer release is available, startup shows a picker
-  with Update Now, Later, and Skip This Version actions.
+  the cache is missing or stale, startup attempts a short best-effort refresh
+  and continues if it fails. When a newer release is available, the shell
+  welcome offers Continue, Upgrade, and Skip until next actions.
 - Settings > About > Update shows the current version, detected installer,
   cached latest version, Check Updates, and Update Now actions.
 
-Startup never reaches the network. Refresh the cache explicitly when you want
-projmux to check GitHub Releases:
+Refresh the cache explicitly when you want a full foreground GitHub Releases
+check:
 
 ```sh
 projmux update check
@@ -24,6 +25,97 @@ projmux update apply
 Use `--dry-run` to see the planned action and `--no-apply` to skip reloading
 the live tmux config after the binary changes.
 
+Shell Upgrade invokes only `projmux update apply`, then reports success or the
+specific failure inline and continues into the shell either way (a failed
+upgrade is never fatal to shell entry). Shell Skip until next stores the current
+latest release tag in `update-skip.json`; the prompt appears again when the
+cached latest tag changes. For `source` and unknown installer sources, Upgrade
+prints guidance and continues shell entry without applying anything.
+
+The installer is detected from an explicit `PROJMUX_INSTALLER` first, then
+inferred from the running binary when unset (npm install tree → `npm`,
+`go install …@latest` binary in `$GOBIN`/`$GOPATH/bin`/`~/go/bin` → `go`, a
+local `go build`/`make install` `(devel)` binary → `source`). `github-release`
+still requires an explicit `PROJMUX_INSTALLER=github-release`.
+
+## Behavior Changes
+
+### Theme is now global-only
+
+Theme is a global user preference. The effective theme resolves from the global
+`[theme]` in `~/.config/projmux/config.toml` plus a built-in fallback preset.
+
+If you previously set a `[theme]` section in a project's `.projmux/config.toml`,
+it is now **deprecated and ignored** — it no longer overrides the global theme
+and does not affect the native picker, statusbar, popups, or any tmux chrome.
+The project `[theme]` keys are left in the file untouched (no warning, no
+removal); they simply have no effect.
+
+To restore your previous look, copy the values into the global
+`~/.config/projmux/config.toml` `[theme]` section, or edit them through
+Settings > Theme. Settings no longer exposes a Project theme editor, and the
+separate Effective theme view has been merged into the Global theme view: each
+token row now shows its resolved value inline, with unset tokens shown as their
+dimmed `(fallback)` value.
+
+### Foreground split
+
+The old broad `foreground` theme key is now split into two clearer public keys:
+`text_primary` for primary native content text, and `chrome_foreground` for
+frame/title/search/status/window chrome foreground roles. Existing global
+`foreground` values still work as a legacy alias/fill and will feed both split
+roles unless either new key is set explicitly. Settings shows and writes the new
+split names instead of encouraging new `foreground` writes.
+
+If your previous `foreground` override made both content and chrome change
+together, you do not need to migrate immediately. To tune them separately, copy
+the value into `text_primary` and/or `chrome_foreground`, then remove
+`foreground` when you no longer need the compatibility fill.
+
+### New public theme keys
+
+Seven new public `[theme]` keys are now available: `text_primary`,
+`chrome_foreground`, `progress`, `success`, `action_required` (AI/status
+colors), `pane_active_bg` (active-pane tint), and `focus` (active-pane border).
+Leaving a key unset keeps the historical built-in color; setting it repaints the
+matching role. `action_required` is independent of `critical` — repainting
+`critical` never changes it. The full public token set is documented in
+`docs/configuration.md` and `docs/theme-palette.md`.
+
+The active-pane tint (`pane_active_bg`) defaults to the terminal background in
+the built-in `projmux` preset; set it to a concrete color when the active pane
+should visibly sink. The active-pane border (`focus`) defaults to cyan
+`colour51`. Both apply only to tmux pane chrome.
+
+Built-in presets are intentionally small: `projmux`, `high-contrast`,
+`blue-hour`, `carbon-violet`, `daylight`, `ember`, `forest`, and `rose`
+(`daylight` is the fully-light one). Terminal-default
+backgrounds are configured per token with the `default` sentinel rather than
+through separate terminal preset variants.
+
+### Pane body vs popup backgrounds
+
+The general (pane) background and the popup/chrome background are now driven by
+separate public tokens. The pane body follows `background` (unset keeps the
+terminal default), while the status bar, native popup bodies, and the
+settings/notify/recent/picker frames follow `surface`. Because the `surface`
+fallback equals `background`, leaving both unset looks exactly as before; set
+them to different values to make popups read as a distinct surface from the pane
+body.
+
+### Theme font keys removed
+
+The `[theme]` `font_family` and `font_size` keys were removed. They never
+applied to the terminal — tmux/ANSI rendering cannot force a font family or
+size across terminal emulators — so they only stored and displayed a desired
+value that was always reported as `not applied`.
+
+Leftover `font_family` / `font_size` keys in a global or project
+`config.toml` are accepted but ignored: they no longer parse into the theme,
+appear in Settings, or affect any surface. You can delete them at your
+convenience. Set your terminal font through your terminal emulator's own
+profile settings instead.
+
 ## npm Installs
 
 The recommended install path is:
@@ -35,12 +127,20 @@ npm install -g projmux
 For npm-managed installs, `projmux update apply` runs:
 
 ```sh
-npm update -g projmux
+npm install -g projmux@latest
 projmux tmux apply
 ```
 
+`npm install -g projmux@latest` is used instead of `npm update -g projmux`
+because `npm update -g` honors the installed semver range and frequently
+refuses to move a global install across a newer minor/major release, leaving it
+stuck on an old version. `install -g …@latest` always fetches the newest
+published release and re-resolves the per-platform optional dependency.
+
 The npm shim sets `PROJMUX_INSTALLER=npm` so projmux can detect this path
-automatically. You can also update manually with `npm update -g projmux`.
+automatically. Even when the shim is bypassed, projmux infers the npm install
+from the binary path (`node_modules/@projmux/...`). You can also update manually
+with `npm install -g projmux@latest`.
 
 ## Go Installs
 

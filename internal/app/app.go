@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync"
 
+	"github.com/crevissepartners/projmux/internal/app/initcmd"
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -66,7 +68,8 @@ type App struct {
 	doctor       *doctorCommand
 	focus        *focusCommand
 	hook         *hookCommand
-	initCmd      *initCommand
+	initCmd      *initcmd.Command
+	keyBroker    *keyBrokerCommand
 	kill         *killCommand
 	notify       *notifyCommand
 	pin          *pinCommand
@@ -87,33 +90,50 @@ type App struct {
 	tmux         *tmuxCommand
 	update       *updateCommand
 	upgrade      *upgradeCommand
-	usage        *usageCommand
+	usage        *usagecmd.Command
 	welcome      *welcomeCommand
+	window       *windowCommand
 }
 
 // New builds the default application graph.
 func New() *App {
 	ai := newAICommand()
 	switcher := newSwitchCommand()
+	attach := newAttachCommand()
+	kill := newKillCommand()
+	sessions := newSessionsCommand()
 	update := newUpdateCommand()
 	quit := newQuitCommand()
+	notifyCmd := newNotifyCommand(newDefaultLivePaneLister())
+	pruneCmd := newPruneCommand()
+	previewCleaner := newKilledSessionPreviewCleaner()
+	cleanupKilledSession := previewCleaner.cleanup
+	attach.cleanupKilledSession = cleanupKilledSession
+	kill.cleanupKilledSession = cleanupKilledSession
+	sessions.cleanupKilledSession = cleanupKilledSession
+	switcher.cleanupKilledSession = cleanupKilledSession
+	pruneCmd.cleanupKilledSession = cleanupKilledSession
+	pruneCmd.reconcileNotify = func() {
+		_ = notifyCmd.runReconcile(nil, io.Discard, io.Discard)
+	}
 	return &App{
 		ai:           ai,
 		attention:    newAttentionCommand(),
-		attach:       newAttachCommand(),
+		attach:       attach,
 		current:      newCurrentCommand(),
 		doctor:       newDoctorCommand(),
 		focus:        newFocusCommand(),
 		hook:         newHookCommand(),
 		initCmd:      newInitCommand(),
-		kill:         newKillCommand(),
-		notify:       newNotifyCommand(),
+		keyBroker:    newKeyBrokerCommand(),
+		kill:         kill,
+		notify:       notifyCmd,
 		pin:          newPinCommand(),
 		popupWaitKey: newPopupWaitKeyCommand(),
 		preview:      newPreviewCommand(),
-		prune:        newPruneCommand(),
+		prune:        pruneCmd,
 		quit:         quit,
-		sessions:     newSessionsCommand(),
+		sessions:     sessions,
 		sessionState: newSessionStateCommand(),
 		sessionPopup: newSessionPopupCommand(),
 		settings:     newSettingsCommand(ai, switcher, update, quit),
@@ -126,8 +146,9 @@ func New() *App {
 		tmux:         newTmuxCommand(),
 		update:       update,
 		upgrade:      newUpgradeCommand(),
-		usage:        newUsageCommand(),
+		usage:        usagecmd.New(nil),
 		welcome:      newWelcomeCommand(update),
+		window:       newWindowCommand(),
 	}
 }
 
@@ -156,6 +177,10 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.hook.Run(args[1:], stdout, stderr)
 	case "init":
 		return a.initCmd.Run(args[1:], stdout, stderr)
+	case "key-broker":
+		// Hidden Darwin helper: captures physical portable key chords while a
+		// projmux tmux client is focused and feeds them through its root table.
+		return a.keyBroker.Run(args[1:], stdout, stderr)
 	case "kill":
 		return a.kill.Run(args[1:], stdout, stderr)
 	case "notify":
@@ -203,6 +228,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.usage.Run(args[1:], stdout, stderr)
 	case "welcome":
 		return a.welcome.Run(args[1:], stdout, stderr)
+	case "window":
+		return a.window.Run(args[1:], stdout, stderr)
 	case "version", "--version", "-version":
 		_, err := fmt.Fprintf(stdout, "projmux %s\n", version.String())
 		return err
@@ -226,12 +253,12 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  doctor    Diagnose runtime dependencies and suggest installs")
 	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
-	fmt.Fprintln(w, "  init      Merge projmux keybindings into a terminal config")
+	fmt.Fprintln(w, "  init      Preview/apply supported terminal key delivery mappings")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
 	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")
-	fmt.Fprintln(w, "  prune     Trim stale tmux lifecycle state")
+	fmt.Fprintln(w, "  prune     Trim stale lifecycle state and inspect preserved snapshots")
 	fmt.Fprintln(w, "  quit      Quit the app-owned projmux tmux runtime")
 	fmt.Fprintln(w, "  sessions  Pick and open an existing tmux session")
 	fmt.Fprintln(w, "  session-state  Inspect and manage saved tmux session snapshots")
@@ -248,6 +275,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  upgrade   Self-update projmux via go install")
 	fmt.Fprintln(w, "  usage     Report AI token usage across 5h and weekly windows")
 	fmt.Fprintln(w, "  welcome   Reprint the shell welcome guide")
+	fmt.Fprintln(w, "  window    Open recent window navigation surfaces")
 	fmt.Fprintln(w, "  help      Show bootstrap help")
 	fmt.Fprintln(w, "  version   Print the current version")
 }

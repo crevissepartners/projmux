@@ -90,6 +90,30 @@ Ephemeral runtime state:
 - popup marker files
 - current tagged selection set
 
+## Naming metadata model
+
+Projmux keeps visible naming separate from source metadata:
+
+- **Pane border label** is the primary visible pane name. In the app tmux
+  config it resolves to AI topic first, known interactive shell command
+  (`zsh`, `bash`, `fish`, `sh`, `nu`, `xonsh`) second, and raw pane title last.
+- **Window tab name** follows the active pane's visible pane label through the
+  same tmux format expression used by the pane border. Historically the app
+  config used raw `#{pane_title}` for `automatic-rename-format`, which let shell
+  OSC titles such as branch names diverge from the pane border; generated app
+  config now keeps the two aligned.
+- **Terminal / pane title** remains raw title metadata owned by the running app
+  or shell. It is still available to tmux and to Projmux features that need
+  title evidence, but it is not the canonical Projmux window naming source.
+- **AI topic** is the user-facing AI pane name. AI panes may set the pane title,
+  pane border label, window tab name, and `@projmux_ai_topic` from the topic.
+- **Git branch** belongs in the statusbar git segment. Branch-based terminal
+  title overwrites are not promoted to the primary Projmux pane or window name.
+- **Session snapshots** store source metadata such as `window_name`,
+  `pane_title`, `@projmux_ai_topic`, and agent resume metadata. They do not store
+  a resolved `display_label`; visible labels are recomputed by tmux policy at
+  display time.
+
 ## Notify queue
 
 `projmux` keeps a single JSON-backed queue of pending notifications at
@@ -111,18 +135,21 @@ does not own the truth of every live badge.
   source (`ai|k8s|git|external`), TTL freshness metadata (default 600s), and a
   `Target{Socket, Session, Window, Pane}`. Re-pushing an existing id
   refreshes the entry's text and timestamp.
-- **List** — `projmux notify list` returns newest-first until explicit ack.
-  TTL is not a removal condition. `projmux notify list --live` adds a
+- **List** — `projmux notify list` returns newest-first without mutating the
+  queue. TTL alone is not a removal condition. `projmux notify list --live` adds a
   read-only comparison against live pane state, explaining manual reply
   badges without queue entries, live AI replies with/missing queue entries,
-  and stale `ai:` entries.
+  and inactive (`queue-stale`) `ai:` entries.
 - **Ack** — `projmux notify ack <id>` removes one entry; `--all`
-  flushes everything. Focus/click handlers do not ack rows.
+  flushes everything. Interactive focus/click handlers ack after successful
+  focus, and gone/unroutable targets clean up without focusing.
 - **Reconcile** — `projmux notify reconcile` walks
   `tmux list-panes -a` and back-fills entries for panes whose
   attention state is `reply` AND whose AI agent option is set,
-  reporting stale `ai:` entries that no longer match a live pane without
-  acking them.
+  reporting inactive `ai:` entries that no longer match a live reply+agent pane without
+  acking them. It then removes rows only when they are both TTL-expired and
+  gone from the real pane/session inventory, and enforces a 256-row hard cap
+  by evicting oldest overflow. Live rows otherwise remain explicit-ack-only.
   `make install` and `projmux upgrade` invoke it so the queue
   recovers from any drift introduced by a lost daemon.
 
@@ -189,6 +216,9 @@ The keyboard chord uses `bind-key s switch-client -T projmux-status` so the
 prefix-then-`s`-then-letter shortcut routes through the same dispatcher as
 the mouse click. Empty `#{mouse_status_range}` (clicks on whitespace) is a
 no-op so the binding never flashes a spurious error.
+The hardcoded `prefix s r` sibling is usage-specific: it runs the existing
+throttled collector and then reopens the same display-only usage popup from
+cache.
 
 ## Non-goals
 

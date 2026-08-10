@@ -297,6 +297,44 @@ func TestReplayAgentDirectStartSplitPaneUsesSplitWindowTail(t *testing.T) {
 	}
 }
 
+func TestReplayAntigravityAgentDirectStartUsesConversation(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	agentBin := "/opt/antigravity/bin/agy"
+	conversationID := "123e4567-e89b-12d3-a456-426614174000"
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{
+		{
+			Index:           0,
+			Name:            "agent",
+			ActivePaneIndex: 0,
+			Panes: []Pane{
+				{Index: 0, CWD: cwd, Recipe: AgentRecipe("antigravity", conversationID, "antigravity topic")},
+			},
+		},
+	}
+	runner := &recordingReplayRunner{}
+
+	result, err := Replay(context.Background(), runner, snap, replayAgentOptions(agentBin))
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("Replay() warnings = %#v, want none", result.Warnings)
+	}
+
+	want := append([]string{"new-session", "-d", "-s", "home", "-c", cwd}, replayAgentTail("antigravity", agentBin, cwd, "antigravity topic", "--conversation", conversationID)...)
+	if got := runner.commands[0].args; !reflect.DeepEqual(got, want) {
+		t.Fatalf("new-session args = %#v, want %#v", got, want)
+	}
+	for _, command := range runner.commands {
+		if len(command.args) > 0 && command.args[0] == "send-keys" {
+			t.Fatalf("Replay() sent Antigravity resume through send-keys: %#v", command)
+		}
+	}
+}
+
 func TestReplayRunsStartupRecipeAfterLayoutAndPaneSelection(t *testing.T) {
 	t.Parallel()
 
@@ -503,6 +541,41 @@ func TestReplaySkipsCodexResumeWithInvalidResumeID(t *testing.T) {
 	}
 }
 
+func TestReplaySkipsAntigravityResumeWithInvalidConversationID(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{
+		{
+			Index:           0,
+			Name:            "agent",
+			ActivePaneIndex: 0,
+			Panes: []Pane{
+				{Index: 0, CWD: cwd, Recipe: AgentRecipe("antigravity", "ag-conv-123", "topic")},
+			},
+		},
+	}
+	runner := &recordingReplayRunner{}
+
+	result, err := Replay(context.Background(), runner, snap, ReplayOptions{})
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("warnings = %#v, want one invalid resume warning", result.Warnings)
+	}
+	if result.Warnings[0].Scope != "agent" || !strings.Contains(result.Warnings[0].Reason, "invalid antigravity resume id") {
+		t.Fatalf("warning = %#v, want invalid antigravity resume id warning", result.Warnings[0])
+	}
+	assertAgentFallbackShellPane(t, runner.commands, []string{"new-session", "-d", "-s", "home", "-c", cwd})
+	for _, command := range runner.commands {
+		if len(command.args) > 0 && command.args[0] == "send-keys" {
+			t.Fatalf("Replay() sent unsafe Antigravity resume command: %#v", command)
+		}
+	}
+}
+
 func TestReplaySkipsAgentDirectStartWithMissingBinary(t *testing.T) {
 	t.Parallel()
 
@@ -552,7 +625,7 @@ func TestReplayDoesNotResumeUnsupportedAgent(t *testing.T) {
 			Name:            "agent",
 			ActivePaneIndex: 0,
 			Panes: []Pane{
-				{Index: 0, CWD: cwd, Recipe: AgentRecipe("gemini", "abcdef-1234", "topic")},
+				{Index: 0, CWD: cwd, Recipe: AgentRecipe("unsupported-agent", "abcdef-1234", "topic")},
 			},
 		},
 	}
@@ -569,97 +642,6 @@ func TestReplayDoesNotResumeUnsupportedAgent(t *testing.T) {
 		if len(command.args) > 0 && command.args[0] == "send-keys" {
 			t.Fatalf("Replay() resumed unsupported agent: %#v", command)
 		}
-	}
-}
-
-func TestApplyToExistingSessionMovesStagedWindowsAndKillsExtras(t *testing.T) {
-	t.Parallel()
-
-	cwd := t.TempDir()
-	snap := replaySnapshot(cwd)
-	snap.Windows = []Window{
-		{
-			Index:           0,
-			Name:            "main",
-			ActivePaneIndex: 0,
-			Panes: []Pane{
-				{Index: 0, CWD: cwd, Recipe: ShellRecipe()},
-			},
-		},
-		{
-			Index:           1,
-			Name:            "logs",
-			ActivePaneIndex: 0,
-			Panes: []Pane{
-				{Index: 0, CWD: cwd, Recipe: StartupRecipe("tail -f app.log")},
-			},
-		},
-		{
-			Index:           2,
-			Name:            "agent",
-			ActivePaneIndex: 0,
-			Panes: []Pane{
-				{Index: 0, CWD: cwd, Recipe: AgentRecipe("claude", "abcdef-1234", "topic")},
-			},
-		},
-	}
-	runner := &recordingReplayRunner{outputs: map[string]string{
-		replayOutputKey("tmux", "list-windows", "-t", "tmp-home", "-F", "#{window_id}\t#{window_index}"): "@10\t0\n@11\t1\n@12\t2\n",
-		replayOutputKey("tmux", "list-windows", "-t", "home", "-F", "#{window_id}"):                      "@10\n@11\n@12\n@2\n",
-	}}
-
-	result, err := ApplyToExistingSession(context.Background(), runner, snap, ApplyToExistingSessionOptions{
-		ReplayOptions: ReplayOptions{},
-		TempSession:   "tmp-home",
-	})
-	if err != nil {
-		t.Fatalf("ApplyToExistingSession() error = %v", err)
-	}
-	if len(result.Warnings) != 0 {
-		t.Fatalf("ApplyToExistingSession() warnings = %#v, want none", result.Warnings)
-	}
-
-	want := [][]string{
-		{"new-session", "-d", "-s", "tmp-home", "-c", cwd},
-		{"rename-window", "-t", "tmp-home:0", "main"},
-		{"new-window", "-d", "-t", "tmp-home:1", "-c", cwd, "-n", "logs"},
-		{"new-window", "-d", "-t", "tmp-home:2", "-c", cwd, "-n", "agent"},
-		{"list-windows", "-t", "tmp-home", "-F", "#{window_id}\t#{window_index}"},
-		{"move-window", "-d", "-k", "-s", "@10", "-t", "home:0"},
-		{"move-window", "-d", "-k", "-s", "@11", "-t", "home:1"},
-		{"move-window", "-d", "-k", "-s", "@12", "-t", "home:2"},
-		{"list-windows", "-t", "home", "-F", "#{window_id}"},
-		{"kill-window", "-t", "@2"},
-		{"send-keys", "-t", "home:1.0", "tail -f app.log", "Enter"},
-		{"send-keys", "-t", "home:2.0", "claude --resume abcdef-1234", "Enter"},
-		{"select-window", "-t", "home:0"},
-	}
-	if !replayCommandsContainInOrder(runner.commands, want) {
-		t.Fatalf("commands = %#v, want ordered subsequence %#v", runner.commands, want)
-	}
-	for _, command := range runner.commands {
-		if reflect.DeepEqual(command.args, []string{"send-keys", "-t", "tmp-home:1.0", "tail -f app.log", "Enter"}) ||
-			reflect.DeepEqual(command.args, []string{"send-keys", "-t", "tmp-home:2.0", "claude --resume abcdef-1234", "Enter"}) {
-			t.Fatalf("ApplyToExistingSession() replayed pane recipe in staging session: %#v", command)
-		}
-	}
-}
-
-func TestApplyToExistingSessionRejectsEmptySnapshot(t *testing.T) {
-	t.Parallel()
-
-	snap := replaySnapshot(t.TempDir())
-	runner := &recordingReplayRunner{}
-
-	_, err := ApplyToExistingSession(context.Background(), runner, snap, ApplyToExistingSessionOptions{TempSession: "tmp-home"})
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "requires at least one window") {
-		t.Fatalf("error = %v, want empty snapshot failure", err)
-	}
-	if len(runner.commands) != 0 {
-		t.Fatalf("commands = %#v, want no tmux calls", runner.commands)
 	}
 }
 
@@ -704,24 +686,6 @@ func replayCommandIndex(commands []replayCommand, args []string) int {
 		}
 	}
 	return -1
-}
-
-func replayCommandsContainInOrder(commands []replayCommand, want [][]string) bool {
-	last := -1
-	for _, args := range want {
-		next := -1
-		for i := last + 1; i < len(commands); i++ {
-			if reflect.DeepEqual(commands[i].args, args) {
-				next = i
-				break
-			}
-		}
-		if next < 0 {
-			return false
-		}
-		last = next
-	}
-	return true
 }
 
 func replayAgentOptions(agentBin string) ReplayOptions {

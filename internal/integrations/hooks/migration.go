@@ -2,6 +2,11 @@
 // [hooks.<event>] config.toml entry. The runner no longer executes script
 // files directly; this code path drains the historical layout so users do not
 // silently lose hook behaviour after upgrading.
+//
+// Legacy: retained for draining legacy `.projmux/<event>` scripts into
+// declarative config without data loss; sunset when a post-0.7 review after
+// two minor releases or 90 days confirms legacy script migration has had
+// enough release/time coverage.
 package hooks
 
 import (

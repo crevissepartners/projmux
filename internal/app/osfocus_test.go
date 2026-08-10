@@ -30,7 +30,7 @@ func (f *fakeOSFocusChain) snapshot() []osfocus.Target {
 	return append([]osfocus.Target(nil), f.calls...)
 }
 
-func TestFocus_DispatchesOSFocusOnSuccess(t *testing.T) {
+func TestFocus_DispatchesOSFocusOnSuccessWhenDesktopNotifyRaise(t *testing.T) {
 	t.Parallel()
 
 	listSessions := []byte("100\tworkspace\t1\n")
@@ -48,7 +48,7 @@ func TestFocus_DispatchesOSFocusOnSuccess(t *testing.T) {
 		},
 	}
 	chain := &fakeOSFocusChain{}
-	cmd := newFocusTestCommand(runner, nil, nil)
+	cmd := newFocusTestCommand(runner, map[string]string{desktopNotifyModeEnv: "raise"}, nil)
 	cmd.osFocusChain = chain
 
 	stdout := &bytes.Buffer{}
@@ -73,6 +73,51 @@ func TestFocus_DispatchesOSFocusOnSuccess(t *testing.T) {
 	}
 }
 
+func TestFocus_DoesNotDispatchOSFocusWhenDesktopNotifyModeIsNotRaise(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		mode string
+	}{
+		{name: "off", mode: "off"},
+		{name: "none", mode: "none"},
+		{name: "notify", mode: "notify"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			listSessions := []byte("100\tworkspace\t1\n")
+			listClients := []byte("/dev/pts/0\tworkspace\n")
+
+			runner := &focusFakeRunner{
+				respond: func(args []string) ([]byte, error) {
+					switch {
+					case containsArg(args, "list-sessions"):
+						return listSessions, nil
+					case containsArg(args, "list-clients"):
+						return listClients, nil
+					}
+					return nil, nil
+				},
+			}
+			chain := &fakeOSFocusChain{}
+			cmd := newFocusTestCommand(runner, map[string]string{desktopNotifyModeEnv: tc.mode}, nil)
+			cmd.osFocusChain = chain
+
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			if err := cmd.Run([]string{"--target", "workspace:1.0"}, stdout, stderr); err != nil {
+				t.Fatalf("Run returned error: %v (stderr=%s)", err, stderr.String())
+			}
+
+			if calls := chain.snapshot(); len(calls) != 0 {
+				t.Fatalf("expected no os-focus dispatch in mode %q, got %v", tc.mode, calls)
+			}
+		})
+	}
+}
+
 func TestFocus_DoesNotDispatchOSFocusWhenNoClientAttached(t *testing.T) {
 	t.Parallel()
 
@@ -94,7 +139,7 @@ func TestFocus_DoesNotDispatchOSFocusWhenNoClientAttached(t *testing.T) {
 	}
 	notifier := &focusFakeNotifier{}
 	chain := &fakeOSFocusChain{}
-	cmd := newFocusTestCommand(runner, nil, notifier)
+	cmd := newFocusTestCommand(runner, map[string]string{desktopNotifyModeEnv: "raise"}, notifier)
 	cmd.osFocusChain = chain
 
 	stdout := &bytes.Buffer{}
@@ -124,7 +169,7 @@ func TestFocus_DoesNotDispatchOSFocusOnUnresolvedSession(t *testing.T) {
 		},
 	}
 	chain := &fakeOSFocusChain{}
-	cmd := newFocusTestCommand(runner, nil, nil)
+	cmd := newFocusTestCommand(runner, map[string]string{desktopNotifyModeEnv: "raise"}, nil)
 	cmd.osFocusChain = chain
 
 	stdout := &bytes.Buffer{}

@@ -243,7 +243,7 @@ func isSessionStateRefreshAgent(pane sessionStateResumeRefreshPaneRow) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(pane.aiAgent)) {
-	case "codex", "claude":
+	case "antigravity", "codex", "claude":
 		return true
 	default:
 		return false

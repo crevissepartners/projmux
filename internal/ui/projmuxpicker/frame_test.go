@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 func TestRendererRenderFrameUsesCRLFRowsForRawTTY(t *testing.T) {
@@ -60,6 +62,138 @@ func TestRendererRenderFrameWithTitleKeepsDefaultWhenTitleEmpty(t *testing.T) {
 	}
 }
 
+func TestThemeFromEffectiveFallbackPaintsFrameBackground(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
+	themed := NewRenderer(ThemeFromEffective(effective))
+	layout := Layout{Rows: 8, Cols: 32}
+	listRow := RenderableListLine(InteractiveRowLines(Row{
+		Label: "\x1b[36mapi\x1b[0m",
+	}, true, false)[0], 30)
+	content := strings.Join([]string{
+		HeaderLine("\x1b[36mPinned", 30),
+		listRow,
+		PromptLineWithCursor("› ", "api", 3, 2, 9, 30),
+		strings.Join(FooterBlockLines("\x1b[32mEnter: open\x1b[0m", 30), "\n"),
+	}, "\n")
+
+	var defaultFrame bytes.Buffer
+	var themedFrame bytes.Buffer
+	DefaultRenderer().RenderFrame(&defaultFrame, content, layout)
+	themed.RenderFrame(&themedFrame, content, layout)
+	if got, want := themedFrame.String(), defaultFrame.String(); got == want {
+		t.Fatalf("fallback themed frame = default frame, want app surface SGR")
+	}
+
+	var defaultTitle bytes.Buffer
+	var themedTitle bytes.Buffer
+	DefaultRenderer().RenderFrameWithTitle(&defaultTitle, content, "Projects", layout)
+	themed.RenderFrameWithTitle(&themedTitle, content, "Projects", layout)
+	if got, want := themedTitle.String(), defaultTitle.String(); got == want {
+		t.Fatalf("fallback themed title frame = default frame, want app surface SGR")
+	}
+
+	chips := []Chip{{Label: "Projects", Active: true}, {Label: "Settings"}}
+	var defaultChips bytes.Buffer
+	var themedChips bytes.Buffer
+	DefaultRenderer().RenderFrameWithChips(&defaultChips, content, chips, layout)
+	themed.RenderFrameWithChips(&themedChips, content, chips, layout)
+	if got, want := themedChips.String(), defaultChips.String(); got == want {
+		t.Fatalf("fallback themed chip frame = default frame, want app surface SGR")
+	}
+
+	fallbackTheme := ThemeFromEffective(effective)
+	style := fallbackTheme.Background + fallbackTheme.Foreground
+	if style == "" {
+		t.Fatal("fallback frame style empty, want app surface/chrome_foreground SGR")
+	}
+	for _, rendered := range []string{themedFrame.String(), themedTitle.String(), themedChips.String()} {
+		if !strings.Contains(rendered, style) {
+			t.Fatalf("fallback themed frame = %q, want fallback surface/chrome_foreground SGR %q", rendered, style)
+		}
+		for line := range strings.SplitSeq(rendered, "\r\n") {
+			if !strings.HasPrefix(line, style) {
+				t.Fatalf("fallback themed row = %q, want style prefix %q", line, style)
+			}
+			assertFrameResetsResumeStyleOrEnd(t, line, style)
+		}
+	}
+}
+
+func TestThemeFromEffectiveAppliesGlobalSurfaceForeground(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{
+		Background: "#010203",
+		Surface:    "#040506",
+		Foreground: "#aabbcc",
+	})
+	renderer := NewRenderer(ThemeFromEffective(effective))
+	var out bytes.Buffer
+	renderer.RenderFrameWithTitle(&out, "api", "Projects", Layout{Rows: 5, Cols: 18})
+	rendered := out.String()
+
+	for _, want := range []string{"\x1b[48;2;4;5;6m", "\x1b[38;2;170;187;204m"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered frame = %q, want global SGR %q", rendered, want)
+		}
+	}
+	if banned := "\x1b[48;2;1;2;3m"; strings.Contains(rendered, banned) {
+		t.Fatalf("rendered frame = %q, must not use pane background SGR %q", rendered, banned)
+	}
+	for _, banned := range []string{"\x1b[48;2;17;34;51m", "\x1b[38;2;68;85;102m"} {
+		if strings.Contains(rendered, banned) {
+			t.Fatalf("rendered frame = %q, must not contain unrelated SGR %q", rendered, banned)
+		}
+	}
+}
+
+func TestThemeFromEffectiveBackgroundOnlyDoesNotRepaintPickerSurface(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{Background: "#010203"})
+	renderer := NewRenderer(ThemeFromEffective(effective))
+	var out bytes.Buffer
+	renderer.RenderFrameWithTitle(&out, "api", "Projects", Layout{Rows: 5, Cols: 18})
+	rendered := out.String()
+
+	if banned := "\x1b[48;2;1;2;3m"; strings.Contains(rendered, banned) {
+		t.Fatalf("rendered frame = %q, must not use pane background SGR %q", rendered, banned)
+	}
+}
+
+func TestThemeFromEffectiveMapsSemanticRoles(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{
+		SurfaceActive: "#010203",
+		Foreground:    "#111213",
+		Muted:         "#212223",
+		Accent:        "#313233",
+		Warning:       "#414243",
+		Critical:      "#515253",
+	})
+	pickerTheme := ThemeFromEffective(effective)
+
+	for name, values := range map[string][2]string{
+		"selected": {pickerTheme.Selected, "\x1b[48;2;1;2;3m\x1b[38;2;17;18;19m"},
+		"muted":    {pickerTheme.Muted, "\x1b[38;2;33;34;35m"},
+		"accent":   {pickerTheme.Accent, "\x1b[38;2;49;50;51m"},
+		"warning":  {pickerTheme.Warning, "\x1b[38;2;65;66;67m"},
+		"critical": {pickerTheme.Critical, "\x1b[38;2;81;82;83m"},
+	} {
+		if values[0] != values[1] {
+			t.Fatalf("%s role = %q, want %q", name, values[0], values[1])
+		}
+	}
+
+	selected := RenderableListLineWithTheme(pickerTheme, InteractiveRowLinesWithTheme(pickerTheme, Row{Label: "\x1b[36mapi\x1b[0m"}, true, false)[0], 16)
+	if !strings.Contains(selected, pickerTheme.Selected) || !strings.Contains(selected, pickerTheme.Accent+"▌"+pickerTheme.Selected) {
+		t.Fatalf("selected row = %q, want themed selected/accent roles", selected)
+	}
+}
+
 func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	t.Parallel()
 
@@ -76,8 +210,8 @@ func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	if !strings.Contains(lines[1], " Projects ") {
 		t.Fatalf("titlebar row = %q, want title inside picker-owned titlebar", lines[1])
 	}
-	if !strings.Contains(lines[1], TitlebarStart) {
-		t.Fatalf("titlebar row = %q, want distinct neutral titlebar styling", lines[1])
+	if strings.Contains(lines[1], TitlebarStart) || strings.Contains(lines[1], TitlebarRule) {
+		t.Fatalf("titlebar row = %q, want frame styling without titlebar overlay ANSI", lines[1])
 	}
 	if strings.Contains(lines[1], "▌") {
 		t.Fatalf("titlebar row = %q, want no red accent marker next to title", lines[1])
@@ -88,7 +222,7 @@ func TestRendererRenderFrameWithTitleUsesTitlebarRow(t *testing.T) {
 	if got, want := VisibleLen(lines[1]), 24; got != want {
 		t.Fatalf("titlebar row width = %d, want %d: %q", got, want, lines[1])
 	}
-	if !strings.HasPrefix(lines[2], "├") || !strings.HasSuffix(lines[2], "┤") || !strings.Contains(lines[2], TitlebarRule+"─") {
+	if !strings.HasPrefix(lines[2], "├") || !strings.HasSuffix(lines[2], "┤") {
 		t.Fatalf("titlebar divider row = %q, want full-width divider below titlebar", lines[2])
 	}
 	if !strings.Contains(lines[3], "hello") {
@@ -102,7 +236,7 @@ func TestFrameTitlebarLineResetsAroundBordersAndPadsBody(t *testing.T) {
 	const innerWidth = 18
 	line := frameTitlebarLine(DefaultTheme, innerWidth, "Projects")
 
-	if got, want := line, Reset+"│"+TitlebarStart+" Projects "+strings.Repeat(" ", 8)+Reset+"│"+Reset; got != want {
+	if got, want := line, "│ Projects "+strings.Repeat(" ", 8)+"│"; got != want {
 		t.Fatalf("frameTitlebarLine() = %q, want %q", got, want)
 	}
 	if got, want := VisibleLen(line), innerWidth+2; got != want {
@@ -110,6 +244,70 @@ func TestFrameTitlebarLineResetsAroundBordersAndPadsBody(t *testing.T) {
 	}
 	if hasActiveStyle(line) {
 		t.Fatalf("frameTitlebarLine() = %q, want reset after right border", line)
+	}
+}
+
+func TestFrameTitlebarLineUsesFrameBackgroundForeground(t *testing.T) {
+	t.Parallel()
+
+	theme := DefaultTheme
+	theme.Background = "\x1b[48;2;1;2;3m"
+	theme.Foreground = "\x1b[38;2;170;187;204m"
+	line := frameTitlebarLine(theme, 18, "\x1b[31mProjects\x1b[0m")
+	style := theme.Background + theme.Foreground
+
+	if !strings.HasPrefix(line, style+"│ ") {
+		t.Fatalf("frameTitlebarLine() = %q, want frame style before titlebar content", line)
+	}
+	if !strings.Contains(line, "\x1b[31mProjects"+Reset+style+strings.Repeat(" ", 9)) {
+		t.Fatalf("frameTitlebarLine() = %q, want embedded reset to resume frame style for padding", line)
+	}
+	if !strings.HasSuffix(line, "│"+Reset) {
+		t.Fatalf("frameTitlebarLine() = %q, want final reset after right border", line)
+	}
+	if strings.Contains(line, TitlebarStart) || strings.Contains(line, TitlebarRule) {
+		t.Fatalf("frameTitlebarLine() = %q, want no titlebar overlay ANSI", line)
+	}
+}
+
+func TestRendererFrameBackgroundResumesAfterContentResetBeforePadding(t *testing.T) {
+	t.Parallel()
+
+	theme := DefaultTheme
+	theme.Background = "\x1b[48;2;1;2;3m"
+	theme.Foreground = "\x1b[38;2;170;187;204m"
+	style := theme.Background + theme.Foreground
+	content := "\x1b[31mapi\x1b[0m"
+	var out bytes.Buffer
+	NewRenderer(theme).RenderFrame(&out, content, Layout{Rows: 4, Cols: 12})
+
+	lines := strings.Split(out.String(), "\r\n")
+	if got, want := len(lines), 4; got != want {
+		t.Fatalf("frame rows = %d, want %d: %q", got, want, out.String())
+	}
+	contentRow := lines[1]
+	if !strings.Contains(contentRow, "\x1b[31mapi"+Reset+style+strings.Repeat(" ", 7)+"│") {
+		t.Fatalf("content row = %q, want background style resumed for padding and right border", contentRow)
+	}
+	assertFrameResetsResumeStyleOrEnd(t, contentRow, style)
+	if got, want := VisibleLen(contentRow), 12; got != want {
+		t.Fatalf("content row width = %d, want %d: %q", got, want, contentRow)
+	}
+}
+
+func assertFrameResetsResumeStyleOrEnd(t *testing.T, line, style string) {
+	t.Helper()
+	for start := 0; ; {
+		idx := strings.Index(line[start:], Reset)
+		if idx < 0 {
+			return
+		}
+		after := start + idx + len(Reset)
+		if after == len(line) || strings.HasPrefix(line[after:], style) {
+			start = after
+			continue
+		}
+		t.Fatalf("line = %q, want reset followed by frame style %q or row end", line, style)
 	}
 }
 
@@ -124,11 +322,10 @@ func TestFrameTitlebarChipsLineResetsAroundBordersAndPadsBody(t *testing.T) {
 
 	wantBody := " " +
 		ChipActiveStart + " A " + Reset +
-		ChipInactiveStart + " " + Reset +
+		" " +
 		ChipInactiveStart + " B " + Reset +
-		TitlebarStart +
 		strings.Repeat(" ", 10)
-	if got, want := line, Reset+"│"+TitlebarStart+wantBody+Reset+"│"+Reset; got != want {
+	if got, want := line, "│"+wantBody+"│"; got != want {
 		t.Fatalf("frameTitlebarChipsLine() = %q, want %q", got, want)
 	}
 	if got, want := VisibleLen(line), innerWidth+2; got != want {
@@ -136,6 +333,48 @@ func TestFrameTitlebarChipsLineResetsAroundBordersAndPadsBody(t *testing.T) {
 	}
 	if hasActiveStyle(line) {
 		t.Fatalf("frameTitlebarChipsLine() = %q, want reset after right border", line)
+	}
+}
+
+func TestFrameTitlebarChipsLineUsesFrameStyleForGaps(t *testing.T) {
+	t.Parallel()
+
+	theme := DefaultTheme
+	theme.Background = "\x1b[48;2;1;2;3m"
+	theme.Foreground = "\x1b[38;2;170;187;204m"
+	line := frameTitlebarChipsLine(theme, 18, []Chip{
+		{Label: "A", Active: true},
+		{Label: "B"},
+	})
+	style := theme.Background + theme.Foreground
+
+	if !strings.Contains(line, ChipActiveStart+" A "+Reset+style+" "+ChipInactiveStart+" B "+Reset+style) {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want chip gap and right pad to resume frame style", line)
+	}
+	if strings.Contains(line, TitlebarStart) || strings.Contains(line, TitlebarRule) {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want no titlebar overlay ANSI", line)
+	}
+}
+
+func TestFrameTitlebarChipsLineKeepsRightPadStyledWhenStripFills(t *testing.T) {
+	t.Parallel()
+
+	const innerWidth = 10
+	line := frameTitlebarChipsLine(DefaultTheme, innerWidth, []Chip{
+		{Label: "Project Settings", Active: true},
+	})
+
+	if got, want := VisibleLen(line), innerWidth+2; got != want {
+		t.Fatalf("VisibleLen(chip titlebar line) = %d, want %d: %q", got, want, line)
+	}
+	if !strings.Contains(line, ChipActiveStart+" Projec "+Reset) {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want truncated chip before right pad", line)
+	}
+	if !strings.HasSuffix(line, Reset+" │") {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want inherited right padding cell before right border", line)
+	}
+	if strings.Contains(line, TitlebarStart) || strings.Contains(line, TitlebarRule) {
+		t.Fatalf("frameTitlebarChipsLine() = %q, want no titlebar overlay ANSI", line)
 	}
 }
 
@@ -249,8 +488,14 @@ func TestVisibleLenUsesTerminalCellWidth(t *testing.T) {
 	if got, want := VisibleLen("프로젝트"), 8; got != want {
 		t.Fatalf("VisibleLen(korean) = %d, want terminal cell width %d", got, want)
 	}
+	if got, want := VisibleLen("api⏳✅"), 7; got != want {
+		t.Fatalf("VisibleLen(lower emoji) = %d, want terminal cell width %d", got, want)
+	}
 	if got, want := VisibleLen("api🔔"), 5; got != want {
 		t.Fatalf("VisibleLen(emoji) = %d, want terminal cell width %d", got, want)
+	}
+	if got, want := VisibleLen("☑️"), 1; got != want {
+		t.Fatalf("VisibleLen(variation selector) = %d, want terminal cell width %d", got, want)
 	}
 	if got, want := VisibleLen("e\u0301"), 1; got != want {
 		t.Fatalf("VisibleLen(combining) = %d, want terminal cell width %d", got, want)
@@ -443,7 +688,7 @@ func TestChipANSIGoldenMatchesTmuxWindowStatusPalette(t *testing.T) {
 	if got, want := TmuxWindowInactiveFg, "colour245"; got != want {
 		t.Fatalf("inactive fg palette = %q, want %q", got, want)
 	}
-	if got, want := TmuxWindowActiveBg, "colour238"; got != want {
+	if got, want := TmuxWindowActiveBg, "colour240"; got != want {
 		t.Fatalf("active bg palette = %q, want %q", got, want)
 	}
 	if got, want := TmuxWindowActiveFg, "colour231"; got != want {
@@ -452,7 +697,7 @@ func TestChipANSIGoldenMatchesTmuxWindowStatusPalette(t *testing.T) {
 	if got, want := ChipInactiveStart, "\x1b[48;5;235m\x1b[38;5;245m"; got != want {
 		t.Fatalf("inactive chip ANSI = %q, want %q", got, want)
 	}
-	if got, want := ChipActiveStart, "\x1b[1m\x1b[48;5;238m\x1b[38;5;231m"; got != want {
+	if got, want := ChipActiveStart, "\x1b[1m\x1b[48;5;240m\x1b[38;5;231m"; got != want {
 		t.Fatalf("active chip ANSI = %q, want %q", got, want)
 	}
 	if got, want := ChipDisabledStart, "\x1b[2m\x1b[48;5;235m\x1b[38;5;245m"; got != want {

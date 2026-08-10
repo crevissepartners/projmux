@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +63,7 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.Footer, "Enter: switch to previewed target\nCtrl-S: state overview\nCtrl-X: kill focused session\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+	if got, want := gotOptions.Footer, "Preview follows the focused target.\nSession state opens read-only; destructive actions keep the current confirmation policy."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.ExpectKeys, []string{sessionsKillExpectKey, sessionsStateExpectKey}; !equalStrings(got, want) {
@@ -83,9 +84,6 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotOptions.Bindings, []string{
 		"esc:abort",
 		"ctrl-n:abort",
-		"alt-1:abort",
-		"alt-2:abort",
-		"alt-3:abort",
 		"left:execute-silent(exec '/tmp/proj mux/bin/projmux' 'session-popup' 'cycle-window' {2} 'prev')+refresh-preview",
 		"right:execute-silent(exec '/tmp/proj mux/bin/projmux' 'session-popup' 'cycle-window' {2} 'next')+refresh-preview",
 		"alt-up:execute-silent(exec '/tmp/proj mux/bin/projmux' 'session-popup' 'cycle-pane' {2} 'prev')+refresh-preview",
@@ -133,7 +131,7 @@ func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.Footer, "Enter: switch to previewed target\nCtrl-S: state overview\nCtrl-X: kill focused session\nLeft/Right: preview window\nAlt-Up/Alt-Down: preview pane"; got != want {
+	if got, want := gotOptions.Footer, "Preview follows the focused target.\nSession state opens read-only; destructive actions keep the current confirmation policy."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.PreviewWindow, "right,60%,border-left"; got != want {
@@ -247,6 +245,7 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 	runnerCalls := 0
 	opener := &recordingSessionsOpener{}
 	killer := &recordingSessionsKiller{}
+	var cleaned []string
 	var gotOptions []intpickercompat.Options
 	cmd := &sessionsCommand{
 		recent: sessionsRecentFunc(func(context.Context) ([]inttmux.RecentSessionSummary, error) {
@@ -278,6 +277,9 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		opener:     opener,
 		killer:     killer,
+		cleanupKilledSession: func(sessionName string) {
+			cleaned = append(cleaned, sessionName)
+		},
 	}
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -293,6 +295,9 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 	}
 	if got, want := killer.killSessionName, "repo-b"; got != want {
 		t.Fatalf("kill session = %q, want %q", got, want)
+	}
+	if got, want := cleaned, []string{"repo-b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("cleaned sessions = %q, want %q", got, want)
 	}
 	if got := opener.openSessionName; got != "" {
 		t.Fatalf("open session called unexpectedly: %q", got)

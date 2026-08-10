@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,7 +14,40 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
+	"github.com/crevissepartners/projmux/internal/i18n"
 )
+
+func TestPersistAntigravityContextUsage(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	now := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	cmd.now = func() time.Time { return now }
+
+	// Numeric context_window is persisted so the adapter surfaces it.
+	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: "42%"})
+
+	baseDir, err := cmd.usageStateDir()
+	if err != nil {
+		t.Fatalf("usageStateDir: %v", err)
+	}
+	snaps, err := antigravityadapter.New(baseDir).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(snaps) != 1 || snaps[0].Pct != 42 || snaps[0].Model != "antigravity" {
+		t.Fatalf("snapshots = %#v, want single antigravity 42%% context row", snaps)
+	}
+
+	// Non-numeric / empty values are ignored (clean degrade, no garbage file
+	// churn) — the previously persisted value stays intact.
+	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: ""})
+	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: "n/a"})
+	snaps, err = antigravityadapter.New(baseDir).Collect(context.Background())
+	if err != nil || len(snaps) != 1 || snaps[0].Pct != 42 {
+		t.Fatalf("after non-numeric writes snapshots = %#v err = %v, want unchanged 42%%", snaps, err)
+	}
+}
 
 func TestParseCodexHookPayload(t *testing.T) {
 	t.Parallel()
@@ -121,6 +155,7 @@ func TestIngestCodexHookPermissionPushesCriticalQueueEntryAndMetadata(t *testing
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeSourceOption, "hook"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeUpdatedAtOption, "1970-01-01T00:00:00Z"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindApprovalRequired}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
@@ -133,13 +168,13 @@ func TestIngestCodexHookPermissionPushesCriticalQueueEntryAndMetadata(t *testing
 	if got.ID != "ai:codex:permission:codex-session:turn-456:Bash:go test ./internal/app" {
 		t.Fatalf("ID = %q", got.ID)
 	}
-	if got.Text != "Codex · 승인 필요 · Bash: go test ./internal/app" {
+	if got.Text != "Bash: go test ./internal/app" {
 		t.Fatalf("Text = %q", got.Text)
 	}
 	if got.Severity != notify.SeverityCritical {
 		t.Fatalf("Severity = %q", got.Severity)
 	}
-	if got.Metadata["agent"] != "codex" || got.Metadata["event"] != "PermissionRequest" || got.Metadata["model"] != "gpt-5.1-codex" || got.Metadata["tool_input.command"] != "go test ./internal/app" {
+	if got.Metadata["agent"] != "codex" || got.Metadata["category"] != "approval_required" || got.Metadata["event"] != "PermissionRequest" || got.Metadata["model"] != "gpt-5.1-codex" || got.Metadata["tool_input.command"] != "go test ./internal/app" {
 		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
 	assertNoAIPaneTopicWrite(t, cmdRecorder(cmd).commands)
@@ -165,8 +200,11 @@ func TestIngestCodexHookStopPushesInfoQueueEntry(t *testing.T) {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 	got := store.pushed[0]
-	if got.ID != "ai:codex:stop:codex-session:turn-456" || got.Text != "Codex · 응답 완료" || got.Severity != notify.SeverityInfo {
+	if got.ID != "ai:codex:stop:codex-session:turn-456" || got.Text != "Ready" || got.Severity != notify.SeverityInfo || got.Metadata["category"] != "response_complete" {
 		t.Fatalf("pushed = %#v", got)
+	}
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindResponseComplete}}) {
+		t.Fatalf("commands = %#v, want response_complete semantic badge", cmdRecorder(cmd).commands)
 	}
 }
 
@@ -193,6 +231,7 @@ func TestIngestCodexHookUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeCodex}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "thinking"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindInProgress}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", attentionStateOption, attentionStateBusy}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
@@ -294,7 +333,7 @@ func TestIngestCodexHookRuntimeNotifyPushesGenericQueueOnlyRow(t *testing.T) {
 		t.Fatalf("push count = %d, want 1: %#v", len(store.pushed), store.pushed)
 	}
 	got := store.pushed[0]
-	if got.Text != "Codex · PreToolUse · Bash" || got.Severity != notify.SeverityInfo {
+	if got.Text != "PreToolUse · Bash" || got.Severity != notify.SeverityInfo {
 		t.Fatalf("pushed = %#v", got)
 	}
 	if got.Metadata["provider"] != "codex" || got.Metadata["event"] != "PreToolUse" || got.Metadata["tool"] != "Bash" || got.Metadata["cwd"] != "/repo/projmux" || got.Metadata["session_id"] != "codex-session" || got.Metadata["turn_id"] != "turn-456" {
@@ -361,7 +400,7 @@ func TestIngestCodexHookRuntimeNotifySuppressesSendNotiHook(t *testing.T) {
 	if len(store.pushed) != 1 {
 		t.Fatalf("push count = %d, want 1: %#v", len(store.pushed), store.pushed)
 	}
-	if got := store.pushed[0].Text; got != "Codex · PostToolUse · Edit" {
+	if got := store.pushed[0].Text; got != "PostToolUse · Edit" {
 		t.Fatalf("Text = %q", got)
 	}
 	if runner.calls != 0 {
@@ -512,8 +551,10 @@ func TestIngestCodexHookBlankSessionIDDoesNotRewriteResumeMetadata(t *testing.T)
 func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 	home := t.TempDir()
 	store := &stubNotifyStore{}
+	events := &stubNotifyQueueEvents{publishErr: errors.New("listener unavailable")}
 	cmd := testAICommand(home)
 	cmd.notifyStore = store
+	cmd.events = events
 	cmd.now = func() time.Time { return time.Unix(100, 0) }
 
 	lastBellAt := ""
@@ -548,6 +589,9 @@ func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 	if len(store.pushed) != 1 {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
+	if events.publishCalls != 1 {
+		t.Fatalf("publish calls = %d, want one successful queue write event", events.publishCalls)
+	}
 	got := store.pushed[0]
 	if got.ID != "ai:bell:workspace:%7" {
 		t.Fatalf("ID = %q", got.ID)
@@ -572,20 +616,6 @@ func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 	}
 }
 
-func TestSplitTmuxUnitFieldsAcceptsRawAndEscapedSeparators(t *testing.T) {
-	for name, raw := range map[string]string{
-		"raw":     "one\x1ftwo\x1fthree",
-		"escaped": "one\\037two\\037three",
-	} {
-		t.Run(name, func(t *testing.T) {
-			got := splitTmuxUnitFields(raw)
-			if !reflect.DeepEqual(got, []string{"one", "two", "three"}) {
-				t.Fatalf("splitTmuxUnitFields(%q) = %#v", raw, got)
-			}
-		})
-	}
-}
-
 func TestIngestBellRequiresPaneFlag(t *testing.T) {
 	cmd := testAICommand(t.TempDir())
 	err := cmd.Run([]string{"ingest", "bell"}, &bytes.Buffer{}, &bytes.Buffer{})
@@ -605,13 +635,13 @@ func TestAIIngestLogPrintsTailAndPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("aiIngestLogPath() error = %v", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(strings.Join([]string{
 		`{"at":"2026-01-01T00:00:00Z","source":"codex-hook","event":"Stop","result":"notify","pane":"%1"}`,
 		`{"at":"2026-01-01T00:00:01Z","source":"claude-hook","event":"SubagentStop","result":"quiet","reason":"high-volume event","pane":"%2"}`,
-	}, "\n")+"\n"), 0o600); err != nil {
+	}, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -621,6 +651,15 @@ func TestAIIngestLogPrintsTailAndPath(t *testing.T) {
 	}
 	if got := out.String(); !strings.Contains(got, "claude-hook SubagentStop quiet") || strings.Contains(got, "codex-hook Stop notify") {
 		t.Fatalf("tail output = %q", got)
+	}
+	for modePath, want := range map[string]os.FileMode{filepath.Dir(path): 0o700, path: 0o600} {
+		info, err := os.Stat(modePath)
+		if err != nil {
+			t.Fatalf("Stat(%q): %v", modePath, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s mode = %#o, want %#o", modePath, got, want)
+		}
 	}
 
 	out.Reset()
@@ -752,12 +791,12 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				ToolName:  "Bash",
 				ToolInput: map[string]any{"command": "go test ./internal/app"},
 			}),
-			want: aiNotifyBody{Text: "Codex · 승인 필요 · Bash: go test ./internal/app", Severity: notify.SeverityCritical},
+			want: aiNotifyBody{Text: "Bash: go test ./internal/app", Severity: notify.SeverityCritical, Agent: "codex", Category: "approval_required"},
 		},
 		{
 			name: "codex hook stop",
 			body: formatCodexHookStopNotifyBody(codexHookPayload{}),
-			want: aiNotifyBody{Text: "Codex · 응답 완료", Severity: notify.SeverityInfo},
+			want: aiNotifyBody{Text: "Ready", Severity: notify.SeverityInfo, Agent: "codex", Category: "response_complete"},
 		},
 		{
 			name: "claude notification permission prompt",
@@ -765,7 +804,7 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				NotificationType: "permission_prompt",
 				Message:          "Approve Bash?",
 			}),
-			want: aiNotifyBody{Text: "Claude · 승인 필요 · Approve Bash?", Severity: notify.SeverityCritical},
+			want: aiNotifyBody{Text: "Approve Bash?", Severity: notify.SeverityCritical, Agent: "claude", Category: "approval_required"},
 		},
 		{
 			name: "claude notification idle",
@@ -773,7 +812,7 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				NotificationType: "idle_prompt",
 				Message:          "Waiting for your next request",
 			}),
-			want: aiNotifyBody{Text: "Claude · 응답 완료 · Waiting for your next request", Severity: notify.SeverityInfo},
+			want: aiNotifyBody{Text: "Waiting for your next request", Severity: notify.SeverityInfo, Agent: "claude", Category: "response_complete"},
 		},
 		{
 			name: "claude permission request bash command",
@@ -782,12 +821,12 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				ToolUseID: "tool-123",
 				ToolInput: map[string]any{"command": "rm -rf /tmp/old-cache"},
 			}),
-			want: aiNotifyBody{Text: "Claude · 승인 필요 · Bash: rm -rf /tmp/old-cache", Severity: notify.SeverityCritical},
+			want: aiNotifyBody{Text: "Bash: rm -rf /tmp/old-cache", Severity: notify.SeverityCritical, Agent: "claude", Category: "approval_required"},
 		},
 		{
 			name: "claude stop transcript summary",
 			body: formatClaudeStopNotifyBody("implemented and verified"),
-			want: aiNotifyBody{Text: "Claude · 응답 완료 · implemented and verified", Severity: notify.SeverityInfo},
+			want: aiNotifyBody{Text: "implemented and verified", Severity: notify.SeverityInfo, Agent: "claude", Category: "response_complete"},
 		},
 		{
 			name: "claude stop failure error labels",
@@ -795,7 +834,7 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				ErrorType:    "timeout",
 				ErrorMessage: "tool call exceeded deadline",
 			}),
-			want: aiNotifyBody{Text: "Claude · 오류 · timeout · tool call exceeded deadline", Severity: notify.SeverityCritical},
+			want: aiNotifyBody{Text: "timeout · tool call exceeded deadline", Severity: notify.SeverityCritical, Agent: "claude", Category: "error"},
 		},
 		{
 			name: "claude subagent stop labels",
@@ -803,7 +842,7 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				SubagentType: "reviewer",
 				SubagentID:   "sub-7",
 			}),
-			want: aiNotifyBody{Text: "Claude · 서브에이전트 종료 · reviewer · sub-7", Severity: notify.SeverityInfo},
+			want: aiNotifyBody{Text: "reviewer · sub-7", Severity: notify.SeverityInfo, Agent: "claude", Category: "subagent_stopped"},
 		},
 		{
 			name: "claude teammate idle labels",
@@ -812,7 +851,7 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 				TeammateID:      "team-3",
 				TeammateContext: "waiting for review",
 			}),
-			want: aiNotifyBody{Text: "Claude · 팀메이트 대기 · sam · team-3 · waiting for review", Severity: notify.SeverityInfo},
+			want: aiNotifyBody{Text: "sam · team-3 · waiting for review", Severity: notify.SeverityInfo, Agent: "claude", Category: "teammate_waiting"},
 		},
 	}
 
@@ -820,6 +859,98 @@ func TestAIHookNotifyBodyCatalog(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.body != tc.want {
 				t.Fatalf("body = %#v, want %#v", tc.body, tc.want)
+			}
+		})
+	}
+}
+
+func TestAIHookRenderedNotifyTextLocalizesCategoryAndPreservesLiterals(t *testing.T) {
+	t.Parallel()
+
+	stop := formatCodexHookStopNotifyBody(codexHookPayload{})
+	stopMetadata := mergeAINotifyBodyMetadata(nil, stop)
+	if got, want := renderAINotifyText(stop.Text, stopMetadata, i18n.FallbackLocale).Summary, "Codex · Response complete"; got != want {
+		t.Fatalf("en-US stop summary = %q, want %q", got, want)
+	}
+	if got, want := renderAINotifyText(stop.Text, stopMetadata, i18n.Locale("ko-KR")).Summary, "Codex · 응답 완료"; got != want {
+		t.Fatalf("ko-KR stop summary = %q, want %q", got, want)
+	}
+
+	permission := formatCodexHookPermissionNotifyBody(codexHookPayload{
+		ToolName:  "Bash",
+		ToolInput: map[string]any{"command": "go test ./internal/app"},
+	})
+	rendered := renderAINotifyText(permission.Text, mergeAINotifyBodyMetadata(nil, permission), i18n.Locale("ko-KR"))
+	for _, want := range []string{"Codex", "승인 필요", "Bash", "go test ./internal/app"} {
+		if !strings.Contains(rendered.Full, want) {
+			t.Fatalf("rendered permission = %q, want literal/category %q", rendered.Full, want)
+		}
+	}
+}
+
+func TestClaudeHookRenderedNotifyTextCatalogCoveragePreservesPayloads(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body aiNotifyBody
+		want []string
+	}{
+		{
+			name: "permission notification message",
+			body: formatClaudeNotificationNotifyBody(claudeHookPayload{
+				NotificationType: "permission_prompt",
+				Message:          "Approve Bash?",
+			}),
+			want: []string{"Claude", "승인 필요", "Approve Bash?"},
+		},
+		{
+			name: "idle notification message",
+			body: formatClaudeNotificationNotifyBody(claudeHookPayload{
+				NotificationType: "idle_prompt",
+				Message:          "Waiting for your next request",
+			}),
+			want: []string{"Claude", "응답 완료", "Waiting for your next request"},
+		},
+		{
+			name: "stop transcript body",
+			body: formatClaudeStopNotifyBody("implemented and verified"),
+			want: []string{"Claude", "응답 완료", "implemented and verified"},
+		},
+		{
+			name: "stop failure error",
+			body: formatClaudeStopFailureNotifyBody(claudeHookPayload{
+				ErrorType:    "timeout",
+				ErrorMessage: "tool call exceeded deadline",
+			}),
+			want: []string{"Claude", "오류", "timeout", "tool call exceeded deadline"},
+		},
+		{
+			name: "subagent stopped",
+			body: formatClaudeSubagentStopNotifyBody(claudeHookPayload{
+				SubagentType: "reviewer",
+				SubagentID:   "sub-7",
+			}),
+			want: []string{"Claude", "서브에이전트 종료", "reviewer", "sub-7"},
+		},
+		{
+			name: "teammate waiting",
+			body: formatClaudeTeammateIdleNotifyBody(claudeHookPayload{
+				TeammateName:    "sam",
+				TeammateID:      "team-3",
+				TeammateContext: "waiting for review",
+			}),
+			want: []string{"Claude", "팀메이트 대기", "sam", "team-3", "waiting for review"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := renderAINotifyText(tc.body.Text, mergeAINotifyBodyMetadata(nil, tc.body), i18n.Locale("ko-KR"))
+			for _, want := range tc.want {
+				if !strings.Contains(rendered.Full, want) {
+					t.Fatalf("rendered = %q, want %q", rendered.Full, want)
+				}
 			}
 		})
 	}
@@ -857,19 +988,24 @@ func TestAIHookDesktopNotificationUsesQueueTextPayload(t *testing.T) {
 		}
 	}
 
-	text := "Codex · 승인 필요 · Bash: go test ./internal/app"
-	notification := cmd.aiTextNotification("%7", text, notify.SeverityCritical)
-	if notification.Summary != text {
-		t.Fatalf("Summary = %q, want queue text %q", notification.Summary, text)
+	text := "Bash: go test ./internal/app"
+	metadata := map[string]string{"agent": "codex", "category": "approval_required"}
+	notification := cmd.aiTextNotificationWithMetadata("%7", text, notify.SeverityCritical, metadata)
+	if notification.Summary != "Codex · Approval required" {
+		t.Fatalf("Summary = %q", notification.Summary)
 	}
 	if notification.Urgency != "normal" {
 		t.Fatalf("Urgency = %q, want OS urgency normal for critical queue text", notification.Urgency)
 	}
-	if !strings.Contains(notification.Body, "projmux/feat/hooks") || !strings.Contains(notification.Body, "workspace:editor") {
-		t.Fatalf("Body = %q, want project/session context", notification.Body)
+	if !strings.Contains(notification.Body, text) || !strings.Contains(notification.Body, "projmux/feat/hooks") || strings.Contains(notification.Body, "workspace:editor") {
+		t.Fatalf("Body = %q, want actionable text and project context only", notification.Body)
+	}
+	queueText := notifyQueueDisplayText(notify.Notification{Text: text, Source: notify.SourceAI, Metadata: metadata}, i18n.FallbackLocale)
+	if queueText != "Codex · Approval required · Bash: go test ./internal/app" || !strings.Contains(queueText, text) {
+		t.Fatalf("queue text = %q, want shared rendered category + literal body", queueText)
 	}
 
-	if err := cmd.notifyAIText("%7", text, notify.SeverityCritical, true); err != nil {
+	if err := cmd.notifyAITextWithMetadata("%7", text, notify.SeverityCritical, true, metadata); err != nil {
 		t.Fatalf("notifyAIText error = %v", err)
 	}
 	var notifySend recordedAICommand
@@ -882,7 +1018,7 @@ func TestAIHookDesktopNotificationUsesQueueTextPayload(t *testing.T) {
 	if notifySend.name == "" {
 		t.Fatalf("commands = %#v, want notify-send dispatch", cmdRecorder(cmd).commands)
 	}
-	if !reflect.DeepEqual(notifySend.args[len(notifySend.args)-2:], []string{text, notification.Body}) {
+	if !reflect.DeepEqual(notifySend.args[len(notifySend.args)-2:], []string{notification.Summary, notification.Body}) {
 		t.Fatalf("notify-send args = %#v, want summary/body from shared payload", notifySend.args)
 	}
 	for _, want := range []string{"--urgency=normal", "--expire-time=5000"} {
@@ -926,6 +1062,7 @@ func TestIngestClaudeUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneHookActiveOption, "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeClaude}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneStateOption, "thinking"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneBadgeKindOption, aiBadgeKindInProgress}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", attentionStateOption, attentionStateBusy}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
@@ -963,6 +1100,7 @@ func TestIngestClaudePermissionPushesCriticalQueueEntryAndHookMarker(t *testing.
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneTranscriptPathOption, "/tmp/claude-transcript.jsonl"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeUpdatedAtOption, "1970-01-01T00:00:00Z"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindApprovalRequired}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
@@ -975,13 +1113,13 @@ func TestIngestClaudePermissionPushesCriticalQueueEntryAndHookMarker(t *testing.
 	if got.ID != "ai:claude:permission:claude-session:tool-123" {
 		t.Fatalf("ID = %q", got.ID)
 	}
-	if got.Text != "Claude · 승인 필요 · Bash: go test ./internal/app" {
+	if got.Text != "Bash: go test ./internal/app" {
 		t.Fatalf("Text = %q", got.Text)
 	}
 	if got.Severity != notify.SeverityCritical {
 		t.Fatalf("Severity = %q", got.Severity)
 	}
-	if got.Metadata["agent"] != "claude" || got.Metadata["event"] != "PermissionRequest" || got.Metadata["tool_input.command"] != "go test ./internal/app" {
+	if got.Metadata["agent"] != "claude" || got.Metadata["category"] != "approval_required" || got.Metadata["event"] != "PermissionRequest" || got.Metadata["tool_input.command"] != "go test ./internal/app" {
 		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
 	assertNoAIPaneTopicWrite(t, cmdRecorder(cmd).commands)
@@ -1007,8 +1145,11 @@ func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook Stop error = %v", err)
 	}
-	if len(store.pushed) != 1 || store.pushed[0].Text != "Claude · 응답 완료 · implemented and verified" {
+	if len(store.pushed) != 1 || store.pushed[0].Text != "implemented and verified" || store.pushed[0].Metadata["category"] != "response_complete" {
 		t.Fatalf("pushed = %#v", store.pushed)
+	}
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindResponseComplete}}) {
+		t.Fatalf("commands = %#v, want response_complete semantic badge", cmdRecorder(cmd).commands)
 	}
 
 	store = &stubNotifyStore{}
@@ -1023,8 +1164,11 @@ func TestIngestClaudeStopUsesTranscriptOrGenericFallback(t *testing.T) {
 	if err := cmd.Run([]string{"ingest", "claude-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest claude-hook Stop without transcript error = %v", err)
 	}
-	if len(store.pushed) != 1 || store.pushed[0].Text != "Claude · 응답 완료" {
+	if len(store.pushed) != 1 || store.pushed[0].Text != "Ready" || store.pushed[0].Metadata["category"] != "response_complete" {
 		t.Fatalf("fallback pushed = %#v", store.pushed)
+	}
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindResponseComplete}}) {
+		t.Fatalf("fallback commands = %#v, want response_complete semantic badge", cmdRecorder(cmd).commands)
 	}
 }
 
@@ -1049,8 +1193,11 @@ func TestIngestClaudeNotificationMapsInputReady(t *testing.T) {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 	got := store.pushed[0]
-	if got.Text != "Claude · 입력 필요 · Need deployment target" || got.Severity != notify.SeverityCritical {
+	if got.Text != "Need deployment target" || got.Severity != notify.SeverityCritical || got.Metadata["category"] != "input_required" {
 		t.Fatalf("pushed = %#v", got)
+	}
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindInputRequired}}) {
+		t.Fatalf("commands = %#v, want input_required semantic badge", cmdRecorder(cmd).commands)
 	}
 }
 
@@ -1074,7 +1221,7 @@ func TestIngestClaudeExtraEvents(t *testing.T) {
 				"error_message": "tool call exceeded deadline"
 			}`,
 			wantID:       "ai:claude:stop-failure:claude-session:timeout:tool call exceeded deadline",
-			wantText:     "Claude · 오류 · timeout · tool call exceeded deadline",
+			wantText:     "timeout · tool call exceeded deadline",
 			wantSeverity: notify.SeverityCritical,
 			wantPush:     true,
 			wantMetadata: map[string]string{
@@ -1102,7 +1249,7 @@ func TestIngestClaudeExtraEvents(t *testing.T) {
 				"teammate": {"name": "sam", "id": "team-3", "context": "waiting for review"}
 			}`,
 			wantID:       "ai:claude:teammate-idle:claude-session:sam:team-3:waiting for review",
-			wantText:     "Claude · 팀메이트 대기 · sam · team-3 · waiting for review",
+			wantText:     "sam · team-3 · waiting for review",
 			wantSeverity: notify.SeverityInfo,
 			wantPush:     true,
 			wantMetadata: map[string]string{
@@ -1211,7 +1358,7 @@ func TestIngestClaudeRuntimeNotifyAppliesToKnownQuietEvent(t *testing.T) {
 	if len(store.pushed) != 1 {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
-	if got := store.pushed[0].Text; got != "Claude · 서브에이전트 종료 · reviewer · sub-7" {
+	if got := store.pushed[0].Text; got != "reviewer · sub-7" {
 		t.Fatalf("Text = %q", got)
 	}
 }
@@ -1290,6 +1437,265 @@ func TestIngestClaudeUnknownEventFallsBackToQuiet(t *testing.T) {
 	}
 }
 
+func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
+	t.Parallel()
+
+	payload, err := parseAntigravityHookPayload([]byte(`{
+		"eventName": "Stop",
+		"conversationId": "ag-conv-123",
+		"workspace": {"path": "/repo/projmux"},
+		"transcriptPath": "/tmp/ag.jsonl",
+		"terminationReason": "completed",
+		"fullyIdle": true,
+		"statusline": {
+			"agent_state": "idle",
+			"tool_confirmation_pending": false,
+			"context_window": "42%"
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("parseAntigravityHookPayload() error = %v", err)
+	}
+	if payload.EventName != "Stop" || payload.ConversationID != "ag-conv-123" || payload.CWD != "/repo/projmux" || payload.TranscriptPath != "/tmp/ag.jsonl" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if payload.TerminationReason != "completed" || !payload.FullyIdle || !payload.FullyIdleSet || payload.ToolConfirmationPending || payload.AgentState != "idle" || payload.ContextWindow != "42%" {
+		t.Fatalf("observed fields = %+v", payload)
+	}
+
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","tool_confirmation_pending":true}`))
+	if err != nil {
+		t.Fatalf("parseAntigravityHookPayload() statusline-only error = %v", err)
+	}
+	if payload.EventName != "Statusline" || !payload.ToolConfirmationPending {
+		t.Fatalf("statusline payload = %+v, want Statusline approval signal", payload)
+	}
+
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","agent_state":"idle","context_window":"38%"}`))
+	if err != nil {
+		t.Fatalf("parseAntigravityHookPayload() statusline-shaped error = %v", err)
+	}
+	if payload.EventName != "Statusline" || payload.ToolConfirmationPending || payload.ToolConfirmationPendingSet {
+		t.Fatalf("statusline-shaped payload = %+v, want Statusline without pending metadata", payload)
+	}
+	if metadata := payload.antigravityMetadata(); metadata["tool_confirmation_pending"] != "" {
+		t.Fatalf("metadata = %#v, want absent tool_confirmation_pending when field was absent", metadata)
+	}
+
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","toolConfirmationPending":false}`))
+	if err != nil {
+		t.Fatalf("parseAntigravityHookPayload() explicit false statusline error = %v", err)
+	}
+	if payload.EventName != "Statusline" || payload.ToolConfirmationPending || !payload.ToolConfirmationPendingSet {
+		t.Fatalf("explicit false statusline payload = %+v, want Statusline with pending=false", payload)
+	}
+}
+
+func TestIngestAntigravityStopPushesCompletionMetadataAndResumeState(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	conversationID := "123e4567-e89b-12d3-a456-426614174000"
+	cmd.stdin = strings.NewReader(`{
+		"eventName": "Stop",
+		"conversationId": "` + conversationID + `",
+		"cwd": "/repo/projmux",
+		"transcriptPath": "/tmp/ag.jsonl",
+		"terminationReason": "completed",
+		"fullyIdle": true
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook Stop error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:antigravity:stop:"+conversationID || got.Text != "Ready" || got.Severity != notify.SeverityInfo {
+		t.Fatalf("pushed = %#v", got)
+	}
+	for key, want := range map[string]string{
+		"agent":              "antigravity",
+		"event":              "Stop",
+		"conversation_id":    conversationID,
+		"cwd":                "/repo/projmux",
+		"transcript_path":    "/tmp/ag.jsonl",
+		"termination_reason": "completed",
+		"fully_idle":         "true",
+		"category":           "response_complete",
+	} {
+		if got.Metadata[key] != want {
+			t.Fatalf("metadata[%s] = %q, want %q in %#v", key, got.Metadata[key], want, got.Metadata)
+		}
+	}
+	for _, want := range []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeAntigravity}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneThreadIDOption, conversationID}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneSessionIDOption, conversationID}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeIDOption, conversationID}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeSourceOption, "hook"}},
+	} {
+		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
+			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
+		}
+	}
+	if !hasRecordedAISetOption(cmdRecorder(cmd).commands, aiPaneResumeUpdatedAtOption) {
+		t.Fatalf("commands = %#v, want Antigravity resume updated timestamp", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestIngestAntigravityStopIgnoresToolConfirmationPendingForApproval(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"eventName": "Stop",
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux",
+		"tool_confirmation_pending": true,
+		"terminationReason": "completed"
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook Stop error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:antigravity:stop:ag-conv-123" || got.Metadata["category"] != "response_complete" || got.Severity != notify.SeverityInfo {
+		t.Fatalf("pushed = %#v, want Stop completion mapping", got)
+	}
+}
+
+func TestIngestAntigravityStopErrorPushesCritical(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"eventName": "Stop",
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux",
+		"terminationReason": "error",
+		"error": {"message": "tool failed"}
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook Stop error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.Severity != notify.SeverityCritical || got.Metadata["category"] != "error" || got.Metadata["error"] != "tool failed" {
+		t.Fatalf("pushed = %#v", got)
+	}
+}
+
+func TestIngestAntigravityStatuslineApprovalPushesCritical(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux",
+		"statusline": {
+			"agent_state": "waiting_for_tool",
+			"tool_confirmation_pending": true
+		}
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook Statusline error = %v", err)
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want 1", len(store.pushed))
+	}
+	got := store.pushed[0]
+	if got.ID != "ai:antigravity:approval:ag-conv-123:waiting_for_tool" || got.Severity != notify.SeverityCritical || got.Metadata["category"] != "approval_required" {
+		t.Fatalf("pushed = %#v", got)
+	}
+	if got.Metadata["agent"] != "antigravity" || got.Metadata["tool_confirmation_pending"] != "true" || got.Metadata["agent_state"] != "waiting_for_tool" {
+		t.Fatalf("metadata = %#v", got.Metadata)
+	}
+}
+
+func TestIngestAntigravityStatuslineWithoutPendingQuietLogsReason(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux",
+		"agent_state": "idle",
+		"context_window": "38%"
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook Statusline quiet error = %v", err)
+	}
+	if len(store.pushed) != 0 {
+		t.Fatalf("push count = %d, want 0: %#v", len(store.pushed), store.pushed)
+	}
+	var out bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "log", "--json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest log --json error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		`"source":"antigravity-hook"`,
+		`"event":"Statusline"`,
+		`"result":"quiet"`,
+		`"reason":"statusline has no pending tool confirmation"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("log output = %q, want %s", got, want)
+		}
+	}
+}
+
+func TestIngestAntigravityPostInvocationQuietWithoutNotify(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"eventName": "PostInvocation",
+		"conversationId": "ag-conv-123",
+		"cwd": "/repo/projmux"
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest antigravity-hook PostInvocation error = %v", err)
+	}
+	if len(store.pushed) != 0 {
+		t.Fatalf("push count = %d, want 0: %#v", len(store.pushed), store.pushed)
+	}
+	var out bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "log", "--json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run ingest log --json error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, `"source":"antigravity-hook"`) || !strings.Contains(got, `"event":"PostInvocation"`) || !strings.Contains(got, `"result":"quiet"`) {
+		t.Fatalf("log output = %q", got)
+	}
+}
+
 func TestAIWatchTitleSkipsHookActivePane(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
@@ -1356,6 +1762,29 @@ func codexHookIngestReadCommand(paneID string) func(context.Context, string, ...
 			return []byte(paneID + "\x1f/repo/projmux\x1f\x1fcodex-session\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{@projmux_ai_agent}"}):
 			return []byte("codex\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#S"}):
+			return []byte("workspace\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{window_id}"}):
+			return []byte("@1\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{pane_id}"}):
+			return []byte(paneID + "\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{socket_path}"}):
+			return []byte("/tmp/tmux-1000/projmux\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
+func antigravityIngestReadCommand(paneID string) func(context.Context, string, ...string) ([]byte, error) {
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}):
+			return []byte(paneID + "\x1f/repo/projmux\x1f\x1f\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{@projmux_ai_agent}"}):
+			return []byte("antigravity\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#S"}):
 			return []byte("workspace\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{window_id}"}):

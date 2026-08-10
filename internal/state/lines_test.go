@@ -61,6 +61,29 @@ func TestLinesFileWriteCreatesParentAndPersistsLines(t *testing.T) {
 	if string(raw) != "/tmp/app\n/tmp/lib\n" {
 		t.Fatalf("file contents = %q, want %q", string(raw), "/tmp/app\n/tmp/lib\n")
 	}
+	assertMode(t, filepath.Dir(path), PrivateDirMode)
+	assertMode(t, path, PrivateFileMode)
+}
+
+func TestLinesFileReadRepairsExistingPermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	path := filepath.Join(dir, "pins")
+	if err := os.WriteFile(path, []byte("/tmp/app\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	file := NewLinesFile(path)
+	for range 2 {
+		if _, err := file.Read(); err != nil {
+			t.Fatalf("Read() error = %v", err)
+		}
+	}
+
+	assertMode(t, dir, PrivateDirMode)
+	assertMode(t, path, PrivateFileMode)
 }
 
 func TestLinesFileWriteEmptyCreatesEmptyFile(t *testing.T) {

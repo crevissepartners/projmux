@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -15,30 +16,38 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
-const aiIngestListPanesFormat = "#{pane_id}\x1f#{pane_current_path}\x1f#{" + aiPaneThreadIDOption + "}\x1f#{" + aiPaneSessionIDOption + "}"
-const claudeTranscriptTailLimit = 256 * 1024
 const (
 	aiBellDedupeOption = "@projmux_ai_bell_notified_at"
 	aiBellDedupeWindow = 5 * time.Second
-	aiBellPaneFormat   = "#{session_name}\x1f#{window_id}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_title}\x1f#{pane_current_command}\x1f#{socket_path}"
 	aiIngestLogName    = "ai-ingest.log"
 	aiIngestLogMaxSize = 1024 * 1024
 	aiIngestLogRetain  = 512 * 1024
 )
 
-type codexHookPayload struct {
-	EventName      string
-	ThreadID       string
-	SessionID      string
-	TurnID         string
-	CWD            string
-	TranscriptPath string
-	Model          string
-	ToolName       string
-	ToolInput      map[string]any
+var aiIngestListPanesFormats = []string{
+	intmux.TmuxFormat("pane_id"),
+	intmux.TmuxFormat("pane_current_path"),
+	intmux.PaneOptionFormat(aiPaneThreadIDOption),
+	intmux.PaneOptionFormat(aiPaneSessionIDOption),
 }
+
+var aiIngestListPanesFormat = intmux.JoinFormats(intmux.FieldDelimiter, aiIngestListPanesFormats...)
+
+var aiBellPaneFormats = []string{
+	intmux.TmuxFormat("session_name"),
+	intmux.TmuxFormat("window_id"),
+	intmux.TmuxFormat("window_name"),
+	intmux.TmuxFormat("pane_id"),
+	intmux.TmuxFormat("pane_title"),
+	intmux.TmuxFormat("pane_current_command"),
+	intmux.TmuxFormat("socket_path"),
+}
+
+var aiBellPaneFormat = intmux.JoinFormats(intmux.FieldDelimiter, aiBellPaneFormats...)
 
 type aiPaneMatchInput struct {
 	CWD       string
@@ -64,26 +73,6 @@ type aiIngestLogEntry struct {
 	ThreadID  string `json:"thread_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	TurnID    string `json:"turn_id,omitempty"`
-}
-
-type claudeHookPayload struct {
-	EventName        string
-	SessionID        string
-	CWD              string
-	TranscriptPath   string
-	NotificationType string
-	Message          string
-	Prompt           string
-	ToolName         string
-	ToolUseID        string
-	ToolInput        map[string]any
-	ErrorType        string
-	ErrorMessage     string
-	SubagentType     string
-	SubagentID       string
-	TeammateName     string
-	TeammateID       string
-	TeammateContext  string
 }
 
 func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
@@ -126,6 +115,23 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 			return errors.New("claude hook payload exceeds 1 MiB")
 		}
 		return c.ingestClaudeHook(data)
+	case "antigravity-hook":
+		if len(args) != 1 {
+			printAIUsage(stderr)
+			return errors.New("ai ingest antigravity-hook reads JSON from stdin and accepts no payload arguments")
+		}
+		reader := c.stdin
+		if reader == nil {
+			reader = os.Stdin
+		}
+		data, err := io.ReadAll(io.LimitReader(reader, 1024*1024+1))
+		if err != nil {
+			return fmt.Errorf("read antigravity hook payload: %w", err)
+		}
+		if len(data) > 1024*1024 {
+			return errors.New("antigravity hook payload exceeds 1 MiB")
+		}
+		return c.ingestAntigravityHook(data)
 	case "bell":
 		return c.runIngestBell(args[1:], stderr)
 	case "log":
@@ -180,6 +186,7 @@ func (c *aiCommand) runIngestLog(args []string, stdout, stderr io.Writer) error 
 		return nil
 	}
 
+	localstate.RepairPrivateFile(path)
 	readFile := c.readFile
 	if readFile == nil {
 		readFile = os.ReadFile
@@ -242,9 +249,9 @@ func (c *aiCommand) ingestBell(paneID string) error {
 	}
 	text := composeBellNotifyText(info)
 	metadata := map[string]string{
-		"agent": "bell",
-		"event": "bell",
-		"pane":  info.Pane,
+		notify.MetaAgent: "bell",
+		notify.MetaEvent: "bell",
+		"pane":           info.Pane,
 	}
 	if info.Session != "" {
 		metadata["session"] = info.Session
@@ -282,6 +289,7 @@ func (c *aiCommand) ingestBell(paneID string) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "error", Reason: err.Error(), Pane: info.Pane})
 		return err
 	}
+	c.publishNotifyQueueRefreshBestEffort()
 	c.recordBellNotification(info.Pane)
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "notify", Pane: info.Pane})
 	return nil
@@ -299,22 +307,18 @@ func (c *aiCommand) aiNotifyStore() (notifyStore, error) {
 }
 
 func (c *aiCommand) readBellPaneInfo(paneID string) (bellPaneInfo, bool) {
-	out := c.readTrimmed("tmux", "display-message", "-p", "-t", paneID, aiBellPaneFormat)
-	if out == "" {
-		return bellPaneInfo{}, false
-	}
-	fields := splitTmuxUnitFields(out)
-	if len(fields) < 7 {
+	fields, err := c.muxRunner().DisplayPaneFields(context.Background(), paneID, aiBellPaneFormats...)
+	if err != nil || len(fields) < 7 {
 		return bellPaneInfo{}, false
 	}
 	info := bellPaneInfo{
-		Session: strings.TrimSpace(fields[0]),
-		Window:  strings.TrimSpace(fields[1]),
-		WinName: strings.TrimSpace(fields[2]),
-		Pane:    strings.TrimSpace(fields[3]),
-		Title:   strings.TrimSpace(fields[4]),
-		Command: strings.TrimSpace(fields[5]),
-		Socket:  strings.TrimSpace(fields[6]),
+		Session: fields[0],
+		Window:  fields[1],
+		WinName: fields[2],
+		Pane:    fields[3],
+		Title:   fields[4],
+		Command: fields[5],
+		Socket:  fields[6],
 	}
 	if info.Pane == "" {
 		info.Pane = paneID
@@ -346,400 +350,6 @@ func composeBellNotifyText(info bellPaneInfo) string {
 		return "bell"
 	}
 	return "bell · " + context
-}
-
-func (c *aiCommand) ingestCodexHook(data []byte) error {
-	payload, err := parseCodexHookPayload(data)
-	if err != nil {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Result: "error", Reason: err.Error()})
-		return err
-	}
-
-	paneID := c.matchAIPane(aiPaneMatchInput{
-		CWD:       payload.CWD,
-		ThreadID:  payload.matchThreadID(),
-		SessionID: payload.SessionID,
-	})
-	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-		return nil
-	}
-
-	metadata := payload.codexHookMetadata()
-	action := c.aiHookEffectiveAction(aiHookProviderCodex, payload.EventName)
-	switch payload.EventName {
-	case "UserPromptSubmit":
-		if action.Action == aiHookActionQuiet {
-			c.quietCodexHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
-		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
-		if err := c.applyAIStatusWithNotify("thinking", paneID, attentionNotifyInput{
-			Metadata: metadata,
-		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-			return err
-		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "state", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-		return nil
-	case "Stop":
-		if action.Action == aiHookActionQuiet {
-			c.quietCodexHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
-		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
-		body := formatCodexHookStopNotifyBody(payload)
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       codexHookNotifyID(payload, "stop"),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: metadata,
-				Force:    true,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-			return nil
-		}
-		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       codexHookNotifyID(payload, "stop"),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: metadata,
-			Force:    true,
-		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-			return err
-		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-		return nil
-	case "PermissionRequest":
-		if action.Action == aiHookActionQuiet {
-			c.quietCodexHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
-		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
-		body := formatCodexHookPermissionNotifyBody(payload)
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       codexHookNotifyID(payload, "permission"),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: metadata,
-				Force:    true,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-			return nil
-		}
-		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       codexHookNotifyID(payload, "permission"),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: metadata,
-			Force:    true,
-		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-			return err
-		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-		return nil
-	case "PreToolUse", "PostToolUse", "PreCompact", "PostCompact", "SessionStart":
-		if c.shouldPushGenericCodexHookNotify(action) {
-			if err := c.pushGenericCodexHookNotify(paneID, payload); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-			return nil
-		}
-		c.quietCodexHook(paneID, payload, aiHookNoHandlerReason(action))
-		return nil
-	default:
-		c.quietCodexHook(paneID, payload, aiHookNoHandlerReason(action))
-		return nil
-	}
-}
-
-func (c *aiCommand) ingestClaudeHook(data []byte) error {
-	payload, err := parseClaudeHookPayload(data)
-	if err != nil {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Result: "error", Reason: err.Error()})
-		return err
-	}
-
-	paneID := c.matchAIPane(aiPaneMatchInput{
-		CWD:       payload.CWD,
-		SessionID: payload.SessionID,
-	})
-	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, SessionID: payload.SessionID})
-		return nil
-	}
-
-	c.markAIHookPane(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
-	metadata := payload.claudeMetadata()
-	action := c.aiHookEffectiveAction(aiHookProviderClaude, payload.EventName)
-
-	switch payload.EventName {
-	case "UserPromptSubmit":
-		if action.Action == aiHookActionQuiet {
-			c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
-		if err := c.applyAIStatusWithNotify("thinking", paneID, attentionNotifyInput{
-			Metadata: metadata,
-		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return err
-		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "state", Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-		return nil
-	case "Notification":
-		if action.Action == aiHookActionQuiet {
-			c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
-		body := formatClaudeNotificationNotifyBody(payload)
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       claudeNotifyID(payload),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: metadata,
-				Force:    true,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return nil
-		}
-		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       claudeNotifyID(payload),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: metadata,
-			Force:    true,
-		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return err
-		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-		return nil
-	case "PermissionRequest":
-		if action.Action == aiHookActionQuiet {
-			c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
-		body := formatClaudePermissionNotifyBody(payload)
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       claudePermissionNotifyID(payload),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: metadata,
-				Force:    true,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return nil
-		}
-		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       claudePermissionNotifyID(payload),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: metadata,
-			Force:    true,
-		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return err
-		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-		return nil
-	case "Stop":
-		if action.Action == aiHookActionQuiet {
-			c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
-		message := readClaudeTranscriptLastAssistantText(payload.TranscriptPath)
-		body := formatClaudeStopNotifyBody(message)
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       claudeStopNotifyID(payload),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: metadata,
-				Force:    true,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return nil
-		}
-		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       claudeStopNotifyID(payload),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: metadata,
-			Force:    true,
-		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return err
-		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-		return nil
-	case "StopFailure":
-		if action.Action == aiHookActionQuiet {
-			c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
-		body := formatClaudeStopFailureNotifyBody(payload)
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       claudeExtraNotifyID(payload, "stop-failure", payload.ErrorType, payload.ErrorMessage),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: metadata,
-				Force:    true,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return nil
-		}
-		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       claudeExtraNotifyID(payload, "stop-failure", payload.ErrorType, payload.ErrorMessage),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: metadata,
-			Force:    true,
-		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return err
-		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-		return nil
-	case "SubagentStop":
-		if action.Action == aiHookActionNotify {
-			body := formatClaudeSubagentStopNotifyBody(payload)
-			if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-				ID:       claudeExtraNotifyID(payload, "subagent-stop", payload.SubagentType, payload.SubagentID),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: metadata,
-				Force:    true,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return nil
-		}
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       claudeExtraNotifyID(payload, "subagent-stop", payload.SubagentType, payload.SubagentID),
-				Text:     formatClaudeSubagentStopNotifyBody(payload).Text,
-				Severity: notify.SeverityInfo,
-				Metadata: metadata,
-				Force:    true,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return nil
-		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "quiet", Reason: "high-volume event", Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-		return nil
-	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "PermissionDenied", "UserPromptExpansion", "SessionStart", "SubagentStart", "PreCompact", "PostCompact", "SessionEnd", "Setup", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "InstructionsLoaded", "WorktreeCreate", "WorktreeRemove", "CwdChanged", "FileChanged":
-		c.quietClaudeHook(paneID, payload, aiHookNoHandlerReason(action))
-		return nil
-	case "TeammateIdle":
-		if action.Action == aiHookActionQuiet {
-			c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
-		body := formatClaudeTeammateIdleNotifyBody(payload)
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:       claudeExtraNotifyID(payload, "teammate-idle", payload.TeammateName, payload.TeammateID, payload.TeammateContext),
-				Text:     body.Text,
-				Severity: body.Severity,
-				Metadata: metadata,
-				Force:    true,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return nil
-		}
-		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:       claudeExtraNotifyID(payload, "teammate-idle", payload.TeammateName, payload.TeammateID, payload.TeammateContext),
-			Text:     body.Text,
-			Severity: body.Severity,
-			Metadata: metadata,
-			Force:    true,
-		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-			return err
-		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-		return nil
-	default:
-		c.quietClaudeHook(paneID, payload, aiHookNoHandlerReason(action))
-		return nil
-	}
-}
-
-func (c *aiCommand) quietCodexHook(paneID string, payload codexHookPayload, reason string) {
-	c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
-	c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "quiet", Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-}
-
-func (c *aiCommand) shouldPushGenericCodexHookNotify(action aiHookActionResolution) bool {
-	return action.Action == aiHookActionNotify && action.Source == aiHookActionSourceRuntime
-}
-
-func (c *aiCommand) pushGenericCodexHookNotify(paneID string, payload codexHookPayload) error {
-	c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
-	body := formatCodexGenericHookNotifyBody(payload)
-	return c.applyAIStatusQueueOnly("waiting", paneID, attentionNotifyInput{
-		ID:            codexHookNotifyID(payload, "generic"),
-		Text:          body.Text,
-		Severity:      body.Severity,
-		Metadata:      payload.codexGenericHookMetadata(),
-		Force:         true,
-		SuppressHooks: true,
-	})
-}
-
-func (c *aiCommand) quietClaudeHook(paneID string, payload claudeHookPayload, reason string) {
-	c.markAIHookPane(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
-	c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "quiet", Reason: reason, Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID})
-}
-
-func (c *aiCommand) aiHookFallbackReason(provider, event string) string {
-	action, ok, err := c.aiHookCatalogAction(provider, event)
-	if err != nil {
-		return "catalog unavailable; quiet fallback"
-	}
-	if !ok {
-		return "unknown event"
-	}
-	if action == aiHookActionQuiet {
-		return "catalog quiet event"
-	}
-	return "catalog " + action + " event has no specialized handler"
 }
 
 func (c *aiCommand) aiIngestLogPath() (string, error) {
@@ -777,6 +387,7 @@ func (c *aiCommand) appendAIIngestLog(entry aiIngestLogEntry) {
 	if err := mkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return
 	}
+	localstate.RepairPrivateFile(path)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
@@ -785,6 +396,7 @@ func (c *aiCommand) appendAIIngestLog(entry aiIngestLogEntry) {
 	if _, err := file.Write(append(data, '\n')); err != nil {
 		return
 	}
+	localstate.RepairPrivateFile(path)
 	c.trimAIIngestLogFile(path)
 }
 
@@ -849,200 +461,6 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 	return strings.Join(parts, " ")
 }
 
-func parseCodexHookPayload(data []byte) (codexHookPayload, error) {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return codexHookPayload{}, fmt.Errorf("parse codex hook payload: %w", err)
-	}
-	payload := codexHookPayload{
-		EventName:      firstString(raw, "hook_event_name", "event_name"),
-		ThreadID:       firstString(raw, "thread_id", "thread-id"),
-		SessionID:      firstString(raw, "session_id", "session-id"),
-		TurnID:         firstString(raw, "turn_id", "turn-id"),
-		CWD:            firstString(raw, "cwd", "workspace", "project_dir"),
-		TranscriptPath: firstString(raw, "transcript_path", "transcriptPath"),
-		Model:          firstString(raw, "model"),
-		ToolName:       firstString(raw, "tool_name", "toolName"),
-	}
-	if payload.CWD == "" {
-		payload.CWD = firstNestedString(raw["workspace"], "cwd", "path")
-	}
-	if payload.ToolName == "" {
-		payload.ToolName = firstNestedString(raw["tool"], "name", "tool_name")
-	}
-	payload.ToolInput = mapFromAny(raw["tool_input"])
-	if len(payload.ToolInput) == 0 {
-		payload.ToolInput = mapFromAny(raw["input"])
-	}
-	if len(payload.ToolInput) == 0 {
-		payload.ToolInput = mapFromAny(raw["tool"])
-		delete(payload.ToolInput, "name")
-		delete(payload.ToolInput, "tool_name")
-	}
-	return payload, nil
-}
-
-func parseClaudeHookPayload(data []byte) (claudeHookPayload, error) {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return claudeHookPayload{}, fmt.Errorf("parse claude hook payload: %w", err)
-	}
-	payload := claudeHookPayload{
-		EventName:        firstString(raw, "hook_event_name", "event_name"),
-		SessionID:        firstString(raw, "session_id", "session-id"),
-		CWD:              firstString(raw, "cwd", "workspace", "project_dir"),
-		TranscriptPath:   firstString(raw, "transcript_path", "transcriptPath"),
-		NotificationType: firstString(raw, "notification_type", "notificationType"),
-		Message:          firstString(raw, "message", "text"),
-		Prompt:           firstString(raw, "prompt", "user_prompt"),
-		ToolName:         firstString(raw, "tool_name", "toolName"),
-		ToolUseID:        firstString(raw, "tool_use_id", "toolUseID", "id"),
-		ErrorType:        firstString(raw, "error_type", "errorType", "failure_type", "failureType"),
-		ErrorMessage:     firstString(raw, "error_message", "errorMessage", "message", "reason"),
-		SubagentType:     firstString(raw, "subagent_type", "subagentType", "agent_type", "agentType"),
-		SubagentID:       firstString(raw, "subagent_id", "subagentId", "agent_id", "agentId"),
-		TeammateName:     firstString(raw, "teammate_name", "teammateName", "teammate"),
-		TeammateID:       firstString(raw, "teammate_id", "teammateId"),
-		TeammateContext:  firstString(raw, "teammate_context", "teammateContext", "context", "reason", "message"),
-	}
-	if payload.CWD == "" {
-		payload.CWD = firstNestedString(raw["workspace"], "cwd", "path")
-	}
-	if payload.Message == "" {
-		payload.Message = firstNestedString(raw["notification"], "message", "text")
-	}
-	if payload.NotificationType == "" {
-		payload.NotificationType = firstNestedString(raw["notification"], "notification_type", "type")
-	}
-	if payload.ToolName == "" {
-		payload.ToolName = firstNestedString(raw["tool"], "name", "tool_name")
-	}
-	if payload.ToolUseID == "" {
-		payload.ToolUseID = firstNestedString(raw["tool"], "id", "tool_use_id")
-	}
-	if payload.ErrorType == "" {
-		payload.ErrorType = firstNestedString(raw["error"], "type", "name", "code")
-	}
-	if payload.ErrorMessage == "" {
-		payload.ErrorMessage = firstNestedString(raw["error"], "message", "text", "reason")
-	}
-	if payload.SubagentType == "" {
-		payload.SubagentType = firstNestedString(raw["subagent"], "type", "name", "kind")
-	}
-	if payload.SubagentID == "" {
-		payload.SubagentID = firstNestedString(raw["subagent"], "id", "subagent_id", "agent_id")
-	}
-	if payload.TeammateName == "" {
-		payload.TeammateName = firstNestedString(raw["teammate"], "name", "type", "kind")
-	}
-	if payload.TeammateID == "" {
-		payload.TeammateID = firstNestedString(raw["teammate"], "id", "teammate_id")
-	}
-	if payload.TeammateContext == "" {
-		payload.TeammateContext = firstNestedString(raw["teammate"], "context", "status", "reason", "message")
-	}
-	payload.ToolInput = mapFromAny(raw["tool_input"])
-	if len(payload.ToolInput) == 0 {
-		payload.ToolInput = mapFromAny(raw["input"])
-	}
-	if len(payload.ToolInput) == 0 {
-		payload.ToolInput = mapFromAny(raw["tool"])
-		delete(payload.ToolInput, "name")
-		delete(payload.ToolInput, "tool_name")
-		delete(payload.ToolInput, "id")
-		delete(payload.ToolInput, "tool_use_id")
-	}
-	return payload, nil
-}
-
-func (p codexHookPayload) codexHookMetadata() map[string]string {
-	metadata := map[string]string{
-		"agent":           aiModeCodex,
-		"event":           p.EventName,
-		"session_id":      p.SessionID,
-		"thread_id":       p.matchThreadID(),
-		"turn_id":         p.TurnID,
-		"cwd":             p.CWD,
-		"transcript_path": p.TranscriptPath,
-		"model":           p.Model,
-		"tool_name":       p.ToolName,
-	}
-	for key, value := range p.ToolInput {
-		if text := stringFromAny(value); text != "" {
-			metadata["tool_input."+key] = truncateRunes(text, 160)
-		}
-	}
-	out := make(map[string]string, len(metadata))
-	for k, v := range metadata {
-		if value := strings.TrimSpace(v); value != "" {
-			out[k] = value
-		}
-	}
-	return out
-}
-
-func (p codexHookPayload) codexGenericHookMetadata() map[string]string {
-	metadata := map[string]string{
-		"provider":   aiHookProviderCodex,
-		"agent":      aiModeCodex,
-		"event":      p.EventName,
-		"tool":       p.ToolName,
-		"tool_name":  p.ToolName,
-		"cwd":        p.CWD,
-		"thread_id":  p.matchThreadID(),
-		"session_id": p.SessionID,
-		"turn_id":    p.TurnID,
-		"model":      p.Model,
-	}
-	out := make(map[string]string, len(metadata))
-	for k, v := range metadata {
-		if value := strings.TrimSpace(v); value != "" {
-			out[k] = value
-		}
-	}
-	return out
-}
-
-func (p codexHookPayload) matchThreadID() string {
-	if threadID := strings.TrimSpace(p.ThreadID); threadID != "" {
-		return threadID
-	}
-	return p.SessionID
-}
-
-func (p claudeHookPayload) claudeMetadata() map[string]string {
-	metadata := map[string]string{
-		"agent":             aiModeClaude,
-		"event":             p.EventName,
-		"session_id":        p.SessionID,
-		"cwd":               p.CWD,
-		"transcript_path":   p.TranscriptPath,
-		"notification_type": p.NotificationType,
-		"prompt":            truncateRunes(p.Prompt, 60),
-		"tool_name":         p.ToolName,
-		"tool_use_id":       p.ToolUseID,
-		"error_type":        p.ErrorType,
-		"error_message":     truncateRunes(p.ErrorMessage, 160),
-		"subagent_type":     p.SubagentType,
-		"subagent_id":       p.SubagentID,
-		"teammate_name":     p.TeammateName,
-		"teammate_id":       p.TeammateID,
-		"teammate_context":  truncateRunes(p.TeammateContext, 160),
-	}
-	for key, value := range p.ToolInput {
-		if text := stringFromAny(value); text != "" {
-			metadata["tool_input."+key] = truncateRunes(text, 160)
-		}
-	}
-	out := make(map[string]string, len(metadata))
-	for k, v := range metadata {
-		if value := strings.TrimSpace(v); value != "" {
-			out[k] = value
-		}
-	}
-	return out
-}
-
 func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, transcriptPath string) {
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneHookActiveOption, "1")
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneManagedOption, "1")
@@ -1103,36 +521,27 @@ func (c *aiCommand) matchAIPane(in aiPaneMatchInput) string {
 }
 
 func (c *aiCommand) listAIPaneMatchRows() []aiPaneMatchRow {
-	out, err := c.read("tmux", "list-panes", "-a", "-F", aiIngestListPanesFormat)
+	rows, err := c.muxRunner().ListPanes(context.Background(), intmux.ListPanesOptions{
+		All:     true,
+		Formats: aiIngestListPanesFormats,
+	})
 	if err != nil {
 		return nil
 	}
-	rows := strings.Split(strings.TrimSpace(string(out)), "\n")
 	matches := make([]aiPaneMatchRow, 0, len(rows))
-	for _, raw := range rows {
-		fields := splitTmuxUnitFields(raw)
-		if len(fields) != 4 {
-			continue
-		}
-		paneID := strings.TrimSpace(fields[0])
+	for _, fields := range rows {
+		paneID := fields[0]
 		if paneID == "" {
 			continue
 		}
 		matches = append(matches, aiPaneMatchRow{
 			PaneID:    paneID,
-			CWD:       strings.TrimSpace(fields[1]),
-			ThreadID:  strings.TrimSpace(fields[2]),
-			SessionID: strings.TrimSpace(fields[3]),
+			CWD:       fields[1],
+			ThreadID:  fields[2],
+			SessionID: fields[3],
 		})
 	}
 	return matches
-}
-
-func splitTmuxUnitFields(raw string) []string {
-	if strings.Contains(raw, "\x1f") {
-		return strings.Split(raw, "\x1f")
-	}
-	return strings.Split(raw, "\\037")
 }
 
 func cleanMatchPath(path string) string {
@@ -1141,142 +550,6 @@ func cleanMatchPath(path string) string {
 		return ""
 	}
 	return filepath.Clean(path)
-}
-
-func codexHookNotifyID(p codexHookPayload, kind string) string {
-	parts := []string{"ai", "codex", kind}
-	if value := strings.TrimSpace(p.SessionID); value != "" {
-		parts = append(parts, value)
-	}
-	if value := strings.TrimSpace(p.TurnID); value != "" {
-		parts = append(parts, value)
-	}
-	if kind == "permission" {
-		if value := strings.TrimSpace(p.ToolName); value != "" {
-			parts = append(parts, value)
-		}
-		if summary := formatCodexToolInputSummary(p.ToolName, p.ToolInput); summary != "" {
-			parts = append(parts, truncateRunes(summary, 40))
-		}
-	}
-	return strings.Join(parts, ":")
-}
-
-func claudeNotifyID(p claudeHookPayload) string {
-	parts := []string{"ai", "claude", "notification"}
-	if value := strings.TrimSpace(p.SessionID); value != "" {
-		parts = append(parts, value)
-	}
-	if value := strings.TrimSpace(p.NotificationType); value != "" {
-		parts = append(parts, value)
-	}
-	if value := strings.TrimSpace(p.Message); value != "" {
-		parts = append(parts, truncateRunes(value, 40))
-	}
-	return strings.Join(parts, ":")
-}
-
-func claudePermissionNotifyID(p claudeHookPayload) string {
-	sessionID := strings.TrimSpace(p.SessionID)
-	toolUseID := strings.TrimSpace(p.ToolUseID)
-	switch {
-	case sessionID != "" && toolUseID != "":
-		return "ai:claude:permission:" + sessionID + ":" + toolUseID
-	case toolUseID != "":
-		return "ai:claude:permission:" + toolUseID
-	default:
-		return ""
-	}
-}
-
-func claudeStopNotifyID(p claudeHookPayload) string {
-	if sessionID := strings.TrimSpace(p.SessionID); sessionID != "" {
-		return "ai:claude:stop:" + sessionID
-	}
-	return ""
-}
-
-func claudeExtraNotifyID(p claudeHookPayload, kind string, values ...string) string {
-	parts := []string{"ai", "claude", kind}
-	if value := strings.TrimSpace(p.SessionID); value != "" {
-		parts = append(parts, value)
-	}
-	for _, value := range values {
-		if trimmed := truncateRunes(value, 40); trimmed != "" {
-			parts = append(parts, trimmed)
-		}
-	}
-	return strings.Join(parts, ":")
-}
-
-func readClaudeTranscriptLastAssistantText(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil {
-		return ""
-	}
-	size := info.Size()
-	if size <= 0 {
-		return ""
-	}
-	start := int64(0)
-	if size > claudeTranscriptTailLimit {
-		start = size - claudeTranscriptTailLimit
-	}
-	buf := make([]byte, size-start)
-	if _, err := file.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
-		return ""
-	}
-	lines := strings.Split(strings.TrimSpace(string(buf)), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if text := claudeAssistantTextFromJSONLine(lines[i]); text != "" {
-			return text
-		}
-	}
-	return ""
-}
-
-func claudeAssistantTextFromJSONLine(line string) string {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return ""
-	}
-	if strings.EqualFold(stringFromAny(raw["role"]), "assistant") {
-		return claudeContentText(raw["content"])
-	}
-	message := mapFromAny(raw["message"])
-	if strings.EqualFold(stringFromAny(message["role"]), "assistant") {
-		return claudeContentText(message["content"])
-	}
-	return ""
-}
-
-func claudeContentText(value any) string {
-	switch v := value.(type) {
-	case string:
-		return strings.TrimSpace(v)
-	case []any:
-		for _, item := range v {
-			if text := firstNestedString(item, "text"); text != "" {
-				return text
-			}
-			if text := stringFromAny(item); text != "" {
-				return text
-			}
-		}
-	case map[string]any:
-		return firstString(v, "text", "content")
-	}
-	return ""
 }
 
 func firstString(raw map[string]any, keys ...string) string {
@@ -1296,6 +569,40 @@ func firstNestedString(value any, keys ...string) string {
 	return firstString(nested, keys...)
 }
 
+func firstAny(raw map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := raw[key]; ok && value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstNestedAny(value any, keys ...string) any {
+	nested, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return firstAny(nested, keys...)
+}
+
+func firstBool(raw map[string]any, keys ...string) (bool, bool) {
+	for _, key := range keys {
+		if value, ok := boolFromAny(raw[key]); ok {
+			return value, true
+		}
+	}
+	return false, false
+}
+
+func firstNestedBool(value any, keys ...string) (bool, bool) {
+	nested, ok := value.(map[string]any)
+	if !ok {
+		return false, false
+	}
+	return firstBool(nested, keys...)
+}
+
 func mapFromAny(value any) map[string]any {
 	if raw, ok := value.(map[string]any); ok {
 		out := make(map[string]any, len(raw))
@@ -1303,6 +610,28 @@ func mapFromAny(value any) map[string]any {
 		return out
 	}
 	return map[string]any{}
+}
+
+func boolFromAny(value any) (bool, bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "yes":
+			return true, true
+		case "false", "0", "no":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func boolMetadataValue(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
 
 func stringFromAny(value any) string {

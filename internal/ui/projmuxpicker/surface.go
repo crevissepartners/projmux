@@ -34,6 +34,10 @@ func WriteContentWithFooter(w io.Writer, top, main, footer string, layout Layout
 }
 
 func FooterBlockLines(footer string, cols int) []string {
+	return FooterBlockLinesWithTheme(DefaultTheme, footer, cols)
+}
+
+func FooterBlockLinesWithTheme(pickerTheme Theme, footer string, cols int) []string {
 	footer = strings.TrimSpace(footer)
 	if footer == "" {
 		return nil
@@ -41,29 +45,41 @@ func FooterBlockLines(footer string, cols int) []string {
 	if cols <= 0 {
 		cols = DefaultCols
 	}
-	lines := []string{SeparatorLine(cols)}
+	lines := []string{SeparatorLineWithTheme(pickerTheme, cols)}
 	for line := range strings.SplitSeq(footer, "\n") {
-		lines = append(lines, ChromeLine(strings.TrimRight(line, "\r"), cols))
+		lines = append(lines, ChromeLineWithTheme(pickerTheme, strings.TrimRight(line, "\r"), cols))
 	}
 	return lines
 }
 
 func HeaderLine(header string, cols int) string {
-	return ChromeLine(strings.TrimRight(header, "\r"), cols)
+	return HeaderLineWithTheme(DefaultTheme, header, cols)
+}
+
+func HeaderLineWithTheme(pickerTheme Theme, header string, cols int) string {
+	return ChromeLineWithTheme(pickerTheme, strings.TrimRight(header, "\r"), cols)
 }
 
 func ChromeLine(line string, cols int) string {
+	return ChromeLineWithTheme(DefaultTheme, line, cols)
+}
+
+func ChromeLineWithTheme(pickerTheme Theme, line string, cols int) string {
 	if cols <= 0 {
 		cols = DefaultCols
 	}
-	return PadStyledLine(TruncateANSI(line, cols), cols)
+	return PadStyledLineWithTheme(pickerTheme, TruncateANSI(line, cols), cols)
 }
 
 func SeparatorLine(cols int) string {
+	return SeparatorLineWithTheme(DefaultTheme, cols)
+}
+
+func SeparatorLineWithTheme(pickerTheme Theme, cols int) string {
 	if cols <= 0 {
 		cols = DefaultCols
 	}
-	return MutedStart + strings.Repeat(GapLine, cols) + Reset
+	return themeMuted(pickerTheme) + strings.Repeat(GapLine, cols) + Reset
 }
 
 func RenderedTextLineCount(value string) int {
@@ -82,35 +98,57 @@ func PromptLineWithCursor(prompt, query string, cursor, matches, total, cols int
 	return PromptLineWithRenderedQuery(prompt, query, QueryWithCursor(query, cursor), matches, total, cols)
 }
 
+func PromptLineWithCursorLabel(searchLabel, prompt, query string, cursor, matches, total, cols int) string {
+	return PromptLineWithRenderedQueryLabel(searchLabel, prompt, query, QueryWithCursor(query, cursor), matches, total, cols)
+}
+
 func PromptLineWithRenderedQuery(prompt, query, renderedQuery string, matches, total, cols int) string {
+	return PromptLineWithRenderedQueryLabel("Search", prompt, query, renderedQuery, matches, total, cols)
+}
+
+func PromptLineWithRenderedQueryLabel(searchLabel, prompt, query, renderedQuery string, matches, total, cols int) string {
+	return PromptLineWithRenderedQueryLabelAndTheme(DefaultTheme, searchLabel, prompt, query, renderedQuery, matches, total, cols)
+}
+
+func PromptLineWithRenderedQueryLabelAndTheme(pickerTheme Theme, searchLabel, prompt, query, renderedQuery string, matches, total, cols int) string {
 	prompt = strings.TrimRight(prompt, " ")
 	input := strings.TrimRight(prompt+" "+renderedQuery, " ")
-	line := MutedStart + "Search" + Reset + " " + input
+	searchLabel = strings.TrimSpace(searchLabel)
+	if searchLabel == "" {
+		searchLabel = "Search"
+	}
+	muted := themeMuted(pickerTheme)
+	line := muted + searchLabel + Reset + " " + input
 	info := strconv.Itoa(matches)
 	if query != "" || matches != total {
 		info = fmt.Sprintf("%d/%d", matches, total)
 	}
-	info = MutedStart + info + Reset
+	info = muted + info + Reset
 	if cols <= 0 {
 		cols = DefaultCols
 	}
 	padding := cols - VisibleLen(line) - VisibleLen(info)
 	if padding < 2 {
-		return PadStyledLine(line+"  "+info, cols)
+		return PadStyledLineWithTheme(pickerTheme, line+"  "+info, cols)
 	}
-	return PadStyledLine(line+strings.Repeat(" ", padding)+info, cols)
+	return PadStyledLineWithTheme(pickerTheme, line+strings.Repeat(" ", padding)+info, cols)
 }
 
 func QueryWithCursor(query string, cursor int) string {
+	return QueryWithCursorAndTheme(DefaultTheme, query, cursor)
+}
+
+func QueryWithCursorAndTheme(pickerTheme Theme, query string, cursor int) string {
 	runes := []rune(query)
 	cursor = clampCursor(runes, cursor)
+	cursorStart := themeCursor(pickerTheme)
 	if cursor == len(runes) {
-		return string(runes) + CursorStart + " " + Reset
+		return string(runes) + cursorStart + " " + Reset
 	}
 	var out strings.Builder
 	for i, r := range runes {
 		if i == cursor {
-			out.WriteString(CursorStart)
+			out.WriteString(cursorStart)
 			out.WriteRune(r)
 			out.WriteString(Reset)
 			continue
@@ -154,6 +192,10 @@ func RenderedListLineCount(rows []Row, start, end int, multiLine bool) int {
 }
 
 func InteractiveListLines(rows []Row, start, end, selected int, multiLine bool) []string {
+	return InteractiveListLinesWithTheme(DefaultTheme, rows, start, end, selected, multiLine)
+}
+
+func InteractiveListLinesWithTheme(pickerTheme Theme, rows []Row, start, end, selected int, multiLine bool) []string {
 	if start < 0 {
 		start = 0
 	}
@@ -162,7 +204,7 @@ func InteractiveListLines(rows []Row, start, end, selected int, multiLine bool) 
 	}
 	lines := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
-		lines = append(lines, InteractiveRowLines(rows[i], i == selected, multiLine)...)
+		lines = append(lines, InteractiveRowLinesWithTheme(pickerTheme, rows[i], i == selected, multiLine)...)
 		if multiLine && i < end-1 {
 			lines = append(lines, gapSentinel)
 		}
@@ -175,13 +217,21 @@ func ListLinesWithScrollbar(lines []string, total, start, end, width int) []stri
 }
 
 func ListLinesWithScrollbarRows(lines []string, total, start, end, width, rows int) []string {
+	return ListLinesWithScrollbarRowsWithTheme(DefaultTheme, lines, total, start, end, width, rows)
+}
+
+func ListLinesWithScrollbarRowsWithTheme(pickerTheme Theme, lines []string, total, start, end, width, rows int) []string {
 	visible := end - start
 	if rows < len(lines) {
 		rows = len(lines)
 	}
 	hasScrollbar := total > visible && rows > 0 && width > 1
+	contentWidth, markerWidth := listContentAndMarkerWidth(width)
 	if !hasScrollbar {
-		rendered := RenderableListLines(lines, width)
+		rendered := make([]string, 0, max(len(lines), rows))
+		for _, line := range lines {
+			rendered = append(rendered, renderListLineWithMarker(pickerTheme, line, contentWidth, strings.Repeat(" ", markerWidth)))
+		}
 		for len(rendered) < rows {
 			rendered = append(rendered, PadRight("", width))
 		}
@@ -198,10 +248,23 @@ func ListLinesWithScrollbarRows(lines []string, total, start, end, width, rows i
 		if i < len(lines) {
 			line = lines[i]
 		}
-		line = RenderableListLine(line, width-1)
-		rendered = append(rendered, PadStyledLine(TruncateANSI(line, width-1), width-1)+marker)
+		rendered = append(rendered, renderListLineWithMarker(pickerTheme, line, contentWidth, marker))
 	}
 	return rendered
+}
+
+func listContentAndMarkerWidth(width int) (int, int) {
+	if width <= 1 {
+		return width, 0
+	}
+	return width - 1, 1
+}
+
+func renderListLineWithMarker(pickerTheme Theme, line string, contentWidth int, marker string) string {
+	if contentWidth <= 0 {
+		return marker
+	}
+	return RenderableListLineWithTheme(pickerTheme, line, contentWidth) + marker
 }
 
 func scrollbarThumbRange(total, visible, start, track int) (int, int) {
@@ -228,37 +291,53 @@ func scrollbarThumbRange(total, visible, start, track int) (int, int) {
 }
 
 func RenderableListLines(lines []string, width int) []string {
+	return RenderableListLinesWithTheme(DefaultTheme, lines, width)
+}
+
+func RenderableListLinesWithTheme(pickerTheme Theme, lines []string, width int) []string {
 	rendered := make([]string, 0, len(lines))
 	for _, line := range lines {
-		rendered = append(rendered, RenderableListLine(line, width))
+		rendered = append(rendered, RenderableListLineWithTheme(pickerTheme, line, width))
 	}
 	return rendered
 }
 
 func RenderableListLine(line string, width int) string {
+	return RenderableListLineWithTheme(DefaultTheme, line, width)
+}
+
+func RenderableListLineWithTheme(pickerTheme Theme, line string, width int) string {
 	if line != gapSentinel {
-		return PadStyledLine(line, width)
+		return PadStyledLineWithTheme(pickerTheme, TruncateANSI(line, width), width)
 	}
 	if width <= 0 {
 		return ""
 	}
-	return SeparatorLine(width)
+	return SeparatorLineWithTheme(pickerTheme, width)
 }
 
 func PadStyledLine(line string, width int) string {
+	return PadStyledLineWithTheme(DefaultTheme, line, width)
+}
+
+func PadStyledLineWithTheme(pickerTheme Theme, line string, width int) string {
 	if width <= 0 {
 		return closeStyledLine(line)
 	}
 	visible := VisibleLen(line)
+	if visible > width {
+		line = TruncateANSI(line, width)
+		visible = VisibleLen(line)
+	}
 	if visible >= width {
 		return closeStyledLine(line)
 	}
 	padding := strings.Repeat(" ", width-visible)
-	if strings.HasSuffix(line, Reset) && padsInsideFinalStyle(line) {
+	if strings.HasSuffix(line, Reset) && padsInsideFinalStyleWithTheme(pickerTheme, line) {
 		return strings.TrimSuffix(line, Reset) + padding + Reset
 	}
 	if hasActiveStyle(line) {
-		if padsInsideFinalStyle(line) {
+		if padsInsideFinalStyleWithTheme(pickerTheme, line) {
 			return line + padding + Reset
 		}
 		return line + Reset + padding
@@ -267,14 +346,22 @@ func PadStyledLine(line string, width int) string {
 }
 
 func padsInsideFinalStyle(line string) bool {
-	return strings.Contains(line, CurrentStart) || strings.Contains(line, InverseStart)
+	return padsInsideFinalStyleWithTheme(DefaultTheme, line)
+}
+
+func padsInsideFinalStyleWithTheme(pickerTheme Theme, line string) bool {
+	return strings.Contains(line, themeSelected(pickerTheme)) || strings.Contains(line, themeCursor(pickerTheme))
 }
 
 func InteractiveRowLines(row Row, selected, multiLine bool) []string {
+	return InteractiveRowLinesWithTheme(DefaultTheme, row, selected, multiLine)
+}
+
+func InteractiveRowLinesWithTheme(pickerTheme Theme, row Row, selected, multiLine bool) []string {
 	lines := strings.Split(row.Label, "\n")
 	prefix := "  "
 	if selected {
-		prefix = Pointer
+		prefix = themePointer(pickerTheme)
 	}
 	if len(lines) == 0 {
 		lines = []string{""}
@@ -282,13 +369,13 @@ func InteractiveRowLines(row Row, selected, multiLine bool) []string {
 	rendered := make([]string, 0, len(lines)+len(row.MetaLines))
 	first := fmt.Sprintf("%s%s", prefix, strings.TrimRight(lines[0], "\r"))
 	if selected {
-		first = SelectedLine(prefix, strings.TrimRight(lines[0], "\r"))
+		first = SelectedLineWithTheme(pickerTheme, prefix, strings.TrimRight(lines[0], "\r"))
 	}
 	rendered = append(rendered, first)
 	for _, line := range lines[1:] {
 		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
 		if selected && multiLine {
-			line = SelectedLine(Continuation, line)
+			line = SelectedLineWithTheme(pickerTheme, themeContinuation(pickerTheme), line)
 		} else {
 			line = "  " + line
 		}
@@ -298,7 +385,7 @@ func InteractiveRowLines(row Row, selected, multiLine bool) []string {
 		if meta = strings.TrimSpace(meta); meta != "" {
 			line := meta
 			if selected && multiLine {
-				line = SelectedLine(Continuation, " "+meta)
+				line = SelectedLineWithTheme(pickerTheme, themeContinuation(pickerTheme), " "+meta)
 			} else {
 				line = "   " + line
 			}
@@ -309,15 +396,67 @@ func InteractiveRowLines(row Row, selected, multiLine bool) []string {
 }
 
 func SelectedLine(prefix, value string) string {
-	return prefix + strings.ReplaceAll(value, Reset, Reset+CurrentStart) + Reset
+	return SelectedLineWithTheme(DefaultTheme, prefix, value)
+}
+
+func SelectedLineWithTheme(pickerTheme Theme, prefix, value string) string {
+	selected := themeSelected(pickerTheme)
+	return prefix + strings.ReplaceAll(value, Reset, Reset+selected) + Reset
 }
 
 func SelectedContent(value string) string {
-	return CurrentStart + strings.ReplaceAll(value, Reset, Reset+CurrentStart) + Reset
+	return SelectedContentWithTheme(DefaultTheme, value)
+}
+
+func SelectedContentWithTheme(pickerTheme Theme, value string) string {
+	selected := themeSelected(pickerTheme)
+	return selected + strings.ReplaceAll(value, Reset, Reset+selected) + Reset
 }
 
 func InverseSelectedContent(value string) string {
-	return InverseStart + strings.ReplaceAll(value, Reset, Reset+InverseStart) + Reset
+	return InverseSelectedContentWithTheme(DefaultTheme, value)
+}
+
+func InverseSelectedContentWithTheme(pickerTheme Theme, value string) string {
+	inverse := themeCursor(pickerTheme)
+	return inverse + strings.ReplaceAll(value, Reset, Reset+inverse) + Reset
+}
+
+func themeSelected(pickerTheme Theme) string {
+	if pickerTheme.Selected != "" {
+		return pickerTheme.Selected
+	}
+	return CurrentStart
+}
+
+func themeMuted(pickerTheme Theme) string {
+	if pickerTheme.Muted != "" {
+		return pickerTheme.Muted
+	}
+	return MutedStart
+}
+
+func themeAccent(pickerTheme Theme) string {
+	if pickerTheme.Accent != "" {
+		return pickerTheme.Accent
+	}
+	return themeAccentStart
+}
+
+func themeCursor(pickerTheme Theme) string {
+	if pickerTheme.Cursor != "" {
+		return pickerTheme.Cursor
+	}
+	return CursorStart
+}
+
+func themePointer(pickerTheme Theme) string {
+	selected := themeSelected(pickerTheme)
+	return selected + themeAccent(pickerTheme) + "▌" + selected + " "
+}
+
+func themeContinuation(pickerTheme Theme) string {
+	return themePointer(pickerTheme)
 }
 
 func clampCursor(runes []rune, cursor int) int {

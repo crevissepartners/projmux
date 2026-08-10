@@ -36,7 +36,7 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "reloaded t
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "reconcile:"
 smoke_assert_file_contains "$HOME/.config/projmux/tmux.conf" "status notify --max-width 80"
 
-app_flag="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-option -gqv @projmux_app)"
+app_flag="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_app)"
 if [[ "$app_flag" != "1" ]]; then
   echo "expected installed tmux apply to set @projmux_app=1, got: $app_flag" >&2
   exit 1

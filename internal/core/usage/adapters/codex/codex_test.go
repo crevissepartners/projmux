@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,108 @@ func rolloutWithRateLimits(primary, secondary float64, primaryReset, secondaryRe
 	return `{"timestamp":"2026-04-30T09:00:00Z","type":"event_msg","payload":{"type":"agent_message"}}` + "\n" +
 		fmt.Sprintf(`{"timestamp":"2026-04-30T09:30:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":100}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":%g,"window_minutes":300,"resets_at":%d},"secondary":{"used_percent":%g,"window_minutes":10080,"resets_at":%d},"plan_type":"prolite"}}}`,
 			primary, primaryReset, secondary, secondaryReset) + "\n"
+}
+
+func TestAdapterCollectRolloutSchemaGolden(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		fixture     string
+		golden      string
+		wantWindows map[usage.Window]bool
+	}{
+		{
+			name:    "old schema",
+			fixture: "rollout-old-schema.jsonl",
+			golden:  "rollout-old-schema.golden.json",
+			wantWindows: map[usage.Window]bool{
+				usage.Window5h:     true,
+				usage.WindowWeekly: true,
+			},
+		},
+		{
+			name:    "new schema",
+			fixture: "rollout-new-schema.jsonl",
+			golden:  "rollout-new-schema.golden.json",
+			wantWindows: map[usage.Window]bool{
+				usage.WindowWeekly: true,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			body, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
+			if err != nil {
+				t.Fatalf("ReadFile fixture: %v", err)
+			}
+			root := t.TempDir()
+			writeRollout(t, root, "2026-04-30", string(body), now)
+
+			a := NewWithRoot(root)
+			a.now = func() time.Time { return now }
+			snaps, err := a.Collect(context.Background())
+			if err != nil {
+				t.Fatalf("Collect: %v", err)
+			}
+
+			gotWindows := make(map[usage.Window]bool, len(snaps))
+			for _, snap := range snaps {
+				gotWindows[snap.Window] = true
+			}
+			if len(gotWindows) != len(tc.wantWindows) {
+				t.Fatalf("windows = %v, want %v", gotWindows, tc.wantWindows)
+			}
+			for window := range tc.wantWindows {
+				if !gotWindows[window] {
+					t.Fatalf("windows = %v, missing %q", gotWindows, window)
+				}
+			}
+
+			got, err := json.MarshalIndent(snaps, "", "  ")
+			if err != nil {
+				t.Fatalf("MarshalIndent: %v", err)
+			}
+			got = append(got, '\n')
+			want, err := os.ReadFile(filepath.Join("testdata", tc.golden))
+			if err != nil {
+				t.Fatalf("ReadFile golden: %v", err)
+			}
+			if string(got) != string(want) {
+				t.Fatalf("snapshot golden mismatch\n--- got ---\n%s--- want ---\n%s", got, want)
+			}
+		})
+	}
+}
+
+func TestRateLimitsToSnapshotsSkipsUnknownWindow(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	rl := rateLimits{
+		Primary: &rateLimitWindow{
+			UsedPercent:   91,
+			WindowMinutes: 1440,
+			ResetsAt:      1777559543,
+		},
+		Secondary: &rateLimitWindow{
+			UsedPercent:   12,
+			WindowMinutes: 10080,
+			ResetsAt:      1777966095,
+		},
+	}
+
+	snaps := rl.toSnapshots(now)
+	if len(snaps) != 1 {
+		t.Fatalf("len(snaps) = %d, want 1", len(snaps))
+	}
+	if snaps[0].Window != usage.WindowWeekly || snaps[0].Pct != 12 {
+		t.Fatalf("snapshot = %+v, want weekly pct=12", snaps[0])
+	}
 }
 
 func TestAdapterCollectFromNewestRollout(t *testing.T) {
@@ -86,9 +189,9 @@ func TestAdapterCollectPicksLatestRateLimitsLineWithinFile(t *testing.T) {
 	root := t.TempDir()
 	body := `{"type":"event_msg","payload":{"type":"agent_message"}}` + "\n" +
 		// Earlier rate_limits payload — should be overridden.
-		`{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":1.0,"resets_at":100},"secondary":{"used_percent":1.0,"resets_at":200}}}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":1.0,"window_minutes":300,"resets_at":100},"secondary":{"used_percent":1.0,"window_minutes":10080,"resets_at":200}}}}` + "\n" +
 		// Later — this is the one we want.
-		`{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":42.0,"resets_at":300},"secondary":{"used_percent":7.0,"resets_at":400}}}}` + "\n"
+		`{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":42.0,"window_minutes":300,"resets_at":300},"secondary":{"used_percent":7.0,"window_minutes":10080,"resets_at":400}}}}` + "\n"
 	mtime := time.Date(2026, 4, 30, 9, 30, 0, 0, time.UTC)
 	writeRollout(t, root, "2026-04-30", body, mtime)
 

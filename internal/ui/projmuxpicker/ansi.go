@@ -5,20 +5,22 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 // ANSI/style tokens used by the projmux native picker surface.
 const (
-	CurrentStart   = "\x1b[48;2;38;50;56m\x1b[38;2;255;255;255m"
-	HighlightStart = "\x1b[38;2;255;204;102m"
-	MutedStart     = "\x1b[38;2;117;132;140m"
-	TitlebarStart  = "\x1b[48;2;24;34;38m\x1b[38;2;238;242;244m"
-	TitlebarRule   = "\x1b[48;2;24;34;38m\x1b[38;2;117;132;140m"
-	Pointer        = CurrentStart + "\x1b[38;2;225;38;114m▌" + CurrentStart + " "
-	Continuation   = CurrentStart + "\x1b[38;2;225;38;114m▌" + CurrentStart + " "
-	Reset          = "\x1b[0m"
-	InverseStart   = "\x1b[7m"
-	CursorStart    = "\x1b[7m"
+	CurrentStart   = theme.ANSISurfaceActiveStart
+	HighlightStart = theme.ANSIAccentHighlightStart
+	MutedStart     = theme.ANSITextMutedStart
+	TitlebarStart  = theme.ANSISurfaceRaisedStart
+	TitlebarRule   = theme.ANSISurfaceRuleStart
+	Pointer        = CurrentStart + themeAccentStart + "▌" + CurrentStart + " "
+	Continuation   = CurrentStart + themeAccentStart + "▌" + CurrentStart + " "
+	Reset          = theme.ANSIReset
+	InverseStart   = theme.ANSIInverse
+	CursorStart    = theme.ANSIInverse
 	Scrollbar      = "█"
 	GapLine        = "─"
 
@@ -26,20 +28,72 @@ const (
 	// palette entries used both by the tmux status bar (window list) and by
 	// the projmux picker frame chip primitives so the two surfaces stay
 	// visually congruent without re-declaring colour codes.
-	TmuxWindowInactiveBg = "colour235"
-	TmuxWindowInactiveFg = "colour245"
-	TmuxWindowActiveBg   = "colour238"
-	TmuxWindowActiveFg   = "colour231"
+	TmuxWindowInactiveBg = theme.TmuxWindowInactiveBg
+	TmuxWindowInactiveFg = theme.TmuxWindowInactiveFg
+	TmuxWindowActiveBg   = theme.TmuxWindowActiveBg
+	TmuxWindowActiveFg   = theme.TmuxWindowActiveFg
 
 	// Chip ANSI segments (terminal SGR escapes). They mirror the tmux
-	// window-status tone above (colour235/245 inactive, colour238/231 bold
-	// active). Disabled reuses inactive bg with a dimmer foreground to read
-	// as "tab present but not actionable" rather than introducing a third
-	// hue.
-	ChipInactiveStart = "\x1b[48;5;235m\x1b[38;5;245m"
-	ChipActiveStart   = "\x1b[1m\x1b[48;5;238m\x1b[38;5;231m"
-	ChipDisabledStart = "\x1b[2m\x1b[48;5;235m\x1b[38;5;245m"
+	// window-status tone above. Disabled reuses inactive bg with a dimmer
+	// foreground to read as "tab present but not actionable" rather than
+	// introducing a third hue.
+	ChipInactiveStart = theme.ANSIChipInactiveStart
+	ChipActiveStart   = theme.ANSIChipActiveStart
+	ChipDisabledStart = theme.ANSIChipDisabledStart
 )
+
+const (
+	themeAccentStart   = theme.ANSIAccentActionStrongStart
+	themeWarningStart  = theme.ANSIStateProgressStart
+	themeCriticalStart = theme.ANSIStateDangerStart
+)
+
+// ThemeFromEffective adapts resolver-backed colors to the native picker frame.
+// Even fallback-sourced fields are concrete app theme tokens. Native popup rows
+// paint the surface token, keeping pane-body background separate from popup
+// chrome.
+func ThemeFromEffective(effective theme.EffectiveTheme) Theme {
+	out := DefaultTheme
+	if theme.IsThemeDefaultSpec(effective.Surface.Value) {
+		out.Background = ""
+	} else if bg := effective.Surface.Value.TruecolorBG(); bg != "" {
+		out.Background = "\x1b[" + bg + "m"
+	}
+	if fg := effective.ChromeForeground.Value.TruecolorFG(); fg != "" {
+		out.Foreground = "\x1b[" + fg + "m"
+	}
+	if effective.SurfaceActive.Source != theme.SourceFallback || effective.ChromeForeground.Source != theme.SourceFallback {
+		out.Selected = ansiBG(effective.SurfaceActive) + ansiFG(effective.ChromeForeground)
+	}
+	if effective.Muted.Source != theme.SourceFallback {
+		out.Muted = ansiFG(effective.Muted)
+	}
+	if effective.Accent.Source != theme.SourceFallback {
+		out.Accent = ansiFG(effective.Accent)
+		out.Highlight = out.Accent
+	}
+	if effective.Warning.Source != theme.SourceFallback {
+		out.Warning = ansiFG(effective.Warning)
+	}
+	if effective.Critical.Source != theme.SourceFallback {
+		out.Critical = ansiFG(effective.Critical)
+	}
+	return out
+}
+
+func ansiFG(field theme.ColorField) string {
+	if fg := field.Value.TruecolorFG(); fg != "" {
+		return "\x1b[" + fg + "m"
+	}
+	return ""
+}
+
+func ansiBG(field theme.ColorField) string {
+	if bg := field.Value.TruecolorBG(); bg != "" {
+		return "\x1b[" + bg + "m"
+	}
+	return ""
+}
 
 func PadRight(value string, width int) string {
 	length := VisibleLen(value)
@@ -180,12 +234,45 @@ func RuneWidth(r rune) int {
 }
 
 func isCombiningRune(r rune) bool {
-	return unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r)
+	return unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r) || unicode.Is(unicode.Me, r) || unicode.Is(unicode.Cf, r)
 }
 
 func isWideRune(r rune) bool {
 	return r >= 0x1100 && (r <= 0x115f ||
+		(r >= 0x231a && r <= 0x231b) ||
 		r == 0x2329 || r == 0x232a ||
+		(r >= 0x23e9 && r <= 0x23ec) ||
+		r == 0x23f0 ||
+		r == 0x23f3 ||
+		(r >= 0x25fd && r <= 0x25fe) ||
+		(r >= 0x2614 && r <= 0x2615) ||
+		(r >= 0x2648 && r <= 0x2653) ||
+		r == 0x267f ||
+		r == 0x2693 ||
+		r == 0x26a1 ||
+		(r >= 0x26aa && r <= 0x26ab) ||
+		(r >= 0x26bd && r <= 0x26be) ||
+		(r >= 0x26c4 && r <= 0x26c5) ||
+		r == 0x26ce ||
+		r == 0x26d4 ||
+		r == 0x26ea ||
+		(r >= 0x26f2 && r <= 0x26f3) ||
+		r == 0x26f5 ||
+		r == 0x26fa ||
+		r == 0x26fd ||
+		r == 0x2705 ||
+		(r >= 0x270a && r <= 0x270b) ||
+		r == 0x2728 ||
+		r == 0x274c ||
+		r == 0x274e ||
+		(r >= 0x2753 && r <= 0x2755) ||
+		r == 0x2757 ||
+		(r >= 0x2795 && r <= 0x2797) ||
+		r == 0x27b0 ||
+		r == 0x27bf ||
+		(r >= 0x2b1b && r <= 0x2b1c) ||
+		r == 0x2b50 ||
+		r == 0x2b55 ||
 		(r >= 0x2e80 && r <= 0xa4cf && r != 0x303f) ||
 		(r >= 0xac00 && r <= 0xd7a3) ||
 		(r >= 0xf900 && r <= 0xfaff) ||

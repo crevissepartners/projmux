@@ -31,18 +31,20 @@ type Window string
 const (
 	Window5h     Window = "5h"
 	WindowWeekly Window = "weekly"
+	// WindowContext is a non-time-bounded window describing how full the
+	// active context window is (0-100%). Unlike 5h/weekly it has no reset
+	// cadence — it rises and falls with the conversation — so Duration()
+	// returns 0 and adapters leave ResetsAt zero. Used by adapters (e.g.
+	// Antigravity) that expose a context-fullness metric but no
+	// server-side quota contract.
+	WindowContext Window = "context"
 )
-
-// AllWindows returns the canonical ordered window list used by the CLI.
-func AllWindows() []Window {
-	return []Window{Window5h, WindowWeekly}
-}
 
 // Duration is the rolling window length used when describing windows. The
 // weekly window's duration is approximate — actual rollover follows the
 // vendor's published reset cadence (Anthropic returns an explicit
 // resets_at; Codex's rate_limits payload includes resets_at as a unix
-// timestamp).
+// timestamp). WindowContext has no reset cadence and returns 0.
 func (w Window) Duration() time.Duration {
 	switch w {
 	case Window5h:

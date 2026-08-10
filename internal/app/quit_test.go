@@ -3,11 +3,13 @@ package app
 import (
 	"bytes"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 func TestQuitCommandPickerShowsQuitAndCancel(t *testing.T) {
@@ -41,12 +43,32 @@ func TestQuitCommandPickerShowsQuitAndCancel(t *testing.T) {
 	}
 }
 
+func TestQuitCommandDestructiveRowKeepsDangerColorWhenSelected(t *testing.T) {
+	t.Parallel()
+
+	options := quitActionOptions()
+	if len(options.Entries) == 0 {
+		t.Fatal("quit picker has no entries")
+	}
+	quitLabel := options.Entries[0].Label
+	if !strings.Contains(quitLabel, settingsColorRemove+"Quit projmux") {
+		t.Fatalf("quit label = %q, want danger-colored action name", quitLabel)
+	}
+	selected := projmuxpicker.SelectedLine(projmuxpicker.Pointer, quitLabel)
+	if !strings.Contains(selected, settingsColorRemove+"Quit projmux") {
+		t.Fatalf("selected quit label = %q, destructive action lost danger color", selected)
+	}
+	if !strings.Contains(selected, settingsColorReset+projmuxpicker.CurrentStart) {
+		t.Fatalf("selected quit label = %q, want current-row style restored after embedded color resets", selected)
+	}
+}
+
 func TestQuitCommandSelectionKillsOnlyAppOwnedRuntime(t *testing.T) {
 	t.Parallel()
 
 	runner := &recordingTmuxRunner{
 		outputs: map[string]string{
-			strings.Join([]string{"tmux", "-L", defaultAppSocket, "show-option", "-gv", "@projmux_app"}, "\x00"): "1\n",
+			strings.Join([]string{"tmux", "-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}, "\x00"): "1\n",
 		},
 	}
 	cmd := &quitCommand{
@@ -60,11 +82,39 @@ func TestQuitCommandSelectionKillsOnlyAppOwnedRuntime(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-option", "-gv", "@projmux_app"}},
+		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
 		{name: "tmux", args: []string{"-L", defaultAppSocket, "kill-server"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("tmux calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestQuitCommandUsesPSMuxBackendAndKeepsAppOwnedGuard(t *testing.T) {
+	t.Setenv(muxBackendEnvVar, "psmux")
+
+	runner := &recordingTmuxRunner{
+		outputs: map[string]string{
+			strings.Join([]string{"psmux", "-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}, "\x00"): "1\n",
+		},
+	}
+	cmd := &quitCommand{
+		lookupEnv: os.Getenv,
+		runner:    runner,
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{Key: "enter", Value: quitActionQuit}, nil
+		})),
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []recordedTmuxCall{
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "kill-server"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("mux calls = %#v, want %#v", runner.calls, want)
 	}
 }
 
@@ -105,7 +155,7 @@ func TestQuitCommandNonAppRuntimeIsNoop(t *testing.T) {
 
 	runner := &recordingTmuxRunner{
 		outputs: map[string]string{
-			strings.Join([]string{"tmux", "-L", defaultAppSocket, "show-option", "-gv", "@projmux_app"}, "\x00"): "0\n",
+			strings.Join([]string{"tmux", "-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}, "\x00"): "0\n",
 		},
 	}
 	cmd := &quitCommand{runner: runner}
@@ -114,7 +164,7 @@ func TestQuitCommandNonAppRuntimeIsNoop(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-option", "-gv", "@projmux_app"}},
+		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("tmux calls = %#v, want only ownership check", runner.calls)
@@ -131,7 +181,7 @@ func TestQuitCommandMissingRuntimeIsNoop(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-option", "-gv", "@projmux_app"}},
+		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("tmux calls = %#v, want only ownership check", runner.calls)

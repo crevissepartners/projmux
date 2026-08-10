@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -50,7 +51,7 @@ func statusbarSessionStateSavedText(savedAt, now time.Time) string {
 	text := savedAt.Local().Format("2006-01-02 15:04:05 MST")
 	age := statusbarSessionStateAge(savedAt, now)
 	if age >= time.Second {
-		text += " (" + formatBackoffDuration(age.Round(time.Second)) + " ago)"
+		text += " (" + usagecmd.FormatBackoffDuration(age.Round(time.Second)) + " ago)"
 	}
 	return text
 }
@@ -68,42 +69,6 @@ func statusbarSessionStatePaneCount(snap sessionstate.Snapshot) int {
 		count += len(window.Panes)
 	}
 	return count
-}
-
-func statusbarSessionStatePreviewLines(snap sessionstate.Snapshot, cols int) []string {
-	const (
-		maxWindows = 8
-		maxPanes   = 18
-	)
-	windows := snap.Windows
-	lines := make([]string, 0, len(windows)+statusbarSessionStatePaneCount(snap))
-	panesSeen := 0
-	for wi, window := range windows {
-		if wi >= maxWindows {
-			lines = append(lines, dimANSI(fmt.Sprintf("... %d more windows", len(windows)-wi)))
-			break
-		}
-		name := statusbarSessionStateClean(window.Name)
-		if name == "" {
-			name = "window"
-		}
-		lines = append(lines, statusbarSessionStateClip(fmt.Sprintf("window %d  %s  (%d panes)", window.Index, name, len(window.Panes)), cols))
-		for _, pane := range window.Panes {
-			if panesSeen >= maxPanes {
-				remaining := statusbarSessionStatePaneCount(snap) - panesSeen
-				if remaining > 0 {
-					lines = append(lines, dimANSI(fmt.Sprintf("  ... %d more panes", remaining)))
-				}
-				return lines
-			}
-			panesSeen++
-			lines = append(lines, statusbarSessionStateClip("  "+statusbarSessionStatePanePreview(snap.SavedAt, window.Index, pane), cols))
-		}
-	}
-	if len(lines) == 0 {
-		return []string{dimANSI("No windows recorded.")}
-	}
-	return lines
 }
 
 func statusbarSessionStatePanePreview(savedAt time.Time, windowIndex int, pane sessionstate.Pane) string {

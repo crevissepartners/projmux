@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -25,6 +28,7 @@ type notifyStore interface {
 	List() ([]notify.Notification, error)
 	Ack(id string) error
 	AckAll() (int, error)
+	Reconcile(targetExists notify.TargetExistsFunc) (notify.ReconcileResult, error)
 }
 
 type notifyCommand struct {
@@ -32,7 +36,9 @@ type notifyCommand struct {
 	storeErr   error
 	now        func() time.Time
 	runner     tmuxRunner
+	livePanes  livePaneLister
 	hooks      *sendNotiHookDispatcher
+	events     notifyQueueRefreshEvents
 	picker     intpickercompat.Runner
 	native     intpicker.Runner
 	executable func() (string, error)
@@ -40,10 +46,11 @@ type notifyCommand struct {
 	homeDir    func() (string, error)
 }
 
-func newNotifyCommand() *notifyCommand {
+func newNotifyCommand(livePanes livePaneLister) *notifyCommand {
 	cmd := &notifyCommand{
 		now:        time.Now,
 		runner:     reconcileDefaultRunner(),
+		livePanes:  livePanes,
 		hooks:      newSendNotiHookDispatcher(),
 		native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		executable: resolveExecutablePath,
@@ -56,6 +63,7 @@ func newNotifyCommand() *notifyCommand {
 		return cmd
 	}
 	cmd.store = notify.NewDefaultStore(paths)
+	cmd.events = newNotifyQueueRefreshTransport(paths.StateDir)
 	return cmd
 }
 
@@ -99,6 +107,13 @@ func (c *notifyCommand) clock() time.Time {
 		return c.now()
 	}
 	return time.Now()
+}
+
+func (c *notifyCommand) locale() i18n.Locale {
+	if c == nil {
+		return i18n.FallbackLocale
+	}
+	return appLocale(c.homeDir, c.lookupEnv)
 }
 
 // --- push --------------------------------------------------------------------
@@ -179,6 +194,7 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 			Message: strings.TrimSpace(entry.Text),
 		})
 	}
+	c.publishNotifyQueueRefreshBestEffort()
 
 	if *asJSON {
 		payload := map[string]any{
@@ -248,8 +264,10 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	locale := c.locale()
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
 	if *ui == "sidebar" {
-		return c.runSidebar(store, severities, sources, *limit, stdout, stderr, c.notifyOriginClient(*clientTTY))
+		return c.runSidebar(store, severities, sources, *limit, stdout, stderr, c.notifyOriginClient(*clientTTY), locale)
 	}
 
 	entries, err := store.List()
@@ -267,7 +285,7 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 			entries = []notify.Notification{}
 		}
 		if *live {
-			report, err := c.buildNotifyLiveReport(entries)
+			report, err := c.buildNotifyLiveReportLocale(entries, locale)
 			if err != nil {
 				return err
 			}
@@ -276,103 +294,548 @@ func (c *notifyCommand) runList(args []string, stdout, stderr io.Writer) error {
 		return writeJSON(stdout, entries)
 	}
 	if *live {
-		report, err := c.buildNotifyLiveReport(entries)
+		report, err := c.buildNotifyLiveReportLocale(entries, locale)
 		if err != nil {
 			return err
 		}
-		return writeNotifyLiveTable(stdout, report, c.clock())
+		return writeNotifyLiveTable(stdout, report, c.clock(), locale)
 	}
-	return writeNotifyTable(stdout, entries, c.clock())
+	return writeNotifyTable(stdout, entries, c.clock(), locale)
 }
 
-func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []string, limit int, stdout, stderr io.Writer, clientTTY string) error {
+func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []string, limit int, stdout, stderr io.Writer, clientTTY string, locale i18n.Locale) error {
 	if c.native == nil {
 		return errors.New("native picker is not configured")
 	}
 
-	nextIndex := -1
-	for {
-		entries, err := store.List()
-		if err != nil {
-			return fmt.Errorf("list notifications: %w", err)
+	entries, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+	if err != nil {
+		return err
+	}
+	options := c.notifySidebarPickerOptions(store, entries, severities, sources, limit, clientTTY, locale)
+	if trigger, cancel := c.subscribeNotifyQueueRefreshBestEffort(context.Background()); trigger != nil {
+		defer cancel()
+		options.DeferredUpdateTrigger = trigger
+	} else {
+		options.DeferredUpdate = nil
+	}
+	if options.Theme == nil {
+		if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, ""); err == nil {
+			options = source.pickerOptions(options)
+		} else {
+			options = fallbackRenderThemeSource().pickerOptions(options)
 		}
-		entries = filterEntries(entries, severities, sources)
-		if limit > 0 && len(entries) > limit {
-			entries = entries[:limit]
-		}
-		bindings := []string{"alt-2:abort"}
-		if len(entries) == 0 {
-			nextIndex = -1
-		} else if nextIndex >= 0 {
-			if nextIndex >= len(entries) {
-				nextIndex = len(entries) - 1
-			}
-			bindings = append(bindings, fmt.Sprintf("start:pos(%d)", nextIndex+1))
-		}
+	}
+	result, err := c.native.Run(options)
+	if err != nil {
+		return fmt.Errorf("run notify sidebar: %w", err)
+	}
+	id := strings.TrimSpace(result.Value)
+	if id == "" || id == notifySidebarEmptyValue {
+		return nil
+	}
 
-		now := c.clock()
-		liveByID := c.notifyLiveByIDBestEffort()
-		compatOptions := intpickercompat.Options{
-			UI:            "notify-sidebar",
-			Read0:         true,
-			Title:         "\x1b[1;38;5;220m" + notifyHeaderDecorator(c.statusbarDecoration()) + "Pending Notifications\x1b[0m",
-			Prompt:        "Notify > ",
-			Header:        "Newest first",
-			Footer:        "Enter: focus + ack  |  x: ack  |  Ctrl-X: clear all  |  Esc/Alt-2: close",
-			ExpectKeys:    []string{"x", "ctrl-x"},
-			Bindings:      bindings,
-			Entries:       notifySidebarEntriesWithLive(entries, now, liveByID),
-			DisableSearch: true,
-		}
-		result, err := runPickerOptionBackend(c.lookupEnv, c.native, c.picker, compatOptions)
+	switch {
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearAll", "ctrl-x"):
+		removed, err := store.AckAll()
 		if err != nil {
-			return fmt.Errorf("run notify sidebar: %w", err)
+			return fmt.Errorf("clear all notifications: %w", err)
 		}
-		id := strings.TrimSpace(result.Value)
-		if id == "" || id == notifySidebarEmptyValue {
+		_, err = fmt.Fprintf(stdout, "cleared %s\n", i18n.FormatCount(removed, i18n.CountNotifications, locale, i18n.FormatFull))
+		return err
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:Ack", "a"):
+		if notifySidebarGroupKeyFromValue(id) != "" {
 			return nil
 		}
-
-		switch result.Key {
-		case "ctrl-x":
-			removed, err := store.AckAll()
-			if err != nil {
-				return fmt.Errorf("clear all notifications: %w", err)
-			}
-			_, err = fmt.Fprintf(stdout, "cleared %d notification(s)\n", removed)
+		if err := store.Ack(id); err != nil {
+			return fmt.Errorf("ack notification: %w", err)
+		}
+		return nil
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:AckGroup", "A"):
+		groupKey := notifySidebarSelectedGroupKey(entries, id)
+		if groupKey == "" {
+			return nil
+		}
+		if err := ackNotifySidebarGroup(store, entries, groupKey); err != nil {
 			return err
-		case "x":
-			nextIndex = indexNotificationByID(entries, id)
-			if err := store.Ack(id); err != nil {
-				return fmt.Errorf("ack notification: %w", err)
-			}
-			continue
-		default:
-			entry, ok := findNotificationByID(entries, id)
-			if !ok {
-				return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
-			}
-			if err := c.focusNotification(entry, "notify-sidebar", "row-select", clientTTY); err != nil {
-				if isFocusTargetUnresolved(err) {
-					if ackErr := store.Ack(id); ackErr != nil {
-						return fmt.Errorf("ack target-gone notification: %w", ackErr)
-					}
-					return nil
+		}
+		return nil
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearNonCritical", "x"):
+		if err := ackNonCriticalNotifications(store, entries); err != nil {
+			return err
+		}
+		return nil
+	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearGone", "g"):
+		removed, err := c.clearGoneNotifications(store, entries)
+		if err != nil {
+			return err
+		}
+		if removed == 0 {
+			c.displayNotifySidebarMessage("no gone notifications")
+		}
+		return nil
+	default:
+		if groupKey := notifySidebarGroupKeyFromValue(id); groupKey != "" {
+			return c.focusAndAckNotifySidebarGroup(store, entries, groupKey, clientTTY, locale)
+		}
+		entry, ok := findNotificationByID(entries, id)
+		if !ok {
+			return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
+		}
+		if err := c.focusNotification(entry, "notify-sidebar", "row-select", clientTTY); err != nil {
+			if isFocusTargetUnresolved(err) {
+				if ackErr := store.Ack(id); ackErr != nil {
+					return fmt.Errorf("ack target-gone notification: %w", ackErr)
 				}
-				return err
+				return nil
 			}
-			if err := ackFocusedNotification(store, entry, entries); err != nil {
-				return fmt.Errorf("ack focused notification: %w", err)
+			return err
+		}
+		if err := ackFocusedNotification(store, entry, entries); err != nil {
+			return fmt.Errorf("ack focused notification: %w", err)
+		}
+		return nil
+	}
+}
+
+func (c *notifyCommand) publishNotifyQueueRefreshBestEffort() {
+	if c == nil || c.events == nil {
+		return
+	}
+	_ = c.events.Publish()
+}
+
+func (c *notifyCommand) subscribeNotifyQueueRefreshBestEffort(parent context.Context) (<-chan struct{}, context.CancelFunc) {
+	if c == nil || c.events == nil {
+		return nil, func() {}
+	}
+	ctx, cancel := context.WithCancel(parent)
+	events, err := c.events.Subscribe(ctx)
+	if err != nil {
+		cancel()
+		return nil, func() {}
+	}
+	return events, cancel
+}
+
+func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []notify.Notification, severities, sources []string, limit int, clientTTY string, locale i18n.Locale) intpicker.Options {
+	expanded := map[string]bool{}
+	refresh := func() (intpicker.DeferredUpdate, error) {
+		return c.notifySidebarDeferredUpdate(store, severities, sources, limit, locale, expanded)
+	}
+	ack := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		id := strings.TrimSpace(ctx.Value)
+		if id == "" || id == notifySidebarEmptyValue {
+			return refresh()
+		}
+		if notifySidebarGroupKeyFromValue(id) != "" {
+			return refresh()
+		}
+		if err := store.Ack(id); err != nil {
+			return intpicker.DeferredUpdate{}, fmt.Errorf("ack notification: %w", err)
+		}
+		return refresh()
+	}
+	ackGroup := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		groupKey := notifySidebarSelectedGroupKey(current, ctx.Value)
+		if groupKey == "" {
+			return refresh()
+		}
+		if err := ackNotifySidebarGroup(store, current, groupKey); err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		delete(expanded, groupKey)
+		return refresh()
+	}
+	clearNonCritical := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		if err := ackNonCriticalNotifications(store, current); err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		return refresh()
+	}
+	clearGone := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		removed, err := c.clearGoneNotifications(store, current)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		if removed == 0 {
+			c.displayNotifySidebarMessage("no gone notifications")
+		}
+		return refresh()
+	}
+	unfold := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		if groupKey := notifySidebarSelectedGroupKey(current, ctx.Value); groupKey != "" {
+			if notifySidebarGroupCanUnfold(current, groupKey) {
+				expanded[groupKey] = true
+			} else {
+				delete(expanded, groupKey)
 			}
+		}
+		return refresh()
+	}
+	fold := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		if groupKey := notifySidebarSelectedGroupKey(current, ctx.Value); groupKey != "" {
+			delete(expanded, groupKey)
+		}
+		return refresh()
+	}
+	focusOrAckGroup := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+		current, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		groupKey := notifySidebarGroupKeyFromValue(ctx.Value)
+		if groupKey != "" {
+			if err := c.focusAndAckNotifySidebarGroup(store, current, groupKey, clientTTY, locale); err != nil {
+				return intpicker.DeferredUpdate{}, err
+			}
+			delete(expanded, groupKey)
+			return refresh()
+		}
+		return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: ctx.Key, Value: ctx.Value, Query: ctx.Query}}, nil
+	}
+	actions := append(
+		pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, "notify-sidebar", "esc"),
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:FocusAndAck"}, []string{"enter"}), focusOrAckGroup)...,
+	)
+	actions = append(actions,
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:Ack"}, []string{"a"}), ack)...,
+	)
+	actions = append(actions,
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:AckGroup"}, []string{"A"}), ackGroup)...,
+	)
+	actions = append(actions,
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearNonCritical"}, []string{"x"}), clearNonCritical)...,
+	)
+	actions = append(actions,
+		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearGone"}, []string{"g"}), clearGone)...,
+	)
+	actions = append(actions, notifySidebarMutableActions([]string{"right"}, unfold)...)
+	actions = append(actions, notifySidebarMutableActions([]string{"left"}, fold)...)
+	for _, key := range effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:ClearAll"}, []string{"ctrl-x"}) {
+		actions = append(actions, intpicker.Action{Key: key, Intent: intpicker.ActionAccept})
+	}
+
+	now := c.clock()
+	liveByID, paneSet := c.notifyLiveStateBestEffort()
+	model := buildNotifySidebarReadModel(entries, now, liveByID, paneSet, locale)
+	return intpicker.Options{
+		UI:             "notify-sidebar",
+		MultiLine:      true,
+		Title:          notifySidebarTitle + notifyHeaderDecorator(c.statusbarDecoration()) + localizeUIText(locale, "Pending Notifications") + theme.ANSIReset,
+		Prompt:         localizeUIText(locale, "Notify > "),
+		Header:         localizeUIText(locale, "Newest first"),
+		Footer:         notifySidebarFooter(c.homeDir, c.lookupEnv, locale),
+		Actions:        actions,
+		Items:          notifySidebarPickerItems(model.ExpandedEntries(expanded)),
+		DisableSearch:  true,
+		DeferredUpdate: refresh,
+	}
+}
+
+func notifySidebarMutableActions(keys []string, mutate func(intpicker.ActionContext) (intpicker.DeferredUpdate, error)) []intpicker.Action {
+	actions := make([]intpicker.Action, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		actions = append(actions, intpicker.Action{Key: key, Intent: intpicker.ActionCustom, Mutate: mutate})
+	}
+	return actions
+}
+
+func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string, locale i18n.Locale) string {
+	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
+		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live/inactive / clean gone"},
+		{ActionID: "NotifySidebar:Ack", Label: "ack child"},
+		{ActionID: "NotifySidebar:AckGroup", Label: "ack group"},
+		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
+		{ActionID: "NotifySidebar:ClearGone", Label: "clear gone"},
+		{ActionID: "NotifySidebar:ClearAll", Label: "clear all"},
+	})
+	local := keybindingReadableChord("Right") + ": " + localizeUIText(locale, "show child rows") + "  |  " + keybindingReadableChord("Left") + ": " + localizeUIText(locale, "hide child rows")
+	if guide == "" {
+		return local
+	}
+	return local + "  |  " + guide
+}
+
+func (c *notifyCommand) notifySidebarDeferredUpdate(store notifyStore, severities, sources []string, limit int, locale i18n.Locale, expanded map[string]bool) (intpicker.DeferredUpdate, error) {
+	entries, err := c.notifySidebarFilteredEntries(store, severities, sources, limit)
+	if err != nil {
+		return intpicker.DeferredUpdate{}, err
+	}
+	now := c.clock()
+	liveByID, paneSet := c.notifyLiveStateBestEffort()
+	model := buildNotifySidebarReadModel(entries, now, liveByID, paneSet, locale)
+	pruneNotifySidebarExpanded(expanded, model)
+	return intpicker.DeferredUpdate{
+		Items: notifySidebarPickerItems(model.ExpandedEntries(expanded)),
+	}, nil
+}
+
+func (c *notifyCommand) notifySidebarFilteredEntries(store notifyStore, severities, sources []string, limit int) ([]notify.Notification, error) {
+	entries, err := store.List()
+	if err != nil {
+		return nil, fmt.Errorf("list notifications: %w", err)
+	}
+	entries = filterEntries(entries, severities, sources)
+	if limit > 0 && len(entries) > limit {
+		entries = entries[:limit]
+	}
+	return entries, nil
+}
+
+func notifySidebarPickerItems(entries []intpickercompat.Entry) []intpicker.Item {
+	items := make([]intpicker.Item, 0, len(entries))
+	for _, entry := range entries {
+		items = append(items, intpicker.Item{
+			Label:      entry.Label,
+			Title:      entry.Label,
+			Value:      entry.Value,
+			SearchText: entry.SearchKey,
+		})
+	}
+	return items
+}
+
+func ackNonCriticalNotifications(store notifyStore, entries []notify.Notification) error {
+	for _, entry := range entries {
+		if entry.Severity == notify.SeverityCritical {
+			continue
+		}
+		if err := store.Ack(entry.ID); err != nil {
+			return fmt.Errorf("clear non-critical notification: %w", err)
+		}
+	}
+	return nil
+}
+
+// ackGoneNotifications dismisses every entry whose display classification is
+// notifyDisplayGone, leaving live/inactive/critical rows untouched. It returns
+// the number of entries acked so callers can no-op with a hint when the queue
+// has nothing gone. GONE classification is reused from classifyNotifyRowState;
+// this helper never changes that policy.
+func ackGoneNotifications(store notifyStore, entries []notify.Notification, liveByID map[string]notifyLivePane, paneSet notifyLivePaneSet) (int, error) {
+	removed := 0
+	for _, entry := range entries {
+		if classifyNotifyRowState(entry, liveByID, paneSet) != notifyDisplayGone {
+			continue
+		}
+		if err := store.Ack(entry.ID); err != nil {
+			return removed, fmt.Errorf("clear gone notification: %w", err)
+		}
+		removed++
+	}
+	return removed, nil
+}
+
+// clearGoneNotifications resolves best-effort live state and dismisses gone
+// entries. It shares the runSidebar dispatch path and the in-picker clearGone
+// handler so both surfaces classify identically.
+func (c *notifyCommand) clearGoneNotifications(store notifyStore, entries []notify.Notification) (int, error) {
+	liveByID, paneSet := c.notifyLiveStateBestEffort()
+	return ackGoneNotifications(store, entries, liveByID, paneSet)
+}
+
+const notifySidebarEmptyValue = "__projmux_notify_empty__"
+const notifySidebarGroupValuePrefix = "__projmux_notify_group__:"
+
+func notifySidebarGroupValue(groupKey string) string {
+	groupKey = strings.TrimSpace(groupKey)
+	if groupKey == "" {
+		return ""
+	}
+	return notifySidebarGroupValuePrefix + groupKey
+}
+
+func notifySidebarGroupKeyFromValue(value string) string {
+	value = strings.TrimSpace(value)
+	key, ok := strings.CutPrefix(value, notifySidebarGroupValuePrefix)
+	if !ok {
+		return ""
+	}
+	return key
+}
+
+func notifySidebarSelectedGroupKey(entries []notify.Notification, selectedValue string) string {
+	selectedValue = strings.TrimSpace(selectedValue)
+	if selectedValue == "" || selectedValue == notifySidebarEmptyValue {
+		return ""
+	}
+	if groupKey := notifySidebarGroupKeyFromValue(selectedValue); groupKey != "" {
+		return groupKey
+	}
+	for _, entry := range entries {
+		if entry.ID == selectedValue {
+			return notifySidebarGroupKey(entry)
+		}
+	}
+	return ""
+}
+
+func ackNotifySidebarGroup(store notifyStore, entries []notify.Notification, groupKey string) error {
+	groupKey = strings.TrimSpace(groupKey)
+	if groupKey == "" {
+		return nil
+	}
+	for _, entry := range entries {
+		if notifySidebarGroupKey(entry) != groupKey {
+			continue
+		}
+		if err := store.Ack(entry.ID); err != nil {
+			return fmt.Errorf("ack notification group: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *notifyCommand) focusAndAckNotifySidebarGroup(store notifyStore, entries []notify.Notification, groupKey, clientTTY string, locale i18n.Locale) error {
+	liveByID, paneSet := c.notifyLiveStateBestEffort()
+	group, ok := notifySidebarGroupByKey(entries, c.clock(), liveByID, paneSet, groupKey, locale)
+	if !ok {
+		c.displayNotifySidebarMessage("notify group already gone")
+		return nil
+	}
+	representative, display, ok := notifySidebarGroupRepresentative(group)
+	if !ok {
+		c.displayNotifySidebarMessage("notify group already gone")
+		return nil
+	}
+	if display == notifyDisplayGone {
+		if err := ackNotifySidebarGroup(store, entries, groupKey); err != nil {
+			return err
+		}
+		c.displayNotifySidebarMessage(notifySidebarGroupCleanupMessage(display))
+		return nil
+	}
+	if err := c.focusNotification(representative, "notify-sidebar", "group-select", clientTTY); err != nil {
+		if isFocusTargetUnresolved(err) {
+			if ackErr := ackNotifySidebarGroup(store, entries, groupKey); ackErr != nil {
+				return ackErr
+			}
+			c.displayNotifySidebarMessage(notifySidebarGroupCleanupMessage(notifyDisplayGone))
 			return nil
+		}
+		c.displayNotifySidebarMessage(notifySidebarGroupFocusBlockedMessage(notifyDisplayLive, err))
+		return nil
+	}
+	return ackNotifySidebarGroup(store, entries, groupKey)
+}
+
+func notifySidebarGroupByKey(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, paneSet notifyLivePaneSet, groupKey string, locale i18n.Locale) (notifySidebarGroup, bool) {
+	groupKey = strings.TrimSpace(groupKey)
+	if groupKey == "" {
+		return notifySidebarGroup{}, false
+	}
+	model := buildNotifySidebarReadModel(entries, now, liveByID, paneSet, locale)
+	for _, group := range model.Groups {
+		if group.Key == groupKey {
+			return group, true
+		}
+	}
+	return notifySidebarGroup{}, false
+}
+
+func notifySidebarGroupRepresentative(group notifySidebarGroup) (notify.Notification, notifyRowDisplayState, bool) {
+	if len(group.Rows) == 0 {
+		return notify.Notification{}, notifyDisplayGone, false
+	}
+	for _, row := range group.Rows {
+		if row.Display == notifyDisplayLive {
+			return row.Notify, row.Display, true
+		}
+	}
+	row := group.Rows[0]
+	return row.Notify, row.Display, true
+}
+
+func notifySidebarGroupFocusBlockedMessage(display notifyRowDisplayState, err error) string {
+	switch display {
+	case notifyDisplayGone:
+		return notifySidebarGroupCleanupMessage(display)
+	}
+	if isFocusTargetUnresolved(err) {
+		return notifySidebarGroupCleanupMessage(notifyDisplayGone)
+	}
+	return fmt.Sprintf("notify group focus failed: %s; not acked", focusFailureSummary(err))
+}
+
+func notifySidebarGroupCleanupMessage(display notifyRowDisplayState) string {
+	switch display {
+	case notifyDisplayGone:
+		return "notify gone group cleaned"
+	default:
+		return "notify group cleaned"
+	}
+}
+
+func (c *notifyCommand) displayNotifySidebarMessage(message string) {
+	message = strings.TrimSpace(message)
+	if message == "" || c == nil || c.runner == nil {
+		return
+	}
+	_, _ = c.runner.Run(context.Background(), "tmux", "display-message", message)
+}
+
+func pruneNotifySidebarExpanded(expanded map[string]bool, model notifySidebarReadModel) {
+	if len(expanded) == 0 {
+		return
+	}
+	visible := make(map[string]bool, len(model.Groups))
+	for _, group := range model.Groups {
+		visible[group.Key] = group.HasChildRows()
+	}
+	for key := range expanded {
+		if !visible[key] {
+			delete(expanded, key)
 		}
 	}
 }
 
-const notifySidebarEmptyValue = "__projmux_notify_empty__"
+func notifySidebarGroupCanUnfold(entries []notify.Notification, groupKey string) bool {
+	if strings.TrimSpace(groupKey) == "" {
+		return false
+	}
+	count := 0
+	for _, entry := range entries {
+		if notifySidebarGroupKey(entry) != groupKey {
+			continue
+		}
+		count++
+		if count > 1 {
+			return true
+		}
+	}
+	return false
+}
 
-func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpickercompat.Entry {
-	return notifySidebarEntriesWithLive(entries, now, nil)
+func notifySidebarEntriesWithLiveLocale(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, locale i18n.Locale) []intpickercompat.Entry {
+	// Legacy collapsed-entry helper: the modern sidebar path builds the read
+	// model directly (with the pane inventory). These helpers keep nil paneSet
+	// (inventory unavailable) so behavior is unchanged for their callers.
+	return buildNotifySidebarReadModel(entries, now, liveByID, nil, locale).CollapsedEntries()
 }
 
 // notifySidebarEntriesWithLive renders sidebar rows with awareness of
@@ -380,56 +843,404 @@ func notifySidebarEntries(entries []notify.Notification, now time.Time) []intpic
 // unavailable; in that case rows fall back to the live-row palette so a
 // missing tmux server does not falsely dim every entry.
 func notifySidebarEntriesWithLive(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane) []intpickercompat.Entry {
-	if len(entries) == 0 {
-		return []intpickercompat.Entry{{
-			Label: "No pending notifications",
-			Value: notifySidebarEmptyValue,
-		}}
+	return notifySidebarEntriesWithLiveLocale(entries, now, liveByID, i18n.FallbackLocale)
+}
+
+type notifySidebarReadModel struct {
+	Groups []notifySidebarGroup
+	Locale i18n.Locale
+}
+
+type notifySidebarGroup struct {
+	Key         string
+	Label       string
+	Project     string
+	Count       int
+	NewestAt    time.Time
+	Worst       string
+	Display     notifyRowDisplayState
+	Latest      notify.Notification
+	LatestLabel string
+	Rows        []notifySidebarRow
+}
+
+type notifySidebarRow struct {
+	GroupKey string
+	Entry    intpickercompat.Entry
+	Notify   notify.Notification
+	Display  notifyRowDisplayState
+}
+
+func (m notifySidebarReadModel) CollapsedEntries() []intpickercompat.Entry {
+	if len(m.Groups) == 0 {
+		return notifySidebarEmptyEntries(m.Locale)
 	}
-	out := make([]intpickercompat.Entry, 0, len(entries))
-	for _, e := range entries {
-		label := notifySidebarLabelFor(e, now, classifyNotifyRowState(e, liveByID))
-		out = append(out, intpickercompat.Entry{
-			Label: label,
-			Value: e.ID,
-		})
+	out := make([]intpickercompat.Entry, 0, len(m.Groups))
+	for _, group := range m.Groups {
+		out = append(out, notifySidebarGroupEntry(group, false))
 	}
 	return out
 }
 
-func notifySidebarLabel(e notify.Notification, now time.Time) string {
-	return notifySidebarLabelFor(e, now, notifyDisplayLive)
+func (m notifySidebarReadModel) ExpandedEntries(expanded map[string]bool) []intpickercompat.Entry {
+	if len(m.Groups) == 0 {
+		return notifySidebarEmptyEntries(m.Locale)
+	}
+	out := make([]intpickercompat.Entry, 0, len(m.Groups))
+	for _, group := range m.Groups {
+		isExpanded := expanded[group.Key] && group.HasChildRows()
+		out = append(out, notifySidebarGroupEntry(group, isExpanded))
+		if !isExpanded {
+			continue
+		}
+		for _, row := range group.Rows {
+			out = append(out, row.Entry)
+		}
+	}
+	return out
 }
 
-func notifySidebarLabelFor(e notify.Notification, now time.Time, display notifyRowDisplayState) string {
-	age := formatAge(now.Sub(e.CreatedAt))
-	agent, text := splitAgentPrefix(e)
-	text = notifySidebarLabelCell(text)
-	if text == "" {
-		text = "(empty notification)"
+func (group notifySidebarGroup) ChildCount() int {
+	if len(group.Rows) <= 1 {
+		return 0
+	}
+	return len(group.Rows)
+}
+
+func (group notifySidebarGroup) HasChildRows() bool {
+	return group.ChildCount() > 0
+}
+
+func notifySidebarGroupEntry(group notifySidebarGroup, expanded bool) intpickercompat.Entry {
+	return intpickercompat.Entry{
+		Label: notifySidebarGroupLabelWithMarker(group.Label, expanded, group.HasChildRows()),
+		Value: notifySidebarGroupValue(group.Key),
+	}
+}
+
+func notifySidebarGroupLabelWithMarker(label string, expanded, hasChildren bool) string {
+	if !hasChildren {
+		return notifySidebarGroupLabelWithoutMarker(label)
+	}
+	marker := "▸ "
+	if expanded {
+		marker = "▾ "
+	}
+	return marker + notifySidebarGroupLabelWithoutMarker(label)
+}
+
+func notifySidebarGroupLabelWithoutMarker(label string) string {
+	if strings.HasPrefix(label, "▸ ") || strings.HasPrefix(label, "▾ ") {
+		return label[len("▸ "):]
+	}
+	return label
+}
+
+func notifySidebarEmptyEntries(locale i18n.Locale) []intpickercompat.Entry {
+	return []intpickercompat.Entry{{
+		Label: localizeUIText(locale, "No pending notifications"),
+		Value: notifySidebarEmptyValue,
+	}}
+}
+
+func buildNotifySidebarReadModel(entries []notify.Notification, now time.Time, liveByID map[string]notifyLivePane, paneSet notifyLivePaneSet, locale i18n.Locale) notifySidebarReadModel {
+	type groupBuild struct {
+		group notifySidebarGroup
+	}
+	builders := make(map[string]*groupBuild)
+	order := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		key := notifySidebarGroupKey(entry)
+		builder, ok := builders[key]
+		if !ok {
+			builder = &groupBuild{group: notifySidebarGroup{
+				Key:     key,
+				Project: notifyProjectName(entry.Session),
+				Worst:   notify.SeverityInfo,
+			}}
+			builders[key] = builder
+			order = append(order, key)
+		}
+		display := classifyNotifyRowState(entry, liveByID, paneSet)
+		label := notifySidebarChildLabelForLocale(entry, now, display, locale)
+		builder.group.Rows = append(builder.group.Rows, notifySidebarRow{
+			GroupKey: key,
+			Entry: intpickercompat.Entry{
+				Label: label,
+				Value: entry.ID,
+			},
+			Notify:  entry,
+			Display: display,
+		})
+		builder.group.Worst = notifySidebarWorstSeverity(builder.group.Worst, entry.Severity)
+		builder.group.Display = notifySidebarWorstDisplay(builder.group.Display, display)
+		if builder.group.Count == 0 || entry.CreatedAt.After(builder.group.NewestAt) {
+			builder.group.NewestAt = entry.CreatedAt
+			builder.group.Latest = entry
+			builder.group.LatestLabel = label
+		}
+		builder.group.Count++
+	}
+
+	groups := make([]notifySidebarGroup, 0, len(order))
+	for _, key := range order {
+		group := builders[key].group
+		sort.SliceStable(group.Rows, func(i, j int) bool {
+			return group.Rows[i].Notify.CreatedAt.After(group.Rows[j].Notify.CreatedAt)
+		})
+		group.Label = notifySidebarGroupLabel(group, liveByID, now, locale)
+		groups = append(groups, group)
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		return groups[i].NewestAt.After(groups[j].NewestAt)
+	})
+	return notifySidebarReadModel{Groups: groups, Locale: locale}
+}
+
+func notifySidebarGroupKey(entry notify.Notification) string {
+	socket := strings.TrimSpace(entry.Socket)
+	session := strings.TrimSpace(entry.Session)
+	window := strings.TrimSpace(entry.Window)
+	pane := strings.TrimSpace(entry.Pane)
+	switch {
+	case session != "" && pane != "":
+		return "pane\x00" + socket + "\x00" + session + "\x00" + pane
+	case session != "" && window != "":
+		return "window\x00" + socket + "\x00" + session + "\x00" + window
+	case session != "":
+		return "session\x00" + socket + "\x00" + session
+	default:
+		return "external\x00" + socket
+	}
+}
+
+func notifySidebarWorstSeverity(current, next string) string {
+	if notifySidebarSeverityRank(next) > notifySidebarSeverityRank(current) {
+		return next
+	}
+	if strings.TrimSpace(current) == "" {
+		return notify.SeverityInfo
+	}
+	return current
+}
+
+func notifySidebarSeverityRank(severity string) int {
+	switch severity {
+	case notify.SeverityCritical:
+		return 3
+	case notify.SeverityWarn:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func notifySidebarWorstDisplay(current, next notifyRowDisplayState) notifyRowDisplayState {
+	if notifySidebarDisplayRank(next) > notifySidebarDisplayRank(current) {
+		return next
+	}
+	return current
+}
+
+func notifySidebarDisplayRank(display notifyRowDisplayState) int {
+	switch display {
+	case notifyDisplayGone:
+		return 3
+	case notifyDisplayStale:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func notifySidebarGroupLabel(group notifySidebarGroup, liveByID map[string]notifyLivePane, now time.Time, locale i18n.Locale) string {
+	latest := group.Latest
+	preview := notifySidebarGroupPreview(latest, locale)
+	if preview == "" {
+		preview = "(empty notification)"
+	}
+	if group.Display != notifyDisplayLive {
+		preview = notifySidebarDimText(preview)
+	}
+	project := notifySidebarGroupProjectLabel(group)
+	provider := notifySidebarGroupProvider(group, liveByID)
+	context := notifySidebarGroupContextLabel(group, liveByID)
+	ageDuration := time.Duration(0)
+	if !group.NewestAt.IsZero() {
+		ageDuration = now.Sub(group.NewestAt)
+	}
+	age := formatAgeLocale(ageDuration, locale)
+	stateEntry := latest
+	stateEntry.Severity = group.Worst
+	stateBadge := notifySidebarStateBadgeForDisplay(notifyStateLabelForLocale(stateEntry, preview, group.Display, locale), group.Display)
+
+	aggregateParts := make([]string, 0, 2)
+	if childCount := notifySidebarGroupChildCount(group.ChildCount()); childCount != "" {
+		aggregateParts = append(aggregateParts, notifySidebarDim(childCount))
+	}
+	aggregateParts = append(aggregateParts, stateBadge)
+
+	lines := []string{
+		notifySidebarProjectBadge(project) + " · " + provider + "  " + notifySidebarAge(age),
+		"  " + context + "  " + strings.Join(aggregateParts, " "),
+		"  " + preview,
+	}
+	return strings.Join(lines, "\n")
+}
+
+func notifySidebarGroupChildCount(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("+%d", count)
+}
+
+func notifySidebarGroupPreview(entry notify.Notification, locale i18n.Locale) string {
+	if entry.Source == notify.SourceAI {
+		text := renderAINotifyText(entry.Text, entry.Metadata, locale).Full
+		if text == "" {
+			text = entry.Text
+		}
+		if notifySidebarLabelCell(entry.Metadata[notify.MetaTopic]) == notifySidebarLabelCell(entry.Text) {
+			text = "Ready"
+		}
+		return notifySidebarLabelCell(text)
+	}
+	_, text := splitAgentPrefix(entry)
+	return notifySidebarLabelCell(text)
+}
+
+func notifySidebarGroupProjectLabel(group notifySidebarGroup) string {
+	if project := strings.TrimSpace(group.Project); project != "" {
+		return project
+	}
+	return notifySidebarGroupFallbackLabel(group.Latest)
+}
+
+func notifySidebarGroupProvider(group notifySidebarGroup, liveByID map[string]notifyLivePane) string {
+	if agent := notifySidebarGroupExplicitAgent(group.Rows, liveByID); agent != "" {
+		return agent
+	}
+	if source := notifySidebarGroupSourceLabel(group.Latest); source != "" {
+		return source
+	}
+	return "Notify"
+}
+
+func notifySidebarGroupContextLabel(group notifySidebarGroup, liveByID map[string]notifyLivePane) string {
+	if context := notifySidebarGroupContext(group.Rows, liveByID); context != "" {
+		return notifySidebarLabelCell(context)
+	}
+	return "notification"
+}
+
+func notifySidebarGroupExplicitAgent(rows []notifySidebarRow, liveByID map[string]notifyLivePane) string {
+	for _, row := range rows {
+		live := liveByID[row.Notify.ID]
+		if agent := firstNonEmptyNotifySidebarString(live.Agent, row.Notify.Metadata[notify.MetaAgent], row.Notify.Metadata["provider"]); agent != "" {
+			return notifySidebarAgentDisplayName(agent)
+		}
+	}
+	return ""
+}
+
+func notifySidebarGroupContext(rows []notifySidebarRow, liveByID map[string]notifyLivePane) string {
+	for _, row := range rows {
+		live := liveByID[row.Notify.ID]
+		if context := firstNonEmptyNotifySidebarString(
+			live.Topic,
+			row.Notify.Metadata[notify.MetaTopic],
+			live.Title,
+			row.Notify.Metadata["pane_title"],
+			row.Notify.Metadata["title"],
+		); context != "" {
+			return notifySidebarLabelCell(context)
+		}
+	}
+	return ""
+}
+
+func notifySidebarGroupSourceLabel(entry notify.Notification) string {
+	switch entry.Source {
+	case notify.SourceAI:
+		return "AI"
+	case notify.SourceK8s:
+		return "K8s"
+	case notify.SourceGit:
+		return "Git"
+	case notify.SourceExternal:
+		return "External"
+	}
+	return ""
+}
+
+func notifySidebarAgentDisplayName(agent string) string {
+	agent = notifySidebarLabelCell(agent)
+	switch strings.ToLower(agent) {
+	case "codex":
+		return "Codex"
+	case "claude":
+		return "Claude"
+	case "antigravity":
+		return "Antigravity"
+	default:
+		if agent == "" {
+			return ""
+		}
+		lower := strings.ToLower(agent)
+		return strings.ToUpper(lower[:1]) + lower[1:]
+	}
+}
+
+func notifySidebarGroupFallbackLabel(entry notify.Notification) string {
+	if session := notifyProjectName(entry.Session); session != "" {
+		return session
+	}
+	return "external"
+}
+
+func firstNonEmptyNotifySidebarString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func notifySidebarChildLabelForLocale(e notify.Notification, now time.Time, display notifyRowDisplayState, locale i18n.Locale) string {
+	age := formatAgeLocale(now.Sub(e.CreatedAt), locale)
+	preview := notifySidebarGroupPreview(e, locale)
+	if preview == "" {
+		preview = "(empty notification)"
 	}
 	if display != notifyDisplayLive {
-		text = notifySidebarDimText(text)
+		preview = notifySidebarDimText(preview)
 	}
-	metaParts := []string{
-		notifySidebarAge(age),
-		notifySidebarProjectBadge(notifyProjectName(e.Session)),
+	stateBadge := notifySidebarStateBadgeForDisplay(notifyStateLabelForLocale(e, preview, display, locale), display)
+	parts := []string{notifySidebarAge(age), preview, stateBadge}
+	if target := notifySidebarChildTarget(e, locale); target != "" {
+		parts = append(parts, target)
 	}
-	if agent != "" {
-		metaParts = append(metaParts, notifySidebarAgentBadge(agent))
+	return "  " + strings.Join(parts, " ")
+}
+
+func notifySidebarChildTarget(e notify.Notification, locale i18n.Locale) string {
+	if e.Source == notify.SourceAI {
+		return ""
 	}
-	metaParts = append(metaParts, notifySidebarStateBadge(notifyStateLabelFor(e, text, display)))
-	if window := notifySidebarTargetPart("window", e.Window); window != "" {
-		metaParts = append(metaParts, window)
+	parts := make([]string, 0, 2)
+	if window := notifySidebarTargetPart("window", e.Window, locale); window != "" {
+		parts = append(parts, window)
 	}
-	if pane := notifySidebarTargetPart("pane", e.Pane); pane != "" {
-		metaParts = append(metaParts, pane)
+	if pane := notifySidebarTargetPart("pane", e.Pane, locale); pane != "" {
+		parts = append(parts, pane)
 	}
-	return text + "\n  " + strings.Join(metaParts, " ")
+	return strings.Join(parts, " ")
 }
 
 // notifySidebarDimText wraps the row's body text in the dim foreground so
-// STALE/GONE rows visibly recede from active ones.
+// inactive/gone rows visibly recede from active ones.
 func notifySidebarDimText(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -446,40 +1257,34 @@ func notifySidebarLabelCell(value string) string {
 	return strings.TrimSpace(value)
 }
 
-func notifySidebarTarget(e notify.Notification) string {
-	pane := strings.TrimSpace(e.Pane)
-	if strings.HasPrefix(pane, "%") {
-		pane = ""
-	}
-	return notifySidebarLabelCell(notify.FormatTarget(notify.Target{
-		Session: e.Session,
-		Window:  e.Window,
-		Pane:    pane,
-	}))
-}
+const notifySidebarReset = theme.ANSIReset
 
-const (
-	notifySidebarReset   = "\x1b[0m"
-	notifySidebarDimOpen = "\x1b[38;5;245m"
-	notifySidebarProject = "\x1b[1;38;5;231;48;5;90m"
-	notifySidebarInfo    = "\x1b[1;38;5;16;48;5;45m"
-	notifySidebarWarn    = "\x1b[1;38;5;16;48;5;220m"
-	notifySidebarCrit    = "\x1b[1;38;5;231;48;5;160m"
-	// Stale/gone badges share a muted grey palette so the ack-only state is
-	// visually distinct from active rows without competing for attention.
-	// STALE keeps the dim italic-equivalent (no italic SGR is universally
-	// supported on tmux palettes, so we lean on the dim attribute), while
-	// GONE adds strikethrough to telegraph "the target no longer exists".
-	notifySidebarStale = "\x1b[2;38;5;231;48;5;240m"
-	notifySidebarGone  = "\x1b[2;9;38;5;231;48;5;238m"
+// notify sidebar role escapes default to fallback literals; applyNativeUITheme
+// repoints them for an explicit global theme (see theme_render_native.go).
+// Inactive/gone badges share a muted grey palette so target-state hints are
+// visually distinct from active rows without competing for attention. INACTIVE
+// keeps the dim italic-equivalent (no italic SGR is universally supported on
+// tmux palettes, so we lean on the dim attribute), while GONE adds
+// strikethrough to telegraph "the target no longer exists".
+var (
+	notifySidebarDimOpen        = theme.ANSINotifyDimStart
+	notifySidebarProject        = theme.ANSINotifyProjectStart
+	notifySidebarInfo           = theme.ANSINotifyInfoStart
+	notifySidebarWarn           = theme.ANSINotifyWarnStart
+	notifySidebarCrit           = theme.ANSINotifyCritStart
+	notifySidebarStale          = theme.ANSINotifyStaleStart
+	notifySidebarGone           = theme.ANSINotifyGoneStart
+	notifySidebarTitle          = theme.ANSINotifyTitleStart
+	notifySidebarAgeOpen        = theme.ANSINotifyAgeStart
+	notifySidebarAgentOpenStyle = theme.ANSINotifyAgentStart
 )
 
 func notifySidebarAge(age string) string {
 	age = strings.TrimSpace(age)
 	if age == "" {
-		age = "0s"
+		age = "just now"
 	}
-	return "\x1b[1;38;5;45m age " + age + " " + notifySidebarReset
+	return notifySidebarAgeOpen + " " + age + " " + notifySidebarReset
 }
 
 func notifySidebarProjectBadge(project string) string {
@@ -490,7 +1295,7 @@ func notifySidebarProjectBadge(project string) string {
 	return notifySidebarProject + " " + project + " " + notifySidebarReset
 }
 
-func notifySidebarTargetPart(label, value string) string {
+func notifySidebarTargetPart(label, value string, locale i18n.Locale) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
@@ -500,24 +1305,41 @@ func notifySidebarTargetPart(label, value string) string {
 	if value == "" {
 		return ""
 	}
+	number := parsePositiveInt(value)
+	if number > 0 {
+		switch label {
+		case "window":
+			return notifySidebarDim(i18n.FormatTargetLabel(i18n.TargetWindow, number, locale, i18n.FormatCompact))
+		case "pane":
+			return notifySidebarDim(i18n.FormatTargetLabel(i18n.TargetPane, number, locale, i18n.FormatCompact))
+		}
+	}
 	return notifySidebarDim(label + " " + value)
 }
 
 func notifySidebarStateBadge(label string) string {
+	return notifySidebarStateBadgeForDisplay(label, notifyDisplayLive)
+}
+
+func notifySidebarStateBadgeForDisplay(label string, display notifyRowDisplayState) string {
 	label = strings.ToUpper(strings.TrimSpace(label))
 	if label == "" {
 		label = "INFO"
 	}
 	open := notifySidebarInfo
-	switch label {
-	case "WARN":
-		open = notifySidebarWarn
-	case "CRIT":
-		open = notifySidebarCrit
-	case "STALE":
+	switch {
+	case display == notifyDisplayStale:
 		open = notifySidebarStale
-	case "GONE":
+	case display == notifyDisplayGone:
 		open = notifySidebarGone
+	case label == "INACTIVE":
+		open = notifySidebarStale
+	case label == "GONE":
+		open = notifySidebarGone
+	case label == "WARN":
+		open = notifySidebarWarn
+	case label == "CRIT":
+		open = notifySidebarCrit
 	}
 	return open + " " + label + " " + notifySidebarReset
 }
@@ -533,11 +1355,11 @@ func notifySidebarAgentBadge(agent string) string {
 func notifySidebarAgentOpen(agent string) string {
 	switch strings.ToLower(strings.TrimSpace(agent)) {
 	case "claude":
-		return "\x1b[1;38;5;16;48;5;208m"
+		return notifySidebarAgentOpenStyle
 	case "codex":
-		return "\x1b[1;38;5;231;48;5;33m"
+		return notifySidebarAgentOpenStyle
 	default:
-		return "\x1b[1;38;5;16;48;5;51m"
+		return notifySidebarAgentOpenStyle
 	}
 }
 
@@ -556,15 +1378,6 @@ func findNotificationByID(entries []notify.Notification, id string) (notify.Noti
 		}
 	}
 	return notify.Notification{}, false
-}
-
-func indexNotificationByID(entries []notify.Notification, id string) int {
-	for i, e := range entries {
-		if e.ID == id {
-			return i
-		}
-	}
-	return -1
 }
 
 func (c *notifyCommand) notifyOriginClient(explicit string) string {
@@ -614,11 +1427,11 @@ func (c *notifyCommand) focusNotification(entry notify.Notification, source, kin
 
 func (c *notifyCommand) statusbarDecoration() config.StatusbarDecoration {
 	if envValue(c.lookupEnv, "TMUX") != "" && c.runner != nil {
-		out, err := c.runner.Run(context.Background(), "tmux", "show-option", "-gqv", statusbarDecorationNotifyTmuxOption)
+		out, err := c.runner.Run(context.Background(), "tmux", "show-options", "-gqv", statusbarDecorationNotifyTmuxOption)
 		if err == nil && strings.TrimSpace(string(out)) != "" {
 			return config.NormalizeStatusbarDecoration(string(out))
 		}
-		out, err = c.runner.Run(context.Background(), "tmux", "show-option", "-gqv", statusbarDecorationTmuxOption)
+		out, err = c.runner.Run(context.Background(), "tmux", "show-options", "-gqv", statusbarDecorationTmuxOption)
 		if err == nil && strings.TrimSpace(string(out)) != "" {
 			return config.NormalizeStatusbarDecoration(string(out))
 		}
@@ -711,7 +1524,7 @@ func toSet(values []string) map[string]struct{} {
 }
 
 // writeNotifyTable renders a tab-aligned table: ID  AGE  SEV  SRC  TARGET  TEXT.
-func writeNotifyTable(w io.Writer, entries []notify.Notification, now time.Time) error {
+func writeNotifyTable(w io.Writer, entries []notify.Notification, now time.Time, locale i18n.Locale) error {
 	if _, err := fmt.Fprintln(w, "ID\tAGE\tSEV\tSRC\tTARGET\tTEXT"); err != nil {
 		return err
 	}
@@ -726,16 +1539,27 @@ func writeNotifyTable(w io.Writer, entries []notify.Notification, now time.Time)
 			w,
 			"%s\t%s\t%s\t%s\t%s\t%s\n",
 			e.ID,
-			formatAge(now.Sub(e.CreatedAt)),
+			formatAgeLocale(now.Sub(e.CreatedAt), locale),
 			e.Severity,
 			e.Source,
 			target,
-			e.Text,
+			notifyQueueDisplayText(e, locale),
 		); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func notifyQueueDisplayText(e notify.Notification, locale i18n.Locale) string {
+	if e.Source != notify.SourceAI {
+		return e.Text
+	}
+	rendered := renderAINotifyText(e.Text, e.Metadata, locale)
+	if rendered.Full != "" {
+		return rendered.Full
+	}
+	return e.Text
 }
 
 type notifyLiveReport struct {
@@ -758,6 +1582,10 @@ type notifyLivePane struct {
 	Topic          string `json:"topic,omitempty"`
 	Target         string `json:"target"`
 	ShouldQueue    bool   `json:"should_queue"`
+	// replyState mirrors livePaneRow.ReplyState (pane is in attention "reply"
+	// state) for the manual-reply vs title-attention distinction. Unexported so
+	// the `--live` JSON shape stays unchanged.
+	replyState bool
 }
 
 type notifyLiveRow struct {
@@ -771,6 +1599,10 @@ type notifyLiveRow struct {
 }
 
 func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (notifyLiveReport, error) {
+	return c.buildNotifyLiveReportLocale(entries, i18n.FallbackLocale)
+}
+
+func (c *notifyCommand) buildNotifyLiveReportLocale(entries []notify.Notification, locale i18n.Locale) (notifyLiveReport, error) {
 	report := notifyLiveReport{
 		Queue:  nonNilNotifications(entries),
 		Live:   []notifyLivePane{},
@@ -778,11 +1610,11 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 		Errors: []string{},
 	}
 
-	panes, err := c.listNotifyLivePanes()
+	panes, paneSet, err := c.listNotifyLivePanesAndSet()
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
 		for _, entry := range entries {
-			report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, "live-unavailable", "live tmux pane state could not be read; queue entry remains pending"))
+			report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, "live-unavailable", notifyLiveExplanation("live-unavailable", locale)))
 		}
 		return report, nil
 	}
@@ -804,16 +1636,14 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 		liveCopy := live
 		if !live.ShouldQueue {
 			state := "live-title-attention"
-			explanation := "live title attention badge exists but pane is not reply+agent state; title-only/manual attention does not create notify queue entries"
-			if live.AttentionState == attentionStateReply {
+			if live.replyState {
 				state = "live-manual-reply"
-				explanation = "live reply badge exists but no AI agent metadata is set; manual attention panes do not create notify queue entries"
 			}
 			report.Rows = append(report.Rows, notifyLiveRow{
 				State:       state,
 				ID:          live.ID,
 				Target:      live.Target,
-				Explanation: explanation,
+				Explanation: notifyLiveExplanation(state, locale),
 				Live:        &liveCopy,
 			})
 			continue
@@ -824,8 +1654,8 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 				State:       "live-ai-reply-queued",
 				ID:          live.ID,
 				Target:      live.Target,
-				Text:        entry.Text,
-				Explanation: "live AI reply pane has a matching actionable notify queue entry",
+				Text:        notifyQueueDisplayText(entry, locale),
+				Explanation: notifyLiveExplanation("live-ai-reply-queued", locale),
 				Queue:       &entryCopy,
 				Live:        &liveCopy,
 			})
@@ -835,7 +1665,7 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 			State:       "live-ai-reply-missing-queue",
 			ID:          live.ID,
 			Target:      live.Target,
-			Explanation: "live AI reply pane has no matching queue entry; run `projmux notify reconcile` to back-fill it",
+			Explanation: notifyLiveExplanation("live-ai-reply-missing-queue", locale),
 			Live:        &liveCopy,
 		})
 	}
@@ -845,34 +1675,57 @@ func (c *notifyCommand) buildNotifyLiveReport(entries []notify.Notification) (no
 			continue
 		}
 		state := "queue-only"
-		explanation := "queue entry is pending; no matching live AI reply pane was found"
-		switch classifyNotifyRowState(entry, liveByID) {
+		switch classifyNotifyRowState(entry, liveByID, paneSet) {
 		case notifyDisplayStale:
 			state = "queue-stale"
-			explanation = "queue entry exists but live pane no longer matches reply+agent state; it remains pending until explicit ack"
 		case notifyDisplayGone:
 			state = "queue-gone"
-			explanation = "queue entry has no routable target; it can only be ack'd"
 		}
-		report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, state, explanation))
+		report.Rows = append(report.Rows, notifyLiveQueueOnlyRow(entry, state, notifyLiveExplanation(state, locale)))
 	}
 
 	return report, nil
 }
 
-// notifyLiveByIDBestEffort returns the map of live AI reply-state panes keyed
-// by notify id, swallowing any tmux error. The sidebar/statusbar use this so
-// a missing tmux server only suppresses the stale/gone classification —
-// listing entries themselves continues to work.
-func (c *notifyCommand) notifyLiveByIDBestEffort() map[string]notifyLivePane {
-	if c == nil || c.runner == nil {
-		return nil
+func notifyLiveExplanation(state string, locale i18n.Locale) string {
+	key, fallback := notifyLiveExplanationKey(state)
+	return localizeText(locale, key, fallback)
+}
+
+func notifyLiveExplanationKey(state string) (i18n.Key, string) {
+	switch strings.TrimSpace(state) {
+	case "live-unavailable":
+		return i18n.KeyNotifyLiveUnavailable, "live tmux pane state could not be read; queue entry remains pending"
+	case "live-title-attention":
+		return i18n.KeyNotifyLiveTitleAttention, "live title attention badge exists but pane is not reply+agent state; title-only/manual attention does not create notify queue entries"
+	case "live-manual-reply":
+		return i18n.KeyNotifyLiveManualReply, "live reply badge exists but no AI agent metadata is set; manual attention panes do not create notify queue entries"
+	case "live-ai-reply-queued":
+		return i18n.KeyNotifyLiveAIReplyQueued, "live AI reply pane has a matching actionable notify queue entry"
+	case "live-ai-reply-missing-queue":
+		return i18n.KeyNotifyLiveAIReplyMissingQueue, "live AI reply pane has no matching queue entry; run `projmux notify reconcile` to back-fill it"
+	case "queue-stale":
+		return i18n.KeyNotifyLiveQueueStale, "queue entry target is inactive: the live pane no longer matches reply+agent state; it may still be focusable if the target is routable"
+	case "queue-gone":
+		return i18n.KeyNotifyLiveQueueGone, "queue entry target is gone: no routable target exists; Enter/ack cleans it up without focusing"
+	default:
+		return i18n.KeyNotifyLiveQueuePending, "queue entry is pending; no matching live AI reply pane was found"
 	}
-	panes, err := c.listNotifyLivePanes()
+}
+
+// notifyLiveStateBestEffort reads the live pane rows once and returns both
+// the reply+agent index (for stale detection) and the full pane inventory
+// (for gone detection), swallowing any tmux error into nil/nil. Sidebar
+// renders use this so a single `list-panes` subprocess feeds both classifiers.
+func (c *notifyCommand) notifyLiveStateBestEffort() (map[string]notifyLivePane, notifyLivePaneSet) {
+	if c == nil || c.livePanes == nil {
+		return nil, nil
+	}
+	panes, paneSet, err := c.listNotifyLivePanesAndSet()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	return notifyLiveShouldQueueByID(panes)
+	return notifyLiveShouldQueueByID(panes), paneSet
 }
 
 // notifyLiveShouldQueueByID indexes the subset of live panes that satisfy
@@ -889,12 +1742,92 @@ func notifyLiveShouldQueueByID(panes []notifyLivePane) map[string]notifyLivePane
 	return out
 }
 
+// notifyLivePaneSet is the full live tmux pane inventory (every pane on the
+// server), used to decide whether a queue row's pane target still exists.
+//
+// A nil notifyLivePaneSet means "inventory unavailable" (the tmux read failed
+// or returned an empty/unrecognized result); callers MUST treat nil as
+// best-effort and skip membership-based GONE classification rather than
+// goneing every row. An empty (non-nil) set is also treated as unavailable by
+// the constructor below: it returns nil when no live panes were parsed, which
+// is the same docker-e2e degradation [statusbarCommand.classifyHeadDisplayBestEffort]
+// guards against.
+type notifyLivePaneSet map[string]struct{}
+
+// notifyLivePaneSetKey builds the membership key for a pane target. The notify
+// queue is pane-centric, so we key by pane id scoped within its session: two
+// different sessions can each have a `%0`. Pane ids are unique per tmux server,
+// so session+pane is sufficient.
+//
+// Socket is deliberately NOT part of the key. The notify producer records a
+// socket path, but user-edited and reconciled rows frequently omit it while the
+// tmux-reported pane always carries one; including socket in the key would
+// cause false-gone on socket-empty rows. The (session, pane) pair is precise
+// enough in practice and errs toward "present" (no false gone) when sockets
+// disagree.
+func notifyLivePaneSetKey(session, pane string) string {
+	return strings.TrimSpace(session) + "\x00" + strings.TrimSpace(pane)
+}
+
+// newNotifyLivePaneSet builds a pane-inventory set from the full (unfiltered)
+// live pane rows. It returns nil when no rows have a usable pane target,
+// so callers uniformly read nil as "inventory unavailable".
+func newNotifyLivePaneSet(rows []livePaneRow) notifyLivePaneSet {
+	set := make(notifyLivePaneSet, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.Pane) == "" {
+			continue
+		}
+		set[notifyLivePaneSetKey(row.Session, row.Pane)] = struct{}{}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
+}
+
+// Has reports whether the entry's pane target is present in the live
+// inventory. It is only meaningful for pane-target rows; window/session-only
+// rows should not be tested for membership (see classifyNotifyRowState).
+func (s notifyLivePaneSet) Has(entry notify.Notification) bool {
+	if s == nil {
+		return false
+	}
+	_, ok := s[notifyLivePaneSetKey(entry.Session, entry.Pane)]
+	return ok
+}
+
+// listLivePaneRows reads the full (unfiltered) live pane inventory through
+// the livePaneLister seam. Every notify-side live read funnels through here
+// so the attention dependency stays behind the injected lister.
+func (c *notifyCommand) listLivePaneRows() ([]livePaneRow, error) {
+	if c == nil || c.livePanes == nil {
+		return nil, errors.New("live pane lister is not configured")
+	}
+	return c.livePanes.ListLivePanes()
+}
+
+// listNotifyLivePanesAndSet reads the live pane rows once and returns both
+// the attention/reply-filtered notifyLivePane slice (for stale detection) and
+// the full pane-inventory set (for GONE detection), avoiding a second tmux
+// subprocess.
+func (c *notifyCommand) listNotifyLivePanesAndSet() ([]notifyLivePane, notifyLivePaneSet, error) {
+	rows, err := c.listLivePaneRows()
+	if err != nil {
+		return nil, nil, err
+	}
+	return notifyLivePanesFromRows(rows), newNotifyLivePaneSet(rows), nil
+}
+
 func (c *notifyCommand) listNotifyLivePanes() ([]notifyLivePane, error) {
-	rows, err := (&attentionCommand{runner: c.runner}).listAttentionPanes()
+	rows, err := c.listLivePaneRows()
 	if err != nil {
 		return nil, err
 	}
+	return notifyLivePanesFromRows(rows), nil
+}
 
+func notifyLivePanesFromRows(rows []livePaneRow) []notifyLivePane {
 	out := make([]notifyLivePane, 0, len(rows))
 	for _, row := range rows {
 		live := notifyLivePane{
@@ -913,13 +1846,14 @@ func (c *notifyCommand) listNotifyLivePanes() ([]notifyLivePane, error) {
 				Window:  row.Window,
 				Pane:    row.Pane,
 			}),
-			ShouldQueue: row.AttentionState == attentionStateReply && strings.TrimSpace(row.Agent) != "",
+			ShouldQueue: row.ReplyState && strings.TrimSpace(row.Agent) != "",
+			replyState:  row.ReplyState,
 		}
-		if live.AttentionState == attentionStateReply || hasAttentionPrefix(live.Title) || hasBraillePrefix(live.Title) {
+		if row.ReplyState || row.TitleBadge {
 			out = append(out, live)
 		}
 	}
-	return out, nil
+	return out
 }
 
 func nonNilNotifications(entries []notify.Notification) []notify.Notification {
@@ -946,8 +1880,8 @@ func notifyLiveQueueOnlyRow(entry notify.Notification, state, explanation string
 	}
 }
 
-func writeNotifyLiveTable(w io.Writer, report notifyLiveReport, now time.Time) error {
-	if err := writeNotifyTable(w, report.Queue, now); err != nil {
+func writeNotifyLiveTable(w io.Writer, report notifyLiveReport, now time.Time, locale i18n.Locale) error {
+	if err := writeNotifyTable(w, report.Queue, now, locale); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(w, ""); err != nil {
@@ -986,21 +1920,11 @@ func notifyTableCell(value string) string {
 	return value
 }
 
-// formatAge renders a duration as a short age string (e.g. "12s", "5m").
-func formatAge(d time.Duration) string {
+func formatAgeLocale(d time.Duration, locale i18n.Locale) string {
 	if d < 0 {
 		d = 0
 	}
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	}
+	return i18n.FormatRelativeAge(d, locale, i18n.FormatCompact)
 }
 
 // writeJSON encodes payload as a single newline-terminated json document.

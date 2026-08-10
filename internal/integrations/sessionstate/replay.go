@@ -9,8 +9,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
+	antigravityagent "github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	claudeagent "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	codexagent "github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 )
@@ -32,16 +33,6 @@ type ReplayOptions struct {
 
 	// CommandShell overrides the POSIX shell used for direct-start wrappers.
 	CommandShell string
-}
-
-// ApplyToExistingSessionOptions controls destructive replay into an
-// already-running tmux session.
-type ApplyToExistingSessionOptions struct {
-	ReplayOptions
-
-	// TempSession overrides the internal staging session name. It is intended
-	// for tests; production callers should leave it empty.
-	TempSession string
 }
 
 // ReplayResult reports non-fatal restore decisions.
@@ -171,96 +162,6 @@ func replay(ctx context.Context, runner Runner, snap Snapshot, opts ReplayOption
 	return result, nil
 }
 
-// ApplyToExistingSession destructively replaces the windows in snap.Session
-// while keeping that tmux session identity. It stages the snapshot in a
-// temporary session using Replay, moves the staged windows into the live
-// session by window ID, then removes any live windows that were not part of the
-// staged snapshot.
-func ApplyToExistingSession(ctx context.Context, runner Runner, snap Snapshot, opts ApplyToExistingSessionOptions) (ReplayResult, error) {
-	var result ReplayResult
-	if runner == nil {
-		return result, fmt.Errorf("sessionstate: replay runner is required")
-	}
-	if err := snap.Validate(); err != nil {
-		return result, err
-	}
-
-	windows := sortedWindows(snap.Windows)
-	if len(windows) == 0 {
-		return result, fmt.Errorf("sessionstate: live replay requires at least one window")
-	}
-
-	tempSession := strings.TrimSpace(opts.TempSession)
-	if tempSession == "" {
-		tempSession = defaultLiveReplayTempSession(snap.Session)
-	}
-	if err := validateSessionName(tempSession); err != nil {
-		return result, fmt.Errorf("sessionstate: invalid live replay temp session: %w", err)
-	}
-	if tempSession == snap.Session {
-		return result, fmt.Errorf("sessionstate: live replay temp session must differ from target session")
-	}
-
-	staged := snap
-	staged.Session = tempSession
-	cleanupTemp := false
-	defer func() {
-		if cleanupTemp {
-			_, _ = runner.Run(ctx, "tmux", "kill-session", "-t", tempSession)
-		}
-	}()
-
-	var err error
-	result, err = replay(ctx, runner, staged, opts.ReplayOptions, replayOptions{})
-	if err != nil {
-		cleanupTemp = true
-		return result, err
-	}
-	cleanupTemp = true
-
-	stagedWindows, err := listIndexedWindowIDs(ctx, runner, tempSession)
-	if err != nil {
-		return result, err
-	}
-
-	moved := make(map[string]struct{}, len(windows))
-	for _, window := range windows {
-		windowID, ok := stagedWindows[window.Index]
-		if !ok {
-			return result, fmt.Errorf("sessionstate: staged window %d not found", window.Index)
-		}
-		if _, err := runner.Run(ctx, "tmux", "move-window", "-d", "-k", "-s", windowID, "-t", windowTarget(snap.Session, window.Index)); err != nil {
-			return result, fmt.Errorf("live replay tmux window %d move: %w", window.Index, err)
-		}
-		moved[windowID] = struct{}{}
-	}
-	cleanupTemp = false
-
-	liveWindows, err := listWindowIDs(ctx, runner, snap.Session)
-	if err != nil {
-		return result, err
-	}
-	for _, windowID := range liveWindows {
-		if _, keep := moved[windowID]; keep {
-			continue
-		}
-		if _, err := runner.Run(ctx, "tmux", "kill-window", "-t", windowID); err != nil {
-			return result, fmt.Errorf("live replay tmux extra window %s: %w", windowID, err)
-		}
-	}
-
-	for _, window := range windows {
-		if err := replayPaneRecipes(ctx, runner, snap.Session, window, sortedPanes(window.Panes), &result, replayOptions{replayPaneRecipes: true}); err != nil {
-			return result, err
-		}
-	}
-
-	if _, err := runner.Run(ctx, "tmux", "select-window", "-t", windowTarget(snap.Session, windows[0].Index)); err != nil {
-		return result, fmt.Errorf("live replay tmux active window %d: %w", windows[0].Index, err)
-	}
-	return result, nil
-}
-
 func replayPaneRecipes(ctx context.Context, runner Runner, session string, window Window, panes []Pane, result *ReplayResult, replayOpts replayOptions) error {
 	for _, pane := range panes {
 		if replayOpts.directStartAgents && pane.Recipe.Kind == RecipeKindAgent {
@@ -308,7 +209,12 @@ func replayPaneLaunchTail(launcher agentLaunchResolver, window Window, pane Pane
 	agent := strings.ToLower(strings.TrimSpace(pane.Recipe.Agent))
 	var resumeArgs []string
 	var err error
+	if !aiprovider.SessionStateSupported(agent) {
+		return nil
+	}
 	switch agent {
+	case antigravityagent.AgentName:
+		resumeArgs, err = antigravityagent.ResumeArgs(pane.Recipe.ResumeID)
 	case claudeagent.AgentName:
 		resumeArgs, err = claudeagent.ResumeArgs(pane.Recipe.ResumeID)
 	case codexagent.AgentName:
@@ -365,7 +271,12 @@ func replayAgentRecipe(ctx context.Context, runner Runner, target string, window
 	agent := strings.ToLower(strings.TrimSpace(pane.Recipe.Agent))
 	var command string
 	var err error
+	if !aiprovider.SessionStateSupported(agent) {
+		return nil
+	}
 	switch agent {
+	case antigravityagent.AgentName:
+		command, err = antigravityagent.ResumeCommand(pane.Recipe.ResumeID)
 	case claudeagent.AgentName:
 		command, err = claudeagent.ResumeCommand(pane.Recipe.ResumeID)
 	case codexagent.AgentName:
@@ -399,54 +310,6 @@ func replayStartupRecipe(ctx context.Context, runner Runner, target string, wind
 	return nil
 }
 
-func listWindowIDs(ctx context.Context, runner Runner, session string) ([]string, error) {
-	output, err := runner.Run(ctx, "tmux", "list-windows", "-t", session, "-F", "#{window_id}")
-	if err != nil {
-		return nil, fmt.Errorf("sessionstate: list tmux windows for %q: %w", session, err)
-	}
-	var ids []string
-	for raw := range strings.SplitSeq(string(output), "\n") {
-		id := strings.TrimSpace(raw)
-		if id != "" {
-			ids = append(ids, id)
-		}
-	}
-	return ids, nil
-}
-
-func listIndexedWindowIDs(ctx context.Context, runner Runner, session string) (map[int]string, error) {
-	output, err := runner.Run(ctx, "tmux", "list-windows", "-t", session, "-F", "#{window_id}\t#{window_index}")
-	if err != nil {
-		return nil, fmt.Errorf("sessionstate: list staged tmux windows for %q: %w", session, err)
-	}
-	out := make(map[int]string)
-	for raw := range strings.SplitSeq(string(output), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		fields := strings.Split(line, "\t")
-		if len(fields) != 2 {
-			return nil, fmt.Errorf("sessionstate: parse tmux window row %q", raw)
-		}
-		index, err := strconv.Atoi(strings.TrimSpace(fields[1]))
-		if err != nil {
-			return nil, fmt.Errorf("sessionstate: parse tmux window index %q: %w", fields[1], err)
-		}
-		id := strings.TrimSpace(fields[0])
-		if id == "" {
-			return nil, fmt.Errorf("sessionstate: parse tmux window row %q: missing window id", raw)
-		}
-		out[index] = id
-	}
-	return out, nil
-}
-
-func defaultLiveReplayTempSession(session string) string {
-	name := strings.NewReplacer(":", "_", ".", "_").Replace(session)
-	return "__projmux_apply_" + name + "_" + strconv.Itoa(os.Getpid()) + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-}
-
 func appendReplayWarning(result *ReplayResult, warning ReplayWarning) {
 	if result == nil {
 		return
@@ -456,11 +319,11 @@ func appendReplayWarning(result *ReplayResult, warning ReplayWarning) {
 
 func findAgentBinary(agent string) string {
 	binName := strings.TrimSpace(agent)
-	switch binName {
-	case claudeagent.AgentName, codexagent.AgentName:
-	default:
+	provider, ok := aiprovider.Lookup(binName)
+	if !ok || !provider.SessionState.Supported || strings.TrimSpace(provider.BinaryName) == "" {
 		return ""
 	}
+	binName = provider.BinaryName
 
 	home, _ := os.UserHomeDir()
 	if path := firstExecutable(
@@ -473,7 +336,7 @@ func findAgentBinary(agent string) string {
 	if path := newestExecutable(nodeManagerCandidates(home, binName)); path != "" {
 		return path
 	}
-	if binName == codexagent.AgentName {
+	if provider.ID == aiprovider.Codex {
 		matches, _ := filepath.Glob(filepath.Join(home, ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
 		return newestExecutable(matches)
 	}

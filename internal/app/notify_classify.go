@@ -9,10 +9,9 @@ import (
 // notifyRowDisplayState classifies how a queue entry should be rendered in
 // user-facing surfaces (sidebar row, statusbar segment, `--live` diagnostics).
 //
-// The state is a *display* concept: it does not mutate the queue. Entries that
-// resolve to anything other than [notifyDisplayLive] are ack-only — focus
-// round-trips will not succeed, so we want to communicate that to the user
-// before they click.
+// The state is a *display* concept: it does not mutate the queue. Inactive
+// entries are live reply+agent mismatches that may still be routable; only
+// gone entries are cleanup-only.
 type notifyRowDisplayState int
 
 const (
@@ -27,21 +26,53 @@ const (
 
 	// notifyDisplayGone means the entry has no routable target (typically the
 	// session field is empty after trimming). Focus would exit with
-	// `focusExitNotResolved`, so the segment should ack-only.
+	// `focusExitNotResolved`, so the segment should clean up without focusing.
 	notifyDisplayGone
 )
 
 // classifyNotifyRowState returns the display classification for a single
-// queue entry. `liveByID` is the map of live AI reply-state panes keyed by
-// notify id (the same map [notifyCommand.buildNotifyLiveReport] builds). Pass
-// `nil` when live data is unavailable; the helper then only reports
-// [notifyDisplayGone] for unroutable entries and treats every other entry as
-// [notifyDisplayLive] (best-effort: a missing tmux server must not falsely
-// dim every row).
-func classifyNotifyRowState(entry notify.Notification, liveByID map[string]notifyLivePane) notifyRowDisplayState {
+// queue entry.
+//
+// `liveByID` is the map of live AI reply-state panes keyed by notify id (the
+// same map [notifyCommand.buildNotifyLiveReport] builds). It drives the
+// inactive/stale decision. Pass `nil` when live data is unavailable; the
+// helper then never reports [notifyDisplayStale] (best-effort: a missing tmux
+// server must not falsely dim every row).
+//
+// `paneSet` is the full live tmux pane inventory (every pane on the server,
+// not just attention/reply panes). It drives the real GONE decision: a
+// pane-target queue row whose pane is no longer present in tmux is gone. Pass
+// `nil` to mean "inventory unavailable" — membership-based GONE is then
+// skipped entirely so a missing/empty tmux reply does not falsely gone every
+// row. See [notifyLivePaneSet].
+//
+// Classification order (fixed):
+//
+//  1. GONE — the entry has no routable target (malformed/empty session), OR
+//     the inventory is available AND the entry has a pane target AND that pane
+//     is NOT present in the live inventory. Only pane-target rows are eligible
+//     for membership-based GONE; window/session-only rows keep the routable
+//     string check only (we do not have a reliable pane id to test).
+//  2. STALE/INACTIVE — an `ai:`-prefixed entry whose pane still exists but no
+//     longer satisfies live reply+agent state (a `liveByID` miss).
+//  3. LIVE — everything else.
+func classifyNotifyRowState(entry notify.Notification, liveByID map[string]notifyLivePane, paneSet notifyLivePaneSet) notifyRowDisplayState {
+	// 1. GONE: malformed target, or a real pane-inventory miss.
 	if !notifyEntryIsRoutable(entry) {
 		return notifyDisplayGone
 	}
+	// Pane-first policy: only rows that carry a concrete pane target are
+	// eligible for membership-based GONE. Window/session-only rows have no
+	// pane id to look up, so we leave them to the routable-string check above.
+	// A nil paneSet means the inventory was unavailable (read failed or the
+	// tmux reply was empty/unrecognized); skip membership-based GONE so a
+	// missing tmux server cannot gone every row.
+	if paneSet != nil && strings.TrimSpace(entry.Pane) != "" && !paneSet.Has(entry) {
+		return notifyDisplayGone
+	}
+
+	// 2. STALE: ai-prefixed entry whose pane exists but no longer matches live
+	// reply+agent state.
 	if liveByID == nil {
 		return notifyDisplayLive
 	}
@@ -77,7 +108,7 @@ func notifyEntryIsRoutable(entry notify.Notification) bool {
 func notifyDisplayStateLabel(state notifyRowDisplayState) string {
 	switch state {
 	case notifyDisplayStale:
-		return "STALE"
+		return "INACTIVE"
 	case notifyDisplayGone:
 		return "GONE"
 	}
@@ -89,7 +120,7 @@ func notifyDisplayStateLabel(state notifyRowDisplayState) string {
 func notifyDisplayStateShortLabel(state notifyRowDisplayState) string {
 	switch state {
 	case notifyDisplayStale:
-		return "STL"
+		return "INA"
 	case notifyDisplayGone:
 		return "GON"
 	}

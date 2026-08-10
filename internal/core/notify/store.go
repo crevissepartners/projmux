@@ -10,13 +10,20 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 // NotifyFileName is the basename of the queue file inside StateDir.
 const NotifyFileName = "notify.json"
+
+// MaxQueueEntries is the hard upper bound applied by Reconcile. Push remains
+// append/replace-only so producer and explicit-ack semantics do not change;
+// the queue is trimmed to its most recent entries only during reconciliation.
+const MaxQueueEntries = 256
 
 // lockFileSuffix is appended to the queue file path to derive the lock path.
 const lockFileSuffix = ".lock"
@@ -42,12 +49,11 @@ type Store struct {
 	lockPath string
 	clock    Clock
 
-	// rng is used by the lock-acquisition backoff to add jitter. The store is
-	// not safe for concurrent use across goroutines without external
-	// serialization (this matches every other core/* store), so the rng is
-	// only ever touched while we already hold the file lock or are racing to
-	// acquire it; either way the simple seeded source is fine.
-	rng *rand.Rand
+	// rng is used by the lock-acquisition backoff to add jitter. Contenders
+	// access it before acquiring the file lock, so rngMu serializes the
+	// concurrency-unsafe seeded source.
+	rngMu sync.Mutex
+	rng   *rand.Rand
 }
 
 // NewStore builds a Store rooted at the supplied path.
@@ -84,6 +90,23 @@ type PushResult struct {
 	QueueLen   int
 	Replaced   bool // true if the push replaced an entry with the same ID.
 	WasExpired bool // true if the existing entry had already expired.
+}
+
+// TargetExistsFunc reports whether a notification's tmux target is still
+// present. A nil function means target inventory is unavailable, so
+// reconciliation skips TTL-based removal and only enforces the hard cap.
+type TargetExistsFunc func(Notification) bool
+
+// ReconcileResult summarizes automatic queue eviction.
+type ReconcileResult struct {
+	ExpiredGone int
+	Overflow    int
+	QueueLen    int
+}
+
+// Removed returns the total number of entries evicted.
+func (r ReconcileResult) Removed() int {
+	return r.ExpiredGone + r.Overflow
 }
 
 // Push appends or replaces a notification. Validation is performed first so
@@ -188,9 +211,8 @@ func sanitizeMetadata(in map[string]string) map[string]string {
 	return out
 }
 
-// List returns all pending entries in recency-desc order. Expiration metadata
-// is retained for freshness displays only; explicit ack is the only removal
-// path.
+// List returns all pending entries in recency-desc order. It is read-only:
+// expiration metadata never causes List itself to remove an entry.
 func (s *Store) List() ([]Notification, error) {
 	var out []Notification
 	err := s.withLock(func() error {
@@ -253,6 +275,56 @@ func (s *Store) Ack(id string) error {
 	})
 }
 
+// Reconcile applies the queue's bounded-retention policy atomically. It
+// removes only expired entries whose tmux target no longer exists, then keeps
+// at most MaxQueueEntries of the remaining entries, evicting oldest first.
+// Live expired entries are retained unless they fall into the hard-cap
+// overflow. This is the only automatic removal path; Push and List never
+// evict.
+func (s *Store) Reconcile(targetExists TargetExistsFunc) (ReconcileResult, error) {
+	var result ReconcileResult
+	err := s.withLock(func() error {
+		entries, err := s.read()
+		if err != nil {
+			return err
+		}
+
+		entries, result = reconcileEntries(entries, s.clock(), targetExists, MaxQueueEntries)
+		return s.write(entries)
+	})
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	return result, nil
+}
+
+func reconcileEntries(entries []Notification, now time.Time, targetExists TargetExistsFunc, maxEntries int) ([]Notification, ReconcileResult) {
+	kept := make([]Notification, 0, len(entries))
+	result := ReconcileResult{}
+	for _, entry := range entries {
+		if notificationExpired(entry, now) && targetExists != nil && !targetExists(entry) {
+			result.ExpiredGone++
+			continue
+		}
+		kept = append(kept, entry)
+	}
+
+	if maxEntries >= 0 && len(kept) > maxEntries {
+		result.Overflow = len(kept) - maxEntries
+		kept = sortRecencyDesc(kept)[:maxEntries]
+	}
+	result.QueueLen = len(kept)
+	return kept, result
+}
+
+func notificationExpired(entry Notification, now time.Time) bool {
+	expiresAt := entry.ExpiresAt
+	if expiresAt.IsZero() && !entry.CreatedAt.IsZero() {
+		expiresAt = entry.CreatedAt.Add(DefaultTTL)
+	}
+	return !expiresAt.IsZero() && !expiresAt.After(now)
+}
+
 // replaceOrAppend writes entry into entries, replacing any existing entry
 // with the same id. The replaced flag indicates whether a previous entry was
 // overwritten (and was still live), while wasExpired indicates the previous
@@ -285,6 +357,7 @@ func sortRecencyDesc(entries []Notification) []Notification {
 
 // read parses the queue file. Missing/empty file decodes as an empty queue.
 func (s *Store) read() ([]Notification, error) {
+	localstate.RepairPrivateFile(s.path)
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -311,7 +384,7 @@ func (s *Store) read() ([]Notification, error) {
 // write replaces the queue file atomically.
 func (s *Store) write(entries []Notification) error {
 	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(dir); err != nil {
 		return fmt.Errorf("create notify state dir: %w", err)
 	}
 
@@ -343,13 +416,11 @@ func (s *Store) write(entries []Notification) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close notify temp file: %w", err)
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return fmt.Errorf("chmod notify temp file: %w", err)
-	}
 	if err := os.Rename(tmpName, s.path); err != nil {
 		return fmt.Errorf("rename notify temp file: %w", err)
 	}
 	cleanup = false
+	localstate.RepairPrivateFile(s.path)
 	return nil
 }
 
@@ -358,7 +429,7 @@ func (s *Store) write(entries []Notification) error {
 // stale lock older than defaultLockStaleAfter is broken to recover from a
 // crashed peer.
 func (s *Store) withLock(fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(s.lockPath), 0o755); err != nil {
+	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lockPath)); err != nil {
 		return fmt.Errorf("create notify lock dir: %w", err)
 	}
 
@@ -390,7 +461,7 @@ func (s *Store) acquireLock() error {
 		}
 
 		// Add jitter so multiple contenders do not synchronise.
-		jitter := time.Duration(s.rng.Int63n(int64(defaultLockBaseDelay) + 1))
+		jitter := s.lockJitter()
 		time.Sleep(delay + jitter)
 		if delay < defaultLockMaxDelay {
 			delay *= 2
@@ -400,6 +471,12 @@ func (s *Store) acquireLock() error {
 		}
 	}
 	return fmt.Errorf("acquire notify lock: exhausted %d attempts on %s", defaultLockMaxAttempts, s.lockPath)
+}
+
+func (s *Store) lockJitter() time.Duration {
+	s.rngMu.Lock()
+	defer s.rngMu.Unlock()
+	return time.Duration(s.rng.Int63n(int64(defaultLockBaseDelay) + 1))
 }
 
 // tryBreakStaleLock removes the lock file if it is older than

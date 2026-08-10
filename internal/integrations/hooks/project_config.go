@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 const projectConfigRelativePath = ".projmux/config.toml"
@@ -20,11 +22,78 @@ type ProjectConfig struct {
 	Hooks      map[Event]string
 	Env        map[string]string
 	Kube       KubeConfig
+	Theme      theme.ThemeConfig
+	UI         UIConfig
+	AI         AIConfig
 }
 
 type KubeConfig struct {
 	Context   string
 	Namespace string
+}
+
+type UIConfig struct {
+	Locale     string
+	NativeKeys *bool
+}
+
+// AIConfig holds the [ai] section. It is intentionally extensible: Phase 1
+// added ResumePickerLimit; Phase 2 adds ResumeScanDepth alongside it.
+type AIConfig struct {
+	// ResumePickerLimit caps how many recent sessions the AI resume picker
+	// lists. Zero means unset (callers fall back to their own default). Stored
+	// values are clamped to [AIResumePickerLimitMin, AIResumePickerLimitMax].
+	ResumePickerLimit int
+
+	// ResumeScanDepth widens the AI resume picker to include sessions started in
+	// directories up to N levels below the current cwd. Zero means unset, which
+	// is identical to the historical exact-cwd behaviour (depth 0). Stored
+	// values are clamped to [0, AIResumeScanDepthMax].
+	ResumeScanDepth int
+}
+
+// AIResumePickerLimit bounds. A configured value outside this range is clamped
+// on write (normalizeProjectConfig); zero stays zero and means "not set".
+const (
+	AIResumePickerLimitMin = 1
+	AIResumePickerLimitMax = 100
+)
+
+// AIResumeScanDepth bounds. Depth 0 is the default exact-cwd behaviour; a
+// configured value above the max is clamped on write. Unlike the picker limit,
+// zero is a meaningful value (exact cwd) as well as the "unset" sentinel — both
+// resolve to the same behaviour, so render simply omits a zero depth.
+const (
+	AIResumeScanDepthMin = 0
+	AIResumeScanDepthMax = 8
+)
+
+// ClampAIResumePickerLimit constrains a configured (non-zero) limit to the
+// supported range. Zero is preserved so it keeps meaning "unset".
+func ClampAIResumePickerLimit(limit int) int {
+	if limit == 0 {
+		return 0
+	}
+	if limit < AIResumePickerLimitMin {
+		return AIResumePickerLimitMin
+	}
+	if limit > AIResumePickerLimitMax {
+		return AIResumePickerLimitMax
+	}
+	return limit
+}
+
+// ClampAIResumeScanDepth constrains a configured scan depth to the supported
+// range. Negative depths collapse to zero (unset/exact cwd); oversized depths
+// clamp to AIResumeScanDepthMax.
+func ClampAIResumeScanDepth(depth int) int {
+	if depth <= AIResumeScanDepthMin {
+		return AIResumeScanDepthMin
+	}
+	if depth > AIResumeScanDepthMax {
+		return AIResumeScanDepthMax
+	}
+	return depth
 }
 
 func (c ProjectConfig) SessionEnv() map[string]string {
@@ -95,7 +164,7 @@ func ParseProjectConfig(content string) (ProjectConfig, error) {
 		if key == "" {
 			return ProjectConfig{}, fmt.Errorf("line %d: empty key", lineNo+1)
 		}
-		decoded, err := parseQuotedConfigString(value)
+		decoded, err := parseProjectConfigValue(section, key, value)
 		if err != nil {
 			return ProjectConfig{}, fmt.Errorf("line %d: %w", lineNo+1, err)
 		}
@@ -170,7 +239,7 @@ func loadProjectConfig(path string) (ProjectConfig, error) {
 
 func isSupportedProjectConfigSection(section string) bool {
 	switch section {
-	case "startup", "env", "kube":
+	case "startup", "env", "kube", "theme", "ui", "ai":
 		return true
 	}
 	if eventName, ok := strings.CutPrefix(section, "hooks."); ok {
@@ -200,6 +269,40 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 		default:
 			return fmt.Errorf("line %d: unsupported kube key %q", lineNo, key)
 		}
+	case "theme":
+		if err := applyProjectThemeConfigValue(&cfg.Theme, key, value, lineNo); err != nil {
+			return err
+		}
+	case "ui":
+		switch key {
+		case "locale":
+			cfg.UI.Locale = value
+		case "native_keys":
+			enabled, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("line %d: invalid ui native_keys %q: %w", lineNo, value, err)
+			}
+			cfg.UI.NativeKeys = &enabled
+		default:
+			return fmt.Errorf("line %d: unsupported ui key %q", lineNo, key)
+		}
+	case "ai":
+		switch key {
+		case "resume_picker_limit":
+			limit, err := strconv.Atoi(value)
+			if err != nil {
+				return fmt.Errorf("line %d: invalid ai resume_picker_limit %q: %w", lineNo, value, err)
+			}
+			cfg.AI.ResumePickerLimit = limit
+		case "resume_scan_depth":
+			depth, err := strconv.Atoi(value)
+			if err != nil {
+				return fmt.Errorf("line %d: invalid ai resume_scan_depth %q: %w", lineNo, value, err)
+			}
+			cfg.AI.ResumeScanDepth = depth
+		default:
+			return fmt.Errorf("line %d: unsupported ai key %q", lineNo, key)
+		}
 	default:
 		eventName, ok := strings.CutPrefix(section, "hooks.")
 		if !ok || key != "run" {
@@ -212,6 +315,94 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 		cfg.Hooks[event] = value
 	}
 	return nil
+}
+
+func applyProjectThemeConfigValue(cfg *theme.ThemeConfig, key, value string, lineNo int) error {
+	switch key {
+	case "preset":
+		cfg.Preset = value
+	case "background":
+		cfg.Background = value
+	case "surface":
+		cfg.Surface = value
+	case "status_background":
+		cfg.StatusBackground = value
+	case "surface_active":
+		cfg.SurfaceActive = value
+	case "chrome_foreground":
+		cfg.ChromeForeground = value
+	case "text_primary":
+		cfg.TextPrimary = value
+	case "foreground":
+		cfg.Foreground = value
+	case "muted":
+		cfg.Muted = value
+	case "accent":
+		cfg.Accent = value
+	case "critical":
+		cfg.Critical = value
+	case "warning":
+		cfg.Warning = value
+	case "progress":
+		cfg.Progress = value
+	case "success":
+		cfg.Success = value
+	case "action_required":
+		cfg.ActionRequired = value
+	case "pane_active_bg":
+		cfg.PaneActiveBg = value
+	case "focus":
+		cfg.Focus = value
+	case "font_family", "font_size":
+		// Deprecated theme font keys (removed in Phase 1b). They never applied
+		// to the terminal, so leftover keys are accepted for backward
+		// compatibility but ignored rather than stored or resolved.
+	default:
+		return fmt.Errorf("line %d: unsupported theme key %q", lineNo, key)
+	}
+	return nil
+}
+
+func parseProjectConfigValue(section, key, value string) (string, error) {
+	if section == "ui" && key == "native_keys" {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", fmt.Errorf("value must be a boolean")
+		}
+		if _, err := strconv.ParseBool(value); err != nil {
+			return "", fmt.Errorf("invalid boolean value: %w", err)
+		}
+		return value, nil
+	}
+	if section == "ai" && (key == "resume_picker_limit" || key == "resume_scan_depth") {
+		// resume_picker_limit and resume_scan_depth are bare integers (no
+		// quotes), e.g.
+		//   [ai]
+		//   resume_picker_limit = 50
+		//   resume_scan_depth = 2
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", fmt.Errorf("value must be an integer")
+		}
+		if _, err := strconv.Atoi(value); err != nil {
+			return "", fmt.Errorf("invalid integer value: %w", err)
+		}
+		return value, nil
+	}
+	if section == "theme" && key == "font_size" && !strings.HasPrefix(strings.TrimSpace(value), "\"") {
+		// font_size is a deprecated, ignored key (Phase 1b). It used to be
+		// written as a bare integer, so tolerate that form here to keep old
+		// configs loadable; applyProjectThemeConfigValue discards the value.
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", fmt.Errorf("value must be a quoted string or integer")
+		}
+		if _, err := strconv.Atoi(value); err != nil {
+			return "", fmt.Errorf("invalid integer value: %w", err)
+		}
+		return value, nil
+	}
+	return parseQuotedConfigString(value)
 }
 
 func parseQuotedConfigString(value string) (string, error) {
@@ -277,6 +468,10 @@ func normalizeProjectConfig(cfg *ProjectConfig) {
 	}
 	cfg.Kube.Context = strings.TrimSpace(cfg.Kube.Context)
 	cfg.Kube.Namespace = strings.TrimSpace(cfg.Kube.Namespace)
+	cfg.Theme.Normalize()
+	cfg.UI.Locale = strings.TrimSpace(cfg.UI.Locale)
+	cfg.AI.ResumePickerLimit = ClampAIResumePickerLimit(cfg.AI.ResumePickerLimit)
+	cfg.AI.ResumeScanDepth = ClampAIResumeScanDepth(cfg.AI.ResumeScanDepth)
 }
 
 func validateProjectConfig(cfg ProjectConfig) error {
@@ -294,6 +489,14 @@ func validateProjectConfig(cfg ProjectConfig) error {
 }
 
 func writeProjectConfigFile(path string, cfg ProjectConfig) error {
+	return writeProjectConfigFileMode(path, cfg, 0o644)
+}
+
+func writePrivateProjectConfigFile(path string, cfg ProjectConfig) error {
+	return writeProjectConfigFileMode(path, cfg, 0o600)
+}
+
+func writeProjectConfigFileMode(path string, cfg ProjectConfig, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -314,8 +517,12 @@ func writeProjectConfigFile(path string, cfg ProjectConfig) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return err
+	// CreateTemp requests 0600, which is already the private global-config
+	// mode. Only the shareable project-local writer needs to broaden it.
+	if mode != 0o600 {
+		if err := os.Chmod(tmpName, mode); err != nil {
+			return err
+		}
 	}
 	return os.Rename(tmpName, path)
 }
@@ -361,10 +568,72 @@ func renderProjectConfig(cfg ProjectConfig) string {
 		}
 		sections = append(sections, b.String())
 	}
+	if cfg.Theme.HasContent() {
+		sections = append(sections, renderThemeConfigSection(cfg.Theme))
+	}
+	if cfg.UI.Locale != "" || cfg.UI.NativeKeys != nil {
+		var b strings.Builder
+		b.WriteString("[ui]\n")
+		if cfg.UI.Locale != "" {
+			fmt.Fprintf(&b, "locale = %s\n", strconv.Quote(strings.TrimSpace(cfg.UI.Locale)))
+		}
+		if cfg.UI.NativeKeys != nil {
+			fmt.Fprintf(&b, "native_keys = %t\n", *cfg.UI.NativeKeys)
+		}
+		sections = append(sections, b.String())
+	}
+	if cfg.AI.ResumePickerLimit != 0 || cfg.AI.ResumeScanDepth != 0 {
+		var b strings.Builder
+		b.WriteString("[ai]\n")
+		if cfg.AI.ResumePickerLimit != 0 {
+			fmt.Fprintf(&b, "resume_picker_limit = %d\n", cfg.AI.ResumePickerLimit)
+		}
+		if cfg.AI.ResumeScanDepth != 0 {
+			fmt.Fprintf(&b, "resume_scan_depth = %d\n", cfg.AI.ResumeScanDepth)
+		}
+		sections = append(sections, b.String())
+	}
 	if len(sections) == 0 {
 		return ""
 	}
 	return strings.Join(sections, "\n")
+}
+
+func renderThemeConfigSection(cfg theme.ThemeConfig) string {
+	cfg.Normalize()
+	var b strings.Builder
+	b.WriteString("[theme]\n")
+	for _, field := range []struct {
+		key   string
+		value string
+	}{
+		{"preset", cfg.Preset},
+		{"background", cfg.Background},
+		{"surface", cfg.Surface},
+		{"status_background", cfg.StatusBackground},
+		{"surface_active", cfg.SurfaceActive},
+		{"chrome_foreground", cfg.ChromeForeground},
+		{"text_primary", cfg.TextPrimary},
+		{"foreground", cfg.Foreground},
+		{"muted", cfg.Muted},
+		{"accent", cfg.Accent},
+		{"critical", cfg.Critical},
+		{"warning", cfg.Warning},
+		{"progress", cfg.Progress},
+		{"success", cfg.Success},
+		{"action_required", cfg.ActionRequired},
+		{"pane_active_bg", cfg.PaneActiveBg},
+		{"focus", cfg.Focus},
+	} {
+		if field.value == "" {
+			continue
+		}
+		b.WriteString(field.key)
+		b.WriteString(" = ")
+		b.WriteString(strconv.Quote(field.value))
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 type projectConfigFile struct {

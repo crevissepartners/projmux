@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 )
 
 func TestStoreListDiscoversValidPresetsAndWarnsMalformed(t *testing.T) {
@@ -83,6 +83,117 @@ command = "nvim ."
 	}
 	if got := preset.Windows[0].Panes[0].Recipe; got.Kind != sessionstate.RecipeKindStartup || got.Command != "nvim ." {
 		t.Fatalf("Recipe = %#v, want startup command", got)
+	}
+}
+
+func TestLoadArtifactUsesSameExactBytesForParseAndAuthorization(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	store := NewStore(project)
+	body := []byte("schema_version = 1\n\n[[windows]]\nindex = 0\nactive_pane_index = 0\n\n[[windows.panes]]\nindex = 0\ncwd = \"${PROJMUX_CWD}\"\ncommand = \"printf exact-bytes\"\n")
+	mustWrite(t, filepath.Join(store.Dir(), "exact.toml"), string(body))
+
+	artifact, err := store.LoadArtifact("exact")
+	if err != nil {
+		t.Fatalf("LoadArtifact() error = %v", err)
+	}
+	if string(artifact.Contents) != string(body) {
+		t.Fatalf("artifact contents changed:\ngot  %q\nwant %q", artifact.Contents, body)
+	}
+	commands := artifact.ExecutableCommands()
+	if len(commands) != 1 || !strings.Contains(commands[0], "printf exact-bytes") {
+		t.Fatalf("ExecutableCommands() = %#v", commands)
+	}
+}
+
+func TestLoadArtifactRejectsFileAndDirectorySymlinks(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name          string
+		linkComponent string
+	}{
+		{name: "file"},
+		{name: "layouts-directory", linkComponent: "layouts"},
+		{name: "projmux-directory", linkComponent: ".projmux"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project := t.TempDir()
+			store := NewStore(project)
+			outside := t.TempDir()
+			body := "schema_version = 1\n"
+			if err := os.WriteFile(filepath.Join(outside, "unsafe.toml"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			switch tc.linkComponent {
+			case ".projmux":
+				outsideLayouts := filepath.Join(outside, "layouts")
+				if err := os.MkdirAll(outsideLayouts, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(filepath.Join(outside, "unsafe.toml"), filepath.Join(outsideLayouts, "unsafe.toml")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(project, ".projmux")); err != nil {
+					t.Fatal(err)
+				}
+			case "layouts":
+				if err := os.MkdirAll(filepath.Dir(store.Dir()), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, store.Dir()); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				if err := os.MkdirAll(store.Dir(), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(outside, "unsafe.toml"), filepath.Join(store.Dir(), "unsafe.toml")); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			_, err := store.LoadArtifact("unsafe")
+			if !errors.Is(err, ErrUnsafeArtifact) {
+				t.Fatalf("LoadArtifact() error = %v, want ErrUnsafeArtifact", err)
+			}
+		})
+	}
+}
+
+func TestToSnapshotEscapesProjectOwnedDisplayControls(t *testing.T) {
+	t.Parallel()
+
+	preset := Preset{
+		SchemaVersion: SchemaVersion,
+		Windows: []Window{{
+			Index:           0,
+			Name:            "dev\x1b]0;owned\a",
+			ActivePaneIndex: 0,
+			Panes: []Pane{{
+				Index:    0,
+				CWD:      "${PROJMUX_CWD}",
+				Agent:    "codex",
+				ResumeID: "resume",
+				Topic:    "topic\x1b[31m",
+				Recipe: sessionstate.AgentRecipe(
+					"codex",
+					"resume",
+					"topic\x1b[31m",
+				),
+			}},
+		}},
+	}
+	snap, err := ToSnapshot(preset, "workspace", t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatalf("ToSnapshot() error = %v", err)
+	}
+	if got := snap.Windows[0].Name; strings.Contains(got, "\x1b") || !strings.Contains(got, `\x1b`) {
+		t.Fatalf("window name = %q, want visible escape", got)
+	}
+	if got := snap.Windows[0].Panes[0].Recipe.Topic; strings.Contains(got, "\x1b") || !strings.Contains(got, `\x1b`) {
+		t.Fatalf("agent topic = %q, want visible escape", got)
 	}
 }
 

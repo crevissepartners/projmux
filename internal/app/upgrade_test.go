@@ -227,7 +227,7 @@ func TestUpgradeRunRejectsNPMInstaller(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Run() error = nil, want npm installer rejection")
 	}
-	for _, want := range []string{"npm installs", "projmux update apply", "npm update -g projmux"} {
+	for _, want := range []string{"npm installs", "projmux update apply", "npm install -g projmux@latest"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Run() error = %v, want %q", err, want)
 		}

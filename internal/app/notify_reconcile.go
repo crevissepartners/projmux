@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,52 +11,26 @@ import (
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
-// reconcileListPanesFormat is the tab/pipe-separated format used by the
-// reconcile pass. The producer key set (session, pane id, agent, topic,
-// socket) drives id construction and queue text composition; the
-// attention/ai state fields decide whether the pane should be in the queue.
-const reconcileListPanesFormat = "" +
-	"#{session_name}|" +
-	"#{window_id}|" +
-	"#{pane_id}|" +
-	"#{" + attentionStateOption + "}|" +
-	"#{" + aiPaneStateOption + "}|" +
-	"#{" + aiPaneAgentOption + "}|" +
-	"#{" + aiPaneTopicOption + "}|" +
-	"#{socket_path}"
-
 // reconcileResult is the summary returned by the reconcile pass.
 type reconcileResult struct {
-	Pushed int      `json:"pushed"`
-	Acked  int      `json:"acked"`
-	Kept   int      `json:"kept"`
-	Stale  int      `json:"stale"`
-	Errors []string `json:"errors"`
+	Pushed  int      `json:"pushed"`
+	Acked   int      `json:"acked"`
+	Kept    int      `json:"kept"`
+	Stale   int      `json:"stale"`
+	Evicted int      `json:"evicted"`
+	Errors  []string `json:"errors"`
 }
 
-// reconcilePane is the projection of one row from
-// `tmux list-panes -a -F <reconcileListPanesFormat>` after parsing.
-type reconcilePane struct {
-	Session        string
-	Window         string
-	Pane           string
-	AttentionState string
-	AIState        string
-	Agent          string
-	Topic          string
-	Socket         string
-}
-
-// shouldHaveQueueEntry reports whether the pane's live state means it must
-// be present in the notify queue. The producer pushes when the attention
-// state machine reports `reply` AND there is an AI agent associated with
-// the pane (manual `attention toggle` on a shell pane is intentionally
-// skipped). The reconcile pass mirrors that contract.
-func (p reconcilePane) shouldHaveQueueEntry() bool {
+// reconcileShouldHaveQueueEntry reports whether the pane's live state means
+// it must be present in the notify queue. The producer pushes when the
+// attention state machine reports `reply` AND there is an AI agent
+// associated with the pane (manual `attention toggle` on a shell pane is
+// intentionally skipped). The reconcile pass mirrors that contract.
+func reconcileShouldHaveQueueEntry(p livePaneRow) bool {
 	if strings.TrimSpace(p.Agent) == "" {
 		return false
 	}
-	if p.AttentionState == attentionStateReply {
+	if p.ReplyState {
 		return true
 	}
 	// The AI flow flips attention to reply on `status set waiting` but the
@@ -67,26 +40,27 @@ func (p reconcilePane) shouldHaveQueueEntry() bool {
 	return false
 }
 
-// id returns the canonical queue id used by the producer. Reusing the
-// shared helper guarantees push/ack/reconcile all agree on the key.
-func (p reconcilePane) id() string {
+// reconcileEntryID returns the canonical queue id used by the producer.
+// Reusing the shared helper guarantees push/ack/reconcile all agree on the
+// key.
+func reconcileEntryID(p livePaneRow) string {
 	return buildAttentionNotifyID(p.Session, p.Pane)
 }
 
-// text returns the canonical queue text used by the producer. Reusing the
-// shared helper guarantees the agent/topic rendering stays in lockstep
-// with the event-driven path.
-func (p reconcilePane) text() string {
+// reconcileEntryText returns the canonical queue text used by the producer.
+// Reusing the shared helper guarantees the agent/topic rendering stays in
+// lockstep with the event-driven path.
+func reconcileEntryText(p livePaneRow) string {
 	return composeAttentionReplyText(p.Agent, p.Topic)
 }
 
 // runReconcile walks every tmux pane on the host, compares the live state
-// against the persistent notify queue, and back-fills entries whose derived
-// AI reply rows are missing or stale. It never removes unacknowledged rows:
-// ack is the user's consume signal. Returns an error only for argument parsing
-// or store failures; tmux call failures are surfaced through the
-// `errors` field of the summary so install scripts get a single
-// non-fatal pass.
+// against the persistent notify queue, back-fills entries whose derived AI
+// reply rows are missing or stale, and applies the bounded eviction policy.
+// Live rows remain explicit-ack-only unless they are hard-cap overflow.
+// Returns an error only for argument parsing or store failures; tmux call
+// failures are surfaced through the `errors` field of the summary so install
+// scripts get a single non-fatal pass.
 func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("notify reconcile", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -111,20 +85,31 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 
 	result := reconcileResult{Errors: []string{}}
 
-	panes, listErr := c.listReconcilePanes()
+	panes, listErr := c.listLivePaneRows()
 	if listErr != nil {
 		// Common case: tmux is not running. Treat as soft failure so the
-		// post-install hook does not break.
+		// post-install hook does not break. Inventory-dependent TTL eviction
+		// is skipped, but the hard cap remains safe to enforce.
 		result.Errors = append(result.Errors, listErr.Error())
+		eviction, reconcileErr := store.Reconcile(nil)
+		if reconcileErr != nil {
+			return fmt.Errorf("reconcile notifications: %w", reconcileErr)
+		}
+		result.Evicted = eviction.Removed()
+		if result.Evicted > 0 {
+			c.publishNotifyQueueRefreshBestEffort()
+		}
 		return writeReconcileSummary(stdout, result, *asJSON)
 	}
 
-	wantByID := make(map[string]reconcilePane, len(panes))
+	paneSet := newNotifyLivePaneSet(panes)
+	sessionSet := newNotifyLiveSessionSet(panes)
+	wantByID := make(map[string]livePaneRow, len(panes))
 	for _, p := range panes {
-		if !p.shouldHaveQueueEntry() {
+		if !reconcileShouldHaveQueueEntry(p) {
 			continue
 		}
-		wantByID[p.id()] = p
+		wantByID[reconcileEntryID(p)] = p
 	}
 
 	existing, listQueueErr := store.List()
@@ -139,8 +124,9 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 
 	// Push pass: for every pane that should be in the queue, add or refresh.
 	for id, pane := range wantByID {
-		want := pane.text()
-		if cur, ok := existingByID[id]; ok && cur.Text == want {
+		want := reconcileEntryText(pane)
+		metadata := mergeAttentionNotifyMetadata(nil, pane.Agent, pane.Topic, notify.SeverityInfo)
+		if cur, ok := existingByID[id]; ok && cur.Text == want && attentionNotifyMetadataMatches(cur.Metadata, metadata) {
 			result.Kept++
 			continue
 		}
@@ -149,6 +135,7 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 			Text:     want,
 			Severity: notify.SeverityInfo,
 			Source:   notify.SourceAI,
+			Metadata: metadata,
 			TTL:      attentionNotifyTTL,
 			Target: notify.Target{
 				Socket:  pane.Socket,
@@ -161,12 +148,29 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 			result.Errors = append(result.Errors, fmt.Sprintf("push %s: %v", id, err))
 			continue
 		}
+		c.publishNotifyQueueRefreshBestEffort()
 		result.Pushed++
 	}
 
-	// Stale pass: for every queue entry whose key starts with `ai:`, report it
-	// if the pane is no longer reply-state with an agent. Do not ack it; users
-	// must explicitly clear rows under the notify SOT contract.
+	eviction, reconcileErr := store.Reconcile(func(entry notify.Notification) bool {
+		return reconcileTargetExists(entry, paneSet, sessionSet)
+	})
+	if reconcileErr != nil {
+		return fmt.Errorf("reconcile notifications: %w", reconcileErr)
+	}
+	result.Evicted = eviction.Removed()
+	if result.Evicted > 0 {
+		c.publishNotifyQueueRefreshBestEffort()
+		existing, listQueueErr = store.List()
+		if listQueueErr != nil {
+			return fmt.Errorf("list reconciled notifications: %w", listQueueErr)
+		}
+	}
+
+	// Stale pass: for every remaining queue entry whose key starts with `ai:`,
+	// report it if the pane is no longer reply-state with an agent. Do not ack
+	// it; users must explicitly clear retained rows under the notify SOT
+	// contract.
 	for _, e := range existing {
 		if !strings.HasPrefix(e.ID, "ai:") {
 			continue
@@ -180,47 +184,46 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 	return writeReconcileSummary(stdout, result, *asJSON)
 }
 
-// listReconcilePanes shells out to `tmux list-panes -a -F ...` and parses
-// every live pane row. Empty/blank rows are skipped. A nil runner short-
-// circuits to an empty slice so unit tests that exercise unrelated paths
-// do not need to wire a fake.
-func (c *notifyCommand) listReconcilePanes() ([]reconcilePane, error) {
-	if c == nil || c.runner == nil {
-		return nil, errors.New("tmux runner is not configured")
+type notifyLiveSessionSet map[string]struct{}
+
+func newNotifyLiveSessionSet(rows []livePaneRow) notifyLiveSessionSet {
+	if len(rows) == 0 {
+		return nil
 	}
-	output, err := c.runner.Run(context.Background(), "tmux", "list-panes", "-a", "-F", reconcileListPanesFormat)
-	if err != nil {
-		return nil, fmt.Errorf("tmux list-panes: %w", err)
+	set := make(notifyLiveSessionSet, len(rows))
+	for _, row := range rows {
+		session := strings.TrimSpace(row.Session)
+		if session != "" {
+			set[session] = struct{}{}
+		}
 	}
-	lines := strings.Split(strings.TrimRight(string(output), "\r\n"), "\n")
-	out := make([]reconcilePane, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fields := strings.Split(line, "|")
-		// The format string emits exactly 8 fields; tmux silently substitutes
-		// empty strings for unset options so a short row is malformed.
-		if len(fields) < 8 {
-			continue
-		}
-		p := reconcilePane{
-			Session:        strings.TrimSpace(fields[0]),
-			Window:         strings.TrimSpace(fields[1]),
-			Pane:           strings.TrimSpace(fields[2]),
-			AttentionState: strings.TrimSpace(fields[3]),
-			AIState:        strings.TrimSpace(fields[4]),
-			Agent:          strings.TrimSpace(fields[5]),
-			Topic:          strings.TrimSpace(fields[6]),
-			Socket:         strings.TrimSpace(fields[7]),
-		}
-		if p.Session == "" || p.Pane == "" {
-			continue
-		}
-		out = append(out, p)
+	if len(set) == 0 {
+		return nil
 	}
-	return out, nil
+	return set
+}
+
+// reconcileTargetExists reuses the same real pane inventory and pane-first
+// GONE classification as the notify UI. Session/window-only rows fall back to
+// session membership because they do not carry a concrete pane id.
+func reconcileTargetExists(entry notify.Notification, paneSet notifyLivePaneSet, sessionSet notifyLiveSessionSet) bool {
+	if paneSet == nil || sessionSet == nil {
+		return true
+	}
+	if strings.TrimSpace(entry.Pane) != "" {
+		return classifyNotifyRowState(entry, nil, paneSet) != notifyDisplayGone
+	}
+	_, ok := sessionSet[strings.TrimSpace(entry.Session)]
+	return ok
+}
+
+func attentionNotifyMetadataMatches(got, want map[string]string) bool {
+	for _, key := range []string{notify.MetaAgent, notify.MetaCategory, notify.MetaState, notify.MetaTopic} {
+		if strings.TrimSpace(got[key]) != strings.TrimSpace(want[key]) {
+			return false
+		}
+	}
+	return true
 }
 
 // writeReconcileSummary renders the result as either JSON or a single
@@ -232,7 +235,7 @@ func writeReconcileSummary(w io.Writer, r reconcileResult, asJSON bool) error {
 	if asJSON {
 		return writeJSON(w, r)
 	}
-	_, err := fmt.Fprintf(w, "reconcile: pushed %d, acked %d, kept %d, stale %d\n", r.Pushed, r.Acked, r.Kept, r.Stale)
+	_, err := fmt.Fprintf(w, "reconcile: pushed %d, acked %d, kept %d, stale %d, evicted %d\n", r.Pushed, r.Acked, r.Kept, r.Stale, r.Evicted)
 	if err != nil {
 		return err
 	}

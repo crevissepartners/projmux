@@ -76,6 +76,57 @@ func TestRenderPopupPreviewShowsShellCommandAsShellPaneTitle(t *testing.T) {
 	}
 }
 
+func TestRenderPopupPreviewStylesProgressAndLeadPrefixOnlyInRenderer(t *testing.T) {
+	t.Parallel()
+
+	got := RenderPopupPreview(preview.PopupReadModel{
+		SessionName:         "app",
+		HasSelection:        true,
+		SelectedWindowIndex: "1",
+		SelectedPaneIndex:   "0",
+		Windows: []preview.Window{
+			{Index: "1", Name: "app", PaneCount: 1},
+		},
+		Panes: []preview.Pane{
+			{WindowIndex: "1", Index: "0", Title: "agent", AttentionState: "busy", AIState: "thinking", AIAgent: "codex", AITopic: "[Lead:Ship] release", Command: "node", Path: "~rp/app"},
+		},
+	})
+
+	for _, want := range []string{
+		"  \x1b[2mtitle\x1b[0m  \x1b[1m\x1b[38;2;255;204;102m[Lead:Ship]\x1b[0m release\n",
+		"badge=\x1b[38;2;255;204;102mworking\x1b[0m state=\x1b[38;2;255;204;102mworking\x1b[0m assistant=codex topic=\x1b[1m\x1b[38;2;255;204;102m[Lead:Ship]\x1b[0m release",
+		"\x1b[1m\x1b[32m[1.0] \x1b[1m\x1b[38;2;255;204;102m[Lead:Ship]\x1b[0m relea",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("RenderPopupPreview() = %q, want substring %q", got, want)
+		}
+	}
+	if strings.Contains(got, "@projmux_ai_topic") || strings.Contains(got, "#[") {
+		t.Fatalf("RenderPopupPreview() = %q, want ANSI renderer styling only", got)
+	}
+}
+
+func TestRenderPopupPreviewShowsSemanticBadgeKind(t *testing.T) {
+	t.Parallel()
+
+	got := RenderPopupPreview(preview.PopupReadModel{
+		SessionName:         "dev",
+		HasSelection:        true,
+		SelectedWindowIndex: "1",
+		SelectedPaneIndex:   "0",
+		Windows: []preview.Window{
+			{Index: "1", Name: "app", PaneCount: 1},
+		},
+		Panes: []preview.Pane{
+			{WindowIndex: "1", Index: "0", Title: "agent", AIState: "waiting", AIBadgeKind: "input_required", AIAgent: "codex", AITopic: "needs target", Command: "node"},
+		},
+	})
+
+	if !strings.Contains(got, "badge=\x1b[38;5;214minput-required\x1b[0m") {
+		t.Fatalf("RenderPopupPreview() = %q, want semantic input badge", got)
+	}
+}
+
 func TestRenderPopupPreviewWithWindowOnlySelection(t *testing.T) {
 	t.Parallel()
 

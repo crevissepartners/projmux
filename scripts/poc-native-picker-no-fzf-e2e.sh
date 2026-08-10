@@ -254,7 +254,6 @@ EOF
     printf -v popup_env "env PROJMUX_PICKER_BACKEND=native PROJMUX_PROJDIR=%q PROJMUX_MANAGED_ROOTS=%q" "$demo_root" "$demo_root"
     {
       printf "bind-key -n M-1 run-shell \"%s /tmp/projmux tmux popup-toggle --client #{client_tty} sessionizer-sidebar\"\n" "$popup_env"
-      printf "bind-key -n User4 run-shell \"%s /tmp/projmux tmux popup-toggle --client #{client_tty} sessionizer-sidebar\"\n" "$popup_env"
     } >> "$shell_config"
     grep -q "PROJMUX_PICKER_BACKEND=native" "$shell_config"
     shell_log=/tmp/projmux-shell.log
@@ -349,18 +348,18 @@ EOF
     assert_native_launch_close "alt-4" "ai picker" "/tmp/projmux ai picker --inside right"
     assert_native_launch_close "alt-5" "ai settings" "/tmp/projmux ai settings"
     echo "[poc/no-fzf] native Alt-2/3/4/5 launch keys close immediately"
-    echo "[poc/no-fzf] exercise native notify sidebar printable expect key"
+    echo "[poc/no-fzf] exercise native notify sidebar printable ack key"
     /tmp/projmux notify push --text "deploy ok" --target main --source ai --id poc-notify
     notify_log=/tmp/projmux-notify.log
     notify_status=0
-    printf "x" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-2 /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
+    printf "a" | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native PROJMUX_NATIVE_LAUNCH_KEY=alt-2 /tmp/projmux notify list --ui=sidebar" "$notify_log" || notify_status=$?
     if [[ "$notify_status" != 0 ]]; then
       cat "$notify_log"
       exit "$notify_status"
     fi
-    if ! grep -q "ack poc-notify" "$notify_log"; then
+    if /tmp/projmux notify list --json | grep -q '"id": "poc-notify"'; then
       cat "$notify_log"
-      echo "native notify sidebar did not ack with printable expect key" >&2
+      echo "native notify sidebar did not ack with printable ack key" >&2
       exit 1
     fi
     if grep -q "Notify >" "$notify_log"; then

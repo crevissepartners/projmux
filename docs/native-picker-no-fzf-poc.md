@@ -16,6 +16,9 @@ The fzf compatibility surface for the native engine is tracked in
   execution, and result contracts, while moving visual composition into
   `projmuxpicker` so projmux can evolve a native picker design without coupling
   every visual tweak to the compatibility option/result shape.
+  Built-in fallback colors are centralized as semantic tokens in
+  `internal/theme/palette.go`; see [theme-palette.md](theme-palette.md) for the
+  current inventory and truecolor to tmux 256-color mapping policy.
 - `internal/ui/pickercompat` remains an internal compatibility mapper between
   the old option/result shape and the backend-neutral `picker.Options`
   contract. It is not a runtime backend. App code should
@@ -29,7 +32,7 @@ The fzf compatibility surface for the native engine is tracked in
 - The native picker supports ranked fuzzy search/filter, arrow-key selection in
   normal CSI and tmux application-cursor modes, Enter, Esc, Ctrl-C, Backspace,
   Ctrl-U, Ctrl-W, PageUp/PageDown, Home/End, modified CSI keys, custom expect
-  keys such as Ctrl-X/Alt-P, printable expect keys such as notify `x`, control
+  keys such as Ctrl-X/Alt-P, printable expect keys such as notify `a`/`x`, control
   expect keys such as notify `Ctrl-X`, `start:pos(N)` initial focus, preview
   command output, preview cycle command bindings, and sidebar focus command
   bindings.
@@ -40,9 +43,10 @@ The fzf compatibility surface for the native engine is tracked in
 - Typed-query prompts support cursor-aware insertion/deletion with a visible
   prompt cursor, Left/Right, Ctrl-A/E, Delete, Backspace, Ctrl-U, and Ctrl-W
   for settings path entry.
-- The native key parser recognizes the app's CSI-u keybind-probe sequences
-  such as `ESC [ 9005 u` for `Alt-1`, plus generic modified CSI-u forms such as
-  `ESC [ 115 ; 7 u` for `Ctrl-Alt-S`.
+- The native key parser keeps legacy parser-fixture coverage for app-specific
+  modified-key escapes, plus generic modified forms such as `ESC [ 115 ; 7 u`
+  for `Ctrl-Alt-S`. This is backend parser parity, not a product fallback
+  route.
 - Native interactive picker screens use an alternate screen lifecycle to better
   match fzf fullscreen behavior and restore the tmux pane after exit. Frame
   updates and screen exit both return to column 0 before emitting terminal
@@ -108,7 +112,7 @@ The fzf compatibility surface for the native engine is tracked in
   the top border off screen.
 - Native preview panes normalize tabs and control bytes before horizontal
   clipping, preventing long preview rows from wrapping and consuming extra
-  vertical viewport rows in Alt-3/session popups.
+  vertical viewport rows in session popups.
 - Native sidebar list scrollbars use the fixed list viewport as their track and
   measure multi-line cards in rendered rows, so the thumb does not shrink or
   jump when card heights vary.
@@ -175,8 +179,9 @@ Manual UX checks for the Docker sandbox:
 - Alt-1 opens with the top border/title visible, not clipped.
 - Vertical borders stay continuous while moving Up/Down.
 - Alt-1 closes the sidebar immediately when pressed again.
-- Alt-2, Alt-3, Alt-4, and Alt-5 open their matching native popups and close
+- Alt-2, Alt-4, Alt-5, and Alt-7 open their matching native popups and close
   on the same Alt key immediately.
+- Alt-3 opens Recent Windows.
 - Arrow keys move selection without leaking `^[[` text into the query.
 
 `fzf` is intentionally not installed in the image.

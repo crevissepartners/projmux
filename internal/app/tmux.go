@@ -15,8 +15,11 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
@@ -30,6 +33,18 @@ const (
 	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
 	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
 	tmuxWindowTitleWidth = 10
+
+	tmuxAccentAttentionBg = theme.TmuxAccentAttentionBg
+	tmuxAccentAIBg        = theme.TmuxAccentAIBg
+	tmuxAccentAIFg        = theme.TmuxAccentAIFg
+	tmuxStateProgressFg   = theme.TmuxStateProgressFg
+	tmuxStateSuccessFg    = theme.TmuxStateSuccessFg
+	tmuxStateWarningFg    = theme.TmuxStateWarningFg
+	tmuxStateCriticalFg   = theme.TmuxStateCriticalFg
+
+	tmuxAIBadgeProgressFg       = theme.TmuxAIBadgeProgressFg
+	tmuxAIBadgeSuccessFg        = theme.TmuxAIBadgeSuccessFg
+	tmuxAIBadgeActionRequiredFg = theme.TmuxAIBadgeActionRequiredFg
 )
 
 type tmuxPopupClient interface {
@@ -209,7 +224,7 @@ func (c *tmuxCommand) projectSessionStateAutosaveModeForSession(ctx context.Cont
 		return config.SessionStateProjectInherit, false, err
 	}
 	path := paths.ProjectSessionStateAutosaveFile(sessionName)
-	if _, err := osStat(path); err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return config.SessionStateProjectInherit, false, nil
 	}
 	mode, err := config.LoadSessionStateProjectToggleFile(path)
@@ -393,35 +408,49 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 	if _, err := os.Stat(marker); err == nil {
 		targetPane := strings.TrimSpace(popupCtx.OriginPane)
 		targetClient := ""
-		if content, readErr := os.ReadFile(marker); readErr == nil && strings.TrimSpace(string(content)) != "" {
-			targetPane = strings.TrimSpace(string(content))
+		originSession := ""
+		if content, readErr := os.ReadFile(marker); readErr == nil {
+			markerPane, markerSession := parsePopupMarkerContent(content)
+			if markerPane != "" {
+				targetPane = markerPane
+			}
+			originSession = markerSession
 		}
 		if mode.Canonical == "notify-sidebar" {
 			targetPane = ""
 			targetClient = popupCtx.TargetClient
 		}
 		if err := c.closePopup(ctx, targetPane, targetClient); err != nil {
-			return err
+			if !isRecoverablePopupCloseError(err) {
+				return err
+			}
+			if removeErr := os.Remove(marker); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				return fmt.Errorf("remove stale tmux popup marker: %w", removeErr)
+			}
+		} else {
+			_ = os.Remove(marker)
+			if mode.Canonical == "sessionizer-sidebar" {
+				c.restoreSidebarOriginSession(ctx, popupCtx.TargetClient, originSession)
+			}
+			return nil
 		}
-		_ = os.Remove(marker)
-		return nil
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat tmux popup marker: %w", err)
 	}
 
-	command, options, err := buildPopupToggleWithPickerBackend(mode, binaryPath, marker, popupCtx, c.pickerBackend(), c.lookupEnv)
+	backend := c.pickerBackend()
+	popupBodyStyle := ""
+	if backend == intpicker.BackendNative {
+		popupBodyStyle = c.nativePickerPopupBodyStyle(popupCtx.ContextDir)
+	}
+	command, options, err := buildPopupToggleWithPickerBackendAndStyle(mode, binaryPath, marker, popupCtx, backend, c.lookupEnv, popupBodyStyle)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(marker, []byte(popupCtx.OriginPane+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(marker, []byte(popupCtx.OriginPane+"\n"+popupCtx.OriginSession+"\n"), 0o644); err != nil {
 		return fmt.Errorf("write tmux popup marker: %w", err)
 	}
-	displayArgs, err := inttmux.BuildDisplayPopupArgs(command, options)
-	if err != nil {
-		_ = os.Remove(marker)
-		return err
-	}
-	if _, err := c.runner.Run(ctx, "tmux", displayArgs...); err != nil {
+	if err := intmux.NewRunner(c.runner).DisplayPopup(ctx, command, intmux.PopupOptions(options)); err != nil {
 		_ = os.Remove(marker)
 		if isNoSelectionExit(err) {
 			return nil
@@ -445,15 +474,22 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 
 	raw := strings.TrimSpace(fs.Arg(0))
 	client := strings.TrimSpace(*clientKey)
+	if _, ok := popupToggleActionIDForMode(raw); !ok {
+		printTmuxUsage(stderr)
+		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
+	}
 	switch raw {
-	case "session-popup", "sessionizer", "sessionizer-sidebar", "notify-sidebar", "ai-split-settings":
+	case "session-popup", "sessionizer", "sessionizer-sidebar", "notify-sidebar", "recent-windows", "ai-split-settings":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: raw, ClientKey: client}, nil
 	case "ai-split-picker-right":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client}, nil
 	case "ai-split-picker-down":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "down", ClientKey: client}, nil
+	case "ai-split-resume-right":
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "right", ClientKey: client}, nil
+	case "ai-split-resume-down":
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "down", ClientKey: client}, nil
 	default:
-		printTmuxUsage(stderr)
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
 	}
 }
@@ -536,6 +572,22 @@ func (c *tmuxCommand) runPopupSessions(args []string, stderr io.Writer) error {
 	return nil
 }
 
+// appConfigThemeSource resolves the global user theme for generated tmux
+// config (standalone snippet and app config alike) so an explicit global
+// `[theme]` actually repaints tmux chrome — status/window styles, pane and
+// active-pane borders, and the active-pane background tint. It degrades to the
+// built-in fallback when the global config cannot be read, mirroring the
+// per-popup body-style path, so config generation never fails on a missing or
+// malformed user config. Theme is a global preference, so no project path
+// participates.
+func (c *tmuxCommand) appConfigThemeSource() renderThemeSource {
+	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, "")
+	if err != nil {
+		return fallbackRenderThemeSource()
+	}
+	return source
+}
+
 func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) error {
 	binaryPath, err := c.parseConfigBinary(args, "tmux print-config", stderr)
 	if err != nil {
@@ -545,7 +597,7 @@ func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, tmuxStandaloneConfigWithKeymap(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	_, err = io.WriteString(stdout, c.appConfigThemeSource().tmuxStandaloneConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	return err
 }
 
@@ -558,7 +610,7 @@ func (c *tmuxCommand) runPrintAppConfig(args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, tmuxAppConfigWithKeymap(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	_, err = io.WriteString(stdout, c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	return err
 }
 
@@ -599,7 +651,7 @@ func (c *tmuxCommand) runInstall(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	if err := c.writeFile(include, []byte(tmuxStandaloneConfigWithKeymap(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(include, []byte(c.appConfigThemeSource().tmuxStandaloneConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return fmt.Errorf("write tmux standalone config: %w", err)
 	}
 
@@ -655,7 +707,7 @@ func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (str
 	if err != nil {
 		return "", err
 	}
-	if err := c.writeFile(config, []byte(tmuxAppConfigWithKeymap(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(config, []byte(c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleAndDesktopNotifyMode(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return "", fmt.Errorf("write tmux app config: %w", err)
 	}
 	return config, nil
@@ -754,7 +806,7 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux tmux popup-preview <session>")
 	fmt.Fprintln(w, "  projmux tmux popup-switch")
 	fmt.Fprintln(w, "  projmux tmux popup-sessions")
-	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|ai-split-picker-right|ai-split-picker-down|ai-split-settings>")
+	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|ai-split-picker-right|ai-split-picker-down|ai-split-resume-right|ai-split-resume-down|ai-split-settings>")
 	fmt.Fprintln(w, "  projmux tmux rebalance-panes")
 	fmt.Fprintln(w, "  projmux tmux rename-pane <pane> <title>")
 	fmt.Fprintln(w, "  projmux tmux print-config [--bin <path>]")
@@ -812,6 +864,26 @@ func (c *tmuxCommand) pickerBackend() intpicker.Backend {
 	return resolvePickerBackendWithConfig(c.homeDir, c.lookupEnv)
 }
 
+func (c *tmuxCommand) nativePickerPopupBodyStyle(projectPath string) string {
+	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, projectPath)
+	if err != nil {
+		source = fallbackRenderThemeSource()
+	}
+	return nativePickerPopupBodyStyleFromEffective(source.effective)
+}
+
+func nativePickerPopupBodyStyleFromEffective(effective theme.EffectiveTheme) string {
+	tokens := theme.TmuxRenderTokensFromEffective(effective)
+	style := []string{}
+	if bg := strings.TrimSpace(tokens.StatusBg); bg != "" {
+		style = append(style, "bg="+bg)
+	}
+	if fg := strings.TrimSpace(tokens.StatusFg); fg != "" {
+		style = append(style, "fg="+fg)
+	}
+	return strings.Join(style, ",")
+}
+
 func (c *tmuxCommand) applyPickerPopupBackend(options inttmux.PopupOptions) inttmux.PopupOptions {
 	env := options.Env
 	if env == nil {
@@ -844,18 +916,41 @@ func (c *tmuxCommand) tmuxFormat(ctx context.Context, format string) string {
 }
 
 func (c *tmuxCommand) closePopup(ctx context.Context, targetPane, targetClient string) error {
-	args := []string{"display-popup"}
-	if strings.TrimSpace(targetClient) != "" {
-		args = append(args, "-c", targetClient)
+	if c.runner == nil {
+		return errors.New("configure tmux runner: tmux runner is not configured")
 	}
-	if strings.TrimSpace(targetPane) != "" {
-		args = append(args, "-t", targetPane)
-	}
-	args = append(args, "-C")
-	if _, err := c.runner.Run(ctx, "tmux", args...); err != nil {
+	if err := intmux.NewRunner(c.runner).ClosePopup(ctx, intmux.ClosePopupOptions{
+		Client: targetClient,
+		Target: targetPane,
+	}); err != nil {
 		return fmt.Errorf("close tmux popup: %w", err)
 	}
 	return nil
+}
+
+func isRecoverablePopupCloseError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "display-popup") {
+		return false
+	}
+	if strings.Contains(msg, "exit status 1") {
+		return true
+	}
+	for _, fragment := range []string{
+		"can't find pane",
+		"can't find client",
+		"can't find session",
+		"can't find window",
+		"target not found",
+	} {
+		if strings.Contains(msg, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext) (string, inttmux.PopupOptions, error) {
@@ -891,6 +986,10 @@ func addSwitchTargetClientEnv(env map[string]string, ctx tmuxPopupContext) {
 }
 
 func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext, backend intpicker.Backend, lookupEnv func(string) string) (string, inttmux.PopupOptions, error) {
+	return buildPopupToggleWithPickerBackendAndStyle(mode, binaryPath, marker, ctx, backend, lookupEnv, "")
+}
+
+func buildPopupToggleWithPickerBackendAndStyle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext, backend intpicker.Backend, lookupEnv func(string) string, popupBodyStyle string) (string, inttmux.PopupOptions, error) {
 	options := inttmux.PopupOptions{
 		Target:        ctx.OriginPane,
 		CloseBehavior: inttmux.PopupCloseOnExit,
@@ -922,7 +1021,6 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		options.X = "0"
 		options.Y = "0"
 		cwd = ctx.ContextDir
-		addHookTrustInlineEnv(env)
 		addHookTrustPopupTargetEnv(env, ctx)
 		addSwitchTargetClientEnv(env, ctx)
 		env["TMUX_SESSIONIZER_CONTEXT_DIR"] = ctx.ContextDir
@@ -940,6 +1038,10 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		if client := strings.TrimSpace(ctx.TargetClient); client != "" {
 			commandArgs = append(commandArgs, "--client", client)
 		}
+	case "recent-windows":
+		options.Width = popupSize(ctx.ClientWidth, 80, 120)
+		options.Height = popupSize(ctx.ClientHeight, 70, 28)
+		commandArgs = []string{"window", "recent"}
 	case "ai-split-picker-right", "ai-split-picker-down":
 		options.Width = popupSize(ctx.ClientWidth, 40, 96)
 		options.Height = popupSize(ctx.ClientHeight, 45, 20)
@@ -947,6 +1049,13 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
 		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
 		commandArgs = []string{"ai", "picker", "--inside", mode.Direction}
+	case "ai-split-resume-right", "ai-split-resume-down":
+		options.Width = popupSize(ctx.ClientWidth, 55, 110)
+		options.Height = popupSize(ctx.ClientHeight, 55, 24)
+		cwd = ctx.ContextDir
+		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
+		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
+		commandArgs = []string{"ai", "picker", "--resume", "--inside", mode.Direction}
 	case "ai-split-settings":
 		options.Width = popupSize(ctx.ClientWidth, 55, 80)
 		options.Height = popupSize(ctx.ClientHeight, 40, 14)
@@ -960,6 +1069,7 @@ func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, mar
 	inheritPopupPickerEnv(env, lookupEnv)
 	if backend == intpicker.BackendNative {
 		options.NoBorder = true
+		options.BodyStyle = strings.TrimSpace(popupBodyStyle)
 		env[intpicker.BackendEnv] = string(intpicker.BackendNative)
 	}
 
@@ -988,7 +1098,17 @@ func inheritPopupPickerEnv(env map[string]string, lookupEnv func(string) string)
 	if lookupEnv == nil {
 		lookupEnv = os.Getenv
 	}
-	for _, key := range []string{intpicker.BackendEnv, intpicker.NativeDebugLogEnv, intpicker.NativeTTYFallbackEnv, "PROJMUX_PROJDIR", "PROJMUX_MANAGED_ROOTS", "TMUX_SESSIONIZER_ROOTS"} {
+	for _, key := range []string{
+		intpicker.BackendEnv,
+		intpicker.NativeDebugLogEnv,
+		intpicker.NativeTTYFallbackEnv,
+		"PROJMUX_PROJDIR",
+		"PROJMUX_MANAGED_ROOTS",
+		"TMUX_SESSIONIZER_ROOTS",
+		switchInitialQueryEnv,
+		switchInitialSelectionEnv,
+		switchStatusMessageEnv,
+	} {
 		if value := strings.TrimSpace(lookupEnv(key)); value != "" {
 			env[key] = value
 		}
@@ -1001,9 +1121,11 @@ func nativeLaunchKeyForPopupMode(mode string) string {
 		return "alt-1"
 	case "notify-sidebar":
 		return "alt-2"
-	case "session-popup":
+	case "recent-windows":
 		return "alt-3"
 	case "ai-split-picker-right", "ai-split-picker-down":
+		return "alt-7"
+	case "ai-split-resume-right", "ai-split-resume-down":
 		return "alt-4"
 	case "ai-split-settings":
 		return "alt-5"
@@ -1111,16 +1233,30 @@ func tmuxStandaloneConfig(binaryPath string, decoration config.StatusbarDecorati
 
 const statusbarSettingsIcon = ""
 
-func statusbarSettingsButton(label string) string {
-	return "#[bold,fg=colour230,bg=colour31]#[range=user|settings] " + label + " #[norange]#[default]"
+func statusbarSettingsButton(label string, roles theme.RenderRoles) string {
+	return "#[bold,fg=" + roles.ActionFg + ",bg=" + roles.ActionBg + "]#[range=user|settings]" + statusbarSettingsButtonBody(label) + "#[norange]#[default]"
 }
 
-func statusbarStandaloneSessionLeftFormat() string {
-	return "#[range=user|session][#S] #[norange] "
+func statusbarSettingsButtonBody(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = statusbarSettingsIcon
+	}
+	if label == statusbarSettingsIcon {
+		return " " + label + "  "
+	}
+	return " " + label + " "
 }
 
-func statusbarAppSessionLeftFormat() string {
-	return "#[range=user|session]#[bold,fg=colour231,bg=colour90] #{s|^[^-]*-||:session_name} #[default]#[norange] "
+// statusbarSessionLeftFormat renders the status-left session segment for both
+// the standalone and app configs. The displayed name is computed by the unified
+// project-identity resolver via `status project`, so the segment shows the same
+// drift-safe, worktree-normalized, de-slugged project name as every other
+// project surface. This replaces the former divergent raw `[#S]` (standalone)
+// and tmux-native de-slug `#{s|^[^-]*-||:session_name}` (app) segments; the
+// tmux regex de-slug is gone (naming v2 Phase 1b).
+func statusbarSessionLeftFormat(bin string, roles theme.RenderRoles) string {
+	return "#[range=user|session]#[bold,fg=" + roles.IdentityFg + ",bg=" + roles.IdentityBg + "] #(" + bin + " status project) #[default]#[norange] "
 }
 
 func statusbarAuxLineFormat(bin string, autosave bool) string {
@@ -1144,6 +1280,65 @@ func statusbarWindowTitleFormat() string {
 	return tmuxCenteredWindowNameFormat(tmuxWindowTitleWidth)
 }
 
+// tmuxVisiblePaneLabelFormat is the canonical Projmux visible naming rule for
+// panes and app window tabs. It intentionally keeps the pane border priority:
+// AI topic first, known interactive shell command second, raw pane title last.
+// Raw terminal/pane titles remain metadata for apps and snapshots, but shell
+// branch OSC titles are not the primary Projmux window naming source.
+func tmuxVisiblePaneLabelFormat() string {
+	return "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + tmuxShellPaneLabelFormat() + "}"
+}
+
+func tmuxStyledVisiblePaneLabelFormat() string {
+	return tmuxStyledVisiblePaneLabelFormatFor(theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{})).StateProgress)
+}
+
+func tmuxStyledVisiblePaneLabelFormatFor(styleFg string) string {
+	topic := "#{@projmux_ai_topic}"
+	return "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:" + topic + ",}}," + tmuxStyledAITopicFormat(topic, styleFg) + "," + tmuxShellPaneLabelFormat() + "}"
+}
+
+func tmuxStyledAITopicFormat(topic, styleFg string) string {
+	return "#{?" + tmuxLeadModeTopicMatchFormat(topic) + ",#[push-default]#[bold#,fg=" + styleFg + "]" + topic + "#[pop-default]," + topic + "}"
+}
+
+func tmuxLeadModeTopicMatchFormat(topic string) string {
+	qa := "#{m/r:^\\\\[[Ll]ead:[Qq][Aa]\\\\]," + topic + "}"
+	poc := "#{m/r:^\\\\[[Ll]ead:[Pp][Oo][Cc]\\\\]," + topic + "}"
+	ship := "#{m/r:^\\\\[[Ll]ead:[Ss]hip\\\\]," + topic + "}"
+	roadmap := "#{m/r:^\\\\[[Ll]ead:[Rr]oadmap\\\\]," + topic + "}"
+	return "#{||:#{||:" + qa + "," + poc + "},#{||:" + ship + "," + roadmap + "}}"
+}
+
+func tmuxShellPaneLabelFormat() string {
+	return "#{?#{||:#{||:#{||:#{==:#{pane_current_command},zsh},#{==:#{pane_current_command},bash}},#{||:#{==:#{pane_current_command},fish},#{==:#{pane_current_command},sh}}},#{||:#{==:#{pane_current_command},nu},#{==:#{pane_current_command},xonsh}}},#{pane_current_command},#{pane_title}}"
+}
+
+func tmuxPaneBorderFormat() string {
+	return tmuxPaneBorderFormatWithAIBadgeStyle(config.AIBadgeStyleDot, theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{})))
+}
+
+func tmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle config.AIBadgeStyle, roles theme.RenderRoles) string {
+	badgeStyle = config.NormalizeAIBadgeStyle(string(badgeStyle))
+	activePaneLabelFormat := tmuxVisiblePaneLabelFormat()
+	promptPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(roles.AIActionRequired)
+	busyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(roles.AIProgress)
+	replyPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(roles.AISuccess)
+	mutedPaneLabelFormat := tmuxStyledVisiblePaneLabelFormatFor(roles.PaneBorderMutedFg)
+	panePromptFormat := "#{||:#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindApprovalRequired + "},#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindInputRequired + "}}"
+	paneCompleteFormat := "#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindResponseComplete + "}"
+	paneProgressFormat := "#{==:#{@projmux_ai_badge_kind}," + aiBadgeKindInProgress + "}"
+	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
+	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
+	inactivePaneBorderFormat := "#{?" + panePromptFormat + ",#[bold#,fg=" + roles.AIActionRequired + "]" + tmuxAIBadgeMarker(aiBadgeKindApprovalRequired, badgeStyle) + promptPaneLabelFormat + " #[default],#{?" + paneCompleteFormat + ",#[bold#,fg=" + roles.AISuccess + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#{?#{||:" + paneProgressFormat + "," + paneBusyFormat + "},#[bold#,fg=" + roles.AIProgress + "]" + tmuxAIBadgeMarker(aiBadgeKindInProgress, badgeStyle) + busyPaneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=" + roles.AISuccess + "]" + tmuxAIBadgeMarker(aiBadgeKindResponseComplete, badgeStyle) + replyPaneLabelFormat + " #[default],#[fg=" + roles.PaneBorderMutedFg + "] " + mutedPaneLabelFormat + " #[default]}}}}"
+	return "#{?pane_active,#[bold#,fg=" + roles.PaneTopicChipFg + "#,bg=" + roles.PaneTopicChipBg + "] > " + activePaneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
+}
+
+func tmuxAIBadgeMarker(kind string, badgeStyle config.AIBadgeStyle) string {
+	glyph := aibadge.Glyph(kind, string(badgeStyle))
+	return " " + glyph + " "
+}
+
 func tmuxCenteredWindowNameFormat(width int) string {
 	if width <= 0 {
 		return ""
@@ -1159,31 +1354,59 @@ func tmuxCenteredWindowNameFormat(width int) string {
 	return fallback
 }
 
-func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
+func tmuxWindowStatusFormats(binaryPath string, effective theme.EffectiveTheme) (string, string) {
 	bin := tmuxShellQuote(binaryPath)
+	tokens := theme.TmuxRenderTokensFromEffective(effective)
+	return "#[fg=" + tokens.WindowInactiveFg + ",bg=" + tokens.WindowInactiveBg + "] #(" + bin + " attention window #{window_id} #{@projmux_ai_badge_style})#[fg=" + tokens.WindowInactiveFg + "] #I " + statusbarWindowTitleFormat() + " #[default]",
+		"#[bold,fg=" + tokens.WindowActiveFg + ",bg=" + tokens.WindowActiveBg + "] #(" + bin + " attention window #{window_id} #{@projmux_ai_badge_style})#[fg=" + tokens.WindowActiveFg + "] #I " + statusbarWindowTitleFormat() + " #[default]"
+}
+
+func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
+	return fallbackRenderThemeSource().tmuxStandaloneConfig(binaryPath, decorations, catalog, keymapPresent)
+}
+
+func tmuxStandaloneConfigWithKeymapTheme(binaryPath string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	return tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, decorations, config.AIBadgeStyleDot, catalog, keymapPresent, effective)
+}
+
+func tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, decorations, badgeStyle, config.DefaultDesktopNotifyMode, catalog, keymapPresent, effective)
+}
+
+func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	bin := tmuxShellQuote(binaryPath)
+	roles := theme.RenderRolesFromEffective(effective)
+	windowStatusFormat, windowStatusCurrentFormat := tmuxWindowStatusFormats(binaryPath, effective)
 	defaultStandaloneKeyBindings := keyBindingCatalogForScope(keyBindingScopeStandalone)
 	standaloneKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeStandalone)
+	badgeStyle = config.NormalizeAIBadgeStyle(string(badgeStyle))
+	desktopNotifyMode = config.NormalizeDesktopNotifyMode(string(desktopNotifyMode))
 	lines := []string{
 		"# Generated by projmux. Safe to source from ~/.tmux.conf.",
+		"set -as terminal-features \",xterm*:RGB\"",
 		"set -g " + statusbarDecorationTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Cwd))),
 		"set -g " + statusbarDecorationCwdTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Cwd))),
 		"set -g " + statusbarDecorationGitTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Git))),
 		"set -g " + statusbarDecorationNotifyTmuxOption + " " + string(config.NormalizeStatusbarDecoration(string(decorations.Notify))),
+		"set -g " + aiBadgeStyleTmuxOption + " " + string(badgeStyle),
+		"set -g " + desktopNotifyModeTmuxOption + " " + string(desktopNotifyMode),
 	}
-	lines = append(lines, tmuxUserKeyLines(standaloneKeyBindings)...)
 	lines = append(lines,
 		"set-hook -g pane-focus-out "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g pane-focus-in "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id} >/dev/null 2>&1 || true")),
 		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes >/dev/null 2>&1 || true")),
 		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes >/dev/null 2>&1 || true")),
-		"set -g window-status-format "+tmuxConfigQuote("#[fg="+tmuxWindowInactiveFg+",bg="+tmuxWindowInactiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowInactiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
-		"set -g window-status-current-format "+tmuxConfigQuote("#[bold,fg="+tmuxWindowActiveFg+",bg="+tmuxWindowActiveBg+"] #("+bin+" attention window #{window_id})#[fg="+tmuxWindowActiveFg+"] #I "+statusbarWindowTitleFormat()+" #[default]"),
+	)
+	lines = append(lines, tmuxRecentWindowRecordHookLines(bin)...)
+	lines = append(lines,
+		"set -g window-status-format "+tmuxConfigQuote(windowStatusFormat),
+		"set -g window-status-current-format "+tmuxConfigQuote(windowStatusCurrentFormat),
 		"set -g status 2",
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
-		"set -g status-left "+tmuxConfigQuote(statusbarStandaloneSessionLeftFormat()),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux")),
+		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin, roles)),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat(roles)+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+roles.StatusTextSecondary+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux", roles)),
 		// Two-line status bar: line 0 is the notify/HUD control row; line 1 is
 		// tmux's native session/window/path row. Setting both rows explicitly is
 		// required because tmux's built-in row otherwise stays at index 0.
@@ -1198,9 +1421,21 @@ func tmuxStandaloneConfigWithKeymap(binaryPath string, decorations statusbarDeco
 	} else {
 		lines = append(lines, tmuxUnbindLines(standaloneKeyBindings)...)
 	}
+	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
 	lines = append(lines, tmuxBindLines(binaryPath, standaloneKeyBindings)...)
 	lines = append(lines, tmuxStatusbarKeyBindings(binaryPath)...)
+	lines = append(lines, tmuxPaneContextMenuBindings(binaryPath)...)
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func tmuxRecentWindowRecordHookLines(bin string) []string {
+	command := bin + " window record >/dev/null 2>&1 || true"
+	body := "run-shell -b " + tmuxConfigQuote(command)
+	return []string{
+		"set-hook -g after-select-window " + tmuxConfigQuote(body),
+		"set-hook -g client-session-changed " + tmuxConfigQuote(body),
+		"run-shell -b " + tmuxConfigQuote(command),
+	}
 }
 
 func tmuxAppConfig(binaryPath, defaultShell string, decoration config.StatusbarDecoration) string {
@@ -1208,18 +1443,29 @@ func tmuxAppConfig(binaryPath, defaultShell string, decoration config.StatusbarD
 }
 
 func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
+	return fallbackRenderThemeSource().tmuxAppConfig(binaryPath, defaultShell, decorations, catalog, keymapPresent)
+}
+
+func tmuxAppConfigWithKeymapTheme(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	return tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell, decorations, config.AIBadgeStyleDot, catalog, keymapPresent, effective)
+}
+
+func tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	return tmuxAppConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, defaultShell, decorations, badgeStyle, config.DefaultDesktopNotifyMode, catalog, keymapPresent, effective)
+}
+
+func tmuxAppConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	bin := tmuxShellQuote(binaryPath)
+	tokens := theme.TmuxRenderTokensFromEffective(effective)
+	roles := theme.RenderRolesFromEffective(effective)
 	shell := tmuxConfigQuote(nonEmpty(strings.TrimSpace(defaultShell), fallbackInteractiveShell))
-	shellPaneLabelFormat := "#{?#{||:#{||:#{||:#{==:#{pane_current_command},zsh},#{==:#{pane_current_command},bash}},#{||:#{==:#{pane_current_command},fish},#{==:#{pane_current_command},sh}}},#{||:#{==:#{pane_current_command},nu},#{==:#{pane_current_command},xonsh}}},#{pane_current_command},#{pane_title}}"
-	paneLabelFormat := "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + shellPaneLabelFormat + "}"
-	paneBusyFormat := "#{==:#{@projmux_attention_state},busy}"
-	paneReplyFormat := "#{==:#{@projmux_attention_state},reply}"
-	inactivePaneBorderFormat := "#{?" + paneBusyFormat + ",#[bold#,fg=colour220] ● " + paneLabelFormat + " #[default],#{?" + paneReplyFormat + ",#[bold#,fg=colour46] ● " + paneLabelFormat + " #[default],#[fg=colour244] " + paneLabelFormat + " #[default]}}"
-	paneBorderFormat := "#{?pane_active,#[bold#,fg=colour16#,bg=colour45] > " + paneLabelFormat + " #[default]," + inactivePaneBorderFormat + "}"
+	paneLabelFormat := tmuxVisiblePaneLabelFormat()
+	paneBorderFormat := tmuxPaneBorderFormatWithAIBadgeStyle(badgeStyle, roles)
 	lines := []string{
 		"# Generated by projmux. Used by `projmux shell`.",
 		"set -g @projmux_app 1",
 		"set -g default-terminal \"tmux-256color\"",
+		"set -as terminal-features \",xterm*:RGB\"",
 		"set -g mouse on",
 		"set -g history-limit 10000",
 		"set -g set-clipboard on",
@@ -1244,19 +1490,28 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
 		"set -g window-status-separator \" \"",
+		"set -g allow-rename off",
 		"set -g automatic-rename on",
-		"set -g automatic-rename-format \"#{pane_title}\"",
+		"set -g automatic-rename-format " + tmuxConfigQuote(paneLabelFormat),
 		"set -g mode-keys vi",
 		"set -sg escape-time 100",
-		"set -g status-style \"bg=" + tmuxWindowInactiveBg + ",fg=" + tmuxWindowInactiveFg + "\"",
-		"set -g message-style \"bg=colour208,fg=colour16,bold\"",
-		"set -g message-command-style \"bg=colour208,fg=colour16,bold\"",
-		"set -g pane-border-style \"fg=colour236\"",
-		"set -g pane-active-border-style \"fg=colour51,bold\"",
+		"set -g status-style \"bg=" + tokens.StatusBg + ",fg=" + tokens.StatusFg + "\"",
+		"set -g message-style \"bg=" + theme.TmuxMessageBg + ",fg=" + theme.TmuxMessageFg + ",bold\"",
+		"set -g message-command-style \"bg=" + theme.TmuxMessageBg + ",fg=" + theme.TmuxMessageFg + ",bold\"",
+		"set -g pane-border-style \"fg=" + roles.PaneBorder + "\"",
+		"set -g pane-active-border-style \"fg=" + roles.FocusBorder + ",bold\"",
 		"set -g pane-border-status top",
+		// Active-pane tint (Phase 2 spike decision: window-active-style tint,
+		// not a label chip). tmux only tints the active window's panes via
+		// window-active-style; window-style sets the inactive-pane body bg.
+		// Phase 6b+: window-style follows the `background` token via
+		// PaneInactiveBg (fallback "default"), separating the general pane body
+		// from popup/native frame and status backgrounds.
+		"set -g window-style \"bg=" + roles.PaneInactiveBg + "\"",
+		"set -g window-active-style \"bg=" + roles.FocusPaneActiveBg + "\"",
 		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
 	}
-	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymap(binaryPath, decorations, catalog, keymapPresent)), "\n")[1:]...)
+	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleAndDesktopNotifyMode(binaryPath, decorations, badgeStyle, desktopNotifyMode, catalog, keymapPresent, effective)), "\n")[1:]...)
 	lines = append(lines,
 		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
 	)
@@ -1274,8 +1529,8 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 	// small buffer while still fitting alongside notify.
 	lines = append(lines,
 		"set -g status 2",
-		"set -g status-left "+tmuxConfigQuote(statusbarAppSessionLeftFormat()),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat()+"#[fg=colour239]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon)),
+		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin, roles)),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat(roles)+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]#[fg="+roles.StatusTextSecondary+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon, roles)),
 		"set -g status-format[0] "+tmuxConfigQuote(statusbarAuxLineFormat(bin, true)),
 		"set -g status-format[1] "+tmuxConfigQuote(statusbarWindowLineFormat()),
 		"set -gu status-format[2]",
@@ -1286,12 +1541,13 @@ func tmuxAppConfigWithKeymap(binaryPath, defaultShell string, decorations status
 func tmuxAppKeyBindings(catalog []keyBindingAction, keymapPresent bool) []string {
 	defaultAppKeyBindings := keyBindingCatalogForScope(keyBindingScopeApp)
 	appKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeApp)
-	lines := tmuxUserKeyLines(appKeyBindings)
+	var lines []string
 	if keymapPresent {
 		lines = append(lines, tmuxMergedUnbindLines(defaultAppKeyBindings, appKeyBindings)...)
 	} else {
 		lines = append(lines, tmuxUnbindLines(appKeyBindings)...)
 	}
+	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
 	lines = append(lines, tmuxBindLines("", appKeyBindings)...)
 	return lines
 }
@@ -1323,7 +1579,8 @@ func tmuxAppKeyBindings(catalog []keyBindingAction, keymapPresent bool) []string
 //
 // The `prefix s` chord uses tmux's `switch-client -T <table>` mechanism so
 // keyboard users get the same handlers as mouse clickers without re-defining
-// each handler twice.
+// each handler twice. The hardcoded `r` sibling is usage-specific: it calls
+// the throttled refresh subcommand before reopening the same popup.
 func tmuxStatusbarKeyBindings(binaryPath string) []string {
 	bin := tmuxShellQuote(binaryPath)
 	clickCmd := bin + " statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\" --mouse-window \"#{mouse_window}\""
@@ -1340,11 +1597,70 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 		mouseDownBind,
 		"bind-key s switch-client -T projmux-status",
 		"bind-key -T projmux-status u run-shell " + tmuxConfigQuote(bin+" statusbar click usage"),
+		"bind-key -T projmux-status r run-shell " + tmuxConfigQuote(bin+" statusbar usage-refresh"),
 		"bind-key -T projmux-status n run-shell " + tmuxConfigQuote(bin+" statusbar click notify"),
 		"bind-key -T projmux-status g run-shell " + tmuxConfigQuote(bin+" statusbar click git"),
 		"bind-key -T projmux-status k run-shell " + tmuxConfigQuote(bin+" statusbar click kube"),
 		"bind-key -T projmux-status p run-shell " + tmuxConfigQuote(bin+" statusbar click pwd"),
 		"bind-key -T projmux-status s run-shell " + tmuxConfigQuote(bin+" statusbar click session"),
+	}
+}
+
+// tmuxPaneContextMenuBindings emits the right-click (MouseDown3Pane) pane
+// context menu. tmux ships a stock MouseDown3Pane menu, but overriding a root
+// mouse binding can leave a stale handler on a live server across reloads, so
+// we follow the statusbar pattern: unbind first, then re-install
+// deterministically.
+//
+// The menu reconstructs the useful subset of tmux 3.4's stock pane menu
+// (split, swap, kill, respawn, mark, zoom — with tmux's stock key shortcuts
+// and dim conditions) and adds a projmux `AI Resume Picker` entry at the top
+// that opens the resume picker through the same `tmux popup-toggle
+// ai-split-resume-right` entrypoint as the C-r keybinding. Calling `ai picker`
+// directly does not work here: tmux `run-shell` executes without the TMUX env
+// of a pane shell, so `resolveContextDir` cannot resolve a cwd and the picker
+// exits 1 ("cwd is empty"). `popup-toggle` resolves the origin pane and
+// context dir server-side instead. The item first runs `select-pane -t =` so
+// the clicked pane — not whichever pane happened to be active — becomes the
+// popup's origin; tmux keeps the opening click's mouse target alive for item
+// commands, so `-t =` resolves at selection time for both keyboard and mouse
+// selection (verified on tmux 3.4).
+//
+// Like the stock binding, the menu only opens when the pane's program is not
+// consuming the mouse (`mouse_any_flag`) and the pane is not in a
+// non-copy/view mode; otherwise the click is forwarded to the application via
+// `send-keys -M` so mouse-aware programs (vim, htop, ...) keep their own
+// right-click behavior. Block syntax (`{ ... }`) keeps the nested `run-shell`
+// quoting flat; blocks require tmux 3.0+ and doctor already enforces 3.4+.
+func tmuxPaneContextMenuBindings(binaryPath string) []string {
+	// Reuse the keybinding catalog's renderer so the menu action stays
+	// byte-identical to the C-r binding's proven run-shell line.
+	resumeAction := renderTmuxBindingBody(binaryPath, keyBindingAction{
+		TmuxKind: tmuxBindingPopupToggle,
+		TmuxBody: "ai-split-resume-right",
+	})
+	// Guard + title + dim conditions mirror tmux 3.4 key-bindings.c: swap
+	// entries are dimmed (`-` prefix) in single-pane windows, Mark/Unmark and
+	// Zoom/Unzoom toggle with pane/window state.
+	menu := "bind-key -n MouseDown3Pane if-shell -F -t = " +
+		tmuxConfigQuote("#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}") + " " +
+		"{ select-pane -t = ; send-keys -M } " +
+		"{ display-menu -T " + tmuxConfigQuote("#[align=centre]#{pane_index} (#{pane_id})") + " -t = -x M -y M " +
+		tmuxConfigQuote("AI Resume Picker") + " a { select-pane -t = ; " + resumeAction + " } " +
+		"'' " +
+		tmuxConfigQuote("Horizontal Split") + " h { split-window -h } " +
+		tmuxConfigQuote("Vertical Split") + " v { split-window -v } " +
+		"'' " +
+		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Up") + " u { swap-pane -U } " +
+		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Down") + " d { swap-pane -D } " +
+		"'' " +
+		tmuxConfigQuote("Kill") + " X { kill-pane } " +
+		tmuxConfigQuote("Respawn") + " R { respawn-pane -k } " +
+		tmuxConfigQuote("#{?pane_marked,Unmark,Mark}") + " m { select-pane -m } " +
+		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}") + " z { resize-pane -Z } }"
+	return []string{
+		"unbind-key -q -n MouseDown3Pane",
+		menu,
 	}
 }
 
@@ -1375,6 +1691,53 @@ func buildMarkedPopupCommand(binaryPath string, args []string, marker, cwd strin
 
 func popupMarkerPath(clientKey, mode string) string {
 	return filepath.Join(os.TempDir(), "projmux-tmux-popup-"+sanitizePopupKey(clientKey)+"-"+sanitizePopupKey(mode)+".marker")
+}
+
+// parsePopupMarkerContent splits a popup marker payload into its origin pane
+// (line 1) and origin session (line 2, used by the sessionizer-sidebar cancel
+// restore). Markers written before the session line existed yield an empty
+// session.
+func parsePopupMarkerContent(content []byte) (pane, session string) {
+	lines := strings.Split(string(content), "\n")
+	if len(lines) > 0 {
+		pane = strings.TrimSpace(lines[0])
+	}
+	if len(lines) > 1 {
+		session = strings.TrimSpace(lines[1])
+	}
+	return pane, session
+}
+
+// isSidebarPreviewActive reports whether any client currently has the project
+// sidebar popup open. The sidebar's live switch is a preview: while a sidebar
+// marker exists, `window record` skips so peeked sessions never enter the
+// recent-windows queue. The glob is client-agnostic because the tmux record
+// hook runs without client context.
+func isSidebarPreviewActive() bool {
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "projmux-tmux-popup-*-sessionizer-sidebar.marker"))
+	return err == nil && len(matches) > 0
+}
+
+// restoreSidebarOriginSession switches the client back to the session that was
+// active when the sidebar opened. Runs on toggle-off (= cancel) after the
+// popup marker is removed, so this restore switch records origin naturally via
+// the session-changed hook while the peeked sessions stay unrecorded. Best
+// effort: a missing origin session (killed while peeking) keeps the client on
+// its current session.
+func (c *tmuxCommand) restoreSidebarOriginSession(ctx context.Context, targetClient, originSession string) {
+	originSession = strings.TrimSpace(originSession)
+	if originSession == "" || c.runner == nil {
+		return
+	}
+	if _, err := c.runner.Run(ctx, "tmux", "has-session", "-t", "="+originSession); err != nil {
+		return
+	}
+	args := []string{"switch-client"}
+	if client := strings.TrimSpace(targetClient); client != "" {
+		args = append(args, "-c", client)
+	}
+	args = append(args, "-t", "="+originSession)
+	_, _ = c.runner.Run(ctx, "tmux", args...)
 }
 
 func sanitizePopupKey(value string) string {

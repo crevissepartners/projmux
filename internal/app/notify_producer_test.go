@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,8 +54,11 @@ func TestStoreAttentionNotifyProducerPushReplyReadyHappyPath(t *testing.T) {
 	if got.ID != "ai:main:%9" {
 		t.Fatalf("ID = %q, want ai:main:%%9", got.ID)
 	}
-	if got.Text != "claude: reply ready" {
-		t.Fatalf("Text = %q, want %q", got.Text, "claude: reply ready")
+	if got.Text != "Ready" {
+		t.Fatalf("Text = %q, want %q", got.Text, "Ready")
+	}
+	if got.Metadata["agent"] != "claude" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" {
+		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
 	if got.Source != notify.SourceAI {
 		t.Fatalf("Source = %q, want %q", got.Source, notify.SourceAI)
@@ -70,6 +74,30 @@ func TestStoreAttentionNotifyProducerPushReplyReadyHappyPath(t *testing.T) {
 	}
 }
 
+func TestStoreAttentionNotifyProducerPublishesQueueRefreshBestEffort(t *testing.T) {
+	t.Parallel()
+
+	store := &stubNotifyStore{}
+	events := &stubNotifyQueueEvents{publishErr: errors.New("listener unavailable")}
+	producer := &storeAttentionNotifyProducer{store: store, ttl: time.Minute, events: events}
+
+	lookup := newFakeAttentionLookup(map[string]string{
+		"%9|@projmux_ai_agent": "claude",
+		"%9|#S":                "main",
+		"%9|#{window_id}":      "@4",
+		"%9|#{pane_id}":        "%9",
+	})
+
+	producer.PushReplyReady(attentionNotifyInput{PaneID: "%9", Lookup: lookup})
+
+	if len(store.pushed) != 1 {
+		t.Fatalf("push count = %d, want queue write to succeed", len(store.pushed))
+	}
+	if events.publishCalls != 1 {
+		t.Fatalf("publish calls = %d, want 1", events.publishCalls)
+	}
+}
+
 func TestStoreAttentionNotifyProducerPushReplyReadyWithTopic(t *testing.T) {
 	t.Parallel()
 
@@ -78,7 +106,7 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithTopic(t *testing.T) {
 
 	lookup := newFakeAttentionLookup(map[string]string{
 		"%2|@projmux_ai_agent": "Codex",
-		"%2|@projmux_ai_topic": "wire-producer",
+		"%2|@projmux_ai_topic": "[Lead:QA] wire-producer",
 		"%2|#S":                "feat-notify-producer-attention",
 		"%2|#{window_id}":      "@1",
 		"%2|#{pane_id}":        "%2",
@@ -90,9 +118,15 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithTopic(t *testing.T) {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 	got := store.pushed[0]
-	wantText := "codex: reply ready · wire-producer"
+	wantText := "[Lead:QA] wire-producer"
 	if got.Text != wantText {
 		t.Fatalf("Text = %q, want %q", got.Text, wantText)
+	}
+	if got.Metadata["agent"] != "codex" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" || got.Metadata["topic"] != "[Lead:QA] wire-producer" {
+		t.Fatalf("Metadata = %#v", got.Metadata)
+	}
+	if strings.Contains(got.Text, "\x1b[") || strings.Contains(got.Text, "#[") {
+		t.Fatalf("Text = %q, want plain notification text", got.Text)
 	}
 	if got.ID != "ai:feat-notify-producer-attention:%2" {
 		t.Fatalf("ID = %q", got.ID)
@@ -116,9 +150,10 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithOverrides(t *testing.T) {
 		PaneID: "%2",
 		Lookup: lookup,
 		ID:     "ai:codex:thread:turn",
-		Text:   "Codex · 응답 완료 · done",
+		Text:   "done",
 		Metadata: map[string]string{
 			"agent":     "codex",
+			"category":  "response_complete",
 			"thread_id": "thread",
 		},
 	})
@@ -127,10 +162,10 @@ func TestStoreAttentionNotifyProducerPushReplyReadyWithOverrides(t *testing.T) {
 		t.Fatalf("push count = %d, want 1", len(store.pushed))
 	}
 	got := store.pushed[0]
-	if got.ID != "ai:codex:thread:turn" || got.Text != "Codex · 응답 완료 · done" {
+	if got.ID != "ai:codex:thread:turn" || got.Text != "done" {
 		t.Fatalf("PushInput = %+v", got)
 	}
-	if got.Metadata["agent"] != "codex" || got.Metadata["thread_id"] != "thread" {
+	if got.Metadata["agent"] != "codex" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" || got.Metadata["thread_id"] != "thread" {
 		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
 }
@@ -264,13 +299,13 @@ func TestStoreAttentionNotifyProducerAckSkipsBlankInput(t *testing.T) {
 func TestComposeAttentionReplyTextDefaultsAgent(t *testing.T) {
 	t.Parallel()
 
-	if got := composeAttentionReplyText("", ""); got != "agent: reply ready" {
+	if got := composeAttentionReplyText("", ""); got != "Ready" {
 		t.Fatalf("default = %q", got)
 	}
-	if got := composeAttentionReplyText("CLAUDE", ""); got != "claude: reply ready" {
+	if got := composeAttentionReplyText("CLAUDE", ""); got != "Ready" {
 		t.Fatalf("uppercase = %q", got)
 	}
-	if got := composeAttentionReplyText("codex", "  refactor split  "); got != "codex: reply ready · refactor split" {
+	if got := composeAttentionReplyText("codex", "  refactor split  "); got != "refactor split" {
 		t.Fatalf("topic trim = %q", got)
 	}
 }
@@ -310,9 +345,12 @@ func TestAttentionToggleNotifiesQueueOnReply(t *testing.T) {
 	if got.ID != "ai:main:%1" {
 		t.Fatalf("ID = %q", got.ID)
 	}
-	wantText := "claude: reply ready · worker loop"
+	wantText := "worker loop"
 	if got.Text != wantText {
 		t.Fatalf("Text = %q, want %q", got.Text, wantText)
+	}
+	if got.Metadata["agent"] != "claude" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" || got.Metadata["topic"] != "worker loop" {
+		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
 	if got.Source != notify.SourceAI {
 		t.Fatalf("Source = %q", got.Source)
@@ -463,9 +501,12 @@ func TestAIStatusSetWaitingPushesQueueWhenInactive(t *testing.T) {
 	if got.ID != "ai:main:%30" {
 		t.Fatalf("ID = %q, want ai:main:%%30", got.ID)
 	}
-	wantText := "claude: reply ready · notify wiring"
+	wantText := "notify wiring"
 	if got.Text != wantText {
 		t.Fatalf("Text = %q, want %q", got.Text, wantText)
+	}
+	if got.Metadata["agent"] != "claude" || got.Metadata["category"] != "response_complete" || got.Metadata["state"] != "need" || got.Metadata["topic"] != "notify wiring" {
+		t.Fatalf("Metadata = %#v", got.Metadata)
 	}
 	if got.Source != notify.SourceAI {
 		t.Fatalf("Source = %q", got.Source)

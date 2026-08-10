@@ -87,16 +87,18 @@ language.
 ## Keymap File
 
 Settings > Keybindings is the normal in-app editor for action keys. It lists
-each action, opens a detail screen, and uses `Press new key` to capture one
-keypress through the same controlling-TTY probe path as `projmux setup`.
-Saving writes safe tmux plain chords to `~/.config/projmux/keymap.toml`,
-rewrites `~/.config/projmux/tmux.conf`, and, when Settings is running inside
-tmux, sources that app config so tmux-level chords take effect immediately.
+actions with the current active keys and one state: Default, Custom, Available,
+or Unbound. Open an action to see the action label, state, a flat Keys list,
+Options, and a collapsed Troubleshooting row. Create flows start from
+`+ Add key`, deletion lives under each key's detail, and action-level state
+changes such as Unbind or Reset live under Options. Successful saves report the
+keybinding as saved; failures identify the stage that failed.
 
-Settings reports CSI-u/User-key captures as terminal fallback delivery and
-does not write a keymap entry for them. Raw sequences that cannot be safely
-represented as a tmux plain chord are not persisted; configure terminal
-fallback with `projmux init` instead.
+Raw sequences that cannot be safely represented as a direct keybinding are not
+persisted. Use Settings to save a custom key. When key delivery needs
+terminal-layer remediation, first try the key in `projmux shell`, then run
+`projmux setup` from the raw terminal, then use `projmux init` for supported
+terminal adapters.
 
 `~/.config/projmux/keymap.toml` can also be edited by hand. When the file is
 absent, generated tmux config stays on the built-in defaults.
@@ -104,48 +106,274 @@ absent, generated tmux config stays on the built-in defaults.
 Supported schema:
 
 ```toml
-[bindings.sessionizer-sidebar]
-plain = "M-a"
+[bindings.ProjectSidebarToggle]
+keys = ["M-1", "M-a"]
 
 [bindings.new-window]
-plain = "C-t"
+keys = ["C-t"]
+
+[bindings."Sidebar:PinProject"]
+keys = ["M-p", "p"]
 ```
 
 Each table is `[bindings.<action-id>]`. Supported keys are:
 
 | Key | Meaning |
 | --- | --- |
-| `plain` | A no-prefix tmux chord such as `M-a`, `C-t`, or `M-S-Left`. |
+| `keys` | A list of no-prefix tmux plain chords such as `M-a`, `C-t`, or `M-S-Left`. |
+| `plain` | Legacy single-primary replacement. Still read, but not written by Settings. |
 
 Legacy `prefix = ...` entries still parse during migration so existing files
-do not break, but Settings no longer writes prefix keys and generated tmux
-config no longer binds the old action prefix chords.
+do not break. Settings preserves existing prefix entries when rewriting the
+file, but does not create new prefix keys, and generated tmux config no longer
+binds the old action prefix chords.
 
-Set a value to the empty string to disable that chord for the action:
+Settings > Keybindings names `AISplitPickerToggle` as the AI split popup
+picker toggle. That action opens or closes the picker UI and is separate from
+the direct AI pane actions, `ai-split-right` and `ai-split-down`. The direct
+actions create a new managed AI pane each time they run, leaving existing AI
+panes in place. `right` and `down` choose where the new pane is created.
+
+Use an empty `keys` list to disable direct plain keys for the action when
+editing the file by hand:
 
 ```toml
-[bindings.sessionizer-sidebar]
-plain = ""
+[bindings.ProjectSidebarToggle]
+keys = []
 ```
 
-In Settings, `Disable` writes the empty plain override. `Reset default`
-removes that override and returns to the built-in default. The Settings writer
-is deterministic and rewrites the supported saved subset only:
-`[bindings.<action-id>]` tables with `plain` string keys. If the existing file
-has parse errors or unknown action IDs, Settings shows the keymap error row and
-refuses to overwrite it until the file is fixed.
+In Settings, reset removes the saved override and returns to the built-in
+default. Legacy popup IDs such as
+`sessionizer-sidebar` still read, but new writes use canonical toggle names
+such as `ProjectSidebarToggle`, `NotifySidebarToggle`, `SessionPopupToggle`,
+`AISplitPickerToggle`, `SettingsToggle`, and `ProjectSwitcherToggle`. Internal
+popup commands use `Surface:Action` IDs and have surface-local conflict
+domains and remain visible in Settings when catalogued.
+
+The Settings writer is deterministic and rewrites the supported saved subset
+only. If the existing file has parse errors or unknown action IDs, Settings
+shows the keymap error row and refuses to overwrite it until the file is fixed.
 
 The file currently affects generated tmux config from `projmux tmux
 print-config`, `projmux tmux install`, `projmux tmux print-app-config`,
 `projmux tmux install-app`, and `projmux shell`. Terminal init adapters such as
-Ghostty and Windows Terminal still install the built-in CSI-u fallback map.
-Changing those terminal-layer mappings still requires rerunning `projmux init`
-and restarting the terminal where that terminal requires it.
+Ghostty and Windows Terminal install built-in plain-byte mappings where needed;
+they do not read `keymap.toml` or copy saved keys into terminal configs.
+Changing terminal-layer mappings still requires rerunning `projmux init` and
+restarting the terminal where that terminal requires it.
 
 When a chord is overridden, projmux emits unbinds for both the stale default
 chord and the replacement before binding the merged action. Popup and floating
 UI actions still route through `tmux popup-toggle`, so pressing the same
 configured key opens and closes the popup.
+
+## Theme Resolver Foundation
+
+Theme is a global user preference. The effective theme resolves from the global
+user theme plus a built-in fallback only:
+
+```text
+~/.config/projmux/config.toml
+built-in fallback preset
+```
+
+Settings edits the global `[theme]` in `~/.config/projmux/config.toml`. The
+Effective theme view shows the final global > built-in fallback value for each
+field with source labels: `global` or `fallback`. Saving or resetting a theme
+value live-applies it: projmux regenerates the generated tmux config and, when
+Settings runs inside tmux, `tmux source-file`-reloads it so a running server
+repaints immediately. Outside tmux the save still succeeds and the report
+prints `Next: run \`projmux tmux apply\`` to sync a running server.
+
+The `background`, `surface`, `status_background`, `surface_active`, and
+`pane_active_bg` tokens additionally accept the value `default` ("Terminal
+default" in Settings) to keep that role at the terminal background. Priority is
+**explicit `default` > preset fill > unset (fallback)**, so picking a preset and
+then setting (for example) `background = "default"` keeps every other token
+preset-filled while the pane body stays at the terminal default (`window-style
+"bg=default"`). Set `surface = "default"` separately when popup/native frame
+backgrounds should inherit the terminal background, set
+`status_background = "default"` when the bottom status line should do the same,
+and set `pane_active_bg = "default"` when the active pane should not be tinted.
+`default` is only valid on these background-like tokens. See
+`docs/theme-palette.md` for the full sentinel contract.
+
+Project `.projmux/config.toml` `[theme]` is **deprecated and ignored**: it is no
+longer an effective theme source and does not influence the native picker,
+statusbar, popup, or any tmux chrome. Settings has no Project theme tab, project
+override editor, project theme reset action, or `project` source label — both
+the global theme editor and the effective theme view live under the Global tab.
+See `docs/upgrading.md` for the migration note for existing project `[theme]`
+users.
+
+Renderer adapters can apply an already resolved `EffectiveTheme` to native
+picker frame `surface` / `chrome_foreground` SGR, tmux window background tokens,
+and the bottom status bar `status_background` token. Settings and native project
+picker surfaces load global `[theme]` values through the shared effective-theme
+source. Native picker frames also apply the built-in fallback `surface` /
+`chrome_foreground` tokens so picker-owned padding, empty rows, footer rows, and
+preview gaps do not inherit the terminal default background.
+
+Active pane focus is part of the theme app chrome. The active pane is marked by
+an active border (`pane-active-border-style`, fallback cyan `colour51`, the
+public `focus` token) and a subtle dark background tint (`window-active-style`,
+fallback `colour234`, the public `pane_active_bg` token); inactive panes follow
+the public `background` token (tmux `window-style`, unset keeps `bg=default`).
+tmux draws a single shared border between adjacent panes, so a full active-pane
+rectangle is not guaranteed; focus is reinforced by the tint plus the
+`pane-border-status top` topic line. This chrome preserves `pane-border-status
+top`, pane topics, AI badges, and visible pane labels.
+
+Native picker popups launched through `projmux tmux popup-toggle` also pass a
+per-popup tmux 3.4 `display-popup -s` body style using the effective theme
+`surface` / `chrome_foreground` tmux tokens (popup/native backgrounds follow
+`surface`, while the bottom status bar follows `status_background`). This styles
+only the tmux popup body
+before the native renderer draws. It does not set global `popup-style` or
+`popup-border-style`, and it does not change shell pane backgrounds,
+`default-style`, `window-style`, OSC terminal backgrounds, or the general
+status/window palette.
+
+Resolver schema shape:
+
+```toml
+[theme]
+preset = "projmux"
+background = "default"
+surface = "default"
+status_background = "#182226"
+surface_active = "#2c383d"
+chrome_foreground = "#d8e0e4"
+text_primary = "#d8e0e4"
+muted = "#75848c"
+accent = "#7ac7ad"
+critical = "#ff6b6b"
+warning = "#ffcc66"
+progress = "#ffcc66"
+success = "#5faf87"
+action_required = "#ffaf00"
+pane_active_bg = "default"
+focus = "#00ffff"
+```
+
+`text_primary` controls primary content text in native terminal-rendered UI.
+`chrome_foreground` controls frame, title, search, status, border-adjacent, and
+other app chrome foreground roles. The older `foreground` key is still accepted
+as a legacy alias/fill value: when present, it fills `text_primary` and
+`chrome_foreground` unless either new key is explicitly set. New configs should
+prefer the split keys, and Settings presents the split names rather than
+encouraging writes to `foreground`.
+
+`progress`, `success`, and `action_required` are the AI/status colors (progress
+yellow, success green, action-required amber-orange). `action_required` is the
+AI "needs input/approval" badge color and is intentionally independent of
+`critical` — repainting `critical` never changes it. `pane_active_bg` is the
+active-pane background tint, and `focus` is the active-pane border color. Each
+of these is a public token: leave it unset to keep the historical built-in
+color, or set it to repaint the matching chrome.
+
+Supported presets are `projmux`, `high-contrast`, `blue-hour`, `carbon-violet`,
+`daylight`, `ember`, `forest`, and `rose`. `daylight` is the fully-light
+preset; the others are dark. Preset colors paint projmux chrome only (status
+bar, popups, pane borders/tint) — pane contents follow the terminal theme, so
+`daylight` pairs best with a light terminal theme. A preset fills
+missing color tokens, and explicit color tokens override preset values. Tokens
+the global theme leaves unset fall through to the built-in fallback preset.
+Terminal-default backgrounds are configured per token with the `default`
+sentinel rather than through separate terminal preset variants.
+
+Unknown presets and invalid color values invalidate only the global theme
+source and produce resolver warnings; the built-in fallback still resolves
+normally.
+Colors are `#RRGGBB`. Settings edits colors through a preset selector, swatch
+rows, and a hex input page. Native truecolor renderers and tmux style roles use
+the exact hex value; 256-color mappings are retained only for renderer paths
+that explicitly require xterm `colourN`/ANSI-256 colors. Generated tmux config
+adds `xterm*:RGB` to `terminal-features` so capable terminals render exact
+theme hex values instead of tmux downsampling them to the nearest 256-color
+entry. The theme has no font keys: `font_family` and `font_size` were removed in
+Phase 1b because tmux/ANSI rendering cannot force a terminal font. Leftover font
+keys in an existing config are accepted but ignored. See `docs/upgrading.md`.
+
+## UI Locale
+
+The UI locale can be pinned globally or left on automatic detection.
+
+Preferred interactive path:
+
+- `Settings > Appearance > Language / Locale`
+
+Global config path:
+
+```text
+~/.config/projmux/config.toml
+```
+
+Schema:
+
+```toml
+[ui]
+locale = "auto" # auto | en-US | ko-KR
+```
+
+Resolution priority is:
+
+1. `PROJMUX_LOCALE`
+2. global/user `[ui] locale`
+3. auto-detected environment: `LC_ALL`, then `LC_MESSAGES`, then `LANG`
+4. built-in fallback `en-US`
+
+`auto` means detect from the environment. In Settings, the `auto` detail shows
+the currently detected locale and source. Supported UI locales are `en-US` and
+`ko-KR`; unsupported tags fall back to `en-US` and the Settings detail shows a
+warning with the unsupported value and source.
+
+Project-local locale override is not part of the runtime policy. Locale is a
+user/global preference in this release.
+
+## AI Resume Picker
+
+The AI resume picker (`projmux ai split --agent resume`) lists the most recent
+deduplicated Claude/Codex resume sessions. The number of rows it shows and how
+far below the current directory it scans are both configurable; the defaults are
+30 rows and depth 0 (the current directory only).
+
+Preferred interactive path:
+
+- `Settings > AI Settings > Resume picker`
+
+Config paths (global and project both honored):
+
+```text
+~/.config/projmux/config.toml      # global
+<project>/.projmux/config.toml     # project
+```
+
+Schema:
+
+```toml
+[ai]
+resume_picker_limit = 30 # 1-100; how many recent sessions the picker lists
+resume_scan_depth = 0    # 0-8; include sessions started in cwd child dirs
+```
+
+Resolution priority (each key resolves independently) is:
+
+1. `PROJMUX_AI_RESUME_PICKER_LIMIT` / `PROJMUX_AI_RESUME_SCAN_DEPTH`
+2. project `[ai]` key
+3. global/user `[ai]` key
+4. built-in default (`30` rows, depth `0`)
+
+`resume_picker_limit` is clamped to `1`-`100`; a missing or non-positive value
+falls back to the default. `resume_scan_depth` is clamped to `0`-`8`: depth `0`
+lists only sessions whose recorded working directory matches the current one
+(the historical behavior), while depth `N` also lists sessions started up to `N`
+levels below it — useful from a monorepo or parent directory. The match is a
+path-tree filter on each session's recorded cwd, so parent and sibling
+directories are never included. At depth `>0` the picker adds a relative-cwd
+column (`./`, `./web`, `./api`) so child-directory sessions are easy to tell
+apart. A missing or zero depth is identical to the historical behavior. Settings
+edits write the global config.
 
 ## Environment Variables
 
@@ -154,7 +382,10 @@ configured key opens and closes the popup.
 | `PROJMUX_PROJDIR` | Explicit primary project root. Accepts an OS-native PATH-style multi-value: the first non-empty entry is the primary root and later entries are prepended to managed-root discovery. The primary value is memoized to `~/.config/projmux/projdir`. |
 | `PROJMUX_MANAGED_ROOTS` | Search-root override. Uses the OS-native path-list separator and takes priority over the saved workdirs file and default weak probes. |
 | `TMUX_SESSIONIZER_ROOTS` | Legacy alias still honored at runtime for managed roots. |
+| `PROJMUX_LOCALE` | UI locale override. `auto` resumes detection; `en-US` and `ko-KR` pin supported locales. Unsupported tags fall back to `en-US` and surface a Settings warning. |
 | `PROJMUX_NOTIFY_HOOK` | External executable that receives AI desktop notifications instead of the built-in Linux/WSL sender. Separate from declarative `[hooks.send-noti]`. |
+| `PROJMUX_AI_RESUME_PICKER_LIMIT` | Overrides the AI resume picker row count (`[ai] resume_picker_limit`). Clamped to 1-100; takes priority over project and global config. |
+| `PROJMUX_AI_RESUME_SCAN_DEPTH` | Overrides the AI resume picker cwd-tree scan depth (`[ai] resume_scan_depth`). Clamped to 0-8; takes priority over project and global config. Depth 0 keeps the exact-cwd behavior. |
 | `PROJMUX_NOTIFY_HOOK_DEPTH` | Internal recursion guard for `send-noti` hooks. Depth `>= 1` suppresses nested hook dispatch while still allowing the queue write itself. |
 | `PROJMUX_NOTIFY_EXPIRE_MS` | AI desktop notification expiration in milliseconds. Defaults to `5000`; unset, zero, negative, and non-numeric values fall back to the default. |
 | `PROJMUX_DESKTOP_NOTIFY_MODE` | OS desktop notification mode override. `none` / `notify` / `raise` (case insensitive). When set, this takes priority over every other resolution rung. The in-app notify queue is not affected. |
@@ -168,6 +399,44 @@ configured key opens and closes the popup.
 | `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
 | `PROJMUX_PICKER_BACKEND` | Legacy picker backend override. Any value, including old `fzf` settings, now resolves to the native picker. |
 | `PROJMUX_INSTALLER` | Installer source hint used by update flows. npm installs set this automatically; advanced release installs can set `github-release`. |
+| `PROJMUX_SHELL_UPDATE_CHECK_TIMEOUT_MS` | Timeout in milliseconds for the best-effort release check attempted by `projmux shell` when the update cache is missing or stale. Invalid, zero, or negative values use the default. |
+
+## Welcome State
+
+`projmux shell` still reads and rewrites legacy per-version welcome state under
+the projmux state directory for attach-popup compatibility, normally:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/projmux/welcomed-v<version>.json
+```
+
+The current schema is:
+
+```json
+{
+  "version": 1,
+  "last_welcomed_version": "0.6.3",
+  "welcomed_at": "2026-05-21T00:00:00Z",
+  "skip_version": "0.6.3",
+  "skipped_at": "2026-05-21T00:00:00Z"
+}
+```
+
+This file no longer suppresses the shell-entry welcome. `skip_version` and
+`last_welcomed_version` remain readable for legacy state and pending attach
+popup compatibility, but the automatic shell prompt now uses release skip state
+instead.
+
+Update prompt skips are stored by latest release tag under the update cache
+directory:
+
+```text
+${XDG_CACHE_HOME:-$HOME/.cache}/projmux/update-skip.json
+```
+
+When `tag_name` matches the fresh cached latest release tag, `projmux shell`
+continues without offering the update actions. A newer latest tag makes the
+prompt eligible again.
 
 Example:
 
@@ -269,11 +538,13 @@ only a generic in-app queue/sidebar/statusbar row; it does not fire OS toast,
 The OS-level dispatch carries three modes. The in-app notify queue, the
 statusbar segment, and the attention badge stay live regardless of which
 mode is active — only the toast / notify-send / auto-raise fan-out is
-gated here.
+gated here. The same mode also gates `projmux focus` post-switch osfocus
+dispatch: only `raise` asks the host terminal to come forward after a
+successful tmux focus.
 
 | Mode | On push | On click |
 | --- | --- | --- |
-| `none` | no toast | n/a |
+| `off` / `none` | no toast | n/a |
 | `notify` | toast / notify-send fires | no click action |
 | `raise` | toast / notify-send fires AND the host terminal is auto-raised via the osfocus chain | toast click invokes `projmux focus --uri` via the `projmux://` handler |
 
@@ -281,30 +552,37 @@ Click activation is wired only for `raise`. The `projmux://` URI handler is
 registered on the first `raise` Notify of each tmux server (gated by the
 `@projmux_uri_protocol_registered_v6` marker). The
 mode only controls whether a toast fires at all and whether to follow it
-up with an on-push auto-raise.
+up with an on-push auto-raise. `off` / `none` and `notify` also suppress
+the focus-triggered osfocus raise after `projmux focus`.
 
 Resolution order (highest priority first):
 
-1. `PROJMUX_DESKTOP_NOTIFY_MODE` env (`none` / `notify` / `raise`).
+1. `PROJMUX_DESKTOP_NOTIFY_MODE` env (`off` / `none` / `notify` / `raise`).
 2. `PROJMUX_DESKTOP_NOTIFY` env (legacy `on` / `off`; `on` → `notify`,
    `off` → `none`).
-3. Tmux global option `@projmux_desktop_notify_mode`.
-4. Tmux global option `@projmux_desktop_notify` (legacy `1` / `0`, same
+3. Saved Settings config
+   `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/desktop-notify-mode`
+   (`off` / `notify` / `raise`).
+4. Tmux global option `@projmux_desktop_notify_mode`.
+5. Tmux global option `@projmux_desktop_notify` (legacy `1` / `0`, same
    mapping as the env above).
-5. Default = `raise` when running inside WSL with `$WT_SESSION` set
+6. Default = `raise` when running inside WSL with `$WT_SESSION` set
    (Windows Terminal × WSL is the measured-working cell for osfocus
    raise today); otherwise `notify`.
 
 Migration is intentionally read-time. Users with the previous legacy
 toggle set keep their behavior — `@projmux_desktop_notify=0` resolves to
 `none`, `@projmux_desktop_notify=1` resolves to `notify`. The first
-Settings press through the new row writes the new key and the legacy key
-goes unused. No eager rewrite of tmux state.
+Settings press through the new row writes `desktop-notify-mode`, mirrors the
+new value into `@projmux_desktop_notify_mode` when tmux is live, and leaves the
+legacy key unused. No eager rewrite of tmux state.
 
 Toggle from Settings > Notifications > `Desktop notifications`. The
 Settings info row labels the effective source as `env`, `env (legacy)`,
 `setting`, `setting (legacy)`, or `default` so users see which rung of
-the cascade pinned the value.
+the cascade pinned the value. `projmux tmux apply` regenerates the live tmux
+option from the saved Settings file; when that file is missing, apply writes
+only the default for the current host.
 
 Hook details for new-session lifecycle hooks and project-local
 `.projmux/config.toml` live in [Hooks](hooks.md).
@@ -401,31 +679,6 @@ ${PROJMUX_USAGE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/projmux/usage}/
 See [Usage tracking](usage-tracking.md) for adapter behavior, throttling, and
 failure handling.
 
-## Shell Welcome State
-
-`projmux shell` stores its once-per-version welcome marker under:
-
-```text
-${XDG_STATE_HOME:-$HOME/.local/state}/projmux/welcomed-v<version>.json
-```
-
-If the marker is missing, the next shell launch shows the welcome again. If the
-marker is corrupt or cannot be written, shell startup continues without the
-welcome.
-
-The same guide is also available on demand through `projmux welcome`, and it is
-linked from Settings > About as `Welcome`.
-
-When `pending_attach_welcome` is true, the generated projmux shell tmux config
-runs `projmux welcome --popup` asynchronously from the `client-attached` hook.
-That helper atomically claims the pending marker, flips it off, and shows the
-welcome guide in a tmux popup once for that version. Missing, corrupt, or
-already-consumed state is a quiet no-op.
-
-Set `PROJMUX_WELCOME=off` before launching or attaching to `projmux shell` to
-suppress the automatic attach popup. The manual `projmux welcome` command still
-prints the guide.
-
 ## Session State
 
 `projmux shell` autosaves session snapshots from the app tmux status tick. The
@@ -438,22 +691,30 @@ while `on` and `off` take precedence. Auto-save only updates the latest
 snapshot. Named snapshots are manual and are never updated by auto-save.
 
 Project open from the Alt-1 sidebar defaults to opening a closed project as an
-`Empty session`. The optional `Settings > Labs > Sidebar startup picker` toggle
-enables the native sidebar `Start project` step. Rows appear as `Latest
+`Empty session`. The optional `Settings > Session State > Sidebar startup
+picker` toggle enables the native sidebar `Start project` step. Rows appear as `Latest
 snapshot`, named snapshot rows, `Empty session`, and `Back`. `Latest snapshot`
 is the snapshot auto-save that changes as auto-save runs; named snapshots are
 fixed snapshots. Rows include saved-at date/time metadata when projmux can
 determine it. `Back` returns to the project list without creating, replaying, or
-opening a session. After the startup mode is selected, project hook/config trust
-is evaluated if needed; approval continues the selected path and deny/cancel
-aborts without session create, snapshot replay, or startup command. Existing
+opening a session. After the startup mode is selected, project automation trust
+is evaluated if needed. A named snapshot containing a startup `command` must
+authorize the SHA-256 of the exact layout bytes used for parse/restore, even
+when project hooks are disabled or `.projmux/config.toml` is absent. Approval
+continues the selected path and deny/cancel aborts without session create,
+snapshot replay, or startup command. The Alt-1 sidebar opens trust as the shared
+client-scoped `Trust project automation` popup
+instead of inline sidebar rows. The selected open continuation runs in a
+detached tmux job that can close the sidebar before trust without depending on
+the self-closing sidebar process to keep running. Deny/cancel refreshes the
+original sidebar query/selection context with a visible status message. Existing
 sessions switch directly without a startup picker.
 
 Default `projmux shell` no longer opens a startup picker or replays session-state
 snapshots before attach. It still derives the default app session identity and
 startup directory from the current project context when available; otherwise it
 uses the `home` target and home directory. Session-state restore selection is
-limited to the Labs sidebar startup picker.
+limited to the Session State sidebar startup picker.
 
 Settings > Session State is global settings only: global auto-save, auto-save
 interval, and storage/retention policy. Settings > Project > Session State

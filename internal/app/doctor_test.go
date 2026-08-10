@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/config"
 )
 
 func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
@@ -28,6 +30,8 @@ func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
 				switch name {
 				case "tmux":
 					return "tmux 3.6"
+				case "psmux":
+					return "psmux 3.3.4"
 				}
 				return name + " 1.2.3"
 			}
@@ -205,7 +209,7 @@ func TestDoctorEvaluateSkipsSttyOnWindows(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("windows", map[string]bool{
-		"tmux": true, "git": true, "kubectl": true,
+		"psmux": true, "git": true, "kubectl": true,
 	})
 
 	var stdout bytes.Buffer
@@ -218,6 +222,148 @@ func TestDoctorEvaluateSkipsSttyOnWindows(t *testing.T) {
 	}
 	if !strings.Contains(out, "windows host") {
 		t.Fatalf("skip reason missing:\n%s", out)
+	}
+}
+
+func TestDoctorWindowsPsmuxTrackDoesNotRequireTmux(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("windows", map[string]bool{
+		"psmux": true, "git": true, "kubectl": true,
+	})
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v\noutput=%s", err, stdout.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "[ok]      psmux") {
+		t.Fatalf("windows native core dependency should be psmux:\n%s", out)
+	}
+	if strings.Contains(out, "[missing] tmux") || strings.Contains(out, "[stale]   tmux") || strings.Contains(out, "[ok]      tmux") {
+		t.Fatalf("windows native psmux track should not report tmux dependency:\n%s", out)
+	}
+	if !strings.Contains(out, "[skip]    stty") {
+		t.Fatalf("stty should remain skipped on windows:\n%s", out)
+	}
+
+	stdout.Reset()
+	if err := cmd.Run([]string{"--json"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run(--json) error = %v\noutput=%s", err, stdout.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
+	}
+	byName := doctorResultsByName(report.Dependencies)
+	if _, ok := byName["tmux"]; ok {
+		t.Fatalf("windows native dependencies include tmux: %#v", report.Dependencies)
+	}
+	psmux, ok := byName["psmux"]
+	if !ok {
+		t.Fatalf("windows native dependencies missing psmux: %#v", report.Dependencies)
+	}
+	if !psmux.Required || psmux.Status != doctorStatusOK {
+		t.Fatalf("psmux dependency = %#v, want required ok", psmux)
+	}
+	stty, ok := byName["stty"]
+	if !ok || stty.Status != doctorStatusSkip {
+		t.Fatalf("stty dependency = %#v, want skipped", stty)
+	}
+}
+
+func TestDoctorWindowsPsmuxTrackChecksPsmuxDependency(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("windows", map[string]bool{
+		"git": true, "kubectl": true,
+	})
+
+	var stdout bytes.Buffer
+	err := cmd.Run(nil, &stdout, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run() error = nil, want missing psmux failure")
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "[missing] psmux") || !strings.Contains(out, "scoop install psmux") {
+		t.Fatalf("missing psmux dependency should be reported with install hint:\n%s", out)
+	}
+	if strings.Contains(out, "[missing] tmux") || strings.Contains(out, "[stale]   tmux") {
+		t.Fatalf("windows native psmux track should not require tmux:\n%s", out)
+	}
+}
+
+func TestDoctorWindowsPsmuxTrackIgnoresMissingOrStaleTmux(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		present  map[string]bool
+		versions map[string]string
+	}{
+		{
+			name:    "tmux missing",
+			present: map[string]bool{"psmux": true, "git": true, "kubectl": true},
+		},
+		{
+			name:     "tmux stale",
+			present:  map[string]bool{"psmux": true, "tmux": true, "git": true, "kubectl": true},
+			versions: map[string]string{"tmux": "tmux 3.2", "psmux": "psmux 3.3.4"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd := newStubDoctorCommandWithVersions("windows", tc.present, tc.versions)
+			var stdout bytes.Buffer
+			if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v\noutput=%s", err, stdout.String())
+			}
+			out := stdout.String()
+			if strings.Contains(out, "[missing] tmux") || strings.Contains(out, "[stale]   tmux") || strings.Contains(out, "minimum 3.4; found tmux 3.2") {
+				t.Fatalf("windows native psmux track should ignore tmux dependency health:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestDoctorLinuxTmuxCoreDependencyAndStaleCheckRemainActive(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommandWithVersions(
+		"linux",
+		map[string]bool{"tmux": true, "psmux": true, "git": true, "stty": true, "kubectl": true},
+		map[string]string{"tmux": "tmux 3.2", "psmux": "psmux 3.3.4"},
+	)
+
+	var stdout bytes.Buffer
+	err := cmd.Run(nil, &stdout, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run() error = nil, want stale tmux failure")
+	}
+	out := stdout.String()
+	for _, want := range []string{"[stale]   tmux", "minimum 3.4; found tmux 3.2"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("linux tmux output missing %q:\n%s", want, out)
+		}
+	}
+
+	stdout.Reset()
+	_ = cmd.Run([]string{"--json"}, &stdout, &bytes.Buffer{})
+	var report doctorReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
+	}
+	byName := doctorResultsByName(report.Dependencies)
+	tmux, ok := byName["tmux"]
+	if !ok {
+		t.Fatalf("linux dependencies missing tmux: %#v", report.Dependencies)
+	}
+	if !tmux.Required || tmux.Status != doctorStatusStale {
+		t.Fatalf("tmux dependency = %#v, want required stale", tmux)
+	}
+	if _, ok := byName["psmux"]; ok {
+		t.Fatalf("linux dependencies should not include psmux: %#v", report.Dependencies)
 	}
 }
 
@@ -255,6 +401,30 @@ func TestDoctorRunJSONOutputIsValid(t *testing.T) {
 	}
 	if byName["kubectl"].Required {
 		t.Fatalf("kubectl Required = true, want false")
+	}
+	if report.SessionStatePrune != doctorSessionStatePruneGuidance {
+		t.Fatalf("session-state prune guidance = %q, want %q", report.SessionStatePrune, doctorSessionStatePruneGuidance)
+	}
+}
+
+func TestDoctorRunIncludesManualSessionStatePruneGuidance(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "git": true, "stty": true,
+	})
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, want := range []string{
+		"Session State retention",
+		"projmux prune session-state",
+		"delete only by explicit name",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, stdout.String())
+		}
 	}
 }
 
@@ -342,6 +512,109 @@ func TestDoctorJSONIncludesAINotifyDiagnostics(t *testing.T) {
 	}
 }
 
+func TestDoctorWindowsPsmuxTrackSkipsTmuxBellFallback(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("windows", map[string]bool{
+		"psmux": true, "git": true, "kubectl": true,
+	})
+	cmd.aiDiagnostics = func() []doctorAINotifyIntegration {
+		return []doctorAINotifyIntegration{
+			{
+				ID:             "tmux-bell",
+				Name:           "tmux bell fallback",
+				Status:         doctorAINotifyStatusMissing,
+				InstallCommand: "projmux ai integrate tmux-bell",
+				RemoveCommand:  "projmux ai integrate tmux-bell --remove",
+				DryRunCommand:  "projmux ai integrate tmux-bell --dry-run",
+			},
+		}
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v\noutput=%s", err, stdout.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"AI notify integrations",
+		"[skip]",
+		"tmux bell fallback",
+		"unsupported on the native Windows psmux track",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "install: projmux ai integrate tmux-bell") {
+		t.Fatalf("unsupported tmux bell fallback should not render install command:\n%s", out)
+	}
+
+	stdout.Reset()
+	if err := cmd.Run([]string{"--json"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run(--json) error = %v\noutput=%s", err, stdout.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
+	}
+	if len(report.AINotifyIntegrations) != 1 {
+		t.Fatalf("len(report.AINotifyIntegrations) = %d, want 1", len(report.AINotifyIntegrations))
+	}
+	got := report.AINotifyIntegrations[0]
+	if got.ID != "tmux-bell" || got.Status != doctorAINotifyStatusSkip {
+		t.Fatalf("AI diagnostic = %#v, want tmux-bell skip", got)
+	}
+	if got.InstallCommand != "" || got.RemoveCommand != "" || got.DryRunCommand != "" {
+		t.Fatalf("unsupported tmux bell commands = %#v, want no commands", got)
+	}
+}
+
+func TestDoctorLinuxTmuxBellFallbackRemainsMissingWhenNotInstalled(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{
+		"tmux": true, "git": true, "stty": true,
+	})
+	cmd.aiDiagnostics = func() []doctorAINotifyIntegration {
+		return []doctorAINotifyIntegration{
+			{
+				ID:             "tmux-bell",
+				Name:           "tmux bell fallback",
+				Status:         doctorAINotifyStatusMissing,
+				InstallCommand: "projmux ai integrate tmux-bell",
+				RemoveCommand:  "projmux ai integrate tmux-bell --remove",
+				DryRunCommand:  "projmux ai integrate tmux-bell --dry-run",
+			},
+		}
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v\noutput=%s", err, stdout.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"[missing]  tmux bell fallback",
+		"install: projmux ai integrate tmux-bell",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "unsupported on the native Windows psmux track") {
+		t.Fatalf("linux tmux bell fallback should not be rewritten as unsupported:\n%s", out)
+	}
+}
+
+func doctorResultsByName(results []doctorResult) map[string]doctorResult {
+	byName := make(map[string]doctorResult, len(results))
+	for _, result := range results {
+		byName[result.Name] = result
+	}
+	return byName
+}
+
 func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 	t.Parallel()
 
@@ -362,6 +635,17 @@ func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 				Reason:          "resume metadata older than 24h0m0s",
 				SnapshotPath:    "/tmp/workspace.json",
 			},
+			{
+				Session:         "workspace",
+				WindowIndex:     0,
+				PaneIndex:       2,
+				Agent:           "antigravity",
+				Status:          "available",
+				Confidence:      "high",
+				ResumeSource:    "hook",
+				ResumeUpdatedAt: "2026-06-04T03:04:05Z",
+				SnapshotPath:    "/tmp/workspace.json",
+			},
 		}
 	}
 
@@ -378,6 +662,10 @@ func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 		"confidence: medium",
 		"source: codex-log",
 		"resume metadata older than 24h0m0s",
+		"antigravity",
+		"workspace:0.2",
+		"confidence: high",
+		"source: hook",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)
@@ -392,8 +680,8 @@ func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("json unmarshal error = %v\n%s", err, stdout.String())
 	}
-	if len(report.SessionStateResume) != 1 || report.SessionStateResume[0].Status != "stale" || report.SessionStateResume[0].Confidence != "medium" {
-		t.Fatalf("SessionStateResume = %#v, want stale medium diagnostic", report.SessionStateResume)
+	if len(report.SessionStateResume) != 2 || report.SessionStateResume[0].Status != "stale" || report.SessionStateResume[1].Agent != "antigravity" || report.SessionStateResume[1].Status != "available" {
+		t.Fatalf("SessionStateResume = %#v, want codex stale and antigravity available diagnostics", report.SessionStateResume)
 	}
 }
 
@@ -449,6 +737,9 @@ command = "projmux ai ingest codex-hook"
 	if byID["tmux-bell"].Status != doctorAINotifyStatusInstalled {
 		t.Fatalf("tmux bell status = %#v, want installed", byID["tmux-bell"])
 	}
+	if byID["antigravity-hooks"].Status != doctorAINotifyStatusSkip {
+		t.Fatalf("antigravity hooks status = %#v, want skip/manual diagnostic", byID["antigravity-hooks"])
+	}
 	if byID["codex-hooks"].InstallCommand != "projmux ai integrate codex" {
 		t.Fatalf("codex hooks InstallCommand = %q", byID["codex-hooks"].InstallCommand)
 	}
@@ -464,8 +755,55 @@ command = "projmux ai ingest codex-hook"
 	if byID["claude-hooks"].TestedVersion != "Claude Code 2.1.140" {
 		t.Fatalf("claude hooks TestedVersion = %q", byID["claude-hooks"].TestedVersion)
 	}
+	if byID["antigravity-hooks"].ProviderID != "antigravity" || byID["antigravity-hooks"].InstallCommand != "" || byID["antigravity-hooks"].RemoveCommand != "" || byID["antigravity-hooks"].DryRunCommand != "" {
+		t.Fatalf("antigravity hooks diagnostic = %#v", byID["antigravity-hooks"])
+	}
+	if !strings.Contains(byID["antigravity-hooks"].Guidance, "does not mutate Antigravity user config") || !strings.Contains(byID["antigravity-hooks"].Guidance, "absolute projmux path") {
+		t.Fatalf("antigravity hooks Guidance = %q, want manual/absolute-command notice", byID["antigravity-hooks"].Guidance)
+	}
 	if len(cmdRecorder(cmd).commands) != 0 {
 		t.Fatalf("commands = %#v, want read-only diagnostics", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestDoctorAINotifyDiagnosticsProviderMetadataShowsDisabledProviders(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	paths := config.DefaultPaths(configHome, t.TempDir())
+	if err := config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), nil); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+
+	cmd := testAICommand(t.TempDir())
+	cmd.readFile = os.ReadFile
+	diagnostics := doctorAINotifyDiagnostics(cmd)
+	byID := map[string]doctorAINotifyIntegration{}
+	for _, diagnostic := range diagnostics {
+		byID[diagnostic.ID] = diagnostic
+	}
+
+	for _, tc := range []struct {
+		id       string
+		provider string
+	}{
+		{id: "codex-hooks", provider: "codex"},
+		{id: "claude-hooks", provider: "claude"},
+		{id: "antigravity-hooks", provider: "antigravity"},
+	} {
+		diagnostic, ok := byID[tc.id]
+		if !ok {
+			t.Fatalf("diagnostics = %#v, want %s even when provider is disabled", diagnostics, tc.id)
+		}
+		if diagnostic.ProviderID != tc.provider {
+			t.Fatalf("%s ProviderID = %q, want %q", tc.id, diagnostic.ProviderID, tc.provider)
+		}
+		if diagnostic.ProviderEnabled == nil || *diagnostic.ProviderEnabled {
+			t.Fatalf("%s ProviderEnabled = %#v, want disabled false", tc.id, diagnostic.ProviderEnabled)
+		}
+		if !strings.Contains(diagnostic.Guidance, "provider disabled") || !strings.Contains(diagnostic.Guidance, "explicit diagnostics") {
+			t.Fatalf("%s Guidance = %q, want disabled-provider diagnostic policy", tc.id, diagnostic.Guidance)
+		}
 	}
 }
 
@@ -641,6 +979,8 @@ func newStubDoctorCommandWithVersions(host string, present map[string]bool, vers
 			switch name {
 			case "tmux":
 				return "tmux 3.6"
+			case "psmux":
+				return "psmux 3.3.4"
 			}
 			return name + " 1.2.3"
 		},

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,6 +17,12 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -83,7 +90,7 @@ func TestAISettingsPickerSetsSelectedMode(t *testing.T) {
 	if got, want := runner.options.UI, "ai-settings"; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
-	if got, want := runner.options.Title, "AI Settings - Default Ctrl+Shift+R/L split mode"; got != want {
+	if got, want := runner.options.Title, "AI Settings - Default split mode"; got != want {
 		t.Fatalf("runner title = %q, want %q", got, want)
 	}
 	if got, want := runner.options.Prompt, "AI Setting > "; got != want {
@@ -92,11 +99,141 @@ func TestAISettingsPickerSetsSelectedMode(t *testing.T) {
 	if got := runner.options.Header; got != "" {
 		t.Fatalf("runner header = %q, want description only in title", got)
 	}
-	if got, want := runner.options.Footer, "Enter: set default  |  Esc/Alt+5/Ctrl+Alt+S: close"; got != want {
+	if got, want := runner.options.Footer, "Choose the default split mode for future AI launches."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := readModeFile(t, home), "shell\n"; got != want {
 		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+}
+
+func TestAISplitPickerCloseBindingsUseAISplitPickerAlias(t *testing.T) {
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte(`[bindings.AISplitPickerToggle]
+keys = ["M-a"]
+[bindings.SettingsToggle]
+keys = ["M-s"]
+[bindings.new-window]
+keys = ["M-t"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &capturingAIRunner{}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if _, err := cmd.runAgentPicker("right"); err != nil {
+		t.Fatalf("runAgentPicker() error = %v", err)
+	}
+	if !containsString(runner.options.Bindings, "alt-a:abort") {
+		t.Fatalf("AI picker bindings = %#v, want custom AISplitPickerToggle alias close", runner.options.Bindings)
+	}
+	if containsString(runner.options.Bindings, "alt-s:abort") {
+		t.Fatalf("AI picker bindings = %#v, SettingsToggle alias must not close AI picker", runner.options.Bindings)
+	}
+	if containsString(runner.options.Bindings, "alt-t:abort") {
+		t.Fatalf("AI picker bindings = %#v, direct command alias must not close popup", runner.options.Bindings)
+	}
+}
+
+func TestAIPickerAppliesGlobalThemeSurface(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#0000ff"
+surface = "#112233"
+foreground = "#ffffff"
+`)
+	runner := &capturingAIRunner{}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if _, err := cmd.runAgentPicker("right"); err != nil {
+		t.Fatalf("runAgentPicker() error = %v", err)
+	}
+	if runner.options.Theme == nil {
+		t.Fatalf("AI picker options.Theme = nil, want global theme filled")
+	}
+	if got := runner.options.Theme.Background.Source; got != theme.SourceGlobal {
+		t.Fatalf("AI picker background source = %q, want global", got)
+	}
+	if got, want := runner.options.Theme.Surface.Value.Hex, "#112233"; got != want {
+		t.Fatalf("AI picker surface hex = %q, want %q", got, want)
+	}
+}
+
+func TestAISettingsAppliesGlobalThemeSurface(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+[theme]
+background = "#0000ff"
+surface = "#112233"
+`)
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "esc"}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if err := cmd.Run([]string{"settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run settings picker error = %v", err)
+	}
+	if runner.options.Theme == nil {
+		t.Fatalf("AI settings options.Theme = nil, want global theme filled")
+	}
+	if got := runner.options.Theme.Background.Source; got != theme.SourceGlobal {
+		t.Fatalf("AI settings background source = %q, want global", got)
+	}
+}
+
+func TestAIPickerUnsetThemeMatchesFallback(t *testing.T) {
+	home := t.TempDir()
+	runner := &capturingAIRunner{}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if _, err := cmd.runAgentPicker("right"); err != nil {
+		t.Fatalf("runAgentPicker() error = %v", err)
+	}
+	if runner.options.Theme == nil {
+		t.Fatalf("AI picker options.Theme = nil, want fallback theme filled")
+	}
+	want := theme.ResolveTheme(theme.ThemeConfig{})
+	if got := runner.options.Theme.Background.Source; got != want.Background.Source {
+		t.Fatalf("AI picker unset background source = %q, want fallback %q", got, want.Background.Source)
+	}
+	if got := runner.options.Theme.Surface.Value.Hex; got != want.Surface.Value.Hex {
+		t.Fatalf("AI picker unset surface hex = %q, want fallback %q", got, want.Surface.Value.Hex)
+	}
+}
+
+func TestAISettingsRowsHideDisabledAgentDefaults(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeCodex); err != nil {
+		t.Fatalf("setMode(codex) error = %v", err)
+	}
+
+	rows := cmd.settingsRows()
+	if hasEntryValue(rows, aiModeCodex) {
+		t.Fatalf("settings rows = %#v, want disabled Codex hidden", rows)
+	}
+	for _, want := range []string{aiModeSelective, aiModeClaude, aiModeShell} {
+		if !hasEntryValue(rows, want) {
+			t.Fatalf("settings rows = %#v, want row %q", rows, want)
+		}
+	}
+	if !hasEntryLabelContainingAll(rows, "saved default codex is disabled", "Enabled agents") {
+		t.Fatalf("settings rows = %#v, want disabled default warning", rows)
 	}
 }
 
@@ -119,7 +256,7 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	if got := runner.options.Header; got != "" {
 		t.Fatalf("runner header = %q, want direction only in title", got)
 	}
-	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiModeClaude, aiModeShell}; !reflect.DeepEqual(got, want) {
+	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiModeClaude, aiModeAntigravity, aiModeShell}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("runner entry order = %#v, want %#v", got, want)
 	}
 	for _, entry := range runner.options.Entries {
@@ -127,8 +264,423 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 			t.Fatalf("runner entry %#v has empty SearchKey; want stable search-order filtering", entry)
 		}
 	}
-	if got, want := runner.options.Footer, "Enter: launch  |  Esc/Alt+4/Alt+5/Ctrl+Alt+S: close"; got != want {
+	if got, want := runner.options.Footer, "Choose an agent or shell target to launch."; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
+	}
+}
+
+func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
+	sessions := make([]aisessions.SessionMeta, 0, aiResumePickerLimitDefault+2)
+	for i := range aiResumePickerLimitDefault + 2 {
+		sessions = append(sessions, aisessions.SessionMeta{
+			Agent:        aiModeCodex,
+			ResumeID:     fmt.Sprintf("019f0000-0000-7000-8000-%012d", i),
+			Title:        fmt.Sprintf("Title %02d", i),
+			LastModified: time.Date(2026, 6, 25, 9, i, 0, 0, time.UTC),
+			Context:      aisessions.SessionContext{Branch: "feat/resume-picker"},
+		})
+	}
+
+	rows, visible, total := aiResumeSessionRows(sessions, aiResumePickerLimitDefault, time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC), i18n.FallbackLocale, "", 0)
+
+	if visible != aiResumePickerLimitDefault || total != aiResumePickerLimitDefault+2 {
+		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, aiResumePickerLimitDefault, aiResumePickerLimitDefault+2)
+	}
+	if len(rows) != aiResumePickerLimitDefault+1 {
+		t.Fatalf("rows len = %d, want cap plus New row", len(rows))
+	}
+	if rows[0].Value != aiResumeNewValue || !strings.Contains(rows[0].Label, "[+ New Session]") {
+		t.Fatalf("first row = %#v, want New row", rows[0])
+	}
+	if !strings.Contains(rows[1].Label, "[codex") || !strings.Contains(rows[1].Label, "feat/resume-picke") || !strings.Contains(rows[1].Label, "Title 00") {
+		t.Fatalf("session row label = %q, want agent, branch, title", rows[1].Label)
+	}
+	if !strings.Contains(rows[1].SearchKey, sessions[0].ResumeID) {
+		t.Fatalf("session row search key = %q, want resume id", rows[1].SearchKey)
+	}
+}
+
+// aiResumeRowPrefixWidth is the fixed-column prefix width that every session
+// row shares before the trailing title: rel[6] + " " + badge[8] + " " +
+// branch[18] + " " + turns[5] + " " (separator before title).
+const aiResumeRowPrefixWidth = aiResumeRelCellWidth + 1 + aiResumeBadgeCellWidth + 1 +
+	aiResumeBranchCellWidth + 1 + aiResumeTurnsCellWidth + 1
+
+func TestAIResumeSessionRowColumnsAlign(t *testing.T) {
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	sessions := []aisessions.SessionMeta{
+		{
+			Agent:        aiModeClaude,
+			ResumeID:     "019f0000-0000-7000-8000-000000000001",
+			Title:        "short title",
+			LastModified: now.Add(-2 * time.Hour),
+			Context:      aisessions.SessionContext{Branch: "main"},
+		},
+		{
+			Agent:        aiModeAntigravity, // longer than the badge cell
+			ResumeID:     "abc",             // shorter than the short-id cell
+			Title:        strings.Repeat("very-long-title ", 12),
+			LastModified: now.Add(-72 * time.Hour),
+			Context:      aisessions.SessionContext{Branch: "feature/extremely-long-branch-name-overflow"},
+		},
+		{
+			Agent:        aiModeCodex,
+			ResumeID:     "019f0000-0000-7000-8000-000000000003",
+			Title:        "한글 제목 정렬 확인", // wide runes in the title
+			LastModified: now.Add(-30 * time.Minute),
+			Context:      aisessions.SessionContext{Branch: ""}, // empty -> placeholder
+		},
+	}
+
+	rows, visible, total := aiResumeSessionRows(sessions, aiResumePickerLimitDefault, now, i18n.FallbackLocale, "", 0)
+	if visible != len(sessions) || total != len(sessions) {
+		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, len(sessions), len(sessions))
+	}
+
+	for i, session := range sessions {
+		row := rows[i+1] // row 0 is the New Session entry
+		title := cleanAIResumeTitle(session.Title, session.ResumeID)
+		// The fixed-column prefix width is label width minus the rendered title.
+		prefix := i18n.TerminalCellWidth(row.Label) - i18n.TerminalCellWidth(title)
+		if prefix != aiResumeRowPrefixWidth {
+			t.Fatalf("row %d prefix width = %d, want %d (label %q)", i, prefix, aiResumeRowPrefixWidth, row.Label)
+		}
+	}
+
+	// Empty branch renders the placeholder, not a collapsed column.
+	if !strings.Contains(rows[3].Label, aiResumeEmptyCell) {
+		t.Fatalf("empty-branch row = %q, want %q placeholder", rows[3].Label, aiResumeEmptyCell)
+	}
+}
+
+func TestAIResumeSessionRowsLimitBoundaries(t *testing.T) {
+	now := time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC)
+	// hooks.AIResumePickerLimitMax is 100; clamp pins the visible count there.
+	const maxLimit = 100
+	const sessionCount = maxLimit + 10
+	sessions := make([]aisessions.SessionMeta, 0, sessionCount)
+	for i := range sessionCount {
+		sessions = append(sessions, aisessions.SessionMeta{
+			Agent:        aiModeCodex,
+			ResumeID:     fmt.Sprintf("019f0000-0000-7000-8000-%012d", i),
+			Title:        fmt.Sprintf("Title %03d", i),
+			LastModified: now.Add(-time.Duration(i) * time.Minute),
+		})
+	}
+
+	for _, tc := range []struct {
+		name        string
+		limit       int
+		wantVisible int
+	}{
+		{name: "zero falls back to default", limit: 0, wantVisible: aiResumePickerLimitDefault},
+		{name: "negative falls back to default", limit: -7, wantVisible: aiResumePickerLimitDefault},
+		{name: "in range honored", limit: 12, wantVisible: 12},
+		{name: "oversized clamps to max", limit: 500, wantVisible: maxLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, visible, total := aiResumeSessionRows(sessions, tc.limit, now, i18n.FallbackLocale, "", 0)
+			if visible != tc.wantVisible {
+				t.Fatalf("visible = %d, want %d", visible, tc.wantVisible)
+			}
+			if total != sessionCount {
+				t.Fatalf("total = %d, want %d", total, sessionCount)
+			}
+		})
+	}
+}
+
+func TestAIResumeSessionRowTitleEllipsis(t *testing.T) {
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	long := strings.Repeat("x", aiResumeTitleMaxCells+25)
+	const resumeID = "019f0000-0000-7000-8000-000000000009"
+	row := aiResumeSessionRow(aisessions.SessionMeta{
+		Agent:        aiModeClaude,
+		ResumeID:     resumeID,
+		Title:        long,
+		LastModified: now.Add(-time.Hour),
+	}, now, i18n.FallbackLocale, "", 0)
+
+	if !strings.Contains(row.Label, "…") {
+		t.Fatalf("row label = %q, want ellipsis on overflow", row.Label)
+	}
+	title := cleanAIResumeTitle(long, "")
+	if w := i18n.TerminalCellWidth(title); w > aiResumeTitleMaxCells {
+		t.Fatalf("clipped title width = %d, want <= %d", w, aiResumeTitleMaxCells)
+	}
+	// The resume id is dropped from the visible columns but stays searchable.
+	if strings.Contains(row.Label, "019f0000") {
+		t.Fatalf("row label = %q, should not surface the resume id column", row.Label)
+	}
+	if !strings.Contains(row.SearchKey, resumeID) {
+		t.Fatalf("row search key = %q, want resume id preserved for search", row.SearchKey)
+	}
+}
+
+func TestAIResumeExtraMetaCellDepthGating(t *testing.T) {
+	session := aisessions.SessionMeta{
+		Context: aisessions.SessionContext{CWD: "/workspace/app/web"},
+	}
+	// Depth 0 hides the column entirely (historical view).
+	if got := aiResumeExtraMetaCell(session, "/workspace/app", 0); got != "" {
+		t.Fatalf("depth 0 extra cell = %q, want empty", got)
+	}
+	// Depth>0 surfaces the cwd relative to the picker base.
+	if got := aiResumeExtraMetaCell(session, "/workspace/app", 1); got != "./web" {
+		t.Fatalf("depth 1 extra cell = %q, want ./web", got)
+	}
+	// The exact cwd renders "./" so every row keeps the column aligned.
+	exact := aisessions.SessionMeta{Context: aisessions.SessionContext{CWD: "/workspace/app"}}
+	if got := aiResumeExtraMetaCell(exact, "/workspace/app", 1); got != "./" {
+		t.Fatalf("exact cwd extra cell = %q, want ./", got)
+	}
+}
+
+func TestAIResumeRelativeCWD(t *testing.T) {
+	for _, tc := range []struct {
+		base     string
+		recorded string
+		want     string
+	}{
+		{base: "/workspace/app", recorded: "/workspace/app", want: "./"},
+		{base: "/workspace/app", recorded: "/workspace/app/web", want: "./web"},
+		{base: "/workspace/app", recorded: "/workspace/app/web/api", want: "./web/api"},
+		{base: "/workspace/app", recorded: "/workspace/app-other", want: ""}, // sibling escapes base
+		{base: "/workspace/app", recorded: "/workspace", want: ""},           // parent escapes base
+		{base: "", recorded: "/workspace/app", want: ""},
+		{base: "/workspace/app", recorded: "", want: ""},
+	} {
+		if got := aiResumeRelativeCWD(tc.base, tc.recorded); got != tc.want {
+			t.Fatalf("aiResumeRelativeCWD(%q, %q) = %q, want %q", tc.base, tc.recorded, got, tc.want)
+		}
+	}
+}
+
+func TestAIResumeSessionRowShowsCWDColumnOnlyAtDepth(t *testing.T) {
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	session := aisessions.SessionMeta{
+		Agent:        aiModeClaude,
+		ResumeID:     "019f0000-0000-7000-8000-000000000021",
+		Title:        "Child session",
+		LastModified: now.Add(-time.Hour),
+		Context:      aisessions.SessionContext{CWD: "/workspace/app/web", Branch: "feat/web"},
+	}
+
+	depth0 := aiResumeSessionRow(session, now, i18n.FallbackLocale, "/workspace/app", 0)
+	if strings.Contains(depth0.Label, "./web") {
+		t.Fatalf("depth 0 row should hide cwd column: %q", depth0.Label)
+	}
+
+	depth1 := aiResumeSessionRow(session, now, i18n.FallbackLocale, "/workspace/app", 1)
+	if !strings.Contains(depth1.Label, "./web") {
+		t.Fatalf("depth 1 row should show cwd column: %q", depth1.Label)
+	}
+	if !strings.Contains(depth1.SearchKey, "./web") {
+		t.Fatalf("depth 1 search key should include cwd: %q", depth1.SearchKey)
+	}
+	// The cwd column pushes the title right, so the depth>0 label is wider.
+	if i18n.TerminalCellWidth(depth1.Label) <= i18n.TerminalCellWidth(depth0.Label) {
+		t.Fatalf("depth 1 label width %d should exceed depth 0 width %d",
+			i18n.TerminalCellWidth(depth1.Label), i18n.TerminalCellWidth(depth0.Label))
+	}
+}
+
+func TestAIResumeFitCell(t *testing.T) {
+	if got := aiResumeFitCell("ab", 6); got != "ab    " {
+		t.Fatalf("pad short = %q, want %q", got, "ab    ")
+	}
+	if got := aiResumeFitCell("abcdefgh", 6); got != "abcdef" {
+		t.Fatalf("truncate long = %q, want %q", got, "abcdef")
+	}
+	// Wide runes must be measured in cells, not bytes/runes.
+	if got := i18n.TerminalCellWidth(aiResumeFitCell("한글", 6)); got != 6 {
+		t.Fatalf("CJK cell width = %d, want 6", got)
+	}
+}
+
+func TestTruncateAIResumeCells(t *testing.T) {
+	if got := truncateAIResumeCells("hello", 10); got != "hello" {
+		t.Fatalf("under limit = %q, want unchanged", got)
+	}
+	got := truncateAIResumeCells("abcdefghij", 5)
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("over limit = %q, want ellipsis suffix", got)
+	}
+	if w := i18n.TerminalCellWidth(got); w > 5 {
+		t.Fatalf("clipped width = %d, want <= 5", w)
+	}
+}
+
+func TestAIResumeRelativeAge(t *testing.T) {
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	if got := aiResumeRelativeAge(now, now.Add(-2*time.Hour), i18n.FallbackLocale); got != "2h" {
+		t.Fatalf("relative hours = %q, want %q", got, "2h")
+	}
+	if got := aiResumeRelativeAge(now, now.Add(-72*time.Hour), i18n.FallbackLocale); got != "3d" {
+		t.Fatalf("relative days = %q, want %q", got, "3d")
+	}
+	// Unknown timestamps yield an empty (padded) cell rather than a bogus age.
+	if got := aiResumeRelativeAge(time.Time{}, now, i18n.FallbackLocale); got != "" {
+		t.Fatalf("zero now = %q, want empty", got)
+	}
+	if got := aiResumeRelativeAge(now, time.Time{}, i18n.FallbackLocale); got != "" {
+		t.Fatalf("zero modified = %q, want empty", got)
+	}
+	// Future timestamps clamp to zero instead of going negative.
+	if got := aiResumeRelativeAge(now, now.Add(time.Hour), i18n.FallbackLocale); got != "0s" {
+		t.Fatalf("future = %q, want %q", got, "0s")
+	}
+}
+
+func TestAIResumeTurnsCell(t *testing.T) {
+	// Known counts render as "<n>t" left-aligned in a fixed-width cell.
+	if got := aiResumeTurnsCell(8); strings.TrimRight(got, " ") != "8t" {
+		t.Fatalf("turns cell = %q, want %q", got, "8t")
+	}
+	if got := aiResumeTurnsCell(120); strings.TrimRight(got, " ") != "120t" {
+		t.Fatalf("turns cell = %q, want %q", got, "120t")
+	}
+	if w := i18n.TerminalCellWidth(aiResumeTurnsCell(31)); w != aiResumeTurnsCellWidth {
+		t.Fatalf("turns cell width = %d, want %d", w, aiResumeTurnsCellWidth)
+	}
+	// Unknown (zero) turns render as a blank padded cell, not "0t".
+	blank := aiResumeTurnsCell(0)
+	if strings.TrimSpace(blank) != "" {
+		t.Fatalf("zero turns cell = %q, want blank", blank)
+	}
+	if w := i18n.TerminalCellWidth(blank); w != aiResumeTurnsCellWidth {
+		t.Fatalf("blank turns cell width = %d, want %d", w, aiResumeTurnsCellWidth)
+	}
+}
+
+func TestAIResumeAgentBadgeTightBracketsAndColor(t *testing.T) {
+	// Padding sits outside the brackets: "[codex]", never "[codex ]".
+	badge := aiResumeAgentBadge(aiModeCodex)
+	if !strings.Contains(badge, "[codex]") {
+		t.Fatalf("codex badge = %q, want tight [codex]", badge)
+	}
+	if strings.Contains(badge, "[codex ") {
+		t.Fatalf("codex badge = %q, want no padding inside brackets", badge)
+	}
+	// Every agent badge occupies the same visible cell width regardless of name.
+	for _, agent := range []string{aiModeClaude, aiModeCodex, aiModeAntigravity} {
+		if w := i18n.TerminalCellWidth(aiResumeAgentBadge(agent)); w != aiResumeBadgeCellWidth {
+			t.Fatalf("%s badge width = %d, want %d", agent, w, aiResumeBadgeCellWidth)
+		}
+	}
+	// Distinct agents get distinct colours (per-agent disambiguation).
+	claudeColor := aiResumeAgentColor(aiModeClaude)
+	codexColor := aiResumeAgentColor(aiModeCodex)
+	agyColor := aiResumeAgentColor(aiModeAntigravity)
+	if claudeColor == codexColor || codexColor == agyColor || claudeColor == agyColor {
+		t.Fatalf("agent colours not distinct: claude=%q codex=%q agy=%q", claudeColor, codexColor, agyColor)
+	}
+}
+
+func TestAIResumeSessionRowShowsTurns(t *testing.T) {
+	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	row := aiResumeSessionRow(aisessions.SessionMeta{
+		Agent:        aiModeCodex,
+		ResumeID:     "019f0000-0000-7000-8000-000000000042",
+		Title:        "Optimize picker",
+		LastModified: now.Add(-time.Hour),
+		Turns:        31,
+	}, now, i18n.FallbackLocale, "", 0)
+	if !strings.Contains(row.Label, "31t") {
+		t.Fatalf("row label = %q, want turn count 31t", row.Label)
+	}
+}
+
+func TestAIResumePickerNoSessionsDelegatesToAgentPicker(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "esc"}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		default:
+			return ""
+		}
+	}
+
+	if err := cmd.runResumePicker("right"); err != nil {
+		t.Fatalf("runResumePicker() error = %v", err)
+	}
+	if got, want := runner.options.UI, "ai-picker"; got != want {
+		t.Fatalf("picker UI = %q, want %q", got, want)
+	}
+}
+
+func TestAIPickerFiltersDisabledAgents(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	runner := &capturingAIRunner{}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if _, err := cmd.runAgentPicker("right"); err != nil {
+		t.Fatalf("runAgentPicker error = %v", err)
+	}
+	if got, want := entryValues(runner.options.Entries), []string{aiModeClaude, aiModeShell}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("runner entry order = %#v, want %#v", got, want)
+	}
+	if hasEntryValue(runner.options.Entries, aiModeCodex) {
+		t.Fatalf("runner entries = %#v, want disabled Codex hidden", runner.options.Entries)
+	}
+}
+
+func TestAIProviderPickerRowsDeriveFromRegistryAndHideDisabledProviders(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	cmd := testAICommand(home)
+
+	rows := cmd.agentRows()
+	if got, want := entryValues(rows), []string{string(aiprovider.Claude), aiModeShell}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentRows values = %#v, want enabled registry providers plus shell %#v", got, want)
+	}
+	if hasEntryValue(rows, string(aiprovider.Codex)) {
+		t.Fatalf("agentRows = %#v, want disabled Codex hidden", rows)
+	}
+	if hasEntryValue(rows, string(aiprovider.Antigravity)) {
+		t.Fatalf("agentRows = %#v, want disabled Antigravity hidden", rows)
+	}
+}
+
+func TestAIPickerAllAgentsDisabledShowsShellFallbackGuidance(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), nil); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	runner := &capturingAIRunner{}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+
+	if _, err := cmd.runAgentPicker("down"); err != nil {
+		t.Fatalf("runAgentPicker error = %v", err)
+	}
+	if got, want := entryValues(runner.options.Entries), []string{"", aiModeShell}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("runner entry order = %#v, want guidance plus shell fallback %#v", got, want)
+	}
+	if !hasEntryLabelContainingAll(runner.options.Entries, "AI agents disabled", "shell") {
+		t.Fatalf("runner entries = %#v, want disabled-agent guidance", runner.options.Entries)
+	}
+	if hasEntryValue(runner.options.Entries, aiModeClaude) || hasEntryValue(runner.options.Entries, aiModeCodex) || hasEntryValue(runner.options.Entries, aiModeAntigravity) {
+		t.Fatalf("runner entries = %#v, want all AI agents hidden", runner.options.Entries)
 	}
 }
 
@@ -166,6 +718,7 @@ func TestFindAgentBinaryDiscoversNodeManagerInstalls(t *testing.T) {
 	}{
 		{"codex via nvm", aiModeCodex, filepath.Join(".nvm", "versions", "node", "v24.15.0", "bin", "codex")},
 		{"claude via nvm", aiModeClaude, filepath.Join(".nvm", "versions", "node", "v22.0.0", "bin", "claude")},
+		{"antigravity via nvm", aiModeAntigravity, filepath.Join(".nvm", "versions", "node", "v24.15.0", "bin", "agy")},
 		{"codex via fnm", aiModeCodex, filepath.Join(".fnm", "node-versions", "v22.4.0", "installation", "bin", "codex")},
 		{"codex via asdf", aiModeCodex, filepath.Join(".asdf", "installs", "nodejs", "20.10.0", "bin", "codex")},
 		{"claude via volta", aiModeClaude, filepath.Join(".volta", "bin", "claude")},
@@ -205,6 +758,114 @@ func TestFindAgentBinaryPrefersPathOverNodeManager(t *testing.T) {
 	}
 }
 
+func TestFindAgentBinaryPSMuxCodexPrefersPowerShellPS1Shim(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, "npm-bin")
+	codexPS1 := writeExecutable(t, filepath.Join(binDir, "codex.ps1"))
+	writeExecutable(t, filepath.Join(binDir, "codex.cmd"))
+	writeExecutable(t, filepath.Join(binDir, "codex.exe"))
+	writeExecutable(t, filepath.Join(binDir, "codex"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		case "PATH":
+			return binDir
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "powershell" && len(args) == 3 && args[0] == "-NoProfile" && args[1] == "-Command" && strings.Contains(args[2], "Get-Command") {
+			return []byte(codexPS1 + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	got := cmd.findAgentBinary(aiModeCodex)
+	if got != codexPS1 {
+		t.Fatalf("findAgentBinary = %q, want PowerShell ps1 shim %q", got, codexPS1)
+	}
+	if containsRecordedAICommandPrefix(cmdRecorder(cmd).commands, recordedAICommand{name: "command", args: []string{"-v", "codex"}}) {
+		t.Fatalf("commands = %#v, did not expect POSIX command -v lookup on psmux", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestFindAgentBinaryPSMuxCodexRecognizesWindowsShimCandidates(t *testing.T) {
+	cases := []struct {
+		name     string
+		fileName string
+	}{
+		{"cmd shim", "codex.cmd"},
+		{"ps1 shim without PATHEXT", "codex.ps1"},
+		{"exe shim", "codex.exe"},
+		{"extensionless shim", "codex"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			binDir := filepath.Join(home, "npm-bin")
+			want := writeExecutable(t, filepath.Join(binDir, tc.fileName))
+			cmd := testAICommand(home)
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "HOME":
+					return home
+				case muxBackendEnvVar:
+					return string(muxBackendPSMux)
+				case "PATH":
+					return binDir
+				default:
+					return ""
+				}
+			}
+			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+				return nil, os.ErrNotExist
+			}
+
+			got := cmd.findAgentBinary(aiModeCodex)
+			if got != want {
+				t.Fatalf("findAgentBinary = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestFindAgentBinaryPSMuxCodexUsesWhereFallback(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, "npm-bin")
+	extensionless := writeExecutable(t, filepath.Join(binDir, "codex"))
+	cmdShim := writeExecutable(t, filepath.Join(binDir, "codex.cmd"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "where.exe" && reflect.DeepEqual(args, []string{"codex"}) {
+			return []byte(extensionless + "\n" + cmdShim + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	got := cmd.findAgentBinary(aiModeCodex)
+	if got != cmdShim {
+		t.Fatalf("findAgentBinary = %q, want where.exe cmd shim %q over extensionless %q", got, cmdShim, extensionless)
+	}
+}
+
 func TestFindAgentBinaryPicksNewestNvmVersion(t *testing.T) {
 	home := t.TempDir()
 	older := writeExecutable(t, filepath.Join(home, ".nvm", "versions", "node", "v18.0.0", "bin", "codex"))
@@ -232,6 +893,190 @@ func TestFindAgentBinaryReturnsEmptyWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestAISplitMissingRunnerPreservesTmuxMessage(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+
+	err := cmd.Run([]string{"split", "--agent", "codex", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || err.Error() != "selected runner is not installed: codex" {
+		t.Fatalf("Run split missing codex error = %v, want selected runner is not installed: codex", err)
+	}
+}
+
+func TestAISplitMissingAntigravityRunnerReportsMode(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		return nil, os.ErrNotExist
+	}
+
+	err := cmd.Run([]string{"split", "--agent", "antigravity", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || err.Error() != "selected runner is not installed: antigravity" {
+		t.Fatalf("Run split missing antigravity error = %v, want selected runner is not installed: antigravity", err)
+	}
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "command", []string{"-v", "agy"}) {
+		t.Fatalf("commands = %#v, want agy lookup", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestAISplitDirectDisabledAgentFailsBeforeRunnerLookup(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentCodex}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	cmd := testAICommand(home)
+	cmd.readCommand = func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("disabled direct agent should fail before command lookup")
+		return nil, os.ErrNotExist
+	}
+
+	err := cmd.Run([]string{"split", "--agent", "claude", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run split --agent claude error = nil, want disabled-agent error")
+	}
+	for _, want := range []string{"AI agent claude is disabled", "Settings > AI Settings > Enabled agents", "--force-agent"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("commands = %#v, want none", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestAISplitDefaultDisabledAgentFailsClearly(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeCodex); err != nil {
+		t.Fatalf("setMode(codex) error = %v", err)
+	}
+	cmdRecorder(cmd).commands = nil
+
+	err := cmd.Run([]string{"split", "down"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run split with disabled default error = nil, want disabled-default error")
+	}
+	for _, want := range []string{"AI split default codex is disabled", "choose another default", "--agent shell"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("commands = %#v, want no launch commands", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestAISplitDisabledConcreteAgentFailsBeforeRunnerFocusOrSplit(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		agent      string
+		enabled    []config.AIAgentProvider
+		defaultSet bool
+		want       []string
+	}{
+		{
+			name:    "direct",
+			args:    []string{"split", "--agent", "claude", "right"},
+			agent:   aiModeClaude,
+			enabled: []config.AIAgentProvider{config.AIAgentCodex},
+			want:    []string{"AI agent claude is disabled", "--force-agent"},
+		},
+		{
+			name:       "default",
+			args:       []string{"split", "right"},
+			agent:      aiModeCodex,
+			enabled:    []config.AIAgentProvider{config.AIAgentClaude},
+			defaultSet: true,
+			want:       []string{"AI split default codex is disabled", "choose another default"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			work := filepath.Join(home, "repo")
+			if err := os.MkdirAll(work, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), tt.enabled); err != nil {
+				t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+			}
+			cmd := testAICommand(home)
+			if tt.defaultSet {
+				if err := cmd.setMode(tt.agent); err != nil {
+					t.Fatalf("setMode(%s) error = %v", tt.agent, err)
+				}
+				cmdRecorder(cmd).commands = nil
+			}
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "HOME":
+					return home
+				case "TMUX":
+					return "/tmp/tmux"
+				default:
+					return ""
+				}
+			}
+			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+				if name != "tmux" {
+					return nil, os.ErrNotExist
+				}
+				switch {
+				case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+					return []byte("%1\n"), nil
+				case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+					return []byte(work + "\n"), nil
+				}
+				return nil, os.ErrNotExist
+			}
+
+			err := cmd.Run(tt.args, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("Run(%v) error = nil, want disabled-agent error", tt.args)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want substring %q", err.Error(), want)
+				}
+			}
+			commands := cmdRecorder(cmd).commands
+			for _, forbidden := range [][]string{
+				{"select-pane", "-t", "%2"},
+				{"split-window"},
+			} {
+				if containsAICommandArgs(commands, "tmux", forbidden) {
+					t.Fatalf("commands = %#v, disabled agent must fail before %v", commands, forbidden)
+				}
+			}
+		})
+	}
+}
+
+func TestAISplitForceAgentOverridesDisabledDirectOnly(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), nil); err != nil {
+		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	cmd := testAICommand(home)
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"codex": codexBin}, "%7", "%9")
+
+	if err := cmd.Run([]string{"split", "--agent", "codex", "--force-agent", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --force-agent error = %v", err)
+	}
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeCodex}) {
+		t.Fatalf("commands = %#v, want forced Codex launch metadata", cmdRecorder(cmd).commands)
+	}
+}
+
 func TestAISplitSelectiveDelegatesToPopupToggle(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
@@ -253,6 +1098,238 @@ func TestAISplitSelectiveDelegatesToPopupToggle(t *testing.T) {
 	}}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAISplitDirectAlwaysCreatesNewPaneWithoutReuseProbe(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+			return []byte(codexBin + "\n"), nil
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+			return []byte("%1\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
+			return []byte("%9\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%1", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
+			return []byte("%1\t0\t0\t40\t10\n%2\t41\t0\t40\t10\n%9\t82\t0\t40\t10\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "--agent", "codex", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent codex error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%1", "-c", work, "/bin/sh", "-lc"}) {
+		t.Fatalf("commands = %#v, want new Codex split-window", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeCodex}) {
+		t.Fatalf("commands = %#v, want new pane Codex metadata", commands)
+	}
+	if containsAICommandArgs(commands, "tmux", []string{"select-pane", "-t", "%2"}) {
+		t.Fatalf("commands = %#v, direct split must not select preexisting AI pane", commands)
+	}
+	if containsAICommandArgs(commands, "tmux", []string{"list-panes", "-s", "-t", "%1"}) {
+		t.Fatalf("commands = %#v, direct split must not probe existing AI panes for reuse", commands)
+	}
+}
+
+func TestAISplitDefaultAlwaysCreatesNewPaneWithoutReuseProbe(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeCodex); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+			return []byte(codexBin + "\n"), nil
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+			return []byte("%1\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
+			return []byte("%9\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%1", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
+			return []byte("%1\t0\t0\t40\t10\n%2\t0\t11\t40\t10\n%9\t0\t22\t40\t10\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "down"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split default codex error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-v", "-t", "%1", "-c", work, "/bin/sh", "-lc"}) {
+		t.Fatalf("commands = %#v, want new default Codex split-window", commands)
+	}
+	if containsAICommandArgs(commands, "tmux", []string{"select-pane", "-t", "%2"}) {
+		t.Fatalf("commands = %#v, default split must not select preexisting AI pane", commands)
+	}
+	if containsAICommandArgs(commands, "tmux", []string{"list-panes", "-s", "-t", "%1"}) {
+		t.Fatalf("commands = %#v, default split must not probe existing AI panes for reuse", commands)
+	}
+}
+
+func TestAISplitDirectFromCurrentAIPaneStillCreatesNewPane(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+			return []byte(codexBin + "\n"), nil
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+			return []byte("%2\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
+			return []byte("%10\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%2", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
+			return []byte("%1\t0\t0\t40\t10\n%2\t41\t0\t40\t10\n%10\t82\t0\t40\t10\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "--agent", "codex", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent codex error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%2", "-c", work, "/bin/sh", "-lc"}) {
+		t.Fatalf("commands = %#v, want new Codex split from current AI pane", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%10", aiPaneAgentOption, aiModeCodex}) {
+		t.Fatalf("commands = %#v, want new pane Codex metadata", commands)
+	}
+	if containsAICommandArgs(commands, "tmux", []string{"select-pane", "-t", "%1"}) {
+		t.Fatalf("commands = %#v, direct split from AI pane must not select previous pane", commands)
+	}
+	if containsAICommandArgs(commands, "tmux", []string{"list-panes", "-s", "-t", "%2"}) {
+		t.Fatalf("commands = %#v, direct split from AI pane must not probe existing AI panes for reuse", commands)
+	}
+}
+
+func TestAISplitPickerSelectionPreservesLaunchPathWithExistingManagedPane(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiModeCodex}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX":
+			return "/tmp/tmux"
+		case "SHELL":
+			return "/bin/bash"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+			return []byte(codexBin + "\n"), nil
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_id}"}):
+			return []byte("%1\n"), nil
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pane_current_path}"}):
+			return []byte(work + "\n"), nil
+		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
+			return []byte("%9\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%1", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
+			return []byte("%1\t0\t0\t40\t10\n%9\t41\t0\t40\t10\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"picker", "--inside", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run picker --inside error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%1", "-c", work, "/bin/bash", "-lc"}) {
+		t.Fatalf("commands = %#v, want picker-selected Codex split-window", commands)
+	}
+	if containsAICommandArgs(commands, "tmux", []string{"select-pane", "-t", "%2"}) {
+		t.Fatalf("commands = %#v, picker path must not select preexisting AI pane", commands)
 	}
 }
 
@@ -415,6 +1492,39 @@ func TestAISplitAgentFlagLaunchesCodexWithoutChangingClaudeDefault(t *testing.T)
 	}
 }
 
+func TestAISplitAgentFlagLaunchesAntigravityWithoutChangingDefault(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agyBin := writeExecutable(t, filepath.Join(home, "bin", "agy"))
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeClaude); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"agy": agyBin}, "%7", "%9")
+
+	if err := cmd.Run([]string{"split", "--agent=antigravity", "down"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent antigravity error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if got, want := readModeFile(t, home), "claude\n"; got != want {
+		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-v", "-t", "%7", "-c", work, "/bin/bash", "-lc"}) {
+		t.Fatalf("commands = %#v, want vertical Antigravity split", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeAntigravity}) {
+		t.Fatalf("commands = %#v, want Antigravity AI pane metadata", commands)
+	}
+	if !containsAICommandArgSubstring(commands, "exec "+shellQuote(agyBin)) {
+		t.Fatalf("commands = %#v, want Antigravity exec", commands)
+	}
+}
+
 func TestAISplitCodexExtraArgsKeepsPaneSetupWatcherAndLayout(t *testing.T) {
 	home := t.TempDir()
 	work := filepath.Join(home, "repo")
@@ -513,6 +1623,196 @@ func TestAISplitAgentSelectiveDelegatesToPickerWithoutChangingDefault(t *testing
 	}
 }
 
+func TestAISplitAgentResumeDelegatesToResumePickerWithoutChangingDefault(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.executable = func() (string, error) { return "/tmp/projmux bin", nil }
+	if err := cmd.setMode(aiModeCodex); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{client_tty}"}) {
+			return []byte("/dev/pts/7\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "--agent", "resume", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run split --agent resume error = %v", err)
+	}
+
+	if got, want := readModeFile(t, home), "codex\n"; got != want {
+		t.Fatalf("mode file = %q, want %q", got, want)
+	}
+	want := []recordedAICommand{{
+		name: "/tmp/projmux bin",
+		args: []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-resume-right"},
+	}}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAIResumePickerNewDelegatesToAgentPicker(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeCodexResumeSession(t, home, "019f0000-0000-7000-8000-000000000077", work, "feat/resume", "Resume existing")
+	runner := &sequencingAIRunner{results: []intpickercompat.Result{
+		{Key: "enter", Value: aiResumeNewValue},
+		{Key: "esc"},
+	}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		default:
+			return ""
+		}
+	}
+
+	if err := cmd.runResumePicker("right"); err != nil {
+		t.Fatalf("runResumePicker() error = %v", err)
+	}
+	if len(runner.options) != 2 {
+		t.Fatalf("picker calls = %d, want resume picker then agent picker", len(runner.options))
+	}
+	if got, want := runner.options[0].UI, "ai-resume-picker"; got != want {
+		t.Fatalf("first picker UI = %q, want %q", got, want)
+	}
+	if got, want := runner.options[1].UI, "ai-picker"; got != want {
+		t.Fatalf("second picker UI = %q, want %q", got, want)
+	}
+}
+
+func TestAIResumePickerSessionRowRunsCodexResumeAndRecordsPaneMetadata(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resumeID := "019f0000-0000-7000-8000-000000000078"
+	writeCodexResumeSession(t, home, resumeID, work, "feat/resume", "Resume existing")
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiResumePickerValue(aiModeCodex, resumeID)}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"codex": codexBin}, "%7", "%9")
+
+	if err := cmd.runResumePicker("right"); err != nil {
+		t.Fatalf("runResumePicker() error = %v", err)
+	}
+	if got, want := runner.options.UI, "ai-resume-picker"; got != want {
+		t.Fatalf("picker UI = %q, want %q", got, want)
+	}
+	if !strings.Contains(runner.options.Footer, "Showing latest 1 resume sessions") {
+		t.Fatalf("picker footer = %q, want capped-count footer", runner.options.Footer)
+	}
+	commands := cmdRecorder(cmd).commands
+	wantExec := "exec " + shellQuote(codexBin) + " 'resume' '" + resumeID + "'"
+	if !containsAICommandArgSubstring(commands, wantExec) {
+		t.Fatalf("commands = %#v, want Codex resume exec %q", commands, wantExec)
+	}
+	for _, want := range [][]string{
+		{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeCodex},
+		{"set-option", "-p", "-t", "%9", aiPaneSessionIDOption, resumeID},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeIDOption, resumeID},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeSourceOption, aisessions.SourceCodexRollout},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeUpdatedAtOption, "2026-06-25T09:00:00Z"},
+	} {
+		if !containsAICommandArgs(commands, "tmux", want) {
+			t.Fatalf("commands = %#v, want resume metadata command %v", commands, want)
+		}
+	}
+}
+
+func TestRunSelectedResumeSessionRunsClaudeResume(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claudeBin := writeExecutable(t, filepath.Join(home, "bin", "claude"))
+	cmd := testAICommand(home)
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"claude": claudeBin}, "%7", "%9")
+	resumeID := "018f4c2d-abc_DEF.123"
+	updatedAt := time.Date(2026, 6, 25, 10, 30, 0, 0, time.UTC)
+
+	err := cmd.runSelectedResumeSession(aiResumeSelection{
+		agent:     aiModeClaude,
+		resumeID:  resumeID,
+		source:    aisessions.SourceClaudeTranscript,
+		updatedAt: updatedAt,
+	}, "down")
+	if err != nil {
+		t.Fatalf("runSelectedResumeSession() error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	wantExec := "exec " + shellQuote(claudeBin) + " '--resume' '" + resumeID + "'"
+	if !containsAICommandArgSubstring(commands, wantExec) {
+		t.Fatalf("commands = %#v, want Claude resume exec %q", commands, wantExec)
+	}
+	for _, want := range [][]string{
+		{"split-window", "-P", "-F", "#{pane_id}", "-v", "-t", "%7", "-c", work, "/bin/bash", "-lc"},
+		{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeClaude},
+		{"set-option", "-p", "-t", "%9", aiPaneSessionIDOption, resumeID},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeIDOption, resumeID},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeSourceOption, aisessions.SourceClaudeTranscript},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeUpdatedAtOption, "2026-06-25T10:30:00Z"},
+	} {
+		if !containsAICommandArgs(commands, "tmux", want) {
+			t.Fatalf("commands = %#v, want command %v", commands, want)
+		}
+	}
+}
+
+func TestRunSelectedResumeSessionInvalidResumeIDFallsBackToFresh(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	cmd := testAICommand(home)
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"codex": codexBin}, "%7", "%9")
+
+	err := cmd.runSelectedResumeSession(aiResumeSelection{agent: aiModeCodex, resumeID: "bad\nid"}, "right")
+	if err != nil {
+		t.Fatalf("runSelectedResumeSession() error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	wantExec := "exec " + shellQuote(codexBin)
+	if !containsAICommandArgSubstring(commands, wantExec) {
+		t.Fatalf("commands = %#v, want fresh Codex exec %q", commands, wantExec)
+	}
+	if containsAICommandArgSubstring(commands, "exec "+shellQuote(codexBin)+" 'resume'") {
+		t.Fatalf("commands = %#v, invalid resume id should fall back to fresh launch", commands)
+	}
+	if !containsAICommandArgSubstring(commands, "Could not resume codex session") {
+		t.Fatalf("commands = %#v, want fallback message", commands)
+	}
+	for _, forbidden := range [][]string{
+		{"set-option", "-p", "-t", "%9", aiPaneSessionIDOption},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeIDOption},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeSourceOption},
+	} {
+		if containsAICommandArgs(commands, "tmux", forbidden) {
+			t.Fatalf("commands = %#v, fresh fallback must not write resume metadata %v", commands, forbidden)
+		}
+	}
+}
+
 func TestAISplitAgentShellUsesPlainShellSplit(t *testing.T) {
 	home := t.TempDir()
 	work := filepath.Join(home, "repo")
@@ -597,6 +1897,16 @@ func TestAISplitAgentFlagUsageErrors(t *testing.T) {
 			name: "shell cannot use extra args",
 			args: []string{"split", "--agent", "shell", "right", "--", "echo", "hi"},
 			want: "ai split --agent shell cannot use extra args",
+		},
+		{
+			name: "force agent requires direct agent",
+			args: []string{"split", "--force-agent", "right"},
+			want: "ai split --force-agent requires --agent claude, --agent codex, or --agent antigravity",
+		},
+		{
+			name: "force agent does not apply to picker",
+			args: []string{"split", "--agent", "selective", "--force-agent", "right"},
+			want: "ai split --force-agent only applies to --agent claude, --agent codex, or --agent antigravity",
 		},
 	}
 	for _, tt := range tests {
@@ -707,6 +2017,217 @@ func TestAISplitShellUsesTmuxSplitWindow(t *testing.T) {
 	}
 }
 
+func TestAISplitShellUsesPSMuxSplitWindowPowerShellTail(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "work")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testAICommand(home)
+	if err := cmd.setMode(aiModeShell); err != nil {
+		t.Fatal(err)
+	}
+	cmdRecorder(cmd).commands = nil
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		case "TMUX":
+			return "/tmp/psmux"
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		case "TMUX_SPLIT_TARGET_PANE":
+			return "%7"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "psmux" && reflect.DeepEqual(args, []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}) {
+			return []byte("%7\n"), nil
+		}
+		if name == "psmux" && len(args) >= 5 && reflect.DeepEqual(args[:5], []string{"-L", defaultAppSocket, "split-window", "-v", "-P"}) {
+			return []byte("%9\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "down"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run psmux shell split error = %v", err)
+	}
+
+	tail, err := intpsmux.RenderPowerShellCommand("powershell", "-NoLogo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []recordedAICommand{
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "split-window", "-v", "-P", "-F", "#{pane_id}", "-t", "%7", "-c", work, tail}},
+	}
+	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAISplitCodexUsesPSMuxSplitWindowPowerShellTailAndSkipsTmuxMetadata(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexBin := writeExecutable(t, filepath.Join(home, "bin with space", "codex"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		case "TMUX":
+			return "/tmp/psmux"
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		case "TMUX_SPLIT_TARGET_PANE":
+			return "%7"
+		case "PATH":
+			return filepath.Dir(codexBin)
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "psmux" && reflect.DeepEqual(args, []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}) {
+			return []byte("%7\n"), nil
+		}
+		if name == "psmux" && len(args) >= 5 && reflect.DeepEqual(args[:5], []string{"-L", defaultAppSocket, "split-window", "-h", "-P"}) {
+			return []byte("%42\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	err := cmd.Run([]string{"split", "--agent", "codex", "right", "--", "--model", "gpt-5.1 codex", "quote'd"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Run psmux codex split error = %v", err)
+	}
+
+	tail, err := intpsmux.RenderPowerShellCommand(codexBin, "--model", "gpt-5.1 codex", "quote'd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := cmdRecorder(cmd).commands
+	for _, want := range []recordedAICommand{
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "split-window", "-h", "-P", "-F", "#{pane_id}", "-t", "%7", "-c", work, tail}},
+	} {
+		if !containsRecordedAICommand(commands, want) {
+			t.Fatalf("commands = %#v, want command %#v", commands, want)
+		}
+	}
+	for _, forbidden := range []recordedAICommand{
+		{name: "tmux"},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "set-option"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "run-shell"}},
+		{name: "psmux", args: []string{"-L", defaultAppSocket, "resize-pane"}},
+	} {
+		if containsRecordedAICommandPrefix(commands, forbidden) {
+			t.Fatalf("commands = %#v, did not expect %#v", commands, forbidden)
+		}
+	}
+}
+
+func TestAISplitClaudeUsesPSMuxSplitWindowPowerShellTail(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claudeBin := writeExecutable(t, filepath.Join(home, "bin", "claude"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		case "TMUX":
+			return "/tmp/psmux"
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		case "TMUX_SPLIT_TARGET_PANE":
+			return "%7"
+		case "PATH":
+			return filepath.Dir(claudeBin)
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "psmux" && reflect.DeepEqual(args, []string{"-L", defaultAppSocket, "display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}) {
+			return []byte("%7\n"), nil
+		}
+		if name == "psmux" && len(args) >= 5 && reflect.DeepEqual(args[:5], []string{"-L", defaultAppSocket, "split-window", "-v", "-P"}) {
+			return []byte("%43\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	if err := cmd.Run([]string{"split", "--agent", "claude", "down", "--", "--dangerously-skip-permissions"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run psmux claude split error = %v", err)
+	}
+
+	tail, err := intpsmux.RenderPowerShellCommand(claudeBin, "--dangerously-skip-permissions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := recordedAICommand{name: "psmux", args: []string{"-L", defaultAppSocket, "split-window", "-v", "-P", "-F", "#{pane_id}", "-t", "%7", "-c", work, tail}}
+	if !containsRecordedAICommand(cmdRecorder(cmd).commands, want) {
+		t.Fatalf("commands = %#v, want command %#v", cmdRecorder(cmd).commands, want)
+	}
+}
+
+func TestAISplitClaudePSMuxReportsNativeInstallerPathGuidance(t *testing.T) {
+	home := t.TempDir()
+	claudeNative := writeExecutable(t, filepath.Join(home, ".local", "bin", "claude.exe"))
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case muxBackendEnvVar:
+			return string(muxBackendPSMux)
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		return nil, os.ErrNotExist
+	}
+
+	err := cmd.Run([]string{"split", "--agent", "claude", "right"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("Run psmux claude split error = nil, want PATH guidance for %s", claudeNative)
+	}
+	for _, want := range []string{
+		"selected runner is installed at " + claudeNative,
+		"but is not on PATH",
+		"add " + filepath.Dir(claudeNative) + " to PATH",
+		"restart psmux",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Run error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if containsRecordedAICommandPrefix(cmdRecorder(cmd).commands, recordedAICommand{name: "psmux", args: []string{"-L", defaultAppSocket, "split-window"}}) {
+		t.Fatalf("commands = %#v, did not expect split launch after missing Claude PATH guidance", cmdRecorder(cmd).commands)
+	}
+}
+
 func TestAILabelsSayPlainShellNotZsh(t *testing.T) {
 	t.Parallel()
 
@@ -756,6 +2277,7 @@ func TestAIStatusSetThinkingMarksPaneBusy(t *testing.T) {
 
 	want := []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_state", "thinking"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_ai_badge_kind", "in_progress"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%1", "@projmux_attention_state", "busy"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%1", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%1", "@projmux_attention_focus_armed"}},
@@ -818,6 +2340,7 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 	commands := cmdRecorder(cmd).commands
 	wantPrefix := []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_ai_state", "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_ai_badge_kind", "response_complete"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%2", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_attention_state", "reply"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_attention_focus_armed", "1"}},
@@ -832,8 +2355,8 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 		"--app-name=" + desktopAppID,
 		desktopAppID,
 		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
-		"Codex 승인 필요 · approval needed",
-		"검토 대기: approval needed · projmux/main",
+		"Codex · Approval required",
+		"projmux/main",
 	} {
 		if !containsAICommandArgSubstring(commands, want) {
 			t.Fatalf("commands = %#v, want notification shell containing %q", commands, want)
@@ -903,8 +2426,8 @@ func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
 
 	commands := cmdRecorder(cmd).commands
 	if !containsAICommandArgs(commands, hook, []string{
-		"Codex 입력 필요 · answer ready",
-		"검토 대기: answer ready · projmux/main",
+		"Codex · Input required",
+		"projmux/main",
 		"normal",
 		desktopAppID,
 		"%9",
@@ -1050,8 +2573,8 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 		"$toast.Group = 'repo'",
 		`<toast duration="short">`,
 		"$toast.ExpirationTime = [DateTimeOffset]::Now.AddMilliseconds(5000)",
-		"Codex 승인 필요 · approval needed",
-		"검토 대기: approval needed · projmux/main",
+		"Codex · Approval required",
+		"projmux/main",
 		iconWin,
 		"appLogoOverride",
 	} {
@@ -1066,6 +2589,24 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 	}
 	if _, err := os.Stat(iconWSL); err != nil {
 		t.Fatalf("icon path %q missing: %v", iconWSL, err)
+	}
+}
+
+func TestAIStatusSetIdleClearsSemanticBadge(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+
+	if err := cmd.Run([]string{"status", "set", "idle", "%3"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run status set idle error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	for _, want := range []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%3", aiPaneStateOption, "idle"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%3", aiPaneBadgeKindOption}},
+	} {
+		if !containsRecordedAICommand(commands, want) {
+			t.Fatalf("commands = %#v, want %#v", commands, want)
+		}
 	}
 }
 
@@ -1086,6 +2627,7 @@ func TestAIStatusSetWaitingAcksVisiblePane(t *testing.T) {
 	commands := cmdRecorder(cmd).commands
 	wantPrefix := []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_ai_state", "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_ai_badge_kind", "response_complete"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%15", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%15", "@projmux_attention_state"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_ack", "1"}},
@@ -1119,6 +2661,7 @@ func TestAIStatusSetWaitingDoesNotAckWhenNoClientViewingPane(t *testing.T) {
 	commands := cmdRecorder(cmd).commands
 	wantPrefix := []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_ai_state", "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_ai_badge_kind", "response_complete"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%15", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_state", "reply"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_focus_armed", "1"}},
@@ -1173,9 +2716,10 @@ func TestAIStatusSetWaitingForceDoesNotSetBadgeWhenVisible(t *testing.T) {
 	}
 
 	if err := cmd.applyAIStatusWithNotify("waiting", "%21", attentionNotifyInput{
-		ID:    "ai:test:%21",
-		Text:  "claude: reply ready · forced hook",
-		Force: true,
+		ID:       "ai:test:%21",
+		Text:     "forced hook",
+		Metadata: map[string]string{"agent": "claude", "category": "response_complete"},
+		Force:    true,
 	}); err != nil {
 		t.Fatalf("applyAIStatusWithNotify error = %v", err)
 	}
@@ -1185,6 +2729,7 @@ func TestAIStatusSetWaitingForceDoesNotSetBadgeWhenVisible(t *testing.T) {
 	// then clear attention_state, set attention_ack=1, clear focus_armed.
 	wantPrefix := []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", "@projmux_ai_state", "waiting"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", "@projmux_ai_badge_kind", "response_complete"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%21", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%21", "@projmux_attention_state"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", "@projmux_attention_ack", "1"}},
@@ -1364,7 +2909,7 @@ func TestAINotifyUsesPaneMetadataBeforeMutableTitle(t *testing.T) {
 	for _, want := range []string{
 		desktopAppID,
 		filepath.Join(home, ".local", "share", "projmux", "icons", "projmux.png"),
-		"Claude 승인 필요 · approval needed",
+		"Claude · Approval required",
 	} {
 		if !containsAICommandArgSubstring(commands, want) {
 			t.Fatalf("commands = %#v, want metadata-derived Claude notification containing %q", commands, want)
@@ -1401,6 +2946,9 @@ func TestAIWatchTitlePromotesBusyPaneToThinking(t *testing.T) {
 
 	if !containsAICommandArg(cmdRecorder(cmd).commands, "busy") {
 		t.Fatalf("commands = %#v, want busy attention state", cmdRecorder(cmd).commands)
+	}
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-p", "-t", "%4", aiPaneBadgeKindOption, aiBadgeKindInProgress}) {
+		t.Fatalf("commands = %#v, want in_progress semantic badge", cmdRecorder(cmd).commands)
 	}
 }
 
@@ -1458,6 +3006,48 @@ func TestAIWatchTitleUsesCapturePaneAsReplySignal(t *testing.T) {
 	}
 	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%10", "@projmux_ai_state", "waiting"}) {
 		t.Fatalf("commands = %#v, want waiting AI state from capture", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%10", aiPaneBadgeKindOption, aiBadgeKindInputRequired}) {
+		t.Fatalf("commands = %#v, want input_required semantic badge from capture", commands)
+	}
+}
+
+func TestAIWatchTitleMapsPermissionTitleToApprovalRequired(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	checks := 0
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
+			return []byte("/usr/bin/notify-send\n"), nil
+		}
+		if name != "tmux" {
+			return nil, os.ErrNotExist
+		}
+		switch {
+		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%16", "#{pane_id}"}):
+			checks++
+			if checks > 1 {
+				return nil, os.ErrNotExist
+			}
+			return []byte("%16\n"), nil
+		case len(args) == 5 && args[0] == "display-message" && args[3] == "%16" && strings.Contains(args[4], aiPaneAgentOption):
+			return []byte("permission required__PROJMUX_TMUX_AI_SEP__node__PROJMUX_TMUX_AI_SEP__" + home + "__PROJMUX_TMUX_AI_SEP__codex__PROJMUX_TMUX_AI_SEP__" + home + "__PROJMUX_TMUX_AI_SEP____PROJMUX_TMUX_AI_SEP____PROJMUX_TMUX_AI_SEP____PROJMUX_TMUX_AI_SEP__\n"), nil
+		case reflect.DeepEqual(args, []string{"capture-pane", "-p", "-J", "-S", "-80", "-t", "%16"}):
+			return []byte("allow command?\n"), nil
+		}
+		return []byte("\n"), nil
+	}
+
+	if err := cmd.Run([]string{"watch-title", "%16"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run watch-title error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%16", aiPaneStateOption, "waiting"}) {
+		t.Fatalf("commands = %#v, want waiting AI state", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%16", aiPaneBadgeKindOption, aiBadgeKindApprovalRequired}) {
+		t.Fatalf("commands = %#v, want approval_required semantic badge", commands)
 	}
 }
 
@@ -1728,6 +3318,31 @@ func TestAIReplyTitleIgnoresProjmuxAttentionMarkers(t *testing.T) {
 	}
 }
 
+func TestAIBadgeKindContractNormalizesAndFallsBackSafely(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    string
+		explicit string
+		want     string
+	}{
+		{name: "thinking fallback", state: "thinking", want: aiBadgeKindInProgress},
+		{name: "waiting fallback", state: "waiting", want: aiBadgeKindResponseComplete},
+		{name: "idle clears", state: "idle", want: ""},
+		{name: "approval explicit", state: "waiting", explicit: aiBadgeKindApprovalRequired, want: aiBadgeKindApprovalRequired},
+		{name: "input explicit", state: "waiting", explicit: aiBadgeKindInputRequired, want: aiBadgeKindInputRequired},
+		{name: "invalid explicit falls back", state: "waiting", explicit: "future_kind", want: aiBadgeKindResponseComplete},
+		{name: "invalid idle clears", state: "idle", explicit: "future_kind", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := aiBadgeKindForStatus(tt.state, tt.explicit); got != tt.want {
+				t.Fatalf("aiBadgeKindForStatus(%q, %q) = %q, want %q", tt.state, tt.explicit, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAINotificationMessageLabelsClaudeAndAvoidsRootProject(t *testing.T) {
 	if got, want := aiAgentDisplayName("Claude: waiting for input"), "Claude"; got != want {
 		t.Fatalf("aiAgentDisplayName = %q, want %q", got, want)
@@ -1738,16 +3353,16 @@ func TestAINotificationMessageLabelsClaudeAndAvoidsRootProject(t *testing.T) {
 	if got := aiProjectName("/"); got != "" {
 		t.Fatalf("aiProjectName(/) = %q, want empty", got)
 	}
-	if got, want := aiSummaryForKind("input_required", "Claude", "waiting for input"), "Claude 입력 필요 · waiting for input"; got != want {
+	if got, want := aiSummaryForKind("input_required", "Claude", "waiting for input"), "Claude · Input required"; got != want {
 		t.Fatalf("aiSummaryForKind = %q, want %q", got, want)
 	}
-	if got, want := aiNotificationBody("waiting for input", "", "", "home", "dev"), "검토 대기: waiting for input"; got != want {
+	if got, want := aiNotificationBody("waiting for input", "", "", "home", "dev"), ""; got != want {
 		t.Fatalf("aiNotificationBody = %q, want %q", got, want)
 	}
-	if got, want := aiNotificationBody("", "projmux", "main", "home", "dev"), "검토 대기: projmux/main · home:dev"; got != want {
+	if got, want := aiNotificationBody("", "projmux", "main", "home", "dev"), "projmux/main"; got != want {
 		t.Fatalf("aiNotificationBody = %q, want %q", got, want)
 	}
-	if got, want := aiNotificationBody("Codex", "projmux", "main", "", ""), "검토 대기: projmux/main"; got != want {
+	if got, want := aiNotificationBody("Codex", "projmux", "main", "", ""), "projmux/main"; got != want {
 		t.Fatalf("aiNotificationBody = %q, want %q", got, want)
 	}
 }
@@ -1761,6 +3376,25 @@ type capturingAIRunner struct {
 func (r *capturingAIRunner) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
 	r.options = options
 	return r.result, r.err
+}
+
+type sequencingAIRunner struct {
+	options []intpickercompat.Options
+	results []intpickercompat.Result
+	err     error
+}
+
+func (r *sequencingAIRunner) Run(options intpickercompat.Options) (intpickercompat.Result, error) {
+	r.options = append(r.options, options)
+	if r.err != nil {
+		return intpickercompat.Result{}, r.err
+	}
+	if len(r.results) == 0 {
+		return intpickercompat.Result{}, nil
+	}
+	result := r.results[0]
+	r.results = r.results[1:]
+	return result, nil
 }
 
 type recordedAICommand struct {
@@ -1855,6 +3489,25 @@ func stubAISplitReadCommand(cmd *aiCommand, home, work string, bins map[string]s
 	}
 }
 
+func writeCodexResumeSession(t *testing.T, home, resumeID, cwd, branch, title string) {
+	t.Helper()
+
+	dir := filepath.Join(home, ".codex", "sessions", "2026", "06", "25")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "rollout-"+resumeID+".jsonl")
+	content := fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"cwd":%q,"git_branch":%q}}
+{"type":"event_msg","payload":{"message":%q}}
+`, resumeID, cwd, branch, title)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write codex resume session: %v", err)
+	}
+	if err := os.Chtimes(path, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC), time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("chtimes codex resume session: %v", err)
+	}
+}
+
 func readModeFile(t *testing.T, home string) string {
 	t.Helper()
 	content, err := os.ReadFile(filepath.Join(home, ".config", "projmux", "tmux-ai-split-mode"))
@@ -1879,6 +3532,27 @@ func containsAICommandArgs(commands []recordedAICommand, name string, prefix []s
 			continue
 		}
 		if reflect.DeepEqual(command.args[:len(prefix)], prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRecordedAICommand(commands []recordedAICommand, want recordedAICommand) bool {
+	for _, command := range commands {
+		if command.name == want.name && reflect.DeepEqual(command.args, want.args) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRecordedAICommandPrefix(commands []recordedAICommand, want recordedAICommand) bool {
+	for _, command := range commands {
+		if command.name != want.name || len(command.args) < len(want.args) {
+			continue
+		}
+		if reflect.DeepEqual(command.args[:len(want.args)], want.args) {
 			return true
 		}
 	}
@@ -2010,7 +3684,7 @@ func TestAITopicGetPrintsPaneOptionValue(t *testing.T) {
 	cmd := testAICommand(home)
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%5", "#{@projmux_ai_topic}"}) {
-			return []byte("ship the feature\n"), nil
+			return []byte("[Lead:Roadmap] ship the feature\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -2020,8 +3694,11 @@ func TestAITopicGetPrintsPaneOptionValue(t *testing.T) {
 		t.Fatalf("Run topic get error = %v", err)
 	}
 
-	if got, want := stdout.String(), "ship the feature\n"; got != want {
+	if got, want := stdout.String(), "[Lead:Roadmap] ship the feature\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if strings.Contains(stdout.String(), "\x1b[") || strings.Contains(stdout.String(), "#[") {
+		t.Fatalf("stdout = %q, want plain topic text", stdout.String())
 	}
 }
 
@@ -2140,6 +3817,24 @@ func TestBuildRegisterToastAppIDShortcutTargetIsCmdExe(t *testing.T) {
 	}
 }
 
+func TestAICommandMuxBackendNonOutputCommandRequiresRunner(t *testing.T) {
+	readerCalled := false
+	backend := aiCommandMuxBackend{
+		readCommand: func(context.Context, string, ...string) ([]byte, error) {
+			readerCalled = true
+			return []byte("unexpected"), nil
+		},
+	}
+
+	_, err := backend.Run(context.Background(), "tmux", "set-hook", "-ag", "alert-bell", "run-shell -b true")
+	if err == nil || err.Error() != "ai command runner is not configured" {
+		t.Fatalf("Run error = %v, want ai command runner is not configured", err)
+	}
+	if readerCalled {
+		t.Fatal("readCommand called for non-output mux command")
+	}
+}
+
 // TestBuildRegisterToastAppIDDoesNotSetToastActivatorCLSID guards against a
 // well-meaning "fix" that adds PKEY_AppUserModel_ToastActivatorCLSID
 // (pid=26) to the shortcut. Setting that property routes Windows toast
@@ -2177,5 +3872,34 @@ func TestBuildRegisterToastAppIDDoesNotSetToastActivatorCLSID(t *testing.T) {
 		if strings.Contains(effective, forbidden) {
 			t.Fatalf("register script must not configure ToastActivatorCLSID (%q): %s", forbidden, effective)
 		}
+	}
+}
+
+// Regression for the sidebar preview attention gate (Phase 1): the gate lives
+// only in `attention arm`/`attention clear` (focus hooks). The AI ingest path
+// writes attention state directly via set-option, so an AI turning "waiting"
+// while the user is browsing the sidebar must still raise the reply marker.
+func TestAIStatusWaitingSetsReplyDuringSidebarPreview(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	marker := popupMarkerPath("tty0", "sessionizer-sidebar")
+	if err := os.WriteFile(marker, []byte("%1\nwork\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !isSidebarPreviewActive() {
+		t.Fatal("test setup: sidebar preview marker not detected")
+	}
+
+	cmd := testAICommand(t.TempDir())
+
+	if err := cmd.applyAIStatusStateOnly("waiting", "%2", attentionNotifyInput{}); err != nil {
+		t.Fatalf("applyAIStatusStateOnly error = %v", err)
+	}
+
+	commands := cmdRecorder(cmd).commands
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%2", "@projmux_attention_state", "reply"}) {
+		t.Fatalf("commands = %#v, want attention_state=reply while sidebar preview marker exists (AI completion attention must not be suppressed)", commands)
+	}
+	if !containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%2", "@projmux_attention_focus_armed", "1"}) {
+		t.Fatalf("commands = %#v, want focus_armed=1 while sidebar preview marker exists", commands)
 	}
 }

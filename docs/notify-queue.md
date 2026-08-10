@@ -3,7 +3,9 @@
 `projmux` keeps a persistent JSON queue of pending AI notifications.
 `attention` is live tmux pane state; `notify` is the user's pending
 notification source of truth. The queue is derived from live state and user
-pushes, but an entry remains pending until explicit ack. Each entry can route
+pushes. Live entries remain pending until explicit ack unless they are among
+the oldest rows beyond the 256-entry hard cap; reconcile can also collect an
+expired entry after its tmux target disappears. Each entry can route
 the status-bar notify segment or notify sidebar to the originating tmux pane
 via `projmux focus`, and feeds the HUD pill rendered by
 `projmux status notify`.
@@ -13,6 +15,7 @@ via `projmux focus`, and feeds the HUD pill rendered by
 ```
 ${XDG_STATE_HOME:-$HOME/.local/state}/projmux/notify.json
 ${XDG_STATE_HOME:-$HOME/.local/state}/projmux/notify.json.lock
+${XDG_STATE_HOME:-$HOME/.local/state}/projmux/notify-queue-events/refresh-*.sock
 ```
 
 The lock file is acquired via `O_CREATE|O_EXCL` with bounded retry
@@ -22,7 +25,16 @@ queue.
 
 The queue file is a pretty-printed JSON array of `Notification`
 objects, sorted newest-first on read. `expires_at` is freshness metadata;
-expired entries are not filtered or deleted by `list`.
+expired entries are not filtered or deleted by `list`. Reconcile removes an
+expired row only when the real tmux inventory also shows its pane/session is
+gone; if inventory is unavailable, that target-based removal is skipped.
+
+Open native notify sidebars also create per-process Unix datagram sockets for
+queue-write refresh events. If the state-dir socket path would exceed Unix
+socket path limits, projmux uses a short per-state-dir temp runtime path for
+the socket directory. These sockets are transient UI delivery endpoints only:
+they are not queue state, do not change the JSON schema, and are removed when
+the sidebar exits.
 
 ## Data model
 
@@ -58,11 +70,17 @@ exit code 2.
 routing/debug context such as `agent`, `thread_id`, `turn_id`, `cwd`,
 `model`, and `client`; Claude hook rows also carry event-specific keys such as
 `tool_name`, `tool_input.command`, `error_type`, `subagent_type`, and
-`teammate_name`. Tmux bell fallback rows carry `agent=bell`, `event=bell`,
-and tmux target context such as pane title, command, session, window, pane, and
-socket. `notify list --json` includes this metadata as the structured data
-channel while human table/sidebar output keeps the compact text body. Existing
-entries without metadata remain valid.
+`teammate_name`. Antigravity manual hook rows carry `agent=antigravity`,
+`conversation_id`, `termination_reason`, `fully_idle`,
+`tool_confirmation_pending`, `agent_state`, and `context_window` when present.
+The same `conversation_id` can seed session-state restore via
+`agy --conversation <uuid>` when it is UUID-shaped; Antigravity quota usage
+remains unsupported because `context_window` is not 5-hour/weekly quota data.
+Tmux bell fallback rows carry `agent=bell`, `event=bell`, and tmux target
+context such as pane title, command, session, window, pane, and socket.
+`notify list --json` includes this metadata as the structured data channel
+while human table/sidebar output keeps the compact text body. Existing entries
+without metadata remain valid.
 
 ## CLI surface
 
@@ -92,16 +110,56 @@ table `ID AGE SEV SRC TARGET TEXT`. `--severity` / `--source` are
 repeatable filters. Without `--live`, this command reads only the queue and
 preserves the stable JSON array used by scripts.
 
-`--ui=sidebar` opens the notify queue as an interactive right-side list when
-run inside the tmux popup surface. Enter focuses the selected target pane and
-acks the row after focus succeeds. `x` acks the selected row in place, keeps
-the sidebar open, and refreshes the list from the queue while preserving the
-selection position where possible; acking the last remaining row renders the
-empty state until the popup is closed. `Ctrl-X` clears all rows via `notify ack
---all` and exits. Rows are intentionally compact: the visible label keeps
-notification text first, then age, project, window, and pane metadata; hidden
-queue ids remain action values but the sidebar has no search input and
-intentionally does not expose a separate metadata detail view.
+`--ui=sidebar` opens the notify queue as an interactive right-side pane/session
+inbox when run inside the tmux popup surface. The queue source of truth remains
+flat; the sidebar builds a read-only grouped view for display. The first screen
+shows collapsed group rows keyed by pane when available, then window, then
+session/external fallback. Each group row is a fixed three-line card: line 1
+keeps project/session plus agent/provider with newest age, line 2 keeps
+topic/pane-title/task context plus severity/live-state aggregate
+metadata, and line 3 keeps the latest notification preview. Collapsed group
+cards do not promote window/pane ids as primary information. A `+N` badge is
+shown only when the group can unfold, and `N` is the number of child
+notification rows that will appear; one-notification group headers omit both
+the count badge and strong fold marker. Right/Left show and hide child rows for
+foldable groups inside the native sidebar only; this fold state is
+session-local and is not persisted. Right on a childless group refreshes
+without adding rows. Enter on a group row, whether folded or expanded, focuses
+the group's representative pane and acknowledges every visible notification in
+that group only after focus succeeds. Inactive means an `ai:` queue entry points
+to a pane that no longer matches live reply+agent state; it is not a time-age
+TTL state, and Enter still focuses the target when it is routable. If the
+representative target is gone/unroutable, Enter treats the selected pane inbox
+as explicit cleanup and acknowledges/prunes the visible group without focusing,
+including critical notifications. If a live- or inactive-looking representative target
+disappears during focus, Enter uses the same gone-group cleanup policy. Other
+focus failures keep the group pending, show a clear message, and refresh/prune
+the list. Expanded child notification rows are compact event rows with age,
+message preview, and severity/state while keeping the existing focus/ack-one
+behavior. The surface actions
+`NotifySidebar:Ack`, `NotifySidebar:AckGroup`,
+`NotifySidebar:ClearNonCritical`, and `NotifySidebar:ClearAll` are internal
+picker actions; direct launch aliases are edited in Settings, while internal
+picker aliases are adjusted in `keymap.toml` when needed.
+`NotifySidebar:AckGroup` defaults to uppercase `A` and explicitly
+acknowledges every visible notification in the selected group, including
+critical notifications. Runtime footer key guides read the merged keymap and
+show the default alias when present, otherwise the first configured alias, so
+custom aliases do not make the UI stale.
+`NotifySidebar:Ack`, `NotifySidebar:AckGroup`, and
+`NotifySidebar:ClearNonCritical` refresh rows, live state, and selection inside
+the same native picker session; `NotifySidebar:ClearAll` still closes the
+popup and prints a summary. Rows are intentionally compact: hidden queue ids
+remain action values but the sidebar has no search input and intentionally does
+not expose a separate metadata detail view.
+
+When a new pending notification is successfully pushed by any app producer
+(`notify push`, reply-ready, reconcile backfill, or bell fallback), open native
+notify sidebars receive a best-effort queue-write event and rerun the same
+`DeferredUpdate` row/live-state refresh path used by `a` ack and `x`
+non-critical clear. Event delivery errors are ignored after the queue write:
+the push still succeeds, and reopening the sidebar remains the recovery path
+for seeing the latest queue.
 
 `--live` adds a non-mutating explanation view that reads
 `tmux list-panes -a` and compares the queue with live reply-state panes. It
@@ -115,11 +173,20 @@ output becomes `{queue, live, rows, errors}`. Typical states:
   queue entry.
 - `live-ai-reply-missing-queue` — a live AI reply pane lacks the derived
   queue entry; run `projmux notify reconcile` to back-fill it.
-- `queue-stale` — an `ai:` queue entry exists, but the live pane no longer
-  matches reply+agent state; it remains pending until explicit ack. Surfaced
-  in the sidebar/statusbar as `STALE` / `STL`.
-- `queue-gone` — a queue entry has no routable target (empty session); it
-  can only be ack'd. Surfaced as `GONE` / `GON`.
+- `queue-stale` — preserved machine-readable state for an inactive target:
+  an `ai:` queue entry whose pane still EXISTS in the live tmux pane inventory,
+  but no longer matches reply+agent state. It is not TTL/time age. Surfaced in
+  the sidebar/statusbar as `INACTIVE` / `INA`; Enter still focuses and acks if
+  the target is routable.
+- `queue-gone` — the queue entry's target is gone. This is now determined two
+  ways: (a) the entry has no routable target (empty session), or (b) the entry
+  carries a pane target whose pane id is absent from the real tmux live pane
+  inventory (`tmux list-panes -a`). Surfaced as `GONE` / `GON`, and Enter/ack
+  cleans it up without focusing. The inventory check is best-effort: when the
+  pane inventory cannot be read (tmux error, or an empty/unrecognized reply),
+  membership-based GONE is skipped so a missing tmux server never falsely
+  dims/gones every row, and only pane-target rows are eligible (window/session-
+  only rows keep the empty-session check only).
 - `queue-only` — a non-AI/external queue entry is pending and has no live AI
   reply-pane requirement.
 
@@ -149,7 +216,11 @@ path), then:
 - pushes/refreshes one `ai:<session>:<pane>` entry for every pane
   whose attention state is `reply` AND whose agent option is non-empty;
 - reports every existing queue entry whose id starts with `ai:` and whose
-  pane no longer matches that condition as stale, without acking it.
+  pane no longer matches that condition as inactive/`queue-stale`, without
+  acking it.
+
+Successful backfill pushes publish the same best-effort open-sidebar refresh
+event as other pending queue additions.
 
 Soft-fails when tmux is not running (returns a populated `errors`
 field rather than a non-zero exit) so the post-install hook does not
@@ -178,7 +249,10 @@ an entry with:
 When the pane leaves the reply state (manual `attention clear`,
 `status set idle`, or a window close), `AckReplyReady` intentionally does not
 remove the entry. The user consumes it through explicit ack. Store errors are
-swallowed so the live tmux UI never blocks on disk IO.
+swallowed so the live tmux UI never blocks on disk IO. After a successful
+queue write and same-pane non-critical compaction, the producer publishes the
+same best-effort notify-sidebar queue-write refresh event used by
+`projmux notify push`.
 
 Manual `projmux attention toggle` on a pane without an agent option
 does NOT push — the queue is intentionally AI-driven; reconcile honours
@@ -198,7 +272,9 @@ tmux and writes an info/source-ai row with:
 Unlike reply-ready reconcile, bell ingest does not require AI pane metadata.
 It is intentionally available for arbitrary CLIs that only signal attention
 through BEL or OSC 9. Repeated bells from the same pane are suppressed for 5
-seconds before a later bell refreshes the stable queue id.
+seconds before a later bell refreshes the stable queue id. Successful
+non-deduped bell queue writes publish the same best-effort open-sidebar
+refresh event as other pending queue additions.
 
 ## Consumer (status-bar click)
 
@@ -228,8 +304,11 @@ Outcomes:
 
 The same consume policy is shared by notify-sidebar Enter and OS
 click-to-focus Toast callbacks after a real tmux focus dispatch succeeds.
+OS Toast click-to-focus is only registered when Desktop notification mode is
+`raise`; the in-app sidebar/statusbar consume path works in every mode.
 Pane focus hooks and attention clear paths remain live-attention-only and do
-not ack the notify queue. Non-critical AI completion producers also compact
+not ack the notify queue; their response-complete badge consume is limited to
+live tmux pane badge/state options. Non-critical AI completion producers also compact
 older same-pane non-critical AI rows after replacing/pushing their latest row,
 so reply-ready/stop/bell-style completion rows stay latest-state centered
 without changing the queue schema or TTL contract.

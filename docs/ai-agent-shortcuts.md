@@ -6,7 +6,7 @@ the same split contract.
 
 ```sh
 projmux ai split --agent <agent> <right|down>
-projmux ai split --agent <agent> <right|down> -- <extra args...>
+projmux ai split --agent <agent> [--force-agent] <right|down> -- <extra args...>
 ```
 
 Use this page for shareable registration patterns. Keep machine-local policy,
@@ -21,6 +21,11 @@ Choose a direct agent when a shortcut should always open that agent:
 projmux ai split --agent codex right
 projmux ai split --agent claude down
 ```
+
+Every direct AI split invocation creates a new managed AI pane for the selected
+agent. Existing Codex, Claude, or Antigravity panes in the same project/session
+are left in place and are not selected by the shortcut. `right` and `down`
+choose where the new pane is created.
 
 Add the separator only when you have extra arguments for the selected agent:
 
@@ -41,16 +46,33 @@ your user-level config. Avoid treating placeholder flags in this guide as
 project defaults or current recommendations. If there are no private extra
 arguments, omit the separator entirely; do not leave a trailing bare `--`.
 
+Settings > AI Settings > Enabled agents is the source of truth for whether
+Claude, Codex, and Antigravity may be launched. Disabled agents do not appear in the
+selective picker, and direct shortcut commands such as
+`projmux ai split --agent codex right` fail clearly instead of launching. This
+is intentional: shortcuts are thin direct CLI wrappers and must respect the
+same disabled state as hand-written commands.
+
+`--force-agent` is the only override, and it is explicit CLI policy for direct
+`--agent claude|codex|antigravity` launches. Do not put it in shared picker,
+default-mode, or general shortcut registrations. Use it only in a private
+one-shot command when you deliberately want to launch a disabled agent without
+changing Settings. If every AI agent is disabled, `--agent selective` still
+offers a plain `shell` split and guidance to re-enable Claude/Codex/Antigravity.
+
 `shell` and `selective` are not targets for extra agent arguments. Use them
 without a tail:
 
 ```sh
 projmux ai split --agent shell right
 projmux ai split --agent selective down
+projmux ai split --agent resume right
 ```
 
 `shell` opens a plain shell split. `selective` opens the existing picker, where
-the user chooses the launch mode interactively.
+the user chooses the launch mode interactively. `resume` opens the current
+project's resume-session picker; when no sessions exist it delegates to the
+same selective picker.
 
 ## Naming Pattern
 
@@ -69,6 +91,8 @@ Concrete examples:
 ```text
 $projmux-codex-right
 $projmux-claude-down
+$projmux-resume-right
+$projmux-resume-down
 ```
 
 For Claude-style slash-command surfaces, names can follow:
@@ -83,6 +107,8 @@ Concrete examples:
 ```text
 /projmux:codex-right
 /projmux:claude-down
+/projmux:resume-right
+/projmux:resume-down
 ```
 
 The same pattern also works for editor commands, launcher actions, shell
@@ -101,6 +127,7 @@ For Codex-style skill surfaces:
 ```text
 $projmux-codex      → projmux ai split --agent codex right
 $projmux-claude     → projmux ai split --agent claude right
+$projmux-resume     → projmux ai split --agent resume right
 ```
 
 For Claude-style slash-command surfaces:
@@ -108,6 +135,7 @@ For Claude-style slash-command surfaces:
 ```text
 /projmux:codex      → projmux ai split --agent codex right
 /projmux:claude     → projmux ai split --agent claude right
+/projmux:resume     → projmux ai split --agent resume right
 ```
 
 Register the bare name as a thin alias of the `*-right` shortcut so that the
@@ -167,6 +195,26 @@ If you have private Claude flags, use the explicit extra-args form instead:
 
 ```sh
 projmux ai split --agent claude down -- <agent flags>
+```
+````
+
+Resume picker examples:
+
+```text
+~/.codex/skills/projmux-resume-right/SKILL.md
+~/.codex/skills/projmux-resume-down/SKILL.md
+```
+
+````markdown
+---
+name: projmux-resume-right
+description: Open a projmux-managed AI resume-session picker to the right.
+---
+
+Run this command:
+
+```sh
+projmux ai split --agent resume right
 ```
 ````
 

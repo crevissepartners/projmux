@@ -1,0 +1,3 @@
+{"type":"permission-mode","permissionMode":"auto","sessionId":"11111111-2222-4333-8444-555555555555"}
+{"type":"user","message":{"role":"user","content":"Investigate session discovery"},"cwd":"/workspace/app","sessionId":"11111111-2222-4333-8444-555555555555","gitBranch":"feat/discovery"}
+{broken json

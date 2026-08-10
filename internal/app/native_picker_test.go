@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -35,6 +36,7 @@ func TestRunPickerOptionBackendUsesNativeWhenRequested(t *testing.T) {
 	})
 
 	result, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(name string) string {
 			if name == intpicker.BackendEnv {
 				return "native"
@@ -75,6 +77,7 @@ func TestRunPickerOptionBackendUsesSavedNativeBackend(t *testing.T) {
 	var compatCalled bool
 	nativeCalled := false
 	result, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(name string) string {
 			switch name {
 			case intpicker.BackendEnv:
@@ -122,6 +125,7 @@ func TestRunPickerOptionBackendDefaultsToNativeBackend(t *testing.T) {
 	var compatCalled bool
 	var nativeCalled bool
 	result, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(name string) string {
 			switch name {
 			case intpicker.BackendEnv:
@@ -158,6 +162,60 @@ func TestRunPickerOptionBackendDefaultsToNativeBackend(t *testing.T) {
 	}
 }
 
+func TestRunPickerOptionBackendPopulatesFallbackTheme(t *testing.T) {
+	t.Parallel()
+
+	var gotTheme *theme.EffectiveTheme
+	_, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
+		func(string) string { return "" },
+		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			gotTheme = options.Theme
+			return intpicker.Result{Key: "enter", Value: "ai"}, nil
+		}),
+		nil,
+		intpickercompat.Options{UI: "settings"},
+	)
+	if err != nil {
+		t.Fatalf("runPickerOptionBackend() error = %v", err)
+	}
+	if gotTheme == nil {
+		t.Fatal("native picker Theme = nil, want fallback effective theme")
+	}
+	if gotTheme.Background.Source != theme.SourceFallback || gotTheme.Foreground.Source != theme.SourceFallback {
+		t.Fatalf("native picker Theme = %#v, want fallback effective theme", gotTheme)
+	}
+}
+
+func TestRunPickerOptionBackendPreservesSuppliedTheme(t *testing.T) {
+	t.Parallel()
+
+	supplied := theme.ResolveTheme(theme.ThemeConfig{
+		Background: "#010203",
+		Foreground: "#aabbcc",
+	})
+	var gotTheme *theme.EffectiveTheme
+	_, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
+		func(string) string { return "" },
+		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			gotTheme = options.Theme
+			return intpicker.Result{Key: "enter", Value: "ai"}, nil
+		}),
+		nil,
+		intpickercompat.Options{UI: "settings", Theme: &supplied},
+	)
+	if err != nil {
+		t.Fatalf("runPickerOptionBackend() error = %v", err)
+	}
+	if gotTheme == nil {
+		t.Fatal("native picker Theme = nil, want supplied effective theme")
+	}
+	if gotTheme.Background.Value.Hex != "#010203" || gotTheme.Foreground.Value.Hex != "#aabbcc" {
+		t.Fatalf("native picker Theme = %#v, want supplied effective theme", gotTheme)
+	}
+}
+
 func TestRunPickerOptionBackendIgnoresDeprecatedBackendEnvOverride(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
@@ -171,6 +229,7 @@ func TestRunPickerOptionBackendIgnoresDeprecatedBackendEnvOverride(t *testing.T)
 	var nativeCalled bool
 	var compatCalled bool
 	result, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(name string) string {
 			if name == intpicker.BackendEnv {
 				return "fzf"
@@ -206,6 +265,7 @@ func TestRunPickerOptionBackendErrorsWhenNativeMissingWithoutCallingCompatRunner
 
 	var compatCalled bool
 	_, err := runPickerOptionBackend(
+		func() (string, error) { return "", nil },
 		func(name string) string {
 			if name == intpicker.BackendEnv {
 				return "fzf"
@@ -245,11 +305,8 @@ func TestProductionPickerConstructorsDoNotCreateCompatRunner(t *testing.T) {
 	if cmd := newSessionsCommand(); cmd.runner != nil {
 		t.Fatal("newSessionsCommand() created compat runner")
 	}
-	if cmd := newNotifyCommand(); cmd.picker != nil {
+	if cmd := newNotifyCommand(newDefaultLivePaneLister()); cmd.picker != nil {
 		t.Fatal("newNotifyCommand() created compat runner")
-	}
-	if cmd := newShellCommand(nil); cmd.updatePromptRunner != nil {
-		t.Fatal("newShellCommand() created compat runner")
 	}
 }
 
@@ -269,6 +326,20 @@ func TestPickerOptionsFromCompatPickerMapsCandidatesWhenEntriesAreEmpty(t *testi
 	}
 	if options.Items[1].Value != "/tmp/project-b" {
 		t.Fatalf("second item = %#v, want second candidate", options.Items[1])
+	}
+}
+
+func TestPickerOptionsFromCompatPickerPreservesTheme(t *testing.T) {
+	t.Parallel()
+
+	effective := theme.ResolveTheme(theme.ThemeConfig{Background: "#010203"})
+	options := pickerOptionsFromCompatPicker(intpickercompat.Options{Theme: &effective})
+	if options.Theme != &effective {
+		t.Fatalf("Theme = %p, want %p", options.Theme, &effective)
+	}
+	roundTrip := intpickercompat.OptionsFromPicker(options)
+	if roundTrip.Theme != &effective {
+		t.Fatalf("round-trip Theme = %p, want %p", roundTrip.Theme, &effective)
 	}
 }
 

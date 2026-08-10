@@ -32,7 +32,7 @@ func TestStatusGitPrintsBranchForPath(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), " #[bold,fg=colour16,bg=colour45] main #[default]"; got != want {
+	if got, want := stdout.String(), " #[bold,fg=colour231,bg=colour30] main #[default]"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -66,7 +66,7 @@ func TestStatusGitUsesCurrentPanePathInsideTmux(t *testing.T) {
 	if err := cmd.Run([]string{"git"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := stdout.String(), " #[bold,fg=colour16,bg=colour45] abc1234 #[default]"; got != want {
+	if got, want := stdout.String(), " #[bold,fg=colour231,bg=colour30] abc1234 #[default]"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -85,7 +85,7 @@ func TestStatusGitPrintsConfiguredSymbolDecorator(t *testing.T) {
 		switch {
 		case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "#{pane_current_path}"}):
 			return []byte("/repo\n"), nil
-		case name == "tmux" && reflect.DeepEqual(args, []string{"show-option", "-gqv", statusbarDecorationTmuxOption}):
+		case name == "tmux" && reflect.DeepEqual(args, []string{"show-options", "-gqv", statusbarDecorationTmuxOption}):
 			return []byte("symbol\n"), nil
 		case name == "git" && reflect.DeepEqual(args, []string{"-C", "/repo", "rev-parse", "--is-inside-work-tree"}):
 			return []byte("true\n"), nil
@@ -102,7 +102,7 @@ func TestStatusGitPrintsConfiguredSymbolDecorator(t *testing.T) {
 	if err := cmd.Run([]string{"git"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour208] #[fg=colour16]main #[default]"
+	want := " #[bold,fg=colour231,bg=colour30] #[fg=colour215] #[fg=colour231]main #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
@@ -137,7 +137,7 @@ func TestStatusGitPrintsConfiguredEmojiDecoratorFromConfig(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour17]🐱 #[fg=colour16]main #[default]"
+	want := " #[bold,fg=colour231,bg=colour30] #[fg=colour153]🐱 #[fg=colour231]main #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
@@ -172,7 +172,7 @@ func TestStatusGitPrintsConfiguredEmojiDecoratorForGitLabRemote(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] #[fg=colour208]🦊 #[fg=colour16]main #[default]"
+	want := " #[bold,fg=colour231,bg=colour30] #[fg=colour215]🦊 #[fg=colour231]main #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
@@ -199,9 +199,56 @@ func TestStatusGitPrintsStateIndicators(t *testing.T) {
 	if err := cmd.Run([]string{"git", "/repo"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := " #[bold,fg=colour16,bg=colour45] main #[fg=colour88]*#[fg=colour16] #[fg=colour22]+2#[fg=colour16] #[fg=colour17]↑2#[fg=colour16] #[fg=colour94]↓1#[fg=colour16] #[default]"
+	want := " #[bold,fg=colour231,bg=colour30] main #[nobold,fg=colour222]*#[bold,fg=colour231] #[nobold,fg=colour151]+2#[bold,fg=colour231] #[nobold,fg=colour153]↑2#[bold,fg=colour231] #[nobold,fg=colour181]↓1#[bold,fg=colour231] #[default]"
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestStatusGitCommandTimeoutStopsHangingRunner(t *testing.T) {
+	t.Parallel()
+
+	cmd := testStatusCommand(t.TempDir())
+	cmd.commandLimit = 20 * time.Millisecond
+	active := 0
+	cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name != "git" || !reflect.DeepEqual(args, []string{"-C", "/slow", "rev-parse", "--is-inside-work-tree"}) {
+			return nil, os.ErrNotExist
+		}
+		active++
+		defer func() { active-- }()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	start := time.Now()
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"git", "/slow"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Run() elapsed = %v, want bounded execution", elapsed)
+	}
+	if active != 0 {
+		t.Fatalf("active hanging runners = %d, want 0 after timeout", active)
+	}
+	if got := stdout.String(); got != "" {
+		t.Fatalf("stdout = %q, want silent timeout", got)
+	}
+}
+
+func TestStatusGitStatePaletteIsCompactAndNonDominant(t *testing.T) {
+	t.Parallel()
+
+	got := parseGitPorcelainStatus("## main...origin/main [ahead 12, behind 3]\n M dirty.go\nA  staged.go\n?? new.go\n")
+	want := "#[nobold,fg=colour222]*#[bold,fg=colour231] #[nobold,fg=colour151]+1#[bold,fg=colour231] #[nobold,fg=colour153]↑12#[bold,fg=colour231] #[nobold,fg=colour181]↓3#[bold,fg=colour231]"
+	if got != want {
+		t.Fatalf("parseGitPorcelainStatus() = %q, want %q", got, want)
+	}
+	for _, disallowed := range []string{"fg=colour88]", "fg=colour22]", "fg=colour17]", "fg=colour94]", "bg=colour45"} {
+		if strings.Contains(got, disallowed) {
+			t.Fatalf("git state = %q, still contains old dominant color %q", got, disallowed)
+		}
 	}
 }
 
@@ -265,15 +312,24 @@ func TestStatusKubeRefreshesContextAndNamespace(t *testing.T) {
 			return ""
 		}
 	}
-	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+	var kubectlDeadlines []time.Duration
+	cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		switch {
 		case name == "command" && reflect.DeepEqual(args, []string{"-v", "kubectl"}):
 			return []byte("/usr/bin/kubectl\n"), nil
-		case name == "command" && reflect.DeepEqual(args, []string{"-v", "timeout"}):
-			return []byte("/usr/bin/timeout\n"), nil
-		case name == "env" && reflect.DeepEqual(args, []string{"KUBECONFIG=" + kubeConfig, "timeout", "0.400", "kubectl", "config", "current-context"}):
+		case name == "env" && reflect.DeepEqual(args, []string{"KUBECONFIG=" + kubeConfig, "kubectl", "config", "current-context"}):
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("kubectl current-context context has no deadline")
+			}
+			kubectlDeadlines = append(kubectlDeadlines, time.Until(deadline))
 			return []byte("kind-dev\n"), nil
-		case name == "env" && reflect.DeepEqual(args, []string{"KUBECONFIG=" + kubeConfig, "timeout", "0.400", "kubectl", "config", "view", "--minify", "--output", "jsonpath={..namespace}"}):
+		case name == "env" && reflect.DeepEqual(args, []string{"KUBECONFIG=" + kubeConfig, "kubectl", "config", "view", "--minify", "--output", "jsonpath={..namespace}"}):
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("kubectl namespace context has no deadline")
+			}
+			kubectlDeadlines = append(kubectlDeadlines, time.Until(deadline))
 			return []byte("apps\n"), nil
 		default:
 			return nil, os.ErrNotExist
@@ -290,6 +346,14 @@ func TestStatusKubeRefreshesContextAndNamespace(t *testing.T) {
 	}
 	if got := strings.TrimSpace(readTextFile(filepath.Join(cacheHome, "tmux", "kube-segment-dev.txt"))); got != want {
 		t.Fatalf("cache = %q, want %q", got, want)
+	}
+	if len(kubectlDeadlines) != 2 {
+		t.Fatalf("kubectl deadline count = %d, want 2", len(kubectlDeadlines))
+	}
+	for _, remaining := range kubectlDeadlines {
+		if remaining <= 0 || remaining > 400*time.Millisecond {
+			t.Fatalf("kubectl deadline remaining = %v, want within (0, 400ms]", remaining)
+		}
 	}
 }
 
@@ -332,5 +396,91 @@ func testStatusCommand(home string) *statusCommand {
 			return nil, os.ErrNotExist
 		},
 		now: func() time.Time { return time.Now() },
+	}
+}
+
+// statusProjectTmuxFields stubs the three per-signal display-message reads that
+// runProject issues (tmux escapes a packed field separator, so each signal is
+// read on its own).
+func statusProjectTmuxFields(session, anchor, cwd string) func(context.Context, string, ...string) ([]byte, error) {
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "#{session_name}"}) {
+			return []byte(session + "\n"), nil
+		}
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "#{@projmux_project_path}"}) {
+			return []byte(anchor + "\n"), nil
+		}
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "#{pane_current_path}"}) {
+			return []byte(cwd + "\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
+func TestStatusProjectResolvesAnchorBasename(t *testing.T) {
+	t.Parallel()
+
+	cmd := testStatusCommand(t.TempDir())
+	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX" {
+			return "/tmp/tmux"
+		}
+		return ""
+	}
+	// anchor present -> Anchor source wins, no de-slug applied, drifted cwd ignored.
+	cmd.readCommand = statusProjectTmuxFields("repos-app", "/home/tester/source/repos/app", "/tmp/drifted")
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"project"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stdout.String(); got != "app" {
+		t.Fatalf("stdout = %q, want %q", got, "app")
+	}
+}
+
+func TestStatusProjectDeSlugsSessionNameFallback(t *testing.T) {
+	t.Parallel()
+
+	cmd := testStatusCommand(t.TempDir())
+	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX" {
+			return "/tmp/tmux"
+		}
+		return ""
+	}
+	// no anchor, no worktree; a non-existent pane cwd must not be trusted over
+	// the session name, which is de-slugged for display.
+	cmd.readCommand = statusProjectTmuxFields("repos-app", "", "/tmp/does-not-exist-projmux")
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"project"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stdout.String(); got != "app" {
+		t.Fatalf("stdout = %q, want %q", got, "app")
+	}
+}
+
+func TestStatusProjectSilentOutsideTmux(t *testing.T) {
+	t.Parallel()
+
+	cmd := testStatusCommand(t.TempDir())
+	cmd.lookupEnv = func(string) string { return "" }
+	called := false
+	cmd.readCommand = func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		called = true
+		return nil, os.ErrNotExist
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"project"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty outside tmux", stdout.String())
+	}
+	if called {
+		t.Fatalf("must not query tmux when TMUX is unset")
 	}
 }

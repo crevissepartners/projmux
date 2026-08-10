@@ -74,10 +74,21 @@ func (c *settingsCommand) runSessionStateSection(stdout, stderr io.Writer) error
 			}, stdout, stderr); err != nil {
 				return err
 			}
+		case settingsSessionStateSidebarStartupPickerDetail:
+			if err := c.runSidebarStartupPickerDetail(stdout, stderr); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unknown session state settings action: %s", action)
 		}
 	}
+}
+
+func (c *settingsCommand) runSidebarStartupPickerDetail(stdout, stderr io.Writer) error {
+	return c.runSessionStateToggleDetail("Session State - Sidebar startup picker", "Settings > Session State > Sidebar startup picker > ", func() []intpickercompat.Entry {
+		sidebarStartup := c.currentSidebarStartupPicker()
+		return c.sidebarStartupPickerEntries(sidebarStartup)
+	}, stdout, stderr)
 }
 
 func (c *settingsCommand) runProjectSessionStateSection(stdout, stderr io.Writer) error {
@@ -122,7 +133,7 @@ func (c *settingsCommand) runSessionStateToggleDetail(title, prompt string, entr
 			Entries:    entries(),
 			Title:      title,
 			Prompt:     prompt,
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -159,7 +170,7 @@ func (c *settingsCommand) runProjectSessionStateAutosaveDetail(stdout, stderr io
 			Entries:    c.projectSessionStateAutosaveDetailEntries(),
 			Title:      "Session State - Project auto-save",
 			Prompt:     "Settings > Project > Session State > Auto-save > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -192,7 +203,7 @@ func (c *settingsCommand) runProjectSessionStateActionsDetail(stdout, stderr io.
 			Entries:    c.projectSessionStateActionsDetailEntries(),
 			Title:      "Session State - Project snapshot actions",
 			Prompt:     "Settings > Project > Session State > Snapshot actions > ",
-			Footer:     projmuxFooter("Enter: action  |  Back row: parent  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+			Footer:     projmuxFooter("Enter: action  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
 		})
@@ -229,22 +240,6 @@ func (c *settingsCommand) runProjectSessionStateActionsDetail(stdout, stderr io.
 	}
 }
 
-func (c *settingsCommand) sessionStateRootLabel() string {
-	autosave := c.currentSessionStateAutosave()
-	interval := c.currentSessionStateAutosaveInterval()
-	desc := fmt.Sprintf("autosave %s, interval %s", autosave.Mode, formatSessionStateAutosaveInterval(interval.Duration))
-	return settingsLabel(settingsGlyphOpen, settingsColorType, "Session State", desc)
-}
-
-func (c *settingsCommand) projectSessionStateRootLabel(ctx settingsProjectContext) string {
-	identity := c.projectSessionStateIdentity(ctx)
-	desc := "disabled - no project context"
-	if identity.Err == nil {
-		desc = identity.Session
-	}
-	return settingsLabel(settingsGlyphOpen, settingsColorType, "Session State", desc)
-}
-
 func (c *settingsCommand) projectSessionStateTitle() string {
 	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
 	if identity.Err != nil {
@@ -256,18 +251,23 @@ func (c *settingsCommand) projectSessionStateTitle() string {
 func (c *settingsCommand) sessionStateEntries() []intpickercompat.Entry {
 	autosave := c.currentSessionStateAutosave()
 	interval := c.currentSessionStateAutosaveInterval()
+	sidebarStartup := c.currentSidebarStartupPicker()
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Auto-save", string(autosave.Mode)+" - interval "+formatSessionStateAutosaveInterval(interval.Duration)+" - "+autosave.Source),
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Auto-save", string(autosave.Mode)+" - interval "+formatSessionStateAutosaveInterval(interval.Duration)+" - "+autosave.Source),
 			Value: settingsSessionStateAutosaveDetail,
 		},
 		{
-			Label: settingsLabelInfo("Storage", "latest snapshot store", "per-session JSON under XDG state"),
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Sidebar startup picker", string(sidebarStartup.Mode)+" - "+sidebarStartup.Source),
+			Value: settingsSessionStateSidebarStartupPickerDetail,
+		},
+		{
+			Label: c.rowLabelInfo("Storage", "latest snapshot store", "per-session JSON under XDG state"),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Retention", "latest snapshot only", "named snapshots are manual project files"),
+			Label: c.rowLabelInfo("Retention", "latest snapshot only", "named snapshots are manual project files"),
 			Value: settingsNoopValue,
 		},
 	}
@@ -278,9 +278,9 @@ func (c *settingsCommand) projectSessionStateEntries() []intpickercompat.Entry {
 	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
 	if identity.Err != nil {
 		return []intpickercompat.Entry{
-			settingsBackEntry(),
+			c.backEntry(),
 			{
-				Label: settingsLabelInfo("Project", "unavailable", identity.Err.Error()),
+				Label: c.rowLabelInfo("Project", "unavailable", identity.Err.Error()),
 				Value: settingsNoopValue,
 			},
 		}
@@ -289,37 +289,37 @@ func (c *settingsCommand) projectSessionStateEntries() []intpickercompat.Entry {
 	autosave := c.currentProjectSessionStateAutosave(identity)
 	interval := c.currentSessionStateAutosaveInterval()
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo("Project", identity.Project.Name, ""),
+			Label: c.rowLabelInfo("Project", identity.Project.Name, ""),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Project path", identity.Project.Path, identity.Project.Source),
+			Label: c.rowLabelInfo("Project path", identity.Project.Path, identity.Project.Source),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Session identity", identity.Session, "derived from project path"),
+			Label: c.rowLabelInfo("Session identity", identity.Session, "derived from project path"),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Project auto-save", string(autosave.ProjectMode)+" - "+autosave.ProjectSource),
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Project auto-save", string(autosave.ProjectMode)+" - "+autosave.ProjectSource),
 			Value: settingsProjectSessionStateAutosaveDetail,
 		},
 		{
-			Label: settingsLabelInfo("Effective auto-save", string(autosave.Mode), autosave.Source),
+			Label: c.rowLabelInfo("Effective auto-save", string(autosave.Mode), autosave.Source),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Global auto-save", string(autosave.Global.Mode), autosave.Global.Source),
+			Label: c.rowLabelInfo("Global auto-save", string(autosave.Global.Mode), autosave.Global.Source),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Auto-save interval", formatSessionStateAutosaveInterval(interval.Duration), interval.Source),
+			Label: c.rowLabelInfo("Auto-save interval", formatSessionStateAutosaveInterval(interval.Duration), interval.Source),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Snapshot actions", c.projectSessionStateActionsSummary(identity)),
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Snapshot actions", c.projectSessionStateActionsSummary(identity)),
 			Value: settingsProjectSessionStateActionsDetail,
 		},
 	}
@@ -328,13 +328,13 @@ func (c *settingsCommand) projectSessionStateEntries() []intpickercompat.Entry {
 
 func (c *settingsCommand) sessionStateAutosaveDetailEntries(autosave sessionStateEffectiveToggle, interval sessionStateEffectiveInterval) []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo("Auto-save", string(autosave.Mode), autosave.Source),
+			Label: c.rowLabelInfo("Auto-save", string(autosave.Mode), autosave.Source),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Interval", formatSessionStateAutosaveInterval(interval.Duration)+" - "+interval.Source),
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Interval", formatSessionStateAutosaveInterval(interval.Duration)+" - "+interval.Source),
 			Value: settingsSessionStateAutosaveIntervalSet,
 		},
 	}
@@ -342,15 +342,33 @@ func (c *settingsCommand) sessionStateAutosaveDetailEntries(autosave sessionStat
 	return entries
 }
 
-func (c *settingsCommand) sessionStateToggleDetailEntries(label, key string, current config.SessionStateToggle, source string) []intpickercompat.Entry {
+func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStateEffectiveToggle) []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo(label, string(current), source),
+			Label: c.rowLabelInfo("Sidebar startup picker", string(sidebarStartup.Mode), sidebarStartup.Source),
 			Value: settingsNoopValue,
 		},
 	}
-	entries = append(entries, c.sessionStateToggleEntries(label, key, current)...)
+	for _, item := range []struct {
+		mode config.SessionStateToggle
+		desc string
+	}{
+		{config.SessionStateToggleOn, "show Start project step in the sidebar"},
+		{config.SessionStateToggleOff, "open closed sidebar projects as empty sessions"},
+	} {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if item.mode == sidebarStartup.Mode {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     c.rowLabel(glyph, color, "Sidebar startup picker "+string(item.mode), item.desc+" - "+sidebarStartup.Source),
+			Value:     settingsActionPrefixSessionState + "sidebar-startup:" + string(item.mode),
+			SearchKey: "Sidebar startup picker Start project empty session on off",
+		})
+	}
 	return entries
 }
 
@@ -363,7 +381,7 @@ func (c *settingsCommand) runSessionStateAutosaveIntervalTyped(stdout, stderr io
 		InitialQuery: formatSessionStateAutosaveInterval(interval.Duration),
 		Title:        "Session State - Auto-save interval",
 		Prompt:       "Auto-save interval > ",
-		Footer:       projmuxFooter("Enter: save  |  Examples: 30s, 2m, 90  |  Esc/Alt+5/Ctrl+Alt+S: close"),
+		Footer:       projmuxFooter("Enter: save  |  Examples: 30s, 2m, 90 "),
 		ExpectKeys:   []string{"enter"},
 		Bindings:     settingsCloseBindings(),
 	})
@@ -385,26 +403,26 @@ func (c *settingsCommand) projectSessionStateAutosaveDetailEntries() []intpicker
 	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
 	if identity.Err != nil {
 		return []intpickercompat.Entry{
-			settingsBackEntry(),
+			c.backEntry(),
 			{
-				Label: settingsLabelInfo("Project", "unavailable", identity.Err.Error()),
+				Label: c.rowLabelInfo("Project", "unavailable", identity.Err.Error()),
 				Value: settingsNoopValue,
 			},
 		}
 	}
 	autosave := c.currentProjectSessionStateAutosave(identity)
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo("Project auto-save", string(autosave.ProjectMode), autosave.ProjectSource),
+			Label: c.rowLabelInfo("Project auto-save", string(autosave.ProjectMode), autosave.ProjectSource),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Effective auto-save", string(autosave.Mode), autosave.Source),
+			Label: c.rowLabelInfo("Effective auto-save", string(autosave.Mode), autosave.Source),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Global auto-save", string(autosave.Global.Mode), autosave.Global.Source),
+			Label: c.rowLabelInfo("Global auto-save", string(autosave.Global.Mode), autosave.Global.Source),
 			Value: settingsNoopValue,
 		},
 	}
@@ -416,21 +434,21 @@ func (c *settingsCommand) projectSessionStateActionsDetailEntries() []intpickerc
 	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
 	if identity.Err != nil {
 		return []intpickercompat.Entry{
-			settingsBackEntry(),
+			c.backEntry(),
 			{
-				Label: settingsLabelInfo("Project", "unavailable", identity.Err.Error()),
+				Label: c.rowLabelInfo("Project", "unavailable", identity.Err.Error()),
 				Value: settingsNoopValue,
 			},
 		}
 	}
 	entries := []intpickercompat.Entry{
-		settingsBackEntry(),
+		c.backEntry(),
 		{
-			Label: settingsLabelInfo("Project", identity.Project.Name, identity.Project.Path),
+			Label: c.rowLabelInfo("Project", identity.Project.Name, identity.Project.Path),
 			Value: settingsNoopValue,
 		},
 		{
-			Label: settingsLabelInfo("Session identity", identity.Session, "derived from project path"),
+			Label: c.rowLabelInfo("Session identity", identity.Session, "derived from project path"),
 			Value: settingsNoopValue,
 		},
 	}
@@ -492,19 +510,19 @@ func (c *settingsCommand) projectSessionStateActionEntries(identity projectSessi
 
 	return []intpickercompat.Entry{
 		{
-			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save latest snapshot", saveDesc),
+			Label: c.rowLabel(settingsGlyphAdd, settingsColorAdd, "Save latest snapshot", saveDesc),
 			Value: saveValue,
 		},
 		{
-			Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, "Save named snapshot", namedDesc),
+			Label: c.rowLabel(settingsGlyphAdd, settingsColorAdd, "Save named snapshot", namedDesc),
 			Value: namedValue,
 		},
 		{
-			Label: settingsLabel(settingsGlyphOpen, settingsColorType, "Preview restore", previewDesc),
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Preview restore", previewDesc),
 			Value: previewValue,
 		},
 		{
-			Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Delete snapshot", deleteDesc),
+			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Delete snapshot", deleteDesc),
 			Value: deleteValue,
 		},
 	}
@@ -528,7 +546,7 @@ func (c *settingsCommand) projectSessionStateAutosaveToggleEntries(current confi
 			color = settingsColorAdd
 		}
 		out = append(out, intpickercompat.Entry{
-			Label: settingsLabel(glyph, color, "Project auto-save "+string(item.mode), item.desc),
+			Label: c.rowLabel(glyph, color, "Project auto-save "+string(item.mode), item.desc),
 			Value: settingsActionPrefixSessionState + "project-autosave:" + string(item.mode),
 		})
 	}
@@ -570,114 +588,11 @@ func (c *settingsCommand) sessionStateToggleEntries(label, key string, current c
 			color = settingsColorAdd
 		}
 		out = append(out, intpickercompat.Entry{
-			Label: settingsLabel(glyph, color, label+" "+string(item.mode), item.desc),
+			Label: c.rowLabel(glyph, color, label+" "+string(item.mode), item.desc),
 			Value: settingsActionPrefixSessionState + key + ":" + string(item.mode),
 		})
 	}
 	return out
-}
-
-func (c *settingsCommand) sessionStateSnapshotEntries() []intpickercompat.Entry {
-	sessionName, err := c.currentSettingsSessionName()
-	if err != nil {
-		return []intpickercompat.Entry{{
-			Label: settingsLabelInfo("Snapshot", "missing", err.Error()),
-			Value: settingsNoopValue,
-		}}
-	}
-	return c.sessionStateSnapshotEntriesForSession(sessionName)
-}
-
-func (c *settingsCommand) sessionStateSnapshotEntriesForSession(sessionName string) []intpickercompat.Entry {
-	store, err := c.settingsSessionStateStore()
-	if err != nil {
-		return []intpickercompat.Entry{{
-			Label: settingsLabelInfo("Snapshot", "invalid", err.Error()),
-			Value: settingsNoopValue,
-		}}
-	}
-	snap, err := store.Load(sessionName)
-	if err != nil {
-		status := "invalid"
-		if errors.Is(err, sessionstate.ErrNotFound) {
-			status = "missing"
-		}
-		return []intpickercompat.Entry{{
-			Label: settingsLabelInfo("Snapshot", status, sessionName),
-			Value: settingsNoopValue,
-		}}
-	}
-	entries := []intpickercompat.Entry{
-		{
-			Label: settingsLabelInfo("Snapshot session", snap.Session, ""),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Snapshot source", snap.SourceLabel(), ""),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: settingsLabelInfo("Saved snapshot", statusbarSessionStateSavedText(snap.SavedAt, time.Now()), snap.SavedAt.Format("2006-01-02 15:04:05 MST")),
-			Value: settingsNoopValue,
-		},
-	}
-	for _, line := range sessionStatePlainPreviewLines(snap, 100) {
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Preview", line, ""),
-			Value: settingsNoopValue,
-		})
-	}
-	entries = append(entries,
-		intpickercompat.Entry{
-			Label: settingsLabelInfo("Windows", fmt.Sprintf("%d", len(snap.Windows)), "snapshot metadata"),
-			Value: settingsNoopValue,
-		},
-		intpickercompat.Entry{
-			Label: settingsLabelInfo("Panes", fmt.Sprintf("%d", statusbarSessionStatePaneCount(snap)), "snapshot metadata"),
-			Value: settingsNoopValue,
-		},
-	)
-	return entries
-}
-
-func (c *settingsCommand) projectSessionStateSnapshotEntriesForSession(sessionName string) []intpickercompat.Entry {
-	entries := c.sessionStateSnapshotEntriesForSession(sessionName)
-	store, err := c.settingsSessionStateStore()
-	if err != nil {
-		return entries
-	}
-	snap, err := store.Load(sessionName)
-	if err != nil {
-		return entries
-	}
-	for _, window := range snap.Windows {
-		windowName := statusbarSessionStateClean(window.Name)
-		if windowName == "" {
-			windowName = "window"
-		}
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfo("Window", fmt.Sprintf("%d %s", window.Index, windowName), sessionStateCount(len(window.Panes), "pane")),
-			Value: settingsNoopValue,
-		})
-		for _, pane := range window.Panes {
-			paneTitle := projectSessionStatePaneTitle(pane)
-			entries = append(entries,
-				intpickercompat.Entry{
-					Label: settingsLabelInfo("Pane", fmt.Sprintf("%d.%d %s", window.Index, pane.Index, paneTitle), ""),
-					Value: settingsNoopValue,
-				},
-				intpickercompat.Entry{
-					Label: settingsLabelInfo("Pane cwd", nonEmpty(strings.TrimSpace(pane.CWD), "-"), ""),
-					Value: settingsNoopValue,
-				},
-				intpickercompat.Entry{
-					Label: settingsLabelInfo("Pane recipe", projectSessionStateRecipeText(pane.Recipe, snap.SavedAt), ""),
-					Value: settingsNoopValue,
-				},
-			)
-		}
-	}
-	return entries
 }
 
 func projectSessionStatePaneTitle(pane sessionstate.Pane) string {
@@ -727,37 +642,6 @@ func projectSessionStateRecipeText(recipe sessionstate.Recipe, savedAt time.Time
 		return "startup"
 	default:
 		return kind
-	}
-}
-
-func (c *settingsCommand) sessionStateDeleteEntry() intpickercompat.Entry {
-	sessionName, err := c.currentSettingsSessionName()
-	if err != nil {
-		return intpickercompat.Entry{
-			Label: settingsLabelDim("Delete snapshot", "unavailable - "+err.Error()),
-			Value: settingsNoopValue,
-		}
-	}
-	store, err := c.settingsSessionStateStore()
-	if err != nil {
-		return intpickercompat.Entry{
-			Label: settingsLabelDim("Delete snapshot", "unavailable - "+err.Error()),
-			Value: settingsNoopValue,
-		}
-	}
-	if _, err := store.Summary(sessionName); err != nil {
-		desc := "missing"
-		if !errors.Is(err, sessionstate.ErrNotFound) {
-			desc = "invalid - " + err.Error()
-		}
-		return intpickercompat.Entry{
-			Label: settingsLabelDim("Delete snapshot", desc),
-			Value: settingsNoopValue,
-		}
-	}
-	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Delete snapshot", sessionName),
-		Value: settingsSessionStateDelete,
 	}
 }
 
@@ -826,7 +710,7 @@ func (c *settingsCommand) runSaveProjectNamedSessionStateSnapshot(stdout io.Writ
 		AcceptQuery: true,
 		Title:       "Save named snapshot",
 		Prompt:      "Snapshot name > ",
-		Footer:      projmuxFooter("Enter: save  |  Esc/Alt+5/Ctrl+Alt+S: cancel"),
+		Footer:      projmuxFooter("Enter: save "),
 		ExpectKeys:  []string{"enter"},
 		Bindings:    settingsCloseBindings(),
 	})
@@ -916,10 +800,6 @@ func (c *settingsCommand) currentSessionStateAutosave() sessionStateEffectiveTog
 	})
 }
 
-func (c *settingsCommand) currentSessionStateToggle(envName string, file func(config.Paths) string) sessionStateEffectiveToggle {
-	return c.currentSessionStateToggleDefault(envName, config.SessionStateToggleOn, file)
-}
-
 func (c *settingsCommand) currentSessionStateAutosaveInterval() sessionStateEffectiveInterval {
 	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
@@ -929,7 +809,7 @@ func (c *settingsCommand) currentSessionStateAutosaveInterval() sessionStateEffe
 	if err != nil {
 		return sessionStateEffectiveInterval{Duration: defaultSessionStateAutosaveInterval, Source: "default"}
 	}
-	if _, err := osStat(paths.SessionStateAutosaveIntervalFile()); err == nil {
+	if _, err := c.statFile(paths.SessionStateAutosaveIntervalFile()); err == nil {
 		return sessionStateEffectiveInterval{Duration: duration, Source: "saved"}
 	}
 	return sessionStateEffectiveInterval{Duration: duration, Source: "default"}
@@ -937,10 +817,6 @@ func (c *settingsCommand) currentSessionStateAutosaveInterval() sessionStateEffe
 
 func (c *settingsCommand) currentSessionStateToggleDefault(envName string, fallback config.SessionStateToggle, file func(config.Paths) string) sessionStateEffectiveToggle {
 	return sessionStateToggleStateDefault(c.homeDir, c.lookupEnv, envName, fallback, file)
-}
-
-func sessionStateToggleState(homeDir func() (string, error), lookupEnv func(string) string, envName string, file func(config.Paths) string) sessionStateEffectiveToggle {
-	return sessionStateToggleStateDefault(homeDir, lookupEnv, envName, config.SessionStateToggleOn, file)
 }
 
 func sessionStateToggleStateDefault(homeDir func() (string, error), lookupEnv func(string) string, envName string, fallback config.SessionStateToggle, file func(config.Paths) string) sessionStateEffectiveToggle {
@@ -957,7 +833,7 @@ func sessionStateToggleStateDefault(homeDir func() (string, error), lookupEnv fu
 	if err != nil {
 		return sessionStateEffectiveToggle{Mode: fallback, Source: "default"}
 	}
-	if _, err := osStat(file(paths)); err == nil {
+	if _, err := os.Stat(file(paths)); err == nil {
 		return sessionStateEffectiveToggle{Mode: mode, Source: "saved"}
 	}
 	return sessionStateEffectiveToggle{Mode: mode, Source: "default"}
@@ -972,7 +848,7 @@ func sessionStateToggleFileStateDefault(homeDir func() (string, error), lookupEn
 	if err != nil {
 		return sessionStateEffectiveToggle{Mode: fallback, Source: "default"}
 	}
-	if _, err := osStat(file(paths)); err == nil {
+	if _, err := os.Stat(file(paths)); err == nil {
 		return sessionStateEffectiveToggle{Mode: mode, Source: "saved"}
 	}
 	return sessionStateEffectiveToggle{Mode: mode, Source: "default"}
@@ -1009,7 +885,7 @@ func (c *settingsCommand) currentProjectSessionStateAutosaveMode(sessionName str
 	if err != nil {
 		return config.SessionStateProjectInherit, "default"
 	}
-	if _, err := osStat(path); err == nil {
+	if _, err := c.statFile(path); err == nil {
 		return mode, "saved"
 	}
 	return mode, "default"
@@ -1133,14 +1009,6 @@ func (c *settingsCommand) deleteCurrentSessionStateSnapshot() error {
 	return nil
 }
 
-func (c *settingsCommand) confirmSessionStateDelete() (bool, error) {
-	sessionName, err := c.currentSettingsSessionName()
-	if err != nil {
-		return false, err
-	}
-	return c.confirmSessionStateDeleteForSession(sessionName, "settings-sessionstate-delete-confirm", "Settings > Session State > Delete snapshot > ")
-}
-
 func (c *settingsCommand) confirmProjectSessionStateDelete() (bool, error) {
 	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
 	if identity.Err != nil {
@@ -1154,21 +1022,21 @@ func (c *settingsCommand) confirmSessionStateDeleteForSession(sessionName, ui, p
 		UI: ui,
 		Entries: []intpickercompat.Entry{
 			{
-				Label: settingsLabelInfo("Delete snapshot", sessionName, "destructive"),
+				Label: c.rowLabelInfo("Delete snapshot", sessionName, "destructive"),
 				Value: settingsNoopValue,
 			},
 			{
-				Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Cancel", "keep snapshot"),
+				Label: c.rowLabel(settingsGlyphBack, settingsColorBack, "Cancel", "keep snapshot"),
 				Value: settingsSessionStateConfirmNo,
 			},
 			{
-				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Yes, delete", "remove latest snapshot"),
+				Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Yes, delete", "remove latest snapshot"),
 				Value: settingsSessionStateConfirmYes,
 			},
 		},
 		Title:      "Delete session snapshot - confirm",
 		Prompt:     prompt,
-		Footer:     projmuxFooter("Enter: confirm  |  Esc/Alt+5/Ctrl+Alt+S: cancel"),
+		Footer:     projmuxFooter("Enter: confirm "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}
@@ -1248,10 +1116,6 @@ func sidebarStartupPickerEnabled(homeDir func() (string, error), lookupEnv func(
 	}).Mode.Enabled()
 }
 
-func sessionStateToggleEnabled(homeDir func() (string, error), lookupEnv func(string) string, envName string, file func(config.Paths) string) bool {
-	return sessionStateToggleEnabledDefault(homeDir, lookupEnv, envName, config.SessionStateToggleOn, file)
-}
-
 func sessionStateToggleEnabledDefault(homeDir func() (string, error), lookupEnv func(string) string, envName string, fallback config.SessionStateToggle, file func(config.Paths) string) bool {
 	if lookupEnv == nil {
 		lookupEnv = os.Getenv
@@ -1271,15 +1135,16 @@ func sessionStateToggleEnabledDefault(homeDir func() (string, error), lookupEnv 
 }
 
 const (
-	settingsSessionStateAutosaveDetail        = settingsActionPrefixSessionState + "view-autosave"
-	settingsSessionStateAutosaveIntervalSet   = settingsActionPrefixSessionState + "autosave-interval-set"
-	settingsProjectSessionStateAutosaveDetail = settingsActionPrefixSessionState + "project-view-autosave"
-	settingsProjectSessionStateActionsDetail  = settingsActionPrefixSessionState + "project-view-actions"
-	settingsProjectSessionStateSaveLatest     = settingsActionPrefixSessionState + "project-save-latest"
-	settingsProjectSessionStateSaveNamed      = settingsActionPrefixSessionState + "project-save-named"
-	settingsProjectSessionStateSave           = settingsActionPrefixSessionState + "project-save"
-	settingsProjectSessionStatePreview        = settingsActionPrefixSessionState + "project-preview"
-	settingsProjectSessionStateDelete         = settingsActionPrefixSessionState + "project-delete"
-	settingsSessionStateConfirmYes            = "sessionstate:confirm-yes"
-	settingsSessionStateConfirmNo             = "sessionstate:confirm-no"
+	settingsSessionStateAutosaveDetail             = settingsActionPrefixSessionState + "view-autosave"
+	settingsSessionStateSidebarStartupPickerDetail = settingsActionPrefixSessionState + "view-sidebar-startup-picker"
+	settingsSessionStateAutosaveIntervalSet        = settingsActionPrefixSessionState + "autosave-interval-set"
+	settingsProjectSessionStateAutosaveDetail      = settingsActionPrefixSessionState + "project-view-autosave"
+	settingsProjectSessionStateActionsDetail       = settingsActionPrefixSessionState + "project-view-actions"
+	settingsProjectSessionStateSaveLatest          = settingsActionPrefixSessionState + "project-save-latest"
+	settingsProjectSessionStateSaveNamed           = settingsActionPrefixSessionState + "project-save-named"
+	settingsProjectSessionStateSave                = settingsActionPrefixSessionState + "project-save"
+	settingsProjectSessionStatePreview             = settingsActionPrefixSessionState + "project-preview"
+	settingsProjectSessionStateDelete              = settingsActionPrefixSessionState + "project-delete"
+	settingsSessionStateConfirmYes                 = "sessionstate:confirm-yes"
+	settingsSessionStateConfirmNo                  = "sessionstate:confirm-no"
 )

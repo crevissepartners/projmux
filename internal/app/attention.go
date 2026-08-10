@@ -7,10 +7,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 const (
@@ -22,29 +26,51 @@ const (
 )
 
 const (
-	attentionListSeparator = "\x1f"
-	attentionListFormat    = "#{session_name}" + attentionListSeparator +
-		"#{window_id}" + attentionListSeparator +
-		"#{pane_id}" + attentionListSeparator +
-		"#{pane_active}" + attentionListSeparator +
-		"#{pane_title}" + attentionListSeparator +
-		"#{" + attentionStateOption + "}" + attentionListSeparator +
-		"#{" + aiPaneStateOption + "}" + attentionListSeparator +
-		"#{" + aiPaneAgentOption + "}" + attentionListSeparator +
-		"#{" + aiPaneTopicOption + "}" + attentionListSeparator +
-		"#{socket_path}"
+	attentionListSeparator = intmux.FieldDelimiter
 )
 
+var attentionListFormats = []string{
+	intmux.TmuxFormat("session_name"),
+	intmux.TmuxFormat("window_id"),
+	intmux.TmuxFormat("pane_id"),
+	intmux.TmuxFormat("pane_active"),
+	intmux.TmuxFormat("pane_title"),
+	intmux.PaneOptionFormat(attentionStateOption),
+	intmux.PaneOptionFormat(aiPaneStateOption),
+	intmux.PaneOptionFormat(aiPaneAgentOption),
+	intmux.PaneOptionFormat(aiPaneTopicOption),
+	intmux.TmuxFormat("socket_path"),
+}
+
+var attentionListFormat = intmux.JoinFormats(attentionListSeparator, attentionListFormats...)
+
 type attentionCommand struct {
-	runner   tmuxRunner
-	producer attentionNotifyProducer
+	runner               tmuxRunner
+	producer             attentionNotifyProducer
+	sidebarPreviewActive func() bool
+	homeDir              func() (string, error)
+	lookupEnv            func(string) string
 }
 
 func newAttentionCommand() *attentionCommand {
 	return &attentionCommand{
-		runner:   inttmux.ExecRunner{},
-		producer: newAttentionNotifyProducer(),
+		runner:               inttmux.ExecRunner{},
+		producer:             newAttentionNotifyProducer(),
+		sidebarPreviewActive: isSidebarPreviewActive,
+		homeDir:              os.UserHomeDir,
+		lookupEnv:            os.Getenv,
 	}
+}
+
+// sidebarPreviewGateActive reports whether focus-hook attention updates must
+// be skipped because the project sidebar popup is previewing sessions. Only
+// `attention arm`/`attention clear` consult this gate: both subcommands are
+// invoked exclusively by the pane-focus-in/out and after-select-pane hooks,
+// so skipping them keeps peeked panes' markers intact. Manual
+// `attention toggle` and the AI ingest path (direct set-option in ai.go)
+// never route through these subcommands and stay live during preview.
+func (c *attentionCommand) sidebarPreviewGateActive() bool {
+	return c != nil && c.sidebarPreviewActive != nil && c.sidebarPreviewActive()
 }
 
 // notifyProducer returns the wired-up producer or a noop when the command
@@ -80,11 +106,14 @@ func (l attentionLookup) PaneFormat(paneID, format string) string {
 	if l.cmd == nil || l.cmd.runner == nil {
 		return ""
 	}
-	output, err := l.cmd.run("tmux", "display-message", "-p", "-t", paneID, format)
+	output, err := intmux.NewRunner(l.cmd.runner).DisplayMessageTrimmed(context.Background(), intmux.DisplayMessageOptions{
+		Target: paneID,
+		Format: format,
+	})
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return output
 }
 
 func (c *attentionCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -177,6 +206,9 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 	if err != nil || paneID == "" {
 		return err
 	}
+	if c.sidebarPreviewGateActive() {
+		return nil
+	}
 
 	state := c.paneAttentionState(paneID)
 	if state == attentionStateBusy {
@@ -189,6 +221,7 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 	c.setPaneOption(paneID, attentionAckOption, "1")
 	c.unsetPaneOption(paneID, attentionFocusArmedOption)
 	c.notifyProducer().AckReplyReady(attentionNotifyInput{PaneID: paneID, Lookup: c.notifyLookup()})
+	c.consumeResponseCompleteLiveBadge(paneID)
 
 	title := c.paneTitle(paneID)
 	clean := trimAttentionPrefix(title)
@@ -204,6 +237,9 @@ func (c *attentionCommand) runArm(args []string, stderr io.Writer) error {
 	if err != nil || paneID == "" {
 		return err
 	}
+	if c.sidebarPreviewGateActive() {
+		return nil
+	}
 	if c.paneAttentionState(paneID) == attentionStateReply {
 		c.setPaneOption(paneID, attentionFocusArmedOption, "1")
 	}
@@ -211,7 +247,10 @@ func (c *attentionCommand) runArm(args []string, stderr io.Writer) error {
 }
 
 func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) error {
-	windowID, err := parseOptionalAttentionTarget(args, "attention window", stderr)
+	// Bright Phase 2 (B1): the window badge glyph renders with the resolved
+	// effective theme instead of the zero-value fallback role map.
+	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
+	windowID, style, err := parseAttentionWindowArgs(args, stderr)
 	if err != nil {
 		return err
 	}
@@ -221,23 +260,38 @@ func (c *attentionCommand) runWindow(args []string, stdout, stderr io.Writer) er
 	}
 
 	rows := c.windowAttentionRows(windowID)
-	seenReply := false
+	badgeKind := ""
 	for _, row := range rows {
-		if row.State == attentionStateBusy || hasBraillePrefix(row.Title) {
-			_, err := fmt.Fprint(stdout, "#[fg=colour220]●")
-			return err
-		}
-		if row.State == attentionStateReply || hasAttentionPrefix(row.Title) {
-			seenReply = true
-		}
+		badgeKind = aibadge.Aggregate(badgeKind, attentionWindowBadgeKind(row))
 	}
 
-	if seenReply {
-		_, err := fmt.Fprint(stdout, "#[fg=colour82]●")
+	if badgeKind != "" {
+		glyph := aibadge.Glyph(badgeKind, style)
+		if strings.TrimSpace(glyph) == "" {
+			_, err := fmt.Fprint(stdout, " ")
+			return err
+		}
+		_, err := fmt.Fprint(stdout, "#[fg="+tmuxAIBadgeKindFg(badgeKind, statusSegmentRoles)+"]"+glyph)
 		return err
 	}
 	_, err = fmt.Fprint(stdout, " ")
 	return err
+}
+
+func parseAttentionWindowArgs(args []string, stderr io.Writer) (windowID, style string, err error) {
+	if len(args) > 2 {
+		printAttentionUsage(stderr)
+		return "", "", errors.New("attention window accepts at most 2 arguments")
+	}
+	if len(args) > 0 {
+		windowID = strings.TrimSpace(args[0])
+	}
+	if len(args) > 1 {
+		style = aibadge.NormalizeStyle(args[1])
+	} else {
+		style = aibadge.StyleDot
+	}
+	return windowID, style, nil
 }
 
 func parseOptionalAttentionTarget(args []string, command string, stderr io.Writer) (string, error) {
@@ -252,8 +306,10 @@ func parseOptionalAttentionTarget(args []string, command string, stderr io.Write
 }
 
 type attentionWindowRow struct {
-	Title string
-	State string
+	Title       string
+	State       string
+	AIState     string
+	AIBadgeKind string
 }
 
 type attentionPaneRow struct {
@@ -270,7 +326,13 @@ type attentionPaneRow struct {
 }
 
 func (c *attentionCommand) paneTitle(paneID string) string {
-	output, err := c.run("tmux", "display-message", "-p", "-t", paneID, "#{pane_title}")
+	if c.runner == nil {
+		return ""
+	}
+	output, err := intmux.NewRunner(c.runner).DisplayMessage(context.Background(), intmux.DisplayMessageOptions{
+		Target: paneID,
+		Format: intmux.TmuxFormat("pane_title"),
+	})
 	if err != nil {
 		return ""
 	}
@@ -299,70 +361,199 @@ func (c *attentionCommand) paneVisibleToClient(paneID string) bool {
 }
 
 func (c *attentionCommand) paneOption(paneID, option string) string {
-	output, err := c.run("tmux", "display-message", "-p", "-t", paneID, "#{"+option+"}")
+	if c.runner == nil {
+		return ""
+	}
+	output, err := intmux.NewRunner(c.runner).ShowPaneOption(context.Background(), paneID, option)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return output
 }
 
 func (c *attentionCommand) windowAttentionRows(windowID string) []attentionWindowRow {
-	output, err := c.run("tmux", "list-panes", "-t", windowID, "-F", "#{pane_title}\t#{@projmux_attention_state}")
+	if c == nil || c.runner == nil {
+		return nil
+	}
+	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
+		Target: windowID,
+		Formats: []string{
+			intmux.TmuxFormat("pane_title"),
+			intmux.PaneOptionFormat(attentionStateOption),
+			intmux.PaneOptionFormat(aiPaneStateOption),
+			intmux.PaneOptionFormat(aiPaneBadgeKindOption),
+		},
+	})
+	if err != nil {
+		return nil
+	}
+	if len(rows) == 0 {
+		return c.legacyWindowAttentionRows(windowID)
+	}
+
+	out := make([]attentionWindowRow, 0, len(rows))
+	for _, fields := range rows {
+		out = append(out, attentionWindowRow{
+			Title:       fields[0],
+			State:       fields[1],
+			AIState:     fields[2],
+			AIBadgeKind: fields[3],
+		})
+	}
+	return out
+}
+
+func (c *attentionCommand) legacyWindowAttentionRows(windowID string) []attentionWindowRow {
+	// Legacy: retained for old pane option format fallback; sunset when the
+	// new window-attention format has a versioned migration/expiry policy and
+	// old pane options are intentionally dropped.
+	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
+		Target: windowID,
+		Formats: []string{
+			intmux.TmuxFormat("pane_title"),
+			intmux.PaneOptionFormat(attentionStateOption),
+		},
+	})
 	if err != nil {
 		return nil
 	}
 
-	lines := strings.Split(strings.TrimRight(string(output), "\r\n"), "\n")
-	rows := make([]attentionWindowRow, 0, len(lines))
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fields := strings.SplitN(line, "\t", 2)
-		row := attentionWindowRow{Title: fields[0]}
-		if len(fields) == 2 {
-			row.State = strings.TrimSpace(fields[1])
-		}
-		rows = append(rows, row)
+	out := make([]attentionWindowRow, 0, len(rows))
+	for _, fields := range rows {
+		out = append(out, attentionWindowRow{
+			Title: fields[0],
+			State: fields[1],
+		})
 	}
-	return rows
+	return out
+}
+
+func attentionWindowBadgeKind(row attentionWindowRow) string {
+	if kind := normalizeAIBadgeKind(row.AIBadgeKind); kind != "" {
+		return kind
+	}
+	switch {
+	case row.State == attentionStateBusy || strings.TrimSpace(row.AIState) == "thinking" || hasBraillePrefix(row.Title):
+		return aiBadgeKindInProgress
+	case row.State == attentionStateReply || strings.TrimSpace(row.AIState) == "waiting" || hasAttentionPrefix(row.Title):
+		return aiBadgeKindResponseComplete
+	default:
+		return ""
+	}
+}
+
+func (c *attentionCommand) consumeResponseCompleteLiveBadge(paneID string) {
+	badgeKind := strings.TrimSpace(c.paneOption(paneID, aiPaneBadgeKindOption))
+	aiState := strings.TrimSpace(c.paneOption(paneID, aiPaneStateOption))
+	if isResponseCompleteLiveBadgeKind(badgeKind) {
+		c.unsetPaneOption(paneID, aiPaneBadgeKindOption)
+		if aiState == "waiting" {
+			c.setPaneOption(paneID, aiPaneStateOption, "idle")
+		}
+		return
+	}
+	if normalizeAIBadgeKind(badgeKind) != "" {
+		return
+	}
+	if aiState == "waiting" {
+		c.setPaneOption(paneID, aiPaneStateOption, "idle")
+	}
+}
+
+func isResponseCompleteLiveBadgeKind(kind string) bool {
+	kind = strings.TrimSpace(kind)
+	return normalizeAIBadgeKind(kind) == aiBadgeKindResponseComplete || kind == "response_ready"
+}
+
+func tmuxAIBadgeKindFg(kind string, roles theme.RenderRoles) string {
+	switch aibadge.ThemeRole(kind) {
+	case aibadge.RoleActionRequired:
+		return roles.AIActionRequired
+	case aibadge.RoleSuccess:
+		return roles.AISuccess
+	case aibadge.RoleProgress:
+		return roles.AIProgress
+	default:
+		return roles.AIProgress
+	}
 }
 
 func (c *attentionCommand) listAttentionPanes() ([]attentionPaneRow, error) {
-	output, err := c.run("tmux", "list-panes", "-a", "-F", attentionListFormat)
+	if c == nil || c.runner == nil {
+		return nil, errors.New("attention tmux runner is not configured")
+	}
+	rows, err := intmux.NewRunner(c.runner).ListPanes(context.Background(), intmux.ListPanesOptions{
+		All:              true,
+		Formats:          attentionListFormats,
+		Delimiter:        attentionListSeparator,
+		AllowExtraFields: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes: %w", err)
 	}
 
-	lines := strings.Split(strings.TrimRight(string(output), "\r\n"), "\n")
-	rows := make([]attentionPaneRow, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fields := strings.Split(line, attentionListSeparator)
-		if len(fields) < 10 {
-			continue
-		}
+	out := make([]attentionPaneRow, 0, len(rows))
+	for _, fields := range rows {
 		row := attentionPaneRow{
-			Session:        strings.TrimSpace(fields[0]),
-			Window:         strings.TrimSpace(fields[1]),
-			Pane:           strings.TrimSpace(fields[2]),
-			Active:         strings.TrimSpace(fields[3]) == "1",
-			Title:          strings.TrimSpace(fields[4]),
-			AttentionState: strings.TrimSpace(fields[5]),
-			AIState:        strings.TrimSpace(fields[6]),
-			Agent:          strings.TrimSpace(fields[7]),
-			Topic:          strings.TrimSpace(fields[8]),
-			Socket:         strings.TrimSpace(fields[9]),
+			Session:        fields[0],
+			Window:         fields[1],
+			Pane:           fields[2],
+			Active:         fields[3] == "1",
+			Title:          fields[4],
+			AttentionState: fields[5],
+			AIState:        fields[6],
+			Agent:          fields[7],
+			Topic:          fields[8],
+			Socket:         fields[9],
 		}
 		if row.Session == "" || row.Pane == "" {
 			continue
 		}
-		rows = append(rows, row)
+		out = append(out, row)
 	}
-	return rows, nil
+	return out, nil
+}
+
+// attentionLivePaneLister implements the notify cluster's livePaneLister
+// seam on top of [attentionCommand.listAttentionPanes], translating
+// attentionPaneRow into the neutral livePaneRow DTO so the notify side does
+// not depend on attention internals (state consts, title-prefix helpers).
+type attentionLivePaneLister struct {
+	runner tmuxRunner
+}
+
+func newAttentionLivePaneLister(runner tmuxRunner) livePaneLister {
+	return attentionLivePaneLister{runner: runner}
+}
+
+// newDefaultLivePaneLister builds the production live-pane lister used by
+// the app constructor wiring in [New].
+func newDefaultLivePaneLister() livePaneLister {
+	return newAttentionLivePaneLister(inttmux.ExecRunner{})
+}
+
+func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
+	rows, err := (&attentionCommand{runner: l.runner}).listAttentionPanes()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]livePaneRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, livePaneRow{
+			Session:        row.Session,
+			Window:         row.Window,
+			Pane:           row.Pane,
+			Socket:         row.Socket,
+			Title:          row.Title,
+			AttentionState: row.AttentionState,
+			AIState:        row.AIState,
+			Agent:          row.Agent,
+			Topic:          row.Topic,
+			ReplyState:     row.AttentionState == attentionStateReply,
+			TitleBadge:     hasAttentionPrefix(row.Title) || hasBraillePrefix(row.Title),
+		})
+	}
+	return out, nil
 }
 
 func filterAttentionRows(rows []attentionPaneRow) []attentionPaneRow {
@@ -418,11 +609,17 @@ func formatAttentionActive(active bool) string {
 }
 
 func (c *attentionCommand) setPaneOption(paneID, option, value string) {
-	_, _ = c.run("tmux", "set-option", "-p", "-t", paneID, option, value)
+	if c.runner == nil {
+		return
+	}
+	_ = intmux.NewRunner(c.runner).SetPaneOption(context.Background(), paneID, option, value)
 }
 
 func (c *attentionCommand) unsetPaneOption(paneID, option string) {
-	_, _ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, option)
+	if c.runner == nil {
+		return
+	}
+	_ = intmux.NewRunner(c.runner).UnsetPaneOption(context.Background(), paneID, option)
 }
 
 func (c *attentionCommand) selectPaneTitle(paneID, title string) {

@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/theme"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 func newStatusNotifyCommand(store notifyStore) *statusCommand {
@@ -79,18 +82,19 @@ func TestStatusNotifyExternalEntryRendersInfoBadge(t *testing.T) {
 	}
 }
 
-// AI-source entry whose text begins with `claude:` strips the prefix and
-// renders project, reply-needed state, and agent badges.
-func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
+// AI-source entry renders project and topic badges from metadata without
+// repeating state or agent badges in the statusbar body.
+func TestStatusNotifyAIEntryRendersTopicBadge(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	store := &stubNotifyStore{listEntries: []notify.Notification{
 		{
 			ID:        "a",
-			Text:      "claude: reply ready · review",
+			Text:      "review needed before shipping",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "shipping"},
 			Session:   "s",
 			Window:    "1",
 			Pane:      "0",
@@ -106,18 +110,20 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	got := stdout.String()
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
-		renderNotifyBadge("NEED", notify.SeverityInfo),
-		renderNotifyAgentBadge("claude"),
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want badge %q", got, want)
 		}
 	}
-	if strings.Contains(got, "claude:") {
-		t.Fatalf("stdout = %q, agent prefix should have been stripped from text", got)
+	if strings.Contains(got, "claude:") || strings.Contains(got, "reply ready") {
+		t.Fatalf("stdout = %q, body should not include agent/category prefix", got)
 	}
-	if !strings.Contains(got, "reply ready · review") {
-		t.Fatalf("stdout = %q, want body 'reply ready · review'", got)
+	if !strings.Contains(got, "review") {
+		t.Fatalf("stdout = %q, want body 'review'", got)
+	}
+	if strings.Contains(got, " NEED ") || strings.Contains(got, " claude ") {
+		t.Fatalf("stdout = %q, must not include state/agent badges for AI statusbar", got)
 	}
 	if strings.Contains(got, "w1.p0") {
 		t.Fatalf("stdout = %q, must not include pane target", got)
@@ -127,7 +133,39 @@ func TestStatusNotifyAIEntryRendersAgentBadge(t *testing.T) {
 	}
 }
 
-func TestStatusNotifyWarnEntryRendersYellowBadge(t *testing.T) {
+func TestStatusNotifyPaletteSeparatesAttentionAndAI(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	out := formatStatusNotify([]notify.Notification{{
+		ID:        "a",
+		Text:      "review needed before shipping",
+		Severity:  notify.SeverityInfo,
+		Source:    notify.SourceAI,
+		Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "state": "need", "topic": "review"},
+		Session:   "s",
+		CreatedAt: now,
+	}}, 80, now)
+
+	for _, want := range []string{
+		"#[bg=" + tmuxAccentAttentionBg + ",fg=" + tmuxStateProgressFg + "]",
+		"#[bg=" + tmuxAccentAIBg + ",fg=colour16,bold] review ",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status notify palette output = %q, want %q", out, want)
+		}
+	}
+	for _, notWant := range []string{"brightcyan", "bg=colour45", "bg=colour29", "bg=colour51"} {
+		if strings.Contains(out, notWant) {
+			t.Fatalf("status notify palette output = %q, must not use action/legacy color %q", out, notWant)
+		}
+	}
+	if !strings.Contains(out, "#[bg="+tmuxAccentAttentionBg+",fg="+theme.TmuxStateAheadFg+"]") {
+		t.Fatalf("status notify palette output = %q, want blue age foreground", out)
+	}
+}
+
+func TestStatusNotifyWarnEntryRendersAmberBadge(t *testing.T) {
 	t.Parallel()
 
 	store := &stubNotifyStore{listEntries: []notify.Notification{
@@ -140,7 +178,38 @@ func TestStatusNotifyWarnEntryRendersYellowBadge(t *testing.T) {
 	}
 	got := stdout.String()
 	if !strings.HasPrefix(got, notifyLineOpen+renderNotifyProjectBadge("ops")) || !strings.Contains(got, renderNotifyBadge("WARN", notify.SeverityWarn)) {
-		t.Fatalf("stdout = %q, want project + yellow WARN badges", got)
+		t.Fatalf("stdout = %q, want project + amber WARN badges", got)
+	}
+}
+
+func TestCriticalNotifySeverityDoesNotDriveAIStatusBadgePalette(t *testing.T) {
+	t.Parallel()
+
+	entry := notify.Notification{
+		ID:        "ai:main:%7",
+		Text:      "codex: PermissionRequest · Bash",
+		Severity:  notify.SeverityCritical,
+		Source:    notify.SourceAI,
+		Session:   "main",
+		Metadata:  map[string]string{"agent": "codex", "category": aiBadgeKindApprovalRequired, "state": "need"},
+		CreatedAt: time.Date(2026, time.May, 22, 12, 0, 0, 0, time.UTC),
+	}
+
+	if got := notifyBadgeOpen(entry.Severity); got != notifyBadgeCritOpen {
+		t.Fatalf("notify severity palette = %q, want critical queue palette %q", got, notifyBadgeCritOpen)
+	}
+	fallbackRoles := theme.RenderRolesFromEffective(theme.EffectiveTheme{})
+	if got := tmuxAIBadgeKindFg(aiBadgeKindApprovalRequired, fallbackRoles); got != theme.TmuxAIBadgeActionRequiredFg {
+		t.Fatalf("approval-required status badge fg = %q, want action-required %q", got, theme.TmuxAIBadgeActionRequiredFg)
+	}
+	if got := tmuxAIBadgeKindFg(aiBadgeKindApprovalRequired, fallbackRoles); got == tmuxStateCriticalFg {
+		t.Fatalf("approval-required status badge fg = %q, must not follow critical notify severity", got)
+	}
+	if got := tmuxAIBadgeKindFg(aiBadgeKindResponseComplete, fallbackRoles); got != theme.TmuxAIBadgeSuccessFg {
+		t.Fatalf("response-complete status badge fg = %q, want success %q", got, theme.TmuxAIBadgeSuccessFg)
+	}
+	if got := tmuxAIBadgeKindFg(aiBadgeKindInProgress, fallbackRoles); got != theme.TmuxAIBadgeProgressFg {
+		t.Fatalf("in-progress status badge fg = %q, want progress %q", got, theme.TmuxAIBadgeProgressFg)
 	}
 }
 
@@ -244,9 +313,10 @@ func fixtureAIEntry(now time.Time) []notify.Notification {
 	return []notify.Notification{
 		{
 			ID:        "a",
-			Text:      "claude: reply ready · review",
+			Text:      "review needed before shipping",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "shipping"},
 			Session:   "s",
 			Window:    "1",
 			Pane:      "0",
@@ -254,9 +324,10 @@ func fixtureAIEntry(now time.Time) []notify.Notification {
 		},
 		{
 			ID:        "b",
-			Text:      "claude: another",
+			Text:      "another",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "shipping"},
 			Session:   "s",
 			Window:    "1",
 			Pane:      "0",
@@ -272,9 +343,10 @@ func TestStatusNotifyLongBodyClipsBeforeDroppingAge(t *testing.T) {
 	entries := []notify.Notification{
 		{
 			ID:        "a",
-			Text:      "claude: reply ready with a very long body that should clip before metadata disappears",
+			Text:      "reply ready with a very long body that should clip before metadata disappears",
 			Severity:  notify.SeverityInfo,
 			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "claude", "category": "response_complete", "state": "need", "topic": "long"},
 			Session:   "project",
 			CreatedAt: now,
 		},
@@ -282,13 +354,12 @@ func TestStatusNotifyLongBodyClipsBeforeDroppingAge(t *testing.T) {
 		{ID: "c", Text: "oldest", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "project"},
 	}
 	out := formatStatusNotify(entries, 80, now)
-	if visualLen(out) > 80 {
-		t.Fatalf("visualLen=%d > 80: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 80 {
+		t.Fatalf("visualLen=%d > 80: %q", intrender.VisualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("project"),
-		renderNotifyBadge("NEED", notify.SeverityInfo),
-		renderNotifyAgentBadge("claude"),
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "long"}}),
 		"just now",
 		"+2",
 		"…",
@@ -303,21 +374,60 @@ func TestStatusNotifyWidthTier1Long(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	out := formatStatusNotify(fixtureAIEntry(now), 80, now)
-	if visualLen(out) > 80 {
-		t.Fatalf("tier1 visualLen=%d > 80: %q", visualLen(out), out)
+	out := formatStatusNotify(fixtureAIEntry(now), 96, now)
+	if intrender.VisualLen(out) > 96 {
+		t.Fatalf("tier1 visualLen=%d > 96: %q", intrender.VisualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
-		renderNotifyBadge("NEED", notify.SeverityInfo),
-		renderNotifyAgentBadge("claude"),
-		"reply ready",
-		"2m",
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
+		"Claude · Response complete · review needed before shipping",
+		"2m ago",
 		"+1",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tier1 missing %q in %q", want, out)
 		}
+	}
+}
+
+func TestStatusNotifyLocaleFormatsAgeAITextAndCount(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	out := formatStatusNotifyWithLiveLocale([]notify.Notification{
+		{
+			ID:        "a",
+			Text:      "Ready",
+			Severity:  notify.SeverityInfo,
+			Source:    notify.SourceAI,
+			Metadata:  map[string]string{"agent": "codex", "category": "response_complete", "topic": "shipping"},
+			Session:   "s",
+			CreatedAt: now.Add(-36 * time.Second),
+		},
+		{
+			ID:        "b",
+			Text:      "older",
+			Severity:  notify.SeverityInfo,
+			Source:    notify.SourceAI,
+			Session:   "s",
+			CreatedAt: now.Add(-2 * time.Minute),
+		},
+	}, 80, now, nil, nil, i18n.Locale("ko-KR"))
+
+	for _, want := range []string{
+		renderNotifyProjectBadge("s"),
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
+		"Codex · 응답 완료",
+		"36초 전",
+		"+1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("localized status notify missing %q in %q", want, out)
+		}
+	}
+	if strings.Contains(out, "Ready") {
+		t.Fatalf("localized status notify = %q, response-complete Ready detail should be suppressed", out)
 	}
 }
 
@@ -328,15 +438,14 @@ func TestStatusNotifyWidthTier2ClipsTextBeforeAge(t *testing.T) {
 	// clip body text while retaining contextual badges and age.
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 45, now)
-	if visualLen(out) > 45 {
-		t.Fatalf("tier2 visualLen=%d > 45: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 45 {
+		t.Fatalf("tier2 visualLen=%d > 45: %q", intrender.VisualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
-		renderNotifyBadge("NEED", notify.SeverityInfo),
-		renderNotifyAgentBadge("claude"),
-		"reply ready",
-		"2m",
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
+		"Claude",
+		"2m ago",
 		"+1",
 		"…",
 	} {
@@ -350,14 +459,13 @@ func TestStatusNotifyWidthTier3DropsAgeAfterClippingText(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
-	out := formatStatusNotify(fixtureAIEntry(now), 28, now)
-	if visualLen(out) > 28 {
-		t.Fatalf("tier3 visualLen=%d > 28: %q", visualLen(out), out)
+	out := formatStatusNotify(fixtureAIEntry(now), 24, now)
+	if intrender.VisualLen(out) > 24 {
+		t.Fatalf("tier3 visualLen=%d > 24: %q", intrender.VisualLen(out), out)
 	}
 	for _, want := range []string{
 		notifyLineOpen + renderNotifyProjectBadge("s"),
-		renderNotifyBadge("NEED", notify.SeverityInfo),
-		renderNotifyAgentBadge("claude"),
+		renderNotifyTopicBadge(notify.Notification{Source: notify.SourceAI, Metadata: map[string]string{"topic": "shipping"}}),
 		"+1",
 		"…",
 	} {
@@ -378,8 +486,8 @@ func TestStatusNotifyWidthTier4TruncatesText(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 24, now)
-	if visualLen(out) > 24 {
-		t.Fatalf("tier4 visualLen=%d > 24: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 24 {
+		t.Fatalf("tier4 visualLen=%d > 24: %q", intrender.VisualLen(out), out)
 	}
 	if strings.Contains(out, " NEED ") || strings.Contains(out, " claude ") {
 		t.Fatalf("tier4 should drop badges before icon fallback at this width: %q", out)
@@ -392,15 +500,15 @@ func TestStatusNotifyWidthTier4TruncatesText(t *testing.T) {
 	}
 }
 
-// Tier 5 drops the block badges. The standalone severity-tinted `●`
-// icon preserves a minimal severity hint for very narrow statuslines.
-func TestStatusNotifyWidthTier5DropsBadge(t *testing.T) {
+// Tier 5 drops the block badges and keeps only clipped text plus count. It
+// intentionally avoids the old standalone severity dot in very narrow cells.
+func TestStatusNotifyWidthTier5DropsBadgeAndDot(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 14, now)
-	if visualLen(out) > 14 {
-		t.Fatalf("tier5 visualLen=%d > 14: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 14 {
+		t.Fatalf("tier5 visualLen=%d > 14: %q", intrender.VisualLen(out), out)
 	}
 	if strings.Contains(out, " NEED ") || strings.Contains(out, " claude ") {
 		t.Fatalf("tier5 must drop the block badges: %q", out)
@@ -408,11 +516,14 @@ func TestStatusNotifyWidthTier5DropsBadge(t *testing.T) {
 	if strings.Contains(out, "claude") {
 		t.Fatalf("tier5 must drop the agent label: %q", out)
 	}
-	if !strings.Contains(out, notifySeverityInfo+notifyIcon+notifyLineOpen) {
-		t.Fatalf("tier5 should still show the icon-only severity hint: %q", out)
+	if strings.Contains(out, notifyIcon) || strings.Contains(out, notifySeverityInfo+notifyIcon+notifyLineOpen) {
+		t.Fatalf("tier5 must not show the standalone severity dot: %q", out)
 	}
 	if !strings.Contains(out, "+1") {
 		t.Fatalf("tier5 should still show count: %q", out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Fatalf("tier5 should clip text with ellipsis: %q", out)
 	}
 }
 
@@ -421,11 +532,43 @@ func TestStatusNotifyWidthTier6HardTruncate(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	out := formatStatusNotify(fixtureAIEntry(now), 8, now)
-	if visualLen(out) > 8 {
-		t.Fatalf("tier6 visualLen=%d > 8: %q", visualLen(out), out)
+	if intrender.VisualLen(out) > 8 {
+		t.Fatalf("tier6 visualLen=%d > 8: %q", intrender.VisualLen(out), out)
 	}
 	if !strings.HasSuffix(out, "#[default]") {
 		t.Fatalf("tier6 must end with #[default]: %q", out)
+	}
+}
+
+func TestStatusNotifyCriticalVeryNarrowFallbackHasNoStandaloneDot(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
+	out := formatStatusNotify([]notify.Notification{{
+		ID:        "a",
+		Text:      "critical failure needs attention",
+		Severity:  notify.SeverityCritical,
+		Source:    notify.SourceExternal,
+		Session:   "prod",
+		CreatedAt: now,
+	}}, 6, now)
+	if intrender.VisualLen(out) > 6 {
+		t.Fatalf("critical narrow visualLen=%d > 6: %q", intrender.VisualLen(out), out)
+	}
+	if strings.Contains(out, notifyIcon) {
+		t.Fatalf("critical narrow fallback must not render standalone dot: %q", out)
+	}
+	if strings.Contains(out, notifySeverityCrit) {
+		t.Fatalf("critical narrow fallback must not render critical severity escape: %q", out)
+	}
+	if strings.Contains(out, renderNotifyBadge("CRIT", notify.SeverityCritical)) {
+		t.Fatalf("critical narrow fallback should drop the CRIT badge: %q", out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Fatalf("critical narrow fallback should clip text: %q", out)
+	}
+	if !strings.HasSuffix(out, "#[default]") {
+		t.Fatalf("critical narrow fallback must end with #[default]: %q", out)
 	}
 }
 
@@ -434,17 +577,15 @@ func TestStatusNotifyAgentPrefixGracefulFallback(t *testing.T) {
 
 	now := time.Date(2026, time.May, 6, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
-		name      string
-		text      string
-		wantAgent string // "" means INFO label badge
-		wantState string
+		name string
+		text string
 	}{
-		{name: "no colon", text: "reply ready", wantAgent: "", wantState: "NEED"},
-		{name: "unknown agent", text: "gpt: reply ready", wantAgent: "", wantState: "NEED"},
-		{name: "empty body after colon", text: "claude:", wantAgent: "", wantState: "INFO"},
-		{name: "leading colon", text: ":hello", wantAgent: "", wantState: "INFO"},
-		{name: "codex prefix", text: "codex: thought", wantAgent: "codex", wantState: "INFO"},
-		{name: "claude prefix uppercase", text: "Claude: ready", wantAgent: "claude", wantState: "INFO"},
+		{name: "no colon", text: "reply ready"},
+		{name: "unknown agent", text: "gpt: reply ready"},
+		{name: "empty body after colon", text: "claude:"},
+		{name: "leading colon", text: ":hello"},
+		{name: "codex prefix", text: "codex: thought"},
+		{name: "claude prefix uppercase", text: "Claude: ready"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -456,16 +597,8 @@ func TestStatusNotifyAgentPrefixGracefulFallback(t *testing.T) {
 			if !strings.HasPrefix(out, notifyLineOpen+renderNotifyProjectBadge("s")) {
 				t.Fatalf("expected project badge at start of %q", out)
 			}
-			wantStateBadge := renderNotifyBadge(tc.wantState, notify.SeverityInfo)
-			if !strings.Contains(out, wantStateBadge) {
-				t.Fatalf("expected state badge %q in %q", wantStateBadge, out)
-			}
-			wantAgentBadge := renderNotifyAgentBadge(tc.wantAgent)
-			if tc.wantAgent != "" && !strings.Contains(out, wantAgentBadge) {
-				t.Fatalf("expected agent badge %q in %q", wantAgentBadge, out)
-			}
-			if tc.wantAgent == "" && (strings.Contains(out, notifyAgentOpen) || strings.Contains(out, notifyAgentClaude) || strings.Contains(out, notifyAgentCodex)) {
-				t.Fatalf("did not expect agent badge in %q", out)
+			if strings.Contains(out, " NEED ") || strings.Contains(out, " INFO ") || strings.Contains(out, " codex ") || strings.Contains(out, " claude ") {
+				t.Fatalf("did not expect state/agent badge in AI statusbar output %q", out)
 			}
 		})
 	}
@@ -479,17 +612,17 @@ func TestFormatRelativeAgeBuckets(t *testing.T) {
 		want string
 	}{
 		{0, "just now"},
-		{30 * time.Second, "just now"},
-		{59 * time.Second, "just now"},
-		{60 * time.Second, "1m"},
-		{2 * time.Minute, "2m"},
-		{45 * time.Minute, "45m"},
-		{59*time.Minute + 59*time.Second, "59m"},
-		{time.Hour, "1h"},
-		{3 * time.Hour, "3h"},
-		{23*time.Hour + 59*time.Minute, "23h"},
-		{24 * time.Hour, "1d"},
-		{73 * time.Hour, "3d"},
+		{30 * time.Second, "30s ago"},
+		{59 * time.Second, "59s ago"},
+		{60 * time.Second, "1m ago"},
+		{2 * time.Minute, "2m ago"},
+		{45 * time.Minute, "45m ago"},
+		{59*time.Minute + 59*time.Second, "59m ago"},
+		{time.Hour, "1h ago"},
+		{3 * time.Hour, "3h ago"},
+		{23*time.Hour + 59*time.Minute, "23h ago"},
+		{24 * time.Hour, "1d ago"},
+		{73 * time.Hour, "3d ago"},
 		{-time.Minute, "just now"},
 	}
 	for _, tc := range cases {
