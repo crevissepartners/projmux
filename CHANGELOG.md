@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.2](https://github.com/crevissepartners/projmux/compare/v0.8.1...v0.8.2) (2026-08-10)
+
+
+### Features
+
+* add Linux resource statusbar lab ([3a5661a](https://github.com/crevissepartners/projmux/commit/3a5661aebe85ca29af48ba84b5dbbc16f22d520d))
+* **tmux:** add Linux resource statusbar Lab ([#554](https://github.com/crevissepartners/projmux/issues/554)) ([3a5661a](https://github.com/crevissepartners/projmux/commit/3a5661aebe85ca29af48ba84b5dbbc16f22d520d))
+
+
+### Bug Fixes
+
+* **npm:** preserve native macOS key adapter ([#551](https://github.com/crevissepartners/projmux/issues/551)) ([5be5d7c](https://github.com/crevissepartners/projmux/commit/5be5d7c99ed0a4f12df42eadee9b6b3e98b75b89))
+* **tmux:** canonicalize executable path across npm update renames ([#553](https://github.com/crevissepartners/projmux/issues/553)) ([7544c43](https://github.com/crevissepartners/projmux/commit/7544c436e6fadb9f5b0fcbb18cee5c5f6474a2f5))
+
 ## [0.8.1](https://github.com/crevissepartners/projmux/compare/v0.8.0...v0.8.1) (2026-08-09)
 
 
