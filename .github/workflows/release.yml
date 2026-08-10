@@ -172,8 +172,14 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Download release binaries
+        uses: actions/download-artifact@v7
+        with:
+          path: dist/release
+          merge-multiple: true
+
       - name: Stage npm packages
-        run: scripts/package-npm.sh --version "${GITHUB_REF_NAME#v}" --out dist/npm
+        run: scripts/package-npm.sh --version "${GITHUB_REF_NAME#v}" --out dist/npm --release-dir dist/release
 
       - name: Publish npm packages
         run: |

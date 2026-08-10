@@ -34,12 +34,26 @@ or:
 scripts/package-npm.sh --version 1.2.3 --out /tmp/projmux-npm --pack
 ```
 
-The script stages package directories under `dist/npm` by default. It builds
-the Go binary for each supported platform, copies package metadata and docs,
-updates package versions in the staged copies, generates root
+The script stages package directories under `dist/npm` by default. Local
+all-platform packaging runs on macOS so both Darwin packages include the CGO
+native key adapter; attempting to build them on another host fails instead of
+silently producing a no-CGO Darwin package. The script builds the Go binary for
+each supported platform, copies package metadata and docs, updates package
+versions in the staged copies, generates root
 `optionalDependencies` for the supported platform packages using the same
-version, verifies the staged metadata is internally consistent, then runs
-`npm pack --dry-run` when `--pack` is set.
+version, verifies the staged metadata is internally consistent, checks both
+Darwin binaries for the native adapter, then runs `npm pack --dry-run` when
+`--pack` is set.
+
+Release packaging reuses the already-tested platform archives rather than
+cross-compiling a second set of npm-only binaries:
+
+```bash
+scripts/package-npm.sh \
+  --version 1.2.3 \
+  --release-dir /path/to/release-archives \
+  --out /tmp/projmux-npm
+```
 
 ## Publish Order
 
@@ -69,13 +83,19 @@ Leave the npm trusted publisher environment field empty unless the workflow is
 later moved behind a GitHub deployment environment.
 
 Tag releases publish npm packages from GitHub Actions after release archives
-are uploaded. The workflow runs:
+are uploaded. The npm job downloads the same linux/darwin × amd64/arm64
+archives built by the release matrix and runs:
 
 ```bash
-scripts/package-npm.sh --version "${GITHUB_REF_NAME#v}" --out dist/npm
+scripts/package-npm.sh \
+  --version "${GITHUB_REF_NAME#v}" \
+  --out dist/npm \
+  --release-dir dist/release
 ```
 
-then publishes each staged package with `npm publish --access public`.
+This keeps the npm platform binaries byte-for-byte aligned with the GitHub
+Release binaries, including the `darwin && cgo` native key adapter, then
+publishes each staged package with `npm publish --access public`.
 The npm publish job uses GitHub Actions OIDC (`id-token: write`) instead of a
 long-lived `NPM_TOKEN` secret. PR CI runs `make npm-pack` so package staging and
 dry-run packing fail before release.

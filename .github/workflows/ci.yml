@@ -94,7 +94,7 @@ jobs:
 
   npm-pack:
     name: NPM Packages
-    runs-on: ubuntu-latest
+    runs-on: macos-15
 
     steps:
       - name: Checkout
@@ -156,6 +156,12 @@ jobs:
       - name: Validate npm package staging
         if: steps.package-scope.outputs.needed == '1'
         run: make npm-pack
+
+      - name: Verify npm Darwin native key adapters
+        if: steps.package-scope.outputs.needed == '1'
+        run: |
+          otool -L dist/npm/@projmux/darwin-x64/bin/projmux | grep -F ApplicationServices.framework
+          otool -L dist/npm/@projmux/darwin-arm64/bin/projmux | grep -F ApplicationServices.framework
 
   integration:
     name: Integration Tests
