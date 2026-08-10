@@ -1324,13 +1324,13 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} recent-windows",
 		"unbind-key -q F",
 		"set-hook -g pane-focus-out",
-		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane}",
+		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane} >/dev/null 2>&1 || true",
 		"set-hook -g pane-focus-in",
-		"'/tmp/proj mux/bin/projmux' attention clear #{hook_pane}",
+		"'/tmp/proj mux/bin/projmux' attention clear #{hook_pane} >/dev/null 2>&1 || true",
 		"set-hook -g after-select-pane",
-		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id}",
+		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id} >/dev/null 2>&1 || true",
 		"set-hook -g pane-exited",
-		"sleep 0.05; '/tmp/proj mux/bin/projmux' tmux rebalance-panes",
+		"sleep 0.05; '/tmp/proj mux/bin/projmux' tmux rebalance-panes >/dev/null 2>&1 || true",
 		"set-hook -g after-kill-pane",
 		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",
 		"set-hook -g after-select-window",
@@ -1388,6 +1388,26 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-config output = %q, did not expect substring %q", output, banned)
 		}
+	}
+}
+
+func TestTmuxPrintConfigCanonicalizesNpmStagingBinaryPath(t *testing.T) {
+	t.Parallel()
+
+	stagingPath := "/home/u/.nvm/versions/node/v24.15.0/lib/node_modules/.projmux-lvpOxyM9/node_modules/@projmux/linux-x64/bin/projmux"
+	cmd := &tmuxCommand{executable: func() (string, error) { return stagingPath, nil }}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	want := "/home/u/.nvm/versions/node/v24.15.0/lib/node_modules/projmux/node_modules/@projmux/linux-x64/bin/projmux"
+	if !strings.Contains(output, want) {
+		t.Fatalf("print-config output = %q, want substring %q", output, want)
+	}
+	if strings.Contains(output, ".projmux-lvpOxyM9") {
+		t.Fatalf("print-config output = %q, did not expect npm retire/staging segment %q", output, ".projmux-lvpOxyM9")
 	}
 }
 
@@ -3185,5 +3205,47 @@ func TestAppRunTmuxPopupToggleCloseSkipsSidebarRestoreForLegacyMarker(t *testing
 		if len(call.args) > 0 && (call.args[0] == "has-session" || call.args[0] == "switch-client") {
 			t.Fatalf("tmux calls = %#v, want no restore attempt without a recorded origin session", runner.calls)
 		}
+	}
+}
+
+func TestTmuxPopupPreviewUsesRawUncanonicalizedExecutable(t *testing.T) {
+	t.Parallel()
+
+	stagingPath := "/home/u/.nvm/versions/node/v24.15.0/lib/node_modules/.projmux-lvpOxyM9/node_modules/@projmux/linux-x64/bin/projmux"
+	canonicalPath := "/home/u/.nvm/versions/node/v24.15.0/lib/node_modules/projmux/node_modules/@projmux/linux-x64/bin/projmux"
+	popup := &stubTmuxPopupClient{}
+	app := &App{
+		tmux: &tmuxCommand{
+			popup:         popup,
+			executable:    func() (string, error) { return canonicalPath, nil },
+			rawExecutable: func() (string, error) { return stagingPath, nil },
+			runner: &recordingTmuxRunner{formats: map[string]string{
+				"#{client_tty}":    "/dev/pts/7",
+				"#{pane_id}":       "%9",
+				"#S":               "dev",
+				"#{client_width}":  "140",
+				"#{client_height}": "36",
+			}},
+		},
+	}
+	if err := app.Run([]string{"tmux", "popup-preview", "dev"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	// Immediate in-process re-exec must use the running (raw) path, which is
+	// guaranteed to exist; canonicalizing could point at a not-yet-materialized
+	// npm tree during an update window and fail with "... returned 127".
+	if !strings.Contains(popup.command, stagingPath) {
+		t.Fatalf("popup preview command = %q, want raw staging path %q", popup.command, stagingPath)
+	}
+	if strings.Contains(popup.command, canonicalPath) {
+		t.Fatalf("popup preview command = %q, must not canonicalize for immediate re-exec", popup.command)
+	}
+}
+
+func TestNewTmuxCommandWiresRawExecutable(t *testing.T) {
+	t.Parallel()
+
+	if newTmuxCommand().rawExecutable == nil {
+		t.Fatal("newTmuxCommand().rawExecutable = nil; popup re-exec would fall back to canonicalized path")
 	}
 }

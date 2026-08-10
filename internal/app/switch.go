@@ -116,6 +116,7 @@ type switchCommand struct {
 	inventory            previewInventory
 	inventoryErr         error
 	executable           func() (string, error)
+	rawExecutable        func() (string, error)
 	identity             sessionIdentityResolver
 	identityErr          error
 	validate             func(path string) error
@@ -173,26 +174,27 @@ func newSwitchCommand() *switchCommand {
 	paths, pathsErr := config.DefaultPathsFromEnv()
 
 	cmd := &switchCommand{
-		discover:     candidates.Discover,
-		pinStore:     newDefaultSwitchPinStore,
-		tagStore:     newDefaultSwitchTagStore,
-		tmuxRunner:   inttmux.ExecRunner{},
-		sessions:     client,
-		inventory:    tmuxPreviewInventory{client: client},
-		executable:   os.Executable,
-		identity:     identity,
-		identityErr:  err,
-		validate:     validateDirectory,
-		homeDir:      os.UserHomeDir,
-		workingDir:   os.Getwd,
-		lookupEnv:    os.Getenv,
-		gitBranch:    detectGitBranch,
-		kubeInfo:     defaultSwitchKubeInfo,
-		loadProjdir:  config.LoadProjdir,
-		saveProjdir:  config.SaveProjdir,
-		loadWorkdirs: config.LoadWorkdirs,
-		tmuxProjdir:  tmuxProjdirOption,
-		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		discover:      candidates.Discover,
+		pinStore:      newDefaultSwitchPinStore,
+		tagStore:      newDefaultSwitchTagStore,
+		tmuxRunner:    inttmux.ExecRunner{},
+		sessions:      client,
+		inventory:     tmuxPreviewInventory{client: client},
+		executable:    resolveExecutablePath,
+		rawExecutable: rawExecutablePath,
+		identity:      identity,
+		identityErr:   err,
+		validate:      validateDirectory,
+		homeDir:       os.UserHomeDir,
+		workingDir:    os.Getwd,
+		lookupEnv:     os.Getenv,
+		gitBranch:     detectGitBranch,
+		kubeInfo:      defaultSwitchKubeInfo,
+		loadProjdir:   config.LoadProjdir,
+		saveProjdir:   config.SaveProjdir,
+		loadWorkdirs:  config.LoadWorkdirs,
+		tmuxProjdir:   tmuxProjdirOption,
+		nativePicker:  intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 	}
 	if psmuxClient != nil {
 		cmd.sessions = psmuxClient
@@ -1620,14 +1622,25 @@ func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, pl
 	return c.launchSidebarOpenContinuation(ctx, plan, mode)
 }
 
+// ephemeralBinary returns the resolver for immediate, in-process re-exec
+// (sidebar continuation/reopen, preview command, one-shot window record). It
+// prefers rawExecutable (un-canonicalized) and falls back to executable only
+// when rawExecutable is not wired, e.g. in tests.
+func (c *switchCommand) ephemeralBinary() func() (string, error) {
+	if c.rawExecutable != nil {
+		return c.rawExecutable
+	}
+	return c.executable
+}
+
 func (c *switchCommand) launchSidebarOpenContinuation(ctx context.Context, plan switchPlan, mode projectStartupCandidate) error {
 	if c.tmuxRunner == nil {
 		return fmt.Errorf("switch sidebar continuation runner is not configured")
 	}
-	if c.executable == nil {
+	if c.ephemeralBinary() == nil {
 		return fmt.Errorf("switch sidebar continuation executable is not configured")
 	}
-	binaryPath, err := c.executable()
+	binaryPath, err := c.ephemeralBinary()()
 	if err != nil {
 		return fmt.Errorf("resolve switch sidebar continuation executable: %w", err)
 	}
@@ -1763,10 +1776,10 @@ func (c *switchCommand) reopenSidebarAfterTrust(ctx context.Context, client stri
 	if c.tmuxRunner == nil {
 		return fmt.Errorf("switch sidebar reopen runner is not configured")
 	}
-	if c.executable == nil {
+	if c.ephemeralBinary() == nil {
 		return fmt.Errorf("switch sidebar reopen executable is not configured")
 	}
-	binaryPath, err := c.executable()
+	binaryPath, err := c.ephemeralBinary()()
 	if err != nil {
 		return fmt.Errorf("resolve switch sidebar reopen executable: %w", err)
 	}
@@ -1882,10 +1895,10 @@ func (c *switchCommand) commitSidebarPreview(ctx context.Context) {
 	if !c.removeSidebarPreviewMarker() {
 		return
 	}
-	if c.tmuxRunner == nil || c.executable == nil {
+	if c.tmuxRunner == nil || c.ephemeralBinary() == nil {
 		return
 	}
-	binaryPath, err := c.executable()
+	binaryPath, err := c.ephemeralBinary()()
 	if err != nil {
 		return
 	}
@@ -2081,11 +2094,11 @@ type switchPickerSurface struct {
 }
 
 func (c *switchCommand) switchPickerSurface(plan switchPlan, includePreview bool) (switchPickerSurface, error) {
-	if c.executable == nil {
+	if c.ephemeralBinary() == nil {
 		return switchPickerSurface{}, nil
 	}
 
-	binaryPath, err := c.executable()
+	binaryPath, err := c.ephemeralBinary()()
 	if err != nil {
 		return switchPickerSurface{}, fmt.Errorf("resolve switch preview executable: %w", err)
 	}

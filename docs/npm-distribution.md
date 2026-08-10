@@ -100,6 +100,18 @@ The npm publish job uses GitHub Actions OIDC (`id-token: write`) instead of a
 long-lived `NPM_TOKEN` secret. PR CI runs `make npm-pack` so package staging and
 dry-run packing fail before release.
 
+## Executable Path Canonicalization
+
+`npm update -g` retires the existing package directory by renaming it to
+`node_modules/.<pkg>-<hash>` before installing the replacement and deleting
+the retired directory. `os.Executable()` follows that rename, so a projmux
+process running across the update window can resolve its own path into the
+doomed staging directory. projmux canonicalizes any `node_modules/.<pkg>-<hash>`
+(or scoped `node_modules/@scope/.<pkg>-<hash>`) segment back to `<pkg>` before
+writing the resolved path into generated tmux config or live hooks, so a
+completed update never leaves stale-path `run-shell` commands failing with
+`... returned 127`.
+
 ## Non-Goals
 
 The npm installer must not install system dependencies, edit shell startup

@@ -31,7 +31,7 @@ type welcomeCommand struct {
 
 func newWelcomeCommand(update *updateCommand) *welcomeCommand {
 	return &welcomeCommand{
-		executable: os.Executable,
+		executable: resolveExecutablePath,
 		homeDir:    os.UserHomeDir,
 		lookupEnv:  os.Getenv,
 		readFile:   os.ReadFile,

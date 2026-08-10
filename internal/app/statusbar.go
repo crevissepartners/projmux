@@ -74,7 +74,7 @@ type statusbarCommand struct {
 func newStatusbarCommand() *statusbarCommand {
 	return &statusbarCommand{
 		runner:        statusbarExecRunner{},
-		executable:    os.Executable,
+		executable:    resolveExecutablePath,
 		notifyStoreFn: defaultStatusbarNotifyStore,
 		lookupEnv:     os.Getenv,
 		homeDir:       os.UserHomeDir,

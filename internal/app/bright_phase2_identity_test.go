@@ -41,41 +41,42 @@ func appLightThemeConfig() theme.ThemeConfig {
 }
 
 // brightPhase2ConfigGoldens are SHA-256 digests of the generated tmux configs
-// captured at main fa3da53 (pre-Phase 2), for a fixed binary path, shell, and
-// symbol decorations. The Phase 2 theme threading must not change a single
+// originally captured at main fa3da53 (pre-Phase 2) and refreshed after the
+// intentional attention/rebalance hook error-suppression change, for a fixed
+// binary path, shell, and symbol decorations. The Phase 2 theme threading must not change a single
 // byte for the fallback theme or any current dark preset.
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
-		"standalone": "c79647f859befce69975342e2bf3e24468442bdfbbfe9dec07e756973b3e655c",
-		"app":        "5ced3454170716d2f3353d870ea87a848e1c61434feec0c80659ae22c068cbc4",
+		"standalone": "0a0c735303f20592b0ac056744d023355ca5afdc8afe3a730c517f15aeadc919",
+		"app":        "6c590d4660d2028ec30d2ad753b6d825859858fa52cb2c34fc2928b45730f5ba",
 	},
 	"projmux": {
-		"standalone": "30ab75b5a69a9cbcba823dd64fee407b347501a52c7de911a092fc59821b5784",
-		"app":        "cfaf26535d15ee278ac2bc6d9f68675ce1b2643514bde23ec856a92ec89963f5",
+		"standalone": "1a34de07c3ea7ff0c1ea634184ba6ab9fe4d8ed0048445c149b388d55a464793",
+		"app":        "858d2b62b9805d578aadd0b39c0111a49e0fc7cd3fcdc43664f1be1a2dd36203",
 	},
 	"blue-hour": {
-		"standalone": "842f69d1c60226b4c45c05aca6e36e25ed1a3d83648e479cee5a6c75672019be",
-		"app":        "1fca935b31b6b14d811ada5276ed3717adbe7360091d7dc60bbc1f1312f3463f",
+		"standalone": "7270b67478b5d79872c78ebbe89837d5f183c21f97212ef406e80c8381133e57",
+		"app":        "a5188c37babdf478d50c0b8302feb6a29024cfe38e5eb12d610adba88b829a63",
 	},
 	"carbon-violet": {
-		"standalone": "1e2147056360863b8fae4b15224d48d9fb1d860813363553100faf24c6eb9476",
-		"app":        "2fb60b717a4ccb14bb92b30ee147addbf99c95505731b82622c3e9b5bce0ade9",
+		"standalone": "8d6c400182f1d9c8762cb7b6b6c8eb68126257de710f56da9a053573d6c8b7ef",
+		"app":        "28d6a080e55bcc3cbb9fc4b1eeb9abd0a5825f5ab41c4e0ddc7d52bee5808ade",
 	},
 	"ember": {
-		"standalone": "d4e4253ff880c1732066f91e75eb08179defcf5611c9cce517bed1e8dc1e360a",
-		"app":        "810c695149ba1e562e16613eb255e9133a3b044078aef2239239cc4ee12fc7f5",
+		"standalone": "23716b0a1759f44b6b83cf0e94492636fc68a2e2f38a40b2e6d052a0f8d65b44",
+		"app":        "b89005485814304236321efca94762c68b828e4a4fc85fe705f58fb769a63f18",
 	},
 	"forest": {
-		"standalone": "2ecd073e256af6d4c76f8b4484cdba7e859dd603202eb8e16772dedcc07da804",
-		"app":        "b7de38a717f2e3d573c430c81b8028e94870ae5464fff1f55db434adaea38172",
+		"standalone": "9496222dde755717142bca0fbabd5ba67b7f7b081ea6a84d04b7ab74c0984697",
+		"app":        "cea7677e567d30db264b31a20ca88eb57d33b78f66c24dad99737f8dc4e8564a",
 	},
 	"rose": {
-		"standalone": "e92826b2ca2f968e6ac2bcd60a817ce976f84f17685bf5e7e54833ff9d76a4f2",
-		"app":        "c391159186d72e0aa49004fdf6c7042f8f2de9c107c35ea0da955636a59d40ca",
+		"standalone": "320df93fc8913adcea8ebee1827e9630450cba7316fb42eb649c5fc8359f7d01",
+		"app":        "f676278fa7f6afbac734fea265d4a0de5bb78d586fec4fa22498ce6101780a97",
 	},
 	"high-contrast": {
-		"standalone": "40a68007c5e12a9f237ff3fd37cadd131f1e29b6b9b9a11c2fc360fe50e12248",
-		"app":        "1dbb1e5477036e1ef9f9c6641a434999f32ee61819477dcf9fd02997591fb7f6",
+		"standalone": "8676a11f91bc22ab6179897a6c1fefc6c664415253edc24bd15224f6752a9679",
+		"app":        "95fb3f627c10453ec7d9b7d2c90475237e5dfc07cea56d913dd5b35357c72b88",
 	},
 }
 

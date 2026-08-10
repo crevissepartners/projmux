@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -450,7 +449,7 @@ func (c *settingsCommand) setAIBadgeStyle(value string) error {
 		if err := c.runCommand("tmux", "set-option", "-g", "pane-border-format", tmuxPaneBorderFormatWithAIBadgeStyle(style, theme.RenderRolesFromEffective(source.effective))); err != nil {
 			return fmt.Errorf("set live tmux pane border format: %w", err)
 		}
-		binaryPath, err := os.Executable()
+		binaryPath, err := resolveExecutablePath()
 		if err != nil {
 			return fmt.Errorf("resolve live tmux executable: %w", err)
 		}

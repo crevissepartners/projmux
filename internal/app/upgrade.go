@@ -33,7 +33,7 @@ type upgradeCommand struct {
 
 func newUpgradeCommand() *upgradeCommand {
 	return &upgradeCommand{
-		executable:    os.Executable,
+		executable:    resolveExecutablePath,
 		evalSymlinks:  filepath.EvalSymlinks,
 		lookPath:      exec.LookPath,
 		mkdirTemp:     os.MkdirTemp,

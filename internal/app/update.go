@@ -123,7 +123,7 @@ func newUpdateCommand() *updateCommand {
 		cacheDir:    defaultUpdateCacheDir,
 		client:      &http.Client{Timeout: updateHTTPTimeout},
 		apiURL:      updateReleaseURL,
-		executable:  os.Executable,
+		executable:  resolveExecutablePath,
 		runExternal: runUpdateExternal,
 		goos:        runtime.GOOS,
 		goarch:      runtime.GOARCH,
