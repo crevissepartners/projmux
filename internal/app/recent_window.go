@@ -279,6 +279,7 @@ func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindow
 		"#{pane_id}",
 		"#{pane_title}",
 		"#{@projmux_pane_label}",
+		"#{@projmux_ai_agent}",
 		"#{@projmux_ai_topic}",
 		"#{pane_current_command}",
 		"#{pane_current_path}",
@@ -287,86 +288,91 @@ func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindow
 	if err != nil {
 		return recentwindows.Snapshot{}, fmt.Errorf("snapshot current tmux window: %w", err)
 	}
-	fields := parseRecentWindowFields(output, 11)
+	fields := parseRecentWindowFields(output, 12)
+	if len(fields) == 0 {
+		fields = parseRecentWindowFields(output, 11)
+		if len(fields) == 11 {
+			// Phase 0 label capture before agent identity was added.
+			fields = append(fields[:7], append([]string{""}, fields[7:]...)...)
+		}
+	}
 	if len(fields) == 0 {
 		fields = parseRecentWindowFields(output, 10)
+		if len(fields) == 10 {
+			// Legacy capture had neither user label nor agent metadata.
+			fields = append(fields[:6], append([]string{"", ""}, fields[6:]...)...)
+		}
 	}
-	if len(fields) == 10 {
-		fields = append(fields[:6], append([]string{""}, fields[6:]...)...)
-	}
-	if len(fields) != 11 || fields[1] == "" || fields[2] == "" {
+	if len(fields) != 12 || fields[1] == "" || fields[2] == "" {
 		return recentwindows.Snapshot{}, fmt.Errorf("snapshot current tmux window: tmux returned incomplete metadata")
 	}
-	titles, labels, badgeKinds, topics, commands := c.windowPaneMetadata(ctx, fields[2])
+	titles, labels, badgeKinds, agents, topics, commands := c.windowPaneMetadata(ctx, fields[2])
 	return recentwindows.Snapshot{
 		Socket:     fields[0],
 		Session:    fields[1],
 		WindowID:   fields[2],
 		WindowName: fields[3],
 		Project: resolveProjectDisplayName(projectidentity.Inputs{
-			AnchorPath:  fields[10],
-			PaneCWD:     fields[9],
+			AnchorPath:  fields[11],
+			PaneCWD:     fields[10],
 			SessionName: fields[1],
 		}, projectidentity.OSFS),
 		LastPaneID:     fields[4],
 		LastPaneTitle:  fields[5],
 		LastPaneLabel:  fields[6],
+		LastPaneAgent:  fields[7],
 		PaneTitles:     titles,
 		PaneLabels:     labels,
 		PaneBadgeKinds: badgeKinds,
+		PaneAgents:     agents,
 		PaneTopics:     topics,
 		PaneCommands:   commands,
-		LastPaneTopic:  fields[7],
-		LastCommand:    fields[8],
+		LastPaneTopic:  fields[8],
+		LastCommand:    fields[9],
 		LastFocusedAt:  c.currentTime().UTC(),
 	}, nil
 }
 
-// windowPaneMetadata collects every pane's title, AI badge kind, AI topic, and
-// current command for the given window so the picker can mirror the app
-// pane-border visible label rule. The returned slices are positionally aligned.
-// Failures degrade gracefully: an empty result falls back to LastPaneTitle at
-// display time, missing badge kinds render no status glyph, and missing
-// topics/commands fall back to the pane title.
-func (c *recentWindowCommand) windowPaneMetadata(ctx context.Context, windowID string) (titles, labels, badgeKinds, topics, commands []string) {
+// windowPaneMetadata captures every pane's raw title, user label, AI badge
+// kind, actual AI agent, AI topic, and command. Returned slices are aligned;
+// missing legacy label/agent fields stay empty rather than being inferred.
+func (c *recentWindowCommand) windowPaneMetadata(ctx context.Context, windowID string) (titles, labels, badgeKinds, agents, topics, commands []string) {
 	if c.runner == nil || strings.TrimSpace(windowID) == "" {
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
-	format := strings.Join([]string{"#{pane_title}", "#{@projmux_pane_label}", "#{@projmux_ai_badge_kind}", "#{@projmux_ai_topic}", "#{pane_current_command}"}, recentWindowFieldSep)
+	format := strings.Join([]string{"#{pane_title}", "#{@projmux_pane_label}", "#{@projmux_ai_badge_kind}", "#{@projmux_ai_agent}", "#{@projmux_ai_topic}", "#{pane_current_command}"}, recentWindowFieldSep)
 	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-t", windowID, "-F", format)
 	if err != nil {
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
-	rows := parseRecentWindowRows(output, 5)
+	rows := parseRecentWindowRows(output, 6)
 	if len(rows) == 0 {
-		for _, fields := range parseRecentWindowRows(output, 4) {
-			rows = append(rows, append(fields[:1], append([]string{""}, fields[1:]...)...))
+		for _, fields := range parseRecentWindowRows(output, 5) {
+			rows = append(rows, append(fields[:3], append([]string{""}, fields[3:]...)...))
 		}
 	}
-	titles = make([]string, 0, len(rows))
-	labels = make([]string, 0, len(rows))
-	badgeKinds = make([]string, 0, len(rows))
-	topics = make([]string, 0, len(rows))
-	commands = make([]string, 0, len(rows))
+	if len(rows) == 0 {
+		for _, fields := range parseRecentWindowRows(output, 4) {
+			withLabel := append(fields[:1], append([]string{""}, fields[1:]...)...)
+			rows = append(rows, append(withLabel[:3], append([]string{""}, withLabel[3:]...)...))
+		}
+	}
 	for _, fields := range rows {
 		title := strings.TrimSpace(fields[0])
-		label := strings.TrimSpace(fields[1])
-		kind := strings.TrimSpace(fields[2])
-		topic := strings.TrimSpace(fields[3])
-		command := strings.TrimSpace(fields[4])
 		if title == "" {
 			continue
 		}
 		titles = append(titles, title)
-		labels = append(labels, label)
-		badgeKinds = append(badgeKinds, kind)
-		topics = append(topics, topic)
-		commands = append(commands, command)
+		labels = append(labels, strings.TrimSpace(fields[1]))
+		badgeKinds = append(badgeKinds, strings.TrimSpace(fields[2]))
+		agents = append(agents, strings.TrimSpace(fields[3]))
+		topics = append(topics, strings.TrimSpace(fields[4]))
+		commands = append(commands, strings.TrimSpace(fields[5]))
 	}
 	if len(titles) == 0 {
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
-	return titles, labels, badgeKinds, topics, commands
+	return titles, labels, badgeKinds, agents, topics, commands
 }
 
 func (c *recentWindowCommand) liveWindows(ctx context.Context, socket string) ([]recentwindows.LiveWindow, error) {
@@ -528,7 +534,8 @@ func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time, ba
 		meta = append(meta, lastVisit)
 	}
 
-	searchTail := append([]string{candidate.LastPaneLabel, candidate.LastPaneTopic}, candidate.PaneLabels...)
+	searchTail := append([]string{candidate.LastPaneLabel, candidate.LastPaneAgent, candidate.LastPaneTopic}, candidate.PaneLabels...)
+	searchTail = append(searchTail, candidate.PaneAgents...)
 	searchTail = append(searchTail, candidate.PaneTopics...)
 	searchTail = append(searchTail, candidate.PaneCommands...)
 	searchTail = append(searchTail,
@@ -616,6 +623,7 @@ type recentWindowPaneCell struct {
 	title   string
 	label   string
 	kind    string
+	agent   string
 	topic   string
 	command string
 }
@@ -626,7 +634,7 @@ type recentWindowPaneCell struct {
 func (cell recentWindowPaneCell) perceivedTitle() string {
 	return paneidentity.Resolve(paneidentity.Inputs{
 		Label:   cell.label,
-		AIAgent: cell.topic,
+		AIAgent: cell.agent,
 		AITopic: cell.topic,
 		Command: cell.command,
 		Title:   cell.title,
@@ -682,41 +690,38 @@ func recentWindowPaneSummaryLine(candidate recentwindows.Candidate, badgeStyle s
 // fallbacks: when no PaneTitles exist it falls back to a single LastPaneTitle
 // (then LastCommand) cell with no badge kind.
 func recentWindowPaneCells(candidate recentwindows.Candidate) []recentWindowPaneCell {
-	kinds := candidate.PaneBadgeKinds
-	labels := candidate.PaneLabels
-	topics := candidate.PaneTopics
-	commands := candidate.PaneCommands
 	cells := make([]recentWindowPaneCell, 0, len(candidate.PaneTitles))
 	for i, title := range candidate.PaneTitles {
-		title = strings.TrimSpace(title)
-		kind := ""
-		if i < len(kinds) {
-			kind = strings.TrimSpace(kinds[i])
+		cell := recentWindowPaneCell{title: strings.TrimSpace(title)}
+		if i < len(candidate.PaneBadgeKinds) {
+			cell.kind = strings.TrimSpace(candidate.PaneBadgeKinds[i])
 		}
-		topic := ""
-		if i < len(topics) {
-			topic = strings.TrimSpace(topics[i])
+		if i < len(candidate.PaneLabels) {
+			cell.label = strings.TrimSpace(candidate.PaneLabels[i])
 		}
-		command := ""
-		if i < len(commands) {
-			command = strings.TrimSpace(commands[i])
+		if i < len(candidate.PaneAgents) {
+			cell.agent = strings.TrimSpace(candidate.PaneAgents[i])
 		}
-		label := ""
-		if i < len(labels) {
-			label = strings.TrimSpace(labels[i])
+		if i < len(candidate.PaneTopics) {
+			cell.topic = strings.TrimSpace(candidate.PaneTopics[i])
 		}
-		if title == "" && label == "" && kind == "" && topic == "" && command == "" {
-			continue
+		if i < len(candidate.PaneCommands) {
+			cell.command = strings.TrimSpace(candidate.PaneCommands[i])
 		}
-		cells = append(cells, recentWindowPaneCell{title: title, label: label, kind: kind, topic: topic, command: command})
+		if cell.title != "" || cell.label != "" || cell.kind != "" || cell.agent != "" || cell.topic != "" || cell.command != "" {
+			cells = append(cells, cell)
+		}
 	}
 	if len(cells) == 0 {
-		if label := strings.TrimSpace(candidate.LastPaneLabel); label != "" {
-			cells = append(cells, recentWindowPaneCell{label: label, topic: candidate.LastPaneTopic, command: candidate.LastCommand})
-		} else if title := strings.TrimSpace(candidate.LastPaneTitle); title != "" {
-			cells = append(cells, recentWindowPaneCell{title: title})
-		} else if cmd := strings.TrimSpace(candidate.LastCommand); cmd != "" {
-			cells = append(cells, recentWindowPaneCell{title: cmd})
+		cell := recentWindowPaneCell{
+			title:   strings.TrimSpace(candidate.LastPaneTitle),
+			label:   strings.TrimSpace(candidate.LastPaneLabel),
+			agent:   strings.TrimSpace(candidate.LastPaneAgent),
+			topic:   strings.TrimSpace(candidate.LastPaneTopic),
+			command: strings.TrimSpace(candidate.LastCommand),
+		}
+		if cell.title != "" || cell.label != "" || cell.agent != "" || cell.topic != "" || cell.command != "" {
+			cells = append(cells, cell)
 		}
 	}
 	return cells

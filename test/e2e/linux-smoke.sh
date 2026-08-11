@@ -152,8 +152,68 @@ recorder_client=""
 smoke_wait_for "attached recorder tmux client" sh -c \
   "test -n \"\$(tmux -L '$recorder_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
 recorder_client="$(tmux -L "$recorder_socket" list-clients -F '#{client_name}' | head -n 1)"
-tmux -L "$recorder_socket" display-popup -c "$recorder_client" -T "Recorder E2E" -w 72 -h 20 -E \
-  "env PROJMUX_PICKER_BACKEND=native '$bin' settings" &
+
+# Reuse this attached client and FIFO for the canonical rename-pane-label
+# command-prompt contract.
+recorder_pane="$(tmux -L "$recorder_socket" display-message -p -t "$recorder_client" '#{pane_id}')"
+tmux -L "$recorder_socket" select-pane -T "recorder raw title" -t "$recorder_pane"
+tmux -L "$recorder_socket" set-option -p -t "$recorder_pane" @projmux_pane_label "existing label"
+tmux -L "$recorder_socket" set-option -p -t "$recorder_pane" @projmux_ai_agent codex
+tmux -L "$recorder_socket" set-option -p -t "$recorder_pane" @projmux_ai_topic "recorder AI topic"
+tmux -L "$recorder_socket" set-option -p -t "$recorder_pane" @projmux_ai_topic_manual 1
+recorder_raw_title="$(tmux -L "$recorder_socket" display-message -p -t "$recorder_pane" '#{pane_title}')"
+
+recorder_rename_prompt() {
+  tmux -L "$recorder_socket" command-prompt -t "$recorder_client"     -p "pane label:" -I '#{@projmux_pane_label}'     "if-shell -F '#{==:%1,}' 'set-option -p -u @projmux_pane_label' 'set-option -p @projmux_pane_label \"%1\"'"
+}
+recorder_label_is() {
+  [[ "$(tmux -L "$recorder_socket" show-options -pqv -t "$recorder_pane" @projmux_pane_label)" == "$1" ]]
+}
+recorder_label_empty() {
+  [[ -z "$(tmux -L "$recorder_socket" show-options -pqv -t "$recorder_pane" @projmux_pane_label)" ]]
+}
+assert_recorder_identity_metadata() {
+  if [[ "$(tmux -L "$recorder_socket" show-options -pqv -t "$recorder_pane" @projmux_ai_topic)" != "recorder AI topic" ]] ||
+    [[ "$(tmux -L "$recorder_socket" show-options -pqv -t "$recorder_pane" @projmux_ai_topic_manual)" != "1" ]] ||
+    [[ "$(tmux -L "$recorder_socket" display-message -p -t "$recorder_pane" '#{pane_title}')" != "$recorder_raw_title" ]]; then
+    echo "rename-pane-label command-prompt mutated topic/manual/raw title" >&2
+    exit 1
+  fi
+}
+
+# Enter with no edits confirms the current-label initial value.
+recorder_rename_prompt
+printf '\r' >&9
+sleep 0.1
+if ! recorder_label_is "existing label"; then
+  echo "rename-pane-label prompt did not initialize from current label" >&2
+  exit 1
+fi
+assert_recorder_identity_metadata
+
+# Ctrl-U replaces the initial value and Enter confirms it.
+recorder_rename_prompt
+printf '\025confirmed label\r' >&9
+smoke_wait_for "confirmed pane label" recorder_label_is "confirmed label"
+assert_recorder_identity_metadata
+
+# Native Esc cancels a staged edit and leaves the prior label unchanged.
+recorder_rename_prompt
+printf '\025cancelled label\033' >&9
+sleep 0.1
+if ! recorder_label_is "confirmed label"; then
+  echo "rename-pane-label Esc cancellation changed the label" >&2
+  exit 1
+fi
+assert_recorder_identity_metadata
+
+# Empty input plus Enter clears only the label.
+recorder_rename_prompt
+printf '\025\r' >&9
+smoke_wait_for "cleared pane label" recorder_label_empty
+assert_recorder_identity_metadata
+
+tmux -L "$recorder_socket" display-popup -c "$recorder_client" -T "Recorder E2E" -w 72 -h 20 -E   "env PROJMUX_PICKER_BACKEND=native '$bin' settings" &
 recorder_popup_pid=$!
 
 smoke_wait_for "Settings root" grep -aFq "Settings >" "$recorder_log"

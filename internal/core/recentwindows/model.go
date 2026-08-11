@@ -33,6 +33,7 @@ type Snapshot struct {
 	Project       string   `json:"project,omitempty"`
 	LastPaneID    string   `json:"last_pane_id,omitempty"`
 	LastPaneLabel string   `json:"last_pane_label,omitempty"`
+	LastPaneAgent string   `json:"last_pane_agent,omitempty"`
 	LastPaneTitle string   `json:"last_pane_title,omitempty"`
 	PaneTitles    []string `json:"pane_titles,omitempty"`
 	// PaneLabels carries user-owned pane labels parallel to PaneTitles.
@@ -41,6 +42,9 @@ type Snapshot struct {
 	// (same length/order when available). Additive and backward compatible: old
 	// state files omit it, so the picker falls back to titles-only rendering.
 	PaneBadgeKinds []string `json:"pane_badge_kinds,omitempty"`
+	// PaneAgents carries actual AI agents aligned with PaneTitles. Missing
+	// legacy values stay empty; topics never synthesize agent identity.
+	PaneAgents []string `json:"pane_agents,omitempty"`
 	// PaneTopics carries each pane's own AI topic parallel to PaneTitles (same
 	// length/order when available). Additive and backward compatible: old state
 	// files omit it, so the picker falls back to pane title then command.
@@ -205,10 +209,12 @@ func normalizeSnapshot(snapshot Snapshot) Snapshot {
 	snapshot.Project = strings.TrimSpace(snapshot.Project)
 	snapshot.LastPaneID = strings.TrimSpace(snapshot.LastPaneID)
 	snapshot.LastPaneLabel = strings.TrimSpace(snapshot.LastPaneLabel)
+	snapshot.LastPaneAgent = strings.TrimSpace(snapshot.LastPaneAgent)
 	snapshot.LastPaneTitle = strings.TrimSpace(snapshot.LastPaneTitle)
 	snapshot.PaneTitles = normalizePaneTitles(snapshot.PaneTitles)
 	snapshot.PaneLabels = normalizePaneMetadata(snapshot.PaneLabels)
 	snapshot.PaneBadgeKinds = normalizePaneBadgeKinds(snapshot.PaneBadgeKinds)
+	snapshot.PaneAgents = normalizePaneMetadata(snapshot.PaneAgents)
 	snapshot.PaneTopics = normalizePaneTopics(snapshot.PaneTopics)
 	snapshot.PaneCommands = normalizePaneCommands(snapshot.PaneCommands)
 	snapshot.LastPaneTopic = strings.TrimSpace(snapshot.LastPaneTopic)

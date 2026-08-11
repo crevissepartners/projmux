@@ -122,9 +122,9 @@ func TestClientCreateEphemeralSessionMarksSessionOption(t *testing.T) {
 func TestClientParsesMinimalInventory(t *testing.T) {
 	runner := &recordingRunner{
 		outputs: map[string]string{
-			callKey(recordedCall{name: "psmux", args: []string{"-L", "projmux", "list-sessions", "-F", "#{session_activity}" + fieldSep + "#{session_name}" + fieldSep + "#{session_attached}" + fieldSep + "#{session_windows}"}}):                                                                                                                             "20\x1fwork\x1f1\x1f2\n10\x1fhome\x1f0\x1f1\n",
-			callKey(recordedCall{name: "psmux", args: []string{"-L", "projmux", "list-windows", "-t", "work", "-F", "#{window_index}" + fieldSep + "#{?window_active,1,0}" + fieldSep + "#{window_name}" + fieldSep + "#{window_panes}" + fieldSep + "#{pane_current_path}"}}):                                                                                  "0\x1f1\x1feditor\x1f2\x1fC:\\repo\n",
-			callKey(recordedCall{name: "psmux", args: []string{"-L", "projmux", "list-panes", "-a", "-F", "#{session_name}" + fieldSep + "#{pane_id}" + fieldSep + "#{window_index}" + fieldSep + "#{pane_index}" + fieldSep + "#{?pane_active,1,0}" + fieldSep + "#{pane_title}" + fieldSep + "#{pane_current_command}" + fieldSep + "#{pane_current_path}"}}): "work\x1f%1\x1f0\x1f0\x1f1\x1fPowerShell\x1fpwsh\x1fC:\\repo\nwork\x1f%2\x1f0\x1f1\x1f0\x1fCodex\x1fcodex\x1fC:\\repo\n",
+			callKey(recordedCall{name: "psmux", args: []string{"-L", "projmux", "list-sessions", "-F", "#{session_activity}" + fieldSep + "#{session_name}" + fieldSep + "#{session_attached}" + fieldSep + "#{session_windows}"}}):                                                                                                                                                                   "20\x1fwork\x1f1\x1f2\n10\x1fhome\x1f0\x1f1\n",
+			callKey(recordedCall{name: "psmux", args: []string{"-L", "projmux", "list-windows", "-t", "work", "-F", "#{window_index}" + fieldSep + "#{?window_active,1,0}" + fieldSep + "#{window_name}" + fieldSep + "#{window_panes}" + fieldSep + "#{pane_current_path}"}}):                                                                                                                        "0\x1f1\x1feditor\x1f2\x1fC:\\repo\n",
+			callKey(recordedCall{name: "psmux", args: []string{"-L", "projmux", "list-panes", "-a", "-F", "#{session_name}" + fieldSep + "#{pane_id}" + fieldSep + "#{window_index}" + fieldSep + "#{pane_index}" + fieldSep + "#{?pane_active,1,0}" + fieldSep + "#{pane_title}" + fieldSep + "#{@projmux_pane_label}" + fieldSep + "#{pane_current_command}" + fieldSep + "#{pane_current_path}"}}): "work\x1f%1\x1f0\x1f0\x1f1\x1fPowerShell\x1fuser shell\x1fpwsh\x1fC:\\repo\nwork\x1f%2\x1f0\x1f1\x1f0\x1fCodex\x1f\x1fcodex\x1fC:\\repo\n",
 		},
 	}
 	client := NewClient(runner, WithSocketName("projmux"))
@@ -157,7 +157,7 @@ func TestClientParsesMinimalInventory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAllPanes() error = %v", err)
 	}
-	if len(panes) != 2 || panes[0].ID != "%1" || panes[0].Command != "pwsh" || panes[1].Title != "Codex" {
+	if len(panes) != 2 || panes[0].ID != "%1" || panes[0].Label != "user shell" || panes[0].Command != "pwsh" || panes[1].Title != "Codex" {
 		t.Fatalf("ListAllPanes() = %#v, want minimal pane inventory", panes)
 	}
 	if panes[0].AIState != "" || panes[0].AttentionState != "" {

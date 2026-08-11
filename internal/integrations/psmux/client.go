@@ -211,6 +211,7 @@ func (c *Client) ListAllPanes(ctx context.Context) ([]inttmux.Pane, error) {
 		"#{pane_index}",
 		"#{?pane_active,1,0}",
 		"#{pane_title}",
+		"#{@projmux_pane_label}",
 		"#{pane_current_command}",
 		"#{pane_current_path}",
 	))
@@ -495,8 +496,8 @@ func parseAllPanes(output []byte) ([]inttmux.Pane, error) {
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		fields := splitFields(raw, 8)
-		if len(fields) != 8 {
+		fields := splitFields(raw, 9)
+		if len(fields) != 9 {
 			return nil, fmt.Errorf("parse psmux panes: malformed row %q", raw)
 		}
 		windowIndex, err := strconv.Atoi(strings.TrimSpace(fields[2]))
@@ -521,8 +522,9 @@ func parseAllPanes(output []byte) ([]inttmux.Pane, error) {
 			WindowIndex: windowIndex,
 			PaneIndex:   paneIndex,
 			Title:       strings.TrimSpace(fields[5]),
-			Command:     strings.TrimSpace(fields[6]),
-			Path:        strings.TrimSpace(fields[7]),
+			Label:       strings.TrimSpace(fields[6]),
+			Command:     strings.TrimSpace(fields[7]),
+			Path:        strings.TrimSpace(fields[8]),
 			Active:      active,
 		})
 	}

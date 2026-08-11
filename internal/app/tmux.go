@@ -33,6 +33,7 @@ const (
 	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
 	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
 	tmuxWindowTitleWidth = 10
+	paneLabelOption      = "@projmux_pane_label"
 
 	tmuxAccentAttentionBg = theme.TmuxAccentAttentionBg
 	tmuxAccentAIBg        = theme.TmuxAccentAIBg

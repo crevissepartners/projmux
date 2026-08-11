@@ -295,6 +295,34 @@ func TestRecordPreservesPaneBadgeKindsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNormalizeSnapshotPaneAgentsKeepsAlignment(t *testing.T) {
+	t.Parallel()
+
+	snapshot := normalizeSnapshot(Snapshot{Session: "s", WindowID: "@1", PaneAgents: []string{"", " codex ", ""}})
+	if got := snapshot.PaneAgents; len(got) != 2 || got[0] != "" || got[1] != "codex" {
+		t.Fatalf("pane agents = %#v, want aligned metadata", got)
+	}
+	if got := normalizeSnapshot(Snapshot{Session: "s", WindowID: "@1", PaneAgents: []string{"", " "}}).PaneAgents; got != nil {
+		t.Fatalf("pane agents = %#v, want nil for all-empty legacy metadata", got)
+	}
+}
+
+func TestRecordPreservesPaneAgentsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	state, err := NewState(nil).Record(Snapshot{
+		Session: "s", WindowID: "@1", LastPaneAgent: " codex ",
+		PaneAgents: []string{"", "claude"},
+	}, DefaultLimit)
+	if err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+	got := state.Entries[0]
+	if got.LastPaneAgent != "codex" || len(got.PaneAgents) != 2 || got.PaneAgents[0] != "" || got.PaneAgents[1] != "claude" {
+		t.Fatalf("pane agent metadata = %#v/%q, want aligned round trip", got.PaneAgents, got.LastPaneAgent)
+	}
+}
+
 func TestNormalizeSnapshotPaneTopics(t *testing.T) {
 	t.Parallel()
 
