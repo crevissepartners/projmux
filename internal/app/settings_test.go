@@ -687,7 +687,7 @@ func settingsKoreanStaticRowSamples() []string {
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Preview restore", "dry-run only"),
 		settingsLabelInfoLocale(locale, "Action", "Toggle Settings", "Settings"),
 		settingsLabelInfoLocale(locale, "Action ID", "SettingsToggle", ""),
-		settingsLabelInfoLocale(locale, "Terminal", "Ghostty", "supported mappings: projmux init ghostty"),
+		settingsLabelInfoLocale(locale, "Terminal", "Ghostty", "supported mappings: projmux setup terminal ghostty"),
 		settingsLabelLocale(locale, settingsGlyphType, settingsColorType, "Add key", "press desired key"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Hooks", "on - default"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Sidebar startup picker", "on - default"),
@@ -4806,8 +4806,8 @@ func TestSettingsKeybindingAdvancedDeliveryCopyIsProjmuxOwned(t *testing.T) {
 		"xterm modified-key",
 		"UserKey/UserSequence",
 		"Advanced delivery",
-		"projmux init ghostty",
-		"projmux init windows-terminal",
+		"projmux setup terminal ghostty",
+		"projmux setup terminal windows-terminal",
 		"Projmux-owned snippets",
 	} {
 		if !hasEntryLabelContaining(entries, want) {
@@ -6444,7 +6444,7 @@ func TestSettingsKeybindingsDoesNotExposeTerminalMappingRows(t *testing.T) {
 	}
 
 	options := cmd.keybindingsOptions(settingsKeybindingsInit)
-	for _, absent := range []string{"Terminal", "Preview terminal mappings", "Apply terminal mappings", "projmux init"} {
+	for _, absent := range []string{"Terminal", "Preview terminal mappings", "Apply terminal mappings", "projmux init", "projmux setup terminal"} {
 		if hasEntryLabelContaining(options.Entries, absent) {
 			t.Fatalf("keybindings entries = %#v, did not want %q", options.Entries, absent)
 		}
@@ -6537,7 +6537,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		"new window, rename window/pane",
 		"try shortcuts in projmux shell",
 		"projmux setup reports swallowed shortcuts",
-		"projmux init previews supported terminal key delivery mappings",
+		"projmux setup terminal previews supported terminal key delivery mappings",
 		"projmux doctor checks tmux",
 		"configure a plain alias",
 		"Alt Meta defaults",

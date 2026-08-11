@@ -83,22 +83,26 @@ key map. Default `--timeout` is `5s`. Run it outside tmux after trying
 Settings > Keybindings edits in-app action aliases; terminal delivery
 diagnostics stay in this CLI flow.
 
-## init
+## setup terminal
 
 ```
-projmux init [terminal] [--apply | --dry-run] [--config <path>]
-             [--allow-symlink]
+projmux setup terminal [terminal] [--apply] [--config <path>]
+                              [--allow-symlink]
 ```
 
 Previews or applies terminal-specific key delivery mappings for supported
 terminals when `projmux setup` reports swallowed shortcuts. When `terminal` is
 omitted, autodetects from `$TERM_PROGRAM`/`$TERMINAL_EMULATOR`.
-Known terminals: `ghostty`, `windows-terminal`. Default is dry-run; pass
-`--apply` to write (timestamped `.bak.<timestamp>` is created). Refuses to
+Known terminals: `ghostty`, `windows-terminal`. Default is a read-only
+preview; pass `--apply` to write (timestamped `.bak.<timestamp>` is created). Refuses to
 write through a symlink unless `--allow-symlink` is passed (dotfiles repos).
 `--config <path>` overrides the candidate list when the adapter has more
 than one default location (Ghostty `config` vs `config.ghostty`). If setup
-shows every key arriving, skip init.
+shows every key arriving, skip terminal remediation.
+
+The top-level `projmux init` command remains a deprecated compatibility alias
+during the migration period. It prints the exact `projmux setup terminal`
+replacement to stderr and still accepts the legacy `--dry-run` flag.
 
 ## doctor
 
@@ -847,7 +851,8 @@ flags with the top-level `switch` UX:
   regenerates the app config, and reloads the running tmux session when
   possible; skipped or failed stages show `projmux tmux apply` as the recovery
   or sync command. Terminal diagnostics and terminal mapping application stay
-  in the `projmux shell` -> `projmux setup` -> `projmux init` remediation path.
+  in the `projmux shell` -> `projmux setup` -> `projmux setup terminal`
+  remediation path.
   The About section includes the `Welcome` entry. In Project
   Picker, `Project Root` manages the saved
   primary root (`~/.config/projmux/projdir`) and displays whether the effective

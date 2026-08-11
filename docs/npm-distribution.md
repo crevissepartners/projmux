@@ -18,7 +18,7 @@ The shim sets `PROJMUX_INSTALLER=npm` before executing the real binary so
 `projmux update status` and the Settings About screen can present
 npm-specific guidance. npm is only an update/install source label here; the
 keybinding flow remains `projmux shell` first, then `projmux setup` and
-`projmux init` only for terminals that swallow shortcuts.
+`projmux setup terminal` only for terminals that swallow shortcuts.
 
 ## Local Packaging
 
@@ -116,5 +116,5 @@ completed update never leaves stale-path `run-shell` commands failing with
 
 The npm installer must not install system dependencies, edit shell startup
 files, or mutate tmux config. Those actions stay behind explicit
-`projmux doctor`, `projmux init`, Settings About update actions, or future
+`projmux doctor`, `projmux setup terminal`, Settings About update actions, or future
 opt-in install commands.

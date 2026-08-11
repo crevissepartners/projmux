@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// GhosttyBinding is one keybind = trigger=action pair the projmux init
+// GhosttyBinding is one keybind = trigger=action pair the terminal remediation
 // command guarantees in the user's Ghostty config. The caller derives the
 // desired entries from its keybinding catalog; docs/keybindings.md mirrors
 // them for users.

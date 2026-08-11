@@ -217,7 +217,7 @@ func TestRenderProbeSummaryFlagsFailures(t *testing.T) {
 		"Failures:",
 		"Alt-2",
 		"Ctrl-N",
-		"projmux init ghostty",
+		"projmux setup terminal ghostty",
 		"Ghostty:",
 	} {
 		if !strings.Contains(out, want) {

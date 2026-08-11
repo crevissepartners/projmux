@@ -73,7 +73,7 @@ projmux shell
 Darwin 배포본의 `projmux shell`에서는 macOS 접근성 권한을 한 번 승인하면
 물리 키 어댑터가 자동으로 동작합니다. 그 밖의 경로에서는 tmux 밖에서
 `projmux setup`을 실행한 뒤, 지원 터미널에서는
-`projmux init [terminal] --apply`를 사용하세요.
+`projmux setup terminal [terminal] --apply`를 사용하세요.
 
 ## 일상 사용
 

@@ -978,8 +978,8 @@ func filterKeyBindingActions(actions []keyBindingAction, keep func(keyBindingAct
 	return out
 }
 
-// newInitCommand wires `projmux init` with the bundled terminal adapters,
-// injecting the desired bindings derived from the keybinding catalog.
+// newInitCommand wires terminal remediation with the bundled terminal
+// adapters, injecting the desired bindings derived from the keybinding catalog.
 func newInitCommand() *initcmd.Command {
 	return initcmd.New(
 		initcmd.NewGhosttyAdapter(ghosttyBindingsFromCatalog()),

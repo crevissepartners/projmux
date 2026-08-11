@@ -97,8 +97,8 @@ keybinding as saved; failures identify the stage that failed.
 Raw sequences that cannot be safely represented as a direct keybinding are not
 persisted. Use Settings to save a custom key. When key delivery needs
 terminal-layer remediation, first try the key in `projmux shell`, then run
-`projmux setup` from the raw terminal, then use `projmux init` for supported
-terminal adapters.
+`projmux setup` from the raw terminal, then use `projmux setup terminal` for
+supported terminal adapters.
 
 `~/.config/projmux/keymap.toml` can also be edited by hand. When the file is
 absent, generated tmux config stays on the built-in defaults.
@@ -159,8 +159,8 @@ print-config`, `projmux tmux install`, `projmux tmux print-app-config`,
 `projmux tmux install-app`, and `projmux shell`. Terminal init adapters such as
 Ghostty and Windows Terminal install built-in plain-byte mappings where needed;
 they do not read `keymap.toml` or copy saved keys into terminal configs.
-Changing terminal-layer mappings still requires rerunning `projmux init` and
-restarting the terminal where that terminal requires it.
+Changing terminal-layer mappings still requires rerunning `projmux setup
+terminal` and restarting the terminal where that terminal requires it.
 
 When a chord is overridden, projmux emits unbinds for both the stale default
 chord and the replacement before binding the merged action. Popup and floating

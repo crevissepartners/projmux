@@ -17,7 +17,7 @@ The recommended path when a key does not fire:
    `projmux shell` key adapter, then retry the physical key.
 3. Run `projmux setup` outside tmux to see which bytes reach the process.
 4. For supported terminals outside the native macOS app socket, preview
-   `projmux init [terminal]`; add `--apply`
+   `projmux setup terminal [terminal]`; add `--apply`
    only after reviewing the merge.
 5. For unsupported terminals, configure plain Meta bytes or add a custom key in
    Settings > Keybindings.
@@ -142,11 +142,11 @@ Advanced typed entry remains available from Action detail for literal
 risky/reserved key copy, and raw diagnostics. Advanced delivery is still owned
 by the selected Projmux action. The native macOS app-socket adapter reads the
 same safe chords directly; supported Ghostty and Windows Terminal mappings for
-other paths are previewed/applied through `projmux init`, not by storing raw
+other paths are previewed/applied through `projmux setup terminal`, not by storing raw
 sequences in the primary keymap. Options covers unbinding the action and
 reset/use-default flows. Diagnostic/probe/init workflows are not first-class
 Settings tabs; use `projmux setup` and, where the native adapter does not apply,
-`projmux init` from the terminal when key delivery needs remediation.
+`projmux setup terminal` from the terminal when key delivery needs remediation.
 
 Optional direct keys can be added for actions such as:
 
@@ -299,29 +299,29 @@ projmux setup --timeout 10s
 projmux setup --non-interactive
 ```
 
-## Auto-Config: `projmux init`
+## Terminal remediation: `projmux setup terminal`
 
-`projmux init` previews and optionally applies supported terminal mappings.
-Default mode is dry-run; pass `--apply` to write changes with a timestamped
+`projmux setup terminal` previews and optionally applies supported terminal
+mappings. Default mode is a read-only preview; pass `--apply` to write changes with a timestamped
 backup.
 
 ```sh
-projmux init
-projmux init ghostty
-projmux init ghostty --apply
-projmux init windows-terminal --apply
-projmux init --config /path/to/file
-projmux init --allow-symlink
+projmux setup terminal
+projmux setup terminal ghostty
+projmux setup terminal ghostty --apply
+projmux setup terminal windows-terminal --apply
+projmux setup terminal --config /path/to/file
+projmux setup terminal --allow-symlink
 ```
 
 The merge is idempotent: matching bindings are no-ops, missing bindings are
 added, and keys already mapped to a different user action are skipped with a
-warning. `projmux init` does not read `keymap.toml`; direct tmux keys still
+warning. `projmux setup terminal` does not read `keymap.toml`; direct tmux keys still
 belong in Settings > Keybindings or the keymap file.
 
 ### Ghostty
 
-`projmux init ghostty` emits plain Meta bytes for `Alt-1` through `Alt-5` in
+`projmux setup terminal ghostty` emits plain Meta bytes for `Alt-1` through `Alt-5` in
 the managed block:
 
 ```text
@@ -341,7 +341,7 @@ refused by default; pass `--allow-symlink` to write through the link.
 
 ### Windows Terminal
 
-`projmux init windows-terminal` merges `sendInput` actions identified by the
+`projmux setup terminal windows-terminal` merges `sendInput` actions identified by the
 `User.projmux*` ID prefix. The generated inputs use plain Meta bytes, tmux
 prefix sequences for split actions, and xterm modifier-arrow sequences for
 previous/next window:

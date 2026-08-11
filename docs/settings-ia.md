@@ -39,7 +39,7 @@ view-first layout:
   rows as always-visible sections.
 - Terminal delivery remediation lives outside Settings primary flow. The
   supported order is `projmux shell` first, then `projmux setup`, then
-  `projmux init` for supported terminal adapters.
+  `projmux setup terminal` for supported terminal adapters.
 - Rows that cannot safely be edited still stay visible. Mark diagnostic-only
   rows with the delivery path and reason instead of hiding them or turning them
   into unsupported editable keys. Transport-dependent rows stay visible with
