@@ -2,8 +2,8 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-base_image="${PROJMUX_POC_NO_FZF_BASE_IMAGE:-golang:1.24-trixie}"
-image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf-go124-trixie}"
+base_image="${PROJMUX_POC_NO_FZF_BASE_IMAGE:-golang:1.25-trixie}"
+image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf-go125-trixie}"
 dockerfile="$root/test/docker/no-fzf-poc.Dockerfile"
 host_uid="$(id -u)"
 host_gid="$(id -g)"

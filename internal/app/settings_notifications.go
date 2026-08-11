@@ -162,12 +162,6 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	notifyMode, notifySource := settingsDesktopNotifyResolver(c.homeDir, c.lookupEnv).resolveMode()
 	dedupe := c.currentAINotifyDedupeSeconds()
-	hookSummary := "not set"
-	if c.lookupEnv != nil {
-		if value := strings.TrimSpace(c.lookupEnv("PROJMUX_NOTIFY_HOOK")); value != "" {
-			hookSummary = value
-		}
-	}
 	return []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
@@ -189,16 +183,6 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Hook quiet policy", c.aiHookActionsSummary()),
 			Value:     settingsNotificationsHookActions,
 			SearchKey: "hook quiet policy runtime action codex claude notify state quiet",
-		},
-		{
-			Label:     settingsLabelInfoLocale(locale, "In-app queue", "statusbar/sidebar", "consume pending notify rows"),
-			Value:     settingsNotificationsQueue,
-			SearchKey: "in app queue notify sidebar statusbar pending",
-		},
-		{
-			Label:     settingsLabelInfoLocale(locale, "Notification hook override", hookSummary, "PROJMUX_NOTIFY_HOOK env"),
-			Value:     settingsNotificationsHookOverride,
-			SearchKey: "PROJMUX_NOTIFY_HOOK notification hook override env",
 		},
 	}
 }
@@ -458,16 +442,36 @@ func (c *settingsCommand) aiNotifyDiagnosticsSummary() string {
 		}
 	}
 	if len(parts) == 0 {
-		return "read-only doctor status"
+		parts = append(parts, "read-only doctor status")
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(append(parts, c.notifyHookOverrideSummary()), ", ")
+}
+
+func (c *settingsCommand) notifyHookOverrideSummary() string {
+	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("PROJMUX_NOTIFY_HOOK")) != "" {
+		return "hook override set"
+	}
+	return "built-in desktop sender"
 }
 
 func (c *settingsCommand) aiNotifyDiagnosticEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	diagnostics := c.currentAINotifyDiagnostics()
-	entries := make([]intpickercompat.Entry, 0, len(diagnostics)+1)
+	entries := make([]intpickercompat.Entry, 0, len(diagnostics)+2)
 	entries = append(entries, settingsBackEntryLocale(locale))
+	hookValue := "not set"
+	hookSource := "built-in platform sender"
+	if c.lookupEnv != nil {
+		if value := strings.TrimSpace(c.lookupEnv("PROJMUX_NOTIFY_HOOK")); value != "" {
+			hookValue = value
+			hookSource = "PROJMUX_NOTIFY_HOOK env"
+		}
+	}
+	entries = append(entries, intpickercompat.Entry{
+		Label:     settingsLabelInfoLocale(locale, "Desktop sender override", hookValue, hookSource),
+		Value:     settingsNoopValue,
+		SearchKey: "PROJMUX_NOTIFY_HOOK desktop sender override env",
+	})
 	for _, diag := range diagnostics {
 		entries = append(entries, aiNotifyDiagnosticEntryLocale(locale, diag))
 	}

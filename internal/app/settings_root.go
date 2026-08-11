@@ -130,7 +130,7 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 			Value: settingsSectionAI,
 		},
 		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Notifications", "desktop mode, delivery sources, queue surfaces"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Notifications", "desktop mode, delivery sources, and hook quiet policy"),
 			Value: settingsSectionNotifications,
 		},
 		{

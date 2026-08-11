@@ -2,8 +2,8 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-base_image="${PROJMUX_POC_NO_FZF_BASE_IMAGE:-golang:1.24-trixie}"
-image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf-go124-trixie}"
+base_image="${PROJMUX_POC_NO_FZF_BASE_IMAGE:-golang:1.25-trixie}"
+image="${PROJMUX_POC_NO_FZF_IMAGE:-projmux:poc-no-fzf-go125-trixie}"
 dockerfile="$root/test/docker/no-fzf-poc.Dockerfile"
 host_uid="$(id -u)"
 host_gid="$(id -g)"
@@ -105,12 +105,13 @@ docker run --rm \
     assert_tmux_session_window() {
       assert_tmux_session_state "$1" "$2" "$3" "$4" "$5"
     }
-    echo "[poc/no-fzf] store native picker through Settings > Labs"
-    rm -f "$XDG_CONFIG_HOME/projmux/picker-backend"
+    echo "[poc/no-fzf] legacy picker config stays readable while Settings > Labs stays native-only"
+    mkdir -p "$XDG_CONFIG_HOME/projmux"
+    printf "fzf\n" > "$XDG_CONFIG_HOME/projmux/picker-backend"
     labs_log=/tmp/projmux-settings-labs.log
     labs_stderr=/tmp/projmux-settings-labs.stderr
     labs_status=0
-    { printf "\033[B\033[B\033[B\r\033[B\033[B\033[B\r"; sleep 0.3; printf "\0335"; } | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=native /tmp/projmux settings 2>$labs_stderr" "$labs_log" || labs_status=$?
+    { printf "Labs\r"; sleep 0.3; printf "\0335"; } | timeout 8s script -q -e -E never -c "env PROJMUX_PICKER_BACKEND=fzf /tmp/projmux settings 2>$labs_stderr" "$labs_log" || labs_status=$?
     if [[ "$labs_status" != 0 ]]; then
       cat "$labs_log"
       cat "$labs_stderr"
@@ -119,11 +120,18 @@ docker run --rm \
     assert_search_header "$labs_log" "settings picker"
     if [[ -s "$labs_stderr" ]]; then
       cat "$labs_stderr"
-      echo "Settings > Labs should not write tmux no-server noise outside tmux" >&2
+      echo "native Settings > Labs should not write tmux no-server noise outside tmux" >&2
       exit 1
     fi
-    test "$(cat "$XDG_CONFIG_HOME/projmux/picker-backend")" = native
-    echo "[poc/no-fzf] Settings > Labs persisted native picker backend"
+    grep -q "Live system resources" "$labs_log"
+    grep -q "Project Hooks" "$labs_log"
+    if grep -q "Picker source" "$labs_log"; then
+      cat "$labs_log"
+      echo "Settings > Labs must not expose the native-only picker source" >&2
+      exit 1
+    fi
+    test "$(cat "$XDG_CONFIG_HOME/projmux/picker-backend")" = fzf
+    echo "[poc/no-fzf] legacy env/file resolved to native without a Labs producer or config rewrite"
     echo "[poc/no-fzf] exercise native AI settings simple picker with smart-case query"
     rm -f "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
     ai_settings_log=/tmp/projmux-ai-settings.log
@@ -140,7 +148,7 @@ docker run --rm \
     rm -f "$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
     mouse_log=/tmp/projmux-ai-settings-mouse.log
     mouse_status=0
-    printf "\033[<0;3;7M" | timeout 8s script -q -e -E never -c "/tmp/projmux ai settings" "$mouse_log" || mouse_status=$?
+    printf "\033[<0;3;9M\033[<0;3;9m" | timeout 8s script -q -e -E never -c "/tmp/projmux ai settings" "$mouse_log" || mouse_status=$?
     if [[ "$mouse_status" != 0 ]]; then
       cat "$mouse_log"
       exit "$mouse_status"

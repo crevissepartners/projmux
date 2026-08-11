@@ -63,7 +63,9 @@ sub-verbs are entry hooks invoked by tmux keybindings (e.g.
 the active session in sync).
 
 Settings > Labs remains available for experimental settings, but picker backend
-selection has been retired. The native picker is always used.
+selection/source rows have been retired. The native picker is always used;
+legacy `PROJMUX_PICKER_BACKEND` and `picker-backend` values remain read-compatible
+and normalize to native.
 
 ## setup
 
@@ -130,8 +132,11 @@ setup` for that.
 
 `Settings > Notifications > Delivery sources` shows active Codex hooks, Claude,
 Antigravity manual hook ingest, and tmux statuses, conflicts, config paths, and
-copyable AI integration commands where available. Settings does not install or
-remove external Codex, Claude, Antigravity, or tmux notify wiring.
+copyable AI integration commands where available. Its summary/detail also shows
+whether `PROJMUX_NOTIFY_HOOK` overrides the built-in desktop sender. Settings
+does not install or remove external Codex, Claude, Antigravity, or tmux notify
+wiring. Pending in-app queue rows remain owned by the statusbar/sidebar rather
+than a standalone Settings row.
 
 ## focus
 

@@ -24,8 +24,8 @@ The fzf compatibility surface for the native engine is tracked in
   contract. It is not a runtime backend. App code should
   describe picker intent as rows, actions, preview commands, and initial focus,
   then route through the native picker.
-- Settings > Labs remains available for experimental settings, but picker
-  backend selection has been retired.
+- Settings > Labs remains available for Live system resources and Project
+  Hooks, but picker backend/source information has been retired.
 - Picker flows covered by the native path include AI picker/settings, shell
   update prompt, settings hub sections, switch settings/add-pin, the main
   project switcher list, recent sessions, and notify sidebar.
@@ -188,12 +188,12 @@ Manual UX checks for the Docker sandbox:
 
 ## Automated No-fzf Docker E2E Command
 
-Run this from the repository root. It builds a Go 1.24 Trixie no-fzf
+Run this from the repository root. It builds a Go 1.25 Trixie no-fzf
 dependency image from `test/docker/no-fzf-poc.Dockerfile`, including Go module
 cache, then mounts the repository into an isolated `--network none` container,
 builds `projmux`, asserts `fzf` is not on `PATH`, runs the focused native-picker
-tests, stores the native backend through Settings > Labs, verifies the saved
-backend works without an env override, exercises `projmux switch --ui=sidebar`
+tests, opens Settings > Labs with legacy `fzf` env/file values, verifies native
+operation without a Labs picker-source row or config rewrite, exercises `projmux switch --ui=sidebar`
 search/selection under a container PTY,
 exercises `projmux switch --ui=popup` and `projmux sessions --ui=popup` against
 existing tmux sessions under a wide 150x30 PTY, sends `Right` and `Alt-Down`

@@ -7,7 +7,6 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/systemstatus"
-	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -30,10 +29,6 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 			return nil
 		case action == settingsNoopValue:
 			continue
-		case action == settingsLabKeybindings:
-			if err := c.runKeybindingsSection(stdout, stderr); err != nil {
-				return err
-			}
 		case action == settingsLabsProjectHooks:
 			return c.runLabsProjectHooksSection(stdout, stderr)
 		case strings.HasPrefix(action, settingsActionPrefixLiveResources):
@@ -85,7 +80,6 @@ func (c *settingsCommand) runLabsProjectHooksSection(stdout, stderr io.Writer) e
 
 func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
-	current, source := c.currentPickerBackend()
 	hookMode, hookSource := c.currentProjectHooksMode()
 	liveMode, _, liveSupported := c.currentLiveResourcesMode()
 	entries := make([]intpickercompat.Entry, 0, 5)
@@ -114,12 +108,6 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 		Value:     settingsLabsProjectHooks,
 		SearchKey: "Project Hooks trusted local hooks on off",
 	})
-	if source != "" {
-		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelInfoLocale(locale, "Picker source", string(current), source),
-			Value: settingsNoopValue,
-		})
-	}
 	return entries
 }
 
@@ -222,25 +210,6 @@ func (c *settingsCommand) setProjectHooksMode(value string) error {
 		_ = c.runCommand("tmux", "display-message", "project hooks: "+string(mode))
 	}
 	return nil
-}
-
-func (c *settingsCommand) currentPickerBackend() (config.PickerBackend, string) {
-	if backend, ok := pickerBackendFromEnv(c.lookupEnv); ok {
-		return config.NormalizePickerBackend(string(backend)), intpicker.BackendEnv + " env"
-	}
-
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return config.DefaultPickerBackend, "default"
-	}
-	mode, err := config.LoadPickerBackendFile(paths.PickerBackendFile())
-	if err != nil {
-		return config.DefaultPickerBackend, "default"
-	}
-	if _, err := c.statFile(paths.PickerBackendFile()); err == nil {
-		return mode, "saved"
-	}
-	return mode, "default"
 }
 
 func (c *settingsCommand) setPickerBackend(value string) error {

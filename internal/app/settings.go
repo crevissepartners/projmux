@@ -210,6 +210,9 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
 	options = c.withSettingsScopeTabs(options)
 	options = c.localizeSettingsOptions(options)
+	if err := validateSettingsEntryContracts(options); err != nil {
+		return intpickercompat.Result{}, err
+	}
 	if options.Theme == nil {
 		if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, c.resolveSettingsProjectContext().Path); err == nil {
 			options = source.pickerCompatOptions(options)

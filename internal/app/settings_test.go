@@ -33,17 +33,20 @@ func TestSettingsRootEntriesHaveAxisMetadata(t *testing.T) {
 	t.Parallel()
 
 	cmd := &settingsCommand{}
-	want := map[string]settingsEntryMeta{
-		settingsSectionProject:       {Name: "Project Picker", Axis: settingsAxisGlobal},
-		settingsSectionGlobalHooks:   {Name: "Hooks", Axis: settingsAxisGlobal},
-		settingsSectionAI:            {Name: "AI Settings", Axis: settingsAxisGlobal},
-		settingsSectionNotifications: {Name: "Notifications", Axis: settingsAxisGlobal},
-		settingsSectionStatusbar:     {Name: "Appearance", Axis: settingsAxisGlobal},
-		settingsSectionGlobalTheme:   {Name: "Theme", Axis: settingsAxisGlobal},
-		settingsSectionSessionState:  {Name: "Session State", Axis: settingsAxisGlobal},
-		settingsSectionKeybindings:   {Name: "Keybindings", Axis: settingsAxisGlobal},
-		settingsSectionLabs:          {Name: "Labs", Axis: settingsAxisGlobal},
-		settingsSectionAbout:         {Name: "About", Axis: settingsAxisGlobal},
+	want := map[string]struct {
+		name string
+		axis SettingsAxis
+	}{
+		settingsSectionProject:       {name: "Project Picker", axis: settingsAxisGlobal},
+		settingsSectionGlobalHooks:   {name: "Hooks", axis: settingsAxisGlobal},
+		settingsSectionAI:            {name: "AI Settings", axis: settingsAxisGlobal},
+		settingsSectionNotifications: {name: "Notifications", axis: settingsAxisGlobal},
+		settingsSectionStatusbar:     {name: "Appearance", axis: settingsAxisGlobal},
+		settingsSectionGlobalTheme:   {name: "Theme", axis: settingsAxisGlobal},
+		settingsSectionSessionState:  {name: "Session State", axis: settingsAxisGlobal},
+		settingsSectionKeybindings:   {name: "Keybindings", axis: settingsAxisGlobal},
+		settingsSectionLabs:          {name: "Labs", axis: settingsAxisGlobal},
+		settingsSectionAbout:         {name: "About", axis: settingsAxisGlobal},
 	}
 
 	seen := map[string]bool{}
@@ -52,8 +55,12 @@ func TestSettingsRootEntriesHaveAxisMetadata(t *testing.T) {
 		if !ok {
 			t.Fatalf("root entry value %q missing settings axis metadata", entry.Value)
 		}
-		if got := meta; got != want[entry.Value] {
-			t.Fatalf("root entry value %q metadata = %#v, want %#v", entry.Value, got, want[entry.Value])
+		contract := want[entry.Value]
+		if meta.Name != contract.name || meta.Axis != contract.axis {
+			t.Fatalf("root entry value %q metadata = %#v, want name=%q axis=%b", entry.Value, meta, contract.name, contract.axis)
+		}
+		if meta.Kind != settingsEntryNavigation || meta.Owner != settingsOwnerRoot {
+			t.Fatalf("root entry value %q contract = %#v, want navigation owned by root loop", entry.Value, meta)
 		}
 		seen[entry.Value] = true
 	}
@@ -668,8 +675,7 @@ func settingsKoreanStaticRowSamples() []string {
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "AI notification dedupe", "60s - default"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Delivery sources", "doctor"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Hook quiet policy", "catalog defaults"),
-		settingsLabelInfoLocale(locale, "In-app queue", "statusbar/sidebar", "consume pending notify rows"),
-		settingsLabelInfoLocale(locale, "Notification hook override", "PROJMUX_NOTIFY_HOOK", "PROJMUX_NOTIFY_HOOK env"),
+		settingsLabelInfoLocale(locale, "Desktop sender override", "PROJMUX_NOTIFY_HOOK", "PROJMUX_NOTIFY_HOOK env"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Path icon", "symbol"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Git icon", "emoji"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Notify icon", "off"),
@@ -732,8 +738,7 @@ func settingsEnglishChromeResidue(visible string) (string, bool) {
 		"AI notification dedupe",
 		"Delivery sources",
 		"Hook quiet policy",
-		"In-app queue",
-		"Notification hook override",
+		"Desktop sender override",
 		"Appearance",
 		"Path icon",
 		"Git icon",
@@ -1292,24 +1297,112 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 
 	assertCataloguedEntries := func(name string, entries []intpickercompat.Entry) {
 		t.Helper()
+		if err := validateSettingsEntryContracts(intpickercompat.Options{UI: name, Entries: entries}); err != nil {
+			t.Fatalf("%s rendered-entry reachability: %v", name, err)
+		}
 		for _, entry := range entries {
-			if _, ok := settingsEntryMetaForValue(entry.Value); !ok {
+			if strings.TrimSpace(entry.Value) == "" {
+				continue
+			}
+			meta, ok := settingsEntryMetaForValue(entry.Value)
+			if !ok {
 				t.Fatalf("%s entry value %q missing settings axis metadata", name, entry.Value)
+			}
+			if meta.Owner == settingsOwnerNone || !settingsEntryOwnerHandles(meta.Owner, entry.Value) {
+				t.Fatalf("%s entry value %q has unreachable owner contract %#v", name, entry.Value, meta)
 			}
 		}
 	}
 
 	assertCataloguedEntries("root", cmd.rootEntries())
+	assertCataloguedEntries("project root tab", cmd.projectTabEntries())
 	assertCataloguedEntries("ai root", cmd.aiRootEntries())
 	assertCataloguedEntries("ai default mode", cmd.aiEntries())
 	assertCataloguedEntries("ai enabled agents", cmd.aiEnabledAgentEntries())
+	assertCataloguedEntries("ai resume picker", cmd.aiResumePickerEntries())
+	assertCataloguedEntries("ai resume picker limit", cmd.aiResumePickerLimitEntries())
+	assertCataloguedEntries("ai resume picker depth", cmd.aiResumePickerDepthEntries())
 	assertCataloguedEntries("notifications", cmd.notificationsEntries())
 	assertCataloguedEntries("desktop notifications", cmd.desktopNotifyEntries())
+	assertCataloguedEntries("AI notification dedupe", cmd.aiNotifyDedupeEntries())
+	assertCataloguedEntries("delivery sources", cmd.aiNotifyDiagnosticEntries())
+	assertCataloguedEntries("hook providers", cmd.aiHookProviderEntries())
+	assertCataloguedEntries("hook events", cmd.aiHookEventEntries(aiHookProviderCodex))
+	assertCataloguedEntries("hook action choices", cmd.aiHookActionChoiceEntries(aiHookProviderCodex, "Stop"))
 	assertCataloguedEntries("appearance", cmd.statusbarEntries())
+	assertCataloguedEntries("appearance locale", cmd.localeEntries())
+	assertCataloguedEntries("appearance AI badge", cmd.aiBadgeStyleEntries())
+	assertCataloguedEntries("appearance icon detail", cmd.statusbarDecorationTargetEntries(statusbarDecorationTargetNotify))
 	assertCataloguedEntries("session state", cmd.sessionStateEntries())
+	assertCataloguedEntries("project session state", cmd.projectSessionStateEntries())
 	assertCataloguedEntries("project picker", cmd.projectPickerEntries())
 	assertCataloguedEntries("labs", cmd.labsEntries())
 	assertCataloguedEntries("labs project hooks", cmd.labsProjectHooksEntries())
+	assertCataloguedEntries("about", cmd.aboutEntries())
+	assertCataloguedEntries("about welcome", cmd.welcomeSettingsViewerOptions().Entries)
+	assertCataloguedEntries("theme presets", cmd.themePresetEntries())
+	assertCataloguedEntries("theme color", cmd.themeColorEntries(theme.TokenSurface))
+	assertCataloguedEntries("global hooks", cmd.globalHookEntries())
+
+	ctx := settingsProjectContext{Path: filepath.Join(home, "project"), Name: "project", Source: "test"}
+	mkdirAll(t, ctx.Path)
+	assertCataloguedEntries("project hooks", cmd.projectHookEntries(ctx))
+	assertCataloguedEntries("project recipe", cmd.projectConfigEntries(ctx))
+	assertCataloguedEntries("project trust", cmd.projectTrustEntries(ctx))
+	assertCataloguedEntries("effective merge", cmd.effectiveMergeEntries(ctx))
+
+	autosave := sessionStateEffectiveToggle{Mode: config.SessionStateToggleOff, Source: "default"}
+	interval := sessionStateEffectiveInterval{Duration: time.Minute, Source: "default"}
+	assertCataloguedEntries("session state autosave detail", cmd.sessionStateAutosaveDetailEntries(autosave, interval))
+	assertCataloguedEntries("sidebar startup picker detail", cmd.sidebarStartupPickerEntries(autosave))
+	assertCataloguedEntries("project session state autosave unavailable", cmd.projectSessionStateAutosaveDetailEntries())
+	assertCataloguedEntries("project session state actions unavailable", cmd.projectSessionStateActionsDetailEntries())
+	identity := projectSessionStateIdentity{Project: ctx, Session: "project"}
+	assertCataloguedEntries("project session state action rows", cmd.projectSessionStateActionEntries(identity))
+	assertCataloguedEntries("project session state autosave toggles", cmd.projectSessionStateAutosaveToggleEntries(config.SessionStateProjectInherit))
+	assertCataloguedEntries("session state toggles", cmd.sessionStateToggleEntries("Auto-save", "autosave", config.SessionStateToggleOff))
+
+	diagnostic := doctorAINotifyIntegration{
+		ID:             "codex-hooks",
+		Name:           "Codex hooks",
+		Status:         doctorAINotifyStatusMissing,
+		InstallCommand: "projmux ai integrate codex",
+		RemoveCommand:  "projmux ai integrate codex --remove",
+		DryRunCommand:  "projmux ai integrate codex --dry-run",
+	}
+	assertCataloguedEntries("delivery source detail", aiNotifyDiagnosticDetailEntriesLocale(settingsLocale(), diagnostic))
+
+	themeEntries, err := cmd.themeEntries()
+	if err != nil {
+		t.Fatalf("themeEntries() error = %v", err)
+	}
+	assertCataloguedEntries("theme", themeEntries)
+
+	keybindingEntries, err := cmd.keybindingEntries()
+	if err != nil {
+		t.Fatalf("keybindingEntries() error = %v", err)
+	}
+	assertCataloguedEntries("keybindings", keybindingEntries)
+	keybindingDetail, _, err := cmd.keybindingDetailEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingDetailEntries() error = %v", err)
+	}
+	assertCataloguedEntries("keybinding detail", keybindingDetail)
+	keybindingAdd, _, err := cmd.keybindingAddEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingAddEntries() error = %v", err)
+	}
+	assertCataloguedEntries("keybinding add", keybindingAdd)
+	keybindingAdvanced, _, err := cmd.keybindingAddAdvancedEntries("ProjectSidebarToggle")
+	if err != nil {
+		t.Fatalf("keybindingAddAdvancedEntries() error = %v", err)
+	}
+	assertCataloguedEntries("keybinding advanced", keybindingAdvanced)
+	keybindingKeyDetail, _, err := cmd.keybindingKeyDetailEntries("ProjectSidebarToggle", "M-1")
+	if err != nil {
+		t.Fatalf("keybindingKeyDetailEntries() error = %v", err)
+	}
+	assertCataloguedEntries("keybinding key detail", keybindingKeyDetail)
 
 	projectRootEntries, err := cmd.projectRootEntries()
 	if err != nil {
@@ -1339,6 +1432,53 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 		if _, ok := settingsEntryMetaForValue(value); !ok {
 			t.Fatalf("representative generated value %q missing settings axis metadata", value)
 		}
+	}
+}
+
+func TestSettingsRenderedEntryReachabilityRejectsHandlerlessValues(t *testing.T) {
+	t.Parallel()
+
+	if err := validateSettingsEntryContracts(intpickercompat.Options{
+		UI:      "settings-test",
+		Entries: []intpickercompat.Entry{{Label: "Broken", Value: "settings:missing-handler"}},
+	}); err == nil || !strings.Contains(err.Error(), "has no owner handler contract") {
+		t.Fatalf("validateSettingsEntryContracts() error = %v, want missing-handler failure", err)
+	}
+
+	meta := settingsActionMeta("Broken", settingsAxisGlobal, settingsOwnerNone)
+	if settingsEntryOwnerHandles(meta.Owner, settingsUpdateCheck) {
+		t.Fatalf("handlerless actionable metadata %#v unexpectedly reached an owner", meta)
+	}
+}
+
+func TestSettingsReachabilityCatalogUsesClosedOwnerTable(t *testing.T) {
+	t.Parallel()
+
+	for value, meta := range settingsEntryCatalog {
+		if meta.Owner == settingsOwnerNone || !settingsEntryOwnerHandles(meta.Owner, value) {
+			t.Fatalf("exact entry %q has no reachable owner: %#v", value, meta)
+		}
+	}
+	for _, candidate := range settingsEntryPrefixCatalog {
+		value := candidate.prefix + "contract-fixture"
+		if candidate.meta.Owner == settingsOwnerNone || !settingsEntryOwnerHandles(candidate.meta.Owner, value) {
+			t.Fatalf("entry prefix %q has no reachable owner: %#v", candidate.prefix, candidate.meta)
+		}
+	}
+}
+
+func TestSettingsRenderedPassiveEntriesAreOwnedNoops(t *testing.T) {
+	t.Parallel()
+
+	meta, ok := settingsEntryMetaForValue(settingsNoopValue)
+	if !ok || meta.Kind != settingsEntryPassive || meta.Owner != settingsOwnerPassiveLoop {
+		t.Fatalf("passive value contract = %#v, %v; want info-or-disabled passive loop", meta, ok)
+	}
+	if !settingsEntryOwnerHandles(meta.Owner, settingsNoopValue) {
+		t.Fatalf("passive value %q is not consumed by its owner loop", settingsNoopValue)
+	}
+	if settingsEntryOwnerHandles(meta.Owner, "notifications:missing") {
+		t.Fatalf("passive owner must not consume arbitrary actions")
 	}
 }
 
@@ -1644,6 +1784,15 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 			t.Fatalf("labs settings entries = %#v, want no picker backend choices", labsOptions.Entries)
 		}
 	}
+	if hasEntryLabelContaining(labsOptions.Entries, "Picker source") {
+		t.Fatalf("labs settings entries = %#v, want no native-only picker source row", labsOptions.Entries)
+	}
+	if hasEntryValue(labsOptions.Entries, "labs:keybindings") {
+		t.Fatalf("labs settings entries = %#v, want no hidden keybindings compatibility producer", labsOptions.Entries)
+	}
+	if _, ok := settingsEntryMetaForValue("labs:keybindings"); ok {
+		t.Fatal("labs:keybindings must not retain an owner contract after its producer and compatibility handler are removed")
+	}
 
 	paths, err := config.Homes{HomeDir: home}.Paths()
 	if err != nil {
@@ -1661,46 +1810,42 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 	}
 }
 
-func TestSettingsLabsKeybindingsRedirectsToUnifiedRootView(t *testing.T) {
+func TestSettingsLegacyPickerConfigStillResolvesNativeWithoutLabsExposure(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	var calls int
-	var keybindingOptions intpickercompat.Options
-	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsLabKeybindings}, nil
-		case 3:
-			keybindingOptions = options
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 4:
-			return intpickercompat.Result{}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	})
+	paths, err := config.Homes{HomeDir: home}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, paths.PickerBackendFile(), "fzf\n")
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	lookupSaved := func(string) string { return "" }
+	if got := resolvePickerBackendWithConfig(func() (string, error) { return home, nil }, lookupSaved); got != intpicker.BackendNative {
+		t.Fatalf("saved legacy picker backend resolved to %q, want native", got)
 	}
-	if got, want := keybindingOptions.UI, "settings-keybindings"; got != want {
-		t.Fatalf("redirect UI = %q, want %q", got, want)
+	if got, err := config.LoadPickerBackendFile(paths.PickerBackendFile()); err != nil || got != config.PickerBackendNative {
+		t.Fatalf("saved legacy picker compatibility = (%q, %v), want (native, nil)", got, err)
 	}
-	if got := keybindingOptions.TitleChips; len(got) < 2 || !got[0].Active || strings.TrimSpace(got[0].ClickValue) != "" {
-		t.Fatalf("redirect chips = %#v, want passive Global/Project tabs", got)
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: lookupSaved,
 	}
-	if hasEntryLabelContaining(keybindingOptions.Entries, "Terminal") ||
-		hasEntryLabelContaining(keybindingOptions.Entries, "Preview terminal mappings") ||
-		hasEntryLabelContaining(keybindingOptions.Entries, "Apply terminal mappings") {
-		t.Fatalf("redirect entries = %#v, want Settings Keybindings root without terminal remediation rows", keybindingOptions.Entries)
+	if hasEntryLabelContaining(cmd.labsEntries(), "Picker source") {
+		t.Fatalf("Labs entries = %#v, want compatibility read hidden from Settings", cmd.labsEntries())
 	}
-	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
-		t.Fatalf("redirect entries = %#v, want Settings Keybindings action list", keybindingOptions.Entries)
+
+	lookupEnv := func(name string) string {
+		if name == intpicker.BackendEnv {
+			return "fzf"
+		}
+		return ""
+	}
+	if got := resolvePickerBackendWithConfig(func() (string, error) { return home, nil }, lookupEnv); got != intpicker.BackendNative {
+		t.Fatalf("legacy picker env resolved to %q, want native", got)
+	}
+	if got, ok := pickerBackendFromEnv(lookupEnv); !ok || got != intpicker.BackendNative {
+		t.Fatalf("legacy picker env compatibility = (%q, %v), want (native, true)", got, ok)
 	}
 }
 
@@ -2963,11 +3108,14 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 		settingsNotificationsAIDedupe,
 		settingsNotificationsDelivery,
 		settingsNotificationsHookActions,
-		settingsNotificationsQueue,
-		settingsNotificationsHookOverride,
 	} {
 		if !hasEntryValue(root, want) {
 			t.Fatalf("notifications entries = %#v, want row %q", root, want)
+		}
+	}
+	for _, removed := range []string{"In-app queue", "Notification hook override"} {
+		if hasEntryLabelContaining(root, removed) {
+			t.Fatalf("notifications entries = %#v, want standalone %q row removed", root, removed)
 		}
 	}
 	for _, value := range []string{
@@ -3000,6 +3148,92 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 	}
 	if !sawInfo {
 		t.Fatalf("desktop notification entries = %#v, want info row with raise + env source", detail)
+	}
+}
+
+func TestSettingsNotificationsDeliveryMergesHookOverrideAndConsumesInfoEnter(t *testing.T) {
+	t.Parallel()
+
+	const hook = "/opt/projmux/bin/notify-hook"
+	var calls int
+	var notificationsOptions intpickercompat.Options
+	var deliveryOptions intpickercompat.Options
+	cmd := &settingsCommand{
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_NOTIFY_HOOK" {
+				return hook
+			}
+			return ""
+		},
+		aiNotifyDiagnostics: func() []doctorAINotifyIntegration { return nil },
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
+			case 2:
+				notificationsOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDelivery}, nil
+			case 3:
+				deliveryOptions = options
+				return intpickercompat.Result{Key: "enter", Value: settingsNoopValue}, nil
+			case 4:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 5:
+				return intpickercompat.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intpickercompat.Result{}, nil
+			}
+		}),
+	}
+	cmd.nativePicker = nativePickerFromCompatRunner(cmd.runner)
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v; info Enter must remain a no-op", err)
+	}
+	if !hasEntryLabelContainingAll(notificationsOptions.Entries, "Delivery sources", "hook override set") {
+		t.Fatalf("notifications entries = %#v, want hook override in Delivery sources summary", notificationsOptions.Entries)
+	}
+	for _, removed := range []string{"In-app queue", "Notification hook override"} {
+		if hasEntryLabelContaining(notificationsOptions.Entries, removed) {
+			t.Fatalf("notifications entries = %#v, want standalone %q removed", notificationsOptions.Entries, removed)
+		}
+	}
+	if !hasEntryLabelContainingAll(deliveryOptions.Entries, "Desktop sender override", hook, "PROJMUX_NOTIFY_HOOK env") {
+		t.Fatalf("delivery entries = %#v, want merged hook override detail", deliveryOptions.Entries)
+	}
+}
+
+func TestSettingsLabsProjectHooksConsumesInfoEnter(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	cmd := &settingsCommand{
+		lookupEnv: func(string) string { return "" },
+		runner: switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
+			calls++
+			switch calls {
+			case 1:
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+			case 2:
+				return intpickercompat.Result{Key: "enter", Value: settingsLabsProjectHooks}, nil
+			case 3:
+				return intpickercompat.Result{Key: "enter", Value: settingsNoopValue}, nil
+			case 4:
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			case 5:
+				return intpickercompat.Result{}, nil
+			default:
+				t.Fatalf("unexpected settings picker call %d", calls)
+				return intpickercompat.Result{}, nil
+			}
+		}),
+	}
+	cmd.nativePicker = nativePickerFromCompatRunner(cmd.runner)
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v; Labs info Enter must remain a no-op", err)
 	}
 }
 
