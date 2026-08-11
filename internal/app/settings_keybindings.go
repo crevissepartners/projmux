@@ -1288,10 +1288,10 @@ func keybindingRiskyReservedKeyCopy() string {
 func keybindingAdvancedDeliveryCopy(action keyBindingAction) string {
 	var adapters []string
 	if strings.TrimSpace(action.GhosttyTrigger) != "" || strings.TrimSpace(action.GhosttyAction) != "" {
-		adapters = append(adapters, "projmux init ghostty")
+		adapters = append(adapters, "projmux setup terminal ghostty")
 	}
 	if strings.TrimSpace(action.WTID) != "" || strings.TrimSpace(action.WTInput) != "" {
-		adapters = append(adapters, "projmux init windows-terminal")
+		adapters = append(adapters, "projmux setup terminal windows-terminal")
 	}
 	if len(adapters) == 0 {
 		return "no supported adapter snippet for this Projmux action; choose a safe direct key"

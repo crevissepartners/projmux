@@ -81,8 +81,9 @@ defaults. `Alt-7` is an additional editable built-in default. Add aliases in
 Settings > Keybindings or `~/.config/projmux/keymap.toml`. If a key does not
 fire, the Darwin release uses a native physical-key adapter automatically
 inside `projmux shell` after one-time macOS Accessibility approval. On other
-paths, run `projmux setup` outside tmux, then use `projmux init [terminal]
---apply` for supported terminal delivery fallbacks.
+paths, run `projmux setup` outside tmux, then use
+`projmux setup terminal [terminal] --apply` for supported terminal delivery
+fallbacks.
 
 ## Day-To-Day Use
 

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/app/initcmd"
 )
 
 // setupCommand walks the operator through a per-key delivery probe so they can
@@ -24,14 +26,18 @@ type setupCommand struct {
 	readKey     func(timeout time.Duration) ([]byte, error)
 	openTTY     func() (*os.File, func() error, error)
 	defaultKeys []probeKey
+	terminal    *initcmd.Command
 }
 
-func newSetupCommand() *setupCommand {
+func newSetupCommand(terminal ...*initcmd.Command) *setupCommand {
 	c := &setupCommand{
 		stdin:       os.Stdin,
 		lookupEnv:   os.Getenv,
 		now:         time.Now,
 		defaultKeys: defaultProbeKeys(),
+	}
+	if len(terminal) > 0 {
+		c.terminal = terminal[0]
 	}
 	c.openTTY = openControllingTTY
 	c.enterRaw = func() (func() error, error) {
@@ -89,8 +95,16 @@ const (
 	probeReadPollDelay  = 5 * time.Millisecond
 )
 
-// Run executes the setup probe.
+// Run executes the setup probe or dispatches the terminal remediation
+// subcommand. Bare setup keeps the existing read-only probe behavior.
 func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "terminal" {
+		if c.terminal == nil {
+			return errors.New("setup terminal: remediation command is unavailable")
+		}
+		return c.terminal.RunCanonical(args[1:], stdout, stderr)
+	}
+
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	timeout := fs.Duration("timeout", defaultProbeTimeout, "per-key wait timeout (e.g. 5s)")
@@ -396,9 +410,9 @@ func (t terminalInfo) Display() string {
 func (t terminalInfo) InitCommand() string {
 	switch t.Slug {
 	case "ghostty":
-		return "projmux init ghostty --apply"
+		return "projmux setup terminal ghostty --apply"
 	case "windows-terminal":
-		return "projmux init windows-terminal --apply"
+		return "projmux setup terminal windows-terminal --apply"
 	}
 	return ""
 }

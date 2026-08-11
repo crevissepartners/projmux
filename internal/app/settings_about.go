@@ -21,7 +21,7 @@ func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 		{"Tmux actions", "new window, rename window/pane, previous/next window"},
 		{"Key setup", "try shortcuts in projmux shell before changing terminal config"},
 		{"Diagnose keys", "projmux setup reports swallowed shortcuts"},
-		{"Terminal remediation", "projmux init previews supported terminal key delivery mappings"},
+		{"Terminal remediation", "projmux setup terminal previews supported terminal key delivery mappings"},
 		{"Dependencies", "projmux doctor checks tmux, git, stty, kubectl"},
 		{"Rename key", "configure a plain alias or use tmux prefix rename"},
 		{"Ghostty", "Alt Meta defaults normally need no projmux key block"},

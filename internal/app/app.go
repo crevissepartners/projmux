@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/crevissepartners/projmux/internal/app/initcmd"
@@ -116,6 +117,7 @@ func New() *App {
 	pruneCmd.reconcileNotify = func() {
 		_ = notifyCmd.runReconcile(nil, io.Discard, io.Discard)
 	}
+	initCmd := newInitCommand()
 	return &App{
 		ai:           ai,
 		attention:    newAttentionCommand(),
@@ -124,7 +126,7 @@ func New() *App {
 		doctor:       newDoctorCommand(),
 		focus:        newFocusCommand(),
 		hook:         newHookCommand(),
-		initCmd:      newInitCommand(),
+		initCmd:      initCmd,
 		keyBroker:    newKeyBrokerCommand(),
 		kill:         kill,
 		notify:       notifyCmd,
@@ -137,7 +139,7 @@ func New() *App {
 		sessionState: newSessionStateCommand(),
 		sessionPopup: newSessionPopupCommand(),
 		settings:     newSettingsCommand(ai, switcher, update, quit),
-		setup:        newSetupCommand(),
+		setup:        newSetupCommand(initCmd),
 		shell:        newShellCommand(update),
 		status:       newStatusCommand(),
 		statusbar:    newStatusbarCommand(),
@@ -176,6 +178,9 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 	case "hook":
 		return a.hook.Run(args[1:], stdout, stderr)
 	case "init":
+		if _, err := fmt.Fprintf(stderr, "warning: projmux init is deprecated; use: %s\n", legacyInitReplacement(args[1:])); err != nil {
+			return err
+		}
 		return a.initCmd.Run(args[1:], stdout, stderr)
 	case "key-broker":
 		// Hidden Darwin helper: captures physical portable key chords while a
@@ -253,7 +258,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  doctor    Diagnose runtime dependencies and suggest installs")
 	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
-	fmt.Fprintln(w, "  init      Preview/apply supported terminal key delivery mappings")
+	fmt.Fprintln(w, "  init      Deprecated alias for setup terminal (compatibility period)")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
@@ -264,7 +269,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  session-state  Inspect and manage saved tmux session snapshots")
 	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")
 	fmt.Fprintln(w, "  settings  Configure projmux")
-	fmt.Fprintln(w, "  setup     Probe terminal key delivery for projmux bindings")
+	fmt.Fprintln(w, "  setup     Probe terminal keys or remediate them with setup terminal")
 	fmt.Fprintln(w, "  shell     Open the isolated projmux tmux app")
 	fmt.Fprintln(w, "  status    Render tmux status bar segments")
 	fmt.Fprintln(w, "  statusbar Dispatch projmux status bar clicks and shortcuts")
@@ -278,4 +283,22 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  window    Open recent window navigation surfaces")
 	fmt.Fprintln(w, "  help      Show bootstrap help")
 	fmt.Fprintln(w, "  version   Print the current version")
+}
+
+func legacyInitReplacement(args []string) string {
+	replacement := []string{"projmux", "setup", "terminal"}
+	for _, arg := range args {
+		if arg == "--dry-run" || strings.HasPrefix(arg, "--dry-run=") {
+			continue
+		}
+		replacement = append(replacement, commandArgQuote(arg))
+	}
+	return strings.Join(replacement, " ")
+}
+
+func commandArgQuote(arg string) string {
+	if arg != "" && !strings.ContainsAny(arg, " \t\r\n'\"\\$`!&|;()<>*?[]{}") {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 }

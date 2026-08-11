@@ -42,7 +42,7 @@ func (p MergePlan) HasEffect() bool {
 	return p.Original != p.Updated
 }
 
-// TerminalAdapter is the per-terminal contract for `projmux init`.
+// TerminalAdapter is the per-terminal contract for terminal remediation.
 //
 // Implementations are registered by the caller via New so the init command
 // can dispatch by name and auto-detect the active terminal.

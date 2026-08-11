@@ -77,7 +77,7 @@ Observe:
 - `Alt-1` through `Alt-5` report `OK plain`. These are the guaranteed
   zero-config launch defaults.
 - If a guaranteed key reports `MISS timeout`, preview a supported terminal
-  mapping with `projmux init ghostty` or `projmux init windows-terminal`,
+  mapping with `projmux setup terminal ghostty` or `projmux setup terminal windows-terminal`,
   apply it with the same command plus `--apply`, restart that terminal if
   required, and rerun `projmux setup --timeout 10s`.
 - Optional direct aliases and transport-dependent chords may be reported by
