@@ -164,7 +164,7 @@ tmux -L "$recorder_socket" set-option -p -t "$recorder_pane" @projmux_ai_topic_m
 recorder_raw_title="$(tmux -L "$recorder_socket" display-message -p -t "$recorder_pane" '#{pane_title}')"
 
 recorder_rename_prompt() {
-  tmux -L "$recorder_socket" command-prompt -t "$recorder_client" \
+  tmux -L "$recorder_socket" command-prompt -b -t "$recorder_client" \
     -p "pane label:" -I '#{@projmux_pane_label}' \
     "if-shell -F '#{==:%1,}' 'set-option -p -u @projmux_pane_label' 'set-option -p @projmux_pane_label \"%1\"'"
 }
