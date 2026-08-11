@@ -31,7 +31,7 @@ func TestFormatLiveResourcesStatus(t *testing.T) {
 
 func TestSettingsLiveResourcesTogglePersistsAndUpdatesTmux(t *testing.T) {
 	if !systemstatus.Supported() {
-		t.Skip("Linux/WSL-only setting")
+		t.Skip("live resources unsupported on this build")
 	}
 	home := t.TempDir()
 	var calls [][]string
@@ -74,7 +74,7 @@ func TestSettingsLiveResourcesTogglePersistsAndUpdatesTmux(t *testing.T) {
 
 func TestSettingsLiveResourcesUsesKoreanCatalog(t *testing.T) {
 	if !systemstatus.Supported() {
-		t.Skip("Linux/WSL-only setting")
+		t.Skip("live resources unsupported on this build")
 	}
 	home := t.TempDir()
 	cmd := &settingsCommand{
@@ -87,14 +87,14 @@ func TestSettingsLiveResourcesUsesKoreanCatalog(t *testing.T) {
 		},
 	}
 	entries := cmd.labsEntries()
-	if !hasEntryLabelContainingAll(entries, "실시간 시스템 리소스", "꺼짐", "Linux/WSL 게스트 기준") {
+	if !hasEntryLabelContainingAll(entries, "실시간 시스템 리소스", "꺼짐", "현재 시스템 기준") {
 		t.Fatalf("Korean Labs entries = %#v", entries)
 	}
 }
 
 func TestTmuxPrintConfigLoadsLiveResourcesModeAndPlacesSegment(t *testing.T) {
 	if !systemstatus.Supported() {
-		t.Skip("Linux/WSL-only config")
+		t.Skip("live resources unsupported on this build")
 	}
 	home := t.TempDir()
 	paths, err := config.Homes{HomeDir: home}.Paths()

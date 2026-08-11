@@ -1,3 +1,5 @@
+//go:build linux
+
 package systemstatus
 
 import (
@@ -83,14 +85,14 @@ func TestSamplerFirstAndSecondCPURefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	sampler := Sampler{StatPath: statPath, MemInfoPath: memPath, CachePath: cachePath}
-	first := sampler.Sample()
+	first := sampler.sampleProc()
 	if first.CPUPercent != nil || intValue(first.MemoryPercent) != 40 {
 		t.Fatalf("first Sample() = %#v, want CPU unavailable and MEM 40", first)
 	}
 	if err := os.WriteFile(statPath, []byte("cpu 150 0 0 150 0 0 0 0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	second := sampler.Sample()
+	second := sampler.sampleProc()
 	if intValue(second.CPUPercent) != 50 || intValue(second.MemoryPercent) != 40 {
 		t.Fatalf("second Sample() = %#v, want CPU 50 and MEM 40", second)
 	}
@@ -124,7 +126,7 @@ func TestSamplerRejectsStaleCPUReference(t *testing.T) {
 		MemInfoPath: memPath,
 		CachePath:   cachePath,
 		Now:         func() time.Time { return time.Unix(200, 0) },
-	}).Sample()
+	}).sampleProc()
 	if metrics.CPUPercent != nil || intValue(metrics.MemoryPercent) != 40 {
 		t.Fatalf("stale Sample() = %#v, want CPU unavailable and MEM 40", metrics)
 	}
