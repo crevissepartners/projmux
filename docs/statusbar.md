@@ -71,6 +71,13 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
 - `Settings > Labs > Live system resources` adds the compact `CPU N%  MEM N%`
   segment between git and the clock on macOS, Linux, and WSL. It is global,
   default off, and updates with tmux's existing five-second status interval.
+  CPU and memory are host-scoped telemetry, not pane, window, project, or
+  session attribution. Each value has an independent semantic style: CPU is
+  normal below 70%, warning at 70–89%, and critical at 90% or above; memory is
+  normal below 75%, warning at 75–89%, and critical at 90% or above. Normal and
+  unavailable (`--`) values use the secondary status-text role, warnings use
+  the warning role, and critical values use the bold critical role. Styling one
+  value never promotes the other value.
   Linux CPU is the aggregate delta from `/proc/stat`; memory is
   `(MemTotal - MemAvailable) / MemTotal` from `/proc/meminfo`. macOS CPU uses
   the aggregate Mach host tick delta; memory is total physical memory minus

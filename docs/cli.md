@@ -305,7 +305,11 @@ projmux status resources
 - `resources` — macOS/Linux/WSL aggregate `CPU N%  MEM N%`. Linux uses
   `/proc/stat` and `/proc/meminfo`; macOS uses native Mach host statistics.
   CPU needs two invocations to establish a delta and renders `--` for the first
-  sample. WSL reports the Linux guest/VM view. Unsupported platforms and
+  sample. CPU independently warns at 70–89% and becomes bold critical at 90% or
+  above; memory independently warns at 75–89% and becomes bold critical at 90%
+  or above. Normal and unavailable values use the secondary status-text role.
+  These values are host-scoped rather than pane/window/project/session
+  attribution. WSL reports the Linux guest/VM view. Unsupported platforms and
   unreadable system metrics produce no error output.
 
 ## statusbar

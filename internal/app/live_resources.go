@@ -5,9 +5,24 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/systemstatus"
+	"github.com/crevissepartners/projmux/internal/theme"
 )
 
 const liveResourcesTmuxOption = "@projmux_live_resources"
+
+const (
+	liveResourceCPUWarningAt    = 70
+	liveResourceMemoryWarningAt = 75
+	liveResourceCriticalAt      = 90
+)
+
+type liveResourceSeverity uint8
+
+const (
+	liveResourceNormal liveResourceSeverity = iota
+	liveResourceWarning
+	liveResourceCritical
+)
 
 func loadLiveResourcesMode(homeDir func() (string, error), lookupEnv func(string) string) config.LiveResourcesMode {
 	if !systemstatus.Supported() {
@@ -29,16 +44,39 @@ func statusbarLiveResourcesSegment(bin string) string {
 }
 
 func formatLiveResourcesStatus(metrics systemstatus.Metrics) string {
+	return formatLiveResourcesStatusWithRoles(metrics, statusSegmentRoles)
+}
+
+func formatLiveResourcesStatusWithRoles(metrics systemstatus.Metrics, roles theme.RenderRoles) string {
 	if !metrics.Available() {
 		return ""
 	}
-	cpu := "--"
-	if metrics.CPUPercent != nil {
-		cpu = fmt.Sprintf("%d", *metrics.CPUPercent)
+	cpu := formatLiveResourceMetric("CPU", metrics.CPUPercent, liveResourceCPUWarningAt, roles)
+	memory := formatLiveResourceMetric("MEM", metrics.MemoryPercent, liveResourceMemoryWarningAt, roles)
+	return " " + cpu + "  " + memory
+}
+
+func classifyLiveResourceSeverity(percent *int, warningAt int) liveResourceSeverity {
+	if percent == nil || *percent < warningAt {
+		return liveResourceNormal
 	}
-	memory := "--"
-	if metrics.MemoryPercent != nil {
-		memory = fmt.Sprintf("%d", *metrics.MemoryPercent)
+	if *percent >= liveResourceCriticalAt {
+		return liveResourceCritical
 	}
-	return fmt.Sprintf(" #[fg=%s]CPU %s%%  MEM %s%%#[default]", statusSegmentRoles.StatusTextSecondary, cpu, memory)
+	return liveResourceWarning
+}
+
+func formatLiveResourceMetric(label string, percent *int, warningAt int, roles theme.RenderRoles) string {
+	value := "--"
+	if percent != nil {
+		value = fmt.Sprintf("%d", *percent)
+	}
+	style := roles.StatusTextSecondary
+	switch classifyLiveResourceSeverity(percent, warningAt) {
+	case liveResourceWarning:
+		style = roles.StateWarning
+	case liveResourceCritical:
+		style = roles.StateCritical + ",bold"
+	}
+	return fmt.Sprintf("#[fg=%s]%s %s%%#[default]", style, label, value)
 }

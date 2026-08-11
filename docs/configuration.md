@@ -785,7 +785,17 @@ statistics and `hw.memsize`. Neither path launches `top`, `vm_stat`, `free`,
 PowerShell, or another metrics process. On macOS, available memory is free plus
 inactive pages, matching the reclaimable-memory intent of Linux
 `MemAvailable`. In WSL the values describe the Linux guest/VM view, not total
-Windows host utilization. The CPU delta cache is internal state at
+Windows host utilization. These are host-scoped values and do not attribute
+usage to a pane, window, project, or session.
+
+The display policy is fixed rather than configurable: CPU is normal below 70%,
+warning at 70–89%, and critical at 90% or above; memory is normal below 75%,
+warning at 75–89%, and critical at 90% or above. The two values are classified
+and styled independently. Normal and unavailable (`--`) values use the
+secondary status-text theme role, warnings use the warning role, and critical
+values use the bold critical role. No threshold values are stored in config.
+
+The CPU delta cache is internal state at
 `${XDG_STATE_HOME:-~/.local/state}/projmux/live-resources-sample.json`.
 CPU reference samples older than 30 seconds are ignored and replaced on the
 next refresh.

@@ -90,7 +90,10 @@ view-first layout:
 - `Settings > Labs > Live system resources` is a direct global on/off toggle
   for the macOS/Linux/WSL lower-status-row `CPU N%  MEM N%` segment. It defaults
   off, updates live tmux state when toggled, and renders unavailable on
-  unsupported platforms. WSL values describe the Linux guest/VM view.
+  unsupported platforms. CPU and memory use fixed independent semantic
+  thresholds (CPU warning/critical at 70/90; memory at 75/90); the toggle does
+  not expose threshold customization. WSL values describe the Linux guest/VM
+  view.
 - `Settings > Labs > Project Hooks` is overview-first. The Labs root opens the
   overview, and the on/off mutation rows live one level deeper.
 - `Settings > AI Settings` is view-first. The root contains `Default split
