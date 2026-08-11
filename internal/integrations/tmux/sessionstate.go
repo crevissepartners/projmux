@@ -21,6 +21,7 @@ const (
 	sessionStateAIManagedOption      = "@projmux_ai_managed"
 	sessionStateAIAgentOption        = "@projmux_ai_agent"
 	sessionStateAITopicOption        = "@projmux_ai_topic"
+	sessionStateAITopicManualOption  = "@projmux_ai_topic_manual"
 	sessionStateAISessionIDOption    = "@projmux_ai_session_id"
 	sessionStateAIResumeIDOption     = "@projmux_ai_resume_id"
 	sessionStateAIResumeSourceOption = "@projmux_ai_resume_source"
@@ -50,6 +51,7 @@ type sessionStatePaneRow struct {
 	aiManaged      string
 	aiAgent        string
 	aiTopic        string
+	aiTopicManual  string
 	aiResumeID     string
 	aiResumeSource string
 	aiResumeAt     string
@@ -527,6 +529,7 @@ func (c *Client) listSessionStatePanes(ctx context.Context, sessionName string) 
 		"#{"+sessionStateAIManagedOption+"}",
 		"#{"+sessionStateAIAgentOption+"}",
 		"#{"+sessionStateAITopicOption+"}",
+		"#{"+sessionStateAITopicManualOption+"}",
 		"#{"+sessionStateAIResumeIDOption+"}",
 		"#{"+sessionStateAIResumeSourceOption+"}",
 		"#{"+sessionStateAIResumeAtOption+"}",
@@ -566,7 +569,9 @@ func classifySessionStatePane(pane sessionStatePaneRow) sessionstate.Recipe {
 		return sessionstate.StartupRecipe(pane.startupCommand)
 	}
 	if strings.TrimSpace(pane.aiManaged) != "" && strings.TrimSpace(pane.aiAgent) != "" {
-		return sessionstate.AgentRecipeWithResumeMetadata(pane.aiAgent, pane.aiResumeID, pane.aiTopic, pane.aiResumeSource, pane.aiResumeAt)
+		recipe := sessionstate.AgentRecipeWithResumeMetadata(pane.aiAgent, pane.aiResumeID, pane.aiTopic, pane.aiResumeSource, pane.aiResumeAt)
+		recipe.TopicManual = strings.TrimSpace(pane.aiTopicManual) != ""
+		return recipe
 	}
 	return sessionstate.ShellRecipe()
 }
@@ -610,18 +615,29 @@ func parseSessionStatePanes(output []byte) ([]sessionStatePaneRow, error) {
 		if strings.TrimSpace(rawLine) == "" {
 			continue
 		}
-		fields := splitTmuxFields(rawLine, 14)
-		if len(fields) == 13 {
+		fields := splitTmuxFields(rawLine, 15)
+		switch len(fields) {
+		case 14:
+			// Phase 0 current format had a label but no topic ownership.
+			fields = append(fields[:11], append([]string{""}, fields[11:]...)...)
+		case 13:
+			// The pre-label format already carried resume provenance.
 			fields = append(fields[:3], append([]string{""}, fields[3:]...)...)
+			fields = append(fields[:11], append([]string{""}, fields[11:]...)...)
+		case 12:
+			// Phase 0 label format before resume provenance was added.
+			fields = append(fields[:11], append([]string{""}, fields[11:]...)...)
+			fields = append(fields, "", "")
 		}
-		if len(fields) != 14 {
+		if len(fields) != 15 {
 			legacy := splitTmuxFields(rawLine, 11)
 			if len(legacy) == 11 {
-				legacy = append(legacy, "", "")
 				fields = append(legacy[:3], append([]string{""}, legacy[3:]...)...)
+				fields = append(fields[:11], append([]string{""}, fields[11:]...)...)
+				fields = append(fields, "", "")
 			}
 		}
-		if len(fields) != 14 {
+		if len(fields) != 15 {
 			return nil, fmt.Errorf("parse tmux sessionstate panes: malformed row %q", rawLine)
 		}
 		windowIndex, err := strconv.Atoi(strings.TrimSpace(fields[0]))
@@ -648,9 +664,10 @@ func parseSessionStatePanes(output []byte) ([]sessionStatePaneRow, error) {
 			aiManaged:      strings.TrimSpace(fields[8]),
 			aiAgent:        strings.TrimSpace(fields[9]),
 			aiTopic:        strings.TrimSpace(fields[10]),
-			aiResumeID:     strings.TrimSpace(fields[11]),
-			aiResumeSource: strings.TrimSpace(fields[12]),
-			aiResumeAt:     strings.TrimSpace(fields[13]),
+			aiTopicManual:  strings.TrimSpace(fields[11]),
+			aiResumeID:     strings.TrimSpace(fields[12]),
+			aiResumeSource: strings.TrimSpace(fields[13]),
+			aiResumeAt:     strings.TrimSpace(fields[14]),
 		})
 	}
 	return panes, nil

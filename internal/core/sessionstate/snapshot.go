@@ -63,6 +63,7 @@ type Recipe struct {
 	ResumeSource    string `json:"resume_source,omitempty"`
 	ResumeUpdatedAt string `json:"resume_updated_at,omitempty"`
 	Topic           string `json:"topic,omitempty"`
+	TopicManual     bool   `json:"topic_manual,omitempty"`
 	Command         string `json:"command,omitempty"`
 }
 
@@ -188,7 +189,7 @@ func (s Snapshot) Validate() error {
 func (r Recipe) Validate() error {
 	switch r.Kind {
 	case RecipeKindShell:
-		if r.Agent != "" || r.ResumeID != "" || r.ResumeSource != "" || r.ResumeUpdatedAt != "" || r.Topic != "" || r.Command != "" {
+		if r.Agent != "" || r.ResumeID != "" || r.ResumeSource != "" || r.ResumeUpdatedAt != "" || r.Topic != "" || r.TopicManual || r.Command != "" {
 			return fmt.Errorf("%w: shell recipe cannot include replay metadata", ErrInvalidSnapshot)
 		}
 	case RecipeKindAgent:
@@ -202,7 +203,7 @@ func (r Recipe) Validate() error {
 		if strings.TrimSpace(r.Command) == "" {
 			return fmt.Errorf("%w: startup recipe requires command", ErrInvalidSnapshot)
 		}
-		if r.Agent != "" || r.ResumeID != "" || r.ResumeSource != "" || r.ResumeUpdatedAt != "" || r.Topic != "" {
+		if r.Agent != "" || r.ResumeID != "" || r.ResumeSource != "" || r.ResumeUpdatedAt != "" || r.Topic != "" || r.TopicManual {
 			return fmt.Errorf("%w: startup recipe cannot include agent metadata", ErrInvalidSnapshot)
 		}
 	case "":

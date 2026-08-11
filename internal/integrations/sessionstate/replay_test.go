@@ -2,6 +2,7 @@ package sessionstate
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -35,34 +36,113 @@ func TestReplaySingleWindowSinglePane(t *testing.T) {
 	}
 
 	want := []replayCommand{
-		{name: "tmux", args: []string{"new-session", "-d", "-s", "home", "-c", cwd}},
-		{name: "tmux", args: []string{"rename-window", "-t", "home:0", "main"}},
-		{name: "tmux", args: []string{"select-layout", "-t", "home:0", "b25d,120x36,0,0,1"}},
-		{name: "tmux", args: []string{"select-pane", "-t", "home:0.0"}},
+		{name: "tmux", args: []string{"new-session", "-d", "-s", "home", "-c", cwd, "-P", "-F", "#{pane_id}"}},
+		{name: "tmux", args: []string{"rename-window", "-t", "%1", "main"}},
+		{name: "tmux", args: []string{"select-layout", "-t", "%1", "b25d,120x36,0,0,1"}},
+		{name: "tmux", args: []string{"select-pane", "-t", "%1"}},
 	}
-	if !reflect.DeepEqual(runner.commands, want) {
-		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	if got := replayStructuralCommands(runner.commands); !reflect.DeepEqual(got, want) {
+		t.Fatalf("structural commands = %#v, want %#v", got, want)
 	}
 }
 
-func TestReplayDoesNotMutateCapturedPaneLabel(t *testing.T) {
+func TestReplayRestoresPaneFieldMatrixWithoutCrossFieldWrites(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	agentRecipe := AgentRecipeWithResumeMetadata("codex", "01973f21-phase1", "agent topic", "session-id", "2026-08-12T00:00:00Z")
+	agentRecipe.TopicManual = true
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{{
+		Index: 0, Name: "main", ActivePaneIndex: 2,
+		Panes: []Pane{
+			{Index: 0, Label: "shell label", Title: "shell raw title", CWD: cwd, Recipe: ShellRecipe()},
+			{Index: 1, Label: "startup label", Title: "startup raw title", CWD: cwd, Recipe: StartupRecipe("sleep 30")},
+			{Index: 2, Label: "agent label", Title: "agent raw title", CWD: cwd, Recipe: agentRecipe},
+		},
+	}}
+	runner := &recordingReplayRunner{}
+	if _, err := Replay(context.Background(), runner, snap, replayAgentOptions("/opt/codex/bin/codex")); err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+
+	want := map[string]map[string]string{
+		"%1": {paneLabelOption: "shell label", recipeKindOption: "", startupCommandOption: "", aiManagedOption: "", aiAgentOption: "", aiTopicOption: "", aiTopicManualOption: "", aiResumeIDOption: "", aiResumeSourceOption: "", aiResumeUpdatedAtOption: ""},
+		"%2": {paneLabelOption: "startup label", recipeKindOption: RecipeKindStartup, startupCommandOption: "sleep 30", aiManagedOption: "", aiAgentOption: "", aiTopicOption: "", aiTopicManualOption: "", aiResumeIDOption: "", aiResumeSourceOption: "", aiResumeUpdatedAtOption: ""},
+		"%3": {paneLabelOption: "agent label", recipeKindOption: "", startupCommandOption: "", aiManagedOption: "1", aiAgentOption: "codex", aiTopicOption: "agent topic", aiTopicManualOption: "on", aiResumeIDOption: "01973f21-phase1", aiResumeSourceOption: "session-id", aiResumeUpdatedAtOption: "2026-08-12T00:00:00Z"},
+	}
+	for target, options := range want {
+		for option, value := range options {
+			if got, ok := replayOptionWrite(runner.commands, target, option); !ok || got != value {
+				t.Fatalf("option %s target %s = %q, %v; want %q", option, target, got, ok, value)
+			}
+		}
+	}
+	for target, title := range map[string]string{"%1": "shell raw title", "%2": "startup raw title", "%3": "agent raw title"} {
+		if !hasReplayCommand(runner.commands, []string{"select-pane", "-T", title, "-t", target}) {
+			t.Fatalf("commands = %#v, want raw title %q on %s", runner.commands, title, target)
+		}
+	}
+	for _, forbidden := range []struct{ target, option, value string }{
+		{"%1", aiTopicOption, "shell raw title"},
+		{"%2", aiTopicOption, "startup label"},
+		{"%3", paneLabelOption, "agent topic"},
+		{"%3", aiTopicOption, "agent raw title"},
+	} {
+		if got, _ := replayOptionWrite(runner.commands, forbidden.target, forbidden.option); got == forbidden.value {
+			t.Fatalf("forbidden cross-field write target=%s option=%s value=%q", forbidden.target, forbidden.option, forbidden.value)
+		}
+	}
+}
+
+func TestReplayOldSnapshotDoesNotInferLabelOrTopicOwnership(t *testing.T) {
 	t.Parallel()
 
 	cwd := t.TempDir()
 	snap := replaySnapshot(cwd)
 	snap.Windows = []Window{{
 		Index: 0, Name: "main", ActivePaneIndex: 0,
-		Panes: []Pane{{Index: 0, Label: "phase-one-captured-label", Title: "raw title", CWD: cwd, Recipe: ShellRecipe()}},
+		Panes: []Pane{{
+			Index: 0, Title: "equal legacy identity", CWD: cwd,
+			Recipe: AgentRecipe("codex", "01973f21-legacy", "equal legacy identity"),
+		}},
 	}}
 	runner := &recordingReplayRunner{}
-	if _, err := Replay(context.Background(), runner, snap, ReplayOptions{}); err != nil {
+	if _, err := Replay(context.Background(), runner, snap, replayAgentOptions("/opt/codex/bin/codex")); err != nil {
 		t.Fatalf("Replay() error = %v", err)
 	}
-	for _, command := range runner.commands {
-		joined := strings.Join(command.args, "\x00")
-		if strings.Contains(joined, "@projmux_pane_label") || strings.Contains(joined, "phase-one-captured-label") {
-			t.Fatalf("Replay() command %#v mutates/reuses captured label; Phase 0 is capture-only", command)
-		}
+	if got, ok := replayOptionWrite(runner.commands, "%1", paneLabelOption); !ok || got != "" {
+		t.Fatalf("legacy label write = %q, %v; want explicit clear", got, ok)
+	}
+	if got, ok := replayOptionWrite(runner.commands, "%1", aiTopicManualOption); !ok || got != "" {
+		t.Fatalf("legacy ownership write = %q, %v; want explicit clear", got, ok)
+	}
+	if got, ok := replayOptionWrite(runner.commands, "%1", aiManagedOption); !ok || got != "1" {
+		t.Fatalf("legacy managed write = %q, %v; want preserved agent identity", got, ok)
+	}
+	if got, ok := replayOptionWrite(runner.commands, "%1", aiTopicOption); !ok || got != "equal legacy identity" {
+		t.Fatalf("legacy topic write = %q, %v; want preserved topic", got, ok)
+	}
+	if !hasReplayCommand(runner.commands, []string{"select-pane", "-T", "equal legacy identity", "-t", "%1"}) {
+		t.Fatalf("commands = %#v, want preserved raw title", runner.commands)
+	}
+}
+
+func TestReplayRequiresCreationReturnedPaneID(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{{
+		Index: 0, Name: "main", ActivePaneIndex: 0,
+		Panes: []Pane{{Index: 0, CWD: cwd, Recipe: ShellRecipe()}},
+	}}
+	runner := &recordingReplayRunner{outputs: map[string]string{
+		replayOutputKey("tmux", "new-session", "-d", "-s", "home", "-c", cwd, "-P", "-F", "#{pane_id}"): "",
+	}}
+	_, err := Replay(context.Background(), runner, snap, ReplayOptions{})
+	if err == nil || !strings.Contains(err.Error(), "did not return exactly one pane id") {
+		t.Fatalf("Replay() error = %v, want missing creation pane id failure", err)
 	}
 }
 
@@ -102,18 +182,18 @@ func TestReplaySplitPaneLayoutCommandOrder(t *testing.T) {
 	}
 
 	want := []replayCommand{
-		{name: "tmux", args: []string{"new-session", "-d", "-s", "home", "-c", cwd}},
-		{name: "tmux", args: []string{"rename-window", "-t", "home:0", "main"}},
-		{name: "tmux", args: []string{"split-window", "-d", "-t", "home:0.0", "-c", second}},
-		{name: "tmux", args: []string{"split-window", "-d", "-t", "home:0.1", "-c", third}},
-		{name: "tmux", args: []string{"select-layout", "-t", "home:0", "d3a9,120x36,0,0{60x36,0,0,1,59x36,61,0,2}"}},
-		{name: "tmux", args: []string{"select-pane", "-t", "home:0.2"}},
-		{name: "tmux", args: []string{"new-window", "-d", "-t", "home:1", "-c", second, "-n", "logs"}},
-		{name: "tmux", args: []string{"select-layout", "-t", "home:1", "a111,100x20,0,0,3"}},
-		{name: "tmux", args: []string{"select-pane", "-t", "home:1.0"}},
+		{name: "tmux", args: []string{"new-session", "-d", "-s", "home", "-c", cwd, "-P", "-F", "#{pane_id}"}},
+		{name: "tmux", args: []string{"rename-window", "-t", "%1", "main"}},
+		{name: "tmux", args: []string{"split-window", "-d", "-t", "%1", "-c", second, "-P", "-F", "#{pane_id}"}},
+		{name: "tmux", args: []string{"split-window", "-d", "-t", "%2", "-c", third, "-P", "-F", "#{pane_id}"}},
+		{name: "tmux", args: []string{"select-layout", "-t", "%1", "d3a9,120x36,0,0{60x36,0,0,1,59x36,61,0,2}"}},
+		{name: "tmux", args: []string{"select-pane", "-t", "%3"}},
+		{name: "tmux", args: []string{"new-window", "-d", "-t", "home:1", "-c", second, "-n", "logs", "-P", "-F", "#{pane_id}"}},
+		{name: "tmux", args: []string{"select-layout", "-t", "%4", "a111,100x20,0,0,3"}},
+		{name: "tmux", args: []string{"select-pane", "-t", "%4"}},
 	}
-	if !reflect.DeepEqual(runner.commands, want) {
-		t.Fatalf("commands = %#v, want %#v", runner.commands, want)
+	if got := replayStructuralCommands(runner.commands); !reflect.DeepEqual(got, want) {
+		t.Fatalf("structural commands = %#v, want %#v", got, want)
 	}
 }
 
@@ -148,7 +228,7 @@ func TestReplayMissingPaneCWDFallsBackWithWarning(t *testing.T) {
 	if warning.Scope != "pane" || warning.WindowIndex != 0 || warning.PaneIndex != 1 || warning.CWD != missing || warning.FallbackCWD != fallback {
 		t.Fatalf("warning = %#v, want pane cwd fallback to supplied dir", warning)
 	}
-	if !hasReplayCommand(runner.commands, []string{"split-window", "-d", "-t", "home:0.0", "-c", fallback}) {
+	if !hasReplayCommand(runner.commands, []string{"split-window", "-d", "-t", "%1", "-c", fallback, "-P", "-F", "#{pane_id}"}) {
 		t.Fatalf("commands = %#v, want split-window using fallback cwd", runner.commands)
 	}
 }
@@ -174,8 +254,8 @@ func TestReplayActivePaneSelection(t *testing.T) {
 	if _, err := Replay(context.Background(), runner, snap, ReplayOptions{}); err != nil {
 		t.Fatalf("Replay() error = %v", err)
 	}
-	if got := runner.commands[len(runner.commands)-1].args; !reflect.DeepEqual(got, []string{"select-pane", "-t", "home:0.1"}) {
-		t.Fatalf("last command args = %#v, want active pane selection", got)
+	if !hasReplayCommand(runner.commands, []string{"select-pane", "-t", "%2"}) {
+		t.Fatalf("commands = %#v, want captured active pane selection", runner.commands)
 	}
 }
 
@@ -239,7 +319,7 @@ func TestReplayAgentDirectStartFirstWindowFirstPaneUsesNewSessionTail(t *testing
 		t.Fatalf("Replay() warnings = %#v, want none", result.Warnings)
 	}
 
-	want := append([]string{"new-session", "-d", "-s", "home", "-c", cwd}, replayAgentTail("claude", agentBin, cwd, "restore topic", "--resume", "abcdef-1234")...)
+	want := append([]string{"new-session", "-d", "-s", "home", "-c", cwd, "-P", "-F", "#{pane_id}"}, replayAgentTail(agentBin, cwd, "--resume", "abcdef-1234")...)
 	if got := runner.commands[0].args; !reflect.DeepEqual(got, want) {
 		t.Fatalf("new-session args = %#v, want %#v", got, want)
 	}
@@ -279,7 +359,7 @@ func TestReplayAgentDirectStartLaterWindowFirstPaneUsesNewWindowTail(t *testing.
 		t.Fatalf("Replay() warnings = %#v, want none", result.Warnings)
 	}
 
-	want := append([]string{"new-window", "-d", "-t", "home:1", "-c", cwd, "-n", "agent"}, replayAgentTail("codex", agentBin, cwd, "codex topic", "resume", "01973f21-abc")...)
+	want := append([]string{"new-window", "-d", "-t", "home:1", "-c", cwd, "-n", "agent", "-P", "-F", "#{pane_id}"}, replayAgentTail(agentBin, cwd, "resume", "01973f21-abc")...)
 	if !hasReplayCommand(runner.commands, want) {
 		t.Fatalf("commands = %#v, want new-window direct-start tail %#v", runner.commands, want)
 	}
@@ -312,7 +392,7 @@ func TestReplayAgentDirectStartSplitPaneUsesSplitWindowTail(t *testing.T) {
 		t.Fatalf("Replay() warnings = %#v, want none", result.Warnings)
 	}
 
-	want := append([]string{"split-window", "-d", "-t", "home:0.0", "-c", cwd}, replayAgentTail("codex", agentBin, cwd, "split topic", "resume", "01973f21-abc")...)
+	want := append([]string{"split-window", "-d", "-t", "%1", "-c", cwd, "-P", "-F", "#{pane_id}"}, replayAgentTail(agentBin, cwd, "resume", "01973f21-abc")...)
 	if !hasReplayCommand(runner.commands, want) {
 		t.Fatalf("commands = %#v, want split-window direct-start tail %#v", runner.commands, want)
 	}
@@ -345,7 +425,7 @@ func TestReplayAntigravityAgentDirectStartUsesConversation(t *testing.T) {
 		t.Fatalf("Replay() warnings = %#v, want none", result.Warnings)
 	}
 
-	want := append([]string{"new-session", "-d", "-s", "home", "-c", cwd}, replayAgentTail("antigravity", agentBin, cwd, "antigravity topic", "--conversation", conversationID)...)
+	want := append([]string{"new-session", "-d", "-s", "home", "-c", cwd, "-P", "-F", "#{pane_id}"}, replayAgentTail(agentBin, cwd, "--conversation", conversationID)...)
 	if got := runner.commands[0].args; !reflect.DeepEqual(got, want) {
 		t.Fatalf("new-session args = %#v, want %#v", got, want)
 	}
@@ -391,9 +471,9 @@ func TestReplayRunsStartupRecipeAfterLayoutAndPaneSelection(t *testing.T) {
 		t.Fatalf("Replay() warnings = %#v, want none", result.Warnings)
 	}
 
-	layoutIndex := replayCommandIndex(runner.commands, []string{"select-layout", "-t", "home:0", "d3a9,120x36,0,0{60x36,0,0,1,59x36,61,0,2}"})
-	selectIndex := replayCommandIndex(runner.commands, []string{"select-pane", "-t", "home:0.1"})
-	sendIndex := replayCommandIndex(runner.commands, []string{"send-keys", "-t", "home:0.1", "npm run dev", "Enter"})
+	layoutIndex := replayCommandIndex(runner.commands, []string{"select-layout", "-t", "%1", "d3a9,120x36,0,0{60x36,0,0,1,59x36,61,0,2}"})
+	selectIndex := replayCommandIndex(runner.commands, []string{"select-pane", "-t", "%2"})
+	sendIndex := replayCommandIndex(runner.commands, []string{"send-keys", "-t", "%2", "npm run dev", "Enter"})
 	if layoutIndex < 0 || selectIndex < 0 || sendIndex < 0 {
 		t.Fatalf("commands = %#v, want layout, active pane select, and startup send-keys", runner.commands)
 	}
@@ -434,10 +514,10 @@ func TestReplayRunsMultipleStartupRecipesInWindowPaneOrder(t *testing.T) {
 	}
 
 	want := [][]string{
-		{"send-keys", "-t", "home:0.0", "npm run api", "Enter"},
-		{"send-keys", "-t", "home:0.1", "npm run web", "Enter"},
-		{"send-keys", "-t", "home:0.2", "npm run worker", "Enter"},
-		{"send-keys", "-t", "home:1.0", "npm run jobs", "Enter"},
+		{"send-keys", "-t", "%1", "npm run api", "Enter"},
+		{"send-keys", "-t", "%2", "npm run web", "Enter"},
+		{"send-keys", "-t", "%3", "npm run worker", "Enter"},
+		{"send-keys", "-t", "%4", "npm run jobs", "Enter"},
 	}
 	lastIndex := -1
 	for _, args := range want {
@@ -683,6 +763,7 @@ type replayCommand struct {
 type recordingReplayRunner struct {
 	commands []replayCommand
 	outputs  map[string]string
+	nextPane int
 }
 
 func (r *recordingReplayRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -692,6 +773,14 @@ func (r *recordingReplayRunner) Run(_ context.Context, name string, args ...stri
 	})
 	if output, ok := r.outputs[replayOutputKey(name, args...)]; ok {
 		return []byte(output), nil
+	}
+	if name == "tmux" && len(args) > 0 && (args[0] == "new-session" || args[0] == "new-window" || args[0] == "split-window") {
+		for i := 1; i+1 < len(args); i++ {
+			if args[i] == "-F" && args[i+1] == "#{pane_id}" {
+				r.nextPane++
+				return fmt.Appendf(nil, "%%%d\n", r.nextPane), nil
+			}
+		}
 	}
 	return nil, nil
 }
@@ -716,14 +805,10 @@ func replayAgentOptions(agentBin string) ReplayOptions {
 	}
 }
 
-func replayAgentTail(agent, agentBin, cwd, title string, argv ...string) []string {
-	titleVar := "__" + agent + "_title"
+func replayAgentTail(agentBin, cwd string, argv ...string) []string {
 	command := strings.Join([]string{
 		"export PATH=" + shellQuote(agentBinDir(agentBin)) + `":$PATH"`,
 		"cd " + shellQuote(cwd),
-		titleVar + "=" + shellQuote(title),
-		`printf '\033]0;%s\007' "$` + titleVar + `"`,
-		`if [ -n "${TMUX:-}" ]; then tmux select-pane -T "$` + titleVar + `" >/dev/null 2>&1 || true; fi`,
 		"exec " + shellJoin(append([]string{agentBin}, argv...)),
 	}, " && ")
 	return []string{"/bin/bash", "-lc", command}
@@ -742,6 +827,7 @@ func agentBinDir(agentBin string) string {
 
 func assertAgentFallbackShellPane(t *testing.T, commands []replayCommand, createArgs []string) {
 	t.Helper()
+	createArgs = append(append([]string(nil), createArgs...), "-P", "-F", "#{pane_id}")
 	if !hasReplayCommand(commands, createArgs) {
 		t.Fatalf("commands = %#v, want shell fallback create command %#v", commands, createArgs)
 	}
@@ -753,6 +839,32 @@ func assertAgentFallbackShellPane(t *testing.T, commands []replayCommand, create
 			t.Fatalf("commands = %#v, want shell fallback without launch tail", commands)
 		}
 	}
+}
+
+func replayStructuralCommands(commands []replayCommand) []replayCommand {
+	result := make([]replayCommand, 0, len(commands))
+	for _, command := range commands {
+		if len(command.args) == 0 || command.args[0] == "set-option" {
+			continue
+		}
+		if command.args[0] == "select-pane" && len(command.args) > 1 && command.args[1] == "-T" {
+			continue
+		}
+		result = append(result, command)
+	}
+	return result
+}
+
+func replayOptionWrite(commands []replayCommand, target, option string) (string, bool) {
+	for _, command := range commands {
+		if len(command.args) == 6 && reflect.DeepEqual(command.args[:4], []string{"set-option", "-p", "-t", target}) && command.args[4] == option {
+			return command.args[5], true
+		}
+		if len(command.args) == 6 && reflect.DeepEqual(command.args[:4], []string{"set-option", "-p", "-t", target}) && command.args[4] == "-u" && command.args[5] == option {
+			return "", true
+		}
+	}
+	return "", false
 }
 
 func replayOutputKey(name string, args ...string) string {

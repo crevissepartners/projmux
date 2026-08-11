@@ -11,9 +11,10 @@ projmux session-state restore --dry-run [--session <name>]
 projmux session-state delete [--session <name>]
 ```
 
-Snapshots preserve source metadata, not a final display label. Window records
-keep `window_name`; pane records keep `pane_title`, recipe fields, AI topic
-metadata (`@projmux_ai_topic`), and resume metadata when available. There is no
+Snapshots preserve source metadata, not a resolved display label. Window records
+keep `window_name`; pane records keep the user label, raw `pane_title`, recipe
+fields, AI topic and manual-ownership metadata (`@projmux_ai_topic` and
+`@projmux_ai_topic_manual`), and resume metadata when available. There is no
 `display_label` field in the snapshot schema. After restore, pane borders and
 app window tabs are display-time tmux policy: the app config derives both from
 the active pane's visible label expression, while raw shell or terminal titles
@@ -50,15 +51,19 @@ CLI for inspection/actions.
 
 Session snapshots capture each pane's user-owned `label` separately from its
 raw `title` and agent recipe `topic`. Older snapshots decode with an empty
-label; no title/topic equality heuristic is applied. Pane-label replay is not
-implemented in the current capture-only slice, so restore does not set
-`@projmux_pane_label` yet.
+label and no manual topic ownership; no title/topic equality heuristic is
+applied. Replay explicitly sets or clears the label, startup recipe fields, AI
+agent/topic/ownership/resume fields, and finally the raw title on the pane id
+returned by tmux creation. It does not derive a target or identity from pane
+order, a visible title, or equality between saved fields.
 
 Agent restore direct-starts supported resume commands when creating fresh tmux
 panes, matching the `projmux ai split` wrapper shape: the wrapper prepends the
-agent binary directory to `PATH`, changes to the saved cwd, sets the terminal
-and tmux pane title from the saved agent topic, then execs `codex resume <id>`,
-`claude --resume <id>`, or `agy --conversation <uuid>`. Antigravity restore
+agent binary directory to `PATH`, changes to the saved cwd, then execs
+`codex resume <id>`, `claude --resume <id>`, or
+`agy --conversation <uuid>`. It does not copy the saved topic into OSC or raw
+tmux title state; replay restores the final raw title only from `Pane.Title`.
+Antigravity restore
 uses only the stable statusline `conversation_id` or hook `conversationId`
 metadata captured as the pane resume id; missing or non-UUID Antigravity ids
 render as `resume unavailable` rather than falling back silently to a shell
