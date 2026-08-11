@@ -513,6 +513,20 @@ func (c *settingsCommand) keybindingPhysicalCaptureAvailable() bool {
 	return strings.TrimSpace(env("TMUX")) == ""
 }
 
+func (c *settingsCommand) keybindingPrefersNativeCapture() bool {
+	if c.preferNativeKeyCapture != nil {
+		return c.preferNativeKeyCapture()
+	}
+	return platformkeys.Available()
+}
+
+func (c *settingsCommand) keybindingNativeCaptureGrace() time.Duration {
+	if c.nativeKeyCaptureGrace > 0 {
+		return c.nativeKeyCaptureGrace
+	}
+	return 100 * time.Millisecond
+}
+
 func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer) error {
 	if !c.keybindingPhysicalCaptureAvailable() {
 		fmt.Fprintln(stdout, "physical key capture is unavailable in this context; enter a key name instead")
@@ -535,11 +549,15 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer
 		result probeResult
 		err    error
 	}
-	probeResultCh := make(chan probeCapture, 1)
-	go func() {
-		res, err := c.probeLabKeybindingContext(ctx, key, defaultProbeTimeout)
-		probeResultCh <- probeCapture{result: res, err: err}
-	}()
+	startProbe := func() <-chan probeCapture {
+		results := make(chan probeCapture, 1)
+		go func() {
+			res, err := c.probeLabKeybindingContext(ctx, key, defaultProbeTimeout)
+			results <- probeCapture{result: res, err: err}
+		}()
+		return results
+	}
+	probeResultCh := startProbe()
 	type nativeCapture struct {
 		chord    string
 		captured bool
@@ -556,37 +574,85 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer
 	}
 
 	var res probeResult
+	var pendingProbe *probeCapture
+	var nativeGraceTimer *time.Timer
+	var nativeGrace <-chan time.Time
+	defer func() {
+		if nativeGraceTimer != nil {
+			nativeGraceTimer.Stop()
+		}
+	}()
+	preferNative := c.keybindingPrefersNativeCapture()
+	applyNative := func(native nativeCapture) (bool, error) {
+		if native.err != nil {
+			fmt.Fprintf(stdout, "native physical-key capture unavailable: %v; using terminal capture\n", native.err)
+			return false, nil
+		}
+		if !native.captured || strings.TrimSpace(native.chord) == "" {
+			return false, nil
+		}
+		cancel()
+		chord, err := normalizeKeymapTypedChord(native.chord)
+		if err != nil {
+			return true, err
+		}
+		fmt.Fprintf(stdout, "capture custom key: OK native physical key %s\n", chord)
+		fmt.Fprintln(stdout, "capture result:")
+		fmt.Fprintln(stdout, "  logical key: "+keybindingChordDisplay(chord))
+		fmt.Fprintln(stdout, "  raw bytes: (native physical event)")
+		fmt.Fprintln(stdout, "  tmux received key: "+chord)
+		fmt.Fprintln(stdout, "  delivery status: delivered - physical key captured before terminal encoding")
+		return true, c.addKeymapAliasAndApply(action.ID, chord, stdout)
+	}
+
+captureLoop:
 	for {
 		select {
 		case native := <-nativeResultCh:
 			nativeResultCh = nil
-			if native.err != nil {
-				fmt.Fprintf(stdout, "native physical-key capture unavailable: %v; using terminal capture\n", native.err)
-				continue
+			handled, err := applyNative(native)
+			if handled || err != nil {
+				return err
 			}
-			if !native.captured || strings.TrimSpace(native.chord) == "" {
+			if pendingProbe == nil {
 				continue
 			}
 			cancel()
-			chord, err := normalizeKeymapTypedChord(native.chord)
-			if err != nil {
-				return err
+			if pendingProbe.err != nil {
+				return pendingProbe.err
 			}
-			fmt.Fprintf(stdout, "capture custom key: OK native physical key %s\n", chord)
-			fmt.Fprintln(stdout, "capture result:")
-			fmt.Fprintln(stdout, "  logical key: "+keybindingChordDisplay(chord))
-			fmt.Fprintln(stdout, "  raw bytes: (native physical event)")
-			fmt.Fprintln(stdout, "  tmux received key: "+chord)
-			fmt.Fprintln(stdout, "  delivery status: delivered - physical key captured before terminal encoding")
-			return c.addKeymapAliasAndApply(action.ID, chord, stdout)
+			res = pendingProbe.result
+			break captureLoop
 		case probe := <-probeResultCh:
+			if preferNative && nativeResultCh != nil {
+				if probe.err == nil && isAmbiguousEnterSequence(probe.result.Sequence) {
+					// Enter selected the Press a key row; it is a recorder
+					// control, not a candidate. Read the operator's next key.
+					probeResultCh = startProbe()
+					continue
+				}
+				pendingProbe = &probe
+				probeResultCh = nil
+				if probe.err == nil {
+					nativeGraceTimer = time.NewTimer(c.keybindingNativeCaptureGrace())
+					nativeGrace = nativeGraceTimer.C
+				}
+				continue
+			}
 			cancel()
 			if probe.err != nil {
 				return probe.err
 			}
 			res = probe.result
+			break captureLoop
+		case <-nativeGrace:
+			cancel()
+			if pendingProbe.err != nil {
+				return pendingProbe.err
+			}
+			res = pendingProbe.result
+			break captureLoop
 		}
-		break
 	}
 	fmt.Fprintf(stdout, "capture custom key: %s\n", renderProbeStatus(res))
 	for _, line := range renderKeybindingDeliveryDiagnostic(res) {

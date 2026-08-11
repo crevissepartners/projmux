@@ -108,8 +108,12 @@ On Darwin, Settings > Keybindings > Add key keeps racing native modified-key
 capture against the existing controlling-TTY capture. This lets Press a key
 store a new physical Option, Control, Control-Option, or Shift-modified chord
 before the terminal turns it into text; ordinary keys still use the portable
-TTY path. The Darwin transport lifecycle, Accessibility policy, and event
-mapping are unchanged by the Linux/WSL recorder described below.
+TTY path. The activation Enter is ignored as a recorder control, and a short
+Darwin-only preference window lets the native physical chord win when the
+terminal's translated bytes arrive at the same time. Linux, WSL, and Windows
+keep their existing immediate terminal-capture ordering. The Darwin transport
+lifecycle, Accessibility policy, and event mapping are unchanged by the
+Linux/WSL recorder described below.
 
 ## Discoverable Actions
 

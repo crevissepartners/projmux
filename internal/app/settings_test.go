@@ -4990,6 +4990,158 @@ func TestSettingsKeybindingCapturePrefersNativePhysicalOptionChord(t *testing.T)
 	}
 }
 
+func TestSettingsKeybindingCaptureDarwinWaitsForNativeResult(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		probeResult probeResult
+		probeErr    error
+	}{
+		{
+			name:        "terminal translated bytes",
+			probeResult: classifyProbeInput(probeKey{Label: "custom key"}, []byte("§")),
+		},
+		{
+			name:     "terminal capture error",
+			probeErr: errors.New("controlling tty unavailable"),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			probeReturned := make(chan struct{})
+			cmd := &settingsCommand{
+				homeDir:                func() (string, error) { return home, nil },
+				lookupEnv:              func(string) string { return "" },
+				preferNativeKeyCapture: func() bool { return true },
+				nativeKeyCaptureGrace:  200 * time.Millisecond,
+				nativeKeyCapture: func(context.Context) (string, bool, error) {
+					<-probeReturned
+					time.Sleep(10 * time.Millisecond)
+					return "M-6", true, nil
+				},
+				probeKeybinding: func(probeKey, time.Duration) (probeResult, error) {
+					close(probeReturned)
+					return tc.probeResult, tc.probeErr
+				},
+			}
+
+			var stdout bytes.Buffer
+			if err := cmd.runKeybindingCapture("ProjectSidebarToggle", &stdout); err != nil {
+				t.Fatalf("runKeybindingCapture() error = %v", err)
+			}
+			keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+			if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"M-6\"]\n") {
+				t.Fatalf("keymap = %q, want delayed native M-6 alias", keymap)
+			}
+			if !strings.Contains(stdout.String(), "OK native physical key M-6") {
+				t.Fatalf("stdout = %q, want native capture result", stdout.String())
+			}
+		})
+	}
+}
+
+func TestSettingsKeybindingCaptureDarwinIgnoresActivationEnter(t *testing.T) {
+	home := t.TempDir()
+	secondProbe := make(chan struct{})
+	abortNative := make(chan struct{})
+	probeCalls := 0
+	cmd := &settingsCommand{
+		homeDir:                func() (string, error) { return home, nil },
+		lookupEnv:              func(string) string { return "" },
+		preferNativeKeyCapture: func() bool { return true },
+		nativeKeyCaptureGrace:  200 * time.Millisecond,
+		nativeKeyCapture: func(context.Context) (string, bool, error) {
+			select {
+			case <-secondProbe:
+				return "M-6", true, nil
+			case <-abortNative:
+				return "", false, nil
+			}
+		},
+		probeKeybinding: func(probeKey, time.Duration) (probeResult, error) {
+			probeCalls++
+			if probeCalls == 1 {
+				return classifyProbeInput(probeKey{Label: "custom key"}, []byte("\r")), nil
+			}
+			close(secondProbe)
+			time.Sleep(20 * time.Millisecond)
+			return classifyProbeInput(probeKey{Label: "custom key"}, nil), nil
+		},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.runKeybindingCapture("ProjectSidebarToggle", &bytes.Buffer{})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runKeybindingCapture() error = %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		close(abortNative)
+		<-done
+		t.Fatal("capture did not read another key after the activation Enter")
+	}
+	if probeCalls != 2 {
+		t.Fatalf("probe calls = %d, want 2 after ignoring activation Enter", probeCalls)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"M-6\"]\n") {
+		t.Fatalf("keymap = %q, want native M-6 after activation Enter", keymap)
+	}
+}
+
+func TestSettingsKeybindingCaptureNonDarwinKeepsImmediateTerminalResult(t *testing.T) {
+	home := t.TempDir()
+	releaseNative := make(chan struct{})
+	nativeStopped := make(chan struct{})
+	cmd := &settingsCommand{
+		homeDir:                func() (string, error) { return home, nil },
+		lookupEnv:              func(string) string { return "" },
+		preferNativeKeyCapture: func() bool { return false },
+		nativeKeyCaptureGrace:  time.Hour,
+		nativeKeyCapture: func(ctx context.Context) (string, bool, error) {
+			select {
+			case <-ctx.Done():
+				close(nativeStopped)
+				return "", false, nil
+			case <-releaseNative:
+				return "M-6", true, nil
+			}
+		},
+		probeKeybinding: func(key probeKey, timeout time.Duration) (probeResult, error) {
+			return classifyProbeInput(key, []byte("p")), nil
+		},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.runKeybindingCapture("ProjectSidebarToggle", &bytes.Buffer{})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runKeybindingCapture() error = %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		close(releaseNative)
+		<-done
+		t.Fatal("non-Darwin capture waited for the native preference window")
+	}
+	select {
+	case <-nativeStopped:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("terminal result did not cancel the unused native capture")
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"p\"]\n") {
+		t.Fatalf("keymap = %q, want immediate terminal p alias", keymap)
+	}
+	if strings.Contains(keymap, "M-6") {
+		t.Fatalf("keymap = %q, must not use native result on the non-Darwin path", keymap)
+	}
+}
+
 func TestSettingsHubKeybindingsUnbindWritesEmptyKeys(t *testing.T) {
 	t.Parallel()
 

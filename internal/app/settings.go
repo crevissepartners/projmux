@@ -33,6 +33,8 @@ type settingsCommand struct {
 	tmuxRunner               tmuxRunner
 	probeKeybinding          func(probeKey, time.Duration) (probeResult, error)
 	nativeKeyCapture         func(context.Context) (string, bool, error)
+	preferNativeKeyCapture   func() bool
+	nativeKeyCaptureGrace    time.Duration
 	physicalCaptureAvailable func() bool
 	aiNotifyDiagnostics      func() []doctorAINotifyIntegration
 }
@@ -51,8 +53,10 @@ func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCo
 		runOutput: func(name string, args ...string) ([]byte, error) {
 			return exec.Command(name, args...).Output()
 		},
-		tmuxRunner:       inttmux.ExecRunner{},
-		nativeKeyCapture: platformkeys.CaptureModifiedChord,
+		tmuxRunner:             inttmux.ExecRunner{},
+		nativeKeyCapture:       platformkeys.CaptureModifiedChord,
+		preferNativeKeyCapture: platformkeys.Available,
+		nativeKeyCaptureGrace:  100 * time.Millisecond,
 	}
 	// The concrete commands satisfy the settings role interfaces structurally.
 	// Guard the nil pointers so the `c.<dep> == nil` checks keep their
