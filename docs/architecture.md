@@ -115,10 +115,13 @@ Projmux keeps visible naming separate from source metadata:
 - **Git branch** belongs in the statusbar git segment. Branch-based terminal
   title overwrites are not promoted to the primary Projmux pane or window name.
 - **Session snapshots** store source metadata separately: `window_name`, raw
-  `pane_title`, user `label`, `@projmux_ai_topic`, and agent resume metadata.
-  Old snapshots decode with an absent label; title/topic equality never infers
-  one. Phase 0 captures the field but does not replay it. Snapshots do not store
-  a resolved `display_label`; visible labels are recomputed by display policy.
+  `pane_title`, user `label`, `@projmux_ai_topic`, manual topic ownership, and
+  agent resume metadata. Old snapshots decode with an absent label and absent
+  ownership; title/topic equality never infers either. Replay writes each
+  semantic field to the exact pane id returned by tmux creation and restores
+  raw title from `Pane.Title` after launch/startup replay. Snapshots do not
+  store a resolved `display_label`; visible labels are recomputed by display
+  policy.
 
 ## Notify queue
 

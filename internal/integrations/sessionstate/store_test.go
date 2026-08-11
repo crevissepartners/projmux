@@ -202,7 +202,7 @@ func TestLoadOldSnapshotWithoutPaneLabelDoesNotInferOne(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	pane := got.Windows[0].Panes[0]
-	if pane.Label != "" || pane.Title != "same identity" || pane.Recipe.Topic != "same identity" {
+	if pane.Label != "" || pane.Title != "same identity" || pane.Recipe.Topic != "same identity" || pane.Recipe.TopicManual {
 		t.Fatalf("decoded pane = %#v, want absent label with independent equal title/topic", pane)
 	}
 }
@@ -222,7 +222,7 @@ func TestDecodePhaseOnePaneLabelTargetFixture(t *testing.T) {
 		t.Fatalf("fixture Validate() error = %v", err)
 	}
 	pane := snap.Windows[0].Panes[0]
-	if pane.Label != "user-owned label" || pane.Title != "raw runtime title" || pane.Recipe.Topic != "agent AI topic" {
+	if pane.Label != "user-owned label" || pane.Title != "raw runtime title" || pane.Recipe.Topic != "agent AI topic" || !pane.Recipe.TopicManual {
 		t.Fatalf("fixture pane = %#v, want three independent identity fields", pane)
 	}
 }
@@ -437,6 +437,16 @@ func TestRecipeJSONForms(t *testing.T) {
 			name: "agent",
 			in:   AgentRecipeWithResumeMetadata("claude", "abcdef-1234", "[Lead:QA] keybinding in-app", "session-id", "2026-05-12T03:04:05Z"),
 			want: `{"kind":"agent","agent":"claude","resume_id":"abcdef-1234","resume_source":"session-id","resume_updated_at":"2026-05-12T03:04:05Z","topic":"[Lead:QA] keybinding in-app"}`,
+		},
+		{
+			name: "manual agent topic",
+			in: Recipe{
+				Kind:        RecipeKindAgent,
+				Agent:       "codex",
+				Topic:       "manual topic",
+				TopicManual: true,
+			},
+			want: `{"kind":"agent","agent":"codex","topic":"manual topic","topic_manual":true}`,
 		},
 		{
 			name: "startup",

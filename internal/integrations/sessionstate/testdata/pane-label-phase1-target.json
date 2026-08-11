@@ -18,7 +18,8 @@
             "kind": "agent",
             "agent": "codex",
             "resume_id": "01973f21-phase1",
-            "topic": "agent AI topic"
+            "topic": "agent AI topic",
+            "topic_manual": true
           }
         }
       ]

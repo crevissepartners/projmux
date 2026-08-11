@@ -264,3 +264,9 @@ wait "$recorder_popup_pid"
 tmux -L "$recorder_socket" kill-server
 wait "$recorder_client_pid" || true
 exec 9>&-
+
+# Save, destroy, and replay a shell/startup/agent field matrix through a
+# disposable exact tmux server. The Go harness also changes pane-base-index
+# between save and restore to prove replay uses returned %pane_id targets.
+PROJMUX_REAL_TMUX_TEST=1 go test ./internal/integrations/tmux \
+  -run '^TestRealTmuxSessionStateSaveDestroyReplayFieldFidelity$' -count=1
