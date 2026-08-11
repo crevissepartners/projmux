@@ -10,6 +10,35 @@ cd "$smoke_root"
 smoke_build_binary
 bin="$PROJMUX_SMOKE_BIN"
 
+# Exercise the opt-in direct launch contract against a real isolated tmux
+# server, then prove that the returned handle names the pane that is live.
+PROJMUX_SMOKE_TMUX_SOCKET="projmux-pane-id-e2e"
+export PROJMUX_SMOKE_TMUX_SOCKET
+pane_id_socket="$PROJMUX_SMOKE_TMUX_SOCKET"
+pane_id_session="pane-id-e2e"
+tmux -L "$pane_id_socket" new-session -d -s "$pane_id_session" -c "$smoke_root" sleep 300
+pane_id_target="$(tmux -L "$pane_id_socket" display-message -p -t "$pane_id_session:0.0" '#{pane_id}')"
+pane_id_socket_path="$(tmux -L "$pane_id_socket" display-message -p -t "$pane_id_target" '#{socket_path}')"
+pane_id_server_pid="$(tmux -L "$pane_id_socket" display-message -p -t "$pane_id_target" '#{pid}')"
+pane_id_output="$(
+  TMUX="$pane_id_socket_path,$pane_id_server_pid,0" \
+    TMUX_PANE="$pane_id_target" \
+    TMUX_SPLIT_TARGET_PANE="$pane_id_target" \
+    TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
+    SHELL="/bin/sh" \
+    "$bin" ai split --agent shell --print-pane-id right
+)"
+if [[ ! "$pane_id_output" =~ ^%[0-9]+$ ]]; then
+  echo "expected exactly one %N pane id line, got: $pane_id_output" >&2
+  exit 1
+fi
+pane_id_live="$(tmux -L "$pane_id_socket" display-message -p -t "$pane_id_output" '#{pane_id}')"
+if [[ "$pane_id_live" != "$pane_id_output" ]]; then
+  echo "returned pane id is not live: returned=$pane_id_output resolved=$pane_id_live" >&2
+  exit 1
+fi
+tmux -L "$pane_id_socket" kill-server
+
 project_a="$PROJMUX_SMOKE_WORKDIR/projects/alpha"
 project_b="$PROJMUX_SMOKE_WORKDIR/projects/beta"
 mkdir -p "$project_a" "$project_b"

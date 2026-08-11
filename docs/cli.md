@@ -352,7 +352,7 @@ supplied window.
 ## ai
 
 ```
-projmux ai split    [--agent <claude|codex|antigravity|shell|selective|resume>] [--force-agent] [right|down] [-- <extra-arg>...]
+projmux ai split    [--agent <claude|codex|antigravity|shell|selective|resume>] [--force-agent] [--print-pane-id] [right|down] [-- <extra-arg>...]
 projmux ai picker   [--inside] [--shell] [--resume] <right|down>
 projmux ai settings
 projmux ai status   set <thinking|waiting|idle> [--pane <id>]
@@ -394,6 +394,21 @@ existing plain shell split. Arguments after `--` are extra arguments appended to
 the resolved `claude`, `codex`, or `agy` executable inside the managed wrapper;
 projmux still sets the context directory, tmux title, AI pane metadata, title
 watcher, and split layout.
+
+Automation callers can add `--print-pane-id` to an explicit direct
+`--agent claude|codex|antigravity|shell` launch. On success, stdout contains
+exactly the new `%N` pane id followed by one newline. The value comes directly
+from the selected tmux or psmux backend's existing
+`split-window -P -F '#{pane_id}'` result. If the backend returns no valid pane
+id, the command fails non-zero with backend-specific guidance and writes no
+success value. Without `--print-pane-id`, successful split invocations keep the
+existing empty-stdout behavior.
+
+`--print-pane-id` is not available for the saved default mode or for
+`--agent selective|resume`, because those paths may open a picker and launch
+only after a later user selection. Those combinations fail before opening a
+picker or creating a pane. Arguments after `--` keep their existing argv-tail
+meaning when the flag is used with a concrete AI agent.
 The resume picker lists the newest deduplicated Claude/Codex resume sessions
 for the current project, with `[+ New Session]` pinned first. If there are no
 resume sessions it goes straight to the existing selective picker. Phase 1

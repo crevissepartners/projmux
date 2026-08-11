@@ -157,7 +157,7 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	switch args[0] {
 	case "split":
-		return c.runSplit(args[1:], stderr)
+		return c.runSplit(args[1:], stdout, stderr)
 	case "picker":
 		return c.runPicker(args[1:], stderr)
 	case "settings":
@@ -649,11 +649,12 @@ func (c *aiCommand) resolveTopicPaneID(explicit string) (string, error) {
 }
 
 type aiSplitInvocation struct {
-	direction  string
-	agent      string
-	agentSet   bool
-	forceAgent bool
-	extraArgs  []string
+	direction   string
+	agent       string
+	agentSet    bool
+	forceAgent  bool
+	printPaneID bool
+	extraArgs   []string
 }
 
 type aiSplitLaunchPath string
@@ -664,7 +665,7 @@ const (
 	aiSplitLaunchPicker  aiSplitLaunchPath = "picker"
 )
 
-func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
+func (c *aiCommand) runSplit(args []string, stdout, stderr io.Writer) error {
 	invocation, err := parseAISplitInvocation(args, stderr)
 	if err != nil {
 		return err
@@ -677,12 +678,28 @@ func (c *aiCommand) runSplit(args []string, stderr io.Writer) error {
 			return c.openResumePickerToggle(invocation.direction)
 		}
 		if invocation.agent == aiModeShell && len(invocation.extraArgs) == 0 {
+			if invocation.printPaneID {
+				paneID, err := c.runShellSplitWithPaneID(invocation.direction)
+				if err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(stdout, paneID)
+				return err
+			}
 			return c.runShellSplit(invocation.direction)
 		}
 		if !invocation.forceAgent {
 			if err := c.requireAIAgentEnabled(invocation.agent, aiSplitLaunchDirect); err != nil {
 				return err
 			}
+		}
+		if invocation.printPaneID {
+			paneID, err := c.runDirectAgentSplitWithExtraArgsAndPaneID(invocation.agent, invocation.direction, invocation.extraArgs)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(stdout, paneID)
+			return err
 		}
 		return c.runDirectAgentSplitWithExtraArgs(invocation.agent, invocation.direction, invocation.extraArgs)
 	}
@@ -1470,14 +1487,26 @@ func (c *aiCommand) runDirectAgentSplitWithExtraArgs(mode, direction string, ext
 	return c.runAgentSplitResolved(mode, direction, extraArgs, targetPane, contextDir)
 }
 
+func (c *aiCommand) runDirectAgentSplitWithExtraArgsAndPaneID(mode, direction string, extraArgs []string) (string, error) {
+	targetPane := c.resolveTargetPane()
+	if strings.TrimSpace(targetPane) == "" {
+		return "", c.printPaneIDUnavailableError("")
+	}
+	contextDir := c.resolveAgentContextDir(mode)
+	return c.runAgentSplitResolvedWithOptionsResult(mode, direction, extraArgs, targetPane, contextDir, aiSplitLaunchOptions{
+		requirePaneID: true,
+	})
+}
+
 func (c *aiCommand) runAgentSplitWithExtraArgs(mode, direction string, extraArgs []string) error {
 	return c.runAgentSplitResolved(mode, direction, extraArgs, c.resolveTargetPane(), c.resolveAgentContextDir(mode))
 }
 
 type aiSplitLaunchOptions struct {
-	execArgv    []string
-	pathPrepend string
-	resume      aiPaneResumeMetadata
+	execArgv      []string
+	pathPrepend   string
+	resume        aiPaneResumeMetadata
+	requirePaneID bool
 }
 
 type aiPaneResumeMetadata struct {
@@ -1492,23 +1521,31 @@ func (c *aiCommand) runAgentSplitResolved(mode, direction string, extraArgs []st
 }
 
 func (c *aiCommand) runAgentSplitResolvedWithOptions(mode, direction string, extraArgs []string, targetPane, contextDir string, options aiSplitLaunchOptions) error {
+	_, err := c.runAgentSplitResolvedWithOptionsResult(mode, direction, extraArgs, targetPane, contextDir, options)
+	return err
+}
+
+func (c *aiCommand) runAgentSplitResolvedWithOptionsResult(mode, direction string, extraArgs []string, targetPane, contextDir string, options aiSplitLaunchOptions) (string, error) {
 	execArgv := append([]string(nil), options.execArgv...)
 	pathPrepend := options.pathPrepend
 	if len(execArgv) == 0 {
 		var err error
 		execArgv, pathPrepend, err = c.agentExecArgv(mode, extraArgs)
 		if err != nil {
-			return err
+			return "", err
 		}
 	}
 	usePSMux := c.usePSMuxAIBackend()
 	title := c.buildAgentTitle(mode, contextDir)
 	command, commandArgs, err := c.agentSplitCommand(mode, pathPrepend, contextDir, title, execArgv)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if targetPane == "" {
-		return c.run(command[0], command[1:]...)
+		if options.requirePaneID {
+			return "", c.printPaneIDUnavailableError("")
+		}
+		return "", c.run(command[0], command[1:]...)
 	}
 
 	splitDirection := intmux.SplitRight
@@ -1523,15 +1560,24 @@ func (c *aiCommand) runAgentSplitResolvedWithOptions(mode, direction string, ext
 		Command:      commandArgs,
 	})
 	if err != nil {
-		return err
+		if options.requirePaneID {
+			return "", c.printPaneIDSplitError(err)
+		}
+		return "", err
+	}
+	if options.requirePaneID {
+		paneID, err = c.requirePrintedPaneID(paneID)
+		if err != nil {
+			return "", err
+		}
 	}
 	if usePSMux {
-		return nil
+		return paneID, nil
 	}
 	c.configureAIPane(paneID, mode, contextDir, title, options.resume)
 	c.applySplitLayout(targetPane, direction)
 	c.startAIWatchTitle(paneID)
-	return nil
+	return paneID, nil
 }
 
 func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, string, error) {
@@ -1553,8 +1599,20 @@ func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, st
 }
 
 func (c *aiCommand) runShellSplit(direction string) error {
+	_, err := c.runShellSplitResolved(direction, false)
+	return err
+}
+
+func (c *aiCommand) runShellSplitWithPaneID(direction string) (string, error) {
+	return c.runShellSplitResolved(direction, true)
+}
+
+func (c *aiCommand) runShellSplitResolved(direction string, requirePaneID bool) (string, error) {
 	usePSMux := c.usePSMuxAIBackend()
 	targetPane := c.resolveTargetPane()
+	if requirePaneID && strings.TrimSpace(targetPane) == "" {
+		return "", c.printPaneIDUnavailableError("")
+	}
 	contextDir := c.resolveContextDir()
 	splitDirection := intmux.SplitRight
 	if direction == "down" {
@@ -1565,11 +1623,12 @@ func (c *aiCommand) runShellSplit(direction string) error {
 	if usePSMux {
 		rendered, err := psmuxSplitCommandTail(psmuxInteractiveShellCommand(c.lookupEnv))
 		if err != nil {
-			return err
+			return "", err
 		}
 		command = []string{rendered}
 		returnPaneID = true
 	}
+	returnPaneID = returnPaneID || requirePaneID
 
 	paneID, err := c.muxRunner().SplitWindow(context.Background(), intmux.SplitWindowOptions{
 		ReturnPaneID: returnPaneID,
@@ -1579,14 +1638,54 @@ func (c *aiCommand) runShellSplit(direction string) error {
 		Command:      command,
 	})
 	if err != nil {
-		return err
+		if requirePaneID {
+			return "", c.printPaneIDSplitError(err)
+		}
+		return "", err
+	}
+	if requirePaneID {
+		paneID, err = c.requirePrintedPaneID(paneID)
+		if err != nil {
+			return "", err
+		}
 	}
 	if usePSMux {
-		_ = strings.TrimSpace(paneID)
-		return nil
+		return paneID, nil
 	}
 	c.applySplitLayout(targetPane, direction)
-	return nil
+	return paneID, nil
+}
+
+func (c *aiCommand) requirePrintedPaneID(paneID string) (string, error) {
+	paneID = strings.TrimSpace(paneID)
+	if len(paneID) < 2 || paneID[0] != '%' {
+		return "", c.printPaneIDUnavailableError(paneID)
+	}
+	for _, r := range paneID[1:] {
+		if r < '0' || r > '9' {
+			return "", c.printPaneIDUnavailableError(paneID)
+		}
+	}
+	return paneID, nil
+}
+
+func (c *aiCommand) printPaneIDUnavailableError(paneID string) error {
+	backend := c.printPaneIDBackendName()
+	if paneID == "" {
+		return fmt.Errorf("ai split --print-pane-id: %s backend did not return a pane ID; expected %%N from split-window -P -F '#{pane_id}'", backend)
+	}
+	return fmt.Errorf("ai split --print-pane-id: %s backend returned invalid pane ID %q; expected %%N from split-window -P -F '#{pane_id}'", backend, paneID)
+}
+
+func (c *aiCommand) printPaneIDSplitError(err error) error {
+	return fmt.Errorf("ai split --print-pane-id: %s backend split-window -P -F '#{pane_id}' failed: %w", c.printPaneIDBackendName(), err)
+}
+
+func (c *aiCommand) printPaneIDBackendName() string {
+	if c.usePSMuxAIBackend() {
+		return "psmux"
+	}
+	return "tmux"
 }
 
 type aiPaneGeometry struct {
@@ -2780,6 +2879,8 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 			invocation.agentSet = true
 		case arg == "--force-agent":
 			invocation.forceAgent = true
+		case arg == "--print-pane-id":
+			invocation.printPaneID = true
 		case strings.HasPrefix(arg, "-"):
 			printAIUsage(stderr)
 			return aiSplitInvocation{}, fmt.Errorf("unknown ai split flag: %s", arg)
@@ -2802,6 +2903,10 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 	if invocation.forceAgent && !invocation.agentSet {
 		printAIUsage(stderr)
 		return aiSplitInvocation{}, errors.New("ai split --force-agent requires --agent claude, --agent codex, or --agent antigravity")
+	}
+	if invocation.printPaneID && !invocation.agentSet {
+		printAIUsage(stderr)
+		return aiSplitInvocation{}, errors.New("ai split --print-pane-id requires explicit --agent claude, --agent codex, --agent antigravity, or --agent shell")
 	}
 	direction, err := parseAISplitDirection(positionals, "ai split", stderr)
 	if err != nil {
@@ -2830,6 +2935,10 @@ func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation,
 		if invocation.forceAgent && invocation.agent != aiModeClaude && invocation.agent != aiModeCodex && invocation.agent != aiModeAntigravity {
 			printAIUsage(stderr)
 			return aiSplitInvocation{}, errors.New("ai split --force-agent only applies to --agent claude, --agent codex, or --agent antigravity")
+		}
+		if invocation.printPaneID && (invocation.agent == aiModeSelective || invocation.agent == aiModeResume) {
+			printAIUsage(stderr)
+			return aiSplitInvocation{}, fmt.Errorf("ai split --print-pane-id cannot be used with --agent %s; use an explicit direct agent or shell", invocation.agent)
 		}
 	}
 	return invocation, nil
@@ -3837,7 +3946,7 @@ func parsePositiveInt(value string) int {
 
 func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|antigravity|shell|selective|resume>] [--force-agent] [right|down] [-- <extra-arg>...]")
+	fmt.Fprintln(w, "  projmux ai split [--agent <claude|codex|antigravity|shell|selective|resume>] [--force-agent] [--print-pane-id] [right|down] [-- <extra-arg>...]")
 	fmt.Fprintln(w, "  projmux ai picker [--inside] [--shell] [--resume] [right|down]")
 	fmt.Fprintln(w, "  projmux ai settings [--get|--set <mode>]")
 	fmt.Fprintln(w, "  projmux ai status set <thinking|waiting|idle> [pane]")

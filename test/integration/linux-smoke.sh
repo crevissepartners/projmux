@@ -10,6 +10,62 @@ cd "$smoke_root"
 smoke_build_binary
 bin="$PROJMUX_SMOKE_BIN"
 
+# The CLI contract must propagate the pane id returned by the selected mux
+# backend without scraping a second command. Keep this fake-backed check here
+# so both tmux and psmux argv/output boundaries run through the built binary.
+fake_mux_dir="$PROJMUX_SMOKE_WORKDIR/fake-mux"
+mkdir -p "$fake_mux_dir"
+cat >"$fake_mux_dir/tmux" <<'FAKE_TMUX'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$PROJMUX_FAKE_MUX_LOG"
+if [[ "${1:-}" == "split-window" ]]; then
+  printf '%%81\n'
+fi
+FAKE_TMUX
+cat >"$fake_mux_dir/psmux" <<'FAKE_PSMUX'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$PROJMUX_FAKE_MUX_LOG"
+if [[ "${3:-}" == "split-window" ]]; then
+  printf '%%82\n'
+fi
+FAKE_PSMUX
+chmod 0755 "$fake_mux_dir/tmux" "$fake_mux_dir/psmux"
+
+fake_tmux_log="$PROJMUX_SMOKE_WORKDIR/fake-tmux.log"
+fake_tmux_output="$(
+  PROJMUX_FAKE_MUX_LOG="$fake_tmux_log" \
+    PATH="$fake_mux_dir:$PATH" \
+    TMUX="fake" \
+    TMUX_SPLIT_TARGET_PANE="%7" \
+    TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
+    SHELL="/bin/sh" \
+    "$bin" ai split --agent shell --print-pane-id right
+)"
+if [[ "$fake_tmux_output" != "%81" ]]; then
+  echo "expected fake tmux pane id %81, got: $fake_tmux_output" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$fake_tmux_log" "split-window -P -F #{pane_id} -h -t %7"
+
+fake_psmux_log="$PROJMUX_SMOKE_WORKDIR/fake-psmux.log"
+fake_psmux_output="$(
+  PROJMUX_FAKE_MUX_LOG="$fake_psmux_log" \
+    PROJMUX_MUX_BACKEND="psmux" \
+    PATH="$fake_mux_dir:$PATH" \
+    TMUX="fake" \
+    TMUX_SPLIT_TARGET_PANE="%7" \
+    TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
+    SHELL="/bin/sh" \
+    "$bin" ai split --agent shell --print-pane-id down
+)"
+if [[ "$fake_psmux_output" != "%82" ]]; then
+  echo "expected fake psmux pane id %82, got: $fake_psmux_output" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$fake_psmux_log" "projmux split-window -v -P -F #{pane_id} -t %7"
+
 "$bin" doctor --json >"$PROJMUX_SMOKE_WORKDIR/doctor.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"name": "tmux"'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"status": "ok"'
