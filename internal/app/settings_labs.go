@@ -93,12 +93,12 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	liveGlyph := settingsGlyphInactive
 	liveColor := settingsColorDim
 	liveValue := settingsNoopValue
-	liveDescription := "unavailable - Linux/WSL only"
+	liveDescription := "unavailable on this platform"
 	if liveSupported {
-		liveDescription = "off - hidden; Linux/WSL guest view"
+		liveDescription = "off - hidden; current system view"
 		liveValue = settingsActionPrefixLiveResources + string(config.LiveResourcesOn)
 		if liveMode == config.LiveResourcesOn {
-			liveDescription = "on - live CPU and memory; Linux/WSL guest view"
+			liveDescription = "on - live CPU and memory; current system view"
 			liveGlyph = settingsGlyphToggle
 			liveColor = settingsColorAdd
 			liveValue = settingsActionPrefixLiveResources + string(config.LiveResourcesOff)
@@ -107,7 +107,7 @@ func (c *settingsCommand) labsEntries() []intpickercompat.Entry {
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, liveGlyph, liveColor, "Live system resources", liveDescription),
 		Value:     liveValue,
-		SearchKey: "Live system resources CPU memory statusbar Linux WSL on off",
+		SearchKey: "Live system resources CPU memory statusbar macOS Linux WSL on off",
 	})
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Hooks", string(hookMode)+" - "+hookSource),
@@ -143,7 +143,7 @@ func (c *settingsCommand) currentLiveResourcesMode() (config.LiveResourcesMode, 
 
 func (c *settingsCommand) setLiveResourcesMode(value string) error {
 	if !systemstatus.Supported() {
-		return fmt.Errorf("live system resources are available only on Linux/WSL")
+		return fmt.Errorf("live system resources are unavailable on this platform")
 	}
 	mode := config.NormalizeLiveResourcesMode(value)
 	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)

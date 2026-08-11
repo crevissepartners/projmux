@@ -82,9 +82,9 @@ view-first layout:
   visible Labs row. The hidden compatibility action redirects to the
   `Settings > Keybindings` action list, not to a diagnostic default.
 - `Settings > Labs > Live system resources` is a direct global on/off toggle
-  for the Linux/WSL lower-status-row `CPU N%  MEM N%` segment. It defaults off,
-  updates live tmux state when toggled, and renders unavailable on unsupported
-  platforms. WSL copy identifies the values as the Linux guest/VM view.
+  for the macOS/Linux/WSL lower-status-row `CPU N%  MEM N%` segment. It defaults
+  off, updates live tmux state when toggled, and renders unavailable on
+  unsupported platforms. WSL values describe the Linux guest/VM view.
 - `Settings > Labs > Project Hooks` is overview-first. The Labs root opens the
   overview, and the on/off mutation rows live one level deeper.
 - `Settings > AI Settings` is view-first. The root contains `Default split

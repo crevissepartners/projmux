@@ -297,10 +297,11 @@ projmux status resources
   age, and `+<extras>`. Window/pane ids remain routable metadata but are not
   displayed in the compact HUD. Degrades through width tiers; default
   `--max-width` is `200` runes.
-- `resources` — Linux/WSL aggregate `CPU N%  MEM N%` from `/proc/stat` and
-  `/proc/meminfo`. CPU needs two invocations to establish a delta and renders
-  `--` for the first sample. WSL reports the Linux guest/VM view. Unsupported
-  platforms and unreadable procfs data produce no error output.
+- `resources` — macOS/Linux/WSL aggregate `CPU N%  MEM N%`. Linux uses
+  `/proc/stat` and `/proc/meminfo`; macOS uses native Mach host statistics.
+  CPU needs two invocations to establish a delta and renders `--` for the first
+  sample. WSL reports the Linux guest/VM view. Unsupported platforms and
+  unreadable system metrics produce no error output.
 
 ## statusbar
 

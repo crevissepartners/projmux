@@ -780,10 +780,12 @@ CPU/memory segment on the lower status row. The saved global value is:
 ```
 
 Accepted values are `off` (default) and `on`. The feature is available on
-native Linux and WSL. It reads Linux procfs directly without launching `top`,
-`free`, PowerShell, or another metrics process. In WSL the values describe the
-Linux guest/VM view, not total Windows host utilization. The CPU delta cache is
-internal state at
+macOS, native Linux, and WSL. Linux reads procfs directly; macOS reads Mach host
+statistics and `hw.memsize`. Neither path launches `top`, `vm_stat`, `free`,
+PowerShell, or another metrics process. On macOS, available memory is free plus
+inactive pages, matching the reclaimable-memory intent of Linux
+`MemAvailable`. In WSL the values describe the Linux guest/VM view, not total
+Windows host utilization. The CPU delta cache is internal state at
 `${XDG_STATE_HOME:-~/.local/state}/projmux/live-resources-sample.json`.
 CPU reference samples older than 30 seconds are ignored and replaced on the
 next refresh.

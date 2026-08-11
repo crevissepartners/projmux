@@ -69,10 +69,12 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
   and tab titles are centered in a fixed-width trim so long active pane names
   do not resize the status row.
 - `Settings > Labs > Live system resources` adds the compact `CPU N%  MEM N%`
-  segment between git and the clock on Linux and WSL. It is global, default
-  off, and updates with tmux's existing five-second status interval. CPU is the
-  aggregate delta from `/proc/stat`; memory is
-  `(MemTotal - MemAvailable) / MemTotal` from `/proc/meminfo`. The first CPU
+  segment between git and the clock on macOS, Linux, and WSL. It is global,
+  default off, and updates with tmux's existing five-second status interval.
+  Linux CPU is the aggregate delta from `/proc/stat`; memory is
+  `(MemTotal - MemAvailable) / MemTotal` from `/proc/meminfo`. macOS CPU uses
+  the aggregate Mach host tick delta; memory is total physical memory minus
+  free and inactive pages. The first CPU
   sample renders `CPU --%` until a second counter sample exists. WSL values are
   the Linux guest/VM view, not whole-Windows host utilization. The generated
   tmux condition prevents the status subprocess from running while the Lab is

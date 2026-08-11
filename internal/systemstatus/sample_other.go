@@ -2,4 +2,4 @@
 
 package systemstatus
 
-func Supported() bool { return false }
+func (s Sampler) Sample() Metrics { return Metrics{} }
