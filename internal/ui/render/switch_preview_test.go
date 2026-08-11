@@ -132,6 +132,23 @@ func TestRenderSwitchPreviewForSidebarUsesSemanticPromptBadge(t *testing.T) {
 	}
 }
 
+func TestSidebarVisiblePaneIdentityUsesLabelAndKnownShellBeforeRawTitle(t *testing.T) {
+	t.Parallel()
+
+	got := RenderSwitchPreview(corepreview.SwitchReadModel{
+		SessionMode: "existing",
+		Windows:     []corepreview.Window{{Index: "1", Name: "app"}},
+		Panes: []corepreview.Pane{
+			{WindowIndex: "1", Index: "0", Label: "user label", AIAgent: "codex", AITopic: "AI topic", Command: "zsh", Title: "raw title"},
+			{WindowIndex: "1", Index: "1", Command: "fish", Title: "branch title"},
+			{WindowIndex: "1", Index: "2", Command: "nvim", Title: "raw editor title"},
+		},
+	}, "sidebar")
+	if !strings.Contains(got, "[1] user label | fish | raw editor title") {
+		t.Fatalf("RenderSwitchPreview() = %q, want label -> topic -> known shell -> raw title projection", got)
+	}
+}
+
 func TestRenderSwitchPreviewAIBadgeStyleEmoji(t *testing.T) {
 	t.Parallel()
 

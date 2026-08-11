@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "session": "pane-label-phase1-target",
+  "default_cwd": "/tmp/projmux-pane-label-phase1",
+  "saved_at": "2026-08-12T00:00:00Z",
+  "windows": [
+    {
+      "index": 0,
+      "name": "main",
+      "active_pane_index": 0,
+      "panes": [
+        {
+          "index": 0,
+          "label": "user-owned label",
+          "title": "raw runtime title",
+          "cwd": "/tmp/projmux-pane-label-phase1",
+          "recipe": {
+            "kind": "agent",
+            "agent": "codex",
+            "resume_id": "01973f21-phase1",
+            "topic": "agent AI topic"
+          }
+        }
+      ]
+    }
+  ]
+}

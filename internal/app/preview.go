@@ -237,6 +237,7 @@ func (i tmuxPreviewInventory) SessionPanes(ctx context.Context, sessionName stri
 			WindowIndex:         strconv.Itoa(row.WindowIndex),
 			Index:               strconv.Itoa(row.PaneIndex),
 			Title:               row.Title,
+			Label:               row.Label,
 			AttentionState:      row.AttentionState,
 			AIState:             row.AIState,
 			AIBadgeKind:         row.AIBadgeKind,

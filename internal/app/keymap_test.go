@@ -33,13 +33,46 @@ func TestKeyBindingCatalogGuaranteedLaunchDefaultsAreOnlyAltOneThroughFive(t *te
 		}
 	}
 
-	for _, id := range []string{"AISplitPickerToggle", "SessionPopupToggle", "ProjectSwitcherToggle", "new-window", "previous-window", "next-window", "rename-window", "rename-pane-topic"} {
+	for _, id := range []string{"AISplitPickerToggle", "SessionPopupToggle", "ProjectSwitcherToggle", "new-window", "previous-window", "next-window", "rename-window", "rename-pane-label"} {
 		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), id)
 		if !ok {
 			t.Fatalf("missing action %s", id)
 		}
 		if action.Tier == keyBindingTierGuaranteedLaunchDefault {
 			t.Fatalf("%s tier = guaranteed launch default, want non-guaranteed tier", id)
+		}
+	}
+}
+
+func TestRenamePaneLabelCatalogKeepsDeprecatedAliasLabelOnly(t *testing.T) {
+	t.Parallel()
+
+	catalog := defaultKeyBindingCatalog()
+	canonical, ok := keyBindingActionByID(catalog, "rename-pane-label")
+	if !ok {
+		t.Fatal("catalog missing rename-pane-label")
+	}
+	alias, ok := keyBindingActionByID(catalog, "rename-pane-topic")
+	if !ok || alias.ID != canonical.ID {
+		t.Fatalf("deprecated alias = %#v, %v; want canonical rename-pane-label", alias, ok)
+	}
+	if canonical.DisplayName != "Rename Pane" || canonical.ProbeLabel != "Ctrl-Shift-M" {
+		t.Fatalf("rename action display/default = (%q, %q), want Rename Pane and unchanged Ctrl-Shift-M", canonical.DisplayName, canonical.ProbeLabel)
+	}
+	// tmux invokes the body only when command-prompt confirms. Esc is therefore
+	// a native cancellation with no alternate/direct action body to run.
+	if canonical.TmuxKind != tmuxBindingCommandPrompt || len(canonical.TmuxBodyAliases) != 0 {
+		t.Fatalf("rename action prompt contract = kind %q aliases %#v, want native command-prompt with no alternate body", canonical.TmuxKind, canonical.TmuxBodyAliases)
+	}
+	body := renderTmuxBindingBody("/tmp/projmux", canonical)
+	for _, want := range []string{"command-prompt", `-p "pane label:"`, `-I "#{@projmux_pane_label}"`, "set-option -p @projmux_pane_label", "set-option -p -u @projmux_pane_label"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("rename pane binding = %q, want %q", body, want)
+		}
+	}
+	for _, forbidden := range []string{"select-pane -T", aiPaneTopicOption, aiPaneTopicManualOption, "#{pane_title}"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("rename pane binding = %q, forbidden write/initial source %q", body, forbidden)
 		}
 	}
 }

@@ -1933,7 +1933,7 @@ func TestTmuxRebalancePanesSelectsMultiPaneWindows(t *testing.T) {
 	}
 }
 
-func TestTmuxRenamePaneSetsTitleAndAITopic(t *testing.T) {
+func TestTmuxRenamePaneSetsOnlyUserLabel(t *testing.T) {
 	t.Parallel()
 
 	runner := &recordingTmuxRunner{}
@@ -1944,16 +1944,14 @@ func TestTmuxRenamePaneSetsTitleAndAITopic(t *testing.T) {
 	}
 
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"select-pane", "-T", "projmux-2", "-t", "%42"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%42", "@projmux_ai_topic", "projmux-2"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%42", "@projmux_ai_topic_manual", "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%42", paneLabelOption, "projmux-2"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
 	}
 }
 
-func TestTmuxRenamePaneEmptyClearsManualAITopic(t *testing.T) {
+func TestTmuxRenamePaneEmptyClearsOnlyUserLabel(t *testing.T) {
 	t.Parallel()
 
 	runner := &recordingTmuxRunner{}
@@ -1964,9 +1962,7 @@ func TestTmuxRenamePaneEmptyClearsManualAITopic(t *testing.T) {
 	}
 
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"select-pane", "-T", "", "-t", "%42"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%42", "@projmux_ai_topic", ""}},
-		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%42", "@projmux_ai_topic_manual"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%42", paneLabelOption}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
@@ -2166,12 +2162,12 @@ func TestTmuxAppNamingFormatsUseVisiblePaneLabel(t *testing.T) {
 		t.Fatalf("shell label format = %q, want zsh command match before raw pane_title fallback", shellLabel)
 	}
 
-	wantVisibleLabel := "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + shellLabel + "}"
+	wantVisibleLabel := "#{?#{!=:#{@projmux_pane_label},},#{@projmux_pane_label},#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + shellLabel + "}}"
 	if visibleLabel != wantVisibleLabel {
 		t.Fatalf("visible pane label format = %q, want AI topic before shell fallback: %q", visibleLabel, wantVisibleLabel)
 	}
-	if topicIndex, shellIndex := strings.Index(visibleLabel, "#{@projmux_ai_topic}"), strings.Index(visibleLabel, shellLabel); topicIndex < 0 || shellIndex < 0 || topicIndex > shellIndex {
-		t.Fatalf("visible pane label format = %q, want @projmux_ai_topic before shell/current-command fallback", visibleLabel)
+	if labelIndex, topicIndex, shellIndex := strings.Index(visibleLabel, "#{@projmux_pane_label}"), strings.Index(visibleLabel, "#{@projmux_ai_topic}"), strings.Index(visibleLabel, shellLabel); labelIndex < 0 || topicIndex < 0 || shellIndex < 0 || labelIndex > topicIndex || topicIndex > shellIndex {
+		t.Fatalf("visible pane label format = %q, want label before topic before shell/current-command fallback", visibleLabel)
 	}
 	if !strings.Contains(paneBorder, tmuxStyledVisiblePaneLabelFormatFor(tmuxAIBadgeProgressFg)) {
 		t.Fatalf("pane border format = %q, want progress-styled visible label", paneBorder)
@@ -2275,6 +2271,7 @@ func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing
 		"#{window_index}",
 		"#{pane_index}",
 		"#{pane_title}",
+		"#{@projmux_pane_label}",
 		"#{?pane_active,1,0}",
 		"#{pane_current_path}",
 		"#{@projmux_recipe_kind}",
@@ -2371,6 +2368,7 @@ func TestTmuxAutosaveSessionStateUsesConfiguredInterval(t *testing.T) {
 		"#{window_index}",
 		"#{pane_index}",
 		"#{pane_title}",
+		"#{@projmux_pane_label}",
 		"#{?pane_active,1,0}",
 		"#{pane_current_path}",
 		"#{@projmux_recipe_kind}",
@@ -2877,7 +2875,7 @@ func TestTmuxCommandRejectsInvalidUsage(t *testing.T) {
 		{name: "popup-sessions extra args", args: []string{"popup-sessions", "extra"}, want: "tmux popup-sessions accepts no arguments"},
 		{name: "missing popup-toggle mode", args: []string{"popup-toggle"}, want: "tmux popup-toggle requires exactly 1 argument"},
 		{name: "unknown popup-toggle mode", args: []string{"popup-toggle", "nope"}, want: "unknown tmux popup-toggle mode: nope"},
-		{name: "missing rename-pane args", args: []string{"rename-pane", "%1"}, want: "tmux rename-pane requires <pane> <title>"},
+		{name: "missing rename-pane args", args: []string{"rename-pane", "%1"}, want: "tmux rename-pane requires <pane> <label>"},
 	}
 
 	for _, tt := range tests {
@@ -2980,6 +2978,7 @@ func autosaveCaptureRunner(sessionName, cwd string) *recordingTmuxRunner {
 		"#{window_index}",
 		"#{pane_index}",
 		"#{pane_title}",
+		"#{@projmux_pane_label}",
 		"#{?pane_active,1,0}",
 		"#{pane_current_path}",
 		"#{@projmux_recipe_kind}",

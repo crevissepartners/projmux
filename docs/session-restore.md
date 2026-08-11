@@ -48,6 +48,12 @@ unknown sources are low or none. The old statusbar Session State shortcut has
 been removed; use `Projects > Sessions > State` or the `projmux session-state`
 CLI for inspection/actions.
 
+Session snapshots capture each pane's user-owned `label` separately from its
+raw `title` and agent recipe `topic`. Older snapshots decode with an empty
+label; no title/topic equality heuristic is applied. Pane-label replay is not
+implemented in the current capture-only slice, so restore does not set
+`@projmux_pane_label` yet.
+
 Agent restore direct-starts supported resume commands when creating fresh tmux
 panes, matching the `projmux ai split` wrapper shape: the wrapper prepends the
 agent binary directory to `PATH`, changes to the saved cwd, sets the terminal

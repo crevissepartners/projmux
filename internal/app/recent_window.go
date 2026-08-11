@@ -12,6 +12,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	"github.com/crevissepartners/projmux/internal/core/paneidentity"
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	"github.com/crevissepartners/projmux/internal/core/recentwindows"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -277,6 +278,8 @@ func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindow
 		"#{window_name}",
 		"#{pane_id}",
 		"#{pane_title}",
+		"#{@projmux_pane_label}",
+		"#{@projmux_ai_agent}",
 		"#{@projmux_ai_topic}",
 		"#{pane_current_command}",
 		"#{pane_current_path}",
@@ -285,70 +288,91 @@ func (c *recentWindowCommand) currentSnapshot(ctx context.Context) (recentwindow
 	if err != nil {
 		return recentwindows.Snapshot{}, fmt.Errorf("snapshot current tmux window: %w", err)
 	}
-	fields := parseRecentWindowFields(output, 10)
-	if len(fields) != 10 || fields[1] == "" || fields[2] == "" {
+	fields := parseRecentWindowFields(output, 12)
+	if len(fields) == 0 {
+		fields = parseRecentWindowFields(output, 11)
+		if len(fields) == 11 {
+			// Phase 0 label capture before agent identity was added.
+			fields = append(fields[:7], append([]string{""}, fields[7:]...)...)
+		}
+	}
+	if len(fields) == 0 {
+		fields = parseRecentWindowFields(output, 10)
+		if len(fields) == 10 {
+			// Legacy capture had neither user label nor agent metadata.
+			fields = append(fields[:6], append([]string{"", ""}, fields[6:]...)...)
+		}
+	}
+	if len(fields) != 12 || fields[1] == "" || fields[2] == "" {
 		return recentwindows.Snapshot{}, fmt.Errorf("snapshot current tmux window: tmux returned incomplete metadata")
 	}
-	titles, badgeKinds, topics, commands := c.windowPaneMetadata(ctx, fields[2])
+	titles, labels, badgeKinds, agents, topics, commands := c.windowPaneMetadata(ctx, fields[2])
 	return recentwindows.Snapshot{
 		Socket:     fields[0],
 		Session:    fields[1],
 		WindowID:   fields[2],
 		WindowName: fields[3],
 		Project: resolveProjectDisplayName(projectidentity.Inputs{
-			AnchorPath:  fields[9],
-			PaneCWD:     fields[8],
+			AnchorPath:  fields[11],
+			PaneCWD:     fields[10],
 			SessionName: fields[1],
 		}, projectidentity.OSFS),
 		LastPaneID:     fields[4],
 		LastPaneTitle:  fields[5],
+		LastPaneLabel:  fields[6],
+		LastPaneAgent:  fields[7],
 		PaneTitles:     titles,
+		PaneLabels:     labels,
 		PaneBadgeKinds: badgeKinds,
+		PaneAgents:     agents,
 		PaneTopics:     topics,
 		PaneCommands:   commands,
-		LastPaneTopic:  fields[6],
-		LastCommand:    fields[7],
+		LastPaneTopic:  fields[8],
+		LastCommand:    fields[9],
 		LastFocusedAt:  c.currentTime().UTC(),
 	}, nil
 }
 
-// windowPaneMetadata collects every pane's title, AI badge kind, AI topic, and
-// current command for the given window so the picker can mirror the app
-// pane-border visible label rule. The returned slices are positionally aligned.
-// Failures degrade gracefully: an empty result falls back to LastPaneTitle at
-// display time, missing badge kinds render no status glyph, and missing
-// topics/commands fall back to the pane title.
-func (c *recentWindowCommand) windowPaneMetadata(ctx context.Context, windowID string) (titles, badgeKinds, topics, commands []string) {
+// windowPaneMetadata captures every pane's raw title, user label, AI badge
+// kind, actual AI agent, AI topic, and command. Returned slices are aligned;
+// missing legacy label/agent fields stay empty rather than being inferred.
+func (c *recentWindowCommand) windowPaneMetadata(ctx context.Context, windowID string) (titles, labels, badgeKinds, agents, topics, commands []string) {
 	if c.runner == nil || strings.TrimSpace(windowID) == "" {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
-	format := strings.Join([]string{"#{pane_title}", "#{@projmux_ai_badge_kind}", "#{@projmux_ai_topic}", "#{pane_current_command}"}, recentWindowFieldSep)
+	format := strings.Join([]string{"#{pane_title}", "#{@projmux_pane_label}", "#{@projmux_ai_badge_kind}", "#{@projmux_ai_agent}", "#{@projmux_ai_topic}", "#{pane_current_command}"}, recentWindowFieldSep)
 	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-t", windowID, "-F", format)
 	if err != nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
-	rows := parseRecentWindowRows(output, 4)
-	titles = make([]string, 0, len(rows))
-	badgeKinds = make([]string, 0, len(rows))
-	topics = make([]string, 0, len(rows))
-	commands = make([]string, 0, len(rows))
+	rows := parseRecentWindowRows(output, 6)
+	if len(rows) == 0 {
+		for _, fields := range parseRecentWindowRows(output, 5) {
+			rows = append(rows, append(fields[:3], append([]string{""}, fields[3:]...)...))
+		}
+	}
+	if len(rows) == 0 {
+		for _, fields := range parseRecentWindowRows(output, 4) {
+			withLabel := append(fields[:1], append([]string{""}, fields[1:]...)...)
+			rows = append(rows, append(withLabel[:3], append([]string{""}, withLabel[3:]...)...))
+		}
+	}
 	for _, fields := range rows {
 		title := strings.TrimSpace(fields[0])
-		kind := strings.TrimSpace(fields[1])
-		topic := strings.TrimSpace(fields[2])
-		command := strings.TrimSpace(fields[3])
 		if title == "" {
 			continue
 		}
 		titles = append(titles, title)
-		badgeKinds = append(badgeKinds, kind)
-		topics = append(topics, topic)
-		commands = append(commands, command)
+		labels = append(labels, strings.TrimSpace(fields[1]))
+		badgeKinds = append(badgeKinds, strings.TrimSpace(fields[2]))
+		agents = append(agents, strings.TrimSpace(fields[3]))
+		topics = append(topics, strings.TrimSpace(fields[4]))
+		commands = append(commands, strings.TrimSpace(fields[5]))
 	}
 	if len(titles) == 0 {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
-	return titles, badgeKinds, topics, commands
+	return titles, labels, badgeKinds, agents, topics, commands
 }
 
 func (c *recentWindowCommand) liveWindows(ctx context.Context, socket string) ([]recentwindows.LiveWindow, error) {
@@ -496,7 +520,7 @@ func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time, ba
 	badgeText := recentWindowBadgeText(candidate)
 	title := notifySidebarProjectBadge(badgeText) + " " + name + " " + notifySidebarAge(age)
 
-	// Line 2: the window's pane topic/title summary (topic leads, per-pane AI
+	// Line 2: the window's visible pane identity summary (user label leads, AI
 	// badges). Line 3: last-visit metadata. We deliberately do NOT add a context
 	// (project · session) line: the project already leads line 1 and the session
 	// unique id stays in SearchText/debug only.
@@ -510,7 +534,9 @@ func recentWindowPickerItem(candidate recentwindows.Candidate, now time.Time, ba
 		meta = append(meta, lastVisit)
 	}
 
-	searchTail := append([]string{candidate.LastPaneTopic}, candidate.PaneTopics...)
+	searchTail := append([]string{candidate.LastPaneLabel, candidate.LastPaneAgent, candidate.LastPaneTopic}, candidate.PaneLabels...)
+	searchTail = append(searchTail, candidate.PaneAgents...)
+	searchTail = append(searchTail, candidate.PaneTopics...)
 	searchTail = append(searchTail, candidate.PaneCommands...)
 	searchTail = append(searchTail,
 		candidate.LastCommand,
@@ -562,9 +588,9 @@ func recentWindowPaneTitles(candidate recentwindows.Candidate) []string {
 	return titles
 }
 
-// recentWindowPaneSummary joins the window's pane topic/title summary with
+// recentWindowPaneSummary joins the window's visible pane identity summary with
 // " | " and stably truncates the plain result so it never shifts layout. Pane
-// topic leads (the user's work context) when present; otherwise pane titles,
+// user label leads when present; otherwise agent topic, known shell, then title,
 // falling back to LastPaneTitle then LastCommand via recentWindowPaneTitles.
 func recentWindowPaneSummary(candidate recentwindows.Candidate) string {
 	parts := recentWindowPaneSummaryParts(candidate)
@@ -576,7 +602,7 @@ func recentWindowPaneSummary(candidate recentwindows.Candidate) string {
 
 // recentWindowPaneSummaryParts returns the ordered perceived-title parts for the
 // pane summary, one per pane in display order. Each part is a pane's perceived
-// title (topic > known interactive shell command > title), matching the app
+// title (label > topic > known interactive shell command > title), matching the app
 // pane-border visible label rule for stored pane metadata.
 func recentWindowPaneSummaryParts(candidate recentwindows.Candidate) []string {
 	cells := recentWindowPaneCells(candidate)
@@ -595,25 +621,24 @@ func recentWindowPaneSummaryParts(candidate recentwindows.Candidate) []string {
 // "<status glyph> <perceived title>".
 type recentWindowPaneCell struct {
 	title   string
+	label   string
 	kind    string
+	agent   string
 	topic   string
 	command string
 }
 
 // perceivedTitle returns the pane's display title for line 2, mirroring the app
-// pane-border visible label rule using captured fields: AI topic first, known
-// interactive shell command second, raw pane title last.
+// pane-border visible label rule using captured fields: user label first, AI
+// topic second, known interactive shell command third, raw pane title last.
 func (cell recentWindowPaneCell) perceivedTitle() string {
-	if topic := strings.TrimSpace(cell.topic); topic != "" {
-		return topic
-	}
-	if command := strings.TrimSpace(cell.command); recentWindowKnownInteractiveShell(command) {
-		return command
-	}
-	if title := strings.TrimSpace(cell.title); title != "" {
-		return title
-	}
-	return strings.TrimSpace(cell.command)
+	return paneidentity.Resolve(paneidentity.Inputs{
+		Label:   cell.label,
+		AIAgent: cell.agent,
+		AITopic: cell.topic,
+		Command: cell.command,
+		Title:   cell.title,
+	}).Value
 }
 
 // recentWindowPaneSummaryLine renders the line-2 pane summary as a flat list of
@@ -665,46 +690,41 @@ func recentWindowPaneSummaryLine(candidate recentwindows.Candidate, badgeStyle s
 // fallbacks: when no PaneTitles exist it falls back to a single LastPaneTitle
 // (then LastCommand) cell with no badge kind.
 func recentWindowPaneCells(candidate recentwindows.Candidate) []recentWindowPaneCell {
-	kinds := candidate.PaneBadgeKinds
-	topics := candidate.PaneTopics
-	commands := candidate.PaneCommands
 	cells := make([]recentWindowPaneCell, 0, len(candidate.PaneTitles))
 	for i, title := range candidate.PaneTitles {
-		title = strings.TrimSpace(title)
-		kind := ""
-		if i < len(kinds) {
-			kind = strings.TrimSpace(kinds[i])
+		cell := recentWindowPaneCell{title: strings.TrimSpace(title)}
+		if i < len(candidate.PaneBadgeKinds) {
+			cell.kind = strings.TrimSpace(candidate.PaneBadgeKinds[i])
 		}
-		topic := ""
-		if i < len(topics) {
-			topic = strings.TrimSpace(topics[i])
+		if i < len(candidate.PaneLabels) {
+			cell.label = strings.TrimSpace(candidate.PaneLabels[i])
 		}
-		command := ""
-		if i < len(commands) {
-			command = strings.TrimSpace(commands[i])
+		if i < len(candidate.PaneAgents) {
+			cell.agent = strings.TrimSpace(candidate.PaneAgents[i])
 		}
-		if title == "" && kind == "" && topic == "" && command == "" {
-			continue
+		if i < len(candidate.PaneTopics) {
+			cell.topic = strings.TrimSpace(candidate.PaneTopics[i])
 		}
-		cells = append(cells, recentWindowPaneCell{title: title, kind: kind, topic: topic, command: command})
+		if i < len(candidate.PaneCommands) {
+			cell.command = strings.TrimSpace(candidate.PaneCommands[i])
+		}
+		if cell.title != "" || cell.label != "" || cell.kind != "" || cell.agent != "" || cell.topic != "" || cell.command != "" {
+			cells = append(cells, cell)
+		}
 	}
 	if len(cells) == 0 {
-		if title := strings.TrimSpace(candidate.LastPaneTitle); title != "" {
-			cells = append(cells, recentWindowPaneCell{title: title})
-		} else if cmd := strings.TrimSpace(candidate.LastCommand); cmd != "" {
-			cells = append(cells, recentWindowPaneCell{title: cmd})
+		cell := recentWindowPaneCell{
+			title:   strings.TrimSpace(candidate.LastPaneTitle),
+			label:   strings.TrimSpace(candidate.LastPaneLabel),
+			agent:   strings.TrimSpace(candidate.LastPaneAgent),
+			topic:   strings.TrimSpace(candidate.LastPaneTopic),
+			command: strings.TrimSpace(candidate.LastCommand),
+		}
+		if cell.title != "" || cell.label != "" || cell.agent != "" || cell.topic != "" || cell.command != "" {
+			cells = append(cells, cell)
 		}
 	}
 	return cells
-}
-
-func recentWindowKnownInteractiveShell(command string) bool {
-	switch strings.TrimSpace(command) {
-	case "zsh", "bash", "fish", "sh", "nu", "xonsh":
-		return true
-	default:
-		return false
-	}
 }
 
 // recentWindowPaneKindGlyph renders the themed AI badge glyph for a single

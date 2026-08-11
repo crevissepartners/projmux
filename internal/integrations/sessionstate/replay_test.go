@@ -45,6 +45,27 @@ func TestReplaySingleWindowSinglePane(t *testing.T) {
 	}
 }
 
+func TestReplayDoesNotMutateCapturedPaneLabel(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	snap := replaySnapshot(cwd)
+	snap.Windows = []Window{{
+		Index: 0, Name: "main", ActivePaneIndex: 0,
+		Panes: []Pane{{Index: 0, Label: "phase-one-captured-label", Title: "raw title", CWD: cwd, Recipe: ShellRecipe()}},
+	}}
+	runner := &recordingReplayRunner{}
+	if _, err := Replay(context.Background(), runner, snap, ReplayOptions{}); err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	for _, command := range runner.commands {
+		joined := strings.Join(command.args, "\x00")
+		if strings.Contains(joined, "@projmux_pane_label") || strings.Contains(joined, "phase-one-captured-label") {
+			t.Fatalf("Replay() command %#v mutates/reuses captured label; Phase 0 is capture-only", command)
+		}
+	}
+}
+
 func TestReplaySplitPaneLayoutCommandOrder(t *testing.T) {
 	t.Parallel()
 

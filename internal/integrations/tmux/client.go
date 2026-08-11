@@ -162,6 +162,7 @@ type Pane struct {
 	WindowIndex         int
 	PaneIndex           int
 	Title               string
+	Label               string
 	AttentionState      string
 	AIState             string
 	AIBadgeKind         string
@@ -376,6 +377,7 @@ func (c *Client) ListAllPanes(ctx context.Context) ([]Pane, error) {
 		"#{pane_index}",
 		"#{?pane_active,1,0}",
 		"#{pane_title}",
+		"#{@projmux_pane_label}",
 		"#{@projmux_attention_state}",
 		"#{@projmux_ai_state}",
 		"#{@projmux_ai_badge_kind}",
@@ -1292,8 +1294,8 @@ func parseAllPanes(output []byte) ([]Pane, error) {
 			continue
 		}
 
-		fields := normalizeAllPaneFields(splitTmuxFields(rawLine, 15))
-		if len(fields) != 15 {
+		fields := normalizeAllPaneFields(splitTmuxFields(rawLine, 16))
+		if len(fields) != 16 {
 			return nil, fmt.Errorf("parse tmux panes: malformed row %q", rawLine)
 		}
 
@@ -1321,15 +1323,16 @@ func parseAllPanes(output []byte) ([]Pane, error) {
 			WindowIndex:         windowIndex,
 			PaneIndex:           paneIndex,
 			Title:               strings.TrimSpace(fields[5]),
-			AttentionState:      strings.TrimSpace(fields[6]),
-			AIState:             strings.TrimSpace(fields[7]),
-			AIBadgeKind:         strings.TrimSpace(fields[8]),
-			AIAgent:             strings.TrimSpace(fields[9]),
-			AITopic:             strings.TrimSpace(fields[10]),
-			AttentionAck:        strings.TrimSpace(fields[11]),
-			AttentionFocusArmed: strings.TrimSpace(fields[12]),
-			Command:             strings.TrimSpace(fields[13]),
-			Path:                strings.TrimSpace(fields[14]),
+			Label:               strings.TrimSpace(fields[6]),
+			AttentionState:      strings.TrimSpace(fields[7]),
+			AIState:             strings.TrimSpace(fields[8]),
+			AIBadgeKind:         strings.TrimSpace(fields[9]),
+			AIAgent:             strings.TrimSpace(fields[10]),
+			AITopic:             strings.TrimSpace(fields[11]),
+			AttentionAck:        strings.TrimSpace(fields[12]),
+			AttentionFocusArmed: strings.TrimSpace(fields[13]),
+			Command:             strings.TrimSpace(fields[14]),
+			Path:                strings.TrimSpace(fields[15]),
 			Active:              active,
 		})
 	}
@@ -1343,12 +1346,14 @@ func normalizeAllPaneFields(fields []string) []string {
 		fields = append(fields[:6], append([]string{""}, fields[6:]...)...)
 		fallthrough
 	case 9:
-		return append(fields[:7], append([]string{"", "", "", "", "", ""}, fields[7:]...)...)
+		fields = append(fields[:7], append([]string{"", "", "", "", "", ""}, fields[7:]...)...)
 	case 14:
-		return append(fields[:8], append([]string{""}, fields[8:]...)...)
-	default:
-		return fields
+		fields = append(fields[:8], append([]string{""}, fields[8:]...)...)
 	}
+	if len(fields) == 15 {
+		fields = append(fields[:6], append([]string{""}, fields[6:]...)...)
+	}
+	return fields
 }
 
 func parseWindowPanes(output []byte) ([]WindowPane, error) {

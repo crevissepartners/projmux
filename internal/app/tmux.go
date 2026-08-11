@@ -33,6 +33,7 @@ const (
 	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
 	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
 	tmuxWindowTitleWidth = 10
+	paneLabelOption      = "@projmux_pane_label"
 
 	tmuxAccentAttentionBg = theme.TmuxAccentAttentionBg
 	tmuxAccentAIBg        = theme.TmuxAccentAIBg
@@ -308,27 +309,21 @@ func (c *tmuxCommand) runRebalancePanes(args []string, stderr io.Writer) error {
 func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
 	if len(args) != 2 || strings.TrimSpace(args[0]) == "" {
 		printTmuxUsage(stderr)
-		return fmt.Errorf("tmux rename-pane requires <pane> <title>")
+		return fmt.Errorf("tmux rename-pane requires <pane> <label>")
 	}
 	if c.runner == nil {
 		return errors.New("configure tmux runner: tmux runner is not configured")
 	}
 	paneID := strings.TrimSpace(args[0])
-	title := strings.TrimSpace(args[1])
-	if _, err := c.runner.Run(context.Background(), "tmux", "select-pane", "-T", title, "-t", paneID); err != nil {
-		return fmt.Errorf("rename tmux pane title: %w", err)
-	}
-	if _, err := c.runner.Run(context.Background(), "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, title); err != nil {
-		return fmt.Errorf("rename tmux pane topic: %w", err)
-	}
-	if title == "" {
-		if _, err := c.runner.Run(context.Background(), "tmux", "set-option", "-p", "-u", "-t", paneID, aiPaneTopicManualOption); err != nil {
-			return fmt.Errorf("clear manual tmux pane topic flag: %w", err)
+	label := strings.TrimSpace(args[1])
+	if label == "" {
+		if _, err := c.runner.Run(context.Background(), "tmux", "set-option", "-p", "-u", "-t", paneID, paneLabelOption); err != nil {
+			return fmt.Errorf("clear tmux pane label: %w", err)
 		}
 		return nil
 	}
-	if _, err := c.runner.Run(context.Background(), "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicManualOption, "1"); err != nil {
-		return fmt.Errorf("mark manual tmux pane topic: %w", err)
+	if _, err := c.runner.Run(context.Background(), "tmux", "set-option", "-p", "-t", paneID, paneLabelOption, label); err != nil {
+		return fmt.Errorf("set tmux pane label: %w", err)
 	}
 	return nil
 }
@@ -810,7 +805,7 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux tmux popup-sessions")
 	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|ai-split-picker-right|ai-split-picker-down|ai-split-resume-right|ai-split-resume-down|ai-split-settings>")
 	fmt.Fprintln(w, "  projmux tmux rebalance-panes")
-	fmt.Fprintln(w, "  projmux tmux rename-pane <pane> <title>")
+	fmt.Fprintln(w, "  projmux tmux rename-pane <pane> <label>")
 	fmt.Fprintln(w, "  projmux tmux print-config [--bin <path>]")
 	fmt.Fprintln(w, "  projmux tmux print-app-config [--bin <path>]")
 	fmt.Fprintln(w, "  projmux tmux install [--bin <path>] [--config <path>] [--include <path>]")
@@ -1295,12 +1290,13 @@ func statusbarWindowTitleFormat() string {
 }
 
 // tmuxVisiblePaneLabelFormat is the canonical Projmux visible naming rule for
-// panes and app window tabs. It intentionally keeps the pane border priority:
-// AI topic first, known interactive shell command second, raw pane title last.
+// panes and app window tabs. User labels are independent from AI topics and
+// raw titles, so they lead the shared visible identity priority.
 // Raw terminal/pane titles remain metadata for apps and snapshots, but shell
 // branch OSC titles are not the primary Projmux window naming source.
 func tmuxVisiblePaneLabelFormat() string {
-	return "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + tmuxShellPaneLabelFormat() + "}"
+	label := "#{" + paneLabelOption + "}"
+	return "#{?#{!=:" + label + ",}," + label + ",#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:#{@projmux_ai_topic},}},#{@projmux_ai_topic}," + tmuxShellPaneLabelFormat() + "}}"
 }
 
 func tmuxStyledVisiblePaneLabelFormat() string {
@@ -1308,8 +1304,9 @@ func tmuxStyledVisiblePaneLabelFormat() string {
 }
 
 func tmuxStyledVisiblePaneLabelFormatFor(styleFg string) string {
+	label := "#{" + paneLabelOption + "}"
 	topic := "#{@projmux_ai_topic}"
-	return "#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:" + topic + ",}}," + tmuxStyledAITopicFormat(topic, styleFg) + "," + tmuxShellPaneLabelFormat() + "}"
+	return "#{?#{!=:" + label + ",}," + label + ",#{?#{&&:#{!=:#{@projmux_ai_agent},},#{!=:" + topic + ",}}," + tmuxStyledAITopicFormat(topic, styleFg) + "," + tmuxShellPaneLabelFormat() + "}}"
 }
 
 func tmuxStyledAITopicFormat(topic, styleFg string) string {

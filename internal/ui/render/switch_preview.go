@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	"github.com/crevissepartners/projmux/internal/core/paneidentity"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 )
 
@@ -179,17 +180,19 @@ func formatSidebarPaneTitle(pane corepreview.Pane, badgeStyle string) string {
 	case hasBraillePrefix(title):
 		return ansiProgress + "●" + ansiReset + " " + trimSidebarPaneTitleMarker(title)
 	default:
-		return styleLeadTopicPrefix(title)
+		if visiblePaneIdentity(pane).Source == paneidentity.SourceTopic {
+			return styleLeadTopicPrefix(title)
+		}
+		return title
 	}
 }
 
 func sidebarPaneLabel(pane corepreview.Pane) string {
-	if strings.TrimSpace(pane.AIAgent) != "" {
-		if topic := sanitizeCell(pane.AITopic); topic != "" {
-			return styleLeadTopicPrefix(topic)
-		}
+	identity := visiblePaneIdentity(pane)
+	if identity.Source == paneidentity.SourceTopic {
+		return styleLeadTopicPrefix(identity.Value)
 	}
-	return sanitizeCell(pane.Title)
+	return identity.Value
 }
 
 func sidebarPaneBadge(pane corepreview.Pane, badgeStyle string) string {

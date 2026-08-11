@@ -47,35 +47,35 @@ func appLightThemeConfig() theme.ThemeConfig {
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
 		"standalone": "b35278748392810db4348082771550bb323624463d3eb36397d883590d7483cb",
-		"app":        "e2e249c10e3b7faaeddb3d539637747624aba80a1db142b21054aade9ecac40a",
+		"app":        "ef762cb8bf0685409a4d2903950509925f422129f15c8cb1f20445e0e3b1f183",
 	},
 	"projmux": {
 		"standalone": "f7077359b11cea5ac8c67c613b7ad8424b482d84a7229ba9236c0718baf9b031",
-		"app":        "f55c2d71093904f4355038cd3b28c0fdf8b4f2f5900d5b591c9b5d4d049d295e",
+		"app":        "53e82123e630a8dbcf49320cfdd3f4318fd5447e4da60e633c542e08a913fae6",
 	},
 	"blue-hour": {
 		"standalone": "bfd5f093394723c89162b0c7ef61a67759bff7aa43a125c82a3608e456c5b4c2",
-		"app":        "c726b9524496c2de150332b47a220a205ae2840f2f68e91343cd5b0fea7662d4",
+		"app":        "5aa34b03ea6212963af23c7316f441dbc1840ebb80837c6b78921ce5b9181045",
 	},
 	"carbon-violet": {
 		"standalone": "d00ccae1494b19d25463604f1c5124b5c23d5d4208f1fae2755abe232887025c",
-		"app":        "0ea164fd47b9fbc704457b4e6e441f82327a9c569226f1efc422b8b9f6adc2bf",
+		"app":        "2002b8793709d7177f4133c8bc2ee16c795dc5865db574610ebcd1f9ca16c948",
 	},
 	"ember": {
 		"standalone": "b3b17db9979524ef856ac2c15a99f5baadd713c3cb47047855f83bf170b9c1f4",
-		"app":        "16d8be84426fc2ae1d3dbf28cebe8c9ee508b567bfb32a8cef557d171a2d78e5",
+		"app":        "8c63e5dca7edd8e8790c26f09c16cfbe1f6145f23a31d47f73161790c4aace1e",
 	},
 	"forest": {
 		"standalone": "5aad0ac003be0facdf24a379093bb0a07a2e99e2c65e89dac9cd9a4c49048ba0",
-		"app":        "849613a63a136410608c7d76cb5cbd13c2eb6c5b2ed99f4bd4edfb3e3062b92b",
+		"app":        "4ac5013a9dc979121da591715d4fbd2317d73668f30d3f8cf0afbc44b33094ae",
 	},
 	"rose": {
 		"standalone": "44edfde3c4c7d1cedfafab529e05462f7449be9dfaed41f8969f9346aaf8ff5f",
-		"app":        "7e8a79ff13adfe2bcc5b17682069c23d4e9273ab0301e3d16c3365decd6bbab6",
+		"app":        "5fa99cb178d5bb5e806ade919b82284f44108f40536069c85922b56dc7c17934",
 	},
 	"high-contrast": {
 		"standalone": "a22e287e4cec4fd6b4995f0363d9f9f98fdebff1fc41c5d4489eb49e2f8baa01",
-		"app":        "fcda8250e4ecaa53a2e0a2fd1e158119dae89ab1d09c4afd05e3b7615fd91f06",
+		"app":        "55ec238fc44290ac783576c2a01282f635bed47efee31d93f59f954f8ca86d11",
 	},
 }
 
@@ -103,7 +103,7 @@ func TestBrightPhase2GeneratedConfigByteIdentity(t *testing.T) {
 		for kind, body := range outputs {
 			sum := sha256.Sum256([]byte(body))
 			if got := hex.EncodeToString(sum[:]); got != goldens[kind] {
-				t.Fatalf("theme %s %s config drifted from the golden: sha256 %s, want %s", label, kind, got, goldens[kind])
+				t.Errorf("theme %s %s config drifted from the golden: sha256 %s, want %s", label, kind, got, goldens[kind])
 			}
 		}
 	}

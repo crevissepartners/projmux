@@ -89,7 +89,7 @@ to the semantic capability that a future psmux audit/backend must provide.
 | Capability | Current tmux read | Format variables / options | Converted read paths |
 | --- | --- | --- | --- |
 | `ListPanes` pane identity | `list-panes -a -F` | `#{session_name}`, `#{window_id}`, `#{pane_id}`, `#{pane_active}`, `#{socket_path}` | `attention list`, notify reconcile |
-| `ListPanes` pane labels/state | `list-panes -a -F`, `list-panes -t <window> -F` | `#{pane_title}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}` | `attention list`, attention window badge, notify reconcile |
+| `ListPanes` pane labels/state | `list-panes -a -F`, `list-panes -t <window> -F` | `#{pane_title}`, `#{@projmux_pane_label}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}` | `attention list`, attention window badge, notify reconcile |
 | `ListPanes` AI hook match fields | `list-panes -a -F` | `#{pane_id}`, `#{pane_current_path}`, `#{@projmux_ai_thread_id}`, `#{@projmux_ai_session_id}` | AI hook pane matching |
 | `DisplayPaneFields` bell pane fields | `display-message -p -t <pane>` | `#{session_name}`, `#{window_id}`, `#{window_name}`, `#{pane_id}`, `#{pane_title}`, `#{pane_current_command}`, `#{socket_path}` | tmux bell ingest |
 | `ListWindows` window inventory | `list-windows -F` | `#{window_index}`, `#{window_id}`, `#{window_name}`, `#{window_layout}`, `#{window_panes}`, `#{pane_current_path}` | API available for the existing typed tmux window reads; conversion deferred outside Phase 2B app read slice |
@@ -390,7 +390,7 @@ locking, stale-record cleanup, and pane-id reuse protection.
 | `display-popup ... <command>` | `interactive UI` | `tmux popup-*`, AI picker, hook trust prompt, welcome popup, statusbar pwd/usage popups | Native tmux popup surface. Uses `-E`, `-B`, `-c`, `-t`, `-d`, `-e`, `-x`, `-y`, `-w`, `-h`, `-T` depending on mode. Phase 2C mux API: `DisplayPopup`. |
 | `display-popup [-c <client>] [-t <pane>] -C` | `interactive UI` | `tmux popup-toggle` | Closes a scoped popup. Notify sidebar close targets client instead of origin pane. Phase 2C mux API: `ClosePopup`. |
 | `display-message [message]` | `interactive UI`, `hooks/status` | AI/status/settings/attention/statusbar fallback paths | User-visible toasts and error fallbacks that avoid tmux `run-shell` error popups. |
-| `select-pane -T <title> -t <pane>` | `interactive UI`, `hooks/status`, `session-state` | attention toggle/clear, AI topic/title, `tmux rename-pane`, replay shell wrapper | Sets pane title and topic-adjacent UI metadata. Phase 2C mux API: `SelectPane`. |
+| `select-pane -T <title> -t <pane>` | `interactive UI`, `hooks/status`, `session-state` | attention toggle/clear, AI runtime title, replay shell wrapper | Sets raw runtime pane title. The user Rename Pane action does not call it. Phase 2C mux API: `SelectPane`. |
 | `select-pane -t <target>` | `focus`, `session-state` | `focusCommand`, session-state replay | Selects target pane after focus or replay. Phase 2C mux API: `SelectPane`. |
 | `select-window -t <target>` | `interactive UI`, `focus`, `session-state` | statusbar window-list passthrough, focus, live replay | Restores native window click behavior and selects replay/focus targets. Phase 2C mux API: `SelectWindow`. |
 | `split-window [-h|-v] [-P -F "#{pane_id}"] [-t <pane>] [-c <cwd>] <cmd>` | `required MVP`, `interactive UI` | AI split, session-state replay | Creates AI/shell panes. AI agent split reads the new pane id from `-P -F`. Phase 2D mux API: `SplitWindow` for AI splits; session-state replay remains on the typed tmux path. |
@@ -497,13 +497,14 @@ only. Other `-F` uses in `list-*` commands are covered in the next section.
 | `list-windows -F` | `#{window_id}`, `#{window_panes}` | `hooks/status` | Pane rebalance after exits. |
 | `list-windows -F` | `#{window_index}`, `#{window_name}`, `#{window_layout}` | `session-state` | Snapshot capture. |
 | `list-windows -F` | `#{window_id}`, `#{window_index}` | `session-state` | Staged/live replay window mapping. |
-| `list-panes -a -F` | `#{session_name}`, `#{pane_id}`, `#{window_index}`, `#{pane_index}`, `#{?pane_active,1,0}`, `#{pane_title}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}`, `#{@projmux_attention_ack}`, `#{@projmux_attention_focus_armed}`, `#{pane_current_command}`, `#{pane_current_path}` | `required MVP`, `hooks/status` | Full pane inventory. |
+| `list-panes -a -F` | `#{session_name}`, `#{pane_id}`, `#{window_index}`, `#{pane_index}`, `#{?pane_active,1,0}`, `#{pane_title}`, `#{@projmux_pane_label}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}`, `#{@projmux_attention_ack}`, `#{@projmux_attention_focus_armed}`, `#{pane_current_command}`, `#{pane_current_path}` | `required MVP`, `hooks/status` | Full pane inventory. |
+| `psmux list-panes -a -F` | `#{session_name}`, `#{pane_id}`, `#{window_index}`, `#{pane_index}`, `#{?pane_active,1,0}`, `#{pane_title}`, `#{@projmux_pane_label}`, `#{pane_current_command}`, `#{pane_current_path}` | `required MVP` | Portable ListAllPanes/preview inventory; label remains empty where psmux lacks pane-option persistence. |
 | `list-panes -a -F` | `#{session_name}`, `#{window_id}`, `#{pane_id}`, `#{pane_active}`, `#{pane_title}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}`, `#{socket_path}` | `hooks/status` | `attention list` inventory. |
 | `list-panes -a -F` | `#{session_name}`, `#{window_id}`, `#{pane_id}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}`, `#{socket_path}` | `hooks/status` | Notify queue reconcile. |
 | `list-panes -a -F` | `#{pane_id}`, `#{pane_current_path}`, `#{@projmux_ai_thread_id}`, `#{@projmux_ai_session_id}` | `hooks/status` | AI hook payload to live pane matching. |
 | `list-panes -t <window> -F` | `#{pane_title}`, `#{@projmux_attention_state}` | `hooks/status` | Window badge rendering. |
 | `list-panes -t <target> -F` | `#{pane_id}`, `#{pane_left}`, `#{pane_top}`, `#{pane_width}`, `#{pane_height}` | `interactive UI` | AI split post-layout equalization. |
-| `list-panes -s -t <session> -F` | `#{window_index}`, `#{pane_index}`, `#{pane_title}`, `#{?pane_active,1,0}`, `#{pane_current_path}`, `#{@projmux_recipe_kind}`, `#{@projmux_startup_command}`, `#{@projmux_ai_managed}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}`, `#{@projmux_ai_resume_id}`, `#{@projmux_ai_resume_source}`, `#{@projmux_ai_resume_updated_at}` | `session-state` | Snapshot pane capture. |
+| `list-panes -s -t <session> -F` | `#{window_index}`, `#{pane_index}`, `#{pane_title}`, `#{@projmux_pane_label}`, `#{?pane_active,1,0}`, `#{pane_current_path}`, `#{@projmux_recipe_kind}`, `#{@projmux_startup_command}`, `#{@projmux_ai_managed}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}`, `#{@projmux_ai_resume_id}`, `#{@projmux_ai_resume_source}`, `#{@projmux_ai_resume_updated_at}` | `session-state` | Snapshot pane capture. |
 | `list-panes -s -t <session> -F` | `#{pane_id}`, `#{pane_current_path}`, `#{@projmux_ai_managed}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_session_id}`, `#{@projmux_ai_resume_id}`, `#{@projmux_ai_transcript_path}` | `session-state` | Refresh AI resume metadata before save. |
 
 ## Option And Hook Surface
@@ -527,6 +528,7 @@ only. Other `-F` uses in `list-*` commands are covered in the next section.
 | `@projmux_attention_state` | pane | `hooks/status` | `busy` / `reply` state for statusbar, notify, and attention UX. |
 | `@projmux_attention_ack` | pane | `hooks/status` | Acknowledgement gate for AI reply detection. |
 | `@projmux_attention_focus_armed` | pane | `hooks/status` | Prevents background focus from clearing pending reply too early. |
+| `@projmux_pane_label` | pane | `interactive UI`, `session-state` | User-owned persistent label; Rename Pane is its only user-action writer, and Phase 0 snapshot capture keeps it separate from topic/title. |
 | `@projmux_ai_managed` | pane | `required MVP`, `session-state` | Marks projmux-managed AI panes. |
 | `@projmux_ai_agent` | pane | `required MVP`, `session-state` | Agent kind: codex/claude/shell-derived metadata. |
 | `@projmux_ai_context` | pane | `hooks/status` | AI context directory. |

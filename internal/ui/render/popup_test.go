@@ -76,6 +76,32 @@ func TestRenderPopupPreviewShowsShellCommandAsShellPaneTitle(t *testing.T) {
 	}
 }
 
+func TestPopupVisiblePaneIdentityUsesLabelTopicShellTitleOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		pane preview.Pane
+		want string
+	}{
+		{name: "label", pane: preview.Pane{Label: "[lead:ship] user label", AIAgent: "codex", AITopic: "AI topic", Command: "zsh", Title: "raw title"}, want: "[lead:ship] user label"},
+		{name: "topic", pane: preview.Pane{AIAgent: "codex", AITopic: "AI topic", Command: "zsh", Title: "raw title"}, want: "AI topic"},
+		{name: "shell", pane: preview.Pane{Command: "zsh", Title: "raw title"}, want: "zsh"},
+		{name: "title", pane: preview.Pane{Command: "nvim", Title: "raw title"}, want: "raw title"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := displayPaneTitlePlain(tt.pane); got != tt.want {
+				t.Fatalf("displayPaneTitlePlain(%#v) = %q, want %q", tt.pane, got, tt.want)
+			}
+		})
+	}
+	if got := displayPaneTitle(tests[0].pane); strings.Contains(got, "\x1b[") {
+		t.Fatalf("user label = %q, must not receive AI-topic lead styling", got)
+	}
+}
+
 func TestRenderPopupPreviewStylesProgressAndLeadPrefixOnlyInRenderer(t *testing.T) {
 	t.Parallel()
 

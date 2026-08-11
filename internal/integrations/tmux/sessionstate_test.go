@@ -25,10 +25,10 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 					"2\x1fwork\x1flayout-b\n",
 			)},
 			{output: []byte(
-				"0\x1f0\x1fshell\x1f0\x1f/home/tester\x1f\x1f\x1f\x1f\x1f\x1f\n" +
-					"0\x1f1\x1fwatcher\x1f1\x1f/home/tester/app\x1fstartup\x1fmake watch\x1f\x1f\x1f\x1f\n" +
-					"2\x1f0\x1fcodex task\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1fsession state\x1f01973f21-abc\x1fsession-id\x1f2026-05-12T03:04:05Z\n" +
-					"2\x1f1\x1fclaude task\x1f0\x1f/home/tester/app\x1f\x1f\x1f1\x1fclaude\x1fmissing resume\x1f\n",
+				"0\x1f0\x1fshell\x1fprimary shell\x1f0\x1f/home/tester\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\n" +
+					"0\x1f1\x1fwatcher\x1f\x1f1\x1f/home/tester/app\x1fstartup\x1fmake watch\x1f\x1f\x1f\x1f\x1f\x1f\n" +
+					"2\x1f0\x1fcodex task\x1freview label\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1fsession state\x1f01973f21-abc\x1fsession-id\x1f2026-05-12T03:04:05Z\n" +
+					"2\x1f1\x1fclaude task\x1f\x1f0\x1f/home/tester/app\x1f\x1f\x1f1\x1fclaude\x1fmissing resume\x1f\x1f\x1f\n",
 			)},
 			{output: []byte("layout(team)\n")},
 		},
@@ -53,7 +53,7 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 				Layout:          "layout-a",
 				ActivePaneIndex: 1,
 				Panes: []sessionstate.Pane{
-					{Index: 0, Title: "shell", CWD: "/home/tester", Recipe: sessionstate.ShellRecipe()},
+					{Index: 0, Label: "primary shell", Title: "shell", CWD: "/home/tester", Recipe: sessionstate.ShellRecipe()},
 					{Index: 1, Title: "watcher", CWD: "/home/tester/app", Recipe: sessionstate.StartupRecipe("make watch")},
 				},
 			},
@@ -63,7 +63,7 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 				Layout:          "layout-b",
 				ActivePaneIndex: 0,
 				Panes: []sessionstate.Pane{
-					{Index: 0, Title: "codex task", CWD: "/home/tester/app", Recipe: sessionstate.AgentRecipeWithResumeMetadata("codex", "01973f21-abc", "session state", "session-id", "2026-05-12T03:04:05Z")},
+					{Index: 0, Label: "review label", Title: "codex task", CWD: "/home/tester/app", Recipe: sessionstate.AgentRecipeWithResumeMetadata("codex", "01973f21-abc", "session state", "session-id", "2026-05-12T03:04:05Z")},
 					{Index: 1, Title: "claude task", CWD: "/home/tester/app", Recipe: sessionstate.AgentRecipe("claude", "", "missing resume")},
 				},
 			},
@@ -79,6 +79,7 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 			"#{window_index}",
 			"#{pane_index}",
 			"#{pane_title}",
+			"#{@projmux_pane_label}",
 			"#{?pane_active,1,0}",
 			"#{pane_current_path}",
 			"#{@projmux_recipe_kind}",

@@ -212,6 +212,21 @@ func TestRecentWindowPaneSummaryTruncatesStably(t *testing.T) {
 	}
 }
 
+func TestRecentWindowPaneSummaryUsesLabelTopicShellTitleOrder(t *testing.T) {
+	t.Parallel()
+
+	candidate := recentwindows.Candidate{Snapshot: recentwindows.Snapshot{
+		PaneTitles:   []string{"raw one", "raw two", "raw three", "raw four", "raw five"},
+		PaneLabels:   []string{"user label", "", "", "", ""},
+		PaneAgents:   []string{"", "codex", "", "", ""},
+		PaneTopics:   []string{"AI hidden", "AI topic", "", "", "orphan topic"},
+		PaneCommands: []string{"zsh", "codex", "fish", "nvim", "nvim"},
+	}}
+	if got, want := recentWindowPaneSummary(candidate), "user label | AI topic | fish | raw four | raw five"; got != want {
+		t.Fatalf("recentWindowPaneSummary() = %q, want %q", got, want)
+	}
+}
+
 func TestRecentWindowTruncateIsRuneAware(t *testing.T) {
 	t.Parallel()
 
@@ -278,6 +293,7 @@ func TestRecentWindowPickerItemPaneSummaryIsFlatNoChip(t *testing.T) {
 		WindowName:     "projmux",
 		PaneTitles:     []string{"zsh", "Claude Code"},
 		PaneBadgeKinds: []string{"", "in_progress"},
+		PaneAgents:     []string{"", "codex"},
 		PaneTopics:     []string{"", "Phase 6 polish"},
 	}
 	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
@@ -431,6 +447,7 @@ func TestRecentWindowPickerItemAIPaneShowsOwnTopicWithBoundBadge(t *testing.T) {
 		WindowName:     "projmux",
 		PaneTitles:     []string{"zsh", "Codex"},
 		PaneBadgeKinds: []string{"", "in_progress"},
+		PaneAgents:     []string{"", "codex"},
 		PaneTopics:     []string{"", "Phase 8 binding"},
 	}
 	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
@@ -476,6 +493,7 @@ func TestRecentWindowPickerItemMirrorsPaneBorderVisibleLabels(t *testing.T) {
 		WindowID:     "@6",
 		WindowName:   "projmux",
 		PaneTitles:   []string{"feature/local-branch-title", "Codex"},
+		PaneAgents:   []string{"", "codex"},
 		PaneTopics:   []string{"", "[lead:ship] border geometry spike"},
 		PaneCommands: []string{"zsh", "codex"},
 	}
@@ -716,25 +734,25 @@ keys = ["M-t"]
 	}
 }
 
-func TestRecentWindowPickerItemFallsBackToTitleWhenTopicAbsent(t *testing.T) {
+func TestRecentWindowPickerItemFallsBackToTitleWhenAgentAbsent(t *testing.T) {
 	t.Parallel()
 
 	at := time.Date(2026, 6, 18, 1, 2, 3, 0, time.UTC)
-	// Old snapshot: an AI pane with a badge kind but no PaneTopics entry falls back
-	// to its pane title (then command) for the perceived title.
 	snapshot := recentwindows.Snapshot{
 		Session:        "repos-projmux",
 		WindowID:       "@6",
 		WindowName:     "projmux",
 		PaneTitles:     []string{"Codex"},
 		PaneBadgeKinds: []string{"in_progress"},
+		PaneTopics:     []string{"orphan topic"},
 	}
 	item := recentWindowPickerItem(recentWindowCandidate(snapshot), at, aibadge.StyleDot)
 	if len(item.MetaLines) == 0 {
 		t.Fatalf("MetaLines = %#v, want a pane summary line", item.MetaLines)
 	}
-	if visible := recentWindowStripANSI(item.MetaLines[0]); !strings.Contains(visible, "Codex") {
-		t.Fatalf("pane summary line = %q, want pane-title fallback when topic absent", visible)
+	visible := recentWindowStripANSI(item.MetaLines[0])
+	if !strings.Contains(visible, "Codex") || strings.Contains(visible, "orphan topic") {
+		t.Fatalf("pane summary line = %q, want raw-title fallback without agent synthesis", visible)
 	}
 }
 
@@ -1073,14 +1091,16 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 			"agent",
 			"%54",
 			"codex-review",
+			"review focus",
+			"codex",
 			"Phase 4 recorder",
 			"codex",
 			filepath.Join(project, "internal", "app"),
 			"",
 		}, recentWindowFieldSep) + "\n",
-		listPanesOutput: strings.Join([]string{"codex-review", "in_progress", "Phase 9 picker", "codex"}, recentWindowFieldSep) + "\n" +
-			strings.Join([]string{"Claude Code", "response_complete", "Recent windows queue", "claude"}, recentWindowFieldSep) + "\n" +
-			strings.Join([]string{"branch-title", "", "", "zsh"}, recentWindowFieldSep) + "\n",
+		listPanesOutput: strings.Join([]string{"codex-review", "picker label", "in_progress", "codex", "Phase 9 picker", "codex"}, recentWindowFieldSep) + "\n" +
+			strings.Join([]string{"Claude Code", "", "response_complete", "claude", "Recent windows queue", "claude"}, recentWindowFieldSep) + "\n" +
+			strings.Join([]string{"branch-title", "", "", "", "", "zsh"}, recentWindowFieldSep) + "\n",
 	}
 	store := &recentWindowStubStore{}
 	cmd := &recentWindowCommand{
@@ -1104,14 +1124,20 @@ func TestRecentWindowRecordSnapshotsCurrentTmuxWindow(t *testing.T) {
 	if got.Socket != "/tmp/tmux-1000/projmux" || got.Session != "repos-projmux" || got.WindowID != "@6" || got.WindowName != "agent" {
 		t.Fatalf("snapshot identity = %+v, want current window identity", got)
 	}
-	if got.LastPaneID != "%54" || got.LastPaneTitle != "codex-review" || got.LastPaneTopic != "Phase 4 recorder" || got.LastCommand != "codex" {
+	if got.LastPaneID != "%54" || got.LastPaneTitle != "codex-review" || got.LastPaneLabel != "review focus" || got.LastPaneAgent != "codex" || got.LastPaneTopic != "Phase 4 recorder" || got.LastCommand != "codex" {
 		t.Fatalf("snapshot pane metadata = %+v, want active pane metadata", got)
 	}
 	if !reflect.DeepEqual(got.PaneTitles, []string{"codex-review", "Claude Code", "branch-title"}) {
 		t.Fatalf("snapshot pane titles = %+v, want all panes of the window", got.PaneTitles)
 	}
+	if !reflect.DeepEqual(got.PaneLabels, []string{"picker label", "", ""}) {
+		t.Fatalf("snapshot pane labels = %+v, want per-pane user labels aligned with titles", got.PaneLabels)
+	}
 	if !reflect.DeepEqual(got.PaneBadgeKinds, []string{"in_progress", "response_complete", ""}) {
 		t.Fatalf("snapshot pane badge kinds = %+v, want per-pane AI badge kinds aligned with titles", got.PaneBadgeKinds)
+	}
+	if !reflect.DeepEqual(got.PaneAgents, []string{"codex", "claude", ""}) {
+		t.Fatalf("snapshot pane agents = %+v, want aligned agents", got.PaneAgents)
 	}
 	if !reflect.DeepEqual(got.PaneTopics, []string{"Phase 9 picker", "Recent windows queue", ""}) {
 		t.Fatalf("snapshot pane topics = %+v, want per-pane AI topics aligned with titles", got.PaneTopics)
@@ -1490,10 +1516,10 @@ func (r *recentWindowFakeRunner) Run(_ context.Context, name string, args ...str
 	if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", strings.Join([]string{"#{socket_path}", "#{session_name}", "#{window_id}"}, recentWindowFieldSep)}) {
 		return []byte(r.currentOutput), nil
 	}
-	if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", strings.Join([]string{"#{socket_path}", "#{session_name}", "#{window_id}", "#{window_name}", "#{pane_id}", "#{pane_title}", "#{@projmux_ai_topic}", "#{pane_current_command}", "#{pane_current_path}", "#{@projmux_project_path}"}, recentWindowFieldSep)}) {
+	if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", strings.Join([]string{"#{socket_path}", "#{session_name}", "#{window_id}", "#{window_name}", "#{pane_id}", "#{pane_title}", "#{@projmux_pane_label}", "#{@projmux_ai_agent}", "#{@projmux_ai_topic}", "#{pane_current_command}", "#{pane_current_path}", "#{@projmux_project_path}"}, recentWindowFieldSep)}) {
 		return []byte(r.recordOutput), nil
 	}
-	if name == "tmux" && len(args) == 5 && args[0] == "list-panes" && args[1] == "-t" && args[3] == "-F" && args[4] == strings.Join([]string{"#{pane_title}", "#{@projmux_ai_badge_kind}", "#{@projmux_ai_topic}", "#{pane_current_command}"}, recentWindowFieldSep) {
+	if name == "tmux" && len(args) == 5 && args[0] == "list-panes" && args[1] == "-t" && args[3] == "-F" && args[4] == strings.Join([]string{"#{pane_title}", "#{@projmux_pane_label}", "#{@projmux_ai_badge_kind}", "#{@projmux_ai_agent}", "#{@projmux_ai_topic}", "#{pane_current_command}"}, recentWindowFieldSep) {
 		return []byte(r.listPanesOutput), nil
 	}
 	if name == "tmux" && reflect.DeepEqual(args, []string{"list-windows", "-a", "-F", strings.Join([]string{"#{session_name}", "#{window_id}"}, recentWindowFieldSep)}) {
