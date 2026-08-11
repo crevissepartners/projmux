@@ -1443,8 +1443,12 @@ func TestAISplitAgentFlagLaunchesClaudeWithoutChangingCodexDefault(t *testing.T)
 	cmdRecorder(cmd).commands = nil
 	stubAISplitReadCommand(cmd, home, work, map[string]string{"claude": claudeBin}, "%7", "%9")
 
-	if err := cmd.Run([]string{"split", "--agent", "claude", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	stdout := &bytes.Buffer{}
+	if err := cmd.Run([]string{"split", "--agent", "claude", "right"}, stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run split --agent claude error = %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty without --print-pane-id", stdout.String())
 	}
 
 	commands := cmdRecorder(cmd).commands
@@ -1456,6 +1460,72 @@ func TestAISplitAgentFlagLaunchesClaudeWithoutChangingCodexDefault(t *testing.T)
 	}
 	if !containsAICommandArgSubstring(commands, "exec "+shellQuote(claudeBin)) {
 		t.Fatalf("commands = %#v, want Claude exec", commands)
+	}
+}
+
+func TestAISplitPrintPaneIDDirectAgent(t *testing.T) {
+	for _, tt := range []struct {
+		agent  string
+		binary string
+	}{
+		{agent: aiModeClaude, binary: "claude"},
+		{agent: aiModeCodex, binary: "codex"},
+		{agent: aiModeAntigravity, binary: "agy"},
+	} {
+		t.Run(tt.agent, func(t *testing.T) {
+			home := t.TempDir()
+			work := filepath.Join(home, "repo")
+			if err := os.MkdirAll(work, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			agentBin := writeExecutable(t, filepath.Join(home, "bin", tt.binary))
+			cmd := testAICommand(home)
+			stubAISplitReadCommand(cmd, home, work, map[string]string{tt.binary: agentBin}, "%7", "%29")
+
+			stdout := &bytes.Buffer{}
+			err := cmd.Run([]string{"split", "--agent", tt.agent, "--print-pane-id", "right", "--", "prompt"}, stdout, &bytes.Buffer{})
+			if err != nil {
+				t.Fatalf("Run split --print-pane-id error = %v", err)
+			}
+			if got, want := stdout.String(), "%29\n"; got != want {
+				t.Fatalf("stdout = %q, want exactly %q", got, want)
+			}
+			if !containsAICommandArgSubstring(cmdRecorder(cmd).commands, "exec "+shellQuote(agentBin)+" 'prompt'") {
+				t.Fatalf("commands = %#v, want prompt argv tail preserved", cmdRecorder(cmd).commands)
+			}
+		})
+	}
+}
+
+func TestAISplitPrintPaneIDRejectsMissingOrInvalidBackendResult(t *testing.T) {
+	for _, paneID := range []string{"", "pane-9"} {
+		t.Run(fmt.Sprintf("pane_id_%q", paneID), func(t *testing.T) {
+			home := t.TempDir()
+			work := filepath.Join(home, "repo")
+			if err := os.MkdirAll(work, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+			cmd := testAICommand(home)
+			stubAISplitReadCommand(cmd, home, work, map[string]string{"codex": codexBin}, "%7", paneID)
+			stdout := &bytes.Buffer{}
+
+			err := cmd.Run([]string{"split", "--agent", "codex", "--print-pane-id", "right"}, stdout, &bytes.Buffer{})
+			if err == nil {
+				t.Fatal("Run split --print-pane-id error = nil, want backend contract failure")
+			}
+			for _, want := range []string{"--print-pane-id", "tmux backend", "expected %N", "split-window -P -F"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want contains %q", err, want)
+				}
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("stdout = %q, want empty on error", stdout.String())
+			}
+			if containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-p"}) {
+				t.Fatalf("commands = %#v, pane setup must stop after invalid split result", cmdRecorder(cmd).commands)
+			}
+		})
 	}
 }
 
@@ -1844,8 +1914,12 @@ func TestAISplitAgentShellUsesPlainShellSplit(t *testing.T) {
 		return nil, os.ErrNotExist
 	}
 
-	if err := cmd.Run([]string{"split", "--agent", "shell", "down"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	stdout := &bytes.Buffer{}
+	if err := cmd.Run([]string{"split", "--agent", "shell", "down"}, stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run split --agent shell error = %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty without --print-pane-id", stdout.String())
 	}
 
 	want := []recordedAICommand{
@@ -1864,6 +1938,122 @@ func TestAISplitAgentShellUsesPlainShellSplit(t *testing.T) {
 		if containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", forbidden) {
 			t.Fatalf("commands = %#v, did not expect managed AI command %v", cmdRecorder(cmd).commands, forbidden)
 		}
+	}
+}
+
+func TestAISplitPrintPaneIDShellUsesTmuxSplitResult(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "TMUX":
+			return "/tmp/tmux"
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		case "TMUX_SPLIT_TARGET_PANE":
+			return "%7"
+		case "SHELL":
+			return "/bin/bash"
+		default:
+			return ""
+		}
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		if name == "tmux" && len(args) >= 6 && reflect.DeepEqual(args[:6], []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t"}) {
+			return []byte("%31\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	stdout := &bytes.Buffer{}
+	if err := cmd.Run([]string{"split", "--agent", "shell", "--print-pane-id", "right"}, stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run shell --print-pane-id error = %v", err)
+	}
+	if got, want := stdout.String(), "%31\n"; got != want {
+		t.Fatalf("stdout = %q, want exactly %q", got, want)
+	}
+	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%7", "-c", work, "/bin/bash", "-l"}) {
+		t.Fatalf("commands = %#v, want tmux split return contract", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestAISplitPrintPaneIDWrapsMuxExecutionError(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		backendEnv string
+		command    string
+		agent      string
+	}{
+		{name: "tmux", command: "tmux", agent: aiModeCodex},
+		{name: "psmux", backendEnv: string(muxBackendPSMux), command: "psmux", agent: aiModeShell},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			work := filepath.Join(home, "repo")
+			if err := os.MkdirAll(work, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			codexBin := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+			cmd := testAICommand(home)
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "HOME":
+					return home
+				case muxBackendEnvVar:
+					return tt.backendEnv
+				case "TMUX":
+					return "/tmp/mux"
+				case "TMUX_SPLIT_CONTEXT_DIR":
+					return work
+				case "TMUX_SPLIT_TARGET_PANE":
+					return "%7"
+				case "SHELL":
+					return "/bin/bash"
+				default:
+					return ""
+				}
+			}
+			cause := errors.New("exit status 1: unsupported pane id format")
+			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+				if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+					return []byte(codexBin + "\n"), nil
+				}
+				if name == tt.command && slices.Contains(args, "split-window") {
+					return nil, cause
+				}
+				return nil, os.ErrNotExist
+			}
+
+			stdout := &bytes.Buffer{}
+			err := cmd.Run([]string{"split", "--agent", tt.agent, "--print-pane-id", "right"}, stdout, &bytes.Buffer{})
+			if err == nil {
+				t.Fatal("Run shell --print-pane-id error = nil, want mux execution failure")
+			}
+			for _, want := range []string{"ai split --print-pane-id", tt.name + " backend", "split-window -P -F '#{pane_id}' failed", cause.Error()} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want contains %q", err, want)
+				}
+			}
+			if !errors.Is(err, cause) {
+				t.Fatalf("error = %v, want wrapped cause %v", err, cause)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("stdout = %q, want empty on execution error", stdout.String())
+			}
+			for _, command := range cmdRecorder(cmd).commands {
+				for _, forbidden := range []string{"list-panes", "resize-pane", "set-option", "run-shell"} {
+					if slices.Contains(command.args, forbidden) {
+						t.Fatalf("commands = %#v, post-split setup must not run after execution error", cmdRecorder(cmd).commands)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -1907,6 +2097,21 @@ func TestAISplitAgentFlagUsageErrors(t *testing.T) {
 			name: "force agent does not apply to picker",
 			args: []string{"split", "--agent", "selective", "--force-agent", "right"},
 			want: "ai split --force-agent only applies to --agent claude, --agent codex, or --agent antigravity",
+		},
+		{
+			name: "print pane id requires explicit direct agent",
+			args: []string{"split", "--print-pane-id", "right"},
+			want: "ai split --print-pane-id requires explicit --agent",
+		},
+		{
+			name: "print pane id rejects selective picker",
+			args: []string{"split", "--agent", "selective", "--print-pane-id", "right"},
+			want: "ai split --print-pane-id cannot be used with --agent selective",
+		},
+		{
+			name: "print pane id rejects resume picker",
+			args: []string{"split", "--agent", "resume", "--print-pane-id", "right"},
+			want: "ai split --print-pane-id cannot be used with --agent resume",
 		},
 	}
 	for _, tt := range tests {
@@ -2072,7 +2277,7 @@ func TestAISplitShellUsesPSMuxSplitWindowPowerShellTail(t *testing.T) {
 	}
 }
 
-func TestAISplitCodexUsesPSMuxSplitWindowPowerShellTailAndSkipsTmuxMetadata(t *testing.T) {
+func TestAISplitCodexPrintPaneIDUsesPSMuxSplitResultAndSkipsTmuxMetadata(t *testing.T) {
 	home := t.TempDir()
 	work := filepath.Join(home, "repo")
 	if err := os.MkdirAll(work, 0o755); err != nil {
@@ -2109,9 +2314,13 @@ func TestAISplitCodexUsesPSMuxSplitWindowPowerShellTailAndSkipsTmuxMetadata(t *t
 		return nil, os.ErrNotExist
 	}
 
-	err := cmd.Run([]string{"split", "--agent", "codex", "right", "--", "--model", "gpt-5.1 codex", "quote'd"}, &bytes.Buffer{}, &bytes.Buffer{})
+	stdout := &bytes.Buffer{}
+	err := cmd.Run([]string{"split", "--agent", "codex", "--print-pane-id", "right", "--", "--model", "gpt-5.1 codex", "quote'd"}, stdout, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("Run psmux codex split error = %v", err)
+	}
+	if got, want := stdout.String(), "%42\n"; got != want {
+		t.Fatalf("stdout = %q, want exactly %q", got, want)
 	}
 
 	tail, err := intpsmux.RenderPowerShellCommand(codexBin, "--model", "gpt-5.1 codex", "quote'd")

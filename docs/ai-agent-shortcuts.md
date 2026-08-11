@@ -7,6 +7,7 @@ the same split contract.
 ```sh
 projmux ai split --agent <agent> <right|down>
 projmux ai split --agent <agent> [--force-agent] <right|down> -- <extra args...>
+projmux ai split --agent <agent> --print-pane-id <right|down> [-- <extra args...>]
 ```
 
 Use this page for shareable registration patterns. Keep machine-local policy,
@@ -73,6 +74,27 @@ projmux ai split --agent resume right
 the user chooses the launch mode interactively. `resume` opens the current
 project's resume-session picker; when no sessions exist it delegates to the
 same selective picker.
+
+### Automation Pane Handle
+
+Use `--print-pane-id` only when an automation wrapper needs the new pane as a
+handle for later orchestration:
+
+```sh
+pane_id="$(projmux ai split --agent codex --print-pane-id right -- "prompt")"
+```
+
+Successful explicit `claude`, `codex`, `antigravity`, and `shell` launches
+print exactly one `%N` pane id line. The flag does not change how arguments
+after `--` reach the selected agent. Without the flag, stdout remains empty so
+existing manual shortcuts and Settings actions retain their behavior.
+
+The pane id is the existing tmux or psmux `split-window` return value. A backend
+that does not return a valid id causes a non-zero, actionable error instead of
+a false success. Do not combine the flag with the saved default,
+`--agent selective`, or `--agent resume`; picker-backed paths are rejected
+before a picker or pane is opened. This is a one-line handle contract, not a
+JSON launch-result schema or a pane status/wait API.
 
 ## Naming Pattern
 
@@ -307,6 +329,9 @@ in shared docs; put those in your private user-level command files.
 - Omit the separator entirely when there are no extra agent arguments.
 - Use `--agent shell` with no tail for a plain shell split.
 - Use `--agent selective` with no tail for the picker.
+- Use `--print-pane-id` only with an explicit direct
+  `claude|codex|antigravity|shell` target when an automation caller needs the
+  returned `%N` handle.
 - Treat a bare agent name (`/projmux:codex`, `$projmux-claude`) as the
   `right` variant; spell out `*-down` shortcuts in full.
 - Keep tracked project docs and `AGENTS.md` free of private shortcut policy.
