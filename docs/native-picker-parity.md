@@ -66,8 +66,9 @@ native picker engine and is not a public dependency-policy change.
   backend. It is not a runtime backend. This keeps app code closer to a
   DI-style picker contract instead of embedding binding strings at each call
   site.
-- Settings > Labs remains available, but picker backend selection has been
-  retired. Deprecated saved/env backend values normalize to native.
+- Settings > Labs remains available for Live system resources and Project
+  Hooks, but no longer exposes picker backend/source information. Deprecated
+  saved/env backend values remain read-compatible and normalize to native.
 - The split lets projmux grow a first-party picker design independently from
   the compatibility option/result mapper.
 
@@ -93,9 +94,10 @@ contract; native popups still rely on the existing borderless tmux popup path.
   using Enter plus arrow-key navigation under a PTY. The Docker e2e also fails
   if the Settings flows write tmux no-server noise to stderr while running
   outside tmux.
-- `settings > Labs`: unit-covered backend toggle writes
-  `~/.config/projmux/picker-backend`, updates the tmux global
-  `PROJMUX_PICKER_BACKEND`, and lets env override saved config.
+- `settings > Labs`: unit and Docker no-fzf coverage assert only Live system
+  resources and Project Hooks are visible. The Docker smoke starts with legacy
+  `fzf` env/file values, verifies Settings still uses native without fzf, and
+  confirms the compatibility file is read without being rewritten.
 - `switch --ui=sidebar`: Docker no-fzf e2e creates sample projects, types
   `bravo`, selects `bravo-web`, and confirms the opened tmux shell path.
 - `switch --ui=popup`: Docker no-fzf e2e creates existing tmux sessions using

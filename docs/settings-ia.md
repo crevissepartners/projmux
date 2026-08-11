@@ -11,6 +11,10 @@ view-first layout:
   current state, source, and expected rendered result before offering mutation
   rows. If a detail opens a dedicated `Change` page, that page is mutation-only
   and does not repeat the same read-only view rows.
+- Every rendered non-empty row value is classified as navigation, actionable,
+  or passive information/disabled state and is mapped to a closed owner-loop
+  contract before rendering. An unowned value is a Settings error; Enter on a
+  passive row is consumed as a no-op.
 - `Settings > Project Picker > Workdirs` is the list/overview entry. Add/remove
   actions live inside that view.
 - `Settings > Project Picker > Project Root` shows effective and saved values
@@ -57,9 +61,10 @@ view-first layout:
   `[theme]` is never resolved or shown here.
 - `Settings > Notifications` owns notification delivery IA. Desktop notification
   mode, AI desktop notification dedupe duration, delivery source diagnostics,
-  AI hook quiet policy, in-app queue status, and
-  `PROJMUX_NOTIFY_HOOK` visibility live together without mixing mutation
-  boundaries.
+  and AI hook quiet policy live together without mixing mutation boundaries.
+  The in-app queue is consumed from the statusbar/sidebar, not from a standalone
+  Settings row. `PROJMUX_NOTIFY_HOOK` override presence is folded into Delivery
+  sources summary/detail instead of appearing as a separate root row.
 - `Settings > Notifications > Desktop notifications` owns the desktop
   notification mode. The detail choices are `none`, `notify`, and `raise`.
 - `Settings > Notifications > AI notification dedupe` owns the duplicate
@@ -67,10 +72,10 @@ view-first layout:
   the effective source; `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` remains the top
   override. The tmux bell fallback keeps its fixed 5 second window.
 - `Settings > Notifications > Delivery sources` shows Codex hooks, Claude, and
-  tmux producer diagnostics plus copyable install/remove/dry-run commands.
-  Settings copies command text only; it does not install or remove external
-  notify wiring. The legacy Codex notify source is intentionally omitted from
-  Settings.
+  tmux producer diagnostics, the effective desktop sender override state, and
+  copyable install/remove/dry-run commands. Settings copies command text only;
+  it does not install or remove external notify wiring. The legacy Codex notify
+  source is intentionally omitted from Settings.
 - `Settings > Notifications > Hook quiet policy` shows Codex/Claude hook
   runtime action values and writes only
   `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json`. It does not
@@ -78,9 +83,10 @@ view-first layout:
 - `Settings > Session State > Sidebar startup picker` controls the Alt-1
   project-open startup selector. The saved file remains
   `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`.
-- `Settings > Labs` keeps experimental toggles, but keybindings no longer have a
-  visible Labs row. The hidden compatibility action redirects to the
-  `Settings > Keybindings` action list, not to a diagnostic default.
+- `Settings > Labs` contains only Live system resources and Project Hooks.
+  Keybindings live at `Settings > Keybindings`; Labs has no visible or hidden
+  keybindings redirect. Native is the only picker backend, so Labs does not
+  render picker source/backend information.
 - `Settings > Labs > Live system resources` is a direct global on/off toggle
   for the macOS/Linux/WSL lower-status-row `CPU N%  MEM N%` segment. It defaults
   off, updates live tmux state when toggled, and renders unavailable on
