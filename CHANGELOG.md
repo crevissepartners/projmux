@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.3](https://github.com/crevissepartners/projmux/compare/v0.8.2...v0.8.3) (2026-08-11)
+
+
+### Bug Fixes
+
+* refresh macOS key broker after accessibility approval ([#555](https://github.com/crevissepartners/projmux/issues/555)) ([fcb854b](https://github.com/crevissepartners/projmux/commit/fcb854b416dd458a1c6663b3beb9f1b19f31d347))
+* stabilize macOS add key capture ([#557](https://github.com/crevissepartners/projmux/issues/557)) ([33cd644](https://github.com/crevissepartners/projmux/commit/33cd64457c2b893fd4ac63592817d841cceb9d2c))
+
 ## [0.8.2](https://github.com/crevissepartners/projmux/compare/v0.8.1...v0.8.2) (2026-08-10)
 
 
