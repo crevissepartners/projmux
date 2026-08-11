@@ -32,8 +32,11 @@ type Snapshot struct {
 	WindowName    string   `json:"window_name,omitempty"`
 	Project       string   `json:"project,omitempty"`
 	LastPaneID    string   `json:"last_pane_id,omitempty"`
+	LastPaneLabel string   `json:"last_pane_label,omitempty"`
 	LastPaneTitle string   `json:"last_pane_title,omitempty"`
 	PaneTitles    []string `json:"pane_titles,omitempty"`
+	// PaneLabels carries user-owned pane labels parallel to PaneTitles.
+	PaneLabels []string `json:"pane_labels,omitempty"`
 	// PaneBadgeKinds carries the per-pane AI badge kind parallel to PaneTitles
 	// (same length/order when available). Additive and backward compatible: old
 	// state files omit it, so the picker falls back to titles-only rendering.
@@ -201,8 +204,10 @@ func normalizeSnapshot(snapshot Snapshot) Snapshot {
 	snapshot.WindowName = strings.TrimSpace(snapshot.WindowName)
 	snapshot.Project = strings.TrimSpace(snapshot.Project)
 	snapshot.LastPaneID = strings.TrimSpace(snapshot.LastPaneID)
+	snapshot.LastPaneLabel = strings.TrimSpace(snapshot.LastPaneLabel)
 	snapshot.LastPaneTitle = strings.TrimSpace(snapshot.LastPaneTitle)
 	snapshot.PaneTitles = normalizePaneTitles(snapshot.PaneTitles)
+	snapshot.PaneLabels = normalizePaneMetadata(snapshot.PaneLabels)
 	snapshot.PaneBadgeKinds = normalizePaneBadgeKinds(snapshot.PaneBadgeKinds)
 	snapshot.PaneTopics = normalizePaneTopics(snapshot.PaneTopics)
 	snapshot.PaneCommands = normalizePaneCommands(snapshot.PaneCommands)
@@ -258,35 +263,24 @@ func normalizePaneBadgeKinds(kinds []string) []string {
 // than shifting later panes. Trailing empties are trimmed and an all-empty
 // slice collapses to nil so backward-compatible state stays clean.
 func normalizePaneTopics(topics []string) []string {
-	if len(topics) == 0 {
-		return nil
-	}
-	out := make([]string, len(topics))
-	last := -1
-	for i, topic := range topics {
-		trimmed := strings.TrimSpace(topic)
-		out[i] = trimmed
-		if trimmed != "" {
-			last = i
-		}
-	}
-	if last < 0 {
-		return nil
-	}
-	return out[:last+1]
+	return normalizePaneMetadata(topics)
 }
 
 // normalizePaneCommands trims each per-pane command while keeping positional
 // alignment with PaneTitles. Empty commands keep empty slots, trailing empties
 // are trimmed, and an all-empty slice collapses to nil.
 func normalizePaneCommands(commands []string) []string {
-	if len(commands) == 0 {
+	return normalizePaneMetadata(commands)
+}
+
+func normalizePaneMetadata(values []string) []string {
+	if len(values) == 0 {
 		return nil
 	}
-	out := make([]string, len(commands))
+	out := make([]string, len(values))
 	last := -1
-	for i, command := range commands {
-		trimmed := strings.TrimSpace(command)
+	for i, value := range values {
+		trimmed := strings.TrimSpace(value)
 		out[i] = trimmed
 		if trimmed != "" {
 			last = i

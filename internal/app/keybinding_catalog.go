@@ -49,6 +49,7 @@ const (
 // trigger/action tables from these entries.
 type keyBindingAction struct {
 	ID          string
+	Aliases     []string
 	Description string
 	DisplayName string
 	Kind        keyBindingActionKind
@@ -278,17 +279,19 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbePlain:     "\r",
 		},
 		{
-			ID:             "rename-pane-topic",
-			Description:    "Rename the current tmux pane label",
+			ID:             "rename-pane-label",
+			Aliases:        []string{"rename-pane-topic"},
+			Description:    "Set or clear the current tmux pane's user label",
+			DisplayName:    "Rename Pane",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingCommandPrompt,
-			TmuxBody:       "select-pane -T '%1' \\; set-option -p " + aiPaneTopicOption + " '%1' \\; if-shell -F '#{==:#{" + aiPaneTopicOption + "},}' 'set-option -p -u " + aiPaneTopicManualOption + "' 'set-option -p " + aiPaneTopicManualOption + " 1'",
-			TmuxPromptArgs: "-p \"ai topic:\" -I \"#{pane_title}\"",
+			TmuxBody:       "if-shell -F '#{==:%1,}' 'set-option -p -u " + paneLabelOption + "' 'set-option -p " + paneLabelOption + " \"%1\"'",
+			TmuxPromptArgs: "-p \"pane label:\" -I \"#{" + paneLabelOption + "}\"",
 			ProbeOrder:     110,
 			ProbeLabel:     "Ctrl-Shift-M",
-			ProbeAction:    "AI topic prompt",
+			ProbeAction:    "Rename pane",
 		},
 		{
 			ID:          "ai-split-right",
@@ -757,7 +760,7 @@ func isDigitASCII(r rune) bool {
 }
 
 func keyBindingActionAliases(action keyBindingAction) []string {
-	return []string{action.ID}
+	return uniqueNonEmptyStrings(append([]string{action.ID}, action.Aliases...))
 }
 
 func keyBindingActionIsPopupToggle(action keyBindingAction) bool {

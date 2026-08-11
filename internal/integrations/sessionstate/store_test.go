@@ -178,6 +178,55 @@ func TestLoadLegacySnapshotWithoutPaneTitle(t *testing.T) {
 	}
 }
 
+func TestLoadOldSnapshotWithoutPaneLabelDoesNotInferOne(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(t.TempDir())
+	snap := sampleSnapshot()
+	writeSnapshotJSON(t, store, snap.Session, map[string]any{
+		"version":     snap.Version,
+		"session":     snap.Session,
+		"default_cwd": snap.DefaultCWD,
+		"saved_at":    snap.SavedAt,
+		"windows": []any{map[string]any{
+			"index": 0, "name": "main", "active_pane_index": 0,
+			"panes": []any{map[string]any{
+				"index": 0, "title": "same identity", "cwd": snap.DefaultCWD,
+				"recipe": map[string]any{"kind": "agent", "agent": "codex", "topic": "same identity"},
+			}},
+		}},
+	})
+
+	got, err := store.Load(snap.Session)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	pane := got.Windows[0].Panes[0]
+	if pane.Label != "" || pane.Title != "same identity" || pane.Recipe.Topic != "same identity" {
+		t.Fatalf("decoded pane = %#v, want absent label with independent equal title/topic", pane)
+	}
+}
+
+func TestDecodePhaseOnePaneLabelTargetFixture(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("testdata", "pane-label-phase1-target.json"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var snap Snapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if err := snap.Validate(); err != nil {
+		t.Fatalf("fixture Validate() error = %v", err)
+	}
+	pane := snap.Windows[0].Panes[0]
+	if pane.Label != "user-owned label" || pane.Title != "raw runtime title" || pane.Recipe.Topic != "agent AI topic" {
+		t.Fatalf("fixture pane = %#v, want three independent identity fields", pane)
+	}
+}
+
 func TestStoreSummaryCountsWindowsAndPanes(t *testing.T) {
 	t.Parallel()
 
@@ -476,6 +525,7 @@ func sampleSnapshot() Snapshot {
 					},
 					{
 						Index:  1,
+						Label:  "review pane",
 						Title:  "agent task",
 						CWD:    "/home/tester/source/repos/projmux",
 						Recipe: AgentRecipe("claude", "abcdef-1234", "keybinding in-app"),

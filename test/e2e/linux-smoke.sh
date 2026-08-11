@@ -62,6 +62,31 @@ tmux set-option -p -t "$pane_id" @projmux_ai_agent codex
 tmux set-option -p -t "$pane_id" @projmux_ai_topic "docker e2e"
 tmux set-option -p -t "$pane_id" @projmux_attention_state reply
 
+# A user rename owns only the persistent pane label. It must not mutate the
+# independent AI topic or raw runtime title, and empty confirmation clears it.
+raw_title_before="$(tmux display-message -p -t "$pane_id" '#{pane_title}')"
+"$bin" tmux rename-pane "$pane_id" "docker user label"
+if [[ "$(tmux show-options -pqv -t "$pane_id" @projmux_pane_label)" != "docker user label" ]]; then
+  echo "expected real tmux pane label write" >&2
+  exit 1
+fi
+if [[ "$(tmux show-options -pqv -t "$pane_id" @projmux_ai_topic)" != "docker e2e" ]] ||
+  [[ "$(tmux display-message -p -t "$pane_id" '#{pane_title}')" != "$raw_title_before" ]]; then
+  echo "pane label rename mutated AI topic or raw title" >&2
+  exit 1
+fi
+tmux select-pane -T "runtime title changed" -t "$pane_id"
+if [[ "$(tmux show-options -pqv -t "$pane_id" @projmux_pane_label)" != "docker user label" ]] ||
+  [[ "$(tmux show-options -pqv -t "$pane_id" @projmux_ai_topic)" != "docker e2e" ]]; then
+  echo "native raw-title change mutated pane label or AI topic" >&2
+  exit 1
+fi
+"$bin" tmux rename-pane "$pane_id" ""
+if [[ -n "$(tmux show-options -pqv -t "$pane_id" @projmux_pane_label)" ]]; then
+  echo "expected empty pane label rename to clear the option" >&2
+  exit 1
+fi
+
 "$bin" notify reconcile --json >"$PROJMUX_SMOKE_WORKDIR/reconcile.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile.json" '"pushed": 1'
 "$bin" notify list --json >"$PROJMUX_SMOKE_WORKDIR/reconcile-list.json"

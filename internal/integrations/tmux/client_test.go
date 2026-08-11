@@ -439,6 +439,7 @@ func TestClientRecentSessionSummariesIncludeAttachedPaneCountAndPath(t *testing.
 				"#{pane_index}",
 				"#{?pane_active,1,0}",
 				"#{pane_title}",
+				"#{@projmux_pane_label}",
 				"#{@projmux_attention_state}",
 				"#{@projmux_ai_state}",
 				"#{@projmux_ai_badge_kind}",
@@ -620,7 +621,7 @@ func TestClientListAllPanesParsesRows(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("workspace\t%1\t0\t1\t1\tserver\tbusy\tthinking\tapproval_required\tcodex\tapproval needed\t\t1\tgo\t/home/tester/source/repos/workspace\nhome\t%2\t2\t0\t0\tshell\t\t\t\t\t\t\t\tzsh\t/home/tester\n"), nil
+		return []byte("workspace\t%1\t0\t1\t1\tserver\tapi label\tbusy\tthinking\tapproval_required\tcodex\tapproval needed\t\t1\tgo\t/home/tester/source/repos/workspace\nhome\t%2\t2\t0\t0\tshell\t\t\t\t\t\t\t\tzsh\t/home/tester\n"), nil
 	}))
 
 	panes, err := client.ListAllPanes(context.Background())
@@ -629,7 +630,7 @@ func TestClientListAllPanesParsesRows(t *testing.T) {
 	}
 
 	want := []Pane{
-		{ID: "%1", SessionName: "workspace", WindowIndex: 0, PaneIndex: 1, Title: "server", AttentionState: "busy", AIState: "thinking", AIBadgeKind: "approval_required", AIAgent: "codex", AITopic: "approval needed", AttentionFocusArmed: "1", Command: "go", Path: "/home/tester/source/repos/workspace", Active: true},
+		{ID: "%1", SessionName: "workspace", WindowIndex: 0, PaneIndex: 1, Title: "server", Label: "api label", AttentionState: "busy", AIState: "thinking", AIBadgeKind: "approval_required", AIAgent: "codex", AITopic: "approval needed", AttentionFocusArmed: "1", Command: "go", Path: "/home/tester/source/repos/workspace", Active: true},
 		{ID: "%2", SessionName: "home", WindowIndex: 2, PaneIndex: 0, Title: "shell", Command: "zsh", Path: "/home/tester", Active: false},
 	}
 	if !reflect.DeepEqual(panes, want) {

@@ -39,6 +39,7 @@ type Pane struct {
 	WindowIndex         string
 	Index               string
 	Title               string
+	Label               string
 	AttentionState      string
 	AIState             string
 	AIBadgeKind         string
@@ -210,6 +211,7 @@ func normalizedPanes(panes []Pane) []Pane {
 			WindowIndex:         windowIndex,
 			Index:               index,
 			Title:               strings.TrimSpace(pane.Title),
+			Label:               strings.TrimSpace(pane.Label),
 			AttentionState:      strings.TrimSpace(pane.AttentionState),
 			AIState:             strings.TrimSpace(pane.AIState),
 			AIBadgeKind:         strings.TrimSpace(pane.AIBadgeKind),

@@ -52,6 +52,7 @@ const (
 	aiPaneBadgeKindOption       = "@projmux_ai_badge_kind"
 	aiPaneTopicOption           = "@projmux_ai_topic"
 	aiPaneTopicManualOption     = "@projmux_ai_topic_manual"
+	paneLabelOption             = "@projmux_pane_label"
 	aiPaneHookActiveOption      = "@projmux_ai_hook_active"
 	aiPaneThreadIDOption        = "@projmux_ai_thread_id"
 	aiPaneSessionIDOption       = "@projmux_ai_session_id"

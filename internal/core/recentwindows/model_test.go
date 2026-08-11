@@ -317,6 +317,33 @@ func TestNormalizeSnapshotPaneTopics(t *testing.T) {
 	}
 }
 
+func TestNormalizeSnapshotPaneLabelsKeepsAlignment(t *testing.T) {
+	t.Parallel()
+
+	snapshot := normalizeSnapshot(Snapshot{
+		Session: "s", WindowID: "@1", PaneTitles: []string{"one", "two", "three"},
+		PaneLabels: []string{" user one ", "", "  "},
+	})
+	if got := snapshot.PaneLabels; len(got) != 1 || got[0] != "user one" {
+		t.Fatalf("pane labels = %#v, want trimmed label with trailing empty slots omitted", got)
+	}
+}
+
+func TestRecordPreservesPaneLabelsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	state, err := NewState(nil).Record(Snapshot{
+		Session: "s", WindowID: "@1", PaneTitles: []string{"one", "two"},
+		PaneLabels: []string{"", "user two"}, LastFocusedAt: time.Unix(1, 0),
+	}, DefaultLimit)
+	if err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+	if got := state.Entries[0].PaneLabels; len(got) != 2 || got[0] != "" || got[1] != "user two" {
+		t.Fatalf("pane labels = %#v, want positional round trip", got)
+	}
+}
+
 func TestRecordPreservesPaneTopicsRoundTrip(t *testing.T) {
 	t.Parallel()
 

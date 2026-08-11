@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	"github.com/crevissepartners/projmux/internal/core/paneidentity"
 	"github.com/crevissepartners/projmux/internal/core/preview"
 )
 
@@ -155,7 +156,10 @@ func formatPaneSummary(pane preview.Pane) string {
 	if command == "" {
 		command = "-"
 	}
-	titleCell := styleLeadTopicPrefix(padRight(truncateText(title, 18), 18))
+	titleCell := padRight(truncateText(title, 18), 18)
+	if visiblePaneIdentity(pane).Source == paneidentity.SourceTopic {
+		titleCell = styleLeadTopicPrefix(titleCell)
+	}
 	line := "[" + sanitizeCell(pane.WindowIndex) + "." + sanitizeCell(pane.Index) + "] " + titleCell + " " + truncateText(command, 10)
 	if status := formatPaneStatus(pane); status != "" {
 		if strings.Contains(status, "\x1b[") {
@@ -168,24 +172,26 @@ func formatPaneSummary(pane preview.Pane) string {
 }
 
 func displayPaneTitle(pane preview.Pane) string {
-	return styleLeadTopicPrefix(displayPaneTitlePlain(pane))
+	identity := visiblePaneIdentity(pane)
+	if identity.Source == paneidentity.SourceTopic {
+		return styleLeadTopicPrefix(identity.Value)
+	}
+	return identity.Value
 }
 
 func displayPaneTitlePlain(pane preview.Pane) string {
-	if strings.TrimSpace(pane.AIAgent) != "" {
-		if topic := sanitizeCell(pane.AITopic); topic != "" {
-			return topic
-		}
-	}
-	title := sanitizeCell(pane.Title)
-	command := displayPaneCommand(pane)
-	if title == "" {
-		return command
-	}
-	if strings.TrimSpace(pane.AIAgent) == "" && isShellCommand(pane.Command) {
-		return command
-	}
-	return title
+	return visiblePaneIdentity(pane).Value
+}
+
+func visiblePaneIdentity(pane preview.Pane) paneidentity.Identity {
+	resolved := paneidentity.Resolve(paneidentity.Inputs{
+		Label:   sanitizeCell(pane.Label),
+		AIAgent: sanitizeCell(pane.AIAgent),
+		AITopic: sanitizeCell(pane.AITopic),
+		Command: sanitizeCell(pane.Command),
+		Title:   sanitizeCell(pane.Title),
+	})
+	return resolved
 }
 
 func displayPaneCommand(pane preview.Pane) string {
@@ -193,15 +199,6 @@ func displayPaneCommand(pane preview.Pane) string {
 		return agent
 	}
 	return sanitizeCell(pane.Command)
-}
-
-func isShellCommand(command string) bool {
-	switch strings.TrimSpace(command) {
-	case "sh", "bash", "zsh", "fish", "nu", "xonsh":
-		return true
-	default:
-		return false
-	}
 }
 
 func formatPaneStatus(pane preview.Pane) string {

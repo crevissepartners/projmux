@@ -684,7 +684,7 @@ projmux tmux popup-switch
 projmux tmux popup-sessions
 projmux tmux popup-preview <session>
 projmux tmux rebalance-panes
-projmux tmux rename-pane <pane> <title>
+projmux tmux rename-pane <pane> <label>
 projmux tmux print-config     [--bin <path>]
 projmux tmux print-app-config [--bin <path>]
 projmux tmux install     [--bin <path>] [--config <path>] [--include <path>]
@@ -698,6 +698,11 @@ accepted by `popup-toggle` mirror the historical sessionizer surface:
 `notify-sidebar`, `recent-windows`, `ai-split-picker-right`,
 `ai-split-picker-down`, `ai-split-resume-right`, `ai-split-resume-down`,
 `ai-split-settings`.
+`rename-pane` sets only the pane-scoped user label
+`@projmux_pane_label`; an empty label clears the option. It does not change the
+raw tmux pane title, AI topic, or AI topic manual-ownership flag. The canonical
+keybinding action id is `rename-pane-label`; `rename-pane-topic` remains a
+deprecated label-only keymap alias for one compatibility period.
 `apply` regenerates the app tmux config and reloads the live `-L projmux`
 server without restarting it. `make install` and `projmux upgrade` invoke it
 after replacing the binary. Settings > Keybindings normally runs the same

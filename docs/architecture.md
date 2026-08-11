@@ -94,9 +94,13 @@ Ephemeral runtime state:
 
 Projmux keeps visible naming separate from source metadata:
 
+- **User pane label** is persistent pane-scoped metadata stored in
+  `@projmux_pane_label`. The Rename Pane action sets or clears only this field;
+  it does not write the AI topic or raw pane title.
 - **Pane border label** is the primary visible pane name. In the app tmux
-  config it resolves to AI topic first, known interactive shell command
-  (`zsh`, `bash`, `fish`, `sh`, `nu`, `xonsh`) second, and raw pane title last.
+  config and native previews it resolves to user pane label first, agent AI
+  topic second, known interactive shell command (`zsh`, `bash`, `fish`, `sh`,
+  `nu`, `xonsh`) third, and raw pane title last.
 - **Window tab name** follows the active pane's visible pane label through the
   same tmux format expression used by the pane border. Historically the app
   config used raw `#{pane_title}` for `automatic-rename-format`, which let shell
@@ -105,14 +109,16 @@ Projmux keeps visible naming separate from source metadata:
 - **Terminal / pane title** remains raw title metadata owned by the running app
   or shell. It is still available to tmux and to Projmux features that need
   title evidence, but it is not the canonical Projmux window naming source.
-- **AI topic** is the user-facing AI pane name. AI panes may set the pane title,
-  pane border label, window tab name, and `@projmux_ai_topic` from the topic.
+- **AI topic** is agent-owned naming metadata stored in `@projmux_ai_topic`.
+  Its set/clear CLI and watcher manual-ownership behavior remain independent of
+  user pane labels.
 - **Git branch** belongs in the statusbar git segment. Branch-based terminal
   title overwrites are not promoted to the primary Projmux pane or window name.
-- **Session snapshots** store source metadata such as `window_name`,
-  `pane_title`, `@projmux_ai_topic`, and agent resume metadata. They do not store
-  a resolved `display_label`; visible labels are recomputed by tmux policy at
-  display time.
+- **Session snapshots** store source metadata separately: `window_name`, raw
+  `pane_title`, user `label`, `@projmux_ai_topic`, and agent resume metadata.
+  Old snapshots decode with an absent label; title/topic equality never infers
+  one. Phase 0 captures the field but does not replay it. Snapshots do not store
+  a resolved `display_label`; visible labels are recomputed by display policy.
 
 ## Notify queue
 
