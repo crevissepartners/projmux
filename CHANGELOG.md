@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.4](https://github.com/crevissepartners/projmux/compare/v0.8.3...v0.8.4) (2026-08-11)
+
+
+### Features
+
+* support live resources on macOS ([#558](https://github.com/crevissepartners/projmux/issues/558)) ([5ff7a1c](https://github.com/crevissepartners/projmux/commit/5ff7a1cdaa29c009ecb83c632c7e9c23fefcccfc))
+
 ## [0.8.3](https://github.com/crevissepartners/projmux/compare/v0.8.2...v0.8.3) (2026-08-11)
 
 
