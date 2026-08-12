@@ -139,16 +139,32 @@ func formatAntigravityStopNotifyBody(p antigravityHookPayload) aiNotifyBody {
 }
 
 func antigravityHookHasError(p antigravityHookPayload) bool {
+	return antigravityTerminationClassification(p) == "error"
+}
+
+func antigravityTerminationClassification(p antigravityHookPayload) string {
 	if strings.TrimSpace(p.Error) != "" {
-		return true
+		return "error"
 	}
-	reason := strings.ToLower(strings.TrimSpace(p.TerminationReason))
+	reason := strings.ToUpper(strings.TrimSpace(p.TerminationReason))
+	reason = strings.NewReplacer("-", "_", " ", "_").Replace(reason)
 	switch reason {
-	case "", "stop", "stopped", "complete", "completed", "success", "normal":
-		return false
-	default:
-		return true
+	case "", "STOP", "STOPPED", "COMPLETE", "COMPLETED", "SUCCESS", "NORMAL", "NO_TOOL_CALL", "MODEL_STOP":
+		return "completion"
+	case "ERROR", "MAX_STEPS_EXCEEDED":
+		return "error"
 	}
+	if strings.HasPrefix(reason, "ERROR_") || strings.HasSuffix(reason, "_ERROR") || strings.HasPrefix(reason, "MAX_STEPS_EXCEEDED") {
+		return "error"
+	}
+	return "unknown"
+}
+
+func antigravityStopDiagnosticReason(p antigravityHookPayload) string {
+	if antigravityTerminationClassification(p) != "unknown" {
+		return ""
+	}
+	return "unknown termination reason: " + truncateRunes(strings.TrimSpace(p.TerminationReason), 80)
 }
 
 func joinAINotifyText(agent, category string, values ...string) string {

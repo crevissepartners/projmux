@@ -2798,7 +2798,7 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			Name:          "Antigravity hooks",
 			Status:        doctorAINotifyStatusSkip,
 			ProviderID:    "antigravity",
-			TestedVersion: "Antigravity CLI agy Phase 0b smoke",
+			TestedVersion: "Antigravity CLI 1.1.12",
 			Guidance:      "Antigravity hook payloads support manual projmux ai ingest antigravity-hook wiring only; projmux does not mutate Antigravity user config.",
 		},
 	}
@@ -2882,7 +2882,7 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			t.Fatalf("delivery sources entries = %#v, want %q", listOptions.Entries, want)
 		}
 	}
-	for _, want := range []string{"Antigravity hooks", "skip", "Antigravity CLI agy Phase 0b smoke"} {
+	for _, want := range []string{"Antigravity hooks", "skip", "Antigravity CLI 1.1.12"} {
 		if !hasEntryLabelContaining(listOptions.Entries, want) {
 			t.Fatalf("delivery sources entries = %#v, want %q", listOptions.Entries, want)
 		}
@@ -2938,7 +2938,7 @@ func TestSettingsNotificationsDeliveryShowsAntigravityUnsupportedReadOnly(t *tes
 		Name:          "Antigravity hooks",
 		ProviderID:    "antigravity",
 		Status:        doctorAINotifyStatusSkip,
-		TestedVersion: "Antigravity CLI agy Phase 0b smoke",
+		TestedVersion: "Antigravity CLI 1.1.12",
 		Guidance:      "Antigravity hook payloads support manual projmux ai ingest antigravity-hook wiring only; projmux does not mutate Antigravity user config, and hook commands should use an absolute projmux path or a known cwd.",
 	}}
 
@@ -2978,7 +2978,7 @@ func TestSettingsNotificationsDeliveryShowsAntigravityUnsupportedReadOnly(t *tes
 	if !hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+"antigravity-hooks") {
 		t.Fatalf("delivery sources entries = %#v, want antigravity row", listOptions.Entries)
 	}
-	for _, want := range []string{"Antigravity hooks", "skip", "Antigravity CLI agy Phase 0b smoke"} {
+	for _, want := range []string{"Antigravity hooks", "skip", "Antigravity CLI 1.1.12"} {
 		if !hasEntryLabelContaining(listOptions.Entries, want) {
 			t.Fatalf("delivery sources entries = %#v, want %q", listOptions.Entries, want)
 		}

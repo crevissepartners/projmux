@@ -1,9 +1,11 @@
 {
   "provider": "antigravity",
-  "observed_version": "Antigravity CLI agy Phase 0b smoke",
+  "observed_version": "Antigravity CLI 1.1.12",
   "events": [
+    { "name": "PreToolUse", "install": false, "action": "quiet" },
+    { "name": "PostToolUse", "install": false, "action": "quiet" },
+    { "name": "PreInvocation", "install": false, "action": "quiet" },
     { "name": "PostInvocation", "install": false, "action": "quiet" },
-    { "name": "Stop", "install": false, "action": "notify" },
-    { "name": "Statusline", "install": false, "action": "notify" }
+    { "name": "Stop", "install": false, "action": "notify" }
   ]
 }
