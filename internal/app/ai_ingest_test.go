@@ -1995,6 +1995,58 @@ func TestIngestAntigravityStatuslineApprovalPushesCritical(t *testing.T) {
 	}
 }
 
+func TestIngestAntigravityStatuslineConfirmationDedupeAndFalseSilence(t *testing.T) {
+	t.Run("repeated true replaces one queue row", func(t *testing.T) {
+		home := t.TempDir()
+		queue := notify.NewStore(filepath.Join(home, "notify.json"))
+		cmd := testAICommand(home)
+		cmd.producer = &storeAttentionNotifyProducer{store: queue, ttl: time.Minute}
+		cmd.readCommand = antigravityIngestReadCommand("%7")
+		payload := `{"conversation_id":"123e4567-e89b-12d3-a456-426614174000","cwd":"/repo/projmux","agent_state":"tool_use","tool_confirmation_pending":true}`
+		for range 2 {
+			cmd.stdin = strings.NewReader(payload)
+			if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		entries, err := queue.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 1 {
+			t.Fatalf("queue entries = %#v, want one replaced approval row", entries)
+		}
+		if got, want := entries[0].ID, "ai:antigravity:approval:123e4567-e89b-12d3-a456-426614174000"; got != want {
+			t.Fatalf("queue ID = %q, want stable %q", got, want)
+		}
+		if entries[0].Severity != notify.SeverityCritical || entries[0].Metadata[notify.MetaCategory] != "approval_required" {
+			t.Fatalf("queue entry = %#v, want critical approval_required", entries[0])
+		}
+	})
+
+	t.Run("repeated false creates no queue row", func(t *testing.T) {
+		home := t.TempDir()
+		queue := notify.NewStore(filepath.Join(home, "notify.json"))
+		cmd := testAICommand(home)
+		cmd.producer = &storeAttentionNotifyProducer{store: queue, ttl: time.Minute}
+		cmd.readCommand = antigravityIngestReadCommand("%7")
+		payload := `{"conversation_id":"123e4567-e89b-12d3-a456-426614174000","cwd":"/repo/projmux","agent_state":"idle","tool_confirmation_pending":false}`
+		for range 2 {
+			cmd.stdin = strings.NewReader(payload)
+			if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		entries, err := queue.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("queue entries = %#v, want none for repeated false", entries)
+		}
+	})
+}
+
 func TestIngestAntigravityStatuslineWithoutPendingQuietLogsReason(t *testing.T) {
 	home := t.TempDir()
 	store := &stubNotifyStore{}

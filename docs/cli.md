@@ -275,8 +275,8 @@ Codex shares the global `30s`). `--json` emits the snapshot array; when
 backoff is active the wrapper `{snapshots, backoff}` object is emitted
 instead.
 
-Antigravity has no 5-hour/weekly quota contract, so it is surfaced
-`context-window-only`: the adapter emits a single `context` window row
+Phase 3 does not parse or render Antigravity account quota. Its adapter is
+`context-window-only` in this slice and emits a single `context` window row
 (context-window fullness, no `RESETS_AT`) sourced from the latest
 statusline `context_window` seen via hook ingest. `--model antigravity`
 renders that row; in the HUD it shows as `Antigravity ctx [bar] N%`
@@ -563,7 +563,8 @@ metadata for matching and as session-state resume metadata. Restore uses
 session-state preview/doctor render `resume unavailable`. Structured statusline
 `context_window.used_percentage` is persisted with its conversation id and
 surfaced by the usage HUD
-as a `context-window-only` row (Antigravity has no 5h/weekly quota contract).
+as a `context-window-only` row. Account quota remains outside Phase 3 and is
+not inferred from this conversation-local gauge.
 The earlier string percentage form remains a compatibility fallback.
 Transcript contents are not read.
 

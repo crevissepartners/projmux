@@ -1,11 +1,10 @@
 // Package antigravity implements a best-effort usage Adapter for the
 // Antigravity CLI (`agy`).
 //
-// Unlike Claude (OAuth usage API) and Codex (rate_limits in the rollout
-// JSONL), Antigravity exposes NO server-side 5h/weekly quota contract. The
-// only usage-shaped signal it emits is the statusline `context_window`
-// percentage — how full the active conversation's context window is. This
-// adapter is therefore context-window-only: it surfaces a single
+// This Phase 3 adapter intentionally consumes only the statusline
+// `context_window` percentage — how full the active conversation's context
+// window is. Separate account quota parsing/rendering is outside this slice.
+// This adapter is therefore context-window-only: it surfaces a single
 // usage.Snapshot on the usage.WindowContext window and never fabricates
 // 5h/weekly rows.
 //
@@ -47,7 +46,8 @@ const ContextFileName = "antigravity-context.json"
 
 // ContextRecord is the on-disk schema shared between the hook ingest path
 // (writer) and this adapter (reader). Pct is the context-window fullness
-// percentage (0-100); UpdatedAt is when the value was last observed.
+// percentage (0-100); ConversationID preserves its conversation-local identity;
+// UpdatedAt is when the value was last observed.
 type ContextRecord struct {
 	ConversationID string    `json:"conversation_id,omitempty"`
 	Pct            float64   `json:"pct"`

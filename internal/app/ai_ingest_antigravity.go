@@ -195,8 +195,8 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 // persistAntigravityContextUsage records the latest context-window
 // percentage carried by an antigravity hook into the usage state
 // directory so the usage adapter (and thus the HUD/status bar) can surface
-// it. Best-effort: antigravity exposes no 5h/weekly quota, so this
-// context-window gauge is the only usage-shaped signal available. A
+// it. Best-effort: Phase 3 handles only this conversation-local gauge and
+// deliberately does not parse or render separate account quota data. A
 // missing or unparseable value, or a write failure, is silently ignored —
 // usage is a non-critical side channel of hook ingest.
 func (c *aiCommand) persistAntigravityContextUsage(payload antigravityHookPayload) {

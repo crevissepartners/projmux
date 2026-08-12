@@ -684,9 +684,9 @@ otherwise preview and doctor render `resume unavailable`. Official snake_case
 `tool_confirmation_pending`, and structured `context_window.used_percentage`
 plus token fields are parsed directly. The structured percentage is persisted
 with conversation identity to the usage state dir; the legacy string percentage
-remains a fallback so
-the usage HUD can surface it as a `context-window-only` row — Antigravity has
-no 5-hour/weekly quota contract, so no quota bars are emitted. Raw payloads or
+remains a fallback so the usage HUD can surface it as a `context-window-only`
+row. Separate Antigravity account quota data is not parsed or rendered in Phase
+3, so no quota bars are emitted from this bridge. Raw payloads or
 transcript contents are not stored.
 
 ## Ingest Debug Log

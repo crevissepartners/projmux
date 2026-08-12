@@ -11,13 +11,13 @@ still collect and render that provider even when it is disabled.
 Both adapters read from the upstream's own view of the account so the
 percentages match what `claude /usage` and `codex` show natively.
 
-Antigravity is intentionally not registered as a 5-hour/weekly quota adapter.
-The only stable usage signal is statusline `context_window.used_percentage`,
+Phase 3 intentionally does not register or render an Antigravity account-quota
+adapter. Its statusline signal is `context_window.used_percentage`,
 which is stored with its conversation id and is conversation context-window
 usage, not account quota usage. Legacy string percent payloads remain a
-compatibility fallback. `projmux usage
---model antigravity` and ambient all-model table output therefore render an
-explicit unsupported note when Antigravity is enabled. The statusbar usage
+compatibility fallback. `projmux usage --model antigravity` and ambient
+all-model table output therefore render an explicit Phase 3 unsupported note
+for account quota when Antigravity is enabled. The statusbar usage
 popup shows an `Antigravity ctx ... unsupported` row, while the compact tmux
 status segment stays silent unless Claude/Codex quota rows exist. Projmux does
 not infer quota, reset timestamps, or account limits from screen scraping,
@@ -126,9 +126,9 @@ When no AI agents are enabled, all-model table output contains no
 provider rows and prints a short Settings hint. `--json` returns an
 empty array. Explicit `--model claude`, `--model codex` and
 `--model antigravity` bypass the enabled-agent filter for read-only
-inspection and collect/render only the requested adapter. Antigravity
-exposes no 5h/weekly quota, so its adapter reports a single `context`
-window row (context-window fullness, no `RESETS_AT`) sourced from the
+inspection and collect/render only the requested adapter. Phase 3 keeps
+Antigravity account quota outside this slice, so its adapter reports a single
+`context` window row (context-window fullness, no `RESETS_AT`) sourced from the
 latest statusline `context_window` observed via hook ingest.
 
 ### `projmux status usage`
