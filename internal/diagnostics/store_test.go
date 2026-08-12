@@ -154,6 +154,40 @@ func TestStoreReadSkipsMalformedAndTruncatedRecords(t *testing.T) {
 	}
 }
 
+func TestStoreReadOnlySharesDecoderWithoutRepairingSource(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission modes are not enforced on Windows")
+	}
+	root := t.TempDir()
+	logs := filepath.Join(root, "projmux", "logs")
+	if err := os.MkdirAll(logs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(logs, LogFileName)
+	valid, _ := json.Marshal(fixtureEvent("strict-read"))
+	if err := os.WriteFile(path, append(append(valid, '\n'), []byte("malformed\n{\"truncated\"")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	beforeDir, _ := os.Stat(logs)
+	beforeFile, _ := os.Stat(path)
+
+	result, err := NewStore(path).ReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Events) != 1 || result.Events[0].RunID != "strict-read" || result.Malformed != 1 || !result.Truncated || result.Missing {
+		t.Fatalf("ReadOnly result = %#v", result)
+	}
+	afterDir, _ := os.Stat(logs)
+	afterFile, _ := os.Stat(path)
+	if afterDir.Mode().Perm() != beforeDir.Mode().Perm() || afterFile.Mode().Perm() != beforeFile.Mode().Perm() {
+		t.Fatalf("ReadOnly changed modes dir %o->%o file %o->%o", beforeDir.Mode().Perm(), afterDir.Mode().Perm(), beforeFile.Mode().Perm(), afterFile.Mode().Perm())
+	}
+	if _, err := os.Stat(path + lockSuffix); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ReadOnly lock stat = %v, want missing", err)
+	}
+}
+
 func TestStoreConcurrentGoroutineWritersKeepCompleteRecords(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "logs", LogFileName)
 	store := NewStore(path)
@@ -364,6 +398,7 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 		{args: []string{"upgrade", "--dry-run"}, runID: "upgrade-preview-ok"},
 		{args: []string{"update", "apply", "--dry-run"}, runID: "update-preview-ok"},
 		{args: []string{"doctor", "--json", "--section", "deps"}, runID: "doctor-read-ok"},
+		{args: []string{"diagnostics", "report", "--output", "/private/report"}, runID: "report-read-ok"},
 		{args: []string{"ai", "integrate", "codex", "--dry-run"}, runID: "integration-preview-ok"},
 		{args: []string{"session-state", "restore", "--dry-run"}, runID: "restore-preview-ok"},
 	}
@@ -380,6 +415,9 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := RecordOutcome(store, []string{"doctor", "--install-missing"}, "doctor-usage-error", "0.8.4", "tmux", start, errors.New("removed flag"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordOutcome(store, []string{"diagnostics", "report", "--unknown"}, "report-usage-error", "0.8.4", "tmux", start, errors.New("private output"), true); err != nil {
 		t.Fatal(err)
 	}
 	events, err := store.Read()

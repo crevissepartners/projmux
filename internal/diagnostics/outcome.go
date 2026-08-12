@@ -16,7 +16,7 @@ func RecordOutcome(store *Store, args []string, runID, version, muxBackend strin
 	class := Classify(args)
 	// Doctor owns a strict no-write contract, including invalid flag
 	// invocations. Do not turn its read-only result into a journal write.
-	if class.Command == "doctor" {
+	if class.Command == "doctor" || (class.Command == "diagnostics" && class.Subcommand == "report") {
 		return nil
 	}
 	if commandErr == nil && !class.StateChanging {

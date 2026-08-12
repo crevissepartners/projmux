@@ -168,6 +168,36 @@ func (s *Store) Read() ([]Event, error) {
 	}
 	defer file.Close()
 	home, _ := os.UserHomeDir()
+	return decodeCompleteRecords(file, home).Events, nil
+}
+
+// ReadResult describes a tolerant journal read without exposing malformed
+// input. Report consumers use the counts to explain omissions while the event
+// decoder remains shared with the interactive viewer.
+type ReadResult struct {
+	Events    []Event
+	Malformed int
+	Truncated bool
+	Missing   bool
+}
+
+// ReadOnly reads valid complete records without creating, locking, chmodding,
+// repairing, or truncating any source path. It is the support-report boundary;
+// Read intentionally keeps its historical best-effort permission repair for
+// the diagnostics log viewer.
+func (s *Store) ReadOnly() (ReadResult, error) {
+	if err := s.rejectSymlinks(); err != nil {
+		return ReadResult{}, err
+	}
+	file, err := os.Open(s.path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ReadResult{Missing: true}, nil
+		}
+		return ReadResult{}, fmt.Errorf("open diagnostics log: %w", err)
+	}
+	defer file.Close()
+	home, _ := os.UserHomeDir()
 	return decodeCompleteRecords(file, home), nil
 }
 
@@ -199,9 +229,9 @@ func (s *Store) repairPrivateDirs() {
 	bestEffortPrivateDir(logsDir)
 }
 
-func decodeCompleteRecords(reader io.Reader, home string) []Event {
+func decodeCompleteRecords(reader io.Reader, home string) ReadResult {
 	buffered := bufio.NewReaderSize(reader, 64*1024)
-	var events []Event
+	var result ReadResult
 	for {
 		line, err := buffered.ReadBytes('\n')
 		if len(line) > 0 && line[len(line)-1] == '\n' {
@@ -209,12 +239,18 @@ func decodeCompleteRecords(reader io.Reader, home string) []Event {
 			var event Event
 			if len(line) > 0 && json.Unmarshal(line, &event) == nil {
 				if safe, validationErr := sanitizeEvent(event, home); validationErr == nil {
-					events = append(events, safe)
+					result.Events = append(result.Events, safe)
+				} else {
+					result.Malformed++
 				}
+			} else if len(line) > 0 {
+				result.Malformed++
 			}
+		} else if len(line) > 0 {
+			result.Truncated = true
 		}
 		if err != nil {
-			return events
+			return result
 		}
 	}
 }

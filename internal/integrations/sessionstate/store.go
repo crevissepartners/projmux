@@ -125,6 +125,21 @@ func (s Store) Load(session string) (Snapshot, error) {
 	}
 
 	localstate.RepairPrivateFile(path)
+	return s.loadPath(session, path)
+}
+
+// LoadReadOnly reads and validates a snapshot without repairing permissions.
+// Strict diagnostic/report consumers use this method so inspecting an
+// existing source cannot mutate product state.
+func (s Store) LoadReadOnly(session string) (Snapshot, error) {
+	path, err := s.Path(session)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return s.loadPath(session, path)
+}
+
+func (s Store) loadPath(session, path string) (Snapshot, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

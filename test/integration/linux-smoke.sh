@@ -82,6 +82,212 @@ elif [[ -e "$operations_log" ]]; then
   exit 1
 fi
 
+# An explicit report invocation prints the complete preview before writing one
+# private local archive. It reuses Doctor schema v1 and does not migrate the
+# seeded legacy hook or journal its own success.
+support_report="$PROJMUX_SMOKE_WORKDIR/support/report.tar.gz"
+if [[ -e "$(dirname "$support_report")" || -e "$support_report" ]]; then
+  echo "support report existed before explicit request" >&2
+  exit 1
+fi
+operations_count_before_report=0
+if [[ -f "$operations_log" ]]; then
+  operations_count_before_report="$(wc -l <"$operations_log")"
+fi
+"$bin" diagnostics report --output "$support_report" >"$PROJMUX_SMOKE_WORKDIR/report-preview.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-preview.txt" "projmux diagnostics report preview"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-preview.txt" "manifest.json: included"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-preview.txt" "doctor.json: included"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-preview.txt" "archive write follows this complete preview"
+if [[ ! -f "$support_report" ]] || [[ "$(stat -c '%a' "$support_report")" != "600" ]]; then
+  echo "expected explicit private support archive" >&2
+  exit 1
+fi
+tar -xOzf "$support_report" manifest.json >"$PROJMUX_SMOKE_WORKDIR/report-manifest.json"
+tar -xOzf "$support_report" doctor.json >"$PROJMUX_SMOKE_WORKDIR/report-doctor.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-manifest.json" '"report_schema_version": 1'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-manifest.json" '"redaction_mode": "default-hash-v1"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-doctor.json" '"schema_version": 1'
+smoke_assert_file_contains "$legacy_hook" "legacy-hook-must-stay"
+operations_count_after_report=0
+if [[ -f "$operations_log" ]]; then
+  operations_count_after_report="$(wc -l <"$operations_log")"
+fi
+if [[ "$operations_count_before_report" != "$operations_count_after_report" ]]; then
+  echo "support report unexpectedly appended an operational event" >&2
+  exit 1
+fi
+
+assert_report_manifest_entry() {
+  local manifest="$1"
+  local name="$2"
+  local status="$3"
+  local reason="$4"
+  awk -v want_name="$name" -v want_status="$status" -v want_reason="$reason" '
+    index($0, "\"name\": \"" want_name "\"") { active=1; got_status=0; got_reason=0 }
+    active && index($0, "\"status\": \"" want_status "\"") { got_status=1 }
+    active && index($0, "\"reason\": \"" want_reason "\"") { got_reason=1 }
+    active && index($0, "}") { if (got_status && got_reason) found=1; active=0 }
+    END { exit(found ? 0 : 1) }
+  ' "$manifest" || {
+    echo "missing report manifest contract: $name $status $reason" >&2
+    cat "$manifest" >&2
+    exit 1
+  }
+}
+
+assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-manifest.json" \
+  "operational-errors.json" "omitted" "source-clean-no-errors"
+assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-manifest.json" \
+  "ai-ingest-summary.json" "omitted" "source-missing"
+
+# Dedicated empty state proves both bounded sources remain missing and report
+# reads do not create them. The output parent is separate from the state root.
+missing_state="$PROJMUX_SMOKE_WORKDIR/report-missing-state"
+missing_report="$PROJMUX_SMOKE_WORKDIR/report-missing-output/report.tar.gz"
+if [[ -e "$missing_state" || -e "$(dirname "$missing_report")" ]]; then
+  echo "missing-source fixture existed before explicit report request" >&2
+  exit 1
+fi
+XDG_STATE_HOME="$missing_state" "$bin" diagnostics report --output "$missing_report" \
+  >"$PROJMUX_SMOKE_WORKDIR/report-missing-preview.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-missing-preview.txt" "archive write follows this complete preview"
+tar -xOzf "$missing_report" manifest.json >"$PROJMUX_SMOKE_WORKDIR/report-missing-manifest.json"
+assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-missing-manifest.json" \
+  "operational-errors.json" "omitted" "source-missing"
+assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-missing-manifest.json" \
+  "ai-ingest-summary.json" "omitted" "source-missing"
+if [[ -e "$missing_state" ]]; then
+  echo "missing-source report created state input paths" >&2
+  exit 1
+fi
+
+# Corrupt bounded sources degrade to stable omissions without mode repair.
+corrupt_state="$PROJMUX_SMOKE_WORKDIR/report-corrupt-state"
+corrupt_operations="$corrupt_state/projmux/logs/operations.jsonl"
+corrupt_ingest="$corrupt_state/projmux/ai-ingest.log"
+mkdir -p "$(dirname "$corrupt_operations")"
+printf 'corrupt\n{"truncated"' >"$corrupt_operations"
+printf 'not-json\n' >"$corrupt_ingest"
+chmod 0644 "$corrupt_operations" "$corrupt_ingest"
+corrupt_report="$PROJMUX_SMOKE_WORKDIR/report-corrupt/report.tar.gz"
+XDG_STATE_HOME="$corrupt_state" "$bin" diagnostics report --output "$corrupt_report" \
+  >"$PROJMUX_SMOKE_WORKDIR/report-corrupt-preview.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-corrupt-preview.txt" "archive write follows this complete preview"
+tar -xOzf "$corrupt_report" manifest.json >"$PROJMUX_SMOKE_WORKDIR/report-corrupt-manifest.json"
+assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-corrupt-manifest.json" \
+  "operational-errors.json" "omitted" "source-corrupt-no-valid-errors"
+assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-corrupt-manifest.json" \
+  "ai-ingest-summary.json" "omitted" "source-corrupt-no-safe-records"
+if [[ "$(stat -c '%a' "$corrupt_operations")" != "644" ]] ||
+  [[ "$(stat -c '%a' "$corrupt_ingest")" != "644" ]]; then
+  echo "support report repaired corrupt source modes" >&2
+  exit 1
+fi
+
+# A failed preview writer proves the built CLI creates neither output parent
+# nor archive before the complete preview is accepted.
+preview_failure_parent="$PROJMUX_SMOKE_WORKDIR/report-preview-failure"
+set +e
+XDG_STATE_HOME="$corrupt_state" "$bin" diagnostics report \
+  --output "$preview_failure_parent/report.tar.gz" >/dev/full 2>"$PROJMUX_SMOKE_WORKDIR/report-preview-failure.err"
+preview_failure_status=$?
+set -e
+if [[ "$preview_failure_status" == "0" ]] || [[ -e "$preview_failure_parent" ]]; then
+  echo "failed report preview wrote output state" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-preview-failure.err" "write support report preview failed"
+
+# An output collision preserves exact bytes and mode and leaves no temp file.
+collision_parent="$PROJMUX_SMOKE_WORKDIR/report-collision"
+collision_report="$collision_parent/report.tar.gz"
+mkdir -p "$collision_parent"
+printf 'existing-report-bytes\n' >"$collision_report"
+chmod 0640 "$collision_report"
+cp "$collision_report" "$PROJMUX_SMOKE_WORKDIR/report-collision-before"
+set +e
+XDG_STATE_HOME="$corrupt_state" "$bin" diagnostics report --output "$collision_report" \
+  >"$PROJMUX_SMOKE_WORKDIR/report-collision.out" 2>"$PROJMUX_SMOKE_WORKDIR/report-collision.err"
+collision_status=$?
+set -e
+if [[ "$collision_status" == "0" ]]; then
+  echo "support report collision unexpectedly succeeded" >&2
+  exit 1
+fi
+cmp "$PROJMUX_SMOKE_WORKDIR/report-collision-before" "$collision_report"
+if [[ "$(stat -c '%a' "$collision_report")" != "640" ]] ||
+  compgen -G "$collision_parent/.projmux-support-*.tmp" >/dev/null; then
+  echo "support report collision changed target mode or left temp state" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-collision.err" "support report destination already exists"
+
+# Permission denial uses a non-root execution when the container itself is
+# root. If that adapter is unavailable, record and assert the explicit skip so
+# root never turns chmod into a flaky false pass.
+permission_case=""
+permission_root="$PROJMUX_SMOKE_WORKDIR/report-permission"
+permission_state="$permission_root/state"
+permission_operations="$permission_state/projmux/logs/operations.jsonl"
+permission_ingest="$permission_state/projmux/ai-ingest.log"
+permission_output="$permission_root/output/report.tar.gz"
+permission_operations_mode_before=""
+permission_ingest_mode_before=""
+mkdir -p "$(dirname "$permission_operations")" "$permission_root/home" "$permission_root/config" "$permission_root/output"
+printf '{}\n' >"$permission_operations"
+printf '{}\n' >"$permission_ingest"
+if [[ "$(id -u)" == "0" ]]; then
+  if command -v runuser >/dev/null 2>&1 && id nobody >/dev/null 2>&1; then
+    cp "$bin" "$permission_root/projmux"
+    chmod 0755 "$permission_root/projmux"
+    chown -R nobody:nogroup "$permission_root/home" "$permission_root/config" "$permission_root/output"
+    chown root:root "$permission_operations" "$permission_ingest"
+    chmod 0600 "$permission_operations" "$permission_ingest"
+    permission_operations_mode_before="$(stat -c '%a' "$permission_operations")"
+    permission_ingest_mode_before="$(stat -c '%a' "$permission_ingest")"
+    chmod 0711 "$PROJMUX_SMOKE_WORKDIR"
+    runuser -u nobody -- env \
+      HOME="$permission_root/home" \
+      XDG_CONFIG_HOME="$permission_root/config" \
+      XDG_STATE_HOME="$permission_state" \
+      "$permission_root/projmux" diagnostics report --output "$permission_output" \
+      >"$PROJMUX_SMOKE_WORKDIR/report-permission-preview.txt"
+    chmod 0700 "$PROJMUX_SMOKE_WORKDIR"
+    permission_case="passed-non-root-adapter"
+  else
+    echo "SKIP: report permission-denied fixture requires runuser+nobody when integration runs as root" >&2
+    permission_case="skipped-root-no-adapter"
+  fi
+else
+  chmod 0000 "$permission_operations" "$permission_ingest"
+  permission_operations_mode_before="$(stat -c '%a' "$permission_operations")"
+  permission_ingest_mode_before="$(stat -c '%a' "$permission_ingest")"
+  XDG_STATE_HOME="$permission_state" "$bin" diagnostics report --output "$permission_output" \
+    >"$PROJMUX_SMOKE_WORKDIR/report-permission-preview.txt"
+  permission_case="passed-direct-non-root"
+fi
+case "$permission_case" in
+passed-*)
+  tar -xOzf "$permission_output" manifest.json >"$PROJMUX_SMOKE_WORKDIR/report-permission-manifest.json"
+  assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-permission-manifest.json" \
+    "operational-errors.json" "omitted" "source-permission-denied"
+  assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-permission-manifest.json" \
+    "ai-ingest-summary.json" "omitted" "source-permission-denied"
+  if [[ "$(stat -c '%a' "$permission_operations")" != "$permission_operations_mode_before" ]] ||
+    [[ "$(stat -c '%a' "$permission_ingest")" != "$permission_ingest_mode_before" ]] ||
+    compgen -G "$permission_root/output/.projmux-support-*.tmp" >/dev/null; then
+    echo "permission-denied report repaired sources or left temp state" >&2
+    exit 1
+  fi
+  ;;
+skipped-root-no-adapter) ;;
+*)
+  echo "permission-denied report fixture did not choose an asserted branch" >&2
+  exit 1
+  ;;
+esac
+
 "$bin" tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux.conf"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "status notify --max-width 80"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "tmux popup-toggle"

@@ -31,6 +31,24 @@ fi
 "$installed" version >"$PROJMUX_SMOKE_WORKDIR/version.out"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/version.out" "projmux"
 
+installed_report="$PROJMUX_SMOKE_WORKDIR/installed-support/report.tar.gz"
+if [[ -e "$(dirname "$installed_report")" || -e "$installed_report" ]]; then
+  echo "installed support report existed before explicit request" >&2
+  exit 1
+fi
+"$installed" diagnostics report --output "$installed_report" >"$PROJMUX_SMOKE_WORKDIR/installed-report-preview.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-preview.txt" "projmux diagnostics report preview"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-preview.txt" "archive write follows this complete preview"
+if [[ ! -f "$installed_report" ]] || [[ "$(stat -c '%a' "$installed_report")" != "600" ]]; then
+  echo "expected installed binary to create a private support archive" >&2
+  exit 1
+fi
+tar -xOzf "$installed_report" manifest.json >"$PROJMUX_SMOKE_WORKDIR/installed-report-manifest.json"
+tar -xOzf "$installed_report" doctor.json >"$PROJMUX_SMOKE_WORKDIR/installed-report-doctor.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-manifest.json" '"report_schema_version": 1'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-manifest.json" '"redaction_mode": "default-hash-v1"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-doctor.json" '"schema_version": 1'
+
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "atomically replaced $installed"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "reloaded tmux server -L projmux: 1 sessions"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "reconcile:"
