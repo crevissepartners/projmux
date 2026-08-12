@@ -267,20 +267,10 @@ func parseAntigravityHookPayload(data []byte, explicitEvent string) (antigravity
 		payload.EventName = explicitEvent
 	}
 	payload.EventName = normalizeAntigravityEventName(payload.EventName)
-	if payload.EventName == "" && antigravityStatuslineShapedPayload(statusline, payload) {
-		payload.EventName = "Statusline"
-	}
 	if payload.EventName == "" {
 		payload.EventName = "Unknown"
 	}
 	return payload, nil
-}
-
-func antigravityStatuslineShapedPayload(statusline any, payload antigravityHookPayload) bool {
-	return statusline != nil ||
-		strings.TrimSpace(payload.AgentState) != "" ||
-		strings.TrimSpace(payload.ContextWindow) != "" ||
-		payload.ToolConfirmationPendingSet
 }
 
 func normalizeAntigravityEventName(name string) string {

@@ -1464,7 +1464,7 @@ func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
 		t.Fatalf("observed fields = %+v", payload)
 	}
 
-	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","tool_confirmation_pending":true}`), "")
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","tool_confirmation_pending":true}`), "Statusline")
 	if err != nil {
 		t.Fatalf("parseAntigravityHookPayload() statusline-only error = %v", err)
 	}
@@ -1476,14 +1476,14 @@ func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseAntigravityHookPayload() statusline-shaped error = %v", err)
 	}
-	if payload.EventName != "Statusline" || payload.ToolConfirmationPending || payload.ToolConfirmationPendingSet {
-		t.Fatalf("statusline-shaped payload = %+v, want Statusline without pending metadata", payload)
+	if payload.EventName != "Unknown" || payload.ToolConfirmationPending || payload.ToolConfirmationPendingSet {
+		t.Fatalf("statusline-shaped payload = %+v, want Unknown without an explicit event or payload alias", payload)
 	}
 	if metadata := payload.antigravityMetadata(); metadata["tool_confirmation_pending"] != "" {
 		t.Fatalf("metadata = %#v, want absent tool_confirmation_pending when field was absent", metadata)
 	}
 
-	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","toolConfirmationPending":false}`), "")
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","toolConfirmationPending":false}`), "Statusline")
 	if err != nil {
 		t.Fatalf("parseAntigravityHookPayload() explicit false statusline error = %v", err)
 	}
@@ -1765,6 +1765,44 @@ func TestIngestAntigravityUnknownExplicitEventSafelyDegrades(t *testing.T) {
 	}
 }
 
+func TestIngestAntigravityStopUnknownReasonStaysInfoWithDiagnostic(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"conversationId": "123e4567-e89b-12d3-a456-426614174099",
+		"workspacePaths": ["/repo/projmux"],
+		"terminationReason": "FUTURE_SAFE_REASON",
+		"error": "",
+		"fullyIdle": true
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Stop"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "{\"decision\":\"stop\"}\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("pushed = %#v, want one completion", store.pushed)
+	}
+	got := store.pushed[0]
+	if got.Severity != notify.SeverityInfo || got.Metadata[notify.MetaCategory] != "response_complete" || got.Metadata["termination_class"] != "unknown" {
+		t.Fatalf("pushed = %#v, want info response_complete with unknown classification", got)
+	}
+	var log bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "log", "--json"}, &log, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), `"result":"notify"`) || !strings.Contains(log.String(), `"reason":"unknown termination reason: FUTURE_SAFE_REASON"`) {
+		t.Fatalf("log = %q, want noncritical unknown-reason diagnostic", log.String())
+	}
+}
+
 func TestIngestAntigravityStopPushesCompletionMetadataAndResumeState(t *testing.T) {
 	home := t.TempDir()
 	store := &stubNotifyStore{}
@@ -1889,7 +1927,7 @@ func TestIngestAntigravityStatuslineApprovalPushesCritical(t *testing.T) {
 	}`)
 	cmd.readCommand = antigravityIngestReadCommand("%7")
 
-	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest antigravity-hook Statusline error = %v", err)
 	}
 	if len(store.pushed) != 1 {
@@ -1918,7 +1956,7 @@ func TestIngestAntigravityStatuslineWithoutPendingQuietLogsReason(t *testing.T) 
 	}`)
 	cmd.readCommand = antigravityIngestReadCommand("%7")
 
-	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest antigravity-hook Statusline quiet error = %v", err)
 	}
 	if len(store.pushed) != 0 {
