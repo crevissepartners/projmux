@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
@@ -103,12 +104,20 @@ type startupCommandProvider interface {
 
 // Client exposes typed tmux queries used by CLI commands.
 type Client struct {
-	runner     commandRunner
-	lookupEnv  func(string) string
-	readFile   func(string) ([]byte, error)
-	postCreate postCreateRunner
-	lifecycle  lifecycleHookRunner
-	socket     string
+	runner      commandRunner
+	lookupEnv   func(string) string
+	readFile    func(string) ([]byte, error)
+	postCreate  postCreateRunner
+	lifecycle   lifecycleHookRunner
+	socket      string
+	diagnostics *diagnostics.LifecycleRecorder
+}
+
+// WithLifecycleDiagnostics attaches the process-scoped, coalescing runtime
+// recorder. The client only marks typed operations; the app command boundary
+// owns the single terminal outcome.
+func WithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) ClientOption {
+	return func(c *Client) { c.diagnostics = recorder }
 }
 
 // ClientOption configures optional Client behavior.
@@ -454,6 +463,7 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 	if exists {
 		return nil
 	}
+	c.markLifecycle(diagnostics.OperationSessionCreate)
 
 	if err := c.runPreCreate(ctx, sessionName, cwd, "persistent"); err != nil {
 		return err
@@ -481,6 +491,7 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 	if strings.TrimSpace(cwd) == "" {
 		return errSessionCWDRequired
 	}
+	c.markLifecycle(diagnostics.OperationSessionCreate)
 
 	if err := c.runPreCreate(ctx, sessionName, cwd, "ephemeral"); err != nil {
 		return err
@@ -671,6 +682,11 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 		command = c.switchClientCommand(target)
 		action = "switch"
 	}
+	if inside {
+		c.markLifecycle(diagnostics.OperationSessionSwitch)
+	} else {
+		c.markLifecycle(diagnostics.OperationSessionAttach)
+	}
 
 	if _, err := c.runner.Run(ctx, "tmux", command...); err != nil {
 		return fmt.Errorf("%s tmux session %q: %w", action, sessionName, err)
@@ -708,6 +724,11 @@ func (c *Client) OpenSessionTarget(ctx context.Context, sessionName, windowIndex
 	} else if windowIndex != "" {
 		target = sessionWindowTarget(sessionName, windowIndex)
 		command = []string{"attach-session", "-t", target}
+	}
+	if inside {
+		c.markLifecycle(diagnostics.OperationSessionSwitch)
+	} else {
+		c.markLifecycle(diagnostics.OperationSessionAttach)
 	}
 
 	if _, err := c.runner.Run(ctx, "tmux", command...); err != nil {
@@ -764,6 +785,7 @@ func (c *Client) SwitchClient(ctx context.Context, sessionName string) error {
 	if strings.TrimSpace(sessionName) == "" {
 		return errSessionNameRequired
 	}
+	c.markLifecycle(diagnostics.OperationSessionSwitch)
 
 	if _, err := c.runner.Run(ctx, "tmux", "switch-client", "-t", exactSessionTarget(sessionName)); err != nil {
 		return fmt.Errorf("switch tmux client to session %q: %w", sessionName, err)
@@ -777,12 +799,19 @@ func (c *Client) KillSession(ctx context.Context, sessionName string) error {
 	if strings.TrimSpace(sessionName) == "" {
 		return errSessionNameRequired
 	}
+	c.markLifecycle(diagnostics.OperationSessionKill)
 
 	if _, err := c.runner.Run(ctx, "tmux", "kill-session", "-t", exactSessionTarget(sessionName)); err != nil {
 		return fmt.Errorf("kill tmux session %q: %w", sessionName, err)
 	}
 
 	return nil
+}
+
+func (c *Client) markLifecycle(operation diagnostics.Operation) {
+	if c.diagnostics != nil {
+		c.diagnostics.Mark(operation)
+	}
 }
 
 // DisplayPopup opens a tmux popup and executes the provided shell command.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 type attachInventoryResolver interface {
@@ -38,8 +39,8 @@ type attachCommand struct {
 	cleanupKilledSession func(string)
 }
 
-func newAttachCommand() *attachCommand {
-	client := defaultTmuxClient()
+func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachCommand {
+	client := defaultTmuxClient(recorders...)
 	return &attachCommand{
 		inventory:  client,
 		sessions:   client,

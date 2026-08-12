@@ -24,11 +24,19 @@ type exitCoder interface {
 func main() {
 	started := time.Now()
 	runID := diagnostics.NewRunID()
+	var store *diagnostics.Store
+	if path, err := diagnostics.DefaultPath(os.Getenv, os.UserHomeDir); err == nil {
+		store = diagnostics.NewStore(path)
+	}
+	var lifecycle *diagnostics.LifecycleRecorder
+	if store != nil {
+		lifecycle = diagnostics.NewLifecycleRecorder(store, runID, version.String(), diagnostics.MuxBackend())
+	}
 	code := executeCLI(
-		func() error { return app.Run(os.Args[1:], os.Stdout, os.Stderr) },
+		func() error { return app.RunWithLifecycleDiagnostics(os.Args[1:], os.Stdout, os.Stderr, lifecycle) },
 		func(err error) {
-			if path, pathErr := diagnostics.DefaultPath(os.Getenv, os.UserHomeDir); pathErr == nil {
-				_ = diagnostics.RecordOutcome(diagnostics.NewStore(path), os.Args[1:], runID, version.String(), diagnostics.MuxBackend(), started, err, app.IsUsageError(err))
+			if store != nil {
+				_ = diagnostics.RecordOutcome(store, os.Args[1:], runID, version.String(), diagnostics.MuxBackend(), started, err, app.IsUsageError(err), lifecycle.RecordedOutcome())
 			}
 		},
 		os.Stderr,

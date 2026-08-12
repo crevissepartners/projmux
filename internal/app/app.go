@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -35,6 +36,15 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	return New().Run(args, stdout, stderr)
 }
 
+// RunWithLifecycleDiagnostics executes one CLI invocation with the shared
+// process recorder used by runtime lifecycle operations.
+func RunWithLifecycleDiagnostics(args []string, stdout, stderr io.Writer, recorder *diagnostics.LifecycleRecorder) error {
+	if recorder == nil {
+		return New().Run(args, stdout, stderr)
+	}
+	return NewWithLifecycleDiagnostics(recorder).Run(args, stdout, stderr)
+}
+
 // UsageError marks an error caused by invalid CLI input (parse failure,
 // invalid enum, missing required flag). The main entrypoint treats these as
 // exit code 2.
@@ -60,6 +70,7 @@ func IsUsageError(err error) bool {
 
 // App wires the CLI entrypoints to concrete command handlers.
 type App struct {
+	lifecycle    *diagnostics.LifecycleRecorder
 	ai           *aiCommand
 	attention    *attentionCommand
 	attach       *attachCommand
@@ -97,11 +108,17 @@ type App struct {
 
 // New builds the default application graph.
 func New() *App {
+	return NewWithLifecycleDiagnostics(nil)
+}
+
+// NewWithLifecycleDiagnostics builds the application graph with one recorder
+// shared by every Phase 2 lifecycle surface.
+func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	ai := newAICommand()
-	switcher := newSwitchCommand()
-	attach := newAttachCommand()
-	kill := newKillCommand()
-	sessions := newSessionsCommand()
+	switcher := newSwitchCommand(recorder)
+	attach := newAttachCommand(recorder)
+	kill := newKillCommand(recorder)
+	sessions := newSessionsCommand(recorder)
 	update := newUpdateCommand()
 	quit := newQuitCommand()
 	notifyCmd := newNotifyCommand(newDefaultLivePaneLister())
@@ -118,10 +135,11 @@ func New() *App {
 	}
 	initCmd := newInitCommand()
 	return &App{
+		lifecycle:    recorder,
 		ai:           ai,
 		attention:    newAttentionCommand(),
 		attach:       attach,
-		current:      newCurrentCommand(),
+		current:      newCurrentCommand(recorder),
 		doctor:       newDoctorCommand(),
 		diagnostics:  newDiagnosticsCommand(),
 		focus:        newFocusCommand(),
@@ -145,7 +163,7 @@ func New() *App {
 		statusbar:    newStatusbarCommand(),
 		switcher:     switcher,
 		tag:          newTagCommand(),
-		tmux:         newTmuxCommand(),
+		tmux:         newTmuxCommand(recorder),
 		update:       update,
 		upgrade:      newUpgradeCommand(),
 		usage:        usagecmd.New(nil),
@@ -155,7 +173,11 @@ func New() *App {
 }
 
 // Run dispatches the configured application commands.
-func (a *App) Run(args []string, stdout, stderr io.Writer) error {
+func (a *App) Run(args []string, stdout, stderr io.Writer) (err error) {
+	if a.lifecycle != nil {
+		finish := a.lifecycle.BeginCommand()
+		defer func() { finish(err) }()
+	}
 	// Doctor and explicit support-report collection are strict source-read-only
 	// boundaries. In particular, they must not trigger the otherwise automatic
 	// legacy-hook filesystem migration before dispatch.

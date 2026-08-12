@@ -12,6 +12,7 @@ import (
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -56,8 +57,12 @@ type sessionsCommand struct {
 	cleanupKilledSession func(string)
 }
 
-func newSessionsCommand() *sessionsCommand {
-	client := inttmux.NewClient(inttmux.ExecRunner{})
+func newSessionsCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionsCommand {
+	opts := []inttmux.ClientOption{}
+	if len(recorders) > 0 && recorders[0] != nil {
+		opts = append(opts, inttmux.WithLifecycleDiagnostics(recorders[0]))
+	}
+	client := inttmux.NewClient(inttmux.ExecRunner{}, opts...)
 	return &sessionsCommand{
 		recent:     client,
 		store:      newSessionPopupCommand().store,

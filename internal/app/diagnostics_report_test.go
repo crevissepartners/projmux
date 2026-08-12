@@ -30,6 +30,8 @@ const (
 	reportArgv    = "--token=argv-REPORT-SEED"
 	reportPrompt  = "prompt-REPORT-SEED"
 	reportEnv     = "env-REPORT-SEED"
+	reportSocket  = "/tmp/socket-REPORT-SEED/projmux-private"
+	reportName    = "name-REPORT-SEED"
 )
 
 type failingWriter struct{}
@@ -89,7 +91,7 @@ func seedReportSources(t *testing.T, stateHome, configHome string) (operationsPa
 	store := diagnostics.NewStore(operationsPath)
 	event := diagnosticsFixture(reportUUID, "error", "runtime")
 	event.Version = "version-" + reportSecret
-	event.Message = strings.Join([]string{reportSecret, reportProject, reportSession, reportWindow, reportPane, reportThread, reportRouting, reportUUID, reportArgv, reportPrompt, reportEnv}, " ")
+	event.Message = strings.Join([]string{reportSecret, reportProject, reportSession, reportWindow, reportPane, reportThread, reportRouting, reportUUID, reportArgv, reportPrompt, reportEnv, reportSocket, reportName}, " ")
 	if err := store.Append(event); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +233,7 @@ func TestDiagnosticsReportPreviewArchiveManifestPermissionsAndRedaction(t *testi
 			t.Fatalf("doctor report lost safe diagnostic value %q:\n%s", safe, entries["doctor.json"])
 		}
 	}
-	for _, raw := range []string{reportSecret, "home-REPORT-SEED", reportProject, reportSession, reportWindow, reportPane, reportThread, reportRouting, reportUUID, reportArgv, reportPrompt, reportEnv} {
+	for _, raw := range []string{reportSecret, "home-REPORT-SEED", reportProject, reportSession, reportWindow, reportPane, reportThread, reportRouting, reportUUID, reportArgv, reportPrompt, reportEnv, reportSocket, reportName} {
 		if bytes.Contains(preview, []byte(raw)) || bytes.Contains(archiveText, []byte(raw)) {
 			t.Fatalf("raw sensitive value %q leaked\npreview=%s\narchive=%s", raw, preview, archiveText)
 		}

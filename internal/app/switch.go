@@ -20,6 +20,7 @@ import (
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	coretags "github.com/crevissepartners/projmux/internal/core/tags"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -163,8 +164,8 @@ type switchSidebarResume struct {
 	Message   string
 }
 
-func newSwitchCommand() *switchCommand {
-	client := defaultTmuxClient()
+func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchCommand {
+	client := defaultTmuxClient(recorders...)
 	identity, err := newDefaultCurrentIdentityResolver()
 	paths, pathsErr := config.DefaultPathsFromEnv()
 

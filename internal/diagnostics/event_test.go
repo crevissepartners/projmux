@@ -9,7 +9,7 @@ import (
 func TestEventSchemaHasNoGenericOrSensitiveEscapeHatch(t *testing.T) {
 	t.Parallel()
 	typeOf := reflect.TypeFor[Event]()
-	want := []string{"At", "Level", "Component", "Event", "Result", "DurationMS", "RunID", "Version", "MuxBackend", "Command", "Subcommand", "Kind", "Message"}
+	want := []string{"At", "Level", "Component", "Event", "Result", "DurationMS", "RunID", "Version", "MuxBackend", "Command", "Subcommand", "Kind", "Message", "Operation", "Code"}
 	if typeOf.NumField() != len(want) {
 		t.Fatalf("Event fields = %d, want %d", typeOf.NumField(), len(want))
 	}
@@ -242,5 +242,39 @@ func TestMuxBackendIsTmux(t *testing.T) {
 	t.Parallel()
 	if got := MuxBackend(); got != "tmux" {
 		t.Fatalf("MuxBackend() = %q, want tmux", got)
+	}
+}
+
+func TestLifecycleSchemaRejectsMismatchedOutcomeCodes(t *testing.T) {
+	t.Parallel()
+	base := Event{
+		At:         "2026-08-13T00:00:00Z",
+		Level:      "error",
+		Component:  "runtime",
+		Event:      "lifecycle.outcome",
+		Result:     "error",
+		RunID:      "safe-run",
+		Version:    "0.10.0",
+		MuxBackend: "tmux",
+		Kind:       "runtime",
+		Operation:  string(OperationSessionCreate),
+		Code:       string(CodeSessionCreateFailed),
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Event)
+	}{
+		{name: "failure code on success", mutate: func(e *Event) { e.Level, e.Result, e.Kind = "info", "success", "" }},
+		{name: "skipped code on error", mutate: func(e *Event) { e.Operation, e.Code = string(OperationTmuxApply), string(CodeTmuxApplyReloadSkipped) }},
+		{name: "code from another operation", mutate: func(e *Event) { e.Code = string(CodeSessionKillFailed) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event := base
+			tt.mutate(&event)
+			if _, err := sanitizeEvent(event, ""); err == nil {
+				t.Fatalf("sanitizeEvent(%#v) = nil, want closed-schema rejection", event)
+			}
+		})
 	}
 }

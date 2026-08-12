@@ -190,6 +190,12 @@ channel and never change command output or exit status. See
 [operational-diagnostics.md](operational-diagnostics.md) for the file,
 retention, concurrency, and privacy contracts.
 
+Session create/attach/switch/kill and `tmux apply` use correlated
+`lifecycle.start`/`lifecycle.outcome` records instead of a duplicate generic
+top-level outcome. The text and JSONL views expose only the closed safe
+`operation` and optional `code` enums; session names, socket paths, tmux
+targets, subprocess argv, and generated configuration are never recorded.
+
 `diagnostics report` is the explicit consent boundary for creating one local
 private `tar.gz` support archive. The invocation first prints a redacted
 destination label, the complete included/omitted entry list, stable omission reasons, report

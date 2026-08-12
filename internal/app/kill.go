@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/core/tags"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
@@ -43,8 +44,12 @@ type killCommand struct {
 	cleanupKilledSession func(string)
 }
 
-func newKillCommand() *killCommand {
-	client := inttmux.NewClient(inttmux.ExecRunner{})
+func newKillCommand(recorders ...*diagnostics.LifecycleRecorder) *killCommand {
+	opts := []inttmux.ClientOption{}
+	if len(recorders) > 0 && recorders[0] != nil {
+		opts = append(opts, inttmux.WithLifecycleDiagnostics(recorders[0]))
+	}
+	client := inttmux.NewClient(inttmux.ExecRunner{}, opts...)
 
 	cmd := &killCommand{
 		current: client,
