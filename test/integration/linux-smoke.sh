@@ -120,8 +120,80 @@ PROJMUX_SMOKE_TMUX_SOCKET="projmux-it"
 export PROJMUX_SMOKE_TMUX_SOCKET
 tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s integration-smoke -c "$smoke_root" sleep 300
 
+# A pre-rename-pane-label config could leave C-t installed in the live root
+# table even after the retired keymap action disappeared. Seed that exact stale
+# shape plus an unrelated live binding before apply.
+keymap_path="$XDG_CONFIG_HOME/projmux/keymap.toml"
+install -m 0644 "$smoke_root/test/fixtures/keymaps/stale-pane-label-current.toml" "$keymap_path"
+cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-mp.before"
+tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" bind-key -n C-t command-prompt -p "pane label:" "set-option -p @projmux_pane_label '%%'"
+tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" bind-key -n M-F12 display-message "unrelated-live-binding"
+
 apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
 smoke_assert_output_contains "$apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
+
+if stale_ct="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t 2>/dev/null)"; then
+  echo "expected stale C-t pane-label binding to be absent after apply, got: $stale_ct" >&2
+  exit 1
+fi
+mp_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-p)"
+if [[ "$mp_binding" != *"command-prompt"* || "$mp_binding" != *"pane label:"* || "$mp_binding" != *"@projmux_pane_label"* ]]; then
+  echo "expected current M-p pane-label binding after apply, got: $mp_binding" >&2
+  exit 1
+fi
+unrelated_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-F12)"
+if [[ "$unrelated_binding" != *"unrelated-live-binding"* ]]; then
+  echo "expected unrelated live binding to survive apply, got: $unrelated_binding" >&2
+  exit 1
+fi
+ma_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-a)"
+if [[ "$ma_binding" != *"sessionizer-sidebar"* ]]; then
+  echo "expected unrelated current M-a binding to survive apply, got: $ma_binding" >&2
+  exit 1
+fi
+cmp "$PROJMUX_SMOKE_WORKDIR/keymap-mp.before" "$keymap_path"
+cp "$XDG_CONFIG_HOME/projmux/tmux.conf" "$PROJMUX_SMOKE_WORKDIR/tmux-mp.first"
+
+repeat_apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
+smoke_assert_output_contains "$repeat_apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
+cmp "$PROJMUX_SMOKE_WORKDIR/tmux-mp.first" "$XDG_CONFIG_HOME/projmux/tmux.conf"
+cmp "$PROJMUX_SMOKE_WORKDIR/keymap-mp.before" "$keymap_path"
+if tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t >/dev/null 2>&1; then
+  echo "repeated apply restored retired C-t binding" >&2
+  exit 1
+fi
+
+# A current action may explicitly reclaim C-t. The retired cleanup must render
+# and execute first so the current new-window binding wins without retaining
+# the stale pane-label body.
+install -m 0644 "$smoke_root/test/fixtures/keymaps/stale-pane-label-ct-reassigned.toml" "$keymap_path"
+cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before"
+reassign_apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
+smoke_assert_output_contains "$reassign_apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
+ct_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t)"
+if [[ "$ct_binding" != *"new-window"* || "$ct_binding" == *"pane label:"* || "$ct_binding" == *"@projmux_pane_label"* ]]; then
+  echo "expected current C-t new-window binding without stale pane-label body, got: $ct_binding" >&2
+  exit 1
+fi
+if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-p)" != *"pane label:"* ]]; then
+  echo "expected M-p pane-label binding to remain after C-t reassignment" >&2
+  exit 1
+fi
+if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-F12)" != *"unrelated-live-binding"* ]]; then
+  echo "expected unrelated live binding to survive C-t reassignment apply" >&2
+  exit 1
+fi
+cmp "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before" "$keymap_path"
+cp "$XDG_CONFIG_HOME/projmux/tmux.conf" "$PROJMUX_SMOKE_WORKDIR/tmux-ct-reassigned.first"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
+  >"$PROJMUX_SMOKE_WORKDIR/reassign-repeat-apply.out"
+cmp "$PROJMUX_SMOKE_WORKDIR/tmux-ct-reassigned.first" "$XDG_CONFIG_HOME/projmux/tmux.conf"
+cmp "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before" "$keymap_path"
+ct_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t)"
+if [[ "$ct_binding" != *"new-window"* || "$ct_binding" == *"pane label:"* ]]; then
+  echo "repeated reassignment apply changed C-t ownership: $ct_binding" >&2
+  exit 1
+fi
 
 app_flag="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_app)"
 if [[ "$app_flag" != "1" ]]; then

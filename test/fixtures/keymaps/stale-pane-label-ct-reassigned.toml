@@ -1,0 +1,8 @@
+[bindings.rename-pane-label]
+keys = ["M-p"]
+
+[bindings.new-window]
+keys = ["C-t"]
+
+[bindings.ProjectSidebarToggle]
+keys = ["M-a"]

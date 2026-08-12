@@ -242,7 +242,10 @@ Settings is the default apply path for key edits: it writes the key list,
 refreshes the generated config, and reloads the running tmux session when
 possible. Use `projmux tmux apply` as a CLI recovery/sync command after editing
 the keymap file by hand, after an outside-tmux Settings save, or after resolving
-a reported generated-config or live-reload failure.
+a reported generated-config or live-reload failure. Generated config first
+unbinds the known retired `C-t` pane-label chord, then installs the current
+keymap; an explicit current `C-t` assignment therefore wins without retaining
+the retired command body. Apply does not rewrite `keymap.toml`.
 
 ## Keymap File
 

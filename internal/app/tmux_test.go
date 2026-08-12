@@ -1326,6 +1326,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"unbind-key -q -n M-6",
 		"unbind-key -q -n C-n",
 		"unbind-key -q -n M-r",
+		"unbind-key -q -n C-t",
 		"unbind-key -q -n User11",
 	} {
 		if !strings.Contains(output, want) {
@@ -2105,6 +2106,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"unbind-key -q -n M-6",
 		"unbind-key -q -n C-n",
 		"unbind-key -q -n M-r",
+		"unbind-key -q -n C-t",
 		"unbind-key -q -n User11",
 	} {
 		if !strings.Contains(output, want) {
@@ -2682,6 +2684,90 @@ func TestTmuxPrintAppConfigKeepsStandaloneAndAppKeymapScopesSeparated(t *testing
 	}
 	if strings.Contains(output, "bind-key -n M-a new-window") {
 		t.Fatalf("print-app-config output = %q, standalone chord unexpectedly used app action", output)
+	}
+	unbindIdx := strings.LastIndex(output, "unbind-key -q -n C-t")
+	bindIdx := strings.Index(output, "bind-key -n C-t new-window")
+	if unbindIdx < 0 || bindIdx < 0 || unbindIdx > bindIdx {
+		t.Fatalf("C-t cleanup/rebind order = (%d, %d), want every cleanup before current new-window bind\n%s", unbindIdx, bindIdx, output)
+	}
+	for line := range strings.SplitSeq(output, "\n") {
+		if strings.HasPrefix(line, "bind-key -n C-t ") && strings.Contains(line, "pane label:") {
+			t.Fatalf("current C-t binding retained stale pane-label body: %s", line)
+		}
+	}
+}
+
+func TestTmuxApplyRetiresStalePaneLabelChordWithoutRewritingKeymap(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keymap := []byte(`# keep comments and spacing byte-for-byte
+[bindings.rename-pane-label]
+keys = ["M-p"]
+
+[bindings.ProjectSidebarToggle]
+keys = ["M-a"] # unrelated current binding
+`)
+	if err := os.WriteFile(keymapPath, keymap, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	probeKey := strings.Join([]string{"tmux", "-L", "projmux-test", "list-sessions", "-F", "#{session_id}"}, "\x00")
+	sourceKey := strings.Join([]string{"tmux", "-L", "projmux-test", "source-file", configPath}, "\x00")
+	runner := &recordingTmuxRunner{outputs: map[string]string{probeKey: "$0\n", sourceKey: ""}}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+		writeFile:  os.WriteFile,
+		runner:     runner,
+	}
+
+	var firstConfig []byte
+	for attempt := 1; attempt <= 2; attempt++ {
+		var stdout, stderr bytes.Buffer
+		if err := cmd.Run([]string{"apply", "--config", configPath, "--socket", "projmux-test"}, &stdout, &stderr); err != nil {
+			t.Fatalf("apply attempt %d error = %v; stderr = %q", attempt, err, stderr.String())
+		}
+		gotKeymap, err := os.ReadFile(keymapPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(gotKeymap, keymap) {
+			t.Fatalf("apply attempt %d rewrote keymap bytes\ngot:  %q\nwant: %q", attempt, gotKeymap, keymap)
+		}
+		gotConfig, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attempt == 1 {
+			firstConfig = append([]byte(nil), gotConfig...)
+		} else if !bytes.Equal(gotConfig, firstConfig) {
+			t.Fatalf("repeated apply changed generated config bytes")
+		}
+	}
+
+	output := string(firstConfig)
+	unbindIdx := strings.Index(output, "unbind-key -q -n C-t")
+	renameIdx := strings.Index(output, "bind-key -n M-p command-prompt")
+	if unbindIdx < 0 || renameIdx < 0 || unbindIdx > renameIdx {
+		t.Fatalf("C-t cleanup/M-p bind order = (%d, %d), want cleanup before current bind\n%s", unbindIdx, renameIdx, output)
+	}
+	if strings.Contains(output, "bind-key -n C-t ") {
+		t.Fatalf("generated config rebound retired C-t:\n%s", output)
+	}
+	for _, want := range []string{`-p "pane label:"`, "set-option -p @projmux_pane_label", "bind-key -n M-a run-shell"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("generated config missing preserved current binding %q\n%s", want, output)
+		}
+	}
+	if got := len(runner.calls); got != 4 {
+		t.Fatalf("repeated apply tmux calls = %d, want two probe/source pairs: %#v", got, runner.calls)
 	}
 }
 
