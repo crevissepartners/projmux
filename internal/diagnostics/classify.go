@@ -14,8 +14,8 @@ type CommandClass struct {
 }
 
 var commandRules = map[string]commandRule{
-	"ai":             {subcommands: stringSet("split", "picker", "settings", "status", "notify", "watch-title", "ingest", "integrate", "topic"), changing: stringSet("split", "picker", "settings", "notify", "watch-title", "ingest", "integrate")},
-	"attention":      {subcommands: stringSet("toggle", "clear", "arm", "list", "window"), changing: stringSet("toggle", "clear", "arm", "window")},
+	"ai":             {subcommands: stringSet("split", "picker", "settings", "status", "notify", "watch-title", "ingest", "integrate", "topic"), changing: stringSet("split", "picker", "settings", "notify", "watch-title", "integrate")},
+	"attention":      {subcommands: stringSet("toggle", "clear", "arm", "list", "window"), changing: stringSet("toggle")},
 	"attach":         {alwaysChanging: true, subcommands: stringSet("auto")},
 	"current":        {alwaysChanging: true},
 	"diagnostics":    {subcommands: stringSet("log")},
@@ -42,13 +42,13 @@ var commandRules = map[string]commandRule{
 	"statusbar":      {subcommands: stringSet("click", "usage-refresh"), changing: stringSet("click", "usage-refresh")},
 	"switch":         {alwaysChanging: true, subcommands: stringSet("toggle-tag", "toggle-pin", "kill", "open", "sidebar-open", "settings", "preview", "cycle-pane", "cycle-window", "sidebar-focus")},
 	"tag":            {subcommands: stringSet("list", "toggle", "clear"), changing: stringSet("toggle", "clear")},
-	"tmux":           {subcommands: stringSet("hook-trust-prompt", "popup-preview", "popup-switch", "popup-sessions", "popup-toggle", "rebalance-panes", "rename-pane", "print-config", "print-app-config", "install", "install-app", "apply", "autosave-session-state"), changing: stringSet("hook-trust-prompt", "popup-preview", "popup-switch", "popup-sessions", "popup-toggle", "rebalance-panes", "rename-pane", "install", "install-app", "apply", "autosave-session-state")},
+	"tmux":           {subcommands: stringSet("hook-trust-prompt", "popup-preview", "popup-switch", "popup-sessions", "popup-toggle", "rebalance-panes", "rename-pane", "print-config", "print-app-config", "install", "install-app", "apply", "autosave-session-state"), changing: stringSet("hook-trust-prompt", "popup-preview", "popup-switch", "popup-sessions", "popup-toggle", "rebalance-panes", "rename-pane", "install", "install-app", "apply")},
 	"update":         {subcommands: stringSet("status", "check", "apply"), changing: stringSet("apply")},
 	"upgrade":        {alwaysChanging: true},
 	"usage":          {},
 	"version":        {},
 	"welcome":        {},
-	"window":         {subcommands: stringSet("record", "recent"), changing: stringSet("record", "recent")},
+	"window":         {subcommands: stringSet("record", "recent"), changing: stringSet("recent")},
 }
 
 type commandRule struct {

@@ -152,6 +152,41 @@ fi
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/operations-tail.jsonl" '"component":"cli"'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/operations-tail.jsonl" '"result":"success"'
 
+# Generated hooks and status formats call these six automatic paths. Exercise
+# each against the isolated tmux server and prove its successful top-level
+# outcome does not grow the operational journal.
+automatic_pane="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t integration-smoke '#{pane_id}')"
+automatic_window="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t integration-smoke '#{window_id}')"
+automatic_socket="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t integration-smoke '#{socket_path}')"
+automatic_server_pid="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t integration-smoke '#{pid}')"
+automatic_tmux_env="$automatic_socket,$automatic_server_pid,0"
+
+assert_automatic_success_no_record() {
+  local label="$1"
+  shift
+  local before after
+  before="$(wc -l <"$operations_log")"
+  "$@" >"$PROJMUX_SMOKE_WORKDIR/automatic-$label.out"
+  after="$(wc -l <"$operations_log")"
+  if [[ "$before" != "$after" ]]; then
+    echo "$label success unexpectedly appended an operational event" >&2
+    exit 1
+  fi
+}
+
+assert_automatic_success_no_record ai-ingest \
+  env TMUX="$automatic_tmux_env" "$bin" ai ingest bell --pane "$automatic_pane"
+assert_automatic_success_no_record attention-arm \
+  env TMUX="$automatic_tmux_env" "$bin" attention arm "$automatic_pane"
+assert_automatic_success_no_record attention-clear \
+  env TMUX="$automatic_tmux_env" "$bin" attention clear "$automatic_pane"
+assert_automatic_success_no_record attention-window \
+  env TMUX="$automatic_tmux_env" "$bin" attention window "$automatic_window"
+assert_automatic_success_no_record session-state-autosave \
+  env TMUX="$automatic_tmux_env" "$bin" tmux autosave-session-state --quiet
+assert_automatic_success_no_record recent-window-record \
+  env TMUX="$automatic_tmux_env" "$bin" window record
+
 set +e
 "$bin" unknown-fixture-command >"$PROJMUX_SMOKE_WORKDIR/unknown.out" 2>"$PROJMUX_SMOKE_WORKDIR/unknown.err"
 unknown_status=$?

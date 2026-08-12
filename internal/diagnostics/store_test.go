@@ -411,6 +411,68 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 	}
 }
 
+func TestRecordOutcomeAutomaticHookAndPollSuccessZeroErrorOne(t *testing.T) {
+	start := time.Now().Add(-time.Millisecond)
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "ai ingest", args: []string{"ai", "ingest", "codex-hook"}},
+		{name: "attention arm", args: []string{"attention", "arm", "%1"}},
+		{name: "attention clear", args: []string{"attention", "clear", "%1"}},
+		{name: "attention window", args: []string{"attention", "window", "@1"}},
+		{name: "session state autosave", args: []string{"tmux", "autosave-session-state", "--quiet"}},
+		{name: "recent window record", args: []string{"window", "record"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
+			if err := RecordOutcome(store, tt.args, "automatic-success", "0.8.4", "tmux", start, nil, false); err != nil {
+				t.Fatal(err)
+			}
+			events, err := store.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(events) != 0 {
+				t.Fatalf("successful automatic path appended %d events, want 0: %#v", len(events), events)
+			}
+
+			if err := RecordOutcome(store, tt.args, "automatic-error", "0.8.4", "tmux", start, errors.New("private hook payload"), false); err != nil {
+				t.Fatal(err)
+			}
+			events, err = store.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(events) != 1 {
+				t.Fatalf("failed automatic path appended %d events, want 1: %#v", len(events), events)
+			}
+			if events[0].Result != "error" || events[0].Level != "error" || events[0].Kind != "runtime" || events[0].Message != "command failed" {
+				t.Fatalf("failed automatic path event = %#v, want one safe runtime error", events[0])
+			}
+			class := Classify(tt.args)
+			if events[0].Command != class.Command || events[0].Subcommand != class.Subcommand {
+				t.Fatalf("failed automatic path classification = %#v, event = %#v", class, events[0])
+			}
+		})
+	}
+}
+
+func TestRecordOutcomeExplicitMutationSuccessStillAppendsOne(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
+	if err := RecordOutcome(store, []string{"attention", "toggle", "%1"}, "explicit-success", "0.8.4", "tmux", time.Now(), nil, false); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].RunID != "explicit-success" || events[0].Result != "success" || events[0].Command != "attention" || events[0].Subcommand != "toggle" {
+		t.Fatalf("explicit mutation events = %#v, want one attention toggle success", events)
+	}
+}
+
 type outcomeExitError struct{ code int }
 
 func (e outcomeExitError) Error() string { return "target unavailable" }
