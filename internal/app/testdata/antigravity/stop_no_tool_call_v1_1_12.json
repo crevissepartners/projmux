@@ -1,0 +1,11 @@
+{
+  "conversationId": "123e4567-e89b-12d3-a456-426614174003",
+  "workspacePaths": [],
+  "transcriptPath": "/sanitized/transcripts/conversation.jsonl",
+  "artifactDirectoryPath": "/sanitized/artifacts/conversation",
+  "modelName": "sanitized-model",
+  "executionNum": 0,
+  "terminationReason": "NO_TOOL_CALL",
+  "error": "",
+  "fullyIdle": true
+}

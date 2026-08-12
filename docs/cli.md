@@ -379,7 +379,7 @@ projmux ai notify   <reset|notify> [--pane <id>]
 projmux ai watch-title [--pane <id>]
 projmux ai ingest   codex-hook < payload.json
 projmux ai ingest   claude-hook < payload.json
-projmux ai ingest   antigravity-hook < payload.json
+projmux ai ingest   antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop|Statusline>] < payload.json
 projmux ai ingest   bell --pane <pane_id>
 projmux ai ingest   log [--tail N] [--json] [--path]
 projmux ai integrate codex [--dry-run] [--remove]
@@ -502,19 +502,32 @@ noisy notify event can be made state-only or quiet without changing installed
 Claude hook commands.
 
 `ingest antigravity-hook` is the manual hook/statusline entrypoint for
-Antigravity CLI `agy` payloads observed in the Phase 0b smoke. Projmux does not
+Antigravity CLI `agy` payloads. Official v1.1.12 hook commands must pass their
+event identity explicitly, for example
+`projmux ai ingest antigravity-hook --event Stop`; the official stdin payload
+does not carry an event field. The explicit selector is authoritative, while
+payload `eventName` and its legacy aliases remain fallback inputs for existing
+manual wiring. Projmux does not
 provide `projmux ai integrate antigravity`, does not install Antigravity hooks,
 and does not mutate Antigravity user config. If users wire Antigravity manually,
 the hook/statusline command should call an absolute `projmux` path or run from a
 known cwd because relative command paths failed smoke.
 
-The default known Antigravity catalog is intentionally narrow:
-`PostInvocation` is quiet/log-only, `Stop` is notify, and `Statusline` is notify
-only when manually wired and `tool_confirmation_pending=true`. `Stop` with
-`error` or a non-normal `terminationReason` pushes a critical error row; `Stop`
-without those error signals pushes an info completion row. Accepted identity
-fields include `conversationId`/`conversation_id`, `cwd` or `workspace.path`,
-`transcriptPath`, `fullyIdle`, `agent_state`, and `context_window`.
+The embedded v1.1.12 catalog contains the five official events `PreToolUse`,
+`PostToolUse`, `PreInvocation`, `PostInvocation`, and `Stop`, all with
+`install: false` in this manual-only phase. `PreToolUse` remains disabled
+because its response can change permission policy. Legacy `Statusline` manual
+wiring is still accepted outside that official catalog.
+
+`workspacePaths` uses the first non-empty path as a cwd matching candidate;
+an absent or empty array does not invent a cwd. Inherited `$TMUX_PANE` remains
+the first pane attribution source. A Stop with non-empty `error`, explicit
+`ERROR`, or a `MAX_STEPS_EXCEEDED` family reason pushes a critical error row.
+`NO_TOOL_CALL`, `MODEL_STOP`, and known normal reasons push an info completion;
+unknown reasons remain info completions with diagnostic metadata rather than
+being promoted to critical. Official camelCase fields retained by the parser
+also include `artifactDirectoryPath`, `modelName`, `invocationNum`,
+`initialNumSteps`, `toolCall`, `stepIdx`, `executionNum`, and `fullyIdle`.
 Antigravity notify metadata uses `agent=antigravity`. Phase 3 session-state
 restore is included: Antigravity ingest stores `conversationId` as pane thread
 metadata for matching and as session-state resume metadata. Restore uses

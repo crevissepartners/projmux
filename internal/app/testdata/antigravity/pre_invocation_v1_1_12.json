@@ -1,0 +1,9 @@
+{
+  "conversationId": "123e4567-e89b-12d3-a456-426614174001",
+  "workspacePaths": ["", "/workspace/sanitized-project", "/workspace/ignored-second"],
+  "transcriptPath": "/sanitized/transcripts/conversation.jsonl",
+  "artifactDirectoryPath": "/sanitized/artifacts/conversation",
+  "modelName": "sanitized-model",
+  "invocationNum": 0,
+  "initialNumSteps": 1
+}

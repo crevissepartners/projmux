@@ -618,29 +618,45 @@ catalog `install` field for installed hook events.
 
 ## Antigravity Hook Ingest
 
-`projmux ai ingest antigravity-hook < payload.json` is available for manual
-Antigravity CLI `agy` hook/statusline payloads. Projmux does not provide
+`projmux ai ingest antigravity-hook --event <event> < payload.json` is available
+for manual Antigravity CLI `agy` hook payloads. Antigravity v1.1.12 stdin does
+not include the event name, so the command's `--event` value is authoritative.
+Payload event aliases remain a compatibility fallback when `--event` is
+omitted. Projmux does not provide
 `projmux ai integrate antigravity`, does not install Antigravity hooks, and
 does not mutate Antigravity user config. The Delivery sources diagnostic
 therefore reports Antigravity as a read-only unsupported/manual row. If users
 wire it by hand, use an absolute `projmux` command path or a known cwd because
 relative command paths failed the Phase 0b smoke.
 
-The default known Antigravity catalog records only observed Phase 0b signals
-and marks them `install: false`:
+The default Antigravity catalog records the five official v1.1.12 events and
+marks them `install: false`:
 
 | Event/signal | Behavior |
 | --- | --- |
-| `PostInvocation` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
-| `Stop` | pushes a completion row, or a critical error row when `error` is present or `terminationReason` is non-normal |
-| `Statusline` with `tool_confirmation_pending=true` | pushes a critical approval row; this is only active when a statusline/manual status payload is wired to ingest |
-| `Statusline` without `tool_confirmation_pending=true` | marks the matched pane hook-active and writes a quiet ingest diagnostic |
+| `PreToolUse` | known permission-changing event; never installed and no permission decision is synthesized |
+| `PreInvocation`, `PostInvocation`, `PostToolUse` | mark the matched pane hook-active and write a quiet ingest diagnostic; no notify queue entry is pushed |
+| `Stop` | pushes an info completion unless an explicit error signal requires a critical error row |
+| legacy `Statusline` with `tool_confirmation_pending=true` | preserves the manual Phase 0b critical approval behavior outside the official catalog |
+| legacy `Statusline` without `tool_confirmation_pending=true` | marks the matched pane hook-active and writes a quiet ingest diagnostic |
 | unknown events | mark the matched pane hook-active and write quiet ingest diagnostics only |
 
-Antigravity notify rows use `agent=antigravity` metadata. Accepted fields
-include `conversationId`/`conversation_id`, `cwd`, `workspace.path`,
-`transcriptPath`, `terminationReason`, `error`, `fullyIdle`, `agent_state`,
-`context_window`, and nested `statusline.tool_confirmation_pending`.
+Antigravity notify rows use `agent=antigravity` metadata. The v1.1.12 parser
+retains common camelCase `conversationId`, `workspacePaths`, `transcriptPath`,
+`artifactDirectoryPath`, and `modelName`; invocation `invocationNum` and
+`initialNumSteps`; post-tool `toolCall`, `stepIdx`, and `error`; and Stop
+`executionNum`, `terminationReason`, `error`, and `fullyIdle`. Existing aliases
+such as `conversation_id`, `cwd`, `workspace.path`, `agent_state`, and nested
+`statusline.tool_confirmation_pending` remain accepted. The first non-empty
+`workspacePaths` value is only a cwd fallback candidate; empty/absent arrays do
+not become the process cwd, and inherited `$TMUX_PANE` still wins attribution.
+`NO_TOOL_CALL`, `MODEL_STOP`, and known normal reasons are info completions.
+Non-empty `error`, explicit `ERROR`, and `MAX_STEPS_EXCEEDED` families are
+critical; unknown reasons retain diagnostic metadata but default to info.
+Explicit non-permission hook ingest writes valid hook stdout: `{}` for
+invocation/post-tool events and `{"decision":"stop"}` for Stop. The latter
+allows the requested stop to complete; projmux does not emit `continue` or a
+`PreToolUse` permission decision.
 Antigravity ingest uses `conversationId` as pane thread metadata for matching
 and as session-state resume metadata. Session restore uses
 `agy --conversation <uuid>` only when that id is present and UUID-shaped;

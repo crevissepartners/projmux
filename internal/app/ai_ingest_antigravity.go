@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,19 @@ type antigravityHookPayload struct {
 	EventName                  string
 	CWD                        string
 	ConversationID             string
+	WorkspacePaths             []string
 	TranscriptPath             string
+	ArtifactDirectoryPath      string
+	ModelName                  string
+	InvocationNum              int
+	InvocationNumSet           bool
+	InitialNumSteps            int
+	InitialNumStepsSet         bool
+	ToolCall                   map[string]any
+	StepIdx                    int
+	StepIdxSet                 bool
+	ExecutionNum               int
+	ExecutionNumSet            bool
 	TerminationReason          string
 	Error                      string
 	FullyIdle                  bool
@@ -27,8 +40,8 @@ type antigravityHookPayload struct {
 	ContextWindow              string
 }
 
-func (c *aiCommand) ingestAntigravityHook(data []byte) error {
-	payload, err := parseAntigravityHookPayload(data)
+func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) error {
+	payload, err := parseAntigravityHookPayload(data, explicitEvent)
 	if err != nil {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Result: "error", Reason: err.Error()})
 		return err
@@ -47,6 +60,12 @@ func (c *aiCommand) ingestAntigravityHook(data []byte) error {
 	c.persistAntigravityContextUsage(payload)
 	metadata := payload.antigravityMetadata()
 	action := c.aiHookEffectiveAction(aiHookProviderAntigravity, payload.EventName)
+	// Statusline is a legacy/manual signal rather than one of the five official
+	// v1.1.12 hook events. Preserve its Phase 0b notify behavior without keeping
+	// it in the official catalog.
+	if payload.EventName == "Statusline" && !action.Known {
+		action.Action = aiHookActionNotify
+	}
 
 	switch payload.EventName {
 	case "Stop":
@@ -81,7 +100,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte) error {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 			return err
 		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "notify", Reason: antigravityStopDiagnosticReason(payload), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 		return nil
 	case "Statusline":
 		if !payload.ToolConfirmationPending {
@@ -121,7 +140,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte) error {
 		}
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 		return nil
-	case "PostInvocation":
+	case "PreInvocation", "PostInvocation", "PostToolUse":
 		c.quietAntigravityHook(paneID, payload, aiHookNoHandlerReason(action))
 		return nil
 	default:
@@ -180,24 +199,31 @@ func (c *aiCommand) quietAntigravityHook(paneID string, payload antigravityHookP
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "quiet", Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 }
 
-func parseAntigravityHookPayload(data []byte) (antigravityHookPayload, error) {
+func parseAntigravityHookPayload(data []byte, explicitEvent string) (antigravityHookPayload, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return antigravityHookPayload{}, fmt.Errorf("parse antigravity hook payload: %w", err)
 	}
 	eventName := firstString(raw, "hook_event_name", "event_name", "eventName", "event", "type")
 	payload := antigravityHookPayload{
-		EventName:         eventName,
-		CWD:               firstString(raw, "cwd", "workspace", "project_dir", "projectDir"),
-		ConversationID:    firstString(raw, "conversation_id", "conversationId", "session_id", "sessionId"),
-		TranscriptPath:    firstString(raw, "transcript_path", "transcriptPath"),
-		TerminationReason: firstString(raw, "termination_reason", "terminationReason"),
-		Error:             antigravityErrorString(raw["error"]),
-		AgentState:        firstString(raw, "agent_state", "agentState"),
-		ContextWindow:     stringFromAny(firstAny(raw, "context_window", "contextWindow")),
+		EventName:             eventName,
+		CWD:                   firstString(raw, "cwd", "workspace", "project_dir", "projectDir"),
+		ConversationID:        firstString(raw, "conversation_id", "conversationId", "session_id", "sessionId"),
+		TranscriptPath:        firstString(raw, "transcript_path", "transcriptPath"),
+		ArtifactDirectoryPath: firstString(raw, "artifactDirectoryPath", "artifact_directory_path"),
+		ModelName:             firstString(raw, "modelName", "model_name", "model"),
+		ToolCall:              mapFromAny(firstAny(raw, "toolCall", "tool_call")),
+		TerminationReason:     firstString(raw, "termination_reason", "terminationReason"),
+		Error:                 antigravityErrorString(raw["error"]),
+		AgentState:            firstString(raw, "agent_state", "agentState"),
+		ContextWindow:         stringFromAny(firstAny(raw, "context_window", "contextWindow")),
 	}
+	payload.WorkspacePaths = antigravityWorkspacePaths(firstAny(raw, "workspacePaths", "workspace_paths"))
 	if payload.CWD == "" {
 		payload.CWD = firstNestedString(raw["workspace"], "cwd", "path")
+	}
+	if payload.CWD == "" && len(payload.WorkspacePaths) > 0 {
+		payload.CWD = payload.WorkspacePaths[0]
 	}
 	if payload.TranscriptPath == "" {
 		payload.TranscriptPath = firstNestedString(raw["transcript"], "path", "transcriptPath")
@@ -213,6 +239,22 @@ func parseAntigravityHookPayload(data []byte) (antigravityHookPayload, error) {
 		payload.FullyIdle = value
 		payload.FullyIdleSet = true
 	}
+	if value, ok := firstAntigravityInt(raw, "invocationNum", "invocation_num"); ok {
+		payload.InvocationNum = value
+		payload.InvocationNumSet = true
+	}
+	if value, ok := firstAntigravityInt(raw, "initialNumSteps", "initial_num_steps"); ok {
+		payload.InitialNumSteps = value
+		payload.InitialNumStepsSet = true
+	}
+	if value, ok := firstAntigravityInt(raw, "stepIdx", "step_idx"); ok {
+		payload.StepIdx = value
+		payload.StepIdxSet = true
+	}
+	if value, ok := firstAntigravityInt(raw, "executionNum", "execution_num"); ok {
+		payload.ExecutionNum = value
+		payload.ExecutionNumSet = true
+	}
 	if value, ok := firstBool(raw, "tool_confirmation_pending", "toolConfirmationPending"); ok {
 		payload.ToolConfirmationPending = value
 		payload.ToolConfirmationPendingSet = true
@@ -221,28 +263,27 @@ func parseAntigravityHookPayload(data []byte) (antigravityHookPayload, error) {
 		payload.ToolConfirmationPending = value
 		payload.ToolConfirmationPendingSet = true
 	}
-	payload.EventName = normalizeAntigravityEventName(payload.EventName)
-	if payload.EventName == "" && antigravityStatuslineShapedPayload(statusline, payload) {
-		payload.EventName = "Statusline"
+	if strings.TrimSpace(explicitEvent) != "" {
+		payload.EventName = explicitEvent
 	}
+	payload.EventName = normalizeAntigravityEventName(payload.EventName)
 	if payload.EventName == "" {
 		payload.EventName = "Unknown"
 	}
 	return payload, nil
 }
 
-func antigravityStatuslineShapedPayload(statusline any, payload antigravityHookPayload) bool {
-	return statusline != nil ||
-		strings.TrimSpace(payload.AgentState) != "" ||
-		strings.TrimSpace(payload.ContextWindow) != "" ||
-		payload.ToolConfirmationPendingSet
-}
-
 func normalizeAntigravityEventName(name string) string {
 	trimmed := strings.TrimSpace(name)
 	switch strings.ToLower(strings.ReplaceAll(trimmed, "_", "")) {
+	case "pretooluse":
+		return "PreToolUse"
+	case "preinvocation":
+		return "PreInvocation"
 	case "postinvocation":
 		return "PostInvocation"
+	case "posttooluse":
+		return "PostToolUse"
 	case "stop":
 		return "Stop"
 	case "statusline", "status":
@@ -254,15 +295,36 @@ func normalizeAntigravityEventName(name string) string {
 
 func (p antigravityHookPayload) antigravityMetadata() map[string]string {
 	metadata := map[string]string{
-		notify.MetaAgent:     aiModeAntigravity,
-		notify.MetaEvent:     p.EventName,
-		"conversation_id":    p.ConversationID,
-		"cwd":                p.CWD,
-		"transcript_path":    p.TranscriptPath,
-		"termination_reason": p.TerminationReason,
-		"error":              truncateRunes(p.Error, 160),
-		"agent_state":        p.AgentState,
-		"context_window":     p.ContextWindow,
+		notify.MetaAgent:          aiModeAntigravity,
+		notify.MetaEvent:          p.EventName,
+		"conversation_id":         p.ConversationID,
+		"cwd":                     p.CWD,
+		"transcript_path":         p.TranscriptPath,
+		"artifact_directory_path": p.ArtifactDirectoryPath,
+		"model_name":              p.ModelName,
+		"termination_reason":      p.TerminationReason,
+		"error":                   truncateRunes(p.Error, 160),
+		"agent_state":             p.AgentState,
+		"context_window":          p.ContextWindow,
+	}
+	if name := firstString(p.ToolCall, "name"); name != "" {
+		metadata["tool_name"] = name
+	}
+	if p.InvocationNumSet {
+		metadata["invocation_num"] = fmt.Sprintf("%d", p.InvocationNum)
+	}
+	if p.InitialNumStepsSet {
+		metadata["initial_num_steps"] = fmt.Sprintf("%d", p.InitialNumSteps)
+	}
+	if p.StepIdxSet {
+		metadata["step_idx"] = fmt.Sprintf("%d", p.StepIdx)
+	}
+	if p.ExecutionNumSet {
+		metadata["execution_num"] = fmt.Sprintf("%d", p.ExecutionNum)
+	}
+	if p.EventName == "Stop" {
+		classification := antigravityTerminationClassification(p)
+		metadata["termination_class"] = classification
 	}
 	if p.FullyIdleSet {
 		metadata["fully_idle"] = boolMetadataValue(p.FullyIdle)
@@ -277,6 +339,55 @@ func (p antigravityHookPayload) antigravityMetadata() map[string]string {
 		}
 	}
 	return out
+}
+
+func antigravityWorkspacePaths(value any) []string {
+	values, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	paths := make([]string, 0, len(values))
+	for _, value := range values {
+		path := strings.TrimSpace(stringFromAny(value))
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func firstAntigravityInt(raw map[string]any, keys ...string) (int, bool) {
+	for _, key := range keys {
+		switch value := raw[key].(type) {
+		case float64:
+			if value == float64(int(value)) {
+				return int(value), true
+			}
+		case json.Number:
+			parsed, err := value.Int64()
+			if err == nil {
+				return int(parsed), true
+			}
+		case int:
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+func antigravityHookResponse(event string) ([]byte, error) {
+	switch normalizeAntigravityEventName(event) {
+	case "Stop":
+		// The Stop contract requires a decision. Any value other than
+		// "continue" allows the already-requested stop to complete.
+		return []byte(`{"decision":"stop"}`), nil
+	case "PreInvocation", "PostInvocation", "PostToolUse", "Statusline":
+		return []byte(`{}`), nil
+	case "PreToolUse":
+		return nil, errors.New("antigravity PreToolUse response is intentionally unsupported because it changes permission policy")
+	default:
+		return []byte(`{}`), nil
+	}
 }
 
 func antigravityNotifyID(p antigravityHookPayload, kind string) string {

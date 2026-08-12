@@ -116,9 +116,15 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		}
 		return c.ingestClaudeHook(data)
 	case "antigravity-hook":
-		if len(args) != 1 {
+		fs := flag.NewFlagSet("ai ingest antigravity-hook", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		eventName := fs.String("event", "", "authoritative Antigravity hook event name")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
 			printAIUsage(stderr)
-			return errors.New("ai ingest antigravity-hook reads JSON from stdin and accepts no payload arguments")
+			return errors.New("ai ingest antigravity-hook does not accept positional payload arguments")
 		}
 		reader := c.stdin
 		if reader == nil {
@@ -131,7 +137,18 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		if len(data) > 1024*1024 {
 			return errors.New("antigravity hook payload exceeds 1 MiB")
 		}
-		return c.ingestAntigravityHook(data)
+		if err := c.ingestAntigravityHook(data, *eventName); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*eventName) == "" {
+			return nil
+		}
+		response, err := antigravityHookResponse(*eventName)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(stdout, string(response))
+		return err
 	case "bell":
 		return c.runIngestBell(args[1:], stderr)
 	case "log":

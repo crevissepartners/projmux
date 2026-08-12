@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -1452,7 +1453,7 @@ func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
 			"tool_confirmation_pending": false,
 			"context_window": "42%"
 		}
-	}`))
+	}`), "")
 	if err != nil {
 		t.Fatalf("parseAntigravityHookPayload() error = %v", err)
 	}
@@ -1463,7 +1464,7 @@ func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
 		t.Fatalf("observed fields = %+v", payload)
 	}
 
-	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","tool_confirmation_pending":true}`))
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","tool_confirmation_pending":true}`), "Statusline")
 	if err != nil {
 		t.Fatalf("parseAntigravityHookPayload() statusline-only error = %v", err)
 	}
@@ -1471,23 +1472,334 @@ func TestParseAntigravityHookPayloadObservedFields(t *testing.T) {
 		t.Fatalf("statusline payload = %+v, want Statusline approval signal", payload)
 	}
 
-	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","agent_state":"idle","context_window":"38%"}`))
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","agent_state":"idle","context_window":"38%"}`), "")
 	if err != nil {
 		t.Fatalf("parseAntigravityHookPayload() statusline-shaped error = %v", err)
 	}
-	if payload.EventName != "Statusline" || payload.ToolConfirmationPending || payload.ToolConfirmationPendingSet {
-		t.Fatalf("statusline-shaped payload = %+v, want Statusline without pending metadata", payload)
+	if payload.EventName != "Unknown" || payload.ToolConfirmationPending || payload.ToolConfirmationPendingSet {
+		t.Fatalf("statusline-shaped payload = %+v, want Unknown without an explicit event or payload alias", payload)
 	}
 	if metadata := payload.antigravityMetadata(); metadata["tool_confirmation_pending"] != "" {
 		t.Fatalf("metadata = %#v, want absent tool_confirmation_pending when field was absent", metadata)
 	}
 
-	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","toolConfirmationPending":false}`))
+	payload, err = parseAntigravityHookPayload([]byte(`{"conversation_id":"ag-conv-123","toolConfirmationPending":false}`), "Statusline")
 	if err != nil {
 		t.Fatalf("parseAntigravityHookPayload() explicit false statusline error = %v", err)
 	}
 	if payload.EventName != "Statusline" || payload.ToolConfirmationPending || !payload.ToolConfirmationPendingSet {
 		t.Fatalf("explicit false statusline payload = %+v, want Statusline with pending=false", payload)
+	}
+}
+
+func TestParseAntigravityHookPayloadV1112FixturesWithExplicitEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		file  string
+		event string
+		check func(*testing.T, antigravityHookPayload)
+	}{
+		{
+			name:  "pre invocation common and invocation fields",
+			file:  "pre_invocation_v1_1_12.json",
+			event: "PreInvocation",
+			check: func(t *testing.T, got antigravityHookPayload) {
+				if got.CWD != "/workspace/sanitized-project" || !reflect.DeepEqual(got.WorkspacePaths, []string{"/workspace/sanitized-project", "/workspace/ignored-second"}) {
+					t.Fatalf("workspace fields = %#v, cwd %q", got.WorkspacePaths, got.CWD)
+				}
+				if got.InvocationNum != 0 || !got.InvocationNumSet || got.InitialNumSteps != 1 || !got.InitialNumStepsSet {
+					t.Fatalf("invocation fields = %+v", got)
+				}
+			},
+		},
+		{
+			name:  "post tool fields",
+			file:  "post_tool_use_v1_1_12.json",
+			event: "PostToolUse",
+			check: func(t *testing.T, got antigravityHookPayload) {
+				if got.StepIdx != 5 || !got.StepIdxSet || got.Error != "sanitized tool failure" || firstString(got.ToolCall, "name") != "read_file" {
+					t.Fatalf("post tool fields = %+v", got)
+				}
+			},
+		},
+		{
+			name:  "stop fields with empty workspace",
+			file:  "stop_no_tool_call_v1_1_12.json",
+			event: "Stop",
+			check: func(t *testing.T, got antigravityHookPayload) {
+				if got.CWD != "" || len(got.WorkspacePaths) != 0 || got.ExecutionNum != 0 || !got.ExecutionNumSet || got.TerminationReason != "NO_TOOL_CALL" || !got.FullyIdle {
+					t.Fatalf("stop fields = %+v", got)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", "antigravity", tt.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := parseAntigravityHookPayload(data, tt.event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.EventName != tt.event {
+				t.Fatalf("event = %q, want %q", got.EventName, tt.event)
+			}
+			if got.ConversationID == "" || got.TranscriptPath == "" || got.ArtifactDirectoryPath == "" || got.ModelName != "sanitized-model" {
+				t.Fatalf("common fields = %+v", got)
+			}
+			tt.check(t, got)
+		})
+	}
+}
+
+func TestParseAntigravityHookPayloadExplicitEventPrecedesLegacyAlias(t *testing.T) {
+	t.Parallel()
+
+	got, err := parseAntigravityHookPayload([]byte(`{"eventName":"Stop","conversationId":"sanitized"}`), "post_tool_use")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EventName != "PostToolUse" {
+		t.Fatalf("event = %q, want authoritative PostToolUse", got.EventName)
+	}
+
+	legacy, err := parseAntigravityHookPayload([]byte(`{"eventName":"Stop","conversationId":"sanitized"}`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.EventName != "Stop" {
+		t.Fatalf("legacy event = %q, want payload fallback Stop", legacy.EventName)
+	}
+}
+
+func TestParseAntigravityHookPayloadWorkspacePathsAbsentAndEmptyDegrade(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{`{}`, `{"workspacePaths":[]}`, `{"workspacePaths":["", "  "]}`} {
+		got, err := parseAntigravityHookPayload([]byte(raw), "Stop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.CWD != "" || len(got.WorkspacePaths) != 0 {
+			t.Fatalf("payload for %s = %+v, want no invented cwd", raw, got)
+		}
+	}
+}
+
+func TestFormatAntigravityStopExplicitErrorClassification(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		reason   string
+		error    string
+		severity string
+		category string
+		class    string
+	}{
+		{name: "no tool call", reason: "NO_TOOL_CALL", severity: notify.SeverityInfo, category: "response_complete", class: "completion"},
+		{name: "model stop", reason: "MODEL_STOP", severity: notify.SeverityInfo, category: "response_complete", class: "completion"},
+		{name: "explicit error text", reason: "MODEL_STOP", error: "sanitized failure", severity: notify.SeverityCritical, category: "error", class: "error"},
+		{name: "error reason", reason: "ERROR", severity: notify.SeverityCritical, category: "error", class: "error"},
+		{name: "max steps family", reason: "MAX_STEPS_EXCEEDED_RETRY", severity: notify.SeverityCritical, category: "error", class: "error"},
+		{name: "unknown is not critical", reason: "FUTURE_SAFE_REASON", severity: notify.SeverityInfo, category: "response_complete", class: "unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := antigravityHookPayload{TerminationReason: tt.reason, Error: tt.error}
+			body := formatAntigravityStopNotifyBody(payload)
+			if body.Severity != tt.severity || body.Category != tt.category {
+				t.Fatalf("body = %#v, want severity %q category %q", body, tt.severity, tt.category)
+			}
+			if got := antigravityTerminationClassification(payload); got != tt.class {
+				t.Fatalf("classification = %q, want %q", got, tt.class)
+			}
+		})
+	}
+}
+
+func TestFormatAntigravityHookResponseJSON(t *testing.T) {
+	t.Parallel()
+
+	for _, event := range []string{"PreInvocation", "PostInvocation", "PostToolUse", "Statusline", "FutureEvent"} {
+		response, err := antigravityHookResponse(event)
+		if err != nil {
+			t.Fatalf("response for %s: %v", event, err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(response, &decoded); err != nil || len(decoded) != 0 {
+			t.Fatalf("response for %s = %s, err = %v; want {}", event, response, err)
+		}
+	}
+	response, err := antigravityHookResponse("Stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stop map[string]any
+	if err := json.Unmarshal(response, &stop); err != nil || stop["decision"] != "stop" {
+		t.Fatalf("Stop response = %s, decoded %#v, err %v", response, stop, err)
+	}
+	if _, err := antigravityHookResponse("PreToolUse"); err == nil {
+		t.Fatal("PreToolUse response must not invent a permission decision")
+	}
+}
+
+func TestAntigravityV1112HookCatalogHasOfficialFiveEvents(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := defaultAIHookCatalog(aiHookProviderAntigravity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "Stop"}
+	got := make([]string, 0, len(catalog.Events))
+	for _, event := range catalog.Events {
+		got = append(got, event.Name)
+		if event.Install {
+			t.Fatalf("event %s install = true, want Phase 1 config non-mutation default", event.Name)
+		}
+	}
+	if !reflect.DeepEqual(got, want) || catalog.ObservedVersion != "Antigravity CLI 1.1.12" {
+		t.Fatalf("catalog = %#v", catalog)
+	}
+}
+
+func TestIngestAntigravityExplicitEventUsesTmuxPaneAndWritesHookResponse(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX_PANE" {
+			return "%inherited"
+		}
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "antigravity", "stop_no_tool_call_v1_1_12.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.stdin = bytes.NewReader(data)
+	readCommand := antigravityIngestReadCommand("%inherited")
+	cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
+			t.Fatal("inherited TMUX_PANE must precede workspace matching")
+		}
+		return readCommand(ctx, name, args...)
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Stop"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "{\"decision\":\"stop\"}\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if len(store.pushed) != 1 || store.pushed[0].Severity != notify.SeverityInfo || store.pushed[0].Metadata[notify.MetaCategory] != "response_complete" {
+		t.Fatalf("pushed = %#v, commands = %#v, stdout = %q", store.pushed, cmdRecorder(cmd).commands, stdout.String())
+	}
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%inherited", aiPaneHookActiveOption, "1"}}) {
+		t.Fatalf("commands = %#v, want inherited pane", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestIngestAntigravityRawV1112FixtureRoutesExplicitPreInvocationByWorkspace(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	data, err := os.ReadFile(filepath.Join("testdata", "antigravity", "pre_invocation_v1_1_12.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.stdin = bytes.NewReader(data)
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}) {
+			return []byte("%workspace\x1f/workspace/sanitized-project\x1f\x1f\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "PreInvocation"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "{}\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	for _, want := range []recordedAICommand{
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%workspace", aiPaneHookActiveOption, "1"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%workspace", aiPaneContextOption, "/workspace/sanitized-project"}},
+	} {
+		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
+			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
+		}
+	}
+}
+
+func TestIngestAntigravityUnknownExplicitEventSafelyDegrades(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX_PANE" {
+			return "%7"
+		}
+		return ""
+	}
+	cmd.stdin = strings.NewReader(`{"eventName":"Stop","conversationId":"sanitized"}`)
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "FutureEvent"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "{}\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	var log bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "log", "--json"}, &log, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), `"event":"FutureEvent"`) || !strings.Contains(log.String(), `"reason":"unknown event"`) {
+		t.Fatalf("log = %q", log.String())
+	}
+}
+
+func TestIngestAntigravityStopUnknownReasonStaysInfoWithDiagnostic(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{
+		"conversationId": "123e4567-e89b-12d3-a456-426614174099",
+		"workspacePaths": ["/repo/projmux"],
+		"terminationReason": "FUTURE_SAFE_REASON",
+		"error": "",
+		"fullyIdle": true
+	}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Stop"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "{\"decision\":\"stop\"}\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if len(store.pushed) != 1 {
+		t.Fatalf("pushed = %#v, want one completion", store.pushed)
+	}
+	got := store.pushed[0]
+	if got.Severity != notify.SeverityInfo || got.Metadata[notify.MetaCategory] != "response_complete" || got.Metadata["termination_class"] != "unknown" {
+		t.Fatalf("pushed = %#v, want info response_complete with unknown classification", got)
+	}
+	var log bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "log", "--json"}, &log, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), `"result":"notify"`) || !strings.Contains(log.String(), `"reason":"unknown termination reason: FUTURE_SAFE_REASON"`) {
+		t.Fatalf("log = %q, want noncritical unknown-reason diagnostic", log.String())
 	}
 }
 
@@ -1615,7 +1927,7 @@ func TestIngestAntigravityStatuslineApprovalPushesCritical(t *testing.T) {
 	}`)
 	cmd.readCommand = antigravityIngestReadCommand("%7")
 
-	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest antigravity-hook Statusline error = %v", err)
 	}
 	if len(store.pushed) != 1 {
@@ -1644,7 +1956,7 @@ func TestIngestAntigravityStatuslineWithoutPendingQuietLogsReason(t *testing.T) 
 	}`)
 	cmd.readCommand = antigravityIngestReadCommand("%7")
 
-	if err := cmd.Run([]string{"ingest", "antigravity-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "Statusline"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run ingest antigravity-hook Statusline quiet error = %v", err)
 	}
 	if len(store.pushed) != 0 {

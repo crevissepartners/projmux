@@ -1,0 +1,15 @@
+{
+  "conversationId": "123e4567-e89b-12d3-a456-426614174002",
+  "workspacePaths": ["/workspace/sanitized-project"],
+  "transcriptPath": "/sanitized/transcripts/conversation.jsonl",
+  "artifactDirectoryPath": "/sanitized/artifacts/conversation",
+  "modelName": "sanitized-model",
+  "toolCall": {
+    "name": "read_file",
+    "args": {
+      "path": "/workspace/sanitized-project/README.md"
+    }
+  },
+  "stepIdx": 5,
+  "error": "sanitized tool failure"
+}
