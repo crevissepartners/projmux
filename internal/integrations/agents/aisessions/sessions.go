@@ -690,6 +690,7 @@ func discoverAntigravityCurrentStorage(cwd, cacheDir, conversationsDir string, d
 }
 
 func discoverAntigravityLastConversations(cwd, cachePath, conversationsDir string, depth int) []SessionMeta {
+	// #nosec G304 -- cachePath is the caller-selected read-only Antigravity cache root joined with the fixed upstream last_conversations.json filename; it is never used for writes or DB content.
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
 		return nil
@@ -723,6 +724,7 @@ type antigravityConversationMetadataIndex struct {
 }
 
 func discoverAntigravityConversationMetadata(cwd, cachePath, conversationsDir string, depth int) []SessionMeta {
+	// #nosec G304 -- cachePath is the caller-selected read-only Antigravity cache root joined with the fixed upstream conversation_metadata.json filename; it is never used for writes or DB content.
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
 		return nil
