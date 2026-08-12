@@ -390,6 +390,16 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 			if !validActionID(id) {
 				return out, keymapParseError(path, lineNo+1, "invalid action id %q", id)
 			}
+			if id == retiredPaneRenameActionID {
+				return out, keymapParseError(
+					path,
+					lineNo+1,
+					"keybinding action %q was removed; replace [bindings.%s] with [bindings.%s]",
+					retiredPaneRenameActionID,
+					retiredPaneRenameActionID,
+					paneRenameActionID,
+				)
+			}
 			currentID = id
 			if _, ok := out.Bindings[id]; !ok {
 				out.Bindings[id] = keymapOverride{lineByKey: map[string]int{}}

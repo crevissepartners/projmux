@@ -1636,6 +1636,94 @@ func TestTmuxPrintConfigInvalidKeymapReportsUsefulErrors(t *testing.T) {
 	}
 }
 
+func TestTmuxPrintConfigRejectsRetiredPaneRenameActionWithMigrationGuidance(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "[bindings.rename-pane-topic]\nkeys = [\"M-r\"]\n"
+	if err := os.WriteFile(keymapPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+
+	err := cmd.Run([]string{"print-config"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("Run() = nil, want retired pane rename action error")
+	}
+	for _, want := range []string{
+		keymapPath + ":1",
+		`keybinding action "rename-pane-topic" was removed`,
+		"replace [bindings.rename-pane-topic] with [bindings.rename-pane-label]",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Run() error = %q, want %q", err, want)
+		}
+	}
+}
+
+func TestTmuxPrintConfigCanonicalPaneRenameWritesOnlyLabelBinding(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	if err := os.MkdirAll(filepath.Dir(keymapPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymapPath, []byte("[bindings.rename-pane-label]\nkeys = [\"M-r\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := stdout.String()
+	var binding string
+	for line := range strings.SplitSeq(output, "\n") {
+		if strings.Contains(line, "bind-key -n M-r command-prompt") {
+			binding = line
+			break
+		}
+	}
+	if binding == "" {
+		t.Fatalf("print-config output = %q, want canonical pane rename binding", output)
+	}
+	for _, want := range []string{
+		"bind-key -n M-r command-prompt",
+		`-p "pane label:"`,
+		"set-option -p @projmux_pane_label",
+	} {
+		if !strings.Contains(binding, want) {
+			t.Fatalf("pane rename binding = %q, want %q", binding, want)
+		}
+	}
+	for _, forbidden := range []string{
+		retiredPaneRenameActionID,
+		aiPaneTopicOption,
+		aiPaneTopicManualOption,
+		"select-pane -T",
+	} {
+		if strings.Contains(binding, forbidden) {
+			t.Fatalf("pane rename binding contains forbidden producer %q: %s", forbidden, binding)
+		}
+	}
+}
+
 func TestTmuxPrintConfigGracefullyIgnoresDroppedLegacyIDs(t *testing.T) {
 	t.Parallel()
 

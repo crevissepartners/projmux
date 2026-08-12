@@ -23,8 +23,10 @@ func TestPaneIdentityActionWriteMatrix(t *testing.T) {
 	}
 
 	catalog := defaultKeyBindingCatalog()
-	canonical, _ := keyBindingActionByID(catalog, "rename-pane-label")
-	alias, _ := keyBindingActionByID(catalog, "rename-pane-topic")
+	canonical, _ := keyBindingActionByID(catalog, paneRenameActionID)
+	if alias, ok := keyBindingActionByID(catalog, retiredPaneRenameActionID); ok {
+		t.Fatalf("retired pane rename action unexpectedly resolves to %#v", alias)
+	}
 
 	tests := []struct {
 		name      string
@@ -34,7 +36,6 @@ func TestPaneIdentityActionWriteMatrix(t *testing.T) {
 	}{
 		{name: "user rename helper", commands: recordedTmuxCallsText(renameRunner.calls), allowed: []string{paneLabelOption}, forbidden: []string{aiPaneTopicOption, aiPaneTopicManualOption, "select-pane -T"}},
 		{name: "canonical rename action", commands: canonical.TmuxBody, allowed: []string{paneLabelOption}, forbidden: []string{aiPaneTopicOption, aiPaneTopicManualOption, "select-pane -T", "pane_title"}},
-		{name: "deprecated topic alias", commands: alias.TmuxBody, allowed: []string{paneLabelOption}, forbidden: []string{aiPaneTopicOption, aiPaneTopicManualOption, "select-pane -T", "pane_title"}},
 		{name: "AI topic set", commands: recordedAICommandsText(cmdRecorder(topicSet).commands), allowed: []string{aiPaneTopicOption, aiPaneTopicManualOption}, forbidden: []string{paneLabelOption, "select-pane -T"}},
 		{name: "AI topic clear", commands: recordedAICommandsText(cmdRecorder(topicClear).commands), allowed: []string{aiPaneTopicOption, aiPaneTopicManualOption}, forbidden: []string{paneLabelOption, "select-pane -T"}},
 	}
