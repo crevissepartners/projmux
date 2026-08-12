@@ -22,7 +22,6 @@ var commandRules = map[string]commandRule{
 	"doctor":         {},
 	"focus":          {alwaysChanging: true},
 	"hook":           {subcommands: stringSet("list", "edit", "validate", "trust", "untrust"), changing: stringSet("edit", "trust", "untrust")},
-	"init":           {},
 	"key-broker":     {alwaysChanging: true},
 	"kill":           {alwaysChanging: true, subcommands: stringSet("tagged")},
 	"notify":         {subcommands: stringSet("push", "list", "ack", "reconcile"), changing: stringSet("push", "ack", "reconcile")},
@@ -90,9 +89,6 @@ func Classify(args []string) CommandClass {
 	}
 	if command == "setup" && out.Subcommand == "terminal" {
 		out.StateChanging = boolFlagEnabled(args[2:], "apply")
-	}
-	if command == "init" {
-		out.StateChanging = boolFlagEnabled(args[1:], "apply")
 	}
 	if command == "doctor" {
 		out.StateChanging = boolFlagEnabled(args[1:], "install-missing") && !boolFlagEnabled(args[1:], "dry-run")

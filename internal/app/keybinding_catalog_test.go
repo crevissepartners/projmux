@@ -38,7 +38,7 @@ func TestWindowsTerminalBindingsFromCatalogDoNotUseAppCSIu(t *testing.T) {
 }
 
 // TestNewInitCommandRegistersBundledTerminals exercises the production wiring:
-// the init command built by newInitCommand must know both bundled adapters,
+// the terminal remediation command built by newInitCommand must know both bundled adapters,
 // which surfaces in the "unknown terminal" error's known-terminals list.
 func TestNewInitCommandRegistersBundledTerminals(t *testing.T) {
 	t.Parallel()

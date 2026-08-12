@@ -44,7 +44,7 @@ func (p MergePlan) HasEffect() bool {
 
 // TerminalAdapter is the per-terminal contract for terminal remediation.
 //
-// Implementations are registered by the caller via New so the init command
+// Implementations are registered by the caller via New so the remediation command
 // can dispatch by name and auto-detect the active terminal.
 type TerminalAdapter interface {
 	// Name returns the terminal's canonical CLI name, e.g. "ghostty".
@@ -66,7 +66,7 @@ type TerminalAdapter interface {
 
 // ConfigPathCandidatesResolver is an optional interface for terminal adapters
 // whose configuration may live at one of several well-known paths (e.g.
-// Ghostty looks at both `config` and `config.ghostty`). The init command uses
+// Ghostty looks at both `config` and `config.ghostty`). The remediation command uses
 // the candidate list to pick the existing file, surface ambiguity when more
 // than one exists, and fall back to the first entry when none exists. Adapters
 // that map cleanly to a single path can ignore this interface; the init
@@ -79,7 +79,7 @@ type ConfigPathCandidatesResolver interface {
 }
 
 // terminalRegistry indexes TerminalAdapter implementations by name for the
-// init command's dispatch and auto-detection.
+// remediation command's dispatch and auto-detection.
 type terminalRegistry struct {
 	mu       sync.RWMutex
 	adapters map[string]TerminalAdapter

@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 
-	"github.com/crevissepartners/projmux/internal/app/initcmd"
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -70,7 +68,6 @@ type App struct {
 	diagnostics  *diagnosticsCommand
 	focus        *focusCommand
 	hook         *hookCommand
-	initCmd      *initcmd.Command
 	keyBroker    *keyBrokerCommand
 	kill         *killCommand
 	notify       *notifyCommand
@@ -129,7 +126,6 @@ func New() *App {
 		diagnostics:  newDiagnosticsCommand(),
 		focus:        newFocusCommand(),
 		hook:         newHookCommand(),
-		initCmd:      initCmd,
 		keyBroker:    newKeyBrokerCommand(),
 		kill:         kill,
 		notify:       notifyCmd,
@@ -183,11 +179,6 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.focus.Run(args[1:], stdout, stderr)
 	case "hook":
 		return a.hook.Run(args[1:], stdout, stderr)
-	case "init":
-		if _, err := fmt.Fprintf(stderr, "warning: projmux init is deprecated; use: %s\n", legacyInitReplacement(args[1:])); err != nil {
-			return err
-		}
-		return a.initCmd.Run(args[1:], stdout, stderr)
 	case "key-broker":
 		// Hidden Darwin helper: captures physical portable key chords while a
 		// projmux tmux client is focused and feeds them through its root table.
@@ -267,7 +258,6 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  diagnostics  Read the private bounded operational event log")
 	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
-	fmt.Fprintln(w, "  init      Deprecated alias for setup terminal (compatibility period)")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
 	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")
 	fmt.Fprintln(w, "  pin       Manage pinned project directories")
@@ -293,22 +283,4 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  window    Open recent window navigation surfaces")
 	fmt.Fprintln(w, "  help      Show bootstrap help")
 	fmt.Fprintln(w, "  version   Print the current version")
-}
-
-func legacyInitReplacement(args []string) string {
-	replacement := []string{"projmux", "setup", "terminal"}
-	for _, arg := range args {
-		if arg == "--dry-run" || strings.HasPrefix(arg, "--dry-run=") {
-			continue
-		}
-		replacement = append(replacement, commandArgQuote(arg))
-	}
-	return strings.Join(replacement, " ")
-}
-
-func commandArgQuote(arg string) string {
-	if arg != "" && !strings.ContainsAny(arg, " \t\r\n'\"\\$`!&|;()<>*?[]{}") {
-		return arg
-	}
-	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 }

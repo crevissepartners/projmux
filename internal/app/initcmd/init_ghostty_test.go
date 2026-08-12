@@ -465,7 +465,7 @@ func TestGhosttyAdapterConfigPathCandidatesHomeFallback(t *testing.T) {
 	}
 }
 
-// newGhosttyTestInitCommand returns an init command wired to operate inside a
+// newGhosttyTestInitCommand returns a remediation command wired to operate inside a
 // per-test temp dir as if it were $XDG_CONFIG_HOME. The Ghostty adapter is
 // the sole registered terminal so the test exercises the production code
 // path including ConfigPathCandidates.

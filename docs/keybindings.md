@@ -194,7 +194,7 @@ Settings > Keybindings stays a discovery surface. It must continue to expose
 launch toggles, sidebar keymap actions, picker-local actions, pane switching,
 window switching, and rename actions. The basic Settings flow is not the
 terminal remediation surface: key-role replacement, disable-default, typed
-fallback, terminal mapping preview/apply, and init execution rows stay out of
+fallback and terminal mapping preview/apply rows stay out of
 the action detail.
 
 The product model does not support `UserN` or `CSI-u` as fallback guidance.

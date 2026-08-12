@@ -1,7 +1,7 @@
-// Package initcmd implements terminal key-delivery remediation for both the
-// canonical `projmux setup terminal` command and its compatibility
-// `projmux init` alias. It auto-merges projmux keybindings into a terminal
-// emulator's config file via per-terminal TerminalAdapter implementations.
+// Package initcmd implements terminal key-delivery remediation for the
+// canonical `projmux setup terminal` command. It auto-merges projmux
+// keybindings into a terminal emulator's config file via per-terminal
+// TerminalAdapter implementations.
 // The desired bindings are injected by the caller (the app package derives
 // them from its keybinding catalog), so this package has no dependency on the
 // rest of the app.
@@ -35,7 +35,6 @@ type Command struct {
 type initOptions struct {
 	TerminalName   string
 	Apply          bool
-	DryRun         bool
 	ConfigOverride string
 	AllowSymlink   bool
 }
@@ -46,13 +45,7 @@ type initResult struct {
 	Applied  bool
 }
 
-type invocation struct {
-	command       string
-	acceptDryRun  bool
-	displayDryRun bool
-}
-
-// New builds the init command with the supplied terminal adapters registered.
+// New builds the remediation command with the supplied terminal adapters.
 // Registration panics on duplicate names so wiring bugs surface immediately.
 func New(adapters ...TerminalAdapter) *Command {
 	registry := newTerminalRegistry()
@@ -69,76 +62,44 @@ func New(adapters ...TerminalAdapter) *Command {
 	}
 }
 
-// Run implements the legacy `projmux init [terminal]` command surface. The
-// application owns the compatibility warning so direct adapter tests can use
-// this method without mixing that warning into the remediation result.
+// Run implements `projmux setup terminal [terminal]`. Preview is the default;
+// this surface does not register a redundant --dry-run flag.
 func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
-	return c.runInvocation(args, stdout, stderr, invocation{
-		command:       "projmux init",
-		acceptDryRun:  true,
-		displayDryRun: true,
-	})
-}
-
-// RunCanonical implements `projmux setup terminal [terminal]`. Preview is the
-// default; unlike the compatibility alias, this surface does not register the
-// redundant --dry-run flag.
-func (c *Command) RunCanonical(args []string, stdout, stderr io.Writer) error {
-	return c.runInvocation(args, stdout, stderr, invocation{
-		command:       "projmux setup terminal",
-		acceptDryRun:  false,
-		displayDryRun: false,
-	})
-}
-
-func (c *Command) runInvocation(args []string, stdout, stderr io.Writer, inv invocation) error {
 	terminalName, flagArgs := splitInitArgs(args)
 
-	fs := flag.NewFlagSet(inv.command, flag.ContinueOnError)
+	const command = "projmux setup terminal"
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	apply := fs.Bool("apply", false, "write the merged config (default: preview only)")
-	var dryRun *bool
-	if inv.acceptDryRun {
-		dryRun = fs.Bool("dry-run", false, "force preview even when no other flag is set")
-	}
 	configOverride := fs.String("config", "", "explicit config file path (overrides auto-detected candidates)")
 	allowSymlink := fs.Bool("allow-symlink", false, "merge into a symlinked config target (default: refuse to mutate symlink targets such as dotfiles repos)")
 	if err := fs.Parse(flagArgs); err != nil {
 		return err
 	}
-	dryRunValue := dryRun != nil && *dryRun
-	if *apply && dryRunValue {
-		return fmt.Errorf("%s: --apply and --dry-run are mutually exclusive", inv.command)
-	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%s: unexpected positional argument %q", inv.command, fs.Arg(0))
+		return fmt.Errorf("%s: unexpected positional argument %q", command, fs.Arg(0))
 	}
 
 	result, err := c.run(initOptions{
 		TerminalName:   terminalName,
 		Apply:          *apply,
-		DryRun:         dryRunValue,
 		ConfigOverride: strings.TrimSpace(*configOverride),
 		AllowSymlink:   *allowSymlink,
-	}, inv.command)
+	}, command)
 	if err != nil {
 		return err
 	}
 	if result.Applied {
-		return c.printApplyResult(inv.command, result.Terminal, result.Plan, stdout)
+		return c.printApplyResult(command, result.Terminal, result.Plan, stdout)
 	}
-	return c.printPlan(inv.command, inv.displayDryRun, result.Terminal, result.Plan, stdout)
+	return c.printPlan(command, result.Terminal, result.Plan, stdout)
 }
 
 func (c *Command) run(opts initOptions, command ...string) (initResult, error) {
-	commandName := "projmux init"
+	commandName := "projmux setup terminal"
 	if len(command) > 0 && command[0] != "" {
 		commandName = command[0]
 	}
-	if opts.Apply && opts.DryRun {
-		return initResult{}, fmt.Errorf("%s: --apply and --dry-run are mutually exclusive", commandName)
-	}
-
 	registry := c.registry
 	if registry == nil {
 		registry = newTerminalRegistry()
@@ -213,7 +174,7 @@ func (c *Command) env() func(string) string {
 // Adapters that only register a single ConfigPath fall through to the same
 // logic with a one-element candidate list.
 func (c *Command) resolveConfigPath(adapter TerminalAdapter, override string, command ...string) (string, error) {
-	commandName := "projmux init"
+	commandName := "projmux setup terminal"
 	if len(command) > 0 && command[0] != "" {
 		commandName = command[0]
 	}
@@ -268,7 +229,7 @@ func (c *Command) candidatesFor(adapter TerminalAdapter) ([]string, error) {
 // absConfigPath turns a (possibly relative) --config override into an
 // absolute path so downstream stat/symlink checks behave consistently.
 func (c *Command) absConfigPath(p string, command ...string) (string, error) {
-	commandName := "projmux init"
+	commandName := "projmux setup terminal"
 	if len(command) > 0 && command[0] != "" {
 		commandName = command[0]
 	}
@@ -292,7 +253,7 @@ func (c *Command) absConfigPath(p string, command ...string) (string, error) {
 // silently editing through the symlink would mutate that repo without their
 // knowledge.
 func (c *Command) guardSymlink(path string, allow bool, command ...string) error {
-	commandName := "projmux init"
+	commandName := "projmux setup terminal"
 	if len(command) > 0 && command[0] != "" {
 		commandName = command[0]
 	}
@@ -340,12 +301,8 @@ func (c *Command) loadConfig(path string) (string, bool, error) {
 	return string(data), true, nil
 }
 
-func (c *Command) printPlan(command string, displayDryRun bool, terminal string, plan MergePlan, stdout io.Writer) error {
-	mode := "preview"
-	if displayDryRun {
-		mode = "dry-run"
-	}
-	if _, err := fmt.Fprintf(stdout, "%s %s (%s)\n", command, terminal, mode); err != nil {
+func (c *Command) printPlan(command, terminal string, plan MergePlan, stdout io.Writer) error {
+	if _, err := fmt.Fprintf(stdout, "%s %s (preview)\n", command, terminal); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "config: %s\n", plan.ConfigPath); err != nil {
