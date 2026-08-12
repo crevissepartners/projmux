@@ -45,7 +45,7 @@ func doctorSessionStateResumeDiagnosticsFromStore(store sessionstate.Store) []do
 			continue
 		}
 		sessionName := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		snap, err := store.Load(sessionName)
+		snap, err := store.LoadReadOnly(sessionName)
 		if err != nil {
 			continue
 		}

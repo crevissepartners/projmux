@@ -156,8 +156,9 @@ func New() *App {
 
 // Run dispatches the configured application commands.
 func (a *App) Run(args []string, stdout, stderr io.Writer) error {
-	// Doctor is a strict read-only boundary. In particular, it must not trigger
-	// the otherwise automatic legacy-hook filesystem migration before dispatch.
+	// Doctor and explicit support-report collection are strict source-read-only
+	// boundaries. In particular, they must not trigger the otherwise automatic
+	// legacy-hook filesystem migration before dispatch.
 	if shouldRunLegacyHookMigrations(args) {
 		runLegacyHookMigrations()
 	}
@@ -251,7 +252,13 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 func shouldRunLegacyHookMigrations(args []string) bool {
-	return len(args) == 0 || args[0] != "doctor"
+	if len(args) == 0 {
+		return true
+	}
+	if args[0] == "doctor" {
+		return false
+	}
+	return !(len(args) >= 2 && args[0] == "diagnostics" && args[1] == "report")
 }
 
 func printUsage(w io.Writer) {
@@ -263,7 +270,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  attach    Open tmux lifecycle entry helpers")
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
 	fmt.Fprintln(w, "  doctor    Run read-only runtime and integration diagnostics")
-	fmt.Fprintln(w, "  diagnostics  Read the private bounded operational event log")
+	fmt.Fprintln(w, "  diagnostics  Read operational events or create an explicit local support report")
 	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
 	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")

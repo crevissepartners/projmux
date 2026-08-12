@@ -2,8 +2,9 @@
 
 Projmux records a small local-only operational journal so command failures and
 state changes can be inspected after the originating process exits. It does
-not upload the journal, create support archives, contact an issue tracker, or
-provide a background telemetry service.
+not upload the journal, contact an issue tracker, or provide a background
+telemetry service. A support archive is created only by an explicit
+`projmux diagnostics report` invocation and is never transmitted.
 
 ## Safe event contract
 
@@ -57,7 +58,10 @@ state-changing success record. Direct top-level help and explicit preview-only i
 --dry-run`, `update apply --dry-run`, AI integration dry-runs, and the
 currently preview-only session restore) are also read-only. Doctor is a stricter
 boundary: successes and errors never append to this journal, so diagnostics do
-not make its filesystem contract self-defeating. Multi-mode commands such as AI status/topic,
+not make its filesystem contract self-defeating. Support report success and
+errors likewise never append; its strict reader shares the viewer's tolerant
+decoder but never creates/locks/chmods/repairs/truncates the source journal.
+Multi-mode commands such as AI status/topic,
 terminal apply, snapshot delete, update check, and welcome popup inspect only
 allowlisted mode/flag names; boolean `=false` values retain mutation-capable
 classification, and no flag values are ever recorded. Help-looking tokens
@@ -79,3 +83,14 @@ recursion loop.
 The older bounded `ai-ingest.log` and subsystem-specific `PROJMUX_*_DEBUG`
 surfaces retain their current paths, formats, and behavior. They are not
 migrated by this foundation.
+
+## Explicit support report
+
+`projmux diagnostics report [--output <path>]` previews and then atomically
+publishes a private local `tar.gz`; see [cli.md](cli.md#diagnostics). The
+manifest records report schema version 1, `default-hash-v1` redaction, every
+included entry, and stable missing/corrupt/permission omission reasons. Doctor
+JSON schema version 1 and the bounded operations decoder are reused rather than
+duplicated. AI ingest contributes count-only allowlisted source/result rows,
+never raw legacy lines. Existing output files survive collisions and partial
+temporary archives are removed.

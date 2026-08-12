@@ -63,6 +63,7 @@ func TestClassifyAllowlistAndStatePolicy(t *testing.T) {
 		{name: "topic set changes state", args: []string{"ai", "topic", "set", "private topic"}, want: CommandClass{Command: "ai", Subcommand: "topic", StateChanging: true}},
 		{name: "update check writes cache", args: []string{"update", "check"}, want: CommandClass{Command: "update", Subcommand: "check", StateChanging: true}},
 		{name: "diagnostics viewer read only", args: []string{"diagnostics", "log"}, want: CommandClass{Command: "diagnostics", Subcommand: "log"}},
+		{name: "diagnostics report explicit local write boundary", args: []string{"diagnostics", "report", "--output", "/secret/path"}, want: CommandClass{Command: "diagnostics", Subcommand: "report"}},
 		{name: "terminal preview read only", args: []string{"setup", "terminal", "/secret"}, want: CommandClass{Command: "setup", Subcommand: "terminal"}},
 		{name: "terminal apply changes state", args: []string{"setup", "terminal", "--apply", "/secret"}, want: CommandClass{Command: "setup", Subcommand: "terminal", StateChanging: true}},
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,25 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 	assertSessionStateMode(t, store.Dir, 0o700)
 	assertSessionStateMode(t, mustPath(t, store, want.Session), 0o600)
+}
+
+func TestLoadReadOnlyDoesNotRepairSnapshotMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission modes are not enforced on Windows")
+	}
+	store := NewStore(filepath.Join(t.TempDir(), "sessions"))
+	snap := sampleSnapshot()
+	if err := store.Save(snap); err != nil {
+		t.Fatal(err)
+	}
+	path := mustPath(t, store, snap.Session)
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadReadOnly(snap.Session); err != nil {
+		t.Fatal(err)
+	}
+	assertSessionStateMode(t, path, 0o644)
 }
 
 func assertSessionStateMode(t *testing.T, path string, want os.FileMode) {

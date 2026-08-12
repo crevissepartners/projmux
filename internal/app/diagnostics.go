@@ -15,10 +15,11 @@ import (
 type diagnosticsCommand struct {
 	lookupEnv func(string) string
 	homeDir   func() (string, error)
+	doctor    *doctorCommand
 }
 
 func newDiagnosticsCommand() *diagnosticsCommand {
-	return &diagnosticsCommand{lookupEnv: os.Getenv, homeDir: os.UserHomeDir}
+	return &diagnosticsCommand{lookupEnv: os.Getenv, homeDir: os.UserHomeDir, doctor: newDoctorCommand()}
 }
 
 func (c *diagnosticsCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -29,6 +30,8 @@ func (c *diagnosticsCommand) Run(args []string, stdout, stderr io.Writer) error 
 	switch args[0] {
 	case "log":
 		return c.runLog(args[1:], stdout, stderr)
+	case "report":
+		return c.runReport(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printDiagnosticsUsage(stdout)
 		return nil
@@ -127,4 +130,5 @@ func formatOperationalEvent(event diagnostics.Event) string {
 func printDiagnosticsUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux diagnostics log [--tail N] [--json] [--level LEVEL] [--component NAME] [--path]")
+	fmt.Fprintln(w, "  projmux diagnostics report [--output <path>]")
 }

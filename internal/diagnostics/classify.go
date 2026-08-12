@@ -18,7 +18,7 @@ var commandRules = map[string]commandRule{
 	"attention":      {subcommands: stringSet("toggle", "clear", "arm", "list", "window"), changing: stringSet("toggle")},
 	"attach":         {alwaysChanging: true, subcommands: stringSet("auto")},
 	"current":        {alwaysChanging: true},
-	"diagnostics":    {subcommands: stringSet("log")},
+	"diagnostics":    {subcommands: stringSet("log", "report")},
 	"doctor":         {},
 	"focus":          {alwaysChanging: true},
 	"hook":           {subcommands: stringSet("list", "edit", "validate", "trust", "untrust"), changing: stringSet("edit", "trust", "untrust")},

@@ -169,6 +169,7 @@ than a standalone Settings row.
 ```
 projmux diagnostics log [--tail N] [--json]
                         [--level info|error] [--component NAME] [--path]
+projmux diagnostics report [--output <path>]
 ```
 
 Reads the local operational event journal through the same tolerant JSONL
@@ -188,6 +189,34 @@ read-only and do not produce an event. Journal failures are a best-effort side
 channel and never change command output or exit status. See
 [operational-diagnostics.md](operational-diagnostics.md) for the file,
 retention, concurrency, and privacy contracts.
+
+`diagnostics report` is the explicit consent boundary for creating one local
+private `tar.gz` support archive. The invocation first prints a redacted
+destination label, the complete included/omitted entry list, stable omission reasons, report
+schema, and redaction mode; the first parent/temp/archive write happens only
+after that preview is successfully written. `--output` selects the local
+destination. Without it, the command uses a timestamped archive in the current
+directory. Existing destinations are never replaced.
+
+The archive contains `manifest.json`, safe projmux version/platform/backend
+metadata, a redacted projection of the existing Doctor JSON schema version 1,
+config presence states (never values), up to 50 recent errors from the existing
+bounded operations reader, and count-only AI ingest diagnostics. Paths,
+session/window/pane/thread/routing identifiers, run IDs, tool/version output,
+commands, guidance, reasons, and other free text are field-scoped hashes unless they
+match a closed diagnostic enum/static-name allowlist. Raw config/environment
+values, argv/stdin, prompts, notification text, pane output, transcripts, and
+hook payloads are never collected. Missing, corrupt, or unreadable sources are
+recorded as stable manifest omissions. Report collection does not repair source
+permissions, migrate hooks, append an operational outcome, contact a network,
+upload, create an issue, or run in the background; only the explicitly selected
+output parent/temp/archive can be written.
+
+The redacted Doctor projection keeps `schema_version` and structural/count
+numbers as numbers. Numeric routing fields such as `window_index` and
+`pane_index` become field-scoped hash strings under `default-hash-v1`; consumers
+must treat this support projection as redacted evidence rather than decoding it
+back into the unredacted Doctor Go types.
 
 ## focus
 
