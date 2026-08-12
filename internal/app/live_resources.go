@@ -28,7 +28,7 @@ func loadLiveResourcesMode(homeDir func() (string, error), lookupEnv func(string
 	if !systemstatus.Supported() {
 		return config.LiveResourcesOff
 	}
-	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return config.LiveResourcesOff
 	}

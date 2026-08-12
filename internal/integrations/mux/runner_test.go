@@ -308,7 +308,7 @@ func TestRunnerDisplayPopupBuildsExistingPopupArgs(t *testing.T) {
 	err := runner.DisplayPopup(context.Background(), "printf hello", PopupOptions{
 		Target:        "%4",
 		Cwd:           "/repo",
-		Env:           map[string]string{"PROJMUX_PICKER_BACKEND": "native"},
+		Env:           map[string]string{"PROJMUX_TEST_ENV": "value"},
 		NoBorder:      true,
 		X:             "0",
 		Y:             "0",
@@ -326,7 +326,7 @@ func TestRunnerDisplayPopupBuildsExistingPopupArgs(t *testing.T) {
 		"-E",
 		"-B",
 		"-d", "/repo",
-		"-e", "PROJMUX_PICKER_BACKEND=native",
+		"-e", "PROJMUX_TEST_ENV=value",
 		"-x", "0",
 		"-y", "0",
 		"-w", "40",

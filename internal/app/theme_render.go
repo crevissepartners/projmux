@@ -37,7 +37,7 @@ func configRenderThemeSource(homeDir func() (string, error), lookupEnv func(stri
 // not participate in theme resolution.
 func effectiveThemeFromConfig(homeDir func() (string, error), lookupEnv func(string) string, projectPath string) (theme.EffectiveTheme, error) {
 	_ = projectPath
-	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return theme.EffectiveTheme{}, err
 	}

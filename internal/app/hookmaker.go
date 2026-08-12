@@ -310,7 +310,7 @@ func projectLegacyScriptMap(projectPath string) map[string]settingsLegacyScript 
 
 func globalLegacyScriptMap(homeDir func() (string, error), lookupEnv func(string) string) map[string]settingsLegacyScript {
 	result := map[string]settingsLegacyScript{}
-	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return result
 	}
@@ -1153,7 +1153,7 @@ func (c *settingsCommand) saveProjectConfig(ctx settingsProjectContext, stdout i
 }
 
 func (c *settingsCommand) projectConfigTrustStorePath() (string, error) {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return "", err
 	}

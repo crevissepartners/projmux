@@ -548,7 +548,7 @@ func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
 }
 
 func (c *settingsCommand) currentAIEnabledAgents() []config.AIAgentProvider {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
 	}
@@ -565,7 +565,7 @@ func (c *settingsCommand) toggleAIEnabledAgent(provider string) error {
 		return fmt.Errorf("unknown AI agent provider: %s", provider)
 	}
 	target := normalized[0]
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}

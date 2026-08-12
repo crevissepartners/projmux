@@ -53,8 +53,8 @@ Responsibilities:
 - selection handoff into core actions
 - picker-agnostic close/dismiss actions
 
-Picker-specific display and search rules are tracked in
-[picker-ui-plan.md](picker-ui-plan.md).
+Picker-specific display, search, input, and popup rules are tracked in
+[native-picker.md](native-picker.md).
 
 This keeps parity with the existing shell workflow while moving state and behavior into Go.
 

@@ -820,7 +820,7 @@ func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
 	if c.nativePicker == nil {
 		return errors.New("native picker is not configured")
 	}
-	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
+	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, c.themedPickerOptions(intpickercompat.Options{
 		UI:         "ai-settings",
 		Entries:    c.settingsRows(),
 		Title:      "AI Settings - Default split mode",
@@ -845,7 +845,7 @@ func (c *aiCommand) runAgentPicker(direction string) (intpickercompat.Result, er
 	if c.nativePicker == nil {
 		return intpickercompat.Result{}, errors.New("native picker is not configured")
 	}
-	return runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
+	return runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, c.themedPickerOptions(intpickercompat.Options{
 		UI:         "ai-picker",
 		Entries:    c.agentRows(),
 		Title:      localizeUIText(appLocale(c.homeDir, c.lookupEnv), "AI Launch - Split direction: ") + direction,
@@ -925,7 +925,7 @@ func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessio
 		enriched, _, _ := aiResumeSessionRows(sessions, limit, now, locale, baseCWD, depth)
 		return intpicker.DeferredUpdate{Items: intpickercompat.PickerItemsFromEntries(enriched)}, nil
 	}
-	return runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, c.themedPickerOptions(intpickercompat.Options{
+	return runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, c.themedPickerOptions(intpickercompat.Options{
 		UI:             "ai-resume-picker",
 		Entries:        entries,
 		Title:          localizeUIText(locale, "AI Resume - Split direction: ") + direction,
@@ -1230,7 +1230,7 @@ func resumeArgsForAgent(mode, resumeID string) ([]string, error) {
 
 // themedPickerOptions fills options.Theme with the global theme source so AI
 // split-picker and AI settings popups paint the themed surface/background
-// instead of the runPickerOptionBackend fallback default. It degrades to the
+// instead of the runNativePickerOption fallback default. It degrades to the
 // built-in fallback theme on a config read error, matching the switch.go /
 // notify.go sidebar pattern. Theme is global-only, so no project path
 // participates.
@@ -1343,7 +1343,7 @@ func (c *aiCommand) agentRow(provider aiprovider.Metadata) intpickercompat.Entry
 }
 
 func (c *aiCommand) enabledAIAgents() []config.AIAgentProvider {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return append([]config.AIAgentProvider(nil), config.DefaultAIEnabledAgents...)
 	}

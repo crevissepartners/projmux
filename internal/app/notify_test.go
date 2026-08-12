@@ -984,7 +984,7 @@ func TestNotifySidebarGroupedReadModelPaneLessFallbackKeys(t *testing.T) {
 	}
 }
 
-func TestNotifySidebarNativeBackendDoesNotCallCompatRunner(t *testing.T) {
+func TestNotifySidebarUsesNativePicker(t *testing.T) {
 	store := &stubNotifyStore{
 		listEntries: []notify.Notification{{
 			ID:        "abc",
@@ -1015,12 +1015,7 @@ func TestNotifySidebarNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 		}
 		return intpicker.Result{Value: "abc"}, nil
 	})
-	cmd.lookupEnv = func(name string) string {
-		if name == intpicker.BackendEnv {
-			return string(intpicker.BackendNative)
-		}
-		return ""
-	}
+	cmd.lookupEnv = func(string) string { return "" }
 	cmd.picker = notifyPickerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 		compatCalled = true
 		return intpickercompat.Result{}, nil
@@ -1183,7 +1178,7 @@ func TestNotifyListSidebarAAcksSelectedRowAndRefreshes(t *testing.T) {
 	if len(first) != 3 || first[0].Value != abcGroup || first[1].Value != defGroup || first[2].Value != ghiGroup {
 		t.Fatalf("first picker entries = %#v, want abc then def then ghi", first)
 	}
-	compatOptions := intpickercompat.OptionsFromPicker(picker.options[0])
+	compatOptions := compatOptionsFromNativePickerForTest(picker.options[0])
 	if got, want := compatOptions.Bindings, []string{"esc:abort", "alt-2:abort"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("picker bindings = %#v, want %#v", got, want)
 	}

@@ -1692,9 +1692,9 @@ func TestSettingsHubTogglesAIEnabledAgentPersists(t *testing.T) {
 		}
 	}
 
-	paths, err := pickerBackendConfigPaths(func() (string, error) { return home, nil }, func(string) string { return "" })
+	paths, err := configPaths(func() (string, error) { return home, nil }, func(string) string { return "" })
 	if err != nil {
-		t.Fatalf("pickerBackendConfigPaths() error = %v", err)
+		t.Fatalf("configPaths() error = %v", err)
 	}
 	got, err := config.LoadAIEnabledAgentsFile(paths.AIEnabledAgentsFile())
 	if err != nil {
@@ -1743,9 +1743,9 @@ func TestSettingsAIEnabledAgentsWarnsWhenDefaultModeDisabled(t *testing.T) {
 	if err := ai.setMode(aiModeCodex); err != nil {
 		t.Fatalf("setMode(codex) error = %v", err)
 	}
-	paths, err := pickerBackendConfigPaths(func() (string, error) { return home, nil }, func(string) string { return "" })
+	paths, err := configPaths(func() (string, error) { return home, nil }, func(string) string { return "" })
 	if err != nil {
-		t.Fatalf("pickerBackendConfigPaths() error = %v", err)
+		t.Fatalf("configPaths() error = %v", err)
 	}
 	if err := config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
 		t.Fatalf("SaveAIEnabledAgentsFile() error = %v", err)
@@ -1781,7 +1781,7 @@ func TestSettingsAIEnabledAgentsWarnsWhenDefaultModeDisabled(t *testing.T) {
 	}
 }
 
-func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
+func TestSettingsHubKeepsLabsSectionWithoutRetiredPickerChoices(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -1834,13 +1834,11 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 		hasEntryLabelContaining(labsOptions.Entries, "Desktop notifications") {
 		t.Fatalf("labs settings entries = %#v, want Desktop notifications moved to Notifications", labsOptions.Entries)
 	}
-	for _, entry := range labsOptions.Entries {
-		if strings.HasPrefix(entry.Value, settingsActionPrefixPicker) {
-			t.Fatalf("labs settings entries = %#v, want no picker backend choices", labsOptions.Entries)
-		}
-	}
 	if hasEntryLabelContaining(labsOptions.Entries, "Picker source") {
-		t.Fatalf("labs settings entries = %#v, want no native-only picker source row", labsOptions.Entries)
+		t.Fatalf("labs settings entries = %#v, want no picker source row", labsOptions.Entries)
+	}
+	if _, ok := settingsEntryMetaForValue("picker-backend:native"); ok {
+		t.Fatal("retired picker backend action must not retain an owner contract")
 	}
 	if hasEntryValue(labsOptions.Entries, "labs:keybindings") {
 		t.Fatalf("labs settings entries = %#v, want no hidden keybindings compatibility producer", labsOptions.Entries)
@@ -1849,58 +1847,8 @@ func TestSettingsHubKeepsLabsSectionWithoutPickerBackendChoices(t *testing.T) {
 		t.Fatal("labs:keybindings must not retain an owner contract after its producer and compatibility handler are removed")
 	}
 
-	paths, err := config.Homes{HomeDir: home}.Paths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := config.LoadPickerBackendFile(paths.PickerBackendFile())
-	if err != nil {
-		t.Fatalf("LoadPickerBackendFile() error = %v", err)
-	}
-	if got != config.PickerBackendNative {
-		t.Fatalf("picker backend = %q, want %q", got, config.PickerBackendNative)
-	}
 	if len(tmuxCalls) != 0 {
 		t.Fatalf("tmux calls = %#v, want none", tmuxCalls)
-	}
-}
-
-func TestSettingsLegacyPickerConfigStillResolvesNativeWithoutLabsExposure(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	paths, err := config.Homes{HomeDir: home}.Paths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, paths.PickerBackendFile(), "fzf\n")
-
-	lookupSaved := func(string) string { return "" }
-	if got := resolvePickerBackendWithConfig(func() (string, error) { return home, nil }, lookupSaved); got != intpicker.BackendNative {
-		t.Fatalf("saved legacy picker backend resolved to %q, want native", got)
-	}
-	if got, err := config.LoadPickerBackendFile(paths.PickerBackendFile()); err != nil || got != config.PickerBackendNative {
-		t.Fatalf("saved legacy picker compatibility = (%q, %v), want (native, nil)", got, err)
-	}
-	cmd := &settingsCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: lookupSaved,
-	}
-	if hasEntryLabelContaining(cmd.labsEntries(), "Picker source") {
-		t.Fatalf("Labs entries = %#v, want compatibility read hidden from Settings", cmd.labsEntries())
-	}
-
-	lookupEnv := func(name string) string {
-		if name == intpicker.BackendEnv {
-			return "fzf"
-		}
-		return ""
-	}
-	if got := resolvePickerBackendWithConfig(func() (string, error) { return home, nil }, lookupEnv); got != intpicker.BackendNative {
-		t.Fatalf("legacy picker env resolved to %q, want native", got)
-	}
-	if got, ok := pickerBackendFromEnv(lookupEnv); !ok || got != intpicker.BackendNative {
-		t.Fatalf("legacy picker env compatibility = (%q, %v), want (native, true)", got, ok)
 	}
 }
 

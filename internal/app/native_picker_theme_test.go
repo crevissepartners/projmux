@@ -15,7 +15,7 @@ import (
 // the switch sub-pickers — must still pick up the explicit global `[theme]` at
 // the shared choke point, instead of falling back to the built-in default. The
 // global config is injected via XDG_CONFIG_HOME so the test is hermetic.
-func TestRunPickerOptionBackendThemesFromGlobalConfigWhenUnset(t *testing.T) {
+func TestRunNativePickerOptionThemesFromGlobalConfigWhenUnset(t *testing.T) {
 	t.Parallel()
 
 	configHome := t.TempDir()
@@ -33,18 +33,17 @@ foreground = "#aabbcc"
 	}
 
 	var gotTheme *theme.EffectiveTheme
-	_, err := runPickerOptionBackend(
+	_, err := runNativePickerOption(
 		func() (string, error) { return configHome, nil },
 		lookupEnv,
 		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			gotTheme = options.Theme
 			return intpicker.Result{Key: "enter", Value: "x"}, nil
 		}),
-		nil,
 		intpickercompat.Options{UI: "sessions"},
 	)
 	if err != nil {
-		t.Fatalf("runPickerOptionBackend() error = %v", err)
+		t.Fatalf("runNativePickerOption() error = %v", err)
 	}
 	if gotTheme == nil {
 		t.Fatal("native picker Theme = nil, want global-config effective theme")

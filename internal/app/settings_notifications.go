@@ -609,7 +609,7 @@ func (c *settingsCommand) setDesktopNotifyMode(value string) error {
 		return fmt.Errorf("unknown desktop notification mode: %s", value)
 	}
 	saved := desktopNotifyConfigValue(mode)
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}

@@ -22,7 +22,6 @@ const (
 type quitCommand struct {
 	lookupEnv    func(string) string
 	runner       tmuxRunner
-	picker       intpickercompat.Runner
 	nativePicker intpicker.Runner
 }
 
@@ -67,7 +66,7 @@ func (c *quitCommand) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *quitCommand) pickAction() (string, error) {
-	result, err := runPickerOptionBackend(os.UserHomeDir, c.lookupEnv, c.nativePicker, c.picker, quitActionOptions())
+	result, err := runNativePickerOption(os.UserHomeDir, c.lookupEnv, c.nativePicker, quitActionOptions())
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return "", nil

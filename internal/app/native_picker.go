@@ -7,8 +7,7 @@ import (
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
-func runPickerOptionBackend(homeDir func() (string, error), lookupEnv func(string) string, native intpicker.Runner, compat intpickercompat.Runner, options intpickercompat.Options) (intpickercompat.Result, error) {
-	_ = compat
+func runNativePickerOption(homeDir func() (string, error), lookupEnv func(string) string, native intpicker.Runner, options intpickercompat.Options) (intpickercompat.Result, error) {
 	if native == nil {
 		return intpickercompat.Result{}, fmt.Errorf("native picker is not configured")
 	}

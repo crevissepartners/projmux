@@ -20,16 +20,9 @@ import (
 )
 
 const (
-	BackendEnv           = "PROJMUX_PICKER_BACKEND"
 	NativeLaunchKeyEnv   = "PROJMUX_NATIVE_LAUNCH_KEY"
 	NativeDebugLogEnv    = "PROJMUX_NATIVE_DEBUG_LOG"
 	NativeTTYFallbackEnv = "PROJMUX_NATIVE_TTY_FALLBACK"
-)
-
-type Backend string
-
-const (
-	BackendNative Backend = "native"
 )
 
 type ActionIntent string
@@ -120,13 +113,6 @@ type Result struct {
 
 type Runner interface {
 	Run(options Options) (Result, error)
-}
-
-func ResolveBackend(lookup func(string) string) Backend {
-	if lookup != nil {
-		_ = lookup(BackendEnv)
-	}
-	return BackendNative
 }
 
 func nativeLocalizedText(key i18n.Key, fallback string) string {
@@ -1966,7 +1952,7 @@ func nativeChromeLineCount(options Options) int {
 		lines += nativeTextLineCount(header)
 	}
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
-		lines += 1 + nativeTextLineCount(footer) // fzf footer border + footer text
+		lines += 1 + nativeTextLineCount(footer) // footer separator + footer text
 	}
 	return lines
 }

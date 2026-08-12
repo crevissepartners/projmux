@@ -956,7 +956,7 @@ func BuildPopupSessionsCommand(binaryPath string) (string, error) {
 	return buildExecCommand(binaryPath, "sessions", "--ui=popup"), nil
 }
 
-// BuildSessionPopupPreviewCommand builds the shell command used by fzf preview
+// BuildSessionPopupPreviewCommand builds the shell command used by picker preview
 // panes for the existing `projmux session-popup preview {2}` flow.
 func BuildSessionPopupPreviewCommand(binaryPath string) (string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)
@@ -967,7 +967,7 @@ func BuildSessionPopupPreviewCommand(binaryPath string) (string, error) {
 	return buildExecCommand(binaryPath, "session-popup", "preview") + " {2}", nil
 }
 
-// BuildSessionPopupCycleCommand builds the shell command used by fzf bindings
+// BuildSessionPopupCycleCommand builds the shell command used by picker actions
 // to move popup preview selection for the focused tmux session.
 func BuildSessionPopupCycleCommand(binaryPath, subcommand, direction string) (string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)
@@ -988,7 +988,7 @@ func BuildSessionPopupCycleCommand(binaryPath, subcommand, direction string) (st
 	return buildExecCommand(binaryPath, "session-popup", subcommand) + " {2} " + shellQuote(direction), nil
 }
 
-// BuildSwitchPreviewCommand builds the shell command used by fzf preview panes
+// BuildSwitchPreviewCommand builds the shell command used by picker preview panes
 // for the existing `projmux switch preview {2}` flow.
 func BuildSwitchPreviewCommand(binaryPath, ui string) (string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)
@@ -1004,7 +1004,7 @@ func BuildSwitchPreviewCommand(binaryPath, ui string) (string, error) {
 	return buildExecCommand(binaryPath, "switch", "preview", "--ui="+ui) + " {2}", nil
 }
 
-// BuildSwitchCycleWindowCommand builds the shell command used by fzf bindings
+// BuildSwitchCycleWindowCommand builds the shell command used by picker actions
 // to move switch preview window selection for the focused candidate.
 func BuildSwitchCycleWindowCommand(binaryPath, direction string) (string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)
@@ -1020,7 +1020,7 @@ func BuildSwitchCycleWindowCommand(binaryPath, direction string) (string, error)
 	return buildExecCommand(binaryPath, "switch", "cycle-window") + " {2} " + shellQuote(direction), nil
 }
 
-// BuildSwitchCyclePaneCommand builds the shell command used by fzf bindings to
+// BuildSwitchCyclePaneCommand builds the shell command used by picker actions to
 // move switch preview pane selection for the focused candidate.
 func BuildSwitchCyclePaneCommand(binaryPath, direction string) (string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)
@@ -1036,7 +1036,7 @@ func BuildSwitchCyclePaneCommand(binaryPath, direction string) (string, error) {
 	return buildExecCommand(binaryPath, "switch", "cycle-pane") + " {2} " + shellQuote(direction), nil
 }
 
-// BuildSwitchSidebarFocusCommand builds the shell command used by fzf sidebar
+// BuildSwitchSidebarFocusCommand builds the shell command used by picker sidebar
 // focus bindings to jump to an already-existing session for the focused path.
 func BuildSwitchSidebarFocusCommand(binaryPath string) (string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)

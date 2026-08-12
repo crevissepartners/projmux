@@ -472,7 +472,7 @@ func (c *statusCommand) runResources(args []string, stdout, stderr io.Writer) er
 	if !systemstatus.Supported() {
 		return nil
 	}
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return nil
 	}

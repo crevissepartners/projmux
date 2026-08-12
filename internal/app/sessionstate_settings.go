@@ -804,7 +804,7 @@ func (c *settingsCommand) currentSessionStateAutosave() sessionStateEffectiveTog
 }
 
 func (c *settingsCommand) currentSessionStateAutosaveInterval() sessionStateEffectiveInterval {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return sessionStateEffectiveInterval{Duration: defaultSessionStateAutosaveInterval, Source: "default"}
 	}
@@ -828,7 +828,7 @@ func sessionStateToggleStateDefault(homeDir func() (string, error), lookupEnv fu
 			return sessionStateEffectiveToggle{Mode: config.NormalizeSessionStateToggle(raw), Source: envName + " env"}
 		}
 	}
-	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return sessionStateEffectiveToggle{Mode: fallback, Source: "default"}
 	}
@@ -843,7 +843,7 @@ func sessionStateToggleStateDefault(homeDir func() (string, error), lookupEnv fu
 }
 
 func sessionStateToggleFileStateDefault(homeDir func() (string, error), lookupEnv func(string) string, fallback config.SessionStateToggle, file func(config.Paths) string) sessionStateEffectiveToggle {
-	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return sessionStateEffectiveToggle{Mode: fallback, Source: "default"}
 	}
@@ -879,7 +879,7 @@ func (c *settingsCommand) currentProjectSessionStateAutosave(identity projectSes
 }
 
 func (c *settingsCommand) currentProjectSessionStateAutosaveMode(sessionName string) (config.SessionStateProjectToggle, string) {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return config.SessionStateProjectInherit, "default"
 	}
@@ -907,7 +907,7 @@ func (c *settingsCommand) currentSidebarStartupPicker() sessionStateEffectiveTog
 }
 
 func (c *settingsCommand) setSessionStateAutosaveInterval(value time.Duration, stdout io.Writer) error {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}
@@ -934,7 +934,7 @@ func (c *settingsCommand) setProjectSessionStateAutosave(value string) error {
 	if identity.Err != nil {
 		return identity.Err
 	}
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}
@@ -980,7 +980,7 @@ func formatSessionStateAutosaveInterval(value time.Duration) string {
 }
 
 func (c *settingsCommand) setSessionStateToggle(value config.SessionStateToggle, file func(config.Paths) string, messageLabel string) error {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}
@@ -1058,7 +1058,7 @@ func (c *settingsCommand) confirmSessionStateDeleteForSession(sessionName, ui, p
 }
 
 func (c *settingsCommand) settingsSessionStateStore() (sessionstate.Store, error) {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return sessionstate.Store{}, err
 	}
@@ -1126,7 +1126,7 @@ func sessionStateToggleEnabledDefault(homeDir func() (string, error), lookupEnv 
 	if raw := strings.TrimSpace(lookupEnv(envName)); raw != "" {
 		return config.NormalizeSessionStateToggle(raw).Enabled()
 	}
-	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return fallback.Enabled()
 	}

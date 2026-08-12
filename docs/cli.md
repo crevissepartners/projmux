@@ -64,10 +64,9 @@ sub-verbs are entry hooks invoked by tmux keybindings (e.g.
 `sidebar-focus` is wired to the sidebar's focus binding so navigation keeps
 the active session in sync).
 
-Settings > Labs remains available for experimental settings, but picker backend
-selection/source rows have been retired. The native picker is always used;
-legacy `PROJMUX_PICKER_BACKEND` and `picker-backend` values remain read-compatible
-and normalize to native.
+Settings > Labs remains available for experimental settings, but picker
+selection/source rows have been retired. The native picker is always used, and
+there is no picker selection configuration or migration behavior.
 
 ## setup
 

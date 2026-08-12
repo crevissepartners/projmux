@@ -18,31 +18,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
-func TestResolveBackendDefaultsToNative(t *testing.T) {
-	t.Parallel()
-
-	if got := ResolveBackend(nil); got != BackendNative {
-		t.Fatalf("ResolveBackend(nil) = %q, want %q", got, BackendNative)
-	}
-	if got := ResolveBackend(func(string) string { return "unknown" }); got != BackendNative {
-		t.Fatalf("ResolveBackend(unknown) = %q, want %q", got, BackendNative)
-	}
-}
-
-func TestResolveBackendIgnoresDeprecatedFZFOverride(t *testing.T) {
-	t.Parallel()
-
-	got := ResolveBackend(func(name string) string {
-		if name != BackendEnv {
-			t.Fatalf("env name = %q, want %q", name, BackendEnv)
-		}
-		return "fzf"
-	})
-	if got != BackendNative {
-		t.Fatalf("ResolveBackend(fzf) = %q, want %q", got, BackendNative)
-	}
-}
-
 func TestFilterItemsUsesSearchTextNotMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -87,7 +62,7 @@ func TestFilterItemsRanksBetterMatchesFirst(t *testing.T) {
 	}
 }
 
-func TestFilterItemsPrefersFZFBoundaryAndCamelCaseMatches(t *testing.T) {
+func TestFilterItemsPrefersBoundaryAndCamelCaseMatches(t *testing.T) {
 	t.Parallel()
 
 	items := []Item{
@@ -99,7 +74,7 @@ func TestFilterItemsPrefersFZFBoundaryAndCamelCaseMatches(t *testing.T) {
 
 	filtered := FilterItems(items, "fb")
 	if got, want := valuesOf(filtered)[:3], []string{"boundary", "camel", "late-boundary"}; !equalStringSlices(got, want) {
-		t.Fatalf("FilterItems(fb) leading values = %#v, want fzf-like boundary/camel ranking %#v", got, want)
+		t.Fatalf("FilterItems(fb) leading values = %#v, want boundary/camel ranking %#v", got, want)
 	}
 }
 
@@ -268,11 +243,11 @@ func TestFilterItemsSearchesHiddenValueWhenNoSearchKey(t *testing.T) {
 
 	filtered := FilterItems(items, "apply")
 	if got, want := valuesOf(filtered), []string{"apply"}; !equalStringSlices(got, want) {
-		t.Fatalf("FilterItems(apply) values = %#v, want fzf hidden-value match %#v", got, want)
+		t.Fatalf("FilterItems(apply) values = %#v, want hidden-value match %#v", got, want)
 	}
 }
 
-func TestFilterItemsUsesFZFSmartCase(t *testing.T) {
+func TestFilterItemsUsesSmartCase(t *testing.T) {
 	t.Parallel()
 
 	items := []Item{
@@ -283,12 +258,12 @@ func TestFilterItemsUsesFZFSmartCase(t *testing.T) {
 
 	lower := FilterItems(items, "codex")
 	if got, want := valuesOf(lower), []string{"lower", "title", "upper"}; !equalStringSlices(got, want) {
-		t.Fatalf("FilterItems(codex) values = %#v, want fzf smart-case insensitive %#v", got, want)
+		t.Fatalf("FilterItems(codex) values = %#v, want smart-case insensitive %#v", got, want)
 	}
 
 	title := FilterItems(items, "Codex")
 	if got, want := valuesOf(title), []string{"title"}; !equalStringSlices(got, want) {
-		t.Fatalf("FilterItems(Codex) values = %#v, want fzf smart-case sensitive %#v", got, want)
+		t.Fatalf("FilterItems(Codex) values = %#v, want smart-case sensitive %#v", got, want)
 	}
 }
 
@@ -303,7 +278,7 @@ func TestFilterItemsPreservesSearchKeyOrder(t *testing.T) {
 
 	filtered := FilterItems(items, "api")
 	if got, want := valuesOf(filtered), []string{"1", "2", "3"}; !equalStringSlices(got, want) {
-		t.Fatalf("FilterItems(api) values = %#v, want fzf reload-preserved order %#v", got, want)
+		t.Fatalf("FilterItems(api) values = %#v, want search-key order %#v", got, want)
 	}
 }
 
@@ -1099,7 +1074,7 @@ func TestNativeInteractiveUsesOptionsThemeForFrame(t *testing.T) {
 	}
 }
 
-func TestNativeInteractiveSupportsFZFNavigationKeys(t *testing.T) {
+func TestNativeInteractiveSupportsControlNavigationKeys(t *testing.T) {
 	t.Parallel()
 
 	items := []Item{
@@ -1115,7 +1090,7 @@ func TestNativeInteractiveSupportsFZFNavigationKeys(t *testing.T) {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
 	if result.Key != "enter" || result.Value != "/repo/api" {
-		t.Fatalf("result = %#v, want Ctrl-J/Ctrl-N/Ctrl-P/Ctrl-K to navigate like fzf", result)
+		t.Fatalf("result = %#v, want Ctrl-J/Ctrl-N/Ctrl-P/Ctrl-K navigation", result)
 	}
 }
 
@@ -1291,7 +1266,7 @@ func TestNativeInteractiveRendersBorderFrame(t *testing.T) {
 
 	rendered := out.String()
 	if !strings.Contains(rendered, "╭") || !strings.Contains(rendered, "╰") || !strings.Contains(rendered, "│") {
-		t.Fatalf("native output = %q, want fzf-like rounded border frame", rendered)
+		t.Fatalf("native output = %q, want rounded border frame", rendered)
 	}
 }
 
@@ -2251,7 +2226,7 @@ func TestNativeInteractiveRendersSelectedPreview(t *testing.T) {
 		t.Fatalf("native output = %q, want selected preview output", out.String())
 	}
 	if strings.Contains(out.String(), "Type to search") {
-		t.Fatalf("native output = %q, want fzf-like prompt without generic help row", out.String())
+		t.Fatalf("native output = %q, want search prompt without generic help row", out.String())
 	}
 }
 
@@ -2314,10 +2289,10 @@ func TestNativeInteractiveRendersWidePreviewBesideList(t *testing.T) {
 		t.Fatalf("native output = %q, want side-by-side preview", rendered)
 	}
 	if strings.Contains(rendered, " │ preview\n") {
-		t.Fatalf("native output = %q, want fzf-like preview without synthetic title row", rendered)
+		t.Fatalf("native output = %q, want preview without synthetic title row", rendered)
 	}
 	if strings.Contains(rendered, "│ preview") {
-		t.Fatalf("native output = %q, want fzf-like preview border without padded title column", rendered)
+		t.Fatalf("native output = %q, want preview border without padded title column", rendered)
 	}
 }
 
@@ -2423,7 +2398,7 @@ func TestNativeInteractiveUsesScrollbarForLongLists(t *testing.T) {
 
 	rendered := out.String()
 	if !strings.Contains(rendered, nativeScrollbar) {
-		t.Fatalf("native output = %q, want fzf-like scrollbar", rendered)
+		t.Fatalf("native output = %q, want proportional scrollbar", rendered)
 	}
 	if strings.Contains(rendered, "more below") || strings.Contains(rendered, "more above") {
 		t.Fatalf("native output = %q, want scrollbar instead of textual overflow rows", rendered)
@@ -2446,7 +2421,7 @@ func TestNativeInteractiveUsesAvailableHeightForSimpleLists(t *testing.T) {
 
 	rendered := out.String()
 	if !strings.Contains(rendered, "item 19") {
-		t.Fatalf("native output = %q, want simple list to use full fzf-height surface", rendered)
+		t.Fatalf("native output = %q, want simple list to use full-height surface", rendered)
 	}
 	if strings.Contains(rendered, nativeScrollbar) {
 		t.Fatalf("native output = %q, want no scrollbar when all rows fit", rendered)
@@ -2491,7 +2466,7 @@ func TestNativeInteractiveRendersFooterAtBottom(t *testing.T) {
 		t.Fatalf("footer line = %q, want footer above bottom border", footerLine)
 	}
 	if !strings.Contains(separatorLine, nativeGapLine) {
-		t.Fatalf("separator line = %q, want fzf-like footer border", separatorLine)
+		t.Fatalf("separator line = %q, want footer separator", separatorLine)
 	}
 	promptIndex := -1
 	footerIndex := -1
@@ -2688,7 +2663,7 @@ func TestNativePreviewWidthUsesPreviewWindowPercent(t *testing.T) {
 
 	for _, tt := range tests {
 		if got := nativePreviewWidth(tt.contentCols, "right,60%,border-left"); got != tt.want {
-			t.Fatalf("nativePreviewWidth(%d) = %d, want fzf-measured content width %d", tt.contentCols, got, tt.want)
+			t.Fatalf("nativePreviewWidth(%d) = %d, want reference content width %d", tt.contentCols, got, tt.want)
 		}
 	}
 }
@@ -2707,12 +2682,12 @@ func TestNativePreviewHeightUsesPreviewWindowPercent(t *testing.T) {
 
 	for _, tt := range tests {
 		if got := nativePreviewHeight(tt.contentRows, "down,25%,border-top"); got != tt.want {
-			t.Fatalf("nativePreviewHeight(%d) = %d, want fzf-measured content height %d", tt.contentRows, got, tt.want)
+			t.Fatalf("nativePreviewHeight(%d) = %d, want reference content height %d", tt.contentRows, got, tt.want)
 		}
 	}
 }
 
-func TestNativeInteractiveRendersFZFLikeMultilineSelection(t *testing.T) {
+func TestNativeInteractiveRendersMultilineSelection(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
@@ -2730,7 +2705,7 @@ func TestNativeInteractiveRendersFZFLikeMultilineSelection(t *testing.T) {
 
 	rendered := out.String()
 	if !strings.Contains(rendered, "▌") || !strings.Contains(rendered, "48;2;44;56;61") {
-		t.Fatalf("native output = %q, want fzf-like pointer and current-row color", rendered)
+		t.Fatalf("native output = %q, want pointer and current-row color", rendered)
 	}
 	if strings.Contains(rendered, "> api") {
 		t.Fatalf("native output = %q, want multiline selection to avoid legacy > pointer", rendered)
@@ -2815,7 +2790,7 @@ func TestNativeInteractiveHighlightsSimpleQueryMatches(t *testing.T) {
 	rendered := out.String()
 	if !strings.Contains(rendered, nativeHighlightStart+"C"+nativeReset+"\x1b[36m") ||
 		!strings.Contains(rendered, nativeHighlightStart+"o"+nativeReset+"\x1b[36m") {
-		t.Fatalf("native output = %q, want fzf-like query highlight with original ANSI style restored", rendered)
+		t.Fatalf("native output = %q, want query highlight with original ANSI style restored", rendered)
 	}
 }
 
@@ -2837,7 +2812,7 @@ func TestNativeInteractiveDoesNotHighlightSearchKeyReloadLists(t *testing.T) {
 	}}, "bravo", 0, 0, nativeLayout{Rows: 8, Cols: 48})
 
 	if rendered := out.String(); strings.Contains(rendered, nativeHighlightStart) {
-		t.Fatalf("native output = %q, want search-key reload lists to preserve fzf disabled-filter rendering without match highlights", rendered)
+		t.Fatalf("native output = %q, want search-key lists without match highlights", rendered)
 	}
 }
 
@@ -2871,7 +2846,7 @@ func TestNativeInteractiveRendersMultilineGapLine(t *testing.T) {
 
 	rendered := out.String()
 	if !strings.Contains(rendered, projmuxpicker.MutedStart+strings.Repeat(nativeGapLine, 8)) {
-		t.Fatalf("native output = %q, want muted fzf-like full-width multiline gap line", rendered)
+		t.Fatalf("native output = %q, want muted full-width multiline gap line", rendered)
 	}
 	if strings.Contains(rendered, nativeGapSentinel) {
 		t.Fatalf("native output leaked gap sentinel: %q", rendered)
@@ -2905,10 +2880,10 @@ func TestNativeInteractiveRendersDownPreviewBelowList(t *testing.T) {
 		t.Fatalf("native output = %q, want bottom preview", rendered)
 	}
 	if strings.Contains(rendered, "\npreview\n") {
-		t.Fatalf("native output = %q, want fzf-like bottom preview without synthetic title row", rendered)
+		t.Fatalf("native output = %q, want bottom preview without synthetic title row", rendered)
 	}
 	if strings.Contains(rendered, "\n\n─") {
-		t.Fatalf("native output = %q, want fzf-like bottom preview without blank row before border", rendered)
+		t.Fatalf("native output = %q, want bottom preview without blank row before border", rendered)
 	}
 }
 

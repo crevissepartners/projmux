@@ -163,6 +163,14 @@ tmux -L "$recorder_socket" set-option -p -t "$recorder_pane" @projmux_ai_topic "
 tmux -L "$recorder_socket" set-option -p -t "$recorder_pane" @projmux_ai_topic_manual 1
 recorder_raw_title="$(tmux -L "$recorder_socket" display-message -p -t "$recorder_pane" '#{pane_title}')"
 
+# Retired picker-selection artifacts are inert: the Settings popup stays on the
+# native path without reading, deleting, rewriting, propagating, or warning
+# about either value.
+retired_picker_file="$XDG_CONFIG_HOME/projmux/picker-backend"
+mkdir -p "$(dirname "$retired_picker_file")"
+printf 'retired-value\n' >"$retired_picker_file"
+retired_picker_inode="$(stat -c %i "$retired_picker_file")"
+
 recorder_rename_prompt() {
   tmux -L "$recorder_socket" command-prompt -b -t "$recorder_client" \
     -p "pane label:" -I '#{@projmux_pane_label}' \
@@ -215,8 +223,8 @@ smoke_wait_for "cleared pane label" recorder_label_empty
 assert_recorder_identity_metadata
 
 tmux -L "$recorder_socket" display-popup -c "$recorder_client" \
-  -T "Recorder E2E" -w 72 -h 20 -E \
-  "env PROJMUX_PICKER_BACKEND=native '$bin' settings" &
+	-T "Recorder E2E" -w 72 -h 20 -E \
+	"env PROJMUX_PICKER_BACKEND=retired-value '$bin' settings" &
 recorder_popup_pid=$!
 
 smoke_wait_for "Settings root" grep -aFq "Settings >" "$recorder_log"
@@ -261,6 +269,15 @@ fi
 printf '\003' >&9
 smoke_wait_for "Settings popup exit" sh -c "! kill -0 '$recorder_popup_pid' 2>/dev/null"
 wait "$recorder_popup_pid"
+if [[ "$(cat "$retired_picker_file")" != "retired-value" ]] ||
+  [[ "$(stat -c %i "$retired_picker_file")" != "$retired_picker_inode" ]]; then
+  echo "retired picker backend file was deleted or rewritten" >&2
+  exit 1
+fi
+if grep -aiEq 'picker backend|picker-backend|PROJMUX_PICKER_BACKEND' "$recorder_log"; then
+  echo "retired picker backend artifact produced visible output" >&2
+  exit 1
+fi
 tmux -L "$recorder_socket" kill-server
 wait "$recorder_client_pid" || true
 exec 9>&-

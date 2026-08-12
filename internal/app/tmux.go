@@ -222,7 +222,7 @@ func (c *tmuxCommand) projectSessionStateAutosaveModeForSession(ctx context.Cont
 	if sessionName == "" {
 		return config.SessionStateProjectInherit, false, nil
 	}
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return config.SessionStateProjectInherit, false, err
 	}
@@ -435,12 +435,8 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 		return fmt.Errorf("stat tmux popup marker: %w", err)
 	}
 
-	backend := c.pickerBackend()
-	popupBodyStyle := ""
-	if backend == intpicker.BackendNative {
-		popupBodyStyle = c.nativePickerPopupBodyStyle(popupCtx.ContextDir)
-	}
-	command, options, err := buildPopupToggleWithPickerBackendAndStyle(mode, binaryPath, marker, popupCtx, backend, c.lookupEnv, popupBodyStyle)
+	popupBodyStyle := c.nativePickerPopupBodyStyle(popupCtx.ContextDir)
+	command, options, err := buildPopupToggleWithStyle(mode, binaryPath, marker, popupCtx, c.lookupEnv, popupBodyStyle)
 	if err != nil {
 		return err
 	}
@@ -524,7 +520,7 @@ func (c *tmuxCommand) runPopupSwitch(args []string, stderr io.Writer) error {
 		options = c.switchPopup(popupCtx)
 	}
 	options = withHookTrustInlineEnv(options)
-	options = c.applyPickerPopupBackend(options)
+	options = c.applyNativePickerPopup(options)
 
 	if err := c.popup.DisplayPopupWithOptions(context.Background(), command, options); err != nil {
 		return fmt.Errorf("display tmux popup switch: %w", err)
@@ -560,7 +556,7 @@ func (c *tmuxCommand) runPopupSessions(args []string, stderr io.Writer) error {
 	if c.sessionsPopup != nil {
 		options = c.sessionsPopup(popupCtx)
 	}
-	options = c.applyPickerPopupBackend(options)
+	options = c.applyNativePickerPopup(options)
 
 	if err := c.popup.DisplayPopupWithOptions(context.Background(), command, options); err != nil {
 		return fmt.Errorf("display tmux popup sessions: %w", err)
@@ -857,10 +853,6 @@ func (c *tmuxCommand) popupContext(ctx context.Context) tmuxPopupContext {
 	}
 }
 
-func (c *tmuxCommand) pickerBackend() intpicker.Backend {
-	return resolvePickerBackendWithConfig(c.homeDir, c.lookupEnv)
-}
-
 func (c *tmuxCommand) nativePickerPopupBodyStyle(projectPath string) string {
 	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, projectPath)
 	if err != nil {
@@ -881,18 +873,15 @@ func nativePickerPopupBodyStyleFromEffective(effective theme.EffectiveTheme) str
 	return strings.Join(style, ",")
 }
 
-func (c *tmuxCommand) applyPickerPopupBackend(options inttmux.PopupOptions) inttmux.PopupOptions {
+func (c *tmuxCommand) applyNativePickerPopup(options inttmux.PopupOptions) inttmux.PopupOptions {
 	env := options.Env
 	if env == nil {
 		env = map[string]string{}
 	} else {
 		env = maps.Clone(env)
 	}
-	inheritPopupPickerEnv(env, c.lookupEnv)
-	if c.pickerBackend() == intpicker.BackendNative {
-		options.NoBorder = true
-		env[intpicker.BackendEnv] = string(intpicker.BackendNative)
-	}
+	inheritPopupEnv(env, c.lookupEnv)
+	options.NoBorder = true
 	if len(env) == 0 {
 		options.Env = nil
 	} else {
@@ -951,7 +940,7 @@ func isRecoverablePopupCloseError(err error) bool {
 }
 
 func buildPopupToggle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext) (string, inttmux.PopupOptions, error) {
-	return buildPopupToggleWithPickerBackend(mode, binaryPath, marker, ctx, resolvePickerBackend(os.Getenv), os.Getenv)
+	return buildPopupToggleWithStyle(mode, binaryPath, marker, ctx, os.Getenv, "")
 }
 
 func addHookTrustPopupTargetEnv(env map[string]string, ctx tmuxPopupContext) {
@@ -982,11 +971,7 @@ func addSwitchTargetClientEnv(env map[string]string, ctx tmuxPopupContext) {
 	}
 }
 
-func buildPopupToggleWithPickerBackend(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext, backend intpicker.Backend, lookupEnv func(string) string) (string, inttmux.PopupOptions, error) {
-	return buildPopupToggleWithPickerBackendAndStyle(mode, binaryPath, marker, ctx, backend, lookupEnv, "")
-}
-
-func buildPopupToggleWithPickerBackendAndStyle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext, backend intpicker.Backend, lookupEnv func(string) string, popupBodyStyle string) (string, inttmux.PopupOptions, error) {
+func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker string, ctx tmuxPopupContext, lookupEnv func(string) string, popupBodyStyle string) (string, inttmux.PopupOptions, error) {
 	options := inttmux.PopupOptions{
 		Target:        ctx.OriginPane,
 		CloseBehavior: inttmux.PopupCloseOnExit,
@@ -1013,7 +998,7 @@ func buildPopupToggleWithPickerBackendAndStyle(mode tmuxPopupToggleMode, binaryP
 		env["TMUX_SESSIONIZER_CONTEXT_PANE"] = ctx.OriginPane
 		commandArgs = []string{"switch", "--ui=popup"}
 	case "sessionizer-sidebar":
-		options.Width = sessionizerSidebarWidth(ctx.ClientWidth, backend)
+		options.Width = sessionizerSidebarWidth(ctx.ClientWidth)
 		options.Height = sidebarPopupHeight(ctx.ClientHeight)
 		options.X = "0"
 		options.Y = "0"
@@ -1069,20 +1054,16 @@ func buildPopupToggleWithPickerBackendAndStyle(mode tmuxPopupToggleMode, binaryP
 	if launchKey := nativeLaunchKeyForPopupMode(mode.Raw); launchKey != "" {
 		env[intpicker.NativeLaunchKeyEnv] = launchKey
 	}
-	inheritPopupPickerEnv(env, lookupEnv)
-	if backend == intpicker.BackendNative {
-		options.NoBorder = true
-		options.BodyStyle = strings.TrimSpace(popupBodyStyle)
-		env[intpicker.BackendEnv] = string(intpicker.BackendNative)
-	}
+	inheritPopupEnv(env, lookupEnv)
+	options.NoBorder = true
+	options.BodyStyle = strings.TrimSpace(popupBodyStyle)
 
 	options.Cwd = cwd
 	options.Env = env
 	return buildMarkedPopupCommand(binaryPath, commandArgs, marker, cwd, env), options, nil
 }
 
-func sessionizerSidebarWidth(clientWidth int, backend intpicker.Backend) string {
-	_ = backend
+func sessionizerSidebarWidth(clientWidth int) string {
 	return popupSize(clientWidth, 20, 40)
 }
 
@@ -1097,12 +1078,11 @@ func sidebarPopupHeight(clientHeight int) string {
 	return fmt.Sprintf("%d", max(clientHeight-2, 1))
 }
 
-func inheritPopupPickerEnv(env map[string]string, lookupEnv func(string) string) {
+func inheritPopupEnv(env map[string]string, lookupEnv func(string) string) {
 	if lookupEnv == nil {
 		lookupEnv = os.Getenv
 	}
 	for _, key := range []string{
-		intpicker.BackendEnv,
 		intpicker.NativeDebugLogEnv,
 		intpicker.NativeTTYFallbackEnv,
 		"PROJMUX_PROJDIR",

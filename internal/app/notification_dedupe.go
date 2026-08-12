@@ -34,7 +34,7 @@ func resolveAINotifyDedupeSeconds(homeDir func() (string, error), lookupEnv func
 			return aiNotifyDedupeResolution{Seconds: seconds, Source: aiNotifyDedupeSourceEnv}
 		}
 	}
-	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err == nil {
 		seconds, err := config.LoadAINotifyDedupeSecondsFileDefault(paths.AINotifyDedupeSecondsFile(), defaultAINotifyDedupeSeconds)
 		if err == nil {
@@ -59,7 +59,7 @@ func (c *settingsCommand) setAINotifyDedupeSeconds(seconds int, stdout io.Writer
 	if seconds <= 0 {
 		return fmt.Errorf("AI notify dedupe seconds must be positive")
 	}
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}
