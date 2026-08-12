@@ -78,21 +78,16 @@ func classifyResourcePercent(percent, warningAt float64) liveResourceSeverity {
 }
 
 func formatLiveResourceMetric(label string, percent *int, warningAt int, roles theme.RenderRoles) string {
-	value := "--"
+	value := " --%"
 	if percent != nil {
-		value = fmt.Sprintf("%d", *percent)
+		value = fmt.Sprintf("%3d%%", *percent)
 	}
 	style := roles.StatusTextSecondary
-	state := "unknown"
 	switch classifyLiveResourceSeverity(percent, warningAt) {
-	case liveResourceNormal:
-		state = "normal"
 	case liveResourceWarning:
-		state = "warning"
 		style = roles.StateWarning
 	case liveResourceCritical:
-		state = "critical"
 		style = roles.StateCritical + ",bold"
 	}
-	return fmt.Sprintf("#[fg=%s]%s %s%% %s#[default]", style, label, value, state)
+	return fmt.Sprintf("#[fg=%s]%s %s#[default]", style, label, value)
 }

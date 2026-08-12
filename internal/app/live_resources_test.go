@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -60,22 +61,22 @@ func TestFormatLiveResourcesStatusIndependentStyles(t *testing.T) {
 		{
 			name:    "CPU critical memory normal",
 			metrics: systemstatus.Metrics{CPUPercent: intPointer(90), MemoryPercent: intPointer(74)},
-			want:    " #[fg=critical-role,bold]CPU 90% critical#[default]  #[fg=secondary-role]MEM 74% normal#[default]",
+			want:    " #[fg=critical-role,bold]CPU  90%#[default]  #[fg=secondary-role]MEM  74%#[default]",
 		},
 		{
 			name:    "CPU normal memory warning",
 			metrics: systemstatus.Metrics{CPUPercent: intPointer(69), MemoryPercent: intPointer(75)},
-			want:    " #[fg=secondary-role]CPU 69% normal#[default]  #[fg=warning-role]MEM 75% warning#[default]",
+			want:    " #[fg=secondary-role]CPU  69%#[default]  #[fg=warning-role]MEM  75%#[default]",
 		},
 		{
 			name:    "CPU unknown memory critical",
 			metrics: systemstatus.Metrics{MemoryPercent: intPointer(90)},
-			want:    " #[fg=secondary-role]CPU --% unknown#[default]  #[fg=critical-role,bold]MEM 90% critical#[default]",
+			want:    " #[fg=secondary-role]CPU  --%#[default]  #[fg=critical-role,bold]MEM  90%#[default]",
 		},
 		{
 			name:    "CPU warning memory unknown",
 			metrics: systemstatus.Metrics{CPUPercent: intPointer(70)},
-			want:    " #[fg=warning-role]CPU 70% warning#[default]  #[fg=secondary-role]MEM --% unknown#[default]",
+			want:    " #[fg=warning-role]CPU  70%#[default]  #[fg=secondary-role]MEM  --%#[default]",
 		},
 	}
 	for _, test := range tests {
@@ -104,11 +105,11 @@ func TestFormatLiveResourcesStatusUnknownUsesOnlySecondaryStyle(t *testing.T) {
 	}{
 		{
 			metrics: systemstatus.Metrics{MemoryPercent: intPointer(41)},
-			want:    " #[fg=secondary-role]CPU --% unknown#[default]  #[fg=secondary-role]MEM 41% normal#[default]",
+			want:    " #[fg=secondary-role]CPU  --%#[default]  #[fg=secondary-role]MEM  41%#[default]",
 		},
 		{
 			metrics: systemstatus.Metrics{CPUPercent: intPointer(12)},
-			want:    " #[fg=secondary-role]CPU 12% normal#[default]  #[fg=secondary-role]MEM --% unknown#[default]",
+			want:    " #[fg=secondary-role]CPU  12%#[default]  #[fg=secondary-role]MEM  --%#[default]",
 		},
 	} {
 		got := formatLiveResourcesStatusWithRoles(test.metrics, roles)
@@ -117,6 +118,11 @@ func TestFormatLiveResourcesStatusUnknownUsesOnlySecondaryStyle(t *testing.T) {
 		}
 		if strings.Contains(got, "warning-role") || strings.Contains(got, "critical-role") || strings.Contains(got, "bold") {
 			t.Fatalf("unknown metric gained warning/critical style: %q", got)
+		}
+		for _, forbidden := range []string{"normal", "warning", "critical", "unknown"} {
+			if strings.Contains(got, forbidden) {
+				t.Fatalf("unknown metric output leaked severity word %q: %q", forbidden, got)
+			}
 		}
 	}
 }
@@ -127,12 +133,45 @@ func TestFormatLiveResourcesStatusUsesResolvedThemeRoles(t *testing.T) {
 	metrics := systemstatus.Metrics{CPUPercent: intPointer(75), MemoryPercent: intPointer(95)}
 	for _, preset := range []string{"", "daylight"} {
 		roles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{Preset: preset}))
-		want := " #[fg=" + roles.StateWarning + "]CPU 75% warning#[default]  #[fg=" + roles.StateCritical + ",bold]MEM 95% critical#[default]"
+		want := " #[fg=" + roles.StateWarning + "]CPU  75%#[default]  #[fg=" + roles.StateCritical + ",bold]MEM  95%#[default]"
 		if got := formatLiveResourcesStatusWithRoles(metrics, roles); got != want {
 			t.Fatalf("preset %q output = %q, want semantic roles %q", preset, got, want)
 		}
 	}
 }
+
+func TestLiveResourcePercentSlotsAndSegmentWidthStayFixed(t *testing.T) {
+	t.Parallel()
+	values := []*int{nil, intPointer(0), intPointer(9), intPointer(15), intPointer(69), intPointer(70), intPointer(74), intPointer(75), intPointer(89), intPointer(90), intPointer(99), intPointer(100)}
+	for _, cfg := range []theme.ThemeConfig{{}, {Warning: "#112233", Critical: "#cc2233", Muted: "#667788", TextPrimary: "#ddeeff"}} {
+		roles := theme.RenderRolesFromEffective(theme.ResolveTheme(cfg))
+		var metricWidth, segmentWidth int
+		for _, value := range values {
+			cpu := formatLiveResourceMetric("CPU", value, liveResourceCPUWarningAt, roles)
+			memory := formatLiveResourceMetric("MEM", value, liveResourceMemoryWarningAt, roles)
+			segment := " " + cpu + "  " + memory
+			cpuPlain, memoryPlain, segmentPlain := stripTmuxStyles(cpu), stripTmuxStyles(memory), stripTmuxStyles(segment)
+			if !regexp.MustCompile(`^(CPU|MEM) ( {0,2}[0-9]{1,3}| --)%$`).MatchString(cpuPlain) || !regexp.MustCompile(`^(CPU|MEM) ( {0,2}[0-9]{1,3}| --)%$`).MatchString(memoryPlain) {
+				t.Fatalf("value=%v slots cpu=%q memory=%q", value, cpuPlain, memoryPlain)
+			}
+			if metricWidth == 0 {
+				metricWidth, segmentWidth = len([]rune(cpuPlain)), len([]rune(segmentPlain))
+			}
+			if len([]rune(cpuPlain)) != metricWidth || len([]rune(memoryPlain)) != metricWidth || len([]rune(segmentPlain)) != segmentWidth {
+				t.Fatalf("value=%v visible widths cpu=%d memory=%d segment=%d, want %d/%d/%d (%q)", value, len([]rune(cpuPlain)), len([]rune(memoryPlain)), len([]rune(segmentPlain)), metricWidth, metricWidth, segmentWidth, segmentPlain)
+			}
+			for _, forbidden := range []string{"normal", "warning", "critical", "unknown"} {
+				if strings.Contains(segmentPlain, forbidden) {
+					t.Fatalf("value=%v segment leaked %q: %q", value, forbidden, segmentPlain)
+				}
+			}
+		}
+	}
+}
+
+var tmuxStylePattern = regexp.MustCompile(`#\[[^]]*\]`)
+
+func stripTmuxStyles(value string) string { return tmuxStylePattern.ReplaceAllString(value, "") }
 
 func TestSettingsLiveResourcesTogglePersistsAndUpdatesTmux(t *testing.T) {
 	if !systemstatus.Supported() {

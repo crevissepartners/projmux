@@ -346,15 +346,18 @@ projmux resources
 
 Opens the native, read-only Resource Inspector. It samples only while this
 interactive process is alive, paints `warming` immediately, then refreshes at
-a non-overlapping two-second cadence. Enter drills Project → Window → Pane →
-Pane detail; Esc or Alt-Left returns, and root Esc closes. Search matches the
-current scope's display name and stable tmux id. Tab cycles CPU, Memory, and
-Name sorting; Ctrl-R requests an immediate refresh. A plain `r` remains search
-input.
+a non-overlapping two-second cadence. Right or Enter drills Project → Window →
+Pane → Pane detail; Left returns (and is a no-op at the root), while Esc closes
+the popup at every depth. Search matches the current scope's display name and
+stable tmux id. Tab cycles CPU, Memory, and Name sorting; Ctrl-R requests an
+immediate refresh. A plain `r` remains search input.
 
 CPU list values are host-capacity share; pane detail also shows
-core-equivalent CPU. Memory is explicitly an RSS sum (shared pages can be
-counted more than once) plus its host ratio. `Unassigned`,
+core-equivalent CPU. Project and window rows count panes, while pane rows count
+the attributed processes. Pane rows and detail share the resolved pane identity
+and label the tmux current command, PID/SID, pane id, and TTY separately. Memory
+is explicitly an RSS sum (shared pages can be counted more than once) plus its
+host ratio. `Unassigned`,
 `Shared / ambiguous`, and non-drillable `Other / unattributed` remain explicit,
 as do warming, partial, unavailable, unknown, and overage states. No process
 command list, mutation, history, graph, daemon, persistence, or Session State

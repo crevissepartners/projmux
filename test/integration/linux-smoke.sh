@@ -95,13 +95,15 @@ printf 'on\n' >"$XDG_CONFIG_HOME/projmux/live-resources"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux-resources.conf" "set -g @projmux_live_resources on"
 
 resources_first="$("$bin" status resources)"
-if [[ ! "$resources_first" =~ CPU\ --%.*MEM\ [0-9]+% ]]; then
+if [[ ! "$resources_first" =~ CPU[[:space:]]{2}--%.*MEM[[:space:]]{1,3}[0-9]{1,3}% ]] ||
+  [[ "$resources_first" =~ (normal|warning|critical|unknown) ]]; then
   echo "expected first resource sample to show unavailable CPU and numeric memory, got: $resources_first" >&2
   exit 1
 fi
 sleep 0.1
 resources_second="$("$bin" status resources)"
-if [[ ! "$resources_second" =~ CPU\ [0-9]+%.*MEM\ [0-9]+% ]]; then
+if [[ ! "$resources_second" =~ CPU[[:space:]]{1,3}[0-9]{1,3}%.*MEM[[:space:]]{1,3}[0-9]{1,3}% ]] ||
+  [[ "$resources_second" =~ (normal|warning|critical|unknown) ]]; then
   echo "expected second resource sample to show numeric CPU and memory, got: $resources_second" >&2
   exit 1
 fi

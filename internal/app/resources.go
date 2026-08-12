@@ -109,12 +109,12 @@ func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("run resources picker: %w", err)
 		}
 		if result.Closed {
-			if (result.Key == "esc" || result.Key == "back") && view.back() {
+			if result.Key == "back" && view.back() {
 				continue
 			}
 			return nil
 		}
-		if result.Key == "enter" {
+		if result.Key == "enter" || result.Key == "right" {
 			view.enter(result.Value)
 			continue
 		}
@@ -176,22 +176,26 @@ func (c *resourceCommand) pickerOptions(view *resourceViewState, lifecycle *reso
 func (c *resourceCommand) resourceActions(view *resourceViewState, lifecycle *resourceLifecycle, actionable bool) []intpicker.Action {
 	actions := pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, resourceInspectorPopupMode, "esc")
 	if actionable {
-		actions = append(actions, intpicker.Action{Key: "tab", Intent: intpicker.ActionCustom, Mutate: func(intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
-			view.cycleSort()
-			return c.withResourceActions(view, lifecycle, view.deferredUpdate()), nil
-		}})
+		actions = append(actions,
+			intpicker.Action{Key: "right", Intent: intpicker.ActionAccept},
+			intpicker.Action{Key: "tab", Intent: intpicker.ActionCustom, Mutate: func(intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+				view.cycleSort()
+				return c.withResourceActions(view, lifecycle, view.deferredUpdate()), nil
+			}},
+		)
 	}
 	actions = append(actions,
+		intpicker.Action{Key: "left", Intent: intpicker.ActionCustom, Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+			if view.atRoot() {
+				return c.withResourceActions(view, lifecycle, view.deferredUpdate()), nil
+			}
+			return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: "back", Query: ctx.Query, Closed: true}}, nil
+		}},
 		intpicker.Action{Key: "ctrl-r", Intent: intpicker.ActionCustom, Mutate: func(intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
 			lifecycle.request(view)
 			return c.withResourceActions(view, lifecycle, view.deferredUpdate()), nil
 		}},
 	)
-	if !view.atRoot() {
-		actions = append(actions, intpicker.Action{Key: "alt-left", Intent: intpicker.ActionCustom, Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
-			return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: "back", Query: ctx.Query, Closed: true}}, nil
-		}})
-	}
 	return actions
 }
 
@@ -579,8 +583,16 @@ type resourceRow struct {
 	memKnown                         bool
 	count                            int
 	countKnown                       bool
+	countKind                        resourceCountKind
 	meta                             []string
 }
+
+type resourceCountKind uint8
+
+const (
+	resourceCountPanes resourceCountKind = iota
+	resourceCountProcesses
+)
 
 type resourceSemanticPalette struct {
 	normal, unknown, warning, critical string
@@ -616,17 +628,21 @@ func (v *resourceViewState) itemsLocked() []intpicker.Item {
 		label := row.identity
 		meta := append([]string(nil), row.meta...)
 		if v.scope.kind != resourceScopePaneDetail {
-			paneCount := v.text.value("picker.resources.row.pane_count_unknown", "-- panes")
+			count := "--"
+			metricsKey, metricsFallback := i18n.Key("picker.resources.row.metrics.panes"), "CPU {cpu}  MEMORY {memory}  PANES {count}"
+			if row.countKind == resourceCountProcesses {
+				metricsKey, metricsFallback = "picker.resources.row.metrics.processes", "CPU {cpu}  MEMORY {memory}  PROCESSES {count}"
+			}
 			if row.countKnown {
-				paneCount = v.text.format("picker.resources.row.pane_count", "{count} panes", "{count}", fmt.Sprint(row.count))
+				count = fmt.Sprint(row.count)
 			}
 			if row.context != "" {
 				meta = append([]string{row.context}, meta...)
 			}
-			meta = append(meta, v.text.format("picker.resources.row.metrics", "CPU {cpu}  MEMORY {memory}  PANES {panes}",
+			meta = append(meta, v.text.format(metricsKey, metricsFallback,
 				"{cpu}", projmuxpicker.PadRight(formatResourceCPUState(row.cpu, v.palette, v.text), 18),
 				"{memory}", projmuxpicker.PadRight(formatResourceMemoryState(row.rss, row.memPercent, row.memKnown, v.palette, v.text), 32),
-				"{panes}", paneCount,
+				"{count}", count,
 			))
 		}
 		items = append(items, intpicker.Item{Label: label, Title: label, Value: row.value, SearchText: row.search, MetaLines: meta})
@@ -728,8 +744,8 @@ func resourcePaneRows(snapshot coreresources.Snapshot, socket, windowID string, 
 			continue
 		}
 		identity := resourcePaneDisplayIdentity(pane, text)
-		secondary := text.format("picker.resources.context.pane", "Pane  {pane} · Process  {pid} · TTY  {tty}", "{pane}", pane.PaneID, "{pid}", fmt.Sprint(pane.PanePID), "{tty}", pane.PaneTTY)
-		rows = append(rows, resourceRow{identity: identity, context: secondary, value: "pane:" + pane.Socket + "\x1f" + pane.PaneID, search: identity + " " + secondary + " " + pane.PaneID, cpu: pane.CPU, rss: pane.Memory.RSSBytes, memPercent: pane.Memory.HostPercent, memKnown: snapshot.Host.MemoryAvailable, count: 1, countKnown: true})
+		secondary := resourcePaneContext(pane, text)
+		rows = append(rows, resourceRow{identity: identity, context: secondary, value: "pane:" + pane.Socket + "\x1f" + pane.PaneID, search: identity + " " + secondary + " " + pane.PaneID, cpu: pane.CPU, rss: pane.Memory.RSSBytes, memPercent: pane.Memory.HostPercent, memKnown: snapshot.Host.MemoryAvailable, count: pane.ProcessCount, countKnown: true, countKind: resourceCountProcesses})
 	}
 	return rows
 }
@@ -750,14 +766,27 @@ func resourcePaneDetailRows(snapshot coreresources.Snapshot, socket, paneID stri
 		meta := []string{
 			text.format("picker.resources.detail.project", "Project: {project}", "{project}", anchor),
 			text.format("picker.resources.detail.session_window", "Session: {session}  Window: {window} {window_id}", "{session}", strings.Join(pane.Sessions, ", "), "{window}", pane.WindowName, "{window_id}", pane.WindowID),
-			text.format("picker.resources.detail.pane", "Pane: {pane_id}  PID/SID: {pid}  TTY: {tty}", "{pane_id}", pane.PaneID, "{pid}", fmt.Sprint(pane.PanePID), "{tty}", pane.PaneTTY),
+			resourcePaneContext(pane, text),
 			text.format("picker.resources.detail.processes_cpu", "Processes: {count}  CPU host share: {cpu}", "{count}", fmt.Sprint(pane.ProcessCount), "{cpu}", cpu),
 			text.format("picker.resources.detail.memory", "Memory RSS sum: {memory}", "{memory}", formatResourceMemoryState(pane.Memory.RSSBytes, pane.Memory.HostPercent, snapshot.Host.MemoryAvailable, palette, text)),
 			text.value("picker.resources.detail.rss_caveat", "RSS sum may count shared pages more than once."),
 		}
-		return []resourceRow{{identity: text.value("picker.resources.detail.heading", "Pane details"), value: "", meta: meta}}
+		return []resourceRow{{identity: resourcePaneDisplayIdentity(pane, text), value: "", meta: meta}}
 	}
-	return []resourceRow{{identity: text.value("picker.resources.detail.gone", "Pane no longer exists"), value: "", meta: []string{text.value("picker.resources.detail.gone_help", "The selected pane vanished during refresh. Esc returns to the nearest available pane.")}}}
+	return []resourceRow{{identity: text.value("picker.resources.detail.gone", "Pane no longer exists"), value: "", meta: []string{text.value("picker.resources.detail.gone_help", "The selected pane vanished during refresh. Left returns to the nearest available pane.")}}}
+}
+
+func resourcePaneContext(pane coreresources.PaneUsage, text resourceText) string {
+	command := strings.TrimSpace(pane.PaneCommand)
+	if command == "" {
+		command = "--"
+	}
+	return text.format("picker.resources.context.pane", "Process  {process} · PID/SID  {pid} · Pane  {pane} · TTY  {tty}",
+		"{process}", command,
+		"{pid}", fmt.Sprint(pane.PanePID),
+		"{pane}", pane.PaneID,
+		"{tty}", pane.PaneTTY,
+	)
 }
 
 func sortResourceRows(rows []resourceRow, order resourceSort) {
@@ -880,8 +909,8 @@ func resourceSummaryBands(snapshot coreresources.Snapshot, now time.Time, skippe
 	}
 	coverage := intpicker.ChromeBand{Label: text.value("picker.resources.band.coverage", "Coverage"), Value: text.value("picker.resources.coverage.current_scope", "Current scope has resource rows")}
 	if scope.kind == resourceScopeProjects {
-		otherCPU := formatResourceUnknown(text)
-		otherMemory := formatResourceUnknown(text)
+		otherCPU := formatResourceUnknown()
+		otherMemory := formatResourceUnknown()
 		if snapshot.Other.CPUHostSharePercent != nil {
 			otherCPU = formatResourcePercent(snapshot.Other.CPUHostSharePercent)
 		}
@@ -922,17 +951,17 @@ func resourceFooter(snapshot coreresources.Snapshot, now time.Time, skipped, ref
 	}
 	var actions string
 	if scope == resourceScopePaneDetail {
-		actions = text.value("picker.resources.footer.detail", "Read-only pane detail | Esc/Alt-Left: back | Ctrl-R: refresh")
+		actions = text.value("picker.resources.footer.detail", "Read-only pane detail | Left: back | Esc: close | Ctrl-R: refresh")
 	} else if !actionable {
 		if scope == resourceScopeProjects {
 			actions = text.value("picker.resources.footer.root_readonly", "Read-only | Esc: close | Ctrl-R: refresh")
 		} else {
-			actions = text.value("picker.resources.footer.empty", "Read-only | Esc/Alt-Left: back | Ctrl-R: refresh")
+			actions = text.value("picker.resources.footer.empty", "Read-only | Left: back | Esc: close | Ctrl-R: refresh")
 		}
 	} else if scope == resourceScopeProjects {
-		actions = text.format("picker.resources.footer.root", "Enter: drill down | Esc: close | Tab: sort {sort} | Ctrl-R: refresh", "{sort}", sorts[order])
+		actions = text.format("picker.resources.footer.root", "Right/Enter: drill down | Esc: close | Tab: sort {sort} | Ctrl-R: refresh", "{sort}", sorts[order])
 	} else {
-		actions = text.format("picker.resources.footer.list", "Enter: drill down | Esc/Alt-Left: back | Tab: sort {sort} | Ctrl-R: refresh", "{sort}", sorts[order])
+		actions = text.format("picker.resources.footer.list", "Right/Enter: drill down | Left: back | Esc: close | Tab: sort {sort} | Ctrl-R: refresh", "{sort}", sorts[order])
 	}
 	age, stale := resourceSampleAge(snapshot, now)
 	feedback := text.value("picker.resources.refresh.automatic", "automatic every 2s")
@@ -1013,8 +1042,8 @@ func formatResourcePercentState(percent *float64, warningAt int, palette resourc
 	return formatResourceMetric(formatResourcePercent(percent), percent, warningAt, palette, text)
 }
 
-func formatResourceUnknown(text resourceText) string {
-	return "-- " + text.value("picker.resources.severity.unknown", "unknown")
+func formatResourceUnknown() string {
+	return "--"
 }
 
 func formatResourceMetric(value string, percent *float64, warningAt int, palette resourceSemanticPalette, text resourceText) string {
@@ -1022,21 +1051,19 @@ func formatResourceMetric(value string, percent *float64, warningAt int, palette
 	if percent != nil {
 		severity = classifyResourcePercent(*percent, float64(warningAt))
 	}
-	label := text.value("picker.resources.severity.unknown", "unknown")
 	style := palette.unknown
 	switch severity {
 	case liveResourceNormal:
-		label, style = text.value("picker.resources.severity.normal", "normal"), palette.normal
+		style = palette.normal
 	case liveResourceWarning:
-		label, style = text.value("picker.resources.severity.warning", "warning"), palette.warning
+		style = palette.warning
 	case liveResourceCritical:
-		label, style = text.value("picker.resources.severity.critical", "critical"), palette.critical
+		style = palette.critical
 	}
-	plain := value + " " + label
 	if style == "" {
-		return plain
+		return value
 	}
-	return style + plain + theme.ANSIReset
+	return style + value + theme.ANSIReset
 }
 
 func formatResourcePercent(value *float64) string {
