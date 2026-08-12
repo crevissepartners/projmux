@@ -146,16 +146,20 @@ samples when it closes. Its non-overlapping default cadence is two seconds;
 Ctrl-R shares the same scan gate. Selection and query survive refresh by stable
 row identity, while a vanished row clamps to the nearest valid neighbor.
 Display labels use label → agent topic → known interactive shell → raw title,
-but those values never become ownership keys. Unsupported platforms show an
-unavailable reason, not zero metrics. PSS, non-Linux collectors, process-list
-drill-down, history, and resource mutation remain outside this contract.
+but those values never become ownership keys. Pane rows and detail reuse that
+identity plus the tmux current command, PID/SID, pane id, and TTY; pane rows
+show attributed process counts while project/window rows retain pane counts.
+Right/Enter move forward, Left moves back (and is a root no-op), and Esc closes
+at every depth. Unsupported platforms show an unavailable reason, not zero
+metrics. PSS, non-Linux collectors, process-list drill-down, history, and
+resource mutation remain outside this contract.
 
 Host and attributed CPU/memory use the same semantic classifier as the live
 statusbar: CPU is normal below 70%, warning at 70–89.9%, and critical at 90%
 or above; memory is normal below 75%, warning at 75–89.9%, and critical at 90%
-or above. Every value includes the localized state text as well as the resolved
-normal/warning/critical/unknown role. Unknown is rendered as `-- unknown`,
-never as zero.
+or above. Values retain the resolved semantic role but omit visible severity
+words. Unknown is rendered as `--`, never as zero; Sample lifecycle and
+freshness remain explicit text.
 
 The first paint is a non-actionable warming surface. Completed samples report
 age and fresh/stale state; partial and overage callouts stay bounded to counts

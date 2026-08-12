@@ -37,7 +37,7 @@ func TestResourceViewHierarchyDisplayResolverSortAndExplicitRoots(t *testing.T) 
 			t.Fatalf("project items = %#v, want explicit stable root %q", items, value)
 		}
 	}
-	if !strings.Contains(header, "Host CPU 50.0% normal") || !strings.Contains(header, "Attributed CPU 12.0% normal") || !strings.Contains(header, "RSS") || !strings.Contains(header, "Sample age 1s") || !strings.Contains(header, "ready · fresh") || !strings.Contains(header, "Coverage Other / unattributed") || !strings.Contains(header, "not drillable") || len(view.screen().bands) != 4 {
+	if !strings.Contains(header, "Host CPU 50.0%") || !strings.Contains(header, "Attributed CPU 12.0%") || !strings.Contains(header, "RSS") || !strings.Contains(header, "Sample age 1s") || !strings.Contains(header, "ready · fresh") || !strings.Contains(header, "Coverage Other / unattributed") || !strings.Contains(header, "not drillable") || len(view.screen().bands) != 4 {
 		t.Fatalf("header = %q, want separate host/attributed/Other bands", header)
 	}
 	if !strings.Contains(footer, "Tab: sort Name") || !strings.Contains(footer, "automatic every 2s") || strings.Contains(footer, " r:") {
@@ -66,7 +66,7 @@ func TestResourceViewHierarchyDisplayResolverSortAndExplicitRoots(t *testing.T) 
 	}
 	view.enter(items[0].Value)
 	items, _, footer = renderResourceView(view)
-	if len(items) != 1 || items[0].Value != "" || items[0].Label != "Pane details" || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "CPU host share: 2.0% normal · 0.16c") || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "Memory RSS sum") || !strings.Contains(footer, "Read-only pane detail") {
+	if len(items) != 1 || items[0].Value != "" || items[0].Label != "agent topic" || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "Process  python · PID/SID  101 · Pane  %11 · TTY  /dev/pts/2") || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "CPU host share: 2.0% · 0.16c") || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "Memory RSS sum") || !strings.Contains(footer, "Read-only pane detail") {
 		t.Fatalf("pane detail = %#v footer=%q", items, footer)
 	}
 	for i := range 3 {
@@ -171,6 +171,41 @@ func TestResourceStructuredMetricColumnsStayAlignedAcrossKnownAndUnknownRows(t *
 	}
 }
 
+func TestResourceScopeCountProjection(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
+	view := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
+	view.setSnapshot(resourceReadySnapshot(now), false)
+
+	tests := []struct {
+		name, enter, want, reject string
+	}{
+		{name: "project", want: "PANES 2", reject: "PROCESSES"},
+		{name: "window", enter: "project:/repo/api", want: "PANES 2", reject: "PROCESSES"},
+		{name: "pane", enter: "window:sock\x1f@7", want: "PROCESSES 2", reject: "PANES 1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			local := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
+			local.setSnapshot(resourceReadySnapshot(now), false)
+			if test.name == "window" {
+				local.enter(test.enter)
+			} else if test.name == "pane" {
+				local.enter("project:/repo/api")
+				local.enter(test.enter)
+			}
+			items := local.screen().items
+			if len(items) == 0 {
+				t.Fatal("scope has no rows")
+			}
+			metric := items[0].MetaLines[len(items[0].MetaLines)-1]
+			if !strings.Contains(metric, test.want) || strings.Contains(metric, test.reject) {
+				t.Fatalf("%s metric=%q, want %q without %q", test.name, metric, test.want, test.reject)
+			}
+		})
+	}
+}
+
 func TestResourceDeferredUpdateReconcilesActionableAndReadOnlyActions(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 2, 0, time.UTC)
 	home := t.TempDir()
@@ -195,16 +230,19 @@ func TestResourceDeferredUpdateReconcilesActionableAndReadOnlyActions(t *testing
 	cmd := &resourceCommand{homeDir: func() (string, error) { return home, nil }, lookupEnv: func(string) string { return "" }}
 
 	populated := cmd.pickerOptions(view, lifecycle)
-	for _, key := range []string{"tab", "ctrl-r", "alt-left", "alt-x"} {
+	for _, key := range []string{"right", "tab", "left", "ctrl-r", "alt-x"} {
 		if !pickerActionsContain(populated.Actions, key) {
 			t.Fatalf("populated actions=%#v, missing %q", populated.Actions, key)
 		}
+	}
+	if pickerActionsContain(populated.Actions, "alt-left") {
+		t.Fatalf("populated actions=%#v, Alt-Left must not be exposed", populated.Actions)
 	}
 	toEmpty, err := populated.DeferredUpdate()
 	if err != nil || !toEmpty.SetActions || pickerActionsContain(toEmpty.Actions, "tab") || !toEmpty.ReadOnly || !toEmpty.DisableSearch {
 		t.Fatalf("populated→empty update=%#v err=%v, want Tab removed and read-only enabled", toEmpty, err)
 	}
-	for _, key := range []string{"ctrl-r", "alt-left", "alt-x"} {
+	for _, key := range []string{"left", "ctrl-r", "alt-x"} {
 		if !pickerActionsContain(toEmpty.Actions, key) {
 			t.Fatalf("empty actions=%#v, missing preserved %q", toEmpty.Actions, key)
 		}
@@ -226,7 +264,7 @@ func TestResourceDeferredUpdateReconcilesActionableAndReadOnlyActions(t *testing
 	if err != nil || !toPopulated.SetActions || !pickerActionsContain(toPopulated.Actions, "tab") || toPopulated.ReadOnly || toPopulated.DisableSearch {
 		t.Fatalf("empty→populated update=%#v err=%v, want Tab restored and list interaction enabled", toPopulated, err)
 	}
-	for _, key := range []string{"ctrl-r", "alt-left", "alt-x"} {
+	for _, key := range []string{"right", "left", "ctrl-r", "alt-x"} {
 		if !pickerActionsContain(toPopulated.Actions, key) {
 			t.Fatalf("populated actions=%#v, missing preserved %q", toPopulated.Actions, key)
 		}
@@ -299,7 +337,7 @@ func TestResourceAutomaticRefreshEmitsProgressBeforeBlockedCollectionThenAtomicC
 	}
 }
 
-func TestResourceCommandAltLeftAndEscWalkParentThenCloseRoot(t *testing.T) {
+func TestResourceCommandDirectionalHierarchyAndAllDepthEscClose(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 2, 0, time.UTC)
 	collector := &sequenceResourceCollector{snapshots: []coreresources.Snapshot{resourceReadySnapshot(now)}}
 	var titles []string
@@ -314,19 +352,35 @@ func TestResourceCommandAltLeftAndEscWalkParentThenCloseRoot(t *testing.T) {
 				if _, err := options.DeferredUpdate(); err != nil {
 					t.Fatalf("initial resource sample: %v", err)
 				}
-				return intpicker.Result{Key: "enter", Value: "project:/repo/api"}, nil
-			case 2, 3:
-				return intpicker.Result{Key: "enter", Value: options.Items[0].Value}, nil
-			case 4:
-				action, ok := pickerAction(options.Actions, "alt-left")
-				if !ok || action.Mutate == nil {
-					t.Fatalf("detail actions=%#v, want Alt-Left back action", options.Actions)
+				left, ok := pickerAction(options.Actions, "left")
+				if !ok || left.Mutate == nil || pickerActionsContain(options.Actions, "alt-left") {
+					t.Fatalf("root actions=%#v, want Left no-op and no Alt-Left", options.Actions)
 				}
-				update, err := action.Mutate(intpicker.ActionContext{Key: "alt-left"})
+				update, err := left.Mutate(intpicker.ActionContext{Key: "left", Query: "api"})
+				if err != nil || update.Result != nil {
+					t.Fatalf("root Left update=%#v err=%v, want no-op refresh", update, err)
+				}
+				return intpicker.Result{Key: "right", Value: "project:/repo/api"}, nil
+			case 2, 3:
+				if !pickerActionsContain(options.Actions, "right") || !pickerActionsContain(options.Actions, "left") || pickerActionsContain(options.Actions, "alt-left") {
+					t.Fatalf("list actions=%#v, want Right/Left and no Alt-Left", options.Actions)
+				}
+				return intpicker.Result{Key: "right", Value: options.Items[0].Value}, nil
+			case 4:
+				action, ok := pickerAction(options.Actions, "left")
+				if !ok || action.Mutate == nil {
+					t.Fatalf("detail actions=%#v, want Left back action", options.Actions)
+				}
+				if pickerActionsContain(options.Actions, "right") || pickerActionsContain(options.Actions, "alt-left") {
+					t.Fatalf("detail actions=%#v, must omit Right and Alt-Left", options.Actions)
+				}
+				update, err := action.Mutate(intpicker.ActionContext{Key: "left"})
 				if err != nil || update.Result == nil {
-					t.Fatalf("Alt-Left update=%#v err=%v", update, err)
+					t.Fatalf("Left update=%#v err=%v", update, err)
 				}
 				return *update.Result, nil
+			case 5:
+				return intpicker.Result{Key: "esc", Closed: true}, nil
 			default:
 				return intpicker.Result{Key: "esc", Closed: true}, nil
 			}
@@ -345,11 +399,68 @@ func TestResourceCommandAltLeftAndEscWalkParentThenCloseRoot(t *testing.T) {
 		"Resources · Projects / api / editor @7",
 		"Resources · Projects / api / editor @7 / agent topic",
 		"Resources · Projects / api / editor @7",
-		"Resources · Projects / api",
-		"Resources · Projects",
 	}
 	if !slices.Equal(titles, want) {
 		t.Fatalf("back flow titles=%#v, want %#v", titles, want)
+	}
+}
+
+func TestResourceCommandEscClosesImmediatelyAtEveryDepth(t *testing.T) {
+	now := time.Date(2026, 8, 13, 10, 30, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		closeCall int
+		wantTitle string
+	}{
+		{name: "root", closeCall: 1, wantTitle: "Resources · Projects"},
+		{name: "window", closeCall: 2, wantTitle: "Resources · Projects / api"},
+		{name: "pane list", closeCall: 3, wantTitle: "Resources · Projects / api / editor @7"},
+		{name: "pane detail", closeCall: 4, wantTitle: "Resources · Projects / api / editor @7 / agent topic"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			collector := &sequenceResourceCollector{snapshots: []coreresources.Snapshot{resourceReadySnapshot(now)}}
+			calls := 0
+			cmd := &resourceCommand{
+				collector: collector,
+				picker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+					calls++
+					if calls == 1 {
+						if _, err := options.DeferredUpdate(); err != nil {
+							t.Fatalf("initial resource sample: %v", err)
+						}
+					}
+					if calls == test.closeCall {
+						if options.Title != test.wantTitle {
+							t.Fatalf("close title=%q, want %q", options.Title, test.wantTitle)
+						}
+						escape, ok := pickerAction(options.Actions, "esc")
+						if !ok || escape.Intent != intpicker.ActionClose || pickerActionsContain(options.Actions, "alt-left") {
+							t.Fatalf("close actions=%#v, want Esc close and no Alt-Left", options.Actions)
+						}
+						return intpicker.Result{Key: "esc", Closed: true}, nil
+					}
+					switch calls {
+					case 1:
+						return intpicker.Result{Key: "enter", Value: "project:/repo/api"}, nil
+					case 2, 3:
+						return intpicker.Result{Key: "enter", Value: options.Items[0].Value}, nil
+					default:
+						return intpicker.Result{}, fmt.Errorf("picker reopened after Esc at %s depth", test.name)
+					}
+				}),
+				homeDir:   func() (string, error) { return "", errors.New("no config") },
+				lookupEnv: func(string) string { return "" },
+				now:       func() time.Time { return now },
+				interval:  time.Hour,
+			}
+			if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			if calls != test.closeCall {
+				t.Fatalf("picker calls=%d, want immediate close after call %d", calls, test.closeCall)
+			}
+		})
 	}
 }
 
@@ -482,7 +593,7 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 	snap.Other.MemoryBytes = nil
 	view.setSnapshot(snap, false)
 	_, header, _ = renderResourceView(view)
-	if !strings.Contains(header, "Other / unattributed  CPU -- unknown") || !strings.Contains(header, "Memory -- unknown") {
+	if !strings.Contains(header, "Other / unattributed  CPU --") || !strings.Contains(header, "Memory --") || strings.Contains(header, "unknown") {
 		t.Fatalf("Other band = %q, want overage remainder unknown rather than zero", header)
 	}
 	for _, want := range []string{"partial sampled=20 skipped=2 race=1 permission=1", "CPU overage 4.5%", "RSS overage 2.0 KiB"} {
@@ -501,28 +612,27 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 	unavailableMemory.Host.MemoryAvailable = false
 	view.setSnapshot(unavailableMemory, false)
 	_, header, _ = renderResourceView(view)
-	if !strings.Contains(header, "Memory -- unknown") || !strings.Contains(header, "RSS -- (-- unknown)") {
+	if !strings.Contains(header, "Memory --") || !strings.Contains(header, "RSS -- (--)") || strings.Contains(header, "unknown") {
 		t.Fatalf("memory-unavailable header = %q, want unknown rather than derived zero/value", header)
 	}
 }
 
-func TestResourceInspectorThresholdParityAndSemanticText(t *testing.T) {
+func TestResourceInspectorThresholdParitySemanticStyleAndNoSeverityText(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
 		percent   float64
 		warningAt int
 		want      liveResourceSeverity
-		label     string
 	}{
-		{name: "CPU before warning", percent: 69.9, warningAt: liveResourceCPUWarningAt, want: liveResourceNormal, label: "normal"},
-		{name: "CPU warning boundary", percent: 70, warningAt: liveResourceCPUWarningAt, want: liveResourceWarning, label: "warning"},
-		{name: "CPU before critical", percent: 89.9, warningAt: liveResourceCPUWarningAt, want: liveResourceWarning, label: "warning"},
-		{name: "CPU critical boundary", percent: 90, warningAt: liveResourceCPUWarningAt, want: liveResourceCritical, label: "critical"},
-		{name: "memory before warning", percent: 74.9, warningAt: liveResourceMemoryWarningAt, want: liveResourceNormal, label: "normal"},
-		{name: "memory warning boundary", percent: 75, warningAt: liveResourceMemoryWarningAt, want: liveResourceWarning, label: "warning"},
-		{name: "memory before critical", percent: 89.9, warningAt: liveResourceMemoryWarningAt, want: liveResourceWarning, label: "warning"},
-		{name: "memory critical boundary", percent: 90, warningAt: liveResourceMemoryWarningAt, want: liveResourceCritical, label: "critical"},
+		{name: "CPU before warning", percent: 69.9, warningAt: liveResourceCPUWarningAt, want: liveResourceNormal},
+		{name: "CPU warning boundary", percent: 70, warningAt: liveResourceCPUWarningAt, want: liveResourceWarning},
+		{name: "CPU before critical", percent: 89.9, warningAt: liveResourceCPUWarningAt, want: liveResourceWarning},
+		{name: "CPU critical boundary", percent: 90, warningAt: liveResourceCPUWarningAt, want: liveResourceCritical},
+		{name: "memory before warning", percent: 74.9, warningAt: liveResourceMemoryWarningAt, want: liveResourceNormal},
+		{name: "memory warning boundary", percent: 75, warningAt: liveResourceMemoryWarningAt, want: liveResourceWarning},
+		{name: "memory before critical", percent: 89.9, warningAt: liveResourceMemoryWarningAt, want: liveResourceWarning},
+		{name: "memory critical boundary", percent: 90, warningAt: liveResourceMemoryWarningAt, want: liveResourceCritical},
 	}
 	palette := resourceSemanticPalette{normal: "<normal>", unknown: "<unknown>", warning: "<warning>", critical: "<critical>"}
 	for _, tt := range tests {
@@ -531,13 +641,20 @@ func TestResourceInspectorThresholdParityAndSemanticText(t *testing.T) {
 				t.Fatalf("classifyResourcePercent(%v, %d)=%v, want %v", tt.percent, tt.warningAt, got, tt.want)
 			}
 			got := formatResourcePercentState(&tt.percent, tt.warningAt, palette, resourceText{locale: i18n.FallbackLocale})
-			if !strings.Contains(got, tt.label) || !strings.Contains(got, map[liveResourceSeverity]string{liveResourceNormal: "<normal>", liveResourceWarning: "<warning>", liveResourceCritical: "<critical>"}[tt.want]) {
-				t.Fatalf("formatted metric=%q, want semantic text/style for %s", got, tt.label)
+			if !strings.Contains(got, map[liveResourceSeverity]string{liveResourceNormal: "<normal>", liveResourceWarning: "<warning>", liveResourceCritical: "<critical>"}[tt.want]) {
+				t.Fatalf("formatted metric=%q, want semantic style for %v", got, tt.want)
+			}
+			for _, forbidden := range []string{"normal", "warning", "critical", "unknown"} {
+				plain := strings.ReplaceAll(got, "<"+forbidden+">", "")
+				if strings.Contains(plain, forbidden) {
+					t.Fatalf("formatted metric=%q leaked severity word %q", got, forbidden)
+				}
 			}
 		})
 	}
 	unknown := formatResourcePercentState(nil, liveResourceCPUWarningAt, palette, resourceText{locale: i18n.FallbackLocale})
-	if !strings.Contains(unknown, "-- unknown") || strings.Contains(unknown, "0.0%") {
+	unknownPlain := strings.ReplaceAll(unknown, "<unknown>", "")
+	if !strings.Contains(unknownPlain, "--") || strings.Contains(unknownPlain, "unknown") || strings.Contains(unknownPlain, "0.0%") {
 		t.Fatalf("unknown metric=%q, must not resemble zero", unknown)
 	}
 }
@@ -549,11 +666,11 @@ func TestResourceInspectorUsesResolvedSemanticThemeRoles(t *testing.T) {
 		roles := theme.ANSIRolesFromEffective(effective)
 		palette := newResourceSemanticPalette(effective)
 		warning, critical := 75.0, 90.0
-		if got := formatResourcePercentState(&warning, liveResourceCPUWarningAt, palette, resourceText{locale: i18n.FallbackLocale}); !strings.Contains(got, roles.StateWarning) || !strings.Contains(got, "warning") {
-			t.Fatalf("warning metric=%q, want resolved warning role %q plus text", got, roles.StateWarning)
+		if got := formatResourcePercentState(&warning, liveResourceCPUWarningAt, palette, resourceText{locale: i18n.FallbackLocale}); !strings.Contains(got, roles.StateWarning) || strings.Contains(got, "warning") {
+			t.Fatalf("warning metric=%q, want resolved warning role %q without severity text", got, roles.StateWarning)
 		}
-		if got := formatResourcePercentState(&critical, liveResourceMemoryWarningAt, palette, resourceText{locale: i18n.FallbackLocale}); !strings.Contains(got, roles.StateCritical) || !strings.Contains(got, "critical") {
-			t.Fatalf("critical metric=%q, want resolved critical role %q plus text", got, roles.StateCritical)
+		if got := formatResourcePercentState(&critical, liveResourceMemoryWarningAt, palette, resourceText{locale: i18n.FallbackLocale}); !strings.Contains(got, roles.StateCritical) || strings.Contains(got, "critical") || !strings.Contains(got, theme.ANSIBold) {
+			t.Fatalf("critical metric=%q, want resolved bold critical role %q without severity text", got, roles.StateCritical)
 		}
 	}
 }
@@ -580,10 +697,14 @@ func TestResourcePaneIdentityPrecedenceAndSecondaryIDs(t *testing.T) {
 			if len(rows) != 1 || rows[0].identity != tt.want || strings.Contains(rows[0].identity, pane.PaneID) {
 				t.Fatalf("pane identity rows=%#v, want primary %q without stable id", rows, tt.want)
 			}
-			for _, want := range []string{"Pane  " + pane.PaneID, fmt.Sprintf("Process  %d", pane.PanePID), "TTY  " + pane.PaneTTY} {
+			for _, want := range []string{"Process  " + pane.PaneCommand, fmt.Sprintf("PID/SID  %d", pane.PanePID), "Pane  " + pane.PaneID, "TTY  " + pane.PaneTTY} {
 				if !strings.Contains(rows[0].context, want) {
 					t.Fatalf("secondary context=%q, missing %q", rows[0].context, want)
 				}
+			}
+			detail := resourcePaneDetailRows(snapshot, "sock", pane.PaneID, resourceSemanticPalette{}, resourceText{locale: i18n.FallbackLocale})
+			if len(detail) != 1 || detail[0].identity != tt.want || !slices.Contains(detail[0].meta, rows[0].context) {
+				t.Fatalf("detail=%#v, want shared identity %q and context %q", detail, tt.want, rows[0].context)
 			}
 			scope := resourceScope{kind: resourceScopePaneDetail, socket: "sock", windowID: "@1", paneID: pane.PaneID, projectKey: "/repo/api"}
 			if breadcrumb := resourceBreadcrumb(snapshot, scope, resourceText{locale: i18n.FallbackLocale}); !strings.HasSuffix(breadcrumb, "/ "+tt.want) || strings.Contains(breadcrumb, pane.PaneID) {

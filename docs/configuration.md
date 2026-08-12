@@ -840,7 +840,9 @@ warning at 70–89%, and critical at 90% or above; memory is normal below 75%,
 warning at 75–89%, and critical at 90% or above. The two values are classified
 and styled independently. Normal and unavailable (`--`) values use the
 secondary status-text theme role, warnings use the warning role, and critical
-values use the bold critical role. No threshold values are stored in config.
+values use the bold critical role. Visible severity words are omitted and each
+percent uses a fixed four-column slot, including `%`, so metric transitions do
+not resize the segment. No threshold values are stored in config.
 
 The CPU delta cache is internal state at
 `${XDG_STATE_HOME:-~/.local/state}/projmux/live-resources-sample.json`.
