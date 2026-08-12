@@ -538,8 +538,11 @@ classification. Hook stdout is `{}` for the three non-Stop managed events and
 `{"decision":"stop"}` for Stop, including a shell fallback if ingest fails, so
 the hook cannot force continuation or synthesize a permission decision.
 Official statusline `agent_state` values `thinking`, `working`, and `tool_use`
-map to thinking/busy. `idle` is quiet and does not clear an existing completion
-or approval state. `tool_confirmation_pending=true` produces a stable-ID,
+map to thinking/busy unless the pane already holds a terminal completion or
+approval state; this prevents a late statusline refresh from regressing `Stop`.
+A new `PreInvocation` resets the pane to thinking for the next generation.
+`idle` is quiet and does not clear an existing completion or approval state.
+`tool_confirmation_pending=true` produces a stable-ID,
 deduped approval-required row; false never produces a notification.
 
 The managed JSON is the install source of truth. The command

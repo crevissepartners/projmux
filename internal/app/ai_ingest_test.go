@@ -2134,6 +2134,80 @@ func TestIngestAntigravityStatusLineBusyAndIdleStateMapping(t *testing.T) {
 	}
 }
 
+func TestIngestAntigravityStopThenLateBusyAndIdlePreservesCompletion(t *testing.T) {
+	home := t.TempDir()
+	queue := notify.NewStore(filepath.Join(home, "notify.json"))
+	cmd := testAICommand(home)
+	cmd.producer = &storeAttentionNotifyProducer{store: queue, ttl: time.Minute}
+	baseRead := antigravityIngestReadCommand("%7")
+	aiState := ""
+	attentionState := ""
+	thinkingWrites := 0
+	cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{" + aiPaneStateOption + "}"}) {
+			return []byte(aiState + "\n"), nil
+		}
+		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{" + attentionStateOption + "}"}) {
+			return []byte(attentionState + "\n"), nil
+		}
+		return baseRead(ctx, name, args...)
+	}
+	baseRun := cmd.runCommand
+	cmd.runCommand = func(ctx context.Context, name string, args ...string) error {
+		if name == "tmux" && len(args) == 6 && reflect.DeepEqual(args[:4], []string{"set-option", "-p", "-t", "%7"}) {
+			switch args[4] {
+			case aiPaneStateOption:
+				aiState = args[5]
+				if aiState == "thinking" {
+					thinkingWrites++
+				}
+			case attentionStateOption:
+				attentionState = args[5]
+			}
+		}
+		if name == "tmux" && len(args) == 6 && reflect.DeepEqual(args[:5], []string{"set-option", "-p", "-u", "-t", "%7"}) && args[5] == attentionStateOption {
+			attentionState = ""
+		}
+		return baseRun(ctx, name, args...)
+	}
+
+	run := func(event, payload string) {
+		t.Helper()
+		cmd.stdin = strings.NewReader(payload)
+		if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", event}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	identity := `"conversation_id":"123e4567-e89b-12d3-a456-426614174000","cwd":"/repo/projmux"`
+	run("Stop", `{`+identity+`,"terminationReason":"completed"}`)
+	if aiState != "waiting" {
+		t.Fatalf("state after Stop = %q, want waiting", aiState)
+	}
+	run("Statusline", `{`+identity+`,"agent_state":"tool_use","tool_confirmation_pending":false}`)
+	run("Statusline", `{`+identity+`,"agent_state":"idle","tool_confirmation_pending":false}`)
+	if aiState != "waiting" {
+		t.Fatalf("state after Stop -> busy -> idle = %q, want completion waiting preserved", aiState)
+	}
+	entries, err := queue.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Metadata[notify.MetaCategory] != "response_complete" {
+		t.Fatalf("queue entries = %#v, want one response_complete", entries)
+	}
+
+	// A real next generation starts with PreInvocation, which resets the pane
+	// to thinking; the following statusline busy update is then accepted.
+	run("PreInvocation", `{`+identity+`}`)
+	if aiState != "thinking" || thinkingWrites != 1 {
+		t.Fatalf("state after new PreInvocation = %q, want thinking", aiState)
+	}
+	run("Statusline", `{`+identity+`,"agent_state":"working","tool_confirmation_pending":false}`)
+	if aiState != "thinking" || thinkingWrites != 2 {
+		t.Fatalf("state after new-generation busy statusline = %q writes=%d, want accepted thinking update", aiState, thinkingWrites)
+	}
+}
+
 func TestPersistAntigravityStructuredContextPrecedesStringFallback(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)

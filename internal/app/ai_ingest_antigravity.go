@@ -148,6 +148,10 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 		}
 		switch strings.ToLower(strings.TrimSpace(payload.AgentState)) {
 		case "thinking", "working", "tool_use":
+			if c.preserveAntigravityTerminalState(paneID) {
+				c.quietAntigravityHook(paneID, payload, "late busy statusline; preserving existing completion or approval state")
+				return nil
+			}
 			if err := c.applyAIStatusStateOnly("thinking", paneID, attentionNotifyInput{Metadata: metadata, BadgeKind: aiBadgeKindInProgress}); err != nil {
 				return err
 			}
@@ -190,6 +194,14 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 		c.quietAntigravityHook(paneID, payload, aiHookNoHandlerReason(action))
 		return nil
 	}
+}
+
+func (c *aiCommand) preserveAntigravityTerminalState(paneID string) bool {
+	state := strings.ToLower(strings.TrimSpace(c.readTmuxPaneOption(paneID, aiPaneStateOption)))
+	if state == "waiting" || state == "ready" {
+		return true
+	}
+	return strings.TrimSpace(c.readTmuxPaneOption(paneID, attentionStateOption)) == attentionStateReply
 }
 
 // persistAntigravityContextUsage records the latest context-window

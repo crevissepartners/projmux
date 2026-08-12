@@ -648,7 +648,7 @@ installs four non-permission events:
 | `PostToolUse` | marks the matched pane hook-active, retains tool error metadata in quiet diagnostics, and pushes no notify queue entry |
 | `Stop` | pushes an info completion unless an explicit error signal requires a critical error row |
 | `Statusline` with `tool_confirmation_pending=true` | pushes/replaces a deduped critical approval-required row outside the hook catalog |
-| `Statusline` with `agent_state=thinking|working|tool_use` | moves the matched pane to thinking/busy without notifying |
+| `Statusline` with `agent_state=thinking|working|tool_use` | moves the matched pane to thinking/busy without notifying, unless a terminal completion/approval state must be preserved from a late refresh; a new `PreInvocation` resets the next generation to busy |
 | `Statusline` with `agent_state=idle` or `tool_confirmation_pending=false` | quiet update; does not clear completion/approval attention and creates no notification |
 | unknown events | mark the matched pane hook-active and write quiet ingest diagnostics only |
 
