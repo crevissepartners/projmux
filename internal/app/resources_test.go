@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,8 +25,14 @@ func TestResourceViewHierarchyDisplayResolverSortAndExplicitRoots(t *testing.T) 
 	view.setSnapshot(resourceReadySnapshot(now.Add(-time.Second)), false)
 
 	items, header, footer := renderResourceView(view)
-	if len(items) != 1 || items[0].Label != "api" || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "Context  /repo/api") {
+	api := pickerItemByValue(items, "project:/repo/api")
+	if len(items) != 3 || api == nil || api.Label != "api" || !strings.Contains(strings.Join(api.MetaLines, "\n"), "Context  /repo/api") {
 		t.Fatalf("project items = %#v, want primary identity separate from path context", items)
+	}
+	for _, value := range []string{"project:" + coreresources.ProjectUnassigned, "project:" + coreresources.ProjectShared} {
+		if pickerItemByValue(items, value) == nil {
+			t.Fatalf("project items = %#v, want explicit stable root %q", items, value)
+		}
 	}
 	if !strings.Contains(header, "Host CPU 50.0%") || !strings.Contains(header, "Attributed CPU 12.0%") || !strings.Contains(header, "RSS") || !strings.Contains(header, "sample 1s") || !strings.Contains(header, "ready") || !strings.Contains(header, "Other / unattributed") || !strings.Contains(header, "not drillable") {
 		t.Fatalf("header = %q, want separate host/attributed/Other bands", header)
@@ -83,6 +90,9 @@ func TestResourceBreadcrumbActionableListEmptyAndReadOnlyDetailChrome(t *testing
 	if pickerItemsContain(root.Items, coreresources.OtherUnattributed) || !chromeBandsContain(root.ChromeBands, "Other / unattributed") {
 		t.Fatalf("root items=%#v bands=%#v, want Other summary outside actionable rows", root.Items, root.ChromeBands)
 	}
+	if pickerItemByValue(root.Items, "project:"+coreresources.ProjectUnassigned) == nil || pickerItemByValue(root.Items, "project:"+coreresources.ProjectShared) == nil {
+		t.Fatalf("root items=%#v, want explicit Unassigned/Shared drill-down roots", root.Items)
+	}
 
 	view.enter("project:/repo/api")
 	windows := cmd.pickerOptions(view, lifecycle)
@@ -121,7 +131,7 @@ func TestResourceStructuredMetricColumnsStayAlignedAcrossKnownAndUnknownRows(t *
 		snapshot.Projects = append(snapshot.Projects, coreresources.ProjectUsage{Key: coreresources.ProjectUnassigned})
 		view.setSnapshot(snapshot, false)
 		items := view.screen().items
-		if len(items) != 2 {
+		if len(items) != 3 {
 			t.Fatalf("locale %s rows=%#v", locale, items)
 		}
 		var wantCPU, wantMemory, wantCount int
@@ -143,6 +153,111 @@ func TestResourceStructuredMetricColumnsStayAlignedAcrossKnownAndUnknownRows(t *
 				t.Fatalf("locale %s metric columns drift: first=(%d,%d,%d) row=(%d,%d,%d) metrics=%#v", locale, wantCPU, wantMemory, wantCount, cpu, memory, count, items)
 			}
 		}
+	}
+}
+
+func TestResourceDeferredUpdateReconcilesActionableAndReadOnlyActions(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 2, 0, time.UTC)
+	home := t.TempDir()
+	path, err := keymapPath(func() (string, error) { return home, nil }, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepathDir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[bindings.\"Resources:Open\"]\nkeys = [\"M-x\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ready := resourceReadySnapshot(now)
+	empty := coreresources.Snapshot{At: now, Status: coreresources.StatusReady}
+	collector := &sequenceResourceCollector{snapshots: []coreresources.Snapshot{empty, ready}}
+	lifecycle := newResourceLifecycle(collector, func() time.Time { return now }, time.Hour)
+	defer lifecycle.cancel()
+	view := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
+	view.setSnapshot(ready, false)
+	view.enter("project:/repo/api")
+	cmd := &resourceCommand{homeDir: func() (string, error) { return home, nil }, lookupEnv: func(string) string { return "" }}
+
+	populated := cmd.pickerOptions(view, lifecycle)
+	for _, key := range []string{"tab", "ctrl-r", "alt-left", "alt-x"} {
+		if !pickerActionsContain(populated.Actions, key) {
+			t.Fatalf("populated actions=%#v, missing %q", populated.Actions, key)
+		}
+	}
+	toEmpty, err := populated.DeferredUpdate()
+	if err != nil || !toEmpty.SetActions || pickerActionsContain(toEmpty.Actions, "tab") || !toEmpty.ReadOnly || !toEmpty.DisableSearch {
+		t.Fatalf("populated→empty update=%#v err=%v, want Tab removed and read-only enabled", toEmpty, err)
+	}
+	for _, key := range []string{"ctrl-r", "alt-left", "alt-x"} {
+		if !pickerActionsContain(toEmpty.Actions, key) {
+			t.Fatalf("empty actions=%#v, missing preserved %q", toEmpty.Actions, key)
+		}
+	}
+
+	emptyOptions := cmd.pickerOptions(view, lifecycle)
+	toPopulated, err := emptyOptions.DeferredUpdate()
+	if err != nil || !toPopulated.SetActions || !pickerActionsContain(toPopulated.Actions, "tab") || toPopulated.ReadOnly || toPopulated.DisableSearch {
+		t.Fatalf("empty→populated update=%#v err=%v, want Tab restored and list interaction enabled", toPopulated, err)
+	}
+	for _, key := range []string{"ctrl-r", "alt-left", "alt-x"} {
+		if !pickerActionsContain(toPopulated.Actions, key) {
+			t.Fatalf("populated actions=%#v, missing preserved %q", toPopulated.Actions, key)
+		}
+	}
+}
+
+func TestResourceCommandAltLeftAndEscWalkParentThenCloseRoot(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 2, 0, time.UTC)
+	collector := &sequenceResourceCollector{snapshots: []coreresources.Snapshot{resourceReadySnapshot(now)}}
+	var titles []string
+	call := 0
+	cmd := &resourceCommand{
+		collector: collector,
+		picker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+			titles = append(titles, options.Title)
+			call++
+			switch call {
+			case 1:
+				if _, err := options.DeferredUpdate(); err != nil {
+					t.Fatalf("initial resource sample: %v", err)
+				}
+				return intpicker.Result{Key: "enter", Value: "project:/repo/api"}, nil
+			case 2, 3:
+				return intpicker.Result{Key: "enter", Value: options.Items[0].Value}, nil
+			case 4:
+				action, ok := pickerAction(options.Actions, "alt-left")
+				if !ok || action.Mutate == nil {
+					t.Fatalf("detail actions=%#v, want Alt-Left back action", options.Actions)
+				}
+				update, err := action.Mutate(intpicker.ActionContext{Key: "alt-left"})
+				if err != nil || update.Result == nil {
+					t.Fatalf("Alt-Left update=%#v err=%v", update, err)
+				}
+				return *update.Result, nil
+			default:
+				return intpicker.Result{Key: "esc", Closed: true}, nil
+			}
+		}),
+		homeDir:   func() (string, error) { return "", errors.New("no config") },
+		lookupEnv: func(string) string { return "" },
+		now:       func() time.Time { return now },
+		interval:  time.Hour,
+	}
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"Resources · Projects",
+		"Resources · Projects / api",
+		"Resources · Projects / api / editor @7",
+		"Resources · Projects / api / editor @7 / user label %10",
+		"Resources · Projects / api / editor @7",
+		"Resources · Projects / api",
+		"Resources · Projects",
+	}
+	if !slices.Equal(titles, want) {
+		t.Fatalf("back flow titles=%#v, want %#v", titles, want)
 	}
 }
 
@@ -189,8 +304,8 @@ func TestResourceInspectorLocalizesEnglishAndKoreanUX(t *testing.T) {
 		unavailable string
 		help        string
 	}{
-		{name: "en-US", locale: i18n.FallbackLocale, title: "Resources · Projects", prompt: "search › ", header: "Host CPU", footer: "Enter: drill down", other: "Other / unattributed", detail: "Processes:", caveat: "RSS sum may count shared pages", unavailable: "unavailable on darwin", help: "Usage: projmux resources\n  Open the read-only"},
-		{name: "ko-KR", locale: i18n.Locale("ko-KR"), title: "리소스 · 프로젝트", prompt: "검색 › ", header: "호스트 CPU", footer: "Enter: 상세 보기", other: "기타 / 귀속되지 않음", detail: "프로세스:", caveat: "RSS 합계는 공유 페이지", unavailable: "darwin에서는 리소스 귀속을 사용할 수 없습니다", help: "사용법: projmux resources\n  읽기 전용"},
+		{name: "en-US", locale: i18n.FallbackLocale, title: "Resources · Projects", prompt: "search › ", header: "Host CPU", footer: "Enter: drill down", unassigned: "Unassigned", shared: "Shared / ambiguous", other: "Other / unattributed", detail: "Processes:", caveat: "RSS sum may count shared pages", unavailable: "unavailable on darwin", help: "Usage: projmux resources\n  Open the read-only"},
+		{name: "ko-KR", locale: i18n.Locale("ko-KR"), title: "리소스 · 프로젝트", prompt: "검색 › ", header: "호스트 CPU", footer: "Enter: 상세 보기", unassigned: "할당되지 않음", shared: "공유 / 모호함", other: "기타 / 귀속되지 않음", detail: "프로세스:", caveat: "RSS 합계는 공유 페이지", unavailable: "darwin에서는 리소스 귀속을 사용할 수 없습니다", help: "사용법: projmux resources\n  읽기 전용"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -224,8 +339,15 @@ func TestResourceInspectorLocalizesEnglishAndKoreanUX(t *testing.T) {
 			if !strings.Contains(header, tt.other) {
 				t.Fatalf("root header %q missing non-actionable %q", header, tt.other)
 			}
-			if len(items) != 1 || items[0].Value != "project:/repo/api" {
-				t.Fatalf("localized actionable row changed stable id: %#v", items)
+			for value, label := range map[string]string{
+				"project:" + coreresources.ProjectUnassigned: tt.unassigned,
+				"project:" + coreresources.ProjectShared:     tt.shared,
+				"project:/repo/api":                          "api",
+			} {
+				item := pickerItemByValue(items, value)
+				if item == nil || item.Label != label {
+					t.Fatalf("localized roots=%#v, want stable value %q label %q", items, value, label)
+				}
 			}
 
 			view.enter("project:/repo/api")
@@ -252,7 +374,7 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 	now := time.Now()
 	view := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
 	items, header, footer := renderResourceView(view)
-	if !strings.Contains(header, "warming") || !strings.Contains(header, "CPU --") || !strings.Contains(header, "Other / unattributed") || !strings.Contains(header, "Memory --") || len(items) != 0 {
+	if !strings.Contains(header, "warming") || !strings.Contains(header, "CPU --") || !strings.Contains(header, "Other / unattributed") || !strings.Contains(header, "Memory --") || len(items) != 2 {
 		t.Fatalf("first paint header=%q items=%#v, want chrome + warming/unknown explicit Other", header, items)
 	}
 
@@ -279,7 +401,7 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 
 	view.setSnapshot(coreresources.Snapshot{At: now, Status: coreresources.StatusUnavailable, StatusReason: "resource attribution is unavailable on darwin"}, false)
 	items, header, footer = renderResourceView(view)
-	if !strings.Contains(header, "unavailable") || !strings.Contains(header, "unavailable on darwin") || len(items) != 0 || strings.Contains(footer, "Enter") {
+	if !strings.Contains(header, "unavailable") || !strings.Contains(header, "unavailable on darwin") || len(items) != 2 || !strings.Contains(footer, "Enter") {
 		t.Fatalf("unavailable header=%q footer=%q items=%#v", header, footer, items)
 	}
 
@@ -500,6 +622,15 @@ func pickerItemContaining(items []intpicker.Item, text string) *intpicker.Item {
 	return nil
 }
 
+func pickerItemByValue(items []intpicker.Item, value string) *intpicker.Item {
+	for index := range items {
+		if items[index].Value == value {
+			return &items[index]
+		}
+	}
+	return nil
+}
+
 func pickerActionsContain(actions []intpicker.Action, key string) bool {
 	for _, action := range actions {
 		if action.Key == key {
@@ -507,6 +638,15 @@ func pickerActionsContain(actions []intpicker.Action, key string) bool {
 		}
 	}
 	return false
+}
+
+func pickerAction(actions []intpicker.Action, key string) (intpicker.Action, bool) {
+	for _, action := range actions {
+		if action.Key == key {
+			return action, true
+		}
+	}
+	return intpicker.Action{}, false
 }
 
 func chromeBandsContain(bands []intpicker.ChromeBand, value string) bool {

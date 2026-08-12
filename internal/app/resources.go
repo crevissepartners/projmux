@@ -145,40 +145,54 @@ func (c *resourceCommand) currentTime() time.Time {
 func (c *resourceCommand) pickerOptions(view *resourceViewState, lifecycle *resourceLifecycle) intpicker.Options {
 	screen := view.screen()
 	text := view.text
-	actions := pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, resourceInspectorPopupMode, "esc")
-	if screen.actionable {
-		actions = append(actions, intpicker.Action{Key: "tab", Intent: intpicker.ActionCustom, Mutate: func(intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
-			view.cycleSort()
-			return view.deferredUpdate(), nil
-		}})
-	}
-	actions = append(actions,
-		intpicker.Action{Key: "ctrl-r", Intent: intpicker.ActionCustom, Mutate: func(intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
-			return lifecycle.collect(view), nil
-		}},
-		intpicker.Action{Key: "alt-left", Intent: intpicker.ActionCustom, Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
-			return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: "back", Query: ctx.Query, Closed: true}}, nil
-		}},
-	)
+	actions := c.resourceActions(view, lifecycle, screen.actionable)
 	options := intpicker.Options{
-		UI:                    "resources",
-		Title:                 screen.title,
-		Prompt:                text.value(i18n.KeyPickerResourcesPrompt, "search › "),
-		ChromeBands:           screen.bands,
-		Footer:                screen.footer,
-		Items:                 screen.items,
-		MultiLine:             true,
-		DisableSearch:         !screen.actionable,
-		ReadOnly:              !screen.actionable,
-		Locale:                text.locale,
-		Actions:               actions,
-		DeferredUpdate:        func() (intpicker.DeferredUpdate, error) { return lifecycle.collect(view), nil },
+		UI:            "resources",
+		Title:         screen.title,
+		Prompt:        text.value(i18n.KeyPickerResourcesPrompt, "search › "),
+		ChromeBands:   screen.bands,
+		Footer:        screen.footer,
+		Items:         screen.items,
+		MultiLine:     true,
+		DisableSearch: !screen.actionable,
+		ReadOnly:      !screen.actionable,
+		Locale:        text.locale,
+		Actions:       actions,
+		DeferredUpdate: func() (intpicker.DeferredUpdate, error) {
+			return c.withResourceActions(view, lifecycle, lifecycle.collect(view)), nil
+		},
 		DeferredUpdateTrigger: lifecycle.trigger,
 	}
 	if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, ""); err == nil {
 		return source.pickerOptions(options)
 	}
 	return fallbackRenderThemeSource().pickerOptions(options)
+}
+
+func (c *resourceCommand) resourceActions(view *resourceViewState, lifecycle *resourceLifecycle, actionable bool) []intpicker.Action {
+	actions := pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, resourceInspectorPopupMode, "esc")
+	if actionable {
+		actions = append(actions, intpicker.Action{Key: "tab", Intent: intpicker.ActionCustom, Mutate: func(intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+			view.cycleSort()
+			return c.withResourceActions(view, lifecycle, view.deferredUpdate()), nil
+		}})
+	}
+	actions = append(actions,
+		intpicker.Action{Key: "ctrl-r", Intent: intpicker.ActionCustom, Mutate: func(intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+			return c.withResourceActions(view, lifecycle, lifecycle.collect(view)), nil
+		}},
+		intpicker.Action{Key: "alt-left", Intent: intpicker.ActionCustom, Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+			return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: "back", Query: ctx.Query, Closed: true}}, nil
+		}},
+	)
+	return actions
+}
+
+func (c *resourceCommand) withResourceActions(view *resourceViewState, lifecycle *resourceLifecycle, update intpicker.DeferredUpdate) intpicker.DeferredUpdate {
+	screen := view.screen()
+	update.Actions = c.resourceActions(view, lifecycle, screen.actionable)
+	update.SetActions = true
+	return update
 }
 
 type resourceLifecycle struct {
@@ -465,9 +479,11 @@ func resourceProjectRows(snapshot coreresources.Snapshot, text resourceText) []r
 	for _, project := range snapshot.Projects {
 		byKey[project.Key] = project
 	}
-	keys := make([]string, 0, len(snapshot.Projects))
+	keys := []string{coreresources.ProjectUnassigned, coreresources.ProjectShared}
 	for _, project := range snapshot.Projects {
-		keys = append(keys, project.Key)
+		if project.Key != coreresources.ProjectUnassigned && project.Key != coreresources.ProjectShared {
+			keys = append(keys, project.Key)
+		}
 	}
 	rows := make([]resourceRow, 0, len(keys))
 	for _, key := range keys {

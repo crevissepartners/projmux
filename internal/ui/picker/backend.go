@@ -73,6 +73,8 @@ type DeferredUpdate struct {
 	DisableSearch  bool
 	ReadOnly       bool
 	SetInteraction bool
+	Actions        []Action
+	SetActions     bool
 	Title          string
 	SetTitle       bool
 	Result         *Result
@@ -950,6 +952,9 @@ func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
 	if update.SetInteraction {
 		options.DisableSearch = update.DisableSearch
 		options.ReadOnly = update.ReadOnly
+	}
+	if update.SetActions {
+		options.Actions = append([]Action(nil), update.Actions...)
 	}
 	if update.SetTitle {
 		options.Title = update.Title
