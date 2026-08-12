@@ -103,7 +103,7 @@ shows every key arriving, skip terminal remediation.
 ## doctor
 
 ```
-projmux doctor [--json]
+projmux doctor [--json] [--section deps|runtime|integrations|session-state|logs] [--verbose]
 ```
 
 Runs read-only diagnostics, including a dependency check for `tmux ≥ 3.4`,
@@ -123,24 +123,38 @@ Live `hook`/`session-id` metadata is high confidence; DB-validated Antigravity
 sources are medium confidence; legacy `antigravity-history` is low confidence.
 Disk discovery never lowers or overwrites an already captured live source.
 
-The default plain report exits non-zero when a required dependency is missing
-or stale, and exits `0` when only optional dependencies or AI notify
-integrations are missing. `--json` preserves its current successful exit after
-emitting the report even when a required dependency is missing or stale. It
-emits a machine-readable object with `dependencies`,
-`ai_notify_integrations`, and `session_state_resume`; the default is the human
-report with suggested install commands per platform, AI integration
-install/remove/dry-run commands, and Session State resume metadata health.
-Users explicitly run any displayed install guidance or command outside doctor.
-Doctor does not diagnose terminal key delivery; use `projmux setup` for that.
+The default text report shows per-section summaries plus failing or warning
+items. `--verbose` adds successful checks and complete typed detail, including
+versions, paths, confidence/source metadata, and displayed remediation.
+`--section` projects the same inventory used by text and JSON: `deps` selects
+dependencies, `integrations` selects AI notify integrations, and
+`session-state` selects resume metadata plus retention guidance. `runtime` and
+`logs` are valid filters but have no checks in schema version 1; those health
+checks belong to Phase 2 and doctor does not fabricate placeholder findings.
 
-Compatibility notice: `--install-missing`, `--dry-run`, and
-`--include-optional` are deprecated install flags. During the compatibility
-period their install, preview, optional-dependency, output, and exit behavior
-remain unchanged, and each invocation using one or more of them emits one
-stderr warning. They cannot be combined with `--json`; `--dry-run` and
-`--include-optional` still require `--install-missing`. These mutation paths
-will be removed when doctor becomes read-only diagnostics only.
+JSON reports have integer `schema_version: 1`. An unfiltered report retains the
+existing typed `dependencies`, `ai_notify_integrations`,
+`session_state_resume`, and `session_state_prune` detail; a filtered report
+contains only the selected typed field(s). `--verbose` is accepted with
+`--json` but does not change JSON fields or values.
+
+Default and verbose text exit non-zero only when their projected dependency
+inventory contains a required missing or stale dependency. A non-`deps`
+section exits `0`. JSON preserves its successful exit after emitting a report,
+even when required dependencies are missing or stale.
+
+Doctor is read-only for every flag combination. It never installs packages,
+runs displayed remediation, changes terminal or tmux state, migrates files, or
+writes operational-log outcomes. The removed `--install-missing`,
+`--include-optional`, and Doctor `--dry-run` mutation flags fail as unknown
+usage with an exact instruction to remove the flag and run displayed
+remediation explicitly outside Doctor; they are never ignored. Doctor does not
+diagnose terminal key delivery; use `projmux setup` for that.
+
+JSON migration: consumers must require `schema_version == 1` before decoding
+the typed fields. Version 1 adds the root version and filtered projections;
+field meanings inside the existing dependency, integration, and Session State
+inventories are unchanged.
 
 `Settings > Notifications > Delivery sources` shows active Codex, Claude, and
 Antigravity hooks plus tmux statuses, conflicts, config paths, and

@@ -90,9 +90,6 @@ func Classify(args []string) CommandClass {
 	if command == "setup" && out.Subcommand == "terminal" {
 		out.StateChanging = boolFlagEnabled(args[2:], "apply")
 	}
-	if command == "doctor" {
-		out.StateChanging = boolFlagEnabled(args[1:], "install-missing") && !boolFlagEnabled(args[1:], "dry-run")
-	}
 	if command == "prune" && out.Subcommand == "session-state" && len(args) > 2 {
 		out.StateChanging = args[2] == "delete"
 	}

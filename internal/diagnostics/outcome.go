@@ -14,6 +14,11 @@ type exitCoder interface {
 // Storage is deliberately best-effort: callers must ignore its return value.
 func RecordOutcome(store *Store, args []string, runID, version, muxBackend string, started time.Time, commandErr error, usageError bool) error {
 	class := Classify(args)
+	// Doctor owns a strict no-write contract, including invalid flag
+	// invocations. Do not turn its read-only result into a journal write.
+	if class.Command == "doctor" {
+		return nil
+	}
 	if commandErr == nil && !class.StateChanging {
 		return nil
 	}

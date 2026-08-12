@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +23,6 @@ type doctorCommand struct {
 	goos              func() string
 	getenv            func(string) string
 	commandVersion    func(name string) string
-	runExternal       func(name string, args []string, stdout, stderr io.Writer) error
 	aiDiagnostics     func() []doctorAINotifyIntegration
 	resumeDiagnostics func() []doctorSessionStateResumeDiagnostic
 }
@@ -35,7 +36,6 @@ func newDoctorCommand() *doctorCommand {
 	c.commandVersion = func(name string) string {
 		return defaultCommandVersion(name)
 	}
-	c.runExternal = runDoctorExternal
 	c.aiDiagnostics = func() []doctorAINotifyIntegration {
 		return doctorAINotifyDiagnostics(newAICommand())
 	}
@@ -96,15 +96,35 @@ type doctorResult struct {
 }
 
 type doctorReport struct {
+	SchemaVersion        int                                  `json:"schema_version"`
 	Dependencies         []doctorResult                       `json:"dependencies"`
 	AINotifyIntegrations []doctorAINotifyIntegration          `json:"ai_notify_integrations"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    string                               `json:"session_state_prune"`
 }
 
+const doctorSchemaVersion = 1
+
 const doctorSessionStatePruneGuidance = "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name."
 
-const doctorInstallFlagsDeprecationWarning = "warning: projmux doctor install flags are deprecated; doctor will become read-only diagnostics, so explicitly run the install guidance/command shown in its report."
+type doctorSection string
+
+const (
+	doctorSectionAll          doctorSection = ""
+	doctorSectionDeps         doctorSection = "deps"
+	doctorSectionRuntime      doctorSection = "runtime"
+	doctorSectionIntegrations doctorSection = "integrations"
+	doctorSectionSessionState doctorSection = "session-state"
+	doctorSectionLogs         doctorSection = "logs"
+)
+
+var doctorSections = []doctorSection{
+	doctorSectionDeps,
+	doctorSectionRuntime,
+	doctorSectionIntegrations,
+	doctorSectionSessionState,
+	doctorSectionLogs,
+}
 
 func doctorDeps() []doctorDep {
 	return []doctorDep{
@@ -122,58 +142,91 @@ func doctorDeps() []doctorDep {
 
 // Run executes the projmux doctor diagnostics flow.
 func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
+	if removed := doctorRemovedFlag(args); removed != "" {
+		return usageError(fmt.Sprintf("flag provided but not defined: -%s\nprojmux doctor is read-only; remove --%s and run displayed remediation guidance explicitly outside doctor", removed, removed))
+	}
+
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
-	installMissing := fs.Bool("install-missing", false, "deprecated compatibility: install missing or stale required dependencies")
-	includeOptional := fs.Bool("include-optional", false, "deprecated compatibility: include optional missing dependencies with --install-missing")
-	dryRun := fs.Bool("dry-run", false, "deprecated compatibility: print install commands without running them")
+	sectionName := fs.String("section", "", "filter diagnostics: deps|runtime|integrations|session-state|logs")
+	verbose := fs.Bool("verbose", false, "include successful checks and full detail in the text report")
 	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if doctorDeprecatedInstallFlagUsed(fs) {
-		if _, err := fmt.Fprintln(stderr, doctorInstallFlagsDeprecationWarning); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
+		return usageError(err.Error())
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("doctor does not accept positional arguments")
+		return usageError("doctor does not accept positional arguments")
 	}
-	if *jsonOut && (*installMissing || *dryRun || *includeOptional) {
-		return fmt.Errorf("doctor --json cannot be combined with install flags")
-	}
-	if (*dryRun || *includeOptional) && !*installMissing {
-		return fmt.Errorf("doctor --dry-run and --include-optional require --install-missing")
+	section, ok := parseDoctorSection(*sectionName)
+	if !ok {
+		return usageError("doctor --section must be one of deps, runtime, integrations, session-state, or logs")
 	}
 
-	results := c.evaluate()
-	report := doctorReport{
-		Dependencies:         results,
-		AINotifyIntegrations: c.evaluateAINotifyIntegrations(),
-		SessionStateResume:   c.evaluateSessionStateResume(),
-		SessionStatePrune:    doctorSessionStatePruneGuidance,
-	}
+	report := c.evaluateReport(section)
 
 	if *jsonOut {
-		return writeDoctorJSON(stdout, report)
+		return writeDoctorJSON(stdout, report, section)
 	}
 
-	if err := writeDoctorText(stdout, report); err != nil {
+	if err := writeDoctorText(stdout, report, section, *verbose); err != nil {
 		return err
 	}
-	if *installMissing {
-		return c.installMissing(results, doctorInstallOptions{
-			DryRun:          *dryRun,
-			IncludeOptional: *includeOptional,
-		}, stdout, stderr)
-	}
-
-	for _, r := range results {
+	for _, r := range report.Dependencies {
 		if r.Required && (r.Status == doctorStatusMissing || r.Status == doctorStatusStale) {
 			return fmt.Errorf("missing required dependencies; see report above")
 		}
 	}
 	return nil
+}
+
+func parseDoctorSection(raw string) (doctorSection, bool) {
+	section := doctorSection(strings.TrimSpace(raw))
+	if section == doctorSectionAll {
+		return section, true
+	}
+	if slices.Contains(doctorSections, section) {
+		return section, true
+	}
+	return "", false
+}
+
+func doctorRemovedFlag(args []string) string {
+	removed := map[string]struct{}{
+		"install-missing":  {},
+		"include-optional": {},
+		"dry-run":          {},
+	}
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		name := strings.TrimLeft(arg, "-")
+		if before, _, ok := strings.Cut(name, "="); ok {
+			name = before
+		}
+		if _, ok := removed[name]; ok && strings.HasPrefix(arg, "-") {
+			return name
+		}
+	}
+	return ""
+}
+
+func (c *doctorCommand) evaluateReport(section doctorSection) doctorReport {
+	report := doctorReport{SchemaVersion: doctorSchemaVersion}
+	if section == doctorSectionAll || section == doctorSectionDeps {
+		report.Dependencies = c.evaluate()
+	}
+	if section == doctorSectionAll || section == doctorSectionIntegrations {
+		report.AINotifyIntegrations = c.evaluateAINotifyIntegrations()
+	}
+	if section == doctorSectionAll || section == doctorSectionSessionState {
+		report.SessionStateResume = c.evaluateSessionStateResume()
+		report.SessionStatePrune = doctorSessionStatePruneGuidance
+	}
+	return report
 }
 
 func (c *doctorCommand) evaluateAINotifyIntegrations() []doctorAINotifyIntegration {
@@ -188,206 +241,6 @@ func (c *doctorCommand) evaluateSessionStateResume() []doctorSessionStateResumeD
 		return nil
 	}
 	return c.resumeDiagnostics()
-}
-
-type doctorInstallOptions struct {
-	DryRun          bool
-	IncludeOptional bool
-}
-
-func (c *doctorCommand) installMissing(results []doctorResult, opts doctorInstallOptions, stdout, stderr io.Writer) error {
-	plan := buildDoctorCompatibilityInstallPlan(results, opts.IncludeOptional)
-	if len(plan.Commands) == 0 {
-		for _, r := range plan.Manual {
-			if _, err := fmt.Fprintf(stdout, "manual install required for %s: %s\n", r.Name, r.Install); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintln(stdout, "no automatically installable missing dependencies; follow the guidance above"); err != nil {
-			return err
-		}
-		if hasRequiredDoctorResults(plan.Unresolved) {
-			return fmt.Errorf("missing required dependencies; manual install required for %s", doctorResultNames(plan.Unresolved))
-		}
-		return nil
-	}
-
-	if len(plan.Manual) > 0 {
-		for _, r := range plan.Manual {
-			if _, err := fmt.Fprintf(stdout, "manual install required for %s: %s\n", r.Name, r.Install); err != nil {
-				return err
-			}
-		}
-	}
-	for _, command := range plan.Commands {
-		if opts.DryRun {
-			if _, err := fmt.Fprintf(stdout, "would install %s: %s\n", command.Dep, command.String()); err != nil {
-				return err
-			}
-			continue
-		}
-		if _, err := fmt.Fprintf(stdout, ">> installing %s: %s\n", command.Dep, command.String()); err != nil {
-			return err
-		}
-		if err := c.externalRunner()(command.Name, command.Args, stdout, stderr); err != nil {
-			return fmt.Errorf("install %s via %s: %w", command.Dep, command.String(), err)
-		}
-	}
-	if !opts.DryRun {
-		if _, err := fmt.Fprintln(stdout, "install commands completed; rerun projmux doctor to verify"); err != nil {
-			return err
-		}
-	}
-	if hasRequiredDoctorResults(plan.Unresolved) {
-		return fmt.Errorf("missing required dependencies; manual install required for %s", doctorResultNames(plan.Unresolved))
-	}
-	return nil
-}
-
-// doctorCompatibilityInstallPlan is the internal mutation seam retained for
-// the deprecation period. doctorResult.Install remains the human-facing hint
-// in the existing text and JSON contracts; only this typed projection may be
-// handed to the external runner. Phase 1 can remove the projection and runner
-// without changing the public diagnostic result shape.
-type doctorCompatibilityInstallPlan struct {
-	Commands   []doctorInstallCommand
-	Manual     []doctorResult
-	Unresolved []doctorResult
-}
-
-func buildDoctorCompatibilityInstallPlan(results []doctorResult, includeOptional bool) doctorCompatibilityInstallPlan {
-	return doctorCompatibilityInstallPlan{
-		Commands:   doctorInstallCommands(results, includeOptional),
-		Manual:     doctorManualInstallResults(results, includeOptional),
-		Unresolved: doctorUnresolvedInstallResults(results, includeOptional),
-	}
-}
-
-type doctorInstallCommand struct {
-	Dep  string
-	Name string
-	Args []string
-}
-
-func (c doctorInstallCommand) String() string {
-	return strings.Join(append([]string{c.Name}, c.Args...), " ")
-}
-
-func doctorInstallCommands(results []doctorResult, includeOptional bool) []doctorInstallCommand {
-	var out []doctorInstallCommand
-	for _, r := range results {
-		installableStatus := r.Status == doctorStatusMissing || r.Status == doctorStatusStale
-		if includeOptional {
-			installableStatus = installableStatus || r.Status == doctorStatusHint
-		}
-		if !installableStatus || (!r.Required && !includeOptional) {
-			continue
-		}
-		cmd, ok := parseDoctorInstallCommand(r.Name, r.Install)
-		if ok {
-			out = append(out, cmd)
-		}
-	}
-	return out
-}
-
-func doctorManualInstallResults(results []doctorResult, includeOptional bool) []doctorResult {
-	var out []doctorResult
-	for _, r := range results {
-		if !doctorInstallEligible(r, includeOptional) {
-			continue
-		}
-		if _, ok := parseDoctorInstallCommand(r.Name, r.Install); !ok && strings.TrimSpace(r.Install) != "" {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-func doctorUnresolvedInstallResults(results []doctorResult, includeOptional bool) []doctorResult {
-	var out []doctorResult
-	for _, r := range results {
-		if !doctorInstallEligible(r, includeOptional) {
-			continue
-		}
-		if _, ok := parseDoctorInstallCommand(r.Name, r.Install); !ok {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-func doctorInstallEligible(r doctorResult, includeOptional bool) bool {
-	installableStatus := r.Status == doctorStatusMissing || r.Status == doctorStatusStale
-	if includeOptional {
-		installableStatus = installableStatus || r.Status == doctorStatusHint
-	}
-	return installableStatus && (r.Required || includeOptional)
-}
-
-func hasRequiredDoctorResults(results []doctorResult) bool {
-	for _, r := range results {
-		if r.Required {
-			return true
-		}
-	}
-	return false
-}
-
-func doctorResultNames(results []doctorResult) string {
-	names := make([]string, 0, len(results))
-	for _, r := range results {
-		names = append(names, r.Name)
-	}
-	return strings.Join(names, ", ")
-}
-
-func parseDoctorInstallCommand(dep, hint string) (doctorInstallCommand, bool) {
-	command := strings.TrimSpace(hint)
-	if command == "" {
-		return doctorInstallCommand{}, false
-	}
-	if strings.HasPrefix(command, "manual:") {
-		return doctorInstallCommand{}, false
-	}
-	if before, _, ok := strings.Cut(command, ";"); ok {
-		command = strings.TrimSpace(before)
-	}
-	command = strings.TrimPrefix(command, "or:")
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return doctorInstallCommand{}, false
-	}
-	parts := strings.Fields(command)
-	if len(parts) == 0 {
-		return doctorInstallCommand{}, false
-	}
-	return doctorInstallCommand{Dep: dep, Name: parts[0], Args: parts[1:]}, true
-}
-
-func doctorDeprecatedInstallFlagUsed(fs *flag.FlagSet) bool {
-	used := false
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "install-missing", "include-optional", "dry-run":
-			used = true
-		}
-	})
-	return used
-}
-
-func (c *doctorCommand) externalRunner() func(string, []string, io.Writer, io.Writer) error {
-	if c.runExternal != nil {
-		return c.runExternal
-	}
-	return runDoctorExternal
-}
-
-func runDoctorExternal(name string, args []string, stdout, stderr io.Writer) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	return cmd.Run()
 }
 
 func (c *doctorCommand) evaluate() []doctorResult {
@@ -449,25 +302,63 @@ func (c *doctorCommand) evaluateDep(dep doctorDep, host string) doctorResult {
 	return res
 }
 
-func writeDoctorText(w io.Writer, report doctorReport) error {
+func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, verbose bool) error {
 	var buf bytes.Buffer
 	buf.WriteString("projmux doctor\n")
-	buf.WriteString("dependency and AI notify integration diagnostics; use `projmux setup` for terminal key delivery\n")
+	buf.WriteString("read-only diagnostics; displayed remediation is never executed\n")
+	if section == doctorSectionAll || section == doctorSectionDeps {
+		writeDoctorDependenciesText(&buf, report.Dependencies, verbose)
+	}
+	if section == doctorSectionAll || section == doctorSectionRuntime {
+		buf.WriteString("\nRuntime\n")
+		buf.WriteString("  No runtime checks in schema version 1; runtime health is planned for Phase 2.\n")
+	}
+	if section == doctorSectionAll || section == doctorSectionIntegrations {
+		writeDoctorIntegrationsText(&buf, report.AINotifyIntegrations, verbose)
+	}
+	if section == doctorSectionAll || section == doctorSectionSessionState {
+		writeDoctorSessionStateText(&buf, report, verbose)
+	}
+	if section == doctorSectionAll || section == doctorSectionLogs {
+		buf.WriteString("\nLogs\n")
+		buf.WriteString("  No log checks in schema version 1; log health is planned for Phase 2.\n")
+	}
+	_, err := w.Write(buf.Bytes())
+	return err
+}
 
+func writeDoctorDependenciesText(buf *bytes.Buffer, results []doctorResult, verbose bool) {
+	buf.WriteString("\nDependencies\n")
 	var ok, missing, stale, skipped, hints int
-	for _, r := range report.Dependencies {
-		tag := fmt.Sprintf("[%s]", r.Status)
-		// Why: pad tag column to fit "[missing]" so subsequent columns line up.
-		fmt.Fprintf(&buf, "  %-10s%-10s", tag, r.Name)
-
+	for _, r := range results {
 		switch r.Status {
 		case doctorStatusOK:
 			ok++
+		case doctorStatusMissing:
+			missing++
+		case doctorStatusStale:
+			stale++
+		case doctorStatusHint:
+			hints++
+		case doctorStatusSkip:
+			skipped++
+		}
+	}
+	fmt.Fprintf(buf, "  Summary: %d ok, %d missing, %d stale, %d skipped, %d hint.\n", ok, missing, stale, skipped, hints)
+	for _, r := range results {
+		if !verbose && r.Status == doctorStatusOK {
+			continue
+		}
+		tag := fmt.Sprintf("[%s]", r.Status)
+		// Why: pad tag column to fit "[missing]" so subsequent columns line up.
+		fmt.Fprintf(buf, "  %-10s%-10s", tag, r.Name)
+
+		switch r.Status {
+		case doctorStatusOK:
 			if r.Version != "" {
 				buf.WriteString(r.Version)
 			}
 		case doctorStatusMissing:
-			missing++
 			buf.WriteString("- install: ")
 			if r.Install != "" {
 				buf.WriteString(r.Install)
@@ -475,7 +366,6 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 				buf.WriteString("see https://github.com/crevissepartners/projmux for guidance")
 			}
 		case doctorStatusStale:
-			stale++
 			buf.WriteString("- ")
 			if r.Hint != "" {
 				buf.WriteString(r.Hint)
@@ -485,7 +375,6 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 				buf.WriteString(r.Install)
 			}
 		case doctorStatusHint:
-			hints++
 			buf.WriteString("- ")
 			if r.Hint != "" {
 				buf.WriteString(r.Hint)
@@ -495,7 +384,6 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 				buf.WriteString(r.Install)
 			}
 		case doctorStatusSkip:
-			skipped++
 			buf.WriteString("- ")
 			if r.Hint != "" {
 				buf.WriteString(r.Hint)
@@ -503,111 +391,168 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 		}
 		buf.WriteString("\n")
 	}
+}
 
-	fmt.Fprintf(&buf, "\n%d ok, %d missing, %d stale, %d skipped, %d hint.\n", ok, missing, stale, skipped, hints)
-	if len(report.AINotifyIntegrations) > 0 {
-		buf.WriteString("\nAI notify integrations\n")
-		for _, r := range report.AINotifyIntegrations {
-			tag := fmt.Sprintf("[%s]", r.Status)
-			fmt.Fprintf(&buf, "  %-11s%-22s", tag, r.Name)
-			if r.ProviderID != "" {
-				state := "disabled"
-				if r.ProviderEnabled != nil && *r.ProviderEnabled {
-					state = "enabled"
-				}
-				fmt.Fprintf(&buf, "provider: %s (%s)", r.ProviderID, state)
-			}
-			if r.ConfigPath != "" {
-				if r.ProviderID != "" {
-					buf.WriteString("; ")
-				}
-				fmt.Fprintf(&buf, "config: %s", r.ConfigPath)
-			}
-			if r.StatusLinePath != "" {
-				if r.ProviderID != "" || r.ConfigPath != "" {
-					buf.WriteString("; ")
-				}
-				fmt.Fprintf(&buf, "statusline config: %s", r.StatusLinePath)
-			}
-			if r.ConflictReason != "" {
-				if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" {
-					buf.WriteString("; ")
-				}
-				buf.WriteString(r.ConflictReason)
-			}
-			if r.TestedVersion != "" {
-				if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" || r.ConflictReason != "" {
-					buf.WriteString("; ")
-				}
-				buf.WriteString("tested: ")
-				buf.WriteString(r.TestedVersion)
-			}
-			if r.Guidance != "" {
-				if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
-					buf.WriteString("; ")
-				}
-				buf.WriteString("notice: ")
-				buf.WriteString(r.Guidance)
-			}
-			if r.InstallCommand != "" {
-				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" {
-					buf.WriteString("; ")
-				}
-				buf.WriteString("install: ")
-				buf.WriteString(r.InstallCommand)
-			}
-			if r.DryRunCommand != "" {
-				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" {
-					buf.WriteString("; ")
-				}
-				buf.WriteString("dry-run: ")
-				buf.WriteString(r.DryRunCommand)
-			}
-			if r.RemoveCommand != "" {
-				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" || r.DryRunCommand != "" {
-					buf.WriteString("; ")
-				}
-				buf.WriteString("remove: ")
-				buf.WriteString(r.RemoveCommand)
-			}
-			buf.WriteString("\n")
-		}
+func writeDoctorIntegrationsText(buf *bytes.Buffer, results []doctorAINotifyIntegration, verbose bool) {
+	buf.WriteString("\nAI notify integrations\n")
+	counts := map[doctorAINotifyStatus]int{}
+	for _, result := range results {
+		counts[result.Status]++
 	}
-	if len(report.SessionStateResume) > 0 {
-		buf.WriteString("\nSession State resume metadata\n")
-		for _, r := range report.SessionStateResume {
-			tag := fmt.Sprintf("[%s]", r.Status)
-			fmt.Fprintf(&buf, "  %-15s%-8s %s:%d.%d", tag, r.Agent, r.Session, r.WindowIndex, r.PaneIndex)
-			if r.Confidence != "" {
-				fmt.Fprintf(&buf, "; confidence: %s", r.Confidence)
+	fmt.Fprintf(buf, "  Summary: %d installed, %d missing, %d stale, %d conflict, %d skipped.\n",
+		counts[doctorAINotifyStatusInstalled], counts[doctorAINotifyStatusMissing], counts[doctorAINotifyStatusStale], counts[doctorAINotifyStatusConflict], counts[doctorAINotifyStatusSkip])
+	for _, r := range results {
+		if !verbose && r.Status == doctorAINotifyStatusInstalled {
+			continue
+		}
+		tag := fmt.Sprintf("[%s]", r.Status)
+		fmt.Fprintf(buf, "  %-11s%-22s", tag, r.Name)
+		if !verbose {
+			buf.WriteString("\n")
+			continue
+		}
+		if r.ProviderID != "" {
+			state := "disabled"
+			if r.ProviderEnabled != nil && *r.ProviderEnabled {
+				state = "enabled"
 			}
-			if r.ResumeSource != "" {
-				fmt.Fprintf(&buf, "; source: %s", r.ResumeSource)
+			fmt.Fprintf(buf, "provider: %s (%s)", r.ProviderID, state)
+		}
+		if r.ConfigPath != "" {
+			if r.ProviderID != "" {
+				buf.WriteString("; ")
 			}
-			if r.ResumeUpdatedAt != "" {
-				fmt.Fprintf(&buf, "; updated: %s", r.ResumeUpdatedAt)
+			fmt.Fprintf(buf, "config: %s", r.ConfigPath)
+		}
+		if r.StatusLinePath != "" {
+			if r.ProviderID != "" || r.ConfigPath != "" {
+				buf.WriteString("; ")
 			}
+			fmt.Fprintf(buf, "statusline config: %s", r.StatusLinePath)
+		}
+		if r.ConflictReason != "" {
+			if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" {
+				buf.WriteString("; ")
+			}
+			buf.WriteString(r.ConflictReason)
+		}
+		if r.TestedVersion != "" {
+			if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" || r.ConflictReason != "" {
+				buf.WriteString("; ")
+			}
+			buf.WriteString("tested: ")
+			buf.WriteString(r.TestedVersion)
+		}
+		if r.Guidance != "" {
+			if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
+				buf.WriteString("; ")
+			}
+			buf.WriteString("notice: ")
+			buf.WriteString(r.Guidance)
+		}
+		if r.InstallCommand != "" {
+			if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" {
+				buf.WriteString("; ")
+			}
+			buf.WriteString("install: ")
+			buf.WriteString(r.InstallCommand)
+		}
+		if r.DryRunCommand != "" {
+			if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" {
+				buf.WriteString("; ")
+			}
+			buf.WriteString("dry-run: ")
+			buf.WriteString(r.DryRunCommand)
+		}
+		if r.RemoveCommand != "" {
+			if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" || r.Guidance != "" || r.InstallCommand != "" || r.DryRunCommand != "" {
+				buf.WriteString("; ")
+			}
+			buf.WriteString("remove: ")
+			buf.WriteString(r.RemoveCommand)
+		}
+		buf.WriteString("\n")
+	}
+}
+
+func writeDoctorSessionStateText(buf *bytes.Buffer, report doctorReport, verbose bool) {
+	buf.WriteString("\nSession State resume metadata\n")
+	counts := map[string]int{}
+	for _, result := range report.SessionStateResume {
+		counts[result.Status]++
+	}
+	fmt.Fprintf(buf, "  Summary: %d available, %d stale, %d unavailable.\n", counts["available"], counts["stale"], counts["unavailable"])
+	for _, r := range report.SessionStateResume {
+		if !verbose && r.Status == "available" {
+			continue
+		}
+		tag := fmt.Sprintf("[%s]", r.Status)
+		fmt.Fprintf(buf, "  %-15s%-8s %s:%d.%d", tag, r.Agent, r.Session, r.WindowIndex, r.PaneIndex)
+		if !verbose {
 			if r.Reason != "" {
-				fmt.Fprintf(&buf, "; %s", r.Reason)
-			}
-			if r.SnapshotPath != "" {
-				fmt.Fprintf(&buf, "; snapshot: %s", r.SnapshotPath)
+				fmt.Fprintf(buf, "; %s", r.Reason)
 			}
 			buf.WriteString("\n")
+			continue
 		}
+		if r.Confidence != "" {
+			fmt.Fprintf(buf, "; confidence: %s", r.Confidence)
+		}
+		if r.ResumeSource != "" {
+			fmt.Fprintf(buf, "; source: %s", r.ResumeSource)
+		}
+		if r.ResumeUpdatedAt != "" {
+			fmt.Fprintf(buf, "; updated: %s", r.ResumeUpdatedAt)
+		}
+		if r.Reason != "" {
+			fmt.Fprintf(buf, "; %s", r.Reason)
+		}
+		if r.SnapshotPath != "" {
+			fmt.Fprintf(buf, "; snapshot: %s", r.SnapshotPath)
+		}
+		buf.WriteString("\n")
 	}
 	if report.SessionStatePrune != "" {
 		buf.WriteString("\nSession State retention\n")
-		fmt.Fprintf(&buf, "  %s\n", report.SessionStatePrune)
+		fmt.Fprintf(buf, "  %s\n", report.SessionStatePrune)
 	}
-	_, err := w.Write(buf.Bytes())
-	return err
 }
 
-func writeDoctorJSON(w io.Writer, report doctorReport) error {
+type doctorJSONReport struct {
+	SchemaVersion        int                                   `json:"schema_version"`
+	Dependencies         *[]doctorResult                       `json:"dependencies,omitempty"`
+	AINotifyIntegrations *[]doctorAINotifyIntegration          `json:"ai_notify_integrations,omitempty"`
+	SessionStateResume   *[]doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
+	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
+	Runtime              *[]struct{}                           `json:"runtime,omitempty"`
+	Logs                 *[]struct{}                           `json:"logs,omitempty"`
+}
+
+func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) error {
+	out := doctorJSONReport{SchemaVersion: report.SchemaVersion}
+	if section == doctorSectionAll || section == doctorSectionDeps {
+		out.Dependencies = &report.Dependencies
+	}
+	if section == doctorSectionAll || section == doctorSectionIntegrations {
+		out.AINotifyIntegrations = &report.AINotifyIntegrations
+	}
+	if (section == doctorSectionAll && len(report.SessionStateResume) > 0) || section == doctorSectionSessionState {
+		out.SessionStateResume = &report.SessionStateResume
+	}
+	if section == doctorSectionAll || section == doctorSectionSessionState {
+		out.SessionStatePrune = &report.SessionStatePrune
+	}
+	if section == doctorSectionRuntime {
+		empty := make([]struct{}, 0)
+		out.Runtime = &empty
+	}
+	if section == doctorSectionLogs {
+		empty := make([]struct{}, 0)
+		out.Logs = &empty
+	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(report)
+	return enc.Encode(out)
 }
 
 func detectInstallHint(dep doctorDep, host string, lookPath func(string) (string, error)) string {
