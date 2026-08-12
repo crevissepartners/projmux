@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.9.0](https://github.com/crevissepartners/projmux/compare/v0.8.4...v0.9.0) (2026-08-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove psmux support ([#578](https://github.com/crevissepartners/projmux/issues/578))
+* **settings:** remove the standalone notification queue and hook override Settings rows and stale Labs picker/keybindings exposure.
+
+### Features
+
+* add pane label identity slice ([#563](https://github.com/crevissepartners/projmux/issues/563)) ([995ee4d](https://github.com/crevissepartners/projmux/commit/995ee4dca5488ece478b680a1c41b31aee1080df))
+* **ai:** discover Antigravity current storage resumes ([#573](https://github.com/crevissepartners/projmux/issues/573)) ([f550f9a](https://github.com/crevissepartners/projmux/commit/f550f9a1f966eb8f23c66ff8d9326545f408bddf))
+* **ai:** integrate Antigravity statusline attention ([#571](https://github.com/crevissepartners/projmux/issues/571)) ([cca0070](https://github.com/crevissepartners/projmux/commit/cca0070dfff0341d13e23948be65bdc9e95c1e06))
+* **ai:** manage Antigravity hooks integration ([#570](https://github.com/crevissepartners/projmux/issues/570)) ([60e1dba](https://github.com/crevissepartners/projmux/commit/60e1dbac4b3412fbf0a190e0619a589217302bee))
+* **ai:** print direct split pane IDs ([#560](https://github.com/crevissepartners/projmux/issues/560)) ([24683f6](https://github.com/crevissepartners/projmux/commit/24683f63d39861421a418ae74b6ca72511fbaca2))
+* **ai:** surface Antigravity quota buckets ([#572](https://github.com/crevissepartners/projmux/issues/572)) ([073d426](https://github.com/crevissepartners/projmux/commit/073d426ccf6776a063b2f493cc44b1c40b22777e))
+* **diagnostics:** add local operational event foundation ([#576](https://github.com/crevissepartners/projmux/issues/576)) ([b004a33](https://github.com/crevissepartners/projmux/commit/b004a3394502ab09d47abb6008c85d01adf2d59f))
+* **doctor:** deprecate mutation flags ([#567](https://github.com/crevissepartners/projmux/issues/567)) ([9377085](https://github.com/crevissepartners/projmux/commit/937708539925cc1c9eaffce3b41d0c09305badee))
+* manage Antigravity hooks integration ([60e1dba](https://github.com/crevissepartners/projmux/commit/60e1dbac4b3412fbf0a190e0619a589217302bee))
+* remove psmux support ([#578](https://github.com/crevissepartners/projmux/issues/578)) ([60e4ca0](https://github.com/crevissepartners/projmux/commit/60e4ca0c899d1b3ab75bca04e072aa8f19f9e7de))
+* **resources:** add interactive resource inspector ([#575](https://github.com/crevissepartners/projmux/issues/575)) ([b9a1ae8](https://github.com/crevissepartners/projmux/commit/b9a1ae86839e81c5e55527509317f2943d9b506b))
+* **resources:** add Linux attribution core ([#574](https://github.com/crevissepartners/projmux/issues/574)) ([1eeb633](https://github.com/crevissepartners/projmux/commit/1eeb633d2cd37e8fc23941df533504d53306c58c))
+* **sessionstate:** restore pane identity metadata ([#564](https://github.com/crevissepartners/projmux/issues/564)) ([eaae8d0](https://github.com/crevissepartners/projmux/commit/eaae8d0c6e3d06bfecc13292573972c7f3855f72))
+* **settings:** streamline guidance and action feedback ([#568](https://github.com/crevissepartners/projmux/issues/568)) ([726960a](https://github.com/crevissepartners/projmux/commit/726960a168a3216dd3754735b7c6ad2ca06d138f))
+* **setup:** add terminal remediation subcommand ([#566](https://github.com/crevissepartners/projmux/issues/566)) ([bc5607f](https://github.com/crevissepartners/projmux/commit/bc5607ff4ea903896ad518d05bcb24999357e4b4))
+* **statusbar:** add live resource severity styles ([#565](https://github.com/crevissepartners/projmux/issues/565)) ([9a22411](https://github.com/crevissepartners/projmux/commit/9a224115b5082ca19f6f245f999fa195546dc269))
+
+
+### Bug Fixes
+
+* **ai:** align Antigravity v1.1.12 hook contract ([#569](https://github.com/crevissepartners/projmux/issues/569)) ([6600590](https://github.com/crevissepartners/projmux/commit/660059081d86e3e5782d63e1347b02bb8f18cf21))
+* **diagnostics:** exclude automatic success outcomes ([#577](https://github.com/crevissepartners/projmux/issues/577)) ([5066b41](https://github.com/crevissepartners/projmux/commit/5066b41c6c6226c063e45eee4df559b4603f3071))
+* **settings:** remove stale settings actions ([#562](https://github.com/crevissepartners/projmux/issues/562)) ([38f8037](https://github.com/crevissepartners/projmux/commit/38f80373faeddd21eb107afd983c9367064f8547))
+
 ## [0.8.4](https://github.com/crevissepartners/projmux/compare/v0.8.3...v0.8.4) (2026-08-11)
 
 
