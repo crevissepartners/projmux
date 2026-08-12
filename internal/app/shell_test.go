@@ -1353,13 +1353,6 @@ func (r *recordingShellRunner) run(_ context.Context, env []string, name string,
 	return nil
 }
 
-func recordShellWrite(writes map[string][]byte) func(string, []byte, os.FileMode) error {
-	return func(path string, data []byte, _ os.FileMode) error {
-		writes[path] = append([]byte(nil), data...)
-		return nil
-	}
-}
-
 type scriptedShellTmuxRunner struct {
 	outputs map[string][]byte
 	errors  map[string]error

@@ -3465,18 +3465,6 @@ func containsRecordedAICommand(commands []recordedAICommand, want recordedAIComm
 	return false
 }
 
-func containsRecordedAICommandPrefix(commands []recordedAICommand, want recordedAICommand) bool {
-	for _, command := range commands {
-		if command.name != want.name || len(command.args) < len(want.args) {
-			continue
-		}
-		if reflect.DeepEqual(command.args[:len(want.args)], want.args) {
-			return true
-		}
-	}
-	return false
-}
-
 func decodePowerShellEncodedCommand(t *testing.T, command recordedAICommand) string {
 	t.Helper()
 	if len(command.args) < 4 {
