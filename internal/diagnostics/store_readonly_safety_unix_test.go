@@ -5,10 +5,9 @@ package diagnostics
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 func TestStoreReadOnlyRejectsUnsafeTypesWithoutBlocking(t *testing.T) {
@@ -23,7 +22,7 @@ func TestStoreReadOnlyRejectsUnsafeTypesWithoutBlocking(t *testing.T) {
 		setup func(string) error
 	}{
 		{name: "symlink", setup: func(path string) error { return os.Symlink(target, path) }},
-		{name: "fifo", setup: func(path string) error { return unix.Mkfifo(path, 0o600) }},
+		{name: "fifo", setup: func(path string) error { return syscall.Mkfifo(path, 0o600) }},
 		{name: "directory", setup: func(path string) error { return os.Mkdir(path, 0o700) }},
 		{name: "device", path: "/dev/null", setup: func(string) error { return nil }},
 	} {

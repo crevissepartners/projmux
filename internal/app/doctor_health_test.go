@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -57,14 +58,6 @@ func healthDoctor(t *testing.T, result diagnostics.ReadResult, readErr error, pr
 	c.resolveGeneratedConfig = func() (string, error) { return configPath, nil }
 	c.readGeneratedConfig = doctorReadRegularFileBounded
 	return c, root
-}
-
-func doctorCodes(findings []doctorFinding) []string {
-	out := make([]string, len(findings))
-	for i, finding := range findings {
-		out[i] = finding.Code
-	}
-	return out
 }
 
 func TestDoctorRuntimeFindingTable(t *testing.T) {
@@ -456,8 +449,8 @@ func TestDoctorRuntimeProbeRejectsBoundedMaliciousOutput(t *testing.T) {
 
 func TestDoctorExecBoundedRunnerCapsProcessOutput(t *testing.T) {
 	t.Setenv("PROJMUX_DOCTOR_OUTPUT_HELPER", "1")
-	stdout, stderr, err := (doctorExecBoundedRunner{}).RunBounded(
-		context.Background(), os.Args[0], []string{"-test.run=TestDoctorOutputHelperProcess"}, 128,
+	stdout, stderr, err := doctorRunCommandBounded(
+		exec.CommandContext(context.Background(), os.Args[0], "-test.run=TestDoctorOutputHelperProcess"), 128,
 	)
 	if err == nil {
 		t.Fatal("oversized helper output unexpectedly succeeded")
@@ -467,19 +460,19 @@ func TestDoctorExecBoundedRunnerCapsProcessOutput(t *testing.T) {
 	}
 }
 
+func TestDoctorExecBoundedRunnerRejectsCommandsOutsideFixedProbe(t *testing.T) {
+	_, _, err := (doctorExecBoundedRunner{}).RunBounded(
+		context.Background(), "tmux", []string{"display-message", "unexpected"}, doctorProbeOutputMaxBytes,
+	)
+	if !errors.Is(err, errDoctorUnsupportedProbeCommand) {
+		t.Fatalf("unexpected argv error = %v", err)
+	}
+}
+
 func TestDoctorOutputHelperProcess(t *testing.T) {
 	if os.Getenv("PROJMUX_DOCTOR_OUTPUT_HELPER") != "1" {
 		return
 	}
 	_, _ = os.Stdout.Write(bytes.Repeat([]byte("x"), 1<<20))
 	os.Exit(0)
-}
-
-func containsDoctorCode(findings []doctorFinding, code string) bool {
-	for _, finding := range findings {
-		if finding.Code == code {
-			return true
-		}
-	}
-	return false
 }

@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"golang.org/x/sys/unix"
 )
 
 func TestDoctorGeneratedConfigRejectsUnsafeAndOversizeInputsWithoutBlocking(t *testing.T) {
@@ -25,7 +25,7 @@ func TestDoctorGeneratedConfigRejectsUnsafeAndOversizeInputsWithoutBlocking(t *t
 		setup func(string) error
 	}{
 		{name: "symlink", setup: func(path string) error { return os.Symlink(target, path) }},
-		{name: "fifo", setup: func(path string) error { return unix.Mkfifo(path, 0o600) }},
+		{name: "fifo", setup: func(path string) error { return syscall.Mkfifo(path, 0o600) }},
 		{name: "directory", setup: func(path string) error { return os.Mkdir(path, 0o700) }},
 		{name: "device", path: "/dev/null", setup: func(string) error { return nil }},
 		{name: "oversize", setup: func(path string) error {
@@ -69,7 +69,7 @@ func TestDoctorUnsafeJournalSkipsOperationsReader(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := unix.Mkfifo(path, 0o600); err != nil {
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cmd.readRuntimeHealth = func(diagnostics.ReadOnlyStore) (diagnostics.RuntimeHealth, error) {

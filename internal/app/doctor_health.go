@@ -71,8 +71,9 @@ const (
 )
 
 var (
-	errDoctorUnsafeFileType = errors.New("unsafe file type")
-	errDoctorInputTooLarge  = errors.New("input exceeds diagnostic bound")
+	errDoctorUnsafeFileType          = errors.New("unsafe file type")
+	errDoctorInputTooLarge           = errors.New("input exceeds diagnostic bound")
+	errDoctorUnsupportedProbeCommand = errors.New("unsupported doctor probe command")
 )
 
 func (c *doctorCommand) evaluateRuntimeFindings() []doctorFinding {
@@ -294,13 +295,26 @@ func (doctorExecBoundedRunner) RunBounded(ctx context.Context, name string, args
 	if limit <= 0 {
 		return nil, nil, errDoctorInputTooLarge
 	}
+	if name != "tmux" || !doctorRuntimeProbeArgsMatch(args) {
+		return nil, nil, errDoctorUnsupportedProbeCommand
+	}
+	cmd := exec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_config_digest")
+	return doctorRunCommandBounded(cmd, limit)
+}
+
+func doctorRunCommandBounded(cmd *exec.Cmd, limit int) ([]byte, []byte, error) {
 	stdout := doctorBoundedBuffer{limit: limit / 2}
 	stderr := doctorBoundedBuffer{limit: limit - limit/2}
-	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	return stdout.data, stderr.data, err
+}
+
+func doctorRuntimeProbeArgsMatch(args []string) bool {
+	return len(args) == 5 &&
+		args[0] == "-L" && args[1] == defaultAppSocket &&
+		args[2] == "show-options" && args[3] == "-gqv" && args[4] == tmuxConfigDigestOption
 }
 
 func doctorRuntimeProbeWith(runner doctorBoundedRunner, timeout time.Duration) doctorRuntimeProbe {

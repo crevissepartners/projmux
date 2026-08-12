@@ -339,14 +339,14 @@ passed-*)
     cat "$PROJMUX_SMOKE_WORKDIR/doctor-permission.json" >&2
     exit 1
   fi
-  chmod 0700 "$permission_state/projmux" "$permission_state/projmux/logs"
-  chmod 0600 "$permission_operations" "$permission_ingest"
   if [[ "$(stat -c '%a' "$permission_operations")" != "$permission_operations_mode_before" ]] ||
     [[ "$(stat -c '%a' "$permission_ingest")" != "$permission_ingest_mode_before" ]] ||
     compgen -G "$permission_root/output/.projmux-support-*.tmp" >/dev/null; then
     echo "permission-denied report repaired sources or left temp state" >&2
     exit 1
   fi
+  chmod 0700 "$permission_state/projmux" "$permission_state/projmux/logs"
+  chmod 0600 "$permission_operations" "$permission_ingest"
   ;;
 skipped-root-no-adapter) ;;
 *)

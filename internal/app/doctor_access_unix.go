@@ -5,16 +5,19 @@ package app
 import (
 	"io"
 	"os"
-
-	"golang.org/x/sys/unix"
+	"syscall"
 )
 
 func doctorPathWritable(path string, directory bool) bool {
-	mode := uint32(unix.W_OK)
+	const (
+		accessExecute = 1
+		accessWrite   = 2
+	)
+	mode := uint32(accessWrite)
 	if directory {
-		mode |= unix.X_OK
+		mode |= accessExecute
 	}
-	return unix.Access(path, mode) == nil
+	return syscall.Access(path, mode) == nil
 }
 
 func doctorPathPrivacyPrivate(info os.FileInfo) (bool, bool) {
@@ -22,7 +25,7 @@ func doctorPathPrivacyPrivate(info os.FileInfo) (bool, bool) {
 }
 
 func doctorReadRegularFileBounded(path string, limit int64) ([]byte, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
