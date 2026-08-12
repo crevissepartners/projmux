@@ -87,7 +87,7 @@ Files:
 
 - `internal/ui/projmuxpicker/*`
 - `internal/ui/render/*`
-- `docs/native-picker-no-fzf-poc.md`
+- `docs/native-picker.md`
 
 Classification:
 

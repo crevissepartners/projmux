@@ -2,10 +2,12 @@ package app
 
 import (
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -13,18 +15,80 @@ import (
 
 func nativePickerFromCompatRunner(r intpickercompat.Runner) intpicker.Runner {
 	return pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
-		result, err := r.Run(intpickercompat.OptionsFromPicker(options))
+		result, err := r.Run(compatOptionsFromNativePickerForTest(options))
 		if err != nil {
 			return intpicker.Result{}, err
 		}
-		return intpickercompat.ResultToPicker(result), nil
+		return intpicker.Result{
+			Key:    result.Key,
+			Value:  result.Value,
+			Query:  result.Query,
+			Closed: result.Value == "" && result.Key == "",
+		}, nil
 	})
 }
 
-func TestRunPickerOptionBackendUsesNativeWhenRequested(t *testing.T) {
+// compatOptionsFromNativePickerForTest adapts the remaining older test runner
+// fixtures to the product-native picker contract. It is intentionally test-only:
+// production has no native-to-compatibility routing path.
+func compatOptionsFromNativePickerForTest(options intpicker.Options) intpickercompat.Options {
+	entries := make([]intpickercompat.Entry, 0, len(options.Items))
+	for _, item := range options.Items {
+		entries = append(entries, intpickercompat.Entry{
+			Label:     item.EffectiveLabel(),
+			Value:     item.Value,
+			SearchKey: item.EffectiveSearchText(),
+		})
+	}
+
+	compatOptions := intpickercompat.Options{
+		UI:             options.UI,
+		Entries:        entries,
+		Read0:          options.MultiLine,
+		Title:          options.Title,
+		TitleChips:     options.TitleChips,
+		Prompt:         options.Prompt,
+		Header:         options.Header,
+		Footer:         options.Footer,
+		Locale:         options.Locale,
+		InitialQuery:   options.InitialQuery,
+		DisableSearch:  options.DisableSearch,
+		AcceptQuery:    options.AcceptQuery,
+		ColorGrid:      options.ColorGrid,
+		Recorder:       options.Recorder,
+		PreviewCommand: options.Preview.Command,
+		PreviewWindow:  options.Preview.Window,
+		Theme:          options.Theme,
+	}
+	for _, action := range options.Actions {
+		key := strings.TrimSpace(action.Key)
+		if key == "" {
+			continue
+		}
+		switch action.Intent {
+		case intpicker.ActionClose:
+			compatOptions.Bindings = append(compatOptions.Bindings, key+":abort")
+		case intpicker.ActionAccept, intpicker.ActionCustom:
+			if action.Intent == intpicker.ActionCustom && strings.TrimSpace(action.Command) != "" {
+				binding := key + ":execute-silent(" + strings.TrimSpace(action.Command) + ")"
+				if action.Refresh {
+					binding += "+refresh-preview"
+				}
+				compatOptions.Bindings = append(compatOptions.Bindings, binding)
+				continue
+			}
+			compatOptions.ExpectKeys = append(compatOptions.ExpectKeys, key)
+		}
+	}
+	if options.InitialIndexSet || options.InitialIndex > 0 {
+		compatOptions.Bindings = append(compatOptions.Bindings, "start:pos("+strconv.Itoa(options.InitialIndex+1)+")")
+	}
+	return compatOptions
+}
+
+func TestRunNativePickerOptionUsesNativeContract(t *testing.T) {
 	t.Parallel()
 
-	var compatCalled bool
 	native := pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 		if options.UI != "settings" {
 			t.Fatalf("native UI = %q, want settings", options.UI)
@@ -35,149 +99,38 @@ func TestRunPickerOptionBackendUsesNativeWhenRequested(t *testing.T) {
 		return intpicker.Result{Key: "enter", Value: "ai"}, nil
 	})
 
-	result, err := runPickerOptionBackend(
+	result, err := runNativePickerOption(
 		func() (string, error) { return "", nil },
-		func(name string) string {
-			if name == intpicker.BackendEnv {
-				return "native"
-			}
-			return ""
-		},
+		func(string) string { return "" },
 		native,
-		switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			compatCalled = true
-			return intpickercompat.Result{}, nil
-		}),
 		intpickercompat.Options{
 			UI:      "settings",
 			Entries: []intpickercompat.Entry{{Label: "AI Settings", Value: "ai"}},
 		},
 	)
 	if err != nil {
-		t.Fatalf("runPickerOptionBackend() error = %v", err)
-	}
-	if compatCalled {
-		t.Fatal("compat runner was called for native backend")
+		t.Fatalf("runNativePickerOption() error = %v", err)
 	}
 	if result.Key != "enter" || result.Value != "ai" {
 		t.Fatalf("result = %#v, want native selection", result)
 	}
 }
 
-func TestRunPickerOptionBackendUsesSavedNativeBackend(t *testing.T) {
-	configHome := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", configHome)
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	paths := config.DefaultPaths(configHome, t.TempDir())
-	if err := config.SavePickerBackendFile(paths.PickerBackendFile(), config.PickerBackendNative); err != nil {
-		t.Fatalf("SavePickerBackendFile() error = %v", err)
-	}
-
-	var compatCalled bool
-	nativeCalled := false
-	result, err := runPickerOptionBackend(
-		func() (string, error) { return "", nil },
-		func(name string) string {
-			switch name {
-			case intpicker.BackendEnv:
-				return ""
-			case "XDG_CONFIG_HOME":
-				return configHome
-			case "XDG_STATE_HOME":
-				return t.TempDir()
-			default:
-				return os.Getenv(name)
-			}
-		},
-		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
-			nativeCalled = true
-			return intpicker.Result{Key: "enter", Value: "ai"}, nil
-		}),
-		switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			compatCalled = true
-			return intpickercompat.Result{}, nil
-		}),
-		intpickercompat.Options{
-			UI:      "settings",
-			Entries: []intpickercompat.Entry{{Label: "AI Settings", Value: "ai"}},
-		},
-	)
-	if err != nil {
-		t.Fatalf("runPickerOptionBackend() error = %v", err)
-	}
-	if !nativeCalled {
-		t.Fatal("native runner was not called for saved native picker backend")
-	}
-	if compatCalled {
-		t.Fatal("compat runner was called for saved native picker backend")
-	}
-	if result.Value != "ai" {
-		t.Fatalf("result = %#v, want native selection", result)
-	}
-}
-
-func TestRunPickerOptionBackendDefaultsToNativeBackend(t *testing.T) {
-	configHome := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", configHome)
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	var compatCalled bool
-	var nativeCalled bool
-	result, err := runPickerOptionBackend(
-		func() (string, error) { return "", nil },
-		func(name string) string {
-			switch name {
-			case intpicker.BackendEnv:
-				return ""
-			case "XDG_CONFIG_HOME":
-				return configHome
-			case "XDG_STATE_HOME":
-				return t.TempDir()
-			default:
-				return os.Getenv(name)
-			}
-		},
-		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
-			nativeCalled = true
-			return intpicker.Result{Key: "enter", Value: "ai"}, nil
-		}),
-		switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			compatCalled = true
-			return intpickercompat.Result{}, nil
-		}),
-		intpickercompat.Options{UI: "settings"},
-	)
-	if err != nil {
-		t.Fatalf("runPickerOptionBackend() error = %v", err)
-	}
-	if !nativeCalled {
-		t.Fatal("native runner was not called for default picker backend")
-	}
-	if compatCalled {
-		t.Fatal("compat runner was called for default picker backend")
-	}
-	if result.Value != "ai" {
-		t.Fatalf("result = %#v, want native selection", result)
-	}
-}
-
-func TestRunPickerOptionBackendPopulatesFallbackTheme(t *testing.T) {
+func TestRunNativePickerOptionPopulatesFallbackTheme(t *testing.T) {
 	t.Parallel()
 
 	var gotTheme *theme.EffectiveTheme
-	_, err := runPickerOptionBackend(
+	_, err := runNativePickerOption(
 		func() (string, error) { return "", nil },
 		func(string) string { return "" },
 		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			gotTheme = options.Theme
 			return intpicker.Result{Key: "enter", Value: "ai"}, nil
 		}),
-		nil,
 		intpickercompat.Options{UI: "settings"},
 	)
 	if err != nil {
-		t.Fatalf("runPickerOptionBackend() error = %v", err)
+		t.Fatalf("runNativePickerOption() error = %v", err)
 	}
 	if gotTheme == nil {
 		t.Fatal("native picker Theme = nil, want fallback effective theme")
@@ -187,7 +140,7 @@ func TestRunPickerOptionBackendPopulatesFallbackTheme(t *testing.T) {
 	}
 }
 
-func TestRunPickerOptionBackendPreservesSuppliedTheme(t *testing.T) {
+func TestRunNativePickerOptionPreservesSuppliedTheme(t *testing.T) {
 	t.Parallel()
 
 	supplied := theme.ResolveTheme(theme.ThemeConfig{
@@ -195,18 +148,17 @@ func TestRunPickerOptionBackendPreservesSuppliedTheme(t *testing.T) {
 		Foreground: "#aabbcc",
 	})
 	var gotTheme *theme.EffectiveTheme
-	_, err := runPickerOptionBackend(
+	_, err := runNativePickerOption(
 		func() (string, error) { return "", nil },
 		func(string) string { return "" },
 		pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			gotTheme = options.Theme
 			return intpicker.Result{Key: "enter", Value: "ai"}, nil
 		}),
-		nil,
 		intpickercompat.Options{UI: "settings", Theme: &supplied},
 	)
 	if err != nil {
-		t.Fatalf("runPickerOptionBackend() error = %v", err)
+		t.Fatalf("runNativePickerOption() error = %v", err)
 	}
 	if gotTheme == nil {
 		t.Fatal("native picker Theme = nil, want supplied effective theme")
@@ -216,75 +168,72 @@ func TestRunPickerOptionBackendPreservesSuppliedTheme(t *testing.T) {
 	}
 }
 
-func TestRunPickerOptionBackendIgnoresDeprecatedBackendEnvOverride(t *testing.T) {
-	configHome := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", configHome)
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	paths := config.DefaultPaths(configHome, t.TempDir())
-	if err := config.SavePickerBackendFile(paths.PickerBackendFile(), config.PickerBackendNative); err != nil {
-		t.Fatalf("SavePickerBackendFile() error = %v", err)
+func TestRunNativePickerOptionDoesNotObserveRetiredBackendArtifacts(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, "config")
+	configDir := filepath.Join(configHome, "projmux")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stalePath := filepath.Join(configDir, "picker-backend")
+	staleContent := []byte("retired-value\n")
+	if err := os.WriteFile(stalePath, staleContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(stalePath)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	var nativeCalled bool
-	var compatCalled bool
-	result, err := runPickerOptionBackend(
-		func() (string, error) { return "", nil },
+	effective := theme.ResolveTheme(theme.ThemeConfig{})
+	result, err := runNativePickerOption(
+		func() (string, error) {
+			t.Fatal("retired picker backend file path was resolved")
+			return "", nil
+		},
 		func(name string) string {
-			if name == intpicker.BackendEnv {
-				return "fzf"
-			}
-			return os.Getenv(name)
+			t.Fatalf("environment %q was looked up with explicit locale and theme", name)
+			return ""
 		},
 		pickerRunnerFunc(func(intpicker.Options) (intpicker.Result, error) {
-			nativeCalled = true
 			return intpicker.Result{Key: "enter", Value: "ai"}, nil
 		}),
-		switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			compatCalled = true
-			return intpickercompat.Result{Key: "enter", Value: "fzf"}, nil
-		}),
-		intpickercompat.Options{UI: "settings"},
+		intpickercompat.Options{UI: "settings", Locale: i18n.FallbackLocale, Theme: &effective},
 	)
 	if err != nil {
-		t.Fatalf("runPickerOptionBackend() error = %v", err)
-	}
-	if !nativeCalled {
-		t.Fatal("native runner was not called despite deprecated backend env")
-	}
-	if compatCalled {
-		t.Fatal("compat runner was called despite deprecated backend env")
+		t.Fatalf("runNativePickerOption() error = %v", err)
 	}
 	if result.Value != "ai" {
 		t.Fatalf("result = %#v, want native selection", result)
 	}
+	after, err := os.Stat(stalePath)
+	if err != nil {
+		t.Fatalf("retired picker backend file was deleted: %v", err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("retired picker backend file was replaced")
+	}
+	got, err := os.ReadFile(stalePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(staleContent) {
+		t.Fatalf("retired picker backend file = %q, want unchanged %q", got, staleContent)
+	}
 }
 
-func TestRunPickerOptionBackendErrorsWhenNativeMissingWithoutCallingCompatRunner(t *testing.T) {
+func TestRunNativePickerOptionErrorsWhenNativeMissing(t *testing.T) {
 	t.Parallel()
 
-	var compatCalled bool
-	_, err := runPickerOptionBackend(
+	_, err := runNativePickerOption(
 		func() (string, error) { return "", nil },
-		func(name string) string {
-			if name == intpicker.BackendEnv {
-				return "fzf"
-			}
-			return ""
-		},
+		func(string) string { return "" },
 		nil,
-		switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
-			compatCalled = true
-			return intpickercompat.Result{Key: "enter", Value: "fzf"}, nil
-		}),
 		intpickercompat.Options{UI: "settings"},
 	)
 
 	if err == nil || !strings.Contains(err.Error(), "native picker is not configured") {
-		t.Fatalf("runPickerOptionBackend() error = %v, want native picker error", err)
-	}
-	if compatCalled {
-		t.Fatal("compat runner was called when native picker was missing")
+		t.Fatalf("runNativePickerOption() error = %v, want native picker error", err)
 	}
 }
 
@@ -337,27 +286,18 @@ func TestPickerOptionsFromCompatPickerPreservesTheme(t *testing.T) {
 	if options.Theme != &effective {
 		t.Fatalf("Theme = %p, want %p", options.Theme, &effective)
 	}
-	roundTrip := intpickercompat.OptionsFromPicker(options)
-	if roundTrip.Theme != &effective {
-		t.Fatalf("round-trip Theme = %p, want %p", roundTrip.Theme, &effective)
-	}
 }
 
-func TestSettingsNativeBackendDoesNotCallCompatRunner(t *testing.T) {
+func TestSettingsUsesNativePicker(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
 	var out strings.Builder
 	var compatCalled bool
 	cmd := &settingsCommand{
-		ai:       testAICommand(home),
-		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
-		lookupEnv: func(name string) string {
-			if name == intpicker.BackendEnv {
-				return "native"
-			}
-			return ""
-		},
+		ai:        testAICommand(home),
+		switcher:  testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		lookupEnv: func(string) string { return "" },
 		// Root tab chrome moved out of the entry list in Phase 2.5, so AI
 		// Settings is now the second row in the Global tab. AI Settings
 		// opens Default split mode, whose detail keeps codex on row 4.
@@ -372,7 +312,7 @@ func TestSettingsNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if compatCalled {
-		t.Fatal("compat runner was called for native settings backend")
+		t.Fatal("compat runner was called for Settings")
 	}
 	if got, want := readModeFile(t, home), "codex\n"; got != want {
 		t.Fatalf("mode file = %q, want %q", got, want)

@@ -85,8 +85,8 @@ view-first layout:
   `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`.
 - `Settings > Labs` contains only Live system resources and Project Hooks.
   Keybindings live at `Settings > Keybindings`; Labs has no visible or hidden
-  keybindings redirect. Native is the only picker backend, so Labs does not
-  render picker source/backend information.
+  keybindings redirect. The native picker is the product picker, so Labs does
+  not render picker source information.
 - `Settings > Labs > Live system resources` is a direct global on/off toggle
   for the macOS/Linux/WSL lower-status-row `CPU N%  MEM N%` segment. It defaults
   off, updates live tmux state when toggled, and renders unavailable on

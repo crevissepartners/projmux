@@ -439,7 +439,6 @@ confidence for DB-validated cache sources or low confidence for legacy history.
 | `PROJMUX_SESSIONSTATE_AUTOSAVE` | Session snapshot autosave override for the global fallback. Values such as `off`, `false`, or `0` disable autosave for projects that inherit the global setting; explicit project auto-save `on`/`off` still takes precedence. |
 | `PROJMUX_SESSIONSTATE_DEBUG` | When non-empty, quiet autosave surfaces suppressed session-state errors to stderr. |
 | `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
-| `PROJMUX_PICKER_BACKEND` | Legacy picker backend override. Any value, including old `fzf` settings, now resolves to the native picker. |
 | `PROJMUX_INSTALLER` | Installer source hint used by update flows. npm installs set this automatically; advanced release installs can set `github-release`. |
 | `PROJMUX_SHELL_UPDATE_CHECK_TIMEOUT_MS` | Timeout in milliseconds for the best-effort release check attempted by `projmux shell` when the update cache is missing or stale. Invalid, zero, or negative values use the default. |
 

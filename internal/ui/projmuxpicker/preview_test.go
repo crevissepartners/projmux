@@ -20,7 +20,7 @@ func TestPreviewWidthUsesWindowPercent(t *testing.T) {
 
 	for _, tt := range tests {
 		if got := PreviewWidth(tt.contentCols, "right,60%,border-left"); got != tt.want {
-			t.Fatalf("PreviewWidth(%d) = %d, want fzf-measured content width %d", tt.contentCols, got, tt.want)
+			t.Fatalf("PreviewWidth(%d) = %d, want reference content width %d", tt.contentCols, got, tt.want)
 		}
 	}
 }
@@ -39,7 +39,7 @@ func TestPreviewHeightUsesWindowPercent(t *testing.T) {
 
 	for _, tt := range tests {
 		if got := PreviewHeight(tt.contentRows, "down,25%,border-top"); got != tt.want {
-			t.Fatalf("PreviewHeight(%d) = %d, want fzf-measured content height %d", tt.contentRows, got, tt.want)
+			t.Fatalf("PreviewHeight(%d) = %d, want reference content height %d", tt.contentRows, got, tt.want)
 		}
 	}
 }

@@ -225,7 +225,7 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 			options = source.pickerCompatOptions(options)
 		}
 	}
-	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, options)
+	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, options)
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return intpickercompat.Result{}, errSettingsClosed
@@ -392,8 +392,6 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		return c.setProjectHooksMode(strings.TrimPrefix(value, settingsActionPrefixHooks))
 	case strings.HasPrefix(value, settingsActionPrefixLiveResources):
 		return c.setLiveResourcesMode(strings.TrimPrefix(value, settingsActionPrefixLiveResources))
-	case strings.HasPrefix(value, settingsActionPrefixPicker):
-		return c.setPickerBackend(strings.TrimPrefix(value, settingsActionPrefixPicker))
 	case strings.HasPrefix(value, settingsActionPrefixProjdir):
 		action := strings.TrimPrefix(value, settingsActionPrefixProjdir)
 		if c.switcher == nil {

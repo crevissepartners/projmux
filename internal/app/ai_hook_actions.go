@@ -41,7 +41,7 @@ func (c *aiCommand) aiHookEffectiveAction(provider, event string) aiHookActionRe
 }
 
 func (c *aiCommand) aiHookRuntimeAction(provider, event string) (string, bool) {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return "", false
 	}
@@ -93,7 +93,7 @@ func aiHookNoHandlerReason(resolution aiHookActionResolution) string {
 }
 
 func (c *settingsCommand) aiHookActionsPath() (string, error) {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return "", err
 	}

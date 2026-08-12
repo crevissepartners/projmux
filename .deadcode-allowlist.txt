@@ -82,7 +82,7 @@ firstRune
 runeLen
 
 # internal/ui/picker, pickercompat, projmuxpicker, render -- native picker
-# rendering surface kept for parity with the legacy fzf backend.
+# rendering surface and internal option/result mapping.
 BuildSwitchPickerItems
 ChromeLine
 FooterBlockLines
@@ -109,8 +109,6 @@ RenderableListLines
 RenderableListLinesWithTheme
 Renderer.ContentLayout
 Renderer.RenderFrame
-ResolveBackend
-ResultToPicker
 SelectedContent
 SelectedContentWithTheme
 SelectedLine
@@ -220,7 +218,6 @@ formatRelativeAge
 formatStatusNotify
 formatStatusNotifyWithLive
 buildPopupToggle
-buildPopupToggleWithPickerBackend
 notifyCommand.buildNotifyLiveReport
 notifyCommand.listNotifyLivePanes
 notifySidebarAgentBadge

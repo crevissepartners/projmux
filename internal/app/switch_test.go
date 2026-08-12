@@ -423,7 +423,7 @@ func TestSwitchExecuteSidebarExistingHookProjectOpensDirectly(t *testing.T) {
 	}
 }
 
-func TestAppRunSwitchDeprecatedBackendValueUsesNativeRunner(t *testing.T) {
+func TestAppRunSwitchUsesNativePickerWithoutBackendLookup(t *testing.T) {
 	t.Parallel()
 
 	var compatCalled bool
@@ -455,8 +455,8 @@ func TestAppRunSwitchDeprecatedBackendValueUsesNativeRunner(t *testing.T) {
 			homeDir:    func() (string, error) { return "/home/tester", nil },
 			workingDir: func() (string, error) { return "/home/tester/workspace", nil },
 			lookupEnv: func(name string) string {
-				if name == intpicker.BackendEnv {
-					return "fzf"
+				if name == "PROJMUX_PICKER_BACKEND" {
+					t.Fatal("retired picker backend env was looked up")
 				}
 				return ""
 			},
@@ -467,7 +467,7 @@ func TestAppRunSwitchDeprecatedBackendValueUsesNativeRunner(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if compatCalled {
-		t.Fatal("compat runner was called for native backend")
+		t.Fatal("compat runner was called instead of native picker")
 	}
 	if got, want := gotNativeOptions.UI, switchUIPopup; got != want {
 		t.Fatalf("native UI = %q, want %q", got, want)
@@ -596,12 +596,7 @@ func TestSwitchCommandNativeSidebarSetsTitle(t *testing.T) {
 		validate:   func(string) error { return nil },
 		homeDir:    func() (string, error) { return "/home/tester", nil },
 		workingDir: func() (string, error) { return "/tmp", nil },
-		lookupEnv: func(name string) string {
-			if name == intpicker.BackendEnv {
-				return string(intpicker.BackendNative)
-			}
-			return ""
-		},
+		lookupEnv:  func(string) string { return "" },
 	}
 
 	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1788,7 +1783,6 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv(projdirEnvVar, fixture.path("rp"))
 	t.Setenv(managedRootsEnvVar, fixture.path("managed"))
-	t.Setenv(intpicker.BackendEnv, "fzf")
 
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
@@ -1877,7 +1871,6 @@ func TestNewSwitchCommandDoesNotInferRepoRootFromHomeSourceRepos(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", fixture.path("xdg-state"))
 	t.Setenv("TMUX", "")
 	t.Setenv(projdirEnvVar, "")
-	t.Setenv(intpicker.BackendEnv, "fzf")
 	t.Chdir(fixture.path("home/source/repos/app/nested"))
 
 	cmd := newSwitchCommand()

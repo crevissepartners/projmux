@@ -459,7 +459,7 @@ func (c *switchCommand) runSettings(stdout, stderr io.Writer) error {
 			return err
 		}
 
-		result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
+		result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, intpickercompat.Options{
 			UI:      "settings",
 			Entries: entries,
 		})
@@ -515,7 +515,7 @@ func (c *switchCommand) runAddPinInteractive(stdout io.Writer) error {
 		return nil
 	}
 
-	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, intpickercompat.Options{
+	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, intpickercompat.Options{
 		UI:      "pin",
 		Entries: entries,
 	})
@@ -1954,14 +1954,10 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 		options.Preview = intpicker.Preview{Window: switchPreviewWindow(plan.UI)}
 	}
 
-	compatOptions := intpickercompat.OptionsFromPicker(options)
-	compatOptions.Candidates = plan.Candidates
-	return c.runPickerBackend(compatOptions, options)
+	return c.runNativePicker(options)
 }
 
-func (c *switchCommand) runPickerBackend(compatOptions intpickercompat.Options, pickerOptions intpicker.Options) (intpicker.Result, error) {
-	_ = compatOptions
-	_ = resolvePickerBackend(c.lookupEnv)
+func (c *switchCommand) runNativePicker(pickerOptions intpicker.Options) (intpicker.Result, error) {
 	if c.nativePicker == nil {
 		return intpicker.Result{}, fmt.Errorf("native picker is not configured")
 	}

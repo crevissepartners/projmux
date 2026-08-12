@@ -195,7 +195,7 @@ func TestSessionsStateOverviewShowsReadModelWithoutImmediateMutation(t *testing.
 	}
 }
 
-func TestSessionsCommandNativeBackendDoesNotCallCompatRunner(t *testing.T) {
+func TestSessionsCommandUsesNativePicker(t *testing.T) {
 	t.Parallel()
 
 	var compatCalled bool
@@ -217,12 +217,7 @@ func TestSessionsCommandNativeBackendDoesNotCallCompatRunner(t *testing.T) {
 			}
 			return intpicker.Result{Key: "enter", Value: "repo-b"}, nil
 		}),
-		lookupEnv: func(name string) string {
-			if name == intpicker.BackendEnv {
-				return string(intpicker.BackendNative)
-			}
-			return ""
-		},
+		lookupEnv:  func(string) string { return "" },
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		opener:     opener,
 	}

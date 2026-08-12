@@ -642,7 +642,7 @@ func (c *hookCommand) globalConfigPath() (string, error) {
 }
 
 func (c *hookCommand) trustStorePath() (string, error) {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return "", err
 	}

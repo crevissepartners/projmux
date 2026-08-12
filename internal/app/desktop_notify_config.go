@@ -42,7 +42,7 @@ func loadSavedDesktopNotifyMode(homeDir func() (string, error), lookupEnv func(s
 	if homeDir == nil {
 		return desktopNotifyModeNotify, false
 	}
-	paths, err := pickerBackendConfigPaths(homeDir, lookupEnv)
+	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
 		return desktopNotifyModeNotify, false
 	}

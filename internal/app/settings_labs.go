@@ -115,7 +115,7 @@ func (c *settingsCommand) currentLiveResourcesMode() (config.LiveResourcesMode, 
 	if !systemstatus.Supported() {
 		return config.LiveResourcesOff, "unsupported platform", false
 	}
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return config.LiveResourcesOff, "default", true
 	}
@@ -134,7 +134,7 @@ func (c *settingsCommand) setLiveResourcesMode(value string) error {
 		return fmt.Errorf("live system resources are unavailable on this platform")
 	}
 	mode := config.NormalizeLiveResourcesMode(value)
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}
@@ -183,7 +183,7 @@ func (c *settingsCommand) currentProjectHooksMode() (config.ProjectHooksMode, st
 	if c.lookupEnv != nil && strings.EqualFold(strings.TrimSpace(c.lookupEnv("PROJMUX_PROJECT_HOOKS")), string(config.ProjectHooksOff)) {
 		return config.ProjectHooksOff, "PROJMUX_PROJECT_HOOKS env"
 	}
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return config.ProjectHooksOn, "default"
 	}
@@ -199,7 +199,7 @@ func (c *settingsCommand) currentProjectHooksMode() (config.ProjectHooksMode, st
 
 func (c *settingsCommand) setProjectHooksMode(value string) error {
 	mode := config.NormalizeProjectHooksMode(value)
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return err
 	}
@@ -208,24 +208,6 @@ func (c *settingsCommand) setProjectHooksMode(value string) error {
 	}
 	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
 		_ = c.runCommand("tmux", "display-message", "project hooks: "+string(mode))
-	}
-	return nil
-}
-
-func (c *settingsCommand) setPickerBackend(value string) error {
-	mode := config.NormalizePickerBackend(value)
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return err
-	}
-	if err := config.SavePickerBackendFile(paths.PickerBackendFile(), mode); err != nil {
-		return err
-	}
-	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
-		if err := c.runCommand("tmux", "set-environment", "-g", pickerBackendTmuxEnv, string(mode)); err != nil {
-			return fmt.Errorf("set live tmux picker backend: %w", err)
-		}
-		_ = c.runCommand("tmux", "display-message", "picker backend: "+string(mode))
 	}
 	return nil
 }

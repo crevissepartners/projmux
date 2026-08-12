@@ -16,7 +16,6 @@ import (
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
-	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	projmuxpicker "github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
@@ -722,7 +721,7 @@ keys = ["M-t"]
 	}
 
 	options := recentWindowPickerOptions(nil, -1, func() (string, error) { return home, nil }, func(string) string { return "" })
-	bindings := intpickercompat.OptionsFromPicker(options).Bindings
+	bindings := compatOptionsFromNativePickerForTest(options).Bindings
 	if !containsString(bindings, "alt-r:abort") {
 		t.Fatalf("recent windows bindings = %#v, want custom RecentWindows:Open alias close", bindings)
 	}

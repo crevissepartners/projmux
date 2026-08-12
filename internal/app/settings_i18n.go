@@ -9,7 +9,7 @@ import (
 
 // uiTextKeys maps a user-facing English literal to its catalog key. It is the
 // single shared registry behind both the Settings localization helpers and the
-// common picker choke point (runPickerOptionBackend), so every picker title,
+// common picker choke point (runNativePickerOption), so every picker title,
 // prompt, footer, header, and static row label resolves through the catalog.
 //
 // Adding an entry here is necessary but not sufficient: the key must also exist

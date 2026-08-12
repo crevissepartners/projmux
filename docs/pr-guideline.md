@@ -24,7 +24,7 @@ feat(ai): add codex split picker keybinding
 fix(ai): prepend agent bin dir to PATH so node-managed CLIs find node
 docs(readme): drop Releases and Configuration sections
 chore: bump release-please manifest to 0.3.0
-refactor(picker): collapse duplicate fzf bootstrap code
+refactor(picker): simplify native picker bootstrap code
 ```
 
 Rules:

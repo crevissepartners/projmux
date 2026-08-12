@@ -18,7 +18,6 @@ Primary production sources:
 Support and fixture sources:
 
 - `test/`
-- `scripts/poc-native-picker-no-fzf-*.sh`
 - current docs that describe generated tmux snippets
 
 Useful inventory searches:

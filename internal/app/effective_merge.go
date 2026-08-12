@@ -196,7 +196,7 @@ func (c *settingsCommand) loadProjectConfigForMerge(ctx settingsProjectContext) 
 }
 
 func (c *settingsCommand) globalConfigFilePath() (string, error) {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return "", err
 	}

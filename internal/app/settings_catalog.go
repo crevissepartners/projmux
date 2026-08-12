@@ -47,7 +47,6 @@ const (
 	settingsOwnerNone settingsEntryOwner = iota
 	settingsOwnerPassiveLoop
 	settingsOwnerRoot
-	settingsOwnerGeneric
 	settingsOwnerProjectPicker
 	settingsOwnerAI
 	settingsOwnerNotifications
@@ -151,7 +150,6 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixHookView, settingsNavigationMeta("Hook maker - view", settingsAxisBoth, settingsOwnerHooks)},
 	{settingsActionPrefixKeymap, settingsActionMeta("Keybindings", settingsAxisGlobal, settingsOwnerKeybindings)},
 	{settingsActionPrefixLocale, settingsActionMeta("Language / Locale", settingsAxisGlobal, settingsOwnerAppearance)},
-	{settingsActionPrefixPicker, settingsActionMeta("Picker backend compatibility", settingsAxisGlobal, settingsOwnerGeneric)},
 	{settingsActionPrefixProjectConfig, settingsActionMeta("Project recipe", settingsAxisProject, settingsOwnerProject)},
 	{settingsActionPrefixWelcome, settingsNavigationMeta("Welcome", settingsAxisGlobal, settingsOwnerAbout)},
 	{settingsActionPrefixTrust, settingsActionMeta("Trust", settingsAxisProject, settingsOwnerProject)},
@@ -212,8 +210,6 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 			settingsSectionKeybindings, settingsSectionLabs, settingsSectionAbout:
 			return true
 		}
-	case settingsOwnerGeneric:
-		return strings.HasPrefix(value, settingsActionPrefixPicker)
 	case settingsOwnerProjectPicker:
 		switch value {
 		case settingsProjectAdd, settingsProjectPins, settingsProjectRootManage, settingsWorkdirAdd, settingsWorkdirList:
@@ -304,7 +300,6 @@ const (
 	settingsActionPrefixLiveResources      = "live-resources:"
 	settingsActionPrefixKeymap             = "keymap:"
 	settingsActionPrefixLocale             = "locale:"
-	settingsActionPrefixPicker             = "picker-backend:"
 	settingsActionPrefixProjectConfig      = "project-config:"
 	settingsActionPrefixWelcome            = "welcome:"
 	settingsActionPrefixTrust              = "trust:"

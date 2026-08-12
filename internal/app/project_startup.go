@@ -144,7 +144,7 @@ func (c *switchCommand) pickProjectStartupMode(sessionName, target string) proje
 	if len(candidates) == 0 {
 		return projectStartupCandidate{Kind: projectStartupKindEmpty}
 	}
-	result, err := runPickerOptionBackend(c.homeDir, c.lookupEnv, c.nativePicker, c.runner, projectStartupPickerOptions(candidates))
+	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, projectStartupPickerOptions(candidates))
 	if err != nil {
 		return projectStartupCandidate{Kind: projectStartupKindEmpty}
 	}
@@ -368,7 +368,7 @@ func (c *switchCommand) openProjectSession(ctx context.Context, sessionName stri
 }
 
 func (c *switchCommand) projectStartupSessionStateStore() (sessionstate.Store, error) {
-	paths, err := pickerBackendConfigPaths(c.homeDir, c.lookupEnv)
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return sessionstate.Store{}, err
 	}
