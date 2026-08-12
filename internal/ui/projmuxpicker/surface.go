@@ -60,6 +60,36 @@ func HeaderLineWithTheme(pickerTheme Theme, header string, cols int) string {
 	return ChromeLineWithTheme(pickerTheme, strings.TrimRight(header, "\r"), cols)
 }
 
+// BandLineWithTheme renders a width-bounded structured chrome row. The label
+// and secondary context use semantic theme roles; the primary value retains
+// the normal surface foreground.
+func BandLineWithTheme(pickerTheme Theme, label, value, secondary string, cols int) string {
+	label = strings.TrimSpace(label)
+	value = strings.TrimSpace(value)
+	secondary = strings.TrimSpace(secondary)
+	var line strings.Builder
+	if label != "" {
+		line.WriteString(themeAccent(pickerTheme))
+		line.WriteString(label)
+		line.WriteString(Reset)
+	}
+	if value != "" {
+		if line.Len() > 0 {
+			line.WriteString("  ")
+		}
+		line.WriteString(value)
+	}
+	if secondary != "" {
+		if line.Len() > 0 {
+			line.WriteString("  ")
+		}
+		line.WriteString(themeMuted(pickerTheme))
+		line.WriteString(secondary)
+		line.WriteString(Reset)
+	}
+	return ChromeLineWithTheme(pickerTheme, line.String(), cols)
+}
+
 func ChromeLine(line string, cols int) string {
 	return ChromeLineWithTheme(DefaultTheme, line, cols)
 }

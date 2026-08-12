@@ -63,7 +63,19 @@ type DeferredUpdate struct {
 	Footer    string
 	SetHeader bool
 	SetFooter bool
-	Result    *Result
+	// ChromeBands are structured header rows rendered above the search/list
+	// surface. Callers provide semantic content while the native renderer owns
+	// theme tokens and width clipping.
+	ChromeBands    []ChromeBand
+	SetChromeBands bool
+	// Interaction updates let a live surface move between an actionable list
+	// and a read-only information panel without restarting the picker.
+	DisableSearch  bool
+	ReadOnly       bool
+	SetInteraction bool
+	Title          string
+	SetTitle       bool
+	Result         *Result
 	// FocusValue, when non-empty, moves the selection cursor to the item
 	// whose Value matches it after the update is applied. It overrides the
 	// default behaviour of preserving the previously selected value, which
@@ -74,6 +86,14 @@ type DeferredUpdate struct {
 	FocusValue string
 }
 
+// ChromeBand is one structured visual band in native picker chrome. Label uses
+// the accent semantic token and Secondary uses the muted semantic token.
+type ChromeBand struct {
+	Label     string
+	Value     string
+	Secondary string
+}
+
 type Options struct {
 	UI              string
 	Items           []Item
@@ -81,6 +101,7 @@ type Options struct {
 	TitleChips      []projmuxpicker.Chip
 	Prompt          string
 	Header          string
+	ChromeBands     []ChromeBand
 	Footer          string
 	Locale          i18n.Locale
 	Actions         []Action
@@ -89,8 +110,11 @@ type Options struct {
 	InitialIndex    int
 	InitialIndexSet bool
 	DisableSearch   bool
-	AcceptQuery     bool
-	MultiLine       bool
+	// ReadOnly renders Items as an information panel: no selection pointer,
+	// mouse acceptance, or Enter acceptance. Contextual actions still work.
+	ReadOnly    bool
+	AcceptQuery bool
+	MultiLine   bool
 	// ColorGrid switches runNativeInteractive into the xterm-256 color grid
 	// mode: a navigable swatch grid with a live preview instead of the list
 	// filter/preview machinery. Purely additive; ignored by list pickers.
@@ -366,6 +390,10 @@ func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, er
 			return Result{Key: "enter", Query: input}, nil
 		}
 		if index, err := strconv.Atoi(input); err == nil {
+			if options.ReadOnly {
+				fmt.Fprintln(out, "no actionable rows")
+				continue
+			}
 			if index < 1 || index > len(items) {
 				fmt.Fprintf(out, "invalid selection: %d\n", index)
 				continue
@@ -566,6 +594,10 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			continue
 		}
 		if key.HasMouse {
+			if options.ReadOnly {
+				primaryMouseDown = false
+				continue
+			}
 			if key.Mouse.Release {
 				if nativeMouseIsPrimaryButton(key.Mouse.Button) && primaryMouseDown {
 					primaryMouseDown = false
@@ -685,7 +717,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 				nativeDebugLogf("interactive ui=%q result=accept_query key=enter query=%q", options.UI, query)
 				return Result{Key: "enter", Query: query}, nil
 			}
-			if len(items) == 0 {
+			if len(items) == 0 || options.ReadOnly {
 				continue
 			}
 			result := nativeAcceptSelectedResult(options, items, selected, query)
@@ -695,25 +727,33 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			nativeDebugLogf("interactive ui=%q result=closed key=%q query=%q", options.UI, key.Name, query)
 			return Result{Key: key.Name, Query: query, Closed: true}, nil
 		case "up", "ctrl-p", "ctrl-k":
-			if len(items) > 0 {
+			if len(items) > 0 && !options.ReadOnly {
 				selected = (selected - 1 + len(items)) % len(items)
 			}
 		case "down", "ctrl-n", "ctrl-j":
-			if len(items) > 0 {
+			if len(items) > 0 && !options.ReadOnly {
 				selected = (selected + 1) % len(items)
 			}
 		case "home":
-			selected = 0
+			if !options.ReadOnly {
+				selected = 0
+			}
 		case "end":
-			if len(items) > 0 {
+			if len(items) > 0 && !options.ReadOnly {
 				selected = len(items) - 1
 			}
 		case "page-up":
+			if options.ReadOnly {
+				continue
+			}
 			selected -= nativePageSize
 			if selected < 0 {
 				selected = 0
 			}
 		case "page-down":
+			if options.ReadOnly {
+				continue
+			}
 			selected += nativePageSize
 			if selected >= len(items) {
 				selected = len(items) - 1
@@ -903,6 +943,16 @@ func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
 	}
 	if update.SetFooter {
 		options.Footer = update.Footer
+	}
+	if update.SetChromeBands {
+		options.ChromeBands = append([]ChromeBand(nil), update.ChromeBands...)
+	}
+	if update.SetInteraction {
+		options.DisableSearch = update.DisableSearch
+		options.ReadOnly = update.ReadOnly
+	}
+	if update.SetTitle {
+		options.Title = update.Title
 	}
 	return options
 }
@@ -1158,6 +1208,7 @@ func nativeListStartLine(options Options) int {
 	if header := strings.TrimSpace(options.Header); header != "" {
 		lines += nativeTextLineCount(header)
 	}
+	lines += len(options.ChromeBands)
 	if !options.DisableSearch {
 		lines += 2 // prompt plus search/list separator
 	}
@@ -1741,6 +1792,9 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	if header := strings.TrimSpace(options.Header); header != "" {
 		fmt.Fprintln(&screen, nativeHeaderLineWithTheme(pickerTheme, header, layout.Cols))
 	}
+	for _, band := range options.ChromeBands {
+		fmt.Fprintln(&screen, projmuxpicker.BandLineWithTheme(pickerTheme, band.Label, band.Value, band.Secondary, layout.Cols))
+	}
 	if options.Recorder != nil {
 		renderNativeRecorderContent(w, pickerTheme, screen.String(), options, layout)
 		return
@@ -1774,7 +1828,11 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	if !options.MultiLine {
 		displayItems = nativeHighlightSimpleItemsWithTheme(pickerTheme, options, items, query)
 	}
-	listLines := nativeInteractiveListLinesWithTheme(pickerTheme, displayItems, start, end, selected, options.MultiLine)
+	renderSelected := selected
+	if options.ReadOnly {
+		renderSelected = -1
+	}
+	listLines := nativeInteractiveListLinesWithTheme(pickerTheme, displayItems, start, end, renderSelected, options.MultiLine)
 	prependedRows := 0
 	if options.MultiLine {
 		listLines = nativeAppendPartialNextItemLinesWithTheme(pickerTheme, displayItems, listLines, end, selected, listLimit)
@@ -1951,6 +2009,7 @@ func nativeChromeLineCount(options Options) int {
 	if header := strings.TrimSpace(options.Header); header != "" {
 		lines += nativeTextLineCount(header)
 	}
+	lines += len(options.ChromeBands)
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
 		lines += 1 + nativeTextLineCount(footer) // footer separator + footer text
 	}
@@ -2457,17 +2516,29 @@ func renderNative(w io.Writer, options Options, items []Item, query string) {
 	if header := strings.TrimSpace(options.Header); header != "" {
 		fmt.Fprintln(w, header)
 	}
-	prompt := strings.TrimSpace(options.Prompt)
-	if prompt == "" {
-		prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
+	for _, band := range options.ChromeBands {
+		line := strings.TrimSpace(strings.Join([]string{band.Label, band.Value, band.Secondary}, " "))
+		if line != "" {
+			fmt.Fprintln(w, line)
+		}
 	}
-	if query != "" {
-		fmt.Fprintf(w, "%s query: %s\n", prompt, query)
-	} else {
-		fmt.Fprintln(w, prompt)
+	if !options.DisableSearch {
+		prompt := strings.TrimSpace(options.Prompt)
+		if prompt == "" {
+			prompt = "projmux " + strings.TrimSpace(options.UI) + ">"
+		}
+		if query != "" {
+			fmt.Fprintf(w, "%s query: %s\n", prompt, query)
+		} else {
+			fmt.Fprintln(w, prompt)
+		}
 	}
 	for i, item := range items {
-		fmt.Fprintf(w, "%d. %s\n", i+1, item.EffectiveLabel())
+		if options.ReadOnly {
+			fmt.Fprintf(w, "%s\n", item.EffectiveLabel())
+		} else {
+			fmt.Fprintf(w, "%d. %s\n", i+1, item.EffectiveLabel())
+		}
 		for _, meta := range item.MetaLines {
 			if meta = strings.TrimSpace(meta); meta != "" {
 				fmt.Fprintf(w, "   %s\n", meta)
@@ -2477,7 +2548,11 @@ func renderNative(w io.Writer, options Options, items []Item, query string) {
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
 		fmt.Fprintln(w, footer)
 	}
-	fmt.Fprint(w, nativeLocalizedTextForOptions(options, i18n.KeyPickerLinePrompt, "number, search, or empty to close: "))
+	if options.ReadOnly {
+		fmt.Fprint(w, nativeLocalizedTextForOptions(options, "picker.read_only.prompt", "action or empty to close: "))
+	} else {
+		fmt.Fprint(w, nativeLocalizedTextForOptions(options, i18n.KeyPickerLinePrompt, "number, search, or empty to close: "))
+	}
 }
 
 func findAction(actions []Action, key string) (Action, bool) {
