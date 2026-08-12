@@ -143,6 +143,13 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		if strings.TrimSpace(*eventName) == "" {
 			return nil
 		}
+		// Antigravity statusline commands render their stdout. The managed
+		// bridge is ingest-only and must stay empty so stack_with_default=true
+		// leaves the built-in line visible. Hook events retain their response
+		// JSON contracts below.
+		if normalizeAntigravityEventName(*eventName) == "Statusline" {
+			return nil
+		}
 		response, err := antigravityHookResponse(*eventName)
 		if err != nil {
 			return err

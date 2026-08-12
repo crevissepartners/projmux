@@ -623,7 +623,8 @@ Antigravity CLI `agy` hook payloads. Antigravity v1.1.12 stdin does
 not include the event name, so the command's `--event` value is authoritative.
 Payload event aliases remain a compatibility fallback when `--event` is
 omitted. `projmux ai integrate antigravity [--dry-run|--remove]` owns exactly
-the named `projmux` entry in `~/.gemini/config/hooks.json`. Other named hooks,
+the named `projmux` entry in `~/.gemini/config/hooks.json` and separately owns
+only `statusLine` in `~/.gemini/antigravity-cli/settings.json`. Other named hooks,
 their fields, and unknown JSON values remain untouched. The generated commands
 use the stable absolute projmux executable because Antigravity runs handlers
 with the config directory as cwd. The command refuses unmanaged name/command
@@ -631,6 +632,10 @@ conflicts, malformed JSON, symlink paths, and permission failures with an
 actionable diagnostic. Doctor/Settings distinguish installed, missing,
 conflicting, and stale managed entries; stale covers executable, event/schema,
 or stdout-fallback drift and is refreshed by the install command.
+The statusline object uses the official v1.1.12 command shape with
+`enabled=true` and `stack_with_default=true`. Its direct explicit `Statusline`
+ingest command emits empty stdout, preserving the built-in line. Existing
+custom statusline commands are conflicts and are never wrapped or chained.
 
 The default Antigravity catalog records the five official v1.1.12 events and
 installs four non-permission events:
@@ -642,8 +647,9 @@ installs four non-permission events:
 | `PostInvocation` | marks the matched pane hook-active and writes a quiet bookkeeping diagnostic; no notify queue entry is pushed |
 | `PostToolUse` | marks the matched pane hook-active, retains tool error metadata in quiet diagnostics, and pushes no notify queue entry |
 | `Stop` | pushes an info completion unless an explicit error signal requires a critical error row |
-| legacy `Statusline` with `tool_confirmation_pending=true` | preserves the manual Phase 0b critical approval behavior outside the official catalog |
-| legacy `Statusline` without `tool_confirmation_pending=true` | marks the matched pane hook-active and writes a quiet ingest diagnostic |
+| `Statusline` with `tool_confirmation_pending=true` | pushes/replaces a deduped critical approval-required row outside the hook catalog |
+| `Statusline` with `agent_state=thinking|working|tool_use` | moves the matched pane to thinking/busy without notifying, unless a terminal completion/approval state must be preserved from a late refresh; a new `PreInvocation` resets the next generation to busy |
+| `Statusline` with `agent_state=idle` or `tool_confirmation_pending=false` | quiet update; does not clear completion/approval attention and creates no notification |
 | unknown events | mark the matched pane hook-active and write quiet ingest diagnostics only |
 
 Antigravity notify rows use `agent=antigravity` metadata. The v1.1.12 parser
@@ -673,10 +679,14 @@ loaded sources/events; its result is never used to generate or rewrite config.
 Antigravity ingest uses `conversationId` as pane thread metadata for matching
 and as session-state resume metadata. Session restore uses
 `agy --conversation <uuid>` only when that id is present and UUID-shaped;
-otherwise preview and doctor render `resume unavailable`. The statusline
-`context_window` percentage is persisted to the usage state dir on ingest so
-the usage HUD can surface it as a `context-window-only` row — Antigravity has
-no 5-hour/weekly quota contract, so no quota bars are emitted. Raw payloads or
+otherwise preview and doctor render `resume unavailable`. Official snake_case
+`cwd`, `conversation_id`, `transcript_path`, `agent_state`,
+`tool_confirmation_pending`, and structured `context_window.used_percentage`
+plus token fields are parsed directly. The structured percentage is persisted
+with conversation identity to the usage state dir; the legacy string percentage
+remains a fallback so the usage HUD can surface it as a `context-window-only`
+row. Separate Antigravity account quota data is not parsed or rendered in Phase
+3, so no quota bars are emitted from this bridge. Raw payloads or
 transcript contents are not stored.
 
 ## Ingest Debug Log

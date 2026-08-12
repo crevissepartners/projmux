@@ -2943,6 +2943,7 @@ func TestSettingsNotificationsDeliveryShowsAntigravityManagedCommands(t *testing
 		ProviderID:     "antigravity",
 		Status:         doctorAINotifyStatusMissing,
 		ConfigPath:     "/home/tester/.gemini/config/hooks.json",
+		StatusLinePath: "/home/tester/.gemini/antigravity-cli/settings.json",
 		TestedVersion:  "Antigravity CLI 1.1.12",
 		Guidance:       "Managed hooks use hooks.json as source of truth; /hooks is read-only diagnosis and PreToolUse is unchanged.",
 		InstallCommand: "projmux ai integrate antigravity",
@@ -2993,6 +2994,7 @@ func TestSettingsNotificationsDeliveryShowsAntigravityManagedCommands(t *testing
 	}
 	for _, want := range []string{
 		"/home/tester/.gemini/config/hooks.json",
+		"/home/tester/.gemini/antigravity-cli/settings.json",
 		"hooks.json as source of truth",
 		"/hooks is read-only diagnosis",
 		"PreToolUse is unchanged",

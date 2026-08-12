@@ -554,21 +554,27 @@ func writeDoctorText(w io.Writer, report doctorReport) error {
 				}
 				fmt.Fprintf(&buf, "config: %s", r.ConfigPath)
 			}
-			if r.ConflictReason != "" {
+			if r.StatusLinePath != "" {
 				if r.ProviderID != "" || r.ConfigPath != "" {
+					buf.WriteString("; ")
+				}
+				fmt.Fprintf(&buf, "statusline config: %s", r.StatusLinePath)
+			}
+			if r.ConflictReason != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString(r.ConflictReason)
 			}
 			if r.TestedVersion != "" {
-				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" || r.ConflictReason != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("tested: ")
 				buf.WriteString(r.TestedVersion)
 			}
 			if r.Guidance != "" {
-				if r.ProviderID != "" || r.ConfigPath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
+				if r.ProviderID != "" || r.ConfigPath != "" || r.StatusLinePath != "" || r.ConflictReason != "" || r.TestedVersion != "" {
 					buf.WriteString("; ")
 				}
 				buf.WriteString("notice: ")

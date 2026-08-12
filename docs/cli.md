@@ -275,8 +275,8 @@ Codex shares the global `30s`). `--json` emits the snapshot array; when
 backoff is active the wrapper `{snapshots, backoff}` object is emitted
 instead.
 
-Antigravity has no 5-hour/weekly quota contract, so it is surfaced
-`context-window-only`: the adapter emits a single `context` window row
+Phase 3 does not parse or render Antigravity account quota. Its adapter is
+`context-window-only` in this slice and emits a single `context` window row
 (context-window fullness, no `RESETS_AT`) sourced from the latest
 statusline `context_window` seen via hook ingest. `--model antigravity`
 renders that row; in the HUD it shows as `Antigravity ctx [bar] N%`
@@ -509,9 +509,15 @@ event identity explicitly, for example
 does not carry an event field. The explicit selector is authoritative, while
 payload `eventName` and its legacy aliases remain fallback inputs for existing
 manual wiring. `projmux ai integrate antigravity` manages exactly the named
-`projmux` entry in `~/.gemini/config/hooks.json`. It preserves every other
-named entry and unknown JSON value, resolves the running projmux executable to
-a stable absolute path, and supports `--dry-run` and `--remove`. An existing
+`projmux` entry in `~/.gemini/config/hooks.json` and, separately, exactly the
+`statusLine` member in `~/.gemini/antigravity-cli/settings.json`. The managed
+statusline uses the official v1.1.12 `{type:"command", enabled:true,
+stack_with_default:true}` shape and an absolute direct ingest command whose
+stdout is empty, so the built-in statusline remains visible. It preserves every
+other named entry and unknown JSON value, resolves the running projmux
+executable to a stable absolute path, and supports `--dry-run` and `--remove`.
+An existing unmanaged custom `statusLine` is an actionable conflict and is
+never chained, wrapped, or rewritten. An existing
 unmanaged `projmux` entry, another Antigravity projmux ingest command, malformed
 JSON, symlinks, and read/write permission failures are reported without
 rewriting the file. Doctor and Settings also report a managed entry as `stale`
@@ -522,8 +528,8 @@ The embedded v1.1.12 catalog contains the five official events `PreToolUse`,
 `PostToolUse`, `PreInvocation`, `PostInvocation`, and `Stop`. The managed entry
 installs `PreInvocation`, `PostInvocation`, `PostToolUse`, and `Stop`, each with
 an explicit `--event`; `PreToolUse` remains disabled because its response can
-change permission policy. Legacy `Statusline` manual wiring is still accepted
-outside that official catalog.
+change permission policy. `Statusline` remains an explicit statusline selector
+outside that official hook catalog.
 
 `PreInvocation` moves the matched pane to thinking/busy without notifying.
 `PostInvocation` and `PostToolUse` remain quiet bookkeeping paths, with tool
@@ -531,6 +537,13 @@ errors retained in ingest diagnostics. `Stop` keeps the completion/error notify
 classification. Hook stdout is `{}` for the three non-Stop managed events and
 `{"decision":"stop"}` for Stop, including a shell fallback if ingest fails, so
 the hook cannot force continuation or synthesize a permission decision.
+Official statusline `agent_state` values `thinking`, `working`, and `tool_use`
+map to thinking/busy unless the pane already holds a terminal completion or
+approval state; this prevents a late statusline refresh from regressing `Stop`.
+A new `PreInvocation` resets the pane to thinking for the next generation.
+`idle` is quiet and does not clear an existing completion or approval state.
+`tool_confirmation_pending=true` produces a stable-ID,
+deduped approval-required row; false never produces a notification.
 
 The managed JSON is the install source of truth. The command
 `agy -p '/hooks' --output-format json` is a read-only runtime diagnostic for
@@ -550,9 +563,12 @@ Antigravity notify metadata uses `agent=antigravity`. Phase 3 session-state
 restore is included: Antigravity ingest stores `conversationId` as pane thread
 metadata for matching and as session-state resume metadata. Restore uses
 `agy --conversation <uuid>` when that id is present and UUID-shaped; otherwise
-session-state preview/doctor render `resume unavailable`. The statusline
-`context_window` value is persisted on ingest and surfaced by the usage HUD
-as a `context-window-only` row (Antigravity has no 5h/weekly quota contract).
+session-state preview/doctor render `resume unavailable`. Structured statusline
+`context_window.used_percentage` is persisted with its conversation id and
+surfaced by the usage HUD
+as a `context-window-only` row. Account quota remains outside Phase 3 and is
+not inferred from this conversation-local gauge.
+The earlier string percentage form remains a compatibility fallback.
 Transcript contents are not read.
 
 `ingest bell --pane <pane_id>` is the narrow tmux-bell fallback ingest path.

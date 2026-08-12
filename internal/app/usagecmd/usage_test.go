@@ -52,7 +52,8 @@ func TestFormatStatusUsageRendersAntigravityContext(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	// Antigravity exposes only a context-window gauge — no 5h/weekly quota.
+	// Phase 3's Antigravity adapter exposes only the context-window gauge;
+	// separate account quota parsing/rendering remains out of scope.
 	// It must still render a `ctx` bar in the HUD.
 	snaps := []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 42, UpdatedAt: now},

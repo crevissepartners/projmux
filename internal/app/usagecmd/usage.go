@@ -709,7 +709,7 @@ type modelDisplay struct {
 	weekPct    float64
 	weekStale  int
 	// context-window fullness (usage.WindowContext). Used by adapters
-	// without a 5h/weekly quota contract (Antigravity). Rendered as a
+	// whose current adapter is context-window-only (Antigravity). Rendered as a
 	// `ctx` pair alongside — or in place of — the time-windowed bars.
 	hasContext bool
 	contextPct float64

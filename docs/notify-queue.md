@@ -74,8 +74,9 @@ routing/debug context such as `agent`, `thread_id`, `turn_id`, `cwd`,
 `conversation_id`, `termination_reason`, `fully_idle`,
 `tool_confirmation_pending`, `agent_state`, and `context_window` when present.
 The same `conversation_id` can seed session-state restore via
-`agy --conversation <uuid>` when it is UUID-shaped; Antigravity quota usage
-remains unsupported because `context_window` is not 5-hour/weekly quota data.
+`agy --conversation <uuid>` when it is UUID-shaped. Phase 3 keeps Antigravity
+account quota outside the notify/statusline bridge: `context_window` is a
+separate conversation-local gauge and is never treated as quota data.
 Tmux bell fallback rows carry `agent=bell`, `event=bell`, and tmux target
 context such as pane title, command, session, window, pane, and socket.
 `notify list --json` includes this metadata as the structured data channel

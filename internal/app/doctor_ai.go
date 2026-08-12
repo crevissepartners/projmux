@@ -24,6 +24,7 @@ type doctorAINotifyIntegration struct {
 	ProviderEnabled *bool                `json:"provider_enabled,omitempty"`
 	Status          doctorAINotifyStatus `json:"status"`
 	ConfigPath      string               `json:"config_path,omitempty"`
+	StatusLinePath  string               `json:"statusline_config_path,omitempty"`
 	ConflictReason  string               `json:"conflict_reason,omitempty"`
 	Guidance        string               `json:"guidance,omitempty"`
 	TestedVersion   string               `json:"tested_version,omitempty"`
@@ -141,7 +142,7 @@ func doctorAntigravityIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegra
 		InstallCommand: base,
 		RemoveCommand:  base + " --remove",
 		DryRunCommand:  base + " --dry-run",
-		Guidance:       "Managed hooks use the Antigravity hooks.json entry as the install source of truth. Use `agy -p '/hooks' --output-format json` only for read-only runtime diagnosis; PreToolUse permission policy is never installed or changed.",
+		Guidance:       "Managed hooks use the named hooks.json entry as their install source of truth; the statusline bridge separately owns only settings.json.statusLine and uses official stack_with_default with empty custom output. Existing custom statuslines conflict and are never chained or rewritten. Use `agy -p '/hooks' --output-format json` only for read-only runtime diagnosis; PreToolUse permission policy is never installed or changed.",
 	}
 	removePlan, err := ai.planAntigravityHookIntegration(true)
 	if err != nil {
@@ -150,6 +151,13 @@ func doctorAntigravityIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegra
 		return out
 	}
 	out.ConfigPath = removePlan.path
+	removeStatusLine, err := ai.planAntigravityStatusLineIntegration(true)
+	if err != nil {
+		out.Status = doctorAINotifyStatusConflict
+		out.ConflictReason = err.Error()
+		return out
+	}
+	out.StatusLinePath = removeStatusLine.path
 	installPlan, err := ai.planAntigravityHookIntegration(false)
 	if err != nil {
 		out.Status = doctorAINotifyStatusConflict
@@ -161,13 +169,31 @@ func doctorAntigravityIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegra
 		out.ConflictReason = installPlan.conflict
 		return out
 	}
-	if removePlan.changed {
-		if installPlan.changed {
+	installStatusLine, err := ai.planAntigravityStatusLineIntegration(false)
+	if err != nil {
+		out.Status = doctorAINotifyStatusConflict
+		out.ConflictReason = err.Error()
+		return out
+	}
+	if installStatusLine.conflict != "" {
+		out.Status = doctorAINotifyStatusConflict
+		out.ConflictReason = installStatusLine.conflict
+		return out
+	}
+	hooksManaged := removePlan.changed
+	statusLineManaged := removeStatusLine.managed
+	if hooksManaged && statusLineManaged {
+		if installPlan.changed || installStatusLine.changed {
 			out.Status = doctorAINotifyStatusStale
-			out.ConflictReason = "managed Antigravity hook entry differs from the current absolute executable, four-event command schema, or stdout fallback; run the install command to refresh it"
+			out.ConflictReason = "managed Antigravity hooks or statusline differs from the current absolute executable, official stacked settings object, event command schema, or stdout contract; run the install command to refresh it"
 			return out
 		}
 		out.Status = doctorAINotifyStatusInstalled
+		return out
+	}
+	if hooksManaged || statusLineManaged {
+		out.Status = doctorAINotifyStatusStale
+		out.ConflictReason = "Antigravity integration is partial: both the managed hooks entry and managed stacked statusline bridge are required; run the install command to reconcile it"
 		return out
 	}
 	out.Status = doctorAINotifyStatusMissing

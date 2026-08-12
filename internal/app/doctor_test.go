@@ -1050,7 +1050,7 @@ func TestDoctorAntigravityIntegrationDiagnosticManagedStates(t *testing.T) {
 	cmd.readFile = os.ReadFile
 
 	missing := doctorAntigravityIntegrationDiagnostic(cmd)
-	if missing.Status != doctorAINotifyStatusMissing || missing.ConfigPath != filepath.Join(home, antigravityHooksRelativePath) {
+	if missing.Status != doctorAINotifyStatusMissing || missing.ConfigPath != filepath.Join(home, antigravityHooksRelativePath) || missing.StatusLinePath != filepath.Join(home, antigravitySettingsRelativePath) {
 		t.Fatalf("missing diagnostic = %#v", missing)
 	}
 	for _, want := range []string{"projmux ai integrate antigravity", "projmux ai integrate antigravity --remove", "projmux ai integrate antigravity --dry-run"} {
@@ -1079,6 +1079,16 @@ func TestDoctorAntigravityIntegrationDiagnosticManagedStates(t *testing.T) {
 	conflict := doctorAntigravityIntegrationDiagnostic(cmd)
 	if conflict.Status != doctorAINotifyStatusConflict || !strings.Contains(conflict.ConflictReason, "unmanaged named entry") {
 		t.Fatalf("conflict diagnostic = %#v", conflict)
+	}
+
+	// A separately missing statusline is partial/stale, not fully installed.
+	if err := os.Remove(filepath.Join(home, antigravitySettingsRelativePath)); err != nil {
+		t.Fatal(err)
+	}
+	writeCodexTestFile(t, path, installedData)
+	partial := doctorAntigravityIntegrationDiagnostic(cmd)
+	if partial.Status != doctorAINotifyStatusStale || !strings.Contains(partial.ConflictReason, "partial") {
+		t.Fatalf("partial diagnostic = %#v", partial)
 	}
 }
 

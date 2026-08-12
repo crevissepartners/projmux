@@ -38,6 +38,17 @@ type antigravityHookPayload struct {
 	ToolConfirmationPendingSet bool
 	AgentState                 string
 	ContextWindow              string
+	ContextUsedPercentage      float64
+	ContextUsedPercentageSet   bool
+	ContextRemainingPercentage float64
+	ContextRemainingPercentSet bool
+	ContextTotalInputTokens    int64
+	ContextTotalOutputTokens   int64
+	ContextWindowSize          int64
+	ContextCurrentInputTokens  int64
+	ContextCurrentOutputTokens int64
+	ContextCacheCreationTokens int64
+	ContextCacheReadTokens     int64
 }
 
 func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) error {
@@ -103,43 +114,58 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "notify", Reason: antigravityStopDiagnosticReason(payload), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 		return nil
 	case "Statusline":
-		if !payload.ToolConfirmationPending {
-			c.quietAntigravityHook(paneID, payload, "statusline has no pending tool confirmation")
-			return nil
-		}
-		if action.Action == aiHookActionQuiet {
-			c.quietAntigravityHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
-		body := formatAntigravityApprovalNotifyBody(payload)
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
+		if payload.ToolConfirmationPending {
+			if action.Action == aiHookActionQuiet {
+				c.quietAntigravityHook(paneID, payload, aiHookQuietReason(action))
+				return nil
+			}
+			body := formatAntigravityApprovalNotifyBody(payload)
+			input := attentionNotifyInput{
 				ID:        antigravityNotifyID(payload, "approval"),
 				Text:      body.Text,
 				Severity:  body.Severity,
 				Metadata:  mergeAINotifyBodyMetadata(metadata, body),
-				Force:     true,
 				BadgeKind: aiBadgeKindApprovalRequired,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+			}
+			if action.Action == aiHookActionState {
+				if err := c.applyAIStatusStateOnly("waiting", paneID, input); err != nil {
+					return err
+				}
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+				return nil
+			}
+			// Stable queue ID replaces repeated approval snapshots, while the
+			// desktop path uses its normal time-window dedupe (Force=false).
+			if err := c.applyAIStatusStateOnly("waiting", paneID, input); err != nil {
 				return err
 			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+			_ = c.notifyAIWithInput(paneID, input)
+			input.PaneID = paneID
+			input.Lookup = c.notifyLookup()
+			c.notifyProducer().PushReplyReady(input)
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 			return nil
 		}
-		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
-			ID:        antigravityNotifyID(payload, "approval"),
-			Text:      body.Text,
-			Severity:  body.Severity,
-			Metadata:  mergeAINotifyBodyMetadata(metadata, body),
-			Force:     true,
-			BadgeKind: aiBadgeKindApprovalRequired,
-		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
-			return err
+		switch strings.ToLower(strings.TrimSpace(payload.AgentState)) {
+		case "thinking", "working", "tool_use":
+			if c.preserveAntigravityTerminalState(paneID) {
+				c.quietAntigravityHook(paneID, payload, "late busy statusline; preserving existing completion or approval state")
+				return nil
+			}
+			if err := c.applyAIStatusStateOnly("thinking", paneID, attentionNotifyInput{Metadata: metadata, BadgeKind: aiBadgeKindInProgress}); err != nil {
+				return err
+			}
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: "statusline agent_state is busy", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+			return nil
+		case "idle":
+			// Idle is observational only. Stop/completion or approval attention
+			// must not be cleared by a later quiet statusline refresh.
+			c.quietAntigravityHook(paneID, payload, "statusline agent_state is idle; preserving existing completion or attention state")
+			return nil
+		default:
+			c.quietAntigravityHook(paneID, payload, aiHookQuietReason(action))
+			return nil
 		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
-		return nil
 	case "PreInvocation":
 		if action.Action == aiHookActionQuiet {
 			c.quietAntigravityHook(paneID, payload, aiHookQuietReason(action))
@@ -170,15 +196,26 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 	}
 }
 
+func (c *aiCommand) preserveAntigravityTerminalState(paneID string) bool {
+	state := strings.ToLower(strings.TrimSpace(c.readTmuxPaneOption(paneID, aiPaneStateOption)))
+	if state == "waiting" || state == "ready" {
+		return true
+	}
+	return strings.TrimSpace(c.readTmuxPaneOption(paneID, attentionStateOption)) == attentionStateReply
+}
+
 // persistAntigravityContextUsage records the latest context-window
 // percentage carried by an antigravity hook into the usage state
 // directory so the usage adapter (and thus the HUD/status bar) can surface
-// it. Best-effort: antigravity exposes no 5h/weekly quota, so this
-// context-window gauge is the only usage-shaped signal available. A
+// it. Best-effort: Phase 3 handles only this conversation-local gauge and
+// deliberately does not parse or render separate account quota data. A
 // missing or unparseable value, or a write failure, is silently ignored —
 // usage is a non-critical side channel of hook ingest.
 func (c *aiCommand) persistAntigravityContextUsage(payload antigravityHookPayload) {
-	pct, ok := antigravityadapter.ParsePercent(payload.ContextWindow)
+	pct, ok := payload.ContextUsedPercentage, payload.ContextUsedPercentageSet
+	if !ok {
+		pct, ok = antigravityadapter.ParsePercent(payload.ContextWindow)
+	}
 	if !ok {
 		return
 	}
@@ -187,8 +224,9 @@ func (c *aiCommand) persistAntigravityContextUsage(payload antigravityHookPayloa
 		return
 	}
 	_ = antigravityadapter.WriteContext(baseDir, antigravityadapter.ContextRecord{
-		Pct:       pct,
-		UpdatedAt: c.now().UTC(),
+		ConversationID: payload.ConversationID,
+		Pct:            pct,
+		UpdatedAt:      c.now().UTC(),
 	})
 }
 
@@ -256,6 +294,26 @@ func parseAntigravityHookPayload(data []byte, explicitEvent string) (antigravity
 	if payload.ContextWindow == "" {
 		payload.ContextWindow = stringFromAny(firstNestedAny(statusline, "context_window", "contextWindow"))
 	}
+	contextWindow := mapFromAny(raw["context_window"])
+	if len(contextWindow) == 0 {
+		contextWindow = mapFromAny(firstNestedAny(statusline, "context_window"))
+	}
+	if value, ok := firstAntigravityFloat(contextWindow, "used_percentage"); ok {
+		payload.ContextUsedPercentage = value
+		payload.ContextUsedPercentageSet = true
+	}
+	if value, ok := firstAntigravityFloat(contextWindow, "remaining_percentage"); ok {
+		payload.ContextRemainingPercentage = value
+		payload.ContextRemainingPercentSet = true
+	}
+	payload.ContextTotalInputTokens, _ = firstAntigravityInt64(contextWindow, "total_input_tokens")
+	payload.ContextTotalOutputTokens, _ = firstAntigravityInt64(contextWindow, "total_output_tokens")
+	payload.ContextWindowSize, _ = firstAntigravityInt64(contextWindow, "context_window_size")
+	currentUsage := mapFromAny(contextWindow["current_usage"])
+	payload.ContextCurrentInputTokens, _ = firstAntigravityInt64(currentUsage, "input_tokens")
+	payload.ContextCurrentOutputTokens, _ = firstAntigravityInt64(currentUsage, "output_tokens")
+	payload.ContextCacheCreationTokens, _ = firstAntigravityInt64(currentUsage, "cache_creation_input_tokens")
+	payload.ContextCacheReadTokens, _ = firstAntigravityInt64(currentUsage, "cache_read_input_tokens")
 	if value, ok := firstBool(raw, "fully_idle", "fullyIdle"); ok {
 		payload.FullyIdle = value
 		payload.FullyIdleSet = true
@@ -328,6 +386,25 @@ func (p antigravityHookPayload) antigravityMetadata() map[string]string {
 		"agent_state":             p.AgentState,
 		"context_window":          p.ContextWindow,
 	}
+	if p.ContextUsedPercentageSet {
+		metadata["context_window_used_percentage"] = fmt.Sprintf("%g", p.ContextUsedPercentage)
+	}
+	if p.ContextRemainingPercentSet {
+		metadata["context_window_remaining_percentage"] = fmt.Sprintf("%g", p.ContextRemainingPercentage)
+	}
+	for key, value := range map[string]int64{
+		"context_window_total_input_tokens":    p.ContextTotalInputTokens,
+		"context_window_total_output_tokens":   p.ContextTotalOutputTokens,
+		"context_window_size":                  p.ContextWindowSize,
+		"context_window_input_tokens":          p.ContextCurrentInputTokens,
+		"context_window_output_tokens":         p.ContextCurrentOutputTokens,
+		"context_window_cache_creation_tokens": p.ContextCacheCreationTokens,
+		"context_window_cache_read_tokens":     p.ContextCacheReadTokens,
+	} {
+		if value > 0 {
+			metadata[key] = fmt.Sprintf("%d", value)
+		}
+	}
 	if name := firstString(p.ToolCall, "name"); name != "" {
 		metadata["tool_name"] = name
 	}
@@ -396,13 +473,31 @@ func firstAntigravityInt(raw map[string]any, keys ...string) (int, bool) {
 	return 0, false
 }
 
+func firstAntigravityFloat(raw map[string]any, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		if value, ok := raw[key].(float64); ok {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+func firstAntigravityInt64(raw map[string]any, keys ...string) (int64, bool) {
+	for _, key := range keys {
+		if value, ok := raw[key].(float64); ok && value == float64(int64(value)) {
+			return int64(value), true
+		}
+	}
+	return 0, false
+}
+
 func antigravityHookResponse(event string) ([]byte, error) {
 	switch normalizeAntigravityEventName(event) {
 	case "Stop":
 		// The Stop contract requires a decision. Any value other than
 		// "continue" allows the already-requested stop to complete.
 		return []byte(`{"decision":"stop"}`), nil
-	case "PreInvocation", "PostInvocation", "PostToolUse", "Statusline":
+	case "PreInvocation", "PostInvocation", "PostToolUse":
 		return []byte(`{}`), nil
 	case "PreToolUse":
 		return nil, errors.New("antigravity PreToolUse response is intentionally unsupported because it changes permission policy")
@@ -415,11 +510,6 @@ func antigravityNotifyID(p antigravityHookPayload, kind string) string {
 	parts := []string{"ai", "antigravity", kind}
 	if value := strings.TrimSpace(p.ConversationID); value != "" {
 		parts = append(parts, value)
-	}
-	if kind == "approval" {
-		if value := strings.TrimSpace(p.AgentState); value != "" {
-			parts = append(parts, value)
-		}
 	}
 	return strings.Join(parts, ":")
 }

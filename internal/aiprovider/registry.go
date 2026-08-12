@@ -103,7 +103,7 @@ var registry = []Metadata{
 		HookDiagnostics: SupportMetadata{
 			Supported: true,
 			ID:        "antigravity-hooks",
-			Name:      "Antigravity hooks",
+			Name:      "Antigravity hooks + statusline",
 		},
 		SessionState:  SupportMetadata{Supported: true},
 		SettingsOrder: 30,
