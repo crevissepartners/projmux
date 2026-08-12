@@ -90,6 +90,53 @@ func TestLifecycleRecorderCoalescesCreateThenSwitchIntoOneOutcome(t *testing.T) 
 	}
 }
 
+func TestLifecycleRecorderCompositeFailureUsesActualClosedStage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		stages    []Operation
+		wantOuter Operation
+		wantCode  Code
+	}{
+		{
+			name:      "create succeeds then attach fails",
+			stages:    []Operation{OperationSessionCreate, OperationSessionAttach},
+			wantOuter: OperationSessionCreate,
+			wantCode:  CodeSessionAttachFailed,
+		},
+		{
+			name:      "prune kill succeeds then attach fails",
+			stages:    []Operation{OperationSessionKill, OperationSessionAttach},
+			wantOuter: OperationSessionKill,
+			wantCode:  CodeSessionAttachFailed,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writer := &recordingEventWriter{}
+			recorder := NewLifecycleRecorder(writer, "composite-stage", "0.10.0", "tmux")
+			finish := recorder.BeginCommand()
+			for _, stage := range tt.stages {
+				recorder.Mark(stage)
+			}
+			recorder.Fail(tt.stages[len(tt.stages)-1])
+			finish(errors.New("raw target must not be recorded"))
+
+			events := writer.snapshot()
+			if len(events) != 2 {
+				t.Fatalf("events = %#v, want exactly one pair", events)
+			}
+			if events[0].RunID != events[1].RunID || events[0].RunID != "composite-stage" {
+				t.Fatalf("run IDs = %#v, want correlated pair", events)
+			}
+			outcome := events[1]
+			if outcome.Operation != string(tt.wantOuter) || outcome.Code != string(tt.wantCode) || outcome.Message != "" {
+				t.Fatalf("outcome = %#v, want outer=%s code=%s without raw detail", outcome, tt.wantOuter, tt.wantCode)
+			}
+		})
+	}
+}
+
 func TestLifecycleRecorderWriteFailureIsBestEffortAndStillOwnsOutcome(t *testing.T) {
 	t.Parallel()
 	writer := &recordingEventWriter{err: errors.New("permission denied")}
@@ -154,5 +201,33 @@ func TestLifecycleRecorderConcurrentMarksAndFinishRemainSingle(t *testing.T) {
 	wg.Wait()
 	if events := writer.snapshot(); len(events) != 2 {
 		t.Fatalf("events = %#v, want one start and one outcome", events)
+	}
+}
+
+func TestLifecycleRecorderOuterErrorNormalizesSuccessOnlyHint(t *testing.T) {
+	t.Parallel()
+	writer := &recordingEventWriter{}
+	recorder := NewLifecycleRecorder(writer, "hint-normalized", "0.10.0", "tmux")
+	finish := recorder.BeginCommand()
+	recorder.Mark(OperationTmuxApply)
+	recorder.Hint(LifecycleSuccess, CodeTmuxApplyReloadSkipped)
+	finish(errors.New("stdout rejected after skip"))
+	events := writer.snapshot()
+	if len(events) != 2 || events[1].Result != "error" || events[1].Code != string(CodeTmuxApplyFailed) {
+		t.Fatalf("events = %#v, want normalized tmux.apply.failed terminal", events)
+	}
+}
+
+func TestLifecycleRecorderSealFailureKeepsClosedCompositePair(t *testing.T) {
+	t.Parallel()
+	writer := &recordingEventWriter{}
+	recorder := NewLifecycleRecorder(writer, "sealed-composite", "0.10.0", "tmux")
+	finish := recorder.BeginCommand()
+	recorder.Mark(OperationSessionCreate)
+	recorder.SealFailure(OperationSessionAttach)
+	finish(errors.New("late outer error"))
+	events := writer.snapshot()
+	if len(events) != 2 || events[0].Operation != string(OperationSessionCreate) || events[1].Operation != string(OperationSessionCreate) || events[1].Code != string(CodeSessionAttachFailed) {
+		t.Fatalf("events = %#v, want one create -> attach.failed pair", events)
 	}
 }

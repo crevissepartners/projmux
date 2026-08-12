@@ -212,13 +212,17 @@ func operationAcceptsCode(operation Operation, code Code) bool {
 	}
 	switch operation {
 	case OperationSessionCreate:
-		return code == CodeSessionCreateFailed
+		// Ensure/restore may create and then activate the session.
+		return code == CodeSessionCreateFailed || code == CodeSessionAttachFailed || code == CodeSessionSwitchFailed
 	case OperationSessionAttach:
-		return code == CodeSessionAttachFailed
+		// Attached-session kill flows first move to a fallback, then kill.
+		return code == CodeSessionAttachFailed || code == CodeSessionKillFailed
 	case OperationSessionSwitch:
-		return code == CodeSessionSwitchFailed
+		// In-tmux kill flows first move to a fallback, then kill.
+		return code == CodeSessionSwitchFailed || code == CodeSessionKillFailed
 	case OperationSessionKill:
-		return code == CodeSessionKillFailed
+		// Auto-attach may prune, ensure/create a fallback, then activate it.
+		return code == CodeSessionKillFailed || code == CodeSessionCreateFailed || code == CodeSessionAttachFailed || code == CodeSessionSwitchFailed
 	case OperationTmuxApply:
 		return code == CodeTmuxApplyFailed || code == CodeTmuxApplySocketUnreachable || code == CodeTmuxApplyReloadFailed || code == CodeTmuxApplyReloadSkipped
 	default:

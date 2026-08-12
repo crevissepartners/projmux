@@ -26,6 +26,7 @@ type currentSessionExecutor interface {
 }
 
 type currentCommand struct {
+	diagnostics *diagnostics.LifecycleRecorder
 	currentPath currentPathResolver
 	sessions    currentSessionExecutor
 	identity    sessionIdentityResolver
@@ -43,6 +44,7 @@ func newCurrentCommand(recorders ...*diagnostics.LifecycleRecorder) *currentComm
 	identity, err := newDefaultCurrentIdentityResolver()
 
 	return &currentCommand{
+		diagnostics: recorderFrom(recorders),
 		currentPath: client,
 		sessions:    client,
 		identity:    identity,

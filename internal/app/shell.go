@@ -15,6 +15,7 @@ import (
 	"time"
 
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -26,6 +27,7 @@ const (
 )
 
 type shellCommand struct {
+	diagnostics  *diagnostics.LifecycleRecorder
 	executable   func() (string, error)
 	lookupEnv    func(string) string
 	homeDir      func() (string, error)
@@ -50,8 +52,13 @@ type shellUpdateSkipState struct {
 	SkippedAt time.Time `json:"skipped_at"`
 }
 
-func newShellCommand(update *updateCommand) *shellCommand {
+func newShellCommand(update *updateCommand, recorders ...*diagnostics.LifecycleRecorder) *shellCommand {
+	var recorder *diagnostics.LifecycleRecorder
+	if len(recorders) > 0 {
+		recorder = recorders[0]
+	}
 	return &shellCommand{
+		diagnostics:  recorder,
 		executable:   resolveExecutablePath,
 		lookupEnv:    os.Getenv,
 		homeDir:      os.UserHomeDir,
@@ -126,7 +133,19 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 			_, _ = fmt.Fprintf(stderr, "warning: start native macOS keybindings: %v\n", err)
 		}
 	}
-	return c.run(context.Background(), command, runArgs...)
+	return c.executeShellSession(context.Background(), socketName, target.SessionName, command, runArgs...)
+}
+
+func (c *shellCommand) executeShellSession(ctx context.Context, socketName, sessionName, command string, args ...string) error {
+	_ = socketName
+	_ = sessionName
+	if c.diagnostics != nil {
+		// `shell` explicitly opens the app session. tmux's atomic `new-session
+		// -A` may provision internally, but preflighting that race would make
+		// ownership less truthful. Keep the closed outer lifecycle as attach.
+		c.diagnostics.Mark(diagnostics.OperationSessionAttach)
+	}
+	return c.run(ctx, command, args...)
 }
 
 type shellTarget struct {

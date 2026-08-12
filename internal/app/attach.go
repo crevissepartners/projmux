@@ -30,6 +30,7 @@ type attachSessionKiller interface {
 }
 
 type attachCommand struct {
+	diagnostics          *diagnostics.LifecycleRecorder
 	inventory            attachInventoryResolver
 	sessions             attachSessionManager
 	killer               attachSessionKiller
@@ -42,12 +43,13 @@ type attachCommand struct {
 func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachCommand {
 	client := defaultTmuxClient(recorders...)
 	return &attachCommand{
-		inventory:  client,
-		sessions:   client,
-		killer:     client,
-		homeDir:    os.UserHomeDir,
-		workingDir: os.Getwd,
-		now:        time.Now,
+		diagnostics: recorderFrom(recorders),
+		inventory:   client,
+		sessions:    client,
+		killer:      client,
+		homeDir:     os.UserHomeDir,
+		workingDir:  os.Getwd,
+		now:         time.Now,
 	}
 }
 
@@ -113,12 +115,19 @@ func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) er
 	if err != nil {
 		return fmt.Errorf("plan auto attach: %w", err)
 	}
+	return c.executeAutoAttachPlan(context.Background(), plan, *fallback, homeDir)
+}
+
+// executeAutoAttachPlan owns the ordered mutation boundary after planning.
+// Keeping it separate makes the real kill-then-open composite flow directly
+// testable without changing the planner's session-retention policy.
+func (c *attachCommand) executeAutoAttachPlan(ctx context.Context, plan lifecycle.AutoAttachPlan, fallback, homeDir string) error {
 
 	for _, target := range plan.PruneTargets {
 		if c.killer == nil {
 			return fmt.Errorf("prune auto-attach ephemeral sessions: killer is not configured")
 		}
-		if err := c.killer.KillSession(context.Background(), target); err != nil {
+		if err := c.killer.KillSession(ctx, target); err != nil {
 			return fmt.Errorf("prune auto-attach ephemeral session %q: %w", target, err)
 		}
 		if c.cleanupKilledSession != nil {
@@ -131,7 +140,7 @@ func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) er
 			return fmt.Errorf("ensure auto-attach home session: session manager is not configured")
 		}
 
-		if *fallback == "ephemeral" {
+		if fallback == "ephemeral" {
 			cwd, err := c.resolveWorkingDir()
 			if err != nil {
 				return err
@@ -141,11 +150,11 @@ func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) er
 			}
 
 			sessionName := lifecycle.EphemeralSessionName(cwd, c.now())
-			if err := c.sessions.CreateEphemeralSession(context.Background(), sessionName, cwd); err != nil {
+			if err := c.sessions.CreateEphemeralSession(ctx, sessionName, cwd); err != nil {
 				return fmt.Errorf("create auto-attach ephemeral session %q: %w", sessionName, err)
 			}
 			plan.AttachTarget = sessionName
-		} else if err := c.sessions.EnsureSession(context.Background(), plan.AttachTarget, homeDir); err != nil {
+		} else if err := c.sessions.EnsureSession(ctx, plan.AttachTarget, homeDir); err != nil {
 			return fmt.Errorf("ensure auto-attach home session %q: %w", plan.AttachTarget, err)
 		}
 	}
@@ -153,7 +162,7 @@ func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) er
 	if c.sessions == nil {
 		return fmt.Errorf("open auto-attach target: session manager is not configured")
 	}
-	if err := c.sessions.OpenSession(context.Background(), plan.AttachTarget); err != nil {
+	if err := c.sessions.OpenSession(ctx, plan.AttachTarget); err != nil {
 		return fmt.Errorf("open auto-attach target %q: %w", plan.AttachTarget, err)
 	}
 

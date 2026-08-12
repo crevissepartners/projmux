@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 )
 
@@ -95,7 +96,11 @@ func (c *Client) RestoreSessionSnapshot(ctx context.Context, snap sessionstate.S
 		return err
 	}
 
+	c.markLifecycle(diagnostics.OperationSessionCreate)
 	if _, err := sessionstate.Replay(ctx, c.runner, snap, sessionstate.ReplayOptions{FallbackCWD: cwd}); err != nil {
+		if c.diagnostics != nil {
+			c.diagnostics.SealFailure(diagnostics.OperationSessionCreate)
+		}
 		return fmt.Errorf("restore tmux session %q from snapshot: %w", snap.Session, err)
 	}
 	sessionEnv := c.projectSessionEnv(cwd)

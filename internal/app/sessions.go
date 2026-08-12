@@ -44,6 +44,7 @@ type sessionsRunner interface {
 }
 
 type sessionsCommand struct {
+	diagnostics          *diagnostics.LifecycleRecorder
 	recent               sessionsRecentResolver
 	store                sessionsSelectionStore
 	opener               sessionsOpener
@@ -64,15 +65,16 @@ func newSessionsCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionsCo
 	}
 	client := inttmux.NewClient(inttmux.ExecRunner{}, opts...)
 	return &sessionsCommand{
-		recent:     client,
-		store:      newSessionPopupCommand().store,
-		opener:     client,
-		killer:     client,
-		native:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		executable: resolveExecutablePath,
-		lookupEnv:  os.Getenv,
-		homeDir:    os.UserHomeDir,
-		stateStore: sessionstate.NewDefaultStoreFromEnv,
+		diagnostics: recorderFrom(recorders),
+		recent:      client,
+		store:       newSessionPopupCommand().store,
+		opener:      client,
+		killer:      client,
+		native:      intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		executable:  resolveExecutablePath,
+		lookupEnv:   os.Getenv,
+		homeDir:     os.UserHomeDir,
+		stateStore:  sessionstate.NewDefaultStoreFromEnv,
 	}
 }
 

@@ -266,7 +266,7 @@ func TestLifecycleSchemaRejectsMismatchedOutcomeCodes(t *testing.T) {
 	}{
 		{name: "failure code on success", mutate: func(e *Event) { e.Level, e.Result, e.Kind = "info", "success", "" }},
 		{name: "skipped code on error", mutate: func(e *Event) { e.Operation, e.Code = string(OperationTmuxApply), string(CodeTmuxApplyReloadSkipped) }},
-		{name: "code from another operation", mutate: func(e *Event) { e.Code = string(CodeSessionKillFailed) }},
+		{name: "code outside session operation domain", mutate: func(e *Event) { e.Code = string(CodeTmuxApplyFailed) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -274,6 +274,63 @@ func TestLifecycleSchemaRejectsMismatchedOutcomeCodes(t *testing.T) {
 			tt.mutate(&event)
 			if _, err := sanitizeEvent(event, ""); err == nil {
 				t.Fatalf("sanitizeEvent(%#v) = nil, want closed-schema rejection", event)
+			}
+		})
+	}
+}
+
+func TestLifecycleSchemaCompositeTransitionMatrix(t *testing.T) {
+	t.Parallel()
+	allowed := []struct {
+		outer Operation
+		code  Code
+	}{
+		{OperationSessionCreate, CodeSessionCreateFailed},
+		{OperationSessionCreate, CodeSessionAttachFailed},
+		{OperationSessionCreate, CodeSessionSwitchFailed},
+		{OperationSessionAttach, CodeSessionAttachFailed},
+		{OperationSessionAttach, CodeSessionKillFailed},
+		{OperationSessionSwitch, CodeSessionSwitchFailed},
+		{OperationSessionSwitch, CodeSessionKillFailed},
+		{OperationSessionKill, CodeSessionKillFailed},
+		{OperationSessionKill, CodeSessionCreateFailed},
+		{OperationSessionKill, CodeSessionAttachFailed},
+		{OperationSessionKill, CodeSessionSwitchFailed},
+	}
+	rejected := []struct {
+		outer Operation
+		code  Code
+	}{
+		{OperationSessionAttach, CodeSessionCreateFailed},
+		{OperationSessionAttach, CodeSessionSwitchFailed},
+		{OperationSessionSwitch, CodeSessionCreateFailed},
+		{OperationSessionSwitch, CodeSessionAttachFailed},
+	}
+	for _, tt := range append(allowed, rejected...) {
+		t.Run(string(tt.outer)+"/"+string(tt.code), func(t *testing.T) {
+			event := Event{
+				At:         "2026-08-13T00:00:00Z",
+				Level:      "error",
+				Component:  "runtime",
+				Event:      "lifecycle.outcome",
+				Result:     "error",
+				RunID:      "closed-composite",
+				Version:    "0.10.0",
+				MuxBackend: "tmux",
+				Kind:       "runtime",
+				Operation:  string(tt.outer),
+				Code:       string(tt.code),
+			}
+			_, err := sanitizeEvent(event, "")
+			wantAllowed := false
+			for _, pair := range allowed {
+				wantAllowed = wantAllowed || pair == tt
+			}
+			if wantAllowed && err != nil {
+				t.Errorf("sanitizeEvent() error = %v, want allowed observed transition", err)
+			}
+			if !wantAllowed && err == nil {
+				t.Error("sanitizeEvent() = nil, want rejection for unobserved transition")
 			}
 		})
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
@@ -34,6 +35,7 @@ type pruneSessionKiller interface {
 }
 
 type pruneCommand struct {
+	diagnostics          *diagnostics.LifecycleRecorder
 	inventory            pruneInventoryResolver
 	liveSessions         pruneLiveSessionResolver
 	killer               pruneSessionKiller
@@ -68,9 +70,14 @@ func (c *killedSessionPreviewCleaner) cleanup(sessionName string) {
 	_ = c.store.Delete(sessionName)
 }
 
-func newPruneCommand() *pruneCommand {
-	client := inttmux.NewClient(inttmux.ExecRunner{})
+func newPruneCommand(recorders ...*diagnostics.LifecycleRecorder) *pruneCommand {
+	opts := []inttmux.ClientOption{}
+	if len(recorders) > 0 && recorders[0] != nil {
+		opts = append(opts, inttmux.WithLifecycleDiagnostics(recorders[0]))
+	}
+	client := inttmux.NewClient(inttmux.ExecRunner{}, opts...)
 	return &pruneCommand{
+		diagnostics:  recorderFrom(recorders),
 		inventory:    client,
 		liveSessions: client,
 		killer:       client,
@@ -145,6 +152,9 @@ func (c *pruneCommand) runEphemeral(args []string, _ io.Writer, stderr io.Writer
 		}
 	}()
 	for _, target := range targets {
+		if c.diagnostics != nil {
+			c.diagnostics.Mark(diagnostics.OperationSessionKill)
+		}
 		if err := c.killer.KillSession(context.Background(), target); err != nil {
 			return fmt.Errorf("kill ephemeral session %q: %w", target, err)
 		}

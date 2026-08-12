@@ -9,13 +9,48 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 )
 
 type lifecycleEventWriter struct {
 	events []diagnostics.Event
+}
+
+type typedCommandFailure struct {
+	failure CommandFailure
+}
+
+func (e typedCommandFailure) Error() string                  { return "typed command failure" }
+func (e typedCommandFailure) CommandFailure() CommandFailure { return e.failure }
+
+func TestIsNoServerFailureUsesTypedIsolatedStderr(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "no server", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "no server running on /private/socket"}}, want: true},
+		{name: "missing socket", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "error connecting to /private/socket (No such file or directory)"}}, want: true},
+		{name: "refused", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "failed to connect to server: Connection refused"}}, want: true},
+		{name: "permission stderr", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "failed to connect to server: Permission denied"}}},
+		{name: "malformed stderr", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "failed to connect to server private"}}},
+		{name: "not found executable", err: typedCommandFailure{CommandFailure{Kind: CommandFailureNotFound, Stderr: "no server running on /private/socket"}}},
+		{name: "permission kind", err: typedCommandFailure{CommandFailure{Kind: CommandFailurePermission, Stderr: "no server running on /private/socket"}}},
+		{name: "runner kind", err: typedCommandFailure{CommandFailure{Kind: CommandFailureRunner, Stderr: "no server running on /private/socket"}}},
+		{name: "argv spoof plain error", err: errors.New("tmux -L 'no server running on /private/socket' list-sessions")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsNoServerFailure(tt.err); got != tt.want {
+				t.Fatalf("IsNoServerFailure() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 func (w *lifecycleEventWriter) Append(event diagnostics.Event) error {
@@ -31,6 +66,7 @@ func TestClientLifecycleRecorderCoalescesCommandOperations(t *testing.T) {
 		steps     []scriptedStep
 		run       func(*Client) error
 		want      diagnostics.Operation
+		wantCode  diagnostics.Code
 		wantError bool
 	}{
 		{
@@ -54,6 +90,7 @@ func TestClientLifecycleRecorderCoalescesCommandOperations(t *testing.T) {
 				return client.OpenSession(context.Background(), "private-name")
 			},
 			want:      diagnostics.OperationSessionCreate,
+			wantCode:  diagnostics.CodeSessionAttachFailed,
 			wantError: true,
 		},
 		{
@@ -63,6 +100,7 @@ func TestClientLifecycleRecorderCoalescesCommandOperations(t *testing.T) {
 				return client.EnsureSession(context.Background(), "private-name", "/private/path")
 			},
 			want:      diagnostics.OperationSessionCreate,
+			wantCode:  diagnostics.CodeSessionCreateFailed,
 			wantError: true,
 		},
 		{
@@ -76,6 +114,7 @@ func TestClientLifecycleRecorderCoalescesCommandOperations(t *testing.T) {
 			steps:     []scriptedStep{{err: errors.New("private attach detail")}},
 			run:       func(client *Client) error { return client.OpenSession(context.Background(), "private-name") },
 			want:      diagnostics.OperationSessionAttach,
+			wantCode:  diagnostics.CodeSessionAttachFailed,
 			wantError: true,
 		},
 		{
@@ -91,6 +130,7 @@ func TestClientLifecycleRecorderCoalescesCommandOperations(t *testing.T) {
 			steps:     []scriptedStep{{err: errors.New("private runner detail")}},
 			run:       func(client *Client) error { return client.OpenSession(context.Background(), "private-name") },
 			want:      diagnostics.OperationSessionSwitch,
+			wantCode:  diagnostics.CodeSessionSwitchFailed,
 			wantError: true,
 		},
 		{
@@ -104,6 +144,7 @@ func TestClientLifecycleRecorderCoalescesCommandOperations(t *testing.T) {
 			steps:     []scriptedStep{{err: errors.New("private kill detail")}},
 			run:       func(client *Client) error { return client.KillSession(context.Background(), "private-name") },
 			want:      diagnostics.OperationSessionKill,
+			wantCode:  diagnostics.CodeSessionKillFailed,
 			wantError: true,
 		},
 	}
@@ -126,8 +167,48 @@ func TestClientLifecycleRecorderCoalescesCommandOperations(t *testing.T) {
 			if len(writer.events) != 2 || writer.events[0].Operation != string(tt.want) || writer.events[1].Operation != string(tt.want) {
 				t.Fatalf("events = %#v, want one %s pair", writer.events, tt.want)
 			}
+			if got := diagnostics.Code(writer.events[1].Code); got != tt.wantCode {
+				t.Fatalf("outcome code = %q, want %q", got, tt.wantCode)
+			}
 			if strings.Contains(fmt.Sprint(writer.events), "private-name") || strings.Contains(fmt.Sprint(writer.events), "/private/path") || strings.Contains(fmt.Sprint(writer.events), "private runner detail") {
 				t.Fatalf("private routing/content leaked: %#v", writer.events)
+			}
+		})
+	}
+}
+
+func TestRestoreSnapshotLifecycleProductionBoundary(t *testing.T) {
+	t.Setenv("TMUX", "")
+	snapshot := sessionstate.Snapshot{
+		Version: sessionstate.Version, Session: "private-session", DefaultCWD: "/private/cwd", SavedAt: time.Unix(1, 0),
+	}
+	tests := []struct {
+		name     string
+		steps    []scriptedStep
+		open     bool
+		wantErr  bool
+		wantCode diagnostics.Code
+	}{
+		{name: "replay success", steps: []scriptedStep{{err: exitError(t, 1)}, {}, {}}},
+		{name: "replay create failure", steps: []scriptedStep{{err: exitError(t, 1)}, {err: errors.New("private replay create")}}, wantErr: true, wantCode: diagnostics.CodeSessionCreateFailed},
+		{name: "replay success then open attach failure", steps: []scriptedStep{{err: exitError(t, 1)}, {}, {}, {err: errors.New("private attach")}}, open: true, wantErr: true, wantCode: diagnostics.CodeSessionAttachFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writer := &lifecycleEventWriter{}
+			recorder := diagnostics.NewLifecycleRecorder(writer, "snapshot-run", "0.10.0", "tmux")
+			finish := recorder.BeginCommand()
+			client := NewClient(&scriptedRunner{steps: tt.steps}, WithLifecycleDiagnostics(recorder))
+			err := client.RestoreSessionSnapshot(context.Background(), snapshot, "/private/cwd", sessionstate.SourceAutosave)
+			if err == nil && tt.open {
+				err = client.OpenSession(context.Background(), snapshot.Session)
+			}
+			finish(err)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr=%v", err, tt.wantErr)
+			}
+			if len(writer.events) != 2 || writer.events[0].Operation != string(diagnostics.OperationSessionCreate) || writer.events[1].Operation != string(diagnostics.OperationSessionCreate) || writer.events[1].Code != string(tt.wantCode) {
+				t.Fatalf("events = %#v, want one snapshot create pair code=%s", writer.events, tt.wantCode)
 			}
 		})
 	}

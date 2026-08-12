@@ -1,10 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Never inherit a caller's live tmux client context into this process. Every
+# tmux mutation below is routed to a run-unique -L socket.
+unset TMUX TMUX_PANE
+
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/test/lib/smoke.sh"
 
 smoke_setup_env
-trap smoke_cleanup_env EXIT
+PROJMUX_SMOKE_TMUX_ACTUAL=""
+PROJMUX_SMOKE_TMUX_STARTED=0
+integration_cleanup() {
+	if [[ "${PROJMUX_SMOKE_TMUX_STARTED:-0}" == "1" ]]; then
+		if [[ -z "${PROJMUX_SMOKE_TMUX_ACTUAL:-}" || -z "${PROJMUX_SMOKE_TMUX_SOCKET:-}" ]]; then
+			echo "refusing integration cleanup without expected socket identity" >&2
+			return 1
+		fi
+    case "$PROJMUX_SMOKE_TMUX_ACTUAL" in
+      "$PROJMUX_SMOKE_WORKDIR"/tmux/*) ;;
+      *)
+        echo "refusing integration cleanup outside smoke root: $PROJMUX_SMOKE_TMUX_ACTUAL" >&2
+        return 1
+        ;;
+    esac
+    current_socket="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t integration-smoke '#{socket_path}' 2>/dev/null || true)"
+		if [[ -z "$current_socket" ]]; then
+			echo "refusing integration cleanup: expected server socket is unqueryable" >&2
+			return 1
+		fi
+		if [[ "$current_socket" != "$PROJMUX_SMOKE_TMUX_ACTUAL" ]]; then
+      echo "refusing integration cleanup after socket identity changed: $current_socket" >&2
+      return 1
+    fi
+		env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-server >/dev/null 2>&1 || true
+		PROJMUX_SMOKE_TMUX_STARTED=0
+  fi
+  if [[ -n "${PROJMUX_SMOKE_WORKDIR:-}" ]]; then
+    rm -rf -- "$PROJMUX_SMOKE_WORKDIR"
+  fi
+}
+trap integration_cleanup EXIT
 cd "$smoke_root"
 
 smoke_build_binary
@@ -322,9 +357,21 @@ fi
 smoke_assert_file_contains "$HOME/.tmux.conf" "source-file"
 smoke_assert_file_contains "$XDG_CONFIG_HOME/tmux/projmux.conf" "unbind-key -q F"
 
-PROJMUX_SMOKE_TMUX_SOCKET="projmux-it"
+export TMUX_TMPDIR="$PROJMUX_SMOKE_WORKDIR/tmux"
+mkdir -p "$TMUX_TMPDIR"
+chmod 0700 "$TMUX_TMPDIR"
+PROJMUX_SMOKE_TMUX_SOCKET="projmux-it-$$-$RANDOM"
 export PROJMUX_SMOKE_TMUX_SOCKET
-tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s integration-smoke -c "$smoke_root" sleep 300
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s integration-smoke -c "$smoke_root" sleep 300
+PROJMUX_SMOKE_TMUX_STARTED=1
+PROJMUX_SMOKE_TMUX_ACTUAL="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t integration-smoke '#{socket_path}')"
+case "$PROJMUX_SMOKE_TMUX_ACTUAL" in
+  "$PROJMUX_SMOKE_WORKDIR"/tmux/*) ;;
+  *)
+    echo "integration socket escaped smoke root: $PROJMUX_SMOKE_TMUX_ACTUAL" >&2
+    exit 1
+    ;;
+esac
 
 # A pre-rename-pane-label config could leave C-t installed in the live root
 # table even after the retired keymap action disappeared. Seed that exact stale
@@ -412,13 +459,170 @@ if [[ "$resources_flag" != "on" ]]; then
   exit 1
 fi
 
+# Real lifecycle fixture. A tiny routing wrapper adds the run-unique -L socket
+# for projmux subprocesses that intentionally do not accept a socket flag. The
+# mutation itself is still performed by the host tmux executable.
+real_tmux="$(command -v tmux)"
+lifecycle_mux_dir="$PROJMUX_SMOKE_WORKDIR/lifecycle-mux"
+mkdir -p "$lifecycle_mux_dir"
+cat >"$lifecycle_mux_dir/tmux" <<'LIFECYCLE_TMUX'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${PROJMUX_KILL_RACE_TARGET:-}" && "${1:-}" == "list-sessions" && "$*" == *"@projmux_ephemeral"* ]]; then
+  output="$("$PROJMUX_REAL_TMUX" -L "$PROJMUX_SMOKE_TMUX_SOCKET" "$@")"
+  "$PROJMUX_REAL_TMUX" -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$PROJMUX_KILL_RACE_TARGET"
+  printf '%s\n' "$output"
+  exit 0
+fi
+exec "$PROJMUX_REAL_TMUX" -L "$PROJMUX_SMOKE_TMUX_SOCKET" "$@"
+LIFECYCLE_TMUX
+chmod 0755 "$lifecycle_mux_dir/tmux"
+lifecycle_path="$lifecycle_mux_dir:$PATH"
+server_pid="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t integration-smoke '#{pid}')"
+lifecycle_pane="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t integration-smoke '#{pane_id}')"
+lifecycle_tmux_env="$PROJMUX_SMOKE_TMUX_ACTUAL,$server_pid,0"
+
+# Keep one real control-mode client attached so explicit switch operations can
+# select it without relying on pane contents, ordering, or send-keys.
+control_fifo="$PROJMUX_SMOKE_WORKDIR/lifecycle-control.in"
+control_out="$PROJMUX_SMOKE_WORKDIR/lifecycle-control.out"
+mkfifo "$control_fifo"
+exec 9<>"$control_fifo"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" -C attach-session -t integration-smoke <&9 >"$control_out" 2>&1 &
+control_pid=$!
+control_client=""
+for _ in $(seq 1 500); do
+  control_client="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-clients -F '#{client_name}' 2>/dev/null | head -n 1 || true)"
+  [[ -n "$control_client" ]] && break
+  sleep 0.02
+done
+if [[ -z "$control_client" ]]; then
+  echo "real lifecycle fixture could not establish control client" >&2
+  exit 1
+fi
+
+run_inside_lifecycle() {
+  env \
+    PATH="$lifecycle_path" \
+    PROJMUX_REAL_TMUX="$real_tmux" \
+    TMUX="$lifecycle_tmux_env" \
+    TMUX_PANE="$lifecycle_pane" \
+    PROJMUX_SWITCH_TARGET_CLIENT="$control_client" \
+    "$bin" "$@"
+}
+
+# Create: change the real origin pane cwd to a run-unique project, then let
+# `current` ensure it and switch the attached control client to it.
+create_root="$PROJMUX_SMOKE_WORKDIR/raw-create-project-$$"
+mkdir -p "$create_root"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" respawn-pane -k -t integration-smoke -c "$create_root" sleep 300
+run_inside_lifecycle current >"$PROJMUX_SMOKE_WORKDIR/lifecycle-create.out"
+
+# Deterministic real create failure: the production global pre-create hook
+# aborts before tmux new-session and the target remains absent.
+mkdir -p "$XDG_CONFIG_HOME/projmux"
+cat >"$XDG_CONFIG_HOME/projmux/config.toml" <<'CREATE_FAILURE_HOOK'
+[hooks.pre-create]
+run = "exit 17"
+CREATE_FAILURE_HOOK
+create_fail_root="$PROJMUX_SMOKE_WORKDIR/raw-create-failure-$$"
+mkdir -p "$create_fail_root"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" respawn-pane -k -t integration-smoke -c "$create_fail_root" sleep 300
+if run_inside_lifecycle current >"$PROJMUX_SMOKE_WORKDIR/lifecycle-create-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-create-fail.err"; then
+  echo "real pre-create failure unexpectedly succeeded" >&2
+  exit 1
+fi
+rm -f "$XDG_CONFIG_HOME/projmux/config.toml"
+
+# Switch success and failure through the formerly bypassing session-popup
+# surface. The missing target exercises a real tmux switch-client failure.
+run_inside_lifecycle session-popup open integration-smoke >"$PROJMUX_SMOKE_WORKDIR/lifecycle-switch.out"
+if run_inside_lifecycle session-popup open raw-missing-session >"$PROJMUX_SMOKE_WORKDIR/lifecycle-switch-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-switch-fail.err"; then
+  echo "real missing-session switch unexpectedly succeeded" >&2
+  exit 1
+fi
+
+# Kill through the formerly bypassing prune surface.
+for session in raw-ephemeral-one raw-ephemeral-two; do
+  env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s "$session" sleep 300
+  env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -t "$session" -q @projmux_ephemeral 1
+  env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t "=$session"
+  env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
+done
+run_inside_lifecycle prune ephemeral --keep=0 >"$PROJMUX_SMOKE_WORKDIR/lifecycle-kill.out"
+for session in raw-ephemeral-one raw-ephemeral-two; do
+  if env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" has-session -t "=$session" 2>/dev/null; then
+    echo "real prune did not kill $session" >&2
+    exit 1
+  fi
+done
+
+# Deterministic real kill failure: after prune reads the real inventory, the
+# routing wrapper removes the selected session with the real tmux executable;
+# projmux's ensuing real kill-session sees the missing target and fails.
+kill_race_target="raw-ephemeral-race"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s "$kill_race_target" sleep 300
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -t "$kill_race_target" -q @projmux_ephemeral 1
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t "=$kill_race_target"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
+if PROJMUX_KILL_RACE_TARGET="$kill_race_target" run_inside_lifecycle prune ephemeral --keep=0 >"$PROJMUX_SMOKE_WORKDIR/lifecycle-kill-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-kill-fail.err"; then
+  echo "real kill race failure unexpectedly succeeded" >&2
+  exit 1
+fi
+
+# Attach success/failure use a real pseudo-terminal and the same unique socket
+# routing wrapper. The successful client is detached by a server query, not by
+# pane keystrokes or screen scraping.
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s raw-attach-success sleep 300
+attach_command="env -u TMUX -u TMUX_PANE TERM=xterm PATH=$lifecycle_path PROJMUX_REAL_TMUX=$real_tmux PROJMUX_SMOKE_TMUX_SOCKET=$PROJMUX_SMOKE_TMUX_SOCKET $bin session-popup open raw-attach-success"
+timeout 10 script -qec "$attach_command" /dev/null >"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach.err" &
+attach_pid=$!
+attach_seen=0
+for _ in $(seq 1 500); do
+  if env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-clients -F '#{client_session}' 2>/dev/null | grep -Fxq raw-attach-success; then
+    attach_seen=1
+    break
+  fi
+  sleep 0.02
+done
+if [[ "$attach_seen" != "1" ]]; then
+  echo "real attach client did not appear" >&2
+	cat "$PROJMUX_SMOKE_WORKDIR/lifecycle-attach.out" "$PROJMUX_SMOKE_WORKDIR/lifecycle-attach.err" >&2 || true
+  exit 1
+fi
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" detach-client -s raw-attach-success
+wait "$attach_pid"
+if timeout 10 script -qec "env -u TMUX -u TMUX_PANE TERM=xterm PATH=$lifecycle_path PROJMUX_REAL_TMUX=$real_tmux PROJMUX_SMOKE_TMUX_SOCKET=$PROJMUX_SMOKE_TMUX_SOCKET $bin session-popup open raw-attach-missing" /dev/null >"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach-fail.err"; then
+  echo "real missing-session attach unexpectedly succeeded" >&2
+  exit 1
+fi
+
+# Apply classification: a real absent unique socket is unreachable, while an
+# executable/runner-style list failure remains the generic closed apply code.
+missing_apply_socket="missing-$PROJMUX_SMOKE_TMUX_SOCKET"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$missing_apply_socket" >"$PROJMUX_SMOKE_WORKDIR/apply-unreachable.out"
+generic_mux_dir="$PROJMUX_SMOKE_WORKDIR/generic-apply-mux"
+mkdir -p "$generic_mux_dir"
+cat >"$generic_mux_dir/tmux" <<'GENERIC_TMUX'
+#!/usr/bin/env bash
+echo "permission denied by deterministic integration runner" >&2
+exit 13
+GENERIC_TMUX
+chmod 0755 "$generic_mux_dir/tmux"
+PATH="$generic_mux_dir:$PATH" "$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket raw-generic-socket >"$PROJMUX_SMOKE_WORKDIR/apply-generic.out"
+
+# Stop only the control client process; the guarded trap owns the exact server.
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" detach-client -s integration-smoke >/dev/null 2>&1 || true
+exec 9>&-
+wait "$control_pid" || true
+
 # Each explicit apply owns one correlated lifecycle pair and suppresses the
-# older generic top-level outcome. Four apply invocations ran above.
+# older generic top-level outcome. Six apply invocations ran above.
 operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
 apply_starts="$(grep -c '"event":"lifecycle.start".*"operation":"tmux.apply"' "$operations_log")"
 apply_outcomes="$(grep -c '"event":"lifecycle.outcome".*"operation":"tmux.apply"' "$operations_log")"
-if [[ "$apply_starts" != "4" || "$apply_outcomes" != "4" ]]; then
-  echo "expected four correlated tmux apply lifecycle pairs, got starts=$apply_starts outcomes=$apply_outcomes" >&2
+if [[ "$apply_starts" != "6" || "$apply_outcomes" != "6" ]]; then
+  echo "expected six correlated tmux apply lifecycle pairs, got starts=$apply_starts outcomes=$apply_outcomes" >&2
   exit 1
 fi
 if grep -q '"event":"command.outcome".*"command":"tmux","subcommand":"apply"' "$operations_log"; then
@@ -429,11 +633,53 @@ apply_run_counts="$PROJMUX_SMOKE_WORKDIR/apply-run-counts.txt"
 grep '"operation":"tmux.apply"' "$operations_log" |
   sed -n 's/.*"run_id":"\([^"]*\)".*/\1/p' |
   sort | uniq -c >"$apply_run_counts"
-if [[ "$(wc -l <"$apply_run_counts")" != "4" ]] || ! awk '$1 != 2 { bad=1 } END { exit bad }' "$apply_run_counts"; then
+if [[ "$(wc -l <"$apply_run_counts")" != "6" ]] || ! awk '$1 != 2 { bad=1 } END { exit bad }' "$apply_run_counts"; then
   echo "tmux apply start/outcome run_id correlation failed" >&2
   cat "$apply_run_counts" >&2
   exit 1
 fi
+for code in tmux.apply.socket-unreachable tmux.apply.failed; do
+  if ! grep -q '"event":"lifecycle.outcome".*"code":"'"$code"'"' "$operations_log"; then
+    echo "missing apply classification: $code" >&2
+    exit 1
+  fi
+done
+
+# Every lifecycle run is exactly one start/outcome pair with no generic
+# duplicate. Real fixture failures remain closed and raw routing never enters
+# the journal.
+lifecycle_run_counts="$PROJMUX_SMOKE_WORKDIR/lifecycle-run-counts.txt"
+grep '"event":"lifecycle.\(start\|outcome\)"' "$operations_log" |
+  sed -n 's/.*"run_id":"\([^"]*\)".*/\1/p' |
+  sort | uniq -c >"$lifecycle_run_counts"
+if ! awk '$1 != 2 { bad=1 } END { exit bad }' "$lifecycle_run_counts"; then
+  echo "lifecycle start/outcome run_id correlation failed" >&2
+  cat "$lifecycle_run_counts" >&2
+  exit 1
+fi
+for operation in session.create session.attach session.switch session.kill; do
+  if ! grep -q '"event":"lifecycle.start".*"operation":"'"$operation"'"' "$operations_log" ||
+    ! grep -q '"event":"lifecycle.outcome".*"operation":"'"$operation"'"' "$operations_log"; then
+    echo "missing real lifecycle pair for $operation" >&2
+    exit 1
+  fi
+done
+for code in session.create.failed session.attach.failed session.switch.failed session.kill.failed; do
+  if ! grep -q '"event":"lifecycle.outcome".*"code":"'"$code"'"' "$operations_log"; then
+    echo "missing real lifecycle failure classification: $code" >&2
+    exit 1
+  fi
+done
+if grep -q '"event":"command.outcome".*"command":"\(current\|session-popup\|prune\)"' "$operations_log"; then
+  echo "real lifecycle fixture emitted a duplicate generic top-level outcome" >&2
+  exit 1
+fi
+for raw in "$PROJMUX_SMOKE_TMUX_ACTUAL" "$PROJMUX_SMOKE_WORKDIR" raw-create-project raw-missing-session raw-ephemeral raw-attach raw-generic-socket "$lifecycle_pane"; do
+  if grep -Fq "$raw" "$operations_log"; then
+    echo "operational lifecycle journal leaked raw routing: $raw" >&2
+    exit 1
+  fi
+done
 
 "$bin" notify push --id integration-smoke --text "integration smoke" --target "integration-smoke" >"$PROJMUX_SMOKE_WORKDIR/notify-push.out"
 "$bin" notify list --json >"$PROJMUX_SMOKE_WORKDIR/notify-list.json"
@@ -547,3 +793,5 @@ if [[ "$(cat "$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.out")" != "pinned: $smo
   echo "best-effort operational writer failure changed command stdout" >&2
   exit 1
 fi
+
+echo ">> lifecycle smoke root=$PROJMUX_SMOKE_WORKDIR actual_socket=$PROJMUX_SMOKE_TMUX_ACTUAL guard=passed"

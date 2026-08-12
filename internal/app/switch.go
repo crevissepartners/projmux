@@ -105,6 +105,7 @@ type switchPreviewStore interface {
 }
 
 type switchCommand struct {
+	diagnostics          *diagnostics.LifecycleRecorder
 	discover             candidateDiscoverer
 	pinStore             switchPinStoreFactory
 	tagStore             switchTagStoreFactory
@@ -170,6 +171,7 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 	paths, pathsErr := config.DefaultPathsFromEnv()
 
 	cmd := &switchCommand{
+		diagnostics:   recorderFrom(recorders),
 		discover:      candidates.Discover,
 		pinStore:      newDefaultSwitchPinStore,
 		tagStore:      newDefaultSwitchTagStore,

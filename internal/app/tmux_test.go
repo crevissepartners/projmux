@@ -25,11 +25,33 @@ type appLifecycleWriter struct {
 	drop   bool
 }
 
+type appTypedCommandFailure struct {
+	failure inttmux.CommandFailure
+}
+
+func (e appTypedCommandFailure) Error() string { return "typed tmux command failure" }
+func (e appTypedCommandFailure) CommandFailure() inttmux.CommandFailure {
+	return e.failure
+}
+
 func (w *appLifecycleWriter) Append(event diagnostics.Event) error {
 	if !w.drop {
 		w.events = append(w.events, event)
 	}
 	return w.err
+}
+
+type failAfterWrite struct {
+	writes int
+	failAt int
+}
+
+func (w *failAfterWrite) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == w.failAt {
+		return 0, errors.New("stdout rejected")
+	}
+	return len(p), nil
 }
 
 func TestTmuxApplyLifecycleOutcomeTable(t *testing.T) {
@@ -47,7 +69,13 @@ func TestTmuxApplyLifecycleOutcomeTable(t *testing.T) {
 		wantEvents int
 	}{
 		{name: "success", runner: &recordingTmuxRunner{}, wantResult: "success", wantEvents: 2},
-		{name: "socket unreachable keeps command success", runner: &recordingTmuxRunner{err: errors.New("private socket path")}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplySocketUnreachable, wantEvents: 2},
+		{name: "recognized socket unreachable keeps command success", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running on /private/socket"}}}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplySocketUnreachable, wantEvents: 2},
+		{name: "generic list failure keeps command success", runner: &recordingTmuxRunner{err: errors.New("permission denied for private runner")}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "permission-shaped typed exit stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "failed to connect to server: Permission denied"}}}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "missing executable stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureNotFound, Stderr: "no server running on /private/socket"}}}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "permission kind stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailurePermission, Stderr: "no server running on /private/socket"}}}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "runner kind stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureRunner, Stderr: "no server running on /private/socket"}}}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "argv spoof stays generic", runner: &recordingTmuxRunner{err: errors.New("tmux -L no server running on /private/socket list-sessions")}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
 		{name: "reload failure keeps command success", runner: &recordingTmuxRunner{}, reloadErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyReloadFailed, wantEvents: 2},
 		{name: "config write error", runner: &recordingTmuxRunner{}, writeErr: errors.New("private config path"), wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
 		{name: "append stores then errors is best effort", runner: &recordingTmuxRunner{}, writerErr: errors.New("permission denied"), wantResult: "success", wantEvents: 2},
@@ -95,6 +123,28 @@ func TestTmuxApplyLifecycleOutcomeTable(t *testing.T) {
 				t.Fatal("apply lifecycle did not own terminal outcome")
 			}
 		})
+	}
+}
+
+func TestTmuxApplySkippedHintNormalizesWhenLaterOutputFails(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	writer := &appLifecycleWriter{}
+	recorder := diagnostics.NewLifecycleRecorder(writer, "apply-output", "0.10.0", "tmux")
+	cmd := &tmuxCommand{
+		diagnostics: recorder,
+		executable:  func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:   func(string) string { return home },
+		writeFile:   os.WriteFile,
+		runner:      nil,
+	}
+	stdout := &failAfterWrite{failAt: 2}
+	err := (&App{lifecycle: recorder, tmux: cmd}).Run([]string{"tmux", "apply", "--config", filepath.Join(home, "tmux.conf")}, stdout, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("Run() = nil, want second stdout failure")
+	}
+	if len(writer.events) != 2 || writer.events[1].Result != "error" || writer.events[1].Code != string(diagnostics.CodeTmuxApplyFailed) {
+		t.Fatalf("events = %#v, want one valid tmux.apply.failed terminal", writer.events)
 	}
 }
 
@@ -3323,12 +3373,15 @@ func TestAppRunTmuxPopupToggleCloseRestoresSidebarOriginSession(t *testing.T) {
 		"#{client_tty}": clientKey,
 		"#{pane_id}":    "%active",
 	}}
+	writer := &appLifecycleWriter{}
+	recorder := diagnostics.NewLifecycleRecorder(writer, "popup-restore", "0.10.0", "tmux")
 	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
+		diagnostics: recorder,
+		runner:      runner,
+		executable:  func() (string, error) { return "/tmp/projmux", nil },
 	}
 
-	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := (&App{lifecycle: recorder, tmux: cmd}).Run([]string{"tmux", "popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
@@ -3346,6 +3399,34 @@ func TestAppRunTmuxPopupToggleCloseRestoresSidebarOriginSession(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("cancel restore calls = %#v, want origin has-session then switch-client %#v", got, want)
+	}
+	if len(writer.events) != 2 || writer.events[1].Result != "success" || writer.events[1].Operation != string(diagnostics.OperationSessionSwitch) {
+		t.Fatalf("events = %#v, want popup cancel switch success pair", writer.events)
+	}
+}
+
+func TestAppRunTmuxPopupToggleRestoreFailureIsOwnedAndSwallowed(t *testing.T) {
+	t.Parallel()
+	clientKey := "/dev/pts/projmux-test-sidebar-cancel-failure"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), "sessionizer-sidebar")
+	_ = os.Remove(marker)
+	defer os.Remove(marker)
+	if err := os.WriteFile(marker, []byte("%original\nwork\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	switchKey := recordedTmuxCallKey("tmux", "switch-client", "-c", clientKey, "-t", "=work")
+	runner := &recordingTmuxRunner{
+		formats: map[string]string{"#{client_tty}": clientKey, "#{pane_id}": "%active"},
+		errors:  map[string]error{switchKey: errors.New("private switch failure")},
+	}
+	writer := &appLifecycleWriter{}
+	recorder := diagnostics.NewLifecycleRecorder(writer, "popup-failure", "0.10.0", "tmux")
+	cmd := &tmuxCommand{diagnostics: recorder, runner: runner, executable: func() (string, error) { return "/tmp/projmux", nil }}
+	if err := (&App{lifecycle: recorder, tmux: cmd}).Run([]string{"tmux", "popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("swallowed restore Run() error = %v", err)
+	}
+	if len(writer.events) != 2 || writer.events[1].Result != "error" || writer.events[1].Code != string(diagnostics.CodeSessionSwitchFailed) || !recorder.RecordedOutcome() {
+		t.Fatalf("events = %#v, want owned popup cancel switch failure", writer.events)
 	}
 }
 
