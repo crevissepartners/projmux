@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -15,8 +16,10 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coreresources "github.com/crevissepartners/projmux/internal/core/resources"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 func TestResourceViewHierarchyDisplayResolverSortAndExplicitRoots(t *testing.T) {
@@ -26,7 +29,7 @@ func TestResourceViewHierarchyDisplayResolverSortAndExplicitRoots(t *testing.T) 
 
 	items, header, footer := renderResourceView(view)
 	api := pickerItemByValue(items, "project:/repo/api")
-	if len(items) != 3 || api == nil || api.Label != "api" || !strings.Contains(strings.Join(api.MetaLines, "\n"), "Context  /repo/api") {
+	if len(items) != 3 || api == nil || api.Label != "api" || !strings.Contains(strings.Join(api.MetaLines, "\n"), "Path  /repo/api") {
 		t.Fatalf("project items = %#v, want primary identity separate from path context", items)
 	}
 	for _, value := range []string{"project:" + coreresources.ProjectUnassigned, "project:" + coreresources.ProjectShared} {
@@ -34,16 +37,16 @@ func TestResourceViewHierarchyDisplayResolverSortAndExplicitRoots(t *testing.T) 
 			t.Fatalf("project items = %#v, want explicit stable root %q", items, value)
 		}
 	}
-	if !strings.Contains(header, "Host CPU 50.0%") || !strings.Contains(header, "Attributed CPU 12.0%") || !strings.Contains(header, "RSS") || !strings.Contains(header, "sample 1s") || !strings.Contains(header, "ready") || !strings.Contains(header, "Other / unattributed") || !strings.Contains(header, "not drillable") {
+	if !strings.Contains(header, "Host CPU 50.0% normal") || !strings.Contains(header, "Attributed CPU 12.0% normal") || !strings.Contains(header, "RSS") || !strings.Contains(header, "Sample age 1s") || !strings.Contains(header, "ready · fresh") || !strings.Contains(header, "Coverage Other / unattributed") || !strings.Contains(header, "not drillable") || len(view.screen().bands) != 4 {
 		t.Fatalf("header = %q, want separate host/attributed/Other bands", header)
 	}
-	if !strings.Contains(footer, "Tab: sort CPU") || strings.Contains(footer, " r:") {
+	if !strings.Contains(footer, "Tab: sort Name") || !strings.Contains(footer, "automatic every 2s") || strings.Contains(footer, " r:") {
 		t.Fatalf("footer = %q, want Tab/Ctrl-R and no printable r shortcut", footer)
 	}
 
 	view.enter("project:/repo/api")
 	items, _, _ = renderResourceView(view)
-	if len(items) != 1 || items[0].Label != "editor @7" || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "Session dev") || !strings.Contains(items[0].SearchText, "@7") {
+	if len(items) != 1 || items[0].Label != "editor @7" || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "Session  dev") || !strings.Contains(items[0].SearchText, "@7") {
 		t.Fatalf("window items = %#v, want display/session context and stable id", items)
 	}
 	view.enter(items[0].Value)
@@ -53,17 +56,17 @@ func TestResourceViewHierarchyDisplayResolverSortAndExplicitRoots(t *testing.T) 
 	}
 	view.cycleSort()
 	items, _, _ = renderResourceView(view)
-	if !strings.Contains(items[0].SearchText, "%11") {
-		t.Fatalf("memory sort first = %#v, want larger RSS pane %%11", items[0])
+	if !strings.Contains(items[0].SearchText, "%10") {
+		t.Fatalf("CPU sort first = %#v, want higher CPU pane %%10", items[0])
 	}
 	view.cycleSort()
 	items, _, _ = renderResourceView(view)
-	if !strings.Contains(items[0].Label, "agent topic") {
-		t.Fatalf("name sort first = %q, want resolved agent topic", items[0].Label)
+	if !strings.Contains(items[0].SearchText, "%11") {
+		t.Fatalf("memory sort first = %#v, want larger RSS pane %%11", items[0])
 	}
 	view.enter(items[0].Value)
 	items, _, footer = renderResourceView(view)
-	if len(items) != 1 || items[0].Value != "" || items[0].Label != "Pane details" || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "CPU host share: 2.0% · 0.16c") || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "Memory RSS sum") || !strings.Contains(footer, "Read-only pane detail") {
+	if len(items) != 1 || items[0].Value != "" || items[0].Label != "Pane details" || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "CPU host share: 2.0% normal · 0.16c") || !strings.Contains(strings.Join(items[0].MetaLines, "\n"), "Memory RSS sum") || !strings.Contains(footer, "Read-only pane detail") {
 		t.Fatalf("pane detail = %#v footer=%q", items, footer)
 	}
 	for i := range 3 {
@@ -87,8 +90,8 @@ func TestResourceBreadcrumbActionableListEmptyAndReadOnlyDetailChrome(t *testing
 	if root.Title != "Resources · Projects" || root.DisableSearch || root.ReadOnly || !pickerActionsContain(root.Actions, "tab") {
 		t.Fatalf("root options = %#v, want one root breadcrumb and actionable list chrome", root)
 	}
-	if pickerItemsContain(root.Items, coreresources.OtherUnattributed) || !chromeBandsContain(root.ChromeBands, "Other / unattributed") {
-		t.Fatalf("root items=%#v bands=%#v, want Other summary outside actionable rows", root.Items, root.ChromeBands)
+	if pickerItemsContain(root.Items, coreresources.OtherUnattributed) || !chromeBandsContain(root.ResourceSummaryDock, "Other / unattributed") {
+		t.Fatalf("root items=%#v dock=%#v, want Other summary outside actionable rows", root.Items, root.ResourceSummaryDock)
 	}
 	if pickerItemByValue(root.Items, "project:"+coreresources.ProjectUnassigned) == nil || pickerItemByValue(root.Items, "project:"+coreresources.ProjectShared) == nil {
 		t.Fatalf("root items=%#v, want explicit Unassigned/Shared drill-down roots", root.Items)
@@ -106,19 +109,29 @@ func TestResourceBreadcrumbActionableListEmptyAndReadOnlyDetailChrome(t *testing
 	}
 	view.enter(panes.Items[0].Value)
 	detail := cmd.pickerOptions(view, lifecycle)
-	if !strings.HasPrefix(detail.Title, "Resources · Projects / api / editor @7 / ") || !detail.DisableSearch || !detail.ReadOnly || detail.Prompt == "" || pickerActionsContain(detail.Actions, "tab") || strings.Contains(detail.Footer, "Enter") || strings.Contains(detail.Footer, "sort") || detail.Items[0].Value != "" {
+	if detail.Title != "Resources · Projects / api / editor @7 / agent topic" || !detail.DisableSearch || !detail.ReadOnly || detail.Prompt == "" || pickerActionsContain(detail.Actions, "tab") || strings.Contains(detail.Footer, "Enter") || strings.Contains(detail.Footer, "sort") || detail.Items[0].Value != "" {
 		t.Fatalf("detail options = %#v, want read-only panel chrome without search/pointer/Enter/sort", detail)
 	}
+	readyTitle := detail.Title
+	selectedPaneID := view.scope.paneID
+	if selectedPaneID == "" || view.scope.paneDisplay != "agent topic" {
+		t.Fatalf("detail scope = %#v, want stable pane key and separate resolved display identity", view.scope)
+	}
 
-	view.setSnapshot(coreresources.Snapshot{At: now, Status: coreresources.StatusReady}, false)
+	withoutSelectedPane := resourceReadySnapshot(now)
+	withoutSelectedPane.Panes = nil
+	view.setSnapshot(withoutSelectedPane, false)
 	gone := cmd.pickerOptions(view, lifecycle)
-	if !gone.ReadOnly || !gone.DisableSearch || gone.Items[0].Value != "" || !strings.Contains(gone.Items[0].Label, "no longer exists") {
-		t.Fatalf("gone options = %#v, want explicit non-actionable vanished panel", gone)
+	if !gone.ReadOnly || !gone.DisableSearch || gone.Items[0].Value != "" || !strings.Contains(gone.Items[0].Label, "no longer exists") || gone.Title != readyTitle || strings.Contains(gone.Title, selectedPaneID) {
+		t.Fatalf("gone options = %#v, want vanished panel with preserved primary breadcrumb %q and no stable pane ID %q", gone, readyTitle, selectedPaneID)
 	}
 
 	view.back()
+	if view.scope.paneID != "" || view.scope.paneDisplay != "" {
+		t.Fatalf("pane-list scope = %#v, want pane key and display identity cleared on back", view.scope)
+	}
 	empty := cmd.pickerOptions(view, lifecycle)
-	if len(empty.Items) != 0 || !empty.ReadOnly || !empty.DisableSearch || strings.Contains(empty.Footer, "Enter") || !chromeBandsContain(empty.ChromeBands, "No panes") {
+	if len(empty.Items) != 0 || !empty.ReadOnly || !empty.DisableSearch || strings.Contains(empty.Footer, "Enter") || !chromeBandsContain(empty.ResourceSummaryDock, "No panes") {
 		t.Fatalf("empty options = %#v, want explicit read-only empty surface", empty)
 	}
 }
@@ -143,8 +156,10 @@ func TestResourceStructuredMetricColumnsStayAlignedAcrossKnownAndUnknownRows(t *
 			if locale == i18n.Locale("ko-KR") {
 				memoryLabel, countLabel = "메모리", "PANE"
 			}
-			memory := strings.Index(metric, memoryLabel)
-			count := strings.Index(metric, countLabel)
+			memoryByte := strings.Index(metric, memoryLabel)
+			countByte := strings.Index(metric, countLabel)
+			memory := projmuxpicker.VisibleLen(metric[:memoryByte])
+			count := projmuxpicker.VisibleLen(metric[:countByte])
 			if index == 0 {
 				wantCPU, wantMemory, wantCount = cpu, memory, count
 				continue
@@ -196,6 +211,17 @@ func TestResourceDeferredUpdateReconcilesActionableAndReadOnlyActions(t *testing
 	}
 
 	emptyOptions := cmd.pickerOptions(view, lifecycle)
+	lifecycle.requestAutomatic()
+	<-lifecycle.trigger
+	progress, err := emptyOptions.DeferredUpdate()
+	if err != nil || !strings.Contains(progress.Footer, "in progress") || !chromeBandsContain(progress.ResourceSummaryDock, "not fresh") || len(progress.Items) != 0 {
+		t.Fatalf("automatic progress=%#v err=%v, want retained empty sample with explicit not-fresh state", progress, err)
+	}
+	select {
+	case <-lifecycle.trigger:
+	case <-time.After(time.Second):
+		t.Fatal("automatic completion did not trigger a deferred update")
+	}
 	toPopulated, err := emptyOptions.DeferredUpdate()
 	if err != nil || !toPopulated.SetActions || !pickerActionsContain(toPopulated.Actions, "tab") || toPopulated.ReadOnly || toPopulated.DisableSearch {
 		t.Fatalf("empty→populated update=%#v err=%v, want Tab restored and list interaction enabled", toPopulated, err)
@@ -204,6 +230,72 @@ func TestResourceDeferredUpdateReconcilesActionableAndReadOnlyActions(t *testing
 		if !pickerActionsContain(toPopulated.Actions, key) {
 			t.Fatalf("populated actions=%#v, missing preserved %q", toPopulated.Actions, key)
 		}
+	}
+}
+
+func TestResourceAutomaticRefreshEmitsProgressBeforeBlockedCollectionThenAtomicCompletion(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name       string
+		snapshot   coreresources.Snapshot
+		err        error
+		completion string
+	}{
+		{name: "ready", snapshot: resourceReadySnapshot(base.Add(5 * time.Second)), completion: "ready · fresh"},
+		{name: "partial", snapshot: func() coreresources.Snapshot {
+			snapshot := resourceReadySnapshot(base.Add(5 * time.Second))
+			snapshot.Status = coreresources.StatusPartial
+			return snapshot
+		}(), completion: "partial"},
+		{name: "unavailable", err: errors.New("collector unavailable"), completion: "unavailable"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			now := base.Add(5 * time.Second)
+			view := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
+			view.setSnapshot(resourceReadySnapshot(base), false)
+			before := resourceItemValues(view.screen().items)
+			collector := &controlledResourceCollector{started: make(chan struct{}), release: make(chan struct{}), snapshot: tt.snapshot, err: tt.err}
+			lifecycle := newResourceLifecycle(collector, func() time.Time { return now }, time.Hour)
+			lifecycle.initialized = true
+			lifecycle.start()
+			<-lifecycle.trigger
+			defer lifecycle.close()
+			cmd := &resourceCommand{homeDir: func() (string, error) { return "", errors.New("no config") }, lookupEnv: func(string) string { return "" }}
+			options := cmd.pickerOptions(view, lifecycle)
+
+			lifecycle.requestAutomatic()
+			<-lifecycle.trigger
+			progress, err := options.DeferredUpdate()
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-collector.started:
+			case <-time.After(time.Second):
+				t.Fatal("automatic collection did not start")
+			}
+			if !slices.Equal(resourceItemValues(progress.Items), before) || !strings.Contains(progress.Footer, "in progress; last complete sample retained") || !chromeBandsContain(progress.ResourceSummaryDock, "age 5s") || !chromeBandsContain(progress.ResourceSummaryDock, "not fresh") || chromeBandsContain(progress.ResourceSummaryDock, "ready · fresh") {
+				t.Fatalf("automatic progress=%#v, want current age and explicit not-fresh state with retained sample", progress)
+			}
+			if overlap := lifecycle.collect(view); !strings.Contains(overlap.Footer, "in progress") || collector.maxActive.Load() != 1 {
+				t.Fatalf("blocked overlap update=%#v maxActive=%d, want progress-only non-overlap", overlap, collector.maxActive.Load())
+			}
+
+			close(collector.release)
+			select {
+			case <-lifecycle.trigger:
+			case <-time.After(time.Second):
+				t.Fatal("automatic completion did not trigger a deferred update")
+			}
+			completed, err := options.DeferredUpdate()
+			if err != nil || !chromeBandsContain(completed.ResourceSummaryDock, tt.completion) || strings.Contains(completed.Footer, "in progress") {
+				t.Fatalf("automatic completion=%#v err=%v, want atomic %q state", completed, err, tt.completion)
+			}
+			if collector.maxActive.Load() != 1 {
+				t.Fatalf("max active scans=%d, want exactly one", collector.maxActive.Load())
+			}
+		})
 	}
 }
 
@@ -251,7 +343,7 @@ func TestResourceCommandAltLeftAndEscWalkParentThenCloseRoot(t *testing.T) {
 		"Resources · Projects",
 		"Resources · Projects / api",
 		"Resources · Projects / api / editor @7",
-		"Resources · Projects / api / editor @7 / user label %10",
+		"Resources · Projects / api / editor @7 / agent topic",
 		"Resources · Projects / api / editor @7",
 		"Resources · Projects / api",
 		"Resources · Projects",
@@ -304,8 +396,8 @@ func TestResourceInspectorLocalizesEnglishAndKoreanUX(t *testing.T) {
 		unavailable string
 		help        string
 	}{
-		{name: "en-US", locale: i18n.FallbackLocale, title: "Resources · Projects", prompt: "search › ", header: "Host CPU", footer: "Enter: drill down", unassigned: "Unassigned", shared: "Shared / ambiguous", other: "Other / unattributed", detail: "Processes:", caveat: "RSS sum may count shared pages", unavailable: "unavailable on darwin", help: "Usage: projmux resources\n  Open the read-only"},
-		{name: "ko-KR", locale: i18n.Locale("ko-KR"), title: "리소스 · 프로젝트", prompt: "검색 › ", header: "호스트 CPU", footer: "Enter: 상세 보기", unassigned: "할당되지 않음", shared: "공유 / 모호함", other: "기타 / 귀속되지 않음", detail: "프로세스:", caveat: "RSS 합계는 공유 페이지", unavailable: "darwin에서는 리소스 귀속을 사용할 수 없습니다", help: "사용법: projmux resources\n  읽기 전용"},
+		{name: "en-US", locale: i18n.FallbackLocale, title: "Resources · Projects", prompt: "search › ", header: "Host CPU", footer: "Enter: drill down", unassigned: "No project match", shared: "Multiple project matches", other: "Other / unattributed", detail: "Processes:", caveat: "RSS sum may count shared pages", unavailable: "unavailable on darwin", help: "Usage: projmux resources\n  Open the read-only"},
+		{name: "ko-KR", locale: i18n.Locale("ko-KR"), title: "리소스 · 프로젝트", prompt: "검색 › ", header: "호스트 CPU", footer: "Enter: 상세 보기", unassigned: "프로젝트 일치 없음", shared: "여러 프로젝트 일치", other: "기타 / 귀속되지 않음", detail: "프로세스:", caveat: "RSS 합계는 공유 페이지", unavailable: "darwin에서는 리소스 귀속을 사용할 수 없습니다", help: "사용법: projmux resources\n  읽기 전용"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -390,7 +482,7 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 	snap.Other.MemoryBytes = nil
 	view.setSnapshot(snap, false)
 	_, header, _ = renderResourceView(view)
-	if !strings.Contains(header, "Other / unattributed CPU --") || !strings.Contains(header, "Memory --") {
+	if !strings.Contains(header, "Other / unattributed  CPU -- unknown") || !strings.Contains(header, "Memory -- unknown") {
 		t.Fatalf("Other band = %q, want overage remainder unknown rather than zero", header)
 	}
 	for _, want := range []string{"partial sampled=20 skipped=2 race=1 permission=1", "CPU overage 4.5%", "RSS overage 2.0 KiB"} {
@@ -401,7 +493,7 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 
 	view.setSnapshot(coreresources.Snapshot{At: now, Status: coreresources.StatusUnavailable, StatusReason: "resource attribution is unavailable on darwin"}, false)
 	items, header, footer := renderResourceView(view)
-	if !strings.Contains(header, "unavailable") || !strings.Contains(header, "unavailable on darwin") || len(items) != 2 || !strings.Contains(footer, "Enter") {
+	if !strings.Contains(header, "unavailable") || !strings.Contains(header, "unavailable on darwin") || len(items) != 2 || strings.Contains(footer, "Enter") || !strings.Contains(footer, "Read-only") {
 		t.Fatalf("unavailable header=%q footer=%q items=%#v", header, footer, items)
 	}
 
@@ -409,32 +501,219 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 	unavailableMemory.Host.MemoryAvailable = false
 	view.setSnapshot(unavailableMemory, false)
 	_, header, _ = renderResourceView(view)
-	if !strings.Contains(header, "Memory --") || !strings.Contains(header, "RSS -- (--)") {
+	if !strings.Contains(header, "Memory -- unknown") || !strings.Contains(header, "RSS -- (-- unknown)") {
 		t.Fatalf("memory-unavailable header = %q, want unknown rather than derived zero/value", header)
 	}
+}
+
+func TestResourceInspectorThresholdParityAndSemanticText(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		percent   float64
+		warningAt int
+		want      liveResourceSeverity
+		label     string
+	}{
+		{name: "CPU before warning", percent: 69.9, warningAt: liveResourceCPUWarningAt, want: liveResourceNormal, label: "normal"},
+		{name: "CPU warning boundary", percent: 70, warningAt: liveResourceCPUWarningAt, want: liveResourceWarning, label: "warning"},
+		{name: "CPU before critical", percent: 89.9, warningAt: liveResourceCPUWarningAt, want: liveResourceWarning, label: "warning"},
+		{name: "CPU critical boundary", percent: 90, warningAt: liveResourceCPUWarningAt, want: liveResourceCritical, label: "critical"},
+		{name: "memory before warning", percent: 74.9, warningAt: liveResourceMemoryWarningAt, want: liveResourceNormal, label: "normal"},
+		{name: "memory warning boundary", percent: 75, warningAt: liveResourceMemoryWarningAt, want: liveResourceWarning, label: "warning"},
+		{name: "memory before critical", percent: 89.9, warningAt: liveResourceMemoryWarningAt, want: liveResourceWarning, label: "warning"},
+		{name: "memory critical boundary", percent: 90, warningAt: liveResourceMemoryWarningAt, want: liveResourceCritical, label: "critical"},
+	}
+	palette := resourceSemanticPalette{normal: "<normal>", unknown: "<unknown>", warning: "<warning>", critical: "<critical>"}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyResourcePercent(tt.percent, float64(tt.warningAt)); got != tt.want {
+				t.Fatalf("classifyResourcePercent(%v, %d)=%v, want %v", tt.percent, tt.warningAt, got, tt.want)
+			}
+			got := formatResourcePercentState(&tt.percent, tt.warningAt, palette, resourceText{locale: i18n.FallbackLocale})
+			if !strings.Contains(got, tt.label) || !strings.Contains(got, map[liveResourceSeverity]string{liveResourceNormal: "<normal>", liveResourceWarning: "<warning>", liveResourceCritical: "<critical>"}[tt.want]) {
+				t.Fatalf("formatted metric=%q, want semantic text/style for %s", got, tt.label)
+			}
+		})
+	}
+	unknown := formatResourcePercentState(nil, liveResourceCPUWarningAt, palette, resourceText{locale: i18n.FallbackLocale})
+	if !strings.Contains(unknown, "-- unknown") || strings.Contains(unknown, "0.0%") {
+		t.Fatalf("unknown metric=%q, must not resemble zero", unknown)
+	}
+}
+
+func TestResourceInspectorUsesResolvedSemanticThemeRoles(t *testing.T) {
+	t.Parallel()
+	for _, cfg := range []theme.ThemeConfig{{}, {Warning: "#112233", Critical: "#cc2233", Muted: "#667788", TextPrimary: "#ddeeff"}} {
+		effective := theme.ResolveTheme(cfg)
+		roles := theme.ANSIRolesFromEffective(effective)
+		palette := newResourceSemanticPalette(effective)
+		warning, critical := 75.0, 90.0
+		if got := formatResourcePercentState(&warning, liveResourceCPUWarningAt, palette, resourceText{locale: i18n.FallbackLocale}); !strings.Contains(got, roles.StateWarning) || !strings.Contains(got, "warning") {
+			t.Fatalf("warning metric=%q, want resolved warning role %q plus text", got, roles.StateWarning)
+		}
+		if got := formatResourcePercentState(&critical, liveResourceMemoryWarningAt, palette, resourceText{locale: i18n.FallbackLocale}); !strings.Contains(got, roles.StateCritical) || !strings.Contains(got, "critical") {
+			t.Fatalf("critical metric=%q, want resolved critical role %q plus text", got, roles.StateCritical)
+		}
+	}
+}
+
+func TestResourcePaneIdentityPrecedenceAndSecondaryIDs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		pane coreresources.PaneUsage
+		want string
+	}{
+		{name: "label", pane: coreresources.PaneUsage{PaneLabel: "label", AIAgent: "codex", AITopic: "topic", PaneCommand: "zsh", PaneTitle: "title"}, want: "label"},
+		{name: "agent topic", pane: coreresources.PaneUsage{AIAgent: "codex", AITopic: "topic", PaneCommand: "zsh", PaneTitle: "title"}, want: "topic"},
+		{name: "interactive shell ignores orphan topic", pane: coreresources.PaneUsage{AITopic: "orphan", PaneCommand: "fish", PaneTitle: "title"}, want: "fish"},
+		{name: "raw title", pane: coreresources.PaneUsage{PaneCommand: "nvim", PaneTitle: "title"}, want: "title"},
+	}
+	for index, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pane := tt.pane
+			pane.Socket, pane.WindowID, pane.PaneID = "sock", "@1", fmt.Sprintf("%%%d", index+1)
+			pane.PanePID, pane.PaneTTY = 100+index, fmt.Sprintf("/dev/pts/%d", index+1)
+			snapshot := coreresources.Snapshot{Status: coreresources.StatusReady, Host: coreresources.HostSample{MemoryAvailable: true}, Panes: []coreresources.PaneUsage{pane}}
+			rows := resourcePaneRows(snapshot, "sock", "@1", resourceText{locale: i18n.FallbackLocale})
+			if len(rows) != 1 || rows[0].identity != tt.want || strings.Contains(rows[0].identity, pane.PaneID) {
+				t.Fatalf("pane identity rows=%#v, want primary %q without stable id", rows, tt.want)
+			}
+			for _, want := range []string{"Pane  " + pane.PaneID, fmt.Sprintf("Process  %d", pane.PanePID), "TTY  " + pane.PaneTTY} {
+				if !strings.Contains(rows[0].context, want) {
+					t.Fatalf("secondary context=%q, missing %q", rows[0].context, want)
+				}
+			}
+			scope := resourceScope{kind: resourceScopePaneDetail, socket: "sock", windowID: "@1", paneID: pane.PaneID, projectKey: "/repo/api"}
+			if breadcrumb := resourceBreadcrumb(snapshot, scope, resourceText{locale: i18n.FallbackLocale}); !strings.HasSuffix(breadcrumb, "/ "+tt.want) || strings.Contains(breadcrumb, pane.PaneID) {
+				t.Fatalf("breadcrumb=%q, want shared primary identity without secondary stable id", breadcrumb)
+			}
+		})
+	}
+}
+
+func TestResourceScopeCopyEnglishAndKoreanHasNoGenericContextOrCoreBucketNames(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		locale                                  i18n.Locale
+		path, noMatch, multi, noHelp, multiHelp string
+	}{
+		{locale: i18n.FallbackLocale, path: "Path  /repo/api", noMatch: "No project match", multi: "Multiple project matches", noHelp: "matches no managed project root", multiHelp: "multiple anchors"},
+		{locale: i18n.Locale("ko-KR"), path: "경로  /repo/api", noMatch: "프로젝트 일치 없음", multi: "여러 프로젝트 일치", noHelp: "프로젝트 루트와 일치하지 않습니다", multiHelp: "여러 anchor"},
+	} {
+		rows := resourceProjectRows(resourceReadySnapshot(time.Now()), resourceText{locale: tt.locale})
+		all := fmt.Sprintf("%#v", rows)
+		for _, want := range []string{tt.path, tt.noMatch, tt.multi, tt.noHelp, tt.multiHelp} {
+			if !strings.Contains(all, want) {
+				t.Fatalf("locale %s rows missing %q: %s", tt.locale, want, all)
+			}
+		}
+		for _, forbidden := range []string{"Context", "Unassigned", "Shared / ambiguous"} {
+			for _, row := range rows {
+				if strings.Contains(row.identity+" "+row.context, forbidden) {
+					t.Fatalf("locale %s displayed copy leaked %q: %#v", tt.locale, forbidden, row)
+				}
+			}
+		}
+	}
+}
+
+func TestResourceRefreshPreservesStableRowOrderUntilTab(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	view := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
+	first := resourceReadySnapshot(now)
+	first.Projects = append(first.Projects, coreresources.ProjectUsage{Key: "/repo/zeta", CPU: &coreresources.CPUUsage{HostSharePercent: 80}})
+	view.setSnapshot(first, false)
+	before := resourceItemValues(view.screen().items)
+	if want := []string{"project:/repo/api", "project:Shared / ambiguous", "project:Unassigned", "project:/repo/zeta"}; !slices.Equal(before, want) {
+		t.Fatalf("default Name order=%#v, want %#v", before, want)
+	}
+	second := first
+	second.Projects = append([]coreresources.ProjectUsage(nil), first.Projects...)
+	second.Projects[0].CPU = &coreresources.CPUUsage{HostSharePercent: 95}
+	second.Projects[1].CPU = &coreresources.CPUUsage{HostSharePercent: 1}
+	view.setSnapshot(second, false)
+	if after := resourceItemValues(view.screen().items); !slices.Equal(after, before) {
+		t.Fatalf("automatic refresh reordered rows=%#v, want stable %#v", after, before)
+	}
+	view.cycleSort()
+	if afterTab := resourceItemValues(view.screen().items); len(afterTab) == 0 || afterTab[0] != "project:/repo/api" || slices.Equal(afterTab, before) {
+		t.Fatalf("Tab CPU order=%#v, want one current-sample recompute", afterTab)
+	}
+}
+
+func TestResourceStateTransitionsAndManualRefreshFeedbackAreAtomic(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 10, 0, time.UTC)
+	view := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
+	cmd := &resourceCommand{homeDir: func() (string, error) { return "", errors.New("no config") }, lookupEnv: func(string) string { return "" }}
+	lifecycle := newResourceLifecycle(&sequenceResourceCollector{snapshots: []coreresources.Snapshot{resourceReadySnapshot(now)}}, func() time.Time { return now }, time.Hour)
+	lifecycle.start()
+	defer lifecycle.close()
+
+	warming := cmd.pickerOptions(view, lifecycle)
+	if !warming.ReadOnly || !warming.DisableSearch || pickerActionsContain(warming.Actions, "tab") || pickerActionsContain(warming.Actions, "alt-left") || !strings.Contains(warming.Footer, "collecting first sample") || strings.Contains(warming.Footer, "Enter") {
+		t.Fatalf("warming options=%#v, want non-actionable skeleton and collection feedback", warming)
+	}
+	readyUpdate, err := warming.DeferredUpdate()
+	if err != nil || readyUpdate.ReadOnly || !strings.Contains(readyUpdate.Footer, "automatic every 2s") || !chromeBandsContain(readyUpdate.ResourceSummaryDock, "ready · fresh") || len(readyUpdate.ResourceSummaryDock) != 4 {
+		t.Fatalf("warming→ready update=%#v err=%v", readyUpdate, err)
+	}
+
+	ready := cmd.pickerOptions(view, lifecycle)
+	refresh, ok := pickerAction(ready.Actions, "ctrl-r")
+	if !ok || refresh.Mutate == nil {
+		t.Fatalf("ready actions=%#v, want manual refresh", ready.Actions)
+	}
+	progress, err := refresh.Mutate(intpicker.ActionContext{Query: "api", Value: "project:/repo/api", SelectedIndex: 0})
+	if err != nil || !progress.SetFooter || !progress.SetActions || !strings.Contains(progress.Footer, "in progress; last complete sample retained") || progress.Title != ready.Title || !slices.Equal(resourceItemValues(progress.Items), resourceItemValues(ready.Items)) {
+		t.Fatalf("manual refresh update=%#v err=%v, want atomic same-screen progress state", progress, err)
+	}
+
+	partial := resourceReadySnapshot(now)
+	partial.Status = coreresources.StatusPartial
+	partial.Diagnostics.Scan = coreresources.ScanDiagnostics{SampledProcesses: 5, RaceCount: 1}
+	view.setSnapshot(partial, false)
+	if screen := view.screen(); !chromeBandsContain(screen.bands, "partial sampled=5") || strings.Contains(screen.footer, "in progress") {
+		t.Fatalf("ready→partial screen=%#v", screen)
+	}
+
+	view.enter("project:/repo/api")
+	view.enter("window:sock\x1f@7")
+	view.enter("pane:sock\x1f%10")
+	view.setSnapshot(coreresources.Snapshot{At: now, Status: coreresources.StatusReady}, false)
+	gone := view.screen()
+	if gone.actionable || !chromeBandsContain(gone.bands, "Pane no longer exists") || !strings.Contains(gone.items[0].Label, "no longer exists") || strings.Contains(gone.footer, "Enter") {
+		t.Fatalf("gone screen=%#v, want bounded read-only gone hierarchy", gone)
+	}
+}
+
+func resourceItemValues(items []intpicker.Item) []string {
+	values := make([]string, len(items))
+	for index := range items {
+		values[index] = items[index].Value
+	}
+	return values
 }
 
 func TestResourceLifecycleNeverOverlapsAndCloseCancelsWithoutPersistence(t *testing.T) {
 	collector := &blockingResourceCollector{started: make(chan struct{}), release: make(chan struct{}), canceled: make(chan struct{})}
 	view := newResourceViewState(time.Now, i18n.FallbackLocale)
+	view.setSnapshot(resourceReadySnapshot(time.Now()), false)
 	lifecycle := newResourceLifecycle(collector, time.Now, resourceRefreshInterval)
+	lifecycle.initialized = true
 	lifecycle.start()
-	done := make(chan struct{})
-	go func() {
-		_ = lifecycle.collect(view)
-		close(done)
-	}()
+	<-lifecycle.trigger
+	lifecycle.requestAutomatic()
+	<-lifecycle.trigger
+	if progress := lifecycle.collect(view); !strings.Contains(progress.Footer, "in progress") {
+		t.Fatalf("automatic progress=%#v, want non-blocking progress before collection", progress)
+	}
 	<-collector.started
 
-	secondDone := make(chan struct{})
-	go func() {
-		_ = lifecycle.collect(view)
-		close(secondDone)
-	}()
-	select {
-	case <-secondDone:
-	case <-time.After(time.Second):
-		t.Fatal("overlapping refresh did not return immediately")
+	if overlap := lifecycle.collect(view); !strings.Contains(overlap.Footer, "in progress") {
+		t.Fatalf("overlap update=%#v, want immediate retained-sample progress", overlap)
 	}
 	if got := collector.maxActive.Load(); got != 1 {
 		t.Fatalf("max active scans = %d, want 1", got)
@@ -451,10 +730,9 @@ func TestResourceLifecycleNeverOverlapsAndCloseCancelsWithoutPersistence(t *test
 		t.Fatal("close did not cancel in-flight scan")
 	}
 	close(collector.release)
-	<-done
 	<-closed
-	if lifecycle.previous != nil {
-		t.Fatal("close retained prior sample; inspector lifecycle must be ephemeral")
+	if lifecycle.previous != nil || lifecycle.completion != nil || lifecycle.automaticPending || lifecycle.manualPending {
+		t.Fatalf("close retained ephemeral lifecycle state: previous=%#v completion=%#v automatic=%v manual=%v", lifecycle.previous, lifecycle.completion, lifecycle.automaticPending, lifecycle.manualPending)
 	}
 }
 
@@ -476,14 +754,14 @@ func TestResourceCommandFirstPaintAndCustomAliasClose(t *testing.T) {
 		collector: collector,
 		picker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			calls++
-			if !chromeBandsContain(options.ChromeBands, "warming") {
-				t.Fatalf("first paint bands = %#v, want warming before collection", options.ChromeBands)
+			if !chromeBandsContain(options.ResourceSummaryDock, "warming") || len(options.ResourceSummaryDock) != 4 || len(options.ChromeBands) != 0 {
+				t.Fatalf("first paint dock = %#v, want fixed four bands before collection", options.ResourceSummaryDock)
 			}
-			if !pickerActionsContain(options.Actions, "ctrl-r") || !pickerActionsContain(options.Actions, "tab") || !pickerActionsContain(options.Actions, "alt-x") {
-				t.Fatalf("actions = %#v, want Ctrl-R/Tab/custom Resources alias close", options.Actions)
+			if !pickerActionsContain(options.Actions, "ctrl-r") || pickerActionsContain(options.Actions, "tab") || pickerActionsContain(options.Actions, "alt-left") || !pickerActionsContain(options.Actions, "alt-x") {
+				t.Fatalf("actions = %#v, want warming Ctrl-R/custom close without list/back actions", options.Actions)
 			}
 			update, err := options.DeferredUpdate()
-			if err != nil || !chromeBandsContain(update.ChromeBands, "ready") {
+			if err != nil || !chromeBandsContain(update.ResourceSummaryDock, "ready") || !update.SetResourceSummaryDock {
 				t.Fatalf("deferred update = %#v err=%v, want ready", update, err)
 			}
 			return intpicker.Result{Key: "alt-x", Closed: true}, nil
@@ -574,6 +852,33 @@ type blockingResourceCollector struct {
 	once      sync.Once
 	active    atomic.Int32
 	maxActive atomic.Int32
+}
+
+type controlledResourceCollector struct {
+	started   chan struct{}
+	release   chan struct{}
+	snapshot  coreresources.Snapshot
+	err       error
+	active    atomic.Int32
+	maxActive atomic.Int32
+}
+
+func (c *controlledResourceCollector) CollectResourceSnapshot(ctx context.Context, _ *coreresources.Sample) (coreresources.Snapshot, coreresources.Sample, error) {
+	active := c.active.Add(1)
+	defer c.active.Add(-1)
+	for {
+		old := c.maxActive.Load()
+		if active <= old || c.maxActive.CompareAndSwap(old, active) {
+			break
+		}
+	}
+	close(c.started)
+	select {
+	case <-ctx.Done():
+		return coreresources.Snapshot{}, coreresources.Sample{}, ctx.Err()
+	case <-c.release:
+		return c.snapshot, coreresources.Sample{At: c.snapshot.At, Available: c.err == nil}, c.err
+	}
 }
 
 func (c *blockingResourceCollector) CollectResourceSnapshot(ctx context.Context, _ *coreresources.Sample) (coreresources.Snapshot, coreresources.Sample, error) {
