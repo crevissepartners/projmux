@@ -4,6 +4,24 @@ Most users can configure projmux from `projmux settings`. Environment variables
 are available for repeatable shell setup, managed machines, or advanced
 overrides.
 
+## Operational diagnostics state
+
+Projmux keeps a private bounded operational journal at:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/projmux/logs/operations.jsonl
+```
+
+There is no configuration switch for arbitrary fields or remote delivery. The
+`projmux` state and `logs` directories are created/repaired to mode `0700`, and
+the JSONL file is created/repaired to `0600` on POSIX systems. At more than
+5 MiB, the writer atomically retains about the newest 2 MiB of complete valid
+records. Lock ownership is maintained by the OS and acquisition waits no more
+than 200 ms before the best-effort write is abandoned. See
+[operational-diagnostics.md](operational-diagnostics.md) for safe field and
+best-effort behavior. Existing `ai-ingest.log` and
+`PROJMUX_*_DEBUG` settings remain separate and unchanged.
+
 ## Project Discovery
 
 `projmux switch` combines pinned directories, live tmux sessions, and

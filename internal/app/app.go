@@ -67,6 +67,7 @@ type App struct {
 	attach       *attachCommand
 	current      *currentCommand
 	doctor       *doctorCommand
+	diagnostics  *diagnosticsCommand
 	focus        *focusCommand
 	hook         *hookCommand
 	initCmd      *initcmd.Command
@@ -125,6 +126,7 @@ func New() *App {
 		attach:       attach,
 		current:      newCurrentCommand(),
 		doctor:       newDoctorCommand(),
+		diagnostics:  newDiagnosticsCommand(),
 		focus:        newFocusCommand(),
 		hook:         newHookCommand(),
 		initCmd:      initCmd,
@@ -175,6 +177,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.current.Run(args[1:], stdout, stderr)
 	case "doctor":
 		return a.doctor.Run(args[1:], stdout, stderr)
+	case "diagnostics":
+		return a.diagnostics.Run(args[1:], stdout, stderr)
 	case "focus":
 		return a.focus.Run(args[1:], stdout, stderr)
 	case "hook":
@@ -260,6 +264,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  attach    Open tmux lifecycle entry helpers")
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
 	fmt.Fprintln(w, "  doctor    Run read-only runtime and integration diagnostics")
+	fmt.Fprintln(w, "  diagnostics  Read the private bounded operational event log")
 	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
 	fmt.Fprintln(w, "  init      Deprecated alias for setup terminal (compatibility period)")
