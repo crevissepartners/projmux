@@ -1351,6 +1351,96 @@ func TestNativeInteractiveKoreanSearchEmptyAndFooterFitWidth(t *testing.T) {
 	}
 }
 
+func TestNativeResourceStructuredChromeWideAndNarrowFrames(t *testing.T) {
+	t.Parallel()
+	effective := theme.ResolveTheme(theme.ThemeConfig{Accent: "#12abef", Muted: "#778899", Surface: "#101820", ChromeForeground: "#f0f4f8"})
+	options := Options{
+		UI:     "resources",
+		Title:  "Resources / Projects / 매우-긴-프로젝트-이름",
+		Prompt: "search › ",
+		ChromeBands: []ChromeBand{
+			{Label: "Host", Value: "CPU 34.0%    Memory 61.0%", Secondary: "sample 400ms · ready"},
+			{Label: "Attributed", Value: "CPU 18.0%    RSS 3.2 GiB (20.0%)"},
+		},
+		Items: []Item{{Label: "매우 긴 프로젝트 identity", Value: "project:/repo/long", MetaLines: []string{
+			"Context  /repo/한글/very/long/project/path",
+			"CPU      12.4%    MEMORY  1.8 GiB (11.0%)    PANES  4 panes",
+		}}},
+		Footer:    "Enter: drill down | Esc/Alt-Left: back/close | Tab: sort CPU | Ctrl-R: refresh",
+		MultiLine: true,
+		Theme:     &effective,
+	}
+	for _, layout := range []nativeLayout{{Rows: 24, Cols: 80}, {Rows: 30, Cols: 112}} {
+		frame := nativeInteractiveFrame(options, options.Items, "", 0, 0, 0, layout)
+		lines := strings.Split(frame, "\r\n")
+		if len(lines) != layout.Rows {
+			t.Fatalf("layout %dx%d rows = %d", layout.Cols, layout.Rows, len(lines))
+		}
+		for index, line := range lines {
+			if got := projmuxpicker.VisibleLen(line); got != layout.Cols {
+				t.Fatalf("layout %dx%d line %d width=%d: %q", layout.Cols, layout.Rows, index, got, line)
+			}
+			plain := stripANSISequences(line)
+			if index > 0 && index < len(lines)-1 && strings.HasPrefix(plain, "│") && !strings.HasSuffix(plain, "│") {
+				t.Fatalf("layout %dx%d line %d border bleed: %q", layout.Cols, layout.Rows, index, line)
+			}
+		}
+		for _, want := range []string{"Host", "Attributed", "CPU", "MEMORY", "PANES", "ready", "매우 긴 프로젝트 identity"} {
+			if !strings.Contains(frame, want) {
+				t.Fatalf("layout %dx%d frame missing %q: %q", layout.Cols, layout.Rows, want, frame)
+			}
+		}
+		pickerTheme := projmuxpicker.ThemeFromEffective(effective)
+		if !strings.Contains(frame, pickerTheme.Accent+"Host") || !strings.Contains(frame, pickerTheme.Muted+"sample") {
+			t.Fatalf("layout %dx%d bands do not use accent/muted semantic tokens", layout.Cols, layout.Rows)
+		}
+	}
+	ko := options
+	ko.Title = "리소스 · 프로젝트 / 매우-긴-프로젝트-이름"
+	ko.Locale = i18n.Locale("ko-KR")
+	ko.ChromeBands = []ChromeBand{
+		{Label: "호스트", Value: "CPU 34.0%    메모리 61.0%", Secondary: "샘플 400ms · 준비됨"},
+		{Label: "귀속", Value: "CPU 18.0%    RSS 3.2 GiB (20.0%)"},
+	}
+	ko.Items = []Item{{Label: "매우 긴 프로젝트 identity", Value: "project:/repo/long", MetaLines: []string{
+		"맥락  /repo/한글/very/long/project/path",
+		"CPU 12.4%    메모리 1.8 GiB (11.0%)    PANE pane 4개",
+	}}}
+	frame := nativeInteractiveFrame(ko, ko.Items, "", 0, 0, 0, nativeLayout{Rows: 24, Cols: 80})
+	for _, want := range []string{"호스트", "귀속", "준비됨", "매우 긴 프로젝트 identity"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("localized narrow frame missing %q: %q", want, frame)
+		}
+	}
+	for index, line := range strings.Split(frame, "\r\n") {
+		if got := projmuxpicker.VisibleLen(line); got != 80 {
+			t.Fatalf("localized narrow line %d width=%d: %q", index, got, line)
+		}
+	}
+}
+
+func TestNativeResourceReadOnlyPanelHasNoSearchPointerOrEnterAcceptance(t *testing.T) {
+	options := Options{
+		UI:            "resources",
+		Title:         "Resources / Projects / api / editor @7 / agent %11",
+		ChromeBands:   []ChromeBand{{Label: "Host", Value: "CPU 34.0%    Memory 61.0%"}},
+		Items:         []Item{{Label: "Pane details", MetaLines: []string{"Project: /repo/api", "Pane: %11  PID/SID: 101"}}},
+		Footer:        "Read-only pane detail | Esc/Alt-Left: back | Ctrl-R: refresh",
+		MultiLine:     true,
+		DisableSearch: true,
+		ReadOnly:      true,
+		Locale:        i18n.FallbackLocale,
+	}
+	frame := nativeInteractiveFrame(options, options.Items, "", 0, 0, 0, nativeLayout{Rows: 24, Cols: 80})
+	if strings.Contains(frame, "Search") || strings.Contains(frame, projmuxpicker.Pointer) || strings.Contains(frame, "Enter") || strings.Contains(frame, "sort") {
+		t.Fatalf("read-only detail leaked list affordance: %q", frame)
+	}
+	result, err := runNativeInteractive(bytes.NewBufferString("\r\x1b"), io.Discard, options)
+	if err != nil || !result.Closed || result.Key != "esc" {
+		t.Fatalf("read-only Enter then Esc result=%#v err=%v, want Enter ignored and Esc close", result, err)
+	}
+}
+
 func TestNativeInteractiveExplicitLocaleOverridesEnvironmentChrome(t *testing.T) {
 	t.Setenv("LANG", "ko_KR.UTF-8")
 
@@ -3053,15 +3143,22 @@ func TestNativeDeferredFocusValue(t *testing.T) {
 
 func TestApplyNativeDeferredUpdateRefreshesResourceChrome(t *testing.T) {
 	t.Parallel()
-	got := applyNativeDeferredUpdate(Options{Header: "warming", Footer: "old"}, DeferredUpdate{
+	baseActions := []Action{{Key: "tab"}, {Key: "ctrl-r"}}
+	got := applyNativeDeferredUpdate(Options{Header: "warming", Footer: "old", Actions: baseActions}, DeferredUpdate{
 		Header: "ready age 0s", Footer: "Ctrl-R: refresh", SetHeader: true, SetFooter: true,
+		DisableSearch: true, ReadOnly: true, SetInteraction: true,
+		Actions: []Action{{Key: "ctrl-r"}, {Key: "alt-left"}}, SetActions: true,
 	})
-	if got.Header != "ready age 0s" || got.Footer != "Ctrl-R: refresh" {
+	if got.Header != "ready age 0s" || got.Footer != "Ctrl-R: refresh" || !got.DisableSearch || !got.ReadOnly || len(got.Actions) != 2 || got.Actions[0].Key != "ctrl-r" || got.Actions[1].Key != "alt-left" {
 		t.Fatalf("deferred chrome = header %q footer %q", got.Header, got.Footer)
 	}
-	got = applyNativeDeferredUpdate(got, DeferredUpdate{Header: "ignored", Footer: "ignored"})
-	if got.Header != "ready age 0s" || got.Footer != "Ctrl-R: refresh" {
+	got = applyNativeDeferredUpdate(got, DeferredUpdate{Header: "ignored", Footer: "ignored", Actions: []Action{{Key: "hidden"}}})
+	if got.Header != "ready age 0s" || got.Footer != "Ctrl-R: refresh" || len(got.Actions) != 2 || got.Actions[0].Key != "ctrl-r" {
 		t.Fatalf("unset deferred chrome flags changed options: %#v", got)
+	}
+	got = applyNativeDeferredUpdate(got, DeferredUpdate{DisableSearch: false, ReadOnly: false, SetInteraction: true, Actions: baseActions, SetActions: true})
+	if got.DisableSearch || got.ReadOnly || len(got.Actions) != 2 || got.Actions[0].Key != "tab" {
+		t.Fatalf("read-only→actionable options = %#v", got)
 	}
 }
 
