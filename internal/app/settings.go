@@ -37,6 +37,12 @@ type settingsCommand struct {
 	nativeKeyCaptureGrace    time.Duration
 	physicalCaptureAvailable func() bool
 	aiNotifyDiagnostics      func() []doctorAINotifyIntegration
+	feedback                 *settingsFeedback
+}
+
+type settingsFeedback struct {
+	Summary string
+	Detail  string
 }
 
 var errSettingsClosed = errors.New("settings closed")
@@ -201,13 +207,14 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 		if action == settingsNoopValue {
 			continue
 		}
-		if err := c.execute(action, stdout, stderr); err != nil {
+		if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 			return err
 		}
 	}
 }
 
 func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
+	options = c.withSettingsFeedback(options)
 	options = c.withSettingsScopeTabs(options)
 	options = c.localizeSettingsOptions(options)
 	if err := validateSettingsEntryContracts(options); err != nil {
@@ -225,7 +232,108 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 		}
 		return intpickercompat.Result{}, fmt.Errorf("run settings picker: %w", err)
 	}
+	c.clearSettingsFeedbackFor(strings.TrimSpace(result.Value))
 	return result, nil
+}
+
+// withSettingsFeedback projects the most recent handled mutation result into
+// the next Settings frame. The row deliberately reuses the Phase 0 passive
+// entry contract: it cannot be selected as an action and cannot fall through
+// to an unknown-action branch.
+func (c *settingsCommand) withSettingsFeedback(options intpickercompat.Options) intpickercompat.Options {
+	if c == nil || c.feedback == nil || !strings.HasPrefix(strings.TrimSpace(options.UI), "settings") {
+		return options
+	}
+	entry := intpickercompat.Entry{
+		Label:     settingsLabelInfoLocale(c.locale(), "Feedback", settingsFeedbackSummaryLocale(c.locale(), c.feedback.Summary), c.feedback.Detail),
+		Value:     settingsNoopValue,
+		SearchKey: "feedback mutation result success failure",
+	}
+	insertAt := 0
+	if len(options.Entries) > 0 && options.Entries[0].Value == settingsBackValue {
+		insertAt = 1
+	}
+	options.Entries = append(options.Entries, intpickercompat.Entry{})
+	copy(options.Entries[insertAt+1:], options.Entries[insertAt:])
+	options.Entries[insertAt] = entry
+	return options
+}
+
+func settingsFeedbackSummaryLocale(locale i18n.Locale, summary string) string {
+	for _, status := range []string{"complete", "failed"} {
+		suffix := " " + status
+		if label, ok := strings.CutSuffix(strings.TrimSpace(summary), suffix); ok {
+			return settingsCatalogTextLocale(locale, label) + " " + settingsCatalogTextLocale(locale, status)
+		}
+	}
+	return summary
+}
+
+func (c *settingsCommand) clearSettingsFeedbackFor(value string) {
+	if c == nil || c.feedback == nil || value == "" || value == settingsNoopValue {
+		return
+	}
+	c.feedback = nil
+}
+
+func (c *settingsCommand) setSettingsFeedback(summary, detail string) {
+	if c == nil {
+		return
+	}
+	c.feedback = &settingsFeedback{Summary: strings.TrimSpace(summary), Detail: strings.TrimSpace(detail)}
+}
+
+// runSettingsMutation is the common popup feedback boundary for Settings
+// writes. Output remains mirrored to the command writers for CLI/test
+// compatibility, while the last meaningful line is also made visible inside
+// the alternate-screen picker. Mutation errors are handled here so the user
+// can see and recover from them without losing the Settings popup.
+func (c *settingsCommand) runSettingsMutation(label string, stdout, stderr io.Writer, mutate func(io.Writer, io.Writer) error) error {
+	return c.runSettingsMutationResult(label, stdout, stderr, true, mutate)
+}
+
+func (c *settingsCommand) runObservedSettingsMutation(label string, stdout, stderr io.Writer, mutate func(io.Writer, io.Writer) error) error {
+	return c.runSettingsMutationResult(label, stdout, stderr, false, mutate)
+}
+
+func (c *settingsCommand) runSettingsMutationResult(label string, stdout, stderr io.Writer, successIfSilent bool, mutate func(io.Writer, io.Writer) error) error {
+	var out, errOut strings.Builder
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	outWriter := io.MultiWriter(stdout, &out)
+	errWriter := io.MultiWriter(stderr, &errOut)
+	if err := mutate(outWriter, errWriter); err != nil {
+		c.setSettingsFeedback(label+" failed", err.Error())
+		return nil
+	}
+	detail := lastSettingsFeedbackLine(errOut.String())
+	if detail != "" {
+		c.setSettingsFeedback(label+" failed", detail)
+		return nil
+	}
+	detail = lastSettingsFeedbackLine(out.String())
+	if detail == "" {
+		if !successIfSilent {
+			return nil
+		}
+		detail = "saved"
+	}
+	c.setSettingsFeedback(label+" complete", detail)
+	return nil
+}
+
+func lastSettingsFeedbackLine(output string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 // localizeSettingsOptions resolves the Settings-scoped locale (which honors the
@@ -315,14 +423,14 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			// row already carries the manual guidance.
 			if err := c.update.Run([]string{"apply"}, stdout, stderr); err != nil {
 				_, _ = fmt.Fprintf(stdout, "Update failed: %v\n", err)
-				return nil
+				return err
 			}
 			_, _ = fmt.Fprintln(stdout, "Update complete. Restart projmux to run the new version.")
 			return nil
 		case "check":
 			if err := c.update.Run([]string{"check"}, stdout, stderr); err != nil {
 				_, _ = fmt.Fprintf(stdout, "Update check failed: %v\n", err)
-				return nil
+				return err
 			}
 			return nil
 		default:
@@ -355,6 +463,45 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		printSettingsUsage(stderr)
 		return fmt.Errorf("unknown settings action: %s", value)
 	}
+}
+
+func (c *settingsCommand) executeWithFeedback(value string, stdout, stderr io.Writer) error {
+	label, mutation := settingsMutationLabel(value)
+	if !mutation {
+		return c.execute(value, stdout, stderr)
+	}
+	return c.runSettingsMutation(label, stdout, stderr, func(out, errOut io.Writer) error {
+		return c.execute(value, out, errOut)
+	})
+}
+
+// settingsMutationLabel is the executable Settings mutation inventory. Keep
+// this list closed: navigation/viewer values (Welcome, Quit, diagnostics and
+// key capture/probe flows) must not be projected as generic mutation feedback.
+func settingsMutationLabel(value string) (string, bool) {
+	if value == settingsActionPrefixSessionState+"project-preview" {
+		return "", false
+	}
+	for _, candidate := range []struct {
+		prefix string
+		label  string
+	}{
+		{settingsActionPrefixAI, "AI default mode"},
+		{settingsActionPrefixDesktopNotifyMode, "Desktop notifications"},
+		{settingsActionPrefixHooks, "Project Hooks"},
+		{settingsActionPrefixLiveResources, "Live system resources"},
+		{settingsActionPrefixProjdir, "Project Root"},
+		{settingsActionPrefixSessionState, "Session State"},
+		{settingsActionPrefixStatusbar, "Appearance"},
+		{settingsActionPrefixSwitch, "Pinned project"},
+		{settingsActionPrefixUpdate, "Update"},
+		{settingsActionPrefixWorkdir, "Workdir"},
+	} {
+		if strings.HasPrefix(value, candidate.prefix) {
+			return candidate.label, true
+		}
+	}
+	return "", false
 }
 
 func (c *settingsCommand) runWelcomeSettingsViewer() error {

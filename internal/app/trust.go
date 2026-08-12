@@ -117,14 +117,18 @@ func (c *settingsCommand) runProjectTrustSection(stdout, stderr io.Writer) error
 		case settingsNoopValue:
 			continue
 		case settingsTrustApply:
-			if err := c.runProjectTrustApply(ctx, stdout, stderr); err != nil {
+			if err := c.runSettingsMutation("Project trust", stdout, stderr, func(out, errOut io.Writer) error {
+				return c.runProjectTrustApply(ctx, out, errOut)
+			}); err != nil {
 				return err
 			}
 		case settingsTrustRefresh:
 			// Refresh is the same call as apply — TrustProjectConfig is
 			// idempotent and just rewrites the stored hash so the runner
 			// accepts the updated file on its next invocation.
-			if err := c.runProjectTrustApply(ctx, stdout, stderr); err != nil {
+			if err := c.runSettingsMutation("Project trust", stdout, stderr, func(out, errOut io.Writer) error {
+				return c.runProjectTrustApply(ctx, out, errOut)
+			}); err != nil {
 				return err
 			}
 		case settingsTrustUntrust:
@@ -135,7 +139,9 @@ func (c *settingsCommand) runProjectTrustSection(stdout, stderr io.Writer) error
 			if !confirmed {
 				continue
 			}
-			if err := c.runProjectTrustUntrust(ctx, stdout, stderr); err != nil {
+			if err := c.runSettingsMutation("Project trust", stdout, stderr, func(out, errOut io.Writer) error {
+				return c.runProjectTrustUntrust(ctx, out, errOut)
+			}); err != nil {
 				return err
 			}
 		default:

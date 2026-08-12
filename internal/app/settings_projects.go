@@ -27,27 +27,15 @@ func (ctx settingsProjectContext) hasProject() bool {
 func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 	ctx := c.resolveSettingsProjectContext()
 	if !ctx.hasProject() {
-		// The titlebar chip strip already advertises the active Project
-		// scope (and the popup header carries the "no project" hint), so
-		// the picker entry list skips the redundant "Project context"
-		// placeholder row that lived above the search bar in Phase 1/2.
+		// Keep one textual explanation instead of repeating it on Trust,
+		// Hooks, Project recipe, and Effective merge view. The disabled
+		// Project chip remains the scope signal; this passive row explains
+		// how to make that scope actionable.
 		return []intpickercompat.Entry{
 			{
-				Label: settingsRootLabelDim("Trust", "disabled - no project context"),
-				Value: settingsNoopValue,
-			},
-			{
-				Label: settingsRootLabelDim("Hooks (project)", "disabled - no project context"),
-				Value: settingsNoopValue,
-			},
-			{
-				Label:     settingsRootLabelDim("Project recipe", "disabled - no project context"),
+				Label:     settingsRootLabelDim("Project context", "open Settings from a managed project to enable project actions"),
 				Value:     settingsNoopValue,
-				SearchKey: "Project recipe config.toml",
-			},
-			{
-				Label: settingsRootLabelDim("Effective merge view", "disabled - no project context"),
-				Value: settingsNoopValue,
+				SearchKey: "project context managed project trust hooks recipe effective merge",
 			},
 		}
 	}
@@ -214,15 +202,15 @@ func (c *settingsCommand) runProjectPickerSection(stdout, stderr io.Writer) erro
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixSwitch):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixProjdir):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixWorkdir):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -263,7 +251,7 @@ func (c *settingsCommand) runAddProject(stdout, stderr io.Writer) error {
 	if action == settingsBackValue {
 		return nil
 	}
-	return c.execute(action, stdout, stderr)
+	return c.executeWithFeedback(action, stdout, stderr)
 }
 
 func (c *settingsCommand) runProjectRootSettings(stdout, stderr io.Writer) error {
@@ -301,7 +289,7 @@ func (c *settingsCommand) runProjectRootSettings(stdout, stderr io.Writer) error
 			}
 			continue
 		}
-		if err := c.execute(action, stdout, stderr); err != nil {
+		if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 			return err
 		}
 	}
@@ -336,13 +324,18 @@ func (c *settingsCommand) runSetProjectRootTyped(stdout, stderr io.Writer) error
 	expanded, err := c.expandTypedPath(typed, "project root")
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
+		c.setSettingsFeedback("Project Root failed", err.Error())
 		return nil
 	}
 	if !filepath.IsAbs(expanded) {
-		fmt.Fprintf(stderr, "project root must be an absolute path: %s\n", typed)
+		message := fmt.Sprintf("project root must be an absolute path: %s", typed)
+		fmt.Fprintln(stderr, message)
+		c.setSettingsFeedback("Project Root failed", message)
 		return nil
 	}
-	return c.switcher.saveSavedProjdir(expanded, stdout)
+	return c.runSettingsMutation("Project Root", stdout, stderr, func(out, _ io.Writer) error {
+		return c.switcher.saveSavedProjdir(expanded, out)
+	})
 }
 
 func (c *settingsCommand) projectRootTypedInitialQuery() string {
@@ -397,7 +390,7 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 	if action == settingsWorkdirTyped {
 		return c.runAddWorkdirTyped(stdout, stderr)
 	}
-	return c.execute(action, stdout, stderr)
+	return c.executeWithFeedback(action, stdout, stderr)
 }
 
 func settingsWorkdirTypedEntryLocale(locale i18n.Locale) intpickercompat.Entry {
@@ -440,21 +433,35 @@ func (c *settingsCommand) runAddWorkdirTyped(stdout, stderr io.Writer) error {
 	expanded, err := c.expandTypedWorkdir(typed)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
+		c.setSettingsFeedback("Workdir failed", err.Error())
 		return nil
 	}
 
 	if !filepath.IsAbs(expanded) {
-		fmt.Fprintf(stderr, "workdir must be an absolute path: %s\n", typed)
+		message := fmt.Sprintf("workdir must be an absolute path: %s", typed)
+		fmt.Fprintln(stderr, message)
+		c.setSettingsFeedback("Workdir failed", message)
 		return nil
 	}
 
+	warning := ""
 	if info, statErr := c.statFile(expanded); statErr != nil {
-		fmt.Fprintf(stderr, "warning: cannot stat workdir (continuing): %s: %v\n", expanded, statErr)
+		warning = fmt.Sprintf("warning: cannot stat workdir (continuing): %s: %v", expanded, statErr)
+		fmt.Fprintln(stderr, warning)
 	} else if !info.IsDir() {
-		fmt.Fprintf(stderr, "warning: workdir is not a directory (continuing): %s\n", expanded)
+		warning = fmt.Sprintf("warning: workdir is not a directory (continuing): %s", expanded)
+		fmt.Fprintln(stderr, warning)
 	}
 
-	return c.switcher.addWorkdir(expanded, stdout)
+	if err := c.runSettingsMutation("Workdir", stdout, stderr, func(out, _ io.Writer) error {
+		return c.switcher.addWorkdir(expanded, out)
+	}); err != nil {
+		return err
+	}
+	if warning != "" && c.feedback != nil && strings.HasSuffix(c.feedback.Summary, " complete") {
+		c.feedback.Detail = warning
+	}
+	return nil
 }
 
 // expandTypedWorkdir trims and home-expands a typed workdir path. The home
@@ -516,7 +523,7 @@ func (c *settingsCommand) runWorkdirsList(stdout, stderr io.Writer) error {
 			}
 			continue
 		}
-		if err := c.execute(action, stdout, stderr); err != nil {
+		if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 			return err
 		}
 	}
@@ -606,7 +613,7 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 			}
 			continue
 		}
-		if err := c.execute(action, stdout, stderr); err != nil {
+		if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 			return err
 		}
 	}

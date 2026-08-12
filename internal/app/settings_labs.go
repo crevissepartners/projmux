@@ -32,11 +32,11 @@ func (c *settingsCommand) runLabsSection(stdout, stderr io.Writer) error {
 		case action == settingsLabsProjectHooks:
 			return c.runLabsProjectHooksSection(stdout, stderr)
 		case strings.HasPrefix(action, settingsActionPrefixLiveResources):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixHooks):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -69,7 +69,7 @@ func (c *settingsCommand) runLabsProjectHooksSection(stdout, stderr io.Writer) e
 		case action == settingsNoopValue:
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixHooks):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:

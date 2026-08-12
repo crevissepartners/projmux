@@ -115,6 +115,37 @@ view-first layout:
   `ko-KR`. When `auto` is active it must show the detected source (`LC_ALL`,
   `LC_MESSAGES`, `LANG`, or fallback). Unsupported locale tags must remain
   visible as warnings and fall back to `en-US`.
+- Global root descriptions keep ownership explicit: Appearance owns language,
+  AI badge style, and status/notification icon decoration; Theme owns presets,
+  color tokens, and font hints. About describes only the surface it retains.
+- `Settings > About` is intentionally compact: Version, Source, update
+  status/actions (including Latest, Update state, Installer, and Release notes
+  when available), Welcome, and Quit. It does not reproduce static key,
+  terminal, dependency, terminal-emulator, or documentation guides. Key
+  delivery discovery lives in `projmux setup`, supported terminal remediation
+  in `projmux setup terminal`, read-only dependency/runtime diagnostics in
+  `projmux doctor`, and broader orientation in Welcome and maintained docs.
+- Without an actionable project context, the Project surface renders one
+  passive context-guidance row instead of repeating the same disabled reason
+  for Trust, Hooks, Project recipe, and Effective merge view. With project
+  context, those four rows and Session State retain their existing actions.
+
+Settings mutation feedback follows one transient contract. The next picker
+frame inserts one passive `Feedback` row after Back; the row uses the catalogued
+`settingsNoopValue`, so Enter cannot create an unknown action. Selecting another
+navigation/action clears the old row before that operation runs, and a handled
+result replaces it. The inventory includes AI defaults/enabled agents/resume
+limits, notification modes/dedupe/hook policy, Appearance and locale choices,
+Labs toggles, project roots/workdirs/pins, project hooks/recipe/trust, Theme,
+Session State, direct keybinding reset/remove/toggle operations, and About
+update apply/check. Typed validation and staged apply failures stay in the
+popup instead of being visible only on stdout/stderr.
+
+The generic feedback inventory deliberately excludes Welcome, Quit,
+read-only hook/effective/notification diagnostics, Session State preview, and
+key capture/probe/diagnostic bodies. Those flows own a viewer, confirmation, or
+multi-step output surface; only an actual Settings write at their boundary is
+eligible for transient mutation feedback.
 
 Hooks remain the reference pattern for this IA:
 

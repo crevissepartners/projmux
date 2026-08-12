@@ -157,7 +157,7 @@ func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error
 			strings.HasPrefix(action, settingsActionPrefixHookEdit),
 			strings.HasPrefix(action, settingsActionPrefixHookRemove),
 			strings.HasPrefix(action, settingsActionPrefixHookView):
-			if err := c.runHookMakerAction(ctx, action, stdout, stderr); err != nil {
+			if err := c.runHookMakerActionWithFeedback(ctx, action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -191,7 +191,7 @@ func (c *settingsCommand) runGlobalHooksSection(stdout, stderr io.Writer) error 
 			strings.HasPrefix(action, settingsActionPrefixHookEdit),
 			strings.HasPrefix(action, settingsActionPrefixHookRemove),
 			strings.HasPrefix(action, settingsActionPrefixHookView):
-			if err := c.runHookMakerAction(settingsProjectContext{}, action, stdout, stderr); err != nil {
+			if err := c.runHookMakerActionWithFeedback(settingsProjectContext{}, action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -462,6 +462,15 @@ func (c *settingsCommand) runHookMakerAction(ctx settingsProjectContext, action 
 	}
 }
 
+func (c *settingsCommand) runHookMakerActionWithFeedback(ctx settingsProjectContext, action string, stdout, stderr io.Writer) error {
+	if strings.HasPrefix(action, settingsActionPrefixHookView) {
+		return c.runHookMakerAction(ctx, action, stdout, stderr)
+	}
+	return c.runObservedSettingsMutation("Hook", stdout, stderr, func(out, errOut io.Writer) error {
+		return c.runHookMakerAction(ctx, action, out, errOut)
+	})
+}
+
 // parseHookActionBody parses "<scope>:<event>" payloads. Phase 2.6 collapsed
 // the scope/event/source triple to scope/event since there is only one source
 // (declarative).
@@ -675,7 +684,7 @@ func (c *settingsCommand) runProjectConfigSection(stdout, stderr io.Writer) erro
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixProjectConfig):
-			if err := c.executeProjectConfigAction(ctx, action, stdout, stderr); err != nil {
+			if err := c.executeProjectConfigActionWithFeedback(ctx, action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -708,7 +717,7 @@ func (c *settingsCommand) runProjectConfigStartupSection(ctx settingsProjectCont
 		case action == settingsNoopValue:
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixProjectConfig+"startup:"):
-			if err := c.executeProjectConfigAction(ctx, action, stdout, stderr); err != nil {
+			if err := c.executeProjectConfigActionWithFeedback(ctx, action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -741,7 +750,7 @@ func (c *settingsCommand) runProjectConfigKubeSection(ctx settingsProjectContext
 		case action == settingsNoopValue:
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixProjectConfig+"kube:"):
-			if err := c.executeProjectConfigAction(ctx, action, stdout, stderr); err != nil {
+			if err := c.executeProjectConfigActionWithFeedback(ctx, action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -775,7 +784,7 @@ func (c *settingsCommand) runProjectConfigEnvSection(ctx settingsProjectContext,
 			continue
 		case action == settingsActionPrefixProjectConfig+"env:add",
 			strings.HasPrefix(action, settingsActionPrefixProjectConfig+"env:"):
-			if err := c.executeProjectConfigAction(ctx, action, stdout, stderr); err != nil {
+			if err := c.executeProjectConfigActionWithFeedback(ctx, action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -820,6 +829,12 @@ func (c *settingsCommand) executeProjectConfigAction(ctx settingsProjectContext,
 	default:
 		return fmt.Errorf("unknown project config action: %s", action)
 	}
+}
+
+func (c *settingsCommand) executeProjectConfigActionWithFeedback(ctx settingsProjectContext, action string, stdout, stderr io.Writer) error {
+	return c.runObservedSettingsMutation("Project recipe", stdout, stderr, func(out, errOut io.Writer) error {
+		return c.executeProjectConfigAction(ctx, action, out, errOut)
+	})
 }
 
 func (c *settingsCommand) projectConfigOptions(ctx settingsProjectContext) intpickercompat.Options {

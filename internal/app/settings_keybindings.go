@@ -70,9 +70,12 @@ func (c *settingsCommand) runKeybindingsSectionWithActive(initial string, stdout
 		if action == settingsNativeKeysToggle {
 			enabled, err := c.currentNativeKeysSetting()
 			if err != nil {
-				return err
+				c.setSettingsFeedback("Native macOS keybindings failed", err.Error())
+				continue
 			}
-			if err := c.setNativeKeysSetting(!enabled); err != nil {
+			if err := c.runSettingsMutation("Native macOS keybindings", stdout, stderr, func(io.Writer, io.Writer) error {
+				return c.setNativeKeysSetting(!enabled)
+			}); err != nil {
 				return err
 			}
 			continue
@@ -144,11 +147,15 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 				return err
 			}
 		case "unbind":
-			if err := c.saveKeymapKeysAndApply(actionID, nil, stdout); err != nil {
+			if err := c.runSettingsMutation("Keybinding", stdout, stderr, func(out, _ io.Writer) error {
+				return c.saveKeymapKeysAndApply(actionID, nil, out)
+			}); err != nil {
 				return err
 			}
 		case "reset":
-			if err := c.resetKeymapKeysAndApply(actionID, stdout); err != nil {
+			if err := c.runSettingsMutation("Keybinding", stdout, stderr, func(out, _ io.Writer) error {
+				return c.resetKeymapKeysAndApply(actionID, out)
+			}); err != nil {
 				return err
 			}
 		default:
@@ -159,7 +166,9 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 				continue
 			}
 			if chord, ok := strings.CutPrefix(op, "remove:"); ok {
-				if err := c.removeKeymapKeyAndApply(actionID, chord, stdout); err != nil {
+				if err := c.runSettingsMutation("Keybinding", stdout, stderr, func(out, _ io.Writer) error {
+					return c.removeKeymapKeyAndApply(actionID, chord, out)
+				}); err != nil {
 					return err
 				}
 				continue
@@ -481,7 +490,9 @@ func (c *settingsCommand) runKeybindingKeyDetail(actionID, chord string, stdout,
 		switch {
 		case strings.HasPrefix(op, "remove:"):
 			removeChord := strings.TrimPrefix(op, "remove:")
-			return c.removeKeymapKeyAndApply(actionID, removeChord, stdout)
+			return c.runSettingsMutation("Keybinding", stdout, stderr, func(out, _ io.Writer) error {
+				return c.removeKeymapKeyAndApply(actionID, removeChord, out)
+			})
 		case strings.HasPrefix(op, "test:"):
 			continue
 		default:
