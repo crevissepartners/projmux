@@ -514,11 +514,12 @@ func TestCollectPreservesPriorClaudeRowsOn429(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
 
-	// Seed snapshots.json with claude {5h: 18%, weekly: 13%}.
+	// Seed snapshots.json with Claude aggregate + a typed named quota.
 	priorClaude5h := Snapshot{Model: "claude", Window: Window5h, Pct: 18.0, ResetsAt: mustTime(t, "2026-05-06T17:00:00Z"), UpdatedAt: now.Add(-time.Minute)}
 	priorClaudeWeekly := Snapshot{Model: "claude", Window: WindowWeekly, Pct: 13.0, ResetsAt: mustTime(t, "2026-05-13T00:00:00Z"), UpdatedAt: now.Add(-time.Minute)}
+	priorClaudeNamed := Snapshot{Model: "claude", Window: WindowQuota, Bucket: "group-redacted", Pct: 27.0, ResetsAt: mustTime(t, "2026-05-08T00:00:00Z"), UpdatedAt: now.Add(-time.Minute), NamedQuota: &NamedQuota{Kind: "kind-redacted", Group: "group-redacted", Severity: "severity-redacted", IsActive: true, Scope: nil}}
 	if err := store.SaveState(State{
-		Snapshots: []Snapshot{priorClaude5h, priorClaudeWeekly},
+		Snapshots: []Snapshot{priorClaude5h, priorClaudeWeekly, priorClaudeNamed},
 		LastCollect: map[string]time.Time{
 			"claude": now.Add(-time.Minute),
 			"codex":  now.Add(-time.Minute),
@@ -553,10 +554,14 @@ func TestCollectPreservesPriorClaudeRowsOn429(t *testing.T) {
 		t.Fatalf("Collect must surface 429 error for diagnostics")
 	}
 
-	// Returned snapshots: prior claude rows + fresh codex row.
+	// Returned snapshots: prior Claude aggregate/named rows + fresh Codex row.
 	gotByKey := map[string]Snapshot{}
 	for _, s := range got {
-		gotByKey[s.Model+"/"+string(s.Window)] = s
+		key := s.Model + "/" + string(s.Window)
+		if s.Window == WindowQuota {
+			key += "/" + s.Bucket
+		}
+		gotByKey[key] = s
 	}
 	if cl5h, ok := gotByKey["claude/5h"]; !ok {
 		t.Fatalf("returned snapshots missing claude 5h: %+v", got)
@@ -567,6 +572,11 @@ func TestCollectPreservesPriorClaudeRowsOn429(t *testing.T) {
 		t.Fatalf("returned snapshots missing claude weekly: %+v", got)
 	} else if clWk.Pct != 13.0 {
 		t.Fatalf("claude weekly preserved value = %v, want 13", clWk.Pct)
+	}
+	if named, ok := gotByKey["claude/quota/group-redacted"]; !ok {
+		t.Fatalf("returned snapshots missing Claude named quota: %+v", got)
+	} else if named.Pct != 27.0 || named.NamedQuota == nil || named.NamedQuota.Group != "group-redacted" {
+		t.Fatalf("Claude named quota was not preserved losslessly: %#v", named)
 	}
 	if cx, ok := gotByKey["codex/5h"]; !ok {
 		t.Fatalf("returned snapshots missing codex 5h: %+v", got)
@@ -581,16 +591,23 @@ func TestCollectPreservesPriorClaudeRowsOn429(t *testing.T) {
 	}
 	loadedByKey := map[string]Snapshot{}
 	for _, s := range loaded {
-		loadedByKey[s.Model+"/"+string(s.Window)] = s
+		key := s.Model + "/" + string(s.Window)
+		if s.Window == WindowQuota {
+			key += "/" + s.Bucket
+		}
+		loadedByKey[key] = s
 	}
-	if len(loadedByKey) != 3 {
-		t.Fatalf("on-disk len = %d, want 3 (preserved claude 5h+weekly + fresh codex 5h): %+v", len(loadedByKey), loaded)
+	if len(loadedByKey) != 4 {
+		t.Fatalf("on-disk len = %d, want 4 (preserved Claude aggregate/named + fresh Codex): %+v", len(loadedByKey), loaded)
 	}
 	if loadedByKey["claude/5h"].Pct != 18.0 {
 		t.Fatalf("on-disk claude 5h = %v, want 18", loadedByKey["claude/5h"].Pct)
 	}
 	if loadedByKey["claude/weekly"].Pct != 13.0 {
 		t.Fatalf("on-disk claude weekly = %v, want 13", loadedByKey["claude/weekly"].Pct)
+	}
+	if loadedByKey["claude/quota/group-redacted"].NamedQuota == nil || loadedByKey["claude/quota/group-redacted"].Pct != 27.0 {
+		t.Fatalf("on-disk Claude named quota changed: %#v", loadedByKey["claude/quota/group-redacted"])
 	}
 	if loadedByKey["codex/5h"].Pct != 7.0 {
 		t.Fatalf("on-disk codex 5h = %v, want 7", loadedByKey["codex/5h"].Pct)

@@ -914,6 +914,34 @@ func TestStatusbarUsagePopupSeparatesAntigravityQuotaBuckets(t *testing.T) {
 	}
 }
 
+func TestStatusbarUsagePopupShowsClaudeNamedModelResetAndFreshness(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC)
+	reset := now.Add(2 * time.Hour)
+	snaps := []coreusage.Snapshot{
+		{Model: "claude", Window: coreusage.Window5h, Pct: 11, ResetsAt: reset, UpdatedAt: now.Add(-2 * time.Minute)},
+		{
+			Model: "claude", Window: coreusage.WindowQuota, Bucket: "group-redacted-model", Pct: 37.5,
+			ResetsAt: reset, UpdatedAt: now.Add(-11 * time.Minute),
+			NamedQuota: &coreusage.NamedQuota{
+				Kind: "kind-redacted", Group: "group-redacted-model", Severity: "severity-redacted", IsActive: true,
+				Scope: &coreusage.NamedQuotaScope{Model: &coreusage.NamedQuotaModel{DisplayName: "Model Redacted Alpha"}},
+			},
+		},
+	}
+	payload := strings.Join(statusbarUsagePopupLines(statusbarUsageState{Snapshots: snaps}, now, 92), "\n")
+	for _, want := range []string{"5h", "quota/group-redacted-model · Model Redacted Alpha", "38%", usageResetText(reset), "11m", "AGE"} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("popup = %q, missing %q", payload, want)
+		}
+	}
+	for _, absent := range []string{"USED", "LIMIT", "LEFT"} {
+		if strings.Contains(payload, absent) {
+			t.Fatalf("percent-only popup synthesized %s: %q", absent, payload)
+		}
+	}
+}
+
 func TestStatusbarUsagePopupOmitsAbsoluteColumnsForPercentOnlyDataset(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)

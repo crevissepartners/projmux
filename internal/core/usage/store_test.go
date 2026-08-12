@@ -199,6 +199,58 @@ func TestStoreQuotaBucketIdentityOrderingAndResetRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStoreNamedQuotaMetadataRoundTripPreservesNullableOpaqueIdentity(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewStore(dir)
+	now := mustTime(t, "2031-02-03T04:05:06Z")
+	reset := mustTime(t, "2031-02-04T00:00:00Z")
+	modelID := "model-redacted-id"
+	surface := "surface-redacted"
+	in := []Snapshot{
+		{
+			Model: "claude", Window: WindowQuota, Bucket: "opaque/group\nidentity", Pct: 37.5,
+			ResetsAt: reset, UpdatedAt: now,
+			NamedQuota: &NamedQuota{
+				Kind: "kind-redacted", Group: "opaque/group\nidentity", Severity: "severity-redacted", IsActive: false,
+				Scope: &NamedQuotaScope{
+					Model:   &NamedQuotaModel{ID: &modelID, DisplayName: "Model\nRedacted"},
+					Surface: &surface,
+				},
+			},
+		},
+		{
+			Model: "claude", Window: WindowQuota, Bucket: "opaque-null", Pct: 0,
+			ResetsAt: reset, UpdatedAt: now,
+			NamedQuota: &NamedQuota{Kind: "kind-redacted", Group: "opaque-null", Severity: "", IsActive: true, Scope: nil},
+		},
+	}
+	if err := store.SaveState(State{Snapshots: in}); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := store.LoadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("snapshots = %#v", got)
+	}
+	byBucket := map[string]Snapshot{}
+	for _, snapshot := range got {
+		byBucket[snapshot.Bucket] = snapshot
+	}
+	full := byBucket["opaque/group\nidentity"]
+	if full.NamedQuota == nil || full.NamedQuota.Group != full.Bucket || full.NamedQuota.IsActive || full.NamedQuota.Scope == nil || full.NamedQuota.Scope.Model == nil {
+		t.Fatalf("typed metadata changed: %#v", full)
+	}
+	if full.NamedQuota.Scope.Model.ID == nil || *full.NamedQuota.Scope.Model.ID != modelID || full.NamedQuota.Scope.Model.DisplayName != "Model\nRedacted" || full.NamedQuota.Scope.Surface == nil || *full.NamedQuota.Scope.Surface != surface {
+		t.Fatalf("opaque scope changed: %#v", full.NamedQuota.Scope)
+	}
+	if nullScope := byBucket["opaque-null"].NamedQuota; nullScope == nil || nullScope.Scope != nil {
+		t.Fatalf("nullable scope changed: %#v", nullScope)
+	}
+}
+
 func TestSortedSnapshotsUnknownWindowsDoNotShareDefaultRank(t *testing.T) {
 	t.Parallel()
 	got := SortedSnapshots([]Snapshot{

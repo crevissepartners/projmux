@@ -1000,9 +1000,34 @@ func PercentText(pct float64) string {
 // opaque account-quota IDs without inventing a cadence alias for the latter.
 func SnapshotWindowLabel(snapshot usage.Snapshot) string {
 	if snapshot.Window == usage.WindowQuota {
-		return "quota/" + BucketDisplayID(snapshot.Bucket)
+		label := "quota/" + boundedOpaqueDisplayID(snapshot.Bucket, 24)
+		if quota := snapshot.NamedQuota; quota != nil && quota.Scope != nil && quota.Scope.Model != nil {
+			label += " · " + boundedOpaqueDisplayID(quota.Scope.Model.DisplayName, 24)
+		}
+		if quota := snapshot.NamedQuota; quota != nil && !quota.IsActive {
+			label += " [inactive]"
+		}
+		return truncateDisplayRunes(label, 72)
 	}
 	return string(snapshot.Window)
+}
+
+func boundedOpaqueDisplayID(id string, maxRunes int) string {
+	return truncateDisplayRunes(BucketDisplayID(id), maxRunes)
+}
+
+func truncateDisplayRunes(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	if maxRunes == 1 {
+		return "…"
+	}
+	return string(runes[:maxRunes-1]) + "…"
 }
 
 // BucketDisplayID escapes control characters and quotes without changing the

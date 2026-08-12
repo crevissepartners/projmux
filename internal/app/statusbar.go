@@ -801,7 +801,7 @@ func statusbarUsagePopup(state statusbarUsageState, now time.Time, binaryPath st
 }
 
 func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int) []string {
-	rows := statusbarUsageRows(state.Snapshots)
+	rows := statusbarUsageRowsAt(state.Snapshots, now)
 	columns := statusbarUsageColumnProjection(rows)
 	// The native picker frame chrome wrapping this body already renders the
 	// `Usage` title bar (and the divider below it). Body opens with the
@@ -858,9 +858,9 @@ func statusbarUnsupportedUsageLine(provider usagecmd.UnsupportedProvider, column
 		label = provider.Model
 	}
 	if columns.absoluteCounts {
-		return dimANSI(fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", label, "-", "-", "-", "-", "-", "unsupported"))
+		return dimANSI(fmt.Sprintf("%-8s %-24s %8s %8s %8s %6s  %-12s  %-7s", label, "-", "-", "-", "-", "-", "unsupported", "-"))
 	}
-	return dimANSI(fmt.Sprintf("%-14s %-28s %8s  %-24s", label, "-", "-", "unsupported"))
+	return dimANSI(fmt.Sprintf("%-10s %-50s %6s  %-14s  %-6s", label, "-", "-", "unsupported", "-"))
 }
 
 func statusbarUsageSyncLine(state statusbarUsageState, now time.Time) string {
@@ -905,10 +905,15 @@ type statusbarUsageRow struct {
 	pct       string
 	pctValue  float64
 	reset     string
+	age       string
 	hasCounts bool
 }
 
 func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
+	return statusbarUsageRowsAt(snaps, time.Time{})
+}
+
+func statusbarUsageRowsAt(snaps []coreusage.Snapshot, now time.Time) []statusbarUsageRow {
 	snaps = coreusage.SortedSnapshots(snaps)
 	rows := make([]statusbarUsageRow, 0, len(snaps))
 	for _, s := range snaps {
@@ -927,6 +932,7 @@ func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
 			pct:       usagecmd.PercentText(s.Pct),
 			pctValue:  s.Pct,
 			reset:     usageResetText(s.ResetsAt),
+			age:       statusbarUsageAgeText(s.UpdatedAt, now),
 			hasCounts: hasCounts,
 		}
 		if row.reset == "-" && s.ResetInSeconds != nil {
@@ -958,32 +964,59 @@ func statusbarUsageColumnProjection(rows []statusbarUsageRow) statusbarUsageColu
 func statusbarUsageHeaderLine(columns statusbarUsageColumns) string {
 	if columns.absoluteCounts {
 		return statusbarMutedANSI +
-			fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", "MODEL", "WIN", "USED", "LIMIT", "LEFT", "PCT", "RESET") +
+			fmt.Sprintf("%-8s %-24s %8s %8s %8s %6s  %-12s  %-7s", "MODEL", "WINDOW", "USED", "LIMIT", "LEFT", "PCT", "RESET", "AGE") +
 			projmuxpicker.Reset
 	}
 	return statusbarMutedANSI +
-		fmt.Sprintf("%-14s %-28s %8s  %-24s", "MODEL", "WINDOW", "PCT", "RESET") +
+		fmt.Sprintf("%-10s %-50s %6s  %-14s  %-6s", "MODEL", "WINDOW", "PCT", "RESET", "AGE") +
 		projmuxpicker.Reset
 }
 
 func (r statusbarUsageRow) render(columns statusbarUsageColumns) string {
 	if !columns.absoluteCounts {
-		return fmt.Sprintf("%-14s %-28s %8s  %-24s",
-			r.model,
-			r.window,
-			statusbarUsagePctANSI(r.pct, r.pctValue, 8),
-			styleUnavailableLeft(r.reset, 24),
+		return fmt.Sprintf("%-10s %-50s %6s  %-14s  %-6s",
+			statusbarUsageCell(r.model, 10),
+			statusbarUsageCell(r.window, 50),
+			statusbarUsagePctANSI(r.pct, r.pctValue, 6),
+			styleUnavailableLeft(statusbarUsageCell(r.reset, 14), 14),
+			styleUnavailableLeft(statusbarUsageCell(r.age, 6), 6),
 		)
 	}
-	return fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s",
-		r.model,
-		r.window,
-		styleUnavailableRight(r.used, 10),
-		styleUnavailableRight(r.limit, 10),
-		styleUnavailableRight(r.remaining, 10),
+	return fmt.Sprintf("%-8s %-24s %8s %8s %8s %6s  %-12s  %-7s",
+		statusbarUsageCell(r.model, 8),
+		statusbarUsageCell(r.window, 24),
+		styleUnavailableRight(r.used, 8),
+		styleUnavailableRight(r.limit, 8),
+		styleUnavailableRight(r.remaining, 8),
 		statusbarUsagePctANSI(r.pct, r.pctValue, 6),
-		styleUnavailableLeft(r.reset, 16),
+		styleUnavailableLeft(statusbarUsageCell(r.reset, 12), 12),
+		styleUnavailableLeft(statusbarUsageCell(r.age, 7), 7),
 	)
+}
+
+func statusbarUsageCell(value string, width int) string {
+	runes := []rune(value)
+	if len(runes) <= width {
+		return value
+	}
+	if width <= 1 {
+		return "…"
+	}
+	return string(runes[:width-1]) + "…"
+}
+
+func statusbarUsageAgeText(updatedAt, now time.Time) string {
+	if updatedAt.IsZero() || now.IsZero() {
+		return "-"
+	}
+	age := now.Sub(updatedAt)
+	if age <= 0 {
+		return "now"
+	}
+	if age < time.Minute {
+		return "<1m"
+	}
+	return usagecmd.FormatBackoffDuration(age.Round(time.Minute))
 }
 
 func usageCountText(value int64, available bool) string {

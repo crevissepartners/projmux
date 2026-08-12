@@ -85,6 +85,231 @@ func TestAdapterCollectHappyPath(t *testing.T) {
 	}
 }
 
+func TestParseUsageResponseSyntheticNamedLimitShapes(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC)
+	body := []byte(`{
+		"five_hour":{"utilization":11,"resets_at":"2031-02-03T09:00:00Z"},
+		"seven_day":{"utilization":22,"resets_at":"2031-02-09T00:00:00Z"},
+		"limits":[
+			{"kind":"kind-redacted","group":"group-redacted-all","percent":33,"severity":"severity-redacted","resets_at":"2031-02-04T00:00:00Z","is_active":false,"scope":null},
+			{"kind":"kind-redacted","group":"group-redacted-model","percent":44.5,"severity":"severity-redacted","resets_at":"2031-02-05T00:00:00Z","is_active":true,"scope":{"model":{"id":null,"display_name":"Model Redacted Alpha"},"surface":null}},
+			{"kind":"kind-redacted-2","group":"group-redacted-surface","percent":55,"severity":"severity-redacted-2","resets_at":"2031-02-06T00:00:00Z","is_active":true,"scope":{"model":{"id":"model-redacted-id","display_name":"Model Redacted Beta"},"surface":"surface-redacted"},"opaque_future":{"ignored":true}}
+		],
+		"seven_day_model_hint":null,
+		"opaque_experiment":{"future":true},
+		"extra_usage":{"enabled":true},
+		"spend":{"amount":"redacted"}
+	}`)
+	parsed, err := parseUsageResponse(body)
+	if err != nil {
+		t.Fatalf("parseUsageResponse: %v", err)
+	}
+	snaps := parsed.toSnapshots(now)
+	if len(snaps) != 5 {
+		t.Fatalf("snapshots = %#v, want aggregate pair + 3 typed limits", snaps)
+	}
+	if snaps[0].Window != usage.Window5h || snaps[1].Window != usage.WindowWeekly {
+		t.Fatalf("aggregate contract changed: %#v", snaps[:2])
+	}
+	all := snaps[2]
+	if all.Window != usage.WindowQuota || all.Bucket != "group-redacted-all" || all.Pct != 33 || all.NamedQuota == nil {
+		t.Fatalf("scope-null limit = %#v", all)
+	}
+	if all.NamedQuota.Scope != nil || all.NamedQuota.IsActive {
+		t.Fatalf("scope/null or explicit false lost: %#v", all.NamedQuota)
+	}
+	model := snaps[3]
+	if model.NamedQuota.Scope == nil || model.NamedQuota.Scope.Model == nil {
+		t.Fatalf("model scope missing: %#v", model)
+	}
+	if model.NamedQuota.Scope.Model.ID != nil || model.NamedQuota.Scope.Model.DisplayName != "Model Redacted Alpha" || model.NamedQuota.Scope.Surface != nil {
+		t.Fatalf("nullable model scope changed: %#v", model.NamedQuota.Scope)
+	}
+	surface := snaps[4]
+	if surface.NamedQuota.Kind != "kind-redacted-2" || surface.NamedQuota.Group != surface.Bucket || surface.NamedQuota.Severity != "severity-redacted-2" || !surface.NamedQuota.IsActive {
+		t.Fatalf("typed metadata changed: %#v", surface.NamedQuota)
+	}
+	if surface.NamedQuota.Scope.Model.ID == nil || *surface.NamedQuota.Scope.Model.ID != "model-redacted-id" || surface.NamedQuota.Scope.Surface == nil || *surface.NamedQuota.Scope.Surface != "surface-redacted" {
+		t.Fatalf("non-null scope identity changed: %#v", surface.NamedQuota.Scope)
+	}
+	if surface.Tokens != 0 || surface.Limit != 0 {
+		t.Fatalf("percent-only limit synthesized counts: %#v", surface)
+	}
+}
+
+func TestParseUsageResponseAggregateOnlyAndNullHintsDoNotCreateQuota(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "aggregate only", body: `{"five_hour":{"utilization":1,"resets_at":null},"seven_day":{"utilization":2,"resets_at":null}}`},
+		{name: "null limits and hints", body: `{"five_hour":{"utilization":1,"resets_at":null},"seven_day":{"utilization":2,"resets_at":null},"limits":null,"seven_day_opus":null,"seven_day_sonnet":null,"opaque_future":null}`},
+		{name: "empty limits", body: `{"five_hour":{"utilization":1,"resets_at":null},"seven_day":{"utilization":2,"resets_at":null},"limits":[]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := parseUsageResponse([]byte(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snaps := parsed.toSnapshots(time.Time{}); len(snaps) != 2 {
+				t.Fatalf("snapshots = %#v, want aggregate pair only", snaps)
+			}
+		})
+	}
+}
+
+func TestParseUsageResponseRejectsMalformedTypedLimits(t *testing.T) {
+	t.Parallel()
+
+	valid := `{"kind":"k","group":"g","percent":0,"severity":"s","resets_at":"2031-02-04T00:00:00Z","is_active":false,"scope":null}`
+	cases := []struct {
+		name   string
+		limits string
+	}{
+		{name: "not array", limits: `{}`},
+		{name: "wrong percent type", limits: `[{"kind":"k","group":"g","percent":"0","severity":"s","resets_at":"2031-02-04T00:00:00Z","is_active":false,"scope":null}]`},
+		{name: "missing false", limits: `[{"kind":"k","group":"g","percent":0,"severity":"s","resets_at":"2031-02-04T00:00:00Z","scope":null}]`},
+		{name: "missing zero", limits: `[{"kind":"k","group":"g","severity":"s","resets_at":"2031-02-04T00:00:00Z","is_active":false,"scope":null}]`},
+		{name: "missing scope", limits: `[{"kind":"k","group":"g","percent":0,"severity":"s","resets_at":"2031-02-04T00:00:00Z","is_active":false}]`},
+		{name: "bad reset", limits: `[{"kind":"k","group":"g","percent":0,"severity":"s","resets_at":"not-a-time","is_active":false,"scope":null}]`},
+		{name: "model id wrong type", limits: `[{"kind":"k","group":"g","percent":0,"severity":"s","resets_at":"2031-02-04T00:00:00Z","is_active":false,"scope":{"model":{"id":7,"display_name":"M"},"surface":null}}]`},
+		{name: "surface wrong type", limits: `[{"kind":"k","group":"g","percent":0,"severity":"s","resets_at":"2031-02-04T00:00:00Z","is_active":false,"scope":{"model":{"id":null,"display_name":"M"},"surface":true}}]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"five_hour":{"utilization":7,"resets_at":null},"limits":` + tc.limits + `}`
+			if parsed, err := parseUsageResponse([]byte(body)); err == nil {
+				t.Fatalf("parseUsageResponse = %#v, want explicit limits error", parsed)
+			}
+		})
+	}
+	tooMany := `[` + strings.TrimSuffix(strings.Repeat(valid+`,`, maxUsageLimits+1), `,`) + `]`
+	if _, err := parseUsageResponse([]byte(`{"five_hour":{"utilization":7,"resets_at":null},"limits":` + tooMany + `}`)); err == nil || !strings.Contains(err.Error(), "limit is 64") {
+		t.Fatalf("row cap error = %v", err)
+	}
+}
+
+func TestParseUsageResponseErrorsDoNotEchoRawUsageOrResetValues(t *testing.T) {
+	t.Parallel()
+
+	for _, body := range []string{
+		`{"five_hour":{"utilization":7,"resets_at":"aggregate-reset-private-synthetic"}}`,
+		`{"limits":[{"kind":"k","group":"g","percent":7,"severity":"s","resets_at":"limit-reset-private-synthetic","is_active":true,"scope":null}]}`,
+	} {
+		_, err := parseUsageResponse([]byte(body))
+		if err == nil {
+			t.Fatalf("parseUsageResponse(%s) error = nil", body)
+		}
+		for _, secret := range []string{"aggregate-reset-private-synthetic", "limit-reset-private-synthetic"} {
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("parser error leaked raw reset value: %v", err)
+			}
+		}
+	}
+}
+
+func TestManagerAggregateOnlySuccessReplacesPriorNamedLimits(t *testing.T) {
+	t.Parallel()
+
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if atomic.AddInt32(&calls, 1) == 1 {
+			_, _ = w.Write([]byte(`{
+				"five_hour":{"utilization":10,"resets_at":"2031-02-03T09:00:00Z"},
+				"seven_day":{"utilization":20,"resets_at":"2031-02-09T00:00:00Z"},
+				"limits":[{"kind":"kind-redacted","group":"group-redacted","percent":30,"severity":"severity-redacted","resets_at":"2031-02-04T00:00:00Z","is_active":true,"scope":{"model":{"id":null,"display_name":"Model Redacted"},"surface":null}}]
+			}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"five_hour":{"utilization":11,"resets_at":"2031-02-03T10:00:00Z"},
+			"seven_day":{"utilization":21,"resets_at":"2031-02-09T01:00:00Z"}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCreds(t, credsPath, "access-synthetic", "refresh-synthetic")
+	adapter := NewWithConfig(credsPath, server.URL+"/usage", server.URL+"/refresh", server.Client())
+	registry := usage.NewRegistry()
+	if err := registry.Register(adapter); err != nil {
+		t.Fatal(err)
+	}
+	store := usage.NewStore(filepath.Join(dir, "state"))
+	now := time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC)
+	mgr := usage.NewManager(registry, store, func() time.Time { return now })
+
+	first, err := mgr.Collect(context.Background())
+	if err != nil || len(first) != 3 {
+		t.Fatalf("first collect = %#v, %v", first, err)
+	}
+	second, err := mgr.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 2 || second[0].Window != usage.Window5h || second[1].Window != usage.WindowWeekly {
+		t.Fatalf("aggregate-only replacement = %#v, want exactly canonical pair", second)
+	}
+	loaded, _, err := store.LoadAll()
+	if err != nil || len(loaded) != 2 {
+		t.Fatalf("stored replacement = %#v, %v", loaded, err)
+	}
+}
+
+func TestManagerMalformedLimitsPreservesCompleteClaudeLastKnownGood(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"five_hour":{"utilization":99,"resets_at":"2031-02-03T09:00:00Z"},
+			"seven_day":{"utilization":98,"resets_at":"2031-02-09T00:00:00Z"},
+			"limits":[{"kind":"kind-redacted","group":"group-redacted","percent":"malformed","severity":"severity-redacted","resets_at":"2031-02-04T00:00:00Z","is_active":true,"scope":null}]
+		}`))
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCreds(t, credsPath, "access-synthetic", "refresh-synthetic")
+	adapter := NewWithConfig(credsPath, server.URL+"/usage", server.URL+"/refresh", server.Client())
+	registry := usage.NewRegistry()
+	if err := registry.Register(adapter); err != nil {
+		t.Fatal(err)
+	}
+	store := usage.NewStore(filepath.Join(dir, "state"))
+	priorTime := time.Date(2031, 2, 3, 3, 0, 0, 0, time.UTC)
+	prior := []usage.Snapshot{
+		{Model: Name, Window: usage.Window5h, Pct: 10, UpdatedAt: priorTime},
+		{Model: Name, Window: usage.WindowWeekly, Pct: 20, UpdatedAt: priorTime},
+		{Model: Name, Window: usage.WindowQuota, Bucket: "group-redacted", Pct: 30, UpdatedAt: priorTime, NamedQuota: &usage.NamedQuota{Kind: "kind-redacted", Group: "group-redacted", Severity: "severity-redacted", IsActive: true, Scope: nil}},
+	}
+	if err := store.SaveState(usage.State{Snapshots: prior}); err != nil {
+		t.Fatal(err)
+	}
+	now := priorTime.Add(time.Hour)
+	mgr := usage.NewManager(registry, store, func() time.Time { return now })
+	got, err := mgr.Collect(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "parse usage response limits") {
+		t.Fatalf("Collect error = %v", err)
+	}
+	if len(got) != len(prior) {
+		t.Fatalf("last-known-good rows = %#v, want %#v", got, prior)
+	}
+	for i := range prior {
+		if got[i].Window != prior[i].Window || got[i].Pct != prior[i].Pct || !got[i].UpdatedAt.Equal(prior[i].UpdatedAt) {
+			t.Fatalf("LKG[%d] = %#v, want %#v", i, got[i], prior[i])
+		}
+	}
+}
+
 func TestAdapterCollect401WithoutRefreshFails(t *testing.T) {
 	t.Parallel()
 

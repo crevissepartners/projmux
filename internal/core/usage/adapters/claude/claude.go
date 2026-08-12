@@ -406,14 +406,185 @@ type usageResponse struct {
 		Utilization float64    `json:"utilization"`
 		ResetsAt    *time.Time `json:"resets_at"`
 	} `json:"seven_day"`
+	LimitsRaw json.RawMessage `json:"limits"`
+	Limits    []usageLimit    `json:"-"`
+}
+
+// The usage body is already capped at 1 MiB by fetchUsage. A row cap keeps a
+// syntactically valid but hostile array from growing the persisted cache or
+// popup without bound.
+const maxUsageLimits = 64
+
+type usageLimit struct {
+	Kind     string
+	Group    string
+	Percent  float64
+	Severity string
+	ResetsAt time.Time
+	IsActive bool
+	Scope    *usageLimitScope
+}
+
+type usageLimitScope struct {
+	Model   *usageLimitModel
+	Surface *string
+}
+
+type usageLimitModel struct {
+	ID          *string
+	DisplayName string
 }
 
 func parseUsageResponse(body []byte) (*usageResponse, error) {
 	var r usageResponse
 	if err := json.Unmarshal(body, &r); err != nil {
-		return nil, fmt.Errorf("claude: parse usage response: %w", err)
+		// Do not wrap decoder errors here: time/number decoder messages can
+		// quote raw upstream usage/reset values. Field-level limits parsing
+		// below reports only bounded row/shape context for the same reason.
+		return nil, errors.New("claude: parse usage response: invalid typed payload")
 	}
+	limits, err := parseUsageLimits(r.LimitsRaw)
+	if err != nil {
+		return nil, fmt.Errorf("claude: parse usage response limits: %w", err)
+	}
+	r.Limits = limits
 	return &r, nil
+}
+
+func parseUsageLimits(raw json.RawMessage) ([]usageLimit, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil, nil
+	}
+	var rows []json.RawMessage
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, fmt.Errorf("expected array: %w", err)
+	}
+	if len(rows) > maxUsageLimits {
+		return nil, fmt.Errorf("contains %d rows, limit is %d", len(rows), maxUsageLimits)
+	}
+	out := make([]usageLimit, 0, len(rows))
+	for i, row := range rows {
+		parsed, err := parseUsageLimit(row)
+		if err != nil {
+			return nil, fmt.Errorf("row %d: %w", i, err)
+		}
+		out = append(out, parsed)
+	}
+	return out, nil
+}
+
+func parseUsageLimit(raw json.RawMessage) (usageLimit, error) {
+	var wire struct {
+		Kind     *string         `json:"kind"`
+		Group    *string         `json:"group"`
+		Percent  *float64        `json:"percent"`
+		Severity *string         `json:"severity"`
+		ResetsAt *string         `json:"resets_at"`
+		IsActive *bool           `json:"is_active"`
+		Scope    json.RawMessage `json:"scope"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return usageLimit{}, err
+	}
+	if wire.Kind == nil || *wire.Kind == "" {
+		return usageLimit{}, errors.New("missing kind")
+	}
+	if wire.Group == nil || *wire.Group == "" {
+		return usageLimit{}, errors.New("missing group")
+	}
+	if wire.Percent == nil {
+		return usageLimit{}, errors.New("missing percent")
+	}
+	if wire.Severity == nil {
+		return usageLimit{}, errors.New("missing severity")
+	}
+	if wire.ResetsAt == nil || *wire.ResetsAt == "" {
+		return usageLimit{}, errors.New("missing resets_at")
+	}
+	reset, err := time.Parse(time.RFC3339Nano, *wire.ResetsAt)
+	if err != nil {
+		return usageLimit{}, errors.New("invalid resets_at")
+	}
+	if wire.IsActive == nil {
+		return usageLimit{}, errors.New("missing is_active")
+	}
+	scope, err := parseUsageLimitScope(wire.Scope)
+	if err != nil {
+		return usageLimit{}, fmt.Errorf("scope: %w", err)
+	}
+	return usageLimit{
+		Kind:     *wire.Kind,
+		Group:    *wire.Group,
+		Percent:  *wire.Percent,
+		Severity: *wire.Severity,
+		ResetsAt: reset.UTC(),
+		IsActive: *wire.IsActive,
+		Scope:    scope,
+	}, nil
+}
+
+func parseUsageLimitScope(raw json.RawMessage) (*usageLimitScope, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return nil, errors.New("missing field")
+	}
+	if trimmed == "null" {
+		return nil, nil
+	}
+	var wire struct {
+		Model   json.RawMessage `json:"model"`
+		Surface json.RawMessage `json:"surface"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, err
+	}
+	model, err := parseUsageLimitModel(wire.Model)
+	if err != nil {
+		return nil, fmt.Errorf("model: %w", err)
+	}
+	surface, err := parseNullableString(wire.Surface)
+	if err != nil {
+		return nil, fmt.Errorf("surface: %w", err)
+	}
+	return &usageLimitScope{Model: model, Surface: surface}, nil
+}
+
+func parseUsageLimitModel(raw json.RawMessage) (*usageLimitModel, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil, errors.New("expected object")
+	}
+	var wire struct {
+		ID          json.RawMessage `json:"id"`
+		DisplayName *string         `json:"display_name"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, err
+	}
+	id, err := parseNullableString(wire.ID)
+	if err != nil {
+		return nil, fmt.Errorf("id: %w", err)
+	}
+	if wire.DisplayName == nil {
+		return nil, errors.New("missing display_name")
+	}
+	return &usageLimitModel{ID: id, DisplayName: *wire.DisplayName}, nil
+}
+
+func parseNullableString(raw json.RawMessage) (*string, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return nil, errors.New("missing field")
+	}
+	if trimmed == "null" {
+		return nil, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, errors.New("expected string or null")
+	}
+	return &value, nil
 }
 
 // toSnapshots converts the usage response into the canonical Snapshot
@@ -421,7 +592,7 @@ func parseUsageResponse(body []byte) (*usageResponse, error) {
 // snapshot is omitted (rather than emitted as 0% with a zero ResetsAt) so
 // the renderer can drop it gracefully.
 func (r *usageResponse) toSnapshots(now time.Time) []usage.Snapshot {
-	out := make([]usage.Snapshot, 0, 2)
+	out := make([]usage.Snapshot, 0, 2+len(r.Limits))
 	if r.FiveHour != nil {
 		s := usage.Snapshot{
 			Model:     Name,
@@ -445,6 +616,32 @@ func (r *usageResponse) toSnapshots(now time.Time) []usage.Snapshot {
 			s.ResetsAt = r.SevenDay.ResetsAt.UTC()
 		}
 		out = append(out, s)
+	}
+	for _, limit := range r.Limits {
+		quota := &usage.NamedQuota{
+			Kind:     limit.Kind,
+			Group:    limit.Group,
+			Severity: limit.Severity,
+			IsActive: limit.IsActive,
+		}
+		if limit.Scope != nil {
+			quota.Scope = &usage.NamedQuotaScope{Surface: limit.Scope.Surface}
+			if limit.Scope.Model != nil {
+				quota.Scope.Model = &usage.NamedQuotaModel{
+					ID:          limit.Scope.Model.ID,
+					DisplayName: limit.Scope.Model.DisplayName,
+				}
+			}
+		}
+		out = append(out, usage.Snapshot{
+			Model:      Name,
+			Window:     usage.WindowQuota,
+			Bucket:     limit.Group,
+			Pct:        limit.Percent,
+			ResetsAt:   limit.ResetsAt,
+			UpdatedAt:  now,
+			NamedQuota: quota,
+		})
 	}
 	return out
 }
