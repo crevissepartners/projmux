@@ -86,6 +86,9 @@ func TestReadRuntimeHealthLatestEventWinsAndFailureCodesAreBounded(t *testing.T)
 	if len(health.RecentFailureCodes) != recentFailureLimit {
 		t.Fatalf("recent codes = %d, want %d", len(health.RecentFailureCodes), recentFailureLimit)
 	}
+	if health.RecentErrorCount != recentFailureLimit || !health.RecentErrorsBounded {
+		t.Fatalf("recent error aggregate = count %d bounded %v, want %d true", health.RecentErrorCount, health.RecentErrorsBounded, recentFailureLimit)
+	}
 	for _, code := range health.RecentFailureCodes {
 		if code != CodeSessionKillFailed {
 			t.Fatalf("bounded tail retained stale code %q", code)

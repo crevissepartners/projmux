@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -29,12 +31,13 @@ import (
 // Both surfaces source from the same palette so the popup tab chip strip
 // stays visually congruent with the tmux window-status row.
 const (
-	tmuxWindowInactiveBg = projmuxpicker.TmuxWindowInactiveBg
-	tmuxWindowInactiveFg = projmuxpicker.TmuxWindowInactiveFg
-	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
-	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
-	tmuxWindowTitleWidth = 10
-	paneLabelOption      = "@projmux_pane_label"
+	tmuxWindowInactiveBg   = projmuxpicker.TmuxWindowInactiveBg
+	tmuxWindowInactiveFg   = projmuxpicker.TmuxWindowInactiveFg
+	tmuxWindowActiveBg     = projmuxpicker.TmuxWindowActiveBg
+	tmuxWindowActiveFg     = projmuxpicker.TmuxWindowActiveFg
+	tmuxWindowTitleWidth   = 10
+	paneLabelOption        = "@projmux_pane_label"
+	tmuxConfigDigestOption = "@projmux_config_digest"
 
 	tmuxAccentAttentionBg = theme.TmuxAccentAttentionBg
 	tmuxAccentAIBg        = theme.TmuxAccentAIBg
@@ -1556,7 +1559,13 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(b
 		"set -g status-format[1] "+tmuxConfigQuote(statusbarWindowLineFormat()),
 		"set -gu status-format[2]",
 	)
-	return strings.Join(lines, "\n") + "\n"
+	return withTmuxConfigDigest(strings.Join(lines, "\n") + "\n")
+}
+
+func withTmuxConfigDigest(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	digest := hex.EncodeToString(sum[:])
+	return body + "set -g " + tmuxConfigDigestOption + " " + digest + "\n"
 }
 
 func tmuxAppKeyBindings(catalog []keyBindingAction, keymapPresent bool) []string {

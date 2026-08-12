@@ -47,35 +47,35 @@ func appLightThemeConfig() theme.ThemeConfig {
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
 		"standalone": "b9f075246a9dc30e1995d108c5c8c5d1e1f24fa87de5ddf5278afc42ffbce76b",
-		"app":        "96beee7b6001f01a028276fa9bee71be0b7ce982a9dfc22e51ab293e7af87bba",
+		"app":        "a7489352c926413e17c4d8b2b05720c41e8c03fab9a101a47b00d16d77c05d56",
 	},
 	"projmux": {
 		"standalone": "3863425b1716054a94625226a749c369b2012162a6ce47e38d642b7b3451acf9",
-		"app":        "e4e504ec65cde534f13fc826c4e764c8637ca00e911ba216d944e81dc84d3677",
+		"app":        "304e47ede432affc426dc86a22fa780d662aabe2dd1842ae015c1b72fe4d35da",
 	},
 	"blue-hour": {
 		"standalone": "21a2731fa84824a1e34db43d8fb8d1b06dcb64c8cc0b82d2bc81a5cbb9d4a4b9",
-		"app":        "61d8f34bf4c11fc98ffd43defbef6c608a68384a7c3e9f4f92879e99e50d58cb",
+		"app":        "c25d6458c3faeb0ae4b2ebb49ac92fb12f870512d6f09110bd77b278b9fdae66",
 	},
 	"carbon-violet": {
 		"standalone": "871b0d8ae99f66ad897be408122d121a7931abbc3a142cd53f8f7608db80609d",
-		"app":        "3d5b514980b95e9dbb886f86dbd00e52ca22acfcceb2ba9438e3e3653b579cd0",
+		"app":        "2752c3b0b43b686dd791a847677c696593c2cfc73e092284017500cc04e1e490",
 	},
 	"ember": {
 		"standalone": "cb6b8a300d674fc1cd616636eeec07177bd0732111028c7627e19caf7a65ac05",
-		"app":        "86add5155a48d814d4b51d23eca6d89d29f473bcd705683f9a8255554ee0a336",
+		"app":        "8005a9df37d64eac51428bf7421b9a7e6b451b68e71a1cea065adbd85f342ecf",
 	},
 	"forest": {
 		"standalone": "4425e4fc1bb095d3e3e244af4202422c41586c0bfa8acc40c8c5bee7571e75ba",
-		"app":        "b2526c8af98e267c018d4358dd7c222d0de6dfe19893df82f040a9cb8f121bbd",
+		"app":        "44c2f4527b2d7e8107da39cd5c8069c07bc761beb79f541a01f90b6ee12c64eb",
 	},
 	"rose": {
 		"standalone": "fbba581d56aaa99eba600ca1dd499f1ba608b833bd0a0ae8a2e4a8dc3d9168b9",
-		"app":        "ce4e204a82eb2356dbad03fe6651163345bfbac8b3a46eaf397b8cd4dbcbeb3d",
+		"app":        "f95eab88700b2bf491e2162c42893293cf475d5a8fdc93ae3a1521500160b6f6",
 	},
 	"high-contrast": {
 		"standalone": "901bad4cf3e7975a193ee1eda39be97ebc497113be466be34020764348b4c584",
-		"app":        "f8b1876991d3dc52ae2c4e694b6cc8142eb4626e47c01a64b9af458f0ce0f0d8",
+		"app":        "10c727b7fcc94983772496a37a4d185b6296dea9eb26f46a9b0f094cdd66d873",
 	},
 }
 

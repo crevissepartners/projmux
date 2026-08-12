@@ -45,9 +45,9 @@ if [[ ! -f "$installed_report" ]] || [[ "$(stat -c '%a' "$installed_report")" !=
 fi
 tar -xOzf "$installed_report" manifest.json >"$PROJMUX_SMOKE_WORKDIR/installed-report-manifest.json"
 tar -xOzf "$installed_report" doctor.json >"$PROJMUX_SMOKE_WORKDIR/installed-report-doctor.json"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-manifest.json" '"report_schema_version": 1'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-manifest.json" '"report_schema_version": 2'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-manifest.json" '"redaction_mode": "default-hash-v1"'
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-doctor.json" '"schema_version": 1'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-doctor.json" '"schema_version": 2'
 
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "atomically replaced $installed"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "reloaded tmux server -L projmux: 1 sessions"

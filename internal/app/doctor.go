@@ -10,21 +10,29 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 type doctorCommand struct {
-	lookPath          func(string) (string, error)
-	goos              func() string
-	getenv            func(string) string
-	commandVersion    func(name string) string
-	aiDiagnostics     func() []doctorAINotifyIntegration
-	resumeDiagnostics func() []doctorSessionStateResumeDiagnostic
+	lookPath               func(string) (string, error)
+	goos                   func() string
+	getenv                 func(string) string
+	commandVersion         func(name string) string
+	aiDiagnostics          func() []doctorAINotifyIntegration
+	resumeDiagnostics      func() []doctorSessionStateResumeDiagnostic
+	readRuntimeHealth      func(diagnostics.ReadOnlyStore) (diagnostics.RuntimeHealth, error)
+	resolveOperationsPath  func() (string, error)
+	runtimeProbe           func() doctorRuntimeProbe
+	resolveGeneratedConfig func() (string, error)
+	readGeneratedConfig    func(string, int64) ([]byte, error)
 }
 
 func newDoctorCommand() *doctorCommand {
@@ -40,6 +48,11 @@ func newDoctorCommand() *doctorCommand {
 		return doctorAINotifyDiagnostics(newAICommand())
 	}
 	c.resumeDiagnostics = doctorSessionStateResumeDiagnostics
+	c.readRuntimeHealth = diagnostics.ReadRuntimeHealth
+	c.resolveOperationsPath = func() (string, error) { return diagnostics.DefaultPath(c.getenv, os.UserHomeDir) }
+	c.runtimeProbe = defaultDoctorRuntimeProbe
+	c.resolveGeneratedConfig = func() (string, error) { return doctorGeneratedConfigPath(c.getenv, os.UserHomeDir) }
+	c.readGeneratedConfig = doctorReadRegularFileBounded
 	return c
 }
 
@@ -101,9 +114,11 @@ type doctorReport struct {
 	AINotifyIntegrations []doctorAINotifyIntegration          `json:"ai_notify_integrations"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    string                               `json:"session_state_prune"`
+	Runtime              []doctorFinding                      `json:"runtime"`
+	Logs                 []doctorFinding                      `json:"logs"`
 }
 
-const doctorSchemaVersion = 1
+const doctorSchemaVersion = 2
 
 const doctorSessionStatePruneGuidance = "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name."
 
@@ -226,7 +241,31 @@ func (c *doctorCommand) evaluateReport(section doctorSection) doctorReport {
 		report.SessionStateResume = c.evaluateSessionStateResume()
 		report.SessionStatePrune = doctorSessionStatePruneGuidance
 	}
+	if section == doctorSectionAll || section == doctorSectionRuntime {
+		report.Runtime = c.evaluateRuntimeFindings()
+	}
+	if section == doctorSectionAll || section == doctorSectionLogs {
+		report.Logs = c.evaluateLogFindings()
+	}
 	return report
+}
+
+func doctorGeneratedConfigPath(lookupEnv func(string) string, homeDir func() (string, error)) (string, error) {
+	configHome := ""
+	if lookupEnv != nil {
+		configHome = strings.TrimSpace(lookupEnv("XDG_CONFIG_HOME"))
+	}
+	if configHome == "" {
+		if homeDir == nil {
+			homeDir = os.UserHomeDir
+		}
+		home, err := homeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			return "", errors.New("resolve generated config home")
+		}
+		configHome = filepath.Join(home, ".config")
+	}
+	return filepath.Join(configHome, "projmux", "tmux.conf"), nil
 }
 
 func (c *doctorCommand) evaluateAINotifyIntegrations() []doctorAINotifyIntegration {
@@ -310,8 +349,7 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 		writeDoctorDependenciesText(&buf, report.Dependencies, verbose)
 	}
 	if section == doctorSectionAll || section == doctorSectionRuntime {
-		buf.WriteString("\nRuntime\n")
-		buf.WriteString("  No runtime checks in schema version 1; runtime health is planned for Phase 2.\n")
+		writeDoctorFindingsText(&buf, "Runtime", report.Runtime, verbose)
 	}
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
 		writeDoctorIntegrationsText(&buf, report.AINotifyIntegrations, verbose)
@@ -320,11 +358,40 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 		writeDoctorSessionStateText(&buf, report, verbose)
 	}
 	if section == doctorSectionAll || section == doctorSectionLogs {
-		buf.WriteString("\nLogs\n")
-		buf.WriteString("  No log checks in schema version 1; log health is planned for Phase 2.\n")
+		writeDoctorFindingsText(&buf, "Logs", report.Logs, verbose)
 	}
 	_, err := w.Write(buf.Bytes())
 	return err
+}
+
+func writeDoctorFindingsText(buf *bytes.Buffer, title string, findings []doctorFinding, verbose bool) {
+	buf.WriteString("\n" + title + "\n")
+	counts := map[doctorFindingSeverity]int{}
+	for _, finding := range findings {
+		counts[finding.Severity]++
+	}
+	fmt.Fprintf(buf, "  Summary: %d info, %d warning, %d error.\n", counts[doctorSeverityInfo], counts[doctorSeverityWarning], counts[doctorSeverityError])
+	for _, finding := range findings {
+		if !verbose && finding.Severity == doctorSeverityInfo {
+			continue
+		}
+		fmt.Fprintf(buf, "  [%-7s] %s", finding.Severity, finding.Code)
+		if finding.Count > 0 {
+			fmt.Fprintf(buf, "; count: %d", finding.Count)
+		}
+		if len(finding.SafeCodes) > 0 {
+			fmt.Fprintf(buf, "; safe codes: %s", diagnosticsCodesText(finding.SafeCodes))
+		}
+		fmt.Fprintf(buf, "; remediation: %s\n", finding.Remediation)
+	}
+}
+
+func diagnosticsCodesText(codes []diagnostics.Code) string {
+	values := make([]string, len(codes))
+	for i, code := range codes {
+		values[i] = string(code)
+	}
+	return strings.Join(values, ",")
 }
 
 func writeDoctorDependenciesText(buf *bytes.Buffer, results []doctorResult, verbose bool) {
@@ -524,8 +591,8 @@ type doctorJSONReport struct {
 	AINotifyIntegrations *[]doctorAINotifyIntegration          `json:"ai_notify_integrations,omitempty"`
 	SessionStateResume   *[]doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
-	Runtime              *[]struct{}                           `json:"runtime,omitempty"`
-	Logs                 *[]struct{}                           `json:"logs,omitempty"`
+	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
+	Logs                 *[]doctorFinding                      `json:"logs,omitempty"`
 }
 
 func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) error {
@@ -542,13 +609,11 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 	if section == doctorSectionAll || section == doctorSectionSessionState {
 		out.SessionStatePrune = &report.SessionStatePrune
 	}
-	if section == doctorSectionRuntime {
-		empty := make([]struct{}, 0)
-		out.Runtime = &empty
+	if section == doctorSectionAll || section == doctorSectionRuntime {
+		out.Runtime = &report.Runtime
 	}
-	if section == doctorSectionLogs {
-		empty := make([]struct{}, 0)
-		out.Logs = &empty
+	if section == doctorSectionAll || section == doctorSectionLogs {
+		out.Logs = &report.Logs
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

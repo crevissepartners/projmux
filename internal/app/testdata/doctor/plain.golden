@@ -5,7 +5,9 @@ Dependencies
   Summary: 4 ok, 0 missing, 0 stale, 0 skipped, 0 hint.
 
 Runtime
-  No runtime checks in schema version 1; runtime health is planned for Phase 2.
+  Summary: 2 info, 2 warning, 0 error.
+  [warning] runtime.socket.unreachable; remediation: start-projmux-runtime
+  [warning] runtime.config.generated-missing; remediation: run-projmux-tmux-apply
 
 AI notify integrations
   Summary: 0 installed, 0 missing, 0 stale, 0 conflict, 0 skipped.
@@ -17,4 +19,7 @@ Session State retention
   Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name.
 
 Logs
-  No log checks in schema version 1; log health is planned for Phase 2.
+  Summary: 1 info, 3 warning, 0 error.
+  [warning] logs.state.missing; remediation: inspect-state-permissions
+  [warning] logs.directory.missing; remediation: inspect-log-permissions
+  [warning] logs.journal.missing; remediation: inspect-operational-journal

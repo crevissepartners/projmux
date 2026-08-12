@@ -82,6 +82,12 @@ func testReportCommand(t *testing.T) (*diagnosticsCommand, string, string) {
 			SnapshotPath: filepath.Join(home, reportWindow, reportPane),
 		}}
 	}
+	doctor.readRuntimeHealth = func(diagnostics.ReadOnlyStore) (diagnostics.RuntimeHealth, error) {
+		return diagnostics.RuntimeHealth{
+			MuxBackend: diagnostics.MuxBackend(), RecentErrorCount: 2,
+			RecentFailureCodes: []diagnostics.Code{diagnostics.CodeTmuxApplyFailed, diagnostics.Code(reportSecret)},
+		}, nil
+	}
 	return &diagnosticsCommand{lookupEnv: lookup, homeDir: func() (string, error) { return home, nil }, doctor: doctor}, stateHome, configHome
 }
 
@@ -192,9 +198,10 @@ func TestDiagnosticsReportPreviewArchiveManifestPermissionsAndRedaction(t *testi
 	if err := json.Unmarshal(entries["manifest.json"], &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest.ReportSchemaVersion != 1 || manifest.RedactionMode != supportRedactionMode {
+	if manifest.ReportSchemaVersion != 2 || manifest.RedactionMode != supportRedactionMode {
 		t.Fatalf("manifest = %#v", manifest)
 	}
+	assertManifestReason(t, manifest, "doctor.json", "included", "doctor-schema-version-2")
 	var doctor map[string]any
 	if err := json.Unmarshal(entries["doctor.json"], &doctor); err != nil {
 		t.Fatal(err)
@@ -228,7 +235,7 @@ func TestDiagnosticsReportPreviewArchiveManifestPermissionsAndRedaction(t *testi
 	if configCount != 2 {
 		t.Fatalf("manifest config structural numeric count = %d, want 2: %#v", configCount, manifest.Entries)
 	}
-	for _, safe := range []string{`"name": "tmux"`, `"name": "git"`, `"status": "ok"`, `"provider_id": "codex"`, `"agent": "codex"`, `"confidence": "high"`} {
+	for _, safe := range []string{`"name": "tmux"`, `"name": "git"`, `"status": "ok"`, `"provider_id": "codex"`, `"agent": "codex"`, `"confidence": "high"`, `"severity": "warning"`, `"code": "runtime.socket.unreachable"`, `"remediation": "start-projmux-runtime"`} {
 		if !bytes.Contains(entries["doctor.json"], []byte(safe)) {
 			t.Fatalf("doctor report lost safe diagnostic value %q:\n%s", safe, entries["doctor.json"])
 		}
@@ -245,6 +252,20 @@ func TestDiagnosticsReportPreviewArchiveManifestPermissionsAndRedaction(t *testi
 				t.Fatalf("report repaired source %q mode to %o", filepath.Base(path), info.Mode().Perm())
 			}
 		}
+	}
+}
+
+func TestRedactDoctorJSONEnforcesStringArrayAllowlist(t *testing.T) {
+	value := map[string]any{
+		"safe_codes": []any{string(diagnostics.CodeTmuxApplyFailed), reportSecret},
+	}
+	redactDoctorJSON(value, "")
+	got := value["safe_codes"].([]any)
+	if got[0] != string(diagnostics.CodeTmuxApplyFailed) {
+		t.Fatalf("allowed safe code changed: %#v", got)
+	}
+	if got[1] == reportSecret || !strings.HasPrefix(got[1].(string), "sha256:") {
+		t.Fatalf("unlisted array scalar was not hashed: %#v", got)
 	}
 }
 
@@ -284,6 +305,16 @@ func TestSupportDoctorSafeAllowlistTracksProducerInventory(t *testing.T) {
 	for _, status := range []string{"available", "stale", "unavailable"} {
 		if !values["status"][status] {
 			t.Fatalf("safe Doctor allowlist missing resume status %q", status)
+		}
+	}
+	for _, code := range doctorFindingCodeInventory {
+		if !values["code"][code] {
+			t.Fatalf("safe Doctor allowlist missing finding code %q", code)
+		}
+	}
+	for _, remediation := range doctorFindingRemediationInventory {
+		if !values["remediation"][remediation] {
+			t.Fatalf("safe Doctor allowlist missing remediation %q", remediation)
 		}
 	}
 }

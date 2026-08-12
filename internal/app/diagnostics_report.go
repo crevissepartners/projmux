@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	supportReportSchemaVersion = 1
+	supportReportSchemaVersion = 2
 	supportRedactionMode       = "default-hash-v1"
 	supportOperationalTail     = 50
 )
@@ -139,7 +139,7 @@ func (c *diagnosticsCommand) buildSupportPlan(destination string, now time.Time)
 		return supportPlan{}, fmt.Errorf("build versioned doctor report: %w", err)
 	}
 	entries = append(entries, supportArchiveEntry{name: "doctor.json", data: doctorData})
-	manifest.Entries = append(manifest.Entries, supportManifestEntry{Name: "doctor.json", Status: "included", Reason: "doctor-schema-version-1"})
+	manifest.Entries = append(manifest.Entries, supportManifestEntry{Name: "doctor.json", Status: "included", Reason: "doctor-schema-version-2"})
 
 	configData, configManifest, err := c.supportConfigPresence()
 	if err != nil {
@@ -204,6 +204,19 @@ func supportDoctorSafeStringValues() map[string]map[string]bool {
 		"confidence":  {"high": true, "medium": true, "low": true, "none": true},
 		"name":        {"tmux": true, "git": true, "stty": true, "kubectl": true, "tmux bell fallback": true},
 		"id":          {"tmux-bell": true},
+		"severity":    {string(doctorSeverityInfo): true, string(doctorSeverityWarning): true, string(doctorSeverityError): true},
+		"code":        {},
+		"remediation": {},
+		"safe_codes":  {},
+	}
+	for _, code := range doctorFindingCodeInventory {
+		values["code"][code] = true
+	}
+	for _, remediation := range doctorFindingRemediationInventory {
+		values["remediation"][remediation] = true
+	}
+	for _, code := range diagnostics.AllowedCodes() {
+		values["safe_codes"][string(code)] = true
 	}
 	for _, provider := range aiprovider.HookDiagnosticSupported() {
 		values["provider_id"][string(provider.ID)] = true
@@ -231,7 +244,13 @@ func redactDoctorJSON(value any, key string) {
 			}
 		}
 	case []any:
-		for _, child := range typed {
+		for index, child := range typed {
+			if text, ok := child.(string); ok && text != "" {
+				if !doctorSafeStringValues[key][text] {
+					typed[index] = supportHash(key, text)
+				}
+				continue
+			}
 			redactDoctorJSON(child, key)
 		}
 	}
