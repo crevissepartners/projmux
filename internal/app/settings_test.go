@@ -1117,16 +1117,71 @@ func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 			t.Fatalf("project tab entry values = %#v, want disabled/noop rows only without inline tab toggle", entryValues(options.Entries))
 		}
 	}
-	for _, label := range []string{"Trust", "Hooks (project)", "Project recipe", "Effective merge view"} {
-		if !hasEntryLabelContaining(options.Entries, label) {
-			t.Fatalf("project tab entries = %#v, want label containing %q", options.Entries, label)
+	if got, want := len(options.Entries), 1; got != want {
+		t.Fatalf("project tab entries = %#v, want one passive context guidance row", options.Entries)
+	}
+	if !hasEntryLabelContaining(options.Entries, "Project context") {
+		t.Fatalf("project tab entries = %#v, want one Project context guidance row", options.Entries)
+	}
+	for _, repeated := range []string{"Trust", "Hooks (project)", "Project recipe", "Effective merge view", "disabled - no project context"} {
+		if hasEntryLabelContaining(options.Entries, repeated) {
+			t.Fatalf("project tab entries = %#v, want no repeated disabled copy %q", options.Entries, repeated)
 		}
 	}
-	// Phase 2.6: the chip strip plus popup header already announce the
-	// active scope, so the entry list drops the redundant "Project
-	// context" placeholder row that lived above the search bar.
-	if hasEntryLabelContaining(options.Entries, "Project context") {
-		t.Fatalf("project tab entries = %#v, want no \"Project context\" placeholder row", options.Entries)
+}
+
+func TestSettingsRootDescriptionOwnershipBoundaries(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
+	entries := cmd.rootEntriesForAxisLocale(settingsAxisGlobal, i18n.FallbackLocale)
+	if !hasEntryLabelContainingAll(entries, "Appearance", "language, AI badge, status/notify icon decoration") {
+		t.Fatalf("root entries = %#v, want Appearance limited to language/badge/icon ownership", entries)
+	}
+	if !hasEntryLabelContainingAll(entries, "Theme", "global preset, color tokens, and font hints") {
+		t.Fatalf("root entries = %#v, want Theme preset/token/font ownership", entries)
+	}
+	if !hasEntryLabelContainingAll(entries, "About", "version, updates, welcome, and quit") {
+		t.Fatalf("root entries = %#v, want About description to match retained surface", entries)
+	}
+	appearance := entryWithLabelContaining(entries, "Appearance")
+	if appearance == nil || strings.Contains(appearance.Label, "theme") || strings.Contains(appearance.Label, "font") {
+		t.Fatalf("Appearance row = %#v, want no Theme ownership copy", appearance)
+	}
+}
+
+func TestSettingsProjectContextKeepsActionableRows(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	project := filepath.Join(home, "source", "repos", "app")
+	mkdirAll(t, filepath.Join(project, ".projmux"))
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return project
+			}
+			return ""
+		},
+	}
+	entries := cmd.projectTabEntries()
+	for _, value := range []string{
+		settingsSectionProjectTrust,
+		settingsSectionProjectHooks,
+		settingsSectionProjectConfig,
+		settingsSectionEffectiveMerge,
+		settingsSectionProjectSessionState,
+	} {
+		if !hasEntryValue(entries, value) {
+			t.Fatalf("project entries = %#v, want existing actionable/navigation row %q", entries, value)
+		}
+	}
+	if hasEntryLabelContaining(entries, "disabled - no project context") || hasEntryLabelContaining(entries, "Project context") {
+		t.Fatalf("project entries = %#v, want no no-project guidance with actionable context", entries)
+	}
+	if err := validateSettingsEntryContracts(intpickercompat.Options{UI: "settings-project", Entries: entries}); err != nil {
+		t.Fatalf("project actionable entry contracts: %v", err)
 	}
 }
 
@@ -2002,7 +2057,7 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 			if got, want := statusbarOptions.UI, "settings-statusbar"; got != want {
 				t.Fatalf("statusbar settings UI = %q, want %q", got, want)
 			}
-			if got, want := statusbarOptions.Title, "Appearance - AI badge and icon decoration"; got != want {
+			if got, want := statusbarOptions.Title, "Appearance - Language, AI badge, status/notify icons"; got != want {
 				t.Fatalf("statusbar settings title = %q, want %q", got, want)
 			}
 			if got, want := statusbarOptions.Prompt, "Settings > Appearance > "; got != want {
@@ -6498,7 +6553,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	if got, want := aboutOptions.UI, "settings-about"; got != want {
 		t.Fatalf("settings about UI = %q, want %q", got, want)
 	}
-	if got, want := aboutOptions.Title, "About - Version, updates, key setup"; got != want {
+	if got, want := aboutOptions.Title, "About - Version, updates, welcome, and quit"; got != want {
 		t.Fatalf("settings about title = %q, want %q", got, want)
 	}
 	if got := aboutOptions.Header; got != "" {
@@ -6533,19 +6588,45 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		"Installer",
 		"Installed with Go tooling",
 		"https://github.com/crevissepartners/projmux/releases/tag/" + latest,
-		"sidebar, sessions, projects",
-		"new window, rename window/pane",
-		"try shortcuts in projmux shell",
-		"projmux setup reports swallowed shortcuts",
-		"projmux setup terminal previews supported terminal key delivery mappings",
-		"projmux doctor provides read-only runtime and integration diagnostics",
-		"configure a plain alias",
-		"Alt Meta defaults",
-		"tmux/meta sequences",
-		"docs/keybindings.md",
 	} {
 		if !hasEntryLabelContaining(aboutOptions.Entries, want) {
 			t.Fatalf("settings about entries = %#v, want label containing %q", aboutOptions.Entries, want)
+		}
+	}
+	for _, removed := range []string{
+		"App", "Tmux actions", "Key setup", "Diagnose keys", "Terminal remediation",
+		"Diagnostics", "Rename key", "Ghostty", "Windows Term.", "Docs",
+		"sidebar, sessions, projects", "projmux setup terminal", "projmux doctor", "docs/keybindings.md",
+	} {
+		if hasEntryLabelContaining(aboutOptions.Entries, removed) {
+			t.Fatalf("settings about entries = %#v, want removed static copy %q to have no producer", aboutOptions.Entries, removed)
+		}
+	}
+}
+
+func TestSettingsRemovedAboutGuidanceCanonicalDestinations(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"../../docs/cli.md", "../../docs/settings-ia.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(content)
+		for _, destination := range []string{"`projmux setup`", "`projmux setup terminal`", "`projmux doctor`"} {
+			if !strings.Contains(text, destination) {
+				t.Fatalf("%s missing canonical removed-copy destination %s", path, destination)
+			}
+		}
+		if !strings.Contains(strings.ToLower(text), "read-only") {
+			t.Fatalf("%s must identify doctor diagnostics as read-only", path)
+		}
+	}
+
+	entries := (&settingsCommand{lookupEnv: func(string) string { return "" }}).aboutEntries()
+	for _, destination := range []string{"projmux setup", "projmux setup terminal", "projmux doctor"} {
+		if hasEntryLabelContaining(entries, destination) {
+			t.Fatalf("About entries = %#v, want canonical destination %q in CLI/docs only", entries, destination)
 		}
 	}
 }
@@ -6671,7 +6752,20 @@ func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
 				t.Fatalf("settings about entries = %#v, want update apply action", o.Entries)
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsUpdateApply}},
-		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+		{observe: func(o intpickercompat.Options) {
+			feedback := entryWithLabelContaining(o.Entries, "Update complete")
+			if feedback == nil || feedback.Value != settingsNoopValue {
+				t.Fatalf("settings feedback = %#v, want popup-visible passive update success", feedback)
+			}
+			if err := validateSettingsEntryContracts(o); err != nil {
+				t.Fatalf("update feedback reachability: %v", err)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+		{observe: func(o intpickercompat.Options) {
+			if feedback := entryWithLabelContaining(o.Entries, "Update complete"); feedback != nil {
+				t.Fatalf("root entries = %#v, want previous feedback cleared by Back navigation", o.Entries)
+			}
+		}, reply: intpickercompat.Result{}},
 	})
 	cmd := &settingsCommand{
 		ai:           testAICommand(t.TempDir()),
@@ -6687,6 +6781,202 @@ func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
 	want := []string{"npm install -g projmux@latest", "projmux tmux apply"}
 	if !equalStrings(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
+	}
+}
+
+func TestSettingsHubUpdateFailureStaysOpenWithPassiveFeedback(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
+	update, _ := testUpdateCommand(t, now)
+	update.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	update.runExternal = func(string, []string, io.Writer, io.Writer) error {
+		return errors.New("installer offline")
+	}
+
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAbout}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsUpdateApply}},
+		{observe: func(o intpickercompat.Options) {
+			feedback := entryWithLabelContaining(o.Entries, "Update failed")
+			if feedback == nil || feedback.Value != settingsNoopValue || !strings.Contains(feedback.Label, "installer offline") {
+				t.Fatalf("settings feedback = %#v, want handled update failure as passive row", feedback)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+	})
+	cmd := &settingsCommand{
+		ai:           testAICommand(t.TempDir()),
+		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		update:       update,
+		runner:       runner,
+		nativePicker: native,
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v, want handled failure to keep Settings open", err)
+	}
+	if !strings.Contains(stdout.String(), "Update failed:") || !strings.Contains(stdout.String(), "installer offline") {
+		t.Fatalf("stdout = %q, want preserved CLI-compatible failure output", stdout.String())
+	}
+}
+
+func TestSettingsFeedbackReplacementAndClearContract(t *testing.T) {
+	t.Parallel()
+
+	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
+	cmd.setSettingsFeedback("First complete", "first result")
+	options := cmd.withSettingsFeedback(intpickercompat.Options{
+		UI:      "settings-about",
+		Entries: []intpickercompat.Entry{settingsBackEntry()},
+	})
+	feedback := entryWithLabelContaining(options.Entries, "First complete")
+	if feedback == nil || feedback.Value != settingsNoopValue {
+		t.Fatalf("feedback entry = %#v, want passive noop row", feedback)
+	}
+	if err := validateSettingsEntryContracts(options); err != nil {
+		t.Fatalf("feedback entry contract: %v", err)
+	}
+
+	cmd.clearSettingsFeedbackFor(settingsNoopValue)
+	if cmd.feedback == nil {
+		t.Fatal("passive feedback selection cleared feedback, want it to remain visible")
+	}
+	cmd.clearSettingsFeedbackFor(settingsUpdateCheck)
+	if cmd.feedback != nil {
+		t.Fatalf("feedback = %#v after next action, want cleared before replacement", cmd.feedback)
+	}
+	cmd.setSettingsFeedback("Second failed", "replacement result")
+	if cmd.feedback.Summary != "Second failed" || cmd.feedback.Detail != "replacement result" {
+		t.Fatalf("replacement feedback = %#v", cmd.feedback)
+	}
+}
+
+func TestSettingsFeedbackKoreanChromePreservesDetailPayload(t *testing.T) {
+	t.Parallel()
+
+	const detail = "installer offline: E_CONNRESET"
+	cmd := &settingsCommand{lookupEnv: func(name string) string {
+		if name == "PROJMUX_LOCALE" {
+			return "ko-KR"
+		}
+		return ""
+	}}
+	cmd.setSettingsFeedback("Update failed", detail)
+	options := cmd.withSettingsFeedback(intpickercompat.Options{UI: "settings-about"})
+	feedback := entryWithLabelContaining(options.Entries, detail)
+	if feedback == nil {
+		t.Fatalf("feedback entries = %#v, want literal detail payload", options.Entries)
+	}
+	for _, want := range []string{"결과", "업데이트 실패", detail} {
+		if !strings.Contains(feedback.Label, want) {
+			t.Fatalf("feedback label = %q, want %q", feedback.Label, want)
+		}
+	}
+	for _, avoid := range []string{"Feedback", "Update failed"} {
+		if strings.Contains(feedback.Label, avoid) {
+			t.Fatalf("feedback label = %q, want no avoidable English chrome %q", feedback.Label, avoid)
+		}
+	}
+}
+
+func TestSettingsMutationFeedbackInventoryExcludesViewerFlows(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{
+		settingsUpdateApply,
+		settingsUpdateCheck,
+		settingsActionPrefixAI + "codex",
+		settingsActionPrefixDesktopNotifyMode + "notify",
+		settingsActionPrefixProjdir + "clear",
+		settingsActionPrefixStatusbar + "notify:emoji",
+		settingsActionPrefixSessionState + "autosave:on",
+		settingsActionPrefixWorkdir + "remove:/tmp/example",
+	} {
+		if _, ok := settingsMutationLabel(value); !ok {
+			t.Fatalf("mutation feedback inventory missing %q", value)
+		}
+	}
+	for _, value := range []string{
+		settingsWelcomeShow,
+		settingsQuitOpen,
+		settingsActionPrefixHookView + "global:send-noti",
+		settingsActionPrefixSessionState + "project-preview",
+		settingsKeybindingsDiagnostic,
+		settingsKeybindingsProbe,
+		settingsKeybindingsInit,
+	} {
+		if label, ok := settingsMutationLabel(value); ok {
+			t.Fatalf("non-mutation viewer %q classified as feedback mutation %q", value, label)
+		}
+	}
+}
+
+func TestSettingsCustomValidationFailureProjectsPopupFeedback(t *testing.T) {
+	t.Parallel()
+
+	runner, native := scriptedPicker(t, []pickerStep{{reply: intpickercompat.Result{Key: "enter", Query: "not-a-number"}}})
+	cmd := &settingsCommand{
+		runner:       runner,
+		nativePicker: native,
+		homeDir:      func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:    func(string) string { return "" },
+	}
+	var stderr bytes.Buffer
+	if err := cmd.runAIResumePickerLimitCustom(&bytes.Buffer{}, &stderr); err != nil {
+		t.Fatalf("runAIResumePickerLimitCustom() error = %v", err)
+	}
+	if cmd.feedback == nil || cmd.feedback.Summary != "Resume picker limit failed" || cmd.feedback.Detail == "" {
+		t.Fatalf("feedback = %#v, want handled parse failure", cmd.feedback)
+	}
+	projected := cmd.withSettingsFeedback(intpickercompat.Options{UI: "settings-ai-resume-picker-limit", Entries: []intpickercompat.Entry{settingsBackEntry()}})
+	feedback := entryWithLabelContaining(projected.Entries, "Resume picker limit failed")
+	if feedback == nil || feedback.Value != settingsNoopValue {
+		t.Fatalf("projected feedback = %#v, want passive popup row", feedback)
+	}
+}
+
+func TestSettingsHandledCustomValidationFeedbackInventory(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		summary string
+		run     func(*settingsCommand, io.Writer) error
+	}{
+		{name: "resume depth", summary: "Resume scan depth failed", run: func(c *settingsCommand, stderr io.Writer) error {
+			return c.runAIResumePickerDepthCustom(&bytes.Buffer{}, stderr)
+		}},
+		{name: "notification dedupe", summary: "AI notification dedupe failed", run: func(c *settingsCommand, stderr io.Writer) error {
+			return c.runNotificationsAIDedupeCustom(&bytes.Buffer{}, stderr)
+		}},
+		{name: "session interval", summary: "Session State interval failed", run: func(c *settingsCommand, stderr io.Writer) error {
+			return c.runSessionStateAutosaveIntervalTyped(&bytes.Buffer{}, stderr)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runner, native := scriptedPicker(t, []pickerStep{{reply: intpickercompat.Result{Key: "enter", Query: "invalid"}}})
+			home := t.TempDir()
+			cmd := &settingsCommand{
+				runner:       runner,
+				nativePicker: native,
+				homeDir:      func() (string, error) { return home, nil },
+				lookupEnv:    func(string) string { return "" },
+			}
+			var stderr bytes.Buffer
+			if err := tc.run(cmd, &stderr); err != nil {
+				t.Fatalf("custom validation error = %v", err)
+			}
+			if cmd.feedback == nil || cmd.feedback.Summary != tc.summary || cmd.feedback.Detail == "" {
+				t.Fatalf("feedback = %#v, want %q handled error", cmd.feedback, tc.summary)
+			}
+		})
 	}
 }
 
@@ -7090,8 +7380,12 @@ func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsWorkdirTyped}},
 		{observe: func(o intpickercompat.Options) { typedOptions = o },
 			reply: intpickercompat.Result{Key: "enter", Query: typed}},
-		// After typed flow returns, the workdirs list reopens. Close it.
-		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+		// After typed flow returns, the workdirs list reopens with visible success.
+		{observe: func(o intpickercompat.Options) {
+			if feedback := entryWithLabelContaining(o.Entries, "Workdir complete"); feedback == nil || feedback.Value != settingsNoopValue {
+				t.Fatalf("workdir success feedback = %#v, want passive popup row", feedback)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 		// After typed flow returns, the project picker reopens. Close it.
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
@@ -7143,9 +7437,13 @@ func TestSettingsHubAddWorkdirTypedRejectsRelativePath(t *testing.T) {
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsWorkdirAdd}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsWorkdirTyped}},
 		{reply: intpickercompat.Result{Key: "enter", Query: "relative/path"}},
-		// After typed-flow falls back, settings should return to the
-		// workdirs list. Close it.
-		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+		// After typed-flow falls back, the workdirs list owns the handled error.
+		{observe: func(o intpickercompat.Options) {
+			feedback := entryWithLabelContaining(o.Entries, "Workdir failed")
+			if feedback == nil || feedback.Value != settingsNoopValue || !strings.Contains(feedback.Label, "absolute path") {
+				t.Fatalf("workdir failure feedback = %#v, want passive popup row", feedback)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 		// After typed-flow falls back, settings should return to the
 		// project picker section. Close to terminate the run.
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
@@ -7690,6 +7988,15 @@ func hasEntryLabelContaining(entries []intpickercompat.Entry, value string) bool
 		}
 	}
 	return false
+}
+
+func entryWithLabelContaining(entries []intpickercompat.Entry, value string) *intpickercompat.Entry {
+	for i := range entries {
+		if strings.Contains(entries[i].Label, value) {
+			return &entries[i]
+		}
+	}
+	return nil
 }
 
 func settingsEntryLabelsText(entries []intpickercompat.Entry) string {

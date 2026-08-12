@@ -52,7 +52,9 @@ func (c *settingsCommand) runLocaleSection(stdout, stderr io.Writer) error {
 		case action == settingsNoopValue:
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixLocale):
-			if err := c.setGlobalLocale(strings.TrimPrefix(action, settingsActionPrefixLocale)); err != nil {
+			if err := c.runSettingsMutation("Language / Locale", stdout, stderr, func(io.Writer, io.Writer) error {
+				return c.setGlobalLocale(strings.TrimPrefix(action, settingsActionPrefixLocale))
+			}); err != nil {
 				return err
 			}
 		default:

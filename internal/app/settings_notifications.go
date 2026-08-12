@@ -88,7 +88,9 @@ func (c *settingsCommand) runNotificationsAIDedupeSection(stdout, stderr io.Writ
 			if err != nil {
 				return err
 			}
-			if err := c.setAINotifyDedupeSeconds(seconds, stdout); err != nil {
+			if err := c.runSettingsMutation("AI notification dedupe", stdout, stderr, func(out, _ io.Writer) error {
+				return c.setAINotifyDedupeSeconds(seconds, out)
+			}); err != nil {
 				return err
 			}
 		default:
@@ -119,9 +121,12 @@ func (c *settingsCommand) runNotificationsAIDedupeCustom(stdout, stderr io.Write
 	seconds, err := parseAINotifyDedupeSeconds(result.Query)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
+		c.setSettingsFeedback("AI notification dedupe failed", err.Error())
 		return nil
 	}
-	return c.setAINotifyDedupeSeconds(seconds, stdout)
+	return c.runSettingsMutation("AI notification dedupe", stdout, stderr, func(out, _ io.Writer) error {
+		return c.setAINotifyDedupeSeconds(seconds, out)
+	})
 }
 
 func (c *settingsCommand) runNotificationsDesktopSection(stdout, stderr io.Writer) error {
@@ -149,7 +154,7 @@ func (c *settingsCommand) runNotificationsDesktopSection(stdout, stderr io.Write
 		case action == settingsNoopValue:
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixDesktopNotifyMode):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -299,12 +304,16 @@ func (c *settingsCommand) runAIHookEventActionSection(provider, event string, st
 				return fmt.Errorf("unknown AI hook action choice: %s", action)
 			}
 			if next == "default" {
-				if err := c.clearAIHookAction(provider, event, stdout); err != nil {
+				if err := c.runSettingsMutation("Hook quiet policy", stdout, stderr, func(out, _ io.Writer) error {
+					return c.clearAIHookAction(provider, event, out)
+				}); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := c.setAIHookAction(provider, event, next, stdout); err != nil {
+			if err := c.runSettingsMutation("Hook quiet policy", stdout, stderr, func(out, _ io.Writer) error {
+				return c.setAIHookAction(provider, event, next, out)
+			}); err != nil {
 				return err
 			}
 		default:

@@ -859,7 +859,11 @@ flags with the top-level `switch` UX:
   or sync command. Terminal diagnostics and terminal mapping application stay
   in the `projmux shell` -> `projmux setup` -> `projmux setup terminal`
   remediation path.
-  The About section includes the `Welcome` entry. In Project
+  The compact About section contains Version, Source, real update
+  status/actions, Welcome, and Quit. It does not duplicate static setup or
+  diagnostics guides: use `projmux setup` for key-delivery diagnosis,
+  `projmux setup terminal` for supported terminal remediation, and the
+  read-only `projmux doctor` report for dependency/runtime diagnostics. In Project
   Picker, `Project Root` manages the saved
   primary root (`~/.config/projmux/projdir`) and displays whether the effective
   value comes from `PROJMUX_PROJDIR`, tmux `@projmux_projdir`, saved config, or
@@ -874,10 +878,9 @@ flags with the top-level `switch` UX:
   selecting Check Updates runs `projmux update check`, Update Now runs
   `projmux update apply`, and Welcome opens a Settings-native viewer
   independent of shell skip state. `Settings > About > Quit projmux` routes
-  through the same `projmux quit` action picker. The same About section also
-  lists the keybinding diagnostic path: try `projmux shell` first, use `setup`
-  for swallowed keys, use `init` for supported terminal mappings, and use
-  `doctor` for dependencies.
+  through the same `projmux quit` action picker. Settings mutations surface
+  their handled success/failure as a transient passive row inside the native
+  popup; selecting the next action clears or replaces that row.
 
 ## See also
 

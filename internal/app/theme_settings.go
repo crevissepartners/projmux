@@ -75,7 +75,9 @@ func (c *settingsCommand) runThemeSection(stdout, stderr io.Writer) error {
 				return err
 			}
 		case action == themeAction("reset"):
-			if err := c.resetTheme(stdout); err != nil {
+			if err := c.runSettingsMutation("Theme reset", stdout, stderr, func(out, _ io.Writer) error {
+				return c.resetTheme(out)
+			}); err != nil {
 				return err
 			}
 		default:
@@ -176,7 +178,9 @@ func (c *settingsCommand) runThemePresetSection(stdout, stderr io.Writer) error 
 			continue
 		case strings.HasPrefix(action, themeAction("preset:set:")):
 			preset := strings.TrimPrefix(action, themeAction("preset:set:"))
-			if err := c.setThemePreset(preset, stdout); err != nil {
+			if err := c.runSettingsMutation("Theme preset", stdout, stderr, func(out, _ io.Writer) error {
+				return c.setThemePreset(preset, out)
+			}); err != nil {
 				return err
 			}
 		default:
@@ -241,7 +245,9 @@ func (c *settingsCommand) runThemeColorSection(token theme.ColorToken, stdout, s
 			}
 		case strings.HasPrefix(action, themeAction("color-set:"+string(token)+":")):
 			value := strings.TrimPrefix(action, themeAction("color-set:"+string(token)+":"))
-			if err := c.setThemeColor(token, value, stdout); err != nil {
+			if err := c.runSettingsMutation("Theme color", stdout, stderr, func(out, _ io.Writer) error {
+				return c.setThemeColor(token, value, out)
+			}); err != nil {
 				return err
 			}
 		default:
@@ -313,10 +319,14 @@ func (c *settingsCommand) runThemeColorHexInput(token theme.ColorToken, stdout, 
 	}
 	hex, ok := theme.NormalizeHexColor(result.Query)
 	if !ok {
-		fmt.Fprintf(stderr, "invalid theme color %q: use #RRGGBB\n", strings.TrimSpace(result.Query))
+		message := fmt.Sprintf("invalid theme color %q: use #RRGGBB", strings.TrimSpace(result.Query))
+		fmt.Fprintln(stderr, message)
+		c.setSettingsFeedback("Theme color failed", message)
 		return nil
 	}
-	return c.setThemeColor(token, hex, stdout)
+	return c.runSettingsMutation("Theme color", stdout, stderr, func(out, _ io.Writer) error {
+		return c.setThemeColor(token, hex, out)
+	})
 }
 
 func (c *settingsCommand) runThemeColorGrid(token theme.ColorToken, stdout, stderr io.Writer) error {
@@ -335,10 +345,14 @@ func (c *settingsCommand) runThemeColorGrid(token theme.ColorToken, stdout, stde
 	case "enter":
 		hex, ok := theme.NormalizeHexColor(result.Value)
 		if !ok {
-			fmt.Fprintf(stderr, "invalid theme color %q: use #RRGGBB\n", strings.TrimSpace(result.Value))
+			message := fmt.Sprintf("invalid theme color %q: use #RRGGBB", strings.TrimSpace(result.Value))
+			fmt.Fprintln(stderr, message)
+			c.setSettingsFeedback("Theme color failed", message)
 			return nil
 		}
-		return c.setThemeColor(token, hex, stdout)
+		return c.runSettingsMutation("Theme color", stdout, stderr, func(out, _ io.Writer) error {
+			return c.setThemeColor(token, hex, out)
+		})
 	case "hex":
 		return c.runThemeColorHexInput(token, stdout, stderr)
 	default:

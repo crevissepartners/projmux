@@ -48,7 +48,7 @@ func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixAI):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -82,7 +82,9 @@ func (c *settingsCommand) runAIEnabledAgentsSection(stdout, stderr io.Writer) er
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixAIEnabledAgent):
 			provider := strings.TrimPrefix(action, settingsActionPrefixAIEnabledAgent)
-			if err := c.toggleAIEnabledAgent(provider); err != nil {
+			if err := c.runSettingsMutation("Enabled agents", stdout, stderr, func(io.Writer, io.Writer) error {
+				return c.toggleAIEnabledAgent(provider)
+			}); err != nil {
 				return err
 			}
 		default:
@@ -168,7 +170,9 @@ func (c *settingsCommand) runAIResumePickerLimitSection(stdout, stderr io.Writer
 			if err != nil {
 				return err
 			}
-			if err := c.setAIResumePickerLimit(limit, stdout); err != nil {
+			if err := c.runSettingsMutation("Resume picker limit", stdout, stderr, func(out, _ io.Writer) error {
+				return c.setAIResumePickerLimit(limit, out)
+			}); err != nil {
 				return err
 			}
 		default:
@@ -212,7 +216,9 @@ func (c *settingsCommand) runAIResumePickerDepthSection(stdout, stderr io.Writer
 			if err != nil {
 				return err
 			}
-			if err := c.setAIResumeScanDepth(depth, stdout); err != nil {
+			if err := c.runSettingsMutation("Resume scan depth", stdout, stderr, func(out, _ io.Writer) error {
+				return c.setAIResumeScanDepth(depth, out)
+			}); err != nil {
 				return err
 			}
 		default:
@@ -243,9 +249,12 @@ func (c *settingsCommand) runAIResumePickerLimitCustom(stdout, stderr io.Writer)
 	limit, err := parseAIResumePickerLimit(result.Query)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
+		c.setSettingsFeedback("Resume picker limit failed", err.Error())
 		return nil
 	}
-	return c.setAIResumePickerLimit(limit, stdout)
+	return c.runSettingsMutation("Resume picker limit", stdout, stderr, func(out, _ io.Writer) error {
+		return c.setAIResumePickerLimit(limit, out)
+	})
 }
 
 func (c *settingsCommand) runAIResumePickerDepthCustom(stdout, stderr io.Writer) error {
@@ -270,9 +279,12 @@ func (c *settingsCommand) runAIResumePickerDepthCustom(stdout, stderr io.Writer)
 	depth, err := parseAIResumeScanDepth(result.Query)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
+		c.setSettingsFeedback("Resume scan depth failed", err.Error())
 		return nil
 	}
-	return c.setAIResumeScanDepth(depth, stdout)
+	return c.runSettingsMutation("Resume scan depth", stdout, stderr, func(out, _ io.Writer) error {
+		return c.setAIResumeScanDepth(depth, out)
+	})
 }
 
 // aiResumePickerEntries builds the Resume picker navigation view: two drill-in
@@ -386,7 +398,7 @@ func (c *settingsCommand) runAIDefaultModeSection(stdout, stderr io.Writer) erro
 		case action == settingsNoopValue:
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixAI):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:

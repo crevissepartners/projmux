@@ -154,7 +154,7 @@ func (c *settingsCommand) runSessionStateToggleDetail(title, prompt string, entr
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixSessionState):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -187,7 +187,7 @@ func (c *settingsCommand) runProjectSessionStateAutosaveDetail(stdout, stderr io
 		case action == settingsNoopValue:
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixSessionState):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -227,11 +227,11 @@ func (c *settingsCommand) runProjectSessionStateActionsDetail(stdout, stderr io.
 			if !confirmed {
 				continue
 			}
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixSessionState):
-			if err := c.execute(action, stdout, stderr); err != nil {
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -394,9 +394,12 @@ func (c *settingsCommand) runSessionStateAutosaveIntervalTyped(stdout, stderr io
 	value, err := parseSessionStateAutosaveInterval(result.Query)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
+		c.setSettingsFeedback("Session State interval failed", err.Error())
 		return nil
 	}
-	return c.setSessionStateAutosaveInterval(value, stdout)
+	return c.runSettingsMutation("Session State interval", stdout, stderr, func(out, _ io.Writer) error {
+		return c.setSessionStateAutosaveInterval(value, out)
+	})
 }
 
 func (c *settingsCommand) projectSessionStateAutosaveDetailEntries() []intpickercompat.Entry {

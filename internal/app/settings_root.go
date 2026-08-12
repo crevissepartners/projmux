@@ -138,7 +138,7 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 			Value: settingsSectionGlobalHooks,
 		},
 		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Appearance", "theme font status and icon decoration"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Appearance", "language, AI badge, status/notify icon decoration"),
 			Value: settingsSectionStatusbar,
 		},
 		{
@@ -158,7 +158,7 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 			Value: settingsSectionLabs,
 		},
 		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "About", "version, updates, key setup"),
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "About", "version, updates, welcome, and quit"),
 			Value: settingsSectionAbout,
 		},
 	}

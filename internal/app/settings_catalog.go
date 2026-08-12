@@ -410,7 +410,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 		return intpickercompat.Options{
 			UI:         "settings-statusbar",
 			Entries:    c.statusbarEntries(),
-			Title:      "Appearance - AI badge and icon decoration",
+			Title:      "Appearance - Language, AI badge, status/notify icons",
 			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, ctx.hasProject(), c.locale()),
 			Prompt:     "Settings > Appearance > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
@@ -453,7 +453,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 		return intpickercompat.Options{
 			UI:         "settings-about",
 			Entries:    c.aboutEntries(),
-			Title:      "About - Version, updates, key setup",
+			Title:      "About - Version, updates, welcome, and quit",
 			Prompt:     "Settings > About > ",
 			Footer:     projmuxFooter("Enter: action  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},

@@ -149,7 +149,9 @@ func (c *settingsCommand) runAIBadgeStyleSection(stdout, stderr io.Writer) error
 			if !isAIBadgeStyle(style) {
 				return fmt.Errorf("unknown AI badge style action: %s", action)
 			}
-			if err := c.setAIBadgeStyle(style); err != nil {
+			if err := c.runSettingsMutation("AI badge style", stdout, stderr, func(io.Writer, io.Writer) error {
+				return c.setAIBadgeStyle(style)
+			}); err != nil {
 				return err
 			}
 		default:
@@ -237,6 +239,10 @@ func aiBadgeStylePreview(style config.AIBadgeStyle) string {
 }
 
 func (c *settingsCommand) runAppearanceTargetSection(target statusbarDecorationTarget, stdout, stderr io.Writer) error {
+	meta, ok := statusbarDecorationTargetMeta(target)
+	if !ok {
+		return fmt.Errorf("unknown appearance target: %s", target)
+	}
 	for {
 		options, err := c.statusbarDecorationTargetOptions(target)
 		if err != nil {
@@ -261,7 +267,9 @@ func (c *settingsCommand) runAppearanceTargetSection(target statusbarDecorationT
 			if !ok || actionTarget != target || !isStatusbarDecorationMode(mode) {
 				return fmt.Errorf("unknown appearance detail action: %s", action)
 			}
-			if err := c.setStatusbarDecoration(string(actionTarget) + ":" + mode); err != nil {
+			if err := c.runSettingsMutation(meta.Name, stdout, stderr, func(io.Writer, io.Writer) error {
+				return c.setStatusbarDecoration(string(actionTarget) + ":" + mode)
+			}); err != nil {
 				return err
 			}
 		default:

@@ -17,16 +17,6 @@ func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 	rows := []struct{ name, value string }{
 		{"Version", "projmux " + version.String()},
 		{"Source", "https://github.com/crevissepartners/projmux"},
-		{"App", "sidebar, sessions, projects, AI picker, settings"},
-		{"Tmux actions", "new window, rename window/pane, previous/next window"},
-		{"Key setup", "try shortcuts in projmux shell before changing terminal config"},
-		{"Diagnose keys", "projmux setup reports swallowed shortcuts"},
-		{"Terminal remediation", "projmux setup terminal previews supported terminal key delivery mappings"},
-		{"Diagnostics", "projmux doctor provides read-only runtime and integration diagnostics"},
-		{"Rename key", "configure a plain alias or use tmux prefix rename"},
-		{"Ghostty", "Alt Meta defaults normally need no projmux key block"},
-		{"Windows Term.", "actions sendInput tmux/meta sequences; keybindings attach keys"},
-		{"Docs", "docs/keybindings.md has copyable terminal examples"},
 	}
 	entries := make([]intpickercompat.Entry, 0, len(rows)+8)
 	entries = append(entries, settingsBackEntryLocale(locale))
