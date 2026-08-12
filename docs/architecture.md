@@ -90,6 +90,19 @@ Ephemeral runtime state:
 - popup marker files
 - current tagged selection set
 
+## Resource attribution model
+
+The Linux resource-attribution core is an ephemeral, read-only projection. A
+tmux-specific typed inventory supplies socket/session/window/pane identities,
+pane PID/TTY, and the stable session `@projmux_project_path` anchor. A one-pass
+procfs collector supplies PID+starttime identity, SID, CPU ticks, RSS, and host
+capacity. Pure aggregation builds pane, unique-window, and project rows without
+using labels, topics, titles, or cwd-derived names as ownership keys.
+
+Resource snapshots are not Session State and are never saved or restored. See
+[resource-attribution.md](resource-attribution.md) for metric, partial-state,
+host-remainder, privacy, and measurement contracts.
+
 ## Naming metadata model
 
 Projmux keeps visible naming separate from source metadata:
