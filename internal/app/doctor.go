@@ -120,23 +120,6 @@ func doctorDeps() []doctorDep {
 	}
 }
 
-func doctorDepsForHost(host string) []doctorDep {
-	deps := doctorDeps()
-	if doctorUsesPsmuxTrack(host) {
-		for i, dep := range deps {
-			if dep.Category == doctorCategoryCore {
-				deps[i] = doctorDep{Name: "psmux", Required: true, Category: doctorCategoryCore, MinVersion: "3.3.4"}
-				break
-			}
-		}
-	}
-	return deps
-}
-
-func doctorUsesPsmuxTrack(host string) bool {
-	return host == "windows"
-}
-
 // Run executes the projmux doctor diagnostics flow.
 func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
@@ -197,7 +180,7 @@ func (c *doctorCommand) evaluateAINotifyIntegrations() []doctorAINotifyIntegrati
 	if c.aiDiagnostics == nil {
 		return nil
 	}
-	return doctorApplyMuxTrackToAINotify(c.hostGOOS(), c.aiDiagnostics())
+	return c.aiDiagnostics()
 }
 
 func (c *doctorCommand) evaluateSessionStateResume() []doctorSessionStateResumeDiagnostic {
@@ -409,7 +392,7 @@ func runDoctorExternal(name string, args []string, stdout, stderr io.Writer) err
 
 func (c *doctorCommand) evaluate() []doctorResult {
 	host := c.hostGOOS()
-	deps := doctorDepsForHost(host)
+	deps := doctorDeps()
 	out := make([]doctorResult, 0, len(deps))
 	for _, dep := range deps {
 		out = append(out, c.evaluateDep(dep, host))
@@ -422,20 +405,6 @@ func (c *doctorCommand) hostGOOS() string {
 		return runtime.GOOS
 	}
 	return c.goos()
-}
-
-func doctorApplyMuxTrackToAINotify(host string, diagnostics []doctorAINotifyIntegration) []doctorAINotifyIntegration {
-	if !doctorUsesPsmuxTrack(host) || len(diagnostics) == 0 {
-		return diagnostics
-	}
-	out := make([]doctorAINotifyIntegration, 0, len(diagnostics))
-	for _, diag := range diagnostics {
-		if diag.ID == "tmux-bell" {
-			diag = doctorTmuxBellUnsupportedDiagnostic()
-		}
-		out = append(out, diag)
-	}
-	return out
 }
 
 func (c *doctorCommand) evaluateDep(dep doctorDep, host string) doctorResult {

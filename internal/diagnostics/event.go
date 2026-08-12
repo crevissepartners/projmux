@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 	"unicode"
@@ -43,23 +42,8 @@ func NewRunID() string {
 	return fmt.Sprintf("%x-%x", time.Now().UnixNano(), os.Getpid())
 }
 
-// MuxBackend returns only the supported backend enum. Arbitrary environment
-// values are ignored rather than copied into an event.
-func MuxBackend(lookupEnv func(string) string, goos string) string {
-	if lookupEnv != nil {
-		switch strings.ToLower(strings.TrimSpace(lookupEnv("PROJMUX_MUX_BACKEND"))) {
-		case "tmux":
-			return "tmux"
-		case "psmux":
-			return "psmux"
-		}
-	}
-	if goos == "" {
-		goos = runtime.GOOS
-	}
-	if strings.EqualFold(goos, "windows") {
-		return "psmux"
-	}
+// MuxBackend returns the supported backend enum for operational events.
+func MuxBackend() string {
 	return "tmux"
 }
 
@@ -106,7 +90,7 @@ var (
 	allowedEvents     = stringSet("command.outcome")
 	allowedResults    = stringSet("success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
-	allowedBackends   = stringSet("tmux", "psmux")
+	allowedBackends   = stringSet("tmux")
 )
 
 func sanitizeEvent(in Event, home string) (Event, error) {

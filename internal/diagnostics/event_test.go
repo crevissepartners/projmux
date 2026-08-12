@@ -238,9 +238,9 @@ func TestClassifyPreviewOnlyIntegrationIntents(t *testing.T) {
 	}
 }
 
-func TestMuxBackendDoesNotCopyUnknownEnvironmentValue(t *testing.T) {
+func TestMuxBackendIsTmux(t *testing.T) {
 	t.Parallel()
-	if got := MuxBackend(func(string) string { return "secret-backend" }, "linux"); got != "tmux" {
+	if got := MuxBackend(); got != "tmux" {
 		t.Fatalf("MuxBackend() = %q, want tmux", got)
 	}
 }

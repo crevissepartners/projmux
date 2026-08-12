@@ -40,17 +40,6 @@ type attachCommand struct {
 
 func newAttachCommand() *attachCommand {
 	client := defaultTmuxClient()
-	if usePSMuxBackend(os.Getenv, nil) {
-		client := newDefaultPSMuxClient()
-		return &attachCommand{
-			inventory:  client,
-			sessions:   client,
-			killer:     client,
-			homeDir:    os.UserHomeDir,
-			workingDir: os.Getwd,
-			now:        time.Now,
-		}
-	}
 	return &attachCommand{
 		inventory:  client,
 		sessions:   client,

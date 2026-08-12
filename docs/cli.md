@@ -479,9 +479,9 @@ watcher, and split layout.
 Automation callers can add `--print-pane-id` to an explicit direct
 `--agent claude|codex|antigravity|shell` launch. On success, stdout contains
 exactly the new `%N` pane id followed by one newline. The value comes directly
-from the selected tmux or psmux backend's existing
-`split-window -P -F '#{pane_id}'` result. If the backend returns no valid pane
-id, the command fails non-zero with backend-specific guidance and writes no
+from tmux's existing
+`split-window -P -F '#{pane_id}'` result. If tmux returns no valid pane id, the
+command fails non-zero with tmux-specific guidance and writes no
 success value. Without `--print-pane-id`, successful split invocations keep the
 existing empty-stdout behavior.
 

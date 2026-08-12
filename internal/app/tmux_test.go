@@ -2123,10 +2123,8 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"set-hook -g session-window-changed",
 		"range=user|sessionstate",
 		"statusbar click sessionstate",
-		"$env:PROJMUX_MUX_BACKEND",
 		"$env:PROJMUX_PICKER_BACKEND",
 		"$env:PROJMUX_NATIVE_LINE_MODE",
-		"psmux",
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-app-config output = %q, did not expect substring %q", output, banned)

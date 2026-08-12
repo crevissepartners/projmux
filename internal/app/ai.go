@@ -29,7 +29,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
-	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -1535,7 +1534,6 @@ func (c *aiCommand) runAgentSplitResolvedWithOptionsResult(mode, direction strin
 			return "", err
 		}
 	}
-	usePSMux := c.usePSMuxAIBackend()
 	title := c.buildAgentTitle(mode, contextDir)
 	command, commandArgs, err := c.agentSplitCommand(mode, pathPrepend, contextDir, title, execArgv)
 	if err != nil {
@@ -1571,9 +1569,6 @@ func (c *aiCommand) runAgentSplitResolvedWithOptionsResult(mode, direction strin
 			return "", err
 		}
 	}
-	if usePSMux {
-		return paneID, nil
-	}
 	c.configureAIPane(paneID, mode, contextDir, title, options.resume)
 	c.applySplitLayout(targetPane, direction)
 	c.startAIWatchTitle(paneID)
@@ -1608,7 +1603,6 @@ func (c *aiCommand) runShellSplitWithPaneID(direction string) (string, error) {
 }
 
 func (c *aiCommand) runShellSplitResolved(direction string, requirePaneID bool) (string, error) {
-	usePSMux := c.usePSMuxAIBackend()
 	targetPane := c.resolveTargetPane()
 	if requirePaneID && strings.TrimSpace(targetPane) == "" {
 		return "", c.printPaneIDUnavailableError("")
@@ -1619,19 +1613,9 @@ func (c *aiCommand) runShellSplitResolved(direction string, requirePaneID bool) 
 		splitDirection = intmux.SplitDown
 	}
 	command := loginShellCommand(defaultInteractiveShell(c.lookupEnv))
-	returnPaneID := false
-	if usePSMux {
-		rendered, err := psmuxSplitCommandTail(psmuxInteractiveShellCommand(c.lookupEnv))
-		if err != nil {
-			return "", err
-		}
-		command = []string{rendered}
-		returnPaneID = true
-	}
-	returnPaneID = returnPaneID || requirePaneID
 
 	paneID, err := c.muxRunner().SplitWindow(context.Background(), intmux.SplitWindowOptions{
-		ReturnPaneID: returnPaneID,
+		ReturnPaneID: requirePaneID,
 		Direction:    splitDirection,
 		Target:       targetPane,
 		Cwd:          contextDir,
@@ -1648,9 +1632,6 @@ func (c *aiCommand) runShellSplitResolved(direction string, requirePaneID bool) 
 		if err != nil {
 			return "", err
 		}
-	}
-	if usePSMux {
-		return paneID, nil
 	}
 	c.applySplitLayout(targetPane, direction)
 	return paneID, nil
@@ -1682,9 +1663,6 @@ func (c *aiCommand) printPaneIDSplitError(err error) error {
 }
 
 func (c *aiCommand) printPaneIDBackendName() string {
-	if c.usePSMuxAIBackend() {
-		return "psmux"
-	}
 	return "tmux"
 }
 
@@ -1983,13 +1961,6 @@ func (c *aiCommand) agentLaunchCommand(mode, agentBin, contextDir, title string)
 }
 
 func (c *aiCommand) agentSplitCommand(mode, pathPrepend, contextDir, title string, execArgv []string) ([]string, []string, error) {
-	if c.usePSMuxAIBackend() {
-		rendered, err := psmuxSplitCommandTail(execArgv)
-		if err != nil {
-			return nil, nil, err
-		}
-		return execArgv, []string{rendered}, nil
-	}
 	command := c.agentLaunchCommandForArgv(mode, pathPrepend, contextDir, title, execArgv)
 	commandShell := posixCommandShell(c.lookupEnv)
 	return append([]string{commandShell, "-lc"}, command), []string{commandShell, "-lc", command}, nil
@@ -2019,26 +1990,6 @@ func (c *aiCommand) agentLaunchCommandForArgv(mode, pathPrepend, contextDir, tit
 		strings.Join(execParts, " "),
 	)
 	return strings.Join(parts, " && ")
-}
-
-func (c *aiCommand) usePSMuxAIBackend() bool {
-	return usePSMuxBackend(c.lookupEnv, nil)
-}
-
-func psmuxSplitCommandTail(argv []string) (string, error) {
-	if len(argv) == 0 {
-		return "", errors.New("psmux split command requires argv")
-	}
-	return intpsmux.RenderPowerShellCommand(argv[0], argv[1:]...)
-}
-
-func psmuxInteractiveShellCommand(lookupEnv func(string) string) []string {
-	if lookupEnv != nil {
-		if shell := strings.TrimSpace(lookupEnv("SHELL")); shell != "" && !strings.ContainsAny(shell, "\x00\r\n") {
-			return []string{shell}
-		}
-	}
-	return []string{"powershell", "-NoLogo"}
 }
 
 func (c *aiCommand) configureAIPane(paneID, mode, contextDir, title string, resume aiPaneResumeMetadata) {
@@ -2110,10 +2061,6 @@ func (c *aiCommand) findAgentBinary(mode string) string {
 	}
 	binName := provider.BinaryName
 
-	if c.usePSMuxAIBackend() {
-		return c.findPSMuxAgentBinary(string(provider.ID), binName)
-	}
-
 	home := c.homeOrEmpty()
 	if path := firstExecutable(
 		c.readTrimmed("command", "-v", binName),
@@ -2132,151 +2079,8 @@ func (c *aiCommand) findAgentBinary(mode string) string {
 	return ""
 }
 
-func (c *aiCommand) findPSMuxAgentBinary(mode, binName string) string {
-	if path := c.findPSMuxPowerShellCommand(binName); path != "" {
-		return path
-	}
-	if path := firstExistingWindowsCommandCandidate(psmuxWindowsPathCandidates(c.env("PATH"), binName)); path != "" {
-		return path
-	}
-	if path := firstExistingWindowsCommandCandidate(psmuxWhereCandidates(c.readTrimmed("where.exe", binName), binName)); path != "" {
-		return path
-	}
-
-	home := c.homeOrEmpty()
-	if mode == aiModeCodex {
-		matches, _ := filepath.Glob(filepath.Join(home, ".vscode", "extensions", "openai.chatgpt-*", "bin", "*", "codex"))
-		if path := newestExistingFile(matches); path != "" {
-			return path
-		}
-	}
-	return ""
-}
-
-func (c *aiCommand) findPSMuxPowerShellCommand(binName string) string {
-	script := "$cmd = Get-Command -Name " + powerShellSingleQuote(binName) + " -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1; if ($cmd) { if ($cmd.Source) { $cmd.Source } elseif ($cmd.Path) { $cmd.Path } }"
-	return firstExistingWindowsCommandCandidate([]string{
-		c.readTrimmed("powershell", "-NoProfile", "-Command", script),
-		c.readTrimmed("pwsh", "-NoProfile", "-Command", script),
-	})
-}
-
 func (c *aiCommand) missingAgentRunnerMessage(mode string) string {
-	if c.usePSMuxAIBackend() {
-		if mode == aiModeClaude {
-			nativePath := filepath.Join(c.homeOrEmpty(), ".local", "bin", "claude.exe")
-			if existingFile(nativePath) {
-				return fmt.Sprintf("selected runner is installed at %s but is not on PATH; add %s to PATH and restart psmux", nativePath, filepath.Dir(nativePath))
-			}
-		}
-		return fmt.Sprintf("selected runner is not installed or unsupported on this mux backend: %s", mode)
-	}
 	return fmt.Sprintf("selected runner is not installed: %s", mode)
-}
-
-func psmuxWhereCandidates(output, binName string) []string {
-	var candidates []string
-	for line := range strings.SplitSeq(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		candidates = append(candidates, line)
-	}
-	return sortWindowsCommandCandidates(candidates, binName)
-}
-
-func psmuxWindowsPathCandidates(pathList, binName string) []string {
-	var candidates []string
-	for _, dir := range splitPSMuxPathList(pathList) {
-		for _, name := range windowsCommandCandidateNames(binName) {
-			candidates = append(candidates, filepath.Join(dir, name))
-		}
-	}
-	return candidates
-}
-
-func splitPSMuxPathList(pathList string) []string {
-	if strings.TrimSpace(pathList) == "" {
-		return nil
-	}
-	var parts []string
-	if strings.Contains(pathList, ";") {
-		parts = strings.Split(pathList, ";")
-	} else {
-		parts = filepath.SplitList(pathList)
-	}
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			out = append(out, part)
-		}
-	}
-	return out
-}
-
-func windowsCommandCandidateNames(binName string) []string {
-	return []string{binName + ".cmd", binName + ".ps1", binName + ".exe", binName}
-}
-
-func sortWindowsCommandCandidates(candidates []string, binName string) []string {
-	priority := map[string]int{}
-	for i, name := range windowsCommandCandidateNames(binName) {
-		priority[strings.ToLower(name)] = i
-	}
-	out := append([]string(nil), candidates...)
-	sort.SliceStable(out, func(i, j int) bool {
-		left, ok := priority[strings.ToLower(windowsPathBase(out[i]))]
-		if !ok {
-			left = len(priority)
-		}
-		right, ok := priority[strings.ToLower(windowsPathBase(out[j]))]
-		if !ok {
-			right = len(priority)
-		}
-		return left < right
-	})
-	return out
-}
-
-func windowsPathBase(path string) string {
-	idx := strings.LastIndexAny(path, `/\`)
-	if idx < 0 {
-		return path
-	}
-	return path[idx+1:]
-}
-
-func firstExistingWindowsCommandCandidate(paths []string) string {
-	for _, path := range paths {
-		path = strings.TrimSpace(path)
-		if existingFile(path) {
-			return path
-		}
-	}
-	return ""
-}
-
-func existingFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-func newestExistingFile(paths []string) string {
-	var newestPath string
-	var newestMod time.Time
-	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
-			continue
-		}
-		if newestPath == "" || info.ModTime().After(newestMod) {
-			newestPath = path
-			newestMod = info.ModTime()
-		}
-	}
-	return newestPath
 }
 
 // nodeManagerCandidates returns possible install paths for a globally-installed
@@ -2362,9 +2166,6 @@ func (c *aiCommand) read(name string, args ...string) ([]byte, error) {
 }
 
 func (c *aiCommand) readMux(args ...string) ([]byte, error) {
-	if c.usePSMuxAIBackend() {
-		return c.muxRunner().Read(context.Background(), args...)
-	}
 	return c.read("tmux", args...)
 }
 
@@ -2377,105 +2178,28 @@ func (c *aiCommand) readMuxTrimmed(args ...string) string {
 }
 
 func (c *aiCommand) muxRunner() intmux.Runner {
-	backend := aiCommandMuxBackend{
+	return intmux.NewRunner(aiCommandMuxBackend{
 		runCommand:  c.runCommand,
 		readCommand: c.readCommand,
-	}
-	if c.usePSMuxAIBackend() {
-		backend.commandName = "psmux"
-		backend.prefix = []string{"-L", defaultAppSocket}
-	}
-	return intmux.NewRunner(backend)
+	})
 }
 
 type aiCommandMuxBackend struct {
 	runCommand  func(ctx context.Context, name string, args ...string) error
 	readCommand func(ctx context.Context, name string, args ...string) ([]byte, error)
-	commandName string
-	prefix      []string
 }
 
 func (b aiCommandMuxBackend) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	actualName := name
-	actualArgs := args
-	if name == "tmux" && strings.TrimSpace(b.commandName) != "" {
-		actualName = b.commandName
-		actualArgs = append(append([]string(nil), b.prefix...), psmuxMuxArgs(args)...)
-	}
 	if name == "tmux" && !aiMuxCommandNeedsOutput(args) {
 		if b.runCommand != nil {
-			return nil, b.runCommand(ctx, actualName, actualArgs...)
+			return nil, b.runCommand(ctx, name, args...)
 		}
 		return nil, errors.New("ai command runner is not configured")
 	}
 	if b.readCommand == nil {
 		return nil, errors.New("ai command reader is not configured")
 	}
-	return b.readCommand(ctx, actualName, actualArgs...)
-}
-
-func psmuxMuxArgs(args []string) []string {
-	if len(args) == 0 || args[0] != "split-window" {
-		return args
-	}
-	detached := false
-	direction := ""
-	returnPaneID := false
-	format := ""
-	target := ""
-	cwd := ""
-	commandStart := len(args)
-	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "-d":
-			detached = true
-		case "-h", "-v":
-			direction = args[i]
-		case "-P":
-			returnPaneID = true
-		case "-F":
-			if i+1 < len(args) {
-				format = args[i+1]
-				i++
-			}
-		case "-t":
-			if i+1 < len(args) {
-				target = args[i+1]
-				i++
-			}
-		case "-c":
-			if i+1 < len(args) {
-				cwd = args[i+1]
-				i++
-			}
-		default:
-			commandStart = i
-			i = len(args)
-		}
-	}
-	out := []string{"split-window"}
-	if detached {
-		out = append(out, "-d")
-	}
-	if direction != "" {
-		out = append(out, direction)
-	}
-	if returnPaneID {
-		out = append(out, "-P")
-		if format != "" {
-			out = append(out, "-F", format)
-		}
-	}
-	if target != "" {
-		out = append(out, "-t", target)
-	}
-	if cwd != "" {
-		out = append(out, "-c", cwd)
-	}
-	if commandStart < len(args) {
-		out = append(out, args[commandStart:]...)
-	}
-	return out
+	return b.readCommand(ctx, name, args...)
 }
 
 func aiMuxCommandNeedsOutput(args []string) bool {

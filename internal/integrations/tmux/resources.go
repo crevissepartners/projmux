@@ -17,9 +17,8 @@ var (
 	errResourcePanePIDInvalid    = errors.New("tmux resource pane pid is invalid")
 )
 
-// ListResourcePanes reads the Linux attribution inventory without changing
-// the established cross-backend Pane model. psmux therefore does not need to
-// invent unsupported PID or TTY values.
+// ListResourcePanes reads the Linux attribution inventory into the typed
+// resource model without spreading raw tmux rows into the app layer.
 func (c *Client) ListResourcePanes(ctx context.Context) ([]resources.PaneInventory, error) {
 	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-a", "-F", tmuxFormat(
 		"#{socket_path}",

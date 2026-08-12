@@ -28,7 +28,7 @@ func main() {
 		func() error { return app.Run(os.Args[1:], os.Stdout, os.Stderr) },
 		func(err error) {
 			if path, pathErr := diagnostics.DefaultPath(os.Getenv, os.UserHomeDir); pathErr == nil {
-				_ = diagnostics.RecordOutcome(diagnostics.NewStore(path), os.Args[1:], runID, version.String(), diagnostics.MuxBackend(os.Getenv, ""), started, err, app.IsUsageError(err))
+				_ = diagnostics.RecordOutcome(diagnostics.NewStore(path), os.Args[1:], runID, version.String(), diagnostics.MuxBackend(), started, err, app.IsUsageError(err))
 			}
 		},
 		os.Stderr,

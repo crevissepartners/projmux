@@ -89,8 +89,8 @@ print exactly one `%N` pane id line. The flag does not change how arguments
 after `--` reach the selected agent. Without the flag, stdout remains empty so
 existing manual shortcuts and Settings actions retain their behavior.
 
-The pane id is the existing tmux or psmux `split-window` return value. A backend
-that does not return a valid id causes a non-zero, actionable error instead of
+The pane id is the existing tmux `split-window` return value. If tmux does not
+return a valid id, the command produces a non-zero, actionable error instead of
 a false success. Do not combine the flag with the saved default,
 `--agent selective`, or `--agent resume`; picker-backed paths are rejected
 before a picker or pane is opened. This is a one-line handle contract, not a

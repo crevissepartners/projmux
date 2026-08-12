@@ -11,8 +11,8 @@ outside Session State.
 `tmux.Client.ListResourcePanes` reads a resource-specific inventory containing
 socket path, session id/name, window id, pane id, pane PID/TTY, and the session
 `@projmux_project_path` anchor. This is deliberately separate from the general
-cross-backend `tmux.Pane`: psmux remains a valid degraded inventory adapter and
-does not fabricate PID, TTY, or project-anchor data.
+`tmux.Pane` inventory so the resource contract requires PID, TTY, and project
+anchor data without weakening other pane consumers.
 
 The ownership key is `(socket, pane_id)`. Process identity is `(PID,
 /proc/<pid>/stat starttime)` and a process is attributed only when its POSIX
