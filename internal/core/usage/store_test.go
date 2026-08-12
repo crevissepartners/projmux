@@ -158,3 +158,59 @@ func TestSortedSnapshotsStable(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreQuotaBucketIdentityOrderingAndResetRoundTrip(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewStore(dir)
+	now := mustTime(t, "2026-08-12T00:00:00Z")
+	reset := mustTime(t, "2026-08-13T00:00:00Z")
+	zero := int64(0)
+	in := []Snapshot{
+		{Model: "antigravity", Window: WindowQuota, Bucket: "weekly", Pct: 20, ResetsAt: reset, UpdatedAt: now},
+		{Model: "antigravity", Window: WindowContext, Pct: 10, UpdatedAt: now},
+		{Model: "antigravity", Window: WindowQuota, Bucket: "5h", Pct: 30, ResetsAt: reset, UpdatedAt: now},
+		{Model: "antigravity", Window: WindowQuota, Bucket: "context", Pct: 0, ResetInSeconds: &zero, UpdatedAt: now},
+	}
+	if err := store.SaveState(State{Snapshots: in}); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := store.LoadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("snapshots = %#v", got)
+	}
+	want := []struct {
+		window Window
+		bucket string
+	}{{WindowContext, ""}, {WindowQuota, "5h"}, {WindowQuota, "context"}, {WindowQuota, "weekly"}}
+	for i := range want {
+		if got[i].Window != want[i].window || got[i].Bucket != want[i].bucket {
+			t.Fatalf("got[%d] = %#v, want window=%q bucket=%q", i, got[i], want[i].window, want[i].bucket)
+		}
+	}
+	if got[2].ResetInSeconds == nil || *got[2].ResetInSeconds != 0 {
+		t.Fatalf("explicit reset zero lost: %#v", got[2])
+	}
+	if got[1].ResetInSeconds != nil || !got[1].ResetsAt.Equal(reset) {
+		t.Fatalf("absolute/absent-relative reset changed: %#v", got[1])
+	}
+}
+
+func TestSortedSnapshotsUnknownWindowsDoNotShareDefaultRank(t *testing.T) {
+	t.Parallel()
+	got := SortedSnapshots([]Snapshot{
+		{Model: "m", Window: "zzz"},
+		{Model: "m", Window: WindowQuota, Bucket: "b"},
+		{Model: "m", Window: "aaa"},
+		{Model: "m", Window: Window5h},
+	})
+	want := []Window{Window5h, WindowQuota, "aaa", "zzz"}
+	for i := range want {
+		if got[i].Window != want[i] {
+			t.Fatalf("order[%d] = %q, want %q: %#v", i, got[i].Window, want[i], got)
+		}
+	}
+}

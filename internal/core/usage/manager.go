@@ -176,7 +176,7 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 		if len(snaps) > 0 {
 			// Successful collect: replace all prior rows for the models
 			// the adapter touched. We trust the adapter to emit one row
-			// per (model, window) it owns.
+			// per (model, window, bucket) identity it owns.
 			for _, s := range snaps {
 				freshModels[s.Model] = true
 			}

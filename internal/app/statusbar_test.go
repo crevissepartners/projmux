@@ -856,6 +856,42 @@ func TestStatusbarDefaultUsageStateShowsAntigravityContext(t *testing.T) {
 	}
 }
 
+func TestStatusbarUsagePopupSeparatesAntigravityQuotaBuckets(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
+	reset := now.Add(2 * time.Hour)
+	seconds := int64(7200)
+	snaps := []coreusage.Snapshot{
+		{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: "weekly", Pct: 75, ResetsAt: reset, ResetInSeconds: &seconds, UpdatedAt: now},
+		{Model: "antigravity", Window: coreusage.WindowContext, Pct: 12, UpdatedAt: now},
+		{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: "context", Pct: 25, ResetInSeconds: &seconds, UpdatedAt: now},
+		{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: "bad\n\x1b[31m", Pct: 50, UpdatedAt: now},
+	}
+	rows := statusbarUsageRows(snaps)
+	if len(rows) != 4 {
+		t.Fatalf("rows = %#v", rows)
+	}
+	wantWindows := []string{"context", `quota/bad\n\x1b[31m`, "quota/context", "quota/weekly"}
+	for i, want := range wantWindows {
+		if rows[i].window != want {
+			t.Fatalf("rows[%d].window = %q, want %q", i, rows[i].window, want)
+		}
+		if strings.ContainsAny(rows[i].window, "\n\x1b") {
+			t.Fatalf("unsafe control character in row label: %q", rows[i].window)
+		}
+	}
+	if rows[2].reset != "in 7200s" {
+		t.Fatalf("relative-only reset = %q, want exact seconds", rows[2].reset)
+	}
+	if rows[3].reset != usageResetText(reset) {
+		t.Fatalf("absolute reset = %q, want %q", rows[3].reset, usageResetText(reset))
+	}
+	payload := strings.Join(statusbarUsagePopupLines(statusbarUsageState{Snapshots: snaps}, now, 92), "\n")
+	if !strings.Contains(payload, "context") || !strings.Contains(payload, "quota/context") {
+		t.Fatalf("popup payload does not separate context and quota: %q", payload)
+	}
+}
+
 func TestStatusbarUsagePopupDimsUnavailableValues(t *testing.T) {
 	t.Parallel()
 

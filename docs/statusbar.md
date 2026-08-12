@@ -143,10 +143,14 @@ hard-truncate path still closes with `#[default]` so later status segments do
 not inherit notification styling. That dotless narrow fallback applies only to
 the queued notify segment, not to the separate window-list live attention badge.
 `usage` opens a native-framed detail HUD for the compact usage bar. It reads
-the cached usage state in-process, keeps the existing `projmux usage` CLI
-output shape unchanged for external consumers, aligns model/window rows with
+the cached usage state in-process and aligns model/window rows with
 right-aligned numeric values, dims unavailable values, keeps stale sync/age
 metadata muted, and colors only threshold values: amber at 80% and red at 95%.
+Antigravity rows keep conversation-local `context` separate from account
+`quota/<exact upstream bucket ID>` rows; the popup displays an absolute reset
+when provided and otherwise the exact optional relative reset seconds. Opaque
+bucket IDs are escaped for terminal/tmux safety and are never assigned a
+`5h`/`weekly` cadence.
 Session State inspection lives under `Projects > Sessions > State`; global
 Settings > Session State is settings-only and the statusbar no longer exposes a
 duplicate State button.

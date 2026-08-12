@@ -901,17 +901,20 @@ func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
 	snaps = coreusage.SortedSnapshots(snaps)
 	rows := make([]statusbarUsageRow, 0, len(snaps))
 	for _, s := range snaps {
-		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 {
+		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != coreusage.WindowQuota {
 			continue
 		}
 		row := statusbarUsageRow{
 			model:    usagecmd.ModelDisplayLabel(s.Model),
-			window:   string(s.Window),
+			window:   usagecmd.SnapshotWindowLabel(s),
 			used:     usageCountText(s.Tokens),
 			limit:    usageLimitText(s.Limit),
 			pct:      usagecmd.PercentText(s.Pct),
 			pctValue: s.Pct,
 			reset:    usageResetText(s.ResetsAt),
+		}
+		if row.reset == "-" && s.ResetInSeconds != nil {
+			row.reset = "in " + usagecmd.ResetInText(s.ResetInSeconds)
 		}
 		if s.Limit > 0 {
 			row.remaining = formatUsageInt(max(s.Limit-s.Tokens, 0))

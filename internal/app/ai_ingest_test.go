@@ -50,6 +50,40 @@ func TestPersistAntigravityContextUsage(t *testing.T) {
 	}
 }
 
+func TestPersistAntigravityQuotaUsageKeepsContextAndSurvivesContextOnlyPayload(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	now := time.Date(2026, 8, 12, 3, 0, 0, 0, time.UTC)
+	cmd.now = func() time.Time { return now }
+	reset := now.Add(2 * time.Hour)
+	seconds := int64(7200)
+	cmd.persistAntigravityContextUsage(antigravityHookPayload{
+		ConversationID:           "conversation-local",
+		ContextUsedPercentage:    25,
+		ContextUsedPercentageSet: true,
+	})
+	cmd.persistAntigravityQuotaUsage(antigravityHookPayload{
+		QuotaSet: true,
+		QuotaBuckets: []antigravityadapter.QuotaBucketRecord{{
+			ID: "context", RemainingFraction: 0.75, ResetTime: reset, ResetInSeconds: &seconds,
+		}},
+	})
+	// A later context-only payload must not erase the independent quota file.
+	cmd.persistAntigravityQuotaUsage(antigravityHookPayload{})
+
+	baseDir, err := cmd.usageStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := antigravityadapter.New(baseDir).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 2 || snaps[0].Window != "context" || snaps[1].Window != "quota" || snaps[1].Bucket != "context" {
+		t.Fatalf("snapshots = %#v, want distinct context and quota/context rows", snaps)
+	}
+}
+
 func TestParseCodexHookPayload(t *testing.T) {
 	t.Parallel()
 
@@ -1513,6 +1547,68 @@ func TestParseAntigravityStatusLineV1112OfficialFixture(t *testing.T) {
 	if !got.ContextUsedPercentageSet || got.ContextUsedPercentage != 14.24 || !got.ContextRemainingPercentSet || got.ContextRemainingPercentage != 85.76 || got.ContextTotalInputTokens != 88244 || got.ContextTotalOutputTokens != 61074 || got.ContextWindowSize != 1048576 || got.ContextCurrentInputTokens != 63382 || got.ContextCurrentOutputTokens != 346 || got.ContextCacheReadTokens != 20857 {
 		t.Fatalf("context fields = %+v", got)
 	}
+	if !got.QuotaSet || len(got.QuotaBuckets) != 1 {
+		t.Fatalf("quota fields = %+v", got)
+	}
+	bucket := got.QuotaBuckets[0]
+	if bucket.ID != "gemini-weekly" || bucket.RemainingFraction != 0.9378 || !bucket.ResetTime.Equal(time.Date(2026, 7, 6, 7, 50, 32, 0, time.UTC)) || bucket.ResetInSeconds == nil || *bucket.ResetInSeconds != 560580 {
+		t.Fatalf("quota bucket = %+v", bucket)
+	}
+}
+
+func TestParseAntigravityQuotaBucketsRejectsInvalidAndSortsOpaqueIDs(t *testing.T) {
+	t.Parallel()
+	data := []byte(`{
+		"quota": {
+			"z-new": {"remaining_fraction": 0.25, "reset_time": "2026-08-13T00:00:00Z"},
+			"context": {"remaining_fraction": 1, "reset_time": "2026-08-14T00:00:00Z", "reset_in_seconds": 0},
+			"too-high": {"remaining_fraction": 1.01, "reset_time": "2026-08-13T00:00:00Z"},
+			"negative": {"remaining_fraction": -0.1, "reset_time": "2026-08-13T00:00:00Z"},
+			"disabled": null,
+			"missing": {"reset_time": "2026-08-13T00:00:00Z"},
+			"bad-relative": {"remaining_fraction": 0.5, "reset_in_seconds": -1}
+		}
+	}`)
+	got, err := parseAntigravityHookPayload(data, "Statusline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.QuotaSet || len(got.QuotaBuckets) != 2 {
+		t.Fatalf("quota = set:%v buckets:%#v, want two valid buckets", got.QuotaSet, got.QuotaBuckets)
+	}
+	if got.QuotaBuckets[0].ID != "context" || got.QuotaBuckets[1].ID != "z-new" {
+		t.Fatalf("bucket order = %#v, want exact lexical IDs", got.QuotaBuckets)
+	}
+	if got.QuotaBuckets[0].ResetInSeconds == nil || *got.QuotaBuckets[0].ResetInSeconds != 0 {
+		t.Fatalf("explicit reset_in_seconds zero was not preserved: %#v", got.QuotaBuckets[0])
+	}
+	if got.QuotaBuckets[1].ResetInSeconds != nil {
+		t.Fatalf("absent reset_in_seconds became present: %#v", got.QuotaBuckets[1])
+	}
+}
+
+func TestParseAntigravityQuotaMissingNullAndEmpty(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		payload string
+		set     bool
+	}{
+		{name: "missing", payload: `{}`, set: false},
+		{name: "null", payload: `{"quota":null}`, set: true},
+		{name: "empty", payload: `{"quota":{}}`, set: true},
+		{name: "disabled non-object", payload: `{"quota":"disabled"}`, set: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseAntigravityHookPayload([]byte(tc.payload), "Statusline")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.QuotaSet != tc.set || len(got.QuotaBuckets) != 0 {
+				t.Fatalf("payload %s => set=%v buckets=%#v", tc.payload, got.QuotaSet, got.QuotaBuckets)
+			}
+		})
+	}
 }
 
 func TestParseAntigravityHookPayloadV1112FixturesWithExplicitEvent(t *testing.T) {
@@ -2085,7 +2181,18 @@ func TestIngestAntigravityStatuslineWithoutPendingQuietLogsReason(t *testing.T) 
 }
 
 func TestIngestAntigravityManagedStatusLineWritesEmptyStdout(t *testing.T) {
-	cmd := testAICommand(t.TempDir())
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX_PANE":
+			return "%7"
+		default:
+			return ""
+		}
+	}
 	data, err := os.ReadFile(filepath.Join("testdata", "antigravity", "statusline_v1_1_12.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -2098,6 +2205,17 @@ func TestIngestAntigravityManagedStatusLineWritesEmptyStdout(t *testing.T) {
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("statusline stdout = %q, want empty so built-in stacking remains visible", stdout.String())
+	}
+	baseDir, err := cmd.usageStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := antigravityadapter.New(baseDir).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 2 || snaps[0].Window != "context" || snaps[1].Window != "quota" || snaps[1].Bucket != "gemini-weekly" {
+		t.Fatalf("statusline persisted snapshots = %#v, want separate context and quota rows", snaps)
 	}
 }
 

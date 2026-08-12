@@ -45,7 +45,7 @@ projmux <command> [args...]
 | `update` | Check installer-aware GitHub release update status. |
 | `upgrade` | Self-update via `go install`. |
 | `welcome` | Print the shell onboarding guide again. |
-| `usage` | Report AI token usage across 5h and weekly windows. |
+| `usage` | Report AI usage across fixed windows, context, and named quota buckets. |
 | `version` | Print the current version. |
 
 ## switch
@@ -264,23 +264,25 @@ Authoritative AI token usage. See [usage-tracking.md](usage-tracking.md)
 for adapter detail.
 
 ```
-projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|all]
+projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all]
               [--json] [--force|-f]
 ```
 
-Renders a tab-aligned `MODEL WINDOW PCT RESETS_AT STALE` table; appends a
+Renders a tab-aligned `MODEL WINDOW PCT RESETS_AT RESET_IN STALE` table; appends a
 backoff note when an adapter is in 429 cooldown. `--force` clears any
 active backoff and bypasses the per-adapter throttle floor (Claude `5m`,
 Codex shares the global `30s`). `--json` emits the snapshot array; when
 backoff is active the wrapper `{snapshots, backoff}` object is emitted
 instead.
 
-Phase 3 does not parse or render Antigravity account quota. Its adapter is
-`context-window-only` in this slice and emits a single `context` window row
-(context-window fullness, no `RESETS_AT`) sourced from the latest
-statusline `context_window` seen via hook ingest. `--model antigravity`
-renders that row; in the HUD it shows as `Antigravity ctx [bar] N%`
-alongside the Claude/Codex quota bars.
+Antigravity emits a conversation-local `context` row and separate official
+account rows labelled `quota/<upstream bucket ID>`. `--window quota` selects
+the latter; opaque IDs such as `weekly` are not aliases for the fixed
+`weekly` window. Used percent is `100 * (1 - remaining_fraction)`.
+`reset_time` and optional `reset_in_seconds` are preserved independently,
+including the distinction between absent and explicit zero. Invalid,
+disabled, missing, or empty quota data degrades without reinterpreting the
+conversation context row.
 
 ## status
 
@@ -304,8 +306,8 @@ projmux status resources
   `~/.cache/tmux/kube-segment-<session>.txt` first (TTL governed by
   `TMUX_KUBE_CACHE_TTL`, default `5s`). Picks up a per-session
   `KUBECONFIG` from `${XDG_RUNTIME_DIR:-~/.cache}/kube-sessions/<session>.yaml`.
-- `usage` — HUD-style `Claude (Nm) 5h [bar] N% · weekly [bar] N%   Codex 5h
-  [bar] N% · weekly [bar] N%`. Degrades through six tiers as `--max-width`
+- `usage` — HUD-style `Claude (Nm) 5h [bar] N% · weekly [bar] N%   Antigravity
+  ctx [bar] N% · quota/<bucket> [bar] N%`. Degrades through six tiers as `--max-width`
   shrinks. Triggers an opportunistic, throttled refresh (per-adapter
   throttle, `30s` floor) so a stale cache self-heals.
 - `notify` — newest-first HUD block with project, state, optional agent, text,
@@ -565,9 +567,11 @@ metadata for matching and as session-state resume metadata. Restore uses
 `agy --conversation <uuid>` when that id is present and UUID-shaped; otherwise
 session-state preview/doctor render `resume unavailable`. Structured statusline
 `context_window.used_percentage` is persisted with its conversation id and
-surfaced by the usage HUD
-as a `context-window-only` row. Account quota remains outside Phase 3 and is
-not inferred from this conversation-local gauge.
+surfaced by the usage HUD as the separate `context` row. The official `quota`
+map is persisted independently and surfaces each valid entry as
+`quota/<exact bucket ID>` with independently retained absolute and relative
+reset values. Bucket IDs are never mapped to `5h`/`weekly`, and account quota
+is never inferred from the conversation-local gauge.
 The earlier string percentage form remains a compatibility fallback.
 Transcript contents are not read.
 
