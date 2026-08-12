@@ -2794,12 +2794,16 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			DryRunCommand:  "projmux ai integrate tmux-bell --dry-run",
 		},
 		{
-			ID:            "antigravity-hooks",
-			Name:          "Antigravity hooks",
-			Status:        doctorAINotifyStatusSkip,
-			ProviderID:    "antigravity",
-			TestedVersion: "Antigravity CLI 1.1.12",
-			Guidance:      "Antigravity hook payloads support manual projmux ai ingest antigravity-hook wiring only; projmux does not mutate Antigravity user config.",
+			ID:             "antigravity-hooks",
+			Name:           "Antigravity hooks",
+			Status:         doctorAINotifyStatusMissing,
+			ProviderID:     "antigravity",
+			TestedVersion:  "Antigravity CLI 1.1.12",
+			ConfigPath:     "/home/tester/.gemini/config/hooks.json",
+			Guidance:       "Managed hooks use hooks.json as source of truth; /hooks is read-only diagnosis and PreToolUse is unchanged.",
+			InstallCommand: "projmux ai integrate antigravity",
+			RemoveCommand:  "projmux ai integrate antigravity --remove",
+			DryRunCommand:  "projmux ai integrate antigravity --dry-run",
 		},
 	}
 
@@ -2882,7 +2886,7 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			t.Fatalf("delivery sources entries = %#v, want %q", listOptions.Entries, want)
 		}
 	}
-	for _, want := range []string{"Antigravity hooks", "skip", "Antigravity CLI 1.1.12"} {
+	for _, want := range []string{"Antigravity hooks", "missing", "Antigravity CLI 1.1.12"} {
 		if !hasEntryLabelContaining(listOptions.Entries, want) {
 			t.Fatalf("delivery sources entries = %#v, want %q", listOptions.Entries, want)
 		}
@@ -2930,16 +2934,20 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	}
 }
 
-func TestSettingsNotificationsDeliveryShowsAntigravityUnsupportedReadOnly(t *testing.T) {
+func TestSettingsNotificationsDeliveryShowsAntigravityManagedCommands(t *testing.T) {
 	t.Parallel()
 
 	diagnostics := []doctorAINotifyIntegration{{
-		ID:            "antigravity-hooks",
-		Name:          "Antigravity hooks",
-		ProviderID:    "antigravity",
-		Status:        doctorAINotifyStatusSkip,
-		TestedVersion: "Antigravity CLI 1.1.12",
-		Guidance:      "Antigravity hook payloads support manual projmux ai ingest antigravity-hook wiring only; projmux does not mutate Antigravity user config, and hook commands should use an absolute projmux path or a known cwd.",
+		ID:             "antigravity-hooks",
+		Name:           "Antigravity hooks",
+		ProviderID:     "antigravity",
+		Status:         doctorAINotifyStatusMissing,
+		ConfigPath:     "/home/tester/.gemini/config/hooks.json",
+		TestedVersion:  "Antigravity CLI 1.1.12",
+		Guidance:       "Managed hooks use hooks.json as source of truth; /hooks is read-only diagnosis and PreToolUse is unchanged.",
+		InstallCommand: "projmux ai integrate antigravity",
+		RemoveCommand:  "projmux ai integrate antigravity --remove",
+		DryRunCommand:  "projmux ai integrate antigravity --dry-run",
 	}}
 
 	var calls int
@@ -2978,27 +2986,31 @@ func TestSettingsNotificationsDeliveryShowsAntigravityUnsupportedReadOnly(t *tes
 	if !hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+"antigravity-hooks") {
 		t.Fatalf("delivery sources entries = %#v, want antigravity row", listOptions.Entries)
 	}
-	for _, want := range []string{"Antigravity hooks", "skip", "Antigravity CLI 1.1.12"} {
+	for _, want := range []string{"Antigravity hooks", "missing", "Antigravity CLI 1.1.12"} {
 		if !hasEntryLabelContaining(listOptions.Entries, want) {
 			t.Fatalf("delivery sources entries = %#v, want %q", listOptions.Entries, want)
 		}
 	}
 	for _, want := range []string{
-		"manual projmux ai ingest antigravity-hook",
-		"does not mutate Antigravity user config",
-		"absolute projmux path",
-		"Install command",
-		"unavailable",
-		"Remove command",
-		"Dry-run command",
+		"/home/tester/.gemini/config/hooks.json",
+		"hooks.json as source of truth",
+		"/hooks is read-only diagnosis",
+		"PreToolUse is unchanged",
+		"projmux ai integrate antigravity",
+		"projmux ai integrate antigravity --remove",
+		"projmux ai integrate antigravity --dry-run",
 	} {
 		if !hasEntryLabelContaining(detailOptions.Entries, want) {
 			t.Fatalf("antigravity detail entries = %#v, want %q", detailOptions.Entries, want)
 		}
 	}
-	for _, entry := range detailOptions.Entries {
-		if strings.HasPrefix(entry.Value, settingsActionPrefixAINotifyCommand) {
-			t.Fatalf("antigravity detail entry = %#v, want no copyable install actions", entry)
+	for _, want := range []string{
+		settingsActionPrefixAINotifyCommand + "antigravity-hooks:install",
+		settingsActionPrefixAINotifyCommand + "antigravity-hooks:remove",
+		settingsActionPrefixAINotifyCommand + "antigravity-hooks:dry-run",
+	} {
+		if !hasEntryValue(detailOptions.Entries, want) {
+			t.Fatalf("antigravity detail entries = %#v, want copyable action %q", detailOptions.Entries, want)
 		}
 	}
 }

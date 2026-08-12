@@ -61,17 +61,16 @@ func TestProviderRegistryMetadataForCurrentAgents(t *testing.T) {
 	if !ok {
 		t.Fatalf("Lookup(antigravity) missing")
 	}
-	// Phase 0 (usage parity) wires antigravity into the usage infra:
-	// UsageSupported + UsageModel are set. Integrate remains unsupported
-	// (that is a later phase); session-state stays supported.
+	// Antigravity participates in usage, managed hook integration, hook
+	// diagnostics, and session-state surfaces.
 	if !antigravity.UsageSupported || antigravity.UsageModel != string(Antigravity) {
 		t.Fatalf("Antigravity metadata = %#v, want usage support with UsageModel set", antigravity)
 	}
-	if antigravity.Integrate.Supported || !antigravity.SessionState.Supported {
-		t.Fatalf("Antigravity metadata = %#v, want session-state support without integrate support", antigravity)
+	if !antigravity.Integrate.Supported || antigravity.Integrate.Command != "projmux ai integrate antigravity" || !antigravity.SessionState.Supported {
+		t.Fatalf("Antigravity metadata = %#v, want managed integration and session-state support", antigravity)
 	}
 	if !antigravity.HookDiagnostics.Supported || antigravity.HookDiagnostics.ID != "antigravity-hooks" || antigravity.HookProvider != "antigravity" {
-		t.Fatalf("Antigravity hook metadata = %#v, want manual hook diagnostics support", antigravity)
+		t.Fatalf("Antigravity hook metadata = %#v, want managed hook diagnostics support", antigravity)
 	}
 }
 

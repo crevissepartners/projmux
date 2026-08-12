@@ -11,6 +11,7 @@ type doctorAINotifyStatus string
 
 const (
 	doctorAINotifyStatusInstalled doctorAINotifyStatus = "installed"
+	doctorAINotifyStatusStale     doctorAINotifyStatus = "stale"
 	doctorAINotifyStatusMissing   doctorAINotifyStatus = "missing"
 	doctorAINotifyStatusConflict  doctorAINotifyStatus = "conflict"
 	doctorAINotifyStatusSkip      doctorAINotifyStatus = "skip"
@@ -132,13 +133,45 @@ func doctorClaudeIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration 
 
 func doctorAntigravityIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {
 	provider, _ := aiprovider.Lookup(string(aiprovider.Antigravity))
-	return doctorAINotifyIntegration{
-		ID:            provider.HookDiagnostics.ID,
-		Name:          provider.HookDiagnostics.Name,
-		Status:        doctorAINotifyStatusSkip,
-		TestedVersion: ai.aiHookObservedVersion(aiHookProviderAntigravity),
-		Guidance:      "Antigravity hook payloads support manual projmux ai ingest antigravity-hook wiring only; projmux does not mutate Antigravity user config, and hook commands should use an absolute projmux path or a known cwd because relative hook commands failed smoke.",
+	base := provider.Integrate.Command
+	out := doctorAINotifyIntegration{
+		ID:             provider.HookDiagnostics.ID,
+		Name:           provider.HookDiagnostics.Name,
+		TestedVersion:  ai.aiHookObservedVersion(aiHookProviderAntigravity),
+		InstallCommand: base,
+		RemoveCommand:  base + " --remove",
+		DryRunCommand:  base + " --dry-run",
+		Guidance:       "Managed hooks use the Antigravity hooks.json entry as the install source of truth. Use `agy -p '/hooks' --output-format json` only for read-only runtime diagnosis; PreToolUse permission policy is never installed or changed.",
 	}
+	removePlan, err := ai.planAntigravityHookIntegration(true)
+	if err != nil {
+		out.Status = doctorAINotifyStatusConflict
+		out.ConflictReason = err.Error()
+		return out
+	}
+	out.ConfigPath = removePlan.path
+	installPlan, err := ai.planAntigravityHookIntegration(false)
+	if err != nil {
+		out.Status = doctorAINotifyStatusConflict
+		out.ConflictReason = err.Error()
+		return out
+	}
+	if installPlan.conflict != "" {
+		out.Status = doctorAINotifyStatusConflict
+		out.ConflictReason = installPlan.conflict
+		return out
+	}
+	if removePlan.changed {
+		if installPlan.changed {
+			out.Status = doctorAINotifyStatusStale
+			out.ConflictReason = "managed Antigravity hook entry differs from the current absolute executable, four-event command schema, or stdout fallback; run the install command to refresh it"
+			return out
+		}
+		out.Status = doctorAINotifyStatusInstalled
+		return out
+	}
+	out.Status = doctorAINotifyStatusMissing
+	return out
 }
 
 func doctorTmuxBellIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {

@@ -618,24 +618,29 @@ catalog `install` field for installed hook events.
 
 ## Antigravity Hook Ingest
 
-`projmux ai ingest antigravity-hook --event <event> < payload.json` is available
-for manual Antigravity CLI `agy` hook payloads. Antigravity v1.1.12 stdin does
+`projmux ai ingest antigravity-hook --event <event> < payload.json` accepts
+Antigravity CLI `agy` hook payloads. Antigravity v1.1.12 stdin does
 not include the event name, so the command's `--event` value is authoritative.
 Payload event aliases remain a compatibility fallback when `--event` is
-omitted. Projmux does not provide
-`projmux ai integrate antigravity`, does not install Antigravity hooks, and
-does not mutate Antigravity user config. The Delivery sources diagnostic
-therefore reports Antigravity as a read-only unsupported/manual row. If users
-wire it by hand, use an absolute `projmux` command path or a known cwd because
-relative command paths failed the Phase 0b smoke.
+omitted. `projmux ai integrate antigravity [--dry-run|--remove]` owns exactly
+the named `projmux` entry in `~/.gemini/config/hooks.json`. Other named hooks,
+their fields, and unknown JSON values remain untouched. The generated commands
+use the stable absolute projmux executable because Antigravity runs handlers
+with the config directory as cwd. The command refuses unmanaged name/command
+conflicts, malformed JSON, symlink paths, and permission failures with an
+actionable diagnostic. Doctor/Settings distinguish installed, missing,
+conflicting, and stale managed entries; stale covers executable, event/schema,
+or stdout-fallback drift and is refreshed by the install command.
 
 The default Antigravity catalog records the five official v1.1.12 events and
-marks them `install: false`:
+installs four non-permission events:
 
 | Event/signal | Behavior |
 | --- | --- |
 | `PreToolUse` | known permission-changing event; never installed and no permission decision is synthesized |
-| `PreInvocation`, `PostInvocation`, `PostToolUse` | mark the matched pane hook-active and write a quiet ingest diagnostic; no notify queue entry is pushed |
+| `PreInvocation` | marks the matched pane hook-active and moves it to thinking/busy; no notify queue entry is pushed |
+| `PostInvocation` | marks the matched pane hook-active and writes a quiet bookkeeping diagnostic; no notify queue entry is pushed |
+| `PostToolUse` | marks the matched pane hook-active, retains tool error metadata in quiet diagnostics, and pushes no notify queue entry |
 | `Stop` | pushes an info completion unless an explicit error signal requires a critical error row |
 | legacy `Statusline` with `tool_confirmation_pending=true` | preserves the manual Phase 0b critical approval behavior outside the official catalog |
 | legacy `Statusline` without `tool_confirmation_pending=true` | marks the matched pane hook-active and writes a quiet ingest diagnostic |
@@ -657,6 +662,14 @@ Explicit non-permission hook ingest writes valid hook stdout: `{}` for
 invocation/post-tool events and `{"decision":"stop"}` for Stop. The latter
 allows the requested stop to complete; projmux does not emit `continue` or a
 `PreToolUse` permission decision.
+Each managed command includes its explicit event selector and a valid stdout
+fallback: `{}` for invocation/post-tool events and `{"decision":"stop"}` for
+Stop. The fallback is non-blocking and never returns `continue`,
+`allow`, `deny`, or `ask`.
+
+The named entry in `hooks.json` remains the install source of truth. Use
+`agy -p '/hooks' --output-format json` only as a read-only runtime diagnosis of
+loaded sources/events; its result is never used to generate or rewrite config.
 Antigravity ingest uses `conversationId` as pane thread metadata for matching
 and as session-state resume metadata. Session restore uses
 `agy --conversation <uuid>` only when that id is present and UUID-shaped;

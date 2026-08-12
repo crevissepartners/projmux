@@ -96,6 +96,10 @@ var registry = []Metadata{
 		SettingsVisible: true,
 		PickerEligible:  true,
 		UsageSupported:  true,
+		Integrate: SupportMetadata{
+			Supported: true,
+			Command:   "projmux ai integrate antigravity",
+		},
 		HookDiagnostics: SupportMetadata{
 			Supported: true,
 			ID:        "antigravity-hooks",

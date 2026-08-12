@@ -70,7 +70,7 @@ exit code 2.
 routing/debug context such as `agent`, `thread_id`, `turn_id`, `cwd`,
 `model`, and `client`; Claude hook rows also carry event-specific keys such as
 `tool_name`, `tool_input.command`, `error_type`, `subagent_type`, and
-`teammate_name`. Antigravity manual hook rows carry `agent=antigravity`,
+`teammate_name`. Antigravity hook rows carry `agent=antigravity`,
 `conversation_id`, `termination_reason`, `fully_idle`,
 `tool_confirmation_pending`, `agent_state`, and `context_window` when present.
 The same `conversation_id` can seed session-state restore via
