@@ -46,6 +46,53 @@ func Discover(inputs Inputs) ([]string, error) {
 	return builder.values, nil
 }
 
+// DiscoverProjectRoots returns the configured project candidates that may be
+// used to attribute an arbitrary path. It deliberately excludes HomeDir and
+// CurrentPath: those are picker conveniences, not evidence that a home or
+// otherwise outside directory is a managed project. Pins and children of the
+// configured repo/managed roots retain Discover's ordering, filesystem, and
+// canonical deduplication semantics.
+func DiscoverProjectRoots(inputs Inputs) ([]string, error) {
+	inputs.HomeDir = ""
+	inputs.CurrentPath = ""
+	return Discover(inputs)
+}
+
+// MostSpecificProjectRoot returns the configured project root containing path.
+// Matching uses the same canonical (symlink-resolved when possible) identity
+// as discovery deduplication while retaining the configured display spelling.
+// A nested configured project wins over a broader root regardless of input
+// order. Equal canonical roots keep the first-discovered display form.
+func MostSpecificProjectRoot(path string, projectRoots []string) string {
+	canonicalPath := CanonicalPath(path)
+	if canonicalPath == "" {
+		return ""
+	}
+
+	best := ""
+	bestCanonicalLen := -1
+	for _, root := range projectRoots {
+		root = cleanPath(strings.TrimSpace(root))
+		canonicalRoot := CanonicalPath(root)
+		if canonicalRoot == "" || !pathWithin(canonicalPath, canonicalRoot) {
+			continue
+		}
+		if len(canonicalRoot) > bestCanonicalLen {
+			best = root
+			bestCanonicalLen = len(canonicalRoot)
+		}
+	}
+	return best
+}
+
+func pathWithin(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 func (i Inputs) snapRoots() []string {
 	roots := make([]string, 0, len(i.ManagedRoots)+1)
 	if i.RepoRoot != "" {

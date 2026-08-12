@@ -78,6 +78,64 @@ func TestDiscoverSkipsMissingInputs(t *testing.T) {
 	}
 }
 
+func TestDiscoverProjectRootsExcludesHomeAndOutsideCurrent(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	repos := filepath.Join(root, "repos")
+	pinned := filepath.Join(root, "pinned")
+	outside := filepath.Join(root, "outside")
+	for _, path := range []string{home, filepath.Join(repos, "alpha"), pinned, outside} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := DiscoverProjectRoots(Inputs{HomeDir: home, RepoRoot: repos, Pins: []string{pinned}, CurrentPath: outside})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{pinned, filepath.Join(repos, "alpha")}
+	if !slices.Equal(got, want) {
+		t.Fatalf("DiscoverProjectRoots() = %#v, want %#v", got, want)
+	}
+}
+
+func TestMostSpecificProjectRootUsesCanonicalContainment(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	broad := filepath.Join(root, "projects", "app")
+	nested := filepath.Join(broad, "services", "api")
+	alias := filepath.Join(root, "api-alias")
+	if err := os.MkdirAll(filepath.Join(nested, "internal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(nested, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name  string
+		path  string
+		roots []string
+		want  string
+	}{
+		{name: "longest root", path: filepath.Join(nested, "internal"), roots: []string{broad, nested}, want: nested},
+		{name: "canonical alias display", path: filepath.Join(nested, "internal"), roots: []string{alias, broad}, want: alias},
+		{name: "outside", path: filepath.Join(root, "other"), roots: []string{broad, nested}},
+		{name: "sibling prefix", path: broad + "-copy", roots: []string{broad}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := MostSpecificProjectRoot(tc.path, tc.roots); got != tc.want {
+				t.Fatalf("MostSpecificProjectRoot(%q) = %q, want %q", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDiscoverKeepsCurrentPathWhenOutsideManagedRoots(t *testing.T) {
 	t.Parallel()
 

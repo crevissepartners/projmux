@@ -34,6 +34,7 @@ type PaneInventory struct {
 	PaneID        string
 	PanePID       int
 	PaneTTY       string
+	CurrentPath   string
 	ProjectAnchor string
 	PaneLabel     string
 	AIAgent       string

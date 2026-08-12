@@ -29,6 +29,7 @@ func (c *Client) ListResourcePanes(ctx context.Context) ([]resources.PaneInvento
 		"#{pane_id}",
 		"#{pane_pid}",
 		"#{pane_tty}",
+		"#{pane_current_path}",
 		"#{@projmux_project_path}",
 		"#{@projmux_pane_label}",
 		"#{@projmux_ai_agent}",
@@ -56,8 +57,8 @@ func parseResourcePanes(output []byte, fallbackSocket string) ([]resources.PaneI
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		fields := splitTmuxFields(raw, 14)
-		if len(fields) != 14 {
+		fields := splitTmuxFields(raw, 15)
+		if len(fields) != 15 {
 			return nil, fmt.Errorf("parse tmux resource panes: malformed row %q", raw)
 		}
 		sessionID := strings.TrimSpace(fields[1])
@@ -89,12 +90,13 @@ func parseResourcePanes(output []byte, fallbackSocket string) ([]resources.PaneI
 			PaneID:        paneID,
 			PanePID:       pid,
 			PaneTTY:       strings.TrimSpace(fields[7]),
-			ProjectAnchor: strings.TrimSpace(fields[8]),
-			PaneLabel:     strings.TrimSpace(fields[9]),
-			AIAgent:       strings.TrimSpace(fields[10]),
-			AITopic:       strings.TrimSpace(fields[11]),
-			PaneCommand:   strings.TrimSpace(fields[12]),
-			PaneTitle:     strings.TrimSpace(fields[13]),
+			CurrentPath:   strings.TrimSpace(fields[8]),
+			ProjectAnchor: strings.TrimSpace(fields[9]),
+			PaneLabel:     strings.TrimSpace(fields[10]),
+			AIAgent:       strings.TrimSpace(fields[11]),
+			AITopic:       strings.TrimSpace(fields[12]),
+			PaneCommand:   strings.TrimSpace(fields[13]),
+			PaneTitle:     strings.TrimSpace(fields[14]),
 		})
 	}
 	return rows, nil
