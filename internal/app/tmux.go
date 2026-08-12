@@ -763,7 +763,11 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	sessionsOut, listErr := c.runner.Run(ctx, "tmux", "-L", socketName, "list-sessions", "-F", "#{session_id}")
 	if listErr != nil {
 		if c.diagnostics != nil {
-			c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeTmuxApplySocketUnreachable)
+			code := diagnostics.CodeTmuxApplyFailed
+			if inttmux.IsNoServerFailure(listErr) {
+				code = diagnostics.CodeTmuxApplySocketUnreachable
+			}
+			c.diagnostics.Hint(diagnostics.LifecycleError, code)
 		}
 		_, err = fmt.Fprintf(stdout, "skipped reload: no live tmux server -L %s\n", socketName)
 		return err
@@ -1754,7 +1758,14 @@ func (c *tmuxCommand) restoreSidebarOriginSession(ctx context.Context, targetCli
 		args = append(args, "-c", client)
 	}
 	args = append(args, "-t", "="+originSession)
-	_, _ = c.runner.Run(ctx, "tmux", args...)
+	if c.diagnostics != nil {
+		c.diagnostics.Mark(diagnostics.OperationSessionSwitch)
+	}
+	if _, err := c.runner.Run(ctx, "tmux", args...); err != nil && c.diagnostics != nil {
+		// Cancel restore remains best-effort, but the owned lifecycle records
+		// the actual swallowed switch failure with a closed code.
+		c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeSessionSwitchFailed)
+	}
 }
 
 func sanitizePopupKey(value string) string {

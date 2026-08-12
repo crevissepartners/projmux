@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/paneidentity"
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	"github.com/crevissepartners/projmux/internal/core/recentwindows"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -40,8 +41,8 @@ type windowCommand struct {
 	recent *recentWindowCommand
 }
 
-func newWindowCommand() *windowCommand {
-	return &windowCommand{recent: newRecentWindowCommand()}
+func newWindowCommand(recorders ...*diagnostics.LifecycleRecorder) *windowCommand {
+	return &windowCommand{recent: newRecentWindowCommand(recorders...)}
 }
 
 func (c *windowCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -82,6 +83,8 @@ func printWindowUsage(w io.Writer) {
 }
 
 type recentWindowCommand struct {
+	diagnostics          *diagnostics.LifecycleRecorder
+	openOperation        func() diagnostics.Operation
 	runner               tmuxRunner
 	opener               recentWindowOpener
 	storeFactory         recentWindowStoreFactory
@@ -92,9 +95,11 @@ type recentWindowCommand struct {
 	sidebarPreviewActive func() bool
 }
 
-func newRecentWindowCommand() *recentWindowCommand {
-	client := defaultTmuxClient()
+func newRecentWindowCommand(recorders ...*diagnostics.LifecycleRecorder) *recentWindowCommand {
+	client := defaultTmuxClient(recorders...)
 	return &recentWindowCommand{
+		diagnostics:          recorderFrom(recorders),
+		openOperation:        lifecycleOpenOperation(os.Getenv),
 		runner:               inttmux.ExecRunner{},
 		opener:               client,
 		storeFactory:         defaultRecentWindowStore,
@@ -401,6 +406,13 @@ func (c *recentWindowCommand) liveWindows(ctx context.Context, socket string) ([
 func (c *recentWindowCommand) openRecentWindow(ctx context.Context, selected recentwindows.Candidate) error {
 	if c.opener == nil {
 		return fmt.Errorf("recent window opener is not configured")
+	}
+	if c.diagnostics != nil {
+		operation := diagnostics.OperationSessionAttach
+		if c.openOperation != nil {
+			operation = c.openOperation()
+		}
+		c.diagnostics.Mark(operation)
 	}
 	return c.opener.OpenSessionTarget(ctx, selected.Session, selected.WindowID, "")
 }

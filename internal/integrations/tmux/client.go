@@ -54,6 +54,47 @@ type commandRunner interface {
 // ExecRunner shells out to external commands.
 type ExecRunner struct{}
 
+// CommandFailureKind is a closed subprocess failure classification. Stderr is
+// carried separately from argv so safe diagnostics never classify composed
+// user-controlled error strings.
+type CommandFailureKind string
+
+const (
+	CommandFailureExit       CommandFailureKind = "exit"
+	CommandFailureNotFound   CommandFailureKind = "not-found"
+	CommandFailurePermission CommandFailureKind = "permission"
+	CommandFailureRunner     CommandFailureKind = "runner"
+)
+
+// CommandFailure is the narrow typed projection used by safe classifiers.
+type CommandFailure struct {
+	Kind   CommandFailureKind
+	Stderr string
+}
+
+type commandFailureCarrier interface {
+	CommandFailure() CommandFailure
+}
+
+type commandError struct {
+	name    string
+	args    []string
+	cause   error
+	failure CommandFailure
+}
+
+func (e *commandError) Error() string {
+	base := fmt.Sprintf("%s %s: %v", e.name, strings.Join(e.args, " "), e.cause)
+	if stderr := strings.TrimSpace(e.failure.Stderr); stderr != "" {
+		return base + ": " + stderr
+	}
+	return base
+}
+
+func (e *commandError) Unwrap() error { return e.cause }
+
+func (e *commandError) CommandFailure() CommandFailure { return e.failure }
+
 // Run executes a command and returns its combined output.
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -62,19 +103,56 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return nil, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+			return nil, newCommandError(name, args, nil, err)
 		}
 		return nil, nil
 	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		trimmed := strings.TrimSpace(string(output))
-		if trimmed != "" {
-			return nil, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, trimmed)
-		}
-		return nil, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+		return nil, newCommandError(name, args, output, err)
 	}
 	return output, nil
+}
+
+func newCommandError(name string, args []string, stderr []byte, cause error) error {
+	kind := CommandFailureRunner
+	var exitErr *exec.ExitError
+	var execErr *exec.Error
+	switch {
+	case errors.As(cause, &exitErr):
+		kind = CommandFailureExit
+	case errors.As(cause, &execErr):
+		kind = CommandFailureNotFound
+	case errors.Is(cause, os.ErrPermission):
+		kind = CommandFailurePermission
+	}
+	return &commandError{
+		name:  name,
+		args:  append([]string(nil), args...),
+		cause: cause,
+		failure: CommandFailure{
+			Kind:   kind,
+			Stderr: strings.TrimSpace(string(stderr)),
+		},
+	}
+}
+
+// IsNoServerFailure reports only typed tmux exit failures whose isolated
+// stderr has a recognized no-server/socket signature. Plain composed errors,
+// exec/permission failures, and runner errors are always generic.
+func IsNoServerFailure(err error) bool {
+	var carrier commandFailureCarrier
+	if !errors.As(err, &carrier) {
+		return false
+	}
+	failure := carrier.CommandFailure()
+	if failure.Kind != CommandFailureExit {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(failure.Stderr))
+	return strings.HasPrefix(message, "no server running on ") && len(message) > len("no server running on ") ||
+		message == "failed to connect to server: connection refused" ||
+		strings.HasPrefix(message, "error connecting to ") && strings.HasSuffix(message, " (no such file or directory)")
 }
 
 // postCreateRunner is the narrow post-create hook surface that the tmux
@@ -351,7 +429,9 @@ func isNoServerError(err error) bool {
 	if err == nil {
 		return false
 	}
-
+	// Existing client query semantics accept legacy runner errors. Safe apply
+	// diagnostics deliberately bypass this compatibility helper and use the
+	// typed IsNoServerFailure classifier instead.
 	message := err.Error()
 	return strings.Contains(message, "no server running on") ||
 		strings.Contains(message, "failed to connect to server") ||
@@ -466,12 +546,14 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 	c.markLifecycle(diagnostics.OperationSessionCreate)
 
 	if err := c.runPreCreate(ctx, sessionName, cwd, "persistent"); err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
 		return err
 	}
 
 	sessionEnv := c.projectSessionEnv(cwd)
 	paneID, err := c.createDetachedSession(ctx, sessionName, cwd, sessionEnv)
 	if err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
 		return fmt.Errorf("create tmux session %q: %w", sessionName, err)
 	}
 
@@ -494,12 +576,14 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 	c.markLifecycle(diagnostics.OperationSessionCreate)
 
 	if err := c.runPreCreate(ctx, sessionName, cwd, "ephemeral"); err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
 		return err
 	}
 
 	sessionEnv := c.projectSessionEnv(cwd)
 	paneID, err := c.createDetachedSession(ctx, sessionName, cwd, sessionEnv)
 	if err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
 		return fmt.Errorf("create tmux ephemeral session %q: %w", sessionName, err)
 	}
 	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
@@ -689,6 +773,11 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 	}
 
 	if _, err := c.runner.Run(ctx, "tmux", command...); err != nil {
+		if inside {
+			c.failLifecycle(diagnostics.OperationSessionSwitch)
+		} else {
+			c.failLifecycle(diagnostics.OperationSessionAttach)
+		}
 		return fmt.Errorf("%s tmux session %q: %w", action, sessionName, err)
 	}
 
@@ -732,6 +821,11 @@ func (c *Client) OpenSessionTarget(ctx context.Context, sessionName, windowIndex
 	}
 
 	if _, err := c.runner.Run(ctx, "tmux", command...); err != nil {
+		if inside {
+			c.failLifecycle(diagnostics.OperationSessionSwitch)
+		} else {
+			c.failLifecycle(diagnostics.OperationSessionAttach)
+		}
 		return fmt.Errorf("%s tmux target %q: %w", action, target, err)
 	}
 
@@ -788,6 +882,7 @@ func (c *Client) SwitchClient(ctx context.Context, sessionName string) error {
 	c.markLifecycle(diagnostics.OperationSessionSwitch)
 
 	if _, err := c.runner.Run(ctx, "tmux", "switch-client", "-t", exactSessionTarget(sessionName)); err != nil {
+		c.failLifecycle(diagnostics.OperationSessionSwitch)
 		return fmt.Errorf("switch tmux client to session %q: %w", sessionName, err)
 	}
 
@@ -802,6 +897,7 @@ func (c *Client) KillSession(ctx context.Context, sessionName string) error {
 	c.markLifecycle(diagnostics.OperationSessionKill)
 
 	if _, err := c.runner.Run(ctx, "tmux", "kill-session", "-t", exactSessionTarget(sessionName)); err != nil {
+		c.failLifecycle(diagnostics.OperationSessionKill)
 		return fmt.Errorf("kill tmux session %q: %w", sessionName, err)
 	}
 
@@ -811,6 +907,12 @@ func (c *Client) KillSession(ctx context.Context, sessionName string) error {
 func (c *Client) markLifecycle(operation diagnostics.Operation) {
 	if c.diagnostics != nil {
 		c.diagnostics.Mark(operation)
+	}
+}
+
+func (c *Client) failLifecycle(operation diagnostics.Operation) {
+	if c.diagnostics != nil {
+		c.diagnostics.Fail(operation)
 	}
 }
 

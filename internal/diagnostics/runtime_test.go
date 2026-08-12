@@ -36,6 +36,24 @@ func TestReadRuntimeHealthTypedProjection(t *testing.T) {
 	}
 }
 
+func TestReadRuntimeHealthUsesClosedCompositeFailureCode(t *testing.T) {
+	t.Parallel()
+	health, err := ReadRuntimeHealth(readOnlyStoreStub{result: ReadResult{Events: []Event{
+		{
+			Event:     "lifecycle.outcome",
+			Result:    "error",
+			Operation: string(OperationSessionCreate),
+			Code:      string(CodeSessionAttachFailed),
+		},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.Socket != RuntimeError || !reflect.DeepEqual(health.RecentFailureCodes, []Code{CodeSessionAttachFailed}) {
+		t.Fatalf("composite runtime health = %#v", health)
+	}
+}
+
 func TestReadRuntimeHealthMissingAndFailureRemainReadOnly(t *testing.T) {
 	t.Parallel()
 	health, err := ReadRuntimeHealth(readOnlyStoreStub{result: ReadResult{Missing: true}})

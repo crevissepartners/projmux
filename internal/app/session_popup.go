@@ -11,6 +11,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
@@ -26,20 +27,28 @@ type sessionPopupOpener interface {
 }
 
 type sessionPopupCommand struct {
-	store        sessionPopupStore
-	storeErr     error
-	inventory    previewInventory
-	inventoryErr error
-	opener       sessionPopupOpener
-	openerErr    error
+	diagnostics   *diagnostics.LifecycleRecorder
+	openOperation func() diagnostics.Operation
+	store         sessionPopupStore
+	storeErr      error
+	inventory     previewInventory
+	inventoryErr  error
+	opener        sessionPopupOpener
+	openerErr     error
 }
 
-func newSessionPopupCommand() *sessionPopupCommand {
+func newSessionPopupCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionPopupCommand {
 	paths, err := config.DefaultPathsFromEnv()
-	client := inttmux.NewClient(inttmux.ExecRunner{})
+	opts := []inttmux.ClientOption{}
+	if len(recorders) > 0 && recorders[0] != nil {
+		opts = append(opts, inttmux.WithLifecycleDiagnostics(recorders[0]))
+	}
+	client := inttmux.NewClient(inttmux.ExecRunner{}, opts...)
 	cmd := &sessionPopupCommand{
-		inventory: tmuxPreviewInventory{client: client},
-		opener:    client,
+		diagnostics:   recorderFrom(recorders),
+		openOperation: lifecycleOpenOperation(os.Getenv),
+		inventory:     tmuxPreviewInventory{client: client},
+		opener:        client,
 	}
 	if err != nil {
 		cmd.storeErr = fmt.Errorf("resolve default config paths: %w", err)
@@ -144,6 +153,13 @@ func (c *sessionPopupCommand) runOpen(args []string, stderr io.Writer) error {
 	if hasSelection {
 		windowIndex = strings.TrimSpace(selection.WindowIndex)
 		paneIndex = strings.TrimSpace(selection.PaneIndex)
+	}
+	if c.diagnostics != nil {
+		operation := diagnostics.OperationSessionAttach
+		if c.openOperation != nil {
+			operation = c.openOperation()
+		}
+		c.diagnostics.Mark(operation)
 	}
 
 	if err := opener.OpenSessionTarget(context.Background(), sessionName, windowIndex, paneIndex); err != nil {

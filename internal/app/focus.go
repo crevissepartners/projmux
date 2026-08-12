@@ -15,6 +15,7 @@ import (
 
 	corefocus "github.com/crevissepartners/projmux/internal/core/focus"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
@@ -38,6 +39,7 @@ type focusNotifier interface {
 }
 
 type focusCommand struct {
+	diagnostics   *diagnostics.LifecycleRecorder
 	runner        focusCommandRunner
 	lookupEnv     func(string) string
 	homeDir       func() (string, error)
@@ -77,8 +79,13 @@ type focusResult struct {
 	Note            string `json:"note,omitempty"`
 }
 
-func newFocusCommand() *focusCommand {
+func newFocusCommand(recorders ...*diagnostics.LifecycleRecorder) *focusCommand {
+	var recorder *diagnostics.LifecycleRecorder
+	if len(recorders) > 0 {
+		recorder = recorders[0]
+	}
 	return &focusCommand{
+		diagnostics:   recorder,
 		runner:        focusExecRunner{},
 		lookupEnv:     os.Getenv,
 		homeDir:       os.UserHomeDir,
@@ -498,12 +505,21 @@ func (c *focusCommand) switchClient(ctx context.Context, socket, clientName, ses
 	if c.runner == nil {
 		return errors.New("focus runner is not configured")
 	}
+	if c.diagnostics != nil {
+		c.diagnostics.Mark(diagnostics.OperationSessionSwitch)
+	}
 	if err := intmux.NewRunner(c.runner).SwitchClient(ctx, intmux.SwitchClientOptions{
 		Socket: socket,
 		Client: clientName,
 		Target: sessionName,
 	}); err != nil {
+		if c.diagnostics != nil {
+			c.diagnostics.SealFailure(diagnostics.OperationSessionSwitch)
+		}
 		return fmt.Errorf("focus: switch-client to %q: %w", sessionName, err)
+	}
+	if c.diagnostics != nil {
+		c.diagnostics.SealSuccess()
 	}
 	return nil
 }

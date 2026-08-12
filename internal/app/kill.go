@@ -35,6 +35,7 @@ type killTagStore interface {
 }
 
 type killCommand struct {
+	diagnostics          *diagnostics.LifecycleRecorder
 	current              killCurrentSessionResolver
 	recent               killRecentSessionsResolver
 	exec                 taggedKillExecutor
@@ -52,9 +53,10 @@ func newKillCommand(recorders ...*diagnostics.LifecycleRecorder) *killCommand {
 	client := inttmux.NewClient(inttmux.ExecRunner{}, opts...)
 
 	cmd := &killCommand{
-		current: client,
-		recent:  client,
-		homeDir: os.UserHomeDir,
+		diagnostics: recorderFrom(recorders),
+		current:     client,
+		recent:      client,
+		homeDir:     os.UserHomeDir,
 	}
 	cmd.exec = lifecycle.NewTaggedKiller(client, cleanupKillSessionExecutor{
 		delegate: client,

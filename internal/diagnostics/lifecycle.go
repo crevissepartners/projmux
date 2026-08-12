@@ -57,10 +57,8 @@ type commandLifecycle struct {
 
 // LifecycleRecorder coalesces all nested tmux steps from one explicit CLI
 // invocation into one start and one terminal outcome. The first mutating step
-// selects the safe operation. A create that is immediately followed by initial
-// attach/switch remains one outer create lifecycle: activation is part of that
-// provisioning attempt, so an activation error terminates it as create.failed
-// instead of emitting a second lifecycle outcome.
+// selects the safe outer operation. A typed failure can then provide its
+// closed stage code without changing ownership or starting another pair.
 // Appends are best-effort and never flow back into command control paths.
 type LifecycleRecorder struct {
 	writer     EventWriter
@@ -70,6 +68,7 @@ type LifecycleRecorder struct {
 	now        func() time.Time
 
 	mu       sync.Mutex
+	writeMu  sync.Mutex
 	command  *commandLifecycle
 	outcomes atomic.Uint64
 }
@@ -104,15 +103,43 @@ func (r *LifecycleRecorder) Mark(operation Operation) {
 	}
 	r.mu.Lock()
 	scope := r.command
-	if scope == nil || scope.finished || scope.operation != "" {
+	if scope == nil || scope.finished {
+		r.mu.Unlock()
+		return
+	}
+	if scope.operation != "" {
 		r.mu.Unlock()
 		return
 	}
 	scope.operation = operation
 	scope.started = r.now()
 	event := r.event(scope.started, "info", "lifecycle.start", "started", scope, "", "")
-	r.append(event)
+	// Reserve the writer while state is locked so a concurrent finish cannot
+	// overtake the start. Append itself runs after releasing the state mutex;
+	// EventWriter implementations must not re-enter lifecycle terminal methods.
+	r.writeMu.Lock()
 	r.mu.Unlock()
+	r.append(event)
+	r.writeMu.Unlock()
+}
+
+// Fail attributes the command's terminal error to the typed mutation that
+// actually failed. It only stores a closed code; raw errors and targets never
+// enter the recorder.
+func (r *LifecycleRecorder) Fail(operation Operation) {
+	r.Hint(LifecycleError, failureCode(operation))
+}
+
+// SealSuccess closes the active lifecycle immediately after the owned
+// mutation succeeds. Later command work cannot relabel that mutation as a
+// failure, and the deferred command finish becomes a no-op.
+func (r *LifecycleRecorder) SealSuccess() {
+	r.seal(LifecycleSuccess, "")
+}
+
+// SealFailure closes the active lifecycle at the typed mutation failure.
+func (r *LifecycleRecorder) SealFailure(operation Operation) {
+	r.seal(LifecycleError, failureCode(operation))
 }
 
 // Hint records a safe terminal classification discovered inside a command
@@ -142,7 +169,9 @@ func (r *LifecycleRecorder) finishCommand(scope *commandLifecycle, commandErr er
 	result, code := scope.result, scope.code
 	if commandErr != nil {
 		result = LifecycleError
-		if code == "" {
+		// A success-only hint (currently reload-skipped) cannot survive an
+		// outer command error; normalize to the operation's closed failure.
+		if code == "" || resultCodeIsSuccessOnly(code) {
 			code = failureCode(scope.operation)
 		}
 	}
@@ -161,11 +190,47 @@ func (r *LifecycleRecorder) finishCommand(scope *commandLifecycle, commandErr er
 	if r.command == scope {
 		r.command = nil
 	}
-	r.append(event)
+	r.writeMu.Lock()
 	// Logical ownership, not storage success, suppresses the duplicate top-level
 	// outcome. A failing journal must not change the original command result.
 	r.outcomes.Add(1)
 	r.mu.Unlock()
+	r.append(event)
+	r.writeMu.Unlock()
+}
+
+func (r *LifecycleRecorder) seal(result LifecycleResult, code Code) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	scope := r.command
+	if scope == nil || scope.finished || scope.operation == "" {
+		r.mu.Unlock()
+		return
+	}
+	scope.finished = true
+	level, kind := "info", ""
+	if result == LifecycleError {
+		level, kind = "error", "runtime"
+		if code == "" {
+			code = failureCode(scope.operation)
+		}
+	}
+	now := r.now()
+	event := r.event(now, level, "lifecycle.outcome", string(result), scope, code, kind)
+	if r.command == scope {
+		r.command = nil
+	}
+	r.writeMu.Lock()
+	r.outcomes.Add(1)
+	r.mu.Unlock()
+	r.append(event)
+	r.writeMu.Unlock()
+}
+
+func resultCodeIsSuccessOnly(code Code) bool {
+	return code == CodeTmuxApplyReloadSkipped
 }
 
 func (r *LifecycleRecorder) event(at time.Time, level, name, result string, scope *commandLifecycle, code Code, kind string) Event {

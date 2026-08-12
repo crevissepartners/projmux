@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
@@ -18,6 +19,26 @@ import (
 // migration directly so users who never set PROJMUX_CWD still see the
 // converted entries.
 var legacyHookMigrationOnce sync.Once
+
+// lifecycleMutationSurfaceInventory is the maintained Phase 2 production
+// inventory. Each entry names an explicit CLI route that reaches a shared
+// recorder-backed session/apply mutation; automatic hooks and read-only probes
+// are intentionally absent.
+var lifecycleMutationSurfaceInventory = []string{
+	"attach auto",
+	"current",
+	"kill tagged",
+	"sessions open/kill",
+	"switch create/restore/open/kill",
+	"tmux apply",
+	"session-popup open",
+	"window recent",
+	"prune ephemeral",
+	"focus switch-client",
+	"shell open-app",
+	"snapshot replay create",
+	"popup-toggle cancel restore",
+}
 
 func runLegacyHookMigrations() {
 	legacyHookMigrationOnce.Do(func() {
@@ -122,7 +143,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	update := newUpdateCommand()
 	quit := newQuitCommand()
 	notifyCmd := newNotifyCommand(newDefaultLivePaneLister())
-	pruneCmd := newPruneCommand()
+	pruneCmd := newPruneCommand(recorder)
 	previewCleaner := newKilledSessionPreviewCleaner()
 	cleanupKilledSession := previewCleaner.cleanup
 	attach.cleanupKilledSession = cleanupKilledSession
@@ -142,7 +163,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		current:      newCurrentCommand(recorder),
 		doctor:       newDoctorCommand(),
 		diagnostics:  newDiagnosticsCommand(),
-		focus:        newFocusCommand(),
+		focus:        newFocusCommand(recorder),
 		hook:         newHookCommand(),
 		keyBroker:    newKeyBrokerCommand(),
 		kill:         kill,
@@ -155,10 +176,10 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		resources:    newResourceCommand(),
 		sessions:     sessions,
 		sessionState: newSessionStateCommand(),
-		sessionPopup: newSessionPopupCommand(),
+		sessionPopup: newSessionPopupCommand(recorder),
 		settings:     newSettingsCommand(ai, switcher, update, quit),
 		setup:        newSetupCommand(initCmd),
-		shell:        newShellCommand(update),
+		shell:        newShellCommand(update, recorder),
 		status:       newStatusCommand(),
 		statusbar:    newStatusbarCommand(),
 		switcher:     switcher,
@@ -168,7 +189,23 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		upgrade:      newUpgradeCommand(),
 		usage:        usagecmd.New(nil),
 		welcome:      newWelcomeCommand(update),
-		window:       newWindowCommand(),
+		window:       newWindowCommand(recorder),
+	}
+}
+
+func recorderFrom(recorders []*diagnostics.LifecycleRecorder) *diagnostics.LifecycleRecorder {
+	if len(recorders) == 0 {
+		return nil
+	}
+	return recorders[0]
+}
+
+func lifecycleOpenOperation(lookupEnv func(string) string) func() diagnostics.Operation {
+	return func() diagnostics.Operation {
+		if lookupEnv != nil && strings.TrimSpace(lookupEnv("TMUX")) != "" {
+			return diagnostics.OperationSessionSwitch
+		}
+		return diagnostics.OperationSessionAttach
 	}
 }
 
