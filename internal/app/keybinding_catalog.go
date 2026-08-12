@@ -921,6 +921,10 @@ func tmuxRetiredKeyUnbindLines() []string {
 		"unbind-key -q -n M-6",
 		"unbind-key -q -n C-n",
 		"unbind-key -q -n M-r",
+		// rename-pane-topic used C-t before the canonical pane-label action
+		// replaced it. A generated config reload must retire that live root
+		// binding even after the old action has disappeared from keymap.toml.
+		"unbind-key -q -n C-t",
 	}
 	for slot := 0; slot <= 12; slot++ {
 		lines = append(lines, fmt.Sprintf("unbind-key -q -n User%d", slot))

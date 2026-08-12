@@ -1,0 +1,6 @@
+# apply must preserve these bytes, including comments and spacing
+[bindings.rename-pane-label]
+keys = ["M-p"]
+
+[bindings.ProjectSidebarToggle]
+keys = ["M-a"]

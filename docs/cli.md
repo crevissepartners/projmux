@@ -886,7 +886,10 @@ after replacing the binary. Settings > Keybindings normally runs the same
 save/config/reload flow automatically; use `projmux tmux apply` as the CLI
 recovery or sync path after hand-editing `keymap.toml`, after saving Settings
 outside tmux, or after resolving a reported config-generation or live-reload
-failure.
+failure. Reload also removes the known retired no-prefix `C-t` pane-label
+binding from older live servers before installing current bindings. If the
+current keymap assigns `C-t` to another action, that current action is bound
+after cleanup and remains the owner.
 
 ## update
 
