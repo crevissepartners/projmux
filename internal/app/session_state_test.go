@@ -271,11 +271,24 @@ func TestSessionStateRestoreDryRunShowsResumeHealth(t *testing.T) {
 		"status available confidence high",
 		"status stale confidence medium",
 		"status unavailable confidence none source unknown",
-		"pane 0.3 antigravity agent antigravity resume 123e4567-e89b-12d3-a456-426614174000",
-		"antigravity status unavailable confidence none source unknown",
+		"pane 0.3 agent status available confidence high source hook",
+		"pane 0.4 agent status unavailable confidence none source unknown",
+		"pane 0.5 agent status available confidence medium source " + aisessions.SourceAntigravityLastConversation,
+		"pane 0.6 agent status available confidence low source " + aisessions.SourceAntigravityHistory,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("dry-run output missing %q:\n%s", want, output)
+		}
+	}
+	// The bounded preview prioritizes health, but the shared unbounded pane model
+	// still carries the full Antigravity resume UUID and contextual title.
+	fullPane := statusbarSessionStatePanePreview(snap.SavedAt, 0, snap.Windows[0].Panes[5])
+	for _, want := range []string{
+		"resume 123e4567-e89b-42d3-a456-426614174001",
+		"title cached antigravity",
+	} {
+		if !strings.Contains(fullPane, want) {
+			t.Errorf("unbounded pane preview = %q, want %q", fullPane, want)
 		}
 	}
 	for _, tc := range []struct {

@@ -80,15 +80,20 @@ func statusbarSessionStatePanePreview(savedAt time.Time, windowIndex int, pane s
 	detail := ""
 	switch kind {
 	case sessionstate.RecipeKindAgent:
-		detail = strings.TrimSpace(recipe.Agent)
-		if resumeID := strings.TrimSpace(recipe.ResumeID); resumeID != "" {
-			detail += " resume " + resumeID
-		}
+		// Resume health leads agent details so the bounded 100-column CLI,
+		// Settings, and project previews retain the actionable confidence/source
+		// before a full resume id, topic, or title can consume the row budget.
 		if health := sessionStateResumeHealthText(recipe, savedAt); health != "" {
+			detail = health
+		}
+		if agent := strings.TrimSpace(recipe.Agent); agent != "" {
 			if detail != "" {
 				detail += " "
 			}
-			detail += health
+			detail += agent
+		}
+		if resumeID := strings.TrimSpace(recipe.ResumeID); resumeID != "" {
+			detail += " resume " + resumeID
 		}
 		if topic := strings.TrimSpace(recipe.Topic); topic != "" {
 			detail += " topic " + topic
@@ -103,6 +108,14 @@ func statusbarSessionStatePanePreview(savedAt time.Time, windowIndex int, pane s
 	}
 	detail = statusbarSessionStateClean(detail)
 	if title := statusbarSessionStateClean(pane.Title); title != "" {
+		if kind == sessionstate.RecipeKindAgent {
+			// Agent titles are useful context but lower priority than resume health.
+			// Keep the full identity in the unbounded model, after health and id.
+			if detail == "" {
+				return fmt.Sprintf("pane %d.%d  %s  title %s", windowIndex, pane.Index, kind, title)
+			}
+			return fmt.Sprintf("pane %d.%d  %s  %s title %s", windowIndex, pane.Index, kind, detail, title)
+		}
 		fallback := kind
 		if detail != "" {
 			fallback += " " + detail

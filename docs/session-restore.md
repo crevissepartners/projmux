@@ -83,6 +83,10 @@ has low confidence. Preview and doctor report that source/confidence as stored;
 they do not claim that the upstream cache exposes complete history. Disk
 discovery does not replace an existing live hook source, and it never opens a
 conversation database or reads prompt/transcript content.
+Bounded Session State agent-pane previews place resume health before the full
+resume id, topic, and title so status, confidence, and source remain visible;
+the underlying snapshot and unbounded preview model retain those identity and
+context fields unchanged. Non-agent pane preview ordering is unchanged.
 
 Settings > Session State is global settings only: global auto-save, auto-save
 interval, and storage/retention policy. It does not show the current
