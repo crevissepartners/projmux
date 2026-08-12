@@ -802,7 +802,7 @@ func statusbarUsagePopup(state statusbarUsageState, now time.Time, binaryPath st
 
 func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int) []string {
 	rows := statusbarUsageRowsAt(state.Snapshots, now)
-	columns := statusbarUsageColumnProjection(rows)
+	columns := statusbarUsageColumnProjection(rows, state.Unsupported)
 	// The native picker frame chrome wrapping this body already renders the
 	// `Usage` title bar (and the divider below it). Body opens with the
 	// subdued subtitle so the popup mirrors the picker layout one-to-one
@@ -853,14 +853,25 @@ func statusbarUsageToast(state statusbarUsageState) string {
 }
 
 func statusbarUnsupportedUsageLine(provider usagecmd.UnsupportedProvider, columns statusbarUsageColumns) string {
+	label := statusbarUnsupportedUsageLabel(provider)
+	if columns.absoluteCounts {
+		return dimANSI(fmt.Sprintf("%s %s %8s %8s %8s %6s  %-12s  %-7s",
+			statusbarUsageCellRight(label, columns.modelWidth),
+			statusbarUsageCellRight("-", columns.windowWidth),
+			"-", "-", "-", "-", "unsupported", "-"))
+	}
+	return dimANSI(fmt.Sprintf("%s %s %6s  %-14s  %-6s",
+		statusbarUsageCellRight(label, columns.modelWidth),
+		statusbarUsageCellRight("-", columns.windowWidth),
+		"-", "unsupported", "-"))
+}
+
+func statusbarUnsupportedUsageLabel(provider usagecmd.UnsupportedProvider) string {
 	label := strings.TrimSpace(provider.Label)
 	if label == "" {
-		label = provider.Model
+		return provider.Model
 	}
-	if columns.absoluteCounts {
-		return dimANSI(fmt.Sprintf("%-8s %-24s %8s %8s %8s %6s  %-12s  %-7s", label, "-", "-", "-", "-", "-", "unsupported", "-"))
-	}
-	return dimANSI(fmt.Sprintf("%-10s %-50s %6s  %-14s  %-6s", label, "-", "-", "unsupported", "-"))
+	return label
 }
 
 func statusbarUsageSyncLine(state statusbarUsageState, now time.Time) string {
@@ -920,6 +931,12 @@ func statusbarUsageRowsAt(snaps []coreusage.Snapshot, now time.Time) []statusbar
 		if s.Window == coreusage.WindowContext {
 			continue
 		}
+		// Inactive named quotas remain lossless in the cache and CLI surfaces,
+		// but are not useful popup rows. Aggregate 5h/weekly snapshots have no
+		// NamedQuota, so their zero-value IsActive cannot hide them here.
+		if s.NamedQuota != nil && !s.NamedQuota.IsActive {
+			continue
+		}
 		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != coreusage.WindowContext && s.Window != coreusage.WindowQuota {
 			continue
 		}
@@ -950,41 +967,71 @@ func statusbarUsageRowsAt(snaps []coreusage.Snapshot, now time.Time) []statusbar
 
 type statusbarUsageColumns struct {
 	absoluteCounts bool
+	modelWidth     int
+	windowWidth    int
 }
 
-func statusbarUsageColumnProjection(rows []statusbarUsageRow) statusbarUsageColumns {
+const statusbarUsageModelMaxWidth = 12
+
+func statusbarUsageColumnProjection(rows []statusbarUsageRow, unsupported []usagecmd.UnsupportedProvider) statusbarUsageColumns {
+	absoluteCounts := false
 	for _, row := range rows {
 		if row.hasCounts {
-			return statusbarUsageColumns{absoluteCounts: true}
+			absoluteCounts = true
+			break
 		}
 	}
-	return statusbarUsageColumns{}
+
+	modelWidth, windowWidth := 10, 50
+	if absoluteCounts {
+		modelWidth, windowWidth = 8, 24
+	}
+	baseModelWidth := modelWidth
+	for _, row := range rows {
+		modelWidth = max(modelWidth, projmuxpicker.VisibleLen(row.model))
+	}
+	for _, provider := range unsupported {
+		modelWidth = max(modelWidth, projmuxpicker.VisibleLen(statusbarUnsupportedUsageLabel(provider)))
+	}
+	modelWidth = min(modelWidth, statusbarUsageModelMaxWidth)
+	windowWidth -= modelWidth - baseModelWidth
+	return statusbarUsageColumns{
+		absoluteCounts: absoluteCounts,
+		modelWidth:     modelWidth,
+		windowWidth:    windowWidth,
+	}
 }
 
 func statusbarUsageHeaderLine(columns statusbarUsageColumns) string {
 	if columns.absoluteCounts {
 		return statusbarMutedANSI +
-			fmt.Sprintf("%-8s %-24s %8s %8s %8s %6s  %-12s  %-7s", "MODEL", "WINDOW", "USED", "LIMIT", "LEFT", "PCT", "RESET", "AGE") +
+			fmt.Sprintf("%s %s %8s %8s %8s %6s  %-12s  %-7s",
+				statusbarUsageCellRight("MODEL", columns.modelWidth),
+				statusbarUsageCellRight("WINDOW", columns.windowWidth),
+				"USED", "LIMIT", "LEFT", "PCT", "RESET", "AGE") +
 			projmuxpicker.Reset
 	}
 	return statusbarMutedANSI +
-		fmt.Sprintf("%-10s %-50s %6s  %-14s  %-6s", "MODEL", "WINDOW", "PCT", "RESET", "AGE") +
+		fmt.Sprintf("%s %s %6s  %-14s  %-6s",
+			statusbarUsageCellRight("MODEL", columns.modelWidth),
+			statusbarUsageCellRight("WINDOW", columns.windowWidth),
+			"PCT", "RESET", "AGE") +
 		projmuxpicker.Reset
 }
 
 func (r statusbarUsageRow) render(columns statusbarUsageColumns) string {
 	if !columns.absoluteCounts {
-		return fmt.Sprintf("%-10s %-50s %6s  %-14s  %-6s",
-			statusbarUsageCell(r.model, 10),
-			statusbarUsageCell(r.window, 50),
+		return fmt.Sprintf("%s %s %s  %s  %s",
+			statusbarUsageCellRight(r.model, columns.modelWidth),
+			statusbarUsageCellRight(r.window, columns.windowWidth),
 			statusbarUsagePctANSI(r.pct, r.pctValue, 6),
 			styleUnavailableLeft(statusbarUsageCell(r.reset, 14), 14),
 			styleUnavailableLeft(statusbarUsageCell(r.age, 6), 6),
 		)
 	}
-	return fmt.Sprintf("%-8s %-24s %8s %8s %8s %6s  %-12s  %-7s",
-		statusbarUsageCell(r.model, 8),
-		statusbarUsageCell(r.window, 24),
+	return fmt.Sprintf("%s %s %s %s %s %s  %s  %s",
+		statusbarUsageCellRight(r.model, columns.modelWidth),
+		statusbarUsageCellRight(r.window, columns.windowWidth),
 		styleUnavailableRight(r.used, 8),
 		styleUnavailableRight(r.limit, 8),
 		styleUnavailableRight(r.remaining, 8),
@@ -995,14 +1042,20 @@ func (r statusbarUsageRow) render(columns statusbarUsageColumns) string {
 }
 
 func statusbarUsageCell(value string, width int) string {
-	runes := []rune(value)
-	if len(runes) <= width {
+	if width <= 0 {
+		return ""
+	}
+	if projmuxpicker.VisibleLen(value) <= width {
 		return value
 	}
-	if width <= 1 {
+	if width == 1 {
 		return "…"
 	}
-	return string(runes[:width-1]) + "…"
+	return projmuxpicker.TruncateANSI(value, width-1) + "…"
+}
+
+func statusbarUsageCellRight(value string, width int) string {
+	return projmuxpicker.PadRight(statusbarUsageCell(value, width), width)
 }
 
 func statusbarUsageAgeText(updatedAt, now time.Time) string {
