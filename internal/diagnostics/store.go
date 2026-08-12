@@ -282,6 +282,7 @@ func completeValidLines(data []byte) []byte {
 
 func (s *Store) withLock(action func() error) error {
 	lockPath := s.path + lockSuffix
+	// #nosec G304 -- lockPath is the fixed .lock sibling of the caller-scoped diagnostics path after Append creates the private directory and rejects symlinks; no event payload controls it.
 	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return fmt.Errorf("open diagnostics lock: %w", err)
@@ -310,6 +311,7 @@ func (s *Store) withLock(action func() error) error {
 
 func bestEffortPrivateDir(path string) {
 	if runtime.GOOS != "windows" {
+		// #nosec G302 -- 0700 is the intentional private mode for the local diagnostics state directory.
 		_ = os.Chmod(path, 0o700)
 	}
 }
