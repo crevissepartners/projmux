@@ -14,11 +14,12 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 )
 
 func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
-	return &doctorCommand{
+	c := &doctorCommand{
 		lookPath: func(name string) (string, error) {
 			if present[name] {
 				return "/usr/bin/" + name, nil
@@ -38,6 +39,16 @@ func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
 		},
 		aiDiagnostics: func() []doctorAINotifyIntegration { return nil },
 	}
+	c.resolveOperationsPath = func() (string, error) {
+		return filepath.Join("/projmux-doctor-missing-fixture", "state", "projmux", "logs", diagnostics.LogFileName), nil
+	}
+	c.readRuntimeHealth = diagnostics.ReadRuntimeHealth
+	c.runtimeProbe = func() doctorRuntimeProbe { return doctorRuntimeProbe{SocketState: diagnostics.RuntimeUnreachable} }
+	c.resolveGeneratedConfig = func() (string, error) {
+		return filepath.Join("/projmux-doctor-missing-fixture", "config", "projmux", "tmux.conf"), nil
+	}
+	c.readGeneratedConfig = doctorReadRegularFileBounded
+	return c
 }
 
 func TestDoctorReadOnlyBaselineFixtures(t *testing.T) {
@@ -105,8 +116,8 @@ func TestDoctorSectionJSONProjectsOneTypedInventory(t *testing.T) {
 			if err := json.Unmarshal(stdout.Bytes(), &root); err != nil {
 				t.Fatal(err)
 			}
-			if got := string(root["schema_version"]); got != "1" {
-				t.Fatalf("schema_version = %s, want 1", got)
+			if got := string(root["schema_version"]); got != "2" {
+				t.Fatalf("schema_version = %s, want 2", got)
 			}
 			if _, ok := root[tc.field]; !ok {
 				t.Fatalf("section JSON = %s, want %q", stdout.String(), tc.field)

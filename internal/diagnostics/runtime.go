@@ -22,9 +22,14 @@ type RuntimeHealth struct {
 	Socket             RuntimeState
 	Apply              RuntimeState
 	RecentFailureCodes []Code
-	Missing            bool
-	Malformed          int
-	Truncated          bool
+	// RecentErrorCount is the size of the newest bounded window, never a
+	// lifetime total. RecentErrorsBounded is true when older errors were
+	// omitted from that window.
+	RecentErrorCount    int
+	RecentErrorsBounded bool
+	Missing             bool
+	Malformed           int
+	Truncated           bool
 }
 
 // ReadOnlyStore is the strict no-write event source used by runtime consumers.
@@ -47,7 +52,15 @@ func ReadRuntimeHealth(store ReadOnlyStore) (RuntimeHealth, error) {
 	health.Malformed = result.Malformed
 	health.Truncated = result.Truncated
 
+	recentErrors := make([]Event, 0, recentFailureLimit)
 	for _, event := range result.Events {
+		if event.Level == "error" || event.Result == "error" {
+			recentErrors = append(recentErrors, event)
+			if len(recentErrors) > recentFailureLimit {
+				recentErrors = recentErrors[len(recentErrors)-recentFailureLimit:]
+				health.RecentErrorsBounded = true
+			}
+		}
 		if event.Event != "lifecycle.outcome" {
 			continue
 		}
@@ -77,12 +90,13 @@ func ReadRuntimeHealth(store ReadOnlyStore) (RuntimeHealth, error) {
 				}
 			}
 		}
-		if event.Result == "error" && event.Code != "" {
-			health.RecentFailureCodes = append(health.RecentFailureCodes, Code(event.Code))
-			if len(health.RecentFailureCodes) > recentFailureLimit {
-				health.RecentFailureCodes = health.RecentFailureCodes[len(health.RecentFailureCodes)-recentFailureLimit:]
-			}
+	}
+	health.RecentErrorCount = len(recentErrors)
+	for _, event := range recentErrors {
+		if event.Code == "" {
+			continue
 		}
+		health.RecentFailureCodes = append(health.RecentFailureCodes, Code(event.Code))
 	}
 	return health, nil
 }

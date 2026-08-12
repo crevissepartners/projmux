@@ -76,7 +76,7 @@ fi
 smoke_assert_file_contains "$fake_tmux_log" "split-window -P -F #{pane_id} -h -t %7"
 
 "$bin" doctor --json >"$PROJMUX_SMOKE_WORKDIR/doctor.json"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"schema_version": 1'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"schema_version": 2'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"name": "tmux"'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"status": "ok"'
 
@@ -88,7 +88,8 @@ if grep -Eq '"(ai_notify_integrations|session_state_resume|runtime|logs)"' "$PRO
 fi
 
 "$bin" doctor --section runtime >"$PROJMUX_SMOKE_WORKDIR/doctor-runtime.txt"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime.txt" "No runtime checks in schema version 1"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime.txt" "runtime.socket.unreachable"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime.txt" "runtime.config.generated-missing"
 
 removed_flag_stderr="$PROJMUX_SMOKE_WORKDIR/doctor-removed-flag.err"
 operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
@@ -118,7 +119,7 @@ elif [[ -e "$operations_log" ]]; then
 fi
 
 # An explicit report invocation prints the complete preview before writing one
-# private local archive. It reuses Doctor schema v1 and does not migrate the
+# private local archive. It reuses Doctor schema v2 and does not migrate the
 # seeded legacy hook or journal its own success.
 support_report="$PROJMUX_SMOKE_WORKDIR/support/report.tar.gz"
 if [[ -e "$(dirname "$support_report")" || -e "$support_report" ]]; then
@@ -140,9 +141,9 @@ if [[ ! -f "$support_report" ]] || [[ "$(stat -c '%a' "$support_report")" != "60
 fi
 tar -xOzf "$support_report" manifest.json >"$PROJMUX_SMOKE_WORKDIR/report-manifest.json"
 tar -xOzf "$support_report" doctor.json >"$PROJMUX_SMOKE_WORKDIR/report-doctor.json"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-manifest.json" '"report_schema_version": 1'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-manifest.json" '"report_schema_version": 2'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-manifest.json" '"redaction_mode": "default-hash-v1"'
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-doctor.json" '"schema_version": 1'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/report-doctor.json" '"schema_version": 2'
 smoke_assert_file_contains "$legacy_hook" "legacy-hook-must-stay"
 operations_count_after_report=0
 if [[ -f "$operations_log" ]]; then
@@ -196,6 +197,13 @@ if [[ -e "$missing_state" ]]; then
   echo "missing-source report created state input paths" >&2
   exit 1
 fi
+XDG_STATE_HOME="$missing_state" "$bin" doctor --json --section logs \
+  >"$PROJMUX_SMOKE_WORKDIR/doctor-missing-logs.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-missing-logs.json" '"code": "logs.state.missing"'
+if [[ -e "$missing_state" ]]; then
+  echo "missing-source Doctor created state input paths" >&2
+  exit 1
+fi
 
 # Corrupt bounded sources degrade to stable omissions without mode repair.
 corrupt_state="$PROJMUX_SMOKE_WORKDIR/report-corrupt-state"
@@ -214,6 +222,9 @@ assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-corrupt-manifest.jso
   "operational-errors.json" "omitted" "source-corrupt-no-valid-errors"
 assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-corrupt-manifest.json" \
   "ai-ingest-summary.json" "omitted" "source-corrupt-no-safe-records"
+XDG_STATE_HOME="$corrupt_state" "$bin" doctor --json --section logs \
+  >"$PROJMUX_SMOKE_WORKDIR/doctor-corrupt-logs.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-corrupt-logs.json" '"code": "logs.journal.malformed"'
 if [[ "$(stat -c '%a' "$corrupt_operations")" != "644" ]] ||
   [[ "$(stat -c '%a' "$corrupt_ingest")" != "644" ]]; then
   echo "support report repaired corrupt source modes" >&2
@@ -277,6 +288,8 @@ if [[ "$(id -u)" == "0" ]]; then
     cp "$bin" "$permission_root/projmux"
     chmod 0755 "$permission_root/projmux"
     chown -R nobody:nogroup "$permission_root/home" "$permission_root/config" "$permission_root/output"
+    chown nobody:nogroup "$permission_state/projmux" "$permission_state/projmux/logs"
+    chmod 0500 "$permission_state/projmux" "$permission_state/projmux/logs"
     chown root:root "$permission_operations" "$permission_ingest"
     chmod 0600 "$permission_operations" "$permission_ingest"
     permission_operations_mode_before="$(stat -c '%a' "$permission_operations")"
@@ -288,6 +301,12 @@ if [[ "$(id -u)" == "0" ]]; then
       XDG_STATE_HOME="$permission_state" \
       "$permission_root/projmux" diagnostics report --output "$permission_output" \
       >"$PROJMUX_SMOKE_WORKDIR/report-permission-preview.txt"
+    runuser -u nobody -- env \
+      HOME="$permission_root/home" \
+      XDG_CONFIG_HOME="$permission_root/config" \
+      XDG_STATE_HOME="$permission_state" \
+      "$permission_root/projmux" doctor --json --section logs \
+      >"$PROJMUX_SMOKE_WORKDIR/doctor-permission.json"
     chmod 0700 "$PROJMUX_SMOKE_WORKDIR"
     permission_case="passed-non-root-adapter"
   else
@@ -295,11 +314,14 @@ if [[ "$(id -u)" == "0" ]]; then
     permission_case="skipped-root-no-adapter"
   fi
 else
+  chmod 0500 "$permission_state/projmux" "$permission_state/projmux/logs"
   chmod 0000 "$permission_operations" "$permission_ingest"
   permission_operations_mode_before="$(stat -c '%a' "$permission_operations")"
   permission_ingest_mode_before="$(stat -c '%a' "$permission_ingest")"
   XDG_STATE_HOME="$permission_state" "$bin" diagnostics report --output "$permission_output" \
     >"$PROJMUX_SMOKE_WORKDIR/report-permission-preview.txt"
+  XDG_STATE_HOME="$permission_state" "$bin" doctor --json --section logs \
+    >"$PROJMUX_SMOKE_WORKDIR/doctor-permission.json"
   permission_case="passed-direct-non-root"
 fi
 case "$permission_case" in
@@ -309,12 +331,22 @@ passed-*)
     "operational-errors.json" "omitted" "source-permission-denied"
   assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-permission-manifest.json" \
     "ai-ingest-summary.json" "omitted" "source-permission-denied"
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-permission.json" '"code": "logs.recent-errors.unavailable"'
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-permission.json" '"code": "logs.state.not-writable"'
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-permission.json" '"code": "logs.directory.not-writable"'
+  if ! grep -Eq '"code": "logs.journal.(not-writable|insecure-permissions)"' "$PROJMUX_SMOKE_WORKDIR/doctor-permission.json"; then
+    echo "permission-denied Doctor fixture did not classify journal writability" >&2
+    cat "$PROJMUX_SMOKE_WORKDIR/doctor-permission.json" >&2
+    exit 1
+  fi
   if [[ "$(stat -c '%a' "$permission_operations")" != "$permission_operations_mode_before" ]] ||
     [[ "$(stat -c '%a' "$permission_ingest")" != "$permission_ingest_mode_before" ]] ||
     compgen -G "$permission_root/output/.projmux-support-*.tmp" >/dev/null; then
     echo "permission-denied report repaired sources or left temp state" >&2
     exit 1
   fi
+  chmod 0700 "$permission_state/projmux" "$permission_state/projmux/logs"
+  chmod 0600 "$permission_operations" "$permission_ingest"
   ;;
 skipped-root-no-adapter) ;;
 *)
@@ -458,6 +490,69 @@ if [[ "$resources_flag" != "on" ]]; then
   echo "expected tmux apply to set @projmux_live_resources=on, got: $resources_flag" >&2
   exit 1
 fi
+
+# Doctor probes a fixed closed `tmux -L projmux show-options` argv. This test
+# wrapper routes only that fixed name to the run-unique real socket so the
+# binary boundary still exercises the actual server without accepting a raw
+# socket/path from Doctor input.
+doctor_mux_dir="$PROJMUX_SMOKE_WORKDIR/doctor-mux"
+mkdir -p "$doctor_mux_dir"
+real_doctor_tmux="$(command -v tmux)"
+cat >"$doctor_mux_dir/tmux" <<'DOCTOR_TMUX'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" != "-L" || "${2:-}" != "projmux" ]]; then
+  echo "unexpected Doctor tmux argv" >&2
+  exit 64
+fi
+shift 2
+exec "$PROJMUX_REAL_TMUX" -L "$PROJMUX_SMOKE_TMUX_SOCKET" "$@"
+DOCTOR_TMUX
+chmod 0755 "$doctor_mux_dir/tmux"
+
+doctor_config="$XDG_CONFIG_HOME/projmux/tmux.conf"
+cp "$doctor_config" "$PROJMUX_SMOKE_WORKDIR/doctor-config.before"
+cp "$operations_log" "$PROJMUX_SMOKE_WORKDIR/doctor-operations.before"
+find "$XDG_STATE_HOME/projmux" "$XDG_CONFIG_HOME/projmux" -printf '%p|%m|%s|%T@\n' | sort >"$PROJMUX_SMOKE_WORKDIR/doctor-inventory.before"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -g >"$PROJMUX_SMOKE_WORKDIR/doctor-tmux-options.before"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-sessions -F '#{session_id}|#{session_name}|#{session_windows}|#{session_attached}' >"$PROJMUX_SMOKE_WORKDIR/doctor-tmux-sessions.before"
+pgrep -x tmux | sort >"$PROJMUX_SMOKE_WORKDIR/doctor-process-state.before" || true
+for package_state in /var/lib/dpkg/status /lib/apk/db/installed /var/lib/rpm/rpmdb.sqlite; do
+  if [[ -e "$package_state" ]]; then
+    stat -c '%n|%m|%s|%Y' "$package_state"
+  fi
+done >"$PROJMUX_SMOKE_WORKDIR/doctor-package-state.before"
+env -u TMUX -u TMUX_PANE \
+  PATH="$doctor_mux_dir:$PATH" \
+  PROJMUX_REAL_TMUX="$real_doctor_tmux" \
+  "$bin" doctor --json >"$PROJMUX_SMOKE_WORKDIR/doctor-runtime-current.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime-current.json" '"code": "runtime.socket.reachable"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime-current.json" '"code": "runtime.config.generated-current"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime-current.json" '"code": "runtime.config.applied-current"'
+cmp "$PROJMUX_SMOKE_WORKDIR/doctor-config.before" "$doctor_config"
+cmp "$PROJMUX_SMOKE_WORKDIR/doctor-operations.before" "$operations_log"
+find "$XDG_STATE_HOME/projmux" "$XDG_CONFIG_HOME/projmux" -printf '%p|%m|%s|%T@\n' | sort >"$PROJMUX_SMOKE_WORKDIR/doctor-inventory.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/doctor-inventory.before" "$PROJMUX_SMOKE_WORKDIR/doctor-inventory.after"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -g >"$PROJMUX_SMOKE_WORKDIR/doctor-tmux-options.after"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-sessions -F '#{session_id}|#{session_name}|#{session_windows}|#{session_attached}' >"$PROJMUX_SMOKE_WORKDIR/doctor-tmux-sessions.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-options.before" "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-options.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-sessions.before" "$PROJMUX_SMOKE_WORKDIR/doctor-tmux-sessions.after"
+pgrep -x tmux | sort >"$PROJMUX_SMOKE_WORKDIR/doctor-process-state.after" || true
+cmp "$PROJMUX_SMOKE_WORKDIR/doctor-process-state.before" "$PROJMUX_SMOKE_WORKDIR/doctor-process-state.after"
+for package_state in /var/lib/dpkg/status /lib/apk/db/installed /var/lib/rpm/rpmdb.sqlite; do
+  if [[ -e "$package_state" ]]; then
+    stat -c '%n|%m|%s|%Y' "$package_state"
+  fi
+done >"$PROJMUX_SMOKE_WORKDIR/doctor-package-state.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/doctor-package-state.before" "$PROJMUX_SMOKE_WORKDIR/doctor-package-state.after"
+
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -g @projmux_config_digest "$(printf '0%.0s' {1..64})"
+env -u TMUX -u TMUX_PANE \
+  PATH="$doctor_mux_dir:$PATH" \
+  PROJMUX_REAL_TMUX="$real_doctor_tmux" \
+  "$bin" doctor --json --section runtime >"$PROJMUX_SMOKE_WORKDIR/doctor-runtime-stale.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime-stale.json" '"code": "runtime.config.applied-stale"'
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" source-file "$doctor_config"
 
 # Real lifecycle fixture. A tiny routing wrapper adds the run-unique -L socket
 # for projmux subprocesses that intentionally do not accept a socket flag. The

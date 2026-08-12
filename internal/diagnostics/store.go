@@ -25,6 +25,7 @@ const (
 )
 
 var errLockBusy = errors.New("diagnostics lock busy")
+var errReadOnlyLimit = errors.New("diagnostics read-only limit exceeded")
 
 // DefaultPath resolves the private operations journal without creating it.
 func DefaultPath(lookupEnv func(string) string, homeDir func() (string, error)) (string, error) {
@@ -189,7 +190,7 @@ func (s *Store) ReadOnly() (ReadResult, error) {
 	if err := s.rejectSymlinks(); err != nil {
 		return ReadResult{}, err
 	}
-	file, err := os.Open(s.path)
+	file, err := openReadOnlyRegular(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ReadResult{Missing: true}, nil
@@ -197,8 +198,23 @@ func (s *Store) ReadOnly() (ReadResult, error) {
 		return ReadResult{}, fmt.Errorf("open diagnostics log: %w", err)
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return ReadResult{}, fmt.Errorf("stat diagnostics log: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return ReadResult{}, fmt.Errorf("open diagnostics log: unsafe file type")
+	}
+	if info.Size() > MaxLogSize {
+		return ReadResult{}, fmt.Errorf("open diagnostics log: %w", errReadOnlyLimit)
+	}
 	home, _ := os.UserHomeDir()
-	return decodeCompleteRecords(file, home), nil
+	limited := &io.LimitedReader{R: file, N: MaxLogSize + 1}
+	result := decodeCompleteRecords(limited, home)
+	if limited.N <= 0 {
+		return ReadResult{}, fmt.Errorf("read diagnostics log: %w", errReadOnlyLimit)
+	}
+	return result, nil
 }
 
 func (s *Store) rejectSymlinks() error {

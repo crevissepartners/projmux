@@ -36,12 +36,20 @@ operation instead of recording nested outcomes. Lifecycle ownership replaces
 the generic top-level `command.outcome`; it never duplicates it. Start/outcome
 append failures are ignored and do not change the command result.
 
-The diagnostics package also exposes a typed `ReadRuntimeHealth` projection
-for later read-only Doctor consumers. It reports the fixed `tmux` backend,
-latest socket/apply state, and a bounded tail of safe failure codes using only
-`Store.ReadOnly`; it does not create, chmod, lock, truncate, probe, apply,
-restart, or repair anything. Doctor rendering and sections are intentionally
-unchanged in this phase.
+The diagnostics package exposes a typed `ReadRuntimeHealth` projection for
+read-only Doctor consumers. It reports the fixed `tmux` backend, latest
+socket/apply state, and a bounded tail/count of safe failures using only
+`Store.ReadOnly`; it does not create, chmod, lock, truncate, apply, restart, or
+repair anything. Doctor schema 2 consumes that seam for its `logs` findings
+and adds one fixed-argv, one-second `tmux -L projmux show-options` probe for
+actual socket/config health. The probe neither generates nor applies config.
+Its captured output is capped at 4 KiB. Doctor reads only a pre-existing
+regular generated config (at most 1 MiB) without following symlinks, and the
+shared read-only journal seam rejects non-regular inputs and files above 5 MiB.
+These conditions degrade to typed findings rather than blocking or repairing
+the source. Windows ACL privacy is reported as unverified because `os.FileMode`
+cannot prove it; a separate finding preserves the metadata-only writability
+result, and Doctor does not modify ACLs.
 
 ## Storage and retention
 
@@ -105,9 +113,9 @@ migrated by this foundation.
 
 `projmux diagnostics report [--output <path>]` previews and then atomically
 publishes a private local `tar.gz`; see [cli.md](cli.md#diagnostics). The
-manifest records report schema version 1, `default-hash-v1` redaction, every
+manifest records report schema version 2, `default-hash-v1` redaction, every
 included entry, and stable missing/corrupt/permission omission reasons. Doctor
-JSON schema version 1 and the bounded operations decoder are reused rather than
+JSON schema version 2 and the bounded operations decoder are reused rather than
 duplicated. AI ingest contributes count-only allowlisted source/result rows,
 never raw legacy lines. Existing output files survive collisions and partial
 temporary archives are removed.

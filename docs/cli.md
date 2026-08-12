@@ -128,33 +128,52 @@ items. `--verbose` adds successful checks and complete typed detail, including
 versions, paths, confidence/source metadata, and displayed remediation.
 `--section` projects the same inventory used by text and JSON: `deps` selects
 dependencies, `integrations` selects AI notify integrations, and
-`session-state` selects resume metadata plus retention guidance. `runtime` and
-`logs` are valid filters but have no checks in schema version 1; those health
-checks belong to Phase 2 and doctor does not fabricate placeholder findings.
+`session-state` selects resume metadata plus retention guidance. `runtime`
+selects the fixed `tmux` backend, an actual one-second read-only probe of the
+app socket, and generated-versus-live config digest state. `logs` selects the
+state/log/journal presence, private permissions and metadata-only writability
+checks plus a bounded aggregate of recent safe operational error codes. These
+sections expose only closed status codes and counts: no path, socket name,
+routing identity, message, config content, or argv is rendered.
+The recent-error count is the size of the newest 20-record window, not a
+lifetime total; `logs.recent-errors.bounded` means older errors were omitted.
+The probe captures at most 4 KiB, generated config inspection reads at most
+1 MiB, and the journal seam reads at most 5 MiB.
+Symlinks and non-regular inputs are rejected without following or blocking on
+them. On Windows, POSIX mode bits cannot establish ACL privacy, so otherwise
+valid paths report the closed `privacy-unverified` warning rather than a false
+private/insecure classification, followed by a separate metadata-only `ready`
+or `not-writable` finding; Doctor never changes ACLs.
 
-JSON reports have integer `schema_version: 1`. An unfiltered report retains the
+JSON reports have integer `schema_version: 2`. An unfiltered report retains the
 existing typed `dependencies`, `ai_notify_integrations`,
-`session_state_resume`, and `session_state_prune` detail; a filtered report
-contains only the selected typed field(s). `--verbose` is accepted with
-`--json` but does not change JSON fields or values.
+`session_state_resume`, and `session_state_prune` detail and adds ordered
+`runtime` and `logs` finding arrays. Every finding has closed `severity`,
+stable `code`, and closed `remediation`; bounded aggregates may add `count`
+and `safe_codes`. A filtered report contains only the selected typed field(s).
+`--verbose` is accepted with `--json` but does not change JSON fields or values.
 
 Default and verbose text exit non-zero only when their projected dependency
 inventory contains a required missing or stale dependency. A non-`deps`
 section exits `0`. JSON preserves its successful exit after emitting a report,
 even when required dependencies are missing or stale.
 
-Doctor is read-only for every flag combination. It never installs packages,
-runs displayed remediation, changes terminal or tmux state, migrates files, or
-writes operational-log outcomes. The removed `--install-missing`,
+Doctor is read-only for every flag combination. It never creates or repairs
+state/log paths, installs packages, runs displayed remediation, changes
+terminal or tmux state, generates/applies config, migrates files, or writes
+operational-log outcomes. Missing, malformed, or permission-denied journals
+degrade to typed log findings without failing the command. The removed `--install-missing`,
 `--include-optional`, and Doctor `--dry-run` mutation flags fail as unknown
 usage with an exact instruction to remove the flag and run displayed
 remediation explicitly outside Doctor; they are never ignored. Doctor does not
 diagnose terminal key delivery; use `projmux setup` for that.
 
-JSON migration: consumers must require `schema_version == 1` before decoding
-the typed fields. Version 1 adds the root version and filtered projections;
-field meanings inside the existing dependency, integration, and Session State
-inventories are unchanged.
+JSON migration: consumers must switch on `schema_version` before decoding.
+Version 2 changes the previously empty/reserved `runtime` and `logs` arrays to
+the typed finding shape above; field meanings inside the version 1 dependency,
+integration, and Session State inventories are unchanged. Consumers that only
+understand version 1 must reject version 2 rather than decoding the new arrays
+as the old empty placeholder shape.
 
 `Settings > Notifications > Delivery sources` shows active Codex, Claude, and
 Antigravity hooks plus tmux statuses, conflicts, config paths, and
@@ -205,7 +224,7 @@ destination. Without it, the command uses a timestamped archive in the current
 directory. Existing destinations are never replaced.
 
 The archive contains `manifest.json`, safe projmux version/platform/backend
-metadata, a redacted projection of the existing Doctor JSON schema version 1,
+metadata, a redacted projection of Doctor JSON schema version 2,
 config presence states (never values), up to 50 recent errors from the existing
 bounded operations reader, and count-only AI ingest diagnostics. Paths,
 session/window/pane/thread/routing identifiers, run IDs, tool/version output,
@@ -218,7 +237,8 @@ permissions, migrate hooks, append an operational outcome, contact a network,
 upload, create an issue, or run in the background; only the explicitly selected
 output parent/temp/archive can be written.
 
-The redacted Doctor projection keeps `schema_version` and structural/count
+The redacted Doctor projection keeps `schema_version`, closed runtime/log
+finding enums, and structural/count
 numbers as numbers. Numeric routing fields such as `window_index` and
 `pane_index` become field-scoped hash strings under `default-hash-v1`; consumers
 must treat this support projection as redacted evidence rather than decoding it

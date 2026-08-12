@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "dependencies": [
     {
       "name": "tmux",
@@ -27,5 +27,49 @@
     }
   ],
   "ai_notify_integrations": null,
-  "session_state_prune": "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name."
+  "session_state_prune": "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name.",
+  "runtime": [
+    {
+      "severity": "info",
+      "code": "runtime.backend.tmux",
+      "remediation": "none"
+    },
+    {
+      "severity": "warning",
+      "code": "runtime.socket.unreachable",
+      "remediation": "start-projmux-runtime"
+    },
+    {
+      "severity": "warning",
+      "code": "runtime.config.generated-missing",
+      "remediation": "run-projmux-tmux-apply"
+    },
+    {
+      "severity": "info",
+      "code": "runtime.config.applied-unknown",
+      "remediation": "start-projmux-runtime"
+    }
+  ],
+  "logs": [
+    {
+      "severity": "warning",
+      "code": "logs.state.missing",
+      "remediation": "inspect-state-permissions"
+    },
+    {
+      "severity": "warning",
+      "code": "logs.directory.missing",
+      "remediation": "inspect-log-permissions"
+    },
+    {
+      "severity": "warning",
+      "code": "logs.journal.missing",
+      "remediation": "inspect-operational-journal"
+    },
+    {
+      "severity": "info",
+      "code": "logs.recent-errors.none",
+      "remediation": "none"
+    }
+  ]
 }

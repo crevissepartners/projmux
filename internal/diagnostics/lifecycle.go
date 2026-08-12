@@ -17,6 +17,16 @@ const (
 	OperationTmuxApply     Operation = "tmux.apply"
 )
 
+// AllowedCodes returns the closed safe lifecycle-code inventory for typed
+// read-only consumers. The returned slice is a copy in stable order.
+func AllowedCodes() []Code {
+	return []Code{
+		CodeSessionCreateFailed, CodeSessionAttachFailed, CodeSessionSwitchFailed,
+		CodeSessionKillFailed, CodeTmuxApplyFailed, CodeTmuxApplySocketUnreachable,
+		CodeTmuxApplyReloadFailed, CodeTmuxApplyReloadSkipped,
+	}
+}
+
 // Code is the closed, content-free runtime outcome classification consumed by
 // read-only diagnostics. It must never contain a tmux target, path, argv, or
 // generated configuration value.
