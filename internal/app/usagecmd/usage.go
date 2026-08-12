@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -85,7 +86,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	model := fs.String("model", "all", "filter by model: codex | claude | antigravity | all")
-	window := fs.String("window", "all", "filter by window: 5h | weekly | context | all")
+	window := fs.String("window", "all", "filter by window: 5h | weekly | context | quota | all")
 	asJSON := fs.Bool("json", false, "emit a JSON array instead of the tab-aligned table")
 	// --force / -f bypasses the per-adapter throttle floor AND clears
 	// any active backoff before invoking adapters. Useful when bound
@@ -619,7 +620,7 @@ func writeUsageJSON(w io.Writer, snaps []usage.Snapshot, state usage.State, now 
 
 func writeUsageTable(w io.Writer, snaps []usage.Snapshot, now time.Time) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "MODEL\tWINDOW\tPCT\tRESETS_AT\tSTALE"); err != nil {
+	if _, err := fmt.Fprintln(tw, "MODEL\tWINDOW\tPCT\tRESETS_AT\tRESET_IN\tSTALE"); err != nil {
 		return err
 	}
 	for _, s := range snaps {
@@ -630,11 +631,12 @@ func writeUsageTable(w io.Writer, snaps []usage.Snapshot, now time.Time) error {
 		if !s.ResetsAt.IsZero() {
 			resets = s.ResetsAt.Local().Format(time.RFC3339)
 		}
+		resetIn := ResetInText(s.ResetInSeconds)
 		stale := ""
 		if isStale(s, now) {
 			stale = "*"
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Model, s.Window, pct, resets, stale); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.Model, SnapshotWindowLabel(s), pct, resets, resetIn, stale); err != nil {
 			return err
 		}
 	}
@@ -708,12 +710,12 @@ type modelDisplay struct {
 	hasWeek    bool
 	weekPct    float64
 	weekStale  int
-	// context-window fullness (usage.WindowContext). Used by adapters
-	// whose current adapter is context-window-only (Antigravity). Rendered as a
-	// `ctx` pair alongside — or in place of — the time-windowed bars.
+	// context-window fullness (usage.WindowContext). Rendered as a `ctx` pair
+	// independently from fixed windows and named account quota buckets.
 	hasContext bool
 	contextPct float64
 	ctxStale   int
+	quotas     []quotaDisplay
 	// lastSync is max(fiveUpdatedAt, weekUpdatedAt). Used together
 	// with `now` to compute the age indicator. Zero when no row
 	// supplied an UpdatedAt timestamp.
@@ -721,6 +723,11 @@ type modelDisplay struct {
 	// showAge gates the age-indicator render path. False for
 	// adapters whose data is always near-current (Codex).
 	showAge bool
+}
+
+type quotaDisplay struct {
+	id  string
+	pct float64
 }
 
 // formatStatusUsage produces the HUD-style tmux status segment. The output
@@ -789,7 +796,7 @@ func renderTierLongHUD(models []modelDisplay, now time.Time) string {
 func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) string {
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
-		if !m.hasFive && !m.hasWeek && !m.hasContext {
+		if !m.hasFive && !m.hasWeek && !m.hasContext && len(m.quotas) == 0 {
 			continue
 		}
 		var b strings.Builder
@@ -821,6 +828,9 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 		if m.hasContext {
 			writePair("ctx", m.contextPct)
 		}
+		for _, quota := range m.quotas {
+			writePair("quota/"+BucketDisplayID(quota.id), quota.pct)
+		}
 		b.WriteString(statusDefaultReset)
 		blocks = append(blocks, b.String())
 	}
@@ -844,6 +854,8 @@ func renderTierFiveHOnlyHUD(models []modelDisplay, now time.Time) string {
 			window, pct = "5h", m.fivePct
 		case m.hasContext:
 			window, pct = "ctx", m.contextPct
+		case len(m.quotas) > 0:
+			window, pct = "quota/"+BucketDisplayID(m.quotas[0].id), m.quotas[0].pct
 		default:
 			continue
 		}
@@ -900,7 +912,7 @@ func renderTierTextShort(models []modelDisplay, now time.Time) string {
 // tier carries staleness via the age indicator. The non-JSON `usage`
 // table CLI still surfaces a STALE column for verbose inspection.
 func renderTextPair(m modelDisplay, label string) string {
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 3+len(m.quotas))
 	if m.hasFive {
 		parts = append(parts, fmt.Sprintf("5h:%s", PercentText(m.fivePct)))
 	}
@@ -909,6 +921,9 @@ func renderTextPair(m modelDisplay, label string) string {
 	}
 	if m.hasContext {
 		parts = append(parts, fmt.Sprintf("ctx:%s", PercentText(m.contextPct)))
+	}
+	for _, quota := range m.quotas {
+		parts = append(parts, fmt.Sprintf("quota/%s:%s", BucketDisplayID(quota.id), PercentText(quota.pct)))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -985,6 +1000,36 @@ func PercentText(pct float64) string {
 	return fmt.Sprintf("%.0f%%", pct)
 }
 
+// SnapshotWindowLabel distinguishes fixed windows, conversation context, and
+// opaque account-quota IDs without inventing a cadence alias for the latter.
+func SnapshotWindowLabel(snapshot usage.Snapshot) string {
+	if snapshot.Window == usage.WindowQuota {
+		return "quota/" + BucketDisplayID(snapshot.Bucket)
+	}
+	return string(snapshot.Window)
+}
+
+// BucketDisplayID escapes control characters and quotes without changing the
+// opaque ID stored in Snapshot.Bucket. Removing only the surrounding JSON
+// quotes keeps ordinary IDs compact while keeping escaped and literal text
+// distinct (newline -> `\n`, backslash+n -> `\\n`).
+func BucketDisplayID(id string) string {
+	quoted := strconv.QuoteToGraphic(id)
+	if len(quoted) >= 2 {
+		return strings.ReplaceAll(quoted[1:len(quoted)-1], "#", `\x23`)
+	}
+	return strings.ReplaceAll(quoted, "#", `\x23`)
+}
+
+// ResetInText preserves an upstream relative-reset observation as exact
+// seconds. It deliberately does not derive it from ResetsAt.
+func ResetInText(seconds *int64) string {
+	if seconds == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%ds", *seconds)
+}
+
 // buildModelDisplays converts snapshots into the canonical-ordered display
 // rows the renderers iterate over. In schema v2 the Pct value is the
 // authoritative percentage from the upstream API, so we no longer drop
@@ -993,11 +1038,12 @@ func PercentText(pct float64) string {
 // data" rather than a genuine 0% (e.g. when the upstream returned
 // `seven_day_oauth_apps: null`).
 func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
+	snaps = usage.SortedSnapshots(snaps)
 	byModel := make(map[string]*modelDisplay)
 	order := make([]string, 0, 2)
 	for i := range snaps {
 		s := snaps[i]
-		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 {
+		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != usage.WindowContext && s.Window != usage.WindowQuota {
 			continue
 		}
 		row, ok := byModel[s.Model]
@@ -1024,6 +1070,10 @@ func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 			row.hasContext = true
 			row.contextPct = s.Pct
 			row.ctxStale = level
+		case usage.WindowQuota:
+			if s.Bucket != "" {
+				row.quotas = append(row.quotas, quotaDisplay{id: s.Bucket, pct: s.Pct})
+			}
 		}
 		// lastSync tracks the most recent successful refresh
 		// across the model's rows; the long HUD tier renders its
@@ -1122,7 +1172,7 @@ func runeLen(s string) int {
 
 func printUsageHelp(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|all] [--json] [--force|-f]")
+	fmt.Fprintln(w, "  projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all] [--json] [--force|-f]")
 	fmt.Fprintln(w, "  projmux status usage [--max-width N] [--force|-f]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")

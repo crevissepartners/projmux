@@ -16,6 +16,13 @@
       "cache_read_input_tokens": 20857
     }
   },
+  "quota": {
+    "gemini-weekly": {
+      "remaining_fraction": 0.9378,
+      "reset_time": "2026-07-06T07:50:32Z",
+      "reset_in_seconds": 560580
+    }
+  },
   "agent_state": "tool_use",
   "tool_confirmation_pending": true
 }

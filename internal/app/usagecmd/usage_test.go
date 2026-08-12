@@ -52,9 +52,8 @@ func TestFormatStatusUsageRendersAntigravityContext(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	// Phase 3's Antigravity adapter exposes only the context-window gauge;
-	// separate account quota parsing/rendering remains out of scope.
-	// It must still render a `ctx` bar in the HUD.
+	// The conversation-local gauge must render as `ctx` even when there are no
+	// account quota buckets.
 	snaps := []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 42, UpdatedAt: now},
 	}
@@ -71,6 +70,68 @@ func TestFormatStatusUsageRendersAntigravityContext(t *testing.T) {
 	}
 	if !strings.Contains(got, "█") || !strings.Contains(got, "░") {
 		t.Fatalf("missing bar runes: %q", got)
+	}
+}
+
+func TestFormatStatusUsageSeparatesAntigravityContextAndOpaqueQuotaBuckets(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "weekly", Pct: 70, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 0, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "5h", Pct: 40, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "context", Pct: 20, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "quota", Pct: 50, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "   ", Pct: 60, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "bad\n#[fg=red]", Pct: 30, UpdatedAt: now},
+	}
+	got := intrender.StripTmuxEscapes(formatStatusUsage(snaps, 0, now))
+	for _, want := range []string{"Antigravity", "ctx ", "0%", "quota/5h ", "quota/context ", "quota/quota ", "quota/weekly ", "quota/    ", `quota/bad\n\x23[fg=red] `} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("HUD = %q, missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "bad\n#") {
+		t.Fatalf("raw newline from bucket ID corrupted HUD: %q", got)
+	}
+	if !(strings.Index(got, "quota/5h ") < strings.Index(got, "quota/context ") && strings.Index(got, "quota/context ") < strings.Index(got, "quota/weekly ")) {
+		t.Fatalf("quota bucket order is not deterministic lexical order: %q", got)
+	}
+}
+
+func TestBucketDisplayIDEscapesWithoutLabelCollision(t *testing.T) {
+	t.Parallel()
+	ids := []string{"#", `\x23`, "\n", `\n`, "\x1b", `\x1b`, "\t", `\t`}
+	seen := map[string]string{}
+	for _, id := range ids {
+		label := BucketDisplayID(id)
+		if prior, ok := seen[label]; ok {
+			t.Fatalf("IDs %q and %q collide at label %q", prior, id, label)
+		}
+		seen[label] = id
+		if strings.ContainsAny(label, "\n\r\t\x1b") || strings.Contains(label, "#") {
+			t.Fatalf("unsafe label for %q: %q", id, label)
+		}
+	}
+}
+
+func TestUsageTablePreservesQuotaResetShapes(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
+	reset := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+	zero := int64(0)
+	var out bytes.Buffer
+	if err := writeUsageTable(&out, []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 12, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "context", Pct: 0, ResetsAt: reset, ResetInSeconds: &zero, UpdatedAt: now},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{"context", "quota/context", reset.Local().Format(time.RFC3339), "0s", "RESET_IN"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("table = %q, missing %q", got, want)
+		}
 	}
 }
 
@@ -263,6 +324,24 @@ func TestFilterSnapshotsByModelAndWindow(t *testing.T) {
 	got = filterSnapshots(snaps, "codex", "weekly")
 	if len(got) != 1 || got[0].Model != "codex" || got[0].Window != usage.WindowWeekly {
 		t.Fatalf("codex+weekly got %+v, want one codex weekly", got)
+	}
+}
+
+func TestFilterSnapshotsQuotaDoesNotAliasFixedWindows(t *testing.T) {
+	t.Parallel()
+	snaps := []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "context"},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "weekly"},
+		{Model: "claude", Window: usage.WindowWeekly},
+	}
+	got := filterSnapshots(snaps, "antigravity", "quota")
+	if len(got) != 2 || got[0].Bucket != "context" || got[1].Bucket != "weekly" {
+		t.Fatalf("quota filter = %#v", got)
+	}
+	got = filterSnapshots(snaps, "all", "weekly")
+	if len(got) != 1 || got[0].Model != "claude" || got[0].Window != usage.WindowWeekly {
+		t.Fatalf("weekly filter aliased opaque bucket: %#v", got)
 	}
 }
 

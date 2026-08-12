@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
@@ -49,6 +52,8 @@ type antigravityHookPayload struct {
 	ContextCurrentOutputTokens int64
 	ContextCacheCreationTokens int64
 	ContextCacheReadTokens     int64
+	QuotaSet                   bool
+	QuotaBuckets               []antigravityadapter.QuotaBucketRecord
 }
 
 func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) error {
@@ -69,6 +74,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 
 	c.markAIHookPane(paneID, aiModeAntigravity, payload.CWD, payload.ConversationID, payload.ConversationID, payload.TranscriptPath)
 	c.persistAntigravityContextUsage(payload)
+	c.persistAntigravityQuotaUsage(payload)
 	metadata := payload.antigravityMetadata()
 	action := c.aiHookEffectiveAction(aiHookProviderAntigravity, payload.EventName)
 	// Statusline is a legacy/manual signal rather than one of the five official
@@ -207,10 +213,9 @@ func (c *aiCommand) preserveAntigravityTerminalState(paneID string) bool {
 // persistAntigravityContextUsage records the latest context-window
 // percentage carried by an antigravity hook into the usage state
 // directory so the usage adapter (and thus the HUD/status bar) can surface
-// it. Best-effort: Phase 3 handles only this conversation-local gauge and
-// deliberately does not parse or render separate account quota data. A
-// missing or unparseable value, or a write failure, is silently ignored —
-// usage is a non-critical side channel of hook ingest.
+// it. This remains independent from account quota persistence. A missing or
+// unparseable value, or a write failure, is silently ignored — usage is a
+// non-critical side channel of hook ingest.
 func (c *aiCommand) persistAntigravityContextUsage(payload antigravityHookPayload) {
 	pct, ok := payload.ContextUsedPercentage, payload.ContextUsedPercentageSet
 	if !ok {
@@ -227,6 +232,23 @@ func (c *aiCommand) persistAntigravityContextUsage(payload antigravityHookPayloa
 		ConversationID: payload.ConversationID,
 		Pct:            pct,
 		UpdatedAt:      c.now().UTC(),
+	})
+}
+
+// persistAntigravityQuotaUsage records an explicitly present quota map. An
+// absent map leaves the last observation untouched (statusline payloads may be
+// context-only); an explicit empty or wholly invalid map clears prior buckets.
+func (c *aiCommand) persistAntigravityQuotaUsage(payload antigravityHookPayload) {
+	if !payload.QuotaSet {
+		return
+	}
+	baseDir, err := c.usageStateDir()
+	if err != nil {
+		return
+	}
+	_ = antigravityadapter.WriteQuota(baseDir, antigravityadapter.QuotaRecord{
+		Buckets:   append([]antigravityadapter.QuotaBucketRecord(nil), payload.QuotaBuckets...),
+		UpdatedAt: c.now().UTC(),
 	})
 }
 
@@ -314,6 +336,11 @@ func parseAntigravityHookPayload(data []byte, explicitEvent string) (antigravity
 	payload.ContextCurrentOutputTokens, _ = firstAntigravityInt64(currentUsage, "output_tokens")
 	payload.ContextCacheCreationTokens, _ = firstAntigravityInt64(currentUsage, "cache_creation_input_tokens")
 	payload.ContextCacheReadTokens, _ = firstAntigravityInt64(currentUsage, "cache_read_input_tokens")
+	quota, quotaSet := antigravityQuotaMap(raw, statusline)
+	payload.QuotaSet = quotaSet
+	if quotaSet {
+		payload.QuotaBuckets = parseAntigravityQuotaBuckets(quota)
+	}
 	if value, ok := firstBool(raw, "fully_idle", "fullyIdle"); ok {
 		payload.FullyIdle = value
 		payload.FullyIdleSet = true
@@ -484,11 +511,55 @@ func firstAntigravityFloat(raw map[string]any, keys ...string) (float64, bool) {
 
 func firstAntigravityInt64(raw map[string]any, keys ...string) (int64, bool) {
 	for _, key := range keys {
-		if value, ok := raw[key].(float64); ok && value == float64(int64(value)) {
+		if value, ok := raw[key].(float64); ok && !math.IsNaN(value) && !math.IsInf(value, 0) && value >= math.MinInt64 && value <= math.MaxInt64 && value == math.Trunc(value) {
 			return int64(value), true
 		}
 	}
 	return 0, false
+}
+
+func antigravityQuotaMap(raw map[string]any, statusline any) (map[string]any, bool) {
+	if value, ok := raw["quota"]; ok {
+		return mapFromAny(value), true
+	}
+	if nested := mapFromAny(statusline); len(nested) > 0 {
+		if value, ok := nested["quota"]; ok {
+			return mapFromAny(value), true
+		}
+	}
+	return nil, false
+}
+
+func parseAntigravityQuotaBuckets(quota map[string]any) []antigravityadapter.QuotaBucketRecord {
+	ids := make([]string, 0, len(quota))
+	for id := range quota {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	buckets := make([]antigravityadapter.QuotaBucketRecord, 0, len(ids))
+	for _, id := range ids {
+		rawBucket := mapFromAny(quota[id])
+		remaining, ok := firstAntigravityFloat(rawBucket, "remaining_fraction")
+		if !ok {
+			continue
+		}
+		bucket := antigravityadapter.QuotaBucketRecord{
+			ID:                id,
+			RemainingFraction: remaining,
+		}
+		if rawReset := firstString(rawBucket, "reset_time"); rawReset != "" {
+			if parsed, err := time.Parse(time.RFC3339, rawReset); err == nil {
+				bucket.ResetTime = parsed.UTC()
+			}
+		}
+		if seconds, ok := firstAntigravityInt64(rawBucket, "reset_in_seconds"); ok {
+			bucket.ResetInSeconds = &seconds
+		}
+		if antigravityadapter.ValidQuotaBucket(bucket) {
+			buckets = append(buckets, bucket)
+		}
+	}
+	return buckets
 }
 
 func antigravityHookResponse(event string) ([]byte, error) {

@@ -1,12 +1,10 @@
 // Package antigravity implements a best-effort usage Adapter for the
 // Antigravity CLI (`agy`).
 //
-// This Phase 3 adapter intentionally consumes only the statusline
-// `context_window` percentage — how full the active conversation's context
-// window is. Separate account quota parsing/rendering is outside this slice.
-// This adapter is therefore context-window-only: it surfaces a single
-// usage.Snapshot on the usage.WindowContext window and never fabricates
-// 5h/weekly rows.
+// The adapter consumes two distinct statusline signals: conversation-local
+// `context_window` fullness and account-wide named `quota` buckets. Quota
+// bucket IDs remain opaque upstream identities; this package never aliases
+// them to the canonical 5h/weekly windows.
 //
 // Source of truth: a small sidecar file written by the antigravity hook
 // ingest path (`projmux ai ingest antigravity-hook`) whenever a hook
@@ -25,8 +23,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,11 @@ const Name = "antigravity"
 // (snapshots.json) in the resolved usage state directory.
 const ContextFileName = "antigravity-context.json"
 
+// QuotaFileName stores the latest account-quota map independently from the
+// conversation-local context sidecar. A context-only statusline update must
+// not overwrite the last observed account quota state.
+const QuotaFileName = "antigravity-quota.json"
+
 // ContextRecord is the on-disk schema shared between the hook ingest path
 // (writer) and this adapter (reader). Pct is the context-window fullness
 // percentage (0-100); ConversationID preserves its conversation-local identity;
@@ -52,6 +58,23 @@ type ContextRecord struct {
 	ConversationID string    `json:"conversation_id,omitempty"`
 	Pct            float64   `json:"pct"`
 	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// QuotaBucketRecord preserves one official statusline quota entry. ID is the
+// upstream map key verbatim. ResetInSeconds is a pointer so absent and zero
+// retain different meanings.
+type QuotaBucketRecord struct {
+	ID                string    `json:"id"`
+	RemainingFraction float64   `json:"remaining_fraction"`
+	ResetTime         time.Time `json:"reset_time"`
+	ResetInSeconds    *int64    `json:"reset_in_seconds,omitempty"`
+}
+
+// QuotaRecord is the quota sidecar wire shape. UpdatedAt records when the
+// whole map was observed; individual buckets share that freshness boundary.
+type QuotaRecord struct {
+	Buckets   []QuotaBucketRecord `json:"buckets"`
+	UpdatedAt time.Time           `json:"updated_at"`
 }
 
 // Adapter is the Antigravity implementation of usage.Adapter.
@@ -68,50 +91,82 @@ func New(baseDir string) *Adapter {
 // Name implements usage.Adapter.
 func (a *Adapter) Name() string { return Name }
 
-// Collect reads the context sidecar and returns a single context-window
-// Snapshot. Best-effort: a missing base dir, missing file, malformed JSON
-// or an out-of-range percentage all read as zero snapshots (no error) so
-// the status segment stays silent rather than breaking.
+// Collect reads the independent context and quota sidecars. Missing files and
+// invalid quota buckets degrade to no rows for that signal. If either present
+// sidecar is malformed, Collect returns no partial rows so the Manager keeps
+// the last complete Antigravity model view atomically.
 func (a *Adapter) Collect(_ context.Context) ([]usage.Snapshot, error) {
 	if strings.TrimSpace(a.baseDir) == "" {
 		return nil, nil
 	}
-	rec, ok, err := readContext(filepath.Join(a.baseDir, ContextFileName))
+	var (
+		snaps []usage.Snapshot
+		errs  []error
+	)
+	contextRec, ok, err := readJSON[ContextRecord](filepath.Join(a.baseDir, ContextFileName))
 	if err != nil {
-		// Surface for diagnostics under PROJMUX_USAGE_DEBUG; the hot path
-		// swallows it. Return no snapshots so rendering degrades cleanly.
-		return nil, err
+		errs = append(errs, fmt.Errorf("read context: %w", err))
+	} else if ok && !math.IsNaN(contextRec.Pct) && !math.IsInf(contextRec.Pct, 0) {
+		pct := contextRec.Pct
+		if pct < 0 {
+			pct = 0
+		}
+		snaps = append(snaps, usage.Snapshot{
+			Model:     Name,
+			Window:    usage.WindowContext,
+			Pct:       pct,
+			UpdatedAt: contextRec.UpdatedAt.UTC(),
+		})
 	}
-	if !ok {
-		return nil, nil
+	quotaRec, ok, err := readJSON[QuotaRecord](filepath.Join(a.baseDir, QuotaFileName))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("read quota: %w", err))
+	} else if ok {
+		buckets := append([]QuotaBucketRecord(nil), quotaRec.Buckets...)
+		sort.Slice(buckets, func(i, j int) bool { return buckets[i].ID < buckets[j].ID })
+		seen := map[string]bool{}
+		for _, bucket := range buckets {
+			if !ValidQuotaBucket(bucket) || seen[bucket.ID] {
+				continue
+			}
+			seen[bucket.ID] = true
+			snaps = append(snaps, usage.Snapshot{
+				Model:          Name,
+				Window:         usage.WindowQuota,
+				Bucket:         bucket.ID,
+				Pct:            100 * (1 - bucket.RemainingFraction),
+				ResetInSeconds: cloneInt64(bucket.ResetInSeconds),
+				ResetsAt:       bucket.ResetTime.UTC(),
+				UpdatedAt:      quotaRec.UpdatedAt.UTC(),
+			})
+		}
 	}
-	pct := rec.Pct
-	if pct < 0 {
-		pct = 0
+	if len(errs) > 0 {
+		// The Manager replaces all rows owned by an adapter when any fresh row
+		// is returned. Do not return a partial Antigravity view: doing so would
+		// erase the last-known valid context or quota half. Returning no rows
+		// with an error preserves the prior model atomically.
+		return nil, errors.Join(errs...)
 	}
-	return []usage.Snapshot{{
-		Model:     Name,
-		Window:    usage.WindowContext,
-		Pct:       pct,
-		UpdatedAt: rec.UpdatedAt.UTC(),
-	}}, nil
+	return snaps, nil
 }
 
-func readContext(path string) (ContextRecord, bool, error) {
+func readJSON[T any](path string) (T, bool, error) {
+	var zero T
 	localstate.RepairPrivateFile(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return ContextRecord{}, false, nil
+			return zero, false, nil
 		}
-		return ContextRecord{}, false, err
+		return zero, false, err
 	}
 	if len(data) == 0 {
-		return ContextRecord{}, false, nil
+		return zero, false, nil
 	}
-	var rec ContextRecord
+	var rec T
 	if err := json.Unmarshal(data, &rec); err != nil {
-		return ContextRecord{}, false, err
+		return zero, false, err
 	}
 	return rec, true, nil
 }
@@ -119,16 +174,28 @@ func readContext(path string) (ContextRecord, bool, error) {
 // WriteContext atomically persists rec to <baseDir>/ContextFileName,
 // creating baseDir if needed. Used by the antigravity hook ingest path.
 func WriteContext(baseDir string, rec ContextRecord) error {
+	rec.UpdatedAt = rec.UpdatedAt.UTC()
+	return writeJSON(baseDir, ContextFileName, rec)
+}
+
+// WriteQuota atomically replaces the latest observed quota map. An explicit
+// empty map is persisted as an empty bucket list, clearing older account rows.
+func WriteQuota(baseDir string, rec QuotaRecord) error {
+	rec.UpdatedAt = rec.UpdatedAt.UTC()
+	sort.Slice(rec.Buckets, func(i, j int) bool { return rec.Buckets[i].ID < rec.Buckets[j].ID })
+	return writeJSON(baseDir, QuotaFileName, rec)
+}
+
+func writeJSON(baseDir, fileName string, value any) error {
 	if err := localstate.EnsurePrivateDir(baseDir); err != nil {
 		return err
 	}
-	rec.UpdatedAt = rec.UpdatedAt.UTC()
-	data, err := json.MarshalIndent(rec, "", "  ")
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(baseDir, ContextFileName)
-	tmp, err := os.CreateTemp(baseDir, "."+ContextFileName+".tmp-*")
+	path := filepath.Join(baseDir, fileName)
+	tmp, err := os.CreateTemp(baseDir, "."+fileName+".tmp-*")
 	if err != nil {
 		return err
 	}
@@ -152,6 +219,27 @@ func WriteContext(baseDir string, rec ContextRecord) error {
 	cleanup = false
 	localstate.RepairPrivateFile(path)
 	return nil
+}
+
+// ValidQuotaBucket applies the account-quota safety boundary shared by the
+// ingest writer and adapter reader. It rejects empty identities, non-finite or
+// out-of-range fractions, and negative relative resets.
+func ValidQuotaBucket(bucket QuotaBucketRecord) bool {
+	if bucket.ID == "" || math.IsNaN(bucket.RemainingFraction) || math.IsInf(bucket.RemainingFraction, 0) {
+		return false
+	}
+	if bucket.RemainingFraction < 0 || bucket.RemainingFraction > 1 {
+		return false
+	}
+	return bucket.ResetInSeconds == nil || *bucket.ResetInSeconds >= 0
+}
+
+func cloneInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 // ParsePercent parses an antigravity context_window string (e.g. "42%",

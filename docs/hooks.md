@@ -684,10 +684,13 @@ otherwise preview and doctor render `resume unavailable`. Official snake_case
 `tool_confirmation_pending`, and structured `context_window.used_percentage`
 plus token fields are parsed directly. The structured percentage is persisted
 with conversation identity to the usage state dir; the legacy string percentage
-remains a fallback so the usage HUD can surface it as a `context-window-only`
-row. Separate Antigravity account quota data is not parsed or rendered in Phase
-3, so no quota bars are emitted from this bridge. Raw payloads or
-transcript contents are not stored.
+remains a fallback so the usage HUD can surface it as the conversation-local
+`context` row. The official top-level `quota` map is persisted independently:
+valid `remaining_fraction` values become used percent, exact upstream bucket
+IDs render as separate `quota/<bucket>` account rows, and `reset_time` plus
+optional `reset_in_seconds` retain their independent meanings. Invalid,
+disabled, missing, or empty quota shapes degrade without inventing a cadence or
+reinterpreting context. Raw payloads or transcript contents are not stored.
 
 ## Ingest Debug Log
 

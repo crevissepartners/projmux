@@ -2,6 +2,7 @@ package antigravity
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -91,6 +92,166 @@ func TestWriteThenCollect(t *testing.T) {
 		if got := info.Mode().Perm(); got != want {
 			t.Fatalf("%s mode = %#o, want %#o", path, got, want)
 		}
+	}
+}
+
+func TestWriteQuotaThenCollectKeepsOpaqueBucketsDistinct(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "usage")
+	updated := time.Date(2026, 8, 12, 2, 0, 0, 0, time.UTC)
+	reset := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+	zero := int64(0)
+	if err := WriteContext(dir, ContextRecord{ConversationID: "local", Pct: 12, UpdatedAt: updated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteQuota(dir, QuotaRecord{
+		UpdatedAt: updated,
+		Buckets: []QuotaBucketRecord{
+			{ID: "weekly", RemainingFraction: 0.2, ResetTime: reset},
+			{ID: "5h", RemainingFraction: 0.4, ResetTime: reset},
+			{ID: "context", RemainingFraction: 1, ResetTime: reset, ResetInSeconds: &zero},
+			{ID: "quota", RemainingFraction: 0.7, ResetTime: reset},
+			{ID: "   ", RemainingFraction: 0.6, ResetTime: reset},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := New(dir).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 6 {
+		t.Fatalf("snapshots = %#v, want context plus five quota buckets", snaps)
+	}
+	if snaps[0].Window != usage.WindowContext || snaps[0].Bucket != "" {
+		t.Fatalf("context snapshot = %#v", snaps[0])
+	}
+	wantIDs := []string{"   ", "5h", "context", "quota", "weekly"}
+	for i, wantID := range wantIDs {
+		got := snaps[i+1]
+		if got.Window != usage.WindowQuota || got.Bucket != wantID {
+			t.Fatalf("snapshot[%d] = %#v, want quota bucket %q", i+1, got, wantID)
+		}
+	}
+	contextBucket := snaps[3]
+	if contextBucket.Pct != 0 || contextBucket.ResetInSeconds == nil || *contextBucket.ResetInSeconds != 0 {
+		t.Fatalf("quota/context = %#v, want genuine 0%% and explicit relative reset zero", contextBucket)
+	}
+	if got := snaps[1].Pct; got != 40 {
+		t.Fatalf("used pct for remaining 0.6 = %v, want 40", got)
+	}
+	assertMode := func(path string, want os.FileMode) {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if info.Mode().Perm() != want {
+			t.Fatalf("mode %s = %v, want %#o", path, info.Mode().Perm(), want)
+		}
+	}
+	assertMode(filepath.Join(dir, QuotaFileName), 0o600)
+}
+
+func TestCollectRejectsInvalidQuotaRecords(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	negative := int64(-1)
+	if err := WriteQuota(dir, QuotaRecord{UpdatedAt: now, Buckets: []QuotaBucketRecord{
+		{ID: "", RemainingFraction: 0.5},
+		{ID: "high", RemainingFraction: 1.1},
+		{ID: "low", RemainingFraction: -0.1},
+		{ID: "nan", RemainingFraction: math.NaN()},
+		{ID: "relative", RemainingFraction: 0.5, ResetInSeconds: &negative},
+	}}); err == nil {
+		// encoding/json rejects NaN before invalid data reaches the reader.
+		t.Fatal("WriteQuota with NaN succeeded, want safe rejection")
+	}
+	// Seed finite invalid records directly to verify defensive read filtering.
+	data := []byte(`{"buckets":[{"id":"","remaining_fraction":0.5},{"id":"high","remaining_fraction":1.1},{"id":"low","remaining_fraction":-0.1},{"id":"relative","remaining_fraction":0.5,"reset_in_seconds":-1}],"updated_at":"2026-08-12T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(dir, QuotaFileName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := New(dir).Collect(context.Background())
+	if err != nil || len(snaps) != 0 {
+		t.Fatalf("Collect invalid quota = (%#v, %v), want empty clean degrade", snaps, err)
+	}
+}
+
+func TestValidQuotaBucketRejectsNonFiniteFractions(t *testing.T) {
+	t.Parallel()
+	for _, fraction := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), -0.01, 1.01} {
+		if ValidQuotaBucket(QuotaBucketRecord{ID: "bucket", RemainingFraction: fraction}) {
+			t.Fatalf("fraction %v accepted", fraction)
+		}
+	}
+	if !ValidQuotaBucket(QuotaBucketRecord{ID: "   ", RemainingFraction: 0.5}) {
+		t.Fatal("whitespace-only opaque bucket ID should remain distinct and accepted")
+	}
+}
+
+func TestCollectMalformedQuotaDoesNotReturnPartialContext(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := WriteContext(dir, ContextRecord{Pct: 42, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, QuotaFileName), []byte("{bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := New(dir).Collect(context.Background())
+	if err == nil || len(snaps) != 0 {
+		t.Fatalf("Collect malformed quota = (%#v, %v), want error and no partial rows", snaps, err)
+	}
+}
+
+func TestExplicitEmptyQuotaHonorsManagerReplaceSemantics(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 12, 4, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name             string
+		withContext      bool
+		wantPriorQuota   bool
+		wantContextCount int
+	}{
+		{name: "zero adapter rows preserve prior model", wantPriorQuota: true},
+		{name: "context row replaces model and clears quota", withContext: true, wantContextCount: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			store := usage.NewStore(dir)
+			if err := store.SaveState(usage.State{Snapshots: []usage.Snapshot{{
+				Model: Name, Window: usage.WindowQuota, Bucket: "old", Pct: 80, UpdatedAt: now.Add(-time.Hour),
+			}}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := WriteQuota(dir, QuotaRecord{Buckets: []QuotaBucketRecord{}, UpdatedAt: now}); err != nil {
+				t.Fatal(err)
+			}
+			if tc.withContext {
+				if err := WriteContext(dir, ContextRecord{Pct: 10, UpdatedAt: now}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			registry := usage.NewRegistry()
+			if err := registry.Register(New(dir)); err != nil {
+				t.Fatal(err)
+			}
+			got, err := usage.NewManager(registry, store, func() time.Time { return now }).Collect(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			priorQuota, contexts := false, 0
+			for _, snap := range got {
+				priorQuota = priorQuota || (snap.Window == usage.WindowQuota && snap.Bucket == "old")
+				if snap.Window == usage.WindowContext {
+					contexts++
+				}
+			}
+			if priorQuota != tc.wantPriorQuota || contexts != tc.wantContextCount {
+				t.Fatalf("snapshots = %#v, priorQuota=%v contexts=%d", got, priorQuota, contexts)
+			}
+		})
 	}
 }
 

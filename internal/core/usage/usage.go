@@ -38,13 +38,19 @@ const (
 	// Antigravity) that expose a context-fullness metric but no
 	// server-side quota contract.
 	WindowContext Window = "context"
+	// WindowQuota identifies an account-quota bucket whose upstream identity
+	// is carried separately in Snapshot.Bucket. Keeping the discriminator
+	// separate prevents an upstream bucket named "context", "5h", or
+	// "weekly" from colliding with the fixed canonical windows.
+	WindowQuota Window = "quota"
 )
 
 // Duration is the rolling window length used when describing windows. The
 // weekly window's duration is approximate — actual rollover follows the
 // vendor's published reset cadence (Anthropic returns an explicit
 // resets_at; Codex's rate_limits payload includes resets_at as a unix
-// timestamp). WindowContext has no reset cadence and returns 0.
+// timestamp). WindowContext and opaque WindowQuota buckets have no inferred
+// duration and return 0.
 func (w Window) Duration() time.Duration {
 	switch w {
 	case Window5h:
@@ -56,16 +62,22 @@ func (w Window) Duration() time.Duration {
 	}
 }
 
-// Snapshot is the canonical, CLI-facing view of usage for one (model,
-// window) pair. Pct is the authoritative percentage from the upstream
+// Snapshot is the canonical, CLI-facing view of usage for one
+// (model, window, bucket) identity. Bucket is empty for fixed/context windows.
+// Pct is the authoritative percentage from the upstream
 // API. Tokens and Limit are OPTIONAL — they are zero when the adapter is
 // percent-only (e.g. Claude OAuth usage API, Codex rate_limits payload).
 type Snapshot struct {
-	Model     string    `json:"model"`
-	Window    Window    `json:"window"`
-	Tokens    int64     `json:"tokens,omitempty"`
-	Limit     int64     `json:"limit,omitempty"`
-	Pct       float64   `json:"pct"`
-	ResetsAt  time.Time `json:"resets_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Model  string  `json:"model"`
+	Window Window  `json:"window"`
+	Bucket string  `json:"bucket,omitempty"`
+	Tokens int64   `json:"tokens,omitempty"`
+	Limit  int64   `json:"limit,omitempty"`
+	Pct    float64 `json:"pct"`
+	// ResetInSeconds preserves an upstream relative reset value independently
+	// from ResetsAt. A pointer distinguishes an absent value from an explicit
+	// zero without deriving one representation from the other.
+	ResetInSeconds *int64    `json:"reset_in_seconds,omitempty"`
+	ResetsAt       time.Time `json:"resets_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }

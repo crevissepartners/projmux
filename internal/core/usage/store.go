@@ -172,15 +172,11 @@ func (s *Store) SaveState(state State) error {
 	if err := localstate.EnsurePrivateDir(s.baseDir); err != nil {
 		return fmt.Errorf("usage: create cache dir %s: %w", s.baseDir, err)
 	}
-	// Stable ordering: model asc, window asc within model.
+	// Stable ordering: model asc, fixed windows first, then quota bucket ID.
 	sorted := make([]Snapshot, len(state.Snapshots))
 	copy(sorted, state.Snapshots)
-	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1, WindowContext: 2}
 	sort.SliceStable(sorted, func(i, j int) bool {
-		if sorted[i].Model != sorted[j].Model {
-			return sorted[i].Model < sorted[j].Model
-		}
-		return windowOrder[sorted[i].Window] < windowOrder[sorted[j].Window]
+		return snapshotLess(sorted[i], sorted[j])
 	})
 	last := map[string]time.Time{}
 	for k, v := range state.LastCollect {
@@ -248,17 +244,45 @@ func (s *Store) CleanupLegacyArtifacts() {
 	}
 }
 
-// SortedSnapshots returns snapshots ordered by (model, window). Convenience
-// for CLI rendering that wants stable output.
+// SortedSnapshots returns snapshots ordered by (model, window, bucket).
+// Convenience for CLI rendering that wants stable output.
 func SortedSnapshots(snaps []Snapshot) []Snapshot {
 	out := make([]Snapshot, len(snaps))
 	copy(out, snaps)
-	windowOrder := map[Window]int{Window5h: 0, WindowWeekly: 1, WindowContext: 2}
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Model != out[j].Model {
-			return out[i].Model < out[j].Model
-		}
-		return windowOrder[out[i].Window] < windowOrder[out[j].Window]
+		return snapshotLess(out[i], out[j])
 	})
 	return out
+}
+
+func snapshotLess(left, right Snapshot) bool {
+	if left.Model != right.Model {
+		return left.Model < right.Model
+	}
+	leftRank, rightRank := windowSortRank(left.Window), windowSortRank(right.Window)
+	if leftRank != rightRank {
+		return leftRank < rightRank
+	}
+	if left.Window != right.Window {
+		return left.Window < right.Window
+	}
+	if left.Bucket != right.Bucket {
+		return left.Bucket < right.Bucket
+	}
+	return false
+}
+
+func windowSortRank(window Window) int {
+	switch window {
+	case Window5h:
+		return 0
+	case WindowWeekly:
+		return 1
+	case WindowContext:
+		return 2
+	case WindowQuota:
+		return 3
+	default:
+		return 4
+	}
 }
