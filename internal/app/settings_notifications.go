@@ -512,7 +512,7 @@ func aiNotifyDiagnosticEntryLocale(locale i18n.Locale, diag doctorAINotifyIntegr
 	return intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, glyph, color, diag.Name, desc),
 		Value:     settingsActionPrefixAINotifyDiagnostic + diag.ID,
-		SearchKey: strings.Join([]string{diag.Name, string(diag.Status), diag.TestedVersion, diag.Guidance, diag.ConfigPath, diag.ConflictReason, diag.InstallCommand, diag.RemoveCommand, diag.DryRunCommand}, " "),
+		SearchKey: strings.Join([]string{diag.Name, string(diag.Status), diag.TestedVersion, diag.Guidance, diag.ConfigPath, diag.StatusLinePath, diag.ConflictReason, diag.InstallCommand, diag.RemoveCommand, diag.DryRunCommand}, " "),
 	}
 }
 
@@ -536,6 +536,9 @@ func aiNotifyDiagnosticDetailEntriesLocale(locale i18n.Locale, diag doctorAINoti
 	}
 	if diag.ConfigPath != "" {
 		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, "Config path", diag.ConfigPath, ""), Value: settingsNoopValue})
+	}
+	if diag.StatusLinePath != "" {
+		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, "Statusline config", diag.StatusLinePath, ""), Value: settingsNoopValue})
 	}
 	if diag.ConflictReason != "" {
 		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, "Conflict", diag.ConflictReason, ""), Value: settingsNoopValue})

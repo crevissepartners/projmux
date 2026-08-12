@@ -12,8 +12,10 @@ Both adapters read from the upstream's own view of the account so the
 percentages match what `claude /usage` and `codex` show natively.
 
 Antigravity is intentionally not registered as a 5-hour/weekly quota adapter.
-The only stable Phase 0b usage signal is statusline `context_window`, which is
-conversation context-window usage, not account quota usage. `projmux usage
+The only stable usage signal is statusline `context_window.used_percentage`,
+which is stored with its conversation id and is conversation context-window
+usage, not account quota usage. Legacy string percent payloads remain a
+compatibility fallback. `projmux usage
 --model antigravity` and ambient all-model table output therefore render an
 explicit unsupported note when Antigravity is enabled. The statusbar usage
 popup shows an `Antigravity ctx ... unsupported` row, while the compact tmux

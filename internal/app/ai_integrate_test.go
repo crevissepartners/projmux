@@ -67,6 +67,186 @@ func TestAntigravityManagedHookGolden(t *testing.T) {
 	}
 }
 
+func TestAIIntegrateAntigravityManagesOfficialStackedStatusLineAndRestoresSettings(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.executable = func() (string, error) { return "/opt/projmux/bin/projmux", nil }
+	settingsPath := filepath.Join(home, antigravitySettingsRelativePath)
+	original := "{\n  \"theme\": \"keep\",\n  \"unknown\": {\"spacing\" : [3, 2, 1]}\n}\n"
+	writeCodexTestFile(t, settingsPath, original)
+	if err := os.Chmod(settingsPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	installed := readCodexTestFile(t, settingsPath)
+	if !strings.Contains(installed, `"type": "command"`) || !strings.Contains(installed, `"enabled": true`) || !strings.Contains(installed, `"stack_with_default": true`) || !strings.Contains(installed, antigravityManagedStatusLineMarker) {
+		t.Fatalf("settings missing official managed statusLine:\n%s", installed)
+	}
+	if !strings.Contains(installed, `"unknown": {"spacing" : [3, 2, 1]}`) {
+		t.Fatalf("install normalized unrelated settings:\n%s", installed)
+	}
+	if info, err := os.Stat(settingsPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("settings mode = %v err=%v, want 0600", info.Mode().Perm(), err)
+	}
+	first := installed
+	if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCodexTestFile(t, settingsPath); got != first {
+		t.Fatalf("reinstall changed settings bytes:\n%s", got)
+	}
+	if err := cmd.Run([]string{"integrate", "antigravity", "--remove"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCodexTestFile(t, settingsPath); got != original {
+		t.Fatalf("remove did not exactly restore unrelated settings:\ngot:\n%s\nwant:\n%s", got, original)
+	}
+	if info, err := os.Stat(settingsPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("restored settings mode = %v err=%v, want 0600", info.Mode().Perm(), err)
+	}
+}
+
+func TestAIIntegrateAntigravityStatusLineEmptyAndConflictPolicy(t *testing.T) {
+	for _, empty := range []string{"null", "{}"} {
+		t.Run("empty "+empty, func(t *testing.T) {
+			home := t.TempDir()
+			cmd := testAICommand(home)
+			cmd.readFile = os.ReadFile
+			path := filepath.Join(home, antigravitySettingsRelativePath)
+			writeCodexTestFile(t, path, `{"keep":true,"statusLine":`+empty+`}`)
+			if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(readCodexTestFile(t, path), antigravityManagedStatusLineMarker) {
+				t.Fatalf("empty statusLine was not installed: %s", readCodexTestFile(t, path))
+			}
+		})
+	}
+
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	settingsPath := filepath.Join(home, antigravitySettingsRelativePath)
+	hooksPath := filepath.Join(home, antigravityHooksRelativePath)
+	custom := `{"theme":"keep","statusLine":{"type":"command","command":"/home/user/custom","stack_with_default":true}}`
+	writeCodexTestFile(t, settingsPath, custom)
+	err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "unmanaged \"statusLine\" command") || !strings.Contains(err.Error(), "/statusline delete") {
+		t.Fatalf("conflict error = %v", err)
+	}
+	if got := readCodexTestFile(t, settingsPath); got != custom {
+		t.Fatalf("conflict changed settings: %s", got)
+	}
+	if _, statErr := os.Stat(hooksPath); !os.IsNotExist(statErr) {
+		t.Fatalf("statusLine preflight conflict left hooks behind: %v", statErr)
+	}
+	// Removal preserves separately owned custom statusline state while still
+	// removing the independently managed Phase 2 named hooks entry.
+	managedHooks, err := encodeAntigravityManagedHook("/tmp/projmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCodexTestFile(t, hooksPath, `{"projmux":`+managedHooks+`}`)
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "antigravity", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("remove with custom statusline error = %v", err)
+	}
+	if got := readCodexTestFile(t, settingsPath); got != custom {
+		t.Fatalf("remove changed unmanaged statusline settings: %s", got)
+	}
+	if got := readCodexTestFile(t, hooksPath); strings.Contains(got, antigravityManagedMarker) {
+		t.Fatalf("remove retained independently managed hooks: %s", got)
+	}
+	if !strings.Contains(stdout.String(), "preserved unmanaged Antigravity statusline") {
+		t.Fatalf("stdout = %q, want preservation diagnostic", stdout.String())
+	}
+}
+
+func TestAIIntegrateAntigravityStatusLineMalformedSymlinkAndNewMode(t *testing.T) {
+	t.Run("malformed", func(t *testing.T) {
+		home := t.TempDir()
+		cmd := testAICommand(home)
+		cmd.readFile = os.ReadFile
+		path := filepath.Join(home, antigravitySettingsRelativePath)
+		writeCodexTestFile(t, path, `{"statusLine":`)
+		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "parse Antigravity settings") || !strings.Contains(err.Error(), "malformed JSON") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("symlink", func(t *testing.T) {
+		home := t.TempDir()
+		cmd := testAICommand(home)
+		cmd.readFile = os.ReadFile
+		path := filepath.Join(home, antigravitySettingsRelativePath)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(t.TempDir(), "settings.json")
+		writeCodexTestFile(t, target, `{}`)
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "refusing symlink path component") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("new file private", func(t *testing.T) {
+		home := t.TempDir()
+		cmd := testAICommand(home)
+		cmd.readFile = os.ReadFile
+		if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(filepath.Join(home, antigravitySettingsRelativePath))
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("mode = %v err=%v, want 0600", info.Mode().Perm(), err)
+		}
+	})
+	t.Run("settings permission preflight", func(t *testing.T) {
+		home := t.TempDir()
+		cmd := testAICommand(home)
+		cmd.readFile = os.ReadFile
+		settingsPath := filepath.Join(home, antigravitySettingsRelativePath)
+		writeCodexTestFile(t, settingsPath, `{}`)
+		if err := os.Chmod(settingsPath, 0o400); err != nil {
+			t.Fatal(err)
+		}
+		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "Antigravity settings") {
+			t.Fatalf("error = %v", err)
+		}
+		if _, statErr := os.Stat(filepath.Join(home, antigravityHooksRelativePath)); !os.IsNotExist(statErr) {
+			t.Fatalf("permission preflight left hooks behind: %v", statErr)
+		}
+	})
+}
+
+func TestAntigravityManagedStatusLineGolden(t *testing.T) {
+	got, err := encodeAntigravityManagedStatusLine("/opt/projmux/bin/projmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  \"type\": \"command\",\n  \"command\": \"'/opt/projmux/bin/projmux' ai ingest antigravity-hook --event Statusline # projmux-managed:antigravity-statusline:v1\",\n  \"enabled\": true,\n  \"stack_with_default\": true\n}"
+	if got != want || !isManagedAntigravityStatusLine(got) {
+		t.Fatalf("managed statusLine mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	for _, invalid := range []string{
+		`{"type":"command","command":"'/tmp/projmux' ai ingest antigravity-hook --event Statusline # projmux-managed:antigravity-statusline:v1","enabled":true,"stack_with_default":false}`,
+		`{"type":"command","command":"echo fake ai ingest antigravity-hook --event Statusline # projmux-managed:antigravity-statusline:v1","enabled":true,"stack_with_default":true}`,
+		`{"type":"command","command":"'/tmp/projmux' ai ingest antigravity-hook --event Statusline # projmux-managed:antigravity-statusline:v1","enabled":true,"stack_with_default":true,"extra":1}`,
+	} {
+		if isManagedAntigravityStatusLine(invalid) {
+			t.Fatalf("accepted non-exact managed object: %s", invalid)
+		}
+	}
+}
+
 func TestAIIntegrateAntigravityPreservesUnmanagedBytesAndIsIdempotent(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)

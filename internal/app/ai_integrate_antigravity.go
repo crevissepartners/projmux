@@ -15,6 +15,10 @@ const (
 	antigravityHooksRelativePath = ".gemini/config/hooks.json"
 	antigravityManagedHookName   = "projmux"
 	antigravityManagedMarker     = "projmux-managed:antigravity-hooks:v1"
+
+	antigravitySettingsRelativePath    = ".gemini/antigravity-cli/settings.json"
+	antigravityManagedStatusLineKey    = "statusLine"
+	antigravityManagedStatusLineMarker = "projmux-managed:antigravity-statusline:v1"
 )
 
 var antigravityManagedEvents = []string{
@@ -32,6 +36,29 @@ type antigravityHookPlan struct {
 	executable string
 	changed    bool
 	conflict   string
+}
+
+type antigravityStatusLinePlan struct {
+	path       string
+	current    string
+	next       string
+	action     string
+	executable string
+	changed    bool
+	managed    bool
+	conflict   string
+}
+
+// antigravityManagedStatusLine is the official Antigravity CLI v1.1.12
+// settings.json shape documented at https://antigravity.google/docs/cli/statusline.
+// The installed v1.1.12 binary also carries the Go JSON tag
+// `StackWithDefault json:"stack_with_default,omitempty"`. Stacking keeps the
+// built-in line visible; the managed command deliberately writes no stdout.
+type antigravityManagedStatusLine struct {
+	Type             string `json:"type"`
+	Command          string `json:"command"`
+	Enabled          bool   `json:"enabled"`
+	StackWithDefault bool   `json:"stack_with_default"`
 }
 
 type antigravityNamedHook struct {
@@ -62,8 +89,8 @@ type jsonObjectMember struct {
 func (c *aiCommand) runIntegrateAntigravity(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("ai integrate antigravity", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dryRun := fs.Bool("dry-run", false, "print planned Antigravity hook config changes without writing")
-	remove := fs.Bool("remove", false, "remove the projmux-managed Antigravity hook entry")
+	dryRun := fs.Bool("dry-run", false, "print planned Antigravity hook and statusline changes without writing")
+	remove := fs.Bool("remove", false, "remove the projmux-managed Antigravity hook and statusline entries")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -72,25 +99,203 @@ func (c *aiCommand) runIntegrateAntigravity(args []string, stdout, stderr io.Wri
 		return errors.New("ai integrate antigravity does not accept positional arguments")
 	}
 
-	plan, err := c.planAntigravityHookIntegration(*remove)
+	hookPlan, err := c.planAntigravityHookIntegration(*remove)
+	if err != nil {
+		return err
+	}
+	statusLinePlan, err := c.planAntigravityStatusLineIntegration(*remove)
 	if err != nil {
 		return err
 	}
 	if *dryRun {
-		return printAntigravityHookDryRun(stdout, plan)
+		return printAntigravityIntegrationDryRun(stdout, hookPlan, statusLinePlan)
 	}
-	if plan.conflict != "" {
-		return errors.New(plan.conflict + "; run `projmux ai integrate antigravity --dry-run` to inspect without writing")
+	if hookPlan.conflict != "" {
+		return errors.New(hookPlan.conflict + "; run `projmux ai integrate antigravity --dry-run` to inspect without writing")
 	}
-	if !plan.changed {
-		_, err := fmt.Fprintln(stdout, plan.action)
+	if statusLinePlan.conflict != "" {
+		return errors.New(statusLinePlan.conflict + "; run `projmux ai integrate antigravity --dry-run` to inspect without writing")
+	}
+	// Preflight both separately owned files before either write so a known
+	// permission failure cannot leave only half of the combined integration.
+	for _, target := range []struct {
+		path    string
+		changed bool
+		label   string
+	}{
+		{hookPlan.path, hookPlan.changed, "hooks"},
+		{statusLinePlan.path, statusLinePlan.changed, "settings"},
+	} {
+		if target.changed {
+			if err := preflightAntigravityWrite(target.path); err != nil {
+				return fmt.Errorf("write Antigravity %s %s: %w", target.label, target.path, err)
+			}
+		}
+	}
+	if hookPlan.changed {
+		if err := c.writeAntigravityJSON(hookPlan.path, []byte(hookPlan.next), 0o644, "hooks"); err != nil {
+			return err
+		}
+	}
+	if statusLinePlan.changed {
+		if err := c.writeAntigravityJSON(statusLinePlan.path, []byte(statusLinePlan.next), 0o600, "settings"); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(stdout, hookPlan.action); err != nil {
 		return err
 	}
-	if err := c.writeAntigravityHooks(plan.path, []byte(plan.next)); err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(stdout, plan.action)
+	_, err = fmt.Fprintln(stdout, statusLinePlan.action)
 	return err
+}
+
+func preflightAntigravityWrite(path string) error {
+	current := path
+	for {
+		info, err := os.Stat(current)
+		if err == nil {
+			if info.Mode().Perm()&0o222 == 0 {
+				return os.ErrPermission
+			}
+			return nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return os.ErrPermission
+		}
+		current = parent
+	}
+}
+
+func (c *aiCommand) planAntigravityStatusLineIntegration(remove bool) (antigravityStatusLinePlan, error) {
+	home, err := c.homeDir()
+	if err != nil {
+		return antigravityStatusLinePlan{}, fmt.Errorf("resolve home directory: %w", err)
+	}
+	path := filepath.Join(home, antigravitySettingsRelativePath)
+	current, exists, err := c.readAntigravityJSON(home, path, "settings")
+	if err != nil {
+		return antigravityStatusLinePlan{}, err
+	}
+	plan := antigravityStatusLinePlan{path: path, current: current, next: current}
+	if !exists {
+		if remove {
+			plan.action = "no changes: projmux-managed Antigravity statusline is not present in " + path
+			return plan, nil
+		}
+		current = "{}\n"
+	}
+	members, closeAt, err := scanJSONObject(current)
+	if err != nil {
+		return antigravityStatusLinePlan{}, fmt.Errorf("parse Antigravity settings %s: %w", path, err)
+	}
+	statusIndex := -1
+	for i, member := range members {
+		if member.key != antigravityManagedStatusLineKey {
+			continue
+		}
+		statusIndex = i
+		value := current[member.valueFrom:member.valueTo]
+		if isEmptyAntigravityStatusLine(value) {
+			break
+		}
+		if !isManagedAntigravityStatusLine(value) {
+			if remove {
+				plan.action = "preserved unmanaged Antigravity statusline in " + path
+				return plan, nil
+			}
+			plan.conflict = fmt.Sprintf("Antigravity settings %s already contains an unmanaged %q command; remove it with `/statusline delete` or choose which integration should own it", path, antigravityManagedStatusLineKey)
+			plan.action = "would refuse to modify unmanaged Antigravity statusline"
+			return plan, nil
+		}
+		plan.managed = true
+		break
+	}
+
+	if remove {
+		if !plan.managed {
+			plan.action = "no changes: projmux-managed Antigravity statusline is not present in " + path
+			return plan, nil
+		}
+		plan.next = removeJSONObjectMember(current, members, statusIndex)
+		plan.changed = plan.next != plan.current
+		plan.action = "removed projmux-managed Antigravity statusline from " + path
+		return plan, nil
+	}
+
+	executable, err := c.persistentExecutablePath()
+	if err != nil {
+		return antigravityStatusLinePlan{}, fmt.Errorf("resolve stable absolute projmux executable for Antigravity statusline: %w", err)
+	}
+	plan.executable = executable
+	entry, err := encodeAntigravityManagedStatusLine(executable)
+	if err != nil {
+		return antigravityStatusLinePlan{}, err
+	}
+	if statusIndex >= 0 {
+		member := members[statusIndex]
+		entry = indentJSONValue(entry, jsonMemberIndent(current, member.memberFrom))
+		plan.next = current[:member.valueFrom] + entry + current[member.valueTo:]
+	} else {
+		plan.next = appendJSONObjectMember(current, members, closeAt, antigravityManagedStatusLineKey, entry)
+	}
+	plan.changed = plan.next != plan.current
+	if plan.changed {
+		plan.action = "configured Antigravity statusline in " + path
+	} else {
+		plan.action = "no changes: Antigravity statusline is already configured in " + path
+	}
+	return plan, nil
+}
+
+func isEmptyAntigravityStatusLine(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed == "null" || trimmed == "{}"
+}
+
+func isManagedAntigravityStatusLine(value string) bool {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(value), &raw); err != nil || len(raw) != 4 {
+		return false
+	}
+	for _, key := range []string{"type", "command", "enabled", "stack_with_default"} {
+		if _, ok := raw[key]; !ok {
+			return false
+		}
+	}
+	var decoded antigravityManagedStatusLine
+	if err := json.Unmarshal([]byte(value), &decoded); err != nil {
+		return false
+	}
+	return decoded.Type == "command" && decoded.Enabled && decoded.StackWithDefault &&
+		isManagedAntigravityStatusLineCommand(decoded.Command)
+}
+
+func isManagedAntigravityStatusLineCommand(command string) bool {
+	const suffix = " ai ingest antigravity-hook --event Statusline # " + antigravityManagedStatusLineMarker
+	prefix := strings.TrimSuffix(strings.TrimSpace(command), suffix)
+	if prefix == command || len(prefix) < 3 || prefix[0] != '\'' || prefix[len(prefix)-1] != '\'' {
+		return false
+	}
+	executable := strings.ReplaceAll(prefix[1:len(prefix)-1], "'\\''", "'")
+	return filepath.IsAbs(executable)
+}
+
+func encodeAntigravityManagedStatusLine(executable string) (string, error) {
+	entry := antigravityManagedStatusLine{
+		Type:             "command",
+		Command:          shellQuote(executable) + " ai ingest antigravity-hook --event Statusline # " + antigravityManagedStatusLineMarker,
+		Enabled:          true,
+		StackWithDefault: true,
+	}
+	data, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode projmux-managed Antigravity statusline: %w", err)
+	}
+	return string(data), nil
 }
 
 func (c *aiCommand) planAntigravityHookIntegration(remove bool) (antigravityHookPlan, error) {
@@ -220,8 +425,12 @@ func (c *aiCommand) persistentExecutablePath() (string, error) {
 }
 
 func (c *aiCommand) readAntigravityHooks(home, path string) (string, bool, error) {
+	return c.readAntigravityJSON(home, path, "hooks")
+}
+
+func (c *aiCommand) readAntigravityJSON(home, path, label string) (string, bool, error) {
 	if err := rejectSymlinkPath(home, path); err != nil {
-		return "", false, fmt.Errorf("inspect Antigravity hooks %s: %w", path, err)
+		return "", false, fmt.Errorf("inspect Antigravity %s %s: %w", label, path, err)
 	}
 	readFile := c.readFile
 	if readFile == nil {
@@ -234,7 +443,7 @@ func (c *aiCommand) readAntigravityHooks(home, path string) (string, bool, error
 	if errors.Is(err, os.ErrNotExist) {
 		return "", false, nil
 	}
-	return "", false, fmt.Errorf("read Antigravity hooks %s: %w", path, err)
+	return "", false, fmt.Errorf("read Antigravity %s %s: %w", label, path, err)
 }
 
 func rejectSymlinkPath(home, path string) error {
@@ -259,20 +468,20 @@ func rejectSymlinkPath(home, path string) error {
 	return nil
 }
 
-func (c *aiCommand) writeAntigravityHooks(path string, data []byte) error {
+func (c *aiCommand) writeAntigravityJSON(path string, data []byte, mode os.FileMode, label string) error {
 	mkdirAll := c.mkdirAll
 	if mkdirAll == nil {
 		mkdirAll = os.MkdirAll
 	}
 	if err := mkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create Antigravity hooks directory %s: %w", filepath.Dir(path), err)
+		return fmt.Errorf("create Antigravity %s directory %s: %w", label, filepath.Dir(path), err)
 	}
 	writeFile := c.writeFile
 	if writeFile == nil {
 		writeFile = os.WriteFile
 	}
-	if err := writeFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write Antigravity hooks %s: %w", path, err)
+	if err := writeFile(path, data, mode); err != nil {
+		return fmt.Errorf("write Antigravity %s %s: %w", label, path, err)
 	}
 	return nil
 }
@@ -335,13 +544,45 @@ func printAntigravityHookDryRun(stdout io.Writer, plan antigravityHookPlan) erro
 	return err
 }
 
+func printAntigravityIntegrationDryRun(stdout io.Writer, hooks antigravityHookPlan, statusline antigravityStatusLinePlan) error {
+	if err := printAntigravityHookDryRun(stdout, hooks); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "statusline settings: %s\n", statusline.path); err != nil {
+		return err
+	}
+	if statusline.executable != "" {
+		if _, err := fmt.Fprintf(stdout, "statusline source: %s\n", statusline.executable); err != nil {
+			return err
+		}
+	}
+	if statusline.conflict != "" {
+		_, err := fmt.Fprintf(stdout, "%s\n%s\n", statusline.action, statusline.conflict)
+		return err
+	}
+	if !statusline.changed {
+		_, err := fmt.Fprintln(stdout, statusline.action)
+		return err
+	}
+	entry, err := objectEntryFromDocument(statusline.next, antigravityManagedStatusLineKey)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "%s\nmanaged entry %q:\n%s\n", statusline.action, antigravityManagedStatusLineKey, entry)
+	return err
+}
+
 func managedEntryFromDocument(content string) (string, error) {
+	return objectEntryFromDocument(content, antigravityManagedHookName)
+}
+
+func objectEntryFromDocument(content, key string) (string, error) {
 	members, _, err := scanJSONObject(content)
 	if err != nil {
 		return "", err
 	}
 	for _, member := range members {
-		if member.key == antigravityManagedHookName {
+		if member.key == key {
 			return content[member.valueFrom:member.valueTo], nil
 		}
 	}

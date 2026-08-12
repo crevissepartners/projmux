@@ -1,0 +1,21 @@
+{
+  "cwd": "/workspace/sanitized-project",
+  "session_id": "123e4567-e89b-12d3-a456-426614174000",
+  "conversation_id": "123e4567-e89b-12d3-a456-426614174000",
+  "transcript_path": "/sanitized/transcript.jsonl",
+  "context_window": {
+    "total_input_tokens": 88244,
+    "total_output_tokens": 61074,
+    "context_window_size": 1048576,
+    "used_percentage": 14.24,
+    "remaining_percentage": 85.76,
+    "current_usage": {
+      "input_tokens": 63382,
+      "output_tokens": 346,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 20857
+    }
+  },
+  "agent_state": "tool_use",
+  "tool_confirmation_pending": true
+}

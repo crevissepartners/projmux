@@ -49,8 +49,9 @@ const ContextFileName = "antigravity-context.json"
 // (writer) and this adapter (reader). Pct is the context-window fullness
 // percentage (0-100); UpdatedAt is when the value was last observed.
 type ContextRecord struct {
-	Pct       float64   `json:"pct"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ConversationID string    `json:"conversation_id,omitempty"`
+	Pct            float64   `json:"pct"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Adapter is the Antigravity implementation of usage.Adapter.
