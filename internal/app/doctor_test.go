@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -41,164 +40,6 @@ func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
 	}
 }
 
-func TestDoctorRunAllRequiredPresentSucceeds(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "git": true, "stty": true, "kubectl": true,
-	})
-
-	var stdout, stderr bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
-		t.Fatalf("Run() error = %v\nstderr=%s", err, stderr.String())
-	}
-	out := stdout.String()
-	for _, want := range []string{"[ok]", "tmux", "git", "stty", "kubectl"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
-		}
-	}
-	if !strings.Contains(out, "4 ok, 0 missing, 0 stale, 0 skipped, 0 hint.") {
-		t.Fatalf("summary line wrong:\n%s", out)
-	}
-}
-
-func TestDoctorRunRequiredMissingReturnsError(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "stty": true, "apt-get": true,
-	})
-
-	var stdout, stderr bytes.Buffer
-	err := cmd.Run(nil, &stdout, &stderr)
-	if err == nil {
-		t.Fatalf("Run() error = nil, want missing required failure")
-	}
-	out := stdout.String()
-	if !strings.Contains(out, "[missing]") || !strings.Contains(out, "git") {
-		t.Fatalf("output missing expected missing line:\n%s", out)
-	}
-	if !strings.Contains(out, "sudo apt-get install -y git") {
-		t.Fatalf("apt-get install hint not rendered:\n%s", out)
-	}
-}
-
-func TestDoctorInstallMissingDryRunPrintsCommands(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "stty": true, "apt-get": true,
-	})
-
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"--install-missing", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	out := stdout.String()
-	if !strings.Contains(out, "would install git: sudo apt-get install -y git") {
-		t.Fatalf("dry-run install command missing:\n%s", out)
-	}
-}
-
-func TestDoctorInstallMissingRunsCommands(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "stty": true, "apt-get": true,
-	})
-	var ran []string
-	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
-		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
-		return nil
-	}
-
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"--install-missing"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	want := []string{"sudo apt-get install -y git"}
-	if !equalStrings(ran, want) {
-		t.Fatalf("ran = %#v, want %#v", ran, want)
-	}
-	if !strings.Contains(stdout.String(), "install commands completed; rerun projmux doctor to verify") {
-		t.Fatalf("completion hint missing:\n%s", stdout.String())
-	}
-}
-
-func TestDoctorInstallMissingCanIncludeOptional(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommand("darwin", map[string]bool{
-		"tmux": true, "git": true, "stty": true, "brew": true,
-	})
-
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"--install-missing", "--include-optional", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	out := stdout.String()
-	if !strings.Contains(out, "would install kubectl: brew install kubectl") {
-		t.Fatalf("optional install command missing:\n%s", out)
-	}
-}
-
-func TestDoctorDeprecatedInstallFlagWarningCombinations(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name string
-		args []string
-	}{
-		{name: "install missing", args: []string{"--install-missing"}},
-		{name: "dry run alone", args: []string{"--dry-run"}},
-		{name: "include optional alone", args: []string{"--include-optional"}},
-		{name: "install and dry run", args: []string{"--install-missing", "--dry-run"}},
-		{name: "install and include optional", args: []string{"--install-missing", "--include-optional"}},
-		{name: "dry run and include optional", args: []string{"--dry-run", "--include-optional"}},
-		{name: "all deprecated flags", args: []string{"--install-missing", "--dry-run", "--include-optional"}},
-		{name: "explicit false still uses flag", args: []string{"--install-missing=false"}},
-		{name: "json conflict", args: []string{"--json", "--install-missing"}},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			cmd := newStubDoctorCommand("linux", map[string]bool{
-				"tmux": true, "git": true, "stty": true, "kubectl": true,
-			})
-			var stdout, stderr bytes.Buffer
-			_ = cmd.Run(tc.args, &stdout, &stderr)
-			if got, want := stderr.String(), doctorInstallFlagsDeprecationWarning+"\n"; got != want {
-				t.Fatalf("stderr = %q, want exactly one warning %q", got, want)
-			}
-			if strings.Contains(stdout.String(), doctorInstallFlagsDeprecationWarning) {
-				t.Fatalf("stdout contains deprecation warning:\n%s", stdout.String())
-			}
-		})
-	}
-}
-
-func TestDoctorDeprecatedWarningPrecedesCompatibilityExecution(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "stty": true, "apt-get": true,
-	})
-	cmd.runExternal = func(_ string, _ []string, _, stderr io.Writer) error {
-		_, err := fmt.Fprintln(stderr, "runner invoked")
-		return err
-	}
-
-	var stdout, stderr bytes.Buffer
-	if err := cmd.Run([]string{"--install-missing"}, &stdout, &stderr); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if got, want := stderr.String(), doctorInstallFlagsDeprecationWarning+"\nrunner invoked\n"; got != want {
-		t.Fatalf("stderr ordering = %q, want %q", got, want)
-	}
-}
-
 func TestDoctorReadOnlyBaselineFixtures(t *testing.T) {
 	t.Parallel()
 
@@ -215,12 +56,6 @@ func TestDoctorReadOnlyBaselineFixtures(t *testing.T) {
 			cmd := newStubDoctorCommand("linux", map[string]bool{
 				"tmux": true, "git": true, "stty": true, "kubectl": true,
 			})
-			var externalCalls int
-			cmd.runExternal = func(string, []string, io.Writer, io.Writer) error {
-				externalCalls++
-				return nil
-			}
-
 			var stdout, stderr bytes.Buffer
 			if err := cmd.Run(tc.args, &stdout, &stderr); err != nil {
 				t.Fatalf("Run() error = %v", err)
@@ -235,45 +70,172 @@ func TestDoctorReadOnlyBaselineFixtures(t *testing.T) {
 			if stderr.Len() != 0 {
 				t.Fatalf("stderr = %q, want empty", stderr.String())
 			}
-			if externalCalls != 0 {
-				t.Fatalf("external calls = %d, want zero", externalCalls)
+		})
+	}
+}
+
+func TestDoctorSectionJSONProjectsOneTypedInventory(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "stty": true, "apt-get": true})
+	cmd.aiDiagnostics = func() []doctorAINotifyIntegration {
+		return []doctorAINotifyIntegration{{ID: "codex-hooks", Name: "Codex hooks", Status: doctorAINotifyStatusMissing}}
+	}
+	cmd.resumeDiagnostics = func() []doctorSessionStateResumeDiagnostic {
+		return []doctorSessionStateResumeDiagnostic{{Session: "work", Agent: "codex", Status: "stale"}}
+	}
+
+	cases := []struct {
+		section string
+		field   string
+	}{
+		{section: "deps", field: "dependencies"},
+		{section: "integrations", field: "ai_notify_integrations"},
+		{section: "session-state", field: "session_state_resume"},
+		{section: "runtime", field: "runtime"},
+		{section: "logs", field: "logs"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.section, func(t *testing.T) {
+			var stdout bytes.Buffer
+			if err := cmd.Run([]string{"--json", "--section", tc.section}, &stdout, io.Discard); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			var root map[string]json.RawMessage
+			if err := json.Unmarshal(stdout.Bytes(), &root); err != nil {
+				t.Fatal(err)
+			}
+			if got := string(root["schema_version"]); got != "1" {
+				t.Fatalf("schema_version = %s, want 1", got)
+			}
+			if _, ok := root[tc.field]; !ok {
+				t.Fatalf("section JSON = %s, want %q", stdout.String(), tc.field)
+			}
+			for _, forbidden := range []string{"dependencies", "ai_notify_integrations", "session_state_resume", "session_state_prune", "runtime", "logs"} {
+				if forbidden != tc.field && !(tc.section == "session-state" && forbidden == "session_state_prune") {
+					if _, ok := root[forbidden]; ok {
+						t.Fatalf("section %s leaked %q: %s", tc.section, forbidden, stdout.String())
+					}
+				}
 			}
 		})
 	}
 }
 
-func TestDoctorDeprecatedDryRunCompatibilityStdoutFixture(t *testing.T) {
+func TestDoctorVerboseOwnsTextDetailButDoesNotChangeJSON(t *testing.T) {
 	t.Parallel()
 
-	cmd := newStubDoctorCommand("darwin", map[string]bool{
-		"tmux": true, "stty": true, "brew": true,
-	})
-	var externalCalls int
-	cmd.runExternal = func(string, []string, io.Writer, io.Writer) error {
-		externalCalls++
-		return nil
+	cmd := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true})
+	cmd.aiDiagnostics = func() []doctorAINotifyIntegration {
+		return []doctorAINotifyIntegration{{ID: "codex-hooks", Name: "Codex hooks", Status: doctorAINotifyStatusMissing, ConfigPath: "/private/config", InstallCommand: "projmux ai integrate codex"}}
 	}
-
-	var stdout, stderr bytes.Buffer
-	if err := cmd.Run([]string{"--install-missing", "--dry-run", "--include-optional"}, &stdout, &stderr); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	want, err := os.ReadFile("testdata/doctor/install-dry-run.golden")
-	if err != nil {
+	var plain, verbose bytes.Buffer
+	if err := cmd.Run(nil, &plain, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if got := stdout.Bytes(); !bytes.Equal(got, want) {
-		t.Fatalf("compatibility stdout fixture drift\ngot:\n%s\nwant:\n%s", got, want)
+	if err := cmd.Run([]string{"--verbose"}, &verbose, io.Discard); err != nil {
+		t.Fatal(err)
 	}
-	if got, want := stderr.String(), doctorInstallFlagsDeprecationWarning+"\n"; got != want {
-		t.Fatalf("stderr = %q, want %q", got, want)
+	for _, detail := range []string{"tmux 3.6", "/private/config", "install: projmux ai integrate codex"} {
+		if strings.Contains(plain.String(), detail) || !strings.Contains(verbose.String(), detail) {
+			t.Fatalf("detail %q boundary wrong\nplain:\n%s\nverbose:\n%s", detail, plain.String(), verbose.String())
+		}
 	}
-	if externalCalls != 0 {
-		t.Fatalf("external calls = %d, want zero for dry-run", externalCalls)
+	var compactJSON, verboseJSON bytes.Buffer
+	if err := cmd.Run([]string{"--json"}, &compactJSON, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Run([]string{"--json", "--verbose"}, &verboseJSON, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(compactJSON.Bytes(), verboseJSON.Bytes()) {
+		t.Fatalf("--verbose changed JSON\nplain:\n%s\nverbose:\n%s", compactJSON.String(), verboseJSON.String())
 	}
 }
 
-func TestDoctorCanonicalAndDeprecatedHelpContract(t *testing.T) {
+func TestDoctorTextAndJSONSectionUseSameDependencyInventory(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "stty": true, "apt-get": true})
+	var textOut, jsonOut bytes.Buffer
+	if err := cmd.Run([]string{"--section", "deps", "--verbose"}, &textOut, io.Discard); err == nil {
+		t.Fatal("text deps exit = success, want required git failure")
+	}
+	if err := cmd.Run([]string{"--section", "deps", "--json"}, &jsonOut, io.Discard); err != nil {
+		t.Fatalf("JSON deps error = %v", err)
+	}
+	var report doctorReport
+	if err := json.Unmarshal(jsonOut.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range report.Dependencies {
+		if !strings.Contains(textOut.String(), result.Name) {
+			t.Fatalf("text projection omitted JSON dependency %q\ntext:\n%s\nJSON:\n%s", result.Name, textOut.String(), jsonOut.String())
+		}
+	}
+	for _, other := range []string{"Runtime", "AI notify integrations", "Session State", "Logs"} {
+		if strings.Contains(textOut.String(), other) {
+			t.Fatalf("deps text leaked section %q:\n%s", other, textOut.String())
+		}
+	}
+}
+
+func TestDoctorSectionCollectsOnlySelectedInventory(t *testing.T) {
+	t.Parallel()
+
+	for _, section := range []string{"runtime", "logs"} {
+		cmd := newStubDoctorCommand("linux", map[string]bool{})
+		cmd.lookPath = func(string) (string, error) { t.Fatal("dependency inventory evaluated"); return "", nil }
+		cmd.aiDiagnostics = func() []doctorAINotifyIntegration { t.Fatal("integration inventory evaluated"); return nil }
+		cmd.resumeDiagnostics = func() []doctorSessionStateResumeDiagnostic { t.Fatal("session inventory evaluated"); return nil }
+		if err := cmd.Run([]string{"--section", section}, io.Discard, io.Discard); err != nil {
+			t.Fatalf("Run(--section %s) error = %v", section, err)
+		}
+	}
+}
+
+func TestDoctorRemovedFlagsFailWithExactReadOnlyMigration(t *testing.T) {
+	t.Parallel()
+
+	cmd := newStubDoctorCommand("linux", map[string]bool{})
+	for _, name := range []string{"install-missing", "include-optional", "dry-run"} {
+		for _, arg := range []string{"--" + name, "--" + name + "=false", "--" + name + "=true"} {
+			t.Run(arg, func(t *testing.T) {
+				var stdout, stderr bytes.Buffer
+				err := cmd.Run([]string{arg}, &stdout, &stderr)
+				want := "flag provided but not defined: -" + name + "\nprojmux doctor is read-only; remove --" + name + " and run displayed remediation guidance explicitly outside doctor"
+				if err == nil || err.Error() != want || !IsUsageError(err) {
+					t.Fatalf("Run(%q) error = %#v, want exact UsageError %q", arg, err, want)
+				}
+				if stdout.Len() != 0 || stderr.Len() != 0 {
+					t.Fatalf("Run(%q) stdout=%q stderr=%q, want no partial report", arg, stdout.String(), stderr.String())
+				}
+			})
+		}
+	}
+}
+
+func TestDoctorAllFlagFormsBypassLegacyMigration(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"doctor"},
+		{"doctor", "--json"},
+		{"doctor", "--verbose"},
+		{"doctor", "--section", "deps"},
+		{"doctor", "--json", "--section=integrations", "--verbose"},
+		{"doctor", "--install-missing"},
+		{"doctor", "--dry-run=false"},
+		{"doctor", "--include-optional=true"},
+		{"doctor", "--unknown"},
+	} {
+		if shouldRunLegacyHookMigrations(args) {
+			t.Fatalf("shouldRunLegacyHookMigrations(%q) = true, want false", args)
+		}
+	}
+}
+
+func TestDoctorCanonicalHelpContract(t *testing.T) {
 	t.Parallel()
 
 	var root bytes.Buffer
@@ -292,9 +254,10 @@ func TestDoctorCanonicalAndDeprecatedHelpContract(t *testing.T) {
 		t.Fatalf("Run(--help) error = %v, want flag.ErrHelp", err)
 	}
 	for _, want := range []string{
-		"deprecated compatibility: install missing or stale required dependencies",
-		"deprecated compatibility: include optional missing dependencies with --install-missing",
-		"deprecated compatibility: print install commands without running them",
+		"-json",
+		"-section string",
+		"deps|runtime|integrations|session-state|logs",
+		"-verbose",
 	} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("doctor flag help missing %q:\n%s", want, stderr.String())
@@ -302,50 +265,7 @@ func TestDoctorCanonicalAndDeprecatedHelpContract(t *testing.T) {
 	}
 }
 
-func TestDoctorCompatibilityExitAndPlanBaselines(t *testing.T) {
-	t.Parallel()
-
-	results := []doctorResult{
-		{Name: "git", Required: true, Status: doctorStatusMissing, Install: "sudo apt-get install -y git"},
-		{Name: "manual-tool", Required: true, Status: doctorStatusMissing, Install: "manual: follow vendor guidance"},
-		{Name: "unresolved", Required: true, Status: doctorStatusMissing},
-		{Name: "kubectl", Required: false, Status: doctorStatusHint, Install: "brew install kubectl"},
-	}
-	withoutOptional := buildDoctorCompatibilityInstallPlan(results, false)
-	if got, want := len(withoutOptional.Commands), 1; got != want {
-		t.Fatalf("required commands = %d, want %d", got, want)
-	}
-	if got, want := doctorResultNames(withoutOptional.Manual), "manual-tool"; got != want {
-		t.Fatalf("manual results = %q, want %q", got, want)
-	}
-	if got, want := doctorResultNames(withoutOptional.Unresolved), "manual-tool, unresolved"; got != want {
-		t.Fatalf("unresolved results = %q, want %q", got, want)
-	}
-	withOptional := buildDoctorCompatibilityInstallPlan(results, true)
-	if got, want := len(withOptional.Commands), 2; got != want {
-		t.Fatalf("commands with optional = %d, want %d", got, want)
-	}
-
-	cmd := newStubDoctorCommand("linux", map[string]bool{})
-	var ran []string
-	cmd.runExternal = func(name string, args []string, _, _ io.Writer) error {
-		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
-		return nil
-	}
-	var stdout bytes.Buffer
-	err := cmd.installMissing(results, doctorInstallOptions{}, &stdout, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "manual-tool, unresolved") {
-		t.Fatalf("installMissing() error = %v, want unresolved required dependencies", err)
-	}
-	if got, want := ran, []string{"sudo apt-get install -y git"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("executed commands = %#v, want %#v", got, want)
-	}
-	if !strings.Contains(stdout.String(), "manual install required for manual-tool: manual: follow vendor guidance") {
-		t.Fatalf("manual guidance missing:\n%s", stdout.String())
-	}
-}
-
-func TestDoctorCurrentExitSemanticsAndNoWrite(t *testing.T) {
+func TestDoctorExitSemanticsAcrossFormatsAndSections(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -354,53 +274,33 @@ func TestDoctorCurrentExitSemanticsAndNoWrite(t *testing.T) {
 		present map[string]bool
 		wantErr bool
 	}{
-		{name: "plain healthy", present: map[string]bool{"tmux": true, "git": true, "stty": true}},
 		{name: "plain required missing", present: map[string]bool{"tmux": true, "stty": true}, wantErr: true},
-		{name: "json healthy", args: []string{"--json"}, present: map[string]bool{"tmux": true, "git": true, "stty": true}},
+		{name: "verbose required missing", args: []string{"--verbose"}, present: map[string]bool{"tmux": true, "stty": true}, wantErr: true},
+		{name: "deps required missing", args: []string{"--section", "deps"}, present: map[string]bool{"tmux": true, "stty": true}, wantErr: true},
 		{name: "json required missing preserves successful exit", args: []string{"--json"}, present: map[string]bool{"tmux": true, "stty": true}},
+		{name: "integrations ignores deps", args: []string{"--section", "integrations"}, present: map[string]bool{}},
+		{name: "runtime empty", args: []string{"--section", "runtime"}, present: map[string]bool{}},
+		{name: "logs empty", args: []string{"--section", "logs"}, present: map[string]bool{}},
+		{name: "session state", args: []string{"--section", "session-state"}, present: map[string]bool{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cmd := newStubDoctorCommand("linux", tc.present)
-			var externalCalls int
-			cmd.runExternal = func(string, []string, io.Writer, io.Writer) error {
-				externalCalls++
-				return nil
-			}
 			err := cmd.Run(tc.args, io.Discard, io.Discard)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Run() error = %v, wantErr %v", err, tc.wantErr)
-			}
-			if externalCalls != 0 {
-				t.Fatalf("external calls = %d, want zero", externalCalls)
 			}
 		})
 	}
 }
 
-func TestDoctorInstallFlagsRejectInvalidCombinations(t *testing.T) {
+func TestDoctorSectionRejectsUnknownValue(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{})
-	cases := []struct {
-		args []string
-		want string
-	}{
-		{args: []string{"--json", "--install-missing"}, want: "--json cannot be combined"},
-		{args: []string{"--dry-run"}, want: "require --install-missing"},
-		{args: []string{"--include-optional"}, want: "require --install-missing"},
-	}
-	for _, tc := range cases {
-		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
-			t.Parallel()
-			err := cmd.Run(tc.args, &bytes.Buffer{}, &bytes.Buffer{})
-			if err == nil {
-				t.Fatalf("Run() error = nil, want %q", tc.want)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("Run() error = %v, want %q", err, tc.want)
-			}
-		})
+	err := cmd.Run([]string{"--section", "future"}, io.Discard, io.Discard)
+	if err == nil || !IsUsageError(err) || err.Error() != "doctor --section must be one of deps, runtime, integrations, session-state, or logs" {
+		t.Fatalf("Run() error = %#v, want exact section UsageError", err)
 	}
 }
 
@@ -425,7 +325,7 @@ func TestDoctorEvaluateOptionalMissingIsHintNotError(t *testing.T) {
 	})
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"--verbose"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	out := stdout.String()
@@ -448,7 +348,7 @@ func TestDoctorWindowsRequiresTmuxAndSkipsStty(t *testing.T) {
 	})
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"--verbose"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	out := stdout.String()
@@ -489,6 +389,9 @@ func TestDoctorLinuxTmuxCoreDependencyAndStaleCheckRemainActive(t *testing.T) {
 	var report doctorReport
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
+	}
+	if report.SchemaVersion != doctorSchemaVersion {
+		t.Fatalf("schema_version = %d, want %d", report.SchemaVersion, doctorSchemaVersion)
 	}
 	byName := doctorResultsByName(report.Dependencies)
 	tmux, ok := byName["tmux"]
@@ -547,7 +450,7 @@ func TestDoctorRunIncludesManualSessionStatePruneGuidance(t *testing.T) {
 		"tmux": true, "git": true, "stty": true,
 	})
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"--verbose"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	for _, want := range []string{
@@ -583,7 +486,7 @@ func TestDoctorRunIncludesAINotifyDiagnostics(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"--verbose"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	out := stdout.String()
@@ -665,7 +568,7 @@ func TestDoctorLinuxTmuxBellFallbackRemainsMissingWhenNotInstalled(t *testing.T)
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"--verbose"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v\noutput=%s", err, stdout.String())
 	}
 	out := stdout.String()
@@ -733,7 +636,7 @@ func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"--verbose"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	out := stdout.String()

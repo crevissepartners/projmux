@@ -156,7 +156,11 @@ func New() *App {
 
 // Run dispatches the configured application commands.
 func (a *App) Run(args []string, stdout, stderr io.Writer) error {
-	runLegacyHookMigrations()
+	// Doctor is a strict read-only boundary. In particular, it must not trigger
+	// the otherwise automatic legacy-hook filesystem migration before dispatch.
+	if shouldRunLegacyHookMigrations(args) {
+		runLegacyHookMigrations()
+	}
 	if len(args) == 0 {
 		printUsage(stdout)
 		return nil
@@ -244,6 +248,10 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		printUsage(stderr)
 		return fmt.Errorf("unknown command: %s", args[0])
 	}
+}
+
+func shouldRunLegacyHookMigrations(args []string) bool {
+	return len(args) == 0 || args[0] != "doctor"
 }
 
 func printUsage(w io.Writer) {

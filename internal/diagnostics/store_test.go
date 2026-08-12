@@ -363,7 +363,7 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 		{args: []string{"attach", "--help"}, runID: "help-ok"},
 		{args: []string{"upgrade", "--dry-run"}, runID: "upgrade-preview-ok"},
 		{args: []string{"update", "apply", "--dry-run"}, runID: "update-preview-ok"},
-		{args: []string{"doctor", "--install-missing", "--dry-run"}, runID: "doctor-preview-ok"},
+		{args: []string{"doctor", "--json", "--section", "deps"}, runID: "doctor-read-ok"},
 		{args: []string{"ai", "integrate", "codex", "--dry-run"}, runID: "integration-preview-ok"},
 		{args: []string{"session-state", "restore", "--dry-run"}, runID: "restore-preview-ok"},
 	}
@@ -377,6 +377,9 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 	}
 	forbidden := "pane=%42 title=private-topic body=notification-secret transcript=raw-conversation config_secret=hunter2"
 	if err := RecordOutcome(store, []string{"status", "usage"}, "read-error", "0.8.4", "tmux", start, fmt.Errorf("failed: %s", forbidden), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordOutcome(store, []string{"doctor", "--install-missing"}, "doctor-usage-error", "0.8.4", "tmux", start, errors.New("removed flag"), true); err != nil {
 		t.Fatal(err)
 	}
 	events, err := store.Read()

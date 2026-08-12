@@ -54,9 +54,10 @@ arm`, `attention clear`, `attention window`, `tmux autosave-session-state`, and
 to the journal; an error from any of them still records exactly one safe error
 outcome. Explicit user mutations such as `attention toggle` retain their
 state-changing success record. Direct top-level help and explicit preview-only intents (`upgrade
---dry-run`, `update apply --dry-run`, `doctor --install-missing --dry-run`, AI
-integration dry-runs, and the currently preview-only session restore) are also
-read-only. Multi-mode commands such as AI status/topic, doctor install,
+--dry-run`, `update apply --dry-run`, AI integration dry-runs, and the
+currently preview-only session restore) are also read-only. Doctor is a stricter
+boundary: successes and errors never append to this journal, so diagnostics do
+not make its filesystem contract self-defeating. Multi-mode commands such as AI status/topic,
 terminal apply, snapshot delete, update check, and welcome popup inspect only
 allowlisted mode/flag names; boolean `=false` values retain mutation-capable
 classification, and no flag values are ever recorded. Help-looking tokens

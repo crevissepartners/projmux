@@ -41,8 +41,46 @@ fi
 smoke_assert_file_contains "$fake_tmux_log" "split-window -P -F #{pane_id} -h -t %7"
 
 "$bin" doctor --json >"$PROJMUX_SMOKE_WORKDIR/doctor.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"schema_version": 1'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"name": "tmux"'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"status": "ok"'
+
+"$bin" doctor --json --section deps --verbose >"$PROJMUX_SMOKE_WORKDIR/doctor-deps.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-deps.json" '"dependencies"'
+if grep -Eq '"(ai_notify_integrations|session_state_resume|runtime|logs)"' "$PROJMUX_SMOKE_WORKDIR/doctor-deps.json"; then
+  echo "doctor deps projection leaked another section" >&2
+  exit 1
+fi
+
+"$bin" doctor --section runtime >"$PROJMUX_SMOKE_WORKDIR/doctor-runtime.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime.txt" "No runtime checks in schema version 1"
+
+removed_flag_stderr="$PROJMUX_SMOKE_WORKDIR/doctor-removed-flag.err"
+operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
+operations_before="$PROJMUX_SMOKE_WORKDIR/operations-before.jsonl"
+if [[ -f "$operations_log" ]]; then
+  cp "$operations_log" "$operations_before"
+fi
+legacy_hook="$XDG_CONFIG_HOME/projmux/hooks/post-create"
+mkdir -p "$(dirname "$legacy_hook")"
+printf 'printf legacy-hook-must-stay\n' >"$legacy_hook"
+if "$bin" doctor --install-missing >"$PROJMUX_SMOKE_WORKDIR/doctor-removed-flag.out" 2>"$removed_flag_stderr"; then
+  echo "removed doctor --install-missing unexpectedly succeeded" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$removed_flag_stderr" "flag provided but not defined: -install-missing"
+smoke_assert_file_contains "$removed_flag_stderr" "projmux doctor is read-only; remove --install-missing and run displayed remediation guidance explicitly outside doctor"
+smoke_assert_file_contains "$legacy_hook" "legacy-hook-must-stay"
+if [[ -e "$legacy_hook.bak" || -e "$XDG_CONFIG_HOME/projmux/config.toml" ]]; then
+  echo "removed doctor flag invocation mutated legacy hook state" >&2
+  exit 1
+fi
+if [[ -f "$operations_before" ]]; then
+  cmp "$operations_before" "$operations_log"
+elif [[ -e "$operations_log" ]]; then
+  echo "removed doctor flag invocation wrote an operational outcome" >&2
+  exit 1
+fi
 
 "$bin" tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux.conf"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "status notify --max-width 80"
