@@ -104,6 +104,8 @@ type doctorReport struct {
 
 const doctorSessionStatePruneGuidance = "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name."
 
+const doctorInstallFlagsDeprecationWarning = "warning: projmux doctor install flags are deprecated; doctor will become read-only diagnostics, so explicitly run the install guidance/command shown in its report."
+
 func doctorDeps() []doctorDep {
 	return []doctorDep{
 		{Name: "tmux", Required: true, Category: doctorCategoryCore, MinVersion: "3.4"},
@@ -140,11 +142,16 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
-	installMissing := fs.Bool("install-missing", false, "install missing or stale required dependencies")
-	includeOptional := fs.Bool("include-optional", false, "include optional missing dependencies with --install-missing")
-	dryRun := fs.Bool("dry-run", false, "print install commands without running them")
+	installMissing := fs.Bool("install-missing", false, "deprecated compatibility: install missing or stale required dependencies")
+	includeOptional := fs.Bool("include-optional", false, "deprecated compatibility: include optional missing dependencies with --install-missing")
+	dryRun := fs.Bool("dry-run", false, "deprecated compatibility: print install commands without running them")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if doctorDeprecatedInstallFlagUsed(fs) {
+		if _, err := fmt.Fprintln(stderr, doctorInstallFlagsDeprecationWarning); err != nil {
+			return err
+		}
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("doctor does not accept positional arguments")
@@ -206,11 +213,9 @@ type doctorInstallOptions struct {
 }
 
 func (c *doctorCommand) installMissing(results []doctorResult, opts doctorInstallOptions, stdout, stderr io.Writer) error {
-	commands := doctorInstallCommands(results, opts.IncludeOptional)
-	manual := doctorManualInstallResults(results, opts.IncludeOptional)
-	unresolved := doctorUnresolvedInstallResults(results, opts.IncludeOptional)
-	if len(commands) == 0 {
-		for _, r := range manual {
+	plan := buildDoctorCompatibilityInstallPlan(results, opts.IncludeOptional)
+	if len(plan.Commands) == 0 {
+		for _, r := range plan.Manual {
 			if _, err := fmt.Fprintf(stdout, "manual install required for %s: %s\n", r.Name, r.Install); err != nil {
 				return err
 			}
@@ -218,20 +223,20 @@ func (c *doctorCommand) installMissing(results []doctorResult, opts doctorInstal
 		if _, err := fmt.Fprintln(stdout, "no automatically installable missing dependencies; follow the guidance above"); err != nil {
 			return err
 		}
-		if hasRequiredDoctorResults(unresolved) {
-			return fmt.Errorf("missing required dependencies; manual install required for %s", doctorResultNames(unresolved))
+		if hasRequiredDoctorResults(plan.Unresolved) {
+			return fmt.Errorf("missing required dependencies; manual install required for %s", doctorResultNames(plan.Unresolved))
 		}
 		return nil
 	}
 
-	if len(manual) > 0 {
-		for _, r := range manual {
+	if len(plan.Manual) > 0 {
+		for _, r := range plan.Manual {
 			if _, err := fmt.Fprintf(stdout, "manual install required for %s: %s\n", r.Name, r.Install); err != nil {
 				return err
 			}
 		}
 	}
-	for _, command := range commands {
+	for _, command := range plan.Commands {
 		if opts.DryRun {
 			if _, err := fmt.Fprintf(stdout, "would install %s: %s\n", command.Dep, command.String()); err != nil {
 				return err
@@ -250,10 +255,29 @@ func (c *doctorCommand) installMissing(results []doctorResult, opts doctorInstal
 			return err
 		}
 	}
-	if hasRequiredDoctorResults(unresolved) {
-		return fmt.Errorf("missing required dependencies; manual install required for %s", doctorResultNames(unresolved))
+	if hasRequiredDoctorResults(plan.Unresolved) {
+		return fmt.Errorf("missing required dependencies; manual install required for %s", doctorResultNames(plan.Unresolved))
 	}
 	return nil
+}
+
+// doctorCompatibilityInstallPlan is the internal mutation seam retained for
+// the deprecation period. doctorResult.Install remains the human-facing hint
+// in the existing text and JSON contracts; only this typed projection may be
+// handed to the external runner. Phase 1 can remove the projection and runner
+// without changing the public diagnostic result shape.
+type doctorCompatibilityInstallPlan struct {
+	Commands   []doctorInstallCommand
+	Manual     []doctorResult
+	Unresolved []doctorResult
+}
+
+func buildDoctorCompatibilityInstallPlan(results []doctorResult, includeOptional bool) doctorCompatibilityInstallPlan {
+	return doctorCompatibilityInstallPlan{
+		Commands:   doctorInstallCommands(results, includeOptional),
+		Manual:     doctorManualInstallResults(results, includeOptional),
+		Unresolved: doctorUnresolvedInstallResults(results, includeOptional),
+	}
 }
 
 type doctorInstallCommand struct {
@@ -356,6 +380,17 @@ func parseDoctorInstallCommand(dep, hint string) (doctorInstallCommand, bool) {
 		return doctorInstallCommand{}, false
 	}
 	return doctorInstallCommand{Dep: dep, Name: parts[0], Args: parts[1:]}, true
+}
+
+func doctorDeprecatedInstallFlagUsed(fs *flag.FlagSet) bool {
+	used := false
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "install-missing", "include-optional", "dry-run":
+			used = true
+		}
+	})
+	return used
 }
 
 func (c *doctorCommand) externalRunner() func(string, []string, io.Writer, io.Writer) error {

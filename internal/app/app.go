@@ -255,7 +255,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  attention View and manage live tmux pane attention state")
 	fmt.Fprintln(w, "  attach    Open tmux lifecycle entry helpers")
 	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
-	fmt.Fprintln(w, "  doctor    Diagnose runtime dependencies and suggest installs")
+	fmt.Fprintln(w, "  doctor    Run read-only runtime and integration diagnostics")
 	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
 	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
 	fmt.Fprintln(w, "  init      Deprecated alias for setup terminal (compatibility period)")

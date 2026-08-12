@@ -45,7 +45,7 @@ comes back as the *same* conversation — not a fresh one.
 - [Node.js](https://nodejs.org/) and npm, for the main install path.
 - [tmux](https://github.com/tmux/tmux/wiki/Installing) **3.4 or newer**.
 
-Run `projmux doctor` after installing to check the local runtime.
+Run `projmux doctor` after installing for read-only local runtime diagnostics.
 
 ## Install
 
@@ -53,8 +53,8 @@ The npm package shown above installs a small Node.js shim plus the matching
 projmux binary for Linux and macOS on x64 or arm64. npm is the primary
 distribution path for normal users.
 
-Verify with `projmux version`. Then `projmux doctor` checks the local runtime
-(tmux 3.4+ and hook integration health).
+Verify with `projmux version`. Then `projmux doctor` provides read-only local
+runtime diagnostics (tmux 3.4+ and hook integration health).
 
 Manual Go, source checkout, GitHub Release, and packaging details live in
 [Install](docs/install.md).

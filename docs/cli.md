@@ -23,7 +23,7 @@ projmux <command> [args...]
 | `attention` | View and manage live tmux pane attention state. |
 | `attach` | Open tmux lifecycle entry helpers. |
 | `current` | Resolve the active tmux pane path. |
-| `doctor` | Diagnose runtime dependencies. |
+| `doctor` | Run read-only runtime and integration diagnostics. |
 | `focus` | Switch the active client to a session/window/pane target. |
 | `init` | Preview or apply supported terminal key delivery mappings. |
 | `kill` | Terminate tagged tmux sessions. |
@@ -108,10 +108,10 @@ replacement to stderr and still accepts the legacy `--dry-run` flag.
 
 ```
 projmux doctor [--json]
-projmux doctor --install-missing [--dry-run] [--include-optional]
 ```
 
-Runs a dependency check: `tmux ≥ 3.4`, `git`, `stty` (POSIX only), and
+Runs read-only diagnostics, including a dependency check for `tmux ≥ 3.4`,
+`git`, `stty` (POSIX only), and
 `kubectl` (optional), then reports read-only AI notify integration diagnostics
 for Codex hooks, Claude Code hooks, and the tmux bell
 fallback. AI notify integration statuses are `installed`, `missing`, or
@@ -121,18 +121,24 @@ diagnostics for saved agent panes, including `available`, `stale`, or
 `unavailable` status plus confidence, source, updated-at, and the affected
 snapshot/window/pane.
 
-Exit code `0` even when optional deps or AI notify integrations are missing;
-non-zero only when a required dep is missing or stale. `--json` emits a
-machine-readable object with `dependencies`, `ai_notify_integrations`, and
-`session_state_resume`; the default is the human report with suggested install
-commands per platform, AI integration install/remove/dry-run commands, and
-Session State resume metadata health. `--install-missing` is explicit opt-in
-and runs generated install commands only for missing or stale required
-dependencies. `--dry-run` prints those commands without executing them.
-`--include-optional` also includes optional missing dependencies such as
-`kubectl` when an install command is available. Install flags cannot be combined
-with `--json`. Doctor does not diagnose terminal key delivery; use `projmux
-setup` for that.
+The default plain report exits non-zero when a required dependency is missing
+or stale, and exits `0` when only optional dependencies or AI notify
+integrations are missing. `--json` preserves its current successful exit after
+emitting the report even when a required dependency is missing or stale. It
+emits a machine-readable object with `dependencies`,
+`ai_notify_integrations`, and `session_state_resume`; the default is the human
+report with suggested install commands per platform, AI integration
+install/remove/dry-run commands, and Session State resume metadata health.
+Users explicitly run any displayed install guidance or command outside doctor.
+Doctor does not diagnose terminal key delivery; use `projmux setup` for that.
+
+Compatibility notice: `--install-missing`, `--dry-run`, and
+`--include-optional` are deprecated install flags. During the compatibility
+period their install, preview, optional-dependency, output, and exit behavior
+remain unchanged, and each invocation using one or more of them emits one
+stderr warning. They cannot be combined with `--json`; `--dry-run` and
+`--include-optional` still require `--install-missing`. These mutation paths
+will be removed when doctor becomes read-only diagnostics only.
 
 `Settings > Notifications > Delivery sources` shows active Codex hooks, Claude,
 Antigravity manual hook ingest, and tmux statuses, conflicts, config paths, and

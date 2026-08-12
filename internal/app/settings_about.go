@@ -22,7 +22,7 @@ func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 		{"Key setup", "try shortcuts in projmux shell before changing terminal config"},
 		{"Diagnose keys", "projmux setup reports swallowed shortcuts"},
 		{"Terminal remediation", "projmux setup terminal previews supported terminal key delivery mappings"},
-		{"Dependencies", "projmux doctor checks tmux, git, stty, kubectl"},
+		{"Diagnostics", "projmux doctor provides read-only runtime and integration diagnostics"},
 		{"Rename key", "configure a plain alias or use tmux prefix rename"},
 		{"Ghostty", "Alt Meta defaults normally need no projmux key block"},
 		{"Windows Term.", "actions sendInput tmux/meta sequences; keybindings attach keys"},

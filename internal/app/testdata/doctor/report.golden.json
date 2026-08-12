@@ -1,0 +1,30 @@
+{
+  "dependencies": [
+    {
+      "name": "tmux",
+      "required": true,
+      "status": "ok",
+      "version": "tmux 3.6"
+    },
+    {
+      "name": "git",
+      "required": true,
+      "status": "ok",
+      "version": "git 1.2.3"
+    },
+    {
+      "name": "stty",
+      "required": true,
+      "status": "ok",
+      "version": "stty 1.2.3"
+    },
+    {
+      "name": "kubectl",
+      "required": false,
+      "status": "ok",
+      "version": "kubectl 1.2.3"
+    }
+  ],
+  "ai_notify_integrations": null,
+  "session_state_prune": "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name."
+}
