@@ -21,7 +21,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	coretags "github.com/crevissepartners/projmux/internal/core/tags"
 	"github.com/crevissepartners/projmux/internal/integrations/mux"
-	intpsmux "github.com/crevissepartners/projmux/internal/integrations/psmux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -166,10 +165,6 @@ type switchSidebarResume struct {
 
 func newSwitchCommand() *switchCommand {
 	client := defaultTmuxClient()
-	psmuxClient := (*intpsmux.Client)(nil)
-	if usePSMuxBackend(os.Getenv, nil) {
-		psmuxClient = newDefaultPSMuxClient()
-	}
 	identity, err := newDefaultCurrentIdentityResolver()
 	paths, pathsErr := config.DefaultPathsFromEnv()
 
@@ -195,10 +190,6 @@ func newSwitchCommand() *switchCommand {
 		loadWorkdirs:  config.LoadWorkdirs,
 		tmuxProjdir:   tmuxProjdirOption,
 		nativePicker:  intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-	}
-	if psmuxClient != nil {
-		cmd.sessions = psmuxClient
-		cmd.inventory = tmuxPreviewInventory{client: psmuxClient}
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)
@@ -1222,9 +1213,6 @@ func extraProjdirRoots(lookup func(string) string) []string {
 // or return a stale value from another server. Errors are swallowed because
 // the caller falls through to the next priority source.
 func tmuxProjdirOption() string {
-	if usePSMuxBackend(os.Getenv, nil) {
-		return ""
-	}
 	if os.Getenv("TMUX") == "" {
 		return ""
 	}

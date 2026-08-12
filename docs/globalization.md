@@ -124,7 +124,7 @@ Classification:
 
 Do not translate these families:
 
-- Product and agent names: `Codex`, `Claude`, `projmux`, `tmux`, `psmux`,
+- Product and agent names: `Codex`, `Claude`, `projmux`, `tmux`,
   `GitHub`, `npm`.
 - Terminal and app names: `Windows Terminal`, `Ghostty`, `WezTerm`, `Kitty`,
   `iTerm2`, `Alacritty`, `Foot`.

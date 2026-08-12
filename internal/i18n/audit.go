@@ -359,7 +359,7 @@ func callName(expr ast.Expr) string {
 
 func isPreservedLiteralString(value string) bool {
 	switch value {
-	case "AI", "Codex", "Claude", "GitHub", "npm", "projmux", "psmux", "tmux",
+	case "AI", "Codex", "Claude", "GitHub", "npm", "projmux", "tmux",
 		"Windows Terminal", "Ghostty", "WezTerm", "Kitty", "iTerm2", "Alacritty", "Foot",
 		"en-US", "ko-KR", "auto":
 		return true
@@ -389,7 +389,7 @@ func isDataStringLiteral(value string) bool {
 		return true
 	}
 	for _, prefix := range []string{
-		"projmux ", "tmux ", "psmux ", "make ", "go ", "git ", "gh ", "docker ", "kubectl ",
+		"projmux ", "tmux ", "make ", "go ", "git ", "gh ", "docker ", "kubectl ",
 	} {
 		if strings.HasPrefix(value, prefix) {
 			return true

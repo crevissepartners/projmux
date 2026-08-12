@@ -58,9 +58,7 @@ type SetOptionOptions struct {
 	Value  string
 }
 
-// ShowOptionOptions describes a `show-options` read. Use the plural command
-// form because tmux supports both show-option/show-options while psmux only
-// supports show-options.
+// ShowOptionOptions describes a `show-options` read.
 type ShowOptionOptions struct {
 	Global    bool
 	Quiet     bool

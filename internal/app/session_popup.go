@@ -37,20 +37,6 @@ type sessionPopupCommand struct {
 func newSessionPopupCommand() *sessionPopupCommand {
 	paths, err := config.DefaultPathsFromEnv()
 	client := inttmux.NewClient(inttmux.ExecRunner{})
-	if usePSMuxBackend(os.Getenv, nil) {
-		client := newDefaultPSMuxClient()
-		cmd := &sessionPopupCommand{
-			inventory: tmuxPreviewInventory{client: client},
-			opener:    client,
-		}
-		if err != nil {
-			cmd.storeErr = fmt.Errorf("resolve default config paths: %w", err)
-			return cmd
-		}
-		cmd.store = corepreview.NewDefaultStore(paths)
-		return cmd
-	}
-
 	cmd := &sessionPopupCommand{
 		inventory: tmuxPreviewInventory{client: client},
 		opener:    client,

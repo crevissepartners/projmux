@@ -107,11 +107,7 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if config == "" {
 		config = c.defaultConfigPath()
 	}
-	if !*noInstall && c.usePSMuxShell() {
-		if err := c.writePSMuxAppConfig(config, binaryPath); err != nil {
-			return err
-		}
-	} else if !*noInstall {
+	if !*noInstall {
 		if err := c.writeAppConfig(config, binaryPath); err != nil {
 			return err
 		}
@@ -121,9 +117,6 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	command := "tmux"
-	if c.usePSMuxShell() {
-		command = "psmux"
-	}
 	runArgs := []string{"-L", socketName, "-f", config, "new-session", "-A", "-s", target.SessionName}
 	if target.CWD != "" {
 		runArgs = append(runArgs, "-c", target.CWD)
@@ -374,26 +367,6 @@ func (c *shellCommand) appConfigThemeSource() renderThemeSource {
 	return source
 }
 
-func (c *shellCommand) writePSMuxAppConfig(path, binaryPath string) error {
-	if strings.TrimSpace(path) == "" {
-		return errors.New("shell psmux app config path is required")
-	}
-	if c.writeFile == nil {
-		return errors.New("configure shell psmux app config writer: file writer is not configured")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create shell psmux app config directory: %w", err)
-	}
-	config, err := psmuxAppConfig(binaryPath)
-	if err != nil {
-		return err
-	}
-	if err := c.writeFile(path, []byte(config), 0o644); err != nil {
-		return fmt.Errorf("write shell psmux app config: %w", err)
-	}
-	return nil
-}
-
 func (c *shellCommand) defaultShell() string {
 	return defaultInteractiveShell(c.lookupEnv)
 }
@@ -408,11 +381,7 @@ func (c *shellCommand) defaultConfigPath() string {
 			configHome = filepath.Join(homeDir, ".config")
 		}
 	}
-	name := "tmux.conf"
-	if c.usePSMuxShell() {
-		name = "psmux.conf"
-	}
-	return filepath.Join(configHome, "projmux", name)
+	return filepath.Join(configHome, "projmux", "tmux.conf")
 }
 
 func (c *shellCommand) expandHome(path string) string {
@@ -465,12 +434,7 @@ func (c *shellCommand) shouldStartNativeKeyBroker() bool {
 		c.goos() == "darwin" &&
 		c.nativeKeys != nil &&
 		c.nativeKeys() &&
-		nativeKeysEnabled(c.lookupEnv, c.homeDir) &&
-		!c.usePSMuxShell()
-}
-
-func (c *shellCommand) usePSMuxShell() bool {
-	return usePSMuxBackend(c.lookupEnv, c.goos)
+		nativeKeysEnabled(c.lookupEnv, c.homeDir)
 }
 
 func runForegroundCommand(ctx context.Context, env []string, name string, args ...string) error {

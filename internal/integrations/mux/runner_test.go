@@ -165,7 +165,7 @@ func TestRunnerDisplayMessageAllowsTargetlessRead(t *testing.T) {
 	}
 }
 
-func TestRunnerShowOptionUsesPluralCommandForPsmuxParity(t *testing.T) {
+func TestRunnerShowOptionUsesPluralCommand(t *testing.T) {
 	backend := &recordingBackend{out: []byte("value\n")}
 	runner := NewRunner(backend)
 

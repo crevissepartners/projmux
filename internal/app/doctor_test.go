@@ -30,11 +30,8 @@ func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
 		getenv: func(string) string { return "" },
 		commandVersion: func(name string) string {
 			if present[name] {
-				switch name {
-				case "tmux":
+				if name == "tmux" {
 					return "tmux 3.6"
-				case "psmux":
-					return "psmux 3.3.4"
 				}
 				return name + " 1.2.3"
 			}
@@ -443,11 +440,11 @@ func TestDoctorEvaluateOptionalMissingIsHintNotError(t *testing.T) {
 	}
 }
 
-func TestDoctorEvaluateSkipsSttyOnWindows(t *testing.T) {
+func TestDoctorWindowsRequiresTmuxAndSkipsStty(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("windows", map[string]bool{
-		"psmux": true, "git": true, "kubectl": true,
+		"tmux": true, "git": true, "kubectl": true,
 	})
 
 	var stdout bytes.Buffer
@@ -461,107 +458,8 @@ func TestDoctorEvaluateSkipsSttyOnWindows(t *testing.T) {
 	if !strings.Contains(out, "windows host") {
 		t.Fatalf("skip reason missing:\n%s", out)
 	}
-}
-
-func TestDoctorWindowsPsmuxTrackDoesNotRequireTmux(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommand("windows", map[string]bool{
-		"psmux": true, "git": true, "kubectl": true,
-	})
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v\noutput=%s", err, stdout.String())
-	}
-	out := stdout.String()
-	if !strings.Contains(out, "[ok]      psmux") {
-		t.Fatalf("windows native core dependency should be psmux:\n%s", out)
-	}
-	if strings.Contains(out, "[missing] tmux") || strings.Contains(out, "[stale]   tmux") || strings.Contains(out, "[ok]      tmux") {
-		t.Fatalf("windows native psmux track should not report tmux dependency:\n%s", out)
-	}
-	if !strings.Contains(out, "[skip]    stty") {
-		t.Fatalf("stty should remain skipped on windows:\n%s", out)
-	}
-
-	stdout.Reset()
-	if err := cmd.Run([]string{"--json"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run(--json) error = %v\noutput=%s", err, stdout.String())
-	}
-	var report doctorReport
-	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
-		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
-	}
-	byName := doctorResultsByName(report.Dependencies)
-	if _, ok := byName["tmux"]; ok {
-		t.Fatalf("windows native dependencies include tmux: %#v", report.Dependencies)
-	}
-	psmux, ok := byName["psmux"]
-	if !ok {
-		t.Fatalf("windows native dependencies missing psmux: %#v", report.Dependencies)
-	}
-	if !psmux.Required || psmux.Status != doctorStatusOK {
-		t.Fatalf("psmux dependency = %#v, want required ok", psmux)
-	}
-	stty, ok := byName["stty"]
-	if !ok || stty.Status != doctorStatusSkip {
-		t.Fatalf("stty dependency = %#v, want skipped", stty)
-	}
-}
-
-func TestDoctorWindowsPsmuxTrackChecksPsmuxDependency(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommand("windows", map[string]bool{
-		"git": true, "kubectl": true,
-	})
-
-	var stdout bytes.Buffer
-	err := cmd.Run(nil, &stdout, &bytes.Buffer{})
-	if err == nil {
-		t.Fatalf("Run() error = nil, want missing psmux failure")
-	}
-	out := stdout.String()
-	if !strings.Contains(out, "[missing] psmux") || !strings.Contains(out, "scoop install psmux") {
-		t.Fatalf("missing psmux dependency should be reported with install hint:\n%s", out)
-	}
-	if strings.Contains(out, "[missing] tmux") || strings.Contains(out, "[stale]   tmux") {
-		t.Fatalf("windows native psmux track should not require tmux:\n%s", out)
-	}
-}
-
-func TestDoctorWindowsPsmuxTrackIgnoresMissingOrStaleTmux(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name     string
-		present  map[string]bool
-		versions map[string]string
-	}{
-		{
-			name:    "tmux missing",
-			present: map[string]bool{"psmux": true, "git": true, "kubectl": true},
-		},
-		{
-			name:     "tmux stale",
-			present:  map[string]bool{"psmux": true, "tmux": true, "git": true, "kubectl": true},
-			versions: map[string]string{"tmux": "tmux 3.2", "psmux": "psmux 3.3.4"},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			cmd := newStubDoctorCommandWithVersions("windows", tc.present, tc.versions)
-			var stdout bytes.Buffer
-			if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-				t.Fatalf("Run() error = %v\noutput=%s", err, stdout.String())
-			}
-			out := stdout.String()
-			if strings.Contains(out, "[missing] tmux") || strings.Contains(out, "[stale]   tmux") || strings.Contains(out, "minimum 3.4; found tmux 3.2") {
-				t.Fatalf("windows native psmux track should ignore tmux dependency health:\n%s", out)
-			}
-		})
+	if !strings.Contains(out, "[ok]      tmux") {
+		t.Fatalf("tmux should remain the core dependency on windows:\n%s", out)
 	}
 }
 
@@ -570,8 +468,8 @@ func TestDoctorLinuxTmuxCoreDependencyAndStaleCheckRemainActive(t *testing.T) {
 
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
-		map[string]bool{"tmux": true, "psmux": true, "git": true, "stty": true, "kubectl": true},
-		map[string]string{"tmux": "tmux 3.2", "psmux": "psmux 3.3.4"},
+		map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true},
+		map[string]string{"tmux": "tmux 3.2"},
 	)
 
 	var stdout bytes.Buffer
@@ -599,9 +497,6 @@ func TestDoctorLinuxTmuxCoreDependencyAndStaleCheckRemainActive(t *testing.T) {
 	}
 	if !tmux.Required || tmux.Status != doctorStatusStale {
 		t.Fatalf("tmux dependency = %#v, want required stale", tmux)
-	}
-	if _, ok := byName["psmux"]; ok {
-		t.Fatalf("linux dependencies should not include psmux: %#v", report.Dependencies)
 	}
 }
 
@@ -750,64 +645,6 @@ func TestDoctorJSONIncludesAINotifyDiagnostics(t *testing.T) {
 	}
 }
 
-func TestDoctorWindowsPsmuxTrackSkipsTmuxBellFallback(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommand("windows", map[string]bool{
-		"psmux": true, "git": true, "kubectl": true,
-	})
-	cmd.aiDiagnostics = func() []doctorAINotifyIntegration {
-		return []doctorAINotifyIntegration{
-			{
-				ID:             "tmux-bell",
-				Name:           "tmux bell fallback",
-				Status:         doctorAINotifyStatusMissing,
-				InstallCommand: "projmux ai integrate tmux-bell",
-				RemoveCommand:  "projmux ai integrate tmux-bell --remove",
-				DryRunCommand:  "projmux ai integrate tmux-bell --dry-run",
-			},
-		}
-	}
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v\noutput=%s", err, stdout.String())
-	}
-	out := stdout.String()
-	for _, want := range []string{
-		"AI notify integrations",
-		"[skip]",
-		"tmux bell fallback",
-		"unsupported on the native Windows psmux track",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "install: projmux ai integrate tmux-bell") {
-		t.Fatalf("unsupported tmux bell fallback should not render install command:\n%s", out)
-	}
-
-	stdout.Reset()
-	if err := cmd.Run([]string{"--json"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run(--json) error = %v\noutput=%s", err, stdout.String())
-	}
-	var report doctorReport
-	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
-		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
-	}
-	if len(report.AINotifyIntegrations) != 1 {
-		t.Fatalf("len(report.AINotifyIntegrations) = %d, want 1", len(report.AINotifyIntegrations))
-	}
-	got := report.AINotifyIntegrations[0]
-	if got.ID != "tmux-bell" || got.Status != doctorAINotifyStatusSkip {
-		t.Fatalf("AI diagnostic = %#v, want tmux-bell skip", got)
-	}
-	if got.InstallCommand != "" || got.RemoveCommand != "" || got.DryRunCommand != "" {
-		t.Fatalf("unsupported tmux bell commands = %#v, want no commands", got)
-	}
-}
-
 func TestDoctorLinuxTmuxBellFallbackRemainsMissingWhenNotInstalled(t *testing.T) {
 	t.Parallel()
 
@@ -839,9 +676,6 @@ func TestDoctorLinuxTmuxBellFallbackRemainsMissingWhenNotInstalled(t *testing.T)
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
 		}
-	}
-	if strings.Contains(out, "unsupported on the native Windows psmux track") {
-		t.Fatalf("linux tmux bell fallback should not be rewritten as unsupported:\n%s", out)
 	}
 }
 
@@ -1276,11 +1110,8 @@ func newStubDoctorCommandWithVersions(host string, present map[string]bool, vers
 			if !present[name] {
 				return ""
 			}
-			switch name {
-			case "tmux":
+			if name == "tmux" {
 				return "tmux 3.6"
-			case "psmux":
-				return "psmux 3.3.4"
 			}
 			return name + " 1.2.3"
 		},

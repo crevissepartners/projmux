@@ -110,9 +110,6 @@ func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string)
 		return errors.New("quit mux runner is not configured")
 	}
 	command := "tmux"
-	if usePSMuxBackend(c.lookupEnv, nil) {
-		command = "psmux"
-	}
 	appOwned, err := c.appRuntimeOwned(ctx, socketName)
 	if err != nil {
 		return err
@@ -129,9 +126,6 @@ func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string)
 
 func (c *quitCommand) appRuntimeOwned(ctx context.Context, socketName string) (bool, error) {
 	command := "tmux"
-	if usePSMuxBackend(c.lookupEnv, nil) {
-		command = "psmux"
-	}
 	output, err := c.runner.Run(ctx, command, "-L", socketName, "show-options", "-gv", "@projmux_app")
 	if err != nil {
 		if tmuxServerMissing(err) {

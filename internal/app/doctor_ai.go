@@ -219,15 +219,6 @@ func doctorTmuxBellIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegratio
 	return out
 }
 
-func doctorTmuxBellUnsupportedDiagnostic() doctorAINotifyIntegration {
-	return doctorAINotifyIntegration{
-		ID:       "tmux-bell",
-		Name:     "tmux bell fallback",
-		Status:   doctorAINotifyStatusSkip,
-		Guidance: "unsupported on the native Windows psmux track; use Codex or Claude hooks for AI notifications",
-	}
-}
-
 func doctorAIEnabledProviders() map[aiprovider.ID]bool {
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {

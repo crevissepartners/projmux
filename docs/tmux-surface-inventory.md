@@ -1,798 +1,128 @@
 # tmux Surface Inventory
 
-Phase 0 artifact for the Mux substrate independence roadmap.
-
-This document inventories the tmux command, format variable, hook, and option
-surface that projmux currently calls or generates. It is intentionally an
-inventory, not a backend abstraction design. Runtime behavior must remain on
-the existing tmux path until a later phase extracts a mux contract.
+This document inventories the tmux command, format-variable, hook, and option
+surface that projmux currently calls or generates. It is the maintained
+architecture boundary for the supported tmux runtime.
 
 ## Scope And Method
 
 Primary production sources:
 
+- `internal/integrations/mux/`
 - `internal/integrations/tmux/`
 - `internal/integrations/sessionstate/`
 - `internal/app/`
-- Generated tmux config from `projmux tmux print-config`,
+- generated config from `projmux tmux print-config`,
   `projmux tmux print-app-config`, and `projmux shell`
 
 Support and fixture sources:
 
 - `test/`
 - `scripts/poc-native-picker-no-fzf-*.sh`
-- Existing docs that describe generated tmux snippets
+- current docs that describe generated tmux snippets
 
-Searches used for this inventory:
+Useful inventory searches:
 
 - `rg 'run\("tmux"|read\("tmux"|exec\.Command\("tmux"' .`
-- `rg 'tmux ' .`
-- `rg 'display-message -p' .`
-- `rg 'display-popup' .`
-- `rg 'capture-pane' .`
-- `rg 'set-hook' .`
-- `rg '@projmux_' .`
-- `rg '#\{[^}]+\}' .`
+- `rg 'display-message -p|display-popup|capture-pane|set-hook' .`
+- `rg '@projmux_|#\{[^}]+\}' .`
 
-The tables below separate production runtime surface from e2e/support fixtures
-and legacy cleanup candidates. Test fixture command strings are used to confirm
-the production contract, but they are not treated as separate product surface
-unless the corresponding production path exists.
+Test fixture command strings confirm production contracts; they are not
+separate product surface unless a corresponding runtime path exists.
 
-## Phase 1 Runner Boundary
+## Integration Boundaries
 
-Phase 1 introduces `internal/integrations/mux` as a thin command-runner
-boundary over the existing tmux backend. New app-layer subprocess calls to the
-`tmux` binary should use `mux.Run`, `mux.Read`, or `mux.ReadTrimmed` so raw
-binary invocation does not spread further. Existing typed tmux clients and
-test-injected runner fields remain valid and do not need a broad rewrite in
-this phase.
+`internal/integrations/mux` is a thin semantic command boundary over tmux.
+App-layer subprocess calls should use its typed operations when one exists so
+argument construction, output parsing, and test injection remain centralized.
+Existing typed clients in `internal/integrations/tmux` remain the correct home
+for richer session, window, pane, focus, and resource inventory models.
 
-## Phase 2A Semantic Mux Reads And Pane Options
+The boundary is intentionally pragmatic:
 
-Phase 2A adds semantic helpers in `internal/integrations/mux` for the pane
-metadata/read surfaces that psmux must eventually model:
+- keep semantic helpers where they encode tmux meaning or parsing policy;
+- keep injectable runners where tests need deterministic command evidence;
+- keep rich domain conversion in typed integration clients;
+- avoid spreading raw tmux invocation through app packages;
+- avoid introducing an abstraction that only renames a single local call.
 
-- `SetPaneOption`, `UnsetPaneOption`, and `ShowPaneOption` cover
-  `set-option -p` writes/unsets and `display-message -p "#{@...}"` reads.
-- `DisplayMessage` and `DisplayMessageTrimmed` cover `display-message -p`
-  format reads while preserving fake-runner injection through app-owned mux
-  runners.
-- `TmuxFormat`, `PaneOptionFormat`, and `JoinFormats` centralize common tmux
-  format assembly so converted call sites do not hand-build `#{...}` strings.
+## Semantic Command Surface
 
-Phase 2A intentionally does not introduce list-pane/list-window, popup, focus,
-capture, lifecycle, or psmux backend behavior.
+### Metadata And Inventory
 
-## Phase 2B Pane And Window Inventory Reads
+- `SetPaneOption`, `UnsetPaneOption`, and `ShowPaneOption` cover pane
+  user-option writes, unsets, and reads.
+- `DisplayMessage` and `DisplayMessageTrimmed` cover formatted reads.
+- `ListPanes`, `ListWindows`, and `DisplayPaneFields` cover structured
+  pane/window inventory.
+- `TmuxFormat`, `PaneOptionFormat`, `JoinFormats`, `FieldDelimiter`,
+  and `ParseFormatRows` centralize format assembly and row parsing.
 
-Phase 2B adds semantic structured inventory helpers in
-`internal/integrations/mux` while keeping tmux as the only production backend:
+These surfaces support AI metadata, attention state, notify reconciliation,
+focus resolution, preview, and recent-window inventory.
 
-- `ListPanes` covers fixed-format `list-panes -F` reads for pane inventory.
-- `ListWindows` covers fixed-format `list-windows -F` reads for window
-  inventory.
-- `DisplayPaneFields` covers one-pane `display-message -p` field reads.
-- `FieldDelimiter` and `ParseFormatRows` centralize delimiter choice, escaped
-  unit-separator compatibility, malformed-row skipping, and field trimming.
+### Interactive Commands
 
-Converted app-layer read paths include AI hook pane matching, tmux bell pane
-field reads, `attention list`/window badge reads, and notify queue reconcile.
-The session-state typed tmux client remains on its existing capture path in this
-phase so replay schema and generation logic stay unchanged.
+- `DisplayPopup` and `ClosePopup` own popup launch/close argument ordering.
+- `CapturePane` owns raw and joined capture forms.
+- `SwitchClient`, `SelectPane`, and `SelectWindow` own focus/navigation
+  targeting.
+- `ResizePane` owns split-layout follow-up sizing.
 
-### Phase 2B psmux Audit Capability Mapping
+### Lifecycle, Split, Hooks, And Options
 
-The table below maps the tmux format variables used by Phase 2B inventory reads
-to the semantic capability that a future psmux audit/backend must provide.
+- `NewSession`, `NewWindow`, and `SplitWindow` own creation commands.
+- `SplitWindow` and `NewSession` optionally return pane ids from
+  `-P -F "#{pane_id}"`; automation callers require the exact `%N` result.
+- `SetHook`, `SetOption`, and `ShowOption` own generated hook/option
+  mutations and reads.
+- socket and config targeting stay explicit in the typed option structs.
 
-| Capability | Current tmux read | Format variables / options | Converted read paths |
-| --- | --- | --- | --- |
-| `ListPanes` pane identity | `list-panes -a -F` | `#{session_name}`, `#{window_id}`, `#{pane_id}`, `#{pane_active}`, `#{socket_path}` | `attention list`, notify reconcile |
-| `ListPanes` pane labels/state | `list-panes -a -F`, `list-panes -t <window> -F` | `#{pane_title}`, `#{@projmux_pane_label}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}` | `attention list`, attention window badge, notify reconcile |
-| `ListPanes` AI hook match fields | `list-panes -a -F` | `#{pane_id}`, `#{pane_current_path}`, `#{@projmux_ai_thread_id}`, `#{@projmux_ai_session_id}` | AI hook pane matching |
-| `DisplayPaneFields` bell pane fields | `display-message -p -t <pane>` | `#{session_name}`, `#{window_id}`, `#{window_name}`, `#{pane_id}`, `#{pane_title}`, `#{pane_current_command}`, `#{socket_path}` | tmux bell ingest |
-| `ListWindows` window inventory | `list-windows -F` | `#{window_index}`, `#{window_id}`, `#{window_name}`, `#{window_layout}`, `#{window_panes}`, `#{pane_current_path}` | API available for the existing typed tmux window reads; conversion deferred outside Phase 2B app read slice |
+The typed `internal/integrations/tmux.Client` owns higher-level operations
+such as ensure/open/kill sessions, recent session summaries, preview inventory,
+resource inventory, and session-state capture/replay.
 
-## Phase 2C Interactive Command Slice
+## Generated Configuration Surface
 
-Phase 2C adds semantic helpers in `internal/integrations/mux` for the visible
-interactive tmux commands that a future backend must either support or report
-as unsupported:
+The standalone and app configs own:
 
-- `DisplayPopup` covers `display-popup` launch args while preserving the
-  existing tmux option ordering from `BuildDisplayPopupArgs`.
-- `ClosePopup` covers scoped `display-popup [-c <client>] [-t <pane>] -C`
-  close behavior.
-- `CapturePane` covers both `capture-pane -p -J -S <n> -t <pane>` and
-  `capture-pane -p -t <pane> -S <n>` forms.
-- `SwitchClient`, `SelectPane`, and `SelectWindow` cover focus/statusbar
-  navigation commands, including optional `-S <socket>` and `-c <client>`
-  targeting where the current tmux paths use them.
+- app/runtime marker options such as `@projmux_app`;
+- status rows, ranges, palette options, mouse dispatch, and popup bindings;
+- AI, attention, notify, recent-window, session-state, and resource hooks;
+- project-root and live-resource options;
+- reload/apply behavior for default and named sockets.
 
-Converted app-layer paths include popup-toggle open/close (including notify
-sidebar popup close-by-client), statusbar path/usage popups and window-list
-passthrough, focus switch/window/pane selection, and AI watch-title joined
-capture.
+Generated callbacks must continue to quote executable paths and user-controlled
+arguments as data. Config changes require unit coverage for exact snippets plus
+integration or e2e coverage when live tmux behavior changes.
 
-### Phase 2C psmux Audit Capability Mapping
+## Maintained Command Inventory
 
-| Capability | Current tmux command | Converted paths |
+| Family | Representative tmux surface | Main consumers |
 | --- | --- | --- |
-| `DisplayPopup` | `display-popup [-c <client>] [-t <pane>] [-E] [-B] [-d <cwd>] [-e KEY=VALUE] [-x <x>] [-y <y>] [-w <w>] [-h <h>] [-T <title>] <command>` | `tmux popup-toggle`, statusbar path popup, statusbar usage popup |
-| `ClosePopup` | `display-popup [-c <client>] [-t <pane>] -C` | `tmux popup-toggle` close path, including notify sidebar client-scoped close |
-| `CapturePane` | `capture-pane -p -J -S -80 -t <pane>`; `capture-pane -p -t <pane> -S <start>` | AI watch-title capture path converted; generic typed tmux client helper remains a tmux client path |
-| `SwitchClient` | `[-S <socket>] switch-client [-c <client>] -t <session>` | `projmux focus` dispatch |
-| `SelectPane` | `[-S <socket>] select-pane [-T <title>] -t <target>` | `projmux focus` pane selection; title form available for existing pane-title surfaces |
-| `SelectWindow` | `[-S <socket>] select-window -t <target>` | `projmux focus` window selection, statusbar window-list passthrough |
-
-## Phase 2D Lifecycle / Split / Hook Slice
-
-Phase 2D adds semantic helpers in `internal/integrations/mux` for tmux
-lifecycle, pane split, hook, and global/session option commands:
-
-- `NewSession` covers `new-session` lifecycle args, including detached or
-  attach/create mode, socket/config prefixes, session name, cwd, sorted
-  environment injection, optional pane id return via `-P -F "#{pane_id}"`, and
-  an optional command tail.
-- `SplitWindow` covers `split-window -h/-v`, detached splits, target, cwd,
-  optional pane id return via `-P -F "#{pane_id}"`, and command tail ordering.
-- `SetHook` covers global append and unset forms used by tmux bell integration.
-- `SetOption` and `ShowOption` cover global/session option writes and reads
-  where runtime code needs structured option commands rather than raw argv.
-
-Converted paths include project session creation, AI agent/shell split, and
-tmux bell integration option/hook install and removal. Session-state replay
-creation remains on the existing typed tmux path in this phase.
-
-### Phase 2D psmux Audit Capability Mapping
-
-| Capability | Current tmux command | Converted paths |
-| --- | --- | --- |
-| `NewSession` | `[-S <socket>] [-f <config>] new-session [-d] [-A] [-s <session>] [-c <cwd>] [-e KEY=VALUE] [-P -F "#{pane_id}"] [command...]` | Project session create, including lifecycle startup pane id capture |
-| `SplitWindow` | `split-window [-d] [-P -F "#{pane_id}"] [-h/-v] [-t <target>] [-c <cwd>] [command...]` | AI agent split, AI shell split |
-| `SetHook` | `set-hook -ag <hook> <command>`, `set-hook -gu <hook[index]>` | `projmux ai integrate tmux-bell` install/remove |
-| `SetOption` | `set-option -g <option> <value>`, `set-option -t <session> -q <option> <value>` | tmux bell integration option install; API available for session-scoped markers |
-| `ShowOption` | `show-options [-g] [-q] [-v] [-t <target>] <option>` | API available for global/session option reads; converted low-risk call sites use the plural spelling for psmux parity |
-
-## Phase 3 psmux MVP Direction
-
-Phase 3 should bring up a psmux backend before solving rich pane metadata.
-psmux 3.3.4 supports global and session user options, but pane-scoped custom
-`@...` options are not persisted by `set-option -p` in current smoke results.
-The psmux MVP therefore treats pane user options as an unsupported capability
-instead of a launch blocker.
-
-Phase 3A0 should bootstrap native Windows `projmux.exe` execution before the
-psmux backend is wired into product flows. Split it into explicit subphases so
-native PowerShell work does not get conflated with the later psmux backend:
-
-- **Phase 3A0-1: Windows build unblock.** Make `GOOS=windows GOARCH=amd64 go
-  build ./cmd/projmux` succeed. WSL-only focus code, POSIX process attributes,
-  and shell assumptions must be build-tagged, stubbed, or moved behind
-  platform adapters.
-- **Phase 3A0-2: Pure PowerShell CLI smoke.** Run `projmux.exe --version` and
-  other mux-free diagnostics/config commands from PowerShell. This phase should
-  prove that startup, argument parsing, config/state path calculation, and
-  read-only commands do not require tmux, WSL, or POSIX shell tools.
-- **Phase 3A0-3: Windows dependency and path policy.** Teach diagnostics to
-  distinguish native Windows/psmux from WSL/Linux/tmux. `tmux`, `stty`, `/bin/sh`,
-  and WSL-only helpers must not be required for a native psmux track.
-- **Phase 3A0-4: PowerShell process-launch and quoting policy.** Define how
-  generated psmux config invokes `projmux.exe` and child commands without
-  POSIX quoting. This must be settled before hooks, status commands, or popup
-  launchers call back into projmux on Windows. Policy/helper coverage now
-  lives in `internal/integrations/psmux`: generated psmux config renders
-  PowerShell-native command lines with `& '<projmux.exe>' '<arg>'...`, while
-  native process-launch code keeps argv structured or uses the Windows
-  CreateProcess command-line renderer only at that boundary.
-- **Phase 3A0-5: Native shell entry smoke.** Add the first limited
-  `projmux.exe shell` PowerShell smoke that reaches a psmux app runtime, with
-  rich pane metadata still disabled.
-
-### Generated psmux Command Rendering Policy
-
-psmux-native generated config must not reuse `tmuxShellQuote`,
-`tmuxConfigQuote`, `sh -c`, POSIX environment-prefix syntax, or cmd.exe
-metacharacter escaping. Those helpers remain tmux/POSIX-only.
-
-When generated psmux config needs to call back into `projmux.exe`, render a
-PowerShell-native invocation from an argv model:
-
-- executable: first token after PowerShell's call operator, e.g.
-  `& 'C:\Program Files\projmux\projmux.exe'`;
-- arguments: one single-quoted literal per argv element;
-- single quote inside an argv element: doubled (`'can''t'`);
-- spaces, backtick, `$`, `&`, `|`, `<`, `>`, `;`, parentheses, braces, caret,
-  percent, and exclamation are data inside single-quoted literals;
-- NUL, CR, and LF are rejected for generated one-line config commands.
-
-When psmux backend code can launch a process directly, it should keep
-`Executable` plus `Args` structured until the native process boundary. If a
-single Windows command-line string is unavoidable for `CreateProcess`, use the
-psmux Windows command-line renderer for direct CreateProcess/C-runtime argv
-parsing only; do not feed that string through PowerShell or `cmd.exe /c`.
-If future code must launch through `cmd.exe /c`, add a separate cmd.exe
-renderer with tests for cmd metacharacters instead of extending the
-CreateProcess helper.
-
-Phase 3A0-5 acceptance/checklist:
-
-- `projmux.exe shell` chooses the psmux path only on native Windows/PowerShell;
-  tmux/POSIX `projmux shell` behavior stays unchanged.
-- generated psmux config uses the PowerShell argv renderer for all callbacks to
-  `projmux.exe` and child commands.
-- Windows paths and args containing spaces, single quote, double quote,
-  backtick, dollar, ampersand, pipe, redirect characters, semicolon,
-  parentheses, braces, caret, percent, and exclamation survive a smoke launch.
-- the smoke reaches a minimal psmux app runtime without pane-scoped metadata,
-  replay, or backend capability redesign.
-- unsupported psmux capabilities fail or degrade explicitly in the smoke notes.
-
-Phase 3A0-5 result:
-
-- native Windows `projmux.exe shell` now writes a separate generated
-  `psmux.conf` and launches `psmux -L projmux -f <config> new-session -A -s
-  <session> [-c <cwd>]`.
-- Linux, WSL, and macOS continue to write the existing tmux app config and
-  launch `tmux -L projmux -f <config> new-session -A -s <session> [-c <cwd>]`.
-- the generated psmux config is intentionally minimal: app marker, mouse,
-  history, basic status, automatic rename, and `C-n` new-window. Pane-scoped
-  metadata, popups, rich hooks, notify sidebar, and session-state replay remain
-  disabled/follow-up.
-- the psmux status callback uses
-  `internal/integrations/psmux.ProjmuxCommand(...).PowerShell()` and renders
-  as `#(& '<projmux.exe>' 'status' 'git' '#{pane_current_path}')`; POSIX tmux
-  quoting helpers are not used for callback argv.
-
-Native Windows PowerShell smoke commands for PR/archive notes:
-
-```powershell
-$Projmux = "$env:TEMP\projmux.exe"
-go build -o $Projmux .\cmd\projmux
-$env:PROJMUX_WELCOME = "0"
-$Session = 'projmux smoke chars '' " ` $ & | < > ; ( ) { } ^ % !'
-& $Projmux shell --config "$env:TEMP\projmux-psmux-smoke.conf" --session $Session --bin $Projmux
-psmux -L projmux list-sessions
-psmux -L projmux show-options -gqv @projmux_app
-psmux -L projmux kill-server
-Remove-Item Env:\PROJMUX_WELCOME -ErrorAction SilentlyContinue
-```
-
-Expected command shape from the implementation:
-
-```text
-psmux -L projmux -f <generated config> new-session -A -s <session> [-c <cwd>]
-```
-
-Phase 3A should add an explicit mux capability contract:
-
-- `PaneUserOptions=false` for psmux until upstream parity or a projmux metadata
-  store exists.
-- `GlobalUserOptions=true` and `SessionUserOptions=true` when backed by
-  `show-options` / `set-option`.
-- Unsupported capabilities must fail or degrade explicitly; they must not
-  silently pretend pane metadata was stored.
-
-Phase 3B is audit-only. It should complete the public psmux parity matrix,
-record the Phase 2A-2D and Phase 3A0 smoke results, and identify the remaining
-native Windows PowerShell checks. It must not implement psmux backend/runtime
-work, sidecar metadata, session-state schema changes, replay behavior, or
-distribution work.
-
-Phase 4 should report degraded psmux capabilities explicitly while keeping the
-MVP narrow:
-
-- pane user options are missing in psmux 3.3.4, so pane topic, AI state,
-  attention ack, notification dedupe, and agent resume metadata must be
-  disabled or shown as unsupported until a later implementation phase.
-- notify/status/session-state code paths should report missing pane metadata
-  capability rather than relying on empty `@projmux_*` reads.
-- `doctor` and settings diagnostics should identify the active backend and its
-  missing metadata capabilities.
-
-### Phase 4 MVP Subset
-
-This section is a Phase 3B scope boundary only; Phase 4 implementation remains
-out of scope for the audit branch.
-
-Phase 4 should implement only the smallest psmux-capable product slice needed
-to prove native Windows project navigation and basic AI pane launch:
-
-- app shell launch on the psmux backend with explicit degraded capability
-  reporting.
-- project session create, attach/open, and switch.
-- right/down split plus Codex/Claude pane launch when command-tail split works.
-- basic pane identity/context reads: pane id, window id, session name, current
-  path, current command, title, and socket path where available.
-- global/session options via `set-option` and `show-options`; pane-scoped
-  custom `@projmux_*` options stay degraded/unsupported.
-- minimal generated status line: app marker, basic status row, and
-  PowerShell-rendered callbacks only.
-- minimal project switch sidebar: open the sidebar, list projects/sessions,
-  select a project/session, then open or switch to it.
-- Phase 4B-F1 generated psmux config uses an explicit command tail for the
-  project popup (`display-popup ... -E powershell -NoProfile -Command
-  <PowerShell script>`) instead of passing the PowerShell script itself as the
-  `-E` argument. The popup is left anchored with `-x 0 -y 0 -w 42% -h 100%` as
-  the closest sidebar-like psmux fallback; exact tmux sidebar parity remains out
-  of scope and needs native Windows visual confirmation.
-- basic preview if the psmux surface can provide it cheaply; no preview is an
-  acceptable MVP fallback.
-- a psmux-capable popup or native picker path for the minimal project switch
-  sidebar only.
-
-Phase 4 explicitly excludes notify sidebar work, rich sidebar preview, pane
-metadata badges, AI pane topic/state/notify/session-state resume metadata
-recovery, statusbar mouse integration, advanced focus/ack/consume semantics,
-full tmux sidebar parity, full hook parity, session-state replay,
-session-state schema changes, sidecar metadata storage, pane option workaround
-implementation, and Phase 5 packaging/distribution work.
-
-### Phase 4A App/Session Foundation
-
-Phase 4A adds only the psmux app/session foundation:
-
-- backend selection uses `PROJMUX_MUX_BACKEND=tmux|psmux`, with native Windows
-  defaulting to psmux and non-Windows hosts defaulting to tmux.
-- `projmux shell` continues to use the app socket/session naming
-  `-L projmux` / `home` and writes `psmux.conf` only for the psmux backend.
-- project session create, attach/open, switch, recent-session summaries, and
-  preview/session inventory can use `psmux -L projmux`.
-- psmux inventory is based on `list-sessions`, `list-windows`, and
-  `list-panes` core fields only. Pane-scoped `@projmux_*` metadata is left
-  empty/degraded; no sidecar store or pane-option workaround is introduced.
-- `projmux quit` keeps the `@projmux_app=1` global marker guard before
-  `kill-server` on the selected app runtime backend.
-
-Phase 4A still excludes the Phase 4B project switch sidebar/keybinding UI,
-Phase 4C splits/agents, notify sidebar, rich preview, metadata recovery,
-statusbar mouse integration, advanced focus/ack/consume, full hook parity, and
-session-state restore parity.
-
-Rich metadata should be revisited only after the psmux MVP is usable. The two
-acceptable later directions are upstream psmux parity for pane-scoped custom
-user options, or a projmux-owned sidecar pane metadata store with reconcile,
-locking, stale-record cleanup, and pane-id reuse protection.
-
-## Classification Key
-
-| Class | Meaning |
-| --- | --- |
-| `required MVP` | Needed for baseline session create/list/open, app shell, AI split, and project navigation. |
-| `interactive UI` | Needed for popups, statusbar clicks, key bindings, picker launch, visible messages, or clipboard helpers. |
-| `hooks/status` | Needed for generated tmux hooks, AI/attention/status segments, notification queue reconciliation, or settings-driven live options. |
-| `e2e/support` | Used by install/apply flows, smoke scripts, POCs, or test harnesses. |
-| `legacy/cleanup candidate` | Backward compatibility, migration markers, old option aliases, or code paths called out as future cleanup candidates. |
-
-## Command Inventory
-
-### Session And App Runtime
-
-| Command | Class | Production call sites | Purpose / notes |
-| --- | --- | --- | --- |
-| `has-session -t <target>` | `required MVP` | `Client.sessionExists`, `tmuxSessionExists` | Check whether a project/app session exists before create/open. |
-| `new-session -d -s <session> -c <cwd> [-e KEY=VALUE]` | `required MVP` | `Client.createDetachedSession` | Create detached project sessions. With lifecycle hooks enabled, adds `-P -F "#{pane_id}"` to capture the first pane id. Phase 2D mux API: `NewSession`. |
-| `new-session -A -s <session> [-c <cwd>]` | `required MVP` | `projmux shell` | Attach/create the isolated app session. Wrapped with `-L <socket> -f <config>`. Phase 2D mux API available: `NewSession`. |
-| `attach-session -t <target>` | `required MVP` | `Client.OpenSession`, `Client.OpenSessionTarget` | Outside-tmux open path. Pane targets degrade to session/window where attach cannot select a pane. |
-| `switch-client [-c <client>] -t <target>` | `required MVP`, `focus` | `Client.OpenSession`, `focusCommand`, generated status key table | Inside-tmux open/focus path. `PROJMUX_SWITCH_TARGET_CLIENT` can force the originating client. Phase 2C mux API: `SwitchClient`. |
-| `list-sessions -F ...` | `required MVP`, `focus`, `e2e/support` | `RecentSessions`, `RecentSessionSummaries`, `ListEphemeralSessions`, `focus`, `tmux apply` | Drives session picker rows, focus fallback, app reload probe, and ephemeral cleanup. |
-| `list-windows -F ...` | `required MVP`, `session-state`, `hooks/status` | `ListSessionWindows`, `runRebalancePanes`, session-state capture/replay | Reads window inventory, window ids, pane counts, layouts. |
-| `list-panes -F ...` | `required MVP`, `hooks/status`, `session-state` | `ListAllPanes`, AI matching, attention list, notify reconcile, session-state capture | Main pane inventory primitive. |
-| `set-environment -t <session> KEY VALUE` | `required MVP`, `hooks/status` | `Client.applyProjectSessionEnv` | Applies project hook environment to newly-created sessions. |
-| `kill-session -t <session>` | `required MVP`, `legacy/cleanup candidate` | `Client.KillSession`, session-state live replay cleanup | User/session lifecycle and destructive live replay cleanup. |
-| `kill-server` | `required MVP` for app quit | `quitCommand` | Quits only an app-owned `tmux -L projmux` server after `@projmux_app=1` verification. |
-
-### Popup And Interactive UI
-
-| Command | Class | Production call sites | Purpose / notes |
-| --- | --- | --- | --- |
-| `display-popup ... <command>` | `interactive UI` | `tmux popup-*`, AI picker, hook trust prompt, welcome popup, statusbar pwd/usage popups | Native tmux popup surface. Uses `-E`, `-B`, `-c`, `-t`, `-d`, `-e`, `-x`, `-y`, `-w`, `-h`, `-T` depending on mode. Phase 2C mux API: `DisplayPopup`. |
-| `display-popup [-c <client>] [-t <pane>] -C` | `interactive UI` | `tmux popup-toggle` | Closes a scoped popup. Notify sidebar close targets client instead of origin pane. Phase 2C mux API: `ClosePopup`. |
-| `display-message [message]` | `interactive UI`, `hooks/status` | AI/status/settings/attention/statusbar fallback paths | User-visible toasts and error fallbacks that avoid tmux `run-shell` error popups. |
-| `select-pane -T <title> -t <pane>` | `interactive UI`, `hooks/status`, `session-state` | attention toggle/clear, AI runtime title, snapshot replay final title | Sets raw runtime pane title. Snapshot replay uses only saved `Pane.Title`, after recipe launch; the user Rename Pane action does not call it. Phase 2C mux API: `SelectPane`. |
-| `select-pane -t <target>` | `focus`, `session-state` | `focusCommand`, session-state replay | Selects target pane after focus or replay. Phase 2C mux API: `SelectPane`. |
-| `select-window -t <target>` | `interactive UI`, `focus`, `session-state` | statusbar window-list passthrough, focus, live replay | Restores native window click behavior and selects replay/focus targets. Phase 2C mux API: `SelectWindow`. |
-| `split-window [-h|-v] [-P -F "#{pane_id}"] [-t <pane>] [-c <cwd>] <cmd>` | `required MVP`, `interactive UI` | AI split, session-state replay | Creates AI/shell panes. AI agent split reads the new pane id from `-P -F`. Phase 2D mux API: `SplitWindow` for AI splits; session-state replay remains on the typed tmux path. |
-| `resize-pane -t <pane> -x|-y <size>` | `interactive UI` | AI split layout rebalance | Best-effort equal sizing after AI split. |
-| `set-buffer -w -- <text>` | `interactive UI` | Settings copy helpers | Copies generated install/remove/dry-run commands to the tmux clipboard. |
-| `command-prompt` | `interactive UI` | generated keymap | Prompt-based rename/topic actions in generated config. |
-| `bind-key`, `unbind-key`, `switch-client -T` | `interactive UI`, `hooks/status` | generated config | Installs popup/statusbar/keybinding UX, including `MouseDown1Status` and the `projmux-status` key table. |
-| `new-window -c "#{pane_current_path}"` | `interactive UI` | generated keymap | App keybinding for opening a new shell window in the current pane path. |
-| `previous-window`, `next-window`, `select-pane -L/-R/-U/-D` | `interactive UI` | generated app keymap | Navigation bindings inside app config. |
-
-### Hook, Status, And Notification Surface
-
-| Command | Class | Production call sites | Purpose / notes |
-| --- | --- | --- | --- |
-| `set-hook -g pane-focus-out run-shell -b ...` | `hooks/status` | generated standalone/app config | Arms attention focus state on pane focus out. Uses `#{hook_pane}`. |
-| `set-hook -g pane-focus-in run-shell -b ...` | `hooks/status` | generated standalone/app config | Clears attention state when pane receives focus. Uses `#{hook_pane}`. |
-| `set-hook -g after-select-pane run-shell -b ...` | `hooks/status` | generated standalone/app config | Clears attention on selected pane. Uses `#{pane_id}`. |
-| `set-hook -g pane-exited` / `after-kill-pane` | `hooks/status` | generated standalone/app config | Calls `projmux tmux rebalance-panes` after pane removal. |
-| `set-hook -g client-attached` | `hooks/status` | generated app config | Runs the legacy welcome popup helper; with the current shell prompt policy it normally no-ops unless a pending marker exists. |
-| `set-hook -ag alert-bell ...` | `hooks/status` | `projmux ai integrate tmux-bell` | Installs bell fallback to `projmux ai ingest bell --pane "#{pane_id}"`. Phase 2D mux API: `SetHook`. |
-| `set-hook -gu alert-bell[...]` | `legacy/cleanup candidate`, `hooks/status` | `projmux ai integrate tmux-bell --remove` | Removes projmux-managed alert-bell entries. Phase 2D mux API: `SetHook`. |
-| `show-hooks -g alert-bell` | `hooks/status` | tmux bell integration planning | Detects existing managed bell fallback. |
-| `run-shell -b <command>` | `hooks/status`, `interactive UI` | generated hooks, generated statusbar binds, AI watch-title | Async hook/status dispatch and title watcher launch. |
-| `show-options -gqv <option>` | `hooks/status`, `legacy/cleanup candidate` | notification mode, statusbar decoration, `@projmux_projdir`, app ownership | Reads global user options and generated app markers. The plural form works on tmux and psmux; avoid tmux's singular alias in shared surfaces. |
-| `show-options -gv @projmux_app` | `required MVP` for app quit | `quitCommand` | Confirms a socket is app-owned before `kill-server`. Phase 2D mux API available: `ShowOption`. |
-| `set-option -g <option> <value>` | `hooks/status` | settings, notification registration, generated config, tmux bell integration | Writes statusbar decoration, desktop notify mode markers, toast URI markers, and tmux bell options. Phase 2D mux API: `SetOption` for tmux bell integration. |
-| `set-option -g -u <option>` | `legacy/cleanup candidate` | notification URI migration | Unsets older URI registration markers. |
-| `set-option -p [-u] -t <pane> <option> [value]` | `hooks/status`, `required MVP` for AI | AI state, attention, topics, notification dedupe, session-state recipe metadata | Core pane metadata storage. Phase 2A mux API: `SetPaneOption`, `UnsetPaneOption`. |
-| `set-option -t <session> -q <option> <value>` | `session-state`, `required MVP` | session autosave/source, ephemeral sessions | Stores session-level live markers. |
-| `source-file <config>` | `e2e/support`, app runtime support | `tmux apply`, install smoke | Reloads generated app config into live `-L projmux` server. |
-
-### Capture And Replay
-
-| Command | Class | Production call sites | Purpose / notes |
-| --- | --- | --- | --- |
-| `capture-pane -p -J -S -80 -t <pane>` | `capture`, `hooks/status` | AI watch-title/notification inference | Reads recent pane text joined into logical lines. Phase 2C mux API: `CapturePane`. |
-| `capture-pane -p -t <pane> -S <n>` | `capture`, `required MVP` if generic pane viewer is used | `Client.CapturePane` | Generic typed tmux client capture helper. Phase 2C mux API supports this form; typed client conversion remains deferred. |
-| `rename-window -t <target> <name>` | `session-state` | session-state replay | Restores first window name. |
-| `new-window -d -t <target> -c <cwd> [-n <name>] [cmd...]` | `session-state` | session-state replay | Recreates additional windows. |
-| `select-layout -t <target> <layout>` | `session-state` | session-state replay | Restores captured window layouts. |
-| `move-window -d -k -s <window-id> -t <target>` | `legacy/cleanup candidate`, `session-state` | destructive live replay primitive | Used by `ApplyToExistingSession`, called out in roadmap backlog as possible cleanup. |
-| `kill-window -t <window-id>` | `legacy/cleanup candidate`, `session-state` | destructive live replay primitive | Removes live windows not present in staged snapshot. |
-| `send-keys -t <target> <command> Enter` | `required MVP`, `session-state` | startup commands and replay recipes | Runs startup or agent resume commands in target panes. |
-
-### E2E, POC, And Support Scripts
-
-| Command | Class | Source | Purpose / notes |
-| --- | --- | --- | --- |
-| `tmux -L <socket> new-session -d ...` | `e2e/support` | integration/install smoke scripts | Creates isolated smoke servers. |
-| `tmux -L <socket> show-options -gqv @projmux_app` | `e2e/support` | install/integration/e2e smoke scripts | Confirms generated app config was sourced. |
-| `tmux set-option -p ... @projmux_ai_*` | `e2e/support` | e2e smoke | Seeds AI/status metadata for visual smoke. |
-| `tmux display-message -p ...`, `list-panes`, `list-windows` | `e2e/support` | native picker POC scripts | Verifies tmux state during native picker POC runs. |
-| `set-environment -g PROJMUX_*` in generated POC config | `e2e/support` | native picker POC scripts | Seeds environment for sandboxed native picker tests. |
-
-## `display-message -p` Format Variable Inventory
-
-This section lists the format variables read through `tmux display-message -p`
-only. Other `-F` uses in `list-*` commands are covered in the next section.
-
-| Format | Class | Read by | Purpose / notes |
-| --- | --- | --- | --- |
-| `#{pane_current_path}` | `required MVP`, `interactive UI`, `hooks/status` | tmux client, AI split, status git, statusbar pwd, popup context | CWD for project switch, popup launch, status segments, and AI context. |
-| `#{session_name}` | `required MVP`, `session-state` | tmux client, autosave, settings/sessionstate | Current session identity. |
-| `#S` | `hooks/status`, `focus` | AI notify, status kube, popup context, focus URI translation | Short session name alias used in legacy/direct paths. |
-| `#W` | `hooks/status` | AI desktop notification | Window name in notification body. |
-| `#I` | `focus` | focus URI translation | Window index when converting a pane id from a toast URI. |
-| `#{pane_id}` | `required MVP`, `interactive UI`, `hooks/status`, `focus` | popup context, AI split, watch-title gate, notify producer | Resolves target/origin pane ids and checks pane liveness. |
-| `#{pane_title}` | `hooks/status`, `interactive UI` | attention, AI watch-title, notify producer | Pane label/topic evidence and attention title cleanup. |
-| `#{pane_current_command}` | `required MVP`, `session-state`, `hooks/status` | startup wait, AI watch-title, bell ingest | Shell readiness and AI/bell classification. |
-| `#{socket_path}` | `hooks/status`, `focus` | notification toast, attention/notify producer, bell ingest | Carries socket path into notify queue and toast focus URI. |
-| `#{window_id}` | `hooks/status` | notify producer, bell ingest | Stable window target for notification rows. |
-| `#{window_name}` | `hooks/status` | bell ingest | Bell notification fallback context. |
-| `#{client_tty}` | `interactive UI`, `statusbar` | popup-toggle, statusbar generated bindings | Scopes popup markers and statusbar click origin. |
-| `#{client_pid}` | `interactive UI` | popup context fallback | Fallback popup marker key when `client_tty` is empty. |
-| `#{client_width}` / `#{client_height}` | `interactive UI` | popup sizing | Calculates popup dimensions for picker/status surfaces. |
-| `#{@projmux_statusbar_decoration}` | `interactive UI`, `hooks/status` | popup context | Live fallback for popup/statusbar decoration mode. |
-| `#{@projmux_sessionstate_autosave_at}` | `session-state` | autosave debounce | Per-session autosave gate timestamp. |
-| `#{@projmux_sessionstate_source}` | `session-state` | session-state source check | Marks fresh/restored/autosave source. |
-| `#{@projmux_attention_state}` | `hooks/status` | attention, AI, notify | Pane reply/busy state. |
-| `#{@projmux_attention_ack}` | `hooks/status` | AI watch-title | Reply acknowledgement state. |
-| `#{@projmux_attention_focus_armed}` | `hooks/status` | attention | Focus-gated attention clear behavior. |
-| `#{@projmux_ai_agent}` | `required MVP`, `hooks/status`, `session-state` | AI/notify/session-state | Agent kind metadata. |
-| `#{@projmux_ai_context}` | `hooks/status` | AI watch-title | AI context directory metadata. |
-| `#{@projmux_ai_topic}` | `hooks/status`, `session-state` | AI/status/session-state | Display topic and restore recipe label. |
-| `#{@projmux_ai_topic_manual}` | `hooks/status`, `session-state` | AI watch-title/session-state | Blocks automatic topic overwrite and preserves manual ownership across snapshot restore. |
-| `#{@projmux_ai_state}` | `hooks/status` | attention/AI/notify | AI thinking/waiting/idle state. |
-| `#{@projmux_ai_hook_active}` | `hooks/status` | AI watch-title gate | Prevents title watcher from overriding hook-driven metadata. |
-| `#{@projmux_desktop_notification_key}` | `hooks/status` | AI notification dedupe | Dedupe key for desktop notifications. |
-| `#{@projmux_desktop_notification_at}` | `hooks/status` | AI notification dedupe | Dedupe timestamp. |
-| `#{@projmux_desktop_notified}` | `legacy/cleanup candidate`, `hooks/status` | AI notification reset/tests | Older notification marker still reset/written. |
-
-## `list-* -F` Format Variable Inventory
-
-| Command | Formats | Class | Purpose |
-| --- | --- | --- | --- |
-| `list-sessions -F` | `#{session_activity}`, `#{session_name}`, `#{session_attached}`, `#{session_windows}` | `required MVP` | Recent session ordering and picker summaries. |
-| `list-sessions -F` | `#{session_name}`, `#{session_attached}`, `#{session_last_attached}`, `#{@projmux_ephemeral}` | `required MVP` | Ephemeral lifecycle inventory. |
-| `list-sessions -F` | `#{session_id}` | `e2e/support` | `tmux apply` live server probe/count. |
-| `list-sessions -F` | `#{session_activity}`, `#{session_name}`, `#{session_attached}` | `focus` | Focus fallback inventory. |
-| `list-clients -F` | `#{client_active_pane}` | `hooks/status` | Detect whether a pane is visible to any attached client. |
-| `list-clients -F` | `#{client_activity}`, `#{session_id}` | `required MVP` | Outside-tmux AI split target fallback. |
-| `list-clients -F` | `#{client_name}`, `#{client_session}` | `focus` | Pick a client for focus dispatch. |
-| `list-windows -F` | `#{window_index}`, `#{?window_active,1,0}`, `#{window_name}`, `#{window_panes}`, `#{pane_current_path}` | `required MVP` | Session preview and window inventory. |
-| `list-windows -F` | `#{window_id}`, `#{window_panes}` | `hooks/status` | Pane rebalance after exits. |
-| `list-windows -F` | `#{window_index}`, `#{window_name}`, `#{window_layout}` | `session-state` | Snapshot capture. |
-| `list-windows -F` | `#{window_id}`, `#{window_index}` | `session-state` | Staged/live replay window mapping. |
-| `list-panes -a -F` | `#{session_name}`, `#{pane_id}`, `#{window_index}`, `#{pane_index}`, `#{?pane_active,1,0}`, `#{pane_title}`, `#{@projmux_pane_label}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}`, `#{@projmux_attention_ack}`, `#{@projmux_attention_focus_armed}`, `#{pane_current_command}`, `#{pane_current_path}` | `required MVP`, `hooks/status` | Full pane inventory. |
-| `psmux list-panes -a -F` | `#{session_name}`, `#{pane_id}`, `#{window_index}`, `#{pane_index}`, `#{?pane_active,1,0}`, `#{pane_title}`, `#{@projmux_pane_label}`, `#{pane_current_command}`, `#{pane_current_path}` | `required MVP` | Portable ListAllPanes/preview inventory; label remains empty where psmux lacks pane-option persistence. |
-| `list-panes -a -F` | `#{session_name}`, `#{window_id}`, `#{pane_id}`, `#{pane_active}`, `#{pane_title}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}`, `#{socket_path}` | `hooks/status` | `attention list` inventory. |
-| `list-panes -a -F` | `#{session_name}`, `#{window_id}`, `#{pane_id}`, `#{@projmux_attention_state}`, `#{@projmux_ai_state}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}`, `#{socket_path}` | `hooks/status` | Notify queue reconcile. |
-| `list-panes -a -F` | `#{pane_id}`, `#{pane_current_path}`, `#{@projmux_ai_thread_id}`, `#{@projmux_ai_session_id}` | `hooks/status` | AI hook payload to live pane matching. |
-| `list-panes -t <window> -F` | `#{pane_title}`, `#{@projmux_attention_state}` | `hooks/status` | Window badge rendering. |
-| `list-panes -t <target> -F` | `#{pane_id}`, `#{pane_left}`, `#{pane_top}`, `#{pane_width}`, `#{pane_height}` | `interactive UI` | AI split post-layout equalization. |
-| `list-panes -s -t <session> -F` | `#{window_index}`, `#{pane_index}`, `#{pane_title}`, `#{@projmux_pane_label}`, `#{?pane_active,1,0}`, `#{pane_current_path}`, `#{@projmux_recipe_kind}`, `#{@projmux_startup_command}`, `#{@projmux_ai_managed}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_topic}`, `#{@projmux_ai_topic_manual}`, `#{@projmux_ai_resume_id}`, `#{@projmux_ai_resume_source}`, `#{@projmux_ai_resume_updated_at}` | `session-state` | Snapshot pane capture. |
-| `list-panes -s -t <session> -F` | `#{pane_id}`, `#{pane_current_path}`, `#{@projmux_ai_managed}`, `#{@projmux_ai_agent}`, `#{@projmux_ai_session_id}`, `#{@projmux_ai_resume_id}`, `#{@projmux_ai_transcript_path}` | `session-state` | Refresh AI resume metadata before save. |
-
-## Option And Hook Surface
-
-### Projmux User Options
-
-| Option | Scope | Class | Read / write purpose |
-| --- | --- | --- | --- |
-| `@projmux_app` | global | `required MVP` | Generated app config sets `1`; quit/install smoke verify before app runtime shutdown. |
-| `@projmux_projdir` | global | `required MVP` | Declarative project root source read by `projmux switch` when inside tmux. |
-| `@projmux_ephemeral` | session | `required MVP` | Marks ephemeral sessions for lifecycle inventory. |
-| `@projmux_statusbar_decoration` | global | `hooks/status` | Legacy/fallback status decoration. |
-| `@projmux_statusbar_decoration_cwd` | global | `hooks/status` | CWD segment decoration mode. |
-| `@projmux_statusbar_decoration_git` | global | `hooks/status` | Git segment decoration mode. |
-| `@projmux_statusbar_decoration_notify` | global | `hooks/status` | Notify segment decoration mode. |
-| `@projmux_desktop_notify_mode` | global | `hooks/status` | Current 3-way desktop notify mode. |
-| `@projmux_desktop_notify` | global | `legacy/cleanup candidate` | Legacy boolean desktop notify mode still read for compatibility. |
-| `@projmux_uri_protocol_registered_v6` | global | `hooks/status` | WSL toast URI registration marker. |
-| `@projmux_uri_protocol_registered` through `_v5` | global | `legacy/cleanup candidate` | Old URI markers unset during v6 registration. |
-| `@projmux_legacy_appid_cleaned` | global | `legacy/cleanup candidate` | One-shot marker for old WSL toast AppID cleanup. |
-| `@projmux_attention_state` | pane | `hooks/status` | `busy` / `reply` state for statusbar, notify, and attention UX. |
-| `@projmux_attention_ack` | pane | `hooks/status` | Acknowledgement gate for AI reply detection. |
-| `@projmux_attention_focus_armed` | pane | `hooks/status` | Prevents background focus from clearing pending reply too early. |
-| `@projmux_pane_label` | pane | `interactive UI`, `session-state` | User-owned persistent label; Rename Pane is its only user-action writer, while snapshot capture/replay keeps it separate from topic/title. |
-| `@projmux_ai_managed` | pane | `required MVP`, `session-state` | Marks projmux-managed AI panes. |
-| `@projmux_ai_agent` | pane | `required MVP`, `session-state` | Agent kind: codex/claude/shell-derived metadata. |
-| `@projmux_ai_context` | pane | `hooks/status` | AI context directory. |
-| `@projmux_ai_state` | pane | `hooks/status` | thinking/waiting/idle status. |
-| `@projmux_ai_topic` | pane | `hooks/status`, `session-state` | Pane topic shown in status/pane border and saved in snapshots. |
-| `@projmux_ai_topic_manual` | pane | `hooks/status`, `session-state` | Manual topic overwrite guard; optional snapshot ownership field restored independently from topic/title. |
-| `@projmux_ai_hook_active` | pane | `hooks/status` | Marks hook-driven panes. |
-| `@projmux_ai_thread_id` | pane | `hooks/status` | Codex hook matching metadata. |
-| `@projmux_ai_session_id` | pane | `hooks/status`, `session-state` | Hook/session resume matching metadata. |
-| `@projmux_ai_transcript_path` | pane | `session-state` | Claude transcript fallback for resume id refresh. |
-| `@projmux_ai_resume_id` | pane | `session-state` | Restore resume identifier. |
-| `@projmux_ai_resume_source` | pane | `session-state` | Source of resume id: hook/session-id/transcript/log. |
-| `@projmux_ai_resume_updated_at` | pane | `session-state` | Resume metadata freshness timestamp. |
-| `@projmux_ai_bell_notified_at` | pane | `hooks/status` | Bell notification dedupe timestamp. |
-| `@projmux_desktop_notified` | pane | `legacy/cleanup candidate` | Older desktop notification marker still written/reset. |
-| `@projmux_desktop_notification_key` | pane | `hooks/status` | Desktop notification dedupe key. |
-| `@projmux_desktop_notification_at` | pane | `hooks/status` | Desktop notification dedupe timestamp. |
-| `@projmux_recipe_kind` | pane | `session-state` | Startup recipe marker. |
-| `@projmux_startup_command` | pane | `session-state` | Startup recipe command. |
-| `@projmux_sessionstate_source` | session | `session-state` | Fresh/restored/autosave source marker. |
-| `@projmux_sessionstate_autosave_at` | session | `session-state` | Autosave debounce timestamp. |
-
-### Generated tmux Options
-
-The app and standalone generated configs also own normal tmux options. psmux
-does not need to emulate every cosmetic option for an MVP, but it must account
-for options that affect visible product behavior:
-
-- App identity/runtime: `default-terminal`, `default-shell`,
-  `default-command`, `update-environment`, `history-limit`, `set-clipboard`.
-- Input behavior: `mouse`, `mode-keys`, `status-keys`, `escape-time`.
-- Statusbar behavior: `status`, `status-position`, `status-interval`,
-  `status-left`, `status-right`, `status-left-length`,
-  `status-right-length`, `status-format[0]`, `status-format[1]`,
-  `status-format[2]` unset.
-- Window/pane labels: `automatic-rename`, `automatic-rename-format`,
-  `window-status-format`, `window-status-current-format`,
-  `window-status-separator`, `pane-border-status`, `pane-border-format`,
-  pane/status/message style options.
-- Bell fallback: `allow-passthrough`, `monitor-bell`, `bell-action`.
-
-### Hook Names
-
-| Hook | Class | Installed by | Payload |
-| --- | --- | --- | --- |
-| `pane-focus-out` | `hooks/status` | generated config | `run-shell -b '<bin> attention arm #{hook_pane}'` |
-| `pane-focus-in` | `hooks/status` | generated config | `run-shell -b '<bin> attention clear #{hook_pane}'` |
-| `after-select-pane` | `hooks/status` | generated config | `run-shell -b '<bin> attention clear #{pane_id}'` |
-| `pane-exited` | `hooks/status` | generated config | `run-shell -b 'sleep 0.05; <bin> tmux rebalance-panes'` |
-| `after-kill-pane` | `hooks/status` | generated config | `run-shell -b 'sleep 0.05; <bin> tmux rebalance-panes'` |
-| `client-attached` | `hooks/status` | app generated config | `run-shell -b '<bin> welcome --popup >/dev/null 2>&1'` (legacy pending-marker fallback; normally no-op after shell prompt) |
-| `alert-bell` | `hooks/status` | `projmux ai integrate tmux-bell` | `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}" ...'` |
-
-## Surface-Specific Command Sets
-
-### Popup
-
-Required tmux commands:
-
-- `display-message -p -F #{client_tty|client_pid|pane_id|#S|pane_current_path|client_width|client_height|@projmux_statusbar_decoration}`
-- `display-popup` with sizing, target/client, env, cwd, border, title, and close-on-exit flags.
-- `display-popup -C` to close toggle popups.
-- Phase 2C mux APIs: `DisplayPopup`, `ClosePopup`.
-
-Dependent generated commands:
-
-- `bind-key ... run-shell '<bin> tmux popup-toggle --client #{client_tty} <mode>'`
-- `run-shell` from statusbar key table and mouse handlers.
-
-### Statusbar
-
-Required tmux commands/config:
-
-- `set -g status 2`
-- `set -g status-left`, `status-right`, `status-format[0]`, `status-format[1]`
-- `#[range=user|...]`, `#[align=...]`, `#(<bin> status ...)`, and native window list `#{W:...}` format support.
-- `bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" { select-window -t = } { run-shell ... }`
-- `bind-key s switch-client -T projmux-status`
-- `bind-key -T projmux-status <key> run-shell ...`
-- Runtime handlers: `display-message`, `display-popup`, `select-window`, `show-options`, `list-panes`.
-- Phase 2C mux APIs used by runtime handlers: `DisplayPopup`, `SelectWindow`.
-
-### Hook
-
-Required tmux commands:
-
-- `set-hook -g` for generated focus/pane/client hooks.
-- `set-hook -ag`, `set-hook -gu`, `show-hooks -g` for the optional bell fallback.
-- `run-shell -b` payload execution.
-- Hook format vars: `#{hook_pane}`, `#{pane_id}`.
-- Pane option reads/writes via `display-message -p` and `set-option -p`.
-
-### Capture
-
-Required tmux commands:
-
-- AI title/watch inference: `capture-pane -p -J -S -80 -t <pane>`.
-- Generic tmux client helper: `capture-pane -p -t <pane> -S <start>`.
-- Phase 2C mux API: `CapturePane`.
-
-psmux audit should check both forms separately because joined-line capture
-(`-J`) is product-visible for AI topic/notification inference.
-
-### Focus
-
-Required tmux commands:
-
-- `list-sessions -F "#{session_activity}<sep>#{session_name}<sep>#{session_attached}"`
-- `list-clients -F "#{client_name}<sep>#{client_session}"`
-- `switch-client [-c <client>] -t <session>`
-- `select-window -t <session>:<window>`
-- `select-pane -t <session>:<window>.<pane>`
-- URI translation: `display-message -p -t <pane-id> "#S<sep>#I"`
-- Optional socket wrapper: `tmux -S <socket> ...`
-- Phase 2C mux APIs: `SwitchClient`, `SelectWindow`, `SelectPane`.
-
-### Session-State
-
-Required tmux commands:
-
-- Capture: `list-windows`, `list-panes -s`, `display-message -p`, `set-option`.
-- Save refresh: `list-panes -s`, pane `set-option` resume metadata.
-- Replay: `new-session`, `new-window`, and `split-window` with
-  `-P -F "#{pane_id}"`, then `rename-window`, `select-layout`, pane
-  `set-option`/unset, `select-pane -T`, active `select-pane`, and `send-keys`.
-- Live overwrite primitive: `move-window`, `kill-window`, `kill-session`,
-  `select-window`. This is classified as a legacy/cleanup candidate because
-  the roadmap already tracks unused destructive live overwrite removal.
-
-## Legacy And Cleanup Candidates
-
-These items should not block Phase 1, but they are useful pressure points when
-raw tmux calls are centralized:
-
-- Global option reads should use the mux `ShowOption` helper or spell the
-  command as `show-options`; tmux accepts the singular alias, but psmux 3.3.4
-  does not.
-- Legacy desktop notify option `@projmux_desktop_notify` remains a read alias
-  for old boolean state.
-- URI registration markers `@projmux_uri_protocol_registered` through `_v5`
-  are explicitly unset after successful v6 registration.
-- `@projmux_desktop_notified` is still written/reset, but dedupe uses
-  `@projmux_desktop_notification_key` and `_at`.
-- Session-state parser accepts older 11/13/14-field pane formats while the
-  current capture format emits 15 fields. Missing label/manual ownership stays
-  absent; no title/topic equality inference is used.
-- `ApplyToExistingSession` uses destructive live overwrite commands
-  (`move-window`, `kill-window`, temp `kill-session`) and is already tracked in
-  the roadmap backlog as a possible removal.
-- Native picker POC scripts contain raw tmux setup and assertions; keep them in
-  e2e/support unless they graduate into production paths.
-
-## psmux Parity Audit
-
-Phase 3B owns audit, matrix, and documentation only. It records the current
-psmux parity result after Phase 2A-2D and Phase 3A0. It must not implement
-psmux backend/runtime work, session-state replay or schema changes, sidecar
-metadata, or Phase 5 distribution.
-
-Observed private audit environment: Windows Terminal plus PowerShell, psmux
-3.3.4. Public docs should keep the reproducible command shape and status
-classification here; raw command output belongs in private audit notes.
-
-Status values for Phase 3: `pass`, `partial`, `missing`, `unknown`.
-For rows with split behavior, the status records the product-facing aggregate
-and the notes identify the passing minimal slice separately from richer parity
-gaps.
-
-| Capability | tmux command / format surface | Current class | psmux status | Audit notes |
-| --- | --- | --- | --- | --- |
-| Create detached project session | `new-session -d -s -c [-e] [-P -F "#{pane_id}"]` | `required MVP` | `pass` | Detached create, cwd, and `-P -F "#{pane_id}"` return passed. Phase 2D mux API: `NewSession`. |
-| Attach or switch to session | `attach-session`, `switch-client [-c] -t` | `required MVP`, `focus` | `partial` | Basic target selection passed in smoke. Complex cross-client and cross-session focus in Windows Terminal remains follow-up; use the `switch-client` line in the native smoke block. Phase 2C mux API: `SwitchClient`. |
-| App shell server | `tmux -L <socket> -f <config> new-session -A -s` / `psmux -L <socket> -f <config> new-session -A -s` | `required MVP` | `partial` | Minimal native PowerShell shell-entry passed: `psmux -L projmux` exposes sessions/panes and `@projmux_app=1`. Richer app runtime remains partial because sidebar/keybinding, full statusbar, notify, and metadata surfaces are not implemented. Phase 2D mux API: `NewSession`. |
-| Session inventory | `list-sessions -F` plus session formats | `required MVP`, `focus` | `unknown` | No Phase 3B result has been recorded for full session activity, attached count, windows, and ids. Run the `list-sessions` line in the native smoke block. |
-| Window inventory | `list-windows -F` plus window formats | `required MVP`, `session-state` | `partial` | Basic index, id, name, and pane-count passed. Layout was not fully audited and matters only if session restore enters psmux scope. |
-| Pane inventory | `list-panes -a/-s -F` plus pane/user-option formats | `required MVP`, `hooks/status`, `session-state` | `partial` | Core fields passed in the app-shell smoke, including session, window, pane, cwd, command, and title. Custom `@projmux_*` fields are empty because pane user options are missing. |
-| Popup launch | `display-popup` with target/client/env/cwd/size/border/title/close flags | `interactive UI` | `partial` | Command returned no error. Visual rendering, focus behavior, close semantics, and option coverage need user visual confirmation; run the popup lines in the native smoke block. Phase 2C mux API: `DisplayPopup`. |
-| Popup close | `display-popup -C` | `interactive UI` | `partial` | Command returned no error. Toggle/close semantics need user visual confirmation with the popup lines in the native smoke block. Phase 2C mux API: `ClosePopup`. |
-| Current context formats | `display-message -p -F #{pane_current_path}`, `#{pane_id}`, `#{session_name}`, `#{pane_current_command}`, `#{pane_title}` | `interactive UI` | `pass` | Target-scoped `DisplayMessage` and `DisplayMessageTrimmed` passed for pane id, session name, current path, current command, and title. Phase 2A mux APIs: `DisplayMessage`, `DisplayMessageTrimmed`. |
-| Display pane fields | `display-message -p -t <pane> "#{pane_id}|#{window_id}|#{socket_path}"` | `focus` | `pass` | Pane id, window id, and socket path tuple passed. |
-| Focus URI translation | `display-message -p -t %N "#S<sep>#I"` | `focus` | `unknown` | Pane-to-session/window mapping for toast click focus was not fully recorded. Run the target-scoped `display-message` lines in the native smoke block before enabling focus UX. |
-| Client inventory | `list-clients -F #{client_name} #{client_session} #{client_active_pane}` | `focus`, `hooks/status` | `unknown` | Needed for focus and reply auto-ack correctness. Run from inside an attached psmux client with the `list-clients` line in the native smoke block. |
-| New window | `new-window [-d] [-n] [-c] [-P -F "#{pane_id}"] [command...]` | `required MVP`, `session-state` | `pass` | Name and cwd create passed. Command tail remains follow-up only if session-state restore enters psmux scope. |
-| Pane split | `split-window -h/-v [-P -F "#{pane_id}"] [-t] [-c] <cmd>` | `required MVP` | `partial` | Horizontal split with pane-id return, cwd, and command tail passed. Vertical split remains a follow-up smoke if product scope requires it. Phase 2D mux API: `SplitWindow`. |
-| Resize panes | `resize-pane -x/-y` | `interactive UI` | `unknown` | Not recorded in Phase 3B. This can remain outside the MVP if default popup/native picker sizing is acceptable; run the `resize-pane` line in the native smoke block before adding resize-dependent UX. |
-| Pane title | `select-pane -T` and `#{pane_title}` | `interactive UI`, `hooks/status` | `pass` | Basic `SelectPane` target selection and title format read passed. Phase 2C mux API: `SelectPane`. |
-| Pane options | `set-option -p`, `display-message -p "#{@...}"`, `show-options -p` | `required MVP`, `hooks/status`, `session-state` | `missing` | `set-option -p` is accepted, but custom `@projmux_audit_key` is not visible through `display-message "#{@...}"` or `show-options -p`. Classify `SetPaneOption`, `UnsetPaneOption`, and `ShowPaneOption` as degraded/unsupported for Phase 4, not a Phase 4 blocker. |
-| Global/session set options | `set-option -g`, `set-option -t -q` | `hooks/status`, `session-state` | `pass` | Global and session custom option writes passed. Phase 2D mux API: `SetOption`. |
-| Global/session show options | `show-options [-g] [-q] [-v] [-t <target>] <option>` | `hooks/status`, `session-state` | `partial` | Plural `show-options` works for global/session reads. psmux 3.3.4 lacks tmux's singular `show-option` alias, so adapters and shared surfaces must use `show-options` plural. Phase 2D mux API: `ShowOption`. |
-| Generated minimal statusbar | `status`, basic `status-left` / `status-right`, `#(...)` callback | `hooks/status` | `partial` | Minimal generated psmux status options were present, including `@projmux_app=1` and a `status-right` PowerShell-rendered `projmux.exe status git #{pane_current_path}` callback. Full status ranges, mouse dispatch, and HUD rows remain future scope. |
-| PowerShell callback rendering | `#(& '<projmux.exe>' 'status' 'git' '#{pane_current_path}')` | `required MVP`, `hooks/status` | `pass` | Observed generated psmux config renders the `status git` callback through the Phase 3A0 PowerShell argv renderer rather than POSIX quoting. |
-| Project switch sidebar / keybinding | sidebar or picker open, project/session list, select then open/switch | `required MVP`, `interactive UI` | `missing` | Current generated psmux config has no projmux sidebar/keybinding yet (`list-keys` has no projmux entry). Keep a narrow minimal project switch sidebar in Phase 4 MVP scope. Notify sidebar is deferred and out of Phase 4 MVP. |
-| Statusbar mouse/key dispatch | `MouseDown1Status`, `if-shell -F`, `switch-client -T`, `run-shell` | `interactive UI`, `hooks/status` | `missing` | Current generated psmux config has no projmux statusbar mouse/key dispatch. Defer from Phase 4 MVP except any minimum picker/sidebar binding needed for project switch. |
-| Hooks | `set-hook`, `show-hooks`, `run-shell -b`, `#{hook_pane}` | `hooks/status` | `partial` | Custom hook set/show/unset passed. Real Projmux hook names, events, payload execution, and hook format vars need targeted follow-up only if hooks enter psmux scope. Phase 2D mux API: `SetHook`. |
-| Bell fallback | `monitor-bell`, `bell-action`, `alert-bell`, `#{pane_id}` | `hooks/status` | `unknown` | Not recorded. Defer from Phase 4 MVP; run targeted bell smoke before supporting unknown AI-tool notification fallback. Phase 2D mux APIs: `SetOption`, `SetHook`. |
-| Capture pane | `capture-pane -p`, `capture-pane -p -J` | `capture` | `partial` | Raw capture passed. Joined `-J` needs explicit follow-up smoke if AI title inference enters psmux scope. Phase 2C mux API: `CapturePane`. |
-| Select window | `select-window -t <session>:<window>` | `focus`, `session-state` | `pass` | Basic target selection passed. Complex cross-client focus remains follow-up. Phase 2C mux API: `SelectWindow`. |
-| Session-state replay | `new-window`, `split-window`, `rename-window`, `select-layout`, `select-pane`, `send-keys` | `session-state` | `unknown` | Out of Phase 3B and Phase 4 MVP scope except the already-audited create/split primitives. Run targeted replay smoke only if session restore later enters psmux scope. |
-| Live overwrite replay | `move-window`, `kill-window`, `select-window` | `legacy/cleanup candidate` | `unknown` | Out of Phase 3B and Phase 4 MVP scope; candidate to exclude from psmux and possibly remove. Phase 2C mux API covers `SelectWindow` only. |
-| Config reload | `source-file`, generated config file semantics | `e2e/support` | `unknown` | Generated config load via `psmux -L projmux -f <config> new-session ...` passed for the app shell path. `source-file` reload parity has not been recorded; run `psmux -L $Socket source-file $Config` from the native smoke block before depending on reload behavior. |
-| Clipboard helper | `set-buffer -w` | `interactive UI` | `unknown` | Not recorded. Settings copy helper can fall back to OS clipboard later; run a targeted `set-buffer -w` smoke before adding psmux clipboard UX. |
-| Socket targeting | `-L <socket>`, `-S <socket>` | `required MVP`, `focus` | `partial` | `psmux -L projmux` passed for the minimal app shell server. Keep `-S` focus socket behavior as follow-up. |
-| Quoting/process launch | PowerShell callbacks, generated config quoting, child command launch | `required MVP`, `interactive UI` | `partial` | PowerShell callback rendering passed for the observed `status git` callback, and Phase 3A0-5 psmux shell entry passed from PowerShell. Broader child command launch remains follow-up. |
-
-Additional native Windows PowerShell follow-up smoke block:
-
-```powershell
-# Run from the repo root in Windows PowerShell with Go and psmux 3.3.4 on PATH.
-# Keep raw command output in private audit notes, not this public document.
-$ErrorActionPreference = 'Stop'
-$Socket = 'projmux-audit'
-$Session = 'projmux-audit'
-$Config = Join-Path $env:TEMP 'projmux-psmux-audit.conf'
-$Projmux = Join-Path $env:TEMP 'projmux.exe'
-$Repo = (Get-Location).Path
-
-go build -o $Projmux .\cmd\projmux
-psmux -L $Socket kill-server 2>$null
-
-Set-Content -Encoding UTF8 -Path $Config -Value @"
-set -g @projmux_app 1
-set -g status on
-set -g status-left 'projmux '
-set -g status-right '#(& '$($Projmux -replace "'", "''")' 'status' 'git' '#{pane_current_path}')'
-"@
-
-psmux -L $Socket -f $Config new-session -d -s $Session -c $Repo -P -F '#{pane_id}'
-psmux -L $Socket source-file $Config
-psmux -L $Socket list-sessions -F '#{session_name}|#{session_id}|#{session_windows}|#{session_attached}'
-psmux -L $Socket list-windows -t $Session -F '#{window_index}|#{window_id}|#{window_name}|#{window_panes}|#{window_layout}'
-psmux -L $Socket list-panes -a -F '#{session_name}|#{window_id}|#{pane_id}|#{pane_current_path}|#{pane_current_command}|#{pane_title}|#{@projmux_audit_key}'
-psmux -L $Socket display-message -p -t "$Session:0.0" '#{pane_id}|#{window_id}|#{socket_path}|#{session_name}|#{pane_current_path}|#{pane_current_command}|#{pane_title}'
-
-psmux -L $Socket set-option -g '@projmux_audit_global' ok
-psmux -L $Socket show-options -gqv '@projmux_audit_global'
-psmux -L $Socket set-option -t $Session -q '@projmux_audit_session' ok
-psmux -L $Socket show-options -t $Session -qv '@projmux_audit_session'
-psmux -L $Socket show-option -gqv '@projmux_audit_global'
-
-psmux -L $Socket set-option -p -t "$Session:0.0" '@projmux_audit_key' ok
-psmux -L $Socket display-message -p -t "$Session:0.0" '#{@projmux_audit_key}'
-psmux -L $Socket show-options -p -t "$Session:0.0"
-
-psmux -L $Socket new-window -d -t $Session -n audit-window -c $Repo -P -F '#{pane_id}'
-psmux -L $Socket split-window -h -d -t "$Session:0.0" -c $Repo -P -F '#{pane_id}' powershell -NoLogo -NoExit
-psmux -L $Socket split-window -v -d -t "$Session:0.0" -c $Repo -P -F '#{pane_id}' powershell -NoLogo -NoExit
-psmux -L $Socket select-window -t "$Session:1"
-psmux -L $Socket select-pane -t "$Session:0.0"
-psmux -L $Socket select-pane -T 'audit title' -t "$Session:0.0"
-psmux -L $Socket resize-pane -t "$Session:0.0" -x 100 -y 30
-
-psmux -L $Socket capture-pane -p -t "$Session:0.0"
-psmux -L $Socket capture-pane -p -J -S -80 -t "$Session:0.0"
-
-psmux -L $Socket set-hook -g 'projmux-audit-hook' 'display-message audit-hook'
-psmux -L $Socket show-hooks -g 'projmux-audit-hook'
-psmux -L $Socket set-hook -gu 'projmux-audit-hook'
-
-psmux -L $Socket display-popup -t "$Session:0.0" -T 'projmux audit popup' -w 60 -h 10 -E powershell -NoProfile -Command 'Write-Host "confirm popup rendering, focus, and close"; Start-Sleep -Seconds 3'
-psmux -L $Socket display-popup -C
-
-# Run these from inside an attached psmux client before enabling focus UX:
-psmux -L $Socket list-clients -F '#{client_name}|#{client_session}|#{client_active_pane}'
-psmux -L $Socket switch-client -t $Session
-
-psmux -L $Socket kill-server
-```
+| Identity | `display-message -p`, `list-clients -F` | focus, switch, hooks |
+| Pane/window inventory | `list-panes -a -F`, `list-windows -F` | preview, notify, attention, recent windows |
+| Session lifecycle | `has-session`, `new-session`, `attach-session`, `switch-client`, `kill-session` | attach, switch, sessions |
+| Split/window creation | `split-window`, `new-window` | AI split, shell, session restore |
+| Metadata | `set-option -p`, `show-options`, `display-message` | AI state, labels, app ownership |
+| Hooks | `set-hook`, `show-hooks`, `run-shell -b` | notify, attention, autosave, recent windows |
+| Interactive UI | `display-popup`, `capture-pane`, `resize-pane` | popup surfaces, title watch, layout |
+| State replay | `rename-window`, `select-layout`, `select-pane`, `send-keys` | session state |
+| Config | `source-file`, global/session options | install, apply, shell |
+| Resource inventory | `list-panes -a -F` with PID/TTY/project fields | Linux resource attribution |
+
+## Validation Contract
+
+Changes to this surface should preserve the repository validation order:
+
+1. focused unit tests for the affected semantic helper or typed client;
+2. `make fmt`;
+3. `make fix`;
+4. `make test`;
+5. `make test-integration`;
+6. `make test-e2e`.
+
+The maintained test list in [agent-workflow.md](agent-workflow.md) must change
+with behavior. Live tests must use isolated tmux sockets and must validate
+returned ids or queried server state rather than pane ordering, screen content,
+or `send-keys` as a completion signal.
