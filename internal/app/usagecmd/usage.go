@@ -134,7 +134,10 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "usage: warning: %v\n", collectErr)
 	}
 
-	filtered := filterSnapshots(snaps, *model, *window)
+	// Conversation-local context fullness is diagnostic hook metadata, not
+	// account usage. Suppress legacy cached context rows before every CLI
+	// rendering mode while retaining lossless named account quota buckets.
+	filtered := filterSnapshots(accountUsageSnapshots(snaps), *model, *window)
 	if !explicitModel {
 		filtered = filterSnapshotsByModels(filtered, modelScope)
 	}
@@ -516,6 +519,22 @@ func filterSnapshotsByModels(snaps []usage.Snapshot, models []string) []usage.Sn
 	return out
 }
 
+// accountUsageSnapshots is the shared public-surface boundary between
+// account quota and conversation-local diagnostic state. WindowContext was
+// emitted by older Antigravity adapters and may remain in snapshots.json; it
+// must not reappear in text, JSON, or popup usage views. Named quota identity
+// remains untouched.
+func accountUsageSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
+	out := make([]usage.Snapshot, 0, len(snaps))
+	for _, snapshot := range snaps {
+		if snapshot.Window == usage.WindowContext {
+			continue
+		}
+		out = append(out, snapshot)
+	}
+	return out
+}
+
 func filterUsageStateByModels(state usage.State, models []string) usage.State {
 	allowed := usageModelSet(models)
 	if len(allowed) == 0 {
@@ -525,7 +544,7 @@ func filterUsageStateByModels(state usage.State, models []string) usage.State {
 		}
 	}
 	out := usage.State{
-		Snapshots:   filterSnapshotsByModels(state.Snapshots, models),
+		Snapshots:   accountUsageSnapshots(filterSnapshotsByModels(state.Snapshots, models)),
 		LastCollect: map[string]time.Time{},
 		Backoff:     map[string]usage.BackoffState{},
 	}
@@ -594,6 +613,7 @@ func writeUsageJSON(w io.Writer, snaps []usage.Snapshot, state usage.State, now 
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 
+	snaps = accountUsageSnapshots(snaps)
 	rows := make([]jsonSnapshot, 0, len(snaps))
 	for _, s := range snaps {
 		rows = append(rows, jsonSnapshot{Snapshot: s, Stale: isStale(s, now)})
@@ -619,6 +639,7 @@ func writeUsageJSON(w io.Writer, snaps []usage.Snapshot, state usage.State, now 
 }
 
 func writeUsageTable(w io.Writer, snaps []usage.Snapshot, now time.Time) error {
+	snaps = accountUsageSnapshots(snaps)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw, "MODEL\tWINDOW\tPCT\tRESETS_AT\tRESET_IN\tSTALE"); err != nil {
 		return err
@@ -710,12 +731,6 @@ type modelDisplay struct {
 	hasWeek    bool
 	weekPct    float64
 	weekStale  int
-	// context-window fullness (usage.WindowContext). Rendered as a `ctx` pair
-	// independently from fixed windows and named account quota buckets.
-	hasContext bool
-	contextPct float64
-	ctxStale   int
-	quotas     []quotaDisplay
 	// lastSync is max(fiveUpdatedAt, weekUpdatedAt). Used together
 	// with `now` to compute the age indicator. Zero when no row
 	// supplied an UpdatedAt timestamp.
@@ -725,11 +740,6 @@ type modelDisplay struct {
 	showAge bool
 }
 
-type quotaDisplay struct {
-	id  string
-	pct float64
-}
-
 // formatStatusUsage produces the HUD-style tmux status segment. The output
 // degrades gracefully through six tiers:
 //
@@ -737,7 +747,7 @@ type quotaDisplay struct {
 //     `Claude (3m) 5h [████████░░] 80% · weekly [...]   Codex 5h [...] 20% · weekly [...]`
 //  2. Drop the age indicator (the legacy `Claude 5h [bar] N% · weekly [bar] N%`
 //     form, current default).
-//  3. Drop the weekly bar (label + 5h bar only).
+//  3. Keep one primary bar per provider (5h, otherwise weekly).
 //  4. Drop bars entirely (`Claude 5h:80% weekly:30%`).
 //  5. Single-letter labels (`C 5h:80% weekly:30%`).
 //  6. Hard rune-truncation with trailing `…`.
@@ -749,14 +759,14 @@ type quotaDisplay struct {
 // `now` is the wall-clock used for staleness detection. Pass time.Time{}
 // to disable the marker (e.g. in tests that don't care).
 func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) string {
-	models := buildModelDisplays(snaps, now)
+	models := buildModelDisplays(projectStatusSnapshots(snaps), now)
 	if len(models) == 0 {
 		return ""
 	}
 	tiers := []func([]modelDisplay, time.Time) string{
 		renderTierLongHUDWithAge,
 		renderTierLongHUD,
-		renderTierFiveHOnlyHUD,
+		renderTierPrimaryHUD,
 		renderTierTextLong,
 		renderTierTextShort,
 	}
@@ -796,7 +806,7 @@ func renderTierLongHUD(models []modelDisplay, now time.Time) string {
 func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) string {
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
-		if !m.hasFive && !m.hasWeek && !m.hasContext && len(m.quotas) == 0 {
+		if !m.hasFive && !m.hasWeek {
 			continue
 		}
 		var b strings.Builder
@@ -825,12 +835,6 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 		if m.hasWeek {
 			writePair("weekly", m.weekPct)
 		}
-		if m.hasContext {
-			writePair("ctx", m.contextPct)
-		}
-		for _, quota := range m.quotas {
-			writePair("quota/"+BucketDisplayID(quota.id), quota.pct)
-		}
 		b.WriteString(statusDefaultReset)
 		blocks = append(blocks, b.String())
 	}
@@ -840,10 +844,10 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 	return strings.Join(blocks, statusModelSeparator) + statusDefaultReset
 }
 
-// renderTierFiveHOnlyHUD drops the weekly bar but keeps a single primary
-// bar per model: 5h when present, else the context bar (so context-only
-// models like Antigravity stay visible at this narrower tier).
-func renderTierFiveHOnlyHUD(models []modelDisplay, now time.Time) string {
+// renderTierPrimaryHUD keeps one official-window bar per provider: 5h when
+// present, otherwise weekly. This preserves weekly-only providers at every
+// provider-preserving tier before hard truncation.
+func renderTierPrimaryHUD(models []modelDisplay, now time.Time) string {
 	_ = now
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
@@ -852,10 +856,8 @@ func renderTierFiveHOnlyHUD(models []modelDisplay, now time.Time) string {
 		switch {
 		case m.hasFive:
 			window, pct = "5h", m.fivePct
-		case m.hasContext:
-			window, pct = "ctx", m.contextPct
-		case len(m.quotas) > 0:
-			window, pct = "quota/"+BucketDisplayID(m.quotas[0].id), m.quotas[0].pct
+		case m.hasWeek:
+			window, pct = "weekly", m.weekPct
 		default:
 			continue
 		}
@@ -912,18 +914,12 @@ func renderTierTextShort(models []modelDisplay, now time.Time) string {
 // tier carries staleness via the age indicator. The non-JSON `usage`
 // table CLI still surfaces a STALE column for verbose inspection.
 func renderTextPair(m modelDisplay, label string) string {
-	parts := make([]string, 0, 3+len(m.quotas))
+	parts := make([]string, 0, 2)
 	if m.hasFive {
 		parts = append(parts, fmt.Sprintf("5h:%s", PercentText(m.fivePct)))
 	}
 	if m.hasWeek {
 		parts = append(parts, fmt.Sprintf("weekly:%s", PercentText(m.weekPct)))
-	}
-	if m.hasContext {
-		parts = append(parts, fmt.Sprintf("ctx:%s", PercentText(m.contextPct)))
-	}
-	for _, quota := range m.quotas {
-		parts = append(parts, fmt.Sprintf("quota/%s:%s", BucketDisplayID(quota.id), PercentText(quota.pct)))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -1030,6 +1026,46 @@ func ResetInText(seconds *int64) string {
 	return fmt.Sprintf("%ds", *seconds)
 }
 
+// projectStatusSnapshots derives the ambient HUD input without mutating the
+// lossless snapshot/cache identity used by account-inspection surfaces. Fixed
+// 5h/weekly rows are canonical for every provider. Antigravity's exact
+// upstream gemini-weekly bucket is the sole named quota projected as weekly;
+// context, 3p-weekly, and unknown valid buckets remain outside the HUD.
+func projectStatusSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
+	projected := make([]usage.Snapshot, 0, len(snaps))
+	seen := make(map[string]bool)
+	key := func(snapshot usage.Snapshot) string {
+		return strings.ToLower(strings.TrimSpace(snapshot.Model)) + "\x00" + string(snapshot.Window)
+	}
+	for _, snapshot := range snaps {
+		if snapshot.Window != usage.Window5h && snapshot.Window != usage.WindowWeekly {
+			continue
+		}
+		k := key(snapshot)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		projected = append(projected, snapshot)
+	}
+	for _, snapshot := range snaps {
+		if !strings.EqualFold(strings.TrimSpace(snapshot.Model), "antigravity") ||
+			snapshot.Window != usage.WindowQuota || snapshot.Bucket != "gemini-weekly" {
+			continue
+		}
+		weekly := snapshot
+		weekly.Window = usage.WindowWeekly
+		weekly.Bucket = ""
+		k := key(weekly)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		projected = append(projected, weekly)
+	}
+	return usage.SortedSnapshots(projected)
+}
+
 // buildModelDisplays converts snapshots into the canonical-ordered display
 // rows the renderers iterate over. In schema v2 the Pct value is the
 // authoritative percentage from the upstream API, so we no longer drop
@@ -1066,14 +1102,6 @@ func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 			row.hasWeek = true
 			row.weekPct = s.Pct
 			row.weekStale = level
-		case usage.WindowContext:
-			row.hasContext = true
-			row.contextPct = s.Pct
-			row.ctxStale = level
-		case usage.WindowQuota:
-			if s.Bucket != "" {
-				row.quotas = append(row.quotas, quotaDisplay{id: s.Bucket, pct: s.Pct})
-			}
 		}
 		// lastSync tracks the most recent successful refresh
 		// across the model's rows; the long HUD tier renders its

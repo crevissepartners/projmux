@@ -14,6 +14,20 @@ import (
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
+// installedCacheFixture mirrors the sanitized shape of the installed cache:
+// Claude 5h+weekly, weekly-only Codex, and Antigravity context plus its two
+// exact named quota buckets. All rows are percent-only (Tokens/Limit zero).
+func installedCacheFixture(now time.Time) []usage.Snapshot {
+	return []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 37, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "3p-weekly", Pct: 24, ResetsAt: now.Add(4 * 24 * time.Hour), UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 61, ResetsAt: now.Add(5 * 24 * time.Hour), UpdatedAt: now},
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(3 * time.Hour), UpdatedAt: now},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 42, ResetsAt: now.Add(6 * 24 * time.Hour), UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 12, ResetsAt: now.Add(6 * 24 * time.Hour), UpdatedAt: now},
+	}
+}
+
 func TestFormatStatusUsageRendersBothModelsHUD(t *testing.T) {
 	t.Parallel()
 
@@ -48,54 +62,57 @@ func TestFormatStatusUsageRendersBothModelsHUD(t *testing.T) {
 	}
 }
 
-func TestFormatStatusUsageRendersAntigravityContext(t *testing.T) {
+func TestProjectStatusSnapshotsOfficialWindowsOnly(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	// The conversation-local gauge must render as `ctx` even when there are no
-	// account quota buckets.
+	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
 	snaps := []usage.Snapshot{
-		{Model: "antigravity", Window: usage.WindowContext, Pct: 42, UpdatedAt: now},
+		{Model: "claude", Window: usage.Window5h, Pct: 10, UpdatedAt: now},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 20, UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 30, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 40, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "3p-weekly", Pct: 50, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 60, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "future-bucket", Pct: 70, UpdatedAt: now},
 	}
-	got := formatStatusUsage(snaps, 0, now)
-
-	if !strings.Contains(got, "Antigravity") {
-		t.Fatalf("missing Antigravity label: %q", got)
+	got := projectStatusSnapshots(snaps)
+	want := []struct {
+		model  string
+		window usage.Window
+		pct    float64
+	}{
+		{"antigravity", usage.WindowWeekly, 60},
+		{"claude", usage.Window5h, 10},
+		{"claude", usage.WindowWeekly, 20},
+		{"codex", usage.WindowWeekly, 30},
 	}
-	if !strings.Contains(got, "ctx ") {
-		t.Fatalf("missing ctx window label: %q", got)
+	if len(got) != len(want) {
+		t.Fatalf("projection = %#v, want %d rows", got, len(want))
 	}
-	if !strings.Contains(got, "42%") {
-		t.Fatalf("missing context percentage: %q", got)
+	for i := range want {
+		if got[i].Model != want[i].model || got[i].Window != want[i].window || got[i].Pct != want[i].pct || got[i].Bucket != "" {
+			t.Fatalf("projection[%d] = %#v, want %#v", i, got[i], want[i])
+		}
 	}
-	if !strings.Contains(got, "█") || !strings.Contains(got, "░") {
-		t.Fatalf("missing bar runes: %q", got)
+	// Projection must not rewrite the lossless source snapshot identity.
+	if snaps[5].Window != usage.WindowQuota || snaps[5].Bucket != "gemini-weekly" {
+		t.Fatalf("source identity mutated: %#v", snaps[5])
 	}
 }
 
-func TestFormatStatusUsageSeparatesAntigravityContextAndOpaqueQuotaBuckets(t *testing.T) {
+func TestFormatStatusUsageCurrentCacheExcludesNonOfficialRows(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
-	snaps := []usage.Snapshot{
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "weekly", Pct: 70, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowContext, Pct: 0, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "5h", Pct: 40, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "context", Pct: 20, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "quota", Pct: 50, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "   ", Pct: 60, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "bad\n#[fg=red]", Pct: 30, UpdatedAt: now},
-	}
-	got := intrender.StripTmuxEscapes(formatStatusUsage(snaps, 0, now))
-	for _, want := range []string{"Antigravity", "ctx ", "0%", "quota/5h ", "quota/context ", "quota/quota ", "quota/weekly ", "quota/    ", `quota/bad\n\x23[fg=red] `} {
+	got := intrender.StripTmuxEscapes(formatStatusUsage(installedCacheFixture(now), 120, now))
+	for _, want := range []string{"Claude", "Codex", "Antigravity", "weekly", "61%"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("HUD = %q, missing %q", got, want)
 		}
 	}
-	if strings.Contains(got, "bad\n#") {
-		t.Fatalf("raw newline from bucket ID corrupted HUD: %q", got)
-	}
-	if !(strings.Index(got, "quota/5h ") < strings.Index(got, "quota/context ") && strings.Index(got, "quota/context ") < strings.Index(got, "quota/weekly ")) {
-		t.Fatalf("quota bucket order is not deterministic lexical order: %q", got)
+	for _, excluded := range []string{"ctx", "quota/", "3p-weekly", "gemini-weekly", "future-bucket"} {
+		if strings.Contains(got, excluded) {
+			t.Fatalf("HUD = %q, leaked %q", got, excluded)
+		}
 	}
 }
 
@@ -128,10 +145,13 @@ func TestUsageTablePreservesQuotaResetShapes(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	for _, want := range []string{"context", "quota/context", reset.Local().Format(time.RFC3339), "0s", "RESET_IN"} {
+	for _, want := range []string{"quota/context", reset.Local().Format(time.RFC3339), "0s", "RESET_IN"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("table = %q, missing %q", got, want)
 		}
+	}
+	if strings.Contains(got, "antigravity  context ") {
+		t.Fatalf("legacy context row leaked into table: %q", got)
 	}
 }
 
@@ -144,7 +164,7 @@ func TestFormatStatusUsageCanonicalOrder(t *testing.T) {
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	snaps := []usage.Snapshot{
-		{Model: "antigravity", Window: usage.WindowContext, Pct: 42, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 42, UpdatedAt: now},
 		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 		{Model: "claude", Window: usage.Window5h, Pct: 12, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}
@@ -284,6 +304,75 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 	}
 	if !strings.HasSuffix(tier5, "…") {
 		t.Fatalf("tier5 must end with ellipsis: %q", tier5)
+	}
+}
+
+func TestCurrentCacheWidthTiersPreserveWeeklyOnlyProvider(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
+	models := buildModelDisplays(projectStatusSnapshots(installedCacheFixture(now)), now)
+
+	for name, out := range map[string]string{
+		"long":        renderTierLongHUD(models, now),
+		"primary-bar": renderTierPrimaryHUD(models, now),
+		"text":        renderTierTextLong(models, now),
+	} {
+		for _, provider := range []string{"Claude", "Codex", "Antigravity"} {
+			if !strings.Contains(out, provider) {
+				t.Fatalf("%s tier dropped %s: %q", name, provider, out)
+			}
+		}
+		if !strings.Contains(out, "Codex") || !strings.Contains(out, "weekly") {
+			t.Fatalf("%s tier did not preserve weekly-only Codex: %q", name, out)
+		}
+	}
+	short := renderTierTextShort(models, now)
+	for _, provider := range []string{"C ", "X weekly:12%", "A weekly:61%"} {
+		if !strings.Contains(short, provider) {
+			t.Fatalf("short text tier dropped %q: %q", provider, short)
+		}
+	}
+	hard := formatStatusUsage(installedCacheFixture(now), 15, now)
+	if intrender.VisualLen(hard) > 15 || !strings.HasSuffix(hard, "…") {
+		t.Fatalf("hard truncation = %q (%d cells)", hard, intrender.VisualLen(hard))
+	}
+}
+
+func TestUnknownQuotaDoesNotChangeStatusProjection(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
+	base := installedCacheFixture(now)
+	want := formatStatusUsage(base, 120, now)
+	withUnknown := append(append([]usage.Snapshot(nil), base...), usage.Snapshot{
+		Model: "antigravity", Window: usage.WindowQuota, Bucket: "future-valid-bucket", Pct: 99, UpdatedAt: now,
+	})
+	if got := formatStatusUsage(withUnknown, 120, now); got != want {
+		t.Fatalf("unknown quota changed status width/output:\n got %q\nwant %q", got, want)
+	}
+	var table bytes.Buffer
+	if err := writeUsageTable(&table, withUnknown, now); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table.String(), "quota/future-valid-bucket") || !strings.Contains(table.String(), "99%") {
+		t.Fatalf("unknown valid quota lost from CLI table: %q", table.String())
+	}
+}
+
+func TestUsageJSONSuppressesLegacyContextAndPreservesNamedQuota(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
+	var out bytes.Buffer
+	if err := writeUsageJSON(&out, installedCacheFixture(now), usage.State{}, now); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if strings.Contains(got, `"window": "context"`) || strings.Contains(got, `"window":"context"`) {
+		t.Fatalf("legacy context row leaked into JSON: %s", got)
+	}
+	for _, bucket := range []string{"3p-weekly", "gemini-weekly"} {
+		if !strings.Contains(got, bucket) {
+			t.Fatalf("named quota %q missing from JSON: %s", bucket, got)
+		}
 	}
 }
 
@@ -449,13 +538,15 @@ func TestUsageStatusScopesToEnabledCodexOnly(t *testing.T) {
 	}
 }
 
-func TestUsageStatusShowsAntigravityContext(t *testing.T) {
+func TestUsageStatusProjectsAntigravityGeminiWeekly(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	store := usage.NewStore(t.TempDir())
 	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 63, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "3p-weekly", Pct: 45, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 22, UpdatedAt: now},
 	}}
 
 	c := New(func() time.Time { return now })
@@ -472,21 +563,56 @@ func TestUsageStatusShowsAntigravityContext(t *testing.T) {
 		t.Fatalf("RunStatus: %v", err)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "Antigravity") || !strings.Contains(out, "63%") {
-		t.Fatalf("expected Antigravity context HUD: %q", out)
+	if !strings.Contains(out, "Antigravity") || !strings.Contains(out, "weekly") || !strings.Contains(out, "22%") {
+		t.Fatalf("expected Antigravity weekly projection: %q", out)
+	}
+	for _, excluded := range []string{"ctx", "63%", "3p-weekly", "gemini-weekly", "quota/"} {
+		if strings.Contains(out, excluded) {
+			t.Fatalf("status leaked %q: %q", excluded, out)
+		}
 	}
 	if agyAd.collectCalls != 1 {
 		t.Fatalf("antigravity collect calls = %d, want 1", agyAd.collectCalls)
 	}
 }
 
-func TestUsageRunShowsAntigravityContextUsage(t *testing.T) {
+func TestUsageRunWindowContextCompatibilityReturnsNoRows(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
+	store := usage.NewStore(t.TempDir())
+	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 55, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 31, UpdatedAt: now},
+	}}
+	c := New(func() time.Time { return now })
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{
+		"antigravity": agyAd,
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "antigravity", "--window", "context"}, stdout, stderr); err != nil {
+		t.Fatalf("Run compatibility context filter: %v stderr=%q", err, stderr.String())
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "MODEL") || strings.Contains(output, "antigravity") || strings.Contains(output, "55%") {
+		t.Fatalf("context compatibility output = %q, want empty usage table", output)
+	}
+	if agyAd.collectCalls != 1 {
+		t.Fatalf("antigravity collect calls = %d, want 1", agyAd.collectCalls)
+	}
+}
+
+func TestUsageRunSuppressesContextAndKeepsNamedQuota(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	store := usage.NewStore(t.TempDir())
 	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 55, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "3p-weekly", Pct: 44, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 77, UpdatedAt: now},
 	}}
 	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
@@ -502,8 +628,11 @@ func TestUsageRunShowsAntigravityContextUsage(t *testing.T) {
 		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "antigravity") || !strings.Contains(output, "context") || !strings.Contains(output, "55%") {
-		t.Fatalf("output = %q, want antigravity context row", output)
+	if !strings.Contains(output, "antigravity") || !strings.Contains(output, "quota/3p-weekly") || !strings.Contains(output, "quota/gemini-weekly") {
+		t.Fatalf("output = %q, want lossless named quota rows", output)
+	}
+	if strings.Contains(output, "  context") || strings.Contains(output, "55%") {
+		t.Fatalf("output = %q, legacy context row leaked", output)
 	}
 	if strings.Contains(output, "unsupported") {
 		t.Fatalf("output = %q, Antigravity usage should no longer be unsupported", output)
@@ -523,6 +652,7 @@ func TestUsageRunExplicitAntigravityWorksWhenDisabled(t *testing.T) {
 	store := usage.NewStore(t.TempDir())
 	agyAd := &stubAdapter{name: "antigravity", snaps: []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 77, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 31, UpdatedAt: now},
 	}}
 	c := New(func() time.Time { return now })
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
@@ -538,8 +668,11 @@ func TestUsageRunExplicitAntigravityWorksWhenDisabled(t *testing.T) {
 		t.Fatalf("Run: %v stderr=%s", err, stderr.String())
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "antigravity") || !strings.Contains(output, "77%") {
-		t.Fatalf("output = %q, want explicit antigravity context row", output)
+	if !strings.Contains(output, "antigravity") || !strings.Contains(output, "quota/gemini-weekly") || !strings.Contains(output, "31%") {
+		t.Fatalf("output = %q, want explicit antigravity named quota row", output)
+	}
+	if strings.Contains(output, "  context") || strings.Contains(output, "77%") {
+		t.Fatalf("output = %q, legacy context row leaked", output)
 	}
 	if agyAd.collectCalls != 1 {
 		t.Fatalf("antigravity collect calls = %d, want 1 for explicit model", agyAd.collectCalls)

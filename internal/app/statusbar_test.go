@@ -834,7 +834,7 @@ func TestStatusbarDefaultUsageStateFiltersDisabledProviders(t *testing.T) {
 	}
 }
 
-func TestStatusbarDefaultUsageStateShowsAntigravityContext(t *testing.T) {
+func TestStatusbarDefaultUsageStateSuppressesLegacyAntigravityContext(t *testing.T) {
 	home := t.TempDir()
 	configHome := filepath.Join(home, "xdg-config")
 	stateHome := filepath.Join(home, "xdg-state")
@@ -865,16 +865,16 @@ func TestStatusbarDefaultUsageStateShowsAntigravityContext(t *testing.T) {
 	if len(state.Unsupported) != 0 {
 		t.Fatalf("Unsupported = %#v, want none now that Antigravity usage is supported", state.Unsupported)
 	}
-	if len(state.Snapshots) != 1 || state.Snapshots[0].Model != "antigravity" || state.Snapshots[0].Window != coreusage.WindowContext {
-		t.Fatalf("Snapshots = %#v, want single Antigravity context row", state.Snapshots)
+	if len(state.Snapshots) != 0 {
+		t.Fatalf("Snapshots = %#v, want legacy context suppressed", state.Snapshots)
 	}
 
 	popup := statusbarUsagePopup(state, now, "/usr/local/bin/projmux")
-	if !strings.Contains(popup.Command, "Antigravity") || !strings.Contains(popup.Command, "42%") {
-		t.Fatalf("popup command = %q, want Antigravity context row", popup.Command)
+	if strings.Contains(popup.Command, "Antigravity") || strings.Contains(popup.Command, "42%") {
+		t.Fatalf("popup command = %q, legacy context row leaked", popup.Command)
 	}
-	if toast := statusbarUsageToast(state); !strings.Contains(toast, "Antigravity") || !strings.Contains(toast, "42%") {
-		t.Fatalf("toast = %q, want Antigravity context usage", toast)
+	if toast := statusbarUsageToast(state); toast != "usage: no data" {
+		t.Fatalf("toast = %q, want no account usage data", toast)
 	}
 }
 
@@ -890,13 +890,10 @@ func TestStatusbarUsagePopupSeparatesAntigravityQuotaBuckets(t *testing.T) {
 		{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: "bad\n\x1b[31m", Pct: 50, UpdatedAt: now},
 	}
 	rows := statusbarUsageRows(snaps)
-	if len(rows) != 4 {
+	if len(rows) != 3 {
 		t.Fatalf("rows = %#v", rows)
 	}
-	if rows[0].window != "context" || rows[0].pct != "0%" {
-		t.Fatalf("zero context row = %#v, want distinct visible context 0%%", rows[0])
-	}
-	wantWindows := []string{"context", `quota/bad\n\x1b[31m`, "quota/context", "quota/weekly"}
+	wantWindows := []string{`quota/bad\n\x1b[31m`, "quota/context", "quota/weekly"}
 	for i, want := range wantWindows {
 		if rows[i].window != want {
 			t.Fatalf("rows[%d].window = %q, want %q", i, rows[i].window, want)
@@ -905,15 +902,62 @@ func TestStatusbarUsagePopupSeparatesAntigravityQuotaBuckets(t *testing.T) {
 			t.Fatalf("unsafe control character in row label: %q", rows[i].window)
 		}
 	}
-	if rows[2].reset != "in 7200s" {
-		t.Fatalf("relative-only reset = %q, want exact seconds", rows[2].reset)
+	if rows[1].reset != "in 7200s" {
+		t.Fatalf("relative-only reset = %q, want exact seconds", rows[1].reset)
 	}
-	if rows[3].reset != usageResetText(reset) {
-		t.Fatalf("absolute reset = %q, want %q", rows[3].reset, usageResetText(reset))
+	if rows[2].reset != usageResetText(reset) {
+		t.Fatalf("absolute reset = %q, want %q", rows[2].reset, usageResetText(reset))
 	}
 	payload := strings.Join(statusbarUsagePopupLines(statusbarUsageState{Snapshots: snaps}, now, 92), "\n")
-	if !strings.Contains(payload, "context") || !strings.Contains(payload, "quota/context") || !strings.Contains(payload, "0%") {
-		t.Fatalf("popup payload does not separate context and quota: %q", payload)
+	if !strings.Contains(payload, "quota/context") || strings.Contains(payload, "Antigravity    context") {
+		t.Fatalf("popup payload did not preserve named quota/suppress context: %q", payload)
+	}
+}
+
+func TestStatusbarUsagePopupOmitsAbsoluteColumnsForPercentOnlyDataset(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
+	seconds := int64(7200)
+	lines := statusbarUsagePopupLines(statusbarUsageState{Snapshots: []coreusage.Snapshot{
+		{Model: "claude", Window: coreusage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour)},
+		{Model: "claude", Window: coreusage.WindowWeekly, Pct: 42, ResetsAt: now.Add(6 * 24 * time.Hour)},
+		{Model: "codex", Window: coreusage.WindowWeekly, Pct: 12},
+		{Model: "antigravity", Window: coreusage.WindowContext, Pct: 37},
+		{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: "3p-weekly", Pct: 24, ResetInSeconds: &seconds},
+		{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: "gemini-weekly", Pct: 61},
+	}}, now, 92)
+	payload := strings.Join(lines, "\n")
+	for _, absent := range []string{"USED", "LIMIT", "LEFT"} {
+		if strings.Contains(payload, absent) {
+			t.Fatalf("percent-only popup contains %s column: %q", absent, payload)
+		}
+	}
+	for _, present := range []string{"WINDOW", "PCT", "RESET", "quota/3p-weekly", "quota/gemini-weekly", "7200s"} {
+		if !strings.Contains(payload, present) {
+			t.Fatalf("percent-only popup missing %q: %q", present, payload)
+		}
+	}
+	if strings.Contains(payload, "Antigravity    context") || strings.Contains(payload, "37%") {
+		t.Fatalf("legacy context leaked into percent-only popup: %q", payload)
+	}
+}
+
+func TestStatusbarUsagePopupKeepsAllAbsoluteColumnsForMixedRealCounts(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
+	lines := statusbarUsagePopupLines(statusbarUsageState{Snapshots: []coreusage.Snapshot{
+		{Model: "claude", Window: coreusage.Window5h, Tokens: 0, Limit: 1000, Pct: 0, ResetsAt: now.Add(time.Hour)},
+		{Model: "codex", Window: coreusage.WindowWeekly, Pct: 12, ResetsAt: now.Add(24 * time.Hour)},
+	}}, now, 92)
+	payload := strings.Join(lines, "\n")
+	for _, present := range []string{"USED", "LIMIT", "LEFT", "1,000", "0"} {
+		if !strings.Contains(payload, present) {
+			t.Fatalf("mixed-count popup missing %q: %q", present, payload)
+		}
+	}
+	rows := statusbarUsageRows([]coreusage.Snapshot{{Model: "codex", Window: coreusage.WindowWeekly, Pct: 12}})
+	if len(rows) != 1 || rows[0].hasCounts || rows[0].used != "-" || rows[0].limit != "-" || rows[0].remaining != "-" {
+		t.Fatalf("percent-only row synthesized counts: %#v", rows)
 	}
 }
 

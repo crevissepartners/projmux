@@ -307,14 +307,17 @@ Codex shares the global `30s`). `--json` emits the snapshot array; when
 backoff is active the wrapper `{snapshots, backoff}` object is emitted
 instead.
 
-Antigravity emits a conversation-local `context` row and separate official
-account rows labelled `quota/<upstream bucket ID>`. `--window quota` selects
-the latter; opaque IDs such as `weekly` are not aliases for the fixed
-`weekly` window. Used percent is `100 * (1 - remaining_fraction)`.
+Antigravity emits official account rows labelled
+`quota/<upstream bucket ID>`. Conversation-local context remains private
+hook/notify diagnostic metadata and legacy cached context rows are suppressed
+from text and JSON output. `--window quota` selects named account rows; opaque
+IDs such as `weekly` are not aliases for the fixed `weekly` window. Used
+percent is `100 * (1 - remaining_fraction)`. `--window context` remains
+accepted for compatibility and returns no Usage rows.
 `reset_time` and optional `reset_in_seconds` are preserved independently,
 including the distinction between absent and explicit zero. Invalid,
 disabled, missing, or empty quota data degrades without reinterpreting the
-conversation context row.
+private conversation context diagnostic.
 
 ## resources
 
@@ -364,9 +367,12 @@ projmux status resources
   `~/.cache/tmux/kube-segment-<session>.txt` first (TTL governed by
   `TMUX_KUBE_CACHE_TTL`, default `5s`). Picks up a per-session
   `KUBECONFIG` from `${XDG_RUNTIME_DIR:-~/.cache}/kube-sessions/<session>.yaml`.
-- `usage` — HUD-style `Claude (Nm) 5h [bar] N% · weekly [bar] N%   Antigravity
-  ctx [bar] N% · quota/<bucket> [bar] N%`. Degrades through six tiers as `--max-width`
-  shrinks. Triggers an opportunistic, throttled refresh (per-adapter
+- `usage` — HUD-style provider blocks containing only official `5h` and
+  `weekly` windows. Antigravity's exact `quota/gemini-weekly` snapshot is
+  projected as `weekly` without changing its cached identity; other named
+  quotas and context never consume status width. Narrow tiers keep one primary
+  window per provider (`5h`, otherwise `weekly`) before hard truncation.
+  Triggers an opportunistic, throttled refresh (per-adapter
   throttle, `30s` floor) so a stale cache self-heals.
 - `notify` — newest-first HUD block with project, state, optional agent, text,
   age, and `+<extras>`. Window/pane ids remain routable metadata but are not
@@ -399,8 +405,11 @@ non-specialized placeholders and no-op. `session` opens the existing-session
 popup; `pwd` shows the current pane path in a native-framed display-only
 popup; `kube` and `git` open the project switcher popup;
 `settings` toggles the settings popup for the tmux client; `usage` opens the
-detailed `projmux usage` table popup; `notify` focuses and acks the newest
-actionable queue target. The internal `usage-refresh` shortcut entry point
+detailed cached account-usage popup. Legacy context rows are suppressed and
+named quotas retain exact identity/reset values. `USED` / `LIMIT` / `LEFT`
+appear together only when at least one displayed row has real absolute counts;
+percent-only datasets omit those columns rather than synthesizing counts.
+`notify` focuses and acks the newest actionable queue target. The internal `usage-refresh` shortcut entry point
 runs the same throttled, per-adapter collection policy as `status usage` and
 then reopens the display-only usage popup from cache.
 `MouseDown1Status` errors are
@@ -639,9 +648,9 @@ restore is included: Antigravity ingest stores `conversationId` as pane thread
 metadata for matching and as session-state resume metadata. Restore uses
 `agy --conversation <uuid>` when that id is present and UUID-shaped; otherwise
 session-state preview/doctor render `resume unavailable`. Structured statusline
-`context_window.used_percentage` is persisted with its conversation id and
-surfaced by the usage HUD as the separate `context` row. The official `quota`
-map is persisted independently and surfaces each valid entry as
+`context_window.used_percentage` is persisted with its conversation id as
+private hook/notify diagnostic metadata and is not surfaced as account usage.
+The official `quota` map is persisted independently and surfaces each valid entry as
 `quota/<exact bucket ID>` with independently retained absolute and relative
 reset values. Bucket IDs are never mapped to `5h`/`weekly`, and account quota
 is never inferred from the conversation-local gauge.

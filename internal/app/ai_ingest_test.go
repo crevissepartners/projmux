@@ -25,7 +25,8 @@ func TestPersistAntigravityContextUsage(t *testing.T) {
 	now := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
 	cmd.now = func() time.Time { return now }
 
-	// Numeric context_window is persisted so the adapter surfaces it.
+	// Numeric context_window remains private diagnostic metadata; it is not an
+	// account-usage snapshot row.
 	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: "42%"})
 
 	baseDir, err := cmd.usageStateDir()
@@ -36,17 +37,31 @@ func TestPersistAntigravityContextUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
-	if len(snaps) != 1 || snaps[0].Pct != 42 || snaps[0].Model != "antigravity" {
-		t.Fatalf("snapshots = %#v, want single antigravity 42%% context row", snaps)
+	if len(snaps) != 0 {
+		t.Fatalf("snapshots = %#v, context must not become account usage", snaps)
+	}
+	readContext := func() antigravityadapter.ContextRecord {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(baseDir, antigravityadapter.ContextFileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var record antigravityadapter.ContextRecord
+		if err := json.Unmarshal(data, &record); err != nil {
+			t.Fatal(err)
+		}
+		return record
+	}
+	if record := readContext(); record.Pct != 42 || !record.UpdatedAt.Equal(now) {
+		t.Fatalf("context sidecar = %#v, want preserved 42%% diagnostic", record)
 	}
 
 	// Non-numeric / empty values are ignored (clean degrade, no garbage file
 	// churn) — the previously persisted value stays intact.
 	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: ""})
 	cmd.persistAntigravityContextUsage(antigravityHookPayload{ContextWindow: "n/a"})
-	snaps, err = antigravityadapter.New(baseDir).Collect(context.Background())
-	if err != nil || len(snaps) != 1 || snaps[0].Pct != 42 {
-		t.Fatalf("after non-numeric writes snapshots = %#v err = %v, want unchanged 42%%", snaps, err)
+	if record := readContext(); record.Pct != 42 {
+		t.Fatalf("after non-numeric writes context sidecar = %#v, want unchanged 42%%", record)
 	}
 }
 
@@ -79,8 +94,19 @@ func TestPersistAntigravityQuotaUsageKeepsContextAndSurvivesContextOnlyPayload(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snaps) != 2 || snaps[0].Window != "context" || snaps[1].Window != "quota" || snaps[1].Bucket != "context" {
-		t.Fatalf("snapshots = %#v, want distinct context and quota/context rows", snaps)
+	if len(snaps) != 1 || snaps[0].Window != "quota" || snaps[0].Bucket != "context" {
+		t.Fatalf("snapshots = %#v, want lossless quota/context row only", snaps)
+	}
+	data, err := os.ReadFile(filepath.Join(baseDir, antigravityadapter.ContextFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contextRecord antigravityadapter.ContextRecord
+	if err := json.Unmarshal(data, &contextRecord); err != nil {
+		t.Fatal(err)
+	}
+	if contextRecord.ConversationID != "conversation-local" || contextRecord.Pct != 25 {
+		t.Fatalf("private context sidecar = %#v, want hook diagnostic preserved", contextRecord)
 	}
 }
 
@@ -1547,6 +1573,17 @@ func TestParseAntigravityStatusLineV1112OfficialFixture(t *testing.T) {
 	if !got.ContextUsedPercentageSet || got.ContextUsedPercentage != 14.24 || !got.ContextRemainingPercentSet || got.ContextRemainingPercentage != 85.76 || got.ContextTotalInputTokens != 88244 || got.ContextTotalOutputTokens != 61074 || got.ContextWindowSize != 1048576 || got.ContextCurrentInputTokens != 63382 || got.ContextCurrentOutputTokens != 346 || got.ContextCacheReadTokens != 20857 {
 		t.Fatalf("context fields = %+v", got)
 	}
+	metadata := got.antigravityMetadata()
+	for key, want := range map[string]string{
+		"context_window_used_percentage":   "14.24",
+		"context_window_size":              "1048576",
+		"context_window_input_tokens":      "63382",
+		"context_window_cache_read_tokens": "20857",
+	} {
+		if metadata[key] != want {
+			t.Fatalf("diagnostic metadata[%s] = %q, want %q in %#v", key, metadata[key], want, metadata)
+		}
+	}
 	if !got.QuotaSet || len(got.QuotaBuckets) != 1 {
 		t.Fatalf("quota fields = %+v", got)
 	}
@@ -2214,8 +2251,19 @@ func TestIngestAntigravityManagedStatusLineWritesEmptyStdout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snaps) != 2 || snaps[0].Window != "context" || snaps[1].Window != "quota" || snaps[1].Bucket != "gemini-weekly" {
-		t.Fatalf("statusline persisted snapshots = %#v, want separate context and quota rows", snaps)
+	if len(snaps) != 1 || snaps[0].Window != "quota" || snaps[0].Bucket != "gemini-weekly" {
+		t.Fatalf("statusline persisted snapshots = %#v, want exact named quota only", snaps)
+	}
+	data, err = os.ReadFile(filepath.Join(baseDir, antigravityadapter.ContextFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contextRecord antigravityadapter.ContextRecord
+	if err := json.Unmarshal(data, &contextRecord); err != nil {
+		t.Fatal(err)
+	}
+	if contextRecord.Pct == 0 {
+		t.Fatalf("managed statusline did not preserve private context metadata: %#v", contextRecord)
 	}
 }
 

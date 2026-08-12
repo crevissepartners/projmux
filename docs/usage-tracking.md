@@ -11,12 +11,12 @@ requests such as `projmux usage --model claude`, `--model codex`, or
 still collect and render that provider even when it is disabled.
 
 Claude and Codex adapters read the upstream's own account view. Antigravity
-reads only the official managed statusline payload: `context_window` remains a
-conversation-local fullness gauge, while each `quota` map entry is a separate
-account row. Projmux preserves the upstream bucket ID and never guesses that an
-undocumented ID means `5h` or `weekly`. It does not infer quota, cadence, reset
-timestamps, or account limits from screen scraping, tokens, history,
-OAuth/cache files, or binary strings.
+reads only the official managed statusline payload: `context_window` remains
+private conversation-local diagnostic metadata, while each valid `quota` map
+entry is a separate account row. Projmux preserves the upstream bucket ID and
+never guesses that an undocumented ID means `5h` or `weekly`. It does not infer
+quota, cadence, reset timestamps, or account limits from screen scraping,
+tokens, history, OAuth/cache files, or binary strings.
 
 ## Adapters
 
@@ -74,12 +74,12 @@ read.
 
 Local managed-statusline sidecars. No network or credential reads.
 
-- `context_window.used_percentage` becomes the conversation-local `context`
-  row and retains the conversation ID in its sidecar. The legacy string
-  percentage remains a compatibility fallback.
+- `context_window.used_percentage` and its conversation ID remain in the
+  private context sidecar for hook/notify diagnostics. They do not become
+  Usage snapshots. The legacy string percentage remains a writer fallback.
 - The official `quota` map is sorted by its exact bucket ID. Each valid bucket
   becomes `window=quota`, `bucket=<upstream ID>` and renders as
-  `quota/<upstream ID>` beside, never instead of, `ctx`.
+  `quota/<upstream ID>` on account-inspection surfaces.
 - Used percent is `100 * (1 - remaining_fraction)`. Non-finite or values
   outside `[0,1]`, empty IDs, null/disabled entries, and negative relative
   resets are ignored safely.
@@ -89,8 +89,8 @@ Local managed-statusline sidecars. No network or credential reads.
 - Context and quota use independent private sidecars. A context-only payload
   does not erase the last quota observation. An explicit empty/null quota map
   records no buckets; the manager's existing rule still preserves prior model
-  rows when an adapter returns zero total rows, while any returned context row
-  causes the normal full-model replacement.
+  rows when an adapter returns zero total rows. Context never participates in
+  that account-row replacement decision.
 
 ## Snapshot store
 
@@ -126,7 +126,6 @@ Enabled agents, filters by window, and renders the tab-aligned table:
 ```
 MODEL        WINDOW                 PCT  RESETS_AT                 RESET_IN  STALE
 claude       5h                     80%  2026-05-07T14:00:00+09:00 -
-antigravity  context                14%  -                         -
 antigravity  quota/gemini-weekly    6%   2026-07-06T16:50:32+09:00 560580s
 ```
 
@@ -144,9 +143,11 @@ provider rows and prints a short Settings hint. `--json` returns an
 empty array. Explicit `--model claude`, `--model codex` and
 `--model antigravity` bypass the enabled-agent filter for read-only
 inspection and collect/render only the requested adapter. Antigravity reports
-its conversation-local `context` row separately from zero or more account
-`quota/<bucket-id>` rows. `--window quota` selects only account buckets;
-`--window weekly` never matches an opaque quota bucket named `weekly`.
+zero or more account `quota/<bucket-id>` rows. Legacy cached `window=context`
+rows are suppressed in text and JSON output. `--window quota` selects only
+account buckets; `--window weekly` never matches an opaque quota bucket named
+`weekly`. `--window context` remains an accepted compatibility filter and
+returns no Usage rows.
 
 ### `projmux status usage`
 
@@ -162,12 +163,18 @@ are swallowed unless `PROJMUX_USAGE_DEBUG` is set. Then it loads the
 cache, filters to the same enabled-agent scope, and renders. If no AI
 agents are enabled, the status segment emits nothing.
 
+The HUD first derives an ambient projection separate from lossless account
+snapshots. Canonical `5h`/`weekly` rows are eligible for every provider;
+Antigravity's exact `quota/gemini-weekly` identity is projected as `weekly`
+without rewriting the cache. Context, `3p-weekly`, and unknown quota buckets
+do not participate in status width.
+
 Output degrades through six tiers as `--max-width` shrinks:
 
 1. Long form with last-sync age + bars: `Claude (3m) 5h [████████░░]
-   80% · weekly [...]   Antigravity ctx [...] · quota/gemini-weekly [...]`
+   80% · weekly [...]   Antigravity weekly [...]`
 2. Drop the age indicator (legacy long form).
-3. Drop the weekly bar.
+3. Keep one primary bar per provider (`5h`, or `weekly` when 5h is absent).
 4. Drop bars entirely (`Claude 5h:80% weekly:30%`).
 5. Single-letter labels (`C 5h:80% weekly:30%`).
 6. Hard rune-truncate with trailing `…`.
@@ -185,6 +192,13 @@ sync metadata to the same enabled-agent scope as the ambient HUD. This keeps
 `projmux usage --json` backwards-compatible for CLI consumers while giving the
 tmux click path a structured table with aligned rows, right-aligned numeric
 values, dim unavailable cells, amber usage at 80%, and red usage at 95%.
+
+The popup suppresses legacy cached context rows while preserving every valid
+named quota ID, reset, and freshness value. Its columns are data-driven: when
+no displayed row has authoritative absolute token counts, `USED`, `LIMIT`, and
+`LEFT` are omitted together. If any row has real counts, all three columns are
+shown; percent-only rows use unavailable cells. Counts are never derived from
+percentages.
 
 The popup sync line uses the maximum authoritative `LastCollect` timestamp from
 the cache. If that field is unavailable, it falls back to the snapshots file

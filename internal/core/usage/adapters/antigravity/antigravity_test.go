@@ -2,6 +2,7 @@ package antigravity
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ func TestCollectEmptyBaseDir(t *testing.T) {
 	}
 }
 
-func TestWriteThenCollect(t *testing.T) {
+func TestWriteContextPreservesPrivateSidecarWithoutUsageRow(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "usage")
 	updated := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
@@ -68,18 +69,19 @@ func TestWriteThenCollect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
-	if len(snaps) != 1 {
-		t.Fatalf("Collect = %d snapshots, want 1", len(snaps))
+	if len(snaps) != 0 {
+		t.Fatalf("Collect = %#v, conversation context must not become usage rows", snaps)
 	}
-	s := snaps[0]
-	if s.Model != Name || s.Window != usage.WindowContext || s.Pct != 42 {
-		t.Fatalf("snapshot = %+v, want model=%s window=context pct=42", s, Name)
+	data, err := os.ReadFile(filepath.Join(dir, ContextFileName))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !s.UpdatedAt.Equal(updated) {
-		t.Fatalf("UpdatedAt = %v, want %v", s.UpdatedAt, updated)
+	var record ContextRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
 	}
-	if !s.ResetsAt.IsZero() {
-		t.Fatalf("ResetsAt = %v, want zero (context window has no reset)", s.ResetsAt)
+	if record.Pct != 42 || !record.UpdatedAt.Equal(updated) {
+		t.Fatalf("context sidecar = %#v, want preserved diagnostic metadata", record)
 	}
 	for path, want := range map[string]os.FileMode{
 		dir:                                 0o700,
@@ -120,24 +122,21 @@ func TestWriteQuotaThenCollectKeepsOpaqueBucketsDistinct(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snaps) != 6 {
-		t.Fatalf("snapshots = %#v, want context plus five quota buckets", snaps)
-	}
-	if snaps[0].Window != usage.WindowContext || snaps[0].Bucket != "" {
-		t.Fatalf("context snapshot = %#v", snaps[0])
+	if len(snaps) != 5 {
+		t.Fatalf("snapshots = %#v, want five quota buckets only", snaps)
 	}
 	wantIDs := []string{"   ", "5h", "context", "quota", "weekly"}
 	for i, wantID := range wantIDs {
-		got := snaps[i+1]
+		got := snaps[i]
 		if got.Window != usage.WindowQuota || got.Bucket != wantID {
-			t.Fatalf("snapshot[%d] = %#v, want quota bucket %q", i+1, got, wantID)
+			t.Fatalf("snapshot[%d] = %#v, want quota bucket %q", i, got, wantID)
 		}
 	}
-	contextBucket := snaps[3]
+	contextBucket := snaps[2]
 	if contextBucket.Pct != 0 || contextBucket.ResetInSeconds == nil || *contextBucket.ResetInSeconds != 0 {
 		t.Fatalf("quota/context = %#v, want genuine 0%% and explicit relative reset zero", contextBucket)
 	}
-	if got := snaps[1].Pct; got != 40 {
+	if got := snaps[0].Pct; got != 40 {
 		t.Fatalf("used pct for remaining 0.6 = %v, want 40", got)
 	}
 	assertMode := func(path string, want os.FileMode) {
@@ -209,13 +208,11 @@ func TestExplicitEmptyQuotaHonorsManagerReplaceSemantics(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 12, 4, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
-		name             string
-		withContext      bool
-		wantPriorQuota   bool
-		wantContextCount int
+		name        string
+		withContext bool
 	}{
-		{name: "zero adapter rows preserve prior model", wantPriorQuota: true},
-		{name: "context row replaces model and clears quota", withContext: true, wantContextCount: 1},
+		{name: "zero adapter rows preserve prior model"},
+		{name: "private context does not alter quota replacement", withContext: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -248,14 +245,14 @@ func TestExplicitEmptyQuotaHonorsManagerReplaceSemantics(t *testing.T) {
 					contexts++
 				}
 			}
-			if priorQuota != tc.wantPriorQuota || contexts != tc.wantContextCount {
+			if !priorQuota || contexts != 0 {
 				t.Fatalf("snapshots = %#v, priorQuota=%v contexts=%d", got, priorQuota, contexts)
 			}
 		})
 	}
 }
 
-func TestCollectMalformedFileDegrades(t *testing.T) {
+func TestCollectIgnoresMalformedPrivateContextSidecar(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ContextFileName), []byte("{not json"), 0o644); err != nil {
@@ -263,25 +260,26 @@ func TestCollectMalformedFileDegrades(t *testing.T) {
 	}
 	a := New(dir)
 	snaps, err := a.Collect(context.Background())
-	if err == nil {
-		t.Fatalf("Collect on malformed file: want diagnostic error, got nil")
-	}
-	if len(snaps) != 0 {
-		t.Fatalf("Collect on malformed file = %v, want no snapshots", snaps)
+	if err != nil || len(snaps) != 0 {
+		t.Fatalf("Collect on malformed private context = (%#v, %v), want empty usage", snaps, err)
 	}
 }
 
-func TestCollectClampsNegativePct(t *testing.T) {
+func TestContextSidecarDoesNotMaskQuotaRows(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	if err := WriteContext(dir, ContextRecord{Pct: -5, UpdatedAt: time.Now().UTC()}); err != nil {
+	now := time.Now().UTC()
+	if err := WriteContext(dir, ContextRecord{Pct: -5, UpdatedAt: now}); err != nil {
 		t.Fatalf("WriteContext: %v", err)
+	}
+	if err := WriteQuota(dir, QuotaRecord{UpdatedAt: now, Buckets: []QuotaBucketRecord{{ID: "gemini-weekly", RemainingFraction: 0.25}}}); err != nil {
+		t.Fatalf("WriteQuota: %v", err)
 	}
 	snaps, err := New(dir).Collect(context.Background())
 	if err != nil || len(snaps) != 1 {
 		t.Fatalf("Collect = (%v, %v), want 1 snapshot", snaps, err)
 	}
-	if snaps[0].Pct != 0 {
-		t.Fatalf("Pct = %v, want clamped to 0", snaps[0].Pct)
+	if snaps[0].Window != usage.WindowQuota || snaps[0].Bucket != "gemini-weekly" || snaps[0].Pct != 75 {
+		t.Fatalf("quota snapshot = %#v", snaps[0])
 	}
 }
