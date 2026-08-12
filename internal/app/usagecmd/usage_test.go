@@ -78,7 +78,7 @@ func TestFormatStatusUsageSeparatesAntigravityContextAndOpaqueQuotaBuckets(t *te
 	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
 	snaps := []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "weekly", Pct: 70, UpdatedAt: now},
-		{Model: "antigravity", Window: usage.WindowContext, Pct: 10, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowContext, Pct: 0, UpdatedAt: now},
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "5h", Pct: 40, UpdatedAt: now},
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "context", Pct: 20, UpdatedAt: now},
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "quota", Pct: 50, UpdatedAt: now},
@@ -86,7 +86,7 @@ func TestFormatStatusUsageSeparatesAntigravityContextAndOpaqueQuotaBuckets(t *te
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "bad\n#[fg=red]", Pct: 30, UpdatedAt: now},
 	}
 	got := intrender.StripTmuxEscapes(formatStatusUsage(snaps, 0, now))
-	for _, want := range []string{"Antigravity", "ctx ", "quota/5h ", "quota/context ", "quota/quota ", "quota/weekly ", "quota/    ", `quota/bad\n\x23[fg=red] `} {
+	for _, want := range []string{"Antigravity", "ctx ", "0%", "quota/5h ", "quota/context ", "quota/quota ", "quota/weekly ", "quota/    ", `quota/bad\n\x23[fg=red] `} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("HUD = %q, missing %q", got, want)
 		}

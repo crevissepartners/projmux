@@ -863,13 +863,16 @@ func TestStatusbarUsagePopupSeparatesAntigravityQuotaBuckets(t *testing.T) {
 	seconds := int64(7200)
 	snaps := []coreusage.Snapshot{
 		{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: "weekly", Pct: 75, ResetsAt: reset, ResetInSeconds: &seconds, UpdatedAt: now},
-		{Model: "antigravity", Window: coreusage.WindowContext, Pct: 12, UpdatedAt: now},
+		{Model: "antigravity", Window: coreusage.WindowContext, Pct: 0, UpdatedAt: now},
 		{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: "context", Pct: 25, ResetInSeconds: &seconds, UpdatedAt: now},
 		{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: "bad\n\x1b[31m", Pct: 50, UpdatedAt: now},
 	}
 	rows := statusbarUsageRows(snaps)
 	if len(rows) != 4 {
 		t.Fatalf("rows = %#v", rows)
+	}
+	if rows[0].window != "context" || rows[0].pct != "0%" {
+		t.Fatalf("zero context row = %#v, want distinct visible context 0%%", rows[0])
 	}
 	wantWindows := []string{"context", `quota/bad\n\x1b[31m`, "quota/context", "quota/weekly"}
 	for i, want := range wantWindows {
@@ -887,7 +890,7 @@ func TestStatusbarUsagePopupSeparatesAntigravityQuotaBuckets(t *testing.T) {
 		t.Fatalf("absolute reset = %q, want %q", rows[3].reset, usageResetText(reset))
 	}
 	payload := strings.Join(statusbarUsagePopupLines(statusbarUsageState{Snapshots: snaps}, now, 92), "\n")
-	if !strings.Contains(payload, "context") || !strings.Contains(payload, "quota/context") {
+	if !strings.Contains(payload, "context") || !strings.Contains(payload, "quota/context") || !strings.Contains(payload, "0%") {
 		t.Fatalf("popup payload does not separate context and quota: %q", payload)
 	}
 }

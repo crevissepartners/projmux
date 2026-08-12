@@ -901,7 +901,7 @@ func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
 	snaps = coreusage.SortedSnapshots(snaps)
 	rows := make([]statusbarUsageRow, 0, len(snaps))
 	for _, s := range snaps {
-		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != coreusage.WindowQuota {
+		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != coreusage.WindowContext && s.Window != coreusage.WindowQuota {
 			continue
 		}
 		row := statusbarUsageRow{

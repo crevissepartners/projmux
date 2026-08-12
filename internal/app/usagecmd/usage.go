@@ -1043,7 +1043,7 @@ func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 	order := make([]string, 0, 2)
 	for i := range snaps {
 		s := snaps[i]
-		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != usage.WindowQuota {
+		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != usage.WindowContext && s.Window != usage.WindowQuota {
 			continue
 		}
 		row, ok := byModel[s.Model]
