@@ -140,8 +140,8 @@ stderr warning. They cannot be combined with `--json`; `--dry-run` and
 `--include-optional` still require `--install-missing`. These mutation paths
 will be removed when doctor becomes read-only diagnostics only.
 
-`Settings > Notifications > Delivery sources` shows active Codex hooks, Claude,
-Antigravity manual hook ingest, and tmux statuses, conflicts, config paths, and
+`Settings > Notifications > Delivery sources` shows active Codex, Claude, and
+Antigravity hooks plus tmux statuses, conflicts, config paths, and
 copyable AI integration commands where available. Its summary/detail also shows
 whether `PROJMUX_NOTIFY_HOOK` overrides the built-in desktop sender. Settings
 does not install or remove external Codex, Claude, Antigravity, or tmux notify
@@ -384,6 +384,7 @@ projmux ai ingest   bell --pane <pane_id>
 projmux ai ingest   log [--tail N] [--json] [--path]
 projmux ai integrate codex [--dry-run] [--remove]
 projmux ai integrate claude [--dry-run] [--remove]
+projmux ai integrate antigravity [--dry-run] [--remove]
 projmux ai integrate tmux-bell [--dry-run] [--remove]
 projmux ai topic     ...
 ```
@@ -501,23 +502,40 @@ precedence over catalog `action` for known Claude events too; for example a
 noisy notify event can be made state-only or quiet without changing installed
 Claude hook commands.
 
-`ingest antigravity-hook` is the manual hook/statusline entrypoint for
+`ingest antigravity-hook` is the hook/statusline entrypoint for
 Antigravity CLI `agy` payloads. Official v1.1.12 hook commands must pass their
 event identity explicitly, for example
 `projmux ai ingest antigravity-hook --event Stop`; the official stdin payload
 does not carry an event field. The explicit selector is authoritative, while
 payload `eventName` and its legacy aliases remain fallback inputs for existing
-manual wiring. Projmux does not
-provide `projmux ai integrate antigravity`, does not install Antigravity hooks,
-and does not mutate Antigravity user config. If users wire Antigravity manually,
-the hook/statusline command should call an absolute `projmux` path or run from a
-known cwd because relative command paths failed smoke.
+manual wiring. `projmux ai integrate antigravity` manages exactly the named
+`projmux` entry in `~/.gemini/config/hooks.json`. It preserves every other
+named entry and unknown JSON value, resolves the running projmux executable to
+a stable absolute path, and supports `--dry-run` and `--remove`. An existing
+unmanaged `projmux` entry, another Antigravity projmux ingest command, malformed
+JSON, symlinks, and read/write permission failures are reported without
+rewriting the file. Doctor and Settings also report a managed entry as `stale`
+when its absolute executable, event/schema wiring, or stdout fallback differs
+from the current plan; the displayed install command refreshes it.
 
 The embedded v1.1.12 catalog contains the five official events `PreToolUse`,
-`PostToolUse`, `PreInvocation`, `PostInvocation`, and `Stop`, all with
-`install: false` in this manual-only phase. `PreToolUse` remains disabled
-because its response can change permission policy. Legacy `Statusline` manual
-wiring is still accepted outside that official catalog.
+`PostToolUse`, `PreInvocation`, `PostInvocation`, and `Stop`. The managed entry
+installs `PreInvocation`, `PostInvocation`, `PostToolUse`, and `Stop`, each with
+an explicit `--event`; `PreToolUse` remains disabled because its response can
+change permission policy. Legacy `Statusline` manual wiring is still accepted
+outside that official catalog.
+
+`PreInvocation` moves the matched pane to thinking/busy without notifying.
+`PostInvocation` and `PostToolUse` remain quiet bookkeeping paths, with tool
+errors retained in ingest diagnostics. `Stop` keeps the completion/error notify
+classification. Hook stdout is `{}` for the three non-Stop managed events and
+`{"decision":"stop"}` for Stop, including a shell fallback if ingest fails, so
+the hook cannot force continuation or synthesize a permission decision.
+
+The managed JSON is the install source of truth. The command
+`agy -p '/hooks' --output-format json` is a read-only runtime diagnostic for
+confirming loaded event names and sources; projmux never uses `/hooks` output
+to rewrite `hooks.json`.
 
 `workspacePaths` uses the first non-empty path as a cwd matching candidate;
 an absent or empty array does not invent a cwd. Inherited `$TMUX_PANE` remains

@@ -442,6 +442,7 @@ func (c *settingsCommand) aiNotifyDiagnosticsSummary() string {
 	parts := make([]string, 0, 3)
 	for _, status := range []doctorAINotifyStatus{
 		doctorAINotifyStatusInstalled,
+		doctorAINotifyStatusStale,
 		doctorAINotifyStatusConflict,
 		doctorAINotifyStatusMissing,
 		doctorAINotifyStatusSkip,
@@ -520,6 +521,8 @@ func aiNotifyDiagnosticTone(status doctorAINotifyStatus) (string, string) {
 	case doctorAINotifyStatusInstalled:
 		return settingsGlyphToggle, settingsColorAdd
 	case doctorAINotifyStatusConflict:
+		return settingsGlyphInfo, settingsColorRemove
+	case doctorAINotifyStatusStale:
 		return settingsGlyphInfo, settingsColorRemove
 	default:
 		return settingsGlyphInactive, settingsColorDim

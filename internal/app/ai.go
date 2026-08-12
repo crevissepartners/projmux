@@ -3959,6 +3959,7 @@ func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux ai ingest log [--tail N] [--json] [--path]")
 	fmt.Fprintln(w, "  projmux ai integrate codex [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai integrate claude [--dry-run] [--remove]")
+	fmt.Fprintln(w, "  projmux ai integrate antigravity [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai integrate tmux-bell [--dry-run] [--remove]")
 	fmt.Fprintln(w, "  projmux ai topic set <text> [--pane <id>]")
 	fmt.Fprintln(w, "  projmux ai topic clear [--pane <id>]")

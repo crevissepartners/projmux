@@ -65,6 +65,8 @@ func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error 
 		return c.runIntegrateCodex(args[1:], stdout, stderr)
 	case "claude":
 		return c.runIntegrateClaude(args[1:], stdout, stderr)
+	case "antigravity":
+		return c.runIntegrateAntigravity(args[1:], stdout, stderr)
 	case "tmux-bell":
 		return c.runIntegrateTmuxBell(args[1:], stdout, stderr)
 	case "help", "--help", "-h":

@@ -3,9 +3,9 @@
   "observed_version": "Antigravity CLI 1.1.12",
   "events": [
     { "name": "PreToolUse", "install": false, "action": "quiet" },
-    { "name": "PostToolUse", "install": false, "action": "quiet" },
-    { "name": "PreInvocation", "install": false, "action": "quiet" },
-    { "name": "PostInvocation", "install": false, "action": "quiet" },
-    { "name": "Stop", "install": false, "action": "notify" }
+    { "name": "PostToolUse", "install": true, "action": "quiet" },
+    { "name": "PreInvocation", "install": true, "action": "state" },
+    { "name": "PostInvocation", "install": true, "action": "quiet" },
+    { "name": "Stop", "install": true, "action": "notify" }
   ]
 }

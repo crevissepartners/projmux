@@ -974,8 +974,8 @@ command = "projmux ai ingest codex-hook"
 	if byID["tmux-bell"].Status != doctorAINotifyStatusInstalled {
 		t.Fatalf("tmux bell status = %#v, want installed", byID["tmux-bell"])
 	}
-	if byID["antigravity-hooks"].Status != doctorAINotifyStatusSkip {
-		t.Fatalf("antigravity hooks status = %#v, want skip/manual diagnostic", byID["antigravity-hooks"])
+	if byID["antigravity-hooks"].Status != doctorAINotifyStatusMissing {
+		t.Fatalf("antigravity hooks status = %#v, want missing managed diagnostic", byID["antigravity-hooks"])
 	}
 	if byID["codex-hooks"].InstallCommand != "projmux ai integrate codex" {
 		t.Fatalf("codex hooks InstallCommand = %q", byID["codex-hooks"].InstallCommand)
@@ -992,11 +992,11 @@ command = "projmux ai ingest codex-hook"
 	if byID["claude-hooks"].TestedVersion != "Claude Code 2.1.140" {
 		t.Fatalf("claude hooks TestedVersion = %q", byID["claude-hooks"].TestedVersion)
 	}
-	if byID["antigravity-hooks"].ProviderID != "antigravity" || byID["antigravity-hooks"].InstallCommand != "" || byID["antigravity-hooks"].RemoveCommand != "" || byID["antigravity-hooks"].DryRunCommand != "" {
+	if byID["antigravity-hooks"].ProviderID != "antigravity" || byID["antigravity-hooks"].InstallCommand != "projmux ai integrate antigravity" || byID["antigravity-hooks"].RemoveCommand != "projmux ai integrate antigravity --remove" || byID["antigravity-hooks"].DryRunCommand != "projmux ai integrate antigravity --dry-run" {
 		t.Fatalf("antigravity hooks diagnostic = %#v", byID["antigravity-hooks"])
 	}
-	if !strings.Contains(byID["antigravity-hooks"].Guidance, "does not mutate Antigravity user config") || !strings.Contains(byID["antigravity-hooks"].Guidance, "absolute projmux path") {
-		t.Fatalf("antigravity hooks Guidance = %q, want manual/absolute-command notice", byID["antigravity-hooks"].Guidance)
+	if !strings.Contains(byID["antigravity-hooks"].Guidance, "install source of truth") || !strings.Contains(byID["antigravity-hooks"].Guidance, "/hooks") || !strings.Contains(byID["antigravity-hooks"].Guidance, "PreToolUse") {
+		t.Fatalf("antigravity hooks Guidance = %q, want source-of-truth/read-only/permission notice", byID["antigravity-hooks"].Guidance)
 	}
 	if len(cmdRecorder(cmd).commands) != 0 {
 		t.Fatalf("commands = %#v, want read-only diagnostics", cmdRecorder(cmd).commands)
@@ -1041,6 +1041,44 @@ func TestDoctorAINotifyDiagnosticsProviderMetadataShowsDisabledProviders(t *test
 		if !strings.Contains(diagnostic.Guidance, "provider disabled") || !strings.Contains(diagnostic.Guidance, "explicit diagnostics") {
 			t.Fatalf("%s Guidance = %q, want disabled-provider diagnostic policy", tc.id, diagnostic.Guidance)
 		}
+	}
+}
+
+func TestDoctorAntigravityIntegrationDiagnosticManagedStates(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+
+	missing := doctorAntigravityIntegrationDiagnostic(cmd)
+	if missing.Status != doctorAINotifyStatusMissing || missing.ConfigPath != filepath.Join(home, antigravityHooksRelativePath) {
+		t.Fatalf("missing diagnostic = %#v", missing)
+	}
+	for _, want := range []string{"projmux ai integrate antigravity", "projmux ai integrate antigravity --remove", "projmux ai integrate antigravity --dry-run"} {
+		if missing.InstallCommand != want && missing.RemoveCommand != want && missing.DryRunCommand != want {
+			t.Fatalf("missing diagnostic = %#v, want command %q", missing, want)
+		}
+	}
+
+	if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	installed := doctorAntigravityIntegrationDiagnostic(cmd)
+	if installed.Status != doctorAINotifyStatusInstalled || installed.ConflictReason != "" {
+		t.Fatalf("installed diagnostic = %#v", installed)
+	}
+
+	path := filepath.Join(home, antigravityHooksRelativePath)
+	installedData := readCodexTestFile(t, path)
+	writeCodexTestFile(t, path, strings.ReplaceAll(installedData, "/tmp/projmux", "/old/projmux"))
+	stale := doctorAntigravityIntegrationDiagnostic(cmd)
+	if stale.Status != doctorAINotifyStatusStale || !strings.Contains(stale.ConflictReason, "absolute executable") || !strings.Contains(stale.ConflictReason, "run the install command") {
+		t.Fatalf("stale diagnostic = %#v", stale)
+	}
+
+	writeCodexTestFile(t, path, `{"projmux":{"Stop":[{"command":"echo unmanaged"}]}}`)
+	conflict := doctorAntigravityIntegrationDiagnostic(cmd)
+	if conflict.Status != doctorAINotifyStatusConflict || !strings.Contains(conflict.ConflictReason, "unmanaged named entry") {
+		t.Fatalf("conflict diagnostic = %#v", conflict)
 	}
 }
 

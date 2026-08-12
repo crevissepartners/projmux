@@ -140,8 +140,29 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 		}
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 		return nil
-	case "PreInvocation", "PostInvocation", "PostToolUse":
+	case "PreInvocation":
+		if action.Action == aiHookActionQuiet {
+			c.quietAntigravityHook(paneID, payload, aiHookQuietReason(action))
+			return nil
+		}
+		if err := c.applyAIStatusStateOnly("thinking", paneID, attentionNotifyInput{
+			Metadata:  metadata,
+			BadgeKind: aiBadgeKindInProgress,
+		}); err != nil {
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+			return err
+		}
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: "invocation started", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+		return nil
+	case "PostInvocation":
 		c.quietAntigravityHook(paneID, payload, aiHookNoHandlerReason(action))
+		return nil
+	case "PostToolUse":
+		reason := aiHookNoHandlerReason(action)
+		if payload.Error != "" {
+			reason = "tool error: " + truncateRunes(payload.Error, 160) + "; " + reason
+		}
+		c.quietAntigravityHook(paneID, payload, reason)
 		return nil
 	default:
 		c.quietAntigravityHook(paneID, payload, aiHookNoHandlerReason(action))

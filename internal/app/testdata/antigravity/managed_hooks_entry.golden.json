@@ -1,0 +1,35 @@
+{
+  "PreInvocation": [
+    {
+      "type": "command",
+      "command": "'/opt/projmux/bin/projmux' ai ingest antigravity-hook --event PreInvocation || printf '%s\\n' '{}' # projmux-managed:antigravity-hooks:v1",
+      "timeout": 30
+    }
+  ],
+  "PostInvocation": [
+    {
+      "type": "command",
+      "command": "'/opt/projmux/bin/projmux' ai ingest antigravity-hook --event PostInvocation || printf '%s\\n' '{}' # projmux-managed:antigravity-hooks:v1",
+      "timeout": 30
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "'/opt/projmux/bin/projmux' ai ingest antigravity-hook --event PostToolUse || printf '%s\\n' '{}' # projmux-managed:antigravity-hooks:v1",
+          "timeout": 30
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "type": "command",
+      "command": "'/opt/projmux/bin/projmux' ai ingest antigravity-hook --event Stop || printf '%s\\n' '{\"decision\":\"stop\"}' # projmux-managed:antigravity-hooks:v1",
+      "timeout": 30
+    }
+  ]
+}

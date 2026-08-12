@@ -4,12 +4,265 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestAIIntegrateAntigravityInstallsNamedEntryWithAbsoluteExplicitEvents(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.executable = func() (string, error) { return "/opt/projmux/bin/projmux", nil }
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "antigravity"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run integrate antigravity error = %v", err)
+	}
+	path := filepath.Join(home, antigravityHooksRelativePath)
+	data := readCodexTestFile(t, path)
+	var hooks map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &hooks); err != nil {
+		t.Fatalf("hooks JSON = %s: %v", data, err)
+	}
+	if len(hooks) != 1 || hooks[antigravityManagedHookName] == nil {
+		t.Fatalf("hooks = %#v, want exactly named projmux entry", hooks)
+	}
+	managed := string(hooks[antigravityManagedHookName])
+	for _, event := range antigravityManagedEvents {
+		if !strings.Contains(managed, `"`+event+`"`) || !strings.Contains(managed, "--event "+event) {
+			t.Fatalf("managed entry missing explicit %s command:\n%s", event, managed)
+		}
+	}
+	for _, want := range []string{"/opt/projmux/bin/projmux", antigravityManagedMarker, `printf '%s\\n' '{}'`, `\"decision\":\"stop\"`, `"matcher": "*"`} {
+		if !strings.Contains(managed, want) {
+			t.Fatalf("managed entry = %s, want %q", managed, want)
+		}
+	}
+	for _, forbidden := range []string{"PreToolUse", `"decision":"allow"`, `"decision":"deny"`, `"decision":"ask"`, "force_continue"} {
+		if strings.Contains(managed, forbidden) {
+			t.Fatalf("managed entry = %s, must not contain %q", managed, forbidden)
+		}
+	}
+	if !strings.Contains(stdout.String(), "configured Antigravity hooks") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestAntigravityManagedHookGolden(t *testing.T) {
+	got, err := encodeAntigravityManagedHook("/opt/projmux/bin/projmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "antigravity", "managed_hooks_entry.golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got+"\n" != string(want) {
+		t.Fatalf("managed Antigravity entry golden mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestAIIntegrateAntigravityPreservesUnmanagedBytesAndIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, antigravityHooksRelativePath)
+	unmanaged := `"user-hook": { "enabled": false, "note": "projmux ai ingest antigravity-hook is documentation, not a command", "FutureEvent": [{"unknown": [3, 2, 1]}], "PostToolUse": [{"matcher":"run_command","hooks":[{"command":"./keep.sh","vendorField":{"x":true}}]}] }`
+	writeCodexTestFile(t, path, "{\n  "+unmanaged+",\n  \"top-level-unknown\": [true, {\"raw\":\"keep spacing\"}]\n}\n")
+
+	if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	first := readCodexTestFile(t, path)
+	if !strings.Contains(first, unmanaged) || !strings.Contains(first, `"top-level-unknown": [true, {"raw":"keep spacing"}]`) {
+		t.Fatalf("install normalized or lost unmanaged JSON:\n%s", first)
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "antigravity"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	second := readCodexTestFile(t, path)
+	if second != first {
+		t.Fatalf("reinstall changed hooks:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+	if !strings.Contains(stdout.String(), "no changes") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+
+	if err := cmd.Run([]string{"integrate", "antigravity", "--remove"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	afterRemove := readCodexTestFile(t, path)
+	if strings.Contains(afterRemove, antigravityManagedMarker) || !strings.Contains(afterRemove, unmanaged) || !strings.Contains(afterRemove, `"top-level-unknown": [true, {"raw":"keep spacing"}]`) {
+		t.Fatalf("remove changed unmanaged JSON or retained managed entry:\n%s", afterRemove)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(afterRemove), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := decoded[antigravityManagedHookName]; ok {
+		t.Fatalf("managed entry remains after remove: %s", afterRemove)
+	}
+	var removeAgain bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "antigravity", "--remove"}, &removeAgain, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCodexTestFile(t, path); got != afterRemove || !strings.Contains(removeAgain.String(), "no changes") {
+		t.Fatalf("second remove changed hooks or lacked no-op diagnostic: hooks=%q stdout=%q", got, removeAgain.String())
+	}
+}
+
+func TestAIIntegrateAntigravityDryRunDoesNotWrite(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "antigravity", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, antigravityHooksRelativePath)); !os.IsNotExist(err) {
+		t.Fatalf("hooks stat = %v, want missing", err)
+	}
+	for _, want := range []string{"dry-run", "/tmp/projmux", "PreInvocation, PostInvocation, PostToolUse, Stop", "--event Stop"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	}
+}
+
+func TestAIIntegrateAntigravityReportsUnmanagedConflicts(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{name: "reserved named entry", content: `{"projmux":{"Stop":[{"command":"echo user"}]}}`, want: `unmanaged named entry "projmux"`},
+		{name: "duplicate ingest elsewhere", content: `{"user":{"Stop":[{"command":"projmux ai ingest antigravity-hook --event Stop"}]}}`, want: `outside the managed "projmux" entry`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			cmd := testAICommand(home)
+			cmd.readFile = os.ReadFile
+			path := filepath.Join(home, antigravityHooksRelativePath)
+			writeCodexTestFile(t, path, tt.content)
+			before := readCodexTestFile(t, path)
+			err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "--dry-run") {
+				t.Fatalf("error = %v, want %q with dry-run guidance", err, tt.want)
+			}
+			if got := readCodexTestFile(t, path); got != before {
+				t.Fatalf("conflict changed hooks: %q -> %q", before, got)
+			}
+			var stdout bytes.Buffer
+			if err := cmd.Run([]string{"integrate", "antigravity", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(stdout.String(), tt.want) {
+				t.Fatalf("dry-run = %q, want %q", stdout.String(), tt.want)
+			}
+		})
+	}
+}
+
+func TestAIIntegrateAntigravityReportsMalformedAndInvalidRoot(t *testing.T) {
+	for _, tt := range []struct{ name, content, want string }{
+		{name: "malformed", content: `{"user":`, want: "malformed JSON"},
+		{name: "array root", content: `[]`, want: "top-level value must be a JSON object"},
+		{name: "duplicate key", content: `{"user":{},"user":{}}`, want: `duplicate top-level key "user"`},
+		{name: "empty", content: ``, want: "file is empty"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			cmd := testAICommand(home)
+			cmd.readFile = os.ReadFile
+			path := filepath.Join(home, antigravityHooksRelativePath)
+			writeCodexTestFile(t, path, tt.content)
+			err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), path) {
+				t.Fatalf("error = %v, want path and %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestAIIntegrateAntigravityRejectsSymlinkComponents(t *testing.T) {
+	t.Run("file", func(t *testing.T) {
+		home := t.TempDir()
+		cmd := testAICommand(home)
+		cmd.readFile = os.ReadFile
+		target := filepath.Join(t.TempDir(), "hooks.json")
+		writeCodexTestFile(t, target, `{}`)
+		path := filepath.Join(home, antigravityHooksRelativePath)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "refusing symlink path component") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("directory", func(t *testing.T) {
+		home := t.TempDir()
+		cmd := testAICommand(home)
+		cmd.readFile = os.ReadFile
+		target := t.TempDir()
+		if err := os.Symlink(target, filepath.Join(home, ".gemini")); err != nil {
+			t.Fatal(err)
+		}
+		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "refusing symlink path component") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
+func TestAIIntegrateAntigravityReportsPermissionFailures(t *testing.T) {
+	t.Run("read", func(t *testing.T) {
+		cmd := testAICommand(t.TempDir())
+		cmd.readFile = func(string) ([]byte, error) { return nil, fs.ErrPermission }
+		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "read Antigravity hooks") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("write", func(t *testing.T) {
+		cmd := testAICommand(t.TempDir())
+		cmd.readFile = os.ReadFile
+		cmd.writeFile = func(string, []byte, os.FileMode) error { return fs.ErrPermission }
+		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "write Antigravity hooks") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("mkdir", func(t *testing.T) {
+		cmd := testAICommand(t.TempDir())
+		cmd.readFile = os.ReadFile
+		cmd.mkdirAll = func(string, os.FileMode) error { return fs.ErrPermission }
+		err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "create Antigravity hooks directory") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
+func TestAIIntegrateAntigravityRejectsRelativeExecutable(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	cmd.readFile = os.ReadFile
+	cmd.executable = func() (string, error) { return "bin/projmux", nil }
+	err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "not absolute") {
+		t.Fatalf("error = %v", err)
+	}
+}
 
 func TestAIIntegrateCodexDefaultsToManagedHooks(t *testing.T) {
 	home := t.TempDir()

@@ -1660,8 +1660,9 @@ func TestAntigravityV1112HookCatalogHasOfficialFiveEvents(t *testing.T) {
 	got := make([]string, 0, len(catalog.Events))
 	for _, event := range catalog.Events {
 		got = append(got, event.Name)
-		if event.Install {
-			t.Fatalf("event %s install = true, want Phase 1 config non-mutation default", event.Name)
+		wantInstall := event.Name != "PreToolUse"
+		if event.Install != wantInstall {
+			t.Fatalf("event %s install = %t, want %t", event.Name, event.Install, wantInstall)
 		}
 	}
 	if !reflect.DeepEqual(got, want) || catalog.ObservedVersion != "Antigravity CLI 1.1.12" {
@@ -1731,9 +1732,38 @@ func TestIngestAntigravityRawV1112FixtureRoutesExplicitPreInvocationByWorkspace(
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%workspace", aiPaneHookActiveOption, "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%workspace", aiPaneContextOption, "/workspace/sanitized-project"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%workspace", aiPaneStateOption, "thinking"}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%workspace", aiPaneBadgeKindOption, aiBadgeKindInProgress}},
+		{name: "tmux", args: []string{"set-option", "-p", "-t", "%workspace", attentionStateOption, attentionStateBusy}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
+		}
+	}
+}
+
+func TestIngestAntigravityPostToolUseRetainsErrorDiagnosticAndStaysQuiet(t *testing.T) {
+	home := t.TempDir()
+	store := &stubNotifyStore{}
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
+	cmd.stdin = strings.NewReader(`{"conversationId":"ag-conv","cwd":"/repo/projmux","error":"sanitized tool failure"}`)
+	cmd.readCommand = antigravityIngestReadCommand("%7")
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "antigravity-hook", "--event", "PostToolUse"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "{}\n" || len(store.pushed) != 0 {
+		t.Fatalf("stdout = %q, pushes = %#v; want quiet {} response", stdout.String(), store.pushed)
+	}
+	var log bytes.Buffer
+	if err := cmd.Run([]string{"ingest", "log", "--json"}, &log, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"event":"PostToolUse"`, `"result":"quiet"`, `tool error: sanitized tool failure`} {
+		if !strings.Contains(log.String(), want) {
+			t.Fatalf("log = %q, want %q", log.String(), want)
 		}
 	}
 }
