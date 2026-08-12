@@ -334,9 +334,9 @@ user/global preference in this release.
 ## AI Resume Picker
 
 The AI resume picker (`projmux ai split --agent resume`) lists the most recent
-deduplicated Claude/Codex resume sessions. The number of rows it shows and how
-far below the current directory it scans are both configurable; the defaults are
-30 rows and depth 0 (the current directory only).
+deduplicated Claude/Codex/Antigravity resume sessions. The number of rows it
+shows and how far below the current directory it scans are both configurable;
+the defaults are 30 rows and depth 0 (the current directory only).
 
 Preferred interactive path:
 
@@ -374,6 +374,21 @@ directories are never included. At depth `>0` the picker adds a relative-cwd
 column (`./`, `./web`, `./api`) so child-directory sessions are easy to tell
 apart. A missing or zero depth is identical to the historical behavior. Settings
 edits write the global config.
+
+Antigravity uses the upstream v1.1.12 current-storage boundary before its
+legacy history fallback. `cache/last_conversations.json` contributes the latest
+UUID mapped to a matching workspace; `cache/conversation_metadata.json`
+contributes only rows that carry a valid UUID, workspace URI/path, and summary.
+Both require an exact regular `conversations/<uuid>.db` and use only its
+existence/mtime. They do not open SQLite content and do not treat `.db-wal`,
+`.db-shm`, symlinks, or arbitrary paths as conversations. The cache provides a
+latest-session floor rather than complete history. Missing/malformed cache,
+workspace-less metadata, and stale mappings degrade to legacy `history.jsonl`
+without changing the shared exact/depth/sort/cap behavior.
+Live hook/session-state resume metadata is a separate high-confidence lane and
+is not a disk-picker candidate. When a disk picker selection creates a pane,
+its source is persisted so Session State preview and doctor can report medium
+confidence for DB-validated cache sources or low confidence for legacy history.
 
 ## Environment Variables
 

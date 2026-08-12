@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -247,6 +248,8 @@ func TestSessionStateRestoreDryRunShowsResumeHealth(t *testing.T) {
 				{Index: 2, Title: "missing codex", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipe("codex", "", "topic")},
 				{Index: 3, Title: "antigravity", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipeWithResumeMetadata("antigravity", "123e4567-e89b-12d3-a456-426614174000", "topic", "hook", now.Format(time.RFC3339))},
 				{Index: 4, Title: "missing antigravity", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipe("antigravity", "", "topic")},
+				{Index: 5, Title: "cached antigravity", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipeWithResumeMetadata("antigravity", "123e4567-e89b-42d3-a456-426614174001", "topic", aisessions.SourceAntigravityLastConversation, now.Format(time.RFC3339))},
+				{Index: 6, Title: "legacy antigravity", CWD: "/tmp/workspace", Recipe: sessionstate.AgentRecipeWithResumeMetadata("antigravity", "123e4567-e89b-42d3-a456-426614174002", "topic", aisessions.SourceAntigravityHistory, now.Format(time.RFC3339))},
 			},
 		}},
 	}
@@ -273,6 +276,35 @@ func TestSessionStateRestoreDryRunShowsResumeHealth(t *testing.T) {
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("dry-run output missing %q:\n%s", want, output)
+		}
+	}
+	for _, tc := range []struct {
+		source string
+		want   string
+	}{
+		{aisessions.SourceAntigravityLastConversation, "status available confidence medium source " + aisessions.SourceAntigravityLastConversation},
+		{aisessions.SourceAntigravityHistory, "status available confidence low source " + aisessions.SourceAntigravityHistory},
+	} {
+		recipe := sessionstate.AgentRecipeWithResumeMetadata("antigravity", "123e4567-e89b-42d3-a456-426614174099", "topic", tc.source, now.Format(time.RFC3339))
+		if got := sessionStateResumeHealthText(recipe, now); !strings.Contains(got, tc.want) {
+			t.Errorf("session-state preview health = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+func TestSessionStateResumeConfidencePreservesLiveAndCurrentStorageGuarantees(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"hook":       "high",
+		"session-id": "high",
+		aisessions.SourceAntigravityLastConversation: "medium",
+		aisessions.SourceAntigravityMetadata:         "medium",
+		aisessions.SourceAntigravityHistory:          "low",
+	}
+	for source, want := range tests {
+		if got := sessionStateResumeConfidence(source); got != want {
+			t.Errorf("sessionStateResumeConfidence(%q) = %q, want %q", source, got, want)
 		}
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -33,9 +34,11 @@ const (
 	AgentCodex       = codex.AgentName
 	AgentAntigravity = "antigravity"
 
-	SourceClaudeTranscript   = "claude-transcript"
-	SourceCodexRollout       = "codex-rollout"
-	SourceAntigravityHistory = "antigravity-history"
+	SourceClaudeTranscript            = "claude-transcript"
+	SourceCodexRollout                = "codex-rollout"
+	SourceAntigravityLastConversation = "antigravity-last-conversation"
+	SourceAntigravityMetadata         = "antigravity-conversation-metadata"
+	SourceAntigravityHistory          = "antigravity-history"
 
 	sessionScanLineLimit  = 100
 	sessionTitleLineLimit = 100
@@ -96,6 +99,13 @@ type DiscoverOptions struct {
 
 	ClaudeProjectsDir string
 	CodexSessionsDir  string
+	// AntigravityCacheDir contains the public v1.1.12 cache indexes. Discovery
+	// reads only last_conversations.json and conversation_metadata.json.
+	AntigravityCacheDir string
+	// AntigravityConversationsDir contains the public conversation DB files.
+	// Discovery only validates an exact <uuid>.db regular file and reads its
+	// mtime; it never opens or queries the SQLite file.
+	AntigravityConversationsDir string
 
 	// AntigravityHistoryPath is the Antigravity CLI session index (JSONL). Each
 	// line records one conversation's id, workspace cwd, timestamp, and first
@@ -127,7 +137,8 @@ func Discover(cwd string, opts DiscoverOptions) ([]SessionMeta, error) {
 	var sessions []SessionMeta
 	sessions = append(sessions, discoverClaude(cwd, opts.ClaudeProjectsDir, depth)...)
 	sessions = append(sessions, discoverCodex(cwd, opts.CodexSessionsDir, depth)...)
-	sessions = append(sessions, discoverAntigravity(cwd, opts.AntigravityHistoryPath, depth)...)
+	sessions = append(sessions, discoverAntigravityCurrentStorage(cwd, opts.AntigravityCacheDir, opts.AntigravityConversationsDir, depth)...)
+	sessions = append(sessions, discoverAntigravityHistory(cwd, opts.AntigravityHistoryPath, depth)...)
 	sessions = dedupeByResumeID(sessions)
 
 	sort.SliceStable(sessions, func(i, j int) bool {
@@ -235,8 +246,20 @@ func (opts DiscoverOptions) withDefaults() DiscoverOptions {
 	if strings.TrimSpace(opts.CodexSessionsDir) == "" && home != "" {
 		opts.CodexSessionsDir = filepath.Join(home, ".codex", "sessions")
 	}
-	if strings.TrimSpace(opts.AntigravityHistoryPath) == "" && home != "" {
-		opts.AntigravityHistoryPath = filepath.Join(home, ".gemini", "antigravity-cli", "history.jsonl")
+	antigravityRoot := ""
+	if historyPath := strings.TrimSpace(opts.AntigravityHistoryPath); historyPath != "" {
+		// An explicit history fixture also scopes default cache/DB lookup beside
+		// that fixture, keeping callers from accidentally mixing stores.
+		antigravityRoot = filepath.Dir(historyPath)
+	} else if home != "" {
+		antigravityRoot = filepath.Join(home, ".gemini", "antigravity-cli")
+		opts.AntigravityHistoryPath = filepath.Join(antigravityRoot, "history.jsonl")
+	}
+	if strings.TrimSpace(opts.AntigravityCacheDir) == "" && antigravityRoot != "" {
+		opts.AntigravityCacheDir = filepath.Join(antigravityRoot, "cache")
+	}
+	if strings.TrimSpace(opts.AntigravityConversationsDir) == "" && antigravityRoot != "" {
+		opts.AntigravityConversationsDir = filepath.Join(antigravityRoot, "conversations")
 	}
 	return opts
 }
@@ -580,7 +603,7 @@ type antigravityHistoryRecord struct {
 // caller then dedupes, sorts, and caps). A missing file, malformed lines, and
 // records whose conversationId is not a valid resume id are skipped silently so
 // a broken index degrades to no Antigravity rows rather than an error.
-func discoverAntigravity(cwd, historyPath string, depth int) []SessionMeta {
+func discoverAntigravityHistory(cwd, historyPath string, depth int) []SessionMeta {
 	historyPath = strings.TrimSpace(historyPath)
 	if historyPath == "" {
 		return nil
@@ -638,6 +661,194 @@ func discoverAntigravity(cwd, historyPath string, depth int) []SessionMeta {
 	return sessions
 }
 
+// discoverAntigravityCurrentStorage reads only Antigravity CLI v1.1.12's
+// public cache indexes and the filename/mtime boundary of conversation DBs.
+// The cache is a latest-conversation floor, not a complete history. Missing or
+// malformed indexes and stale rows degrade independently without failing the
+// rest of discovery.
+func discoverAntigravityCurrentStorage(cwd, cacheDir, conversationsDir string, depth int) []SessionMeta {
+	cacheDir = strings.TrimSpace(cacheDir)
+	conversationsDir = strings.TrimSpace(conversationsDir)
+	if cacheDir == "" || conversationsDir == "" {
+		return nil
+	}
+
+	var sessions []SessionMeta
+	sessions = append(sessions, discoverAntigravityLastConversations(
+		cwd,
+		filepath.Join(cacheDir, "last_conversations.json"),
+		conversationsDir,
+		depth,
+	)...)
+	sessions = append(sessions, discoverAntigravityConversationMetadata(
+		cwd,
+		filepath.Join(cacheDir, "conversation_metadata.json"),
+		conversationsDir,
+		depth,
+	)...)
+	return sessions
+}
+
+func discoverAntigravityLastConversations(cwd, cachePath, conversationsDir string, depth int) []SessionMeta {
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return nil
+	}
+	var records map[string]json.RawMessage
+	if err := json.Unmarshal(data, &records); err != nil || records == nil {
+		return nil
+	}
+
+	var sessions []SessionMeta
+	for workspaceValue, rawID := range records {
+		workspace, ok := antigravityWorkspacePath(workspaceValue)
+		if !ok || !withinTree(workspace, cwd, depth) {
+			continue
+		}
+		var candidateID string
+		if err := json.Unmarshal(rawID, &candidateID); err != nil {
+			continue
+		}
+		id, modTime, ok := antigravityConversationDB(conversationsDir, candidateID)
+		if !ok {
+			continue
+		}
+		sessions = append(sessions, antigravityCacheSession(cwd, workspace, id, "", modTime, depth, SourceAntigravityLastConversation))
+	}
+	return sessions
+}
+
+type antigravityConversationMetadataIndex struct {
+	Conversations map[string]json.RawMessage `json:"conversations"`
+}
+
+func discoverAntigravityConversationMetadata(cwd, cachePath, conversationsDir string, depth int) []SessionMeta {
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return nil
+	}
+	var index antigravityConversationMetadataIndex
+	if err := json.Unmarshal(data, &index); err != nil || index.Conversations == nil {
+		return nil
+	}
+
+	var sessions []SessionMeta
+	for candidateID, rawRecord := range index.Conversations {
+		var record map[string]any
+		if err := json.Unmarshal(rawRecord, &record); err != nil {
+			continue
+		}
+		rawSummary := stringJSONField(record, "summary")
+		if rawSummary == "" {
+			// The metadata lane requires all three upstream associations: UUID,
+			// workspace URI/path, and summary. The last-conversation lane is the
+			// short-UUID floor when metadata has no summary.
+			continue
+		}
+		workspace, ok := matchingAntigravityMetadataWorkspace(record, cwd, depth)
+		if !ok {
+			continue
+		}
+		id, modTime, ok := antigravityConversationDB(conversationsDir, candidateID)
+		if !ok {
+			continue
+		}
+		// Summary supplies only a safe title candidate. It never supplies cwd or
+		// identity; a present but noisy summary falls back to the short UUID.
+		title := cleanTitleCandidate(rawSummary)
+		sessions = append(sessions, antigravityCacheSession(cwd, workspace, id, title, modTime, depth, SourceAntigravityMetadata))
+	}
+	return sessions
+}
+
+func matchingAntigravityMetadataWorkspace(record map[string]any, cwd string, depth int) (string, bool) {
+	// Accept the documented singular forms and observed URI/path list variants.
+	// Unknown fields remain ignored. A workspace-less metadata row is unusable,
+	// even when it has a summary, because project ownership cannot be inferred.
+	keys := []string{
+		"workspace", "workspace_uri", "workspaceUri", "workspace_path", "workspacePath",
+		"workspace_uris", "workspaceUris", "WorkspaceURIs",
+		"workspace_paths", "workspacePaths", "WorkspacePaths",
+	}
+	for _, key := range keys {
+		switch value := record[key].(type) {
+		case string:
+			if workspace, ok := antigravityWorkspacePath(value); ok && withinTree(workspace, cwd, depth) {
+				return workspace, true
+			}
+		case []any:
+			for _, item := range value {
+				workspaceValue, ok := item.(string)
+				if !ok {
+					continue
+				}
+				if workspace, ok := antigravityWorkspacePath(workspaceValue); ok && withinTree(workspace, cwd, depth) {
+					return workspace, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+func antigravityCacheSession(cwd, workspace, id, title string, modTime time.Time, depth int, source string) SessionMeta {
+	recordedCWD := cwd
+	if depth > 0 {
+		recordedCWD = cleanCWD(workspace)
+	}
+	if title == "" {
+		title = shortResumeID(id)
+	}
+	return SessionMeta{
+		Agent:        AgentAntigravity,
+		ResumeID:     id,
+		Title:        title,
+		LastModified: modTime,
+		Context:      SessionContext{CWD: recordedCWD},
+		Source:       source,
+		Turns:        0,
+	}
+}
+
+// antigravityConversationDB validates exactly <normalized-uuid>.db. UUID
+// validation prevents traversal and sidecar suffixes, while Lstat rejects a DB
+// symlink (including one escaping the store) and accepts only regular files.
+// The file is never opened; its mtime is the cache candidate's recency.
+func antigravityConversationDB(conversationsDir, candidateID string) (string, time.Time, bool) {
+	id, err := antigravity.NormalizeResumeID(candidateID)
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	path := filepath.Join(conversationsDir, id+".db")
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", time.Time{}, false
+	}
+	return id, info.ModTime(), true
+}
+
+func antigravityWorkspacePath(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" {
+		if !strings.EqualFold(parsed.Scheme, "file") || (parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost")) {
+			return "", false
+		}
+		unescaped, err := url.PathUnescape(parsed.EscapedPath())
+		if err != nil {
+			return "", false
+		}
+		value = unescaped
+	}
+	cleaned := cleanCWD(value)
+	if cleaned == "" || !filepath.IsAbs(cleaned) {
+		return "", false
+	}
+	return cleaned, true
+}
+
 type sessionFileCandidate struct {
 	path    string
 	modTime time.Time
@@ -654,7 +865,7 @@ func dedupeByResumeID(sessions []SessionMeta) []SessionMeta {
 			continue
 		}
 		current, ok := latest[id]
-		if !ok || session.LastModified.After(current.LastModified) {
+		if !ok || preferSessionCandidate(session, current) {
 			latest[id] = session
 		}
 	}
@@ -663,6 +874,37 @@ func dedupeByResumeID(sessions []SessionMeta) []SessionMeta {
 		deduped = append(deduped, session)
 	}
 	return deduped
+}
+
+func preferSessionCandidate(candidate, current SessionMeta) bool {
+	// Source priority is an Antigravity contract. Preserve the historical
+	// newest-only behavior across providers (including a coincidental UUID
+	// collision with Claude/Codex) and for every non-Antigravity provider.
+	if candidate.Agent != AgentAntigravity || current.Agent != AgentAntigravity {
+		return candidate.LastModified.After(current.LastModified)
+	}
+	candidatePriority := sessionSourcePriority(candidate.Source)
+	currentPriority := sessionSourcePriority(current.Source)
+	return candidatePriority > currentPriority ||
+		(candidatePriority == currentPriority && candidate.LastModified.After(current.LastModified))
+}
+
+// sessionSourcePriority keeps source guarantees separate from recency. Live
+// hook/session-id metadata is authoritative, a DB-validated current-storage
+// cache UUID is next, and legacy history is only the final fallback.
+func sessionSourcePriority(source string) int {
+	switch strings.TrimSpace(source) {
+	case "hook", "session-id":
+		return 4
+	case SourceAntigravityLastConversation:
+		return 3
+	case SourceAntigravityMetadata:
+		return 2
+	case SourceAntigravityHistory:
+		return 1
+	default:
+		return 0
+	}
 }
 
 type sessionDetails struct {

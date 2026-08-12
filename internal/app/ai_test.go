@@ -1805,6 +1805,55 @@ func TestAIResumePickerSessionRowRunsCodexResumeAndRecordsPaneMetadata(t *testin
 	}
 }
 
+func TestAIResumePickerCurrentStorageAntigravityRunsConversationResume(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	cacheDir := filepath.Join(home, ".gemini", "antigravity-cli", "cache")
+	dbDir := filepath.Join(home, ".gemini", "antigravity-cli", "conversations")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resumeID := "123e4567-e89b-42d3-a456-426614174001"
+	writeFile(t, filepath.Join(cacheDir, "last_conversations.json"), `{"`+work+`":"`+resumeID+`"}`)
+	dbPath := filepath.Join(dbDir, resumeID+".db")
+	writeFile(t, dbPath, "synthetic opaque db placeholder")
+	updatedAt := time.Date(2026, 8, 12, 9, 30, 0, 0, time.UTC)
+	if err := os.Chtimes(dbPath, updatedAt, updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	agyBin := writeExecutable(t, filepath.Join(home, "bin", "agy"))
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiResumePickerValue(aiModeAntigravity, resumeID)}}
+	cmd := testAICommand(home)
+	cmd.runner = runner
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+	stubAISplitReadCommand(cmd, home, work, map[string]string{"agy": agyBin}, "%7", "%9")
+
+	if err := cmd.runResumePicker("right"); err != nil {
+		t.Fatalf("runResumePicker() error = %v", err)
+	}
+	commands := cmdRecorder(cmd).commands
+	wantExec := "exec " + shellQuote(agyBin) + " '--conversation' '" + resumeID + "'"
+	if !containsAICommandArgSubstring(commands, wantExec) {
+		t.Fatalf("commands = %#v, want Antigravity resume exec %q", commands, wantExec)
+	}
+	for _, want := range [][]string{
+		{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeAntigravity},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeIDOption, resumeID},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeSourceOption, aisessions.SourceAntigravityLastConversation},
+		{"set-option", "-p", "-t", "%9", aiPaneResumeUpdatedAtOption, updatedAt.Format(time.RFC3339)},
+	} {
+		if !containsAICommandArgs(commands, "tmux", want) {
+			t.Fatalf("commands = %#v, want current-storage resume metadata command %v", commands, want)
+		}
+	}
+}
+
 func TestRunSelectedResumeSessionRunsClaudeResume(t *testing.T) {
 	home := t.TempDir()
 	work := filepath.Join(home, "repo")

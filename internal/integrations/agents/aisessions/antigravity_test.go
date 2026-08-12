@@ -1,8 +1,10 @@
 package aisessions
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -161,4 +163,224 @@ func TestDiscoverMergesAntigravityWithOtherAgents(t *testing.T) {
 	if got[0].Agent != AgentAntigravity || got[1].Agent != AgentCodex {
 		t.Fatalf("agents = [%q, %q], want [antigravity, codex] newest first", got[0].Agent, got[1].Agent)
 	}
+}
+
+func TestDiscoverAntigravityLastConversationUsesValidatedDBBoundary(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace", "app")
+	cacheDir := filepath.Join(root, "cache")
+	dbDir := filepath.Join(root, "conversations")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	id := "11111111-2222-4333-8444-555555555555"
+	dbPath := filepath.Join(dbDir, id+".db")
+	writeFile(t, dbPath, "synthetic opaque db placeholder")
+	dbTime := time.Date(2026, 8, 12, 3, 4, 5, 0, time.UTC)
+	setModTime(t, dbPath, dbTime)
+	writeJSONFile(t, filepath.Join(cacheDir, "last_conversations.json"), map[string]any{
+		workspace: id,
+	})
+	// A newer legacy row for the same UUID must not overwrite the stronger
+	// DB-validated last-conversation source.
+	historyPath := filepath.Join(root, "history.jsonl")
+	writeFile(t, historyPath, `{"conversationId":"`+id+`","workspace":"`+workspace+`","timestamp":1999999999999,"display":"legacy title"}`+"\n")
+
+	got, err := Discover(workspace, DiscoverOptions{
+		AntigravityCacheDir:         cacheDir,
+		AntigravityConversationsDir: dbDir,
+		AntigravityHistoryPath:      historyPath,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Discover() len = %d, want 1: %#v", len(got), got)
+	}
+	assertSession(t, got[0], SessionMeta{
+		Agent:        AgentAntigravity,
+		ResumeID:     id,
+		Title:        shortResumeID(id),
+		LastModified: dbTime,
+		Context:      SessionContext{CWD: workspace},
+		Source:       SourceAntigravityLastConversation,
+	})
+	if got[0].Turns != 0 {
+		t.Fatalf("Turns = %d, want blank/unknown", got[0].Turns)
+	}
+}
+
+func TestDiscoverAntigravityMetadataWorkspaceVariantsAndSafeTitle(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace", "app")
+	child := filepath.Join(workspace, "child dir")
+	cacheDir := filepath.Join(root, "cache")
+	dbDir := filepath.Join(root, "conversations")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{
+		"11111111-2222-4333-8444-555555555561",
+		"11111111-2222-4333-8444-555555555562",
+		"11111111-2222-4333-8444-555555555563",
+	}
+	for i, id := range ids {
+		path := filepath.Join(dbDir, id+".db")
+		writeFile(t, path, "opaque")
+		setModTime(t, path, time.Date(2026, 8, 12, 4, i, 0, 0, time.UTC))
+	}
+	writeJSONFile(t, filepath.Join(cacheDir, "conversation_metadata.json"), map[string]any{
+		"conversations": map[string]any{
+			ids[0]: map[string]any{"workspaceUri": pathToFileURI(workspace), "summary": "  Safe synthetic summary  ", "unknown": true},
+			ids[1]: map[string]any{"WorkspaceURIs": []any{"https://invalid.example/work", pathToFileURI(child)}, "summary": "<command-name>/goal"},
+			ids[2]: map[string]any{"summary": "must not imply a workspace"},
+		},
+		"future_field": map[string]any{"ignored": true},
+	})
+
+	got, err := Discover(workspace, DiscoverOptions{
+		AntigravityCacheDir:         cacheDir,
+		AntigravityConversationsDir: dbDir,
+		AntigravityHistoryPath:      filepath.Join(root, "missing-history.jsonl"),
+		Depth:                       1,
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Discover() len = %d, want 2 workspace-bearing rows: %#v", len(got), got)
+	}
+	if got[0].ResumeID != ids[1] || got[0].Title != shortResumeID(ids[1]) || got[0].Context.CWD != child {
+		t.Fatalf("workspace-list row = %#v, want child cwd and short UUID title", got[0])
+	}
+	if got[1].ResumeID != ids[0] || got[1].Title != "Safe synthetic summary" || got[1].Context.CWD != workspace {
+		t.Fatalf("workspace URI row = %#v, want safe summary/exact cwd", got[1])
+	}
+	for _, session := range got {
+		if session.Source != SourceAntigravityMetadata || session.Turns != 0 {
+			t.Fatalf("metadata row source/turns = %q/%d", session.Source, session.Turns)
+		}
+	}
+}
+
+func TestDiscoverAntigravityCurrentStorageCleanDegradesMalformedAndStaleRows(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace", "app")
+	cacheDir := filepath.Join(root, "cache")
+	dbDir := filepath.Join(root, "conversations")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	validID := "11111111-2222-4333-8444-555555555571"
+	invalidID := "../../escape"
+	missingID := "11111111-2222-4333-8444-555555555572"
+	writeFile(t, filepath.Join(dbDir, validID+".db-wal"), "sidecar only")
+	writeFile(t, filepath.Join(dbDir, validID+".db-shm"), "sidecar only")
+	writeJSONFile(t, filepath.Join(cacheDir, "last_conversations.json"), map[string]any{
+		workspace:                         validID,
+		filepath.Join(workspace, "child"): 42,
+	})
+	writeJSONFile(t, filepath.Join(cacheDir, "conversation_metadata.json"), map[string]any{
+		"conversations": map[string]any{
+			invalidID: map[string]any{"workspace": workspace, "summary": "invalid id"},
+			missingID: map[string]any{"workspace": workspace, "summary": "missing db"},
+		},
+	})
+
+	got, err := Discover(workspace, DiscoverOptions{
+		AntigravityCacheDir:         cacheDir,
+		AntigravityConversationsDir: dbDir,
+		AntigravityHistoryPath:      filepath.Join(root, "missing-history.jsonl"),
+	})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Discover() = %#v, want sidecar/traversal/missing DB rows skipped", got)
+	}
+
+	writeFile(t, filepath.Join(cacheDir, "last_conversations.json"), "{ malformed")
+	writeFile(t, filepath.Join(cacheDir, "conversation_metadata.json"), `{"conversations":[]}`)
+	got, err = Discover(workspace, DiscoverOptions{
+		AntigravityCacheDir:         cacheDir,
+		AntigravityConversationsDir: dbDir,
+		AntigravityHistoryPath:      filepath.Join(root, "missing-history.jsonl"),
+	})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("malformed cache Discover() = %#v, %v; want clean empty degrade", got, err)
+	}
+}
+
+func TestAntigravityConversationDBRejectsSymlinkAndNonExactNames(t *testing.T) {
+	t.Parallel()
+
+	dbDir := t.TempDir()
+	id := "11111111-2222-4333-8444-555555555581"
+	outside := filepath.Join(t.TempDir(), "outside.db")
+	writeFile(t, outside, "opaque")
+	mustSymlink(t, outside, filepath.Join(dbDir, id+".db"))
+	for _, candidate := range []string{id, id + ".db-wal", id + ".db-shm", "../" + id, "not-a-uuid"} {
+		if got, _, ok := antigravityConversationDB(dbDir, candidate); ok {
+			t.Fatalf("antigravityConversationDB(%q) = %q, want rejected", candidate, got)
+		}
+	}
+}
+
+func TestAntigravitySourcePriorityDedupe(t *testing.T) {
+	t.Parallel()
+
+	id := "11111111-2222-4333-8444-555555555591"
+	newer := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
+	older := newer.Add(-time.Hour)
+	sessions := dedupeByResumeID([]SessionMeta{
+		{Agent: AgentAntigravity, ResumeID: id, Source: SourceAntigravityHistory, LastModified: newer, Title: "history"},
+		{Agent: AgentAntigravity, ResumeID: id, Source: SourceAntigravityMetadata, LastModified: newer, Title: "metadata"},
+		{Agent: AgentAntigravity, ResumeID: id, Source: SourceAntigravityLastConversation, LastModified: newer, Title: "last"},
+		{Agent: AgentAntigravity, ResumeID: id, Source: "hook", LastModified: older, Title: "live"},
+	})
+	if len(sessions) != 1 || sessions[0].Source != "hook" || sessions[0].Title != "live" {
+		t.Fatalf("dedupeByResumeID() = %#v, want live hook despite older timestamp", sessions)
+	}
+}
+
+func TestAntigravitySourcePriorityDoesNotChangeCrossProviderDedupe(t *testing.T) {
+	t.Parallel()
+
+	id := "11111111-2222-4333-8444-555555555592"
+	newer := time.Date(2026, 8, 12, 6, 0, 0, 0, time.UTC)
+	sessions := dedupeByResumeID([]SessionMeta{
+		{Agent: AgentCodex, ResumeID: id, Source: SourceCodexRollout, LastModified: newer, Title: "newer codex"},
+		{Agent: AgentAntigravity, ResumeID: id, Source: SourceAntigravityLastConversation, LastModified: newer.Add(-time.Hour), Title: "older cache"},
+	})
+	if len(sessions) != 1 || sessions[0].Agent != AgentCodex || sessions[0].Title != "newer codex" {
+		t.Fatalf("dedupeByResumeID() = %#v, want historical newest cross-provider candidate", sessions)
+	}
+}
+
+func writeJSONFile(t *testing.T, path string, value any) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path, string(data))
+}
+
+func pathToFileURI(path string) string {
+	return "file://" + strings.ReplaceAll(path, " ", "%20")
 }

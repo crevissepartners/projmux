@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	antigravityagent "github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 )
@@ -74,8 +75,11 @@ func sessionStateResumeConfidence(source string) string {
 	switch strings.TrimSpace(source) {
 	case "session-id", "hook":
 		return "high"
-	case "claude-transcript", "codex-log":
+	case "claude-transcript", "codex-log", aisessions.SourceCodexRollout,
+		aisessions.SourceAntigravityLastConversation, aisessions.SourceAntigravityMetadata:
 		return "medium"
+	case aisessions.SourceAntigravityHistory:
+		return "low"
 	case "":
 		return "low"
 	default:
