@@ -48,7 +48,12 @@ Classification is intentionally conservative for mutation-capable interactive
 commands: opening session/project/settings/popup flows is treated as changing
 even when a user cancels. Explicit read variants (`status`, `list`, `get`,
 `preview`, config printing, plain welcome, and the diagnostics viewer) remain
-read-only. Direct top-level help and explicit preview-only intents (`upgrade
+read-only. The successful automatic hook/poll paths `ai ingest`, `attention
+arm`, `attention clear`, `attention window`, `tmux autosave-session-state`, and
+`window record` are also read-only so high-frequency operation does not append
+to the journal; an error from any of them still records exactly one safe error
+outcome. Explicit user mutations such as `attention toggle` retain their
+state-changing success record. Direct top-level help and explicit preview-only intents (`upgrade
 --dry-run`, `update apply --dry-run`, `doctor --install-missing --dry-run`, AI
 integration dry-runs, and the currently preview-only session restore) are also
 read-only. Multi-mode commands such as AI status/topic, doctor install,

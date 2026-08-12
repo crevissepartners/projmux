@@ -58,7 +58,7 @@ func TestClassifyAllowlistAndStatePolicy(t *testing.T) {
 		{name: "status success read only", args: []string{"status", "usage", "/secret/path"}, want: CommandClass{Command: "status", Subcommand: "usage"}},
 		{name: "notify list read only", args: []string{"notify", "list", "--json"}, want: CommandClass{Command: "notify", Subcommand: "list"}},
 		{name: "notify push changes state", args: []string{"notify", "push", "--text", "private"}, want: CommandClass{Command: "notify", Subcommand: "push", StateChanging: true}},
-		{name: "ai ingest changes state", args: []string{"ai", "ingest", "secret-provider"}, want: CommandClass{Command: "ai", Subcommand: "ingest", StateChanging: true}},
+		{name: "ai ingest automatic success read only", args: []string{"ai", "ingest", "secret-provider"}, want: CommandClass{Command: "ai", Subcommand: "ingest"}},
 		{name: "topic get read only", args: []string{"ai", "topic", "get", "--pane", "%1"}, want: CommandClass{Command: "ai", Subcommand: "topic"}},
 		{name: "topic set changes state", args: []string{"ai", "topic", "set", "private topic"}, want: CommandClass{Command: "ai", Subcommand: "topic", StateChanging: true}},
 		{name: "update check writes cache", args: []string{"update", "check"}, want: CommandClass{Command: "update", Subcommand: "check", StateChanging: true}},
@@ -70,6 +70,29 @@ func TestClassifyAllowlistAndStatePolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := Classify(tt.args); got != tt.want {
 				t.Fatalf("Classify() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifyAutomaticHookAndPollSuccessesAreReadOnly(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args []string
+		want CommandClass
+	}{
+		{name: "ai ingest", args: []string{"ai", "ingest", "codex-hook"}, want: CommandClass{Command: "ai", Subcommand: "ingest"}},
+		{name: "attention arm", args: []string{"attention", "arm", "%1"}, want: CommandClass{Command: "attention", Subcommand: "arm"}},
+		{name: "attention clear", args: []string{"attention", "clear", "%1"}, want: CommandClass{Command: "attention", Subcommand: "clear"}},
+		{name: "attention window", args: []string{"attention", "window", "@1"}, want: CommandClass{Command: "attention", Subcommand: "window"}},
+		{name: "session state autosave", args: []string{"tmux", "autosave-session-state", "--quiet"}, want: CommandClass{Command: "tmux", Subcommand: "autosave-session-state"}},
+		{name: "recent window record", args: []string{"window", "record"}, want: CommandClass{Command: "window", Subcommand: "record"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Classify(tt.args); got != tt.want {
+				t.Fatalf("Classify(%q) = %#v, want %#v", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -164,7 +187,7 @@ func TestClassifyMultiModeCommands(t *testing.T) {
 		{args: []string{"welcome"}},
 		{args: []string{"welcome", "--popup"}, changing: true},
 		{args: []string{"welcome", "--popup=false"}},
-		{args: []string{"window", "record"}, changing: true},
+		{args: []string{"window", "record"}},
 		{args: []string{"window", "recent"}, changing: true},
 	}
 	for _, tt := range tests {
