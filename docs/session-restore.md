@@ -74,6 +74,20 @@ environment, shell functions, aliases, or live process state. Startup recipes
 continue to use their saved `send-keys` command replay, and shell recipes only
 restore cwd/layout.
 
+This live capture lane remains distinct from resume-picker disk discovery and
+has high confidence (`hook`/`session-id`). When an Antigravity picker row starts
+a pane, its source is captured too: a UUID verified by an exact regular
+`conversations/<uuid>.db` through `last_conversations` or workspace-bearing
+summarized metadata has medium confidence, while a legacy `history.jsonl` row
+has low confidence. Preview and doctor report that source/confidence as stored;
+they do not claim that the upstream cache exposes complete history. Disk
+discovery does not replace an existing live hook source, and it never opens a
+conversation database or reads prompt/transcript content.
+Bounded Session State agent-pane previews place resume health before the full
+resume id, topic, and title so status, confidence, and source remain visible;
+the underlying snapshot and unbounded preview model retain those identity and
+context fields unchanged. Non-agent pane preview ordering is unchanged.
+
 Settings > Session State is global settings only: global auto-save, auto-save
 interval, and storage/retention policy. It does not show the current
 snapshot tree. Delete for current-session snapshots and destructive restore

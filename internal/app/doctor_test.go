@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 )
 
 func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
@@ -878,9 +879,20 @@ func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 				PaneIndex:       2,
 				Agent:           "antigravity",
 				Status:          "available",
-				Confidence:      "high",
-				ResumeSource:    "hook",
+				Confidence:      "medium",
+				ResumeSource:    aisessions.SourceAntigravityLastConversation,
 				ResumeUpdatedAt: "2026-06-04T03:04:05Z",
+				SnapshotPath:    "/tmp/workspace.json",
+			},
+			{
+				Session:         "workspace",
+				WindowIndex:     0,
+				PaneIndex:       3,
+				Agent:           "antigravity",
+				Status:          "available",
+				Confidence:      "low",
+				ResumeSource:    aisessions.SourceAntigravityHistory,
+				ResumeUpdatedAt: "2026-06-03T03:04:05Z",
 				SnapshotPath:    "/tmp/workspace.json",
 			},
 		}
@@ -901,8 +913,11 @@ func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 		"resume metadata older than 24h0m0s",
 		"antigravity",
 		"workspace:0.2",
-		"confidence: high",
-		"source: hook",
+		"confidence: medium",
+		"source: " + aisessions.SourceAntigravityLastConversation,
+		"workspace:0.3",
+		"confidence: low",
+		"source: " + aisessions.SourceAntigravityHistory,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)
@@ -917,7 +932,7 @@ func TestDoctorReportsSessionStateResumeDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("json unmarshal error = %v\n%s", err, stdout.String())
 	}
-	if len(report.SessionStateResume) != 2 || report.SessionStateResume[0].Status != "stale" || report.SessionStateResume[1].Agent != "antigravity" || report.SessionStateResume[1].Status != "available" {
+	if len(report.SessionStateResume) != 3 || report.SessionStateResume[0].Status != "stale" || report.SessionStateResume[1].ResumeSource != aisessions.SourceAntigravityLastConversation || report.SessionStateResume[1].Confidence != "medium" || report.SessionStateResume[2].ResumeSource != aisessions.SourceAntigravityHistory || report.SessionStateResume[2].Confidence != "low" {
 		t.Fatalf("SessionStateResume = %#v, want codex stale and antigravity available diagnostics", report.SessionStateResume)
 	}
 }

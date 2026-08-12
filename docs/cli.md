@@ -121,6 +121,12 @@ diagnostics for saved agent panes, including `available`, `stale`, or
 `unavailable` status plus confidence, source, updated-at, and the affected
 snapshot/window/pane.
 
+Session State preview and doctor report the resume source captured on the pane.
+Live `hook`/`session-id` metadata is high confidence; DB-validated Antigravity
+`antigravity-last-conversation` and `antigravity-conversation-metadata` picker
+sources are medium confidence; legacy `antigravity-history` is low confidence.
+Disk discovery never lowers or overwrites an already captured live source.
+
 The default plain report exits non-zero when a required dependency is missing
 or stale, and exits `0` when only optional dependencies or AI notify
 integrations are missing. `--json` preserves its current successful exit after
@@ -431,11 +437,26 @@ existing empty-stdout behavior.
 only after a later user selection. Those combinations fail before opening a
 picker or creating a pane. Arguments after `--` keep their existing argv-tail
 meaning when the flag is used with a concrete AI agent.
-The resume picker lists the newest deduplicated Claude/Codex resume sessions
-for the current project, with `[+ New Session]` pinned first. If there are no
-resume sessions it goes straight to the existing selective picker. Phase 1
-captures the selected `(agent, resume id)` contract but still launches a fresh
-split; actual `claude --resume` / `codex resume` wiring is reserved for Phase 2.
+The resume picker lists the newest deduplicated Claude, Codex, and Antigravity
+resume sessions for the current project, with `[+ New Session]` pinned first.
+If there are no resume sessions it goes straight to the existing selective
+picker. Selecting a row directly starts `claude --resume <id>`,
+`codex resume <id>`, or `agy --conversation <uuid>`.
+
+Live Antigravity hook/session-state resume metadata remains a separate,
+high-confidence lane; it is not enumerated from disk by the picker. Within the
+picker's disk discovery, source order is the workspace-to-latest-UUID mapping
+in `cache/last_conversations.json`, workspace-bearing summarized rows in
+`cache/conversation_metadata.json`, then legacy `history.jsonl`. The two cache
+sources require a normalized UUID and an exact regular
+`conversations/<uuid>.db`; only DB existence and mtime are read. SQLite content,
+prompt/transcript text, sidecars, symlinks, and arbitrary paths are never used.
+The cache is only the history floor exposed by upstream v1.1.12, not a complete
+conversation history. Cache rows have medium confidence and blank turns;
+`last_conversations` uses a short UUID title, while metadata uses only a safe
+summary. Legacy history is low confidence. Missing/malformed cache, stale
+missing-DB mappings, workspace-less metadata, and unknown fields degrade
+without failing Claude/Codex or legacy discovery.
 Settings > AI Settings > Enabled agents controls Claude/Codex/Antigravity launch
 visibility. Disabled agents are hidden from the selective picker and from the
 default-mode picker. A saved default that later becomes disabled fails clearly
