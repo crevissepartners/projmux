@@ -68,6 +68,11 @@ type DeferredUpdate struct {
 	// theme tokens and width clipping.
 	ChromeBands    []ChromeBand
 	SetChromeBands bool
+	// ResourceSummaryDock is a fixed five-row resource-inspector seam: one
+	// renderer-owned divider plus four structured bands. It is reserved below
+	// the list and above the independent action footer.
+	ResourceSummaryDock    []ChromeBand
+	SetResourceSummaryDock bool
 	// Interaction updates let a live surface move between an actionable list
 	// and a read-only information panel without restarting the picker.
 	DisableSearch  bool
@@ -97,21 +102,22 @@ type ChromeBand struct {
 }
 
 type Options struct {
-	UI              string
-	Items           []Item
-	Title           string
-	TitleChips      []projmuxpicker.Chip
-	Prompt          string
-	Header          string
-	ChromeBands     []ChromeBand
-	Footer          string
-	Locale          i18n.Locale
-	Actions         []Action
-	Preview         Preview
-	InitialQuery    string
-	InitialIndex    int
-	InitialIndexSet bool
-	DisableSearch   bool
+	UI                  string
+	Items               []Item
+	Title               string
+	TitleChips          []projmuxpicker.Chip
+	Prompt              string
+	Header              string
+	ChromeBands         []ChromeBand
+	ResourceSummaryDock []ChromeBand
+	Footer              string
+	Locale              i18n.Locale
+	Actions             []Action
+	Preview             Preview
+	InitialQuery        string
+	InitialIndex        int
+	InitialIndexSet     bool
+	DisableSearch       bool
 	// ReadOnly renders Items as an information panel: no selection pointer,
 	// mouse acceptance, or Enter acceptance. Contextual actions still work.
 	ReadOnly    bool
@@ -948,6 +954,9 @@ func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
 	}
 	if update.SetChromeBands {
 		options.ChromeBands = append([]ChromeBand(nil), update.ChromeBands...)
+	}
+	if update.SetResourceSummaryDock {
+		options.ResourceSummaryDock = append([]ChromeBand(nil), update.ResourceSummaryDock...)
 	}
 	if update.SetInteraction {
 		options.DisableSearch = update.DisableSearch
@@ -1846,7 +1855,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	var main strings.Builder
 	if len(items) == 0 {
 		fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerEmptyNoMatches, "no matches"))
-		writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
+		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, options.Footer, layout)
 		return
 	}
 	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
@@ -1857,7 +1866,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 			scrollEnd = min(scrollStart+len(listLines), scrollTotal)
 		}
 		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, scrollTotal, scrollStart, scrollEnd, listLimit)
-		writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
+		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, options.Footer, layout)
 		return
 	}
 	scrollRows := listLimit
@@ -1875,13 +1884,13 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	}
 	if len(previewLines) > 0 && placement == "down" {
 		renderNativeDownPreview(&main, previewLines, layout)
-		writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
+		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, options.Footer, layout)
 		return
 	}
 	if len(previewLines) > 0 {
 		renderNativeInlinePreview(&main, previewLines, layout)
 	}
-	writeNativeContentWithFooterWithTheme(w, pickerTheme, screen.String(), main.String(), options.Footer, layout)
+	writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, options.Footer, layout)
 }
 
 func renderNativeRecorderContent(w io.Writer, pickerTheme projmuxpicker.Theme, top string, options Options, layout nativeLayout) {
@@ -2015,6 +2024,9 @@ func nativeChromeLineCount(options Options) int {
 		lines += nativeTextLineCount(header)
 	}
 	lines += len(options.ChromeBands)
+	if len(options.ResourceSummaryDock) > 0 {
+		lines += 1 + len(options.ResourceSummaryDock)
+	}
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
 		lines += 1 + nativeTextLineCount(footer) // footer separator + footer text
 	}
@@ -2080,22 +2092,42 @@ func writeNativeContentWithFooter(w io.Writer, top, main, footer string, layout 
 }
 
 func writeNativeContentWithFooterWithTheme(w io.Writer, pickerTheme projmuxpicker.Theme, top, main, footer string, layout nativeLayout) {
+	writeNativeContentWithResourceDockAndFooter(w, pickerTheme, top, main, nil, footer, layout)
+}
+
+func writeNativeContentWithResourceDockAndFooter(w io.Writer, pickerTheme projmuxpicker.Theme, top, main string, dock []ChromeBand, footer string, layout nativeLayout) {
 	var screen strings.Builder
 	screen.WriteString(top)
 	screen.WriteString(main)
+	dockLines := nativeResourceSummaryDockLines(pickerTheme, dock, layout.Cols)
 	footerLines := projmuxpicker.FooterBlockLinesWithTheme(pickerTheme, footer, layout.Cols)
-	if len(footerLines) == 0 {
+	if len(dockLines) == 0 && len(footerLines) == 0 {
 		fmt.Fprint(w, screen.String())
 		return
 	}
-	remaining := layout.Rows - nativeRenderedTextLineCount(screen.String()) - len(footerLines)
+	remaining := layout.Rows - nativeRenderedTextLineCount(screen.String()) - len(dockLines) - len(footerLines)
 	for range remaining {
 		fmt.Fprintln(&screen)
+	}
+	for _, line := range dockLines {
+		fmt.Fprintln(&screen, line)
 	}
 	for _, line := range footerLines {
 		fmt.Fprintln(&screen, line)
 	}
 	fmt.Fprint(w, screen.String())
+}
+
+func nativeResourceSummaryDockLines(pickerTheme projmuxpicker.Theme, bands []ChromeBand, cols int) []string {
+	if len(bands) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, 1+len(bands))
+	lines = append(lines, projmuxpicker.SeparatorLineWithTheme(pickerTheme, cols))
+	for _, band := range bands {
+		lines = append(lines, projmuxpicker.BandLineWithTheme(pickerTheme, band.Label, band.Value, band.Secondary, cols))
+	}
+	return lines
 }
 
 func nativeFooterBlockLines(footer string, cols int) []string {
@@ -2549,6 +2581,9 @@ func renderNative(w io.Writer, options Options, items []Item, query string) {
 				fmt.Fprintf(w, "   %s\n", meta)
 			}
 		}
+	}
+	for _, line := range nativeResourceSummaryDockLines(nativeTheme(options), options.ResourceSummaryDock, defaultNativeCols) {
+		fmt.Fprintln(w, line)
 	}
 	if footer := strings.TrimSpace(options.Footer); footer != "" {
 		fmt.Fprintln(w, footer)

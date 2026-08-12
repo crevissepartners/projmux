@@ -18,7 +18,9 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/paneidentity"
 	coreresources "github.com/crevissepartners/projmux/internal/core/resources"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 const (
@@ -143,30 +145,32 @@ func (c *resourceCommand) currentTime() time.Time {
 }
 
 func (c *resourceCommand) pickerOptions(view *resourceViewState, lifecycle *resourceLifecycle) intpicker.Options {
+	source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, "")
+	if err != nil {
+		source = fallbackRenderThemeSource()
+	}
+	view.setPalette(newResourceSemanticPalette(source.effective))
 	screen := view.screen()
 	text := view.text
 	actions := c.resourceActions(view, lifecycle, screen.actionable)
 	options := intpicker.Options{
-		UI:            "resources",
-		Title:         screen.title,
-		Prompt:        text.value(i18n.KeyPickerResourcesPrompt, "search › "),
-		ChromeBands:   screen.bands,
-		Footer:        screen.footer,
-		Items:         screen.items,
-		MultiLine:     true,
-		DisableSearch: !screen.actionable,
-		ReadOnly:      !screen.actionable,
-		Locale:        text.locale,
-		Actions:       actions,
+		UI:                  "resources",
+		Title:               screen.title,
+		Prompt:              text.value(i18n.KeyPickerResourcesPrompt, "search › "),
+		ResourceSummaryDock: screen.bands,
+		Footer:              screen.footer,
+		Items:               screen.items,
+		MultiLine:           true,
+		DisableSearch:       !screen.actionable,
+		ReadOnly:            !screen.actionable,
+		Locale:              text.locale,
+		Actions:             actions,
 		DeferredUpdate: func() (intpicker.DeferredUpdate, error) {
 			return c.withResourceActions(view, lifecycle, lifecycle.collect(view)), nil
 		},
 		DeferredUpdateTrigger: lifecycle.trigger,
 	}
-	if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, ""); err == nil {
-		return source.pickerOptions(options)
-	}
-	return fallbackRenderThemeSource().pickerOptions(options)
+	return source.pickerOptions(options)
 }
 
 func (c *resourceCommand) resourceActions(view *resourceViewState, lifecycle *resourceLifecycle, actionable bool) []intpicker.Action {
@@ -179,12 +183,15 @@ func (c *resourceCommand) resourceActions(view *resourceViewState, lifecycle *re
 	}
 	actions = append(actions,
 		intpicker.Action{Key: "ctrl-r", Intent: intpicker.ActionCustom, Mutate: func(intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
-			return c.withResourceActions(view, lifecycle, lifecycle.collect(view)), nil
-		}},
-		intpicker.Action{Key: "alt-left", Intent: intpicker.ActionCustom, Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
-			return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: "back", Query: ctx.Query, Closed: true}}, nil
+			lifecycle.request(view)
+			return c.withResourceActions(view, lifecycle, view.deferredUpdate()), nil
 		}},
 	)
+	if !view.atRoot() {
+		actions = append(actions, intpicker.Action{Key: "alt-left", Intent: intpicker.ActionCustom, Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+			return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: "back", Query: ctx.Query, Closed: true}}, nil
+		}})
+	}
 	return actions
 }
 
@@ -196,24 +203,33 @@ func (c *resourceCommand) withResourceActions(view *resourceViewState, lifecycle
 }
 
 type resourceLifecycle struct {
-	collector resourceSnapshotCollector
-	now       func() time.Time
-	interval  time.Duration
-	ctx       context.Context
-	cancel    context.CancelFunc
-	trigger   chan struct{}
-	gate      chan struct{}
-	skipped   atomic.Uint64
-	mu        sync.Mutex
-	closing   bool
-	active    sync.WaitGroup
-	done      chan struct{}
-	previous  *coreresources.Sample
+	collector        resourceSnapshotCollector
+	now              func() time.Time
+	interval         time.Duration
+	ctx              context.Context
+	cancel           context.CancelFunc
+	trigger          chan struct{}
+	skipped          atomic.Uint64
+	mu               sync.Mutex
+	closing          bool
+	initialized      bool
+	collecting       bool
+	automaticPending bool
+	manualPending    bool
+	completion       *resourceCollectionResult
+	active           sync.WaitGroup
+	done             chan struct{}
+	previous         *coreresources.Sample
+}
+
+type resourceCollectionResult struct {
+	snapshot coreresources.Snapshot
+	skipped  bool
 }
 
 func newResourceLifecycle(collector resourceSnapshotCollector, now func() time.Time, interval time.Duration) *resourceLifecycle {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &resourceLifecycle{collector: collector, now: now, interval: interval, ctx: ctx, cancel: cancel, trigger: make(chan struct{}, 1), gate: make(chan struct{}, 1), done: make(chan struct{})}
+	return &resourceLifecycle{collector: collector, now: now, interval: interval, ctx: ctx, cancel: cancel, trigger: make(chan struct{}, 1), done: make(chan struct{})}
 }
 
 func (l *resourceLifecycle) start() {
@@ -225,11 +241,7 @@ func (l *resourceLifecycle) start() {
 		for {
 			select {
 			case <-ticker.C:
-				select {
-				case l.trigger <- struct{}{}:
-				default:
-					l.skipped.Add(1)
-				}
+				l.requestAutomatic()
 			case <-l.ctx.Done():
 				return
 			}
@@ -237,38 +249,128 @@ func (l *resourceLifecycle) start() {
 	}()
 }
 
-func (l *resourceLifecycle) begin() bool {
+func (l *resourceLifecycle) collect(view *resourceViewState) intpicker.DeferredUpdate {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.closing {
-		return false
+		l.mu.Unlock()
+		return view.deferredUpdate()
 	}
+	if l.completion != nil {
+		result := *l.completion
+		l.completion = nil
+		pending := l.automaticPending || l.manualPending
+		l.mu.Unlock()
+		view.setSnapshot(result.snapshot, result.skipped)
+		if pending {
+			view.setRefreshing(true)
+			l.notify()
+		}
+		return view.deferredUpdate()
+	}
+	if l.collecting {
+		l.mu.Unlock()
+		view.setRefreshing(true)
+		return view.deferredUpdate()
+	}
+	async := l.initialized
+	if async && !l.automaticPending && !l.manualPending {
+		l.mu.Unlock()
+		return view.deferredUpdate()
+	}
+	l.automaticPending = false
+	l.manualPending = false
+	l.initialized = true
+	l.collecting = true
 	l.active.Add(1)
-	return true
+	previous := l.previous
+	before := l.skipped.Load()
+	l.mu.Unlock()
+
+	if async {
+		view.setRefreshing(true)
+		go l.runCollection(before, previous)
+		return view.deferredUpdate()
+	}
+	result := l.collectSnapshot(before, previous)
+	l.finishCollection(result, false)
+	view.setSnapshot(result.snapshot, result.skipped)
+	return view.deferredUpdate()
 }
 
-func (l *resourceLifecycle) collect(view *resourceViewState) intpicker.DeferredUpdate {
-	if !l.begin() {
-		return view.deferredUpdate()
-	}
-	defer l.active.Done()
-	select {
-	case l.gate <- struct{}{}:
-		defer func() { <-l.gate }()
-	default:
-		l.skipped.Add(1)
-		view.setSkippedRefresh(true)
-		return view.deferredUpdate()
-	}
-	before := l.skipped.Load()
-	snapshot, current, err := l.collector.CollectResourceSnapshot(l.ctx, l.previous)
+func (l *resourceLifecycle) runCollection(before uint64, previous *coreresources.Sample) {
+	result := l.collectSnapshot(before, previous)
+	l.finishCollection(result, true)
+}
+
+func (l *resourceLifecycle) collectSnapshot(before uint64, previous *coreresources.Sample) resourceCollectionResult {
+	snapshot, current, err := l.collector.CollectResourceSnapshot(l.ctx, previous)
 	if err != nil {
 		snapshot = coreresources.Snapshot{At: l.now(), Status: coreresources.StatusUnavailable, StatusReason: "collection-error"}
-	} else if l.ctx.Err() == nil {
-		l.previous = &current
 	}
-	view.setSnapshot(snapshot, l.skipped.Load() > before)
-	return view.deferredUpdate()
+	result := resourceCollectionResult{snapshot: snapshot, skipped: l.skipped.Load() > before}
+	if err == nil && l.ctx.Err() == nil {
+		l.mu.Lock()
+		l.previous = &current
+		l.mu.Unlock()
+	}
+	return result
+}
+
+func (l *resourceLifecycle) finishCollection(result resourceCollectionResult, deferred bool) {
+	l.mu.Lock()
+	l.collecting = false
+	if deferred && !l.closing && l.ctx.Err() == nil {
+		l.completion = &result
+	}
+	shouldNotify := deferred && l.completion != nil
+	l.mu.Unlock()
+	l.active.Done()
+	if shouldNotify {
+		l.notify()
+	}
+}
+
+func (l *resourceLifecycle) requestAutomatic() {
+	l.mu.Lock()
+	if l.closing {
+		l.mu.Unlock()
+		return
+	}
+	if l.collecting || l.automaticPending || l.manualPending {
+		l.skipped.Add(1)
+		l.mu.Unlock()
+		return
+	}
+	l.automaticPending = true
+	l.mu.Unlock()
+	l.notify()
+}
+
+func (l *resourceLifecycle) request(view *resourceViewState) {
+	view.setRefreshing(true)
+	l.mu.Lock()
+	if l.closing {
+		l.mu.Unlock()
+		return
+	}
+	if l.collecting || l.manualPending {
+		l.skipped.Add(1)
+		l.mu.Unlock()
+		view.setSkippedRefresh(true)
+		return
+	}
+	l.automaticPending = false
+	l.manualPending = true
+	l.mu.Unlock()
+	l.notify()
+}
+
+func (l *resourceLifecycle) notify() {
+	select {
+	case l.trigger <- struct{}{}:
+	default:
+		l.skipped.Add(1)
+	}
 }
 
 func (l *resourceLifecycle) close() {
@@ -278,7 +380,12 @@ func (l *resourceLifecycle) close() {
 	l.cancel()
 	<-l.done
 	l.active.Wait()
+	l.mu.Lock()
 	l.previous = nil
+	l.completion = nil
+	l.automaticPending = false
+	l.manualPending = false
+	l.mu.Unlock()
 }
 
 type resourceScopeKind uint8
@@ -299,25 +406,31 @@ const (
 )
 
 type resourceScope struct {
-	kind       resourceScopeKind
-	projectKey string
-	socket     string
-	windowID   string
-	paneID     string
+	kind        resourceScopeKind
+	projectKey  string
+	socket      string
+	windowID    string
+	paneID      string
+	paneDisplay string
 }
 
 type resourceViewState struct {
-	mu      sync.RWMutex
-	now     func() time.Time
-	scope   resourceScope
-	sort    resourceSort
-	snap    coreresources.Snapshot
-	skipped bool
-	text    resourceText
+	mu         sync.RWMutex
+	now        func() time.Time
+	scope      resourceScope
+	sort       resourceSort
+	snap       coreresources.Snapshot
+	skipped    bool
+	refreshing bool
+	text       resourceText
+	palette    resourceSemanticPalette
+	order      []string
+	ordered    resourceScope
+	reorder    bool
 }
 
 func newResourceViewState(now func() time.Time, locale i18n.Locale) *resourceViewState {
-	return &resourceViewState{now: now, text: resourceText{locale: locale}, snap: coreresources.Snapshot{Status: coreresources.StatusWarming, StatusReason: "first-sample-pending"}}
+	return &resourceViewState{now: now, sort: resourceSortName, reorder: true, text: resourceText{locale: locale}, snap: coreresources.Snapshot{Status: coreresources.StatusWarming, StatusReason: "first-sample-pending"}}
 }
 
 func (v *resourceViewState) setSnapshot(snapshot coreresources.Snapshot, skipped bool) {
@@ -325,6 +438,19 @@ func (v *resourceViewState) setSnapshot(snapshot coreresources.Snapshot, skipped
 	defer v.mu.Unlock()
 	v.snap = snapshot
 	v.skipped = skipped
+	v.refreshing = false
+}
+
+func (v *resourceViewState) setRefreshing(refreshing bool) {
+	v.mu.Lock()
+	v.refreshing = refreshing
+	v.mu.Unlock()
+}
+
+func (v *resourceViewState) atRoot() bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.scope.kind == resourceScopeProjects
 }
 
 func (v *resourceViewState) setSkippedRefresh(skipped bool) {
@@ -333,9 +459,16 @@ func (v *resourceViewState) setSkippedRefresh(skipped bool) {
 	v.mu.Unlock()
 }
 
+func (v *resourceViewState) setPalette(palette resourceSemanticPalette) {
+	v.mu.Lock()
+	v.palette = palette
+	v.mu.Unlock()
+}
+
 func (v *resourceViewState) cycleSort() {
 	v.mu.Lock()
 	v.sort = (v.sort + 1) % 3
+	v.reorder = true
 	v.mu.Unlock()
 }
 
@@ -346,14 +479,18 @@ func (v *resourceViewState) back() bool {
 	case resourceScopePaneDetail:
 		v.scope.kind = resourceScopePanes
 		v.scope.paneID = ""
+		v.scope.paneDisplay = ""
 	case resourceScopePanes:
 		v.scope.kind = resourceScopeWindows
 		v.scope.windowID = ""
+		v.scope.paneID = ""
+		v.scope.paneDisplay = ""
 	case resourceScopeWindows:
 		v.scope = resourceScope{}
 	default:
 		return false
 	}
+	v.reorder = true
 	return true
 }
 
@@ -365,20 +502,29 @@ func (v *resourceViewState) enter(value string) {
 		if value == "project:"+coreresources.OtherUnattributed || !strings.HasPrefix(value, "project:") {
 			return
 		}
-		v.scope.kind = resourceScopeWindows
-		v.scope.projectKey = strings.TrimPrefix(value, "project:")
+		v.scope = resourceScope{kind: resourceScopeWindows, projectKey: strings.TrimPrefix(value, "project:")}
+		v.reorder = true
 	case resourceScopeWindows:
 		socket, id, ok := parseResourceStableValue(value, "window:")
 		if !ok {
 			return
 		}
 		v.scope.kind, v.scope.socket, v.scope.windowID = resourceScopePanes, socket, id
+		v.scope.paneID, v.scope.paneDisplay = "", ""
+		v.reorder = true
 	case resourceScopePanes:
 		socket, id, ok := parseResourceStableValue(value, "pane:")
 		if !ok {
 			return
 		}
-		v.scope.kind, v.scope.socket, v.scope.paneID = resourceScopePaneDetail, socket, id
+		display := v.text.value("picker.resources.unnamed_pane", "Unnamed pane")
+		if pane, found := resourcePane(v.snap, socket, id); found {
+			if resolved := resourcePaneDisplayIdentity(pane, v.text); resolved != "" {
+				display = resolved
+			}
+		}
+		v.scope.kind, v.scope.socket, v.scope.paneID, v.scope.paneDisplay = resourceScopePaneDetail, socket, id, display
+		v.reorder = true
 	}
 }
 
@@ -393,7 +539,7 @@ func parseResourceStableValue(value, prefix string) (string, string, bool) {
 
 func (v *resourceViewState) deferredUpdate() intpicker.DeferredUpdate {
 	screen := v.screen()
-	return intpicker.DeferredUpdate{Items: screen.items, ChromeBands: screen.bands, SetChromeBands: true, Footer: screen.footer, SetFooter: true, Title: screen.title, SetTitle: true, DisableSearch: !screen.actionable, ReadOnly: !screen.actionable, SetInteraction: true}
+	return intpicker.DeferredUpdate{Items: screen.items, ResourceSummaryDock: screen.bands, SetResourceSummaryDock: true, Footer: screen.footer, SetFooter: true, Title: screen.title, SetTitle: true, DisableSearch: !screen.actionable, ReadOnly: !screen.actionable, SetInteraction: true}
 }
 
 type resourceScreen struct {
@@ -405,15 +551,15 @@ type resourceScreen struct {
 }
 
 func (v *resourceViewState) screen() resourceScreen {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	items := v.itemsLocked()
-	actionable := v.scope.kind != resourceScopePaneDetail && (len(items) > 0 || v.snap.Status == coreresources.StatusWarming)
+	actionable := v.scope.kind != resourceScopePaneDetail && len(items) > 0 && v.snap.Status != coreresources.StatusWarming && v.snap.Status != coreresources.StatusUnavailable
 	return resourceScreen{
 		title:      resourceBreadcrumb(v.snap, v.scope, v.text),
-		bands:      resourceSummaryBands(v.snap, v.currentTime(), v.skipped, v.scope, v.text),
+		bands:      resourceSummaryBands(v.snap, v.currentTime(), v.skipped, v.refreshing, v.scope, v.palette, v.text),
 		items:      items,
-		footer:     resourceFooter(v.scope.kind, v.sort, actionable, v.text),
+		footer:     resourceFooter(v.snap, v.currentTime(), v.skipped, v.refreshing, v.scope.kind, v.sort, actionable, v.text),
 		actionable: actionable,
 	}
 }
@@ -436,6 +582,20 @@ type resourceRow struct {
 	meta                             []string
 }
 
+type resourceSemanticPalette struct {
+	normal, unknown, warning, critical string
+}
+
+func newResourceSemanticPalette(effective theme.EffectiveTheme) resourceSemanticPalette {
+	roles := theme.ANSIRolesFromEffective(effective)
+	return resourceSemanticPalette{
+		normal:   roles.TextSecondary,
+		unknown:  roles.TextMuted,
+		warning:  roles.StateWarning,
+		critical: roles.StateCritical + theme.ANSIBold,
+	}
+}
+
 func (v *resourceViewState) itemsLocked() []intpicker.Item {
 	var rows []resourceRow
 	switch v.scope.kind {
@@ -446,10 +606,10 @@ func (v *resourceViewState) itemsLocked() []intpicker.Item {
 	case resourceScopePanes:
 		rows = resourcePaneRows(v.snap, v.scope.socket, v.scope.windowID, v.text)
 	case resourceScopePaneDetail:
-		rows = resourcePaneDetailRows(v.snap, v.scope.socket, v.scope.paneID, v.text)
+		rows = resourcePaneDetailRows(v.snap, v.scope.socket, v.scope.paneID, v.palette, v.text)
 	}
 	if v.scope.kind != resourceScopePaneDetail {
-		sortResourceRows(rows, v.sort)
+		v.orderRowsLocked(rows)
 	}
 	items := make([]intpicker.Item, 0, len(rows))
 	for _, row := range rows {
@@ -461,17 +621,48 @@ func (v *resourceViewState) itemsLocked() []intpicker.Item {
 				paneCount = v.text.format("picker.resources.row.pane_count", "{count} panes", "{count}", fmt.Sprint(row.count))
 			}
 			if row.context != "" {
-				meta = append([]string{v.text.format("picker.resources.row.context", "Context  {context}", "{context}", row.context)}, meta...)
+				meta = append([]string{row.context}, meta...)
 			}
 			meta = append(meta, v.text.format("picker.resources.row.metrics", "CPU {cpu}  MEMORY {memory}  PANES {panes}",
-				"{cpu}", fmt.Sprintf("%-8s", formatResourceCPU(row.cpu)),
-				"{memory}", fmt.Sprintf("%-22s", formatResourceMemory(row.rss, row.memPercent, row.memKnown)),
+				"{cpu}", projmuxpicker.PadRight(formatResourceCPUState(row.cpu, v.palette, v.text), 18),
+				"{memory}", projmuxpicker.PadRight(formatResourceMemoryState(row.rss, row.memPercent, row.memKnown, v.palette, v.text), 32),
 				"{panes}", paneCount,
 			))
 		}
 		items = append(items, intpicker.Item{Label: label, Title: label, Value: row.value, SearchText: row.search, MetaLines: meta})
 	}
 	return items
+}
+
+func (v *resourceViewState) orderRowsLocked(rows []resourceRow) {
+	if v.reorder || v.ordered != v.scope || len(v.order) == 0 {
+		sortResourceRows(rows, v.sort)
+		v.order = make([]string, 0, len(rows))
+		for _, row := range rows {
+			v.order = append(v.order, row.value)
+		}
+		v.ordered, v.reorder = v.scope, false
+		return
+	}
+	rank := make(map[string]int, len(v.order))
+	for index, value := range v.order {
+		rank[value] = index
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, aOK := rank[rows[i].value]
+		b, bOK := rank[rows[j].value]
+		if aOK != bOK {
+			return aOK
+		}
+		if aOK {
+			return a < b
+		}
+		return strings.ToLower(rows[i].identity) < strings.ToLower(rows[j].identity)
+	})
+	v.order = v.order[:0]
+	for _, row := range rows {
+		v.order = append(v.order, row.value)
+	}
 }
 
 func resourceProjectRows(snapshot coreresources.Snapshot, text resourceText) []resourceRow {
@@ -492,7 +683,11 @@ func resourceProjectRows(snapshot coreresources.Snapshot, text resourceText) []r
 		context := ""
 		if key != coreresources.ProjectUnassigned && key != coreresources.ProjectShared {
 			identity = filepath.Base(key)
-			context = key
+			context = text.format("picker.resources.row.path", "Path  {path}", "{path}", key)
+		} else if key == coreresources.ProjectUnassigned {
+			context = text.value("picker.resources.bucket.unassigned_help", "Pane path matches no managed project root.")
+		} else {
+			context = text.value("picker.resources.bucket.shared_help", "Linked pane or multiple anchors match more than one project.")
 		}
 		rows = append(rows, resourceRow{identity: identity, context: context, value: "project:" + key, search: identity + " " + key, cpu: project.CPU, rss: project.Memory.RSSBytes, memPercent: project.Memory.HostPercent, memKnown: ok && snapshot.Host.MemoryAvailable, count: project.PaneCount, countKnown: ok && snapshot.Status != coreresources.StatusUnavailable})
 	}
@@ -502,9 +697,9 @@ func resourceProjectRows(snapshot coreresources.Snapshot, text resourceText) []r
 func resourceProjectDisplayName(key string, text resourceText) string {
 	switch key {
 	case coreresources.ProjectUnassigned:
-		return text.value("picker.resources.bucket.unassigned", coreresources.ProjectUnassigned)
+		return text.value("picker.resources.bucket.unassigned", "No project match")
 	case coreresources.ProjectShared:
-		return text.value("picker.resources.bucket.shared", coreresources.ProjectShared)
+		return text.value("picker.resources.bucket.shared", "Multiple project matches")
 	case coreresources.OtherUnattributed:
 		return text.value("picker.resources.bucket.other", coreresources.OtherUnattributed)
 	default:
@@ -520,7 +715,7 @@ func resourceWindowRows(snapshot coreresources.Snapshot, project string, text re
 		}
 		context := strings.Join(window.Sessions, ",")
 		identity := strings.TrimSpace(window.WindowName + " " + window.WindowID)
-		secondary := text.format("picker.resources.context.sessions", "Session {sessions}", "{sessions}", context)
+		secondary := text.format("picker.resources.context.sessions", "Session  {sessions}", "{sessions}", context)
 		rows = append(rows, resourceRow{identity: identity, context: secondary, value: "window:" + window.Socket + "\x1f" + window.WindowID, search: identity + " " + secondary + " " + window.WindowID, cpu: window.CPU, rss: window.Memory.RSSBytes, memPercent: window.Memory.HostPercent, memKnown: snapshot.Host.MemoryAvailable, count: window.PaneCount, countKnown: true})
 	}
 	return rows
@@ -532,22 +727,19 @@ func resourcePaneRows(snapshot coreresources.Snapshot, socket, windowID string, 
 		if pane.Socket != socket || pane.WindowID != windowID {
 			continue
 		}
-		identity := paneidentity.Resolve(paneidentity.Inputs{Label: pane.PaneLabel, AIAgent: pane.AIAgent, AITopic: pane.AITopic, Command: pane.PaneCommand, Title: pane.PaneTitle}).Value
-		if identity == "" {
-			identity = text.value("picker.resources.unnamed_pane", "Unnamed pane")
-		}
-		secondary := text.format("picker.resources.context.pane", "Pane {pane} · PID {pid} · {tty}", "{pane}", pane.PaneID, "{pid}", fmt.Sprint(pane.PanePID), "{tty}", pane.PaneTTY)
+		identity := resourcePaneDisplayIdentity(pane, text)
+		secondary := text.format("picker.resources.context.pane", "Pane  {pane} · Process  {pid} · TTY  {tty}", "{pane}", pane.PaneID, "{pid}", fmt.Sprint(pane.PanePID), "{tty}", pane.PaneTTY)
 		rows = append(rows, resourceRow{identity: identity, context: secondary, value: "pane:" + pane.Socket + "\x1f" + pane.PaneID, search: identity + " " + secondary + " " + pane.PaneID, cpu: pane.CPU, rss: pane.Memory.RSSBytes, memPercent: pane.Memory.HostPercent, memKnown: snapshot.Host.MemoryAvailable, count: 1, countKnown: true})
 	}
 	return rows
 }
 
-func resourcePaneDetailRows(snapshot coreresources.Snapshot, socket, paneID string, text resourceText) []resourceRow {
+func resourcePaneDetailRows(snapshot coreresources.Snapshot, socket, paneID string, palette resourceSemanticPalette, text resourceText) []resourceRow {
 	for _, pane := range snapshot.Panes {
 		if pane.Socket != socket || pane.PaneID != paneID {
 			continue
 		}
-		cpu := formatResourceCPU(pane.CPU)
+		cpu := formatResourceCPUState(pane.CPU, palette, text)
 		if pane.CPU != nil {
 			cpu += fmt.Sprintf(" · %.2fc", pane.CPU.CoreEquivalent)
 		}
@@ -560,7 +752,7 @@ func resourcePaneDetailRows(snapshot coreresources.Snapshot, socket, paneID stri
 			text.format("picker.resources.detail.session_window", "Session: {session}  Window: {window} {window_id}", "{session}", strings.Join(pane.Sessions, ", "), "{window}", pane.WindowName, "{window_id}", pane.WindowID),
 			text.format("picker.resources.detail.pane", "Pane: {pane_id}  PID/SID: {pid}  TTY: {tty}", "{pane_id}", pane.PaneID, "{pid}", fmt.Sprint(pane.PanePID), "{tty}", pane.PaneTTY),
 			text.format("picker.resources.detail.processes_cpu", "Processes: {count}  CPU host share: {cpu}", "{count}", fmt.Sprint(pane.ProcessCount), "{cpu}", cpu),
-			text.format("picker.resources.detail.memory", "Memory RSS sum: {memory}", "{memory}", formatResourceMemory(pane.Memory.RSSBytes, pane.Memory.HostPercent, snapshot.Host.MemoryAvailable)),
+			text.format("picker.resources.detail.memory", "Memory RSS sum: {memory}", "{memory}", formatResourceMemoryState(pane.Memory.RSSBytes, pane.Memory.HostPercent, snapshot.Host.MemoryAvailable, palette, text)),
 			text.value("picker.resources.detail.rss_caveat", "RSS sum may count shared pages more than once."),
 		}
 		return []resourceRow{{identity: text.value("picker.resources.detail.heading", "Pane details"), value: "", meta: meta}}
@@ -614,19 +806,27 @@ func resourceBreadcrumb(snapshot coreresources.Snapshot, scope resourceScope, te
 	}
 	if scope.kind == resourceScopePaneDetail {
 		if pane, ok := resourcePane(snapshot, scope.socket, scope.paneID); ok {
-			identity := paneidentity.Resolve(paneidentity.Inputs{Label: pane.PaneLabel, AIAgent: pane.AIAgent, AITopic: pane.AITopic, Command: pane.PaneCommand, Title: pane.PaneTitle}).Value
+			segments = append(segments, resourcePaneDisplayIdentity(pane, text))
+		} else {
+			identity := strings.TrimSpace(scope.paneDisplay)
 			if identity == "" {
 				identity = text.value("picker.resources.unnamed_pane", "Unnamed pane")
 			}
-			segments = append(segments, strings.TrimSpace(identity+" "+pane.PaneID))
-		} else {
-			segments = append(segments, scope.paneID)
+			segments = append(segments, identity)
 		}
 	}
 	if len(segments) == 0 {
 		return title
 	}
 	return title + " / " + strings.Join(segments, " / ")
+}
+
+func resourcePaneDisplayIdentity(pane coreresources.PaneUsage, text resourceText) string {
+	identity := paneidentity.Resolve(paneidentity.Inputs{Label: pane.PaneLabel, AIAgent: pane.AIAgent, AITopic: pane.AITopic, Command: pane.PaneCommand, Title: pane.PaneTitle}).Value
+	if identity == "" {
+		return text.value("picker.resources.unnamed_pane", "Unnamed pane")
+	}
+	return identity
 }
 
 func resourceWindow(snapshot coreresources.Snapshot, socket, windowID string) (coreresources.WindowUsage, bool) {
@@ -647,10 +847,10 @@ func resourcePane(snapshot coreresources.Snapshot, socket, paneID string) (corer
 	return coreresources.PaneUsage{}, false
 }
 
-func resourceSummaryBands(snapshot coreresources.Snapshot, now time.Time, skipped bool, scope resourceScope, text resourceText) []intpicker.ChromeBand {
+func resourceSummaryBands(snapshot coreresources.Snapshot, now time.Time, skipped, refreshing bool, scope resourceScope, palette resourceSemanticPalette, text resourceText) []intpicker.ChromeBand {
 	status := text.status(snapshot.Status)
 	if skipped && snapshot.Status != coreresources.StatusUnavailable {
-		status = text.value("picker.resources.status.refresh_skipped", "partial (refresh skipped; prior scan still in flight)")
+		status = text.value("picker.resources.status.refresh_skipped", "refresh delayed · showing last complete sample")
 	}
 	hostMem := (*float64)(nil)
 	if snapshot.Host.MemoryAvailable && snapshot.Host.MemoryTotalBytes > 0 {
@@ -664,50 +864,96 @@ func resourceSummaryBands(snapshot coreresources.Snapshot, now time.Time, skippe
 		attrMem = &value
 		attrRSS = formatBytes(snapshot.Memory.AttributedRSSBytes)
 	}
-	age := "--"
-	if !snapshot.At.IsZero() {
-		d := max(now.Sub(snapshot.At), 0)
-		age = d.Round(100 * time.Millisecond).String()
+	age, stale := resourceSampleAge(snapshot, now)
+	if snapshot.Status == coreresources.StatusWarming {
+		status = text.value("picker.resources.status.collecting", "warming · collecting first sample")
+	} else if refreshing {
+		status = text.value("picker.resources.status.refreshing", "refresh in progress · last complete sample · not fresh")
+	} else if snapshot.Status == coreresources.StatusReady && stale {
+		status = text.value("picker.resources.status.stale", "stale · last complete state ready")
+	} else if snapshot.Status == coreresources.StatusReady {
+		status += " · " + text.value("picker.resources.status.fresh", "fresh")
 	}
 	bands := []intpicker.ChromeBand{
-		{Label: text.value("picker.resources.band.host", "Host"), Value: text.format("picker.resources.band.host.metrics", "CPU {cpu}    Memory {memory}", "{cpu}", formatResourcePercent(snapshot.CPU.HostBusyPercent), "{memory}", formatResourcePercent(hostMem)), Secondary: text.format("picker.resources.band.sample", "sample {age} · {status}", "{age}", age, "{status}", status)},
-		{Label: text.value("picker.resources.band.attributed", "Attributed"), Value: text.format("picker.resources.band.attributed.metrics", "CPU {cpu}    RSS {rss} ({memory})", "{cpu}", formatResourcePercent(snapshot.CPU.AttributedPercent), "{rss}", attrRSS, "{memory}", formatResourcePercent(attrMem))},
+		{Label: text.value("picker.resources.band.host", "Host"), Value: text.format("picker.resources.band.host.metrics", "CPU {cpu}    Memory {memory}", "{cpu}", formatResourcePercentState(snapshot.CPU.HostBusyPercent, liveResourceCPUWarningAt, palette, text), "{memory}", formatResourcePercentState(hostMem, liveResourceMemoryWarningAt, palette, text))},
+		{Label: text.value("picker.resources.band.attributed", "Attributed"), Value: text.format("picker.resources.band.attributed.metrics", "CPU {cpu}    RSS {rss} ({memory})", "{cpu}", formatResourcePercentState(snapshot.CPU.AttributedPercent, liveResourceCPUWarningAt, palette, text), "{rss}", attrRSS, "{memory}", formatResourcePercentState(attrMem, liveResourceMemoryWarningAt, palette, text))},
 	}
+	coverage := intpicker.ChromeBand{Label: text.value("picker.resources.band.coverage", "Coverage"), Value: text.value("picker.resources.coverage.current_scope", "Current scope has resource rows")}
 	if scope.kind == resourceScopeProjects {
-		otherCPU, otherMemory := "--", "--"
+		otherCPU := formatResourceUnknown(text)
+		otherMemory := formatResourceUnknown(text)
 		if snapshot.Other.CPUHostSharePercent != nil {
 			otherCPU = formatResourcePercent(snapshot.Other.CPUHostSharePercent)
 		}
 		if snapshot.Other.MemoryBytes != nil {
 			otherMemory = formatBytes(*snapshot.Other.MemoryBytes)
 		}
-		bands = append(bands, intpicker.ChromeBand{Label: resourceProjectDisplayName(coreresources.OtherUnattributed, text), Value: text.format("picker.resources.band.other.metrics", "CPU {cpu}    Memory {memory}", "{cpu}", otherCPU, "{memory}", otherMemory), Secondary: text.value("picker.resources.other_not_drillable", "summary only · not drillable")})
-	}
-	if diagnostic := resourceDiagnostic(snapshot, text); diagnostic != "" {
-		bands = append(bands, intpicker.ChromeBand{Label: text.value("picker.resources.band.status", "Status"), Value: diagnostic})
+		coverage.Value = resourceProjectDisplayName(coreresources.OtherUnattributed, text) + "  " + text.format("picker.resources.band.other.metrics", "CPU {cpu}    Memory {memory}", "{cpu}", otherCPU, "{memory}", otherMemory)
+		coverage.Secondary = text.value("picker.resources.other_not_drillable", "summary only · not drillable")
 	}
 	if scope.kind == resourceScopeWindows && len(resourceWindowRows(snapshot, scope.projectKey, text)) == 0 {
-		bands = append(bands, intpicker.ChromeBand{Label: text.value("picker.resources.band.empty", "Empty"), Value: text.value("picker.resources.empty.windows", "No windows in this project"), Secondary: text.value("picker.resources.empty.not_actionable", "No row to open")})
+		coverage.Value = text.value("picker.resources.empty.windows", "No windows in this project")
+		coverage.Secondary = text.value("picker.resources.empty.not_actionable", "No row to open")
 	}
 	if scope.kind == resourceScopePanes && len(resourcePaneRows(snapshot, scope.socket, scope.windowID, text)) == 0 {
-		bands = append(bands, intpicker.ChromeBand{Label: text.value("picker.resources.band.empty", "Empty"), Value: text.value("picker.resources.empty.panes", "No panes in this window"), Secondary: text.value("picker.resources.empty.not_actionable", "No row to open")})
+		coverage.Value = text.value("picker.resources.empty.panes", "No panes in this window")
+		coverage.Secondary = text.value("picker.resources.empty.not_actionable", "No row to open")
 	}
+	if scope.kind == resourceScopePaneDetail {
+		if _, ok := resourcePane(snapshot, scope.socket, scope.paneID); !ok {
+			coverage.Value = text.value("picker.resources.detail.gone", "Pane no longer exists")
+			coverage.Secondary = text.value("picker.resources.detail.gone_bounded", "The latest complete sample no longer contains this pane.")
+		}
+	}
+	bands = append(bands, coverage)
+	bands = append(bands, intpicker.ChromeBand{
+		Label:     text.value("picker.resources.band.sample", "Sample"),
+		Value:     text.format("picker.resources.band.sample.metrics", "age {age} · {status}", "{age}", age, "{status}", status),
+		Secondary: resourceDiagnostic(snapshot, text),
+	})
 	return bands
 }
 
-func resourceFooter(scope resourceScopeKind, order resourceSort, actionable bool, text resourceText) string {
+func resourceFooter(snapshot coreresources.Snapshot, now time.Time, skipped, refreshing bool, scope resourceScopeKind, order resourceSort, actionable bool, text resourceText) string {
 	sorts := []string{
 		text.value("picker.resources.sort.cpu", "CPU"),
 		text.value("picker.resources.sort.memory", "Memory"),
 		text.value("picker.resources.sort.name", "Name"),
 	}
+	var actions string
 	if scope == resourceScopePaneDetail {
-		return text.value("picker.resources.footer.detail", "Read-only pane detail | Esc/Alt-Left: back | Ctrl-R: refresh")
+		actions = text.value("picker.resources.footer.detail", "Read-only pane detail | Esc/Alt-Left: back | Ctrl-R: refresh")
+	} else if !actionable {
+		if scope == resourceScopeProjects {
+			actions = text.value("picker.resources.footer.root_readonly", "Read-only | Esc: close | Ctrl-R: refresh")
+		} else {
+			actions = text.value("picker.resources.footer.empty", "Read-only | Esc/Alt-Left: back | Ctrl-R: refresh")
+		}
+	} else if scope == resourceScopeProjects {
+		actions = text.format("picker.resources.footer.root", "Enter: drill down | Esc: close | Tab: sort {sort} | Ctrl-R: refresh", "{sort}", sorts[order])
+	} else {
+		actions = text.format("picker.resources.footer.list", "Enter: drill down | Esc/Alt-Left: back | Tab: sort {sort} | Ctrl-R: refresh", "{sort}", sorts[order])
 	}
-	if !actionable {
-		return text.value("picker.resources.footer.empty", "Read-only | Esc/Alt-Left: back/close | Ctrl-R: refresh")
+	age, stale := resourceSampleAge(snapshot, now)
+	feedback := text.value("picker.resources.refresh.automatic", "automatic every 2s")
+	if refreshing {
+		feedback = text.value("picker.resources.refresh.in_progress", "in progress; last complete sample retained")
+	} else if snapshot.Status == coreresources.StatusWarming {
+		feedback = text.value("picker.resources.refresh.collecting", "collecting first sample")
+	} else if skipped {
+		feedback = text.value("picker.resources.refresh.delayed", "delayed; last complete sample retained")
+	} else if stale {
+		feedback = text.value("picker.resources.refresh.stale", "stale; waiting for a complete sample")
 	}
-	return text.format("picker.resources.footer.list", "Enter: drill down | Esc/Alt-Left: back/close | Tab: sort {sort} | Ctrl-R: refresh", "{sort}", sorts[order])
+	return actions + "\n" + text.format("picker.resources.footer.refresh", "Refresh: {feedback} | sample age {age}", "{feedback}", feedback, "{age}", age)
+}
+
+func resourceSampleAge(snapshot coreresources.Snapshot, now time.Time) (string, bool) {
+	if snapshot.At.IsZero() {
+		return "--", false
+	}
+	d := max(now.Sub(snapshot.At), 0)
+	return d.Round(100 * time.Millisecond).String(), d > 2*resourceRefreshInterval
 }
 
 func resourceDiagnostic(snapshot coreresources.Snapshot, text resourceText) string {
@@ -745,18 +991,52 @@ func resourceUnavailableReason(reason string, text resourceText) string {
 	return text.value("picker.resources.unavailable.generic", "Resource attribution is unavailable.")
 }
 
-func formatResourceCPU(cpu *coreresources.CPUUsage) string {
+func formatResourceCPUState(cpu *coreresources.CPUUsage, palette resourceSemanticPalette, text resourceText) string {
 	if cpu == nil {
-		return "--"
+		return formatResourceMetric("--", nil, liveResourceCPUWarningAt, palette, text)
 	}
-	return fmt.Sprintf("%.1f%%", cpu.HostSharePercent)
+	percent := cpu.HostSharePercent
+	return formatResourceMetric(fmt.Sprintf("%.1f%%", percent), &percent, liveResourceCPUWarningAt, palette, text)
 }
 
-func formatResourceMemory(bytes uint64, percent *float64, known bool) string {
-	if !known {
-		return "--"
+func formatResourceMemoryState(bytes uint64, percent *float64, known bool, palette resourceSemanticPalette, text resourceText) string {
+	if !known || percent == nil {
+		return formatResourceMetric("--", nil, liveResourceMemoryWarningAt, palette, text)
 	}
-	return fmt.Sprintf("%s (%s)", formatBytes(bytes), formatResourcePercent(percent))
+	return formatResourceMetric(fmt.Sprintf("%s (%s)", formatBytes(bytes), formatResourcePercent(percent)), percent, liveResourceMemoryWarningAt, palette, text)
+}
+
+func formatResourcePercentState(percent *float64, warningAt int, palette resourceSemanticPalette, text resourceText) string {
+	if percent == nil {
+		return formatResourceMetric("--", nil, warningAt, palette, text)
+	}
+	return formatResourceMetric(formatResourcePercent(percent), percent, warningAt, palette, text)
+}
+
+func formatResourceUnknown(text resourceText) string {
+	return "-- " + text.value("picker.resources.severity.unknown", "unknown")
+}
+
+func formatResourceMetric(value string, percent *float64, warningAt int, palette resourceSemanticPalette, text resourceText) string {
+	severity := liveResourceUnknown
+	if percent != nil {
+		severity = classifyResourcePercent(*percent, float64(warningAt))
+	}
+	label := text.value("picker.resources.severity.unknown", "unknown")
+	style := palette.unknown
+	switch severity {
+	case liveResourceNormal:
+		label, style = text.value("picker.resources.severity.normal", "normal"), palette.normal
+	case liveResourceWarning:
+		label, style = text.value("picker.resources.severity.warning", "warning"), palette.warning
+	case liveResourceCritical:
+		label, style = text.value("picker.resources.severity.critical", "critical"), palette.critical
+	}
+	plain := value + " " + label
+	if style == "" {
+		return plain
+	}
+	return style + plain + theme.ANSIReset
 }
 
 func formatResourcePercent(value *float64) string {

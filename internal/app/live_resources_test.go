@@ -39,8 +39,8 @@ func TestClassifyLiveResourceSeverityBoundaries(t *testing.T) {
 			}
 		})
 	}
-	if got := classifyLiveResourceSeverity(nil, liveResourceCPUWarningAt); got != liveResourceNormal {
-		t.Fatalf("classifyLiveResourceSeverity(nil) = %d, want normal", got)
+	if got := classifyLiveResourceSeverity(nil, liveResourceCPUWarningAt); got != liveResourceUnknown {
+		t.Fatalf("classifyLiveResourceSeverity(nil) = %d, want unknown", got)
 	}
 }
 
@@ -60,22 +60,22 @@ func TestFormatLiveResourcesStatusIndependentStyles(t *testing.T) {
 		{
 			name:    "CPU critical memory normal",
 			metrics: systemstatus.Metrics{CPUPercent: intPointer(90), MemoryPercent: intPointer(74)},
-			want:    " #[fg=critical-role,bold]CPU 90%#[default]  #[fg=secondary-role]MEM 74%#[default]",
+			want:    " #[fg=critical-role,bold]CPU 90% critical#[default]  #[fg=secondary-role]MEM 74% normal#[default]",
 		},
 		{
 			name:    "CPU normal memory warning",
 			metrics: systemstatus.Metrics{CPUPercent: intPointer(69), MemoryPercent: intPointer(75)},
-			want:    " #[fg=secondary-role]CPU 69%#[default]  #[fg=warning-role]MEM 75%#[default]",
+			want:    " #[fg=secondary-role]CPU 69% normal#[default]  #[fg=warning-role]MEM 75% warning#[default]",
 		},
 		{
 			name:    "CPU unknown memory critical",
 			metrics: systemstatus.Metrics{MemoryPercent: intPointer(90)},
-			want:    " #[fg=secondary-role]CPU --%#[default]  #[fg=critical-role,bold]MEM 90%#[default]",
+			want:    " #[fg=secondary-role]CPU --% unknown#[default]  #[fg=critical-role,bold]MEM 90% critical#[default]",
 		},
 		{
 			name:    "CPU warning memory unknown",
 			metrics: systemstatus.Metrics{CPUPercent: intPointer(70)},
-			want:    " #[fg=warning-role]CPU 70%#[default]  #[fg=secondary-role]MEM --%#[default]",
+			want:    " #[fg=warning-role]CPU 70% warning#[default]  #[fg=secondary-role]MEM --% unknown#[default]",
 		},
 	}
 	for _, test := range tests {
@@ -104,11 +104,11 @@ func TestFormatLiveResourcesStatusUnknownUsesOnlySecondaryStyle(t *testing.T) {
 	}{
 		{
 			metrics: systemstatus.Metrics{MemoryPercent: intPointer(41)},
-			want:    " #[fg=secondary-role]CPU --%#[default]  #[fg=secondary-role]MEM 41%#[default]",
+			want:    " #[fg=secondary-role]CPU --% unknown#[default]  #[fg=secondary-role]MEM 41% normal#[default]",
 		},
 		{
 			metrics: systemstatus.Metrics{CPUPercent: intPointer(12)},
-			want:    " #[fg=secondary-role]CPU 12%#[default]  #[fg=secondary-role]MEM --%#[default]",
+			want:    " #[fg=secondary-role]CPU 12% normal#[default]  #[fg=secondary-role]MEM --% unknown#[default]",
 		},
 	} {
 		got := formatLiveResourcesStatusWithRoles(test.metrics, roles)
@@ -127,7 +127,7 @@ func TestFormatLiveResourcesStatusUsesResolvedThemeRoles(t *testing.T) {
 	metrics := systemstatus.Metrics{CPUPercent: intPointer(75), MemoryPercent: intPointer(95)}
 	for _, preset := range []string{"", "daylight"} {
 		roles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{Preset: preset}))
-		want := " #[fg=" + roles.StateWarning + "]CPU 75%#[default]  #[fg=" + roles.StateCritical + ",bold]MEM 95%#[default]"
+		want := " #[fg=" + roles.StateWarning + "]CPU 75% warning#[default]  #[fg=" + roles.StateCritical + ",bold]MEM 95% critical#[default]"
 		if got := formatLiveResourcesStatusWithRoles(metrics, roles); got != want {
 			t.Fatalf("preset %q output = %q, want semantic roles %q", preset, got, want)
 		}

@@ -68,7 +68,8 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
   without dominating the status row. Window tab indexes stay left of each tab,
   and tab titles are centered in a fixed-width trim so long active pane names
   do not resize the status row.
-- `Settings > Labs > Live system resources` adds the compact `CPU N%  MEM N%`
+- `Settings > Labs > Live system resources` adds the compact
+  `CPU N% <state>  MEM N% <state>`
   segment between git and the clock on macOS, Linux, and WSL. It is global,
   default off, and updates with tmux's existing five-second status interval.
   CPU and memory are host-scoped telemetry, not pane, window, project, or
@@ -76,8 +77,11 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
   normal below 70%, warning at 70–89%, and critical at 90% or above; memory is
   normal below 75%, warning at 75–89%, and critical at 90% or above. Normal and
   unavailable (`--`) values use the secondary status-text role, warnings use
-  the warning role, and critical values use the bold critical role. Styling one
-  value never promotes the other value.
+  the warning role, and critical values use the bold critical role. Each metric
+  also prints `normal`, `warning`, `critical`, or `unknown`, so color is never
+  the only state signal and an unknown value cannot resemble zero. Styling one
+  value never promotes the other value. The Resource Inspector uses this same
+  classifier and semantic roles for host and attributed CPU/memory.
   Linux CPU is the aggregate delta from `/proc/stat`; memory is
   `(MemTotal - MemAvailable) / MemTotal` from `/proc/meminfo`. macOS CPU uses
   the aggregate Mach host tick delta; memory is total physical memory minus

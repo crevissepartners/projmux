@@ -19,7 +19,8 @@ const (
 type liveResourceSeverity uint8
 
 const (
-	liveResourceNormal liveResourceSeverity = iota
+	liveResourceUnknown liveResourceSeverity = iota
+	liveResourceNormal
 	liveResourceWarning
 	liveResourceCritical
 )
@@ -57,10 +58,20 @@ func formatLiveResourcesStatusWithRoles(metrics systemstatus.Metrics, roles them
 }
 
 func classifyLiveResourceSeverity(percent *int, warningAt int) liveResourceSeverity {
-	if percent == nil || *percent < warningAt {
+	if percent == nil {
+		return liveResourceUnknown
+	}
+	return classifyResourcePercent(float64(*percent), float64(warningAt))
+}
+
+// classifyResourcePercent is the shared statusbar/inspector threshold contract.
+// Keep the critical boundary common and pass the metric-specific warning
+// boundary (CPU 70, memory 75) so both surfaces assign identical semantics.
+func classifyResourcePercent(percent, warningAt float64) liveResourceSeverity {
+	if percent < warningAt {
 		return liveResourceNormal
 	}
-	if *percent >= liveResourceCriticalAt {
+	if percent >= liveResourceCriticalAt {
 		return liveResourceCritical
 	}
 	return liveResourceWarning
@@ -72,11 +83,16 @@ func formatLiveResourceMetric(label string, percent *int, warningAt int, roles t
 		value = fmt.Sprintf("%d", *percent)
 	}
 	style := roles.StatusTextSecondary
+	state := "unknown"
 	switch classifyLiveResourceSeverity(percent, warningAt) {
+	case liveResourceNormal:
+		state = "normal"
 	case liveResourceWarning:
+		state = "warning"
 		style = roles.StateWarning
 	case liveResourceCritical:
+		state = "critical"
 		style = roles.StateCritical + ",bold"
 	}
-	return fmt.Sprintf("#[fg=%s]%s %s%%#[default]", style, label, value)
+	return fmt.Sprintf("#[fg=%s]%s %s%% %s#[default]", style, label, value, state)
 }

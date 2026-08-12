@@ -3,9 +3,11 @@ package picker
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1358,15 +1360,17 @@ func TestNativeResourceStructuredChromeWideAndNarrowFrames(t *testing.T) {
 		UI:     "resources",
 		Title:  "Resources / Projects / 매우-긴-프로젝트-이름",
 		Prompt: "search › ",
-		ChromeBands: []ChromeBand{
-			{Label: "Host", Value: "CPU 34.0%    Memory 61.0%", Secondary: "sample 400ms · ready"},
-			{Label: "Attributed", Value: "CPU 18.0%    RSS 3.2 GiB (20.0%)"},
+		ResourceSummaryDock: []ChromeBand{
+			{Label: "Host", Value: "CPU 34.0% normal    Memory 61.0% normal"},
+			{Label: "Attributed", Value: "CPU 18.0% normal    RSS 3.2 GiB (20.0% normal)"},
+			{Label: "Coverage", Value: "Other / unattributed CPU 16.0% Memory 39.0%", Secondary: "summary only · not drillable"},
+			{Label: "Sample", Value: "age 400ms · ready · fresh"},
 		},
 		Items: []Item{{Label: "매우 긴 프로젝트 identity", Value: "project:/repo/long", MetaLines: []string{
-			"Context  /repo/한글/very/long/project/path",
-			"CPU      12.4%    MEMORY  1.8 GiB (11.0%)    PANES  4 panes",
+			"Path  /repo/한글/very/long/project/path",
+			"CPU 12.4% normal    MEMORY 1.8 GiB (11.0%) normal    PANES 4 panes",
 		}}},
-		Footer:    "Enter: drill down | Esc/Alt-Left: back/close | Tab: sort CPU | Ctrl-R: refresh",
+		Footer:    "Enter: drill down | Esc: close | Tab: sort Name | Ctrl-R: refresh\nRefresh: automatic every 2s | sample age 400ms",
 		MultiLine: true,
 		Theme:     &effective,
 	}
@@ -1385,26 +1389,39 @@ func TestNativeResourceStructuredChromeWideAndNarrowFrames(t *testing.T) {
 				t.Fatalf("layout %dx%d line %d border bleed: %q", layout.Cols, layout.Rows, index, line)
 			}
 		}
+		plainLines := nativePlainFrameLines(frame)
+		host := nativeFrameLineContaining(plainLines, "Host  CPU 34.0% normal")
+		if host < 1 || nativeFrameLineContaining(plainLines, "Attributed  CPU 18.0% normal") != host+1 || nativeFrameLineContaining(plainLines, "Coverage  Other / unattributed") != host+2 || nativeFrameLineContaining(plainLines, "Sample  age 400ms · ready · fresh") != host+3 {
+			t.Fatalf("layout %dx%d summary dock rows are not fixed Host/Attributed/Coverage/Sample: %#v", layout.Cols, layout.Rows, plainLines)
+		}
+		if divider := strings.Trim(plainLines[host-1], "│"); divider == "" || strings.Trim(divider, "─") != "" {
+			t.Fatalf("layout %dx%d dock divider=%q, want renderer-owned full-width rule", layout.Cols, layout.Rows, plainLines[host-1])
+		}
+		if !strings.Contains(plainLines[host+4], "─") || strings.Contains(plainLines[host+4], "Host") {
+			t.Fatalf("layout %dx%d footer boundary=%q, want independent divider below exactly five dock rows", layout.Cols, layout.Rows, plainLines[host+4])
+		}
 		for _, want := range []string{"Host", "Attributed", "CPU", "MEMORY", "PANES", "ready", "매우 긴 프로젝트 identity"} {
 			if !strings.Contains(frame, want) {
 				t.Fatalf("layout %dx%d frame missing %q: %q", layout.Cols, layout.Rows, want, frame)
 			}
 		}
 		pickerTheme := projmuxpicker.ThemeFromEffective(effective)
-		if !strings.Contains(frame, pickerTheme.Accent+"Host") || !strings.Contains(frame, pickerTheme.Muted+"sample") {
+		if !strings.Contains(frame, pickerTheme.Accent+"Host") || !strings.Contains(frame, pickerTheme.Muted+"summary only") {
 			t.Fatalf("layout %dx%d bands do not use accent/muted semantic tokens", layout.Cols, layout.Rows)
 		}
 	}
 	ko := options
 	ko.Title = "리소스 · 프로젝트 / 매우-긴-프로젝트-이름"
 	ko.Locale = i18n.Locale("ko-KR")
-	ko.ChromeBands = []ChromeBand{
-		{Label: "호스트", Value: "CPU 34.0%    메모리 61.0%", Secondary: "샘플 400ms · 준비됨"},
-		{Label: "귀속", Value: "CPU 18.0%    RSS 3.2 GiB (20.0%)"},
+	ko.ResourceSummaryDock = []ChromeBand{
+		{Label: "호스트", Value: "CPU 34.0% 정상    메모리 61.0% 정상"},
+		{Label: "귀속", Value: "CPU 18.0% 정상    RSS 3.2 GiB (20.0% 정상)"},
+		{Label: "범위", Value: "기타 / 귀속되지 않음 CPU 16.0% 메모리 39.0%", Secondary: "요약 전용 · 상세 보기 불가"},
+		{Label: "샘플", Value: "경과 400ms · 준비됨 · 최신"},
 	}
 	ko.Items = []Item{{Label: "매우 긴 프로젝트 identity", Value: "project:/repo/long", MetaLines: []string{
-		"맥락  /repo/한글/very/long/project/path",
-		"CPU 12.4%    메모리 1.8 GiB (11.0%)    PANE pane 4개",
+		"경로  /repo/한글/very/long/project/path",
+		"CPU 12.4% 정상    메모리 1.8 GiB (11.0%) 정상    PANE pane 4개",
 	}}}
 	frame := nativeInteractiveFrame(ko, ko.Items, "", 0, 0, 0, nativeLayout{Rows: 24, Cols: 80})
 	for _, want := range []string{"호스트", "귀속", "준비됨", "매우 긴 프로젝트 identity"} {
@@ -1419,17 +1436,118 @@ func TestNativeResourceStructuredChromeWideAndNarrowFrames(t *testing.T) {
 	}
 }
 
+func TestNativeResourceSummaryDockStaysFixedAcrossSearchAndScroll(t *testing.T) {
+	t.Parallel()
+	options := Options{
+		UI:     "resources",
+		Title:  "Resources · Projects",
+		Prompt: "search › ",
+		ResourceSummaryDock: []ChromeBand{
+			{Label: "Host", Value: "CPU 70.0% warning Memory 75.0% warning"},
+			{Label: "Attributed", Value: "CPU 12.0% normal RSS 384 MiB (4.7% normal)"},
+			{Label: "Coverage", Value: "Other / unattributed CPU -- unknown Memory -- unknown"},
+			{Label: "Sample", Value: "age 200ms · partial", Secondary: "partial sampled=20 skipped=2 race=1 permission=1"},
+		},
+		Footer:    "Enter: drill down | Esc: close | Tab: sort Name | Ctrl-R: refresh\nRefresh: automatic every 2s | sample age 200ms",
+		MultiLine: true,
+	}
+	for index := range 12 {
+		options.Items = append(options.Items, Item{Label: fmt.Sprintf("project-%02d", index), Value: fmt.Sprintf("project:%02d", index), MetaLines: []string{"Path /repo/project", "CPU 1.0% normal MEMORY 1 MiB normal PANES 1 pane"}})
+	}
+	layout := nativeLayout{Rows: 24, Cols: 80}
+	content := nativeContentLayoutForOptions(layout, options)
+	if got := nativeListLimit(options, content, "", 0, false); got < 6 {
+		t.Fatalf("80x24 list height=%d, want at least six navigable rows with fixed dock/footer", got)
+	}
+	first := nativePlainFrameLines(nativeInteractiveFrame(options, options.Items, "", 0, 0, 0, layout))
+	filtered := FilterItems(options.Items, "project-11")
+	second := nativePlainFrameLines(nativeInteractiveFrame(options, filtered, "project-11", len("project-11"), 0, 0, layout))
+	scrolled := nativePlainFrameLines(nativeInteractiveFrame(options, options.Items, "", 0, 11, 0, layout))
+	firstDock := nativeResourceDockGolden(first)
+	for name, frame := range map[string][]string{"search": second, "scroll": scrolled} {
+		if got := nativeResourceDockGolden(frame); !slices.Equal(got, firstDock) {
+			t.Fatalf("%s dock=%#v, want fixed %#v", name, got, firstDock)
+		}
+	}
+	if len(firstDock) != 5 || !strings.Contains(firstDock[1], "Host") || !strings.Contains(firstDock[4], "Sample") {
+		t.Fatalf("dock golden=%#v, want exact divider/Host/Attributed/Coverage/Sample rows", firstDock)
+	}
+}
+
+func nativePlainFrameLines(frame string) []string {
+	lines := strings.Split(frame, "\r\n")
+	for index := range lines {
+		lines[index] = stripANSISequences(lines[index])
+	}
+	return lines
+}
+
+func nativeFrameLineContaining(lines []string, value string) int {
+	for index, line := range lines {
+		if strings.Contains(line, value) {
+			return index
+		}
+	}
+	return -1
+}
+
+func nativeResourceDockGolden(lines []string) []string {
+	host := nativeFrameLineContaining(lines, "Host  ")
+	if host < 1 || host+3 >= len(lines) {
+		return nil
+	}
+	return append([]string(nil), lines[host-1:host+4]...)
+}
+
+func TestNativeResourceDeferredFrameUpdatesOnlyChangedRowsAtomically(t *testing.T) {
+	t.Parallel()
+	layout := nativeLayout{Rows: 24, Cols: 80}
+	options := Options{
+		UI:     "resources",
+		Title:  "Resources · Projects",
+		Prompt: "search › ",
+		ResourceSummaryDock: []ChromeBand{
+			{Label: "Host", Value: "CPU 69.9% normal    Memory 74.9% normal"},
+			{Label: "Attributed", Value: "CPU 12.0% normal    RSS 384 MiB (4.7% normal)"},
+			{Label: "Coverage", Value: "Other / unattributed CPU 57.9% Memory 70.2%"},
+			{Label: "Sample", Value: "age 300ms · ready · fresh"},
+		},
+		Items:     []Item{{Label: "api", Value: "project:/repo/api", MetaLines: []string{"Path  /repo/api", "CPU 12.0% normal MEMORY 384 MiB (4.7%) normal PANES 2 panes"}}},
+		Footer:    "Enter: drill down | Esc: close | Tab: sort Name | Ctrl-R: refresh\nRefresh: automatic every 2s | sample age 300ms",
+		MultiLine: true,
+	}
+	first := nativeInteractiveFrame(options, options.Items, "api", 3, 0, 0, layout)
+	next := options
+	next.ResourceSummaryDock = append([]ChromeBand(nil), options.ResourceSummaryDock...)
+	next.ResourceSummaryDock[0] = ChromeBand{Label: "Host", Value: "CPU 70.0% warning    Memory 74.9% normal"}
+	next.ResourceSummaryDock[3] = ChromeBand{Label: "Sample", Value: "age 200ms · ready · fresh"}
+	next.Footer = "Enter: drill down | Esc: close | Tab: sort Name | Ctrl-R: refresh\nRefresh: in progress; last complete sample retained | sample age 200ms"
+	second := nativeInteractiveFrame(next, next.Items, "api", 3, 0, 0, layout)
+	var out bytes.Buffer
+	renderer := projmuxpicker.FrameUpdateRenderer{}
+	renderer.Render(&out, first)
+	before := out.Len()
+	renderer.Render(&out, second)
+	delta := out.String()[before:]
+	if !strings.Contains(delta, projmuxpicker.SyncUpdateEnter) || !strings.Contains(delta, projmuxpicker.SyncUpdateLeave) || !strings.Contains(delta, "warning") || !strings.Contains(delta, "in progress") {
+		t.Fatalf("differential update=%q, want atomic host/footer state rows", delta)
+	}
+	if strings.Contains(delta, "╭") || strings.Contains(delta, "Path  /repo/api") || strings.Count(out.String(), "╭") != 1 {
+		t.Fatalf("differential update repainted unchanged frame rows: %q", delta)
+	}
+}
+
 func TestNativeResourceReadOnlyPanelHasNoSearchPointerOrEnterAcceptance(t *testing.T) {
 	options := Options{
-		UI:            "resources",
-		Title:         "Resources / Projects / api / editor @7 / agent %11",
-		ChromeBands:   []ChromeBand{{Label: "Host", Value: "CPU 34.0%    Memory 61.0%"}},
-		Items:         []Item{{Label: "Pane details", MetaLines: []string{"Project: /repo/api", "Pane: %11  PID/SID: 101"}}},
-		Footer:        "Read-only pane detail | Esc/Alt-Left: back | Ctrl-R: refresh",
-		MultiLine:     true,
-		DisableSearch: true,
-		ReadOnly:      true,
-		Locale:        i18n.FallbackLocale,
+		UI:                  "resources",
+		Title:               "Resources / Projects / api / editor @7 / agent %11",
+		ResourceSummaryDock: []ChromeBand{{Label: "Host", Value: "CPU 34.0% normal Memory 61.0% normal"}, {Label: "Attributed", Value: "CPU 18.0% normal RSS 3.2 GiB"}, {Label: "Coverage", Value: "Current scope has resource rows"}, {Label: "Sample", Value: "age 400ms · ready · fresh"}},
+		Items:               []Item{{Label: "Pane details", MetaLines: []string{"Project: /repo/api", "Pane: %11  PID/SID: 101"}}},
+		Footer:              "Read-only pane detail | Esc/Alt-Left: back | Ctrl-R: refresh",
+		MultiLine:           true,
+		DisableSearch:       true,
+		ReadOnly:            true,
+		Locale:              i18n.FallbackLocale,
 	}
 	frame := nativeInteractiveFrame(options, options.Items, "", 0, 0, 0, nativeLayout{Rows: 24, Cols: 80})
 	if strings.Contains(frame, "Search") || strings.Contains(frame, projmuxpicker.Pointer) || strings.Contains(frame, "Enter") || strings.Contains(frame, "sort") {

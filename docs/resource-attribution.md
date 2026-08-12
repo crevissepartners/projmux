@@ -130,3 +130,37 @@ Display labels use label → agent topic → known interactive shell → raw tit
 but those values never become ownership keys. Unsupported platforms show an
 unavailable reason, not zero metrics. PSS, non-Linux collectors, process-list
 drill-down, history, and resource mutation remain outside this contract.
+
+Host and attributed CPU/memory use the same semantic classifier as the live
+statusbar: CPU is normal below 70%, warning at 70–89.9%, and critical at 90%
+or above; memory is normal below 75%, warning at 75–89.9%, and critical at 90%
+or above. Every value includes the localized state text as well as the resolved
+normal/warning/critical/unknown role. Unknown is rendered as `-- unknown`,
+never as zero.
+
+The first paint is a non-actionable warming surface. Completed samples report
+age and fresh/stale state; partial and overage callouts stay bounded to counts
+and aggregate values. Empty and gone scopes are read-only and explain what the
+latest complete sample can no longer open. Automatic refresh runs every two
+seconds; Ctrl-R reports in-progress state while retaining the last complete
+sample. Both paths preserve scope, breadcrumb, query, selection, and the row
+order last computed by Tab. The default order is Name; Tab computes CPU,
+Memory, or Name once from the current sample, while later refreshes update row
+values without silently moving focus. Native synchronized frame diffs repaint
+only changed rows and update state/footer chrome together.
+
+The live summary is a fixed five-row bottom dock below the search/list surface:
+one renderer-owned theme-aware divider, then Host, Attributed, Coverage, and
+Sample. It does not scroll or filter with rows. Coverage owns the non-drillable
+Other or current-scope empty/gone explanation; bounded partial/overage details
+stay on Sample. The action footer remains below the dock with its own chrome
+boundary, so diagnostic values and key hints never share a role. The 80x24
+layout retains a navigable list viewport without clipping, border bleed, or a
+second dock divider.
+
+Project rows label project paths explicitly. The two attribution buckets keep
+their stable core keys but display `No project match` and `Multiple project
+matches` with bounded explanations. Pane primary identity follows the shared
+label → agent-only AI topic → interactive shell → raw title resolver; pane id,
+process id, and TTY remain labeled secondary details and stable keys are
+unchanged.
