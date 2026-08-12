@@ -11,39 +11,41 @@ type CommandClass struct {
 }
 
 var commandRules = map[string]commandRule{
-	"ai":            {subcommands: stringSet("split", "picker", "settings", "status", "notify", "watch-title", "ingest", "integrate", "topic"), changing: stringSet("split", "picker", "settings", "status", "notify", "watch-title", "ingest", "integrate")},
-	"attention":     {subcommands: stringSet("toggle", "clear", "arm", "list", "window"), changing: stringSet("toggle", "clear", "arm", "window")},
-	"attach":        {alwaysChanging: true, subcommands: stringSet("auto")},
-	"current":       {alwaysChanging: true},
-	"diagnostics":   {subcommands: stringSet("log")},
-	"doctor":        {},
-	"focus":         {alwaysChanging: true},
-	"hook":          {subcommands: stringSet("list", "edit", "validate", "trust", "untrust"), changing: stringSet("edit", "trust", "untrust")},
-	"init":          {},
-	"kill":          {alwaysChanging: true, subcommands: stringSet("tagged")},
-	"notify":        {subcommands: stringSet("push", "list", "ack", "reconcile"), changing: stringSet("push", "ack", "reconcile")},
-	"pin":           {subcommands: stringSet("list", "add", "remove", "toggle", "clear"), changing: stringSet("add", "remove", "toggle", "clear")},
-	"preview":       {subcommands: stringSet("cycle-pane", "cycle-window", "select"), changing: stringSet("cycle-pane", "cycle-window", "select")},
-	"prune":         {subcommands: stringSet("ephemeral", "session-state"), changing: stringSet("ephemeral")},
-	"quit":          {alwaysChanging: true},
-	"resources":     {},
-	"sessions":      {alwaysChanging: true},
-	"session-state": {subcommands: stringSet("status", "save", "delete", "restore", "preview", "popup"), changing: stringSet("save", "delete", "restore", "popup")},
-	"session-popup": {subcommands: stringSet("preview", "open", "cycle-pane", "cycle-window"), changing: stringSet("open", "cycle-pane", "cycle-window")},
-	"settings":      {alwaysChanging: true},
-	"setup":         {subcommands: stringSet("terminal")},
-	"shell":         {alwaysChanging: true},
-	"status":        {subcommands: stringSet("git", "project", "kube", "usage", "notify", "resources")},
-	"statusbar":     {subcommands: stringSet("click", "usage-refresh"), changing: stringSet("click", "usage-refresh")},
-	"switch":        {alwaysChanging: true, subcommands: stringSet("toggle-tag", "toggle-pin", "kill", "open", "sidebar-open", "settings", "preview", "cycle-pane", "cycle-window", "sidebar-focus")},
-	"tag":           {subcommands: stringSet("list", "toggle", "clear"), changing: stringSet("toggle", "clear")},
-	"tmux":          {subcommands: stringSet("hook-trust-prompt", "popup-preview", "popup-switch", "popup-sessions", "popup-toggle", "rebalance-panes", "rename-pane", "print-config", "print-app-config", "install", "install-app", "apply", "autosave-session-state"), changing: stringSet("hook-trust-prompt", "popup-preview", "popup-switch", "popup-sessions", "popup-toggle", "rebalance-panes", "rename-pane", "install", "install-app", "apply", "autosave-session-state")},
-	"update":        {subcommands: stringSet("status", "check", "apply"), changing: stringSet("apply")},
-	"upgrade":       {alwaysChanging: true},
-	"usage":         {},
-	"version":       {},
-	"welcome":       {},
-	"window":        {subcommands: stringSet("record", "recent"), changing: stringSet("record")},
+	"ai":             {subcommands: stringSet("split", "picker", "settings", "status", "notify", "watch-title", "ingest", "integrate", "topic"), changing: stringSet("split", "picker", "settings", "notify", "watch-title", "ingest", "integrate")},
+	"attention":      {subcommands: stringSet("toggle", "clear", "arm", "list", "window"), changing: stringSet("toggle", "clear", "arm", "window")},
+	"attach":         {alwaysChanging: true, subcommands: stringSet("auto")},
+	"current":        {alwaysChanging: true},
+	"diagnostics":    {subcommands: stringSet("log")},
+	"doctor":         {},
+	"focus":          {alwaysChanging: true},
+	"hook":           {subcommands: stringSet("list", "edit", "validate", "trust", "untrust"), changing: stringSet("edit", "trust", "untrust")},
+	"init":           {},
+	"key-broker":     {alwaysChanging: true},
+	"kill":           {alwaysChanging: true, subcommands: stringSet("tagged")},
+	"notify":         {subcommands: stringSet("push", "list", "ack", "reconcile"), changing: stringSet("push", "ack", "reconcile")},
+	"pin":            {subcommands: stringSet("list", "add", "remove", "toggle", "clear"), changing: stringSet("add", "remove", "toggle", "clear")},
+	"popup-wait-key": {},
+	"preview":        {subcommands: stringSet("cycle-pane", "cycle-window", "select"), changing: stringSet("cycle-pane", "cycle-window", "select")},
+	"prune":          {subcommands: stringSet("ephemeral", "session-state"), changing: stringSet("ephemeral")},
+	"quit":           {alwaysChanging: true},
+	"resources":      {},
+	"sessions":       {alwaysChanging: true},
+	"session-state":  {subcommands: stringSet("status", "save", "delete", "restore", "preview", "popup"), changing: stringSet("save", "delete", "restore", "popup")},
+	"session-popup":  {subcommands: stringSet("preview", "open", "cycle-pane", "cycle-window"), changing: stringSet("open", "cycle-pane", "cycle-window")},
+	"settings":       {alwaysChanging: true},
+	"setup":          {subcommands: stringSet("terminal")},
+	"shell":          {alwaysChanging: true},
+	"status":         {subcommands: stringSet("git", "project", "kube", "usage", "notify", "resources")},
+	"statusbar":      {subcommands: stringSet("click", "usage-refresh"), changing: stringSet("click", "usage-refresh")},
+	"switch":         {alwaysChanging: true, subcommands: stringSet("toggle-tag", "toggle-pin", "kill", "open", "sidebar-open", "settings", "preview", "cycle-pane", "cycle-window", "sidebar-focus")},
+	"tag":            {subcommands: stringSet("list", "toggle", "clear"), changing: stringSet("toggle", "clear")},
+	"tmux":           {subcommands: stringSet("hook-trust-prompt", "popup-preview", "popup-switch", "popup-sessions", "popup-toggle", "rebalance-panes", "rename-pane", "print-config", "print-app-config", "install", "install-app", "apply", "autosave-session-state"), changing: stringSet("hook-trust-prompt", "popup-preview", "popup-switch", "popup-sessions", "popup-toggle", "rebalance-panes", "rename-pane", "install", "install-app", "apply", "autosave-session-state")},
+	"update":         {subcommands: stringSet("status", "check", "apply"), changing: stringSet("apply")},
+	"upgrade":        {alwaysChanging: true},
+	"usage":          {},
+	"version":        {},
+	"welcome":        {},
+	"window":         {subcommands: stringSet("record", "recent"), changing: stringSet("record", "recent")},
 }
 
 type commandRule struct {
@@ -90,8 +92,14 @@ func Classify(args []string) CommandClass {
 	if command == "ai" && out.Subcommand == "topic" && len(args) > 2 {
 		out.StateChanging = args[2] == "set" || args[2] == "clear"
 	}
+	if command == "ai" && out.Subcommand == "status" && len(args) > 2 {
+		out.StateChanging = args[2] == "set"
+	}
 	if command == "update" && out.Subcommand == "check" {
 		out.StateChanging = true // refreshes the local update cache
+	}
+	if command == "welcome" {
+		out.StateChanging = hasExactFlag(args[1:], "--popup") || hasExactFlag(args[1:], "--force")
 	}
 	return out
 }

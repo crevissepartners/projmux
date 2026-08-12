@@ -15,8 +15,10 @@ no generic metadata map.
 Command and subcommand names come from static allowlists. Unknown argv values,
 paths, flags, and arguments are dropped. Messages have control/format
 characters removed, whitespace normalized, the current home path abbreviated
-to `~`, and length capped at 512 Unicode code points. Error `kind` is stored
-separately from the message.
+to `~`, and length capped at 512 Unicode code points. Top-level outcomes never
+copy `error.Error()` into the journal: their message is one of three stable,
+lossy phrases (`command failed`, `invalid command usage`, or a classified
+non-success status). Error `kind` is stored separately from that phrase.
 
 The journal must never contain raw argv, stdin, prompts, notification bodies,
 pane captures/output/title/topic/content, transcripts, raw hook payloads,
@@ -31,11 +33,24 @@ On POSIX systems the `projmux` state and `logs` directories are private
 (`0700`) and the journal is private (`0600`); accesses make a best-effort
 repair of older permissive modes.
 
-Append and trim share an inter-process lock. When the file exceeds 5 MiB, an
-atomic replacement retains approximately the newest 2 MiB, beginning at a
-complete valid record. A trailing partial record is discarded before the next
-append, and the reader skips malformed or truncated records. Lock acquisition
-has a bounded wait and recovers stale lock files.
+Append and trim share an OS-owned advisory inter-process lock. The kernel
+releases ownership when a process exits, so an orphaned lock path needs no
+path deletion or stale-owner reclamation and cannot race a successor owner.
+Lock acquisition has an explicit 200 ms total budget so this side channel
+cannot materially delay the original command result. When the file exceeds
+5 MiB, a platform-specific atomic replacement retains approximately the
+newest 2 MiB, beginning at a complete valid record; Windows uses replace-
+existing semantics rather than plain rename. A trailing partial record is
+discarded before the next append, and the reader skips malformed or truncated
+records.
+
+Classification is intentionally conservative for mutation-capable interactive
+commands: opening session/project/settings/popup flows is treated as changing
+even when a user cancels. Explicit read variants (`status`, `list`, `get`,
+`preview`, config printing, plain welcome, and the diagnostics viewer) remain
+read-only. Multi-mode commands such as AI status/topic, doctor install,
+terminal apply, snapshot delete, update check, and welcome popup inspect only
+allowlisted mode/flag names; their values are never recorded.
 
 Failures to resolve the path, create/repair permissions, lock, append, or trim
 are ignored by the top-level command boundary. They do not change the original

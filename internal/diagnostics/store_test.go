@@ -129,7 +129,7 @@ func TestStoreTrimRetainsRecentCompleteValidRecords(t *testing.T) {
 			t.Fatalf("line %d is malformed: %q", lineNo, line)
 		}
 	}
-	events, err := store.Read()
+	events, err := NewStore(path).Read()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,18 +159,18 @@ func TestStoreConcurrentGoroutineWritersKeepCompleteRecords(t *testing.T) {
 	store := NewStore(path)
 	var wg sync.WaitGroup
 	for worker := range 12 {
-		for record := range 30 {
-			wg.Add(1)
-			go func(worker, record int) {
-				defer wg.Done()
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for record := range 30 {
 				if err := store.Append(fixtureEvent(fmt.Sprintf("g-%d-%d", worker, record))); err != nil {
 					t.Errorf("Append: %v", err)
 				}
-			}(worker, record)
-		}
+			}
+		}(worker)
 	}
 	wg.Wait()
-	events, err := store.Read()
+	events, err := NewStore(path).Read()
 	if err != nil || len(events) != 360 {
 		t.Fatalf("Read() count = %d, err = %v", len(events), err)
 	}
@@ -237,42 +237,117 @@ func TestStoreConcurrentProcessesKeepCompleteRecords(t *testing.T) {
 	}
 }
 
-func TestStoreLockWaitIsBoundedAndStaleLockRecovers(t *testing.T) {
+func TestStoreLockWaitUsesSmallExplicitBudget(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "logs", LogFileName)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	lockPath := path + lockSuffix
-	if err := os.WriteFile(lockPath, []byte("busy"), 0o600); err != nil {
+	held, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer held.Close()
+	if err := tryPlatformLock(held); err != nil {
+		t.Fatal(err)
+	}
+	defer unlockPlatformLock(held)
+
 	store := NewStore(path)
-	store.lockAttempts = 3
-	store.staleAfter = time.Hour
-	waits := 0
-	store.sleep = func(time.Duration) { waits++ }
+	if store.lockBudget != lockBudget || store.lockBudget > 250*time.Millisecond {
+		t.Fatalf("default lock budget = %s, want %s and <=250ms", store.lockBudget, lockBudget)
+	}
+	store.lockRetry = 25 * time.Millisecond
+	clock := time.Unix(0, 0)
+	store.now = func() time.Time { return clock }
+	waited := time.Duration(0)
+	store.sleep = func(delay time.Duration) {
+		waited += delay
+		clock = clock.Add(delay)
+	}
+	realStart := time.Now()
 	if err := store.Append(fixtureEvent("blocked")); !errors.Is(err, errLockBusy) {
 		t.Fatalf("Append error = %v, want lock busy", err)
 	}
-	if waits != 3 {
-		t.Fatalf("bounded waits = %d, want 3", waits)
+	if waited != store.lockBudget {
+		t.Fatalf("bounded wait = %s, want %s", waited, store.lockBudget)
 	}
-	old := time.Now().Add(-2 * time.Hour)
+	if elapsed := time.Since(realStart); elapsed > 100*time.Millisecond {
+		t.Fatalf("injected bounded wait took real time %s", elapsed)
+	}
+}
+
+func TestStoreOrphanedLockFileDoesNotBlockContenders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs", LogFileName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := path + lockSuffix
+	if err := os.WriteFile(lockPath, []byte("orphaned legacy token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-24 * time.Hour)
 	if err := os.Chtimes(lockPath, old, old); err != nil {
 		t.Fatal(err)
 	}
-	store.staleAfter = time.Minute
-	if err := store.Append(fixtureEvent("recovered")); err != nil {
-		t.Fatalf("stale lock recovery: %v", err)
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for _, id := range []string{"contender-a", "contender-b"} {
+		go func(id string) {
+			<-start
+			errs <- NewStore(path).Append(fixtureEvent(id))
+		}(id)
 	}
-	events, err := store.Read()
-	if err != nil || len(events) != 1 || events[0].RunID != "recovered" {
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, err := NewStore(path).Read()
+	if err != nil || len(events) != 2 {
 		t.Fatalf("events = %#v, err = %v", events, err)
 	}
 }
 
+func TestPlatformLockOldOwnerCannotUnlockSuccessor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operations.lock")
+	open := func() *os.File {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return file
+	}
+	oldOwner := open()
+	defer oldOwner.Close()
+	successor := open()
+	defer successor.Close()
+	contender := open()
+	defer contender.Close()
+
+	if err := tryPlatformLock(oldOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := unlockPlatformLock(oldOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := tryPlatformLock(successor); err != nil {
+		t.Fatal(err)
+	}
+	defer unlockPlatformLock(successor)
+	// A delayed/double release from the old handle cannot release the lock held
+	// by the successor handle. This was unsafe with path-based lock deletion.
+	if err := unlockPlatformLock(oldOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := tryPlatformLock(contender); !errors.Is(err, errLockBusy) {
+		t.Fatalf("contender lock error = %v, want busy", err)
+	}
+}
+
 func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
-	t.Setenv("PHASE0_SECRET", "never-store-this-secret")
 	store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
 	start := time.Now().Add(-time.Millisecond)
 	if err := RecordOutcome(store, []string{"status", "usage"}, "read-ok", "0.8.4", "tmux", start, nil, false); err != nil {
@@ -284,7 +359,8 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 	if err := RecordOutcome(store, []string{"pin", "add", "/secret"}, "write-ok", "0.8.4", "tmux", start, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordOutcome(store, []string{"status", "usage", "/secret/argv-value"}, "read-error", "0.8.4", "tmux", start, fmt.Errorf("failed /secret/argv-value never-store-this-secret\ncontrol"), false); err != nil {
+	forbidden := "pane=%42 title=private-topic body=notification-secret transcript=raw-conversation config_secret=hunter2"
+	if err := RecordOutcome(store, []string{"status", "usage"}, "read-error", "0.8.4", "tmux", start, fmt.Errorf("failed: %s", forbidden), false); err != nil {
 		t.Fatal(err)
 	}
 	events, err := store.Read()
@@ -297,8 +373,17 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 	if events[1].RunID != "read-error" || events[1].Result != "error" || events[1].Command != "status" || events[1].Subcommand != "usage" {
 		t.Fatalf("error event = %#v", events[1])
 	}
-	if strings.Contains(events[1].Message, "argv-value") || strings.Contains(events[1].Message, "never-store") || strings.ContainsAny(events[1].Message, "\n\r\t") {
-		t.Fatalf("unsafe error message = %q", events[1].Message)
+	if events[1].Message != "command failed" {
+		t.Fatalf("lossy error message = %q", events[1].Message)
+	}
+	data, err := os.ReadFile(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for secret := range strings.FieldsSeq(forbidden) {
+		if bytes.Contains(data, []byte(secret)) {
+			t.Fatalf("operational record leaked forbidden dynamic literal %q", secret)
+		}
 	}
 	blockedPath := filepath.Join(t.TempDir(), "missing", "nested", LogFileName)
 	blocked := NewStore(blockedPath)

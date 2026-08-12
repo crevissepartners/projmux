@@ -75,6 +75,95 @@ func TestClassifyAllowlistAndStatePolicy(t *testing.T) {
 	}
 }
 
+func TestClassifyCoversEveryTopLevelRule(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		args     []string
+		changing bool
+	}{
+		{args: []string{"ai", "status", "set"}, changing: true},
+		{args: []string{"attention", "list"}},
+		{args: []string{"attach", "auto"}, changing: true},
+		{args: []string{"current"}, changing: true},
+		{args: []string{"diagnostics", "log"}},
+		{args: []string{"doctor"}},
+		{args: []string{"focus"}, changing: true},
+		{args: []string{"hook", "validate"}},
+		{args: []string{"init", "ghostty"}},
+		{args: []string{"key-broker"}, changing: true},
+		{args: []string{"kill", "tagged"}, changing: true},
+		{args: []string{"notify", "list"}},
+		{args: []string{"pin", "list"}},
+		{args: []string{"popup-wait-key"}},
+		{args: []string{"preview", "select"}, changing: true},
+		{args: []string{"prune", "session-state"}},
+		{args: []string{"quit"}, changing: true},
+		{args: []string{"resources"}},
+		{args: []string{"sessions"}, changing: true},
+		{args: []string{"session-state", "status"}},
+		{args: []string{"session-popup", "preview"}},
+		{args: []string{"settings"}, changing: true},
+		{args: []string{"setup"}},
+		{args: []string{"shell"}, changing: true},
+		{args: []string{"status", "usage"}},
+		{args: []string{"statusbar", "usage-refresh"}, changing: true},
+		{args: []string{"switch"}, changing: true},
+		{args: []string{"tag", "list"}},
+		{args: []string{"tmux", "print-config"}},
+		{args: []string{"update", "status"}},
+		{args: []string{"upgrade"}, changing: true},
+		{args: []string{"usage"}},
+		{args: []string{"version"}},
+		{args: []string{"welcome"}},
+		{args: []string{"window", "recent"}, changing: true},
+	}
+	seen := make(map[string]bool, len(tests))
+	for _, tt := range tests {
+		class := Classify(tt.args)
+		if class.Command != tt.args[0] || class.StateChanging != tt.changing {
+			t.Errorf("Classify(%q) = %#v, changing want %v", tt.args, class, tt.changing)
+		}
+		seen[tt.args[0]] = true
+	}
+	if len(seen) != len(commandRules) {
+		t.Fatalf("top-level classification coverage = %d, rules = %d", len(seen), len(commandRules))
+	}
+	for command := range commandRules {
+		if !seen[command] {
+			t.Errorf("missing classification audit case for %q", command)
+		}
+	}
+}
+
+func TestClassifyMultiModeCommands(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		args     []string
+		changing bool
+	}{
+		{args: []string{"ai", "status", "help"}},
+		{args: []string{"ai", "status", "set", "thinking"}, changing: true},
+		{args: []string{"ai", "topic", "get"}},
+		{args: []string{"ai", "topic", "clear"}, changing: true},
+		{args: []string{"doctor", "--json"}},
+		{args: []string{"doctor", "--install-missing"}, changing: true},
+		{args: []string{"prune", "session-state"}},
+		{args: []string{"prune", "session-state", "delete"}, changing: true},
+		{args: []string{"setup", "terminal"}},
+		{args: []string{"setup", "terminal", "--apply"}, changing: true},
+		{args: []string{"update", "check"}, changing: true},
+		{args: []string{"welcome"}},
+		{args: []string{"welcome", "--popup"}, changing: true},
+		{args: []string{"window", "record"}, changing: true},
+		{args: []string{"window", "recent"}, changing: true},
+	}
+	for _, tt := range tests {
+		if got := Classify(tt.args).StateChanging; got != tt.changing {
+			t.Errorf("Classify(%q).StateChanging = %v, want %v", tt.args, got, tt.changing)
+		}
+	}
+}
+
 func TestMuxBackendDoesNotCopyUnknownEnvironmentValue(t *testing.T) {
 	t.Parallel()
 	if got := MuxBackend(func(string) string { return "secret-backend" }, "linux"); got != "tmux" {

@@ -153,7 +153,7 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/operations-tail.jsonl" '"comp
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/operations-tail.jsonl" '"result":"success"'
 
 set +e
-"$bin" unknown-secret-command >"$PROJMUX_SMOKE_WORKDIR/unknown.out" 2>"$PROJMUX_SMOKE_WORKDIR/unknown.err"
+"$bin" unknown-fixture-command >"$PROJMUX_SMOKE_WORKDIR/unknown.out" 2>"$PROJMUX_SMOKE_WORKDIR/unknown.err"
 unknown_status=$?
 set -e
 if [[ "$unknown_status" != "1" ]]; then
@@ -163,7 +163,7 @@ fi
 "$bin" diagnostics log --tail 1 --json --level error \
   >"$PROJMUX_SMOKE_WORKDIR/operations-error.jsonl"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/operations-error.jsonl" '"result":"error"'
-if grep -Fq 'unknown-secret-command' "$PROJMUX_SMOKE_WORKDIR/operations-error.jsonl"; then
+if grep -Fq 'unknown-fixture-command' "$PROJMUX_SMOKE_WORKDIR/operations-error.jsonl"; then
   echo "operational error record leaked raw argv" >&2
   exit 1
 fi
@@ -180,10 +180,21 @@ fi
 
 blocked_state="$PROJMUX_SMOKE_WORKDIR/blocked-state"
 printf 'not-a-directory\n' >"$blocked_state"
+set +e
 XDG_STATE_HOME="$blocked_state" "$bin" pin add "$smoke_root" \
   >"$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.out" \
   2>"$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.err"
+blocked_status=$?
+set -e
+if [[ "$blocked_status" != "0" ]]; then
+  echo "best-effort operational writer failure changed exit code: $blocked_status" >&2
+  exit 1
+fi
 if [[ -s "$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.err" ]]; then
   echo "best-effort operational writer failure leaked to command stderr" >&2
+  exit 1
+fi
+if [[ "$(cat "$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.out")" != "pinned: $smoke_root" ]]; then
+  echo "best-effort operational writer failure changed command stdout" >&2
   exit 1
 fi

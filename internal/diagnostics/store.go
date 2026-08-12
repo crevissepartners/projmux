@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,6 +20,8 @@ const (
 	MaxLogSize    = 5 * 1024 * 1024
 	RetainLogSize = 2 * 1024 * 1024
 	lockSuffix    = ".lock"
+	lockBudget    = 200 * time.Millisecond
+	lockRetry     = 5 * time.Millisecond
 )
 
 var errLockBusy = errors.New("diagnostics lock busy")
@@ -49,14 +50,15 @@ func DefaultPath(lookupEnv func(string) string, homeDir func() (string, error)) 
 
 // Store owns append, bounded retention, and record reading for one log path.
 type Store struct {
-	path         string
-	lockAttempts int
-	staleAfter   time.Duration
-	sleep        func(time.Duration)
+	path       string
+	lockBudget time.Duration
+	lockRetry  time.Duration
+	now        func() time.Time
+	sleep      func(time.Duration)
 }
 
 func NewStore(path string) *Store {
-	return &Store{path: path, lockAttempts: 250, staleAfter: 30 * time.Second, sleep: time.Sleep}
+	return &Store{path: path, lockBudget: lockBudget, lockRetry: lockRetry, now: time.Now, sleep: time.Sleep}
 }
 
 // Append writes exactly one complete JSONL record while holding an
@@ -106,19 +108,44 @@ func (s *Store) Append(event Event) error {
 }
 
 func (s *Store) repairTruncatedTail() error {
-	data, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) || len(data) == 0 || data[len(data)-1] == '\n' {
+	file, err := os.OpenFile(s.path, os.O_RDWR, 0o600)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("read diagnostics tail: %w", err)
+		return fmt.Errorf("open diagnostics tail: %w", err)
 	}
-	last := bytes.LastIndexByte(data, '\n')
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat diagnostics tail: %w", err)
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	last := []byte{0}
+	if _, err := file.ReadAt(last, info.Size()-1); err != nil {
+		return fmt.Errorf("read diagnostics tail byte: %w", err)
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+
+	const chunkSize = int64(4096)
 	keep := int64(0)
-	if last >= 0 {
-		keep = int64(last + 1)
+	for end := info.Size(); end > 0; {
+		start := max(end-chunkSize, 0)
+		chunk := make([]byte, end-start)
+		if _, err := file.ReadAt(chunk, start); err != nil {
+			return fmt.Errorf("read diagnostics tail chunk: %w", err)
+		}
+		if newline := bytes.LastIndexByte(chunk, '\n'); newline >= 0 {
+			keep = start + int64(newline) + 1
+			break
+		}
+		end = start
 	}
-	if err := os.Truncate(s.path, keep); err != nil {
+	if err := file.Truncate(keep); err != nil {
 		return fmt.Errorf("repair diagnostics tail: %w", err)
 	}
 	return nil
@@ -228,7 +255,7 @@ func (s *Store) trimIfNeeded() error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close diagnostics trim file: %w", err)
 	}
-	if err := os.Rename(tmpPath, s.path); err != nil {
+	if err := replaceFile(tmpPath, s.path); err != nil {
 		return fmt.Errorf("replace diagnostics log: %w", err)
 	}
 	bestEffortPrivateFile(s.path)
@@ -247,18 +274,6 @@ func completeValidLines(data []byte) []byte {
 		if len(line) == 0 || !json.Valid(line) {
 			continue
 		}
-		var event Event
-		if json.Unmarshal(line, &event) != nil {
-			continue
-		}
-		safe, err := sanitizeEvent(event, "")
-		if err != nil {
-			continue
-		}
-		line, err = json.Marshal(safe)
-		if err != nil {
-			continue
-		}
 		out = append(out, line...)
 		out = append(out, '\n')
 	}
@@ -267,24 +282,30 @@ func completeValidLines(data []byte) []byte {
 
 func (s *Store) withLock(action func() error) error {
 	lockPath := s.path + lockSuffix
-	for attempt := 0; attempt < s.lockAttempts; attempt++ {
-		lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("open diagnostics lock: %w", err)
+	}
+	defer lock.Close()
+	bestEffortPrivateFile(lockPath)
+
+	deadline := s.now().Add(s.lockBudget)
+	for {
+		err := tryPlatformLock(lock)
 		if err == nil {
-			_, _ = fmt.Fprintf(lock, "%d\n", os.Getpid())
-			_ = lock.Close()
-			defer os.Remove(lockPath)
+			defer unlockPlatformLock(lock)
 			return action()
 		}
-		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("create diagnostics lock: %w", err)
+		if !errors.Is(err, errLockBusy) {
+			return fmt.Errorf("lock diagnostics log: %w", err)
 		}
-		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > s.staleAfter {
-			_ = os.Remove(lockPath)
-			continue
+		remaining := deadline.Sub(s.now())
+		if remaining <= 0 {
+			return errLockBusy
 		}
-		s.sleep(time.Duration(1+rand.Intn(min(2+attempt/5, 50))) * time.Millisecond)
+		delay := min(s.lockRetry, remaining)
+		s.sleep(delay)
 	}
-	return errLockBusy
 }
 
 func bestEffortPrivateDir(path string) {
