@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	coreusage "github.com/crevissepartners/projmux/internal/core/usage"
@@ -986,6 +987,159 @@ func TestStatusbarUsagePopupKeepsAllAbsoluteColumnsForMixedRealCounts(t *testing
 	rows := statusbarUsageRows([]coreusage.Snapshot{{Model: "codex", Window: coreusage.WindowWeekly, Pct: 12}})
 	if len(rows) != 1 || rows[0].hasCounts || rows[0].used != "-" || rows[0].limit != "-" || rows[0].remaining != "-" {
 		t.Fatalf("percent-only row synthesized counts: %#v", rows)
+	}
+}
+
+func TestStatusbarUsageColumnProjectionBalancesModelAndWindowWidths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		rows              []statusbarUsageRow
+		unsupported       []usagecmd.UnsupportedProvider
+		wantAbsolute      bool
+		wantModelWidth    int
+		wantWindowWidth   int
+		wantCombinedWidth int
+	}{
+		{
+			name:              "percent-only Antigravity",
+			rows:              statusbarUsageRows([]coreusage.Snapshot{{Model: "antigravity", Window: coreusage.WindowWeekly, Pct: 25}}),
+			wantModelWidth:    11,
+			wantWindowWidth:   49,
+			wantCombinedWidth: 60,
+		},
+		{
+			name:              "absolute-count Antigravity",
+			rows:              statusbarUsageRows([]coreusage.Snapshot{{Model: "antigravity", Window: coreusage.WindowWeekly, Tokens: 25, Limit: 100}}),
+			wantAbsolute:      true,
+			wantModelWidth:    11,
+			wantWindowWidth:   21,
+			wantCombinedWidth: 32,
+		},
+		{
+			name:              "unsupported Antigravity",
+			unsupported:       []usagecmd.UnsupportedProvider{{Model: "antigravity", Label: "Antigravity"}},
+			wantModelWidth:    11,
+			wantWindowWidth:   49,
+			wantCombinedWidth: 60,
+		},
+		{
+			name:              "overlong future provider is bounded",
+			unsupported:       []usagecmd.UnsupportedProvider{{Model: "future", Label: "미래Provider이름"}},
+			wantModelWidth:    statusbarUsageModelMaxWidth,
+			wantWindowWidth:   48,
+			wantCombinedWidth: 60,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := statusbarUsageColumnProjection(tt.rows, tt.unsupported)
+			if got.absoluteCounts != tt.wantAbsolute || got.modelWidth != tt.wantModelWidth || got.windowWidth != tt.wantWindowWidth {
+				t.Fatalf("projection = %#v, want absolute=%v model=%d window=%d", got, tt.wantAbsolute, tt.wantModelWidth, tt.wantWindowWidth)
+			}
+			if got.modelWidth+got.windowWidth != tt.wantCombinedWidth {
+				t.Fatalf("MODEL+WINDOW = %d, want %d: %#v", got.modelWidth+got.windowWidth, tt.wantCombinedWidth, got)
+			}
+		})
+	}
+}
+
+func TestStatusbarUsageProjectionKeepsAntigravityAndBoundsFutureProvider(t *testing.T) {
+	t.Parallel()
+
+	for _, snapshot := range []coreusage.Snapshot{
+		{Model: "antigravity", Window: coreusage.WindowWeekly, Pct: 25},
+		{Model: "antigravity", Window: coreusage.WindowWeekly, Tokens: 25, Limit: 100, Pct: 25},
+	} {
+		rows := statusbarUsageRows([]coreusage.Snapshot{snapshot})
+		columns := statusbarUsageColumnProjection(rows, nil)
+		rendered := rows[0].render(columns)
+		if !strings.Contains(rendered, "Antigravity") || strings.Contains(rendered, "Antigravit…") {
+			t.Fatalf("Antigravity was truncated for projection %#v: %q", columns, rendered)
+		}
+	}
+
+	styled := "\x1b[31m미래Provider이름이아주김\x1b[0m"
+	cell := statusbarUsageCell(styled, statusbarUsageModelMaxWidth)
+	if got := projmuxpicker.VisibleLen(cell); got != statusbarUsageModelMaxWidth {
+		t.Fatalf("future provider visible width = %d, want %d: %q", got, statusbarUsageModelMaxWidth, cell)
+	}
+	if !strings.HasSuffix(cell, "…") || strings.ToValidUTF8(cell, "") != cell {
+		t.Fatalf("future provider truncation is not rune-safe ellipsis: %q", cell)
+	}
+}
+
+func TestStatusbarUsageProjectionAlignsHeaderDataAndUnsupportedRows(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		snapshot  coreusage.Snapshot
+		wantWidth int
+	}{
+		{
+			name:      "percent-only",
+			snapshot:  coreusage.Snapshot{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: strings.Repeat("long-window-", 5), Pct: 81},
+			wantWidth: 92,
+		},
+		{
+			name:      "absolute-count",
+			snapshot:  coreusage.Snapshot{Model: "antigravity", Window: coreusage.WindowQuota, Bucket: strings.Repeat("긴창", 12), Tokens: 25, Limit: 100, Pct: 25},
+			wantWidth: 90,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rows := statusbarUsageRows([]coreusage.Snapshot{tt.snapshot})
+			unsupported := []usagecmd.UnsupportedProvider{{Label: "Antigravity"}}
+			columns := statusbarUsageColumnProjection(rows, unsupported)
+			lines := []string{
+				statusbarUsageHeaderLine(columns),
+				rows[0].render(columns),
+				statusbarUnsupportedUsageLine(unsupported[0], columns),
+			}
+			for i, line := range lines {
+				if got := projmuxpicker.VisibleLen(line); got != tt.wantWidth {
+					t.Fatalf("line %d visible width = %d, want %d: %q", i, got, tt.wantWidth, line)
+				}
+			}
+		})
+	}
+}
+
+func TestStatusbarUsagePopupFiltersOnlyInactiveNamedQuotas(t *testing.T) {
+	t.Parallel()
+
+	snapshots := []coreusage.Snapshot{
+		{Model: "claude", Window: coreusage.Window5h, Pct: 11},
+		{
+			Model: "claude", Window: coreusage.WindowQuota, Bucket: "active-model", Pct: 22,
+			NamedQuota: &coreusage.NamedQuota{Group: "active-model", IsActive: true},
+		},
+		{
+			Model: "claude", Window: coreusage.WindowQuota, Bucket: "inactive-model", Pct: 33,
+			NamedQuota: &coreusage.NamedQuota{Group: "inactive-model", IsActive: false},
+		},
+		{Model: "codex", Window: coreusage.WindowWeekly, Pct: 44},
+	}
+	rows := statusbarUsageRows(snapshots)
+	if len(rows) != 3 {
+		t.Fatalf("popup rows = %#v, want aggregate 5h/weekly and active named quota", rows)
+	}
+	payload := strings.Join(statusbarUsagePopupLines(statusbarUsageState{Snapshots: snapshots}, time.Time{}, 92), "\n")
+	for _, want := range []string{"5h", "weekly", "quota/active-model"} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("popup = %q, missing %q", payload, want)
+		}
+	}
+	if strings.Contains(payload, "inactive-model") || strings.Contains(payload, "33%") {
+		t.Fatalf("inactive named quota leaked into popup: %q", payload)
+	}
+	if snapshots[2].NamedQuota == nil || snapshots[2].NamedQuota.IsActive || snapshots[2].NamedQuota.Group != "inactive-model" || snapshots[2].Pct != 33 {
+		t.Fatalf("popup projection mutated inactive metadata: %#v", snapshots[2])
 	}
 }
 

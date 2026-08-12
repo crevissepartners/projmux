@@ -169,7 +169,7 @@ func TestNamedQuotaTextAndJSONPreserveIdentityResetFreshnessWithoutCounts(t *tes
 		Model: "claude", Window: usage.WindowQuota, Bucket: "group-redacted-model", Pct: 37.5,
 		ResetsAt: reset, UpdatedAt: now.Add(-11 * time.Minute),
 		NamedQuota: &usage.NamedQuota{
-			Kind: "kind-redacted", Group: "group-redacted-model", Severity: "severity-redacted", IsActive: true,
+			Kind: "kind-redacted", Group: "group-redacted-model", Severity: "severity-redacted", IsActive: false,
 			Scope: &usage.NamedQuotaScope{Model: &usage.NamedQuotaModel{ID: &modelID, DisplayName: "Model Redacted Alpha"}},
 		},
 	}
@@ -177,7 +177,7 @@ func TestNamedQuotaTextAndJSONPreserveIdentityResetFreshnessWithoutCounts(t *tes
 	if err := writeUsageTable(&table, []usage.Snapshot{snapshot}, now); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"quota/group-redacted-model · Model Redacted Alpha", "38%", reset.Local().Format(time.RFC3339), "*"} {
+	for _, want := range []string{"quota/group-redacted-model · Model Redacted Alpha [inactive]", "38%", reset.Local().Format(time.RFC3339), "*"} {
 		if !strings.Contains(table.String(), want) {
 			t.Fatalf("table = %q, missing %q", table.String(), want)
 		}
@@ -190,7 +190,7 @@ func TestNamedQuotaTextAndJSONPreserveIdentityResetFreshnessWithoutCounts(t *tes
 		t.Fatal(err)
 	}
 	jsonText := output.String()
-	for _, want := range []string{`"bucket": "group-redacted-model"`, `"group": "group-redacted-model"`, `"id": "model-redacted-id"`, `"display_name": "Model Redacted Alpha"`, `"surface": null`, `"stale": true`} {
+	for _, want := range []string{`"bucket": "group-redacted-model"`, `"group": "group-redacted-model"`, `"is_active": false`, `"id": "model-redacted-id"`, `"display_name": "Model Redacted Alpha"`, `"surface": null`, `"stale": true`} {
 		if !strings.Contains(jsonText, want) {
 			t.Fatalf("JSON = %s, missing %s", jsonText, want)
 		}
