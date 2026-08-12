@@ -356,6 +356,22 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 	if err := RecordOutcome(store, []string{"diagnostics", "log"}, "viewer-ok", "0.8.4", "tmux", start, nil, false); err != nil {
 		t.Fatal(err)
 	}
+	readOnlySuccesses := []struct {
+		args  []string
+		runID string
+	}{
+		{args: []string{"attach", "--help"}, runID: "help-ok"},
+		{args: []string{"upgrade", "--dry-run"}, runID: "upgrade-preview-ok"},
+		{args: []string{"update", "apply", "--dry-run"}, runID: "update-preview-ok"},
+		{args: []string{"doctor", "--install-missing", "--dry-run"}, runID: "doctor-preview-ok"},
+		{args: []string{"ai", "integrate", "codex", "--dry-run"}, runID: "integration-preview-ok"},
+		{args: []string{"session-state", "restore", "--dry-run"}, runID: "restore-preview-ok"},
+	}
+	for _, success := range readOnlySuccesses {
+		if err := RecordOutcome(store, success.args, success.runID, "0.8.4", "tmux", start, nil, false); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := RecordOutcome(store, []string{"pin", "add", "/secret"}, "write-ok", "0.8.4", "tmux", start, nil, false); err != nil {
 		t.Fatal(err)
 	}

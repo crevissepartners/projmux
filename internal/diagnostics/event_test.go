@@ -147,13 +147,23 @@ func TestClassifyMultiModeCommands(t *testing.T) {
 		{args: []string{"ai", "topic", "clear"}, changing: true},
 		{args: []string{"doctor", "--json"}},
 		{args: []string{"doctor", "--install-missing"}, changing: true},
+		{args: []string{"doctor", "--install-missing=false"}},
+		{args: []string{"doctor", "--install-missing", "--dry-run"}},
+		{args: []string{"doctor", "--install-missing", "--dry-run=false"}, changing: true},
 		{args: []string{"prune", "session-state"}},
 		{args: []string{"prune", "session-state", "delete"}, changing: true},
+		{args: []string{"session-state", "restore", "--dry-run"}},
 		{args: []string{"setup", "terminal"}},
 		{args: []string{"setup", "terminal", "--apply"}, changing: true},
+		{args: []string{"setup", "terminal", "--apply=false"}},
 		{args: []string{"update", "check"}, changing: true},
+		{args: []string{"update", "apply", "--dry-run"}},
+		{args: []string{"update", "apply", "--dry-run=false"}, changing: true},
+		{args: []string{"upgrade", "--dry-run"}},
+		{args: []string{"upgrade", "--dry-run=false"}, changing: true},
 		{args: []string{"welcome"}},
 		{args: []string{"welcome", "--popup"}, changing: true},
+		{args: []string{"welcome", "--popup=false"}},
 		{args: []string{"window", "record"}, changing: true},
 		{args: []string{"window", "recent"}, changing: true},
 	}
@@ -161,6 +171,47 @@ func TestClassifyMultiModeCommands(t *testing.T) {
 		if got := Classify(tt.args).StateChanging; got != tt.changing {
 			t.Errorf("Classify(%q).StateChanging = %v, want %v", tt.args, got, tt.changing)
 		}
+	}
+}
+
+func TestClassifyDirectHelpIsReadOnly(t *testing.T) {
+	t.Parallel()
+	tests := [][]string{
+		{"attach", "help"},
+		{"sessions", "--help"},
+		{"settings", "-h"},
+		{"shell", "-help"},
+		{"switch", "--help"},
+		{"upgrade", "--help"},
+	}
+	for _, args := range tests {
+		class := Classify(args)
+		if class.Command != args[0] || class.StateChanging {
+			t.Errorf("Classify(%q) = %#v, want known read-only help", args, class)
+		}
+	}
+
+	// A later help-looking token can be a flag value. Only direct top-level
+	// help is excluded, so this remains conservatively mutation-capable.
+	if got := Classify([]string{"upgrade", "--ref", "--help"}); !got.StateChanging {
+		t.Fatalf("Classify(upgrade --ref --help) = %#v, want conservative changing classification", got)
+	}
+}
+
+func TestClassifyPreviewOnlyIntegrationIntents(t *testing.T) {
+	t.Parallel()
+	providers := []string{"codex", "claude", "antigravity", "tmux-bell"}
+	for _, provider := range providers {
+		args := []string{"ai", "integrate", provider, "--remove", "--dry-run"}
+		if got := Classify(args); got.StateChanging {
+			t.Errorf("Classify(%q) = %#v, want read-only dry-run", args, got)
+		}
+	}
+	if got := Classify([]string{"ai", "integrate", "codex", "--dry-run=false"}); !got.StateChanging {
+		t.Fatalf("Classify(ai integrate codex --dry-run=false) = %#v, want changing", got)
+	}
+	if got := Classify([]string{"ai", "integrate", "unknown", "--dry-run"}); !got.StateChanging {
+		t.Fatalf("Classify(ai integrate unknown --dry-run) = %#v, want conservative changing", got)
 	}
 }
 

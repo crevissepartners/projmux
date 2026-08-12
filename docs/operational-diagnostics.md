@@ -48,9 +48,15 @@ Classification is intentionally conservative for mutation-capable interactive
 commands: opening session/project/settings/popup flows is treated as changing
 even when a user cancels. Explicit read variants (`status`, `list`, `get`,
 `preview`, config printing, plain welcome, and the diagnostics viewer) remain
+read-only. Direct top-level help and explicit preview-only intents (`upgrade
+--dry-run`, `update apply --dry-run`, `doctor --install-missing --dry-run`, AI
+integration dry-runs, and the currently preview-only session restore) are also
 read-only. Multi-mode commands such as AI status/topic, doctor install,
 terminal apply, snapshot delete, update check, and welcome popup inspect only
-allowlisted mode/flag names; their values are never recorded.
+allowlisted mode/flag names; boolean `=false` values retain mutation-capable
+classification, and no flag values are ever recorded. Help-looking tokens
+after the direct command position stay conservatively mutation-capable because
+they may be values rather than help intent.
 
 Failures to resolve the path, create/repair permissions, lock, append, or trim
 are ignored by the top-level command boundary. They do not change the original

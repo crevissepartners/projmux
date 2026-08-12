@@ -172,8 +172,10 @@ prints the resolved path without creating or reading the log.
 Successful state-changing top-level commands produce one `info` outcome, and
 every top-level command error produces one `error` outcome. Successful
 high-frequency/read-only commands such as `status` and successful
-`diagnostics log` views do not produce an event. Journal failures are a
-best-effort side channel and never change command output or exit status. See
+`diagnostics log` views do not produce an event. Successful direct command
+help and explicit `--dry-run` preview modes also remain read-only and do not
+produce an event. Journal failures are a best-effort side channel and never
+change command output or exit status. See
 [operational-diagnostics.md](operational-diagnostics.md) for the file,
 retention, concurrency, and privacy contracts.
 

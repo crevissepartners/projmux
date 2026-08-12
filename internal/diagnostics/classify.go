@@ -1,6 +1,9 @@
 package diagnostics
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // CommandClass is the privacy-safe outcome classification. Only values in the
 // static allowlist below can be emitted; paths and unknown argv are discarded.
@@ -77,14 +80,22 @@ func Classify(args []string) CommandClass {
 			out.StateChanging = out.StateChanging || rule.alwaysChanging
 		}
 	}
+	// A direct help intent is never a mutation. Keep this check at the first
+	// command argument: scanning later argv would misread flag values (for
+	// example, `upgrade --ref --help`) as help and could suppress a real
+	// successful mutation.
+	if len(args) > 1 && isDirectHelpArg(strings.TrimSpace(args[1])) {
+		out.StateChanging = false
+		return out
+	}
 	if command == "setup" && out.Subcommand == "terminal" {
-		out.StateChanging = hasExactFlag(args[2:], "--apply")
+		out.StateChanging = boolFlagEnabled(args[2:], "apply")
 	}
 	if command == "init" {
-		out.StateChanging = hasExactFlag(args[1:], "--apply")
+		out.StateChanging = boolFlagEnabled(args[1:], "apply")
 	}
 	if command == "doctor" {
-		out.StateChanging = hasExactFlag(args[1:], "--install-missing")
+		out.StateChanging = boolFlagEnabled(args[1:], "install-missing") && !boolFlagEnabled(args[1:], "dry-run")
 	}
 	if command == "prune" && out.Subcommand == "session-state" && len(args) > 2 {
 		out.StateChanging = args[2] == "delete"
@@ -95,20 +106,68 @@ func Classify(args []string) CommandClass {
 	if command == "ai" && out.Subcommand == "status" && len(args) > 2 {
 		out.StateChanging = args[2] == "set"
 	}
+	if command == "ai" && out.Subcommand == "integrate" && len(args) > 2 && isAIIntegrationProvider(args[2]) {
+		out.StateChanging = !boolFlagEnabled(args[3:], "dry-run")
+	}
+	if command == "session-state" && out.Subcommand == "restore" {
+		out.StateChanging = !boolFlagEnabled(args[2:], "dry-run")
+	}
 	if command == "update" && out.Subcommand == "check" {
 		out.StateChanging = true // refreshes the local update cache
 	}
+	if command == "update" && out.Subcommand == "apply" && boolFlagEnabled(args[2:], "dry-run") {
+		out.StateChanging = false
+	}
+	if command == "upgrade" && boolFlagEnabled(args[1:], "dry-run") {
+		out.StateChanging = false
+	}
 	if command == "welcome" {
-		out.StateChanging = hasExactFlag(args[1:], "--popup") || hasExactFlag(args[1:], "--force")
+		out.StateChanging = boolFlagEnabled(args[1:], "popup") || boolFlagEnabled(args[1:], "force")
 	}
 	return out
 }
 
-func hasExactFlag(args []string, flag string) bool {
+func isDirectHelpArg(arg string) bool {
+	switch arg {
+	case "help", "-h", "--help", "-help":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAIIntegrationProvider(arg string) bool {
+	switch strings.TrimSpace(arg) {
+	case "codex", "claude", "antigravity", "tmux-bell":
+		return true
+	default:
+		return false
+	}
+}
+
+// boolFlagEnabled mirrors the standard flag package's accepted one- and
+// two-dash boolean forms and last-value-wins behavior. Invalid values lead to
+// a command error, which is recorded regardless of this success classifier.
+func boolFlagEnabled(args []string, name string) bool {
+	enabled := false
 	for _, arg := range args {
-		if arg == flag || strings.HasPrefix(arg, flag+"=") {
-			return true
+		trimmed := strings.TrimPrefix(arg, "-")
+		if trimmed == arg {
+			continue
+		}
+		trimmed = strings.TrimPrefix(trimmed, "-")
+		if trimmed == name {
+			enabled = true
+			continue
+		}
+		value, ok := strings.CutPrefix(trimmed, name+"=")
+		if !ok {
+			continue
+		}
+		parsed, err := strconv.ParseBool(value)
+		if err == nil {
+			enabled = parsed
 		}
 	}
-	return false
+	return enabled
 }
