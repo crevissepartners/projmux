@@ -1,0 +1,11 @@
+projmux doctor
+dependency and AI notify integration diagnostics; use `projmux setup` for terminal key delivery
+  [ok]      tmux      tmux 3.6
+  [ok]      git       git 1.2.3
+  [ok]      stty      stty 1.2.3
+  [ok]      kubectl   kubectl 1.2.3
+
+4 ok, 0 missing, 0 stale, 0 skipped, 0 hint.
+
+Session State retention
+  Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name.

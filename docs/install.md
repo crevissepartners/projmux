@@ -18,8 +18,8 @@ After installing, run:
 projmux doctor
 ```
 
-`doctor` checks that runtime tools such as `tmux`, `git`, and `stty` are
-available.
+`doctor` performs read-only diagnostics for runtime tools such as `tmux`,
+`git`, and `stty`.
 
 Start the tmux app with:
 

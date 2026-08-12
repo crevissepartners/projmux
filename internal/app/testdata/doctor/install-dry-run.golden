@@ -1,0 +1,13 @@
+projmux doctor
+dependency and AI notify integration diagnostics; use `projmux setup` for terminal key delivery
+  [ok]      tmux      tmux 3.6
+  [missing] git       - install: brew install git
+  [ok]      stty      stty 1.2.3
+  [hint]    kubectl   - optional; install if you use the kubectl switcher; install: brew install kubectl
+
+2 ok, 1 missing, 0 stale, 0 skipped, 1 hint.
+
+Session State retention
+  Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name.
+would install git: brew install git
+would install kubectl: brew install kubectl

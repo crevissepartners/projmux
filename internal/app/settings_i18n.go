@@ -165,6 +165,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"Key setup":             "settings.text.key_setup",
 	"Diagnose keys":         "settings.text.diagnose_keys",
 	"Terminal remediation":  "settings.text.terminal_remediation",
+	"Diagnostics":           "settings.text.diagnostics",
 	"Dependencies":          "settings.text.dependencies",
 	"Rename key":            "settings.text.rename_key",
 	"Windows Term.":         "settings.text.windows_term",

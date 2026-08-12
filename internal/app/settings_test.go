@@ -6538,7 +6538,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 		"try shortcuts in projmux shell",
 		"projmux setup reports swallowed shortcuts",
 		"projmux setup terminal previews supported terminal key delivery mappings",
-		"projmux doctor checks tmux",
+		"projmux doctor provides read-only runtime and integration diagnostics",
 		"configure a plain alias",
 		"Alt Meta defaults",
 		"tmux/meta sequences",
