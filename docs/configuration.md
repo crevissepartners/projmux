@@ -114,6 +114,9 @@ keys = ["C-t"]
 
 [bindings."Sidebar:PinProject"]
 keys = ["M-p", "p"]
+
+[bindings."Resources:Open"]
+keys = ["M-u"]
 ```
 
 Each table is `[bindings.<action-id>]`. Supported keys are:
@@ -149,6 +152,12 @@ such as `ProjectSidebarToggle`, `NotifySidebarToggle`, `SessionPopupToggle`,
 `AISplitPickerToggle`, `SettingsToggle`, and `ProjectSwitcherToggle`. Internal
 popup commands use `Surface:Action` IDs and have surface-local conflict
 domains and remain visible in Settings when catalogued.
+
+`Resources:Open` is a user-configurable direct popup action with no built-in
+shortcut. Every configured alias renders the canonical client-scoped body
+`projmux tmux popup-toggle --client #{client_tty} resource-inspector`; pressing
+the same alias again closes only that client's popup. It remains available on
+Linux/tmux even when the Labs live-resource status segment is off.
 
 The Settings writer is deterministic and rewrites the supported saved subset
 only. If the existing file has parse errors or unknown action IDs, Settings
@@ -802,6 +811,12 @@ inactive pages, matching the reclaimable-memory intent of Linux
 `MemAvailable`. In WSL the values describe the Linux guest/VM view, not total
 Windows host utilization. These are host-scoped values and do not attribute
 usage to a pane, window, project, or session.
+
+When enabled, the compact segment is also the clickable `resources` statusbar
+range and opens the Resource Inspector. Turning the Lab off hides only this
+segment; it does not disable `projmux resources` or a custom-bound
+`Resources:Open` action. Inspector samples are memory-only for the popup
+lifetime and are unrelated to the status segment's host CPU reference cache.
 
 The display policy is fixed rather than configurable: CPU is normal below 70%,
 warning at 70–89%, and critical at 90% or above; memory is normal below 75%,

@@ -56,6 +56,13 @@ These shortcuts are the guaranteed launch defaults. They need no tmux prefix.
 to the selected live tmux window using that window's current active pane; it is
 separate from `last-pane` and from the existing-session popup.
 
+`Resources:Open` is listed in Settings > Keybindings without a default key.
+Adding a safe direct chord opens the Linux/tmux Resource Inspector through the
+canonical client-scoped popup-toggle path; pressing the same custom chord again
+closes it without touching another client's popup. The action remains usable
+when Settings > Labs > Live system resources is off—the Lab controls only
+statusbar visibility.
+
 The tmux prefix remains the upstream default `Ctrl-b`. Inside a running
 session, `Ctrl-b ?` lists the live tmux bindings.
 

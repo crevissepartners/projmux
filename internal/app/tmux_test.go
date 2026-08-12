@@ -864,6 +864,50 @@ func TestAppRunTmuxPopupToggleOpensRecentWindows(t *testing.T) {
 	}
 }
 
+func TestAppRunTmuxPopupToggleResourcesIsClientScopedAndIsolated(t *testing.T) {
+	t.Parallel()
+	clientKey := "/dev/pts/projmux-test-resources"
+	otherClient := "/dev/pts/projmux-test-resources-other"
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), resourceInspectorPopupMode)
+	otherMarker := popupMarkerPath(sanitizePopupKey(otherClient), resourceInspectorPopupMode)
+	_ = os.Remove(marker)
+	_ = os.Remove(otherMarker)
+	defer os.Remove(marker)
+	defer os.Remove(otherMarker)
+	if err := os.WriteFile(otherMarker, []byte("%other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}": clientKey, "#{pane_id}": "%1", "#{client_width}": "200", "#{client_height}": "50",
+	}}
+	cmd := &tmuxCommand{runner: runner, executable: func() (string, error) { return "/tmp/projmux", nil }}
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, resourceInspectorPopupMode}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	got := runner.calls[len(runner.calls)-1]
+	if got.name != "tmux" || !containsTmuxArgPair(got.args, "-c", clientKey) {
+		t.Fatalf("display call = %#v, want client-scoped -c %s", got, clientKey)
+	}
+	command := got.args[len(got.args)-1]
+	if !strings.Contains(command, "'/tmp/projmux' 'resources'") {
+		t.Fatalf("popup command = %q, want native resources CLI", command)
+	}
+	if _, err := os.Stat(otherMarker); err != nil {
+		t.Fatalf("other-client marker changed: %v", err)
+	}
+
+	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, resourceInspectorPopupMode}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	got = runner.calls[len(runner.calls)-1]
+	if want := (recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-c", clientKey, "-C"}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("same-client close = %#v, want %#v", got, want)
+	}
+	if _, err := os.Stat(otherMarker); err != nil {
+		t.Fatalf("same-client close removed other marker: %v", err)
+	}
+}
+
 func TestAppRunTmuxPopupToggleClosesRecentWindowsWithClientMarker(t *testing.T) {
 	t.Parallel()
 

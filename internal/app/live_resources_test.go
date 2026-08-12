@@ -222,7 +222,7 @@ func TestTmuxPrintConfigLoadsLiveResourcesModeAndPlacesSegment(t *testing.T) {
 	output := stdout.String()
 	for _, want := range []string{
 		"set -g " + liveResourcesTmuxOption + " on",
-		"#{?#{==:#{" + liveResourcesTmuxOption + "},on},#('/tmp/projmux' status resources),}",
+		"#{?#{==:#{" + liveResourcesTmuxOption + "},on},#[range=user|resources]#('/tmp/projmux' status resources)#[norange],}",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output missing %q: %s", want, output)
@@ -254,7 +254,7 @@ func TestGeneratedTmuxConfigsPreserveLiveResourcesModesAndOrdering(t *testing.T)
 				if !strings.Contains(output, "set -g "+liveResourcesTmuxOption+" "+string(mode)) {
 					t.Fatalf("generated config missing %s mode %q", name, mode)
 				}
-				condition := "#{?#{==:#{" + liveResourcesTmuxOption + "},on},#('/tmp/projmux' status resources),}"
+				condition := "#{?#{==:#{" + liveResourcesTmuxOption + "},on},#[range=user|resources]#('/tmp/projmux' status resources)#[norange],}"
 				if !strings.Contains(output, condition) {
 					t.Fatalf("generated config missing conditional resources segment: %s", output)
 				}

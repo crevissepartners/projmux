@@ -1,9 +1,10 @@
 # Linux resource attribution core
 
-Phase 0 provides a read-only contract for a future Resource Inspector. It has
-no CLI, popup, statusbar range, action, refresh loop, or platform fallback.
-The snapshot exists only in memory for the consumer's sampling lifetime and is
-not part of Session State.
+Phase 0 provides the read-only attribution contract consumed by the Resource
+Inspector shipped in Phase 1. `projmux resources`, the client-scoped
+`resource-inspector` popup, the statusbar range, and `Resources:Open` all keep
+the snapshot in memory only for the interactive process lifetime; it remains
+outside Session State.
 
 ## Identity and inventory
 
@@ -118,11 +119,14 @@ PROJMUX_RESOURCE_TRANSIENT_SMOKE=1 go test \
 The pane shell remained attributed while its real `setsid` child was counted
 at the escaped/Other boundary, without reading the child command line.
 
-## Phase 1 reconciliation
+## Phase 1 inspector
 
-The future popup must retain warming/partial/unavailable and overage states,
-render RSS explicitly as a sum, keep `Other / unattributed` non-drillable, and
-discard samples when it closes. It must not persist telemetry or infer project
-ownership from display metadata. Unsupported platforms need an unavailable
-reason, not zero metrics. PSS, non-Linux collectors, process-list drill-down,
-and resource mutation remain outside this contract.
+The popup retains warming/partial/unavailable and overage states, renders RSS
+explicitly as a sum, keeps `Other / unattributed` non-drillable, and discards
+samples when it closes. Its non-overlapping default cadence is two seconds;
+Ctrl-R shares the same scan gate. Selection and query survive refresh by stable
+row identity, while a vanished row clamps to the nearest valid neighbor.
+Display labels use label → agent topic → known interactive shell → raw title,
+but those values never become ownership keys. Unsupported platforms show an
+unavailable reason, not zero metrics. PSS, non-Linux collectors, process-list
+drill-down, history, and resource mutation remain outside this contract.

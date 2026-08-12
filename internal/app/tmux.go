@@ -413,7 +413,7 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 			}
 			originSession = markerSession
 		}
-		if mode.Canonical == "notify-sidebar" {
+		if mode.Canonical == "notify-sidebar" || mode.Canonical == resourceInspectorPopupMode {
 			targetPane = ""
 			targetClient = popupCtx.TargetClient
 		}
@@ -476,7 +476,7 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
 	}
 	switch raw {
-	case "session-popup", "sessionizer", "sessionizer-sidebar", "notify-sidebar", "recent-windows", "ai-split-settings":
+	case "session-popup", "sessionizer", "sessionizer-sidebar", "notify-sidebar", "recent-windows", "ai-split-settings", resourceInspectorPopupMode:
 		return tmuxPopupToggleMode{Raw: raw, Canonical: raw, ClientKey: client}, nil
 	case "ai-split-picker-right":
 		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client}, nil
@@ -803,7 +803,7 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux tmux popup-preview <session>")
 	fmt.Fprintln(w, "  projmux tmux popup-switch")
 	fmt.Fprintln(w, "  projmux tmux popup-sessions")
-	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|ai-split-picker-right|ai-split-picker-down|ai-split-resume-right|ai-split-resume-down|ai-split-settings>")
+	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|resource-inspector|ai-split-picker-right|ai-split-picker-down|ai-split-resume-right|ai-split-resume-down|ai-split-settings>")
 	fmt.Fprintln(w, "  projmux tmux rebalance-panes")
 	fmt.Fprintln(w, "  projmux tmux rename-pane <pane> <label>")
 	fmt.Fprintln(w, "  projmux tmux print-config [--bin <path>]")
@@ -1039,6 +1039,12 @@ func buildPopupToggleWithPickerBackendAndStyle(mode tmuxPopupToggleMode, binaryP
 		options.Width = popupSize(ctx.ClientWidth, 80, 120)
 		options.Height = popupSize(ctx.ClientHeight, 70, 28)
 		commandArgs = []string{"window", "recent"}
+	case resourceInspectorPopupMode:
+		options.Client = ctx.TargetClient
+		options.Target = ""
+		options.Width = popupSize(ctx.ClientWidth, 80, 120)
+		options.Height = popupSize(ctx.ClientHeight, 75, 30)
+		commandArgs = []string{"resources"}
 	case "ai-split-picker-right", "ai-split-picker-down":
 		options.Width = popupSize(ctx.ClientWidth, 40, 96)
 		options.Height = popupSize(ctx.ClientHeight, 45, 20)

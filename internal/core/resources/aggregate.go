@@ -22,6 +22,12 @@ type paneTopology struct {
 	window     windowKey
 	pid        int
 	tty        string
+	windowName string
+	paneLabel  string
+	aiAgent    string
+	aiTopic    string
+	command    string
+	title      string
 	sessionIDs map[string]struct{}
 	sessions   map[string]struct{}
 	anchors    map[string]struct{}
@@ -180,6 +186,12 @@ func buildTopology(inventory []PaneInventory) (map[paneKey]*paneTopology, map[in
 				window:     windowKey{socket: row.Socket, windowID: row.WindowID},
 				pid:        row.PanePID,
 				tty:        row.PaneTTY,
+				windowName: row.WindowName,
+				paneLabel:  row.PaneLabel,
+				aiAgent:    row.AIAgent,
+				aiTopic:    row.AITopic,
+				command:    row.PaneCommand,
+				title:      row.PaneTitle,
 				sessionIDs: make(map[string]struct{}),
 				sessions:   make(map[string]struct{}),
 				anchors:    make(map[string]struct{}),
@@ -263,12 +275,18 @@ func buildPaneUsages(topology map[paneKey]*paneTopology, acc map[paneKey]*usageA
 			Socket:        pane.key.socket,
 			PaneID:        pane.key.paneID,
 			WindowID:      pane.window.windowID,
+			WindowName:    pane.windowName,
 			SessionIDs:    sortedKeys(pane.sessionIDs),
 			Sessions:      sortedKeys(pane.sessions),
 			PanePID:       pane.pid,
 			PaneTTY:       pane.tty,
 			ProjectKey:    projectKey,
 			ProjectAnchor: anchor,
+			PaneLabel:     pane.paneLabel,
+			AIAgent:       pane.aiAgent,
+			AITopic:       pane.aiTopic,
+			PaneCommand:   pane.command,
+			PaneTitle:     pane.title,
 			ProcessCount:  usage.processCount,
 			Memory:        memoryUsage(usage.rssBytes, host.MemoryTotalBytes),
 		}
@@ -290,6 +308,7 @@ func buildWindowUsages(panes []PaneUsage, host HostSample) []WindowUsage {
 		sessionIDs map[string]struct{}
 		projects   map[string]struct{}
 		panes      int
+		windowName string
 	}
 	values := make(map[windowKey]*windowAcc)
 	for _, pane := range panes {
@@ -300,6 +319,9 @@ func buildWindowUsages(panes []PaneUsage, host HostSample) []WindowUsage {
 			values[key] = value
 		}
 		value.panes++
+		if value.windowName == "" {
+			value.windowName = pane.WindowName
+		}
 		value.processCount += pane.ProcessCount
 		value.rssBytes += pane.Memory.RSSBytes
 		value.projects[pane.ProjectKey] = struct{}{}
@@ -322,7 +344,7 @@ func buildWindowUsages(panes []PaneUsage, host HostSample) []WindowUsage {
 				project = candidate
 			}
 		}
-		row := WindowUsage{Socket: key.socket, WindowID: key.windowID, SessionIDs: sortedKeys(value.sessionIDs), Sessions: sortedKeys(value.sessions), ProjectKey: project, PaneCount: value.panes, ProcessCount: value.processCount, Memory: memoryUsage(value.rssBytes, host.MemoryTotalBytes)}
+		row := WindowUsage{Socket: key.socket, WindowID: key.windowID, WindowName: value.windowName, SessionIDs: sortedKeys(value.sessionIDs), Sessions: sortedKeys(value.sessions), ProjectKey: project, PaneCount: value.panes, ProcessCount: value.processCount, Memory: memoryUsage(value.rssBytes, host.MemoryTotalBytes)}
 		if value.cpuKnown {
 			row.CPU = cpuUsage(value.cpuShare, host.LogicalCPUs)
 		}

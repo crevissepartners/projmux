@@ -64,7 +64,13 @@ type Preview struct {
 type DeferredUpdate struct {
 	Items   []Item
 	Preview Preview
-	Result  *Result
+	// Header and Footer replace live chrome when their corresponding Set flag
+	// is true. The explicit flags allow a refresh to intentionally clear text.
+	Header    string
+	Footer    string
+	SetHeader bool
+	SetFooter bool
+	Result    *Result
 	// FocusValue, when non-empty, moves the selection cursor to the item
 	// whose Value matches it after the update is applied. It overrides the
 	// default behaviour of preserving the previously selected value, which
@@ -905,6 +911,12 @@ func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
 	}
 	if strings.TrimSpace(update.Preview.Command) != "" || strings.TrimSpace(update.Preview.Window) != "" {
 		options.Preview = update.Preview
+	}
+	if update.SetHeader {
+		options.Header = update.Header
+	}
+	if update.SetFooter {
+		options.Footer = update.Footer
 	}
 	return options
 }

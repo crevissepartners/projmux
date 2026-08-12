@@ -32,6 +32,7 @@ projmux <command> [args...]
 | `preview` | Manage persisted tmux preview selection. |
 | `prune` | Trim stale tmux lifecycle state and inspect preserved session snapshots. |
 | `quit` | Quit the app-owned projmux tmux runtime. |
+| `resources` | Inspect live Linux/tmux Project → Window → Pane CPU/RSS attribution. |
 | `sessions` | Pick and open an existing tmux session. |
 | `session-popup` | Read tmux popup preview state. |
 | `settings` | Configure projmux. |
@@ -289,6 +290,32 @@ the latter; opaque IDs such as `weekly` are not aliases for the fixed
 including the distinction between absent and explicit zero. Invalid,
 disabled, missing, or empty quota data degrades without reinterpreting the
 conversation context row.
+
+## resources
+
+```
+projmux resources
+```
+
+Opens the native, read-only Resource Inspector. It samples only while this
+interactive process is alive, paints `warming` immediately, then refreshes at
+a non-overlapping two-second cadence. Enter drills Project → Window → Pane →
+Pane detail; Esc or Alt-Left returns, and root Esc closes. Search matches the
+current scope's display name and stable tmux id. Tab cycles CPU, Memory, and
+Name sorting; Ctrl-R requests an immediate refresh. A plain `r` remains search
+input.
+
+CPU list values are host-capacity share; pane detail also shows
+core-equivalent CPU. Memory is explicitly an RSS sum (shared pages can be
+counted more than once) plus its host ratio. `Unassigned`,
+`Shared / ambiguous`, and non-drillable `Other / unattributed` remain explicit,
+as do warming, partial, unavailable, unknown, and overage states. No process
+command list, mutation, history, graph, daemon, persistence, or Session State
+telemetry is created. Linux/tmux provides attribution; unsupported platforms
+show an unavailable reason rather than zero metrics.
+
+This is distinct from `projmux status resources`, which remains the short
+host-only statusbar renderer.
 
 ## status
 
@@ -781,7 +808,7 @@ projmux tmux apply
 Helpers tmux's keybindings and the install pipeline call into. Modes
 accepted by `popup-toggle` mirror the historical sessionizer surface:
 `session-popup`, `sessionizer`, `sessionizer-sidebar`,
-`notify-sidebar`, `recent-windows`, `ai-split-picker-right`,
+`notify-sidebar`, `recent-windows`, `resource-inspector`, `ai-split-picker-right`,
 `ai-split-picker-down`, `ai-split-resume-right`, `ai-split-resume-down`,
 `ai-split-settings`.
 `rename-pane` sets only the pane-scoped user label

@@ -89,6 +89,10 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
   re-enabling after a pause starts at `CPU --%` instead of showing a long-term
   average. Missing or malformed procfs data degrades to `--` or an empty segment
   without producing a tmux error popup.
+  The complete live segment is wrapped in `#[range=user|resources]...#[norange]`.
+  Clicking it opens the same canonical client-scoped `resource-inspector`
+  popup as the `Resources:Open` keybinding action. Disabling the Lab hides only
+  the segment; it does not disable a custom action or `projmux resources`.
 - The settings chip keeps its label padding inside the `settings` range
   and inside the chip background. The compact app chip renders `` with
   the extra right-side icon padding painted by the same background, while
@@ -119,6 +123,7 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
 | `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
 | `settings` | 0 | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
+| `resources` | 0 | `projmux tmux popup-toggle --client <tty> resource-inspector` | mouse or custom `Resources:Open`; no default key |
 | `usage`   | 1 | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
 | `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click [--client <tty>]`, then ack on focus success | `prefix s n`  |
 

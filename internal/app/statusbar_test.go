@@ -79,6 +79,7 @@ func TestStatusbarDispatchTableCoversAllKnownRanges(t *testing.T) {
 		statusbarRangeUsage,
 		statusbarRangeNotify,
 		statusbarRangeSettings,
+		statusbarRangeResources,
 	}
 	if got := len(table); got != len(want) {
 		t.Fatalf("dispatch table size = %d, want %d", got, len(want))
@@ -428,6 +429,26 @@ func TestStatusbarClickSettingsOpensSettingsPopupForClient(t *testing.T) {
 	}
 }
 
+func TestStatusbarClickResourcesUsesCanonicalClientScopedPopup(t *testing.T) {
+	t.Parallel()
+	runner := &statusbarFakeRunner{}
+	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
+	if err := cmd.Run([]string{"click", "resources", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", resourceInspectorPopupMode}
+	if !sawProjmuxArgs(runner.calls, want) {
+		t.Fatalf("calls = %#v, want exact canonical args %#v", runner.calls, want)
+	}
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "Resources:Open")
+	if !ok || action.TmuxBody != resourceInspectorPopupMode || action.PlainChord != "" || len(action.PlainChords) != 0 {
+		t.Fatalf("Resources:Open = %#v, want same canonical mode and no default shortcut", action)
+	}
+	if got := renderTmuxBindingBody("/usr/local/bin/projmux", action); got != "run-shell \"'/usr/local/bin/projmux' tmux popup-toggle --client #{client_tty} resource-inspector\"" {
+		t.Fatalf("action body = %q, want byte-equivalent canonical popup path", got)
+	}
+}
+
 func TestStatusbarClickPopupActionFailuresShowToast(t *testing.T) {
 	t.Parallel()
 
@@ -439,6 +460,7 @@ func TestStatusbarClickPopupActionFailuresShowToast(t *testing.T) {
 		{name: "session", rangeID: "session", want: "statusbar session: popup failed"},
 		{name: "kube", rangeID: "kube", want: "statusbar kube: popup failed"},
 		{name: "git", rangeID: "git", want: "statusbar git: popup failed"},
+		{name: "resources", rangeID: "resources", want: "statusbar resources: popup failed"},
 		{name: "settings", rangeID: "settings", want: "statusbar settings: popup failed"},
 	}
 	for _, tt := range tests {

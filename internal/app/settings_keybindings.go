@@ -1088,6 +1088,11 @@ func keybindingLocalizedSearchText(locale i18n.Locale, action keyBindingAction) 
 	switch action.ID {
 	case "last-pane":
 		return settingsCatalogTextLocale(locale, "previously active pane / last pane")
+	case "Resources:Open":
+		return strings.Join([]string{
+			settingsCatalogTextLocale(locale, action.DisplayName),
+			settingsCatalogTextLocale(locale, action.Description),
+		}, " ")
 	default:
 		return ""
 	}

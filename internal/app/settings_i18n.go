@@ -201,6 +201,8 @@ var uiTextKeys = map[string]i18n.Key{
 
 	"Native macOS keybindings": "settings.text.native_macos_keybindings",
 	"Live system resources":    "settings.text.live_system_resources",
+	"Resources":                "settings.keybinding.resources.name",
+	"Open the read-only Project, Window, and Pane resource inspector": "settings.keybinding.resources.description",
 
 	"project roots, workdirs, and pins":                               "settings.text.project_roots_workdirs_pins",
 	"default split mode":                                              "settings.text.default_split_mode",
