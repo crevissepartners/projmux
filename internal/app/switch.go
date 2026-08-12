@@ -597,12 +597,7 @@ func (c *switchCommand) candidateInputs(currentPath string) (candidates.Inputs, 
 }
 
 func (c *switchCommand) candidateInputsWithMemoize(currentPath string, memoize bool) (candidates.Inputs, error) {
-	homeDir, err := c.resolveHomeDir()
-	if err != nil {
-		return candidates.Inputs{}, err
-	}
-
-	pins, err := c.loadPins()
+	inputs, err := c.projectDiscoveryInputs(memoize)
 	if err != nil {
 		return candidates.Inputs{}, err
 	}
@@ -612,6 +607,23 @@ func (c *switchCommand) candidateInputsWithMemoize(currentPath string, memoize b
 		if err != nil {
 			return candidates.Inputs{}, err
 		}
+	}
+	inputs.CurrentPath = currentPath
+	return inputs, nil
+}
+
+// projectDiscoveryInputs reads the same pins and configured search roots as
+// the project picker without injecting its home/current-path convenience
+// candidates. With memoize=false the entire path is read-only.
+func (c *switchCommand) projectDiscoveryInputs(memoize bool) (candidates.Inputs, error) {
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return candidates.Inputs{}, err
+	}
+
+	pins, err := c.loadPins()
+	if err != nil {
+		return candidates.Inputs{}, err
 	}
 
 	var repoRoot string
@@ -626,7 +638,6 @@ func (c *switchCommand) candidateInputsWithMemoize(currentPath string, memoize b
 		RepoRoot:     repoRoot,
 		ManagedRoots: switchManagedRoots(homeDir, repoRoot, extraRoots, c.lookupEnv, c.loadWorkdirs),
 		Pins:         pins,
-		CurrentPath:  currentPath,
 	}, nil
 }
 

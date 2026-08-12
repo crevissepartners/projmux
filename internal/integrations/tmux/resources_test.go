@@ -14,13 +14,13 @@ func TestClientListResourcePanesParsesTypedInventory(t *testing.T) {
 	t.Parallel()
 
 	output := strings.Join([]string{
-		"/tmp/tmux-1000/projmux", "$1", "project", "@2", "editor", "%3", "4242", "/dev/pts/7", "/repo/project", "api", "codex", "fix tests", "zsh", "raw title",
+		"/tmp/tmux-1000/projmux", "$1", "project", "@2", "editor", "%3", "4242", "/dev/pts/7", "/repo/project/subdir", "/repo/project", "api", "codex", "fix tests", "zsh", "raw title",
 	}, tmuxFieldSep) + "\n"
 	client := NewClient(staticRunner(func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name != "tmux" || len(args) != 4 || args[0] != "list-panes" || args[1] != "-a" || args[2] != "-F" {
 			t.Fatalf("resource inventory command = %s %#v", name, args)
 		}
-		for _, format := range []string{"#{socket_path}", "#{session_id}", "#{window_id}", "#{pane_pid}", "#{pane_tty}", "#{@projmux_project_path}"} {
+		for _, format := range []string{"#{socket_path}", "#{session_id}", "#{window_id}", "#{pane_pid}", "#{pane_tty}", "#{pane_current_path}", "#{@projmux_project_path}"} {
 			if !strings.Contains(args[3], format) {
 				t.Fatalf("resource format %q missing from %q", format, args[3])
 			}
@@ -32,7 +32,7 @@ func TestClientListResourcePanesParsesTypedInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []resources.PaneInventory{{Socket: "/tmp/tmux-1000/projmux", SessionID: "$1", SessionName: "project", WindowID: "@2", WindowName: "editor", PaneID: "%3", PanePID: 4242, PaneTTY: "/dev/pts/7", ProjectAnchor: "/repo/project", PaneLabel: "api", AIAgent: "codex", AITopic: "fix tests", PaneCommand: "zsh", PaneTitle: "raw title"}}
+	want := []resources.PaneInventory{{Socket: "/tmp/tmux-1000/projmux", SessionID: "$1", SessionName: "project", WindowID: "@2", WindowName: "editor", PaneID: "%3", PanePID: 4242, PaneTTY: "/dev/pts/7", CurrentPath: "/repo/project/subdir", ProjectAnchor: "/repo/project", PaneLabel: "api", AIAgent: "codex", AITopic: "fix tests", PaneCommand: "zsh", PaneTitle: "raw title"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ListResourcePanes() = %#v, want %#v", got, want)
 	}
@@ -42,7 +42,7 @@ func TestParseResourcePanesPreservesLinkedWindowAnchors(t *testing.T) {
 	t.Parallel()
 
 	row := func(sessionID, session, anchor string) string {
-		return strings.Join([]string{"", sessionID, session, "@8", "editor", "%9", "900", "/dev/pts/9", anchor, "", "", "", "zsh", "title"}, tmuxEscapedFieldSep)
+		return strings.Join([]string{"", sessionID, session, "@8", "editor", "%9", "900", "/dev/pts/9", "/repo/current", anchor, "", "", "", "zsh", "title"}, tmuxEscapedFieldSep)
 	}
 	got, err := parseResourcePanes([]byte(row("$1", "one", "/repo/one")+"\n"+row("$2", "two", "/repo/two")+"\n"), "projmux")
 	if err != nil {
@@ -56,7 +56,7 @@ func TestParseResourcePanesPreservesLinkedWindowAnchors(t *testing.T) {
 func TestParseResourcePanesRejectsMissingIdentity(t *testing.T) {
 	t.Parallel()
 
-	base := []string{"/tmp/s", "$1", "one", "@1", "editor", "%1", "100", "/dev/pts/1", "/repo", "", "", "", "zsh", "title"}
+	base := []string{"/tmp/s", "$1", "one", "@1", "editor", "%1", "100", "/dev/pts/1", "/repo/current", "/repo", "", "", "", "zsh", "title"}
 	tests := []struct {
 		name  string
 		index int
@@ -79,4 +79,44 @@ func TestParseResourcePanesRejectsMissingIdentity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseResourcePanesCurrentPathAndMalformedRows(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"/tmp/s", "$1", "one", "@1", "editor", "%1", "100", "/dev/pts/1", "/repo/project/work", "", "", "", "", "zsh", "title"}
+	tests := []struct {
+		name    string
+		fields  []string
+		wantCWD string
+		wantErr bool
+	}{
+		{name: "current path", fields: base, wantCWD: "/repo/project/work"},
+		{name: "trim current path", fields: replaceResourceField(base, 8, "  /repo/project  "), wantCWD: "/repo/project"},
+		{name: "empty current path allowed", fields: replaceResourceField(base, 8, ""), wantCWD: ""},
+		{name: "missing field", fields: base[:len(base)-1], wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseResourcePanes([]byte(strings.Join(tc.fields, tmuxFieldSep)), "")
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "malformed row") {
+					t.Fatalf("parseResourcePanes() error = %v, want malformed row", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].CurrentPath != tc.wantCWD {
+				t.Fatalf("parseResourcePanes() = %#v, want current path %q", got, tc.wantCWD)
+			}
+		})
+	}
+}
+
+func replaceResourceField(fields []string, index int, value string) []string {
+	result := append([]string(nil), fields...)
+	result[index] = value
+	return result
 }

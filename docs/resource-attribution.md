@@ -90,10 +90,17 @@ The opt-in read-only test below observes an existing socket and emits counts
 only. It neither captures pane content nor reads process command lines.
 
 ```text
-PROJMUX_RESOURCE_TMUX_SOCKET=projmux go test \
+PROJMUX_RESOURCE_TMUX_SOCKET=projmux \
+PROJMUX_RESOURCE_EXPECT_PROJECT_ROOT=/path/to/project go test \
   -run TestResourceAttributionRealTmuxReadOnlySmoke -v \
   ./internal/integrations/tmux
 ```
+
+When `PROJMUX_RESOURCE_EXPECT_PROJECT_ROOT` is set, the smoke additionally
+requires at least one blank explicit anchor to resolve from its pane current
+path and requires the resulting project bucket to contain a pane. Output stays
+bounded to the expected project path and aggregate counts; it does not emit
+session names, pane content, prompts, transcripts, or process command lines.
 
 2026-08-12 result: `panes=8`, `pane_pid_eq_sid=8`, `missing_pids=0`,
 `attributed_processes=13`, `escaped_boundary=0`, `sampled=474`, `skipped=0`,
@@ -118,6 +125,18 @@ PROJMUX_RESOURCE_TRANSIENT_SMOKE=1 go test \
 `escaped_boundary=1`, `sampled=480`, `skipped=0`, `race=0`, `permission=0`.
 The pane shell remained attributed while its real `setsid` child was counted
 at the escaped/Other boundary, without reading the child command line.
+
+The current-path fallback itself has a separate isolated real-tmux smoke. It
+starts with inherited `TMUX`/`TMUX_PANE` removed, uses a dedicated
+`TMUX_TMPDIR` plus `-L` socket, verifies the actual socket path is below that
+temporary root before exact cleanup, and confirms the blank tmux project
+option remains blank after in-memory attribution:
+
+```text
+PROJMUX_RESOURCE_PROJECT_FALLBACK_SMOKE=1 go test \
+  -run TestResourceProjectFallbackTransientSmoke -v \
+  ./internal/integrations/tmux
+```
 
 ## Phase 1 inspector
 

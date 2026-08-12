@@ -2357,6 +2357,57 @@ func TestSwitchCommandSinglePathProjdirRetainsSavedWorkdirs(t *testing.T) {
 	}
 }
 
+func TestProjectDiscoveryInputsReadOnlyPathNeverMemoizes(t *testing.T) {
+	t.Parallel()
+
+	cmd := &switchCommand{
+		pinStore: func() (switchPinStore, error) {
+			return &stubSwitchPinStore{list: []string{"/pinned/project"}}, nil
+		},
+		homeDir: func() (string, error) { return "/home/tester", nil },
+		workingDir: func() (string, error) {
+			t.Fatal("project root discovery must not consult the app working directory")
+			return "", nil
+		},
+		lookupEnv: func(name string) string {
+			if name == projdirEnvVar {
+				return strings.Join([]string{"/repos", "/managed/extra"}, string(os.PathListSeparator))
+			}
+			return ""
+		},
+		tmuxProjdir: func() string {
+			t.Fatal("env project root should win before tmux option")
+			return ""
+		},
+		loadProjdir: func(string) (string, error) {
+			t.Fatal("env project root should win before saved config")
+			return "", nil
+		},
+		saveProjdir: func(string, string) error {
+			t.Fatal("read-only project discovery must never memoize")
+			return nil
+		},
+		loadWorkdirs: func(string) ([]string, error) {
+			t.Fatal("extra PROJMUX_PROJDIR roots suppress saved workdirs")
+			return nil, nil
+		},
+	}
+
+	got, err := cmd.projectDiscoveryInputs(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := candidates.Inputs{
+		HomeDir:      "/home/tester",
+		RepoRoot:     "/repos",
+		ManagedRoots: []string{"/managed/extra"},
+		Pins:         []string{"/pinned/project"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("projectDiscoveryInputs(false) = %#v, want %#v", got, want)
+	}
+}
+
 func TestDetectGitBranchWithRunnerPreservesNormalAndDetachedPaths(t *testing.T) {
 	t.Parallel()
 

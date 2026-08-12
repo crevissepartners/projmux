@@ -32,6 +32,20 @@ func TestResourceAttributionRealTmuxReadOnlySmoke(t *testing.T) {
 	if len(inventory) == 0 {
 		t.Fatal("resource inventory is empty")
 	}
+	expectedProject := strings.TrimSpace(os.Getenv("PROJMUX_RESOURCE_EXPECT_PROJECT_ROOT"))
+	fallbackViews := 0
+	if expectedProject != "" {
+		resolved := resources.ResolveProjectAnchors(inventory, []string{expectedProject})
+		for i := range resolved {
+			if strings.TrimSpace(inventory[i].ProjectAnchor) == "" && resolved[i].ProjectAnchor == expectedProject {
+				fallbackViews++
+			}
+		}
+		if fallbackViews == 0 {
+			t.Fatalf("no blank-anchor pane current path resolved to expected project %q", expectedProject)
+		}
+		inventory = resolved
+	}
 	collector := procfsresources.Collector{}
 	previous := collector.Sample(ctx)
 	time.Sleep(125 * time.Millisecond)
@@ -59,8 +73,21 @@ func TestResourceAttributionRealTmuxReadOnlySmoke(t *testing.T) {
 	for _, pane := range snapshot.Panes {
 		attributedProcesses += pane.ProcessCount
 	}
-	t.Logf("sanitized resource smoke: panes=%d pane_pid_eq_sid=%d missing_pids=%d attributed_processes=%d escaped_boundary=%d sampled=%d skipped=%d race=%d permission=%d status=%s",
+	expectedProjectPanes := 0
+	if expectedProject != "" {
+		for _, project := range snapshot.Projects {
+			if project.Key == expectedProject {
+				expectedProjectPanes = project.PaneCount
+				break
+			}
+		}
+		if expectedProjectPanes == 0 {
+			t.Fatalf("expected project %q has no attributed pane bucket: fallback_views=%d", expectedProject, fallbackViews)
+		}
+	}
+	t.Logf("sanitized resource smoke: panes=%d pane_pid_eq_sid=%d missing_pids=%d attributed_processes=%d fallback_views=%d expected_project_panes=%d expected_project=%q escaped_boundary=%d sampled=%d skipped=%d race=%d permission=%d status=%s",
 		len(inventory), paneSIDMatches, missingPanePIDs, attributedProcesses,
+		fallbackViews, expectedProjectPanes, expectedProject,
 		snapshot.Diagnostics.EscapedProcessCount, current.Diagnostics.SampledProcesses,
 		current.Diagnostics.SkippedProcesses, current.Diagnostics.RaceCount,
 		current.Diagnostics.PermissionCount, snapshot.Status)
@@ -82,13 +109,14 @@ func TestResourceAttributionTransientSetsidSmoke(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux unavailable")
 	}
-	socket := "projmux-resource-smoke-" + filepath.Base(t.TempDir())
+	smokeRoot := t.TempDir()
+	socket := "projmux-resource-setsid-" + filepath.Base(smokeRoot)
 	ctx := context.Background()
-	runner := resourceSmokeRunner{socket: socket}
-	defer func() { _, _ = runner.Run(context.Background(), "tmux", "kill-server") }()
+	runner := resourceSmokeRunner{socket: socket, tmuxTmpDir: smokeRoot, configFile: "/dev/null"}
 	if output, err := runner.Run(ctx, "tmux", "new-session", "-d", "-s", "resource-smoke", "sh", "-c", "setsid sleep 20 & wait"); err != nil {
 		t.Fatalf("start transient tmux: %v: %s", err, output)
 	}
+	t.Cleanup(func() { cleanupIsolatedResourceSmoke(t, runner, smokeRoot) })
 	client := NewClient(runner, WithSocketName(socket))
 	collector := procfsresources.Collector{}
 
@@ -118,11 +146,105 @@ func TestResourceAttributionTransientSetsidSmoke(t *testing.T) {
 	}
 }
 
+// TestResourceProjectFallbackTransientSmoke creates an isolated tmux server
+// whose pane has no project option, then proves that the typed current path is
+// resolved in memory without writing any tmux metadata.
+func TestResourceProjectFallbackTransientSmoke(t *testing.T) {
+	if os.Getenv("PROJMUX_RESOURCE_PROJECT_FALLBACK_SMOKE") != "1" {
+		t.Skip("set PROJMUX_RESOURCE_PROJECT_FALLBACK_SMOKE=1 to run isolated real-tmux project fallback smoke")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux unavailable")
+	}
+
+	smokeRoot := t.TempDir()
+	currentPath, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot := filepath.Clean(filepath.Join(currentPath, "..", "..", ".."))
+	socket := "projmux-resource-fallback-" + filepath.Base(smokeRoot)
+	runner := resourceSmokeRunner{socket: socket, tmuxTmpDir: smokeRoot, configFile: "/dev/null"}
+	ctx := context.Background()
+	if output, err := runner.Run(ctx, "tmux", "new-session", "-d", "-s", "resource-fallback-smoke", "-c", currentPath, "/usr/bin/sleep 20"); err != nil {
+		t.Fatalf("start fallback tmux: %v: %s", err, output)
+	}
+	t.Cleanup(func() { cleanupIsolatedResourceSmoke(t, runner, smokeRoot) })
+
+	client := NewClient(runner, WithSocketName(socket))
+	inventory, err := client.ListResourcePanes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory) != 1 || inventory[0].CurrentPath != currentPath || inventory[0].ProjectAnchor != "" {
+		t.Fatalf("isolated inventory = %#v, want one blank-anchor pane at configured cwd", inventory)
+	}
+	resolved := resources.ResolveProjectAnchors(inventory, []string{projectRoot})
+	if resolved[0].ProjectAnchor != projectRoot {
+		t.Fatalf("resolved project anchor = %q, want %q", resolved[0].ProjectAnchor, projectRoot)
+	}
+
+	current := (procfsresources.Collector{}).Sample(ctx)
+	snapshot := resources.BuildSnapshot(resolved, nil, current)
+	if len(snapshot.Projects) != 1 || snapshot.Projects[0].Key != projectRoot || snapshot.Projects[0].PaneCount != 1 {
+		t.Fatalf("isolated project buckets = %#v, want one fallback-attributed pane", snapshot.Projects)
+	}
+	after, err := client.ListResourcePanes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 || after[0].ProjectAnchor != "" {
+		t.Fatalf("fallback mutated tmux project metadata: %#v", after)
+	}
+	t.Logf("sanitized fallback smoke: panes=%d fallback_project_panes=%d project=%q", len(after), snapshot.Projects[0].PaneCount, projectRoot)
+}
+
 type resourceSmokeRunner struct {
-	socket string
+	socket     string
+	tmuxTmpDir string
+	configFile string
 }
 
 func (r resourceSmokeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	args = append([]string{"-L", r.socket}, args...)
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	prefix := []string{"-L", r.socket}
+	if r.configFile != "" {
+		prefix = append(prefix, "-f", r.configFile)
+	}
+	args = append(prefix, args...)
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = resourceSmokeEnvironment(r.tmuxTmpDir)
+	return cmd.CombinedOutput()
+}
+
+func resourceSmokeEnvironment(tmuxTmpDir string) []string {
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if name == "TMUX" || name == "TMUX_PANE" || tmuxTmpDir != "" && name == "TMUX_TMPDIR" {
+			continue
+		}
+		env = append(env, entry)
+	}
+	if tmuxTmpDir != "" {
+		env = append(env, "TMUX_TMPDIR="+tmuxTmpDir)
+	}
+	return env
+}
+
+func cleanupIsolatedResourceSmoke(t *testing.T, runner resourceSmokeRunner, smokeRoot string) {
+	t.Helper()
+	output, err := runner.Run(context.Background(), "tmux", "display-message", "-p", "#{socket_path}")
+	if err != nil {
+		t.Errorf("query isolated tmux socket before cleanup: %v: %s", err, output)
+		return
+	}
+	socketPath := strings.TrimSpace(string(output))
+	rel, err := filepath.Rel(smokeRoot, socketPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		t.Errorf("refuse cleanup outside smoke root %q: socket=%q", smokeRoot, socketPath)
+		return
+	}
+	if output, err := runner.Run(context.Background(), "tmux", "kill-server"); err != nil {
+		t.Errorf("kill isolated tmux server %q: %v: %s", socketPath, err, output)
+	}
 }
