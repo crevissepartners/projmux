@@ -40,6 +40,20 @@ still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
 
+### Pane rename keymap action ID removed
+
+The deprecated `rename-pane-topic` keybinding action ID has been removed. If
+`~/.config/projmux/keymap.toml` still contains
+`[bindings.rename-pane-topic]`, rename that table to
+`[bindings.rename-pane-label]` before running Settings or
+`projmux tmux apply`. Projmux now rejects the stale table with that exact
+replacement instead of silently applying its keys to the user-label action.
+
+This removal does not change `projmux ai topic set/clear`: those advanced CLI
+commands continue to write only AI topic and manual-ownership state. User pane
+rename continues to write only the pane label, and raw pane title remains an
+independent fallback.
+
 ### Theme is now global-only
 
 Theme is a global user preference. The effective theme resolves from the global

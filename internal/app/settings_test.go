@@ -5545,6 +5545,46 @@ func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 	}
 }
 
+func TestSettingsKeybindingsExposeOnlyCanonicalPaneRenameAction(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := testKeybindingSettingsCommand(t, home, func(intpickercompat.Options) (intpickercompat.Result, error) {
+		return intpickercompat.Result{}, nil
+	})
+	entries, err := cmd.keybindingEntries()
+	if err != nil {
+		t.Fatalf("keybindingEntries() error = %v", err)
+	}
+	if !hasEntryValue(entries, settingsActionPrefixKeymap+paneRenameActionID) {
+		t.Fatalf("entries = %#v, want canonical pane rename action", entries)
+	}
+	if hasEntryValue(entries, settingsActionPrefixKeymap+retiredPaneRenameActionID) {
+		t.Fatalf("entries = %#v, did not want retired pane rename action", entries)
+	}
+}
+
+func TestSettingsKeybindingsRejectRetiredPaneRenameActionWithoutRewriting(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	keymapPath := filepath.Join(home, ".config", "projmux", "keymap.toml")
+	body := "[bindings.rename-pane-topic]\nkeys = [\"M-r\"]\n"
+	writeFile(t, keymapPath, body)
+	cmd := testKeybindingSettingsCommand(t, home, func(intpickercompat.Options) (intpickercompat.Result, error) {
+		return intpickercompat.Result{}, nil
+	})
+
+	options := cmd.keybindingsOptions(settingsKeybindingsBindings)
+	if !hasEntryLabelContaining(options.Entries, "Keymap error") ||
+		!hasEntryLabelContaining(options.Entries, "replace [bindings.rename-pane-topic] with [bindings.rename-pane-label]") {
+		t.Fatalf("entries = %#v, want actionable retired action error", options.Entries)
+	}
+	if got := readFile(t, keymapPath); got != body {
+		t.Fatalf("keymap = %q, want stale file left unchanged as %q", got, body)
+	}
+}
+
 func TestKeyBindingDisplayNameKeepsLaunchToggleLabelsHumanReadable(t *testing.T) {
 	t.Parallel()
 

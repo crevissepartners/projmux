@@ -44,6 +44,11 @@ const (
 	keyBindingActionPickerInternal keyBindingActionKind = "picker-internal"
 )
 
+const (
+	paneRenameActionID        = "rename-pane-label"
+	retiredPaneRenameActionID = "rename-pane-topic"
+)
+
 // keyBindingAction is the in-app source of truth for built-in key actions.
 // Terminal init adapters and tmux config rendering derive their concrete
 // trigger/action tables from these entries.
@@ -290,8 +295,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			ProbePlain:     "\r",
 		},
 		{
-			ID:             "rename-pane-label",
-			Aliases:        []string{"rename-pane-topic"},
+			ID:             paneRenameActionID,
 			Description:    "Set or clear the current tmux pane's user label",
 			DisplayName:    "Rename Pane",
 			Kind:           keyBindingActionCommand,

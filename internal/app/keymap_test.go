@@ -44,17 +44,21 @@ func TestKeyBindingCatalogGuaranteedLaunchDefaultsAreOnlyAltOneThroughFive(t *te
 	}
 }
 
-func TestRenamePaneLabelCatalogKeepsDeprecatedAliasLabelOnly(t *testing.T) {
+func TestRenamePaneLabelCatalogExcludesRetiredTopicAlias(t *testing.T) {
 	t.Parallel()
 
 	catalog := defaultKeyBindingCatalog()
-	canonical, ok := keyBindingActionByID(catalog, "rename-pane-label")
+	canonical, ok := keyBindingActionByID(catalog, paneRenameActionID)
 	if !ok {
-		t.Fatal("catalog missing rename-pane-label")
+		t.Fatalf("catalog missing %s", paneRenameActionID)
 	}
-	alias, ok := keyBindingActionByID(catalog, "rename-pane-topic")
-	if !ok || alias.ID != canonical.ID {
-		t.Fatalf("deprecated alias = %#v, %v; want canonical rename-pane-label", alias, ok)
+	if alias, ok := keyBindingActionByID(catalog, retiredPaneRenameActionID); ok {
+		t.Fatalf("retired action %s unexpectedly resolves to %#v", retiredPaneRenameActionID, alias)
+	}
+	for _, alias := range canonical.Aliases {
+		if alias == retiredPaneRenameActionID {
+			t.Fatalf("canonical aliases = %#v, did not want retired action %s", canonical.Aliases, retiredPaneRenameActionID)
+		}
 	}
 	if canonical.DisplayName != "Rename Pane" || canonical.ProbeLabel != "Ctrl-Shift-M" {
 		t.Fatalf("rename action display/default = (%q, %q), want Rename Pane and unchanged Ctrl-Shift-M", canonical.DisplayName, canonical.ProbeLabel)
@@ -74,6 +78,33 @@ func TestRenamePaneLabelCatalogKeepsDeprecatedAliasLabelOnly(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("rename pane binding = %q, forbidden write/initial source %q", body, forbidden)
 		}
+	}
+}
+
+func TestKeymapRejectsRetiredPaneRenameActionWithExactReplacement(t *testing.T) {
+	t.Parallel()
+
+	for _, header := range []string{
+		"[bindings.rename-pane-topic]",
+		`[bindings."rename-pane-topic"]`,
+	} {
+		t.Run(header, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseKeymapFile("/tmp/keymap.toml", header+"\nkeys = [\"M-r\"]\n")
+			if err == nil {
+				t.Fatal("parseKeymapFile() = nil, want retired action error")
+			}
+			for _, want := range []string{
+				"/tmp/keymap.toml:1",
+				`keybinding action "rename-pane-topic" was removed`,
+				"replace [bindings.rename-pane-topic] with [bindings.rename-pane-label]",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("parseKeymapFile() error = %q, want %q", err, want)
+				}
+			}
+		})
 	}
 }
 

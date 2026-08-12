@@ -848,8 +848,11 @@ accepted by `popup-toggle` mirror the historical sessionizer surface:
 `rename-pane` sets only the pane-scoped user label
 `@projmux_pane_label`; an empty label clears the option. It does not change the
 raw tmux pane title, AI topic, or AI topic manual-ownership flag. The canonical
-keybinding action id is `rename-pane-label`; `rename-pane-topic` remains a
-deprecated label-only keymap alias for one compatibility period.
+keybinding action id is `rename-pane-label`. The retired `rename-pane-topic`
+keymap action is no longer accepted: replace a stale
+`[bindings.rename-pane-topic]` table with `[bindings.rename-pane-label]`.
+The advanced `projmux ai topic set/clear` commands remain available and keep
+AI topic ownership separate from the user pane label and raw pane title.
 `apply` regenerates the app tmux config and reloads the live `-L projmux`
 server without restarting it. `make install` and `projmux upgrade` invoke it
 after replacing the binary. Settings > Keybindings normally runs the same
