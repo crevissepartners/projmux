@@ -1,22 +1,13 @@
 // Package antigravity implements a best-effort usage Adapter for the
 // Antigravity CLI (`agy`).
 //
-// The adapter consumes two distinct statusline signals: conversation-local
-// `context_window` fullness and account-wide named `quota` buckets. Quota
-// bucket IDs remain opaque upstream identities; this package never aliases
-// them to the canonical 5h/weekly windows.
+// The adapter consumes account-wide named `quota` buckets. Quota bucket IDs
+// remain opaque upstream identities; this package never aliases them to the
+// canonical 5h/weekly windows.
 //
-// Source of truth: a small sidecar file written by the antigravity hook
-// ingest path (`projmux ai ingest antigravity-hook`) whenever a hook
-// payload carries a context_window value. The ingest path and this adapter
-// agree on the file name (ContextFileName) and schema (ContextRecord); the
-// file lives in the same directory as the usage snapshot cache so a single
-// PROJMUX_USAGE_STATE_DIR override keeps both in sync.
-//
-// The value reflects the most recently observed context window across all
-// antigravity panes — it is a live gauge, not an account-wide quota, so it
-// carries no ResetsAt. Best-effort throughout: a missing or malformed
-// sidecar reads as zero snapshots so the status segment degrades cleanly.
+// The hook ingest path still writes conversation-local `context_window`
+// diagnostics to ContextFileName for notify/private sidecar consumers, but
+// that gauge is deliberately not projected into usage snapshots.
 package antigravity
 
 import (
@@ -40,9 +31,9 @@ import (
 // registry ID and the usage model key so scope filtering lines up.
 const Name = "antigravity"
 
-// ContextFileName is the sidecar JSON the ingest path writes and this
-// adapter reads. It sits alongside the usage snapshot cache
-// (snapshots.json) in the resolved usage state directory.
+// ContextFileName is the private hook/notify diagnostic sidecar written by
+// the Antigravity ingest path. It remains alongside snapshots.json in the
+// resolved usage state directory but is not adapter input.
 const ContextFileName = "antigravity-context.json"
 
 // QuotaFileName stores the latest account-quota map independently from the
@@ -50,10 +41,10 @@ const ContextFileName = "antigravity-context.json"
 // not overwrite the last observed account quota state.
 const QuotaFileName = "antigravity-quota.json"
 
-// ContextRecord is the on-disk schema shared between the hook ingest path
-// (writer) and this adapter (reader). Pct is the context-window fullness
-// percentage (0-100); ConversationID preserves its conversation-local identity;
-// UpdatedAt is when the value was last observed.
+// ContextRecord is the private sidecar schema written by the hook ingest path.
+// Pct is the context-window fullness percentage (0-100); ConversationID
+// preserves its conversation-local identity; UpdatedAt is when the value was
+// last observed.
 type ContextRecord struct {
 	ConversationID string    `json:"conversation_id,omitempty"`
 	Pct            float64   `json:"pct"`
@@ -82,8 +73,8 @@ type Adapter struct {
 	baseDir string
 }
 
-// New returns an Adapter that reads ContextFileName from baseDir (the
-// resolved usage state directory).
+// New returns an Adapter that reads QuotaFileName from baseDir (the resolved
+// usage state directory).
 func New(baseDir string) *Adapter {
 	return &Adapter{baseDir: baseDir}
 }
@@ -91,36 +82,17 @@ func New(baseDir string) *Adapter {
 // Name implements usage.Adapter.
 func (a *Adapter) Name() string { return Name }
 
-// Collect reads the independent context and quota sidecars. Missing files and
-// invalid quota buckets degrade to no rows for that signal. If either present
-// sidecar is malformed, Collect returns no partial rows so the Manager keeps
-// the last complete Antigravity model view atomically.
+// Collect reads the account quota sidecar. Missing files and invalid quota
+// buckets degrade to no rows. Conversation context remains private diagnostic
+// metadata and is not an account-usage row.
 func (a *Adapter) Collect(_ context.Context) ([]usage.Snapshot, error) {
 	if strings.TrimSpace(a.baseDir) == "" {
 		return nil, nil
 	}
-	var (
-		snaps []usage.Snapshot
-		errs  []error
-	)
-	contextRec, ok, err := readJSON[ContextRecord](filepath.Join(a.baseDir, ContextFileName))
-	if err != nil {
-		errs = append(errs, fmt.Errorf("read context: %w", err))
-	} else if ok && !math.IsNaN(contextRec.Pct) && !math.IsInf(contextRec.Pct, 0) {
-		pct := contextRec.Pct
-		if pct < 0 {
-			pct = 0
-		}
-		snaps = append(snaps, usage.Snapshot{
-			Model:     Name,
-			Window:    usage.WindowContext,
-			Pct:       pct,
-			UpdatedAt: contextRec.UpdatedAt.UTC(),
-		})
-	}
+	var snaps []usage.Snapshot
 	quotaRec, ok, err := readJSON[QuotaRecord](filepath.Join(a.baseDir, QuotaFileName))
 	if err != nil {
-		errs = append(errs, fmt.Errorf("read quota: %w", err))
+		return nil, fmt.Errorf("read quota: %w", err)
 	} else if ok {
 		buckets := append([]QuotaBucketRecord(nil), quotaRec.Buckets...)
 		sort.Slice(buckets, func(i, j int) bool { return buckets[i].ID < buckets[j].ID })
@@ -140,13 +112,6 @@ func (a *Adapter) Collect(_ context.Context) ([]usage.Snapshot, error) {
 				UpdatedAt:      quotaRec.UpdatedAt.UTC(),
 			})
 		}
-	}
-	if len(errs) > 0 {
-		// The Manager replaces all rows owned by an adapter when any fresh row
-		// is returned. Do not return a partial Antigravity view: doing so would
-		// erase the last-known valid context or quota half. Returning no rows
-		// with an error preserves the prior model atomically.
-		return nil, errors.Join(errs...)
 	}
 	return snaps, nil
 }

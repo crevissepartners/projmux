@@ -802,6 +802,7 @@ func statusbarUsagePopup(state statusbarUsageState, now time.Time, binaryPath st
 
 func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int) []string {
 	rows := statusbarUsageRows(state.Snapshots)
+	columns := statusbarUsageColumnProjection(rows)
 	// The native picker frame chrome wrapping this body already renders the
 	// `Usage` title bar (and the divider below it). Body opens with the
 	// subdued subtitle so the popup mirrors the picker layout one-to-one
@@ -811,7 +812,7 @@ func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int
 		"",
 		statusbarUsageSyncLine(state, now),
 		"",
-		statusbarUsageHeaderLine(),
+		statusbarUsageHeaderLine(columns),
 		projmuxpicker.SeparatorLine(cols),
 	}
 	if state.LoadError != nil {
@@ -820,10 +821,10 @@ func statusbarUsagePopupLines(state statusbarUsageState, now time.Time, cols int
 		lines = append(lines, dimANSI("No usage data available yet."))
 	} else {
 		for _, row := range rows {
-			lines = append(lines, row.render())
+			lines = append(lines, row.render(columns))
 		}
 		for _, provider := range state.Unsupported {
-			lines = append(lines, statusbarUnsupportedUsageLine(provider))
+			lines = append(lines, statusbarUnsupportedUsageLine(provider, columns))
 		}
 	}
 	lines = append(lines, statusbarPopupFooterLines(cols)...)
@@ -851,12 +852,15 @@ func statusbarUsageToast(state statusbarUsageState) string {
 	return "usage: " + strings.Join(parts, " · ")
 }
 
-func statusbarUnsupportedUsageLine(provider usagecmd.UnsupportedProvider) string {
+func statusbarUnsupportedUsageLine(provider usagecmd.UnsupportedProvider, columns statusbarUsageColumns) string {
 	label := strings.TrimSpace(provider.Label)
 	if label == "" {
 		label = provider.Model
 	}
-	return dimANSI(fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", label, "ctx", "-", "-", "-", "-", "unsupported"))
+	if columns.absoluteCounts {
+		return dimANSI(fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", label, "-", "-", "-", "-", "-", "unsupported"))
+	}
+	return dimANSI(fmt.Sprintf("%-14s %-28s %8s  %-24s", label, "-", "-", "unsupported"))
 }
 
 func statusbarUsageSyncLine(state statusbarUsageState, now time.Time) string {
@@ -901,23 +905,29 @@ type statusbarUsageRow struct {
 	pct       string
 	pctValue  float64
 	reset     string
+	hasCounts bool
 }
 
 func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
 	snaps = coreusage.SortedSnapshots(snaps)
 	rows := make([]statusbarUsageRow, 0, len(snaps))
 	for _, s := range snaps {
+		if s.Window == coreusage.WindowContext {
+			continue
+		}
 		if s.Pct == 0 && s.ResetsAt.IsZero() && s.Limit == 0 && s.Window != coreusage.WindowContext && s.Window != coreusage.WindowQuota {
 			continue
 		}
+		hasCounts := s.Limit > 0
 		row := statusbarUsageRow{
-			model:    usagecmd.ModelDisplayLabel(s.Model),
-			window:   usagecmd.SnapshotWindowLabel(s),
-			used:     usageCountText(s.Tokens),
-			limit:    usageLimitText(s.Limit),
-			pct:      usagecmd.PercentText(s.Pct),
-			pctValue: s.Pct,
-			reset:    usageResetText(s.ResetsAt),
+			model:     usagecmd.ModelDisplayLabel(s.Model),
+			window:    usagecmd.SnapshotWindowLabel(s),
+			used:      usageCountText(s.Tokens, hasCounts),
+			limit:     usageLimitText(s.Limit),
+			pct:       usagecmd.PercentText(s.Pct),
+			pctValue:  s.Pct,
+			reset:     usageResetText(s.ResetsAt),
+			hasCounts: hasCounts,
 		}
 		if row.reset == "-" && s.ResetInSeconds != nil {
 			row.reset = "in " + usagecmd.ResetInText(s.ResetInSeconds)
@@ -932,13 +942,39 @@ func statusbarUsageRows(snaps []coreusage.Snapshot) []statusbarUsageRow {
 	return rows
 }
 
-func statusbarUsageHeaderLine() string {
+type statusbarUsageColumns struct {
+	absoluteCounts bool
+}
+
+func statusbarUsageColumnProjection(rows []statusbarUsageRow) statusbarUsageColumns {
+	for _, row := range rows {
+		if row.hasCounts {
+			return statusbarUsageColumns{absoluteCounts: true}
+		}
+	}
+	return statusbarUsageColumns{}
+}
+
+func statusbarUsageHeaderLine(columns statusbarUsageColumns) string {
+	if columns.absoluteCounts {
+		return statusbarMutedANSI +
+			fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", "MODEL", "WIN", "USED", "LIMIT", "LEFT", "PCT", "RESET") +
+			projmuxpicker.Reset
+	}
 	return statusbarMutedANSI +
-		fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s", "MODEL", "WIN", "USED", "LIMIT", "LEFT", "PCT", "RESET") +
+		fmt.Sprintf("%-14s %-28s %8s  %-24s", "MODEL", "WINDOW", "PCT", "RESET") +
 		projmuxpicker.Reset
 }
 
-func (r statusbarUsageRow) render() string {
+func (r statusbarUsageRow) render(columns statusbarUsageColumns) string {
+	if !columns.absoluteCounts {
+		return fmt.Sprintf("%-14s %-28s %8s  %-24s",
+			r.model,
+			r.window,
+			statusbarUsagePctANSI(r.pct, r.pctValue, 8),
+			styleUnavailableLeft(r.reset, 24),
+		)
+	}
 	return fmt.Sprintf("%-8s %-6s %10s %10s %10s %6s  %-16s",
 		r.model,
 		r.window,
@@ -950,8 +986,8 @@ func (r statusbarUsageRow) render() string {
 	)
 }
 
-func usageCountText(value int64) string {
-	if value <= 0 {
+func usageCountText(value int64, available bool) string {
+	if !available || value < 0 {
 		return "-"
 	}
 	return formatUsageInt(value)
