@@ -1,0 +1,334 @@
+package diagnostics
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+func fixtureEvent(id string) Event {
+	return Event{At: "2026-08-12T00:00:00Z", Level: "info", Component: "cli", Event: "command.outcome", Result: "success", DurationMS: 1, RunID: id, Version: "0.8.4", MuxBackend: "tmux", Command: "pin", Subcommand: "add"}
+}
+
+func TestDefaultPath(t *testing.T) {
+	t.Parallel()
+	path, err := DefaultPath(func(string) string { return "/state" }, func() (string, error) { return "/home/test", nil })
+	if err != nil || path != filepath.Join("/state", "projmux", "logs", "operations.jsonl") {
+		t.Fatalf("DefaultPath() = %q, %v", path, err)
+	}
+	path, err = DefaultPath(func(string) string { return "" }, func() (string, error) { return "/home/test", nil })
+	if err != nil || path != filepath.Join("/home/test", ".local", "state", "projmux", "logs", "operations.jsonl") {
+		t.Fatalf("fallback DefaultPath() = %q, %v", path, err)
+	}
+}
+
+func TestStoreRepairsPrivatePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission modes are not enforced on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "projmux", "logs", LogFileName)
+	store := NewStore(path)
+	if err := store.Append(fixtureEvent("first")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(filepath.Dir(path)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(fixtureEvent("second")); err != nil {
+		t.Fatal(err)
+	}
+	dirInfo, _ := os.Stat(filepath.Dir(path))
+	stateInfo, _ := os.Stat(filepath.Dir(filepath.Dir(path)))
+	fileInfo, _ := os.Stat(path)
+	if got := stateInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("state directory mode = %o", got)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("directory mode = %o", got)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("file mode = %o", got)
+	}
+}
+
+func TestStoreRefusesSymlinkWithoutChangingTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink permissions vary on Windows")
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "outside.jsonl")
+	if err := os.WriteFile(target, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logs := filepath.Join(root, "projmux", "logs")
+	if err := os.MkdirAll(logs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(logs, LogFileName)
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(path)
+	if err := store.Append(fixtureEvent("unsafe")); err == nil {
+		t.Fatal("expected symlink refusal")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "outside\n" {
+		t.Fatalf("target data = %q, err = %v", data, err)
+	}
+	info, _ := os.Stat(target)
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Fatalf("external target mode = %o", got)
+	}
+}
+
+func TestStoreTrimRetainsRecentCompleteValidRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs", LogFileName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record, _ := json.Marshal(fixtureEvent("old"))
+	record = append(record, '\n')
+	seed := bytes.Repeat(record, MaxLogSize/len(record)+20)
+	seed = append(seed, []byte("corrupt\n{\"truncated\"")...)
+	if err := os.WriteFile(path, seed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(path)
+	if err := store.Append(fixtureEvent("newest")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > RetainLogSize+len(record)*2 {
+		t.Fatalf("trimmed size = %d, want near <= %d", len(data), RetainLogSize)
+	}
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		t.Fatal("trimmed log does not end with a complete record")
+	}
+	for lineNo, line := range bytes.Split(bytes.TrimSuffix(data, []byte{'\n'}), []byte{'\n'}) {
+		if !json.Valid(line) {
+			t.Fatalf("line %d is malformed: %q", lineNo, line)
+		}
+	}
+	events, err := store.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := events[len(events)-1].RunID; got != "newest" {
+		t.Fatalf("last run id = %q", got)
+	}
+}
+
+func TestStoreReadSkipsMalformedAndTruncatedRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), LogFileName)
+	valid, _ := json.Marshal(fixtureEvent("valid"))
+	data := append(append(valid, '\n'), []byte("bad\n{\"at\":")...)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	events, err := NewStore(path).Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].RunID != "valid" {
+		t.Fatalf("events = %#v", events)
+	}
+}
+
+func TestStoreConcurrentGoroutineWritersKeepCompleteRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs", LogFileName)
+	store := NewStore(path)
+	var wg sync.WaitGroup
+	for worker := range 12 {
+		for record := range 30 {
+			wg.Add(1)
+			go func(worker, record int) {
+				defer wg.Done()
+				if err := store.Append(fixtureEvent(fmt.Sprintf("g-%d-%d", worker, record))); err != nil {
+					t.Errorf("Append: %v", err)
+				}
+			}(worker, record)
+		}
+	}
+	wg.Wait()
+	events, err := store.Read()
+	if err != nil || len(events) != 360 {
+		t.Fatalf("Read() count = %d, err = %v", len(events), err)
+	}
+}
+
+func TestStoreConcurrentProcessesKeepCompleteRecords(t *testing.T) {
+	if os.Getenv("PROJMUX_DIAGNOSTICS_HELPER") == "1" {
+		path := os.Getenv("PROJMUX_DIAGNOSTICS_PATH")
+		prefix := os.Getenv("PROJMUX_DIAGNOSTICS_PREFIX")
+		store := NewStore(path)
+		for i := range 80 {
+			if err := store.Append(fixtureEvent(prefix + "-" + strconv.Itoa(i))); err != nil {
+				os.Exit(3)
+			}
+		}
+		os.Exit(0)
+	}
+	path := filepath.Join(t.TempDir(), "logs", LogFileName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := json.Marshal(fixtureEvent("old-before-rotation"))
+	old = append(old, '\n')
+	if err := os.WriteFile(path, bytes.Repeat(old, MaxLogSize/len(old)+10), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commands := make([]*exec.Cmd, 8)
+	for i := range commands {
+		commands[i] = exec.Command(os.Args[0], "-test.run=^TestStoreConcurrentProcessesKeepCompleteRecords$")
+		commands[i].Env = append(os.Environ(), "PROJMUX_DIAGNOSTICS_HELPER=1", "PROJMUX_DIAGNOSTICS_PATH="+path, fmt.Sprintf("PROJMUX_DIAGNOSTICS_PREFIX=p%d", i))
+		if err := commands[i].Start(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, command := range commands {
+		if err := command.Wait(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, err := NewStore(path).Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]bool, 640)
+	for _, event := range events {
+		seen[event.RunID] = true
+	}
+	for process := range 8 {
+		for record := range 80 {
+			id := fmt.Sprintf("p%d-%d", process, record)
+			if !seen[id] {
+				t.Fatalf("missing concurrent post-rotation record %q", id)
+			}
+		}
+	}
+	data, _ := os.ReadFile(path)
+	if len(data) > RetainLogSize+640*len(old) {
+		t.Fatalf("concurrent rotated size = %d", len(data))
+	}
+	for line := range bytes.SplitSeq(bytes.TrimSuffix(data, []byte{'\n'}), []byte{'\n'}) {
+		if !json.Valid(line) {
+			t.Fatalf("malformed concurrent record: %q", line)
+		}
+	}
+}
+
+func TestStoreLockWaitIsBoundedAndStaleLockRecovers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs", LogFileName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := path + lockSuffix
+	if err := os.WriteFile(lockPath, []byte("busy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(path)
+	store.lockAttempts = 3
+	store.staleAfter = time.Hour
+	waits := 0
+	store.sleep = func(time.Duration) { waits++ }
+	if err := store.Append(fixtureEvent("blocked")); !errors.Is(err, errLockBusy) {
+		t.Fatalf("Append error = %v, want lock busy", err)
+	}
+	if waits != 3 {
+		t.Fatalf("bounded waits = %d, want 3", waits)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(lockPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	store.staleAfter = time.Minute
+	if err := store.Append(fixtureEvent("recovered")); err != nil {
+		t.Fatalf("stale lock recovery: %v", err)
+	}
+	events, err := store.Read()
+	if err != nil || len(events) != 1 || events[0].RunID != "recovered" {
+		t.Fatalf("events = %#v, err = %v", events, err)
+	}
+}
+
+func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
+	t.Setenv("PHASE0_SECRET", "never-store-this-secret")
+	store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
+	start := time.Now().Add(-time.Millisecond)
+	if err := RecordOutcome(store, []string{"status", "usage"}, "read-ok", "0.8.4", "tmux", start, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordOutcome(store, []string{"diagnostics", "log"}, "viewer-ok", "0.8.4", "tmux", start, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordOutcome(store, []string{"pin", "add", "/secret"}, "write-ok", "0.8.4", "tmux", start, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordOutcome(store, []string{"status", "usage", "/secret/argv-value"}, "read-error", "0.8.4", "tmux", start, fmt.Errorf("failed /secret/argv-value never-store-this-secret\ncontrol"), false); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.Read()
+	if err != nil || len(events) != 2 {
+		t.Fatalf("events count = %d, err = %v", len(events), err)
+	}
+	if events[0].RunID != "write-ok" || events[0].Result != "success" || events[0].Message != "" {
+		t.Fatalf("success event = %#v", events[0])
+	}
+	if events[1].RunID != "read-error" || events[1].Result != "error" || events[1].Command != "status" || events[1].Subcommand != "usage" {
+		t.Fatalf("error event = %#v", events[1])
+	}
+	if strings.Contains(events[1].Message, "argv-value") || strings.Contains(events[1].Message, "never-store") || strings.ContainsAny(events[1].Message, "\n\r\t") {
+		t.Fatalf("unsafe error message = %q", events[1].Message)
+	}
+	blockedPath := filepath.Join(t.TempDir(), "missing", "nested", LogFileName)
+	blocked := NewStore(blockedPath)
+	if err := os.WriteFile(filepath.Dir(filepath.Dir(blockedPath)), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordOutcome(blocked, []string{"pin", "add"}, "ignored-failure", "0.8.4", "tmux", start, nil, false); err == nil {
+		t.Fatal("expected injected writer failure")
+	}
+}
+
+type outcomeExitError struct{ code int }
+
+func (e outcomeExitError) Error() string { return "target unavailable" }
+func (e outcomeExitError) ExitCode() int { return e.code }
+
+func TestRecordOutcomeClassifiesUsageAndExitErrorsOnce(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
+	start := time.Now()
+	if err := RecordOutcome(store, []string{"status", "usage"}, "usage-run", "0.8.4", "tmux", start, errors.New("bad flag"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordOutcome(store, []string{"focus", "--target", "secret"}, "exit-run", "0.8.4", "tmux", start, outcomeExitError{code: 2}, false); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.Read()
+	if err != nil || len(events) != 2 {
+		t.Fatalf("events = %#v, err = %v", events, err)
+	}
+	if events[0].Kind != "usage" || events[1].Kind != "exit" {
+		t.Fatalf("error kinds = %q, %q", events[0].Kind, events[1].Kind)
+	}
+}

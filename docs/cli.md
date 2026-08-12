@@ -24,6 +24,7 @@ projmux <command> [args...]
 | `attach` | Open tmux lifecycle entry helpers. |
 | `current` | Resolve the active tmux pane path. |
 | `doctor` | Run read-only runtime and integration diagnostics. |
+| `diagnostics` | Read the private bounded operational event log. |
 | `focus` | Switch the active client to a session/window/pane target. |
 | `init` | Preview or apply supported terminal key delivery mappings. |
 | `kill` | Terminate tagged tmux sessions. |
@@ -154,6 +155,27 @@ whether `PROJMUX_NOTIFY_HOOK` overrides the built-in desktop sender. Settings
 does not install or remove external Codex, Claude, Antigravity, or tmux notify
 wiring. Pending in-app queue rows remain owned by the statusbar/sidebar rather
 than a standalone Settings row.
+
+## diagnostics
+
+```
+projmux diagnostics log [--tail N] [--json]
+                        [--level info|error] [--component NAME] [--path]
+```
+
+Reads the local operational event journal through the same tolerant JSONL
+reader used by every output mode. The default text view shows the newest 50
+valid records. `--tail N` changes that bound, `--json` emits the selected
+records as JSONL, and `--level` / `--component` filter before tailing. `--path`
+prints the resolved path without creating or reading the log.
+
+Successful state-changing top-level commands produce one `info` outcome, and
+every top-level command error produces one `error` outcome. Successful
+high-frequency/read-only commands such as `status` and successful
+`diagnostics log` views do not produce an event. Journal failures are a
+best-effort side channel and never change command output or exit status. See
+[operational-diagnostics.md](operational-diagnostics.md) for the file,
+retention, concurrency, and privacy contracts.
 
 ## focus
 

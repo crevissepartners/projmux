@@ -124,3 +124,66 @@ fi
 "$bin" notify list --json >"$PROJMUX_SMOKE_WORKDIR/notify-list.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/notify-list.json" "integration smoke"
 "$bin" notify ack integration-smoke >"$PROJMUX_SMOKE_WORKDIR/notify-ack.out"
+
+# Operational outcomes persist in the isolated XDG state tree. Read-only hot
+# paths and the viewer itself must not append, while an injected journal path
+# failure must not change a successful state-changing command.
+operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
+if [[ ! -f "$operations_log" ]]; then
+  echo "expected operational diagnostics log: $operations_log" >&2
+  exit 1
+fi
+if [[ "$(stat -c '%a' "$XDG_STATE_HOME/projmux")" != "700" ]] ||
+  [[ "$(stat -c '%a' "$XDG_STATE_HOME/projmux/logs")" != "700" ]] ||
+  [[ "$(stat -c '%a' "$operations_log")" != "600" ]]; then
+  echo "expected private 0700/0700/0600 operational diagnostics modes" >&2
+  exit 1
+fi
+
+before_read_only="$(wc -l <"$operations_log")"
+"$bin" status resources >"$PROJMUX_SMOKE_WORKDIR/resources-read-only.out"
+"$bin" diagnostics log --tail 1 --json --level info --component cli \
+  >"$PROJMUX_SMOKE_WORKDIR/operations-tail.jsonl"
+after_read_only="$(wc -l <"$operations_log")"
+if [[ "$before_read_only" != "$after_read_only" ]]; then
+  echo "read-only status/viewer success unexpectedly appended an operational event" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/operations-tail.jsonl" '"component":"cli"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/operations-tail.jsonl" '"result":"success"'
+
+set +e
+"$bin" unknown-secret-command >"$PROJMUX_SMOKE_WORKDIR/unknown.out" 2>"$PROJMUX_SMOKE_WORKDIR/unknown.err"
+unknown_status=$?
+set -e
+if [[ "$unknown_status" != "1" ]]; then
+  echo "expected unknown command exit 1, got: $unknown_status" >&2
+  exit 1
+fi
+"$bin" diagnostics log --tail 1 --json --level error \
+  >"$PROJMUX_SMOKE_WORKDIR/operations-error.jsonl"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/operations-error.jsonl" '"result":"error"'
+if grep -Fq 'unknown-secret-command' "$PROJMUX_SMOKE_WORKDIR/operations-error.jsonl"; then
+  echo "operational error record leaked raw argv" >&2
+  exit 1
+fi
+
+chmod 0755 "$XDG_STATE_HOME/projmux" "$XDG_STATE_HOME/projmux/logs"
+chmod 0644 "$operations_log"
+"$bin" pin add "$smoke_root" >"$PROJMUX_SMOKE_WORKDIR/pin-add.out"
+if [[ "$(stat -c '%a' "$XDG_STATE_HOME/projmux")" != "700" ]] ||
+  [[ "$(stat -c '%a' "$XDG_STATE_HOME/projmux/logs")" != "700" ]] ||
+  [[ "$(stat -c '%a' "$operations_log")" != "600" ]]; then
+  echo "operational diagnostics did not repair private modes" >&2
+  exit 1
+fi
+
+blocked_state="$PROJMUX_SMOKE_WORKDIR/blocked-state"
+printf 'not-a-directory\n' >"$blocked_state"
+XDG_STATE_HOME="$blocked_state" "$bin" pin add "$smoke_root" \
+  >"$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.out" \
+  2>"$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.err"
+if [[ -s "$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.err" ]]; then
+  echo "best-effort operational writer failure leaked to command stderr" >&2
+  exit 1
+fi
