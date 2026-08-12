@@ -18,6 +18,11 @@ never guesses that an undocumented ID means `5h` or `weekly`. It does not infer
 quota, cadence, reset timestamps, or account limits from screen scraping,
 tokens, history, OAuth/cache files, or binary strings.
 
+Claude keeps the canonical aggregate `five_hour` and `seven_day` rows and also
+preserves structurally valid typed `limits[]` rows as named account quotas for
+inspection surfaces. These named rows never participate in the ambient status
+projection.
+
 ## Adapters
 
 ### Claude (`internal/core/usage/adapters/claude`)
@@ -45,6 +50,23 @@ floor.
 - A clean 200 resets the consecutive counter.
 - `--force` (BackoffResetter) clears the persisted state and attempts
   the call regardless of streak.
+- Canonical `five_hour` and `seven_day` blocks remain `5h` and `weekly`.
+  Each valid typed `limits[]` row becomes `window=quota` with the exact opaque
+  `group` copied to `bucket`. The snapshot also preserves `kind`, `severity`,
+  `is_active`, and nullable `scope`, model ID, and surface metadata; percent and
+  reset remain the authoritative common snapshot fields.
+- A model-scoped quota renders as `quota/<group> · <model display name>` in
+  text and popup inspection. Control characters and tmux format introducers are
+  escaped and the display label is bounded, while the stored identity remains
+  byte-for-byte unchanged. No model-family inference, aliasing, aggregation, or
+  percentage-to-count derivation is performed.
+- `limits[]` is capped at 64 rows and required field presence/types are checked
+  explicitly. A malformed container or row fails that adapter collection so the
+  manager retains the complete last-known-good Claude slice. A valid
+  aggregate-only response succeeds and therefore removes obsolete named rows.
+- Null legacy top-level model hints and unknown experiment keys are ignored.
+  Billing/credit blocks such as `extra_usage` and `spend` are not ingested or
+  rendered.
 
 ### Codex (`internal/core/usage/adapters/codex`)
 
@@ -101,7 +123,9 @@ ${PROJMUX_USAGE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/projmux/usage}/
 JSON document keyed by adapter, recording:
 
 - per-window `Snapshot{Model, Window, Bucket, Pct, Limit, ResetsAt,
-  ResetInSeconds, UpdatedAt}`; `Bucket` is populated only for `window=quota`
+  ResetInSeconds, UpdatedAt, NamedQuota}`; `Bucket` is populated only for
+  `window=quota`, and `NamedQuota` is populated only when an upstream typed
+  named-quota contract supplies the metadata
 - per-adapter `last_collect` timestamp (drives the throttle)
 - per-adapter `Backoff{Until, Consecutive}` (drives the cooldown)
 
@@ -127,6 +151,7 @@ Enabled agents, filters by window, and renders the tab-aligned table:
 MODEL        WINDOW                 PCT  RESETS_AT                 RESET_IN  STALE
 claude       5h                     80%  2026-05-07T14:00:00+09:00 -
 antigravity  quota/gemini-weekly    6%   2026-07-06T16:50:32+09:00 560580s
+claude       quota/group-redacted · Model Redacted Alpha  38%  2031-02-03T15:05:06+09:00  -  *
 ```
 
 `STALE` is `*` when `now - UpdatedAt > 10m`. A `--json` payload returns
@@ -167,7 +192,8 @@ The HUD first derives an ambient projection separate from lossless account
 snapshots. Canonical `5h`/`weekly` rows are eligible for every provider;
 Antigravity's exact `quota/gemini-weekly` identity is projected as `weekly`
 without rewriting the cache. Context, `3p-weekly`, and unknown quota buckets
-do not participate in status width.
+do not participate in status width. Claude `limits[]` named/model rows are also
+excluded; only its aggregate official `5h` and `weekly` rows reach the HUD.
 
 Output degrades through six tiers as `--max-width` shrinks:
 
@@ -199,6 +225,10 @@ no displayed row has authoritative absolute token counts, `USED`, `LIMIT`, and
 `LEFT` are omitted together. If any row has real counts, all three columns are
 shown; percent-only rows use unavailable cells. Counts are never derived from
 percentages.
+
+Named Claude rows use the same bounded, injection-safe label as text output and
+include their reset plus per-row `AGE`. JSON retains exact opaque group/model
+identity, nullable scope fields, `updated_at`, and the derived `stale` flag.
 
 The popup sync line uses the maximum authoritative `LastCollect` timestamp from
 the cache. If that field is unavailable, it falls back to the snapshots file

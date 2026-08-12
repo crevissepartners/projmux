@@ -80,4 +80,36 @@ type Snapshot struct {
 	ResetInSeconds *int64    `json:"reset_in_seconds,omitempty"`
 	ResetsAt       time.Time `json:"resets_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	// NamedQuota preserves the typed upstream identity and scope attached to
+	// a named account-quota row. It is nil for canonical 5h/weekly rows and
+	// for adapters whose opaque quota source does not expose this metadata.
+	NamedQuota *NamedQuota `json:"named_quota,omitempty"`
+}
+
+// NamedQuota is the lossless metadata attached to a typed upstream quota
+// row. Group is also copied to Snapshot.Bucket so the established
+// (model, window, bucket) identity and sort contract remain intact.
+// Strings stay opaque: consumers must not infer model families, aliases,
+// cadence, or aggregate counts from them.
+type NamedQuota struct {
+	Kind     string           `json:"kind"`
+	Group    string           `json:"group"`
+	Severity string           `json:"severity"`
+	IsActive bool             `json:"is_active"`
+	Scope    *NamedQuotaScope `json:"scope"`
+}
+
+// NamedQuotaScope mirrors the nullable scope object returned by an
+// upstream quota row. Nil pointers encode JSON null rather than inventing
+// a discriminator when the upstream did not provide one.
+type NamedQuotaScope struct {
+	Model   *NamedQuotaModel `json:"model"`
+	Surface *string          `json:"surface"`
+}
+
+// NamedQuotaModel preserves the upstream model identity exactly. ID is
+// nullable; DisplayName is the opaque display identity supplied upstream.
+type NamedQuotaModel struct {
+	ID          *string `json:"id"`
+	DisplayName string  `json:"display_name"`
 }

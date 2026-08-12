@@ -159,7 +159,11 @@ Antigravity rows keep conversation-local `context` separate from account
 `quota/<exact upstream bucket ID>` rows; the popup displays an absolute reset
 when provided and otherwise the exact optional relative reset seconds. Opaque
 bucket IDs are escaped for terminal/tmux safety and are never assigned a
-`5h`/`weekly` cadence.
+`5h`/`weekly` cadence. Claude retains aggregate `5h`/`weekly` rows alongside
+typed named/model `limits[]` rows in this popup: model-scoped rows display the
+exact upstream group plus model display identity with a bounded terminal-safe
+label, reset, and per-row age. The compact status line excludes every Claude
+named/model row and continues to use only the aggregate official windows.
 Session State inspection lives under `Projects > Sessions > State`; global
 Settings > Session State is settings-only and the statusbar no longer exposes a
 duplicate State button.
@@ -173,7 +177,8 @@ does not leave terminal key state behind. The usage popup uses the same
 single-payload print and plain Enter-close pattern. It shows the authoritative
 last collect timestamp when present, falls back to the cache file mtime when
 needed, and keeps stale sync metadata muted instead of escalating it to a
-warning color.
+warning color. Percent-only named rows do not synthesize `USED`, `LIMIT`, or
+`LEFT` counts.
 The notification HUD detail surface opens the right-side notification popup
 through the notify sidebar action, showing the grouped pane/session inbox with
 collapsed group rows and the same attention-tinted title. When notification

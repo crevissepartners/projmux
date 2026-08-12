@@ -269,7 +269,36 @@ func snapshotLess(left, right Snapshot) bool {
 	if left.Bucket != right.Bucket {
 		return left.Bucket < right.Bucket
 	}
+	if namedQuotaSortKey(left.NamedQuota) != namedQuotaSortKey(right.NamedQuota) {
+		return namedQuotaSortKey(left.NamedQuota) < namedQuotaSortKey(right.NamedQuota)
+	}
 	return false
+}
+
+func namedQuotaSortKey(quota *NamedQuota) string {
+	if quota == nil {
+		return ""
+	}
+	key := quota.Kind + "\x00" + quota.Group + "\x00" + quota.Severity
+	if quota.IsActive {
+		key += "\x001"
+	} else {
+		key += "\x000"
+	}
+	if quota.Scope == nil {
+		return key
+	}
+	key += "\x00scope"
+	if quota.Scope.Model != nil {
+		key += "\x00model\x00" + quota.Scope.Model.DisplayName
+		if quota.Scope.Model.ID != nil {
+			key += "\x00" + *quota.Scope.Model.ID
+		}
+	}
+	if quota.Scope.Surface != nil {
+		key += "\x00surface\x00" + *quota.Scope.Surface
+	}
+	return key
 }
 
 func windowSortRank(window Window) int {

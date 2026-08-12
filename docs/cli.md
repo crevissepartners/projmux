@@ -307,6 +307,16 @@ Codex shares the global `30s`). `--json` emits the snapshot array; when
 backoff is active the wrapper `{snapshots, backoff}` object is emitted
 instead.
 
+Claude keeps the canonical aggregate `5h` and `weekly` rows and projects each
+valid typed upstream `limits[]` entry as a named `quota/<exact group>` row.
+Model-scoped rows append the exact upstream model display identity in text
+output; terminal controls are escaped and the visible label is bounded without
+normalizing the stored identity. JSON preserves the typed named-quota metadata,
+including nullable scope/model ID/surface, reset, `updated_at`, and `stale`.
+These percent-only rows never synthesize token counts. A malformed limits block
+fails that adapter refresh so the prior complete Claude slice remains visible;
+a valid aggregate-only response replaces and removes obsolete named rows.
+
 Antigravity emits official account rows labelled
 `quota/<upstream bucket ID>`. Conversation-local context remains private
 hook/notify diagnostic metadata and legacy cached context rows are suppressed
@@ -370,8 +380,10 @@ projmux status resources
 - `usage` — HUD-style provider blocks containing only official `5h` and
   `weekly` windows. Antigravity's exact `quota/gemini-weekly` snapshot is
   projected as `weekly` without changing its cached identity; other named
-  quotas and context never consume status width. Narrow tiers keep one primary
-  window per provider (`5h`, otherwise `weekly`) before hard truncation.
+  quotas and context never consume status width. Claude typed `limits[]`
+  named/model rows are likewise excluded, so only its aggregate `5h` and
+  `weekly` rows reach the status line. Narrow tiers keep one primary window per
+  provider (`5h`, otherwise `weekly`) before hard truncation.
   Triggers an opportunistic, throttled refresh (per-adapter
   throttle, `30s` floor) so a stale cache self-heals.
 - `notify` — newest-first HUD block with project, state, optional agent, text,
@@ -406,9 +418,12 @@ popup; `pwd` shows the current pane path in a native-framed display-only
 popup; `kube` and `git` open the project switcher popup;
 `settings` toggles the settings popup for the tmux client; `usage` opens the
 detailed cached account-usage popup. Legacy context rows are suppressed and
-named quotas retain exact identity/reset values. `USED` / `LIMIT` / `LEFT`
-appear together only when at least one displayed row has real absolute counts;
-percent-only datasets omit those columns rather than synthesizing counts.
+named quotas retain exact identity/reset/freshness values. Claude model-scoped
+rows distinguish the exact group and model display identity with bounded,
+terminal-safe labels; JSON retains their full typed metadata. `USED`, `LIMIT`,
+and `LEFT` appear together only when at least one displayed row has real
+absolute counts; percent-only datasets omit those columns rather than
+synthesizing counts.
 `notify` focuses and acks the newest actionable queue target. The internal `usage-refresh` shortcut entry point
 runs the same throttled, per-adapter collection policy as `status usage` and
 then reopens the display-only usage popup from cache.

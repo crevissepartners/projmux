@@ -18,12 +18,14 @@ import (
 // Claude 5h+weekly, weekly-only Codex, and Antigravity context plus its two
 // exact named quota buckets. All rows are percent-only (Tokens/Limit zero).
 func installedCacheFixture(now time.Time) []usage.Snapshot {
+	modelID := "model-redacted-id"
 	return []usage.Snapshot{
 		{Model: "antigravity", Window: usage.WindowContext, Pct: 37, UpdatedAt: now},
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "3p-weekly", Pct: 24, ResetsAt: now.Add(4 * 24 * time.Hour), UpdatedAt: now},
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 61, ResetsAt: now.Add(5 * 24 * time.Hour), UpdatedAt: now},
 		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(3 * time.Hour), UpdatedAt: now},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 42, ResetsAt: now.Add(6 * 24 * time.Hour), UpdatedAt: now},
+		{Model: "claude", Window: usage.WindowQuota, Bucket: "group-redacted-model", Pct: 73, ResetsAt: now.Add(2 * 24 * time.Hour), UpdatedAt: now, NamedQuota: &usage.NamedQuota{Kind: "kind-redacted", Group: "group-redacted-model", Severity: "severity-redacted", IsActive: true, Scope: &usage.NamedQuotaScope{Model: &usage.NamedQuotaModel{ID: &modelID, DisplayName: "Model Redacted Alpha"}}}},
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 12, ResetsAt: now.Add(6 * 24 * time.Hour), UpdatedAt: now},
 	}
 }
@@ -109,7 +111,7 @@ func TestFormatStatusUsageCurrentCacheExcludesNonOfficialRows(t *testing.T) {
 			t.Fatalf("HUD = %q, missing %q", got, want)
 		}
 	}
-	for _, excluded := range []string{"ctx", "quota/", "3p-weekly", "gemini-weekly", "future-bucket"} {
+	for _, excluded := range []string{"ctx", "quota/", "3p-weekly", "gemini-weekly", "future-bucket", "group-redacted-model", "Model Redacted Alpha", "73%"} {
 		if strings.Contains(got, excluded) {
 			t.Fatalf("HUD = %q, leaked %q", got, excluded)
 		}
@@ -128,6 +130,74 @@ func TestBucketDisplayIDEscapesWithoutLabelCollision(t *testing.T) {
 		seen[label] = id
 		if strings.ContainsAny(label, "\n\r\t\x1b") || strings.Contains(label, "#") {
 			t.Fatalf("unsafe label for %q: %q", id, label)
+		}
+	}
+}
+
+func TestSnapshotWindowLabelDistinguishesNamedModelAndBoundsDisplayOnly(t *testing.T) {
+	t.Parallel()
+	rawGroup := strings.Repeat("group-redacted-", 8) + "\n#[unsafe]"
+	rawDisplay := strings.Repeat("Model Redacted ", 8) + "\x1b[31m"
+	snapshot := usage.Snapshot{
+		Model: "claude", Window: usage.WindowQuota, Bucket: rawGroup,
+		NamedQuota: &usage.NamedQuota{
+			Kind: "kind-redacted", Group: rawGroup, Severity: "severity-redacted", IsActive: false,
+			Scope: &usage.NamedQuotaScope{Model: &usage.NamedQuotaModel{DisplayName: rawDisplay}},
+		},
+	}
+	label := SnapshotWindowLabel(snapshot)
+	if len([]rune(label)) > 72 {
+		t.Fatalf("label length = %d, want <= 72: %q", len([]rune(label)), label)
+	}
+	if strings.ContainsAny(label, "\n\r\t\x1b") || strings.Contains(label, "#") {
+		t.Fatalf("unsafe display label: %q", label)
+	}
+	if !strings.Contains(label, "quota/group-redacted") || !strings.Contains(label, "Model Redacted") || !strings.Contains(label, "[inactive]") {
+		t.Fatalf("named/model/inactive distinction missing: %q", label)
+	}
+	if snapshot.Bucket != rawGroup || snapshot.NamedQuota.Group != rawGroup || snapshot.NamedQuota.Scope.Model.DisplayName != rawDisplay {
+		t.Fatalf("display bounding mutated stored opaque identity: %#v", snapshot)
+	}
+}
+
+func TestNamedQuotaTextAndJSONPreserveIdentityResetFreshnessWithoutCounts(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC)
+	reset := now.Add(2 * time.Hour)
+	modelID := "model-redacted-id"
+	snapshot := usage.Snapshot{
+		Model: "claude", Window: usage.WindowQuota, Bucket: "group-redacted-model", Pct: 37.5,
+		ResetsAt: reset, UpdatedAt: now.Add(-11 * time.Minute),
+		NamedQuota: &usage.NamedQuota{
+			Kind: "kind-redacted", Group: "group-redacted-model", Severity: "severity-redacted", IsActive: true,
+			Scope: &usage.NamedQuotaScope{Model: &usage.NamedQuotaModel{ID: &modelID, DisplayName: "Model Redacted Alpha"}},
+		},
+	}
+	var table bytes.Buffer
+	if err := writeUsageTable(&table, []usage.Snapshot{snapshot}, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"quota/group-redacted-model · Model Redacted Alpha", "38%", reset.Local().Format(time.RFC3339), "*"} {
+		if !strings.Contains(table.String(), want) {
+			t.Fatalf("table = %q, missing %q", table.String(), want)
+		}
+	}
+	if strings.Contains(table.String(), "Tokens") || strings.Contains(table.String(), "Limit") {
+		t.Fatalf("percent-only table synthesized counts: %q", table.String())
+	}
+	var output bytes.Buffer
+	if err := writeUsageJSON(&output, []usage.Snapshot{snapshot}, usage.State{}, now); err != nil {
+		t.Fatal(err)
+	}
+	jsonText := output.String()
+	for _, want := range []string{`"bucket": "group-redacted-model"`, `"group": "group-redacted-model"`, `"id": "model-redacted-id"`, `"display_name": "Model Redacted Alpha"`, `"surface": null`, `"stale": true`} {
+		if !strings.Contains(jsonText, want) {
+			t.Fatalf("JSON = %s, missing %s", jsonText, want)
+		}
+	}
+	for _, absent := range []string{`"tokens"`, `"limit"`} {
+		if strings.Contains(jsonText, absent) {
+			t.Fatalf("percent-only JSON synthesized %s: %s", absent, jsonText)
 		}
 	}
 }
