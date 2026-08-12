@@ -373,7 +373,7 @@ func TestResourceInspectorLocalizesEnglishAndKoreanUX(t *testing.T) {
 func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.T) {
 	now := time.Now()
 	view := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
-	items, header, footer := renderResourceView(view)
+	items, header, _ := renderResourceView(view)
 	if !strings.Contains(header, "warming") || !strings.Contains(header, "CPU --") || !strings.Contains(header, "Other / unattributed") || !strings.Contains(header, "Memory --") || len(items) != 2 {
 		t.Fatalf("first paint header=%q items=%#v, want chrome + warming/unknown explicit Other", header, items)
 	}
@@ -389,7 +389,7 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 	snap.Other.CPUHostSharePercent = nil
 	snap.Other.MemoryBytes = nil
 	view.setSnapshot(snap, false)
-	items, header, footer = renderResourceView(view)
+	_, header, _ = renderResourceView(view)
 	if !strings.Contains(header, "Other / unattributed CPU --") || !strings.Contains(header, "Memory --") {
 		t.Fatalf("Other band = %q, want overage remainder unknown rather than zero", header)
 	}
@@ -400,7 +400,7 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 	}
 
 	view.setSnapshot(coreresources.Snapshot{At: now, Status: coreresources.StatusUnavailable, StatusReason: "resource attribution is unavailable on darwin"}, false)
-	items, header, footer = renderResourceView(view)
+	items, header, footer := renderResourceView(view)
 	if !strings.Contains(header, "unavailable") || !strings.Contains(header, "unavailable on darwin") || len(items) != 2 || !strings.Contains(footer, "Enter") {
 		t.Fatalf("unavailable header=%q footer=%q items=%#v", header, footer, items)
 	}
