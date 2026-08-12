@@ -31,6 +31,8 @@ type Event struct {
 	Subcommand string `json:"subcommand,omitempty"`
 	Kind       string `json:"kind,omitempty"`
 	Message    string `json:"message,omitempty"`
+	Operation  string `json:"operation,omitempty"`
+	Code       string `json:"code,omitempty"`
 }
 
 // NewRunID creates one opaque correlation ID for a process invocation.
@@ -87,10 +89,27 @@ func SanitizeMessage(message, home string) string {
 var (
 	allowedLevels     = stringSet("info", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource")
-	allowedEvents     = stringSet("command.outcome")
-	allowedResults    = stringSet("success", "error")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome")
+	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
+	allowedOperations = stringSet(
+		string(OperationSessionCreate),
+		string(OperationSessionAttach),
+		string(OperationSessionSwitch),
+		string(OperationSessionKill),
+		string(OperationTmuxApply),
+	)
+	allowedCodes = stringSet(
+		string(CodeSessionCreateFailed),
+		string(CodeSessionAttachFailed),
+		string(CodeSessionSwitchFailed),
+		string(CodeSessionKillFailed),
+		string(CodeTmuxApplyFailed),
+		string(CodeTmuxApplySocketUnreachable),
+		string(CodeTmuxApplyReloadFailed),
+		string(CodeTmuxApplyReloadSkipped),
+	)
 )
 
 func sanitizeEvent(in Event, home string) (Event, error) {
@@ -106,6 +125,9 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 	}
 	if _, ok := allowedResults[out.Result]; !ok {
 		return Event{}, fmt.Errorf("invalid diagnostics result")
+	}
+	if err := validateEventShape(out); err != nil {
+		return Event{}, err
 	}
 	if _, ok := allowedBackends[out.MuxBackend]; !ok {
 		return Event{}, fmt.Errorf("invalid diagnostics mux backend")
@@ -139,6 +161,69 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 	}
 	out.Message = SanitizeMessage(out.Message, home)
 	return out, nil
+}
+
+func validateEventShape(event Event) error {
+	switch event.Event {
+	case "command.outcome":
+		if event.Result == "started" || event.Operation != "" || event.Code != "" {
+			return fmt.Errorf("invalid command outcome shape")
+		}
+	case "lifecycle.start":
+		if event.Result != "started" || event.Level != "info" || event.Operation == "" || event.Code != "" || event.Kind != "" || event.Message != "" || event.Command != "" || event.Subcommand != "" {
+			return fmt.Errorf("invalid lifecycle start shape")
+		}
+	case "lifecycle.outcome":
+		if event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" {
+			return fmt.Errorf("invalid lifecycle outcome shape")
+		}
+		if event.Result == "error" && (event.Level != "error" || event.Kind != "runtime" || event.Code == "") {
+			return fmt.Errorf("invalid lifecycle error shape")
+		}
+		if event.Result == "success" && (event.Level != "info" || event.Kind != "") {
+			return fmt.Errorf("invalid lifecycle success shape")
+		}
+		if event.Result == "success" && event.Code != "" && event.Code != string(CodeTmuxApplyReloadSkipped) {
+			return fmt.Errorf("invalid lifecycle success code")
+		}
+		if event.Result == "error" && event.Code == string(CodeTmuxApplyReloadSkipped) {
+			return fmt.Errorf("invalid lifecycle error code")
+		}
+		if !operationAcceptsCode(Operation(event.Operation), Code(event.Code)) {
+			return fmt.Errorf("invalid lifecycle operation code")
+		}
+	}
+	if event.Operation != "" {
+		if _, ok := allowedOperations[event.Operation]; !ok {
+			return fmt.Errorf("invalid diagnostics operation")
+		}
+	}
+	if event.Code != "" {
+		if _, ok := allowedCodes[event.Code]; !ok {
+			return fmt.Errorf("invalid diagnostics code")
+		}
+	}
+	return nil
+}
+
+func operationAcceptsCode(operation Operation, code Code) bool {
+	if code == "" {
+		return true
+	}
+	switch operation {
+	case OperationSessionCreate:
+		return code == CodeSessionCreateFailed
+	case OperationSessionAttach:
+		return code == CodeSessionAttachFailed
+	case OperationSessionSwitch:
+		return code == CodeSessionSwitchFailed
+	case OperationSessionKill:
+		return code == CodeSessionKillFailed
+	case OperationTmuxApply:
+		return code == CodeTmuxApplyFailed || code == CodeTmuxApplySocketUnreachable || code == CodeTmuxApplyReloadFailed || code == CodeTmuxApplyReloadSkipped
+	default:
+		return false
+	}
 }
 
 // ValidLevel reports whether value is in the stable severity allowlist.

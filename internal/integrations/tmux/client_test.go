@@ -10,8 +10,128 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
+
+type lifecycleEventWriter struct {
+	events []diagnostics.Event
+}
+
+func (w *lifecycleEventWriter) Append(event diagnostics.Event) error {
+	w.events = append(w.events, event)
+	return nil
+}
+
+func TestClientLifecycleRecorderCoalescesCommandOperations(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		inside    bool
+		steps     []scriptedStep
+		run       func(*Client) error
+		want      diagnostics.Operation
+		wantError bool
+	}{
+		{
+			name:  "create then attach success",
+			steps: []scriptedStep{{err: exitError(t, 1)}, {}, {}, {}},
+			run: func(client *Client) error {
+				if err := client.EnsureSession(context.Background(), "private-name", "/private/path"); err != nil {
+					return err
+				}
+				return client.OpenSession(context.Background(), "private-name")
+			},
+			want: diagnostics.OperationSessionCreate,
+		},
+		{
+			name:  "create then attach failure remains one outer create lifecycle",
+			steps: []scriptedStep{{err: exitError(t, 1)}, {}, {}, {err: errors.New("private attach detail")}},
+			run: func(client *Client) error {
+				if err := client.EnsureSession(context.Background(), "private-name", "/private/path"); err != nil {
+					return err
+				}
+				return client.OpenSession(context.Background(), "private-name")
+			},
+			want:      diagnostics.OperationSessionCreate,
+			wantError: true,
+		},
+		{
+			name:  "create failure",
+			steps: []scriptedStep{{err: exitError(t, 1)}, {err: errors.New("private create detail")}},
+			run: func(client *Client) error {
+				return client.EnsureSession(context.Background(), "private-name", "/private/path")
+			},
+			want:      diagnostics.OperationSessionCreate,
+			wantError: true,
+		},
+		{
+			name:  "attach success",
+			steps: []scriptedStep{{}},
+			run:   func(client *Client) error { return client.OpenSession(context.Background(), "private-name") },
+			want:  diagnostics.OperationSessionAttach,
+		},
+		{
+			name:      "attach failure",
+			steps:     []scriptedStep{{err: errors.New("private attach detail")}},
+			run:       func(client *Client) error { return client.OpenSession(context.Background(), "private-name") },
+			want:      diagnostics.OperationSessionAttach,
+			wantError: true,
+		},
+		{
+			name:   "switch success",
+			inside: true,
+			steps:  []scriptedStep{{}},
+			run:    func(client *Client) error { return client.OpenSession(context.Background(), "private-name") },
+			want:   diagnostics.OperationSessionSwitch,
+		},
+		{
+			name:      "switch failure",
+			inside:    true,
+			steps:     []scriptedStep{{err: errors.New("private runner detail")}},
+			run:       func(client *Client) error { return client.OpenSession(context.Background(), "private-name") },
+			want:      diagnostics.OperationSessionSwitch,
+			wantError: true,
+		},
+		{
+			name:  "kill success",
+			steps: []scriptedStep{{}},
+			run:   func(client *Client) error { return client.KillSession(context.Background(), "private-name") },
+			want:  diagnostics.OperationSessionKill,
+		},
+		{
+			name:      "kill failure",
+			steps:     []scriptedStep{{err: errors.New("private kill detail")}},
+			run:       func(client *Client) error { return client.KillSession(context.Background(), "private-name") },
+			want:      diagnostics.OperationSessionKill,
+			wantError: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writer := &lifecycleEventWriter{}
+			recorder := diagnostics.NewLifecycleRecorder(writer, "client-run", "0.10.0", "tmux")
+			runner := &scriptedRunner{t: t, steps: tt.steps}
+			lookup := func(string) string { return "" }
+			if tt.inside {
+				lookup = tmuxEnvOnly
+			}
+			client := newClientWithEnv(runner, lookup, WithLifecycleDiagnostics(recorder))
+			finish := recorder.BeginCommand()
+			err := tt.run(client)
+			finish(err)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("run error = %v, wantError=%v", err, tt.wantError)
+			}
+			if len(writer.events) != 2 || writer.events[0].Operation != string(tt.want) || writer.events[1].Operation != string(tt.want) {
+				t.Fatalf("events = %#v, want one %s pair", writer.events, tt.want)
+			}
+			if strings.Contains(fmt.Sprint(writer.events), "private-name") || strings.Contains(fmt.Sprint(writer.events), "/private/path") || strings.Contains(fmt.Sprint(writer.events), "private runner detail") {
+				t.Fatalf("private routing/content leaked: %#v", writer.events)
+			}
+		})
+	}
+}
 
 func TestClientCurrentPanePathTrimsOutput(t *testing.T) {
 	t.Parallel()

@@ -13,10 +13,90 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/theme"
 )
+
+type appLifecycleWriter struct {
+	events []diagnostics.Event
+	err    error
+	drop   bool
+}
+
+func (w *appLifecycleWriter) Append(event diagnostics.Event) error {
+	if !w.drop {
+		w.events = append(w.events, event)
+	}
+	return w.err
+}
+
+func TestTmuxApplyLifecycleOutcomeTable(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		runner     *recordingTmuxRunner
+		writeErr   error
+		writerErr  error
+		dropWriter bool
+		reloadErr  bool
+		wantErr    bool
+		wantResult string
+		wantCode   diagnostics.Code
+		wantEvents int
+	}{
+		{name: "success", runner: &recordingTmuxRunner{}, wantResult: "success", wantEvents: 2},
+		{name: "socket unreachable keeps command success", runner: &recordingTmuxRunner{err: errors.New("private socket path")}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplySocketUnreachable, wantEvents: 2},
+		{name: "reload failure keeps command success", runner: &recordingTmuxRunner{}, reloadErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyReloadFailed, wantEvents: 2},
+		{name: "config write error", runner: &recordingTmuxRunner{}, writeErr: errors.New("private config path"), wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "append stores then errors is best effort", runner: &recordingTmuxRunner{}, writerErr: errors.New("permission denied"), wantResult: "success", wantEvents: 2},
+		{name: "total writer failure is best effort", runner: &recordingTmuxRunner{}, writerErr: errors.New("permission denied"), dropWriter: true, wantResult: "success"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			writer := &appLifecycleWriter{err: tt.writerErr, drop: tt.dropWriter}
+			recorder := diagnostics.NewLifecycleRecorder(writer, "apply-run", "0.10.0", "tmux")
+			writeFile := os.WriteFile
+			if tt.writeErr != nil {
+				writeFile = func(string, []byte, os.FileMode) error { return tt.writeErr }
+			}
+			cmd := &tmuxCommand{
+				diagnostics: recorder,
+				executable:  func() (string, error) { return "/tmp/projmux", nil },
+				lookupEnv:   func(string) string { return home },
+				writeFile:   writeFile,
+				runner:      tt.runner,
+			}
+			if tt.reloadErr {
+				key := recordedTmuxCallKey("tmux", "-L", "projmux", "source-file", filepath.Join(home, "tmux.conf"))
+				tt.runner.errors = map[string]error{key: errors.New("private reload argv")}
+			}
+			application := &App{lifecycle: recorder, tmux: cmd}
+			err := application.Run([]string{"tmux", "apply", "--config", filepath.Join(home, "tmux.conf")}, &bytes.Buffer{}, &bytes.Buffer{})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Run() error = %v, wantErr=%v", err, tt.wantErr)
+			}
+			if len(writer.events) != tt.wantEvents {
+				t.Fatalf("events = %#v, want start and one outcome", writer.events)
+			}
+			if tt.wantEvents == 0 {
+				if !recorder.RecordedOutcome() {
+					t.Fatal("writer failure lost logical outcome ownership")
+				}
+				return
+			}
+			outcome := writer.events[1]
+			if outcome.Operation != string(diagnostics.OperationTmuxApply) || outcome.Result != tt.wantResult || outcome.Code != string(tt.wantCode) || outcome.RunID != writer.events[0].RunID {
+				t.Fatalf("outcome = %#v start=%#v", outcome, writer.events[0])
+			}
+			if !recorder.RecordedOutcome() {
+				t.Fatal("apply lifecycle did not own terminal outcome")
+			}
+		})
+	}
+}
 
 func TestAppRunTmuxPopupPreviewUsesDefaultOptions(t *testing.T) {
 	t.Parallel()

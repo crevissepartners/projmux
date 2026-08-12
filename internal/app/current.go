@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 type sessionIdentityResolver interface {
@@ -37,8 +38,8 @@ type currentPlan struct {
 	SessionName string
 }
 
-func newCurrentCommand() *currentCommand {
-	client := defaultTmuxClient()
+func newCurrentCommand(recorders ...*diagnostics.LifecycleRecorder) *currentCommand {
+	client := defaultTmuxClient(recorders...)
 	identity, err := newDefaultCurrentIdentityResolver()
 
 	return &currentCommand{

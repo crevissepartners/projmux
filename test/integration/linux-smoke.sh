@@ -412,6 +412,29 @@ if [[ "$resources_flag" != "on" ]]; then
   exit 1
 fi
 
+# Each explicit apply owns one correlated lifecycle pair and suppresses the
+# older generic top-level outcome. Four apply invocations ran above.
+operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
+apply_starts="$(grep -c '"event":"lifecycle.start".*"operation":"tmux.apply"' "$operations_log")"
+apply_outcomes="$(grep -c '"event":"lifecycle.outcome".*"operation":"tmux.apply"' "$operations_log")"
+if [[ "$apply_starts" != "4" || "$apply_outcomes" != "4" ]]; then
+  echo "expected four correlated tmux apply lifecycle pairs, got starts=$apply_starts outcomes=$apply_outcomes" >&2
+  exit 1
+fi
+if grep -q '"event":"command.outcome".*"command":"tmux","subcommand":"apply"' "$operations_log"; then
+  echo "tmux apply emitted a duplicate generic top-level outcome" >&2
+  exit 1
+fi
+apply_run_counts="$PROJMUX_SMOKE_WORKDIR/apply-run-counts.txt"
+grep '"operation":"tmux.apply"' "$operations_log" |
+  sed -n 's/.*"run_id":"\([^"]*\)".*/\1/p' |
+  sort | uniq -c >"$apply_run_counts"
+if [[ "$(wc -l <"$apply_run_counts")" != "4" ]] || ! awk '$1 != 2 { bad=1 } END { exit bad }' "$apply_run_counts"; then
+  echo "tmux apply start/outcome run_id correlation failed" >&2
+  cat "$apply_run_counts" >&2
+  exit 1
+fi
+
 "$bin" notify push --id integration-smoke --text "integration smoke" --target "integration-smoke" >"$PROJMUX_SMOKE_WORKDIR/notify-push.out"
 "$bin" notify list --json >"$PROJMUX_SMOKE_WORKDIR/notify-list.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/notify-list.json" "integration smoke"
@@ -420,7 +443,6 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/notify-list.json" "integratio
 # Operational outcomes persist in the isolated XDG state tree. Read-only hot
 # paths and the viewer itself must not append, while an injected journal path
 # failure must not change a successful state-changing command.
-operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
 if [[ ! -f "$operations_log" ]]; then
   echo "expected operational diagnostics log: $operations_log" >&2
   exit 1

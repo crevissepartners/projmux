@@ -15,6 +15,22 @@ func diagnosticsFixture(id, level, component string) diagnostics.Event {
 	return diagnostics.Event{At: "2026-08-12T01:02:03Z", Level: level, Component: component, Event: "command.outcome", Result: map[bool]string{true: "error", false: "success"}[level == "error"], DurationMS: 7, RunID: id, Version: "0.8.4", MuxBackend: "tmux", Command: "notify", Subcommand: "push", Kind: map[bool]string{true: "runtime", false: ""}[level == "error"], Message: map[bool]string{true: "failed safely", false: ""}[level == "error"]}
 }
 
+func TestFormatOperationalLifecycleEventUsesOnlySafeEnums(t *testing.T) {
+	t.Parallel()
+	event := diagnostics.Event{
+		At: "2026-08-13T01:02:03Z", Level: "error", Component: "runtime",
+		Event: "lifecycle.outcome", Result: "error", DurationMS: 7,
+		RunID: "safe-run", Version: "0.10.0", MuxBackend: "tmux", Kind: "runtime",
+		Operation: string(diagnostics.OperationSessionSwitch), Code: string(diagnostics.CodeSessionSwitchFailed),
+	}
+	got := formatOperationalEvent(event)
+	for _, want := range []string{"operation=session.switch", "code=session.switch.failed", "run_id=safe-run"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("formatted lifecycle = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestDiagnosticsLogViewsSameReaderFixture(t *testing.T) {
 	stateHome := t.TempDir()
 	path := filepath.Join(stateHome, "projmux", "logs", diagnostics.LogFileName)

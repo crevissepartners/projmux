@@ -16,6 +16,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -58,6 +59,7 @@ type tmuxRunner interface {
 }
 
 type tmuxCommand struct {
+	diagnostics   *diagnostics.LifecycleRecorder
 	popup         tmuxPopupClient
 	executable    func() (string, error)
 	rawExecutable func() (string, error)
@@ -73,9 +75,9 @@ type tmuxCommand struct {
 	sessionsPopup func(ctx tmuxPopupContext) inttmux.PopupOptions
 }
 
-func newTmuxCommand() *tmuxCommand {
+func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 	runner := inttmux.ExecRunner{}
-	return &tmuxCommand{
+	cmd := &tmuxCommand{
 		popup:         inttmux.NewClient(inttmux.ExecRunner{}),
 		executable:    resolveExecutablePath,
 		rawExecutable: rawExecutablePath,
@@ -90,6 +92,10 @@ func newTmuxCommand() *tmuxCommand {
 		switchPopup:   defaultPopupSwitchOptions,
 		sessionsPopup: defaultPopupSessionsOptions,
 	}
+	if len(recorders) > 0 {
+		cmd.diagnostics = recorders[0]
+	}
+	return cmd
 }
 
 // Run manages tmux-specific helper subcommands.
@@ -727,6 +733,9 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		printTmuxUsage(stderr)
 		return errors.New("tmux apply does not accept positional arguments")
 	}
+	if c.diagnostics != nil {
+		c.diagnostics.Mark(diagnostics.OperationTmuxApply)
+	}
 
 	resolved, err := c.writeAppConfig(*binaryOverride, *configPath)
 	if err != nil {
@@ -741,6 +750,9 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		socketName = "projmux"
 	}
 	if c.runner == nil {
+		if c.diagnostics != nil {
+			c.diagnostics.Hint(diagnostics.LifecycleSuccess, diagnostics.CodeTmuxApplyReloadSkipped)
+		}
 		_, err = fmt.Fprintf(stdout, "skipped reload: no tmux runner configured\n")
 		return err
 	}
@@ -750,11 +762,17 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	// to stderr) when the socket is dead — treat that as a non-fatal skip.
 	sessionsOut, listErr := c.runner.Run(ctx, "tmux", "-L", socketName, "list-sessions", "-F", "#{session_id}")
 	if listErr != nil {
+		if c.diagnostics != nil {
+			c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeTmuxApplySocketUnreachable)
+		}
 		_, err = fmt.Fprintf(stdout, "skipped reload: no live tmux server -L %s\n", socketName)
 		return err
 	}
 
 	if _, err := c.runner.Run(ctx, "tmux", "-L", socketName, "source-file", resolved); err != nil {
+		if c.diagnostics != nil {
+			c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeTmuxApplyReloadFailed)
+		}
 		fmt.Fprintf(stderr, "tmux source-file failed on -L %s: %v\n", socketName, err)
 		_, err2 := fmt.Fprintf(stdout, "skipped reload: source-file failed on -L %s\n", socketName)
 		return err2

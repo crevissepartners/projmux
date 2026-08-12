@@ -31,6 +31,9 @@ CleanupLegacyArtifacts
 legacyWindowAttentionRows
 formatLegacyPaneSummary
 tmuxRetiredKeyUnbindLines
+# Operational diagnostics Phase 2 typed no-write seam. Doctor Phase 2 is the
+# planned consumer after this producer contract lands.
+ReadRuntimeHealth
 # "last-pane" action handler: audit shows it as dead but it is a PLANNED
 # consumer and must stay (it is a keybinding catalog string ID, not a func,
 # so deadcode does not flag it by name -- recorded here for intent).

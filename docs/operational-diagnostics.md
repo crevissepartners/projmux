@@ -11,7 +11,10 @@ telemetry service. A support archive is created only by an explicit
 Each JSONL record has a closed schema: `at`, `level`, `component`, `event`,
 `result`, `duration_ms`, `run_id`, `version`, `mux_backend`, and optional
 allowlisted `command`, `subcommand`, `kind`, and sanitized `message`. There is
-no generic metadata map.
+no generic metadata map. Runtime lifecycle records add only closed
+`operation` and `code` enums. The allowed operations are session create,
+attach, switch, kill, and tmux apply; codes are stable failure/health
+classifications and never carry routing identity or subprocess details.
 
 Command and subcommand names come from static allowlists. Unknown argv values,
 paths, flags, and arguments are dropped. Messages have control/format
@@ -25,6 +28,20 @@ The journal must never contain raw argv, stdin, prompts, notification bodies,
 pane captures/output/title/topic/content, transcripts, raw hook payloads,
 configuration secrets, or arbitrary environment values. Phase 0 also does not
 add session/window/pane or other routing identifiers.
+
+One explicit state-changing command owns at most one lifecycle pair. Its
+`lifecycle.start` and `lifecycle.outcome` share the process `run_id`, and a
+composite create-then-attach/switch flow keeps the first real mutation as its
+operation instead of recording nested outcomes. Lifecycle ownership replaces
+the generic top-level `command.outcome`; it never duplicates it. Start/outcome
+append failures are ignored and do not change the command result.
+
+The diagnostics package also exposes a typed `ReadRuntimeHealth` projection
+for later read-only Doctor consumers. It reports the fixed `tmux` backend,
+latest socket/apply state, and a bounded tail of safe failure codes using only
+`Store.ReadOnly`; it does not create, chmod, lock, truncate, probe, apply,
+restart, or repair anything. Doctor rendering and sections are intentionally
+unchanged in this phase.
 
 ## Storage and retention
 

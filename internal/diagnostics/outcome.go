@@ -12,7 +12,10 @@ type exitCoder interface {
 
 // RecordOutcome appends the single top-level outcome selected by policy.
 // Storage is deliberately best-effort: callers must ignore its return value.
-func RecordOutcome(store *Store, args []string, runID, version, muxBackend string, started time.Time, commandErr error, usageError bool) error {
+func RecordOutcome(store *Store, args []string, runID, version, muxBackend string, started time.Time, commandErr error, usageError, lifecycleRecorded bool) error {
+	if lifecycleRecorded {
+		return nil
+	}
 	class := Classify(args)
 	// Doctor owns a strict no-write contract, including invalid flag
 	// invocations. Do not turn its read-only result into a journal write.

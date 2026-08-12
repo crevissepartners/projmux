@@ -117,9 +117,15 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		}
 		parts = append(parts, "command="+command)
 	}
+	if event.Operation != "" {
+		parts = append(parts, "operation="+event.Operation)
+	}
 	parts = append(parts, fmt.Sprintf("duration_ms=%d", event.DurationMS), "run_id="+event.RunID, "version="+event.Version, "mux_backend="+event.MuxBackend)
 	if event.Kind != "" {
 		parts = append(parts, "kind="+event.Kind)
+	}
+	if event.Code != "" {
+		parts = append(parts, "code="+event.Code)
 	}
 	if event.Message != "" {
 		parts = append(parts, "message="+event.Message)

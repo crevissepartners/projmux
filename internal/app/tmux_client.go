@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -13,8 +14,11 @@ import (
 // lifecycle hook runner. Hook discovery uses the standard XDG-derived projmux
 // config dir; if that resolution fails we silently fall back to a hookless
 // client so session creation is never blocked by config errors.
-func defaultTmuxClient() *inttmux.Client {
+func defaultTmuxClient(recorders ...*diagnostics.LifecycleRecorder) *inttmux.Client {
 	opts := []inttmux.ClientOption{}
+	if len(recorders) > 0 && recorders[0] != nil {
+		opts = append(opts, inttmux.WithLifecycleDiagnostics(recorders[0]))
+	}
 	if runner := defaultLifecycleHookRunner(); runner != nil {
 		opts = append(opts, inttmux.WithLifecycleHookRunner(runner))
 	}
