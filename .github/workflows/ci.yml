@@ -27,6 +27,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Restore pinned security tools
+        id: security-tools-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .bin/security-tools
+          key: security-tools-${{ runner.os }}-${{ runner.arch }}-go-${{ hashFiles('go.mod') }}-manifest-${{ hashFiles('.security/security-tools.versions') }}
+
+      - name: Verify pinned security tools
+        run: make security-tools
+
       - name: Install shellcheck
         run: |
           if ! command -v shellcheck >/dev/null 2>&1; then
@@ -36,6 +46,16 @@ jobs:
 
       - name: Run security gates
         run: make security
+
+      # Pull-request caches are scoped to refs/pull/.../merge, so they can warm a
+      # rerun without being restorable by main or another pull request. This save
+      # remains after every security gate and only runs for an exact-key miss.
+      - name: Save pinned security tools
+        if: success() && steps.security-tools-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .bin/security-tools
+          key: ${{ steps.security-tools-cache.outputs.cache-primary-key }}
 
   fmt:
     name: Format
