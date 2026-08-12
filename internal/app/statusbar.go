@@ -39,13 +39,14 @@ import (
 type statusbarRangeID string
 
 const (
-	statusbarRangeSession  statusbarRangeID = "session"
-	statusbarRangePwd      statusbarRangeID = "pwd"
-	statusbarRangeKube     statusbarRangeID = "kube"
-	statusbarRangeGit      statusbarRangeID = "git"
-	statusbarRangeUsage    statusbarRangeID = "usage"
-	statusbarRangeNotify   statusbarRangeID = "notify"
-	statusbarRangeSettings statusbarRangeID = "settings"
+	statusbarRangeSession   statusbarRangeID = "session"
+	statusbarRangePwd       statusbarRangeID = "pwd"
+	statusbarRangeKube      statusbarRangeID = "kube"
+	statusbarRangeGit       statusbarRangeID = "git"
+	statusbarRangeUsage     statusbarRangeID = "usage"
+	statusbarRangeNotify    statusbarRangeID = "notify"
+	statusbarRangeResources statusbarRangeID = "resources"
+	statusbarRangeSettings  statusbarRangeID = "settings"
 )
 
 // statusbarRunner abstracts the tmux/projmux invocations the click handlers
@@ -367,8 +368,9 @@ func (c *statusbarCommand) dispatchTable() map[statusbarRangeID]func(statusbarCl
 		statusbarRangeUsage: func(opts statusbarClickOptions, stdout, stderr io.Writer) error {
 			return c.handleUsage(false, opts, stdout, stderr)
 		},
-		statusbarRangeNotify:   c.handleNotify,
-		statusbarRangeSettings: c.handleSettings,
+		statusbarRangeNotify:    c.handleNotify,
+		statusbarRangeResources: c.handleResources,
+		statusbarRangeSettings:  c.handleSettings,
 	}
 }
 
@@ -440,6 +442,10 @@ func (c *statusbarCommand) handleGit(opts statusbarClickOptions, _, stderr io.Wr
 
 func (c *statusbarCommand) handleSettings(opts statusbarClickOptions, _, stderr io.Writer) error {
 	return c.handlePopupToggleWithClient(stderr, "settings", "ai-split-settings", opts.ClientTTY)
+}
+
+func (c *statusbarCommand) handleResources(opts statusbarClickOptions, _, stderr io.Writer) error {
+	return c.handlePopupToggleWithClient(stderr, "resources", resourceInspectorPopupMode, opts.ClientTTY)
 }
 
 func (c *statusbarCommand) handlePopupToggleWithClient(stderr io.Writer, label, mode, clientTTY string) error {

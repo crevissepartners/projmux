@@ -26,10 +26,16 @@ func (c *Client) ListResourcePanes(ctx context.Context) ([]resources.PaneInvento
 		"#{session_id}",
 		"#{session_name}",
 		"#{window_id}",
+		"#{window_name}",
 		"#{pane_id}",
 		"#{pane_pid}",
 		"#{pane_tty}",
 		"#{@projmux_project_path}",
+		"#{@projmux_pane_label}",
+		"#{@projmux_ai_agent}",
+		"#{@projmux_ai_topic}",
+		"#{pane_current_command}",
+		"#{pane_title}",
 	))
 	if err != nil {
 		return nil, fmt.Errorf("list tmux resource panes: %w", err)
@@ -51,8 +57,8 @@ func parseResourcePanes(output []byte, fallbackSocket string) ([]resources.PaneI
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		fields := splitTmuxFields(raw, 8)
-		if len(fields) != 8 {
+		fields := splitTmuxFields(raw, 14)
+		if len(fields) != 14 {
 			return nil, fmt.Errorf("parse tmux resource panes: malformed row %q", raw)
 		}
 		sessionID := strings.TrimSpace(fields[1])
@@ -63,11 +69,11 @@ func parseResourcePanes(output []byte, fallbackSocket string) ([]resources.PaneI
 		if windowID == "" {
 			return nil, errResourceWindowIDRequired
 		}
-		paneID := strings.TrimSpace(fields[4])
+		paneID := strings.TrimSpace(fields[5])
 		if paneID == "" {
 			return nil, errResourcePaneIDRequired
 		}
-		pid, err := strconv.Atoi(strings.TrimSpace(fields[5]))
+		pid, err := strconv.Atoi(strings.TrimSpace(fields[6]))
 		if err != nil || pid <= 0 {
 			return nil, errResourcePanePIDInvalid
 		}
@@ -80,10 +86,16 @@ func parseResourcePanes(output []byte, fallbackSocket string) ([]resources.PaneI
 			SessionID:     sessionID,
 			SessionName:   strings.TrimSpace(fields[2]),
 			WindowID:      windowID,
+			WindowName:    strings.TrimSpace(fields[4]),
 			PaneID:        paneID,
 			PanePID:       pid,
-			PaneTTY:       strings.TrimSpace(fields[6]),
-			ProjectAnchor: strings.TrimSpace(fields[7]),
+			PaneTTY:       strings.TrimSpace(fields[7]),
+			ProjectAnchor: strings.TrimSpace(fields[8]),
+			PaneLabel:     strings.TrimSpace(fields[9]),
+			AIAgent:       strings.TrimSpace(fields[10]),
+			AITopic:       strings.TrimSpace(fields[11]),
+			PaneCommand:   strings.TrimSpace(fields[12]),
+			PaneTitle:     strings.TrimSpace(fields[13]),
 		})
 	}
 	return rows, nil

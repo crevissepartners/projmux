@@ -30,10 +30,16 @@ type PaneInventory struct {
 	SessionID     string
 	SessionName   string
 	WindowID      string
+	WindowName    string
 	PaneID        string
 	PanePID       int
 	PaneTTY       string
 	ProjectAnchor string
+	PaneLabel     string
+	AIAgent       string
+	AITopic       string
+	PaneCommand   string
+	PaneTitle     string
 }
 
 // ProcessIdentity prevents a recycled PID from inheriting an earlier sample.
@@ -102,12 +108,18 @@ type PaneUsage struct {
 	Socket        string
 	PaneID        string
 	WindowID      string
+	WindowName    string
 	SessionIDs    []string
 	Sessions      []string
 	PanePID       int
 	PaneTTY       string
 	ProjectKey    string
 	ProjectAnchor string
+	PaneLabel     string
+	AIAgent       string
+	AITopic       string
+	PaneCommand   string
+	PaneTitle     string
 	ProcessCount  int
 	CPU           *CPUUsage
 	Memory        MemoryUsage
@@ -117,6 +129,7 @@ type PaneUsage struct {
 type WindowUsage struct {
 	Socket       string
 	WindowID     string
+	WindowName   string
 	SessionIDs   []string
 	Sessions     []string
 	ProjectKey   string

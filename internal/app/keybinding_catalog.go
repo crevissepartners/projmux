@@ -148,6 +148,17 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Toggleable:  true,
 		},
 		{
+			ID:          "Resources:Open",
+			Description: "Open the read-only Project, Window, and Pane resource inspector",
+			DisplayName: "Resources",
+			Kind:        keyBindingActionTogglePopup,
+			Tier:        keyBindingTierUserConfigurableDirect,
+			Scope:       keyBindingScopeStandalone,
+			TmuxKind:    tmuxBindingPopupToggle,
+			TmuxBody:    resourceInspectorPopupMode,
+			Toggleable:  true,
+		},
+		{
 			ID:             "RecentWindows:Open",
 			Description:    "Recent windows queue across projects; switches to a live window without restoring a historical pane, distinct from last-pane and the existing-session popup.",
 			DisplayName:    "Recent Windows",

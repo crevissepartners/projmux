@@ -78,6 +78,7 @@ type App struct {
 	preview      *previewCommand
 	prune        *pruneCommand
 	quit         *quitCommand
+	resources    *resourceCommand
 	sessions     *sessionsCommand
 	sessionState *sessionStateCommand
 	sessionPopup *sessionPopupCommand
@@ -135,6 +136,7 @@ func New() *App {
 		preview:      newPreviewCommand(),
 		prune:        pruneCmd,
 		quit:         quit,
+		resources:    newResourceCommand(),
 		sessions:     sessions,
 		sessionState: newSessionStateCommand(),
 		sessionPopup: newSessionPopupCommand(),
@@ -203,6 +205,8 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 		return a.prune.Run(args[1:], stdout, stderr)
 	case "quit":
 		return a.quit.Run(args[1:], stdout, stderr)
+	case "resources":
+		return a.resources.Run(args[1:], stdout, stderr)
 	case "sessions":
 		return a.sessions.Run(args[1:], stdout, stderr)
 	case "session-state":
@@ -265,6 +269,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")
 	fmt.Fprintln(w, "  prune     Trim stale lifecycle state and inspect preserved snapshots")
 	fmt.Fprintln(w, "  quit      Quit the app-owned projmux tmux runtime")
+	fmt.Fprintln(w, "  resources Inspect live Project, Window, and Pane CPU/RSS attribution")
 	fmt.Fprintln(w, "  sessions  Pick and open an existing tmux session")
 	fmt.Fprintln(w, "  session-state  Inspect and manage saved tmux session snapshots")
 	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")

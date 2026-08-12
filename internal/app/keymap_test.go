@@ -282,6 +282,7 @@ func TestPopupToggleModeActionMappingCoversCatalog(t *testing.T) {
 		"SettingsToggle":        {"ai-split-settings"},
 		"ProjectSwitcherToggle": {"sessionizer"},
 		"SessionPopupToggle":    {"session-popup"},
+		"Resources:Open":        {resourceInspectorPopupMode},
 	}
 	catalog := defaultKeyBindingCatalog()
 	var gotIDs []string

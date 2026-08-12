@@ -3076,6 +3076,43 @@ func TestNativeDeferredFocusValue(t *testing.T) {
 	}
 }
 
+func TestApplyNativeDeferredUpdateRefreshesResourceChrome(t *testing.T) {
+	t.Parallel()
+	got := applyNativeDeferredUpdate(Options{Header: "warming", Footer: "old"}, DeferredUpdate{
+		Header: "ready age 0s", Footer: "Ctrl-R: refresh", SetHeader: true, SetFooter: true,
+	})
+	if got.Header != "ready age 0s" || got.Footer != "Ctrl-R: refresh" {
+		t.Fatalf("deferred chrome = header %q footer %q", got.Header, got.Footer)
+	}
+	got = applyNativeDeferredUpdate(got, DeferredUpdate{Header: "ignored", Footer: "ignored"})
+	if got.Header != "ready age 0s" || got.Footer != "Ctrl-R: refresh" {
+		t.Fatalf("unset deferred chrome flags changed options: %#v", got)
+	}
+}
+
+func TestResourceRefreshStableSelectionQueryAndVanishedNeighbor(t *testing.T) {
+	t.Parallel()
+	query := "svc"
+	old := []Item{
+		{Title: "api", Value: "pane:%10", SearchText: "api %10 svc"},
+		{Title: "web", Value: "pane:%11", SearchText: "web %11 svc"},
+		{Title: "worker", Value: "pane:%12", SearchText: "worker %12 svc"},
+	}
+	filtered := nativeFilteredItems(Options{Items: old}, query)
+	selected, selectedValue := 1, selectedNativeValue(filtered, 1)
+	reordered := nativeFilteredItems(Options{Items: []Item{old[1], old[2], old[0]}}, query)
+	if got := nativeSelectedIndexForValue(reordered, selectedValue, selected); got != 0 || reordered[got].Value != "pane:%11" {
+		t.Fatalf("stable refresh index = %d row=%#v, want pane %%11 after reorder", got, reordered[got])
+	}
+	vanished := nativeFilteredItems(Options{Items: []Item{old[0], old[2]}}, query)
+	if got := nativeSelectedIndexForValue(vanished, selectedValue, selected); got != 1 || vanished[got].Value != "pane:%12" {
+		t.Fatalf("vanished refresh index = %d row=%#v, want nearest valid neighbor pane %%12", got, vanished[got])
+	}
+	if query != "svc" {
+		t.Fatalf("query = %q, want preserved svc", query)
+	}
+}
+
 func TestNativeInteractiveDeferredFocusValueMovesCursor(t *testing.T) {
 	t.Parallel()
 
