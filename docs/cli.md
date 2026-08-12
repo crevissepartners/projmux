@@ -26,7 +26,6 @@ projmux <command> [args...]
 | `doctor` | Run read-only runtime and integration diagnostics. |
 | `diagnostics` | Read the private bounded operational event log. |
 | `focus` | Switch the active client to a session/window/pane target. |
-| `init` | Preview or apply supported terminal key delivery mappings. |
 | `kill` | Terminate tagged tmux sessions. |
 | `notify` | Manage the pending AI notify queue (push/list/ack/reconcile). |
 | `pin` | Manage pinned project directories. |
@@ -100,10 +99,6 @@ write through a symlink unless `--allow-symlink` is passed (dotfiles repos).
 `--config <path>` overrides the candidate list when the adapter has more
 than one default location (Ghostty `config` vs `config.ghostty`). If setup
 shows every key arriving, skip terminal remediation.
-
-The top-level `projmux init` command remains a deprecated compatibility alias
-during the migration period. It prints the exact `projmux setup terminal`
-replacement to stderr and still accepts the legacy `--dry-run` flag.
 
 ## doctor
 

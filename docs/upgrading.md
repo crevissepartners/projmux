@@ -40,6 +40,13 @@ still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
 
+### Terminal init command removed
+
+The deprecated top-level `projmux init` command and its legacy-only
+`--dry-run` flag have been removed. Use the exact replacement
+`projmux setup terminal`; it previews by default, and accepts `--apply`,
+`--config <path>`, and `--allow-symlink` when those behaviors are needed.
+
 ### Pane rename keymap action ID removed
 
 The deprecated `rename-pane-topic` keybinding action ID has been removed. If

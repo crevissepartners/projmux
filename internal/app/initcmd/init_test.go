@@ -169,7 +169,7 @@ func TestInitCommandAutoDetectFailsWithoutMatch(t *testing.T) {
 	}
 }
 
-func TestInitCommandDryRunPrintsPlanAndDoesNotApply(t *testing.T) {
+func TestInitCommandPreviewPrintsPlanAndDoesNotApply(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -197,17 +197,17 @@ func TestInitCommandDryRunPrintsPlanAndDoesNotApply(t *testing.T) {
 		t.Fatalf("Run() error = %v (stderr=%s)", err, stderr.String())
 	}
 	if adapter.applied != nil {
-		t.Fatalf("dry-run unexpectedly applied: %+v", adapter.applied)
+		t.Fatalf("preview unexpectedly applied: %+v", adapter.applied)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "dry-run") {
-		t.Fatalf("dry-run output missing 'dry-run' marker: %q", out)
+	if !strings.Contains(out, "preview") {
+		t.Fatalf("preview output missing marker: %q", out)
 	}
 	if !strings.Contains(out, "--apply") {
-		t.Fatalf("dry-run output missing apply hint: %q", out)
+		t.Fatalf("preview output missing apply hint: %q", out)
 	}
 	if !strings.Contains(out, "alt+1") {
-		t.Fatalf("dry-run output missing change preview: %q", out)
+		t.Fatalf("preview output missing change: %q", out)
 	}
 }
 
@@ -256,12 +256,12 @@ func TestInitCommandRunSurfacePlansAndApplies(t *testing.T) {
 		stat:     os.Stat,
 	}
 
-	preview, err := cmd.run(initOptions{TerminalName: "alpha", DryRun: true})
+	preview, err := cmd.run(initOptions{TerminalName: "alpha"})
 	if err != nil {
 		t.Fatalf("run preview error = %v", err)
 	}
 	if preview.Terminal != "alpha" || preview.Applied {
-		t.Fatalf("preview = %+v, want alpha dry-run result", preview)
+		t.Fatalf("preview = %+v, want alpha preview result", preview)
 	}
 	if preview.Plan.ConfigPath != cfg {
 		t.Fatalf("preview config path = %q, want %q", preview.Plan.ConfigPath, cfg)
@@ -276,20 +276,6 @@ func TestInitCommandRunSurfacePlansAndApplies(t *testing.T) {
 	}
 	if !applied.Applied || adapter.applied == nil {
 		t.Fatalf("apply result = %+v adapter.applied=%+v, want applied plan", applied, adapter.applied)
-	}
-}
-
-func TestInitCommandRejectsApplyAndDryRunTogether(t *testing.T) {
-	t.Parallel()
-
-	cmd := &Command{
-		registry: newTestRegistry(),
-		getenv:   func(string) string { return "" },
-	}
-	var stdout, stderr bytes.Buffer
-	err := cmd.Run([]string{"--apply", "--dry-run"}, &stdout, &stderr)
-	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Fatalf("Run(--apply --dry-run) error = %v, want mutual exclusion", err)
 	}
 }
 

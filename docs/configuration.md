@@ -183,7 +183,7 @@ shows the keymap error row and refuses to overwrite it until the file is fixed.
 
 The file currently affects generated tmux config from `projmux tmux
 print-config`, `projmux tmux install`, `projmux tmux print-app-config`,
-`projmux tmux install-app`, and `projmux shell`. Terminal init adapters such as
+`projmux tmux install-app`, and `projmux shell`. Terminal remediation adapters such as
 Ghostty and Windows Terminal install built-in plain-byte mappings where needed;
 they do not read `keymap.toml` or copy saved keys into terminal configs.
 Changing terminal-layer mappings still requires rerunning `projmux setup

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestCanonicalAndLegacyRealAdapterApplyAndBackupParity(t *testing.T) {
+func TestCanonicalRealAdapterApplyAndBackup(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -37,46 +37,24 @@ func TestCanonicalAndLegacyRealAdapterApplyAndBackupParity(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			canonicalPath := filepath.Join(t.TempDir(), "config")
-			legacyPath := filepath.Join(t.TempDir(), "config")
-			for _, path := range []string{canonicalPath, legacyPath} {
-				if err := os.WriteFile(path, []byte(tc.original), 0o644); err != nil {
-					t.Fatalf("seed %s: %v", path, err)
-				}
+			configPath := filepath.Join(t.TempDir(), "config")
+			if err := os.WriteFile(configPath, []byte(tc.original), 0o644); err != nil {
+				t.Fatalf("seed config: %v", err)
 			}
 
-			var canonicalOut, legacyOut bytes.Buffer
-			if err := tc.newCmd().RunCanonical([]string{tc.terminal, "--apply", "--config", canonicalPath}, &canonicalOut, &bytes.Buffer{}); err != nil {
+			var stdout bytes.Buffer
+			if err := tc.newCmd().Run([]string{tc.terminal, "--apply", "--config", configPath}, &stdout, &bytes.Buffer{}); err != nil {
 				t.Fatalf("canonical apply error = %v", err)
 			}
-			if err := tc.newCmd().Run([]string{tc.terminal, "--apply", "--config", legacyPath}, &legacyOut, &bytes.Buffer{}); err != nil {
-				t.Fatalf("legacy apply error = %v", err)
+			if !strings.Contains(stdout.String(), "projmux setup terminal") {
+				t.Fatalf("apply output = %q, want canonical entrypoint", stdout.String())
 			}
-
-			canonicalConfig, err := os.ReadFile(canonicalPath)
-			if err != nil {
-				t.Fatalf("read canonical config: %v", err)
-			}
-			legacyConfig, err := os.ReadFile(legacyPath)
-			if err != nil {
-				t.Fatalf("read legacy config: %v", err)
-			}
-			if !bytes.Equal(canonicalConfig, legacyConfig) {
-				t.Fatalf("file result mismatch\ncanonical:\n%s\nlegacy:\n%s", canonicalConfig, legacyConfig)
-			}
-			assertSingleBackupWithContent(t, canonicalPath, tc.original)
-			assertSingleBackupWithContent(t, legacyPath, tc.original)
-
-			canonicalSummary := normalizeApplyOutput(canonicalOut.String(), "projmux setup terminal", canonicalPath)
-			legacySummary := normalizeApplyOutput(legacyOut.String(), "projmux init", legacyPath)
-			if canonicalSummary != legacySummary {
-				t.Fatalf("apply summary mismatch\ncanonical:\n%s\nlegacy:\n%s", canonicalOut.String(), legacyOut.String())
-			}
+			assertSingleBackupWithContent(t, configPath, tc.original)
 		})
 	}
 }
 
-func TestCanonicalAndLegacyGhosttyCandidateConflictParity(t *testing.T) {
+func TestCanonicalGhosttyCandidateConflict(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -90,19 +68,13 @@ func TestCanonicalAndLegacyGhosttyCandidateConflictParity(t *testing.T) {
 		}
 	}
 
-	canonicalErr := newGhosttyTestInitCommand(t, tmp).RunCanonical([]string{"ghostty", "--apply"}, &bytes.Buffer{}, &bytes.Buffer{})
-	legacyErr := newGhosttyTestInitCommand(t, tmp).Run([]string{"ghostty", "--apply"}, &bytes.Buffer{}, &bytes.Buffer{})
-	if canonicalErr == nil || legacyErr == nil {
-		t.Fatalf("errors = (%v, %v), want both conflict errors", canonicalErr, legacyErr)
-	}
-	canonicalDetail := strings.TrimPrefix(canonicalErr.Error(), "projmux setup terminal: ")
-	legacyDetail := strings.TrimPrefix(legacyErr.Error(), "projmux init: ")
-	if canonicalDetail != legacyDetail {
-		t.Fatalf("conflict error mismatch: canonical=%q legacy=%q", canonicalDetail, legacyDetail)
+	err := newGhosttyTestInitCommand(t, tmp).Run([]string{"ghostty", "--apply"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "multiple ghostty config files found") || !strings.Contains(err.Error(), "--config <path>") {
+		t.Fatalf("conflict error = %v", err)
 	}
 }
 
-func TestCanonicalAndLegacyTerminalDetectionParity(t *testing.T) {
+func TestCanonicalTerminalDetectionPreview(t *testing.T) {
 	t.Parallel()
 
 	config := filepath.Join(t.TempDir(), "config")
@@ -113,76 +85,48 @@ func TestCanonicalAndLegacyTerminalDetectionParity(t *testing.T) {
 	cmd := New(adapter)
 	cmd.getenv = func(string) string { return "detected" }
 
-	var canonicalOut, legacyOut bytes.Buffer
-	if err := cmd.RunCanonical([]string{"--config", config}, &canonicalOut, &bytes.Buffer{}); err != nil {
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"--config", config}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("canonical auto-detect error = %v", err)
 	}
-	if err := cmd.Run([]string{"--config", config}, &legacyOut, &bytes.Buffer{}); err != nil {
-		t.Fatalf("legacy auto-detect error = %v", err)
+	if adapter.detectCalls != 1 {
+		t.Fatalf("Detect calls = %d, want one", adapter.detectCalls)
 	}
-	canonicalPlan := strings.Replace(canonicalOut.String(), "projmux setup terminal alpha (preview)", "<entrypoint>", 1)
-	legacyPlan := strings.Replace(legacyOut.String(), "projmux init alpha (dry-run)", "<entrypoint>", 1)
-	if canonicalPlan != legacyPlan {
-		t.Fatalf("auto-detected plan mismatch\ncanonical:\n%s\nlegacy:\n%s", canonicalOut.String(), legacyOut.String())
+	if adapter.applied != nil {
+		t.Fatalf("preview unexpectedly applied: %+v", adapter.applied)
 	}
-	if adapter.detectCalls != 2 {
-		t.Fatalf("Detect calls = %d, want one per entrypoint", adapter.detectCalls)
+	if !strings.Contains(stdout.String(), "projmux setup terminal alpha (preview)") {
+		t.Fatalf("preview output = %q", stdout.String())
 	}
 }
 
-func TestCanonicalAndLegacySymlinkRefusalAndAllowParity(t *testing.T) {
+func TestCanonicalSymlinkRefusalAndAllow(t *testing.T) {
 	t.Parallel()
 
-	type fixture struct {
-		command *Command
-		source  string
-		link    string
+	tmp := t.TempDir()
+	source := filepath.Join(tmp, "tracked-ghostty.conf")
+	if err := os.WriteFile(source, []byte("# tracked\n"), 0o644); err != nil {
+		t.Fatalf("seed source: %v", err)
 	}
-	newFixture := func(t *testing.T) fixture {
-		t.Helper()
-		tmp := t.TempDir()
-		source := filepath.Join(tmp, "tracked-ghostty.conf")
-		if err := os.WriteFile(source, []byte("# tracked\n"), 0o644); err != nil {
-			t.Fatalf("seed source: %v", err)
-		}
-		link := filepath.Join(tmp, "config")
-		if err := os.Symlink(source, link); err != nil {
-			t.Skipf("symlink unsupported: %v", err)
-		}
-		return fixture{command: New(NewGhosttyAdapter(testGhosttyBindings)), source: source, link: link}
+	link := filepath.Join(tmp, "config")
+	if err := os.Symlink(source, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
 	}
+	cmd := New(NewGhosttyAdapter(testGhosttyBindings))
 
-	canonical := newFixture(t)
-	legacy := newFixture(t)
-	canonicalErr := canonical.command.RunCanonical([]string{"ghostty", "--apply", "--config", canonical.link}, &bytes.Buffer{}, &bytes.Buffer{})
-	legacyErr := legacy.command.Run([]string{"ghostty", "--apply", "--config", legacy.link}, &bytes.Buffer{}, &bytes.Buffer{})
-	if canonicalErr == nil || legacyErr == nil {
-		t.Fatalf("refusal errors = (%v, %v), want both non-nil", canonicalErr, legacyErr)
+	err := cmd.Run([]string{"ghostty", "--apply", "--config", link}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "is a symlink") || !strings.Contains(err.Error(), "--allow-symlink") {
+		t.Fatalf("symlink refusal error = %v", err)
 	}
-	canonicalDetail := strings.TrimPrefix(canonicalErr.Error(), "projmux setup terminal: ")
-	canonicalDetail = strings.ReplaceAll(canonicalDetail, canonical.link, "<config>")
-	legacyDetail := strings.TrimPrefix(legacyErr.Error(), "projmux init: ")
-	legacyDetail = strings.ReplaceAll(legacyDetail, legacy.link, "<config>")
-	if canonicalDetail != legacyDetail {
-		t.Fatalf("symlink refusal mismatch: canonical=%q legacy=%q", canonicalDetail, legacyDetail)
+	if err := cmd.Run([]string{"ghostty", "--apply", "--config", link, "--allow-symlink"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("allow-symlink error = %v", err)
 	}
-
-	if err := canonical.command.RunCanonical([]string{"ghostty", "--apply", "--config", canonical.link, "--allow-symlink"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("canonical allow-symlink error = %v", err)
-	}
-	if err := legacy.command.Run([]string{"ghostty", "--apply", "--config", legacy.link, "--allow-symlink"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("legacy allow-symlink error = %v", err)
-	}
-	canonicalConfig, err := os.ReadFile(canonical.source)
+	updated, err := os.ReadFile(source)
 	if err != nil {
-		t.Fatalf("read canonical source: %v", err)
+		t.Fatalf("read source: %v", err)
 	}
-	legacyConfig, err := os.ReadFile(legacy.source)
-	if err != nil {
-		t.Fatalf("read legacy source: %v", err)
-	}
-	if !bytes.Equal(canonicalConfig, legacyConfig) {
-		t.Fatalf("allowed symlink file mismatch\ncanonical:\n%s\nlegacy:\n%s", canonicalConfig, legacyConfig)
+	if !strings.Contains(string(updated), "keybind") {
+		t.Fatalf("allowed symlink target was not updated:\n%s", updated)
 	}
 }
 
@@ -202,9 +146,4 @@ func assertSingleBackupWithContent(t *testing.T, configPath, want string) {
 	if string(got) != want {
 		t.Fatalf("backup = %q, want %q", got, want)
 	}
-}
-
-func normalizeApplyOutput(output, command, configPath string) string {
-	output = strings.Replace(output, command, "<entrypoint>", 1)
-	return strings.ReplaceAll(output, configPath, "<config>")
 }

@@ -84,7 +84,7 @@ type probeResult struct {
 }
 
 // defaultProbeKeys returns the keys the setup probe checks. Sequences are
-// derived from the same keybinding catalog as the tmux and terminal init
+// derived from the same keybinding catalog as the tmux and terminal remediation
 // renderers.
 func defaultProbeKeys() []probeKey {
 	return probeKeysFromCatalog()
@@ -102,7 +102,7 @@ func (c *setupCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if c.terminal == nil {
 			return errors.New("setup terminal: remediation command is unavailable")
 		}
-		return c.terminal.RunCanonical(args[1:], stdout, stderr)
+		return c.terminal.Run(args[1:], stdout, stderr)
 	}
 
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)

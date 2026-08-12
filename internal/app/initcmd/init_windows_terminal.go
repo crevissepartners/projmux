@@ -15,7 +15,7 @@ import (
 )
 
 // WTBinding mirrors one Windows Terminal action+keybinding pair the projmux
-// init command guarantees in the user's settings.json. The caller derives the
+// remediation command guarantees in the user's settings.json. The caller derives the
 // desired entries from its keybinding catalog; docs/keybindings.md mirrors
 // them for users.
 type WTBinding struct {

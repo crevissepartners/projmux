@@ -105,7 +105,6 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsKeybindingsBindings:        settingsNavigationMeta("Keybindings", settingsAxisGlobal, settingsOwnerKeybindings),
 	settingsKeybindingsDiagnostic:      settingsNavigationMeta("Keybinding Diagnostic", settingsAxisGlobal, settingsOwnerKeybindings),
 	settingsKeybindingsProbe:           settingsNavigationMeta("Keybinding Probe", settingsAxisGlobal, settingsOwnerKeybindings),
-	settingsKeybindingsInit:            settingsNavigationMeta("Keybinding Init", settingsAxisGlobal, settingsOwnerKeybindings),
 	settingsAIDefaultMode:              settingsNavigationMeta("Default split mode", settingsAxisGlobal, settingsOwnerAI),
 	settingsAIEnabledAgents:            settingsNavigationMeta("Enabled agents", settingsAxisGlobal, settingsOwnerAI),
 	settingsAIResumePicker:             settingsNavigationMeta("Resume picker", settingsAxisGlobal, settingsOwnerAI),
@@ -239,7 +238,7 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 		return value == settingsSessionStateDelete || strings.HasPrefix(value, settingsActionPrefixSessionState)
 	case settingsOwnerKeybindings:
 		return value == settingsKeybindingsBindings || value == settingsKeybindingsDiagnostic ||
-			value == settingsKeybindingsProbe || value == settingsKeybindingsInit ||
+			value == settingsKeybindingsProbe ||
 			value == settingsNativeKeysToggle || strings.HasPrefix(value, settingsActionPrefixKeymap)
 	case settingsOwnerLabs:
 		return value == settingsLabsProjectHooks || strings.HasPrefix(value, settingsActionPrefixHooks) ||
@@ -326,7 +325,6 @@ const (
 	settingsKeybindingsBindings            = "keybindings:bindings"
 	settingsKeybindingsDiagnostic          = "keybindings:diagnostic"
 	settingsKeybindingsProbe               = "keybindings:probe"
-	settingsKeybindingsInit                = "keybindings:init"
 	settingsAIDefaultMode                  = "ai-default-mode"
 	settingsAIEnabledAgents                = "ai-enabled-agents"
 	settingsAIResumePicker                 = "ai-resume-picker"

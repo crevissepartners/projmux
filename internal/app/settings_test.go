@@ -6500,8 +6500,8 @@ func TestSettingsKeybindingsDoesNotExposeTerminalMappingRows(t *testing.T) {
 		return ""
 	}
 
-	options := cmd.keybindingsOptions(settingsKeybindingsInit)
-	for _, absent := range []string{"Terminal", "Preview terminal mappings", "Apply terminal mappings", "projmux init", "projmux setup terminal"} {
+	options := cmd.keybindingsOptions("")
+	for _, absent := range []string{"Terminal", "Preview terminal mappings", "Apply terminal mappings", "projmux setup terminal"} {
 		if hasEntryLabelContaining(options.Entries, absent) {
 			t.Fatalf("keybindings entries = %#v, did not want %q", options.Entries, absent)
 		}
@@ -6911,7 +6911,6 @@ func TestSettingsMutationFeedbackInventoryExcludesViewerFlows(t *testing.T) {
 		settingsActionPrefixSessionState + "project-preview",
 		settingsKeybindingsDiagnostic,
 		settingsKeybindingsProbe,
-		settingsKeybindingsInit,
 	} {
 		if label, ok := settingsMutationLabel(value); ok {
 			t.Fatalf("non-mutation viewer %q classified as feedback mutation %q", value, label)

@@ -86,7 +86,7 @@ func (g *GhosttyAdapter) ConfigPath(env func(string) string) (string, error) {
 }
 
 // ConfigPathCandidates returns both well-known Ghostty config paths in the
-// order Ghostty itself loads them. The init dispatcher uses this list to pick
+// order Ghostty itself loads them. The remediation dispatcher uses this list to pick
 // the file that already exists, surface ambiguity when both exist, and create
 // the canonical `config` path when neither does.
 //
@@ -177,7 +177,7 @@ func (g *GhosttyAdapter) PlanMerge(currentConfig string, fileExists bool) (Merge
 			plan.Updated = stripped
 		} else {
 			// Everything already matches. Preserve the existing managed block
-			// so re-running init is idempotent.
+			// so re-running remediation is idempotent.
 			plan.Updated = currentConfig
 		}
 		return plan, nil
@@ -190,7 +190,7 @@ func (g *GhosttyAdapter) PlanMerge(currentConfig string, fileExists bool) (Merge
 // ApplyMerge implements TerminalAdapter. It backs up the existing config to
 // `<config>.bak.<YYYYMMDD-HHMMSS>` (when the file exists) and writes the
 // plan's Updated contents to ConfigPath. The caller is expected to have
-// populated plan.ConfigPath via the init dispatcher.
+// populated plan.ConfigPath via the remediation dispatcher.
 func (g *GhosttyAdapter) ApplyMerge(plan MergePlan) error {
 	if plan.ConfigPath == "" {
 		return fmt.Errorf("apply ghostty merge: plan has no ConfigPath")

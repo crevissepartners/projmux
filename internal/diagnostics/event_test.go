@@ -112,7 +112,6 @@ func TestClassifyCoversEveryTopLevelRule(t *testing.T) {
 		{args: []string{"doctor"}},
 		{args: []string{"focus"}, changing: true},
 		{args: []string{"hook", "validate"}},
-		{args: []string{"init", "ghostty"}},
 		{args: []string{"key-broker"}, changing: true},
 		{args: []string{"kill", "tagged"}, changing: true},
 		{args: []string{"notify", "list"}},
