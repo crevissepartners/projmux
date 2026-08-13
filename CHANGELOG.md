@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.10.0](https://github.com/crevissepartners/projmux/compare/v0.9.0...v0.10.0) (2026-08-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **doctor:** make diagnostics strictly read-only ([#590](https://github.com/crevissepartners/projmux/issues/590))
+* **terminal:** projmux init and its legacy --dry-run flag are removed; use projmux setup terminal instead.
+* **keybindings:** retire pane topic rename alias ([#585](https://github.com/crevissepartners/projmux/issues/585))
+* **picker:** remove retired fzf compatibility surface ([#581](https://github.com/crevissepartners/projmux/issues/581))
+
+### Features
+
+* **diagnostics:** add redacted support reports ([#593](https://github.com/crevissepartners/projmux/issues/593)) ([51ac8b4](https://github.com/crevissepartners/projmux/commit/51ac8b4c4abbd2439768fd7033ebe944b7262517))
+* **diagnostics:** adopt runtime lifecycle events ([#594](https://github.com/crevissepartners/projmux/issues/594)) ([900eaeb](https://github.com/crevissepartners/projmux/commit/900eaeb7ceb4c044dd780d73489eeb622854848e))
+* **doctor:** add runtime health diagnostics ([#596](https://github.com/crevissepartners/projmux/issues/596)) ([6a98459](https://github.com/crevissepartners/projmux/commit/6a984593b167a57d54ca52847e7ed7b265e16ec5))
+* **doctor:** make diagnostics read-only and versioned ([5d3a864](https://github.com/crevissepartners/projmux/commit/5d3a8644e0aa8a13d5d44ef03aa8a6c6d10e7bd2))
+* **doctor:** make diagnostics strictly read-only ([#590](https://github.com/crevissepartners/projmux/issues/590)) ([5d3a864](https://github.com/crevissepartners/projmux/commit/5d3a8644e0aa8a13d5d44ef03aa8a6c6d10e7bd2))
+* **resources:** improve inspector hierarchy and layout ([#582](https://github.com/crevissepartners/projmux/issues/582)) ([d4c3bd0](https://github.com/crevissepartners/projmux/commit/d4c3bd00ad390f0a8721be5fb8e7b00d88472406))
+* **resources:** polish inspector live states ([#584](https://github.com/crevissepartners/projmux/issues/584)) ([41de6e1](https://github.com/crevissepartners/projmux/commit/41de6e1bb4ac6b546ce6c5154f31b9fdb7dc7389))
+* **resources:** refine pane hierarchy UX ([#591](https://github.com/crevissepartners/projmux/issues/591)) ([f4e64eb](https://github.com/crevissepartners/projmux/commit/f4e64eb0785fe4efab0bbd2c782304455417ccdc))
+* **usage:** preserve Claude named quota details ([#586](https://github.com/crevissepartners/projmux/issues/586)) ([837004f](https://github.com/crevissepartners/projmux/commit/837004f737e0fe086a12867c60f4bfe0e628b53d))
+
+
+### Bug Fixes
+
+* **diagnostics:** complete lifecycle adoption ([#595](https://github.com/crevissepartners/projmux/issues/595)) ([85abf59](https://github.com/crevissepartners/projmux/commit/85abf596d20d65ea22346f384afe49c506f1c907))
+* **resources:** resolve missing project anchors from pane paths ([#588](https://github.com/crevissepartners/projmux/issues/588)) ([90007b0](https://github.com/crevissepartners/projmux/commit/90007b0a73f90ab4f4a3aa219142e7c91f664baa))
+* retire stale C-t pane label binding ([c7708c9](https://github.com/crevissepartners/projmux/commit/c7708c95456c14c8ac236dadafe8bb989129eff4))
+* **statusbar:** polish usage popup column budgets ([#587](https://github.com/crevissepartners/projmux/issues/587)) ([85f5a6e](https://github.com/crevissepartners/projmux/commit/85f5a6eaa6c54571f379ffc30de08044e503624b))
+* **tmux:** retire stale C-t pane label binding ([#592](https://github.com/crevissepartners/projmux/issues/592)) ([c7708c9](https://github.com/crevissepartners/projmux/commit/c7708c95456c14c8ac236dadafe8bb989129eff4))
+* **usage:** project official status windows ([#583](https://github.com/crevissepartners/projmux/issues/583)) ([37133c3](https://github.com/crevissepartners/projmux/commit/37133c33f8896da719a1cee8e21f94ce4ca28019))
+
+
+### Performance Improvements
+
+* **ci:** cache pinned security tools ([#579](https://github.com/crevissepartners/projmux/issues/579)) ([ee04b26](https://github.com/crevissepartners/projmux/commit/ee04b26b8a72ea2bae33b52d41d9fe8d24f0f807))
+
+
+### Code Refactoring
+
+* **keybindings:** retire pane topic rename alias ([#585](https://github.com/crevissepartners/projmux/issues/585)) ([8f90d61](https://github.com/crevissepartners/projmux/commit/8f90d6143b5b677e05dbe098dbc776c24e5bb454))
+* **picker:** remove retired fzf compatibility surface ([#581](https://github.com/crevissepartners/projmux/issues/581)) ([f82e46e](https://github.com/crevissepartners/projmux/commit/f82e46ed146f209491c0a8d8dd4bb808827b4141))
+* **terminal:** remove deprecated init command ([#589](https://github.com/crevissepartners/projmux/issues/589)) ([6dcf995](https://github.com/crevissepartners/projmux/commit/6dcf99522c884bfe509997bf9b04cb102e0f4562))
+
 ## [0.9.0](https://github.com/crevissepartners/projmux/compare/v0.8.4...v0.9.0) (2026-08-12)
 
 
