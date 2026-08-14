@@ -39,6 +39,9 @@ type Event struct {
 	Provider           string `json:"provider,omitempty"`
 	Category           string `json:"category,omitempty"`
 	Route              string `json:"route,omitempty"`
+	AIKind             string `json:"ai_kind,omitempty"`
+	AIResult           string `json:"ai_result,omitempty"`
+	Failure            string `json:"failure,omitempty"`
 	WindowCount        *int   `json:"window_count,omitempty"`
 	PaneCount          *int   `json:"pane_count,omitempty"`
 	ShellRecipeCount   *int   `json:"shell_recipe_count,omitempty"`
@@ -101,7 +104,7 @@ func SanitizeMessage(message, home string) string {
 var (
 	allowedLevels     = stringSet("info", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome")
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -158,7 +161,8 @@ var (
 		string(ProviderClaude), string(ProviderCodex), string(ProviderAntigravity), string(ProviderAI), string(ProviderK8s), string(ProviderGit),
 		string(ProviderExternal), string(ProviderProjmux), string(ProviderOther),
 	)
-	allowedCategories = stringSet(
+	allowedAIProviders = stringSet(string(ProviderCodex), string(ProviderClaude), string(ProviderAntigravity), string(ProviderTmuxBell), string(ProviderOther), string(ProviderAI))
+	allowedCategories  = stringSet(
 		string(CategoryApprovalRequired), string(CategoryInputRequired), string(CategoryResponseComplete), string(CategoryError),
 		string(CategorySubagentStopped), string(CategoryTeammateWaiting), string(CategorySelectionRequired), string(CategoryConfirmationRequired),
 		string(CategorySessionReady), string(CategorySegmentClick), string(CategoryToastClick), string(CategoryRowSelect), string(CategoryGroupSelect),
@@ -167,6 +171,18 @@ var (
 	allowedRoutes = stringSet(
 		string(RouteQueue), string(RouteHook), string(RouteNotifySend), string(RouteWSLToast), string(RouteWSLNotifySend),
 		string(RouteDisabled), string(RouteDedupe), string(RouteVisiblePane), string(RouteFocusDirect), string(RouteFocusQueue), string(RouteFocusToast),
+	)
+	allowedAIKinds = stringSet(
+		string(AIKindWatcher), string(AIKindPayload), string(AIKindPrompt), string(AIKindPermission), string(AIKindStop),
+		string(AIKindNotification), string(AIKindTool), string(AIKindSession), string(AIKindCompact), string(AIKindSubagent),
+		string(AIKindTeammate), string(AIKindStatusline), string(AIKindInvocation), string(AIKindLifecycle), string(AIKindBell), string(AIKindUnknown),
+	)
+	allowedAIResults = stringSet(
+		string(AIResultStarted), string(AIResultPaneGone), string(AIResultHookActive), string(AIResultIgnored), string(AIResultFailed),
+	)
+	allowedAIFailures = stringSet(
+		string(AIFailurePayloadInvalid), string(AIFailurePayloadRead), string(AIFailurePayloadOversized), string(AIFailureTargetInvalid),
+		string(AIFailureTargetUnmatched), string(AIFailureUnsupportedEvent), string(AIFailureRoute), string(AIFailureWatcherLaunch), string(AIFailureWatcherState),
 	)
 )
 
@@ -224,18 +240,18 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 func validateEventShape(event Event) error {
 	switch event.Event {
 	case "command.outcome":
-		if event.Result == "started" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() {
+		if event.Result == "started" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() {
 			return fmt.Errorf("invalid command outcome shape")
 		}
 	case "lifecycle.start":
-		if event.Result != "started" || event.Level != "info" || event.Operation == "" || event.Code != "" || event.Kind != "" || event.Message != "" || event.Command != "" || event.Subcommand != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() {
+		if event.Result != "started" || event.Level != "info" || event.Operation == "" || event.Code != "" || event.Kind != "" || event.Message != "" || event.Command != "" || event.Subcommand != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() {
 			return fmt.Errorf("invalid lifecycle start shape")
 		}
 		if !runtimeOperation(Operation(event.Operation)) {
 			return fmt.Errorf("invalid lifecycle operation")
 		}
 	case "lifecycle.outcome":
-		if event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() {
+		if event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() {
 			return fmt.Errorf("invalid lifecycle outcome shape")
 		}
 		if event.Result == "error" && (event.Level != "error" || event.Kind != "runtime" || event.Code == "") {
@@ -257,7 +273,7 @@ func validateEventShape(event Event) error {
 			return fmt.Errorf("invalid lifecycle operation code")
 		}
 	case "session-state.outcome":
-		if event.Component != "session-state" || event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.hasNotifyFocusFields() {
+		if event.Component != "session-state" || event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.hasNotifyFocusFields() || event.hasAIFields() {
 			return fmt.Errorf("invalid session-state outcome shape")
 		}
 		if event.Source != "" {
@@ -292,7 +308,7 @@ func validateEventShape(event Event) error {
 			return fmt.Errorf("invalid session-state count")
 		}
 	case "notify.transition", "focus.transition":
-		if event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Source != "" || event.hasCounts() {
+		if event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Source != "" || event.hasCounts() || event.hasAIFields() {
 			return fmt.Errorf("invalid notify/focus transition shape")
 		}
 		if _, ok := allowedTransitions[event.Transition]; !ok {
@@ -329,6 +345,27 @@ func validateEventShape(event Event) error {
 		}
 		if !notifyFocusCodeMatches(event) {
 			return fmt.Errorf("invalid notify/focus code")
+		}
+	case "ai.watcher.transition", "ai.ingest.outcome":
+		if event.Component != "ai" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() || event.Transition != "" || event.Disposition != "" || event.Category != "" || event.Route != "" {
+			return fmt.Errorf("invalid ai diagnostic shape")
+		}
+		if _, ok := allowedAIProviders[event.Provider]; !ok {
+			return fmt.Errorf("invalid ai provider")
+		}
+		if _, ok := allowedAIKinds[event.AIKind]; !ok {
+			return fmt.Errorf("invalid ai event kind")
+		}
+		if _, ok := allowedAIResults[event.AIResult]; !ok {
+			return fmt.Errorf("invalid ai result")
+		}
+		if event.Failure != "" {
+			if _, ok := allowedAIFailures[event.Failure]; !ok {
+				return fmt.Errorf("invalid ai failure")
+			}
+		}
+		if !aiTupleMatches(event) {
+			return fmt.Errorf("invalid ai diagnostic tuple")
 		}
 	}
 	if event.Operation != "" {
@@ -417,6 +454,10 @@ func (event Event) hasCounts() bool { return event.hasSnapshotCounts() || event.
 
 func (event Event) hasNotifyFocusFields() bool {
 	return event.Transition != "" || event.Disposition != "" || event.Provider != "" || event.Category != "" || event.Route != ""
+}
+
+func (event Event) hasAIFields() bool {
+	return event.AIKind != "" || event.AIResult != "" || event.Failure != ""
 }
 
 func (event Event) nonNegativeCounts() bool {

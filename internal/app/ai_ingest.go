@@ -16,6 +16,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
@@ -92,9 +93,11 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		}
 		data, err := io.ReadAll(io.LimitReader(reader, 1024*1024+1))
 		if err != nil {
+			c.recordAIIngestFailure(diagnostics.ProviderCodex, diagnostics.AIKindPayload, diagnostics.AIFailurePayloadRead)
 			return fmt.Errorf("read codex hook payload: %w", err)
 		}
 		if len(data) > 1024*1024 {
+			c.recordAIIngestFailure(diagnostics.ProviderCodex, diagnostics.AIKindPayload, diagnostics.AIFailurePayloadOversized)
 			return errors.New("codex hook payload exceeds 1 MiB")
 		}
 		return c.ingestCodexHook(data)
@@ -109,9 +112,11 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		}
 		data, err := io.ReadAll(io.LimitReader(reader, 1024*1024+1))
 		if err != nil {
+			c.recordAIIngestFailure(diagnostics.ProviderClaude, diagnostics.AIKindPayload, diagnostics.AIFailurePayloadRead)
 			return fmt.Errorf("read claude hook payload: %w", err)
 		}
 		if len(data) > 1024*1024 {
+			c.recordAIIngestFailure(diagnostics.ProviderClaude, diagnostics.AIKindPayload, diagnostics.AIFailurePayloadOversized)
 			return errors.New("claude hook payload exceeds 1 MiB")
 		}
 		return c.ingestClaudeHook(data)
@@ -132,9 +137,11 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		}
 		data, err := io.ReadAll(io.LimitReader(reader, 1024*1024+1))
 		if err != nil {
+			c.recordAIIngestFailure(diagnostics.ProviderAntigravity, diagnostics.AIKindPayload, diagnostics.AIFailurePayloadRead)
 			return fmt.Errorf("read antigravity hook payload: %w", err)
 		}
 		if len(data) > 1024*1024 {
+			c.recordAIIngestFailure(diagnostics.ProviderAntigravity, diagnostics.AIKindPayload, diagnostics.AIFailurePayloadOversized)
 			return errors.New("antigravity hook payload exceeds 1 MiB")
 		}
 		if err := c.ingestAntigravityHook(data, *eventName); err != nil {
@@ -152,6 +159,7 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		}
 		response, err := antigravityHookResponse(*eventName)
 		if err != nil {
+			c.recordAIIngestFailure(diagnostics.ProviderAntigravity, classifyAIHookKind(diagnostics.ProviderAntigravity, *eventName), diagnostics.AIFailureRoute)
 			return err
 		}
 		_, err = fmt.Fprintln(stdout, string(response))
@@ -393,6 +401,10 @@ func (c *aiCommand) aiIngestLogPath() (string, error) {
 }
 
 func (c *aiCommand) appendAIIngestLog(entry aiIngestLogEntry) {
+	// The legacy file remains the compatibility surface. Phase 5 projects only
+	// anomalous, closed classifications into the common journal independently
+	// of whether this best-effort legacy append succeeds.
+	c.recordAIIngestFromLegacy(entry)
 	path, err := c.aiIngestLogPath()
 	if err != nil {
 		return

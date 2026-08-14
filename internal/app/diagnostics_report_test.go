@@ -101,6 +101,9 @@ func seedReportSources(t *testing.T, stateHome, configHome string) (operationsPa
 	if err := store.Append(event); err != nil {
 		t.Fatal(err)
 	}
+	diagnostics.NewLifecycleRecorder(store, reportUUID, "0.10.0", diagnostics.MuxBackend()).AI().RecordIngest(
+		diagnostics.ProviderCodex, diagnostics.AIKindPayload, diagnostics.AIResultFailed, diagnostics.AIFailurePayloadInvalid, time.Now(), true,
+	)
 	ingestPath = filepath.Join(stateHome, "projmux", aiIngestLogName)
 	if err := os.MkdirAll(filepath.Dir(ingestPath), 0o700); err != nil {
 		t.Fatal(err)
@@ -238,6 +241,11 @@ func TestDiagnosticsReportPreviewArchiveManifestPermissionsAndRedaction(t *testi
 	for _, safe := range []string{`"name": "tmux"`, `"name": "git"`, `"status": "ok"`, `"provider_id": "codex"`, `"agent": "codex"`, `"confidence": "high"`, `"severity": "warning"`, `"code": "runtime.socket.unreachable"`, `"remediation": "start-projmux-runtime"`} {
 		if !bytes.Contains(entries["doctor.json"], []byte(safe)) {
 			t.Fatalf("doctor report lost safe diagnostic value %q:\n%s", safe, entries["doctor.json"])
+		}
+	}
+	for _, safe := range []string{`"event": "ai.ingest.outcome"`, `"provider": "codex"`, `"ai_kind": "payload"`, `"ai_result": "failed"`, `"failure": "payload-invalid"`} {
+		if !bytes.Contains(entries["operational-errors.json"], []byte(safe)) {
+			t.Fatalf("operational support report lost safe AI value %q:\n%s", safe, entries["operational-errors.json"])
 		}
 	}
 	for _, raw := range []string{reportSecret, "home-REPORT-SEED", reportProject, reportSession, reportWindow, reportPane, reportThread, reportRouting, reportUUID, reportArgv, reportPrompt, reportEnv, reportSocket, reportName} {

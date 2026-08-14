@@ -132,6 +132,9 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		{"provider", event.Provider},
 		{"category", event.Category},
 		{"route", event.Route},
+		{"ai_kind", event.AIKind},
+		{"ai_result", event.AIResult},
+		{"failure", event.Failure},
 	} {
 		if field.value != "" {
 			parts = append(parts, field.name+"="+field.value)

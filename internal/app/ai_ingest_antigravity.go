@@ -135,6 +135,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 			}
 			if action.Action == aiHookActionState {
 				if err := c.applyAIStatusStateOnly("waiting", paneID, input); err != nil {
+					c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 					return err
 				}
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
@@ -143,6 +144,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 			// Stable queue ID replaces repeated approval snapshots, while the
 			// desktop path uses its normal time-window dedupe (Force=false).
 			if err := c.applyAIStatusStateOnly("waiting", paneID, input); err != nil {
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 				return err
 			}
 			_ = c.notifyAIWithInput(paneID, input)
@@ -159,6 +161,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 				return nil
 			}
 			if err := c.applyAIStatusStateOnly("thinking", paneID, attentionNotifyInput{Metadata: metadata, BadgeKind: aiBadgeKindInProgress}); err != nil {
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 				return err
 			}
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: "statusline agent_state is busy", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
