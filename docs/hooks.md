@@ -205,11 +205,11 @@ If a `send-noti` hook itself calls `projmux notify push`, projmux sees
 `PROJMUX_NOTIFY_HOOK_DEPTH=1` in the child environment and skips another
 `send-noti` hook fire. The queue write itself still succeeds.
 
-`Settings > Notifications > Delivery sources` surfaces the active Codex hooks,
-Claude, and tmux AI notify diagnostics: status, conflicts, config paths, and
-copyable CLI install/remove/dry-run commands. It also shows whether
+`Settings > Notifications > Delivery sources` surfaces the active Codex,
+Claude, Antigravity, and tmux AI notify diagnostics: status, conflicts, config
+paths, and copyable CLI install/remove/dry-run commands. It also shows whether
 `PROJMUX_NOTIFY_HOOK` overrides the built-in desktop sender. It does not install
-or remove external Codex, Claude, or tmux settings.
+or remove external Codex, Claude, Antigravity, or tmux settings.
 
 `PROJMUX_NOTIFY_HOOK` is separate from `[hooks.send-noti]`: it replaces the
 desktop sender and receives positional arguments

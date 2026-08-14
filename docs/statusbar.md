@@ -122,16 +122,16 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 
 ## Range catalogue
 
-| Range id | Row | Click action                              | Keyboard      |
-| -------- | --- | ----------------------------------------- | ------------- |
-| `session` | 0 | `projmux tmux popup-toggle sessionizer-sidebar` | `prefix s s` |
-| `pwd`     | 0 | show a native-framed current-path popup; no clipboard or tmux buffer copy | `prefix s p`  |
-| `kube`    | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
-| `git`     | 0 | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
-| `settings` | 0 | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
-| `resources` | 0 | `projmux tmux popup-toggle --client <tty> resource-inspector` | mouse or custom `Resources:Open`; no default key |
-| `usage`   | 1 | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
-| `notify`  | 1 | `projmux focus --target <newest> --source status-bar --kind segment-click [--client <tty>]`, then ack on focus success | `prefix s n`  |
+| Range id | Generated row | Click action                              | Keyboard      |
+| -------- | ------------- | ----------------------------------------- | ------------- |
+| `notify`  | `status-format[0]` | `projmux focus --target <newest> --source status-bar --kind segment-click [--client <tty>]`, then ack on focus success | `prefix s n`  |
+| `usage`   | `status-format[0]` | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
+| `session` | `status-format[1]` | `projmux tmux popup-toggle sessionizer-sidebar` | `prefix s s` |
+| `pwd`     | `status-format[1]` | show a native-framed current-path popup; no clipboard or tmux buffer copy | `prefix s p`  |
+| `kube`    | `status-format[1]` | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
+| `git`     | `status-format[1]` | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
+| `resources` | `status-format[1]` | `projmux tmux popup-toggle --client <tty> resource-inspector` | mouse or custom `Resources:Open`; no default key |
+| `settings` | `status-format[1]` | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
 
 `notify` reads the pending queue only. For a live pane-state view that is
 independent of queued reminders, use `projmux attention list`. To explain why
@@ -284,9 +284,8 @@ updates the matching live tmux option
 (`@projmux_statusbar_decoration_cwd`, `_git`, or `_notify`) when run inside
 tmux. The legacy `~/.config/projmux/statusbar-decoration` and
 `@projmux_statusbar_decoration` remain fallback defaults for older configs.
-Appearance also shows the effective desired theme font. This is a status row,
-not a font editor: tmux status strings and ANSI output cannot force terminal
-font family or size, so unsupported environments report `not applied`.
+Settings > Theme controls the bottom status bar background through
+`status_background`; `surface` controls popup and native frame backgrounds.
 
 Settings > Labs controls the experimental live resource segment. Its saved
 value is `~/.config/projmux/live-resources`; changing it inside tmux updates

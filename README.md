@@ -34,8 +34,8 @@ Six tmux windows. Each one is running Claude Code, Codex, or Antigravity on a
 different repo. Three are idle. One is waiting on a permission prompt. One
 crashed an hour ago and you have no idea which.
 
-projmux ingests Claude Code and Codex hook events directly, accepts manually
-wired Antigravity hook/statusline events, shows live per-pane state in the tmux
+projmux manages Claude Code, Codex, and Antigravity hook integrations, including
+Antigravity's hook/statusline wiring, shows live per-pane state in the tmux
 status bar, and lets one keystroke take you to the pane that actually needs
 you. It also remembers each agent's resume id, so after a reboot every pane
 comes back as the *same* conversation — not a fresh one.
@@ -91,8 +91,8 @@ fallbacks.
 - Pin important projects so they stay easy to reach.
 - Preview windows, panes, git branch, Kubernetes context, and AI pane state
   before switching.
-- Resume an existing Claude or Codex conversation, or open a new managed AI
-  split.
+- Resume an existing Claude, Codex, or Antigravity conversation, or open a new
+  managed AI split.
 - Review permission and completion events in one notification queue, then jump
   directly to the pane that needs attention.
 - Use Settings > Project Picker to add roots and workdirs without editing env
