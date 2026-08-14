@@ -549,45 +549,49 @@ func TestWriteProjectConfigFileModeFailureCleansTempAndPreservesSymlinkTarget(t 
 
 	injected := errors.New("injected writer failure")
 	tests := []struct {
-		name  string
-		patch func(*projectConfigFileOps)
+		name           string
+		patch          func(*projectConfigFileOps, *int)
+		wantCloseCalls int
 	}{
-		{name: "lstat", patch: func(ops *projectConfigFileOps) {
+		{name: "lstat", patch: func(ops *projectConfigFileOps, _ *int) {
 			ops.lstat = func(string) (os.FileInfo, error) { return nil, injected }
 		}},
-		{name: "resolve", patch: func(ops *projectConfigFileOps) {
+		{name: "resolve", patch: func(ops *projectConfigFileOps, _ *int) {
 			ops.evalSymlinks = func(string) (string, error) { return "", injected }
 		}},
-		{name: "stat", patch: func(ops *projectConfigFileOps) {
+		{name: "stat", patch: func(ops *projectConfigFileOps, _ *int) {
 			ops.stat = func(string) (os.FileInfo, error) { return nil, injected }
 		}},
-		{name: "write", patch: func(ops *projectConfigFileOps) {
+		{name: "create", patch: func(ops *projectConfigFileOps, _ *int) {
+			ops.createTemp = func(string, string) (projectConfigTempFile, error) { return nil, injected }
+		}},
+		{name: "write", patch: func(ops *projectConfigFileOps, closeCalls *int) {
 			createTemp := ops.createTemp
 			ops.createTemp = func(dir, pattern string) (projectConfigTempFile, error) {
 				file, err := createTemp(dir, pattern)
 				if err != nil {
 					return nil, err
 				}
-				return &failingProjectConfigTempFile{projectConfigTempFile: file, writeErr: injected}, nil
+				return &failingProjectConfigTempFile{projectConfigTempFile: file, writeErr: injected, closeCalls: closeCalls}, nil
 			}
-		}},
-		{name: "close", patch: func(ops *projectConfigFileOps) {
+		}, wantCloseCalls: 1},
+		{name: "close", patch: func(ops *projectConfigFileOps, closeCalls *int) {
 			createTemp := ops.createTemp
 			ops.createTemp = func(dir, pattern string) (projectConfigTempFile, error) {
 				file, err := createTemp(dir, pattern)
 				if err != nil {
 					return nil, err
 				}
-				return &failingProjectConfigTempFile{projectConfigTempFile: file, closeErr: injected}, nil
+				return &failingProjectConfigTempFile{projectConfigTempFile: file, closeErr: injected, closeCalls: closeCalls}, nil
 			}
-		}},
-		{name: "chmod", patch: func(ops *projectConfigFileOps) {
+		}, wantCloseCalls: 1},
+		{name: "chmod", patch: func(ops *projectConfigFileOps, _ *int) {
 			ops.chmod = func(string, os.FileMode) error { return injected }
 		}},
-		{name: "chown", patch: func(ops *projectConfigFileOps) {
+		{name: "chown", patch: func(ops *projectConfigFileOps, _ *int) {
 			ops.chown = func(string, int, int) error { return injected }
 		}},
-		{name: "rename", patch: func(ops *projectConfigFileOps) {
+		{name: "rename", patch: func(ops *projectConfigFileOps, _ *int) {
 			ops.rename = func(string, string) error { return injected }
 		}},
 	}
@@ -612,7 +616,8 @@ func TestWriteProjectConfigFileModeFailureCleansTempAndPreservesSymlinkTarget(t 
 			}
 
 			ops := defaultProjectConfigFileOps()
-			tc.patch(&ops)
+			closeCalls := 0
+			tc.patch(&ops, &closeCalls)
 			err = writeProjectConfigFileModeWithOps(path, ProjectConfig{StartupRun: "changed"}, 0o644, ops)
 			if !errors.Is(err, injected) {
 				if tc.name == "chown" && runtime.GOOS == "windows" && err == nil {
@@ -635,6 +640,9 @@ func TestWriteProjectConfigFileModeFailureCleansTempAndPreservesSymlinkTarget(t 
 			if got, want := string(body), "original\n"; got != want {
 				t.Fatalf("target after %s failure = %q, want %q", tc.name, got, want)
 			}
+			if closeCalls != tc.wantCloseCalls {
+				t.Fatalf("temporary file close calls after %s failure = %d, want %d", tc.name, closeCalls, tc.wantCloseCalls)
+			}
 			assertNoProjectConfigTemps(t, filepath.Dir(path), filepath.Dir(target))
 		})
 	}
@@ -642,8 +650,9 @@ func TestWriteProjectConfigFileModeFailureCleansTempAndPreservesSymlinkTarget(t 
 
 type failingProjectConfigTempFile struct {
 	projectConfigTempFile
-	writeErr error
-	closeErr error
+	writeErr   error
+	closeErr   error
+	closeCalls *int
 }
 
 func (f *failingProjectConfigTempFile) WriteString(content string) (int, error) {
@@ -654,6 +663,9 @@ func (f *failingProjectConfigTempFile) WriteString(content string) (int, error) 
 }
 
 func (f *failingProjectConfigTempFile) Close() error {
+	if f.closeCalls != nil {
+		(*f.closeCalls)++
+	}
 	err := f.projectConfigTempFile.Close()
 	if f.closeErr != nil {
 		return f.closeErr
