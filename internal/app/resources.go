@@ -17,6 +17,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/paneidentity"
 	coreresources "github.com/crevissepartners/projmux/internal/core/resources"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -26,19 +27,31 @@ import (
 const (
 	resourceInspectorPopupMode = "resource-inspector"
 	resourceRefreshInterval    = 2 * time.Second
+	resourceScanBudget         = resourceRefreshInterval
 )
 
 type resourceSnapshotCollector interface {
 	CollectResourceSnapshot(context.Context, *coreresources.Sample) (coreresources.Snapshot, coreresources.Sample, error)
 }
 
+type resourceCollectionError struct {
+	source  diagnostics.ResourceSource
+	failure diagnostics.ResourceFailure
+	cause   error
+}
+
+func (e *resourceCollectionError) Error() string { return e.cause.Error() }
+func (e *resourceCollectionError) Unwrap() error { return e.cause }
+
 type resourceCommand struct {
-	collector resourceSnapshotCollector
-	picker    intpicker.Runner
-	homeDir   func() (string, error)
-	lookupEnv func(string) string
-	now       func() time.Time
-	interval  time.Duration
+	collector   resourceSnapshotCollector
+	picker      intpicker.Runner
+	homeDir     func() (string, error)
+	lookupEnv   func(string) string
+	now         func() time.Time
+	interval    time.Duration
+	scanBudget  time.Duration
+	diagnostics *diagnostics.ResourceRecorder
 }
 
 type resourceText struct{ locale i18n.Locale }
@@ -66,12 +79,13 @@ func (t resourceText) status(status coreresources.Status) string {
 
 func newResourceCommand() *resourceCommand {
 	return &resourceCommand{
-		collector: newPlatformResourceCollector(),
-		picker:    intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		homeDir:   os.UserHomeDir,
-		lookupEnv: os.Getenv,
-		now:       time.Now,
-		interval:  resourceRefreshInterval,
+		collector:  newPlatformResourceCollector(),
+		picker:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		homeDir:    os.UserHomeDir,
+		lookupEnv:  os.Getenv,
+		now:        time.Now,
+		interval:   resourceRefreshInterval,
+		scanBudget: resourceScanBudget,
 	}
 }
 
@@ -98,6 +112,8 @@ func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	lifecycle := newResourceLifecycle(c.collector, c.currentTime, c.refreshInterval())
+	lifecycle.scanBudget = c.collectionBudget()
+	lifecycle.diagnostics = c.diagnostics
 	lifecycle.start()
 	defer lifecycle.close()
 
@@ -119,6 +135,13 @@ func (c *resourceCommand) Run(args []string, stdout, stderr io.Writer) error {
 			continue
 		}
 	}
+}
+
+func (c *resourceCommand) collectionBudget() time.Duration {
+	if c.scanBudget <= 0 {
+		return resourceScanBudget
+	}
+	return c.scanBudget
 }
 
 func hasHelpArg(args []string) bool {
@@ -224,16 +247,34 @@ type resourceLifecycle struct {
 	active           sync.WaitGroup
 	done             chan struct{}
 	previous         *coreresources.Sample
+	lastCompleteAt   time.Time
+	scanBudget       time.Duration
+	diagnostics      *diagnostics.ResourceRecorder
+	diagnosticsMu    sync.Mutex
+	afterStateCommit func()
 }
 
 type resourceCollectionResult struct {
-	snapshot coreresources.Snapshot
-	skipped  bool
+	snapshot     coreresources.Snapshot
+	skipped      bool
+	sample       coreresources.Sample
+	commitSample bool
+	diagnostic   resourceDiagnosticOutcome
+}
+
+type resourceDiagnosticOutcome struct {
+	started time.Time
+	source  diagnostics.ResourceSource
+	result  diagnostics.ResourceResult
+	failure diagnostics.ResourceFailure
+	recover []diagnostics.ResourceSource
+	healthy bool
+	record  bool
 }
 
 func newResourceLifecycle(collector resourceSnapshotCollector, now func() time.Time, interval time.Duration) *resourceLifecycle {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &resourceLifecycle{collector: collector, now: now, interval: interval, ctx: ctx, cancel: cancel, trigger: make(chan struct{}, 1), done: make(chan struct{})}
+	return &resourceLifecycle{collector: collector, now: now, interval: interval, scanBudget: interval, ctx: ctx, cancel: cancel, trigger: make(chan struct{}, 1), done: make(chan struct{})}
 }
 
 func (l *resourceLifecycle) start() {
@@ -307,30 +348,107 @@ func (l *resourceLifecycle) runCollection(before uint64, previous *coreresources
 }
 
 func (l *resourceLifecycle) collectSnapshot(before uint64, previous *coreresources.Sample) resourceCollectionResult {
-	snapshot, current, err := l.collector.CollectResourceSnapshot(l.ctx, previous)
+	started := l.now()
+	ctx := l.ctx
+	cancel := func() {}
+	if l.scanBudget > 0 {
+		ctx, cancel = context.WithTimeout(l.ctx, l.scanBudget)
+	}
+	defer cancel()
+	snapshot, current, err := l.collector.CollectResourceSnapshot(ctx, previous)
+	budgetExceeded := false
+	var diagnostic resourceDiagnosticOutcome
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		budgetExceeded = true
+		snapshot = coreresources.Snapshot{At: l.now(), Status: coreresources.StatusUnavailable, StatusReason: "scan-budget-exceeded"}
+		diagnostic = resourceDiagnosticOutcome{
+			started: started, source: diagnostics.ResourceSourceSampler, result: diagnostics.ResourceResultScanBudgetExceeded,
+			failure: diagnostics.ResourceFailureScanBudget, record: true,
+		}
+		err = nil
+	} else if l.ctx.Err() == nil {
+		diagnostic = classifyResourceOutcome(snapshot, err, started)
+	}
 	if err != nil {
 		snapshot = coreresources.Snapshot{At: l.now(), Status: coreresources.StatusUnavailable, StatusReason: "collection-error"}
 	}
-	result := resourceCollectionResult{snapshot: snapshot, skipped: l.skipped.Load() > before}
-	if err == nil && l.ctx.Err() == nil {
-		l.mu.Lock()
-		l.previous = &current
-		l.mu.Unlock()
+	result := resourceCollectionResult{snapshot: snapshot, skipped: l.skipped.Load() > before, diagnostic: diagnostic}
+	if err == nil && !budgetExceeded && l.ctx.Err() == nil {
+		result.sample = current
+		result.commitSample = true
 	}
 	return result
+}
+
+func classifyResourceOutcome(snapshot coreresources.Snapshot, err error, started time.Time) resourceDiagnosticOutcome {
+	if err != nil {
+		source, failure := diagnostics.ResourceSourceSampler, diagnostics.ResourceFailureCollection
+		var classified *resourceCollectionError
+		if errors.As(err, &classified) {
+			source, failure = classified.source, classified.failure
+		}
+		outcome := resourceDiagnosticOutcome{started: started, source: source, result: diagnostics.ResourceResultError, failure: failure, record: true}
+		switch source {
+		case diagnostics.ResourceSourceProjectDiscovery:
+			outcome.recover = []diagnostics.ResourceSource{diagnostics.ResourceSourceInventory}
+		case diagnostics.ResourceSourceSampler:
+			outcome.recover = []diagnostics.ResourceSource{diagnostics.ResourceSourceInventory, diagnostics.ResourceSourceProjectDiscovery}
+		}
+		return outcome
+	}
+	outcome := resourceDiagnosticOutcome{
+		started: started,
+		recover: []diagnostics.ResourceSource{diagnostics.ResourceSourceInventory, diagnostics.ResourceSourceProjectDiscovery, diagnostics.ResourceSourceRefresh},
+	}
+	switch snapshot.Status {
+	case coreresources.StatusUnavailable:
+		outcome.source, outcome.result, outcome.failure, outcome.record = diagnostics.ResourceSourceSampler, diagnostics.ResourceResultUnavailable, diagnostics.ResourceFailureSampleUnavailable, true
+	case coreresources.StatusPartial:
+		outcome.source, outcome.result, outcome.failure, outcome.record = diagnostics.ResourceSourceSampler, diagnostics.ResourceResultPartial, diagnostics.ResourceFailureSamplePartial, true
+	default:
+		outcome.healthy = true
+	}
+	return outcome
 }
 
 func (l *resourceLifecycle) finishCollection(result resourceCollectionResult, deferred bool) {
 	l.mu.Lock()
 	l.collecting = false
+	if result.commitSample {
+		l.previous = &result.sample
+	}
+	if result.snapshot.At.IsZero() {
+		l.lastCompleteAt = l.now()
+	} else {
+		l.lastCompleteAt = result.snapshot.At
+	}
 	if deferred && !l.closing && l.ctx.Err() == nil {
 		l.completion = &result
 	}
 	shouldNotify := deferred && l.completion != nil
 	l.mu.Unlock()
+	if l.afterStateCommit != nil {
+		l.afterStateCommit()
+	}
+	l.applyResourceOutcome(result.diagnostic)
 	l.active.Done()
 	if shouldNotify {
 		l.notify()
+	}
+}
+
+func (l *resourceLifecycle) applyResourceOutcome(outcome resourceDiagnosticOutcome) {
+	l.diagnosticsMu.Lock()
+	defer l.diagnosticsMu.Unlock()
+	if outcome.healthy {
+		l.diagnostics.Healthy()
+		return
+	}
+	if len(outcome.recover) > 0 {
+		l.diagnostics.Recover(outcome.recover...)
+	}
+	if outcome.record {
+		l.diagnostics.Record(outcome.source, outcome.result, outcome.failure, outcome.started)
 	}
 }
 
@@ -340,13 +458,21 @@ func (l *resourceLifecycle) requestAutomatic() {
 		l.mu.Unlock()
 		return
 	}
+	staleStarted := l.lastCompleteAt
+	stale := !staleStarted.IsZero() && l.now().Sub(staleStarted) > 2*l.interval
 	if l.collecting || l.automaticPending || l.manualPending {
 		l.skipped.Add(1)
 		l.mu.Unlock()
+		if stale {
+			l.recordStaleIfCurrent(staleStarted)
+		}
 		return
 	}
 	l.automaticPending = true
 	l.mu.Unlock()
+	if stale {
+		l.recordStaleIfCurrent(staleStarted)
+	}
 	l.notify()
 }
 
@@ -357,16 +483,35 @@ func (l *resourceLifecycle) request(view *resourceViewState) {
 		l.mu.Unlock()
 		return
 	}
+	staleStarted := l.lastCompleteAt
+	stale := !staleStarted.IsZero() && l.now().Sub(staleStarted) > 2*l.interval
 	if l.collecting || l.manualPending {
 		l.skipped.Add(1)
 		l.mu.Unlock()
+		if stale {
+			l.recordStaleIfCurrent(staleStarted)
+		}
 		view.setSkippedRefresh(true)
 		return
 	}
 	l.automaticPending = false
 	l.manualPending = true
 	l.mu.Unlock()
+	if stale {
+		l.recordStaleIfCurrent(staleStarted)
+	}
 	l.notify()
+}
+
+func (l *resourceLifecycle) recordStaleIfCurrent(started time.Time) {
+	l.diagnosticsMu.Lock()
+	defer l.diagnosticsMu.Unlock()
+	l.mu.Lock()
+	stale := !l.closing && l.lastCompleteAt.Equal(started) && l.now().Sub(started) > 2*l.interval
+	l.mu.Unlock()
+	if stale {
+		l.diagnostics.Record(diagnostics.ResourceSourceRefresh, diagnostics.ResourceResultStale, diagnostics.ResourceFailureSampleStale, started)
+	}
 }
 
 func (l *resourceLifecycle) notify() {
@@ -386,6 +531,7 @@ func (l *resourceLifecycle) close() {
 	l.active.Wait()
 	l.mu.Lock()
 	l.previous = nil
+	l.lastCompleteAt = time.Time{}
 	l.completion = nil
 	l.automaticPending = false
 	l.manualPending = false

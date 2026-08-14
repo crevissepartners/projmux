@@ -104,6 +104,9 @@ func seedReportSources(t *testing.T, stateHome, configHome string) (operationsPa
 	diagnostics.NewLifecycleRecorder(store, reportUUID, "0.10.0", diagnostics.MuxBackend()).AI().RecordIngest(
 		diagnostics.ProviderCodex, diagnostics.AIKindPayload, diagnostics.AIResultFailed, diagnostics.AIFailurePayloadInvalid, time.Now(), true,
 	)
+	resourceRecorder := diagnostics.NewLifecycleRecorder(store, reportUUID, "0.10.0", diagnostics.MuxBackend()).Resource()
+	resourceRecorder.Record(diagnostics.ResourceSourceSampler, diagnostics.ResourceResultPartial, diagnostics.ResourceFailureSamplePartial, time.Now())
+	resourceRecorder.Record(diagnostics.ResourceSourceInventory, diagnostics.ResourceResultError, diagnostics.ResourceFailureInventory, time.Now())
 	ingestPath = filepath.Join(stateHome, "projmux", aiIngestLogName)
 	if err := os.MkdirAll(filepath.Dir(ingestPath), 0o700); err != nil {
 		t.Fatal(err)
@@ -247,6 +250,14 @@ func TestDiagnosticsReportPreviewArchiveManifestPermissionsAndRedaction(t *testi
 		if !bytes.Contains(entries["operational-errors.json"], []byte(safe)) {
 			t.Fatalf("operational support report lost safe AI value %q:\n%s", safe, entries["operational-errors.json"])
 		}
+	}
+	for _, safe := range []string{`"event": "resource.sampler.outcome"`, `"source": "tmux-inventory"`, `"resource_result": "error"`, `"failure": "inventory-failed"`} {
+		if !bytes.Contains(entries["operational-errors.json"], []byte(safe)) {
+			t.Fatalf("operational support report lost safe resource value %q:\n%s", safe, entries["operational-errors.json"])
+		}
+	}
+	if bytes.Contains(entries["operational-errors.json"], []byte(`"resource_result": "partial"`)) {
+		t.Fatalf("support report exported local-only info anomaly:\n%s", entries["operational-errors.json"])
 	}
 	for _, raw := range []string{reportSecret, "home-REPORT-SEED", reportProject, reportSession, reportWindow, reportPane, reportThread, reportRouting, reportUUID, reportArgv, reportPrompt, reportEnv, reportSocket, reportName} {
 		if bytes.Contains(preview, []byte(raw)) || bytes.Contains(archiveText, []byte(raw)) {

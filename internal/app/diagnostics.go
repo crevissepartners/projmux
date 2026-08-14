@@ -134,6 +134,7 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		{"route", event.Route},
 		{"ai_kind", event.AIKind},
 		{"ai_result", event.AIResult},
+		{"resource_result", event.ResourceResult},
 		{"failure", event.Failure},
 	} {
 		if field.value != "" {

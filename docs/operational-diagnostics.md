@@ -128,6 +128,44 @@ cwd/path/command/title/topic, tmux target, queue ID, provider conversation or
 session identifier, UUID, or arbitrary reason/error string. `failure` is a
 stage enum, not `error.Error()`.
 
+Resource attribution diagnostics use `component=resource` and the single
+`resource.sampler.outcome` family. The Resource Inspector lifecycle is the
+only writer: its Linux collector owns tmux inventory, project-root discovery,
+and procfs attribution, while its refresh gate owns derived staleness. The
+closed `source` values are `sampler`, `tmux-inventory`, `project-discovery`,
+and `refresh`; the closed `resource_result` values are `unavailable`,
+`partial`, `stale`, `error`, and `scan-budget-exceeded`. `failure` is limited
+to the matching safe stage enum. Impossible source/result/failure combinations
+are rejected.
+
+The lifecycle's existing overlap and trigger-drop counters remain UI-only
+refresh feedback and do not create an operational event by themselves. When
+the retained last-complete sample crosses the stale boundary, the refresh
+owner records the single coalesced `stale` transition instead.
+
+Normal warming/ready samples, periodic samples, successful automatic/manual
+refreshes, and the separate host-only `projmux status resources` sampler emit
+zero common resource events. The two-second Resource Inspector lifecycle budget
+measures inventory, discovery, and procfs collection together. Tmux inventory
+and procfs observe its context directly. Project discovery does not currently
+accept a context, so an overrun is classified as budget-exceeded when discovery
+returns rather than being preempted; making that seam cancellable is a separate
+follow-up. Budget exhaustion preserves the established unavailable UI/CLI
+result and adds only the safe budget tuple. A persistent identical anomaly
+emits once. Recovery is silent and resets that transition, so a later re-entry
+emits once again. Journal append failure does not affect snapshot selection,
+popup refresh, stdout/stderr, or exit status.
+
+No resource event contains CPU or memory values, PID/process counts, process
+command/cwd/title, project/session/window/pane identifiers, socket/TTY,
+attribution details, snapshot status text, arbitrary errors, paths, UUIDs, or
+privacy seeds. Partial and stale outcomes are info-level and remain in the
+private local journal only. Unavailable, collection/inventory/discovery error,
+and scan-budget outcomes are error-level, so the explicit support report may
+include their closed enums after hashing run/version correlation. The report's
+existing error-only projection omits partial/stale and never exports metrics or
+identity.
+
 The diagnostics package exposes a typed `ReadRuntimeHealth` projection for
 read-only Doctor consumers. It reports the fixed `tmux` backend, latest
 socket/apply state, and a bounded tail/count of safe failures using only
@@ -198,7 +236,7 @@ viewer read is excluded from success logging, so inspection does not create a
 recursion loop.
 
 The older bounded `ai-ingest.log` and subsystem-specific `PROJMUX_*_DEBUG`
-surfaces retain their current paths, formats, and behavior. Phase 5 deliberately
+surfaces retain their current paths, formats, and behavior. Phase 6 deliberately
 keeps the legacy producer and both existing consumers: `projmux ai ingest log`
 still reads the legacy JSONL bytes, and `diagnostics report` still emits its
 allowlisted source/result count summary. Legacy append failure remains
@@ -220,15 +258,22 @@ The measured migration parity is:
 This is a dual-run migration seam, not a deprecation. Operators who need the
 legacy detailed local view can keep using `ai ingest log`; support archives
 remain count-only for that file. The common journal is the safe correlated
-source for watcher lifecycle and anomalous ingest classification. Final
-Keep/Deprecate/Remove decisions for `ai-ingest.log` and debug env variables are
-deferred to Phase 6.
+source for watcher lifecycle and anomalous ingest classification. The file is
+a documented **Deprecate candidate**, not deprecated behavior in this release:
+common diagnostics cover anomalies but not the legacy detailed normal-state
+consumer. Any deprecation/removal requires a separate breaking roadmap with
+consumer migration.
 
 `PROJMUX_FOCUS_DEBUG` remains available with its existing one-line byte
 contract. Focus diagnostics share its request classification seam, but do not
 copy the debug line's raw target, session/window/pane, socket, client, source,
-or kind values into the journal. Removal or migration of the debug variable is
-deferred to the later legacy-diagnostics inventory.
+or kind values into the journal. It is a documented **Deprecate candidate**
+because the common focus transition is the safe support path; its raw routing
+byte contract remains unchanged until a separate breaking deprecation.
+
+The complete file/surface inventory and decisions are maintained in
+[legacy-diagnostics-inventory.md](legacy-diagnostics-inventory.md). These are
+candidates only; Phase 6 removes, renames, ignores, or changes none of them.
 
 ## Explicit support report
 

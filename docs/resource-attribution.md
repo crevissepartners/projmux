@@ -48,6 +48,13 @@ maps, SQLite, protobuf, or remote telemetry.
 - Snapshot state is `warming`, `ready`, `partial`, or `unavailable`. Bounded
   diagnostics contain scan duration and sampled/skipped/race/permission counts,
   plus identity/delta quality counts; they contain no user payload.
+- The interactive lifecycle has a two-second total budget matching its
+  non-overlapping cadence. Tmux inventory and procfs observe the context
+  directly. Project discovery is included in elapsed-budget classification but
+  its current interface is not cancellable, so an overrun is recognized only
+  when discovery returns. Budget exhaustion remains an unavailable snapshot;
+  it never exposes a partially mutating result. Context-aware project discovery
+  is a separate follow-up.
 
 ## Measurements
 
@@ -171,6 +178,15 @@ order last computed by Tab. The default order is Name; Tab computes CPU,
 Memory, or Name once from the current sample, while later refreshes update row
 values without silently moving focus. Native synchronized frame diffs repaint
 only changed rows and update state/footer chrome together.
+
+The Resource Inspector lifecycle projects only unavailable, partial, stale,
+collection/inventory/discovery error, and scan-budget transitions into the
+private bounded operations journal. A persistent identical transition is
+coalesced until silent recovery; normal samples and refreshes emit nothing.
+The statusbar's separate host-only sampler also emits nothing. Resource events
+never contain the metrics, PID/process data, tmux/project identity, paths,
+titles, commands, snapshot reasons, or arbitrary error strings described by
+this UI model. See [operational-diagnostics.md](operational-diagnostics.md).
 
 The live summary is a fixed five-row bottom dock below the search/list surface:
 one renderer-owned theme-aware divider, then Host, Attributed, Coverage, and

@@ -138,6 +138,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	sessionStateDiagnostics := recorder.SessionState()
 	notifyFocusDiagnostics := recorder.NotifyFocus()
 	aiOperationalDiagnostics := recorder.AI()
+	resourceOperationalDiagnostics := recorder.Resource()
 	ai := newAICommand()
 	ai.notifyDiagnostics = notifyFocusDiagnostics
 	ai.operationalDiagnostics = aiOperationalDiagnostics
@@ -174,6 +175,8 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	attentionCmd.producer = newAttentionNotifyProducer(notifyFocusDiagnostics)
 	focusCmd := newFocusCommand(recorder)
 	focusCmd.notifyDiagnostics = notifyFocusDiagnostics
+	resourcesCmd := newResourceCommand()
+	resourcesCmd.diagnostics = resourceOperationalDiagnostics
 	return &App{
 		lifecycle:    recorder,
 		ai:           ai,
@@ -192,7 +195,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		preview:      newPreviewCommand(),
 		prune:        pruneCmd,
 		quit:         quit,
-		resources:    newResourceCommand(),
+		resources:    resourcesCmd,
 		sessions:     sessions,
 		sessionState: sessionStateCmd,
 		sessionPopup: newSessionPopupCommand(recorder),

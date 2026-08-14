@@ -48,6 +48,22 @@ func TestFormatOperationalAIEventUsesOnlySafeEnums(t *testing.T) {
 	}
 }
 
+func TestFormatOperationalResourceEventUsesOnlySafeEnums(t *testing.T) {
+	t.Parallel()
+	event := diagnostics.Event{
+		At: "2026-08-14T01:02:03Z", Level: "error", Component: "resource",
+		Event: "resource.sampler.outcome", Result: "error", DurationMS: 2,
+		RunID: "safe-resource-run", Version: "0.10.0", MuxBackend: "tmux", Kind: "runtime",
+		Source: string(diagnostics.ResourceSourceInventory), ResourceResult: string(diagnostics.ResourceResultError), Failure: string(diagnostics.ResourceFailureInventory),
+	}
+	got := formatOperationalEvent(event)
+	for _, want := range []string{"source=tmux-inventory", "resource_result=error", "failure=inventory-failed", "run_id=safe-resource-run"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("formatted resource event = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestDiagnosticsLogViewsSameReaderFixture(t *testing.T) {
 	stateHome := t.TempDir()
 	path := filepath.Join(stateHome, "projmux", "logs", diagnostics.LogFileName)

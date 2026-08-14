@@ -9,6 +9,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coreresources "github.com/crevissepartners/projmux/internal/core/resources"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/procfsresources"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
@@ -44,11 +45,11 @@ func newPlatformResourceCollector() resourceSnapshotCollector {
 func (c linuxResourceCollector) CollectResourceSnapshot(ctx context.Context, previous *coreresources.Sample) (coreresources.Snapshot, coreresources.Sample, error) {
 	inventory, err := c.tmux.ListResourcePanes(ctx)
 	if err != nil {
-		return coreresources.Snapshot{}, coreresources.Sample{}, err
+		return coreresources.Snapshot{}, coreresources.Sample{}, &resourceCollectionError{source: diagnostics.ResourceSourceInventory, failure: diagnostics.ResourceFailureInventory, cause: err}
 	}
 	projectRoots, err := c.projectRoots()
 	if err != nil {
-		return coreresources.Snapshot{}, coreresources.Sample{}, fmt.Errorf("discover resource project roots: %w", err)
+		return coreresources.Snapshot{}, coreresources.Sample{}, &resourceCollectionError{source: diagnostics.ResourceSourceProjectDiscovery, failure: diagnostics.ResourceFailureProjectDiscovery, cause: fmt.Errorf("discover resource project roots: %w", err)}
 	}
 	inventory = coreresources.ResolveProjectAnchors(inventory, projectRoots)
 	snapshot, current := c.procfs.Collect(ctx, inventory, previous)
