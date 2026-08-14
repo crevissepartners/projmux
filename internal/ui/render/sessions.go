@@ -21,20 +21,30 @@ type SessionSummary struct {
 	Activity     int64
 }
 
+type SessionRowText struct {
+	Attached string
+	Detached string
+	Windows  string
+}
+
 func BuildSessionRows(summaries []SessionSummary) []SessionRow {
+	return BuildSessionRowsWithText(summaries, SessionRowText{Attached: "Attached", Detached: "Detached", Windows: "Windows"})
+}
+
+func BuildSessionRowsWithText(summaries []SessionSummary, text SessionRowText) []SessionRow {
 	rows := make([]SessionRow, 0, len(summaries))
 	for _, summary := range summaries {
 		parts := make([]string, 0, 5)
 		parts = append(parts, formatTagSlot(false))
 
-		status := ansiYellow + "[Detached]" + ansiReset
+		status := ansiYellow + "[" + sanitizeCell(text.Detached) + "]" + ansiReset
 		if summary.Attached {
-			status = ansiGreen + "[Attached]" + ansiReset
+			status = ansiGreen + "[" + sanitizeCell(text.Attached) + "]" + ansiReset
 		}
 		parts = append(parts, status)
 
 		if summary.WindowCount >= 2 {
-			parts = append(parts, ansiBlue+sanitizeCell(strconv.Itoa(summary.WindowCount))+" Windows"+ansiReset)
+			parts = append(parts, ansiBlue+sanitizeCell(strconv.Itoa(summary.WindowCount))+" "+sanitizeCell(text.Windows)+ansiReset)
 		}
 
 		if name := sanitizeCell(summary.Name); name != "" {

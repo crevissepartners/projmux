@@ -1583,6 +1583,47 @@ func TestNativeInteractiveExplicitLocaleOverridesEnvironmentChrome(t *testing.T)
 	}
 }
 
+func TestInstalledSurfaceCoherenceExactSizeLocaleThemeMatrix(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		locale i18n.Locale
+		cols   int
+		rows   int
+		theme  theme.ThemeConfig
+		search string
+		close  string
+	}{
+		{name: "80-en-projmux", locale: i18n.FallbackLocale, cols: 80, rows: 24, search: "Search", close: "Esc: close"},
+		{name: "112-ko-daylight", locale: i18n.Locale("ko-KR"), cols: 112, rows: 30, theme: theme.ThemeConfig{Preset: "daylight"}, search: "검색", close: "Esc: 닫기"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			effective := theme.ResolveTheme(tt.theme)
+			resource := Options{
+				UI: "resources", Locale: tt.locale, Prompt: "› ", Footer: "Enter: open | Esc: close",
+				Items: []Item{{Label: "api", Value: "/repo/api"}}, Theme: &effective,
+			}
+			frame := stripANSISequences(nativeInteractiveFrame(resource, resource.Items, "", 0, 0, 0, nativeLayout{Rows: tt.rows, Cols: tt.cols}))
+			if strings.Count(frame, tt.search) != 1 || strings.Contains(frame, tt.search+" "+tt.search) {
+				t.Fatalf("resource prompt duplicated search label: %q", frame)
+			}
+
+			empty := resource
+			empty.UI = "notify-sidebar"
+			empty.Prompt = ""
+			empty.Footer = tt.close
+			empty.ReadOnly = true
+			empty.DisableSearch = true
+			empty.Items = []Item{{Label: "·  empty", Value: "empty"}}
+			frame = stripANSISequences(nativeInteractiveFrame(empty, empty.Items, "", 0, 0, 0, nativeLayout{Rows: tt.rows, Cols: tt.cols}))
+			if strings.Contains(frame, projmuxpicker.Pointer) || strings.Contains(frame, "Enter:") || !strings.Contains(frame, tt.close) {
+				t.Fatalf("empty notify frame leaked actionable chrome: %q", frame)
+			}
+		})
+	}
+}
+
 func TestNativeInteractiveGeneralPickerEmptyLocaleUsesEnvironmentFallback(t *testing.T) {
 	t.Setenv("LANG", "ko_KR.UTF-8")
 

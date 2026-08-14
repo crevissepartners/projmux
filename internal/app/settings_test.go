@@ -184,6 +184,16 @@ func TestSettingsRootOptionsKoreanCatalogDoesNotOverflow(t *testing.T) {
 	if !hasEntryLabelContaining(options.Entries, "프로젝트 선택기") {
 		t.Fatalf("root settings entries = %#v, want Korean Project Picker row", options.Entries)
 	}
+	if !hasEntryLabelContaining(options.Entries, "자동 저장 꺼짐, 간격 1m") || hasEntryLabelContaining(options.Entries, "autosave off") {
+		t.Fatalf("root settings entries = %#v, want localized Korean Session State summary", options.Entries)
+	}
+	projectPicker, err := cmd.sectionOptions(settingsSectionProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := projectPicker.Footer, "Enter: 뒤로/열기  |  뒤로 행: 상위"; got != want {
+		t.Fatalf("project picker footer = %q, want %q", got, want)
+	}
 	for _, entry := range options.Entries {
 		if width := i18n.TerminalCellWidth(entry.Label); width > 96 {
 			t.Fatalf("Korean root row width = %d, want <= 96: %q", width, entry.Label)
@@ -4459,6 +4469,33 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 	}
 	if got, want := stdout.String(), "pinned: /home/tester/source/repos/app\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestSettingsProjectPickerBackReturnsToHubWithMatchingFooter(t *testing.T) {
+	t.Parallel()
+
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
+		{observe: func(o intpickercompat.Options) {
+			if got, want := o.Footer, "Enter: back/open  |  Back row: parent"; got != want {
+				t.Fatalf("project picker footer = %q, want %q", got, want)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+		{observe: func(o intpickercompat.Options) {
+			if got, want := o.UI, "settings"; got != want {
+				t.Fatalf("picker after Back = %q, want hub %q", got, want)
+			}
+		}, reply: intpickercompat.Result{Key: "esc"}},
+	})
+	cmd := &settingsCommand{
+		ai:           testAICommand(t.TempDir()),
+		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		runner:       runner,
+		nativePicker: native,
+	}
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
 }
 

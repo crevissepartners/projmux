@@ -32,10 +32,16 @@ func TestResourceViewHierarchyDisplayResolverSortAndExplicitRoots(t *testing.T) 
 	if len(items) != 3 || api == nil || api.Label != "api" || !strings.Contains(strings.Join(api.MetaLines, "\n"), "Path  /repo/api") {
 		t.Fatalf("project items = %#v, want primary identity separate from path context", items)
 	}
-	for _, value := range []string{"project:" + coreresources.ProjectUnassigned, "project:" + coreresources.ProjectShared} {
-		if pickerItemByValue(items, value) == nil {
-			t.Fatalf("project items = %#v, want explicit stable root %q", items, value)
-		}
+	if pickerItemByValue(items, "project:"+coreresources.ProjectUnassigned) == nil {
+		t.Fatalf("project items = %#v, want explicit unassigned root", items)
+	}
+	shared := pickerItemByValue(items, resourceInfoValuePrefix+coreresources.ProjectShared)
+	if shared == nil || !strings.Contains(shared.Label, "·  Multiple project matches") || !strings.Contains(strings.Join(shared.MetaLines, "\n"), "No row to open") {
+		t.Fatalf("project items = %#v, want empty shared bucket as disabled info row", items)
+	}
+	view.enter(shared.Value)
+	if view.scope.kind != resourceScopeProjects || !strings.HasPrefix(view.screen().footer, "No row to open |") {
+		t.Fatalf("empty shared Enter changed scope or lacked feedback: scope=%#v footer=%q", view.scope, view.screen().footer)
 	}
 	if !strings.Contains(header, "Host CPU 50.0%") || !strings.Contains(header, "Attributed CPU 12.0%") || !strings.Contains(header, "RSS") || !strings.Contains(header, "Sample age 1s") || !strings.Contains(header, "ready · fresh") || !strings.Contains(header, "Coverage Other / unattributed") || !strings.Contains(header, "not drillable") || len(view.screen().bands) != 4 {
 		t.Fatalf("header = %q, want separate host/attributed/Other bands", header)
@@ -93,8 +99,8 @@ func TestResourceBreadcrumbActionableListEmptyAndReadOnlyDetailChrome(t *testing
 	if pickerItemsContain(root.Items, coreresources.OtherUnattributed) || !chromeBandsContain(root.ResourceSummaryDock, "Other / unattributed") {
 		t.Fatalf("root items=%#v dock=%#v, want Other summary outside actionable rows", root.Items, root.ResourceSummaryDock)
 	}
-	if pickerItemByValue(root.Items, "project:"+coreresources.ProjectUnassigned) == nil || pickerItemByValue(root.Items, "project:"+coreresources.ProjectShared) == nil {
-		t.Fatalf("root items=%#v, want explicit Unassigned/Shared drill-down roots", root.Items)
+	if pickerItemByValue(root.Items, "project:"+coreresources.ProjectUnassigned) == nil || pickerItemByValue(root.Items, resourceInfoValuePrefix+coreresources.ProjectShared) == nil {
+		t.Fatalf("root items=%#v, want actionable Unassigned and disabled empty Shared rows", root.Items)
 	}
 
 	view.enter("project:/repo/api")
@@ -507,8 +513,8 @@ func TestResourceInspectorLocalizesEnglishAndKoreanUX(t *testing.T) {
 		unavailable string
 		help        string
 	}{
-		{name: "en-US", locale: i18n.FallbackLocale, title: "Resources · Projects", prompt: "search › ", header: "Host CPU", footer: "Enter: drill down", unassigned: "No project match", shared: "Multiple project matches", other: "Other / unattributed", detail: "Processes:", caveat: "RSS sum may count shared pages", unavailable: "unavailable on darwin", help: "Usage: projmux resources\n  Open the read-only"},
-		{name: "ko-KR", locale: i18n.Locale("ko-KR"), title: "리소스 · 프로젝트", prompt: "검색 › ", header: "호스트 CPU", footer: "Enter: 상세 보기", unassigned: "프로젝트 일치 없음", shared: "여러 프로젝트 일치", other: "기타 / 귀속되지 않음", detail: "프로세스:", caveat: "RSS 합계는 공유 페이지", unavailable: "darwin에서는 리소스 귀속을 사용할 수 없습니다", help: "사용법: projmux resources\n  읽기 전용"},
+		{name: "en-US", locale: i18n.FallbackLocale, title: "Resources · Projects", prompt: "› ", header: "Host CPU", footer: "Enter: drill down", unassigned: "No project match", shared: "Multiple project matches", other: "Other / unattributed", detail: "Processes:", caveat: "RSS sum may count shared pages", unavailable: "unavailable on darwin", help: "Usage: projmux resources\n  Open the read-only"},
+		{name: "ko-KR", locale: i18n.Locale("ko-KR"), title: "리소스 · 프로젝트", prompt: "› ", header: "호스트 CPU", footer: "Enter: 상세 보기", unassigned: "프로젝트 일치 없음", shared: "여러 프로젝트 일치", other: "기타 / 귀속되지 않음", detail: "프로세스:", caveat: "RSS 합계는 공유 페이지", unavailable: "darwin에서는 리소스 귀속을 사용할 수 없습니다", help: "사용법: projmux resources\n  읽기 전용"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -543,12 +549,12 @@ func TestResourceInspectorLocalizesEnglishAndKoreanUX(t *testing.T) {
 				t.Fatalf("root header %q missing non-actionable %q", header, tt.other)
 			}
 			for value, label := range map[string]string{
-				"project:" + coreresources.ProjectUnassigned: tt.unassigned,
-				"project:" + coreresources.ProjectShared:     tt.shared,
-				"project:/repo/api":                          "api",
+				"project:" + coreresources.ProjectUnassigned:          tt.unassigned,
+				resourceInfoValuePrefix + coreresources.ProjectShared: tt.shared,
+				"project:/repo/api": "api",
 			} {
 				item := pickerItemByValue(items, value)
-				if item == nil || item.Label != label {
+				if item == nil || !strings.Contains(item.Label, label) {
 					t.Fatalf("localized roots=%#v, want stable value %q label %q", items, value, label)
 				}
 			}
@@ -748,7 +754,7 @@ func TestResourceRefreshPreservesStableRowOrderUntilTab(t *testing.T) {
 	first.Projects = append(first.Projects, coreresources.ProjectUsage{Key: "/repo/zeta", CPU: &coreresources.CPUUsage{HostSharePercent: 80}})
 	view.setSnapshot(first, false)
 	before := resourceItemValues(view.screen().items)
-	if want := []string{"project:/repo/api", "project:Shared / ambiguous", "project:Unassigned", "project:/repo/zeta"}; !slices.Equal(before, want) {
+	if want := []string{"project:/repo/api", resourceInfoValuePrefix + coreresources.ProjectShared, "project:Unassigned", "project:/repo/zeta"}; !slices.Equal(before, want) {
 		t.Fatalf("default Name order=%#v, want %#v", before, want)
 	}
 	second := first

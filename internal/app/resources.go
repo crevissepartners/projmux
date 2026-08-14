@@ -28,6 +28,7 @@ const (
 	resourceInspectorPopupMode = "resource-inspector"
 	resourceRefreshInterval    = 2 * time.Second
 	resourceScanBudget         = resourceRefreshInterval
+	resourceInfoValuePrefix    = "__projmux_resource_info__:"
 )
 
 type resourceSnapshotCollector interface {
@@ -179,7 +180,7 @@ func (c *resourceCommand) pickerOptions(view *resourceViewState, lifecycle *reso
 	options := intpicker.Options{
 		UI:                  "resources",
 		Title:               screen.title,
-		Prompt:              text.value(i18n.KeyPickerResourcesPrompt, "search › "),
+		Prompt:              text.value(i18n.KeyPickerResourcesPrompt, "› "),
 		ResourceSummaryDock: screen.bands,
 		Footer:              screen.footer,
 		Items:               screen.items,
@@ -572,6 +573,7 @@ type resourceViewState struct {
 	snap       coreresources.Snapshot
 	skipped    bool
 	refreshing bool
+	feedback   string
 	text       resourceText
 	palette    resourceSemanticPalette
 	order      []string
@@ -618,6 +620,7 @@ func (v *resourceViewState) setPalette(palette resourceSemanticPalette) {
 func (v *resourceViewState) cycleSort() {
 	v.mu.Lock()
 	v.sort = (v.sort + 1) % 3
+	v.feedback = ""
 	v.reorder = true
 	v.mu.Unlock()
 }
@@ -640,6 +643,7 @@ func (v *resourceViewState) back() bool {
 	default:
 		return false
 	}
+	v.feedback = ""
 	v.reorder = true
 	return true
 }
@@ -647,6 +651,11 @@ func (v *resourceViewState) back() bool {
 func (v *resourceViewState) enter(value string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if strings.HasPrefix(value, resourceInfoValuePrefix) {
+		v.feedback = v.text.value("picker.resources.empty.not_actionable", "No row to open")
+		return
+	}
+	v.feedback = ""
 	switch v.scope.kind {
 	case resourceScopeProjects:
 		if value == "project:"+coreresources.OtherUnattributed || !strings.HasPrefix(value, "project:") {
@@ -709,7 +718,7 @@ func (v *resourceViewState) screen() resourceScreen {
 		title:      resourceBreadcrumb(v.snap, v.scope, v.text),
 		bands:      resourceSummaryBands(v.snap, v.currentTime(), v.skipped, v.refreshing, v.scope, v.palette, v.text),
 		items:      items,
-		footer:     resourceFooter(v.snap, v.currentTime(), v.skipped, v.refreshing, v.scope.kind, v.sort, actionable, v.text),
+		footer:     resourceFooter(v.snap, v.currentTime(), v.skipped, v.refreshing, v.scope.kind, v.sort, actionable, v.feedback, v.text),
 		actionable: actionable,
 	}
 }
@@ -730,6 +739,7 @@ type resourceRow struct {
 	count                            int
 	countKnown                       bool
 	countKind                        resourceCountKind
+	disabled                         bool
 	meta                             []string
 }
 
@@ -772,6 +782,9 @@ func (v *resourceViewState) itemsLocked() []intpicker.Item {
 	items := make([]intpicker.Item, 0, len(rows))
 	for _, row := range rows {
 		label := row.identity
+		if row.disabled {
+			label = v.palette.unknown + "·  " + label + theme.ANSIReset
+		}
 		meta := append([]string(nil), row.meta...)
 		if v.scope.kind != resourceScopePaneDetail {
 			count := "--"
@@ -851,9 +864,24 @@ func resourceProjectRows(snapshot coreresources.Snapshot, text resourceText) []r
 		} else {
 			context = text.value("picker.resources.bucket.shared_help", "Linked pane or multiple anchors match more than one project.")
 		}
-		rows = append(rows, resourceRow{identity: identity, context: context, value: "project:" + key, search: identity + " " + key, cpu: project.CPU, rss: project.Memory.RSSBytes, memPercent: project.Memory.HostPercent, memKnown: ok && snapshot.Host.MemoryAvailable, count: project.PaneCount, countKnown: ok && snapshot.Status != coreresources.StatusUnavailable})
+		disabled := key == coreresources.ProjectShared && !resourceProjectHasWindows(snapshot, key)
+		value := "project:" + key
+		if disabled {
+			value = resourceInfoValuePrefix + key
+			context += " · " + text.value("picker.resources.empty.not_actionable", "No row to open")
+		}
+		rows = append(rows, resourceRow{identity: identity, context: context, value: value, search: identity + " " + key, cpu: project.CPU, rss: project.Memory.RSSBytes, memPercent: project.Memory.HostPercent, memKnown: ok && snapshot.Host.MemoryAvailable, count: project.PaneCount, countKnown: ok && snapshot.Status != coreresources.StatusUnavailable, disabled: disabled})
 	}
 	return rows
+}
+
+func resourceProjectHasWindows(snapshot coreresources.Snapshot, projectKey string) bool {
+	for _, window := range snapshot.Windows {
+		if window.ProjectKey == projectKey {
+			return true
+		}
+	}
+	return false
 }
 
 func resourceProjectDisplayName(key string, text resourceText) string {
@@ -1089,7 +1117,7 @@ func resourceSummaryBands(snapshot coreresources.Snapshot, now time.Time, skippe
 	return bands
 }
 
-func resourceFooter(snapshot coreresources.Snapshot, now time.Time, skipped, refreshing bool, scope resourceScopeKind, order resourceSort, actionable bool, text resourceText) string {
+func resourceFooter(snapshot coreresources.Snapshot, now time.Time, skipped, refreshing bool, scope resourceScopeKind, order resourceSort, actionable bool, actionFeedback string, text resourceText) string {
 	sorts := []string{
 		text.value("picker.resources.sort.cpu", "CPU"),
 		text.value("picker.resources.sort.memory", "Memory"),
@@ -1108,6 +1136,9 @@ func resourceFooter(snapshot coreresources.Snapshot, now time.Time, skipped, ref
 		actions = text.format("picker.resources.footer.root", "Right/Enter: drill down | Esc: close | Tab: sort {sort} | Ctrl-R: refresh", "{sort}", sorts[order])
 	} else {
 		actions = text.format("picker.resources.footer.list", "Right/Enter: drill down | Left: back | Esc: close | Tab: sort {sort} | Ctrl-R: refresh", "{sort}", sorts[order])
+	}
+	if actionFeedback = strings.TrimSpace(actionFeedback); actionFeedback != "" {
+		actions = actionFeedback + " | " + actions
 	}
 	age, stale := resourceSampleAge(snapshot, now)
 	feedback := text.value("picker.resources.refresh.automatic", "automatic every 2s")

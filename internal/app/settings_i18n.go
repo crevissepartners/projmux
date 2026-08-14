@@ -445,6 +445,7 @@ var uiTextKeys = map[string]i18n.Key{
 
 	"Enter: open  |  Back row: parent":                                        "settings.footer.enter_open_back_parent",
 	"Enter: open/apply  |  Back row: parent":                                  "settings.footer.enter_open_apply_back_parent",
+	"Enter: back/open  |  Back row: parent":                                   "settings.footer.enter_back_open_back_parent",
 	"Enter: apply  |  Back row: parent":                                       "settings.footer.enter_apply_back_parent",
 	"Enter: toggle  |  Back row: parent":                                      "settings.footer.enter_toggle_back_parent",
 	"Enter: apply preset  |  Back row: parent":                                "settings.footer.enter_apply_preset_back_parent",
@@ -491,6 +492,8 @@ var uiTextKeys = map[string]i18n.Key{
 	// localization. Keys live under the settings.* / picker.* namespaces so
 	// the existing ko-KR coverage test enforces translations.
 	"Notify > ":                        "picker.notify.prompt",
+	"Clear all > ":                     "picker.notify.clear_all.prompt",
+	"Enter: confirm | Esc: cancel":     "picker.notify.clear_all.footer",
 	"Newest first":                     "picker.notify.header_newest_first",
 	"No pending notifications":         "picker.notify.empty",
 	"focus live/inactive / clean gone": "picker.notify.action.focus_clean",

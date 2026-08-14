@@ -394,7 +394,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			Entries:    c.projectPickerEntries(),
 			Title:      "Project Picker - Project roots, workdirs, and pinned projects",
 			Prompt:     "Settings > Project Picker > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
+			Footer:     projmuxFooter("Enter: back/open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
 		}, nil

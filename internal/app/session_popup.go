@@ -12,6 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
@@ -259,7 +260,12 @@ func writeSessionPopupPreview(ctx context.Context, inventory previewInventory, s
 	})
 	model.PaneSnapshot = capturePaneSnapshot(ctx, inventory, model, -80)
 
-	_, err := io.WriteString(stdout, intrender.RenderPopupPreview(model))
+	locale := appLocale(os.UserHomeDir, os.Getenv)
+	preview := intrender.RenderPopupPreview(model)
+	if locale != i18n.FallbackLocale {
+		preview = intrender.RenderPopupPreviewWithText(model, sessionsPopupPreviewText(locale))
+	}
+	_, err := io.WriteString(stdout, preview)
 	return err
 }
 

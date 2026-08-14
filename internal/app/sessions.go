@@ -13,6 +13,7 @@ import (
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -102,6 +103,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	// Bright Phase 2 (B3): the sessions picker rows render with the resolved
 	// effective theme instead of the fallback literals.
 	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
+	locale := appLocale(c.homeDir, c.lookupEnv)
 
 	if c.recent == nil {
 		return fmt.Errorf("recent tmux session resolver is not configured")
@@ -148,7 +150,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	for {
-		rows, err := c.buildRows(summaries)
+		rows, err := c.buildRows(summaries, locale)
 		if err != nil {
 			return err
 		}
@@ -156,7 +158,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			UI:      *ui,
 			Entries: rowsToEntries(rows),
 			Prompt:  "› ",
-			Footer:  sessionsPickerFooter(),
+			Footer:  sessionsPickerFooter(locale),
 			ExpectKeys: append(
 				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"SessionPopup:KillSession"}, []string{sessionsKillExpectKey}),
 				effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"SessionPopup:OpenState"}, []string{sessionsStateExpectKey})...,
@@ -356,7 +358,7 @@ func sessionsSummaryByName(summaries []inttmux.RecentSessionSummary, sessionName
 	return inttmux.RecentSessionSummary{}
 }
 
-func (c *sessionsCommand) buildRows(summaries []inttmux.RecentSessionSummary) ([]intrender.SessionRow, error) {
+func (c *sessionsCommand) buildRows(summaries []inttmux.RecentSessionSummary, locale i18n.Locale) ([]intrender.SessionRow, error) {
 	renderSummaries := make([]intrender.SessionSummary, 0, len(summaries))
 	for _, summary := range summaries {
 		renderSummary := intrender.SessionSummary{
@@ -376,7 +378,14 @@ func (c *sessionsCommand) buildRows(summaries []inttmux.RecentSessionSummary) ([
 		renderSummaries = append(renderSummaries, renderSummary)
 	}
 
-	return intrender.BuildSessionRows(renderSummaries), nil
+	if locale == i18n.FallbackLocale {
+		return intrender.BuildSessionRows(renderSummaries), nil
+	}
+	return intrender.BuildSessionRowsWithText(renderSummaries, intrender.SessionRowText{
+		Attached: localizeText(locale, "picker.sessions.attached", "Attached"),
+		Detached: localizeText(locale, "picker.sessions.detached", "Detached"),
+		Windows:  localizeText(locale, "picker.sessions.windows", "Windows"),
+	}), nil
 }
 
 func (c *sessionsCommand) resolveSelection(sessionName string) (string, string, error) {
@@ -470,11 +479,27 @@ func sessionsPreviewWindow(ui string) string {
 	return "right,60%,border-left"
 }
 
-func sessionsPickerFooter() string {
-	return projmuxFooter(strings.Join([]string{
-		"Preview follows the focused target.",
-		"Session state opens read-only; destructive actions keep the current confirmation policy.",
-	}, "\n"))
+func sessionsPickerFooter(locale i18n.Locale) string {
+	return localizeText(locale, "picker.sessions.footer", "Enter: open | Esc: close")
+}
+
+func sessionsPopupPreviewText(locale i18n.Locale) intrender.PopupPreviewText {
+	return intrender.PopupPreviewText{
+		Session:        localizeText(locale, "picker.sessions.preview.session", "Session"),
+		Name:           localizeText(locale, "picker.sessions.preview.name", "name"),
+		Windows:        localizeText(locale, "picker.sessions.preview.windows", "windows"),
+		Pane:           localizeText(locale, "picker.sessions.preview.pane", "pane"),
+		Command:        localizeText(locale, "picker.sessions.preview.command", "cmd"),
+		Title:          localizeText(locale, "picker.sessions.preview.title", "title"),
+		Status:         localizeText(locale, "picker.sessions.preview.status", "status"),
+		Path:           localizeText(locale, "picker.sessions.preview.path", "path"),
+		WindowsSection: localizeText(locale, "picker.sessions.preview.windows_section", "Windows"),
+		PanesSection:   localizeText(locale, "picker.sessions.preview.panes_section", "Panes"),
+		PaneSnapshot:   localizeText(locale, "picker.sessions.preview.pane_snapshot", "Pane Snapshot"),
+		Window:         localizeText(locale, "picker.sessions.preview.window", "window"),
+		None:           localizeText(locale, "picker.sessions.preview.none", "(none)"),
+		Unknown:        localizeText(locale, "picker.sessions.preview.unknown", "unknown"),
+	}
 }
 
 func rowsToEntries(rows []intrender.SessionRow) []intpickercompat.Entry {

@@ -342,10 +342,18 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 
 	switch {
 	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:ClearAll", "ctrl-x"):
+		confirmed, err := c.confirmNotifySidebarClearAll(len(entries), locale)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return nil
+		}
 		removed, err := store.AckAll()
 		if err != nil {
 			return fmt.Errorf("clear all notifications: %w", err)
 		}
+		c.displayNotifySidebarMessage(notifySidebarClearAllCompleteMessage(removed, locale))
 		_, err = fmt.Fprintf(stdout, "cleared %s\n", i18n.FormatCount(removed, i18n.CountNotifications, locale, i18n.FormatFull))
 		return err
 	case pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "NotifySidebar:Ack", "a"):
@@ -425,8 +433,14 @@ func (c *notifyCommand) subscribeNotifyQueueRefreshBestEffort(parent context.Con
 
 func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []notify.Notification, severities, sources []string, limit int, clientTTY string, locale i18n.Locale) intpicker.Options {
 	expanded := map[string]bool{}
+	var actions, closeActions []intpicker.Action
 	refresh := func() (intpicker.DeferredUpdate, error) {
-		return c.notifySidebarDeferredUpdate(store, severities, sources, limit, locale, expanded)
+		update, err := c.notifySidebarDeferredUpdate(store, severities, sources, limit, locale, expanded)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		applyNotifySidebarInteraction(&update, notifySidebarItemsEmpty(update.Items), actions, closeActions, c.homeDir, c.lookupEnv, locale)
+		return update, nil
 	}
 	ack := func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
 		id := strings.TrimSpace(ctx.Value)
@@ -519,8 +533,9 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 		}
 		return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: ctx.Key, Value: ctx.Value, Query: ctx.Query}}, nil
 	}
-	actions := append(
-		pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, "notify-sidebar", "esc"),
+	closeActions = pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, "notify-sidebar", "esc")
+	actions = append(
+		append([]intpicker.Action(nil), closeActions...),
 		notifySidebarMutableActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"NotifySidebar:FocusAndAck"}, []string{"enter"}), focusOrAckGroup)...,
 	)
 	actions = append(actions,
@@ -544,16 +559,23 @@ func (c *notifyCommand) notifySidebarPickerOptions(store notifyStore, entries []
 	now := c.clock()
 	liveByID, paneSet := c.notifyLiveStateBestEffort()
 	model := buildNotifySidebarReadModel(entries, now, liveByID, paneSet, locale)
+	items := notifySidebarPickerItems(model.ExpandedEntries(expanded))
+	empty := len(entries) == 0
+	visibleActions := actions
+	if empty {
+		visibleActions = closeActions
+	}
 	return intpicker.Options{
 		UI:             "notify-sidebar",
 		MultiLine:      true,
 		Title:          notifySidebarTitle + notifyHeaderDecorator(c.statusbarDecoration()) + localizeUIText(locale, "Pending Notifications") + theme.ANSIReset,
 		Prompt:         localizeUIText(locale, "Notify > "),
 		Header:         localizeUIText(locale, "Newest first"),
-		Footer:         notifySidebarFooter(c.homeDir, c.lookupEnv, locale),
-		Actions:        actions,
-		Items:          notifySidebarPickerItems(model.ExpandedEntries(expanded)),
+		Footer:         notifySidebarFooter(c.homeDir, c.lookupEnv, locale, empty),
+		Actions:        visibleActions,
+		Items:          items,
 		DisableSearch:  true,
+		ReadOnly:       empty,
 		DeferredUpdate: refresh,
 	}
 }
@@ -570,7 +592,10 @@ func notifySidebarMutableActions(keys []string, mutate func(intpicker.ActionCont
 	return actions
 }
 
-func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string, locale i18n.Locale) string {
+func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) string, locale i18n.Locale, empty bool) string {
+	if empty {
+		return localizeText(locale, "picker.notify.footer.empty", "Esc: close")
+	}
 	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
 		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live/inactive / clean gone"},
 		{ActionID: "NotifySidebar:Ack", Label: "ack child"},
@@ -584,6 +609,23 @@ func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) 
 		return local
 	}
 	return local + "  |  " + guide
+}
+
+func applyNotifySidebarInteraction(update *intpicker.DeferredUpdate, empty bool, actions, closeActions []intpicker.Action, homeDir func() (string, error), lookupEnv func(string) string, locale i18n.Locale) {
+	update.DisableSearch = true
+	update.ReadOnly = empty
+	update.SetInteraction = true
+	update.Footer = notifySidebarFooter(homeDir, lookupEnv, locale, empty)
+	update.SetFooter = true
+	update.Actions = actions
+	if empty {
+		update.Actions = closeActions
+	}
+	update.SetActions = true
+}
+
+func notifySidebarItemsEmpty(items []intpicker.Item) bool {
+	return len(items) == 1 && items[0].Value == notifySidebarEmptyValue
 }
 
 func (c *notifyCommand) notifySidebarDeferredUpdate(store notifyStore, severities, sources []string, limit int, locale i18n.Locale, expanded map[string]bool) (intpicker.DeferredUpdate, error) {
@@ -623,6 +665,51 @@ func notifySidebarPickerItems(entries []intpickercompat.Entry) []intpicker.Item 
 		})
 	}
 	return items
+}
+
+const (
+	notifySidebarClearAllCancel  = "notify-clear-all:cancel"
+	notifySidebarClearAllConfirm = "notify-clear-all:confirm"
+)
+
+func (c *notifyCommand) confirmNotifySidebarClearAll(count int, locale i18n.Locale) (bool, error) {
+	if c.native == nil {
+		return false, errors.New("native picker is not configured")
+	}
+	countText := i18n.FormatCount(count, i18n.CountNotifications, locale, i18n.FormatFull)
+	title := strings.ReplaceAll(localizeText(locale, "picker.notify.clear_all.title", "Clear all {count}?"), "{count}", countText)
+	options := intpicker.Options{
+		UI:            "notify-sidebar-clear-all-confirm",
+		Title:         title,
+		Prompt:        localizeText(locale, "picker.notify.clear_all.prompt", "Clear all > "),
+		Footer:        localizeText(locale, "picker.notify.clear_all.footer", "Enter: confirm | Esc: cancel"),
+		Locale:        locale,
+		DisableSearch: true,
+		Items: []intpicker.Item{
+			{Label: settingsLabelLocale(locale, settingsGlyphBack, settingsColorBack, localizeText(locale, "picker.notify.clear_all.cancel", "Cancel"), localizeText(locale, "picker.notify.clear_all.cancel_help", "keep all notifications")), Value: notifySidebarClearAllCancel},
+			{Label: settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, localizeText(locale, "picker.notify.clear_all.confirm", "Yes, clear all"), localizeText(locale, "picker.notify.clear_all.confirm_help", "remove INFO/WARN/CRIT notifications")), Value: notifySidebarClearAllConfirm},
+		},
+		Actions: pickerCloseActionsForPopupToggleMode(c.homeDir, c.lookupEnv, "notify-sidebar", "esc"),
+	}
+	if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, ""); err == nil {
+		options = source.pickerOptions(options)
+	} else {
+		options = fallbackRenderThemeSource().pickerOptions(options)
+	}
+	result, err := c.native.Run(options)
+	if err != nil {
+		return false, fmt.Errorf("run notify clear-all confirmation: %w", err)
+	}
+	if result.Key != "enter" || strings.TrimSpace(result.Value) != notifySidebarClearAllConfirm {
+		c.displayNotifySidebarMessage(localizeText(locale, "picker.notify.clear_all.canceled", "Clear all canceled"))
+		return false, nil
+	}
+	return true, nil
+}
+
+func notifySidebarClearAllCompleteMessage(removed int, locale i18n.Locale) string {
+	count := i18n.FormatCount(removed, i18n.CountNotifications, locale, i18n.FormatFull)
+	return strings.ReplaceAll(localizeText(locale, "picker.notify.clear_all.complete", "Cleared {count}"), "{count}", count)
 }
 
 func ackNonCriticalNotifications(store notifyStore, entries []notify.Notification) error {
@@ -943,7 +1030,7 @@ func notifySidebarGroupLabelWithoutMarker(label string) string {
 
 func notifySidebarEmptyEntries(locale i18n.Locale) []intpickercompat.Entry {
 	return []intpickercompat.Entry{{
-		Label: localizeUIText(locale, "No pending notifications"),
+		Label: notifySidebarDimText("·  " + localizeUIText(locale, "No pending notifications")),
 		Value: notifySidebarEmptyValue,
 	}}
 }
