@@ -430,6 +430,14 @@ command list, mutation, history, graph, daemon, persistence, or Session State
 telemetry is created. Linux/tmux provides attribution; unsupported platforms
 show an unavailable reason rather than zero metrics.
 
+Only Resource Inspector anomalies (`unavailable`, `partial`, `stale`, closed
+collection-stage errors, and scan-budget exhaustion) enter the private bounded
+operations journal. Identical persistent anomalies are transition-coalesced;
+healthy periodic samples and refreshes emit zero records. These records contain
+no CPU/RSS values, PID/process detail, project/tmux identity, path/title/command,
+or arbitrary error/status text. `diagnostics report` includes only error-level
+closed resource outcomes; local-only partial/stale info rows are omitted.
+
 This is distinct from `projmux status resources`, which remains the short
 host-only statusbar renderer.
 
@@ -769,8 +777,10 @@ This legacy log is retained for compatibility. Its producer, `ingest log`
 consumer, 1 MiB/roughly 512 KiB retention, and support-report count summary are
 unchanged. The common operations journal now carries only the safe anomalous
 classification and watcher lifecycle described above. Both surfaces run in
-parallel during the migration; removal or deprecation is deferred to the Phase
-6 legacy-diagnostics inventory.
+parallel during the migration. It is now documented as a deprecation candidate,
+but this release does not deprecate, remove, rename, or change it; a separate
+breaking roadmap must first migrate its detailed local consumer. See
+[legacy-diagnostics-inventory.md](legacy-diagnostics-inventory.md).
 
 For `Stop`, projmux reads `transcript_path` when present and extracts the last
 assistant text from the transcript tail; if that is unavailable, it falls back

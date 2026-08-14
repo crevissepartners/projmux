@@ -41,6 +41,7 @@ type Event struct {
 	Route              string `json:"route,omitempty"`
 	AIKind             string `json:"ai_kind,omitempty"`
 	AIResult           string `json:"ai_result,omitempty"`
+	ResourceResult     string `json:"resource_result,omitempty"`
 	Failure            string `json:"failure,omitempty"`
 	WindowCount        *int   `json:"window_count,omitempty"`
 	PaneCount          *int   `json:"pane_count,omitempty"`
@@ -104,7 +105,7 @@ func SanitizeMessage(message, home string) string {
 var (
 	allowedLevels     = stringSet("info", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome")
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -184,6 +185,16 @@ var (
 		string(AIFailurePayloadInvalid), string(AIFailurePayloadRead), string(AIFailurePayloadOversized), string(AIFailureTargetInvalid),
 		string(AIFailureTargetUnmatched), string(AIFailureUnsupportedEvent), string(AIFailureRoute), string(AIFailureWatcherLaunch),
 	)
+	allowedResourceSources = stringSet(
+		string(ResourceSourceSampler), string(ResourceSourceInventory), string(ResourceSourceProjectDiscovery), string(ResourceSourceRefresh),
+	)
+	allowedResourceResults = stringSet(
+		string(ResourceResultUnavailable), string(ResourceResultPartial), string(ResourceResultStale), string(ResourceResultError), string(ResourceResultScanBudgetExceeded),
+	)
+	allowedResourceFailures = stringSet(
+		string(ResourceFailureSampleUnavailable), string(ResourceFailureSamplePartial), string(ResourceFailureSampleStale), string(ResourceFailureInventory),
+		string(ResourceFailureProjectDiscovery), string(ResourceFailureCollection), string(ResourceFailureScanBudget),
+	)
 )
 
 func sanitizeEvent(in Event, home string) (Event, error) {
@@ -240,18 +251,18 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 func validateEventShape(event Event) error {
 	switch event.Event {
 	case "command.outcome":
-		if event.Result == "started" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() {
+		if event.Result == "started" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() || event.hasResourceFields() {
 			return fmt.Errorf("invalid command outcome shape")
 		}
 	case "lifecycle.start":
-		if event.Result != "started" || event.Level != "info" || event.Operation == "" || event.Code != "" || event.Kind != "" || event.Message != "" || event.Command != "" || event.Subcommand != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() {
+		if event.Result != "started" || event.Level != "info" || event.Operation == "" || event.Code != "" || event.Kind != "" || event.Message != "" || event.Command != "" || event.Subcommand != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() || event.hasResourceFields() {
 			return fmt.Errorf("invalid lifecycle start shape")
 		}
 		if !runtimeOperation(Operation(event.Operation)) {
 			return fmt.Errorf("invalid lifecycle operation")
 		}
 	case "lifecycle.outcome":
-		if event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() {
+		if event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() || event.hasResourceFields() {
 			return fmt.Errorf("invalid lifecycle outcome shape")
 		}
 		if event.Result == "error" && (event.Level != "error" || event.Kind != "runtime" || event.Code == "") {
@@ -273,7 +284,7 @@ func validateEventShape(event Event) error {
 			return fmt.Errorf("invalid lifecycle operation code")
 		}
 	case "session-state.outcome":
-		if event.Component != "session-state" || event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.hasNotifyFocusFields() || event.hasAIFields() {
+		if event.Component != "session-state" || event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.hasNotifyFocusFields() || event.hasAIFields() || event.hasResourceFields() {
 			return fmt.Errorf("invalid session-state outcome shape")
 		}
 		if event.Source != "" {
@@ -308,7 +319,7 @@ func validateEventShape(event Event) error {
 			return fmt.Errorf("invalid session-state count")
 		}
 	case "notify.transition", "focus.transition":
-		if event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Source != "" || event.hasCounts() || event.hasAIFields() {
+		if event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Source != "" || event.hasCounts() || event.hasAIFields() || event.hasResourceFields() {
 			return fmt.Errorf("invalid notify/focus transition shape")
 		}
 		if _, ok := allowedTransitions[event.Transition]; !ok {
@@ -347,7 +358,7 @@ func validateEventShape(event Event) error {
 			return fmt.Errorf("invalid notify/focus code")
 		}
 	case "ai.watcher.transition", "ai.ingest.outcome":
-		if event.Component != "ai" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() || event.Transition != "" || event.Disposition != "" || event.Category != "" || event.Route != "" {
+		if event.Component != "ai" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() || event.Transition != "" || event.Disposition != "" || event.Category != "" || event.Route != "" || event.hasResourceFields() {
 			return fmt.Errorf("invalid ai diagnostic shape")
 		}
 		if _, ok := allowedAIProviders[event.Provider]; !ok {
@@ -366,6 +377,22 @@ func validateEventShape(event Event) error {
 		}
 		if !aiTupleMatches(event) {
 			return fmt.Errorf("invalid ai diagnostic tuple")
+		}
+	case "resource.sampler.outcome":
+		if event.Component != "resource" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Code != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.AIKind != "" || event.AIResult != "" {
+			return fmt.Errorf("invalid resource diagnostic shape")
+		}
+		if _, ok := allowedResourceSources[event.Source]; !ok {
+			return fmt.Errorf("invalid resource source")
+		}
+		if _, ok := allowedResourceResults[event.ResourceResult]; !ok {
+			return fmt.Errorf("invalid resource result")
+		}
+		if _, ok := allowedResourceFailures[event.Failure]; !ok {
+			return fmt.Errorf("invalid resource failure")
+		}
+		if !resourceTupleMatches(event) {
+			return fmt.Errorf("invalid resource diagnostic tuple")
 		}
 	}
 	if event.Operation != "" {
@@ -459,6 +486,8 @@ func (event Event) hasNotifyFocusFields() bool {
 func (event Event) hasAIFields() bool {
 	return event.AIKind != "" || event.AIResult != "" || event.Failure != ""
 }
+
+func (event Event) hasResourceFields() bool { return event.ResourceResult != "" }
 
 func (event Event) nonNegativeCounts() bool {
 	for _, value := range []*int{event.WindowCount, event.PaneCount, event.ShellRecipeCount, event.AgentRecipeCount, event.StartupRecipeCount, event.ItemCount} {
