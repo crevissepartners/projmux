@@ -396,7 +396,7 @@ func TestBuildHookEnvIncludesProjmuxVars(t *testing.T) {
 	}
 }
 
-func TestBuildHookEnvOmitsSocketWhenEmpty(t *testing.T) {
+func TestBuildHookEnvOmitsEmptySocketAndPane(t *testing.T) {
 	t.Parallel()
 
 	env := buildHookEnv(Context{
@@ -407,6 +407,9 @@ func TestBuildHookEnvOmitsSocketWhenEmpty(t *testing.T) {
 	joined := strings.Join(env, "\n")
 	if strings.Contains(joined, "PROJMUX_SOCKET") {
 		t.Fatalf("env should not include PROJMUX_SOCKET when empty:\n%s", joined)
+	}
+	if strings.Contains(joined, "PROJMUX_PANE") {
+		t.Fatalf("env should not include PROJMUX_PANE when empty:\n%s", joined)
 	}
 }
 
