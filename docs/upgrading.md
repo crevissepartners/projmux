@@ -116,13 +116,14 @@ through separate terminal preset variants.
 
 ### Pane body vs popup backgrounds
 
-The general (pane) background and the popup/chrome background are now driven by
-separate public tokens. The pane body follows `background` (unset keeps the
-terminal default), while the status bar, native popup bodies, and the
-settings/notify/recent/picker frames follow `surface`. Because the `surface`
-fallback equals `background`, leaving both unset looks exactly as before; set
-them to different values to make popups read as a distinct surface from the pane
-body.
+The general pane, bottom status bar, and popup/native frame backgrounds are now
+driven by separate public tokens. The pane body follows `background` (unset
+keeps the terminal default), the status bar follows `status_background`, and
+native popup bodies plus the settings/notify/recent/picker frames follow
+`surface`. Because the `surface` fallback equals `background`, leaving those two
+unset looks exactly as before; set `surface` separately to make popups read as a
+distinct surface from the pane body. Set `status_background` separately to
+repaint only the bottom status bar.
 
 ### Theme font keys removed
 
