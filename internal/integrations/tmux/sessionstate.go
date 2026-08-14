@@ -178,15 +178,24 @@ func (c *Client) SaveSessionSnapshot(ctx context.Context, store sessionstate.Sto
 // session. Empty or unreadable markers are returned as empty so callers can
 // fall back to snapshot metadata before defaulting to autosave.
 func (c *Client) SessionStateSource(ctx context.Context, sessionName string) string {
+	source, _ := c.SessionStateSourceResult(ctx, sessionName)
+	return source
+}
+
+// SessionStateSourceResult reads the live source marker without collapsing a
+// tmux failure. Mutation callers use this form when the read is part of an
+// owned attempt; read-only status surfaces keep the historical empty fallback
+// through SessionStateSource.
+func (c *Client) SessionStateSourceResult(ctx context.Context, sessionName string) (string, error) {
 	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
-		return ""
+		return "", nil
 	}
 	output, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "#{"+sessionStateSourceOption+"}")
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read tmux sessionstate source: %w", err)
 	}
-	return strings.TrimSpace(string(output))
+	return strings.TrimSpace(string(output)), nil
 }
 
 // MarkSessionStateSource writes the live source marker used by status surfaces

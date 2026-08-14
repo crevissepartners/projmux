@@ -35,14 +35,15 @@ type pruneSessionKiller interface {
 }
 
 type pruneCommand struct {
-	diagnostics          *diagnostics.LifecycleRecorder
-	inventory            pruneInventoryResolver
-	liveSessions         pruneLiveSessionResolver
-	killer               pruneSessionKiller
-	reconcileNotify      func()
-	cleanupKilledSession func(string)
-	sessionStore         func() (sessionstate.Store, error)
-	now                  func() time.Time
+	diagnostics             *diagnostics.LifecycleRecorder
+	sessionStateDiagnostics *diagnostics.SessionStateRecorder
+	inventory               pruneInventoryResolver
+	liveSessions            pruneLiveSessionResolver
+	killer                  pruneSessionKiller
+	reconcileNotify         func()
+	cleanupKilledSession    func(string)
+	sessionStore            func() (sessionstate.Store, error)
+	now                     func() time.Time
 }
 
 type previewSelectionDeleter interface {
@@ -222,16 +223,12 @@ func (c *pruneCommand) runSessionState(args []string, stdout, stderr io.Writer) 
 	return nil
 }
 
-func (c *pruneCommand) runSessionStateDelete(args []string, stdout, stderr io.Writer) error {
+func (c *pruneCommand) runSessionStateDelete(args []string, stdout, stderr io.Writer) (err error) {
 	if len(args) == 0 {
 		printPruneUsage(stderr)
 		return fmt.Errorf("prune session-state delete requires at least 1 session")
 	}
-	store, err := c.resolveSessionStore()
-	if err != nil {
-		return err
-	}
-
+	targets := make([]string, 0, len(args))
 	seen := make(map[string]struct{}, len(args))
 	for _, arg := range args {
 		sessionName := strings.TrimSpace(arg)
@@ -243,9 +240,26 @@ func (c *pruneCommand) runSessionStateDelete(args []string, stdout, stderr io.Wr
 			continue
 		}
 		seen[sessionName] = struct{}{}
+		targets = append(targets, sessionName)
+	}
+	started := time.Now()
+	if c.now != nil {
+		started = c.now()
+	}
+	counts := diagnostics.SessionStateCounts{}
+	defer func() {
+		c.sessionStateDiagnostics.Record(diagnostics.OperationSessionStateDelete, diagnostics.SessionStateSourcePrune, started, counts, err)
+	}()
+	store, err := c.resolveSessionStore()
+	if err != nil {
+		return err
+	}
+
+	for _, sessionName := range targets {
 		if err := store.Delete(sessionName); err != nil {
 			return fmt.Errorf("delete session snapshot %q: %w", sessionName, err)
 		}
+		counts.ItemCount++
 		if _, err := fmt.Fprintf(stdout, "deleted session snapshot: %s\n", sessionName); err != nil {
 			return err
 		}

@@ -18,21 +18,28 @@ const maxMessageRunes = 512
 // Event is the complete on-disk operational event schema. It intentionally has
 // no argv, environment, routing, payload, or generic metadata field.
 type Event struct {
-	At         string `json:"at"`
-	Level      string `json:"level"`
-	Component  string `json:"component"`
-	Event      string `json:"event"`
-	Result     string `json:"result"`
-	DurationMS int64  `json:"duration_ms"`
-	RunID      string `json:"run_id"`
-	Version    string `json:"version"`
-	MuxBackend string `json:"mux_backend"`
-	Command    string `json:"command,omitempty"`
-	Subcommand string `json:"subcommand,omitempty"`
-	Kind       string `json:"kind,omitempty"`
-	Message    string `json:"message,omitempty"`
-	Operation  string `json:"operation,omitempty"`
-	Code       string `json:"code,omitempty"`
+	At                 string `json:"at"`
+	Level              string `json:"level"`
+	Component          string `json:"component"`
+	Event              string `json:"event"`
+	Result             string `json:"result"`
+	DurationMS         int64  `json:"duration_ms"`
+	RunID              string `json:"run_id"`
+	Version            string `json:"version"`
+	MuxBackend         string `json:"mux_backend"`
+	Command            string `json:"command,omitempty"`
+	Subcommand         string `json:"subcommand,omitempty"`
+	Kind               string `json:"kind,omitempty"`
+	Message            string `json:"message,omitempty"`
+	Operation          string `json:"operation,omitempty"`
+	Code               string `json:"code,omitempty"`
+	Source             string `json:"source,omitempty"`
+	WindowCount        *int   `json:"window_count,omitempty"`
+	PaneCount          *int   `json:"pane_count,omitempty"`
+	ShellRecipeCount   *int   `json:"shell_recipe_count,omitempty"`
+	AgentRecipeCount   *int   `json:"agent_recipe_count,omitempty"`
+	StartupRecipeCount *int   `json:"startup_recipe_count,omitempty"`
+	ItemCount          *int   `json:"item_count,omitempty"`
 }
 
 // NewRunID creates one opaque correlation ID for a process invocation.
@@ -89,7 +96,7 @@ func SanitizeMessage(message, home string) string {
 var (
 	allowedLevels     = stringSet("info", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome")
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -99,6 +106,10 @@ var (
 		string(OperationSessionSwitch),
 		string(OperationSessionKill),
 		string(OperationTmuxApply),
+		string(OperationSessionStateSave),
+		string(OperationSessionStateAutosave),
+		string(OperationSessionStateRestore),
+		string(OperationSessionStateDelete),
 	)
 	allowedCodes = stringSet(
 		string(CodeSessionCreateFailed),
@@ -109,6 +120,19 @@ var (
 		string(CodeTmuxApplySocketUnreachable),
 		string(CodeTmuxApplyReloadFailed),
 		string(CodeTmuxApplyReloadSkipped),
+		string(CodeSessionStateSaveFailed),
+		string(CodeSessionStateAutosaveFailed),
+		string(CodeSessionStateRestoreFailed),
+		string(CodeSessionStateDeleteFailed),
+	)
+	allowedSessionStateSources = stringSet(
+		string(SessionStateSourceManual),
+		string(SessionStateSourceSettingsLatest),
+		string(SessionStateSourceSettingsNamed),
+		string(SessionStateSourceAutosave),
+		string(SessionStateSourceStartupLatest),
+		string(SessionStateSourceStartupNamed),
+		string(SessionStateSourcePrune),
 	)
 )
 
@@ -166,15 +190,18 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 func validateEventShape(event Event) error {
 	switch event.Event {
 	case "command.outcome":
-		if event.Result == "started" || event.Operation != "" || event.Code != "" {
+		if event.Result == "started" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() {
 			return fmt.Errorf("invalid command outcome shape")
 		}
 	case "lifecycle.start":
-		if event.Result != "started" || event.Level != "info" || event.Operation == "" || event.Code != "" || event.Kind != "" || event.Message != "" || event.Command != "" || event.Subcommand != "" {
+		if event.Result != "started" || event.Level != "info" || event.Operation == "" || event.Code != "" || event.Kind != "" || event.Message != "" || event.Command != "" || event.Subcommand != "" || event.Source != "" || event.hasCounts() {
 			return fmt.Errorf("invalid lifecycle start shape")
 		}
+		if !runtimeOperation(Operation(event.Operation)) {
+			return fmt.Errorf("invalid lifecycle operation")
+		}
 	case "lifecycle.outcome":
-		if event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" {
+		if event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Source != "" || event.hasCounts() {
 			return fmt.Errorf("invalid lifecycle outcome shape")
 		}
 		if event.Result == "error" && (event.Level != "error" || event.Kind != "runtime" || event.Code == "") {
@@ -189,8 +216,46 @@ func validateEventShape(event Event) error {
 		if event.Result == "error" && event.Code == string(CodeTmuxApplyReloadSkipped) {
 			return fmt.Errorf("invalid lifecycle error code")
 		}
+		if !runtimeOperation(Operation(event.Operation)) {
+			return fmt.Errorf("invalid lifecycle operation")
+		}
 		if !operationAcceptsCode(Operation(event.Operation), Code(event.Code)) {
 			return fmt.Errorf("invalid lifecycle operation code")
+		}
+	case "session-state.outcome":
+		if event.Component != "session-state" || event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" {
+			return fmt.Errorf("invalid session-state outcome shape")
+		}
+		if event.Source != "" {
+			if _, ok := allowedSessionStateSources[event.Source]; !ok {
+				return fmt.Errorf("invalid session-state source")
+			}
+		}
+		operation := Operation(event.Operation)
+		if !sessionStateOperation(operation) {
+			return fmt.Errorf("invalid session-state operation")
+		}
+		if event.Result == "error" {
+			if event.Level != "error" || event.Kind != "runtime" || event.Code != string(failureCode(operation)) || event.hasCounts() {
+				return fmt.Errorf("invalid session-state error shape")
+			}
+		} else if event.Result == "success" {
+			if event.Level != "info" || event.Kind != "" || event.Code != "" {
+				return fmt.Errorf("invalid session-state success shape")
+			}
+			if operation == OperationSessionStateAutosave {
+				return fmt.Errorf("invalid session-state autosave success")
+			}
+			if operation == OperationSessionStateDelete {
+				if event.ItemCount == nil || event.hasSnapshotCounts() {
+					return fmt.Errorf("invalid session-state delete counts")
+				}
+			} else if event.ItemCount != nil || !event.hasAllSnapshotCounts() {
+				return fmt.Errorf("invalid session-state snapshot counts")
+			}
+		}
+		if !event.nonNegativeCounts() {
+			return fmt.Errorf("invalid session-state count")
 		}
 	}
 	if event.Operation != "" {
@@ -204,6 +269,34 @@ func validateEventShape(event Event) error {
 		}
 	}
 	return nil
+}
+
+func runtimeOperation(operation Operation) bool {
+	switch operation {
+	case OperationSessionCreate, OperationSessionAttach, OperationSessionSwitch, OperationSessionKill, OperationTmuxApply:
+		return true
+	default:
+		return false
+	}
+}
+
+func (event Event) hasSnapshotCounts() bool {
+	return event.WindowCount != nil || event.PaneCount != nil || event.ShellRecipeCount != nil || event.AgentRecipeCount != nil || event.StartupRecipeCount != nil
+}
+
+func (event Event) hasAllSnapshotCounts() bool {
+	return event.WindowCount != nil && event.PaneCount != nil && event.ShellRecipeCount != nil && event.AgentRecipeCount != nil && event.StartupRecipeCount != nil
+}
+
+func (event Event) hasCounts() bool { return event.hasSnapshotCounts() || event.ItemCount != nil }
+
+func (event Event) nonNegativeCounts() bool {
+	for _, value := range []*int{event.WindowCount, event.PaneCount, event.ShellRecipeCount, event.AgentRecipeCount, event.StartupRecipeCount, event.ItemCount} {
+		if value != nil && *value < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func operationAcceptsCode(operation Operation, code Code) bool {

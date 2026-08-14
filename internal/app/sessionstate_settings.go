@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -685,7 +686,12 @@ func (c *settingsCommand) executeSessionStateAction(action string, stdout io.Wri
 	}
 }
 
-func (c *settingsCommand) saveProjectLatestSessionStateSnapshot(stdout io.Writer) error {
+func (c *settingsCommand) saveProjectLatestSessionStateSnapshot(stdout io.Writer) (err error) {
+	started := time.Now()
+	var counts diagnostics.SessionStateCounts
+	defer func() {
+		c.sessionStateDiagnostics.Record(diagnostics.OperationSessionStateSave, diagnostics.SessionStateSourceSettingsLatest, started, counts, err)
+	}()
 	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
 	if identity.Err != nil {
 		return identity.Err
@@ -702,6 +708,7 @@ func (c *settingsCommand) saveProjectLatestSessionStateSnapshot(stdout io.Writer
 	if err != nil {
 		return fmt.Errorf("save project session snapshot %q: %w", identity.Session, err)
 	}
+	counts = sessionStateDiagnosticCounts(snap)
 	_, err = fmt.Fprintf(stdout, "saved project session snapshot: %s (%s, %s)\n", snap.Session, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"))
 	return err
 }
@@ -733,7 +740,12 @@ func (c *settingsCommand) runSaveProjectNamedSessionStateSnapshot(stdout io.Writ
 	return c.saveProjectNamedSessionStateSnapshot(stdout, name)
 }
 
-func (c *settingsCommand) saveProjectNamedSessionStateSnapshot(stdout io.Writer, name string) error {
+func (c *settingsCommand) saveProjectNamedSessionStateSnapshot(stdout io.Writer, name string) (err error) {
+	started := time.Now()
+	var counts diagnostics.SessionStateCounts
+	defer func() {
+		c.sessionStateDiagnostics.Record(diagnostics.OperationSessionStateSave, diagnostics.SessionStateSourceSettingsNamed, started, counts, err)
+	}()
 	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
 	if identity.Err != nil {
 		return identity.Err
@@ -754,6 +766,7 @@ func (c *settingsCommand) saveProjectNamedSessionStateSnapshot(stdout io.Writer,
 	if err := corelayout.NewStore(identity.Project.Path).Save(name, preset); err != nil {
 		return fmt.Errorf("save named project session snapshot %q: %w", name, err)
 	}
+	counts = sessionStateDiagnosticCounts(snap)
 	_, err = fmt.Fprintf(stdout, "saved named project session snapshot: %s (%s, %s)\n", name, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"))
 	return err
 }
@@ -779,7 +792,12 @@ func (c *settingsCommand) previewProjectSessionStateSnapshot(stdout io.Writer) e
 	return nil
 }
 
-func (c *settingsCommand) deleteProjectSessionStateSnapshot() error {
+func (c *settingsCommand) deleteProjectSessionStateSnapshot() (err error) {
+	started := time.Now()
+	counts := diagnostics.SessionStateCounts{ItemCount: 1}
+	defer func() {
+		c.sessionStateDiagnostics.Record(diagnostics.OperationSessionStateDelete, diagnostics.SessionStateSourceSettingsLatest, started, counts, err)
+	}()
 	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
 	if identity.Err != nil {
 		return identity.Err
@@ -804,18 +822,28 @@ func (c *settingsCommand) currentSessionStateAutosave() sessionStateEffectiveTog
 }
 
 func (c *settingsCommand) currentSessionStateAutosaveInterval() sessionStateEffectiveInterval {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	interval, err := c.currentSessionStateAutosaveIntervalResult()
 	if err != nil {
 		return sessionStateEffectiveInterval{Duration: defaultSessionStateAutosaveInterval, Source: "default"}
+	}
+	return interval
+}
+
+func (c *settingsCommand) currentSessionStateAutosaveIntervalResult() (sessionStateEffectiveInterval, error) {
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return sessionStateEffectiveInterval{}, err
 	}
 	duration, err := config.LoadSessionStateDurationFileDefault(paths.SessionStateAutosaveIntervalFile(), defaultSessionStateAutosaveInterval)
 	if err != nil {
-		return sessionStateEffectiveInterval{Duration: defaultSessionStateAutosaveInterval, Source: "default"}
+		return sessionStateEffectiveInterval{}, err
 	}
 	if _, err := c.statFile(paths.SessionStateAutosaveIntervalFile()); err == nil {
-		return sessionStateEffectiveInterval{Duration: duration, Source: "saved"}
+		return sessionStateEffectiveInterval{Duration: duration, Source: "saved"}, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return sessionStateEffectiveInterval{}, fmt.Errorf("stat sessionstate autosave interval: %w", err)
 	}
-	return sessionStateEffectiveInterval{Duration: duration, Source: "default"}
+	return sessionStateEffectiveInterval{Duration: duration, Source: "default"}, nil
 }
 
 func (c *settingsCommand) currentSessionStateToggleDefault(envName string, fallback config.SessionStateToggle, file func(config.Paths) string) sessionStateEffectiveToggle {
@@ -994,7 +1022,12 @@ func (c *settingsCommand) setSessionStateToggle(value config.SessionStateToggle,
 	return nil
 }
 
-func (c *settingsCommand) deleteCurrentSessionStateSnapshot() error {
+func (c *settingsCommand) deleteCurrentSessionStateSnapshot() (err error) {
+	started := time.Now()
+	counts := diagnostics.SessionStateCounts{ItemCount: 1}
+	defer func() {
+		c.sessionStateDiagnostics.Record(diagnostics.OperationSessionStateDelete, diagnostics.SessionStateSourceSettingsLatest, started, counts, err)
+	}()
 	sessionName, err := c.currentSettingsSessionName()
 	if err != nil {
 		return err
@@ -1107,8 +1140,8 @@ func (c *settingsCommand) projectSessionStateIdentity(ctx settingsProjectContext
 	return projectSessionStateIdentity{Project: ctx, Session: sessionName}
 }
 
-func sessionStateAutosaveEnabled(homeDir func() (string, error), lookupEnv func(string) string) bool {
-	return sessionStateToggleEnabledDefault(homeDir, lookupEnv, sessionStateAutosaveEnv, config.SessionStateToggleOff, func(paths config.Paths) string {
+func sessionStateAutosaveEnabledResult(homeDir func() (string, error), lookupEnv func(string) string) (bool, error) {
+	return sessionStateToggleEnabledDefaultResult(homeDir, lookupEnv, sessionStateAutosaveEnv, config.SessionStateToggleOff, func(paths config.Paths) string {
 		return paths.SessionStateAutosaveFile()
 	})
 }
@@ -1119,22 +1152,22 @@ func sidebarStartupPickerEnabled(homeDir func() (string, error), lookupEnv func(
 	}).Mode.Enabled()
 }
 
-func sessionStateToggleEnabledDefault(homeDir func() (string, error), lookupEnv func(string) string, envName string, fallback config.SessionStateToggle, file func(config.Paths) string) bool {
+func sessionStateToggleEnabledDefaultResult(homeDir func() (string, error), lookupEnv func(string) string, envName string, fallback config.SessionStateToggle, file func(config.Paths) string) (bool, error) {
 	if lookupEnv == nil {
 		lookupEnv = os.Getenv
 	}
 	if raw := strings.TrimSpace(lookupEnv(envName)); raw != "" {
-		return config.NormalizeSessionStateToggle(raw).Enabled()
+		return config.NormalizeSessionStateToggle(raw).Enabled(), nil
 	}
 	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
-		return fallback.Enabled()
+		return fallback.Enabled(), err
 	}
 	mode, err := config.LoadSessionStateToggleFileDefault(file(paths), fallback)
 	if err != nil {
-		return fallback.Enabled()
+		return fallback.Enabled(), err
 	}
-	return mode.Enabled()
+	return mode.Enabled(), nil
 }
 
 const (

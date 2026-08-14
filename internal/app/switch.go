@@ -105,35 +105,36 @@ type switchPreviewStore interface {
 }
 
 type switchCommand struct {
-	diagnostics          *diagnostics.LifecycleRecorder
-	discover             candidateDiscoverer
-	pinStore             switchPinStoreFactory
-	tagStore             switchTagStoreFactory
-	runner               switchRunner
-	tmuxRunner           tmuxRunner
-	sessions             switchSessionExecutor
-	previewStore         switchPreviewStore
-	previewStoreErr      error
-	inventory            previewInventory
-	inventoryErr         error
-	executable           func() (string, error)
-	rawExecutable        func() (string, error)
-	identity             sessionIdentityResolver
-	identityErr          error
-	validate             func(path string) error
-	homeDir              func() (string, error)
-	workingDir           func() (string, error)
-	lookupEnv            func(string) string
-	gitBranch            func(string) string
-	kubeInfo             func(sessionName string) switchKubeInfo
-	loadProjdir          func(homeDir string) (string, error)
-	saveProjdir          func(homeDir, value string) error
-	loadWorkdirs         func(homeDir string) ([]string, error)
-	tmuxProjdir          func() string
-	nativePicker         intpicker.Runner
-	focusSession         string
-	sidebarResume        switchSidebarResume
-	cleanupKilledSession func(string)
+	diagnostics             *diagnostics.LifecycleRecorder
+	sessionStateDiagnostics *diagnostics.SessionStateRecorder
+	discover                candidateDiscoverer
+	pinStore                switchPinStoreFactory
+	tagStore                switchTagStoreFactory
+	runner                  switchRunner
+	tmuxRunner              tmuxRunner
+	sessions                switchSessionExecutor
+	previewStore            switchPreviewStore
+	previewStoreErr         error
+	inventory               previewInventory
+	inventoryErr            error
+	executable              func() (string, error)
+	rawExecutable           func() (string, error)
+	identity                sessionIdentityResolver
+	identityErr             error
+	validate                func(path string) error
+	homeDir                 func() (string, error)
+	workingDir              func() (string, error)
+	lookupEnv               func(string) string
+	gitBranch               func(string) string
+	kubeInfo                func(sessionName string) switchKubeInfo
+	loadProjdir             func(homeDir string) (string, error)
+	saveProjdir             func(homeDir, value string) error
+	loadWorkdirs            func(homeDir string) ([]string, error)
+	tmuxProjdir             func() string
+	nativePicker            intpicker.Runner
+	focusSession            string
+	sidebarResume           switchSidebarResume
+	cleanupKilledSession    func(string)
 }
 
 type switchKubeInfo struct {

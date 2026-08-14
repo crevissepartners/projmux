@@ -135,8 +135,10 @@ func New() *App {
 // NewWithLifecycleDiagnostics builds the application graph with one recorder
 // shared by every Phase 2 lifecycle surface.
 func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
+	sessionStateDiagnostics := recorder.SessionState()
 	ai := newAICommand()
 	switcher := newSwitchCommand(recorder)
+	switcher.sessionStateDiagnostics = sessionStateDiagnostics
 	attach := newAttachCommand(recorder)
 	kill := newKillCommand(recorder)
 	sessions := newSessionsCommand(recorder)
@@ -144,6 +146,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	quit := newQuitCommand()
 	notifyCmd := newNotifyCommand(newDefaultLivePaneLister())
 	pruneCmd := newPruneCommand(recorder)
+	pruneCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	previewCleaner := newKilledSessionPreviewCleaner()
 	cleanupKilledSession := previewCleaner.cleanup
 	attach.cleanupKilledSession = cleanupKilledSession
@@ -155,6 +158,12 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		_ = notifyCmd.runReconcile(nil, io.Discard, io.Discard)
 	}
 	initCmd := newInitCommand()
+	sessionStateCmd := newSessionStateCommand()
+	sessionStateCmd.diagnostics = sessionStateDiagnostics
+	settingsCmd := newSettingsCommand(ai, switcher, update, quit)
+	settingsCmd.sessionStateDiagnostics = sessionStateDiagnostics
+	tmuxCmd := newTmuxCommand(recorder)
+	tmuxCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	return &App{
 		lifecycle:    recorder,
 		ai:           ai,
@@ -175,16 +184,16 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		quit:         quit,
 		resources:    newResourceCommand(),
 		sessions:     sessions,
-		sessionState: newSessionStateCommand(),
+		sessionState: sessionStateCmd,
 		sessionPopup: newSessionPopupCommand(recorder),
-		settings:     newSettingsCommand(ai, switcher, update, quit),
+		settings:     settingsCmd,
 		setup:        newSetupCommand(initCmd),
 		shell:        newShellCommand(update, recorder),
 		status:       newStatusCommand(),
 		statusbar:    newStatusbarCommand(),
 		switcher:     switcher,
 		tag:          newTagCommand(),
-		tmux:         newTmuxCommand(recorder),
+		tmux:         tmuxCmd,
 		update:       update,
 		upgrade:      newUpgradeCommand(),
 		usage:        usagecmd.New(nil),

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
@@ -18,6 +19,7 @@ import (
 )
 
 type settingsCommand struct {
+	sessionStateDiagnostics  *diagnostics.SessionStateRecorder
 	ai                       settingsAI
 	switcher                 settingsSwitcher
 	update                   updateRunner

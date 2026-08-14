@@ -62,20 +62,22 @@ type tmuxRunner interface {
 }
 
 type tmuxCommand struct {
-	diagnostics   *diagnostics.LifecycleRecorder
-	popup         tmuxPopupClient
-	executable    func() (string, error)
-	rawExecutable func() (string, error)
-	runner        tmuxRunner
-	lookupEnv     func(string) string
-	homeDir       func() (string, error)
-	writeFile     func(string, []byte, os.FileMode) error
-	readFile      func(string) ([]byte, error)
-	now           func() time.Time
-	sessionStore  func() (sessionstate.Store, error)
-	popupOptions  func(sessionName string, ctx tmuxPopupContext) inttmux.PopupOptions
-	switchPopup   func(ctx tmuxPopupContext) inttmux.PopupOptions
-	sessionsPopup func(ctx tmuxPopupContext) inttmux.PopupOptions
+	diagnostics             *diagnostics.LifecycleRecorder
+	sessionStateDiagnostics *diagnostics.SessionStateRecorder
+	popup                   tmuxPopupClient
+	executable              func() (string, error)
+	rawExecutable           func() (string, error)
+	runner                  tmuxRunner
+	lookupEnv               func(string) string
+	homeDir                 func() (string, error)
+	writeFile               func(string, []byte, os.FileMode) error
+	readFile                func(string) ([]byte, error)
+	statFile                func(string) (os.FileInfo, error)
+	now                     func() time.Time
+	sessionStore            func() (sessionstate.Store, error)
+	popupOptions            func(sessionName string, ctx tmuxPopupContext) inttmux.PopupOptions
+	switchPopup             func(ctx tmuxPopupContext) inttmux.PopupOptions
+	sessionsPopup           func(ctx tmuxPopupContext) inttmux.PopupOptions
 }
 
 func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
@@ -164,65 +166,73 @@ func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) e
 		return err
 	}
 	if fs.NArg() != 0 {
-		err := errors.New("tmux autosave-session-state does not accept positional arguments")
-		return c.finishAutosaveSessionState(err, *quiet, stderr)
+		return errors.New("tmux autosave-session-state does not accept positional arguments")
 	}
+	started := c.nowTime()
 	if c.runner == nil {
-		return c.finishAutosaveSessionState(errors.New("configure tmux runner: tmux runner is not configured"), *quiet, stderr)
+		return c.finishAutosaveSessionState(errors.New("configure tmux runner: tmux runner is not configured"), *quiet, stderr, started)
 	}
 	if c.sessionStore == nil {
-		return c.finishAutosaveSessionState(errors.New("configure sessionstate store: sessionstate store is not configured"), *quiet, stderr)
+		return c.finishAutosaveSessionState(errors.New("configure sessionstate store: sessionstate store is not configured"), *quiet, stderr, started)
 	}
 	ctx := context.Background()
 	now := c.nowTime()
 	sessionName, err := c.currentTmuxSessionName(ctx)
 	if err != nil {
-		return c.finishAutosaveSessionState(err, *quiet, stderr)
+		return c.finishAutosaveSessionState(err, *quiet, stderr, started)
 	}
 	autosave, err := c.sessionStateAutosaveEnabledForSession(ctx, sessionName)
 	if err != nil {
-		return c.finishAutosaveSessionState(err, *quiet, stderr)
+		return c.finishAutosaveSessionState(err, *quiet, stderr, started)
 	}
 	if !autosave {
 		return nil
 	}
 	client := inttmux.NewClient(c.runner)
-	if sessionstate.SourceLabel(client.SessionStateSource(ctx, sessionName)) == sessionstate.SourceFresh {
+	source, err := client.SessionStateSourceResult(ctx, sessionName)
+	if err != nil {
+		return c.finishAutosaveSessionState(err, *quiet, stderr, started)
+	}
+	if sessionstate.SourceLabel(source) == sessionstate.SourceFresh {
 		return nil
 	}
 	if !*force {
-		interval := (&settingsCommand{homeDir: c.homeDir, lookupEnv: c.lookupEnv}).currentSessionStateAutosaveInterval().Duration
+		intervalState, err := (&settingsCommand{homeDir: c.homeDir, lookupEnv: c.lookupEnv}).currentSessionStateAutosaveIntervalResult()
+		if err != nil {
+			return c.finishAutosaveSessionState(err, *quiet, stderr, started)
+		}
+		interval := intervalState.Duration
 		ok, err := c.sessionStateAutosaveDue(ctx, sessionName, now, interval)
 		if err != nil || !ok {
-			return c.finishAutosaveSessionState(err, *quiet, stderr)
+			return c.finishAutosaveSessionState(err, *quiet, stderr, started)
 		}
 	}
 
 	store, err := c.sessionStore()
 	if err != nil {
-		return c.finishAutosaveSessionState(fmt.Errorf("resolve sessionstate store: %w", err), *quiet, stderr)
+		return c.finishAutosaveSessionState(fmt.Errorf("resolve sessionstate store: %w", err), *quiet, stderr, started)
 	}
 	if _, err := client.SaveSessionSnapshot(ctx, store, sessionName, now); err != nil {
-		return c.finishAutosaveSessionState(err, *quiet, stderr)
+		return c.finishAutosaveSessionState(err, *quiet, stderr, started)
 	}
 	_, err = c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", sessionStateAutosaveOption, strconv.FormatInt(now.Unix(), 10))
-	return c.finishAutosaveSessionState(err, *quiet, stderr)
+	return c.finishAutosaveSessionState(err, *quiet, stderr, started)
 }
 
 func (c *tmuxCommand) sessionStateAutosaveEnabledForSession(ctx context.Context, sessionName string) (bool, error) {
-	global := sessionStateAutosaveEnabled(c.homeDir, c.lookupEnv)
 	mode, found, err := c.projectSessionStateAutosaveModeForSession(ctx, sessionName)
-	if err != nil || !found {
-		return global, err
+	if err != nil {
+		return false, err
 	}
-	switch mode {
-	case config.SessionStateProjectOn:
-		return true, nil
-	case config.SessionStateProjectOff:
-		return false, nil
-	default:
-		return global, nil
+	if found {
+		switch mode {
+		case config.SessionStateProjectOn:
+			return true, nil
+		case config.SessionStateProjectOff:
+			return false, nil
+		}
 	}
+	return sessionStateAutosaveEnabledResult(c.homeDir, c.lookupEnv)
 }
 
 func (c *tmuxCommand) projectSessionStateAutosaveModeForSession(ctx context.Context, sessionName string) (config.SessionStateProjectToggle, bool, error) {
@@ -236,8 +246,15 @@ func (c *tmuxCommand) projectSessionStateAutosaveModeForSession(ctx context.Cont
 		return config.SessionStateProjectInherit, false, err
 	}
 	path := paths.ProjectSessionStateAutosaveFile(sessionName)
-	if _, err := os.Stat(path); err != nil {
-		return config.SessionStateProjectInherit, false, nil
+	statFile := c.statFile
+	if statFile == nil {
+		statFile = os.Stat
+	}
+	if _, err := statFile(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return config.SessionStateProjectInherit, false, nil
+		}
+		return config.SessionStateProjectInherit, false, fmt.Errorf("stat project sessionstate autosave config: %w", err)
 	}
 	mode, err := config.LoadSessionStateProjectToggleFile(path)
 	if err != nil {
@@ -246,7 +263,8 @@ func (c *tmuxCommand) projectSessionStateAutosaveModeForSession(ctx context.Cont
 	return mode, true, nil
 }
 
-func (c *tmuxCommand) finishAutosaveSessionState(err error, quiet bool, stderr io.Writer) error {
+func (c *tmuxCommand) finishAutosaveSessionState(err error, quiet bool, stderr io.Writer, started time.Time) error {
+	c.sessionStateDiagnostics.Record(diagnostics.OperationSessionStateAutosave, diagnostics.SessionStateSourceAutosave, started, diagnostics.SessionStateCounts{}, err)
 	if err == nil {
 		return nil
 	}

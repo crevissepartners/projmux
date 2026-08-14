@@ -606,6 +606,90 @@ run_inside_lifecycle() {
     "$bin" "$@"
 }
 
+# Session State diagnostics uses the same run-unique socket and isolated XDG
+# root. Capture a real snapshot containing seeded private cwd/command/session
+# metadata, prove successful autosave stays silent, inject one quiet autosave
+# failure, replay the actual latest snapshot, then delete a deduplicated batch.
+session_state_root="$PROJMUX_SMOKE_WORKDIR/raw-session-state-project-$$"
+session_state_name="raw-session-state-$$"
+mkdir -p "$session_state_root"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s "$session_state_name" -c "$session_state_root" 'sleep 300'
+session_state_pane="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t "=$session_state_name" '#{pane_id}')"
+session_state_tmux_env="$PROJMUX_SMOKE_TMUX_ACTUAL,$server_pid,0"
+
+env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
+  TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
+  "$bin" session-state save >"$PROJMUX_SMOKE_WORKDIR/session-state-save.out"
+
+session_state_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
+session_state_before_autosave="$(wc -l <"$session_state_log")"
+env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
+  PROJMUX_SESSIONSTATE_AUTOSAVE=on TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
+  "$bin" tmux autosave-session-state --force >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave.out"
+session_state_after_autosave="$(wc -l <"$session_state_log")"
+if [[ "$session_state_before_autosave" != "$session_state_after_autosave" ]]; then
+  echo "successful autosave appended an operational event" >&2
+  exit 1
+fi
+
+session_state_fail_mux="$PROJMUX_SMOKE_WORKDIR/session-state-fail-mux"
+mkdir -p "$session_state_fail_mux"
+cat >"$session_state_fail_mux/tmux" <<'SESSION_STATE_FAIL_TMUX'
+#!/usr/bin/env bash
+echo "raw session-state command /seed/private/path" >&2
+exit 23
+SESSION_STATE_FAIL_TMUX
+chmod 0755 "$session_state_fail_mux/tmux"
+env PATH="$session_state_fail_mux:$PATH" \
+  PROJMUX_SESSIONSTATE_AUTOSAVE=on TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
+  "$bin" tmux autosave-session-state --quiet >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave-fail.out"
+
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$session_state_name"
+run_inside_lifecycle switch sidebar-open --path "$session_state_root" --session "$session_state_name" --mode latest \
+  >"$PROJMUX_SMOKE_WORKDIR/session-state-restore.out"
+if ! env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" has-session -t "=$session_state_name" 2>/dev/null; then
+  echo "actual latest snapshot restore did not recreate $session_state_name" >&2
+  exit 1
+fi
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
+
+"$bin" prune session-state delete "$session_state_name" "$session_state_name" raw-session-state-missing \
+  >"$PROJMUX_SMOKE_WORKDIR/session-state-delete.out"
+if find "$XDG_STATE_HOME/projmux/sessions" -maxdepth 1 -type f -name '*raw-session-state*' -print -quit | grep -q .; then
+  echo "aggregate session-state delete left a targeted snapshot" >&2
+  exit 1
+fi
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$session_state_name"
+
+if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.save".*"source":"manual"' "$session_state_log")" != "1" ]]; then
+  echo "manual save did not emit exactly one closed session-state outcome" >&2
+  exit 1
+fi
+if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.autosave".*"code":"session-state.autosave.failed"' "$session_state_log")" != "1" ]]; then
+  echo "quiet autosave failure did not emit exactly one closed error" >&2
+  exit 1
+fi
+if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.restore".*"source":"startup-latest"' "$session_state_log")" != "1" ]]; then
+  echo "actual latest restore did not emit exactly one closed outcome" >&2
+  exit 1
+fi
+if ! grep -q '"event":"session-state.outcome".*"operation":"session-state.delete".*"source":"prune".*"item_count":2' "$session_state_log"; then
+  echo "aggregate delete did not project the exact deduplicated count" >&2
+  exit 1
+fi
+if grep -q '"event":"command.outcome".*"command":"session-state"' "$session_state_log" ||
+  grep -q '"event":"command.outcome".*"command":"prune","subcommand":"session-state"' "$session_state_log" ||
+  grep -q '"event":"command.outcome".*"command":"switch","subcommand":"sidebar-open"' "$session_state_log"; then
+  echo "owned Session State mutation emitted a duplicate generic outcome" >&2
+  exit 1
+fi
+for raw in "$session_state_root" "$session_state_name" 'sleep 300' 'raw session-state command' '/seed/private/path'; do
+  if grep -Fq "$raw" "$session_state_log"; then
+    echo "session-state operational journal leaked raw metadata: $raw" >&2
+    exit 1
+  fi
+done
+
 # Create: change the real origin pane cwd to a run-unique project, then let
 # `current` ensure it and switch the attached control client to it.
 create_root="$PROJMUX_SMOKE_WORKDIR/raw-create-project-$$"
