@@ -34,7 +34,7 @@ Classification:
 
 | Family | Examples | Class | Phase 0 policy |
 | --- | --- | --- | --- |
-| Agent names | `Codex`, `Claude`, `AI` | `literal` | Preserve exactly. |
+| Agent names | `Codex`, `Claude`, `Antigravity`, `AI` | `literal` | Preserve exactly. |
 | Category labels | `Response complete`, `Approval required`, `Input required`, `Error`, `Subagent stopped`, `Teammate waiting` | `translate` | English baseline now; catalog keys later. |
 | Review body prefix | `Review pending:` | `translate` | English baseline now; catalog key later. |
 | Tool names | `Bash`, `Read`, `WebFetch`, `Shell` | `literal` | Preserve provider/source spelling. |
@@ -78,7 +78,7 @@ Classification:
 | Row labels and previews | enabled/disabled state, current source, saved values | `translate` | Inventory only; catalog later. |
 | Disabled reasons and warnings | missing project, env override, conflict text | `translate` | Inventory only; catalog later. |
 | Config keys and env vars | `PROJMUX_PROJDIR`, `config.toml`, `ui.locale` | `literal` | Preserve exactly. |
-| Commands shown for copying | `projmux ai integrate codex --dry-run` | `literal` | Preserve exactly. |
+| Commands shown for copying | `projmux ai integrate codex --dry-run`, `projmux ai integrate antigravity --dry-run` | `literal` | Preserve exactly. |
 | Persisted values | `none`, `notify`, `raise`, `auto` | `literal` | Preserve enum values. |
 
 ### Native Picker And Render Surfaces
@@ -124,7 +124,7 @@ Classification:
 
 Do not translate these families:
 
-- Product and agent names: `Codex`, `Claude`, `projmux`, `tmux`,
+- Product and agent names: `Codex`, `Claude`, `Antigravity`, `projmux`, `tmux`,
   `GitHub`, `npm`.
 - Terminal and app names: `Windows Terminal`, `Ghostty`, `WezTerm`, `Kitty`,
   `iTerm2`, `Alacritty`, `Foot`.
@@ -239,7 +239,8 @@ Contribution convention:
 - Add the `en-US` entry in the same change as the key.
 - Add `ko-KR` when the translation is known; otherwise rely on fallback while
   keeping the missing key intentional in review notes.
-- Do not translate product names (`projmux`, `tmux`, `Codex`, `Claude`),
+- Do not translate product names (`projmux`, `tmux`, `Codex`, `Claude`,
+  `Antigravity`),
   commands, paths, config keys, environment variables, provider payloads, or
   source enum values.
 - Runtime migrations should be narrow by surface. Move a string family behind
@@ -296,7 +297,8 @@ Width-safe rendering:
 
 Runtime surfaces migrated:
 
-- AI desktop notification summaries for Codex and Claude hook payloads.
+- AI desktop notification summaries for Codex, Claude, and Antigravity hook
+  payloads.
 - In-app notify queue table/sidebar/statusbar display text for AI entries.
 - Notify live explanation text for `projmux notify list --live`.
 - Sidebar/table/statusbar age formatting and sidebar stale/gone/target labels.
@@ -317,9 +319,9 @@ Literal preservation and parity rules:
 - Translate only catalog-owned category labels such as `Response complete`,
   `Approval required`, `Input required`, `Error`, `Subagent stopped`, and
   `Teammate waiting`.
-- Preserve provider-owned payloads verbatim: `Codex`, `Claude`, tool names,
-  commands, paths, URLs, query strings, transcript excerpts, teammate IDs, and
-  subagent IDs.
+- Preserve provider-owned payloads verbatim: `Codex`, `Claude`, `Antigravity`,
+  tool names, commands, paths, URLs, query strings, transcript excerpts,
+  teammate IDs, and subagent IDs.
 - Desktop notification summaries and in-app queue display text must use the
   same rendered category labels for the same locale while preserving the same
   literal payload body.

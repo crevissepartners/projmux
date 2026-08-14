@@ -46,19 +46,20 @@ projmux <command> [args...]
 | `update` | Check installer-aware GitHub release update status. |
 | `upgrade` | Self-update via `go install`. |
 | `welcome` | Print the shell onboarding guide again. |
-| `usage` | Report AI usage across fixed windows, context, and named quota buckets. |
+| `usage` | Report AI usage across fixed windows and named account quota buckets. |
 | `version` | Print the current version. |
 
 ## switch
 
 ```
-projmux switch [path]
+projmux switch [--ui=popup|sidebar]
+projmux switch open <path>
 projmux switch toggle-tag | toggle-pin | kill | settings | preview
 projmux switch cycle-pane | cycle-window | sidebar-focus
 ```
 
 Project picker. With no positional argument, opens the configured picker popup
-or sidebar (depending on entry helper). With a path, jumps directly. The
+or sidebar (depending on entry helper). `switch open <path>` jumps directly. The
 sub-verbs are entry hooks invoked by tmux keybindings (e.g.
 `sidebar-focus` is wired to the sidebar's focus binding so navigation keeps
 the active session in sync).
@@ -109,7 +110,7 @@ projmux doctor [--json] [--section deps|runtime|integrations|session-state|logs]
 Runs read-only diagnostics, including a dependency check for `tmux ≥ 3.4`,
 `git`, `stty` (POSIX only), and
 `kubectl` (optional), then reports read-only AI notify integration diagnostics
-for Codex hooks, Claude Code hooks, and the tmux bell
+for Codex hooks, Claude Code hooks, Antigravity hooks/statusline, and the tmux bell
 fallback. AI notify integration statuses are `installed`, `missing`, or
 `conflict`; missing or conflicting integrations are informational and do not
 make doctor fail. It also reports read-only Session State resume metadata
@@ -352,10 +353,12 @@ projmux notify reconcile [--json]
   While open, the native
   sidebar refreshes its row list on successful queue-write events without an
   Alt-2 close/reopen toggle, using the same deferred refresh path as `a` and
-  `x`. The sidebar uses two-line cards with notification text first and
-  compact age/project/window/pane metadata below. Hidden queue ids remain
-  action values, but the sidebar has no search input. `--client` is used by
-  tmux popup launchers to keep row-select focus on the clicked client.
+  `x`. The sidebar is a pane/session-grouped inbox whose collapsed rows are
+  fixed three-line cards: project/session, agent/provider, and newest age on
+  line 1; topic/pane-title/task context plus severity/live-state metadata on
+  line 2; and the latest notification preview on line 3. Hidden queue ids
+  remain action values, but the sidebar has no search input. `--client` is used
+  by tmux popup launchers to keep row-select focus on the clicked client.
 - `ack <id>` removes one entry; `--all` flushes the queue.
 - `reconcile` — walks `tmux list-panes -a` and back-fills entries for
   panes whose attention state is `reply` AND whose AI agent option is
@@ -367,7 +370,7 @@ projmux notify reconcile [--json]
 
 ## usage
 
-Authoritative AI token usage. See [usage-tracking.md](usage-tracking.md)
+Authoritative AI account usage. See [usage-tracking.md](usage-tracking.md)
 for adapter detail.
 
 ```
@@ -423,9 +426,10 @@ core-equivalent CPU. Project and window rows count panes, while pane rows count
 the attributed processes. Pane rows and detail share the resolved pane identity
 and label the tmux current command, PID/SID, pane id, and TTY separately. Memory
 is explicitly an RSS sum (shared pages can be counted more than once) plus its
-host ratio. `Unassigned`,
-`Shared / ambiguous`, and non-drillable `Other / unattributed` remain explicit,
-as do warming, partial, unavailable, unknown, and overage states. No process
+host ratio. `No project match`, `Multiple project matches`, and non-drillable
+`Other / unattributed` remain explicit. The first two are display labels over
+stable internal attribution keys. Warming, partial, unavailable, unknown, and
+overage states also remain explicit. No process
 command list, mutation, history, graph, daemon, persistence, or Session State
 telemetry is created. Linux/tmux provides attribution; unsupported platforms
 show an unavailable reason rather than zero metrics.
@@ -495,10 +499,10 @@ projmux statusbar usage-refresh
 ```
 
 Click/keyboard dispatcher for the two-line status bar. Implemented range ids:
-`session pwd kube git usage notify settings`. The bare `window` /
+`session pwd kube git resources usage notify settings`. The bare `window` /
 `window|<idx>` token (tmux's built-in window-list range) and the empty
 range fall through to `select-window -t @<mouse_window>` so the native
-click-to-switch tab affordance is preserved on row 0. Unknown range ids are
+click-to-switch tab affordance is preserved on row 1. Unknown range ids are
 non-specialized placeholders and no-op. `session` opens the existing-session
 popup; `pwd` shows the current pane path in a native-framed display-only
 popup; `kube` and `git` open the project switcher popup;
@@ -542,11 +546,11 @@ supplied window.
 
 ```
 projmux ai split    [--agent <claude|codex|antigravity|shell|selective|resume>] [--force-agent] [--print-pane-id] [right|down] [-- <extra-arg>...]
-projmux ai picker   [--inside] [--shell] [--resume] <right|down>
-projmux ai settings
-projmux ai status   set <thinking|waiting|idle> [--pane <id>]
-projmux ai notify   <reset|notify> [--pane <id>]
-projmux ai watch-title [--pane <id>]
+projmux ai picker   [--inside] [--shell] [--resume] [right|down]
+projmux ai settings [--get|--set <mode>]
+projmux ai status   set <thinking|waiting|idle> [pane]
+projmux ai notify   [notify|reset] [pane]
+projmux ai watch-title [pane]
 projmux ai ingest   codex-hook < payload.json
 projmux ai ingest   claude-hook < payload.json
 projmux ai ingest   antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop|Statusline>] < payload.json

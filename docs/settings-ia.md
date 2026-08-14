@@ -71,11 +71,11 @@ view-first layout:
   desktop AI notification collapse window. It stores integer seconds and shows
   the effective source; `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` remains the top
   override. The tmux bell fallback keeps its fixed 5 second window.
-- `Settings > Notifications > Delivery sources` shows Codex hooks, Claude, and
-  tmux producer diagnostics, the effective desktop sender override state, and
-  copyable install/remove/dry-run commands. Settings copies command text only;
-  it does not install or remove external notify wiring. The legacy Codex notify
-  source is intentionally omitted from Settings.
+- `Settings > Notifications > Delivery sources` shows Codex, Claude,
+  Antigravity, and tmux producer diagnostics, the effective desktop sender
+  override state, and copyable install/remove/dry-run commands. Settings copies
+  command text only; it does not install or remove external notify wiring. The
+  legacy Codex notify source is intentionally omitted from Settings.
 - `Settings > Notifications > Hook quiet policy` shows Codex/Claude hook
   runtime action values and writes only
   `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json`. It does not
@@ -97,7 +97,8 @@ view-first layout:
 - `Settings > Labs > Project Hooks` is overview-first. The Labs root opens the
   overview, and the on/off mutation rows live one level deeper.
 - `Settings > AI Settings` is view-first. The root contains `Default split
-  mode`; the detail contains the `Claude`, `Codex`, and `Shell` choices.
+  mode`, `Enabled agents`, and `Resume picker`; the default-mode detail contains
+  the `Claude`, `Codex`, `Antigravity`, `Shell`, and `Selective` choices.
 - `Settings > Project > Project recipe` is the functional label for
   `.projmux/config.toml`. Search still matches `config.toml` as an alias.
 - `Settings > Project > Project recipe` is view-first. The root contains section
@@ -117,7 +118,7 @@ view-first layout:
   visible as warnings and fall back to `en-US`.
 - Global root descriptions keep ownership explicit: Appearance owns language,
   AI badge style, and status/notification icon decoration; Theme owns presets,
-  color tokens, and font hints. About describes only the surface it retains.
+  and color tokens. About describes only the surface it retains.
 - `Settings > About` is intentionally compact: Version, Source, update
   status/actions (including Latest, Update state, Installer, and Release notes
   when available), Welcome, and Quit. It does not reproduce static key,
