@@ -137,3 +137,21 @@ longer accepts startup selector flags for session-state restore. It always
 follows the normal empty attach path after resolving the target app session name
 and startup directory. Use `Settings > Session State > Sidebar startup picker` for
 interactive Latest snapshot / Named snapshot / Empty session selection.
+
+## Operational diagnostics
+
+Selected Session State mutations leave one local, best-effort terminal outcome
+in the bounded operational journal. Manual and popup save, Project Settings
+latest/named save, manual/Settings/prune delete, and actual project-startup
+latest/named replay are covered. Restore preview and `--dry-run` remain
+read-only. Successful autosave, disabled/not-due/fresh autosave no-ops, and
+nested snapshot store/replay calls do not write an outcome; an actual autosave
+failure writes one safe error even under `--quiet`.
+
+The outcome contains only a closed operation/source and aggregate window,
+pane, recipe, or deleted-item counts. It never contains a snapshot or project
+path, snapshot content/name, pane cwd/command, agent resume/conversation/session
+ID, or arbitrary metadata. Diagnostics append failure never changes save,
+restore, delete, or quiet-autosave behavior. See
+[operational-diagnostics.md](operational-diagnostics.md) for the complete event
+schema and retention/privacy contract.

@@ -36,6 +36,30 @@ operation instead of recording nested outcomes. Lifecycle ownership replaces
 the generic top-level `command.outcome`; it never duplicates it. Start/outcome
 append failures are ignored and do not change the command result.
 
+Session State mutations use one outcome-only `session-state.outcome` record
+per selected attempt. The closed operations are `session-state.save`,
+`session-state.autosave`, `session-state.restore`, and `session-state.delete`;
+an error uses only the matching `.failed` code, `kind=runtime`, and an empty
+message. Optional sources are limited to `manual`, `settings-latest`,
+`settings-named`, `autosave`, `startup-latest`, `startup-named`, and `prune`.
+Successful save and actual startup restore outcomes contain only exact
+non-negative `window_count`, `pane_count`, `shell_recipe_count`,
+`agent_recipe_count`, and `startup_recipe_count` aggregates. Successful delete
+contains only `item_count`; errors contain no counts. Snapshot paths/content,
+project paths, pane cwd/commands, snapshot names, and agent or conversation
+identifiers are never projected.
+
+Direct and popup save, Settings latest/named save, direct and Settings delete,
+deduplicated prune delete, and actual latest/named project-startup replay own
+these outcomes. Preview, dry-run, and nested store/replay calls do not.
+Autosave success and disabled, not-due, or fresh no-ops always write zero
+records; a real autosave failure writes exactly one error even when `--quiet`
+preserves its historical successful exit. Session State logical ownership
+suppresses a generic top-level outcome even when journal append fails. An
+actual restore may also produce its runtime lifecycle pair with the same run
+ID; the lifecycle pair and Session State terminal outcome describe different
+contracts and are not duplicates.
+
 The diagnostics package exposes a typed `ReadRuntimeHealth` projection for
 read-only Doctor consumers. It reports the fixed `tmux` backend, latest
 socket/apply state, and a bounded tail/count of safe failures using only

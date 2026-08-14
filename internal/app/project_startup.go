@@ -10,6 +10,7 @@ import (
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -77,7 +78,21 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 	return c.authorizeAndContinueProjectOpen(ctx, target, sessionName, mode)
 }
 
-func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate) error {
+func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate) (err error) {
+	started := time.Now()
+	var counts diagnostics.SessionStateCounts
+	var diagnosticSource diagnostics.SessionStateSource
+	switch mode.Kind {
+	case projectStartupKindLatest:
+		diagnosticSource = diagnostics.SessionStateSourceStartupLatest
+	case projectStartupKindNamed:
+		diagnosticSource = diagnostics.SessionStateSourceStartupNamed
+	}
+	if diagnosticSource != "" {
+		defer func() {
+			c.sessionStateDiagnostics.Record(diagnostics.OperationSessionStateRestore, diagnosticSource, started, counts, err)
+		}()
+	}
 	var layoutArtifact *corelayout.Artifact
 	if mode.Kind == projectStartupKindNamed {
 		artifact, err := corelayout.NewStore(target).LoadArtifact(mode.Name)
@@ -102,20 +117,21 @@ func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, tar
 			return errProjectTrustDenied
 		}
 	}
-	return c.continueProjectOpen(ctx, target, sessionName, mode, layoutArtifact)
+	counts, err = c.continueProjectOpen(ctx, target, sessionName, mode, layoutArtifact)
+	return err
 }
 
-func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, layoutArtifact *corelayout.Artifact) error {
+func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, layoutArtifact *corelayout.Artifact) (diagnostics.SessionStateCounts, error) {
 	switch mode.Kind {
 	case projectStartupKindLatest:
 		return c.restoreProjectLatestSnapshot(ctx, sessionName, target)
 	case projectStartupKindNamed:
 		if layoutArtifact == nil {
-			return errors.New("named snapshot artifact is not prepared")
+			return diagnostics.SessionStateCounts{}, errors.New("named snapshot artifact is not prepared")
 		}
 		return c.restoreProjectNamedSnapshot(ctx, sessionName, target, *layoutArtifact)
 	default:
-		return c.ensureAndOpenProjectSession(ctx, sessionName, target)
+		return diagnostics.SessionStateCounts{}, c.ensureAndOpenProjectSession(ctx, sessionName, target)
 	}
 }
 
@@ -313,33 +329,35 @@ func projectStartupCandidateFromValue(value string) (projectStartupCandidate, bo
 	}
 }
 
-func (c *switchCommand) restoreProjectLatestSnapshot(ctx context.Context, sessionName, target string) error {
+func (c *switchCommand) restoreProjectLatestSnapshot(ctx context.Context, sessionName, target string) (diagnostics.SessionStateCounts, error) {
 	store, err := c.projectStartupSessionStateStore()
 	if err != nil {
-		return err
+		return diagnostics.SessionStateCounts{}, err
 	}
 	snap, err := store.Load(sessionName)
 	if err != nil {
-		return err
+		return diagnostics.SessionStateCounts{}, err
 	}
-	return c.restoreProjectSnapshot(ctx, snap, target, sessionstate.SourceAutosave)
+	counts := sessionStateDiagnosticCounts(snap)
+	return counts, c.restoreProjectSnapshot(ctx, snap, target, sessionstate.SourceAutosave)
 }
 
-func (c *switchCommand) restoreProjectNamedSnapshot(ctx context.Context, sessionName, target string, artifact corelayout.Artifact) error {
+func (c *switchCommand) restoreProjectNamedSnapshot(ctx context.Context, sessionName, target string, artifact corelayout.Artifact) (diagnostics.SessionStateCounts, error) {
 	snap, err := corelayout.ToSnapshot(artifact.Preset, sessionName, target, c.projectStartupNow())
 	if err != nil {
-		return err
+		return diagnostics.SessionStateCounts{}, err
 	}
+	counts := sessionStateDiagnosticCounts(snap)
 	source := layoutPresetSource(artifact.Name, artifact.Preset)
 	if err := c.restoreProjectSnapshot(ctx, snap, target, source); err != nil {
-		return err
+		return diagnostics.SessionStateCounts{}, err
 	}
 	if source == sessionstate.SourceFresh {
 		if store, err := c.projectStartupSessionStateStore(); err == nil {
 			_ = store.Delete(sessionName)
 		}
 	}
-	return nil
+	return counts, nil
 }
 
 func (c *switchCommand) restoreProjectSnapshot(ctx context.Context, snap sessionstate.Snapshot, target, source string) error {

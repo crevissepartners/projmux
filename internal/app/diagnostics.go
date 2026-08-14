@@ -120,6 +120,24 @@ func formatOperationalEvent(event diagnostics.Event) string {
 	if event.Operation != "" {
 		parts = append(parts, "operation="+event.Operation)
 	}
+	if event.Source != "" {
+		parts = append(parts, "source="+event.Source)
+	}
+	for _, count := range []struct {
+		name  string
+		value *int
+	}{
+		{"window_count", event.WindowCount},
+		{"pane_count", event.PaneCount},
+		{"shell_recipe_count", event.ShellRecipeCount},
+		{"agent_recipe_count", event.AgentRecipeCount},
+		{"startup_recipe_count", event.StartupRecipeCount},
+		{"item_count", event.ItemCount},
+	} {
+		if count.value != nil {
+			parts = append(parts, fmt.Sprintf("%s=%d", count.name, *count.value))
+		}
+	}
 	parts = append(parts, fmt.Sprintf("duration_ms=%d", event.DurationMS), "run_id="+event.RunID, "version="+event.Version, "mux_backend="+event.MuxBackend)
 	if event.Kind != "" {
 		parts = append(parts, "kind="+event.Kind)

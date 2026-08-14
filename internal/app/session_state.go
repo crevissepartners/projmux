@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -18,6 +19,7 @@ import (
 )
 
 type sessionStateCommand struct {
+	diagnostics  *diagnostics.SessionStateRecorder
 	runner       tmuxRunner
 	nativePicker intpicker.Runner
 	lookupEnv    func(string) string
@@ -92,7 +94,7 @@ func (c *sessionStateCommand) runStatus(args []string, stdout, stderr io.Writer)
 	return nil
 }
 
-func (c *sessionStateCommand) runSave(args []string, stdout, stderr io.Writer) error {
+func (c *sessionStateCommand) runSave(args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("session-state save", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	if err := fs.Parse(args); err != nil {
@@ -102,6 +104,11 @@ func (c *sessionStateCommand) runSave(args []string, stdout, stderr io.Writer) e
 		printSessionStateUsage(stderr)
 		return fmt.Errorf("session-state save does not accept positional arguments")
 	}
+	started := c.nowTime()
+	var counts diagnostics.SessionStateCounts
+	defer func() {
+		c.diagnostics.Record(diagnostics.OperationSessionStateSave, diagnostics.SessionStateSourceManual, started, counts, err)
+	}()
 	if !c.insideTmux() {
 		return errors.New("session-state save requires a current tmux session")
 	}
@@ -124,11 +131,12 @@ func (c *sessionStateCommand) runSave(args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return fmt.Errorf("save session snapshot %q: %w", sessionName, err)
 	}
+	counts = sessionStateDiagnosticCounts(snap)
 	_, err = fmt.Fprintf(stdout, "saved session snapshot: %s (%s, %s)\n", snap.Session, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"))
 	return err
 }
 
-func (c *sessionStateCommand) runDelete(args []string, stdout, stderr io.Writer) error {
+func (c *sessionStateCommand) runDelete(args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("session-state delete", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	session := fs.String("session", "", "target session name")
@@ -139,6 +147,11 @@ func (c *sessionStateCommand) runDelete(args []string, stdout, stderr io.Writer)
 		printSessionStateUsage(stderr)
 		return fmt.Errorf("session-state delete does not accept positional arguments")
 	}
+	started := c.nowTime()
+	counts := diagnostics.SessionStateCounts{ItemCount: 1}
+	defer func() {
+		c.diagnostics.Record(diagnostics.OperationSessionStateDelete, diagnostics.SessionStateSourceManual, started, counts, err)
+	}()
 	sessionName, err := c.resolveSessionName(context.Background(), *session)
 	if err != nil {
 		return err
@@ -152,6 +165,24 @@ func (c *sessionStateCommand) runDelete(args []string, stdout, stderr io.Writer)
 	}
 	_, err = fmt.Fprintf(stdout, "deleted session snapshot: %s\n", sessionName)
 	return err
+}
+
+func sessionStateDiagnosticCounts(snap sessionstate.Snapshot) diagnostics.SessionStateCounts {
+	counts := diagnostics.SessionStateCounts{WindowCount: len(snap.Windows)}
+	for _, window := range snap.Windows {
+		counts.PaneCount += len(window.Panes)
+		for _, pane := range window.Panes {
+			switch pane.Recipe.Kind {
+			case sessionstate.RecipeKindShell:
+				counts.ShellRecipeCount++
+			case sessionstate.RecipeKindAgent:
+				counts.AgentRecipeCount++
+			case sessionstate.RecipeKindStartup:
+				counts.StartupRecipeCount++
+			}
+		}
+	}
+	return counts
 }
 
 func (c *sessionStateCommand) runRestore(args []string, stdout, stderr io.Writer) error {

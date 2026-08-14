@@ -272,6 +272,14 @@ func failureCode(operation Operation) Code {
 		return CodeSessionKillFailed
 	case OperationTmuxApply:
 		return CodeTmuxApplyFailed
+	case OperationSessionStateSave:
+		return CodeSessionStateSaveFailed
+	case OperationSessionStateAutosave:
+		return CodeSessionStateAutosaveFailed
+	case OperationSessionStateRestore:
+		return CodeSessionStateRestoreFailed
+	case OperationSessionStateDelete:
+		return CodeSessionStateDeleteFailed
 	default:
 		return ""
 	}
@@ -287,4 +295,16 @@ func (r *LifecycleRecorder) append(event Event) {
 // failed, so the CLI boundary never attempts a duplicate fallback outcome.
 func (r *LifecycleRecorder) RecordedOutcome() bool {
 	return r != nil && r.outcomes.Load() > 0
+}
+
+// SessionState returns an outcome-only recorder that shares this process run
+// identity and logical top-level ownership with runtime lifecycle records.
+func (r *LifecycleRecorder) SessionState() *SessionStateRecorder {
+	if r == nil {
+		return nil
+	}
+	return &SessionStateRecorder{
+		writer: r.writer, runID: r.runID, version: r.version,
+		muxBackend: r.muxBackend, now: time.Now, outcomes: &r.outcomes,
+	}
 }
