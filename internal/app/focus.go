@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	corefocus "github.com/crevissepartners/projmux/internal/core/focus"
 	"github.com/crevissepartners/projmux/internal/core/notify"
@@ -39,14 +40,15 @@ type focusNotifier interface {
 }
 
 type focusCommand struct {
-	diagnostics   *diagnostics.LifecycleRecorder
-	runner        focusCommandRunner
-	lookupEnv     func(string) string
-	homeDir       func() (string, error)
-	stdout        io.Writer
-	stderr        io.Writer
-	notifierOnce  func(stderr io.Writer) focusNotifier
-	notifyStoreFn func() (notifyStore, error)
+	diagnostics       *diagnostics.LifecycleRecorder
+	notifyDiagnostics *diagnostics.NotifyFocusRecorder
+	runner            focusCommandRunner
+	lookupEnv         func(string) string
+	homeDir           func() (string, error)
+	stdout            io.Writer
+	stderr            io.Writer
+	notifierOnce      func(stderr io.Writer) focusNotifier
+	notifyStoreFn     func() (notifyStore, error)
 	// osFocusChain is the OS-window/terminal raise dispatcher invoked after
 	// the tmux pane focus succeeds. Tests stub it to avoid shelling out to
 	// adapters like wt.exe; production code defaults to defaultOSFocusChain.
@@ -84,22 +86,24 @@ func newFocusCommand(recorders ...*diagnostics.LifecycleRecorder) *focusCommand 
 	if len(recorders) > 0 {
 		recorder = recorders[0]
 	}
-	return &focusCommand{
+	cmd := &focusCommand{
 		diagnostics:   recorder,
 		runner:        focusExecRunner{},
 		lookupEnv:     os.Getenv,
 		homeDir:       os.UserHomeDir,
 		notifyStoreFn: defaultStatusNotifyStore,
-		notifierOnce: func(stderr io.Writer) focusNotifier {
-			// Reuse the existing notifier chain (WSL toast, notify-send, hook).
-			ai := newAICommand()
-			return ai.notificationNotifier()
-		},
 	}
+	cmd.notifierOnce = func(stderr io.Writer) focusNotifier {
+		// Reuse the existing notifier chain (WSL toast, notify-send, hook).
+		ai := newAICommand()
+		ai.notifyDiagnostics = cmd.notifyDiagnostics
+		return ai.notificationNotifier()
+	}
+	return cmd
 }
 
 // Run is the dispatcher entry point.
-func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
+func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) (runErr error) {
 	c.stdout = stdout
 	c.stderr = stderr
 
@@ -107,6 +111,18 @@ func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	diagnosticsStarted := time.Now()
+	var diagnosticsTarget corefocus.Target
+	var diagnosticsSocket string
+	var diagnosticsResult focusResult
+	defer func() {
+		if c.notifyDiagnostics == nil {
+			return
+		}
+		telemetry := newFocusTelemetry(opts, diagnosticsTarget, diagnosticsSocket)
+		disposition, code := focusDiagnosticOutcome(diagnosticsResult, runErr)
+		c.notifyDiagnostics.RecordFocus(disposition, telemetry.provider, telemetry.category, telemetry.route, code, diagnosticsStarted)
+	}()
 
 	if err := c.resolveURIOption(&opts); err != nil {
 		return err
@@ -116,9 +132,11 @@ func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	diagnosticsTarget = target
 
 	socket := c.resolveSocket(opts.Socket)
-	c.logTelemetry(opts, target, socket)
+	diagnosticsSocket = socket
+	c.logTelemetry(newFocusTelemetry(opts, target, socket))
 
 	res, err := c.execute(context.Background(), target, socket, opts.Client)
 	res.Target = target.Raw
@@ -133,9 +151,11 @@ func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
 			res.Note = err.Error()
 		}
 	}
+	diagnosticsResult = res
 
 	if opts.JSON {
 		if writeErr := writeFocusJSON(stdout, res); writeErr != nil {
+			diagnosticsResult.Reason = "output-failed"
 			return writeErr
 		}
 	}
@@ -559,16 +579,18 @@ func (c *focusCommand) notifySessionReady(sessionName string) error {
 		return errors.New("focus notifier is not available")
 	}
 	return notifier.Notify(aiNotification{
-		Summary: "session ready: " + sessionName,
-		Body:    "Click to switch to " + sessionName + ".",
-		Urgency: "normal",
-		AppName: "projmux",
-		Tag:     "projmux.focus." + sessionName,
-		Group:   "projmux.focus",
+		Summary:            "session ready: " + sessionName,
+		Body:               "Click to switch to " + sessionName + ".",
+		Urgency:            "normal",
+		AppName:            "projmux",
+		Tag:                "projmux.focus." + sessionName,
+		Group:              "projmux.focus",
+		diagnosticProvider: diagnostics.ProviderProjmux,
+		diagnosticCategory: diagnostics.CategorySessionReady,
 	})
 }
 
-func (c *focusCommand) logTelemetry(opts focusOptions, target corefocus.Target, socket string) {
+func (c *focusCommand) logTelemetry(telemetry focusTelemetry) {
 	if c.stderr == nil {
 		return
 	}
@@ -577,8 +599,8 @@ func (c *focusCommand) logTelemetry(opts focusOptions, target corefocus.Target, 
 	}
 	fmt.Fprintf(c.stderr,
 		"focus: target=%s session=%s window=%s pane=%s socket=%s client=%s source=%s kind=%s\n",
-		target.Raw, target.Session, target.WindowSelector(), target.PaneSelector(),
-		socket, opts.Client, opts.Source, opts.Kind,
+		telemetry.target.Raw, telemetry.target.Session, telemetry.target.WindowSelector(), telemetry.target.PaneSelector(),
+		telemetry.socket, telemetry.opts.Client, telemetry.opts.Source, telemetry.opts.Kind,
 	)
 }
 

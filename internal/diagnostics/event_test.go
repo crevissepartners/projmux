@@ -9,7 +9,7 @@ import (
 func TestEventSchemaHasNoGenericOrSensitiveEscapeHatch(t *testing.T) {
 	t.Parallel()
 	typeOf := reflect.TypeFor[Event]()
-	want := []string{"At", "Level", "Component", "Event", "Result", "DurationMS", "RunID", "Version", "MuxBackend", "Command", "Subcommand", "Kind", "Message", "Operation", "Code", "Source", "WindowCount", "PaneCount", "ShellRecipeCount", "AgentRecipeCount", "StartupRecipeCount", "ItemCount"}
+	want := []string{"At", "Level", "Component", "Event", "Result", "DurationMS", "RunID", "Version", "MuxBackend", "Command", "Subcommand", "Kind", "Message", "Operation", "Code", "Source", "Transition", "Disposition", "Provider", "Category", "Route", "WindowCount", "PaneCount", "ShellRecipeCount", "AgentRecipeCount", "StartupRecipeCount", "ItemCount"}
 	if typeOf.NumField() != len(want) {
 		t.Fatalf("Event fields = %d, want %d", typeOf.NumField(), len(want))
 	}

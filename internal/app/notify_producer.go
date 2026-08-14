@@ -8,6 +8,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 // attentionNotifyTTL is the freshness window of a "reply ready" queue entry.
@@ -62,26 +63,32 @@ func (noopAttentionNotifyProducer) AckReplyReady(attentionNotifyInput) {}
 // storeAttentionNotifyProducer is the production implementation that writes
 // to the shared notify queue file.
 type storeAttentionNotifyProducer struct {
-	store  notifyStore
-	ttl    time.Duration
-	hooks  *sendNotiHookDispatcher
-	events notifyQueueRefreshEvents
+	store       notifyStore
+	ttl         time.Duration
+	hooks       *sendNotiHookDispatcher
+	events      notifyQueueRefreshEvents
+	diagnostics *diagnostics.NotifyFocusRecorder
 }
 
 // newAttentionNotifyProducer builds a producer that uses the default notify
 // store on disk. If the store cannot be resolved (e.g. because the user has
 // no XDG_STATE_HOME and no $HOME) the producer degrades to a noop so the
 // caller is never crippled by configuration drift.
-func newAttentionNotifyProducer() attentionNotifyProducer {
+func newAttentionNotifyProducer(recorders ...*diagnostics.NotifyFocusRecorder) attentionNotifyProducer {
+	var recorder *diagnostics.NotifyFocusRecorder
+	if len(recorders) > 0 {
+		recorder = recorders[0]
+	}
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil {
 		return noopAttentionNotifyProducer{}
 	}
 	return &storeAttentionNotifyProducer{
-		store:  notify.NewDefaultStore(paths),
-		ttl:    attentionNotifyTTL,
-		hooks:  newSendNotiHookDispatcher(),
-		events: newNotifyQueueRefreshTransport(paths.StateDir),
+		store:       notify.NewDefaultStore(paths),
+		ttl:         attentionNotifyTTL,
+		hooks:       newSendNotiHookDispatcher(),
+		events:      newNotifyQueueRefreshTransport(paths.StateDir),
+		diagnostics: recorder,
 	}
 }
 
@@ -134,7 +141,7 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 		ttl = attentionNotifyTTL
 	}
 
-	entry, _, err := p.store.Push(notify.PushInput{
+	pushInput := notify.PushInput{
 		ID:       id,
 		Text:     text,
 		Severity: severity,
@@ -147,10 +154,14 @@ func (p *storeAttentionNotifyProducer) PushReplyReady(in attentionNotifyInput) {
 			Window:  window,
 			Pane:    resolvedPane,
 		},
-	})
+	}
+	started := time.Now()
+	entry, result, err := p.store.Push(pushInput)
 	if err != nil {
+		recordNotifyEnqueue(p.diagnostics, pushInput, result, err, started, false)
 		return
 	}
+	recordNotifyEnqueue(p.diagnostics, pushInput, result, nil, started, false)
 	if p.hooks != nil && !in.SuppressHooks {
 		p.hooks.Dispatch(entry, notifyHookMeta{
 			Type:    "ai-reply-ready",

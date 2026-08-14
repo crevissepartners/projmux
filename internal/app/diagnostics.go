@@ -123,6 +123,20 @@ func formatOperationalEvent(event diagnostics.Event) string {
 	if event.Source != "" {
 		parts = append(parts, "source="+event.Source)
 	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{"transition", event.Transition},
+		{"disposition", event.Disposition},
+		{"provider", event.Provider},
+		{"category", event.Category},
+		{"route", event.Route},
+	} {
+		if field.value != "" {
+			parts = append(parts, field.name+"="+field.value)
+		}
+	}
 	for _, count := range []struct {
 		name  string
 		value *int
