@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -16,12 +17,21 @@ const DesktopNotifyModeFileName = "desktop-notify-mode"
 
 type DesktopNotifyMode string
 
+// The desktop notification setting is a two-state model. `raise` was a third
+// state until 0.11.0; the literals below are still accepted on read and
+// resolve to `notify` in the source that carries them (see
+// NormalizeDesktopNotifyMode).
 const (
 	DesktopNotifyModeOff     DesktopNotifyMode = "off"
 	DesktopNotifyModeNotify  DesktopNotifyMode = "notify"
-	DesktopNotifyModeRaise   DesktopNotifyMode = "raise"
 	DefaultDesktopNotifyMode                   = DesktopNotifyModeNotify
 )
+
+// legacyDesktopNotifyRaiseAliases are the retired `raise` mode literals. They
+// are read as `notify` so users who saved the old value keep getting desktop
+// notifications instead of silently falling back to a lower-precedence source.
+// Retained for at least 0.11.x.
+var legacyDesktopNotifyRaiseAliases = []string{"raise", "auto-raise", "autoraise"}
 
 type AIHookActionsFile struct {
 	Version   int                              `json:"version,omitempty"`
@@ -44,12 +54,18 @@ func (p Paths) DesktopNotifyModeFile() string {
 	return filepath.Join(p.ConfigDir, DesktopNotifyModeFileName)
 }
 
+// NormalizeDesktopNotifyMode maps a persisted literal onto the two-state
+// model. Retired `raise`-family literals resolve to `notify` so the saved file
+// keeps pinning the resolution instead of falling through to a
+// lower-precedence source. Unknown and empty values take the default.
 func NormalizeDesktopNotifyMode(value string) DesktopNotifyMode {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if slices.Contains(legacyDesktopNotifyRaiseAliases, normalized) {
+		return DesktopNotifyModeNotify
+	}
+	switch normalized {
 	case string(DesktopNotifyModeOff):
 		return DesktopNotifyModeOff
-	case string(DesktopNotifyModeRaise):
-		return DesktopNotifyModeRaise
 	case string(DesktopNotifyModeNotify):
 		return DesktopNotifyModeNotify
 	default:

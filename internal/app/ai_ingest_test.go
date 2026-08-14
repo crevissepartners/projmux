@@ -1088,7 +1088,7 @@ func TestAIHookDesktopNotificationUsesQueueTextPayload(t *testing.T) {
 			t.Fatalf("notify-send args = %#v, want %q", notifySend.args, want)
 		}
 	}
-	toastScript := buildToastPowerShell(notification.Summary, notification.Body, notification.AppName, notification.Tag, notification.Group, "", "", defaultAINotifyExpireMS)
+	toastScript := buildToastPowerShell(notification.Summary, notification.Body, notification.AppName, notification.Tag, notification.Group, "", defaultAINotifyExpireMS)
 	if !strings.Contains(toastScript, text) || !strings.Contains(toastScript, notification.Body) {
 		t.Fatalf("toast script missing shared payload:\n%s", toastScript)
 	}

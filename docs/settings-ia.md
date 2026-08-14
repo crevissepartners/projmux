@@ -66,7 +66,9 @@ view-first layout:
   Settings row. `PROJMUX_NOTIFY_HOOK` override presence is folded into Delivery
   sources summary/detail instead of appearing as a separate root row.
 - `Settings > Notifications > Desktop notifications` owns the desktop
-  notification mode. The detail choices are `none`, `notify`, and `raise`.
+  notification mode. The detail choices are exactly `off` and `notify`. The
+  retired `raise` mode is not offered; existing saved `raise` values are read
+  as `notify`.
 - `Settings > Notifications > AI notification dedupe` owns the duplicate
   desktop AI notification collapse window. It stores integer seconds and shows
   the effective source; `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` remains the top

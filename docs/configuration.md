@@ -430,7 +430,7 @@ confidence for DB-validated cache sources or low confidence for legacy history.
 | `PROJMUX_AI_RESUME_SCAN_DEPTH` | Overrides the AI resume picker cwd-tree scan depth (`[ai] resume_scan_depth`). Clamped to 0-8; takes priority over project and global config. Depth 0 keeps the exact-cwd behavior. |
 | `PROJMUX_NOTIFY_HOOK_DEPTH` | Internal recursion guard for `send-noti` hooks. Depth `>= 1` suppresses nested hook dispatch while still allowing the queue write itself. |
 | `PROJMUX_NOTIFY_EXPIRE_MS` | AI desktop notification expiration in milliseconds. Defaults to `5000`; unset, zero, negative, and non-numeric values fall back to the default. |
-| `PROJMUX_DESKTOP_NOTIFY_MODE` | OS desktop notification mode override. `none` / `notify` / `raise` (case insensitive). When set, this takes priority over every other resolution rung. The in-app notify queue is not affected. |
+| `PROJMUX_DESKTOP_NOTIFY_MODE` | OS desktop notification mode override. `off` / `none` / `notify` (case insensitive). When set, this takes priority over every other resolution rung. The in-app notify queue is not affected. The retired `raise` / `auto-raise` / `autoraise` literals are still accepted and read as `notify`. |
 | `PROJMUX_DESKTOP_NOTIFY` | Legacy on/off override kept for backward compatibility. `on` maps to `notify`, `off` maps to `none`. Honored only when `PROJMUX_DESKTOP_NOTIFY_MODE` is unset. |
 | `PROJMUX_WSL_TOAST_ICON_DIR` | Directory used when copying the WSL toast icon into a Windows-readable path. |
 | `PROJMUX_USAGE_STATE_DIR` | Override directory for AI usage snapshots. Defaults to `<state>/projmux/usage`. Point this at a synced directory to share authoritative usage across machines. |
@@ -576,40 +576,42 @@ only a generic in-app queue/sidebar/statusbar row; it does not fire OS toast,
 
 ### Desktop notification mode
 
-The OS-level dispatch carries three modes. The in-app notify queue, the
+The OS-level dispatch carries two modes. The in-app notify queue, the
 statusbar segment, and the attention badge stay live regardless of which
-mode is active — only the toast / notify-send / auto-raise fan-out is
-gated here. The same mode also gates `projmux focus` post-switch osfocus
-dispatch: only `raise` asks the host terminal to come forward after a
-successful tmux focus.
+mode is active — only the toast / notify-send fan-out is gated here.
 
 | Mode | On push | On click |
 | --- | --- | --- |
 | `off` / `none` | no toast | n/a |
 | `notify` | toast / notify-send fires | no click action |
-| `raise` | toast / notify-send fires AND the host terminal is auto-raised via the osfocus chain | toast click invokes `projmux focus --uri` via the `projmux://` handler |
 
-Click activation is wired only for `raise`. The `projmux://` URI handler is
-registered on the first `raise` Notify of each tmux server (gated by the
-`@projmux_uri_protocol_registered_v6` marker). The
-mode only controls whether a toast fires at all and whether to follow it
-up with an on-push auto-raise. `off` / `none` and `notify` also suppress
-the focus-triggered osfocus raise after `projmux focus`.
+Desktop notification delivery never takes your host terminal window focus.
+The Toast carries no `launch` payload, projmux registers no `projmux://`
+protocol handler, and there is no auto-raise on push. `projmux focus` also
+stops at the tmux layer in every mode: it switches the client, window, and
+pane but never asks the host terminal window to come forward.
 
 Resolution order (highest priority first):
 
-1. `PROJMUX_DESKTOP_NOTIFY_MODE` env (`off` / `none` / `notify` / `raise`).
+1. `PROJMUX_DESKTOP_NOTIFY_MODE` env (`off` / `none` / `notify`).
 2. `PROJMUX_DESKTOP_NOTIFY` env (legacy `on` / `off`; `on` → `notify`,
    `off` → `none`).
 3. Saved Settings config
    `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/desktop-notify-mode`
-   (`off` / `notify` / `raise`).
+   (`off` / `notify`).
 4. Tmux global option `@projmux_desktop_notify_mode`.
 5. Tmux global option `@projmux_desktop_notify` (legacy `1` / `0`, same
    mapping as the env above).
-6. Default = `raise` when running inside WSL with `$WT_SESSION` set
-   (Windows Terminal × WSL is the measured-working cell for osfocus
-   raise today); otherwise `notify`.
+6. Default = `notify` on every platform, WSL + Windows Terminal included.
+
+The retired `raise` mode was removed in 0.11.0. Wherever a mode literal is
+read — env, saved file, or tmux option — `raise`, `auto-raise`, and
+`autoraise` are still accepted and resolve to `notify` **in that same
+source**, so an old value keeps pinning the resolution instead of falling
+through to a lower-precedence rung. The alias never re-enables host-window
+focus, a clickable Toast, or URI handler registration; it is not offered in
+Settings and is never written back — the first Settings press or
+`projmux tmux apply` replaces it with `notify`.
 
 Migration is intentionally read-time. Users with the previous legacy
 toggle set keep their behavior — `@projmux_desktop_notify=0` resolves to
@@ -631,83 +633,27 @@ Settings names that entry point as **Project recipe** (search still matches
 `config.toml` as an alias) to avoid leaking internal file names in the primary
 Settings view.
 
-### Toast click handler (WSL + Windows Terminal)
+### Toast click handler (WSL + Windows Terminal) — retired in 0.11.0
 
-On WSL, projmux registers a `projmux://` URL scheme on the Windows side
-the first time a Toast is dispatched on each tmux server. Clicking the
-toast hands control back to projmux inside WSL via the registered command:
+projmux used to register a `projmux://` URL scheme on the Windows side and
+emit clickable Toasts whose click routed back into `projmux focus --uri`.
+That path is **removed**: desktop notifications are passive, carry no
+`launch` payload, and projmux registers no protocol handler. Clicking a
+projmux Toast does nothing.
 
-```text
-wscript.exe //B //Nologo "%LOCALAPPDATA%\projmux\projmux-uri-handler.vbs" "%1"
-```
+Consequences for existing installs:
 
-Registration writes the VBScript launcher under `%LOCALAPPDATA%\projmux`.
-The launcher receives `%1` as a WScript argument, caret-escapes command-line
-metacharacters such as `&`, and starts a hidden `%ComSpec% /d /s /c` command
-that invokes `wsl.exe`. Its argv semantics are equivalent to:
+- A `HKCU\Software\Classes\projmux` key written by an earlier version is
+  **not** removed automatically. Delete it manually if you want the scheme
+  gone; leaving it in place is harmless because nothing produces the URI.
+- `projmux focus --uri` still parses `projmux://focus?...` as a
+  compatibility input, so a handler you wired yourself keeps working. No
+  projmux code path produces such a URI any more.
+- The `@projmux_uri_protocol_registered*` tmux markers are no longer read or
+  written. Stale markers are inert.
 
-```text
-wsl.exe -d $WSL_DISTRO_NAME --exec <absolute-path-to-projmux> focus --uri <uri>
-```
-
-For click activation to work in our unpackaged Win32 setup, four
-conditions must hold simultaneously — all of them are arranged by the
-notify path so users do not configure anything:
-
-1. No COM Toast Activator is registered. The shortcut writes only
-   `PKEY_AppUserModel_ID` (pid=5) and intentionally omits
-   `PKEY_AppUserModel_ToastActivatorCLSID` (pid=26). When a COM activator
-   is registered alongside the AppID, Windows tries COM first, silently
-   fails for unpackaged exes, and does *not* fall through to the launch
-   URI. Stripping the COM side makes Windows ShellExecute the launch URI
-   on click.
-2. The Start Menu shortcut exists with the AppID set. The shortcut is
-   never launched — it is a property bag so the toast can route under
-   the right DisplayName + icon.
-3. The shortcut target is `cmd.exe /c exit`. Earlier code used
-   `powershell.exe -WindowStyle Hidden -Command exit`; Windows Defender
-   silently quarantines such shortcuts moments after creation, which
-   leaves no AppID-tagged shortcut and breaks both the routing and the
-   click path. `cmd.exe /c exit` is treated as benign and survives.
-4. The WSL handler uses a WScript launcher instead of launching `wsl.exe` or
-   `powershell.exe` directly, avoiding the transient Windows console flash on
-   Toast click. Inside that launcher it still uses `--exec`, not `--`.
-   `wsl.exe -- <cmd>` routes its tail through the user's login shell, which
-   parses `&` query-string separators as background-job operators (zsh emits
-   `parse error near '&'`). `--exec` skips the shell and invokes the binary
-   directly. The `%1` URI is passed as a WScript argument and then forwarded
-   through a hidden cmd.exe command line with `&` escaped as `^&`, so query
-   separators are data instead of PowerShell, cmd, or WSL login-shell syntax.
-   The absolute WSL filesystem path to the binary is captured at registration
-   so PATH does not need to be populated under `--exec`.
-
-The URI carries the originating pane id and tmux socket so the click
-round-trips back to the exact pane that fired the notification, which
-the `projmux focus` path then redirects via `tmux switch-client`.
-
-Registration markers and the writes involved:
-
-- Registry keys (HKCU): `SOFTWARE\Classes\projmux\(Default)`,
-  `SOFTWARE\Classes\projmux\URL Protocol`, and
-  `SOFTWARE\Classes\projmux\shell\open\command\(Default)`.
-- Launcher file: `%LOCALAPPDATA%\projmux\projmux-uri-handler.vbs`.
-- tmux user-option marker `@projmux_uri_protocol_registered_v6` records that
-  registration has been attempted on this server so the script runs at most
-  once per server boot. (The v5 marker
-  `@projmux_uri_protocol_registered_v5` was bumped when the WScript launcher
-  added the hidden cmd.exe parser hop; existing v5 users re-register
-  transparently on the next Notify after upgrade. After successful v6
-  registration, projmux removes legacy URI marker keys from v1 through v5 so
-  tmux state reflects only the active handler generation.)
-
-Limitations:
-
-- The handler captures the user's current `WSL_DISTRO_NAME` at registration
-  time. Users running multiple WSL distros get one handler bound to the
-  first distro that fired a toast — clicks from a different distro's toast
-  will route back through the first distro. Tier-2 follow-up.
-- WSL2 cold-start latency: the first click after a long idle goes through
-  WSL boot and typically takes 2-3s to surface the focus on the pane.
+The measurement trail for the retired design is kept for history in
+[notify-os-focus-poc.md](notify-os-focus-poc.md).
 
 ## Usage Tracking
 

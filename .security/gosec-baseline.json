@@ -275,13 +275,6 @@
     },
     {
       "rule": "G204",
-      "path": "internal/integrations/osfocus/wt_wsl_posix.go",
-      "message": "Subprocess launched with variable",
-      "source": "cmd := exec.Command(\"bash\", \"-c\", quoted)",
-      "max_count": 1
-    },
-    {
-      "rule": "G204",
       "path": "internal/integrations/psmux/client.go",
       "message": "Subprocess launched with variable",
       "source": "cmd := exec.CommandContext(ctx, name, args...)",

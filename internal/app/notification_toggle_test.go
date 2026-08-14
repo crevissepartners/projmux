@@ -15,43 +15,28 @@ func TestDesktopNotifyResolverModeCascade(t *testing.T) {
 		configSet  bool
 		optMode    string
 		optLegacy  string
-		isWSL      bool
-		wtPresent  bool
 		wantMode   desktopNotifyMode
 		wantSource desktopNotifySource
 	}{
-		{
-			name:  "default in WSL with WT",
-			isWSL: true, wtPresent: true,
-			wantMode: desktopNotifyModeRaise, wantSource: desktopNotifySourceDefault,
-		},
-		{
-			name: "default in WSL without WT", isWSL: true,
-			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceDefault,
-		},
-		{
-			name: "default outside WSL with WT", wtPresent: true,
-			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceDefault,
-		},
 		{
 			name:     "default linux",
 			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceDefault,
 		},
 		{
-			name: "new tmux option none beats default raise", isWSL: true, wtPresent: true, optMode: "none",
+			name: "new tmux option off beats default", optMode: "off",
 			wantMode: desktopNotifyModeNone, wantSource: desktopNotifySourceSetting,
 		},
 		{
-			name: "saved config off beats new tmux option", configMode: desktopNotifyModeNone, configSet: true, optMode: "raise",
+			name: "new tmux option none beats default", optMode: "none",
 			wantMode: desktopNotifyModeNone, wantSource: desktopNotifySourceSetting,
 		},
 		{
-			name: "new env beats saved config", envMode: "raise", configMode: desktopNotifyModeNone, configSet: true,
-			wantMode: desktopNotifyModeRaise, wantSource: desktopNotifySourceEnv,
+			name: "saved config off beats new tmux option", configMode: desktopNotifyModeNone, configSet: true, optMode: "notify",
+			wantMode: desktopNotifyModeNone, wantSource: desktopNotifySourceSetting,
 		},
 		{
-			name: "new tmux option raise beats default notify", optMode: "raise",
-			wantMode: desktopNotifyModeRaise, wantSource: desktopNotifySourceSetting,
+			name: "new env beats saved config", envMode: "notify", configMode: desktopNotifyModeNone, configSet: true,
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceEnv,
 		},
 		{
 			name: "new tmux option notify pinned", optMode: "notify",
@@ -66,36 +51,62 @@ func TestDesktopNotifyResolverModeCascade(t *testing.T) {
 			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceSettingLegacy,
 		},
 		{
-			name: "new tmux overrides legacy tmux", optMode: "raise", optLegacy: "0",
-			wantMode: desktopNotifyModeRaise, wantSource: desktopNotifySourceSetting,
+			name: "new tmux overrides legacy tmux", optMode: "notify", optLegacy: "0",
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceSetting,
 		},
 		{
-			name: "new env beats new tmux", envMode: "none", optMode: "raise",
+			name: "new env beats new tmux", envMode: "none", optMode: "notify",
 			wantMode: desktopNotifyModeNone, wantSource: desktopNotifySourceEnv,
 		},
 		{
-			name: "legacy env beats new tmux when new env unset", envLegacy: "off", optMode: "raise",
+			name: "legacy env beats new tmux when new env unset", envLegacy: "off", optMode: "notify",
 			wantMode: desktopNotifyModeNone, wantSource: desktopNotifySourceEnvLegacy,
 		},
 		{
-			name: "new env beats legacy env", envMode: "raise", envLegacy: "off",
-			wantMode: desktopNotifyModeRaise, wantSource: desktopNotifySourceEnv,
+			name: "new env beats legacy env", envMode: "notify", envLegacy: "off",
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceEnv,
 		},
 		{
 			name: "unknown new env falls through to legacy env", envMode: "garbage", envLegacy: "on",
 			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceEnvLegacy,
 		},
 		{
-			name: "unknown new env, unknown legacy env, falls through to tmux", envMode: "garbage", envLegacy: "garbage", optMode: "raise",
-			wantMode: desktopNotifyModeRaise, wantSource: desktopNotifySourceSetting,
+			name: "unknown new env, unknown legacy env, falls through to tmux", envMode: "garbage", envLegacy: "garbage", optMode: "notify",
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceSetting,
 		},
 		{
-			name: "env mode case insensitive", envMode: "RAISE",
-			wantMode: desktopNotifyModeRaise, wantSource: desktopNotifySourceEnv,
+			name: "env mode case insensitive", envMode: "NOTIFY",
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceEnv,
 		},
 		{
 			name: "env mode off alias maps to none", envMode: "OFF",
 			wantMode: desktopNotifyModeNone, wantSource: desktopNotifySourceEnv,
+		},
+		// Retired `raise` family: resolved as `notify` in the source that
+		// carries it, never leaking down to a lower-precedence rung.
+		{
+			name: "legacy raise env resolves to notify in env", envMode: "raise",
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceEnv,
+		},
+		{
+			name: "legacy raise env does not fall through to legacy env off", envMode: "auto-raise", envLegacy: "off",
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceEnv,
+		},
+		{
+			name: "legacy raise env does not fall through to tmux off", envMode: "AUTORAISE", optMode: "off",
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceEnv,
+		},
+		{
+			name: "legacy raise saved config resolves to notify in setting", configMode: desktopNotifyModeNotify, configSet: true, optMode: "off",
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceSetting,
+		},
+		{
+			name: "legacy raise tmux option resolves to notify in setting", optMode: "raise", optLegacy: "0",
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceSetting,
+		},
+		{
+			name: "legacy autoraise tmux option resolves to notify in setting", optMode: "autoraise",
+			wantMode: desktopNotifyModeNotify, wantSource: desktopNotifySourceSetting,
 		},
 	}
 	for _, tc := range cases {
@@ -122,14 +133,32 @@ func TestDesktopNotifyResolverModeCascade(t *testing.T) {
 					}
 					return ""
 				},
-				isWSL:     tc.isWSL,
-				wtPresent: tc.wtPresent,
 			}
 			gotMode, gotSource := resolver.resolveMode()
 			if gotMode != tc.wantMode || gotSource != tc.wantSource {
 				t.Fatalf("resolveMode() = (%q, %q), want (%q, %q)", gotMode, gotSource, tc.wantMode, tc.wantSource)
 			}
 		})
+	}
+}
+
+// TestDesktopNotifyResolverDefaultIsNotifyOnEveryPlatform pins that the
+// unset-everything default no longer depends on any host signal. WSL +
+// Windows Terminal used to default to the retired `raise` mode; it must now
+// resolve to `notify` exactly like every other platform.
+func TestDesktopNotifyResolverDefaultIsNotifyOnEveryPlatform(t *testing.T) {
+	for _, env := range []map[string]string{
+		{},
+		{"WSL_DISTRO_NAME": "Ubuntu-24.04"},
+		{"WT_SESSION": "abc-123"},
+		{"WSL_DISTRO_NAME": "Ubuntu-24.04", "WT_SESSION": "abc-123"},
+	} {
+		lookup := func(name string) string { return env[name] }
+		resolver := settingsDesktopNotifyResolver(func() (string, error) { return t.TempDir(), nil }, lookup)
+		gotMode, gotSource := resolver.resolveMode()
+		if gotMode != desktopNotifyModeNotify || gotSource != desktopNotifySourceDefault {
+			t.Fatalf("resolveMode() with env %#v = (%q, %q), want (notify, default)", env, gotMode, gotSource)
+		}
 	}
 }
 
@@ -177,9 +206,10 @@ func TestParseDesktopNotifyModeAccepts(t *testing.T) {
 		{"disabled", desktopNotifyModeNone},
 		{"notify", desktopNotifyModeNotify},
 		{"toast", desktopNotifyModeNotify},
-		{"raise", desktopNotifyModeRaise},
-		{"AUTO-RAISE", desktopNotifyModeRaise},
-		{"autoraise", desktopNotifyModeRaise},
+		// Retired `raise` family: accepted, read as notify.
+		{"raise", desktopNotifyModeNotify},
+		{"AUTO-RAISE", desktopNotifyModeNotify},
+		{"autoraise", desktopNotifyModeNotify},
 	} {
 		t.Run(tc.in, func(t *testing.T) {
 			got, ok := parseDesktopNotifyMode(tc.in)

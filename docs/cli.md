@@ -275,9 +275,8 @@ client is attached on that socket, it emits the configured desktop
 notification instead. `--socket` is explicit; when omitted, the socket is
 derived from `$TMUX`.
 
-After a successful tmux focus, `projmux focus` dispatches host-terminal
-osfocus only when Desktop notification mode is `raise`. Modes `off` /
-`none` and `notify` keep focus in tmux without a host-window raise.
+`projmux focus` stops at the tmux layer. It never asks the host terminal
+window to come forward, in any Desktop notification mode.
 
 `--client` is a preferred origin tmux client. In-app consumers such as the
 status bar and notify sidebar pass the clicked client so focus redirects that
@@ -285,11 +284,13 @@ display first. If that client is gone, focus falls back to an attached client
 already viewing the target session, then the stable first attached client.
 Toast clicks do not pass `--client`.
 
-`--uri` is the entry point used by the WSL Toast click handler (see
-[configuration.md](configuration.md#toast-click-handler-wsl--windows-terminal)).
-The pane id from the URI is resolved to a `SESSION:WINDOW.%paneID` target
-via `tmux display-message`, and the URI's `socket` overrides any
-`--socket` flag so the click round-trips back to the right tmux server.
+`--uri` is a compatibility input. projmux no longer emits clickable Toasts and
+no longer registers a `projmux://` protocol handler (see
+[configuration.md](configuration.md#toast-click-handler-wsl--windows-terminal-retired-in-0110)),
+so nothing in the product produces such a URI; the flag stays so a handler
+wired before 0.11.0, or one you wired yourself, keeps working. The pane id
+from the URI is resolved to a `SESSION:WINDOW.%paneID` target via
+`tmux display-message`, and the URI's `socket` overrides any `--socket` flag.
 `--uri` and `--target` are mutually exclusive.
 
 Exit codes:

@@ -303,10 +303,12 @@ Outcomes:
 - **Other failure** — keep the entry, toast `focus failed: <reason>`
   so the user can retry without losing the row.
 
-The same consume policy is shared by notify-sidebar Enter and OS
-click-to-focus Toast callbacks after a real tmux focus dispatch succeeds.
-OS Toast click-to-focus is only registered when Desktop notification mode is
-`raise`; the in-app sidebar/statusbar consume path works in every mode.
+The same consume policy is shared by notify-sidebar Enter and any
+`projmux focus --uri` invocation, after a real tmux focus dispatch succeeds.
+Desktop notifications are passive as of 0.11.0 — projmux emits no clickable
+Toast and registers no `projmux://` handler — so the URI ack path is a
+compatibility surface only. The in-app sidebar/statusbar consume path works in
+every desktop notification mode.
 Pane focus hooks and attention clear paths remain live-attention-only and do
 not ack the notify queue; their response-complete badge consume is limited to
 live tmux pane badge/state options. Non-critical AI completion producers also compact

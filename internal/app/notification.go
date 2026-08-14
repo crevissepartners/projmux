@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/integrations/osfocus"
 )
 
 const (
@@ -76,28 +75,22 @@ func (n aiHookNotifier) Notify(notification aiNotification) error {
 type aiDesktopNotifier struct {
 	command             *aiCommand
 	deliveryDiagnostics notifyDeliveryDiagnostics
-	// osFocusChain is an optional injection seam for the auto-raise hook
-	// fired when the resolved mode is `raise`. When nil, defaultOSFocusChain()
-	// builds the production tier-1 chain (Windows Terminal × WSL adapter
-	// today). Tests inject a stub so they don't shell out to wt.exe.
-	osFocusChain osFocusDispatcher
 }
 
 func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 	started := time.Now()
 	deliveryDiagnostics := n.deliveryDiagnostics
 	deliveryDiagnostics.provider, deliveryDiagnostics.category = notification.diagnosticProvider, notification.diagnosticCategory
-	// 3-way mode gate. The in-app notify queue, the statusbar segment,
+	// Two-state mode gate. The in-app notify queue, the statusbar segment,
 	// and the attention badge are intentionally untouched — this only
 	// suppresses the OS-level dispatch so users can silence the
 	// popup/Toast/notify-send fan-out without losing the in-app
 	// surfaces.
 	//
 	// `mode=none` skips dispatch entirely. `mode=notify` dispatches the
-	// toast / notify-send without auto-raise or click-to-focus.
-	// `mode=raise` dispatches with the projmux:// click target and follows
-	// up with an osfocus chain call to bring the host terminal to the
-	// foreground.
+	// toast / notify-send and nothing else: the Toast carries no click URI,
+	// no URI protocol handler is registered, and the host terminal window
+	// is never focused or raised.
 	mode := n.command.desktopNotifyMode()
 	if mode == desktopNotifyModeNone {
 		deliveryDiagnostics.record(diagnostics.DispositionSuppressed, diagnostics.RouteDisabled, "", started)
@@ -106,13 +99,9 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 	expireMS := notification.ExpireMS
 	if n.command.isWSL() {
 		n.command.ensureWSLLegacyAppIDCleaned(notification)
-		if mode == desktopNotifyModeRaise {
-			n.command.ensureWSLURIProtocol()
-		}
 		_ = n.ensureWSLToastAppID(notification)
-		if err := n.dispatchWSLToast(notification, mode == desktopNotifyModeRaise, expireMS); err == nil {
+		if err := n.dispatchWSLToast(notification, expireMS); err == nil {
 			deliveryDiagnostics.record(diagnostics.DispositionDelivered, diagnostics.RouteWSLToast, "", started)
-			n.maybeRaiseHostTerminal(mode, notification)
 			return nil
 		}
 		if n.command.readTrimmed("command", "-v", "wsl-notify-send.exe") != "" {
@@ -122,7 +111,6 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 			}
 			if err := n.command.run("wsl-notify-send.exe", "--category", notification.AppName, message); err == nil {
 				deliveryDiagnostics.record(diagnostics.DispositionDelivered, diagnostics.RouteWSLNotifySend, "", started)
-				n.maybeRaiseHostTerminal(mode, notification)
 				return nil
 			}
 		}
@@ -152,54 +140,17 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 		return err
 	}
 	deliveryDiagnostics.record(diagnostics.DispositionDelivered, diagnostics.RouteNotifySend, "", started)
-	n.maybeRaiseHostTerminal(mode, notification)
 	return nil
 }
 
-// maybeRaiseHostTerminal fires the osfocus chain to bring the host
-// terminal to the foreground when mode=raise. The call is intentionally
-// best-effort:
-//
-//   - The chain swallows adapter errors and returns nil when no adapter
-//     detects (the silent-fallback policy documented on osfocus.Chain).
-//   - The dispatch is paired with a *successful* notification dispatch,
-//     so the user always sees both the toast and the raised terminal as
-//     a pair — we never raise without an accompanying notification.
-//
-// The Target's Pane is set to the originating pane id (aiNotification.Tag);
-// other Target fields stay empty because the tier-1
-// WindowsTerminalWSLAdapter ignores everything but `wt.exe -w 0
-// focus-tab` semantics. Tier-2 adapters that route to specific
-// windows/tabs can use Pane as a hint without changing the call site.
-func (n aiDesktopNotifier) maybeRaiseHostTerminal(mode desktopNotifyMode, notification aiNotification) {
-	if mode != desktopNotifyModeRaise {
-		return
-	}
-	chain := n.osFocusChain
-	if chain == nil {
-		chain = defaultOSFocusChain()
-	}
-	_ = chain.Focus(osfocus.Target{Pane: strings.TrimSpace(notification.Tag)})
-}
-
-func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification, clickToFocus bool, expireMS int) error {
+// dispatchWSLToast shows a passive Toast. The Toast intentionally carries no
+// `launch` payload and no `activationType="protocol"` pair: desktop delivery
+// must never be able to steal the host terminal window focus, so there is no
+// click target and no URI protocol handler to register.
+func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification, expireMS int) error {
 	powerShell := n.command.resolvePowerShell()
 	if powerShell == "" {
 		return errors.New("powershell.exe is unavailable")
-	}
-	// `notification.Tag` carries the originating pane id (e.g. `%8`); the
-	// Toast click handler needs that plus the live tmux socket path so it
-	// can route back to the right server. Reading `#{socket_path}` here
-	// (rather than threading it through the producer) keeps the existing
-	// notify call sites unchanged and naturally tracks the user's
-	// current tmux server, which is what we want for click round-trip.
-	socket := ""
-	if strings.TrimSpace(notification.Tag) != "" {
-		socket = n.command.readTrimmed("tmux", "display-message", "-p", "#{socket_path}")
-	}
-	launchURI := ""
-	if clickToFocus {
-		launchURI = buildFocusURI(notification.Tag, socket)
 	}
 	script := buildToastPowerShell(
 		notification.Summary,
@@ -208,7 +159,6 @@ func (n aiDesktopNotifier) dispatchWSLToast(notification aiNotification, clickTo
 		notification.Tag,
 		notification.Group,
 		n.command.wslToastIconPath(notification.Icon),
-		launchURI,
 		expireMS,
 	)
 	return n.command.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script))
@@ -246,62 +196,6 @@ func (n aiDesktopNotifier) ensureWSLToastAppID(notification aiNotification) erro
 	}
 	script := buildRegisterToastAppIDPowerShell(appID, displayName, n.command.wslToastIconPath(notification.Icon))
 	return n.command.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script))
-}
-
-// ensureWSLURIProtocol registers the `projmux://` URL scheme in the user's
-// HKCU registry so a Toast click is routed back into `projmux focus --uri`
-// running inside the same WSL distro that produced the notification. It
-// runs at most once per tmux server, gated by
-// `@projmux_uri_protocol_registered`.
-//
-// The handler command binds to the *current* WSL_DISTRO_NAME at
-// registration time — users who switch distros mid-server keep the
-// originally-registered handler. This is the documented multi-distro
-// limitation captured in docs/configuration.md.
-//
-// The marker is only set on a successful PowerShell launch. Failure cases
-// (missing distro env, no PowerShell available, run error) leave the
-// marker unset so a later Notify call retries. The registration script
-// itself swallows individual errors so even a partial registry write
-// doesn't break the notification dispatch.
-func (c *aiCommand) ensureWSLURIProtocol() {
-	if !c.isWSL() {
-		return
-	}
-	if strings.TrimSpace(c.readTrimmed("tmux", "show-options", "-gqv", uriProtocolRegisteredTmuxOption)) == "1" {
-		return
-	}
-	distro := strings.TrimSpace(c.env("WSL_DISTRO_NAME"))
-	if distro == "" {
-		// We don't know which distro the click should target — skipping
-		// without setting the marker lets a later call (after WSLENV is
-		// populated) retry the registration.
-		return
-	}
-	// Resolve the absolute WSL path to this projmux binary so the registry
-	// command can use `wsl.exe --exec <abs-path>` (no shell, no PATH
-	// dependency). If we can't resolve the path, skip without setting the
-	// marker so a later Notify retries with a healthier environment.
-	binaryPath, err := c.binaryPath()
-	if err != nil {
-		return
-	}
-	binaryPath = strings.TrimSpace(binaryPath)
-	if binaryPath == "" {
-		return
-	}
-	powerShell := c.resolvePowerShell()
-	if powerShell == "" {
-		return
-	}
-	script := buildRegisterURIProtocolPowerShell(desktopURIScheme, distro, binaryPath)
-	if err := c.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script)); err != nil {
-		return
-	}
-	for _, option := range legacyURIProtocolRegisteredTmuxOptions {
-		_ = c.run("tmux", "set-option", "-g", "-u", option)
-	}
-	_ = c.run("tmux", "set-option", "-g", uriProtocolRegisteredTmuxOption, "1")
 }
 
 // ensureWSLLegacyAppIDCleaned removes the Start Menu shortcut and the

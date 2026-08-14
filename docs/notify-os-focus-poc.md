@@ -1,7 +1,23 @@
-# Notify OS Focus Spike
+# Notify OS Focus Spike (HISTORICAL — retired in 0.11.0)
 
-This document is the on-floor matrix for the "Notify 시 터미널 OS 포커스"
-roadmap item. The first step of that roadmap is explicitly a **spike with no
+> **Status: retired. This document is kept for its measurement trail only and
+> does not describe current behavior.**
+>
+> Desktop notification became a two-state model (`off` / `notify`) in 0.11.0.
+> Notification delivery never takes host terminal window focus, Toasts carry no
+> click URI, and projmux registers no `projmux://` protocol handler. The
+> `raise` mode, the `internal/integrations/osfocus/` adapter package, and the
+> Toast click handler described below were all **removed**. `projmux focus`
+> stops at the tmux layer in every mode.
+>
+> Everything below — the terminal × OS matrix, the tier decisions, the "shipped"
+> sections, and the file-map — records what was measured and shipped before that
+> removal. Read it as history, not as a description of the product. Current
+> behavior is documented in
+> [configuration.md](configuration.md#desktop-notification-mode).
+
+This document was the on-floor matrix for the "Notify 시 터미널 OS 포커스"
+roadmap item. The first step of that roadmap was explicitly a **spike with no
 code** — fill in the tables below with real measurements, then make the
 follow-on decisions before any adapter code lands.
 
@@ -266,13 +282,18 @@ talk to and falls through to the next on detect failure.
 
 Locked 2026-05-11.
 
-### Tier-1 status
+### Tier-1 status (RETIRED)
 
-Tier-1 adapter shipped: `internal/integrations/osfocus/` with
-`WindowsTerminalWSLAdapter`. Other matrix rows remain pending tier-2
-measurements.
+Tier-1 adapter shipped as `internal/integrations/osfocus/` with
+`WindowsTerminalWSLAdapter`; other matrix rows stayed pending tier-2
+measurements. **The package and its call sites were removed in 0.11.0** —
+notification delivery must not take host terminal window focus. Tier-2 was
+never started and is not planned.
 
-### Tier-1.5 shipped — Toast click handler (WSL + Windows Terminal)
+### Tier-1.5 (RETIRED) — Toast click handler (WSL + Windows Terminal)
+
+**Removed in 0.11.0.** Toasts are passive, no `projmux://` handler is
+registered, and the mode selector below no longer exists. Kept for history.
 
 The toast notification produced by `aiDesktopNotifier.Notify` on WSL
 carries a `launch="projmux://focus?..." activationType="protocol"`
@@ -403,5 +424,5 @@ summary.
   precedent for terminal detection and per-terminal adapter dispatch.
 - [`internal/integrations/tmux/`](../internal/integrations/tmux/) — external
   process helpers; pattern to reuse for the new adapters.
-- Planned: `internal/integrations/osfocus/` — new home for the OS / terminal
-  focus adapters once the matrix above is filled in.
+- Retired: `internal/integrations/osfocus/` — was the home for the OS /
+  terminal focus adapters; removed in 0.11.0 along with the `raise` mode.

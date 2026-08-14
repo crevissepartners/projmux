@@ -34,6 +34,14 @@ tmuxRetiredKeyUnbindLines
 # Operational diagnostics Phase 2 typed no-write seam. Doctor Phase 2 is the
 # planned consumer after this producer contract lands.
 ReadRuntimeHealth
+# `projmux://focus?...` encoder. Desktop notification delivery became a
+# two-state model in 0.11.0 (off / notify): Toasts carry no click URI and no
+# protocol handler is registered, so nothing in production emits this URI any
+# more. `projmux focus --uri` and parseFocusURI stay as a compatibility input
+# for handlers wired before 0.11.0, and this encoder is the canonical
+# round-trip counterpart that keeps the retained parser honest. Do not remove
+# it while the parser is supported.
+buildFocusURI
 # "last-pane" action handler: audit shows it as dead but it is a PLANNED
 # consumer and must stay (it is a keybinding catalog string ID, not a func,
 # so deadcode does not flag it by name -- recorded here for intent).

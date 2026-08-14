@@ -13,23 +13,28 @@ import (
 // of which desktop dispatch mode is active (loud-environment / screen-share
 // use case).
 //
-// The setting carries three values:
+// The setting carries two values:
 //
-//	none    — no toast, no auto-raise
-//	notify  — toast only (no click-to-focus)
-//	raise   — toast + click-to-focus + auto-raise host terminal via osfocus chain
+//	none    — no toast, no notify-send
+//	notify  — OS notification only
 //
-// Click handling is only enabled in raise mode, where the URI handler is
-// registered on first dispatch. The mode gates whether to fire a toast,
-// whether the toast is clickable, and whether to auto-raise on push.
+// Delivery never focuses or raises the host terminal window, the Toast never
+// carries a click URI, and no URI protocol handler is registered. The mode
+// only gates whether to fire the OS notification at all.
 //
 // Resolution priority (highest first):
-//  1. env `PROJMUX_DESKTOP_NOTIFY_MODE=off|none|notify|raise` (case-insensitive)
+//  1. env `PROJMUX_DESKTOP_NOTIFY_MODE=off|none|notify` (case-insensitive)
 //  2. env `PROJMUX_DESKTOP_NOTIFY` (legacy on/off, mapped: off→none, on→notify)
 //  3. saved config `~/.config/projmux/desktop-notify-mode`
 //  4. tmux global option `@projmux_desktop_notify_mode`
 //  5. tmux global option `@projmux_desktop_notify` (legacy `1`/`0`, same mapping)
-//  6. default = `raise` if (isWSL && $WT_SESSION present), else `notify`
+//  6. default = `notify` on every platform (WSL + Windows Terminal included)
+//
+// The retired `raise` / `auto-raise` / `autoraise` literals are still accepted
+// wherever a mode literal is read and resolve to `notify` *within that same
+// source*, so an old value keeps pinning the resolution instead of falling
+// through to a lower-precedence rung. They are never offered in Settings and
+// are never written back.
 //
 // The Settings popup exposes a row whose info line surfaces the source
 // (`env` / `env (legacy)` / `setting` / `setting (legacy)` / `default`)
@@ -54,11 +59,11 @@ const (
 	// shape as the tmux option above.
 	desktopNotifyEnv = "PROJMUX_DESKTOP_NOTIFY"
 
-	// desktopNotifyModeTmuxOption is the 3-way mode user-option that
-	// Settings writes. Values: `none` / `notify` / `raise`.
+	// desktopNotifyModeTmuxOption is the mode user-option that Settings
+	// writes. Written values are only `off` / `notify`.
 	desktopNotifyModeTmuxOption = "@projmux_desktop_notify_mode"
 
-	// desktopNotifyModeEnv is the 3-way env override. Same values as the
+	// desktopNotifyModeEnv is the mode env override. Same values as the
 	// tmux option, case insensitive.
 	desktopNotifyModeEnv = "PROJMUX_DESKTOP_NOTIFY_MODE"
 )
@@ -69,18 +74,13 @@ type desktopNotifyMode string
 const (
 	// desktopNotifyModeNone disables the OS-level dispatch entirely. The
 	// in-app notify queue / statusbar / attention badge still fire — only
-	// the toast / notify-send / osfocus raise are suppressed.
+	// the toast / notify-send are suppressed.
 	desktopNotifyModeNone desktopNotifyMode = "none"
 
 	// desktopNotifyModeNotify dispatches the OS notification (toast on
-	// WSL, notify-send on Linux). Click-to-focus and on-push auto-raise
-	// are OFF.
+	// WSL, notify-send on Linux) and nothing else. It never focuses or
+	// raises the host terminal window.
 	desktopNotifyModeNotify desktopNotifyMode = "notify"
-
-	// desktopNotifyModeRaise dispatches the OS notification with
-	// click-to-focus and auto-raises the host terminal via the osfocus
-	// chain after a successful dispatch.
-	desktopNotifyModeRaise desktopNotifyMode = "raise"
 )
 
 // desktopNotifySource describes where the effective mode came from. The
@@ -96,10 +96,12 @@ const (
 	desktopNotifySourceDefault       desktopNotifySource = "default"
 )
 
-// desktopNotifyResolver resolves the effective 3-way mode. The lookups
-// and the WSL/WT-host signals are injected as function pointers / fields
-// so the resolution path stays testable without spawning real tmux
-// processes or touching `/proc`.
+// desktopNotifyResolver resolves the effective mode. The lookups are
+// injected as function pointers so the resolution path stays testable
+// without spawning real tmux processes or touching `/proc`.
+//
+// The resolver deliberately carries no host/platform signal: the
+// unset-everything default is `notify` on every platform.
 type desktopNotifyResolver struct {
 	lookupEnv func(string) string
 	// readConfigMode reads the durable Settings value. The bool is false
@@ -109,36 +111,27 @@ type desktopNotifyResolver struct {
 	// Must return the trimmed string, or empty when tmux is unavailable or
 	// the option is unset.
 	readTmuxOption func(name string) string
-	// isWSL tells the default branch whether we are inside WSL. Combined
-	// with `wtPresent`, this decides whether the unset-everything default
-	// is `raise` or `notify`.
-	isWSL bool
-	// wtPresent indicates `$WT_SESSION` is set — the only signal that
-	// reliably survives the tmux env rewrite. The two-pronged default
-	// matches the WSL+Windows-Terminal cell where osfocus raise actually
-	// works today; everything else falls back to `notify` (toast only).
-	wtPresent bool
 }
 
-// parseDesktopNotifyMode maps a raw 3-way value to a desktopNotifyMode.
-// Returns (mode, true) on a known value; (_, false) when the input is
-// unknown or empty so the caller can fall through to the next rung.
+// parseDesktopNotifyMode maps a raw value to a desktopNotifyMode. Returns
+// (mode, true) on a known value; (_, false) when the input is unknown or
+// empty so the caller can fall through to the next rung.
+//
+// The retired `raise` family resolves to `notify` here rather than
+// returning false: an existing `raise` value must keep pinning its own
+// source instead of leaking the resolution down to a lower rung.
 func parseDesktopNotifyMode(raw string) (desktopNotifyMode, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "none", "off", "disabled":
 		return desktopNotifyModeNone, true
-	case "notify", "toast":
+	case "notify", "toast", "raise", "auto-raise", "autoraise":
 		return desktopNotifyModeNotify, true
-	case "raise", "auto-raise", "autoraise":
-		return desktopNotifyModeRaise, true
 	}
 	return "", false
 }
 
-// parseLegacyDesktopNotify maps the legacy boolean values to a 3-way
-// mode. Migration policy: legacy off → none, legacy on → notify. Users
-// who previously had auto-raise behavior didn't have it on the legacy
-// toggle (it didn't exist), so notify is the closest faithful migration.
+// parseLegacyDesktopNotify maps the legacy boolean values to a mode.
+// Migration policy: legacy off → none, legacy on → notify.
 func parseLegacyDesktopNotify(raw string) (desktopNotifyMode, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "off", "0", "false", "no":
@@ -153,8 +146,7 @@ func parseLegacyDesktopNotify(raw string) (desktopNotifyMode, bool) {
 //
 //	new env → legacy env → saved config → new tmux option → legacy tmux option → default
 //
-// The default rung uses `isWSL && wtPresent` to decide between `raise`
-// and `notify`.
+// The default rung is `notify` unconditionally.
 func (r desktopNotifyResolver) resolveMode() (desktopNotifyMode, desktopNotifySource) {
 	if r.lookupEnv != nil {
 		if mode, ok := parseDesktopNotifyMode(r.lookupEnv(desktopNotifyModeEnv)); ok {
@@ -177,17 +169,13 @@ func (r desktopNotifyResolver) resolveMode() (desktopNotifyMode, desktopNotifySo
 			return mode, desktopNotifySourceSettingLegacy
 		}
 	}
-	if r.isWSL && r.wtPresent {
-		return desktopNotifyModeRaise, desktopNotifySourceDefault
-	}
 	return desktopNotifyModeNotify, desktopNotifySourceDefault
 }
 
 // desktopNotifyMode is the convenience accessor used by the
 // `aiDesktopNotifier.Notify` gate. The gate uses the mode directly to
-// decide whether to dispatch the toast and whether to follow it up with
-// an auto-raise; the source label is reserved for the Settings UI render
-// path.
+// decide whether to dispatch the OS notification; the source label is
+// reserved for the Settings UI render path.
 func (c *aiCommand) desktopNotifyMode() desktopNotifyMode {
 	mode, _ := c.desktopNotifyModeResolution()
 	return mode
@@ -212,8 +200,6 @@ func (c *aiCommand) desktopNotifyModeResolution() (desktopNotifyMode, desktopNot
 			}
 			return c.readTrimmed("tmux", "show-options", "-gqv", name)
 		},
-		isWSL:     c.isWSL(),
-		wtPresent: strings.TrimSpace(c.env("WT_SESSION")) != "",
 	}
 	return resolver.resolveMode()
 }
@@ -223,15 +209,9 @@ func (c *aiCommand) desktopNotifyModeResolution() (desktopNotifyMode, desktopNot
 // production tmux reads go through the central mux runner while the pure
 // resolver remains unit-testable.
 //
-// isWSL and wtPresent are derived from the env lookup so the Settings
-// render path computes the same default as the runtime gate.
+// The Settings render path resolves through exactly the same cascade and
+// the same platform-neutral `notify` default as the runtime gate.
 func settingsDesktopNotifyResolver(homeDir func() (string, error), lookupEnv func(string) string) desktopNotifyResolver {
-	wsl := false
-	wt := false
-	if lookupEnv != nil {
-		wsl = strings.TrimSpace(lookupEnv("WSL_DISTRO_NAME")) != ""
-		wt = strings.TrimSpace(lookupEnv("WT_SESSION")) != ""
-	}
 	return desktopNotifyResolver{
 		lookupEnv: lookupEnv,
 		readConfigMode: func() (desktopNotifyMode, bool) {
@@ -252,7 +232,5 @@ func settingsDesktopNotifyResolver(homeDir func() (string, error), lookupEnv fun
 			}
 			return out
 		},
-		isWSL:     wsl,
-		wtPresent: wt,
 	}
 }
