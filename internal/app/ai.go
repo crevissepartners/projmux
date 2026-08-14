@@ -88,6 +88,7 @@ type aiCommand struct {
 	notifyStore                notifyStore
 	events                     notifyQueueRefreshEvents
 	notifyDiagnostics          *diagnostics.NotifyFocusRecorder
+	operationalDiagnostics     *diagnostics.AIRecorder
 	notifyDeliveryOwnsTopLevel bool
 }
 
@@ -467,6 +468,8 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	if paneID == "" {
 		return nil
 	}
+	started := c.now()
+	c.recordAIWatcher(diagnostics.AIResultStarted, "", started, false)
 
 	interval := c.watchInterval()
 	settleLimit := c.watchSettleLoops()
@@ -477,9 +480,11 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	for {
 		alive, hookActive := c.readAIWatchTitleGate(paneID)
 		if !alive {
+			c.recordAIWatcher(diagnostics.AIResultPaneGone, "", started, true)
 			return nil
 		}
 		if hookActive {
+			c.recordAIWatcher(diagnostics.AIResultHookActive, "", started, true)
 			return nil
 		}
 		snapshot := c.readAIWatchSnapshot(paneID)
@@ -2047,11 +2052,15 @@ func (c *aiCommand) startAIWatchTitle(paneID string) {
 	if strings.TrimSpace(paneID) == "" {
 		return
 	}
+	started := c.now()
 	binaryPath, err := c.binaryPath()
 	if err != nil || strings.TrimSpace(binaryPath) == "" {
+		c.recordAIWatcher(diagnostics.AIResultFailed, diagnostics.AIFailureWatcherLaunch, started, false)
 		return
 	}
-	_ = c.run("tmux", "run-shell", "-b", shellQuote(binaryPath)+" ai watch-title "+shellQuote(paneID))
+	if err := c.run("tmux", "run-shell", "-b", shellQuote(binaryPath)+" ai watch-title "+shellQuote(paneID)); err != nil {
+		c.recordAIWatcher(diagnostics.AIResultFailed, diagnostics.AIFailureWatcherLaunch, started, false)
+	}
 }
 
 func (c *aiCommand) popupAxisSize(axis string, percent, minimum int) string {

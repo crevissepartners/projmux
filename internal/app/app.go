@@ -137,8 +137,10 @@ func New() *App {
 func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	sessionStateDiagnostics := recorder.SessionState()
 	notifyFocusDiagnostics := recorder.NotifyFocus()
+	aiOperationalDiagnostics := recorder.AI()
 	ai := newAICommand()
 	ai.notifyDiagnostics = notifyFocusDiagnostics
+	ai.operationalDiagnostics = aiOperationalDiagnostics
 	ai.producer = newAttentionNotifyProducer(notifyFocusDiagnostics)
 	switcher := newSwitchCommand(recorder)
 	switcher.sessionStateDiagnostics = sessionStateDiagnostics

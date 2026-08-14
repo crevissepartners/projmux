@@ -209,6 +209,17 @@ channel and never change command output or exit status. See
 [operational-diagnostics.md](operational-diagnostics.md) for the file,
 retention, concurrency, and privacy contracts.
 
+`ai watch-title` emits a bounded common lifecycle: one start, one terminal
+pane-gone/hook-active stop, and at most one copy of each closed watcher failure
+tuple per process. Normal polling iterations emit nothing. AI hook ingest emits
+common events only for malformed/read/oversized payloads, unmatched or invalid
+targets, unsupported event classification, and route failures. Provider event
+names, payloads, prompt/tool/transcript values, notification text, pane
+metadata, paths, UUIDs, and conversation/session IDs are never stored. Normal
+state/notify/quiet/dedupe hook results stay zero-volume in the common AI family;
+the existing notify transition remains the owner when notification behavior
+occurs.
+
 Session create/attach/switch/kill and `tmux apply` use correlated
 `lifecycle.start`/`lifecycle.outcome` records instead of a duplicate generic
 top-level outcome. The text and JSONL views expose only the closed safe
@@ -753,6 +764,13 @@ state-only transitions, quiet high-volume events, and notify pushes. Raw hook
 payloads are not stored. The log is capped at 1 MiB and trimmed to the most
 recent roughly 512 KiB when it grows past the cap. Use `--json` for raw JSONL
 and `--path` to print the resolved file path.
+
+This legacy log is retained for compatibility. Its producer, `ingest log`
+consumer, 1 MiB/roughly 512 KiB retention, and support-report count summary are
+unchanged. The common operations journal now carries only the safe anomalous
+classification and watcher lifecycle described above. Both surfaces run in
+parallel during the migration; removal or deprecation is deferred to the Phase
+6 legacy-diagnostics inventory.
 
 For `Stop`, projmux reads `transcript_path` when present and extracts the last
 assistant text from the transcript tail; if that is unavailable, it falls back

@@ -89,6 +89,45 @@ that switches a tmux client may coexist with the shipped runtime
 `session.switch` lifecycle pair under the same run ID: the pair describes the
 tmux mutation, while `focus.transition` describes the request-level result.
 
+AI watcher and hook-ingest diagnostics use the same process `run_id` and add
+only closed `provider`, `ai_kind`, `ai_result`, and `failure` enums. The event
+families are `ai.watcher.transition` and `ai.ingest.outcome`. Watcher provider
+is the generic `ai`; ingest providers are `codex`, `claude`, `antigravity`, or
+`tmux-bell`. Each provider accepts only its own closed semantic-kind catalog;
+for example, `tmux-bell` can only emit `bell`, while watcher events can only use
+the generic `ai` provider and `watcher` kind. Provider event names are projected
+into semantic kinds such as `prompt`, `permission`, `stop`, `notification`,
+`tool`, `session`, `compact`, `subagent`, `teammate`, `statusline`, `invocation`,
+`lifecycle`, `bell`, `payload`, or `unknown`. A raw or future event name can
+therefore be diagnosed as `unknown` but can never extend the journal schema.
+
+One watcher process emits at most one `started` transition, one terminal
+`pane-gone` or `hook-active` transition, and one copy of each distinct safe
+failure tuple. The existing observable launch seam uses only
+`watcher-launch-failed`; status application remains the pre-existing
+best-effort operation and does not claim to expose swallowed tmux write errors.
+The terminal watcher event logically replaces its generic top-level outcome,
+including when append fails.
+The polling loop does not record snapshots, observed titles, captures, pane
+state, or a record per iteration.
+
+Hook ingest projects only anomalies: invalid/read/oversized payloads, unmatched
+or invalid targets, unsupported event classification, and terminal route
+failure. Route failures are limited to the observable bell queue/store and
+Antigravity explicit-response seams. Identical safe anomaly tuples are
+coalesced per process. Successful state, notification, quiet, and bell-dedupe
+traffic emits zero common AI events. Notify enqueue/delivery remains owned by
+the Phase 4 notify recorder, so ingest does not add a second AI success outcome
+or claim a secondary notify outcome. An ingest failure owns the top-level error
+logically before its best-effort append, preventing a duplicate generic
+`command.outcome`.
+
+The common AI event never contains the raw hook payload or event name, prompt,
+transcript, tool name/input/output, notification summary/body, pane content,
+cwd/path/command/title/topic, tmux target, queue ID, provider conversation or
+session identifier, UUID, or arbitrary reason/error string. `failure` is a
+stage enum, not `error.Error()`.
+
 The diagnostics package exposes a typed `ReadRuntimeHealth` projection for
 read-only Doctor consumers. It reports the fixed `tmux` backend, latest
 socket/apply state, and a bounded tail/count of safe failures using only
@@ -159,8 +198,31 @@ viewer read is excluded from success logging, so inspection does not create a
 recursion loop.
 
 The older bounded `ai-ingest.log` and subsystem-specific `PROJMUX_*_DEBUG`
-surfaces retain their current paths, formats, and behavior. They are not
-migrated by this foundation.
+surfaces retain their current paths, formats, and behavior. Phase 5 deliberately
+keeps the legacy producer and both existing consumers: `projmux ai ingest log`
+still reads the legacy JSONL bytes, and `diagnostics report` still emits its
+allowlisted source/result count summary. Legacy append failure remains
+best-effort and independent of common-journal append failure.
+
+The measured migration parity is:
+
+| Legacy `ai-ingest.log` result | Common operational projection |
+| --- | --- |
+| parse error with no classified event | `payload / failed / payload-invalid` |
+| bell queue/store or Antigravity response route error | allowlisted semantic kind / `failed / route-failed` |
+| no matching pane | allowlisted semantic kind / `ignored / target-unmatched` |
+| pane-not-found bell target | `bell / ignored / target-unmatched` |
+| unknown event recorded as quiet | `unknown / ignored / unsupported-event` |
+| normal `state`, `notify`, known `quiet`, or `deduped` | zero common AI events; existing state/notify owner remains authoritative |
+| stdin read or payload-size rejection before the legacy append seam | common-only `payload-read` or `payload-oversized`; no legacy row existed |
+| blank `ai ingest bell` CLI target rejected before the legacy append seam | common-only `bell / ignored / target-invalid`; exit semantics unchanged |
+
+This is a dual-run migration seam, not a deprecation. Operators who need the
+legacy detailed local view can keep using `ai ingest log`; support archives
+remain count-only for that file. The common journal is the safe correlated
+source for watcher lifecycle and anomalous ingest classification. Final
+Keep/Deprecate/Remove decisions for `ai-ingest.log` and debug env variables are
+deferred to Phase 6.
 
 `PROJMUX_FOCUS_DEBUG` remains available with its existing one-line byte
 contract. Focus diagnostics share its request classification seam, but do not
