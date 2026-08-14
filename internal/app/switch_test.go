@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
@@ -1110,7 +1111,9 @@ func TestUsageOmitsLayoutPrimaryCommand(t *testing.T) {
 	t.Parallel()
 
 	var usage bytes.Buffer
-	printUsage(&usage)
+	if err := cli.RenderRootHelp(&usage); err != nil {
+		t.Fatalf("RenderRootHelp returned error: %v", err)
+	}
 	if strings.Contains(usage.String(), "\n  layout") {
 		t.Fatalf("usage = %q, want no primary layout command", usage.String())
 	}

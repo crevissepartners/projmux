@@ -2,7 +2,9 @@
 
 Every subcommand exposed by the `projmux` binary as of v0.4.0. Run
 `projmux help` for the live top-level list, or `projmux <cmd> --help` /
-`projmux <cmd> help` for the per-command usage string.
+`projmux <cmd> help` for the per-command usage string. See
+[Help boundary](#help-boundary) for the exit-code and stream contract shared by
+every `--help` invocation.
 
 Exit codes:
 
@@ -10,6 +12,37 @@ Exit codes:
 - `1` — runtime failure.
 - `2` — usage error (unknown flag, bad enum, missing required flag) or a
   deterministic semantic exit (e.g. `focus` cannot resolve the target).
+
+## Help boundary
+
+Help is handled once, at the root, from the shared command manifest rather than
+by each leaf parser. Matching is on the flag **name** — the part after the
+leading dashes and before any `=` — so every spelling the Go `flag` package
+treats as help goes through this one boundary: `--help`, `-help`, `--h`, `-h`,
+and any `=value` form of those (`--help=true`, `--help=false`, ...). `flag`
+returns its help result for all of them regardless of the value, so aligning
+with it keeps one notion of help; the boundary never interprets a flag value:
+
+- Every help invocation exits `0`, writes to **stdout** only, records no
+  operational error, and performs no tmux, runtime, or lifecycle-migration
+  access. This includes nested routes (`projmux ai settings --help`) and the
+  hidden internal helpers (`projmux popup-wait-key --help`).
+- Help resolves to the deepest documented route and shows its summary, usage
+  synopsis, sub-routes, route-local output projections, and the canonical route
+  spelling it will move to. The synopsis names the route's flags (for example
+  `projmux setup terminal [terminal] [--apply] [--config <path>]
+  [--allow-symlink]`); the per-flag prose descriptions come from the command's
+  own parser and are not reproduced here.
+- A help flag after the first bare `--` is payload, not help:
+  `projmux ai split -- --help` forwards `--help` to the launched process
+  unchanged.
+- An unknown command keeps its `unknown command: <token>` error and exit `1`
+  even with `--help`, and `projmux help` / bare `projmux` keep printing the
+  top-level list. A bare `help` word nested under a command
+  (`projmux pin help`) still reaches that command's own handler.
+- Because a help invocation runs no handler, it is never recorded as a state
+  change in the operations journal, at any depth — `projmux ai topic set --help`
+  logs neither an error nor a state-changing success.
 
 ## Top-level
 

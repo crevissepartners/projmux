@@ -12,7 +12,11 @@ smoke_setup_env() {
   export XDG_RUNTIME_DIR="$PROJMUX_SMOKE_WORKDIR/runtime"
   export XDG_STATE_HOME="$PROJMUX_SMOKE_WORKDIR/state"
   export GOCACHE="$PROJMUX_SMOKE_WORKDIR/go-cache"
-  export GOMODCACHE="$PROJMUX_SMOKE_WORKDIR/go-mod-cache"
+  # Suites build without network access, so the module cache must already hold
+  # the checked-in module graph. An inherited GOMODCACHE (the harness mounts a
+  # prefetched one) wins; otherwise fall back to a run-local cache, which is
+  # only sufficient when the build needs no external modules.
+  export GOMODCACHE="${GOMODCACHE:-$PROJMUX_SMOKE_WORKDIR/go-mod-cache}"
   export GOTOOLCHAIN=local
 
   mkdir -p \

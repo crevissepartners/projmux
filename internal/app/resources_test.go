@@ -475,11 +475,22 @@ func TestAppRunResourcesCLIAndDefaultCadence(t *testing.T) {
 
 	app := New()
 	var stdout, stderr bytes.Buffer
+	// `resources --help` is answered by the shared manifest-driven help
+	// boundary: exit 0, stdout only, and the handler is never reached.
 	if err := app.Run([]string{"resources", "--help"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "Usage: projmux resources") {
-		t.Fatalf("resources help = %q", stdout.String())
+	if !strings.HasPrefix(stdout.String(), "projmux resources\n") || stderr.Len() != 0 {
+		t.Fatalf("resources help = %q stderr = %q", stdout.String(), stderr.String())
+	}
+
+	// The command still owns its own usage text for direct invocation.
+	var direct bytes.Buffer
+	if err := newResourceCommand().Run([]string{"--help"}, &direct, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(direct.String(), "Usage: projmux resources") {
+		t.Fatalf("resources command help = %q", direct.String())
 	}
 
 	stdout.Reset()

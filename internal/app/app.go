@@ -2,13 +2,13 @@ package app
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -231,152 +231,99 @@ func lifecycleOpenOperation(lookupEnv func(string) string) func() diagnostics.Op
 	}
 }
 
-// Run dispatches the configured application commands.
+// rawArgvCommand is the shared shape of every existing command handler. Phase 0
+// bridges forward raw argv to these handlers without reinterpreting it.
+type rawArgvCommand interface {
+	Run(args []string, stdout, stderr io.Writer) error
+}
+
+// routeHandlers binds every manifest route token to its existing handler. The
+// map is the single wiring point between the Cobra route catalog and the
+// current command graph; `help` and `version` are owned by the root policy.
+func (a *App) routeHandlers() map[string]cli.Handler {
+	commands := map[string]rawArgvCommand{
+		"ai":          a.ai,
+		"attention":   a.attention,
+		"attach":      a.attach,
+		"current":     a.current,
+		"doctor":      a.doctor,
+		"diagnostics": a.diagnostics,
+		"focus":       a.focus,
+		"hook":        a.hook,
+		// Hidden Darwin helper: captures physical portable key chords while a
+		// projmux tmux client is focused and feeds them through its root table.
+		"key-broker": a.keyBroker,
+		"kill":       a.kill,
+		"notify":     a.notify,
+		"pin":        a.pin,
+		// Hidden helper: invoked from statusbar display-only popup payloads to
+		// read a single key from /dev/tty and exit. Intentionally absent from
+		// the primary help listing so `projmux help` stays focused on
+		// user-facing commands.
+		"popup-wait-key": a.popupWaitKey,
+		"preview":        a.preview,
+		"prune":          a.prune,
+		"quit":           a.quit,
+		"resources":      a.resources,
+		"sessions":       a.sessions,
+		"session-state":  a.sessionState,
+		"session-popup":  a.sessionPopup,
+		"settings":       a.settings,
+		"setup":          a.setup,
+		"shell":          a.shell,
+		"status":         a.status,
+		"statusbar":      a.statusbar,
+		"switch":         a.switcher,
+		"tag":            a.tag,
+		"tmux":           a.tmux,
+		"update":         a.update,
+		"upgrade":        a.upgrade,
+		"usage":          a.usage,
+		"welcome":        a.welcome,
+		"window":         a.window,
+	}
+	handlers := make(map[string]cli.Handler, len(commands))
+	for token, command := range commands {
+		handlers[token] = command.Run
+	}
+	return handlers
+}
+
+// Run dispatches the configured application commands through the Cobra root.
 func (a *App) Run(args []string, stdout, stderr io.Writer) (err error) {
 	if a.lifecycle != nil {
 		finish := a.lifecycle.BeginCommand()
 		defer func() { finish(err) }()
 	}
-	// Doctor and explicit support-report collection are strict source-read-only
-	// boundaries. In particular, they must not trigger the otherwise automatic
-	// legacy-hook filesystem migration before dispatch.
+	// Doctor, explicit support-report collection, and every help invocation are
+	// strict source-read-only boundaries. In particular, they must not trigger
+	// the otherwise automatic legacy-hook filesystem migration before dispatch.
 	if shouldRunLegacyHookMigrations(args) {
 		runLegacyHookMigrations()
 	}
-	if len(args) == 0 {
-		printUsage(stdout)
-		return nil
+	root, buildErr := cli.NewRoot(cli.RootOptions{
+		Stdout:   stdout,
+		Stderr:   stderr,
+		Version:  version.String(),
+		Handlers: a.routeHandlers(),
+	})
+	if buildErr != nil {
+		return buildErr
 	}
-
-	switch args[0] {
-	case "ai":
-		return a.ai.Run(args[1:], stdout, stderr)
-	case "attention":
-		return a.attention.Run(args[1:], stdout, stderr)
-	case "attach":
-		return a.attach.Run(args[1:], stdout, stderr)
-	case "current":
-		return a.current.Run(args[1:], stdout, stderr)
-	case "doctor":
-		return a.doctor.Run(args[1:], stdout, stderr)
-	case "diagnostics":
-		return a.diagnostics.Run(args[1:], stdout, stderr)
-	case "focus":
-		return a.focus.Run(args[1:], stdout, stderr)
-	case "hook":
-		return a.hook.Run(args[1:], stdout, stderr)
-	case "key-broker":
-		// Hidden Darwin helper: captures physical portable key chords while a
-		// projmux tmux client is focused and feeds them through its root table.
-		return a.keyBroker.Run(args[1:], stdout, stderr)
-	case "kill":
-		return a.kill.Run(args[1:], stdout, stderr)
-	case "notify":
-		return a.notify.Run(args[1:], stdout, stderr)
-	case "pin":
-		return a.pin.Run(args[1:], stdout, stderr)
-	case "popup-wait-key":
-		// Hidden helper: invoked from statusbar display-only popup payloads to
-		// read a single key from /dev/tty and exit. Intentionally absent from
-		// printUsage so `projmux help` stays focused on user-facing commands.
-		return a.popupWaitKey.Run(args[1:], stdout, stderr)
-	case "preview":
-		return a.preview.Run(args[1:], stdout, stderr)
-	case "prune":
-		return a.prune.Run(args[1:], stdout, stderr)
-	case "quit":
-		return a.quit.Run(args[1:], stdout, stderr)
-	case "resources":
-		return a.resources.Run(args[1:], stdout, stderr)
-	case "sessions":
-		return a.sessions.Run(args[1:], stdout, stderr)
-	case "session-state":
-		return a.sessionState.Run(args[1:], stdout, stderr)
-	case "session-popup":
-		return a.sessionPopup.Run(args[1:], stdout, stderr)
-	case "settings":
-		return a.settings.Run(args[1:], stdout, stderr)
-	case "setup":
-		return a.setup.Run(args[1:], stdout, stderr)
-	case "shell":
-		return a.shell.Run(args[1:], stdout, stderr)
-	case "status":
-		return a.status.Run(args[1:], stdout, stderr)
-	case "statusbar":
-		return a.statusbar.Run(args[1:], stdout, stderr)
-	case "switch":
-		return a.switcher.Run(args[1:], stdout, stderr)
-	case "tag":
-		return a.tag.Run(args[1:], stdout, stderr)
-	case "tmux":
-		return a.tmux.Run(args[1:], stdout, stderr)
-	case "update":
-		return a.update.Run(args[1:], stdout, stderr)
-	case "upgrade":
-		return a.upgrade.Run(args[1:], stdout, stderr)
-	case "usage":
-		return a.usage.Run(args[1:], stdout, stderr)
-	case "welcome":
-		return a.welcome.Run(args[1:], stdout, stderr)
-	case "window":
-		return a.window.Run(args[1:], stdout, stderr)
-	case "version", "--version", "-version":
-		_, err := fmt.Fprintf(stdout, "projmux %s\n", version.String())
-		return err
-	case "help", "--help", "-h":
-		printUsage(stdout)
-		return nil
-	default:
-		printUsage(stderr)
-		return fmt.Errorf("unknown command: %s", args[0])
-	}
+	return root.Execute(args)
 }
 
 func shouldRunLegacyHookMigrations(args []string) bool {
+	// Help is a strict read-only boundary: exit 0, no operational error, and
+	// no tmux/runtime or filesystem migration access.
+	if cli.HelpRequested(args) {
+		return false
+	}
 	if len(args) == 0 {
-		return true
+		return false
 	}
 	if args[0] == "doctor" {
 		return false
 	}
 	return !(len(args) >= 2 && args[0] == "diagnostics" && args[1] == "report")
-}
-
-func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "projmux")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  ai        Manage tmux AI split launch and settings")
-	fmt.Fprintln(w, "  attention View and manage live tmux pane attention state")
-	fmt.Fprintln(w, "  attach    Open tmux lifecycle entry helpers")
-	fmt.Fprintln(w, "  current   Resolve the active tmux pane path")
-	fmt.Fprintln(w, "  doctor    Run read-only runtime and integration diagnostics")
-	fmt.Fprintln(w, "  diagnostics  Read operational events or create an explicit local support report")
-	fmt.Fprintln(w, "  focus     Switch the active client to a session/window/pane target")
-	fmt.Fprintln(w, "  hook      List, edit, validate, and trust lifecycle hook config")
-	fmt.Fprintln(w, "  kill      Terminate tagged tmux sessions")
-	fmt.Fprintln(w, "  notify    Manage the pending AI notify queue (push/list/ack/reconcile)")
-	fmt.Fprintln(w, "  pin       Manage pinned project directories")
-	fmt.Fprintln(w, "  preview   Manage persisted tmux preview selection")
-	fmt.Fprintln(w, "  prune     Trim stale lifecycle state and inspect preserved snapshots")
-	fmt.Fprintln(w, "  quit      Quit the app-owned projmux tmux runtime")
-	fmt.Fprintln(w, "  resources Inspect live Project, Window, and Pane CPU/RSS attribution")
-	fmt.Fprintln(w, "  sessions  Pick and open an existing tmux session")
-	fmt.Fprintln(w, "  session-state  Inspect and manage saved tmux session snapshots")
-	fmt.Fprintln(w, "  session-popup  Read tmux popup preview state")
-	fmt.Fprintln(w, "  settings  Configure projmux")
-	fmt.Fprintln(w, "  setup     Probe terminal keys or remediate them with setup terminal")
-	fmt.Fprintln(w, "  shell     Open the isolated projmux tmux app")
-	fmt.Fprintln(w, "  status    Render tmux status bar segments")
-	fmt.Fprintln(w, "  statusbar Dispatch projmux status bar clicks and shortcuts")
-	fmt.Fprintln(w, "  switch    Pick and open a project tmux session")
-	fmt.Fprintln(w, "  tag       Manage tagged tmux sessions")
-	fmt.Fprintln(w, "  tmux      Open tmux popup entry helpers")
-	fmt.Fprintln(w, "  update    Check installer-aware release update status")
-	fmt.Fprintln(w, "  upgrade   Self-update projmux via go install")
-	fmt.Fprintln(w, "  usage     Report AI token usage across 5h and weekly windows")
-	fmt.Fprintln(w, "  welcome   Reprint the shell welcome guide")
-	fmt.Fprintln(w, "  window    Open recent window navigation surfaces")
-	fmt.Fprintln(w, "  help      Show bootstrap help")
-	fmt.Fprintln(w, "  version   Print the current version")
 }

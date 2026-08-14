@@ -205,7 +205,18 @@ func TestClassifyDirectHelpIsReadOnly(t *testing.T) {
 		{"settings", "-h"},
 		{"shell", "-help"},
 		{"switch", "--help"},
+		{"switch", "--h"},
 		{"upgrade", "--help"},
+		{"upgrade", "--h"},
+		{"current", "-help"},
+		// The flag package returns flag.ErrHelp for these regardless of value,
+		// and the CLI help boundary answers them with exit 0, so none of them
+		// may be scored as a state change.
+		{"switch", "--help=true"},
+		{"switch", "--help=false"},
+		{"upgrade", "-help=true"},
+		{"current", "--h=false"},
+		{"sessions", "-h="},
 	}
 	for _, args := range tests {
 		class := Classify(args)
@@ -218,6 +229,59 @@ func TestClassifyDirectHelpIsReadOnly(t *testing.T) {
 	// help is excluded, so this remains conservatively mutation-capable.
 	if got := Classify([]string{"upgrade", "--ref", "--help"}); !got.StateChanging {
 		t.Fatalf("Classify(upgrade --ref --help) = %#v, want conservative changing classification", got)
+	}
+
+	// Near-miss spellings are ordinary flags, not help, so they stay
+	// conservatively mutation-capable.
+	for _, args := range [][]string{
+		{"upgrade", "--helper"},
+		{"upgrade", "--section=help"},
+		{"upgrade", "-h5"},
+	} {
+		if got := Classify(args); !got.StateChanging {
+			t.Errorf("Classify(%q) = %#v, want changing: this is not a help spelling", args, got)
+		}
+	}
+
+	// Nested help of a state-changing sub-route is read-only too. The CLI help
+	// boundary answers these with exit 0 and runs no handler, so scoring them as
+	// mutations would record a phantom state change.
+	for _, args := range [][]string{
+		{"ai", "settings", "--help"},
+		{"ai", "split", "-h"},
+		{"ai", "topic", "set", "--help"},
+		{"ai", "status", "set", "--help"},
+		{"ai", "integrate", "codex", "--help"},
+		{"prune", "session-state", "delete", "--help"},
+		{"session-state", "restore", "--help"},
+		{"update", "check", "--help"},
+		{"update", "apply", "--help=true"},
+		{"tmux", "apply", "--h"},
+		{"statusbar", "click", "-help"},
+		{"window", "recent", "--help"},
+		{"notify", "push", "--help"},
+		{"hook", "trust", "--help"},
+		{"pin", "add", "--help"},
+	} {
+		if got := Classify(args); got.StateChanging {
+			t.Errorf("Classify(%q) = %#v, want read-only nested help", args, got)
+		}
+	}
+
+	// The scan must not walk past a flag into its value, and a later bare `help`
+	// word can be a real positional value rather than a help request.
+	for _, args := range [][]string{
+		// `--help` here can only be the value of `--ref`.
+		{"upgrade", "--ref", "--help"},
+		// `pin add help` pins a directory literally named "help".
+		{"pin", "add", "help"},
+		{"pin", "remove", "help"},
+		// Payload after `--` is never help.
+		{"ai", "split", "--", "--help"},
+	} {
+		if got := Classify(args); !got.StateChanging {
+			t.Errorf("Classify(%q) = %#v, want conservative changing classification", args, got)
+		}
 	}
 }
 

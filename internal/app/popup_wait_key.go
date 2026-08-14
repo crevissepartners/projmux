@@ -7,7 +7,7 @@
 // subcommand removes that shell dependency: the popup payload just calls
 // `<projmux> popup-wait-key` and we handle the raw 1-byte read in Go.
 //
-// The command is intentionally absent from the top-level `printUsage` so it
+// The command is intentionally absent from the primary help listing so it
 // doesn't pollute `projmux help` — it's an internal IPC surface, not a user
 // command.
 package app
