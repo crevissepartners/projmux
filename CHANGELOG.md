@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.1](https://github.com/crevissepartners/projmux/compare/v0.10.0...v0.10.1) (2026-08-14)
+
+
+### Features
+
+* add session state operational outcomes ([09582bd](https://github.com/crevissepartners/projmux/commit/09582bdb2f3501c0f65bb291467e55117a9c98e5))
+* **diagnostics:** add AI watcher and ingest transitions ([#603](https://github.com/crevissepartners/projmux/issues/603)) ([d6ee8af](https://github.com/crevissepartners/projmux/commit/d6ee8af45e4bbd9f83e4fac1efb7efb564ed272d))
+* **diagnostics:** add notify and focus transitions ([#602](https://github.com/crevissepartners/projmux/issues/602)) ([3056eb8](https://github.com/crevissepartners/projmux/commit/3056eb8e921c7447a7dfeb66e4f404d440a71d5d))
+* **diagnostics:** add resource sampler anomaly outcomes ([#604](https://github.com/crevissepartners/projmux/issues/604)) ([f00083a](https://github.com/crevissepartners/projmux/commit/f00083a4403ef672be1959cf58be1d13fa90406a))
+* **diagnostics:** add session state operational outcomes ([#597](https://github.com/crevissepartners/projmux/issues/597)) ([09582bd](https://github.com/crevissepartners/projmux/commit/09582bdb2f3501c0f65bb291467e55117a9c98e5))
+* **hooks:** wire lifecycle hook context ([#598](https://github.com/crevissepartners/projmux/issues/598)) ([0bc4219](https://github.com/crevissepartners/projmux/commit/0bc421997a416e5a91d6a22218d5f9d19cc17d59))
+
+
+### Bug Fixes
+
+* **config:** preserve symlinks during atomic writes ([#601](https://github.com/crevissepartners/projmux/issues/601)) ([8ba2fd8](https://github.com/crevissepartners/projmux/commit/8ba2fd8c11d30a8e216d42c6bada324574eaf8ac))
+* **security:** bump Go toolchain to 1.26.6 ([#599](https://github.com/crevissepartners/projmux/issues/599)) ([0581712](https://github.com/crevissepartners/projmux/commit/058171267587eba0fc9d4017cada0c63fdc9dba0))
+* **ui:** align installed surface feedback and localization ([#607](https://github.com/crevissepartners/projmux/issues/607)) ([3c55911](https://github.com/crevissepartners/projmux/commit/3c559110c1dea064ef6ddacc6c5d54556caa0862))
+* **ui:** keep sessions footer visible at 80 columns ([#608](https://github.com/crevissepartners/projmux/issues/608)) ([be065de](https://github.com/crevissepartners/projmux/commit/be065def6e31009d7c508a7962702eba03ec40d8))
+
 ## [0.10.0](https://github.com/crevissepartners/projmux/compare/v0.9.0...v0.10.0) (2026-08-12)
 
 
