@@ -113,7 +113,7 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotOptions.PreviewCommand, "exec '/tmp/proj mux/bin/projmux' 'session-popup' 'preview' {2}"; got != want {
 		t.Fatalf("runner preview command = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.PreviewWindow, "right,60%,border-left"; got != want {
+	if got, want := gotOptions.PreviewWindow, "down,60%,border-top"; got != want {
 		t.Fatalf("runner preview window = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.Bindings, []string{

@@ -1624,6 +1624,52 @@ func TestInstalledSurfaceCoherenceExactSizeLocaleThemeMatrix(t *testing.T) {
 	}
 }
 
+func TestSessionsPopupExactNativeFrameKeepsConciseFooterVisible(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		locale       i18n.Locale
+		layout       nativeLayout
+		title        string
+		label        string
+		preview      string
+		previewStart string
+		footer       string
+		theme        theme.ThemeConfig
+	}{
+		{
+			name: "80x24-en-projmux", locale: i18n.FallbackLocale, layout: nativeLayout{Rows: 24, Cols: 80},
+			title: "Sessions", label: "[Detached] repo", previewStart: "Session", footer: "Enter: open | Esc: close",
+			preview: "printf 'Session\\nname repo\\nwindows 3\\npane 0.0\\ncmd zsh\\ntitle agent\\nstatus active\\npath /repo\\n\\nWindows\\n0 main\\n1 logs\\n2 shell\\n\\nPanes\\n0.0 zsh\\n1.0 tail\\n2.0 zsh\\n\\nPane Snapshot\\nline one\\nline two\\nline three\\nline four\\n'",
+		},
+		{
+			name: "112x30-ko-daylight", locale: i18n.Locale("ko-KR"), layout: nativeLayout{Rows: 30, Cols: 112},
+			title: "세션", label: "[분리됨] repo", previewStart: "세션", footer: "Enter: 열기 | Esc: 닫기", theme: theme.ThemeConfig{Preset: "daylight"},
+			preview: "printf '세션\\n이름 repo\\n창 3\\n페인 0.0\\n명령 zsh\\n제목 agent\\n상태 active\\n경로 /repo\\n\\n창\\n0 main\\n1 logs\\n2 shell\\n\\n페인\\n0.0 zsh\\n1.0 tail\\n2.0 zsh\\n\\n페인 스냅샷\\nline one\\nline two\\nline three\\nline four\\n'",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			effective := theme.ResolveTheme(tt.theme)
+			options := Options{
+				UI: "popup", Title: tt.title, Prompt: "› ", Footer: tt.footer, Locale: tt.locale, Theme: &effective,
+				Items:   []Item{{Label: tt.label, Value: "repo"}},
+				Preview: Preview{Command: tt.preview, Window: "down,60%,border-top"},
+			}
+			frame := stripANSISequences(nativeInteractiveFrame(options, options.Items, "", 0, 0, 0, tt.layout))
+			if got := nativeRenderedTextLineCount(frame); got != tt.layout.Rows {
+				t.Fatalf("sessions frame lines = %d at %dx%d, want exact layout height %d", got, tt.layout.Cols, tt.layout.Rows, tt.layout.Rows)
+			}
+			if !strings.Contains(frame, tt.footer) || strings.Contains(frame, "confirmati") {
+				t.Fatalf("sessions frame lost concise footer at %dx%d: %q", tt.layout.Cols, tt.layout.Rows, frame)
+			}
+			if !strings.Contains(frame, tt.previewStart) || !strings.Contains(frame, "... ") {
+				t.Fatalf("sessions frame lost preview content at %dx%d: %q", tt.layout.Cols, tt.layout.Rows, frame)
+			}
+		})
+	}
+}
+
 func TestNativeInteractiveGeneralPickerEmptyLocaleUsesEnvironmentFallback(t *testing.T) {
 	t.Setenv("LANG", "ko_KR.UTF-8")
 
