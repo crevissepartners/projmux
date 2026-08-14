@@ -136,7 +136,10 @@ func New() *App {
 // shared by every Phase 2 lifecycle surface.
 func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	sessionStateDiagnostics := recorder.SessionState()
+	notifyFocusDiagnostics := recorder.NotifyFocus()
 	ai := newAICommand()
+	ai.notifyDiagnostics = notifyFocusDiagnostics
+	ai.producer = newAttentionNotifyProducer(notifyFocusDiagnostics)
 	switcher := newSwitchCommand(recorder)
 	switcher.sessionStateDiagnostics = sessionStateDiagnostics
 	attach := newAttachCommand(recorder)
@@ -145,6 +148,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	update := newUpdateCommand()
 	quit := newQuitCommand()
 	notifyCmd := newNotifyCommand(newDefaultLivePaneLister())
+	notifyCmd.diagnostics = notifyFocusDiagnostics
 	pruneCmd := newPruneCommand(recorder)
 	pruneCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	previewCleaner := newKilledSessionPreviewCleaner()
@@ -155,7 +159,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	switcher.cleanupKilledSession = cleanupKilledSession
 	pruneCmd.cleanupKilledSession = cleanupKilledSession
 	pruneCmd.reconcileNotify = func() {
-		_ = notifyCmd.runReconcile(nil, io.Discard, io.Discard)
+		_ = notifyCmd.runReconcileWithOwnership(nil, io.Discard, io.Discard, false)
 	}
 	initCmd := newInitCommand()
 	sessionStateCmd := newSessionStateCommand()
@@ -164,15 +168,19 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	settingsCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	tmuxCmd := newTmuxCommand(recorder)
 	tmuxCmd.sessionStateDiagnostics = sessionStateDiagnostics
+	attentionCmd := newAttentionCommand()
+	attentionCmd.producer = newAttentionNotifyProducer(notifyFocusDiagnostics)
+	focusCmd := newFocusCommand(recorder)
+	focusCmd.notifyDiagnostics = notifyFocusDiagnostics
 	return &App{
 		lifecycle:    recorder,
 		ai:           ai,
-		attention:    newAttentionCommand(),
+		attention:    attentionCmd,
 		attach:       attach,
 		current:      newCurrentCommand(recorder),
 		doctor:       newDoctorCommand(),
 		diagnostics:  newDiagnosticsCommand(),
-		focus:        newFocusCommand(recorder),
+		focus:        focusCmd,
 		hook:         newHookCommand(),
 		keyBroker:    newKeyBrokerCommand(),
 		kill:         kill,

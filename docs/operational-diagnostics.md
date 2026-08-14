@@ -60,6 +60,35 @@ actual restore may also produce its runtime lifecycle pair with the same run
 ID; the lifecycle pair and Session State terminal outcome describe different
 contracts and are not duplicates.
 
+Notify and focus transitions use the same process `run_id` and add only closed
+`transition`, `disposition`, `provider`, `category`, and `route` enums. Notify
+transitions are `enqueue` and `delivery`; focus uses `request`. Enqueue records
+distinguish queued, stable-ID deduplicated, and failed outcomes. Delivery
+records distinguish delivered, dedupe/visibility/setting suppression, and
+failed outcomes across the external sender hook, WSL Toast and fallback, and
+Linux `notify-send` routes. Focus request records distinguish focused,
+notify-only, session-only, window-only, and failed outcomes. Failure codes are
+closed stage classifications and messages stay empty.
+
+Provider and category values are projected through fixed allowlists. Unknown
+values become `other`; arbitrary provider payloads and notification metadata
+cannot extend the event schema. Notification summary/body, tag/group, terminal
+title/topic, paths, queue or routing IDs, UUIDs, and AI/conversation/session
+identifiers are never recorded. The notifier sender owns one terminal delivery
+outcome after fallback selection, so failed intermediate WSL adapters do not
+produce duplicate records when a later route succeeds.
+
+One process writes at most one copy of an identical safe notify/focus tuple.
+This fixes repeated stable-ID queue replacement, desktop dedupe, visible-pane
+suppression, and reconcile hot paths to a finite per-run volume; the journal's
+existing size/retention cap remains the cross-process bound. Explicit `notify
+push` and `focus` outcomes logically replace the generic top-level
+`command.outcome`, including when append fails. Secondary automatic enqueue or
+delivery events do not claim an unrelated outer command. A successful focus
+that switches a tmux client may coexist with the shipped runtime
+`session.switch` lifecycle pair under the same run ID: the pair describes the
+tmux mutation, while `focus.transition` describes the request-level result.
+
 The diagnostics package exposes a typed `ReadRuntimeHealth` projection for
 read-only Doctor consumers. It reports the fixed `tmux` backend, latest
 socket/apply state, and a bounded tail/count of safe failures using only
@@ -132,6 +161,12 @@ recursion loop.
 The older bounded `ai-ingest.log` and subsystem-specific `PROJMUX_*_DEBUG`
 surfaces retain their current paths, formats, and behavior. They are not
 migrated by this foundation.
+
+`PROJMUX_FOCUS_DEBUG` remains available with its existing one-line byte
+contract. Focus diagnostics share its request classification seam, but do not
+copy the debug line's raw target, session/window/pane, socket, client, source,
+or kind values into the journal. Removal or migration of the debug variable is
+deferred to the later legacy-diagnostics inventory.
 
 ## Explicit support report
 

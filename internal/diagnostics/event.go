@@ -34,6 +34,11 @@ type Event struct {
 	Operation          string `json:"operation,omitempty"`
 	Code               string `json:"code,omitempty"`
 	Source             string `json:"source,omitempty"`
+	Transition         string `json:"transition,omitempty"`
+	Disposition        string `json:"disposition,omitempty"`
+	Provider           string `json:"provider,omitempty"`
+	Category           string `json:"category,omitempty"`
+	Route              string `json:"route,omitempty"`
 	WindowCount        *int   `json:"window_count,omitempty"`
 	PaneCount          *int   `json:"pane_count,omitempty"`
 	ShellRecipeCount   *int   `json:"shell_recipe_count,omitempty"`
@@ -96,7 +101,7 @@ func SanitizeMessage(message, home string) string {
 var (
 	allowedLevels     = stringSet("info", "error")
 	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition")
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -124,6 +129,16 @@ var (
 		string(CodeSessionStateAutosaveFailed),
 		string(CodeSessionStateRestoreFailed),
 		string(CodeSessionStateDeleteFailed),
+		string(CodeNotifyEnqueueFailed),
+		string(CodeNotifyDeliveryFailed),
+		string(CodeNotifyDeliveryUnavailable),
+		string(CodeFocusResolveFailed),
+		string(CodeFocusInventoryFailed),
+		string(CodeFocusDispatchFailed),
+		string(CodeFocusWindowFailed),
+		string(CodeFocusPaneFailed),
+		string(CodeFocusOutputFailed),
+		string(CodeFocusRequestFailed),
 	)
 	allowedSessionStateSources = stringSet(
 		string(SessionStateSourceManual),
@@ -133,6 +148,25 @@ var (
 		string(SessionStateSourceStartupLatest),
 		string(SessionStateSourceStartupNamed),
 		string(SessionStateSourcePrune),
+	)
+	allowedTransitions  = stringSet(string(TransitionNotifyEnqueue), string(TransitionNotifyDelivery), string(TransitionFocusRequest))
+	allowedDispositions = stringSet(
+		string(DispositionQueued), string(DispositionDeduplicated), string(DispositionDelivered), string(DispositionSuppressed),
+		string(DispositionFocused), string(DispositionNotifyOnly), string(DispositionSessionOnly), string(DispositionWindowOnly), string(DispositionFailed),
+	)
+	allowedProviders = stringSet(
+		string(ProviderClaude), string(ProviderCodex), string(ProviderAntigravity), string(ProviderAI), string(ProviderK8s), string(ProviderGit),
+		string(ProviderExternal), string(ProviderProjmux), string(ProviderOther),
+	)
+	allowedCategories = stringSet(
+		string(CategoryApprovalRequired), string(CategoryInputRequired), string(CategoryResponseComplete), string(CategoryError),
+		string(CategorySubagentStopped), string(CategoryTeammateWaiting), string(CategorySelectionRequired), string(CategoryConfirmationRequired),
+		string(CategorySessionReady), string(CategorySegmentClick), string(CategoryToastClick), string(CategoryRowSelect), string(CategoryGroupSelect),
+		string(CategoryReplyReady), string(CategoryBusyCleared), string(CategoryCustom), string(CategoryOther),
+	)
+	allowedRoutes = stringSet(
+		string(RouteQueue), string(RouteHook), string(RouteNotifySend), string(RouteWSLToast), string(RouteWSLNotifySend),
+		string(RouteDisabled), string(RouteDedupe), string(RouteVisiblePane), string(RouteFocusDirect), string(RouteFocusQueue), string(RouteFocusToast),
 	)
 )
 
@@ -190,18 +224,18 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 func validateEventShape(event Event) error {
 	switch event.Event {
 	case "command.outcome":
-		if event.Result == "started" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() {
+		if event.Result == "started" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() {
 			return fmt.Errorf("invalid command outcome shape")
 		}
 	case "lifecycle.start":
-		if event.Result != "started" || event.Level != "info" || event.Operation == "" || event.Code != "" || event.Kind != "" || event.Message != "" || event.Command != "" || event.Subcommand != "" || event.Source != "" || event.hasCounts() {
+		if event.Result != "started" || event.Level != "info" || event.Operation == "" || event.Code != "" || event.Kind != "" || event.Message != "" || event.Command != "" || event.Subcommand != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() {
 			return fmt.Errorf("invalid lifecycle start shape")
 		}
 		if !runtimeOperation(Operation(event.Operation)) {
 			return fmt.Errorf("invalid lifecycle operation")
 		}
 	case "lifecycle.outcome":
-		if event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Source != "" || event.hasCounts() {
+		if event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() {
 			return fmt.Errorf("invalid lifecycle outcome shape")
 		}
 		if event.Result == "error" && (event.Level != "error" || event.Kind != "runtime" || event.Code == "") {
@@ -223,7 +257,7 @@ func validateEventShape(event Event) error {
 			return fmt.Errorf("invalid lifecycle operation code")
 		}
 	case "session-state.outcome":
-		if event.Component != "session-state" || event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" {
+		if event.Component != "session-state" || event.Result == "started" || event.Operation == "" || event.Command != "" || event.Subcommand != "" || event.Message != "" || event.hasNotifyFocusFields() {
 			return fmt.Errorf("invalid session-state outcome shape")
 		}
 		if event.Source != "" {
@@ -257,6 +291,45 @@ func validateEventShape(event Event) error {
 		if !event.nonNegativeCounts() {
 			return fmt.Errorf("invalid session-state count")
 		}
+	case "notify.transition", "focus.transition":
+		if event.Command != "" || event.Subcommand != "" || event.Message != "" || event.Operation != "" || event.Source != "" || event.hasCounts() {
+			return fmt.Errorf("invalid notify/focus transition shape")
+		}
+		if _, ok := allowedTransitions[event.Transition]; !ok {
+			return fmt.Errorf("invalid notify/focus transition")
+		}
+		if _, ok := allowedDispositions[event.Disposition]; !ok {
+			return fmt.Errorf("invalid notify/focus disposition")
+		}
+		if _, ok := allowedProviders[event.Provider]; !ok {
+			return fmt.Errorf("invalid notify/focus provider")
+		}
+		if _, ok := allowedCategories[event.Category]; !ok {
+			return fmt.Errorf("invalid notify/focus category")
+		}
+		if _, ok := allowedRoutes[event.Route]; !ok {
+			return fmt.Errorf("invalid notify/focus route")
+		}
+		if event.Event == "notify.transition" {
+			if event.Component != "notify" || event.Transition == string(TransitionFocusRequest) {
+				return fmt.Errorf("invalid notify transition family")
+			}
+		} else if event.Component != "focus" || event.Transition != string(TransitionFocusRequest) {
+			return fmt.Errorf("invalid focus transition family")
+		}
+		if !notifyFocusTupleMatches(event) {
+			return fmt.Errorf("invalid notify/focus transition tuple")
+		}
+		if event.Disposition == string(DispositionFailed) {
+			if event.Level != "error" || event.Result != "error" || event.Kind != "runtime" || event.Code == "" {
+				return fmt.Errorf("invalid notify/focus error shape")
+			}
+		} else if event.Level != "info" || event.Result != "success" || event.Kind != "" || event.Code != "" {
+			return fmt.Errorf("invalid notify/focus success shape")
+		}
+		if !notifyFocusCodeMatches(event) {
+			return fmt.Errorf("invalid notify/focus code")
+		}
 	}
 	if event.Operation != "" {
 		if _, ok := allowedOperations[event.Operation]; !ok {
@@ -269,6 +342,58 @@ func validateEventShape(event Event) error {
 		}
 	}
 	return nil
+}
+
+func notifyFocusTupleMatches(event Event) bool {
+	disposition := Disposition(event.Disposition)
+	route := Route(event.Route)
+	switch Transition(event.Transition) {
+	case TransitionNotifyEnqueue:
+		if route != RouteQueue {
+			return false
+		}
+		return disposition == DispositionQueued || disposition == DispositionDeduplicated || disposition == DispositionFailed
+	case TransitionNotifyDelivery:
+		switch route {
+		case RouteDisabled, RouteDedupe, RouteVisiblePane:
+			return disposition == DispositionSuppressed
+		case RouteHook, RouteNotifySend, RouteWSLToast, RouteWSLNotifySend:
+			return disposition == DispositionDelivered || disposition == DispositionFailed
+		default:
+			return false
+		}
+	case TransitionFocusRequest:
+		switch route {
+		case RouteFocusDirect, RouteFocusQueue, RouteFocusToast:
+			switch disposition {
+			case DispositionFocused, DispositionNotifyOnly, DispositionSessionOnly, DispositionWindowOnly, DispositionFailed:
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func notifyFocusCodeMatches(event Event) bool {
+	code := Code(event.Code)
+	if event.Disposition != string(DispositionFailed) {
+		return code == ""
+	}
+	switch event.Transition {
+	case string(TransitionNotifyEnqueue):
+		return code == CodeNotifyEnqueueFailed
+	case string(TransitionNotifyDelivery):
+		if code == CodeNotifyDeliveryUnavailable {
+			return event.Route == string(RouteNotifySend)
+		}
+		return code == CodeNotifyDeliveryFailed
+	case string(TransitionFocusRequest):
+		switch code {
+		case CodeFocusResolveFailed, CodeFocusInventoryFailed, CodeFocusDispatchFailed, CodeFocusWindowFailed, CodeFocusPaneFailed, CodeFocusOutputFailed, CodeFocusRequestFailed:
+			return true
+		}
+	}
+	return false
 }
 
 func runtimeOperation(operation Operation) bool {
@@ -289,6 +414,10 @@ func (event Event) hasAllSnapshotCounts() bool {
 }
 
 func (event Event) hasCounts() bool { return event.hasSnapshotCounts() || event.ItemCount != nil }
+
+func (event Event) hasNotifyFocusFields() bool {
+	return event.Transition != "" || event.Disposition != "" || event.Provider != "" || event.Category != "" || event.Route != ""
+}
 
 func (event Event) nonNegativeCounts() bool {
 	for _, value := range []*int{event.WindowCount, event.PaneCount, event.ShellRecipeCount, event.AgentRecipeCount, event.StartupRecipeCount, event.ItemCount} {

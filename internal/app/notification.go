@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/osfocus"
 )
 
@@ -18,14 +20,16 @@ const (
 )
 
 type aiNotification struct {
-	Summary  string
-	Body     string
-	Urgency  string
-	ExpireMS int
-	AppName  string
-	Icon     string
-	Tag      string
-	Group    string
+	Summary            string
+	Body               string
+	Urgency            string
+	ExpireMS           int
+	AppName            string
+	Icon               string
+	Tag                string
+	Group              string
+	diagnosticProvider diagnostics.Provider
+	diagnosticCategory diagnostics.Category
 }
 
 type aiNotifier interface {
@@ -33,19 +37,26 @@ type aiNotifier interface {
 }
 
 func (c *aiCommand) notificationNotifier() aiNotifier {
-	if hook := strings.TrimSpace(c.env("PROJMUX_NOTIFY_HOOK")); hook != "" {
-		return aiHookNotifier{command: c, hook: hook}
+	deliveryDiagnostics := notifyDeliveryDiagnostics{
+		recorder: c.notifyDiagnostics, ownsTopLevel: c.notifyDeliveryOwnsTopLevel,
 	}
-	return aiDesktopNotifier{command: c}
+	if hook := strings.TrimSpace(c.env("PROJMUX_NOTIFY_HOOK")); hook != "" {
+		return aiHookNotifier{command: c, hook: hook, deliveryDiagnostics: deliveryDiagnostics}
+	}
+	return aiDesktopNotifier{command: c, deliveryDiagnostics: deliveryDiagnostics}
 }
 
 type aiHookNotifier struct {
-	command *aiCommand
-	hook    string
+	command             *aiCommand
+	hook                string
+	deliveryDiagnostics notifyDeliveryDiagnostics
 }
 
 func (n aiHookNotifier) Notify(notification aiNotification) error {
-	return n.command.run(n.hook,
+	started := time.Now()
+	deliveryDiagnostics := n.deliveryDiagnostics
+	deliveryDiagnostics.provider, deliveryDiagnostics.category = notification.diagnosticProvider, notification.diagnosticCategory
+	err := n.command.run(n.hook,
 		notification.Summary,
 		notification.Body,
 		notification.Urgency,
@@ -54,10 +65,17 @@ func (n aiHookNotifier) Notify(notification aiNotification) error {
 		notification.Group,
 		notification.Icon,
 	)
+	if err != nil {
+		deliveryDiagnostics.record(diagnostics.DispositionFailed, diagnostics.RouteHook, diagnostics.CodeNotifyDeliveryFailed, started)
+		return err
+	}
+	deliveryDiagnostics.record(diagnostics.DispositionDelivered, diagnostics.RouteHook, "", started)
+	return nil
 }
 
 type aiDesktopNotifier struct {
-	command *aiCommand
+	command             *aiCommand
+	deliveryDiagnostics notifyDeliveryDiagnostics
 	// osFocusChain is an optional injection seam for the auto-raise hook
 	// fired when the resolved mode is `raise`. When nil, defaultOSFocusChain()
 	// builds the production tier-1 chain (Windows Terminal × WSL adapter
@@ -66,6 +84,9 @@ type aiDesktopNotifier struct {
 }
 
 func (n aiDesktopNotifier) Notify(notification aiNotification) error {
+	started := time.Now()
+	deliveryDiagnostics := n.deliveryDiagnostics
+	deliveryDiagnostics.provider, deliveryDiagnostics.category = notification.diagnosticProvider, notification.diagnosticCategory
 	// 3-way mode gate. The in-app notify queue, the statusbar segment,
 	// and the attention badge are intentionally untouched — this only
 	// suppresses the OS-level dispatch so users can silence the
@@ -79,6 +100,7 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 	// foreground.
 	mode := n.command.desktopNotifyMode()
 	if mode == desktopNotifyModeNone {
+		deliveryDiagnostics.record(diagnostics.DispositionSuppressed, diagnostics.RouteDisabled, "", started)
 		return nil
 	}
 	expireMS := notification.ExpireMS
@@ -89,6 +111,7 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 		}
 		_ = n.ensureWSLToastAppID(notification)
 		if err := n.dispatchWSLToast(notification, mode == desktopNotifyModeRaise, expireMS); err == nil {
+			deliveryDiagnostics.record(diagnostics.DispositionDelivered, diagnostics.RouteWSLToast, "", started)
 			n.maybeRaiseHostTerminal(mode, notification)
 			return nil
 		}
@@ -98,6 +121,7 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 				message += "\n" + notification.Body
 			}
 			if err := n.command.run("wsl-notify-send.exe", "--category", notification.AppName, message); err == nil {
+				deliveryDiagnostics.record(diagnostics.DispositionDelivered, diagnostics.RouteWSLNotifySend, "", started)
 				n.maybeRaiseHostTerminal(mode, notification)
 				return nil
 			}
@@ -108,6 +132,7 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 		icon = "dialog-information"
 	}
 	if n.command.readTrimmed("command", "-v", "notify-send") == "" {
+		deliveryDiagnostics.record(diagnostics.DispositionFailed, diagnostics.RouteNotifySend, diagnostics.CodeNotifyDeliveryUnavailable, started)
 		return errors.New("notify-send is unavailable")
 	}
 	args := []string{
@@ -123,8 +148,10 @@ func (n aiDesktopNotifier) Notify(notification aiNotification) error {
 		notification.Body,
 	)
 	if err := n.command.run("notify-send", args...); err != nil {
+		deliveryDiagnostics.record(diagnostics.DispositionFailed, diagnostics.RouteNotifySend, diagnostics.CodeNotifyDeliveryFailed, started)
 		return err
 	}
+	deliveryDiagnostics.record(diagnostics.DispositionDelivered, diagnostics.RouteNotifySend, "", started)
 	n.maybeRaiseHostTerminal(mode, notification)
 	return nil
 }

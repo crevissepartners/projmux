@@ -23,6 +23,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
@@ -70,22 +71,24 @@ type aiCommandRunner interface {
 }
 
 type aiCommand struct {
-	runner       aiCommandRunner
-	nativePicker intpicker.Runner
-	executable   func() (string, error)
-	lookupEnv    func(string) string
-	homeDir      func() (string, error)
-	stdin        io.Reader
-	readFile     func(string) ([]byte, error)
-	writeFile    func(string, []byte, os.FileMode) error
-	mkdirAll     func(string, os.FileMode) error
-	runCommand   func(ctx context.Context, name string, args ...string) error
-	readCommand  func(ctx context.Context, name string, args ...string) ([]byte, error)
-	now          func() time.Time
-	sleep        func(time.Duration)
-	producer     attentionNotifyProducer
-	notifyStore  notifyStore
-	events       notifyQueueRefreshEvents
+	runner                     aiCommandRunner
+	nativePicker               intpicker.Runner
+	executable                 func() (string, error)
+	lookupEnv                  func(string) string
+	homeDir                    func() (string, error)
+	stdin                      io.Reader
+	readFile                   func(string) ([]byte, error)
+	writeFile                  func(string, []byte, os.FileMode) error
+	mkdirAll                   func(string, os.FileMode) error
+	runCommand                 func(ctx context.Context, name string, args ...string) error
+	readCommand                func(ctx context.Context, name string, args ...string) ([]byte, error)
+	now                        func() time.Time
+	sleep                      func(time.Duration)
+	producer                   attentionNotifyProducer
+	notifyStore                notifyStore
+	events                     notifyQueueRefreshEvents
+	notifyDiagnostics          *diagnostics.NotifyFocusRecorder
+	notifyDeliveryOwnsTopLevel bool
 }
 
 func newAICommand() *aiCommand {
@@ -270,6 +273,10 @@ func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attenti
 			}
 			c.notifyProducer().PushReplyReady(notifyIn)
 		} else {
+			if dispatchQueue && visible && !notifyIn.Force && c.notifyDiagnostics != nil {
+				labels := notifyLabels(notify.SourceAI, notifyIn.Metadata)
+				c.notifyDiagnostics.RecordNotify(diagnostics.TransitionNotifyDelivery, diagnostics.DispositionSuppressed, labels.provider, labels.category, diagnostics.RouteVisiblePane, "", c.now(), false)
+			}
 			c.notifyProducer().AckReplyReady(notifyIn)
 		}
 	case "idle", "":
@@ -316,6 +323,9 @@ func (c *aiCommand) runNotify(args []string, stderr io.Writer) error {
 	case "reset":
 		return c.resetAINotification(paneID)
 	case "notify":
+		previous := c.notifyDeliveryOwnsTopLevel
+		c.notifyDeliveryOwnsTopLevel = true
+		defer func() { c.notifyDeliveryOwnsTopLevel = previous }()
 		return c.notifyAIForce(paneID)
 	case "help", "--help", "-h":
 		printAIUsage(stderr)
@@ -359,6 +369,9 @@ func (c *aiCommand) notifyAITextWithMetadata(paneID, text, severity string, forc
 	}
 	key := aiNotificationKey("hook", text)
 	if !force && c.duplicateAINotificationRecent(paneID, key) {
+		labels := notifyLabels(notify.SourceAI, metadata)
+		notifyDeliveryDiagnostics{recorder: c.notifyDiagnostics, provider: labels.provider, category: labels.category, ownsTopLevel: c.notifyDeliveryOwnsTopLevel}.
+			record(diagnostics.DispositionSuppressed, diagnostics.RouteDedupe, "", c.now())
 		c.recordAINotification(paneID, key)
 		return nil
 	}
@@ -382,14 +395,16 @@ func (c *aiCommand) aiTextNotificationWithMetadata(paneID, text, severity string
 		summary = strings.TrimSpace(text)
 	}
 	return aiNotification{
-		Summary:  summary,
-		Body:     aiNotificationBody(bodyTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
-		Urgency:  aiOSNotificationUrgency(severity),
-		ExpireMS: c.notificationExpireMS(),
-		AppName:  desktopAppID,
-		Icon:     c.notificationIcon(agent),
-		Tag:      paneID,
-		Group:    sessionName,
+		Summary:            summary,
+		Body:               aiNotificationBody(bodyTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
+		Urgency:            aiOSNotificationUrgency(severity),
+		ExpireMS:           c.notificationExpireMS(),
+		AppName:            desktopAppID,
+		Icon:               c.notificationIcon(agent),
+		Tag:                paneID,
+		Group:              sessionName,
+		diagnosticProvider: notifyLabels(notify.SourceAI, metadata).provider,
+		diagnosticCategory: notifyLabels(notify.SourceAI, metadata).category,
 	}
 }
 
@@ -414,19 +429,24 @@ func (c *aiCommand) notifyAIWithMode(paneID string, force bool) error {
 	replyKind := aiReplyKindForTitle(replyEvidence)
 	key := aiNotificationKey(replyKind, defaultString(cleanTitle, info.title))
 	if !force && c.duplicateAINotificationRecent(paneID, key) {
+		labels := notifyLabels(notify.SourceAI, map[string]string{notify.MetaAgent: info.agent, notify.MetaCategory: replyKind})
+		notifyDeliveryDiagnostics{recorder: c.notifyDiagnostics, provider: labels.provider, category: labels.category, ownsTopLevel: c.notifyDeliveryOwnsTopLevel}.
+			record(diagnostics.DispositionSuppressed, diagnostics.RouteDedupe, "", c.now())
 		c.recordAINotification(paneID, key)
 		return nil
 	}
 
 	notification := aiNotification{
-		Summary:  aiSummaryForKindLocale(replyKind, agentName, cleanTitle, c.locale()),
-		Body:     aiNotificationBody(cleanTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
-		Urgency:  aiOSNotificationUrgency(replyKind),
-		ExpireMS: c.notificationExpireMS(),
-		AppName:  desktopAppID,
-		Icon:     c.notificationIcon(agentName),
-		Tag:      paneID,
-		Group:    sessionName,
+		Summary:            aiSummaryForKindLocale(replyKind, agentName, cleanTitle, c.locale()),
+		Body:               aiNotificationBody(cleanTitle, aiProjectName(panePath), c.gitBranchForPath(panePath), sessionName, windowName),
+		Urgency:            aiOSNotificationUrgency(replyKind),
+		ExpireMS:           c.notificationExpireMS(),
+		AppName:            desktopAppID,
+		Icon:               c.notificationIcon(agentName),
+		Tag:                paneID,
+		Group:              sessionName,
+		diagnosticProvider: notifyLabels(notify.SourceAI, map[string]string{notify.MetaAgent: info.agent}).provider,
+		diagnosticCategory: notifyCategory(replyKind),
 	}
 	if err := c.notificationNotifier().Notify(notification); err != nil {
 		return nil

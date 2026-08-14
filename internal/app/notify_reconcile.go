@@ -62,6 +62,10 @@ func reconcileEntryText(p livePaneRow) string {
 // failures are surfaced through the `errors` field of the summary so install
 // scripts get a single non-fatal pass.
 func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) error {
+	return c.runReconcileWithOwnership(args, stdout, stderr, true)
+}
+
+func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr io.Writer, ownsTopLevel bool) error {
 	fs := flag.NewFlagSet("notify reconcile", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { printNotifyReconcileUsage(stderr) }
@@ -144,10 +148,14 @@ func (c *notifyCommand) runReconcile(args []string, stdout, stderr io.Writer) er
 				Pane:    pane.Pane,
 			},
 		}
-		if _, _, err := store.Push(in); err != nil {
+		started := c.clock()
+		_, pushResult, err := store.Push(in)
+		if err != nil {
+			recordNotifyEnqueue(c.diagnostics, in, pushResult, err, started, ownsTopLevel)
 			result.Errors = append(result.Errors, fmt.Sprintf("push %s: %v", id, err))
 			continue
 		}
+		recordNotifyEnqueue(c.diagnostics, in, pushResult, nil, started, ownsTopLevel)
 		c.publishNotifyQueueRefreshBestEffort()
 		result.Pushed++
 	}

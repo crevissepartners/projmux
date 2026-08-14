@@ -14,6 +14,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -32,18 +33,19 @@ type notifyStore interface {
 }
 
 type notifyCommand struct {
-	store      notifyStore
-	storeErr   error
-	now        func() time.Time
-	runner     tmuxRunner
-	livePanes  livePaneLister
-	hooks      *sendNotiHookDispatcher
-	events     notifyQueueRefreshEvents
-	picker     intpickercompat.Runner
-	native     intpicker.Runner
-	executable func() (string, error)
-	lookupEnv  func(string) string
-	homeDir    func() (string, error)
+	diagnostics *diagnostics.NotifyFocusRecorder
+	store       notifyStore
+	storeErr    error
+	now         func() time.Time
+	runner      tmuxRunner
+	livePanes   livePaneLister
+	hooks       *sendNotiHookDispatcher
+	events      notifyQueueRefreshEvents
+	picker      intpickercompat.Runner
+	native      intpicker.Runner
+	executable  func() (string, error)
+	lookupEnv   func(string) string
+	homeDir     func() (string, error)
 }
 
 func newNotifyCommand(livePanes livePaneLister) *notifyCommand {
@@ -168,11 +170,6 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 	}
 	parsed.Socket = strings.TrimSpace(*socket)
 
-	store, err := c.requireStore()
-	if err != nil {
-		return err
-	}
-
 	in := notify.PushInput{
 		ID:       *id,
 		Text:     *text,
@@ -181,13 +178,21 @@ func (c *notifyCommand) runPush(args []string, stdout, stderr io.Writer) error {
 		TTL:      time.Duration(*ttlSecs) * time.Second,
 		Target:   parsed,
 	}
+	started := c.clock()
+	store, err := c.requireStore()
+	if err != nil {
+		recordNotifyEnqueue(c.diagnostics, in, notify.PushResult{}, err, started, true)
+		return err
+	}
 	entry, result, err := store.Push(in)
 	if err != nil {
+		recordNotifyEnqueue(c.diagnostics, in, result, err, started, true)
 		if isInvalidInputErr(err) {
 			return usageError(err.Error())
 		}
 		return fmt.Errorf("push notification: %w", err)
 	}
+	recordNotifyEnqueue(c.diagnostics, in, result, nil, started, true)
 	if c.hooks != nil {
 		c.hooks.Dispatch(entry, notifyHookMeta{
 			Type:    strings.TrimSpace(*source),
