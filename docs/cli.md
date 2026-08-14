@@ -16,8 +16,12 @@ Exit codes:
 ## Help boundary
 
 Help is handled once, at the root, from the shared command manifest rather than
-by each leaf parser. All four spellings the Go `flag` package treats as
-equivalent — `--help`, `-help`, `--h`, `-h` — go through this one boundary:
+by each leaf parser. Matching is on the flag **name** — the part after the
+leading dashes and before any `=` — so every spelling the Go `flag` package
+treats as help goes through this one boundary: `--help`, `-help`, `--h`, `-h`,
+and any `=value` form of those (`--help=true`, `--help=false`, ...). `flag`
+returns its help result for all of them regardless of the value, so aligning
+with it keeps one notion of help; the boundary never interprets a flag value:
 
 - Every help invocation exits `0`, writes to **stdout** only, records no
   operational error, and performs no tmux, runtime, or lifecycle-migration
@@ -36,6 +40,9 @@ equivalent — `--help`, `-help`, `--h`, `-h` — go through this one boundary:
   even with `--help`, and `projmux help` / bare `projmux` keep printing the
   top-level list. A bare `help` word nested under a command
   (`projmux pin help`) still reaches that command's own handler.
+- Because a help invocation runs no handler, it is never recorded as a state
+  change in the operations journal, at any depth — `projmux ai topic set --help`
+  logs neither an error nor a state-changing success.
 
 ## Top-level
 

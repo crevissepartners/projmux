@@ -12,32 +12,41 @@ import (
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
-// helpFlagSpellings are the four argv spellings the standard library `flag`
-// package treats as equivalent help requests. All four must clear the shared
-// help boundary; covering only `--help`/`-h` would let the other two reach the
-// leaf parser and record an operational error.
-var helpFlagSpellings = []string{"--help", "-help", "--h", "-h"}
+// helpFlagSpellings enumerates every argv spelling the standard library `flag`
+// package treats as a help request: both dash prefixes of both names, bare and
+// with any `=value`. All of them must clear the shared help boundary; an
+// uncovered spelling reaches the leaf parser, exits non-zero, and records an
+// operational error.
+func helpFlagSpellings() []string {
+	var out []string
+	for _, dashes := range []string{"-", "--"} {
+		for _, name := range []string{"help", "h"} {
+			out = append(out, dashes+name, dashes+name+"=true", dashes+name+"=false")
+		}
+	}
+	return out
+}
 
 // helpBoundaryArgv is the maintained help matrix: root spellings, every public
 // route, every documented sub-route, and both hidden internal helpers, each
 // crossed with all four help flag spellings.
 func helpBoundaryArgv() [][]string {
 	argv := [][]string{nil}
-	for _, flag := range helpFlagSpellings {
+	for _, flag := range helpFlagSpellings() {
 		argv = append(argv, []string{flag})
 	}
 	var walk func(prefix []string, routes []cli.Route)
 	walk = func(prefix []string, routes []cli.Route) {
 		for _, route := range routes {
 			path := append(append([]string{}, prefix...), route.Name)
-			for _, flag := range helpFlagSpellings {
+			for _, flag := range helpFlagSpellings() {
 				argv = append(argv, append(append([]string{}, path...), flag))
 			}
 			walk(path, route.Children)
 		}
 	}
 	walk(nil, cli.Routes())
-	for _, flag := range helpFlagSpellings {
+	for _, flag := range helpFlagSpellings() {
 		argv = append(argv,
 			[]string{"ai", "bogus", flag},
 			[]string{"setup", "terminal", "--apply", flag},
@@ -142,6 +151,39 @@ func TestHelpBoundaryRecordsZeroOperationalErrors(t *testing.T) {
 	}
 }
 
+// TestHelpBoundaryAndDiagnosticsClassifierAgree keeps one notion of help across
+// the two packages that independently decide what help is.
+//
+// internal/cli decides whether an invocation is answered by the help boundary;
+// internal/diagnostics decides whether it counts as a state change. If the
+// classifier recognizes fewer spellings than the boundary, a help invocation
+// that now succeeds gets recorded as a state-changing success for a mutation
+// that never ran.
+func TestHelpBoundaryAndDiagnosticsClassifierAgree(t *testing.T) {
+	t.Parallel()
+
+	// `switch` is alwaysChanging in the classifier, so a spelling the classifier
+	// fails to recognize as help shows up as StateChanging.
+	for _, spelling := range helpFlagSpellings() {
+		argv := []string{"switch", spelling}
+		if !cli.HelpRequested(argv) {
+			t.Fatalf("cli.HelpRequested(%q) = false; the boundary must own every help spelling", argv)
+		}
+		if class := diagnostics.Classify(argv); class.StateChanging {
+			t.Fatalf("diagnostics.Classify(%q) = %#v, want a read-only help classification", argv, class)
+		}
+	}
+
+	// A bare nested `help` word keeps reaching its handler, and both packages
+	// must still agree that it is not a mutation.
+	if cli.HelpRequested([]string{"pin", "help"}) {
+		t.Fatal("cli.HelpRequested(pin help) = true; the bare help word belongs to the handler")
+	}
+	if diagnostics.Classify([]string{"pin", "help"}).StateChanging {
+		t.Fatal("diagnostics.Classify(pin help) is state-changing")
+	}
+}
+
 // TestPopupWaitKeyHelpDoesNotBlockOnTheTTY is a bounded-timeout regression test.
 // Before the shared help boundary, `projmux popup-wait-key --help` went straight
 // to a blocking single-key read on /dev/tty and never returned, which violates
@@ -150,7 +192,7 @@ func TestPopupWaitKeyHelpDoesNotBlockOnTheTTY(t *testing.T) {
 	t.Parallel()
 
 	var argvs [][]string
-	for _, flag := range helpFlagSpellings {
+	for _, flag := range helpFlagSpellings() {
 		argvs = append(argvs, []string{"popup-wait-key", flag}, []string{"key-broker", flag})
 	}
 	for _, argv := range argvs {

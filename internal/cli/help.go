@@ -7,17 +7,38 @@ import (
 	"strings"
 )
 
-// helpFlagTokens are the argv tokens that request help. All four spellings are
-// required: the standard library `flag` package strips one or two leading dashes
-// before matching a flag name, so `-h`, `--h`, `-help`, and `--help` are
-// equivalent help requests to every leaf parser. Covering only two of them would
-// leave the other two falling through to the leaf `flag.ErrHelp` failure path,
-// which exits non-zero and records an operational error.
+// helpFlagNames are the flag names that request help.
 //
-// A bare `help` word is deliberately absent: only the top-level `help` route
-// (handled as a normal route) and these flags request the shared help boundary,
-// so nested handlers that already own a `help` word keep their current behavior.
-var helpFlagTokens = []string{"--help", "-help", "--h", "-h"}
+// The standard library `flag` package strips one or two leading dashes and
+// splits on the first `=` before looking a flag name up; an undefined `h`/`help`
+// name then returns flag.ErrHelp regardless of any value. So every dash prefix
+// and every `=value` suffix of these two names already *is* a help request at
+// the parser level, and the shared boundary must intercept all of them or the
+// uncovered spellings fall through to the leaf failure path — non-zero exit,
+// stderr output, and an operational error row.
+//
+// This is why matching is name-level: the boundary aligns with what the parser
+// already does and never interprets a flag value, which keeps the Phase 0 bridge
+// dumb. Leaf flag semantics stay with the leaf parsers.
+//
+// The invariant that makes this safe is that no leaf parser defines a real
+// `help` or `h` flag; TestNoLeafParserDefinesAHelpFlag guards it.
+var helpFlagNames = []string{"help", "h"}
+
+// isHelpFlag reports whether arg requests help. It matches the flag NAME only:
+// the part after the leading dashes and before the first `=`.
+//
+// Bare words are never help flags. The top-level `help` route owns that
+// spelling, and a nested `help` word (`projmux pin help`) stays with the
+// handler that already implements it.
+func isHelpFlag(arg string) bool {
+	if !strings.HasPrefix(arg, "-") {
+		return false
+	}
+	name := strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-")
+	name, _, _ = strings.Cut(name, "=")
+	return slices.Contains(helpFlagNames, name)
+}
 
 // argumentTerminator ends option scanning. Anything after the first bare `--`
 // is payload that projmux forwards untouched, so a `--help` there is data.
@@ -82,7 +103,7 @@ func helpFlagIndex(args []string) int {
 		if arg == argumentTerminator {
 			return -1
 		}
-		if slices.Contains(helpFlagTokens, arg) {
+		if isHelpFlag(arg) {
 			return i
 		}
 	}

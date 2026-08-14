@@ -79,11 +79,8 @@ func Classify(args []string) CommandClass {
 			out.StateChanging = out.StateChanging || rule.alwaysChanging
 		}
 	}
-	// A direct help intent is never a mutation. Keep this check at the first
-	// command argument: scanning later argv would misread flag values (for
-	// example, `upgrade --ref --help`) as help and could suppress a real
-	// successful mutation.
-	if len(args) > 1 && isDirectHelpArg(strings.TrimSpace(args[1])) {
+	// A direct help intent is never a mutation.
+	if directHelpIntent(args[1:]) {
 		out.StateChanging = false
 		return out
 	}
@@ -120,16 +117,48 @@ func Classify(args []string) CommandClass {
 	return out
 }
 
-func isDirectHelpArg(arg string) bool {
-	switch arg {
-	// The flag package strips one or two leading dashes before matching, so
-	// `-h`, `--h`, `-help`, and `--help` are all help requests. `--h` is
-	// included so a help invocation is never recorded as a state change.
-	case "help", "-h", "--h", "--help", "-help":
-		return true
-	default:
+// directHelpIntent reports whether the arguments after the top-level command
+// express a direct help intent.
+//
+// The scan walks positional subcommand words so nested help is recognized
+// (`ai settings --help`, `ai topic set --help`), and stops at the first
+// flag-looking token: a token after a flag can be that flag's value, and
+// misreading a value as help would suppress a real mutation record (for example
+// `upgrade --ref --help`). It also stops at a bare `--`, which begins payload.
+//
+// The bare `help` word counts only in the first position. Later on it can be a
+// real positional value — `pin add help` pins a directory named "help" — so
+// treating it as help there would hide an actual mutation.
+func directHelpIntent(args []string) bool {
+	for i, arg := range args {
+		arg = strings.TrimSpace(arg)
+		switch {
+		case arg == "--":
+			return false
+		case i == 0 && arg == "help":
+			return true
+		case strings.HasPrefix(arg, "-"):
+			return isHelpFlagArg(arg)
+		}
+	}
+	return false
+}
+
+// isHelpFlagArg reports whether arg is a flag-form help request.
+//
+// Matching is name-level and mirrors the flag package: strip one or two leading
+// dashes, take the part before the first `=`, and compare against `h`/`help`.
+// The flag package returns flag.ErrHelp for every such spelling regardless of
+// any value, and the CLI help boundary answers all of them with exit 0, so none
+// of them may be scored as a state change. Missing a spelling here records a
+// phantom state-changing success row for a mutation that never ran.
+func isHelpFlagArg(arg string) bool {
+	if !strings.HasPrefix(arg, "-") {
 		return false
 	}
+	name := strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-")
+	name, _, _ = strings.Cut(name, "=")
+	return name == "h" || name == "help"
 }
 
 func isAIIntegrationProvider(arg string) bool {

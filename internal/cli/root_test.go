@@ -188,15 +188,15 @@ func TestHelpInvocationsInvokeNoHandler(t *testing.T) {
 
 	var argvs [][]string
 	argvs = append(argvs, nil)
-	for _, flag := range helpFlagTokens {
+	for _, flag := range helpFlagSpellings() {
 		argvs = append(argvs, []string{flag})
 	}
 	walkRoutes(Routes(), func(path []string, _ Route) {
-		for _, flag := range helpFlagTokens {
+		for _, flag := range helpFlagSpellings() {
 			argvs = append(argvs, append(append([]string{}, path...), flag))
 		}
 	})
-	for _, flag := range helpFlagTokens {
+	for _, flag := range helpFlagSpellings() {
 		argvs = append(argvs,
 			[]string{"ai", "bogus", flag},
 			[]string{"setup", "terminal", "--apply", flag},

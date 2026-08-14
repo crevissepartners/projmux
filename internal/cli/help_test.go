@@ -5,10 +5,11 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -95,39 +96,114 @@ func TestPadNameMatchesHistoricalColumnRule(t *testing.T) {
 	}
 }
 
-// TestHelpFlagTokensCoverEveryFlagPackageSpelling pins the help-token set to the
-// spellings the standard library `flag` package treats as help.
+// helpFlagSpellings enumerates every argv spelling the shared boundary must
+// intercept: both dash prefixes of both names, bare and with any `=value`.
+func helpFlagSpellings() []string {
+	var out []string
+	for _, dashes := range []string{"-", "--"} {
+		for _, name := range helpFlagNames {
+			out = append(out,
+				dashes+name,
+				dashes+name+"=true",
+				dashes+name+"=false",
+				dashes+name+"=",
+			)
+		}
+	}
+	return out
+}
+
+// TestHelpFlagMatchingTracksTheFlagPackage pins the boundary to exactly what the
+// standard library treats as help, proven against the real `flag` package rather
+// than against a comment.
 //
-// flag.FlagSet.parseOne strips one or two leading dashes and splits on `=` before
-// looking the name up; an undefined `h`/`help` name then returns flag.ErrHelp. So
-// `-h`, `--h`, `-help`, and `--help` are all help requests to every leaf parser,
-// and the shared boundary must intercept all four or the uncovered ones fall
-// through to the leaf failure path (non-zero exit plus an operational error).
-//
-// The `-help`/`--h` spellings are also what internal/diagnostics already treats
-// as a direct help intent, so this keeps one notion of help across the codebase.
-func TestHelpFlagTokensCoverEveryFlagPackageSpelling(t *testing.T) {
+// flag.FlagSet.parseOne strips one or two leading dashes, splits on the first
+// `=`, and looks the remaining name up; an undefined `h`/`help` returns
+// flag.ErrHelp whatever the value is. Every spelling below must therefore route
+// through the boundary, and the near-miss spellings must not.
+func TestHelpFlagMatchingTracksTheFlagPackage(t *testing.T) {
 	t.Parallel()
 
-	want := []string{"--help", "-help", "--h", "-h"}
-	got := append([]string{}, helpFlagTokens...)
-	sort.Strings(got)
-	sorted := append([]string{}, want...)
-	sort.Strings(sorted)
-	if !reflect.DeepEqual(got, sorted) {
-		t.Fatalf("helpFlagTokens = %q, want exactly %q", helpFlagTokens, want)
+	if !reflect.DeepEqual(helpFlagNames, []string{"help", "h"}) {
+		t.Fatalf("helpFlagNames = %q, want [help h]", helpFlagNames)
 	}
 
-	// Prove the equivalence claim against the real flag package rather than
-	// trusting the comment: every spelling above must produce flag.ErrHelp from
-	// a FlagSet that does not define a help flag.
-	for _, spelling := range want {
+	for _, spelling := range helpFlagSpellings() {
+		if !isHelpFlag(spelling) {
+			t.Errorf("isHelpFlag(%q) = false, want true", spelling)
+		}
+		// The flag package must agree that this is a help request.
 		set := flag.NewFlagSet("probe", flag.ContinueOnError)
 		set.SetOutput(io.Discard)
 		set.Bool("apply", false, "")
+		set.String("section", "", "")
 		if err := set.Parse([]string{spelling}); !errors.Is(err, flag.ErrHelp) {
-			t.Fatalf("flag.Parse(%q) error = %v, want flag.ErrHelp", spelling, err)
+			t.Errorf("flag.Parse(%q) error = %v, want flag.ErrHelp", spelling, err)
 		}
+	}
+
+	// Near misses must stay out of the boundary so ordinary flags, payload, and
+	// the bare `help` word keep their existing behavior.
+	for _, spelling := range []string{
+		"help", "-", "--", "-hello", "--helper", "-h5", "-help-me",
+		"---help", "--=help", "-apply", "--section=help", "", "h", "=help",
+	} {
+		if isHelpFlag(spelling) {
+			t.Errorf("isHelpFlag(%q) = true, want false", spelling)
+		}
+	}
+}
+
+// TestNoLeafParserDefinesAHelpFlag guards the invariant the name-level boundary
+// depends on: because no command defines a real `help`/`h` flag, intercepting
+// every dash/`=value` spelling of those two names cannot swallow a meaningful
+// flag. If a future command defines one, this fails and the boundary must be
+// revisited before that flag ships.
+func TestNoLeafParserDefinesAHelpFlag(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	pattern := regexp.MustCompile(`\.(Bool|String|Int|Int64|Uint|Uint64|Float64|Duration|Var|Func|BoolFunc|TextVar)(Var)?\(\s*(?:&?[\w.\[\]]+,\s*)?"(h|help)"`)
+	var offenders []string
+	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, readErr := os.ReadFile(path) // #nosec G304 -- walked repository source
+		if readErr != nil {
+			return readErr
+		}
+		if pattern.Match(data) {
+			offenders = append(offenders, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk internal: %v", err)
+	}
+	if len(offenders) > 0 {
+		t.Fatalf("a leaf parser defines a help/h flag, which the shared help boundary would swallow: %v", offenders)
+	}
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for {
+		if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); statErr == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("could not locate the repository root")
+		}
+		dir = parent
 	}
 }
 
@@ -170,7 +246,15 @@ func TestRequestedHelpDetection(t *testing.T) {
 		{name: "bare help word is not a help flag", args: []string{"pin", "help"}, ok: false},
 		{name: "unknown command keeps its error", args: []string{"nosuchcmd", "--help"}, ok: false},
 		{name: "no help token", args: []string{"doctor", "--json"}, ok: false},
-		{name: "help=false is not an exact help token", args: []string{"doctor", "--help=false"}, ok: false},
+		// `=value` spellings are help requests to the flag package too, so the
+		// boundary answers them rather than letting them fail in the leaf.
+		{name: "long flag with false value", args: []string{"doctor", "--help=false"}, ok: true, path: []string{"doctor"}},
+		{name: "long flag with true value", args: []string{"doctor", "--help=true"}, ok: true, path: []string{"doctor"}},
+		{name: "single dash name with value", args: []string{"switch", "-help=true"}, ok: true, path: []string{"switch"}},
+		{name: "short name with value", args: []string{"current", "--h=false"}, ok: true, path: []string{"current"}},
+		{name: "value spelling after terminator is payload", args: []string{"ai", "split", "--", "--help=true"}, ok: false},
+		{name: "near miss flag is not help", args: []string{"doctor", "--helper"}, ok: false},
+		{name: "other flag whose value looks like help", args: []string{"doctor", "--section=help"}, ok: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -268,7 +352,7 @@ func TestRenderHelpForEveryManifestRouteIsNonEmpty(t *testing.T) {
 	t.Parallel()
 
 	walkRoutes(Routes(), func(path []string, _ Route) {
-		for _, flag := range helpFlagTokens {
+		for _, flag := range helpFlagSpellings() {
 			args := append(append([]string{}, path...), flag)
 			target, ok := RequestedHelp(args)
 			if !ok {
