@@ -172,7 +172,7 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 		{
 			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNotificationsDesktopLabel(locale), desktopNotifyDisplayName(notifyMode)+" - "+string(notifySource)),
 			Value:     settingsNotificationsDesktop,
-			SearchKey: "desktop notifications none notify raise toast osfocus",
+			SearchKey: "desktop notifications off none notify toast",
 		},
 		{
 			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "AI notification dedupe", fmt.Sprintf("%ds - %s", dedupe.Seconds, dedupe.Source)),
@@ -645,8 +645,7 @@ func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
 		desc string
 	}{
 		{desktopNotifyModeNone, string(config.DesktopNotifyModeOff), "silence OS notifications; in-app notify queue is unaffected"},
-		{desktopNotifyModeNotify, string(config.DesktopNotifyModeNotify), "fire toast / notify-send for AI reply-ready without click-to-focus"},
-		{desktopNotifyModeRaise, string(config.DesktopNotifyModeRaise), "fire toast with click-to-focus and auto-raise host terminal via osfocus chain"},
+		{desktopNotifyModeNotify, string(config.DesktopNotifyModeNotify), "fire toast / notify-send for AI reply-ready; never focuses the terminal"},
 	} {
 		glyph := settingsGlyphInactive
 		color := settingsColorDim

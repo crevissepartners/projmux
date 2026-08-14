@@ -3082,6 +3082,83 @@ func TestTmuxApplyUsesSavedDesktopNotifyMode(t *testing.T) {
 	}
 }
 
+// TestTmuxApplyGeneratesOnlyTwoDesktopNotifyModes pins the generated tmux
+// option to the two-state model. A saved `raise`-family literal is normalized
+// to `notify` on the way out, and an absent saved file takes the
+// platform-neutral `notify` default — including under WSL + Windows Terminal,
+// which used to default to the retired `raise` mode.
+func TestTmuxApplyGeneratesOnlyTwoDesktopNotifyModes(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		saved string
+		env   map[string]string
+		want  string
+	}{
+		{name: "saved off", saved: "off", want: "off"},
+		{name: "saved notify", saved: "notify", want: "notify"},
+		{name: "saved legacy raise", saved: "raise", want: "notify"},
+		{name: "saved legacy auto-raise", saved: "auto-raise", want: "notify"},
+		{name: "saved legacy autoraise", saved: "autoraise", want: "notify"},
+		{name: "saved garbage", saved: "garbage", want: "notify"},
+		{name: "unset default", want: "notify"},
+		{
+			name: "unset default under WSL and Windows Terminal",
+			env:  map[string]string{"WSL_DISTRO_NAME": "Ubuntu-24.04", "WT_SESSION": "abc-123"},
+			want: "notify",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			home := t.TempDir()
+			paths, err := config.Homes{HomeDir: home}.Paths()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.saved != "" {
+				if err := os.MkdirAll(paths.ConfigDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				// Write the raw literal (bypassing the normalizing saver) so the
+				// read path is what gets exercised.
+				if err := os.WriteFile(paths.DesktopNotifyModeFile(), []byte(tc.saved+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+			runner := &recordingTmuxRunner{err: errors.New("no server running on /tmp/tmux-1000/projmux")}
+			cmd := &tmuxCommand{
+				executable: func() (string, error) { return "/tmp/projmux", nil },
+				homeDir:    func() (string, error) { return home, nil },
+				lookupEnv:  func(name string) string { return tc.env[name] },
+				writeFile:  os.WriteFile,
+				runner:     runner,
+			}
+
+			var stdout, stderr bytes.Buffer
+			if err := cmd.Run([]string{"apply", "--config", configPath}, &stdout, &stderr); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			content, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "set -g " + desktopNotifyModeTmuxOption + " " + tc.want
+			if !strings.Contains(string(content), want) {
+				t.Fatalf("app config missing %q\n%s", want, string(content))
+			}
+			for _, forbidden := range []string{"raise", "auto-raise", "autoraise", "none"} {
+				line := "set -g " + desktopNotifyModeTmuxOption + " " + forbidden
+				if strings.Contains(string(content), line) {
+					t.Fatalf("app config must not generate %q\n%s", line, string(content))
+				}
+			}
+		})
+	}
+}
+
 func TestTmuxApplyReloadsLiveServer(t *testing.T) {
 	t.Parallel()
 

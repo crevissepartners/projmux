@@ -3181,21 +3181,12 @@ func aiAttentionMismatch(nextState, attentionState string) bool {
 // buildToastPowerShell composes the PowerShell snippet that Windows runs to
 // surface a Toast notification.
 //
-// When launchURI is non-empty the root <toast> element gains a
-// `launch="<uri>" activationType="protocol"` pair. Windows then hands the
-// URI to the registered scheme handler on click — for the WSL scope shipped
-// today that is a hidden PowerShell wrapper around
-// `wsl.exe -d <distro> --exec <abs-binary-path> focus --uri <uri>`, wired from
-// buildRegisterURIProtocolPowerShell. The URI itself is produced by
-// buildFocusURI (already URL-encoded once); we xml-escape it for the attribute
-// so the two layers compose without double-decoding.
-//
-// When launchURI is empty the launch attribute is omitted entirely and the
-// toast behaves as a passive notification — the existing pre-protocol path.
-// This lets the WSL hook short-circuit cleanly when the inbound
-// notification has no pane id (`aiNotification.Tag` empty) without breaking
-// non-WSL notify paths that never compute a URI.
-func buildToastPowerShell(summary, body, appName, tag, group, iconPath, launchURI string, expireMS int) string {
+// The Toast is always passive: the root <toast> element never gains a
+// `launch=` / `activationType="protocol"` pair, so Windows has no click
+// target to activate and projmux never registers a URI scheme handler.
+// Desktop delivery must not be able to pull the host terminal window
+// forward, and a clickable Toast is exactly that capability.
+func buildToastPowerShell(summary, body, appName, tag, group, iconPath string, expireMS int) string {
 	tagLine := ""
 	if tag != "" {
 		tagLine = "$toast.Tag = '" + psEscape(truncate64(tag)) + "'"
@@ -3208,10 +3199,6 @@ func buildToastPowerShell(summary, body, appName, tag, group, iconPath, launchUR
 	if iconPath != "" {
 		iconXML = "\n      <image placement=\"appLogoOverride\" hint-crop=\"circle\" src=\"" + xmlEscape(iconPath) + "\"/>"
 	}
-	toastAttrs := ""
-	if launchURI != "" {
-		toastAttrs = ` launch="` + xmlEscape(launchURI) + `" activationType="protocol"`
-	}
 	toastDuration := ""
 	expirationLine := ""
 	if expireMS > 0 {
@@ -3221,7 +3208,7 @@ func buildToastPowerShell(summary, body, appName, tag, group, iconPath, launchUR
 	return `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType=WindowsRuntime] | Out-Null
 $xml = @'
-<toast` + toastDuration + toastAttrs + `>
+<toast` + toastDuration + `>
   <visual>
     <binding template="ToastGeneric">` + iconXML + `
       <text>` + xmlEscape(summary) + `</text>
@@ -3238,105 +3225,6 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($tpl)
 ` + expirationLine + `
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('` + psEscape(appName) + `').Show($toast)
 `
-}
-
-// buildRegisterURIProtocolPowerShell emits an idempotent PowerShell script
-// that registers the `projmux://` URI scheme in the user's HKCU registry so
-// a Toast click can hand control back to projmux running inside WSL.
-//
-// Registry layout (HKCU\SOFTWARE\Classes\<scheme>):
-//
-//	(Default)                          = "URL:projmux"
-//	URL Protocol                       = ""
-//	shell\open\command\(Default)       = wscript.exe //B //Nologo <launcher.vbs> "%1"
-//
-// The GUI-subsystem WScript launcher avoids the visible console flash caused
-// by Windows ShellExecute launching console-subsystem `wsl.exe` or
-// `powershell.exe` directly from the protocol handler. WScript.Shell.Run does
-// not pass quoted fixed arguments to wsl.exe the same way PowerShell does, so
-// the launcher uses hidden `%ComSpec% /d /s /c` as the command-line parser and
-// caret-escapes URI query separators before invoking wsl.exe. Inside that
-// command, `--exec` instead of `--` remains load-bearing: `wsl.exe -- <cmd>
-// <args>` routes `<cmd> <args>` through the user's default login shell
-// (zsh/bash). The `projmux://` URI carries `&` characters as query-parameter
-// separators, and zsh parses `&` as a background-job operator before projmux
-// ever runs, emitting `zsh:1: parse error near '&'`. `--exec` skips the shell
-// and invokes the binary directly with the args verbatim. Because `--exec`
-// doesn't load shell init files, PATH may be empty, so we register the
-// absolute WSL filesystem path to the projmux binary captured at registration
-// time (whichever binary actually wrote the registry key).
-//
-// The handler captures the user's *current* WSL_DISTRO_NAME because the
-// click is received on the Windows side with no knowledge of which distro
-// produced the notification. This is the documented limitation: users with
-// multiple WSL distros only get the handler bound to whichever distro fired
-// the first toast on this tmux server. The follow-up roadmap entry covers
-// multi-distro dispatch.
-//
-// The script is safe to re-run — every Set-ItemProperty is overwriting
-// idempotently, and the New-Item is gated on Test-Path. Caller gates the
-// invocation behind a tmux user-option marker so this runs at most once per
-// server boot anyway (see ensureWSLURIProtocol).
-func buildRegisterURIProtocolPowerShell(scheme, distro, binaryPath string) string {
-	return `$regPath = "HKCU:\SOFTWARE\Classes\` + psEscape(scheme) + `"
-$cmdPath = "$regPath\shell\open\command"
-$launcherRoot = $env:LOCALAPPDATA
-if ([string]::IsNullOrWhiteSpace($launcherRoot)) {
-  $launcherRoot = $env:TEMP
-}
-$launcherDir = Join-Path $launcherRoot 'projmux'
-$launcherPath = Join-Path $launcherDir '` + psEscape(scheme) + `-uri-handler.vbs'
-$launcherScript = @'
-` + buildWSLURIProtocolLauncherVBScript(distro, binaryPath) + `
-'@
-try {
-  if (-not (Test-Path $regPath)) {
-    New-Item -Path $regPath -Force | Out-Null
-  }
-  if (-not (Test-Path $cmdPath)) {
-    New-Item -Path $cmdPath -Force | Out-Null
-  }
-  if (-not (Test-Path $launcherDir)) {
-    New-Item -Path $launcherDir -ItemType Directory -Force | Out-Null
-  }
-  Set-Content -Path $launcherPath -Value $launcherScript -Encoding ASCII
-  Set-ItemProperty -Path $regPath -Name '(Default)' -Value 'URL:` + psEscape(scheme) + `' -Type String
-  Set-ItemProperty -Path $regPath -Name 'URL Protocol' -Value '' -Type String
-  $launchCmd = 'wscript.exe //B //Nologo "' + $launcherPath + '" "%1"'
-  Set-ItemProperty -Path $cmdPath -Name '(Default)' -Value $launchCmd -Type String
-} catch { }
-`
-}
-
-func buildWSLURIProtocolLauncherVBScript(distro, binaryPath string) string {
-	return `Option Explicit
-
-Dim uri
-If WScript.Arguments.Count < 1 Then
-  WScript.Quit 0
-End If
-uri = WScript.Arguments.Item(0)
-
-Dim shell, inner, command
-inner = "wsl.exe -d " & CmdEscape(` + vbsDoubleQuoted(distro) + `) & " --exec " & CmdEscape(` + vbsDoubleQuoted(binaryPath) + `) & " focus --uri " & CmdEscape(uri)
-command = "%ComSpec% /d /s /c " & Chr(34) & inner & Chr(34)
-Set shell = CreateObject("WScript.Shell")
-shell.Run command, 0, False
-
-Function CmdEscape(value)
-  Dim s
-  s = value
-  s = Replace(s, "^", "^^")
-  s = Replace(s, "&", "^&")
-  s = Replace(s, "|", "^|")
-  s = Replace(s, "<", "^<")
-  s = Replace(s, ">", "^>")
-  CmdEscape = s
-End Function`
-}
-
-func vbsDoubleQuoted(value string) string {
-	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func buildRegisterToastAppIDPowerShell(appID, displayName, iconURI string) string {

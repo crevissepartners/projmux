@@ -79,7 +79,7 @@ Classification:
 | Disabled reasons and warnings | missing project, env override, conflict text | `translate` | Inventory only; catalog later. |
 | Config keys and env vars | `PROJMUX_PROJDIR`, `config.toml`, `ui.locale` | `literal` | Preserve exactly. |
 | Commands shown for copying | `projmux ai integrate codex --dry-run`, `projmux ai integrate antigravity --dry-run` | `literal` | Preserve exactly. |
-| Persisted values | `none`, `notify`, `raise`, `auto` | `literal` | Preserve enum values. |
+| Persisted values | `off`, `none`, `notify`, `auto` | `literal` | Preserve enum values. |
 
 ### Native Picker And Render Surfaces
 

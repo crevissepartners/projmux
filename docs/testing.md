@@ -122,15 +122,15 @@ Observe:
   `"reason":"no-attached-client"`.
 - Windows shows a short projmux toast with `session ready:
   projmux-host-smoke`.
-- In `notify` mode, the toast has no click-to-focus action and should not
-  auto-raise the host terminal.
+- The toast is passive: clicking it does nothing, and the host terminal window
+  never comes forward on its own.
 - No visible PowerShell or console window remains open after the toast.
 
-If the PR changes click-to-focus behavior, repeat with
-`PROJMUX_DESKTOP_NOTIFY_MODE=raise`, click the toast, and record whether the
-host terminal returns to the target. `raise` should also be the only mode where
-`projmux focus` performs post-switch osfocus. Otherwise leave click callbacks
-marked as manual/not run.
+Desktop notification mode has exactly two states, `off` and `notify`. Repeat
+with `PROJMUX_DESKTOP_NOTIFY_MODE=off` and confirm no toast appears while the
+in-app notify queue / statusbar / sidebar still record the event. Repeating
+with the retired `PROJMUX_DESKTOP_NOTIFY_MODE=raise` must behave identically to
+`notify` — toast only, no window raise, no clickable action.
 
 ### macOS GUI Notification
 
@@ -181,6 +181,6 @@ Host-only smoke validation:
   produced `dispatch=notify-only`; observed <toast/no toast/notes>.
 - macOS GUI notification: not run / run on <macOS version>; hook smoke
   produced `dispatch=notify-only`; observed <banner/permission prompt/notes>.
-- Desktop notification click callbacks: not run unless this PR changes
-  click-to-focus behavior; result <notes>.
+- Desktop notification mode: not run / run; `off` produced no toast and
+  `notify` produced a passive toast with no window raise; result <notes>.
 ```

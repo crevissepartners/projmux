@@ -268,6 +268,112 @@ func TestDesktopNotifyModeNormalizesInvalidValues(t *testing.T) {
 	}
 }
 
+// TestNormalizeDesktopNotifyModeTwoStates pins the two-state model: only
+// `off` and `notify` are representable, and the retired `raise` family is
+// still accepted on read but resolves to `notify` rather than to the default
+// via the unknown-value branch (the distinction matters for the resolver
+// cascade, which must not fall through to a lower-precedence source).
+func TestNormalizeDesktopNotifyModeTwoStates(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		in   string
+		want DesktopNotifyMode
+	}{
+		{"off", DesktopNotifyModeOff},
+		{"OFF", DesktopNotifyModeOff},
+		{"  off\n", DesktopNotifyModeOff},
+		{"notify", DesktopNotifyModeNotify},
+		{"NOTIFY", DesktopNotifyModeNotify},
+		{"raise", DesktopNotifyModeNotify},
+		{"RAISE", DesktopNotifyModeNotify},
+		{"auto-raise", DesktopNotifyModeNotify},
+		{"Auto-Raise", DesktopNotifyModeNotify},
+		{"autoraise", DesktopNotifyModeNotify},
+		{" raise \n", DesktopNotifyModeNotify},
+		{"", DefaultDesktopNotifyMode},
+		{"garbage", DefaultDesktopNotifyMode},
+		{"none", DefaultDesktopNotifyMode},
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			t.Parallel()
+
+			if got := NormalizeDesktopNotifyMode(tc.in); got != tc.want {
+				t.Fatalf("NormalizeDesktopNotifyMode(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDesktopNotifyModeDefaultIsNotify pins the platform-neutral default. The
+// config layer carries no host detection at all, so there is no rung where the
+// unset default can differ per platform.
+func TestDesktopNotifyModeDefaultIsNotify(t *testing.T) {
+	t.Parallel()
+
+	if DefaultDesktopNotifyMode != DesktopNotifyModeNotify {
+		t.Fatalf("DefaultDesktopNotifyMode = %q, want %q", DefaultDesktopNotifyMode, DesktopNotifyModeNotify)
+	}
+}
+
+// TestSaveDesktopNotifyModeFileOnlyPersistsTwoStates pins that a saved file
+// never carries a `raise`-family literal forward: writes are normalized, so a
+// legacy value entering Settings leaves as `notify`.
+func TestSaveDesktopNotifyModeFileOnlyPersistsTwoStates(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		in   DesktopNotifyMode
+		want string
+	}{
+		{DesktopNotifyModeOff, "off\n"},
+		{DesktopNotifyModeNotify, "notify\n"},
+		{DesktopNotifyMode("raise"), "notify\n"},
+		{DesktopNotifyMode("auto-raise"), "notify\n"},
+		{DesktopNotifyMode("autoraise"), "notify\n"},
+	} {
+		t.Run(string(tc.in), func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), DesktopNotifyModeFileName)
+			if err := SaveDesktopNotifyModeFile(path, tc.in); err != nil {
+				t.Fatalf("SaveDesktopNotifyModeFile(%q) error = %v", tc.in, err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(raw) != tc.want {
+				t.Fatalf("saved file for %q = %q, want %q", tc.in, string(raw), tc.want)
+			}
+		})
+	}
+}
+
+// TestLoadDesktopNotifyModeFileReadsLegacyRaiseAsNotify pins the read-time
+// alias for users whose saved file predates the two-state model.
+func TestLoadDesktopNotifyModeFileReadsLegacyRaiseAsNotify(t *testing.T) {
+	t.Parallel()
+
+	for _, literal := range []string{"raise\n", "auto-raise\n", "autoraise\n", "RAISE"} {
+		t.Run(literal, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), DesktopNotifyModeFileName)
+			if err := os.WriteFile(path, []byte(literal), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := LoadDesktopNotifyModeFile(path)
+			if err != nil {
+				t.Fatalf("LoadDesktopNotifyModeFile() error = %v", err)
+			}
+			if got != DesktopNotifyModeNotify {
+				t.Fatalf("LoadDesktopNotifyModeFile(%q) = %q, want %q", literal, got, DesktopNotifyModeNotify)
+			}
+		})
+	}
+}
+
 func TestAIHookActionsFileRoundtrip(t *testing.T) {
 	t.Parallel()
 

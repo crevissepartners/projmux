@@ -2441,8 +2441,8 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 			powershellCommands = append(powershellCommands, command)
 		}
 	}
-	// Default WSL without WT_SESSION resolves to mode=notify. Notify mode
-	// shows a toast but deliberately omits the projmux:// click target:
+	// WSL resolves to the default mode=notify, which shows a toast and does
+	// nothing else — no click target, no protocol handler registration:
 	//   [0] legacy AppID cleanup    (ensureWSLLegacyAppIDCleaned)
 	//   [1] new AppID register      (ensureWSLToastAppID)
 	//   [2] toast XML show          (dispatchWSLToast)
@@ -2462,8 +2462,14 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 	if !containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", legacyAppIDCleanedTmuxOption, "1"}) {
 		t.Fatalf("commands = %#v, want legacy cleanup marker write", cmdRecorder(cmd).commands)
 	}
-	if containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", []string{"set-option", "-g", uriProtocolRegisteredTmuxOption, "1"}) {
-		t.Fatalf("commands = %#v, did not expect uri protocol marker write in notify mode", cmdRecorder(cmd).commands)
+	// No `@projmux_uri_protocol_registered*` marker may be written: projmux
+	// no longer registers a `projmux://` protocol handler at all.
+	for _, command := range cmdRecorder(cmd).commands {
+		for _, arg := range command.args {
+			if strings.Contains(arg, "@projmux_uri_protocol_registered") {
+				t.Fatalf("commands = %#v, did not expect any uri protocol marker write", cmdRecorder(cmd).commands)
+			}
+		}
 	}
 	registerScript := decodePowerShellEncodedCommand(t, powershellCommands[1])
 	if !strings.Contains(registerScript, `HKCU:\SOFTWARE\Classes\AppUserModelId\`+desktopAppID) {

@@ -1,8 +1,16 @@
 package app
 
-// notification_uri.go encodes and decodes the `projmux://` URI that the
-// WSL → Windows Toast click handler shuttles between the Windows shell and
-// the in-WSL `projmux focus --uri` invocation.
+// notification_uri.go encodes and decodes the `projmux://` URI understood by
+// the `projmux focus --uri` entrypoint.
+//
+// COMPATIBILITY ONLY as of 0.11.0. Desktop notification delivery is now a
+// two-state model (`off` / `notify`): Toasts carry no click URI and projmux
+// registers no `projmux://` protocol handler, so nothing in the product
+// produces such a URI any more. The parser and the `--uri` flag are retained
+// so a handler wired by an earlier version (or by the user directly) keeps
+// working; `buildFocusURI` is retained as the canonical round-trip
+// counterpart that keeps the parser honest in tests. Do not wire either of
+// them to a new producer.
 //
 // The URI shape is:
 //
@@ -37,11 +45,13 @@ const (
 )
 
 // buildFocusURI assembles a `projmux://focus?...` URI from a tmux pane id
-// and a tmux socket path. `paneID` is required; an empty pane id returns
-// an empty string so callers can use the result as a "no launch attribute"
-// signal (the Toast XML omits the launch attribute when this is empty).
-// `socket` is optional — at click time the receiving `projmux focus --uri`
+// and a tmux socket path. `paneID` is required; an empty pane id returns an
+// empty string. `socket` is optional — the receiving `projmux focus --uri`
 // falls back to $TMUX when the query param is absent.
+//
+// No production call site remains: this is the round-trip counterpart of the
+// retained compatibility parser (see the package comment above), which is why
+// it is listed in .deadcode-allowlist.txt.
 func buildFocusURI(paneID, socket string) string {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {

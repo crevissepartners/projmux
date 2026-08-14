@@ -729,7 +729,6 @@ func settingsEnglishChromeResidue(visible string) (string, bool) {
 		"XDG",
 		"tmux",
 		"notify-send",
-		"osfocus",
 		"statusbar/sidebar",
 	}
 	normalized := visible
@@ -2536,9 +2535,13 @@ func TestSettingsSetDesktopNotifyModePersistsAndWritesTmuxOption(t *testing.T) {
 	}{
 		{"none", "off", "off"},
 		{"notify", "notify", "notify"},
-		{"raise", "raise", "raise"},
 		{"off", "off", "off"},
 		{"toast", "notify", "notify"},
+		// Retired `raise` family: accepted as input, but only ever saved and
+		// applied as `notify`.
+		{"raise", "notify", "notify"},
+		{"auto-raise", "notify", "notify"},
+		{"autoraise", "notify", "notify"},
 	} {
 		t.Run(tc.in, func(t *testing.T) {
 			home := t.TempDir()
@@ -2639,7 +2642,7 @@ func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.
 		homeDir: func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
 			if name == "PROJMUX_DESKTOP_NOTIFY_MODE" {
-				return "raise"
+				return "notify"
 			}
 			return ""
 		},
@@ -2667,7 +2670,6 @@ func TestSettingsAIRootNestsAIDetailsAndExcludesDesktopNotifications(t *testing.
 		settingsActionPrefixAI + aiModeShell,
 		settingsActionPrefixDesktopNotifyMode + string(config.DesktopNotifyModeOff),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
-		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeRaise),
 	} {
 		if hasEntryValue(root, want) {
 			t.Fatalf("AI root entries = %#v, want no direct row %q", root, want)
@@ -3121,7 +3123,7 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 		homeDir: func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
 			if name == "PROJMUX_DESKTOP_NOTIFY_MODE" {
-				return "raise"
+				return "notify"
 			}
 			return ""
 		},
@@ -3148,10 +3150,21 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 	for _, value := range []string{
 		settingsActionPrefixDesktopNotifyMode + string(config.DesktopNotifyModeOff),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
-		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeRaise),
 	} {
 		if hasEntryValue(root, value) {
 			t.Fatalf("notifications entries = %#v, want no direct desktop notification choice %q", root, value)
+		}
+	}
+	// The Raise mode is retired: its keyword must not survive in the search
+	// key of the Desktop notifications row.
+	for _, entry := range root {
+		if entry.Value != settingsNotificationsDesktop {
+			continue
+		}
+		for _, forbidden := range []string{"raise", "osfocus"} {
+			if strings.Contains(strings.ToLower(entry.SearchKey), forbidden) {
+				t.Fatalf("desktop notifications search key = %q, want no %q keyword", entry.SearchKey, forbidden)
+			}
 		}
 	}
 
@@ -3159,7 +3172,6 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 	for _, want := range []string{
 		settingsActionPrefixDesktopNotifyMode + string(config.DesktopNotifyModeOff),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
-		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeRaise),
 	} {
 		if !hasEntryValue(detail, want) {
 			t.Fatalf("desktop notification entries = %#v, want row %q", detail, want)
@@ -3168,13 +3180,56 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 	var sawInfo bool
 	for _, entry := range detail {
 		if strings.Contains(entry.Label, "Desktop notifications") &&
-			strings.Contains(entry.Label, "raise") &&
+			strings.Contains(entry.Label, "notify") &&
 			strings.Contains(entry.Label, "env") {
 			sawInfo = true
 		}
 	}
 	if !sawInfo {
-		t.Fatalf("desktop notification entries = %#v, want info row with raise + env source", detail)
+		t.Fatalf("desktop notification entries = %#v, want info row with notify + env source", detail)
+	}
+}
+
+// TestSettingsDesktopNotifyDetailOffersExactlyTwoModes pins acceptance
+// criterion 1: Settings > Notifications > Desktop notifications exposes only
+// Off and Notify — no Raise row, description, or keyword — in every locale.
+func TestSettingsDesktopNotifyDetailOffersExactlyTwoModes(t *testing.T) {
+	t.Parallel()
+
+	for _, locale := range []i18n.Locale{"en-US", "ko-KR"} {
+		t.Run(string(locale), func(t *testing.T) {
+			t.Parallel()
+
+			home := t.TempDir()
+			cmd := &settingsCommand{
+				homeDir: func() (string, error) { return home, nil },
+				lookupEnv: func(name string) string {
+					if name == i18n.LocaleEnvName {
+						return string(locale)
+					}
+					return ""
+				},
+			}
+			detail := cmd.desktopNotifyEntries()
+			var actions []string
+			for _, entry := range detail {
+				if after, ok := strings.CutPrefix(entry.Value, settingsActionPrefixDesktopNotifyMode); ok {
+					actions = append(actions, after)
+				}
+			}
+			want := []string{string(config.DesktopNotifyModeOff), string(config.DesktopNotifyModeNotify)}
+			if !reflect.DeepEqual(actions, want) {
+				t.Fatalf("desktop notify mode actions = %#v, want %#v", actions, want)
+			}
+			for _, entry := range detail {
+				lowered := strings.ToLower(entry.Label + " " + entry.SearchKey)
+				for _, forbidden := range []string{"raise", "osfocus", "click-to-focus", "클릭 포커스"} {
+					if strings.Contains(lowered, forbidden) {
+						t.Fatalf("desktop notify entry %#v must not mention %q", entry, forbidden)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -3276,7 +3331,7 @@ func TestSettingsNotificationsDesktopNotifyRowsUseKoreanCatalog(t *testing.T) {
 			case i18n.LocaleEnvName:
 				return "ko-KR"
 			case "PROJMUX_DESKTOP_NOTIFY_MODE":
-				return "raise"
+				return "notify"
 			default:
 				return ""
 			}

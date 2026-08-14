@@ -49,10 +49,6 @@ type focusCommand struct {
 	stderr            io.Writer
 	notifierOnce      func(stderr io.Writer) focusNotifier
 	notifyStoreFn     func() (notifyStore, error)
-	// osFocusChain is the OS-window/terminal raise dispatcher invoked after
-	// the tmux pane focus succeeds. Tests stub it to avoid shelling out to
-	// adapters like wt.exe; production code defaults to defaultOSFocusChain.
-	osFocusChain osFocusDispatcher
 }
 
 type focusOptions struct {
@@ -246,7 +242,7 @@ func parseFocusArgs(args []string, stderr io.Writer) (focusOptions, error) {
 	fs.StringVar(&opts.Client, "client", "", "preferred origin tmux client tty")
 	fs.StringVar(&opts.Source, "source", "", "Telemetry label: ai|status-bar|external|os-notification|toast")
 	fs.StringVar(&opts.Kind, "kind", "", "Telemetry label: reply-ready|busy-cleared|segment-click|toast-click|custom")
-	fs.StringVar(&opts.URI, "uri", "", "projmux:// URI from a Toast click (resolves to --target via tmux)")
+	fs.StringVar(&opts.URI, "uri", "", "projmux:// URI compatibility input (resolves to --target via tmux)")
 	fs.BoolVar(&opts.JSON, "json", false, "Emit a single-line JSON result")
 
 	if err := fs.Parse(args); err != nil {
@@ -324,12 +320,9 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 		base.Reason = "switch-client-failed"
 		return base, err
 	}
-	// tmux pane focus succeeded — fire the OS-focus chain so the host
-	// terminal window is raised. Adapter dispatch is asynchronous and
-	// silent on failure (see internal/integrations/osfocus), so this never
-	// blocks the focus path or surfaces an error.
-	c.dispatchOSFocus(target, socket)
-
+	// tmux pane focus succeeded. `projmux focus` deliberately stops at the
+	// tmux layer: it never asks a host-window focus adapter to bring the
+	// terminal window forward, regardless of the desktop notification mode.
 	if target.HasWindow() {
 		windowTarget := fmt.Sprintf("%s:%s", resolution.Name, target.WindowSelector())
 		if err := c.selectWindow(ctx, socket, windowTarget); err != nil {
@@ -387,13 +380,18 @@ func focusSessionState(resolution corefocus.Resolution) string {
 // `--target`/`--socket`/`--source` shape so the rest of focus dispatch is
 // unchanged.
 //
-// A toast click hands us a tmux pane id like `%8` plus the originating tmux
-// socket. corefocus.Target requires a SESSION[:WINDOW[.PANE]] coordinate,
-// so we resolve the pane id to its enclosing session + window via
+// `--uri` is a compatibility input: projmux no longer emits clickable Toasts
+// and registers no `projmux://` protocol handler (see notification_uri.go), so
+// no in-product producer reaches this path. It stays wired for handlers
+// installed before 0.11.0 or by the user.
+//
+// The URI hands us a tmux pane id like `%8` plus the originating tmux socket.
+// corefocus.Target requires a SESSION[:WINDOW[.PANE]] coordinate, so we
+// resolve the pane id to its enclosing session + window via
 // `tmux display-message -p -t %N '#S__SEP__#I'` against the URI's socket.
 // The translated target preserves the explicit pane id (`session:window.%8`)
 // so the pane-level focus stays exact even if a layout change shifts pane
-// indices between toast emission and click.
+// indices between URI emission and invocation.
 //
 // Telemetry default: `--kind toast-click` is applied when the caller hasn't
 // already set it. `--source` follows the URI's hint (defaults to `toast`).
@@ -406,13 +404,13 @@ func (c *focusCommand) resolveURIOption(opts *focusOptions) error {
 	if err != nil {
 		return err
 	}
-	// URI's socket wins over an explicit --socket (the toast click path
-	// carried the socket from the producer side; an additional --socket
-	// flag would generally be a misuse and we surface that by overriding).
+	// URI's socket wins over an explicit --socket (the URI carries the socket
+	// from the producer side; an additional --socket flag would generally be a
+	// misuse and we surface that by overriding).
 	if strings.TrimSpace(parsed.Socket) != "" {
 		opts.Socket = parsed.Socket
 	}
-	// URI's source wins over --source — the click path is the canonical
+	// URI's source wins over --source — the URI path is the canonical
 	// telemetry source for this invocation.
 	if strings.TrimSpace(parsed.Source) != "" {
 		opts.Source = parsed.Source
