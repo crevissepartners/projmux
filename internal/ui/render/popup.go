@@ -12,32 +12,47 @@ import (
 // RenderPopupPreview renders a concise textual popup preview from the derived
 // preview read-model.
 func RenderPopupPreview(model preview.PopupReadModel) string {
+	return RenderPopupPreviewWithText(model, PopupPreviewText{
+		Session: "Session", Name: "name", Windows: "windows", Pane: "pane",
+		Command: "cmd", Title: "title", Status: "status", Path: "path",
+		WindowsSection: "Windows", PanesSection: "Panes", PaneSnapshot: "Pane Snapshot",
+		Window: "window", None: "(none)", Unknown: "unknown",
+	})
+}
+
+type PopupPreviewText struct {
+	Session, Name, Windows, Pane, Command, Title, Status, Path string
+	WindowsSection, PanesSection, PaneSnapshot                 string
+	Window, None, Unknown                                      string
+}
+
+func RenderPopupPreviewWithText(model preview.PopupReadModel, text PopupPreviewText) string {
 	var builder strings.Builder
 
-	writePopupSection(&builder, "Session")
-	writePopupKV(&builder, "name", sanitizeCell(model.SessionName))
-	writePopupKV(&builder, "windows", sanitizeCell(strconv.Itoa(effectiveWindowCount(model))))
-	writePopupKV(&builder, "pane", formatLegacyPaneSummary(model))
+	writePopupSection(&builder, text.Session)
+	writePopupKV(&builder, text.Name, sanitizeCell(model.SessionName))
+	writePopupKV(&builder, text.Windows, sanitizeCell(strconv.Itoa(effectiveWindowCount(model))))
+	writePopupKV(&builder, text.Pane, formatLegacyPaneSummaryWithWindow(model, text.Window))
 	if pane, ok := selectedPreviewPane(model); ok {
-		writePopupKV(&builder, "cmd", fallbackUnknown(displayPaneCommand(pane)))
-		writePopupKV(&builder, "title", fallbackUnknown(displayPaneTitle(pane)))
+		writePopupKV(&builder, text.Command, fallbackUnknownWithText(displayPaneCommand(pane), text.Unknown))
+		writePopupKV(&builder, text.Title, fallbackUnknownWithText(displayPaneTitle(pane), text.Unknown))
 		if status := formatPaneStatus(pane); status != "" {
-			writePopupKV(&builder, "status", status)
+			writePopupKV(&builder, text.Status, status)
 		}
-		writePopupKV(&builder, "path", fallbackUnknown(sanitizeCell(pane.Path)))
+		writePopupKV(&builder, text.Path, fallbackUnknownWithText(sanitizeCell(pane.Path), text.Unknown))
 	}
 	builder.WriteString("\n")
 
-	writePopupSection(&builder, "Windows")
-	writeWindows(&builder, model)
+	writePopupSection(&builder, text.WindowsSection)
+	writeWindowsWithNone(&builder, model, text.None)
 
 	builder.WriteString("\n")
-	writePopupSection(&builder, "Panes")
-	writePanes(&builder, model)
+	writePopupSection(&builder, text.PanesSection)
+	writePanesWithNone(&builder, model, text.None)
 
 	if snapshot := strings.TrimRight(model.PaneSnapshot, "\r\n"); snapshot != "" {
 		builder.WriteString("\n")
-		writePopupSection(&builder, "Pane Snapshot")
+		writePopupSection(&builder, text.PaneSnapshot)
 		writePopupRule(&builder)
 		builder.WriteString(snapshot)
 		builder.WriteString("\n")
@@ -91,8 +106,12 @@ func formatTargetSummary(windowIndex, paneIndex string) string {
 }
 
 func writeWindows(builder *strings.Builder, model preview.PopupReadModel) {
+	writeWindowsWithNone(builder, model, "(none)")
+}
+
+func writeWindowsWithNone(builder *strings.Builder, model preview.PopupReadModel, none string) {
 	if len(model.Windows) == 0 {
-		builder.WriteString("(none)\n")
+		builder.WriteString(none + "\n")
 		return
 	}
 
@@ -114,8 +133,12 @@ func writeWindows(builder *strings.Builder, model preview.PopupReadModel) {
 }
 
 func writePanes(builder *strings.Builder, model preview.PopupReadModel) {
+	writePanesWithNone(builder, model, "(none)")
+}
+
+func writePanesWithNone(builder *strings.Builder, model preview.PopupReadModel, none string) {
 	if len(model.Panes) == 0 {
-		builder.WriteString("(none)\n")
+		builder.WriteString(none + "\n")
 		return
 	}
 
@@ -343,7 +366,7 @@ func highlightPreviewLine(line string) string {
 	return ansiBold + ansiGreen + line + ansiReset
 }
 
-func formatLegacyPaneSummary(model preview.PopupReadModel) string {
+func formatLegacyPaneSummaryWithWindow(model preview.PopupReadModel, windowLabel string) string {
 	// Legacy: retained for old popup pane summary formatting shim; sunset when
 	// popup state/summary producers no longer emit the legacy shape and the
 	// compatibility window is closed.
@@ -355,7 +378,7 @@ func formatLegacyPaneSummary(model preview.PopupReadModel) string {
 	if window == "" {
 		window = "?"
 	}
-	return pane + " (window " + window + ")"
+	return pane + " (" + windowLabel + " " + window + ")"
 }
 
 func selectedPreviewPane(model preview.PopupReadModel) (preview.Pane, bool) {
@@ -368,9 +391,9 @@ func selectedPreviewPane(model preview.PopupReadModel) (preview.Pane, bool) {
 	return preview.Pane{}, false
 }
 
-func fallbackUnknown(value string) string {
+func fallbackUnknownWithText(value, unknown string) string {
 	if value == "" {
-		return "unknown"
+		return unknown
 	}
 	return value
 }

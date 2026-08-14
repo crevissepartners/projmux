@@ -278,6 +278,77 @@ if grep -aiEq 'picker backend|picker-backend|PROJMUX_PICKER_BACKEND' "$recorder_
   echo "retired picker backend artifact produced visible output" >&2
   exit 1
 fi
+
+# Exercise Notify Clear All against the same real attached client/FIFO. The
+# queue JSON and a client-scoped command marker are completion signals; screen
+# text is used only to know when the confirmation picker is ready for input.
+for severity in info warn critical; do
+  "$bin" notify push \
+    --id "polish-$severity" \
+    --text "polish $severity" \
+    --target "$recorder_session:0.0" \
+    --socket "$recorder_socket" \
+    --severity "$severity" \
+    --source external >/dev/null
+done
+notify_before="$PROJMUX_SMOKE_WORKDIR/notify-polish-before.json"
+"$bin" notify list --json >"$notify_before"
+for severity in info warn critical; do
+  smoke_assert_file_contains "$notify_before" "polish-$severity"
+done
+
+notify_focus_before="$(tmux -L "$recorder_socket" display-message -p -c "$recorder_client" '#{pane_id}')"
+notify_cancel_marker="$PROJMUX_SMOKE_WORKDIR/notify-clear-cancel.done"
+notify_cancel_offset="$(stat -c %s "$recorder_log")"
+tmux -L "$recorder_socket" display-popup -c "$recorder_client" \
+  -T "Notify E2E" -w 80 -h 24 -E \
+  "'$bin' notify list --ui=sidebar --client '$recorder_client'; printf done >'$notify_cancel_marker'" &
+notify_cancel_pid=$!
+smoke_wait_for "Notify sidebar before cancel" sh -c \
+  "tail -c +$((notify_cancel_offset + 1)) '$recorder_log' | grep -aFq 'Pending Notifications'"
+printf '\030' >&9
+smoke_wait_for "Notify Clear All cancel confirmation" sh -c \
+  "tail -c +$((notify_cancel_offset + 1)) '$recorder_log' | grep -aFq 'Clear all'"
+printf '\033' >&9
+smoke_wait_for "Notify cancel command marker" test -f "$notify_cancel_marker"
+wait "$notify_cancel_pid"
+notify_after_cancel="$PROJMUX_SMOKE_WORKDIR/notify-polish-after-cancel.json"
+"$bin" notify list --json >"$notify_after_cancel"
+for severity in info warn critical; do
+  smoke_assert_file_contains "$notify_after_cancel" "polish-$severity"
+done
+if [[ "$(tmux -L "$recorder_socket" display-message -p -c "$recorder_client" '#{pane_id}')" != "$notify_focus_before" ]]; then
+  echo "Notify Clear All cancel did not restore the attached client focus" >&2
+  exit 1
+fi
+
+notify_confirm_marker="$PROJMUX_SMOKE_WORKDIR/notify-clear-confirm.done"
+notify_confirm_offset="$(stat -c %s "$recorder_log")"
+tmux -L "$recorder_socket" display-popup -c "$recorder_client" \
+  -T "Notify E2E" -w 80 -h 24 -E \
+  "'$bin' notify list --ui=sidebar --client '$recorder_client'; printf done >'$notify_confirm_marker'" &
+notify_confirm_pid=$!
+smoke_wait_for "Notify sidebar before confirm" sh -c \
+  "tail -c +$((notify_confirm_offset + 1)) '$recorder_log' | grep -aFq 'Pending Notifications'"
+printf '\030' >&9
+smoke_wait_for "Notify Clear All confirm picker" sh -c \
+  "tail -c +$((notify_confirm_offset + 1)) '$recorder_log' | grep -aFq 'Clear all'"
+printf '\033[B\r' >&9
+smoke_wait_for "Notify confirm command marker" test -f "$notify_confirm_marker"
+wait "$notify_confirm_pid"
+notify_after_confirm="$PROJMUX_SMOKE_WORKDIR/notify-polish-after-confirm.json"
+"$bin" notify list --json >"$notify_after_confirm"
+for severity in info warn critical; do
+  if grep -Fq "polish-$severity" "$notify_after_confirm"; then
+    echo "Notify Clear All confirm left $severity fixture queued" >&2
+    exit 1
+  fi
+done
+if [[ "$(tmux -L "$recorder_socket" display-message -p -c "$recorder_client" '#{pane_id}')" != "$notify_focus_before" ]]; then
+  echo "Notify Clear All confirm did not restore the attached client focus" >&2
+  exit 1
+fi
+
 tmux -L "$recorder_socket" kill-server
 wait "$recorder_client_pid" || true
 exec 9>&-

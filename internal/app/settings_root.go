@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -217,7 +216,16 @@ func settingsRootLabelWithColorLocale(locale i18n.Locale, glyph, color, name, de
 func (c *settingsCommand) sessionStateSettingsRootLabelLocale(locale i18n.Locale) string {
 	autosave := c.currentSessionStateAutosave()
 	interval := c.currentSessionStateAutosaveInterval()
-	desc := fmt.Sprintf("autosave %s, interval %s", autosave.Mode, formatSessionStateAutosaveInterval(interval.Duration))
+	var mode string
+	if autosave.Mode.Enabled() {
+		mode = localizeText(locale, "settings.text.state_on", "on")
+	} else {
+		mode = localizeText(locale, "settings.text.state_off", "off")
+	}
+	desc := strings.NewReplacer(
+		"{mode}", mode,
+		"{interval}", formatSessionStateAutosaveInterval(interval.Duration),
+	).Replace(localizeText(locale, "settings.text.session_state_summary", "autosave {mode}, interval {interval}"))
 	return settingsRootLabelLocale(locale, settingsGlyphOpen, "Session State", desc)
 }
 

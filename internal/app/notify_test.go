@@ -97,11 +97,13 @@ func (e *stubNotifyQueueEvents) Subscribe(context.Context) (<-chan struct{}, err
 }
 
 type recordingNotifyNativePicker struct {
-	options []intpicker.Options
-	steps   []notifyNativeActionStep
-	updates [][]intpicker.Item
-	result  intpicker.Result
-	err     error
+	options  []intpicker.Options
+	steps    []notifyNativeActionStep
+	updates  [][]intpicker.Item
+	deferred []intpicker.DeferredUpdate
+	results  []intpicker.Result
+	result   intpicker.Result
+	err      error
 }
 
 type notifyNativeActionStep struct {
@@ -135,7 +137,13 @@ func (p *recordingNotifyNativePicker) Run(options intpicker.Options) (intpicker.
 			return *update.Result, nil
 		}
 		p.updates = append(p.updates, update.Items)
+		p.deferred = append(p.deferred, update)
 		options.Items = update.Items
+	}
+	if len(p.results) > 0 {
+		result := p.results[0]
+		p.results = p.results[1:]
+		return result, nil
 	}
 	return p.result, nil
 }
@@ -1685,8 +1693,11 @@ func TestNotifyListSidebarXClearNonCriticalRendersEmptyState(t *testing.T) {
 	if len(second) != 1 || second[0].Value != notifySidebarEmptyValue {
 		t.Fatalf("second picker entries = %#v, want empty state", second)
 	}
-	if second[0].Label != "No pending notifications" {
+	if !strings.Contains(second[0].Label, "·  No pending notifications") {
 		t.Fatalf("empty label = %q", second[0].Label)
+	}
+	if len(picker.deferred) != 1 || !picker.deferred[0].ReadOnly || picker.deferred[0].Footer != "Esc: close" || !picker.deferred[0].SetActions {
+		t.Fatalf("empty deferred interaction = %#v", picker.deferred)
 	}
 	if stdout.String() != "" {
 		t.Fatalf("stdout = %q, want no sidebar clear output", stdout.String())
@@ -1991,13 +2002,19 @@ func TestNotifyListSidebarClearAll(t *testing.T) {
 	t.Parallel()
 
 	store := &stubNotifyStore{
-		listEntries: []notify.Notification{{ID: "abc", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"}},
-		ackAll:      1,
+		listEntries: []notify.Notification{
+			{ID: "info", Text: "deploy ok", Severity: notify.SeverityInfo, Source: notify.SourceAI, Session: "main"},
+			{ID: "warn", Text: "warning", Severity: notify.SeverityWarn, Source: notify.SourceAI, Session: "main"},
+			{ID: "crit", Text: "critical", Severity: notify.SeverityCritical, Source: notify.SourceAI, Session: "main"},
+		},
+		ackAll: 3,
 	}
-	picker := &stubNotifyPicker{result: intpickercompat.Result{Key: "ctrl-x", Value: "abc"}}
+	picker := &recordingNotifyNativePicker{results: []intpicker.Result{
+		{Key: "ctrl-x", Value: notifySidebarGroupValue("pane\x00\x00main\x00")},
+		{Key: "enter", Value: notifySidebarClearAllConfirm},
+	}}
 	cmd := newCmd(store)
-	cmd.picker = picker
-	cmd.native = nativePickerFromCompatRunner(picker)
+	cmd.native = picker
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -2006,8 +2023,47 @@ func TestNotifyListSidebarClearAll(t *testing.T) {
 	if !store.ackAllOK {
 		t.Fatal("AckAll was not called")
 	}
-	if !strings.Contains(stdout.String(), "cleared 1 notification") {
+	if !strings.Contains(stdout.String(), "cleared 3 notifications") {
 		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if len(picker.options) != 2 || picker.options[1].UI != "notify-sidebar-clear-all-confirm" || picker.options[1].Footer != "Enter: confirm | Esc: cancel" || picker.options[1].Items[0].Value != notifySidebarClearAllCancel {
+		t.Fatalf("clear-all confirmation options = %#v", picker.options)
+	}
+}
+
+func TestNotifyListSidebarClearAllCancelAndEscapeDoNotWrite(t *testing.T) {
+	t.Parallel()
+	for _, confirmation := range []intpicker.Result{
+		{Key: "enter", Value: notifySidebarClearAllCancel},
+		{Key: "esc", Closed: true},
+	} {
+		store := &stubNotifyStore{listEntries: []notify.Notification{{ID: "crit", Severity: notify.SeverityCritical, Source: notify.SourceAI, Session: "main"}}, ackAll: 1}
+		picker := &recordingNotifyNativePicker{results: []intpicker.Result{
+			{Key: "ctrl-x", Value: notifySidebarGroupValue("pane\x00\x00main\x00")},
+			confirmation,
+		}}
+		cmd := newCmd(store)
+		cmd.native = picker
+		if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		if store.ackAllOK || len(store.listEntries) != 1 {
+			t.Fatalf("confirmation %#v mutated queue: %#v", confirmation, store)
+		}
+	}
+}
+
+func TestNotifySidebarEmptyIsReadOnlyCloseOnly(t *testing.T) {
+	t.Parallel()
+	cmd := newCmd(&stubNotifyStore{})
+	options := cmd.notifySidebarPickerOptions(cmd.store, nil, nil, nil, 0, "", i18n.FallbackLocale)
+	if !options.ReadOnly || !options.DisableSearch || options.Footer != "Esc: close" || len(options.Items) != 1 || options.Items[0].Value != notifySidebarEmptyValue || !strings.Contains(options.Items[0].Label, "·  No pending notifications") {
+		t.Fatalf("empty notify options = %#v", options)
+	}
+	for _, action := range options.Actions {
+		if action.Intent != intpicker.ActionClose || action.Key == "enter" {
+			t.Fatalf("empty notify actions = %#v, want close only", options.Actions)
+		}
 	}
 }
 

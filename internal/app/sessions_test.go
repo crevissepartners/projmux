@@ -12,11 +12,46 @@ import (
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
+
+func TestSessionsKoreanRowsPreviewAndNarrowFooterAreLocalized(t *testing.T) {
+	t.Parallel()
+	locale := i18n.Locale("ko-KR")
+	cmd := &sessionsCommand{}
+	rows, err := cmd.buildRows([]inttmux.RecentSessionSummary{{Name: "repo", Attached: false, WindowCount: 2}}, locale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || !strings.Contains(rows[0].Label, "[분리됨]") || !strings.Contains(rows[0].Label, "2 창") || strings.Contains(rows[0].Label, "Detached") || strings.Contains(rows[0].Label, "Windows") {
+		t.Fatalf("Korean session row = %#v", rows)
+	}
+	preview := intrender.RenderPopupPreviewWithText(corepreview.PopupReadModel{
+		SessionName: "repo", WindowCount: 1, TotalPaneCount: 1, HasSelection: true,
+		SelectedWindowIndex: "0", SelectedPaneIndex: "0",
+		Windows: []corepreview.Window{{Index: "0", Name: "main", PaneCount: 1}},
+		Panes:   []corepreview.Pane{{WindowIndex: "0", Index: "0", Command: "zsh"}},
+	}, sessionsPopupPreviewText(locale))
+	for _, want := range []string{"세션", "창", "페인"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("Korean preview %q missing %q", preview, want)
+		}
+	}
+	for _, leak := range []string{"Session", "windows", "pane", "Windows", "Panes"} {
+		if strings.Contains(preview, leak) {
+			t.Fatalf("Korean preview %q leaked %q", preview, leak)
+		}
+	}
+	footer := sessionsPickerFooter(locale)
+	if footer != "Enter: 열기 | Esc: 닫기" || i18n.TerminalCellWidth(footer) > 80 || strings.Contains(footer, "confirmati") {
+		t.Fatalf("Korean narrow footer = %q", footer)
+	}
+}
 
 func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	t.Parallel()
@@ -63,7 +98,7 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.Footer, "Preview follows the focused target.\nSession state opens read-only; destructive actions keep the current confirmation policy."; got != want {
+	if got, want := gotOptions.Footer, "Enter: open | Esc: close"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.ExpectKeys, []string{sessionsKillExpectKey, sessionsStateExpectKey}; !equalStrings(got, want) {
@@ -131,7 +166,7 @@ func TestSessionsCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotOptions.Footer, "Preview follows the focused target.\nSession state opens read-only; destructive actions keep the current confirmation policy."; got != want {
+	if got, want := gotOptions.Footer, "Enter: open | Esc: close"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.PreviewWindow, "right,60%,border-left"; got != want {
