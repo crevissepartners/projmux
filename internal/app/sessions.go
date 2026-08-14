@@ -473,8 +473,8 @@ func formatStoredTarget(windowIndex, paneIndex string) string {
 }
 
 func sessionsPreviewWindow(ui string) string {
-	if ui == switchUISidebar {
-		return "right,60%,border-left"
+	if ui == switchUIPopup {
+		return "down,60%,border-top"
 	}
 	return "right,60%,border-left"
 }
