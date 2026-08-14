@@ -91,6 +91,75 @@ func TestUpdateGlobalConfigWritesAndReadsBack(t *testing.T) {
 	assertGlobalConfigMode(t, path, 0o600)
 }
 
+func TestUpdateGlobalConfigPreservesExistingSymlinkAndTargetMetadata(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	path, err := GlobalConfigPath(func(string) string { return "" }, func() (string, error) { return home, nil })
+	if err != nil {
+		t.Fatalf("GlobalConfigPath() error = %v", err)
+	}
+	target := filepath.Join(home, "config-targets", "global.toml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("[ui]\nlocale = \"en-US\"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(filepath.Dir(path), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(rel, path); err != nil {
+		t.Fatal(err)
+	}
+	linkBefore, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetBefore, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uidBefore, gidBefore, ownerOK := projectConfigFileOwner(targetBefore)
+
+	_, err = UpdateGlobalConfig(path, func(cfg *ProjectConfig) error {
+		cfg.UI.Locale = "ko-KR"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateGlobalConfig() error = %v", err)
+	}
+
+	linkAfter, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkAfter.Mode()&os.ModeSymlink == 0 || !os.SameFile(linkBefore, linkAfter) {
+		t.Fatal("global writer replaced the config symlink")
+	}
+	targetAfter, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := targetAfter.Mode().Perm(), os.FileMode(0o640); got != want {
+		t.Fatalf("target mode = %#o, want %#o", got, want)
+	}
+	if uidAfter, gidAfter, ok := projectConfigFileOwner(targetAfter); ownerOK && (!ok || uidAfter != uidBefore || gidAfter != gidBefore) {
+		t.Fatalf("target owner = (%d,%d,%v), want (%d,%d,true)", uidAfter, gidAfter, ok, uidBefore, gidBefore)
+	}
+	body, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(body); !strings.Contains(got, `locale = "ko-KR"`) {
+		t.Fatalf("global target content = %q, want updated locale", got)
+	}
+}
+
 func assertGlobalConfigMode(t *testing.T, path string, want os.FileMode) {
 	t.Helper()
 	info, err := os.Stat(path)
