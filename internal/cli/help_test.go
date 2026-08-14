@@ -2,9 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -91,6 +95,42 @@ func TestPadNameMatchesHistoricalColumnRule(t *testing.T) {
 	}
 }
 
+// TestHelpFlagTokensCoverEveryFlagPackageSpelling pins the help-token set to the
+// spellings the standard library `flag` package treats as help.
+//
+// flag.FlagSet.parseOne strips one or two leading dashes and splits on `=` before
+// looking the name up; an undefined `h`/`help` name then returns flag.ErrHelp. So
+// `-h`, `--h`, `-help`, and `--help` are all help requests to every leaf parser,
+// and the shared boundary must intercept all four or the uncovered ones fall
+// through to the leaf failure path (non-zero exit plus an operational error).
+//
+// The `-help`/`--h` spellings are also what internal/diagnostics already treats
+// as a direct help intent, so this keeps one notion of help across the codebase.
+func TestHelpFlagTokensCoverEveryFlagPackageSpelling(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"--help", "-help", "--h", "-h"}
+	got := append([]string{}, helpFlagTokens...)
+	sort.Strings(got)
+	sorted := append([]string{}, want...)
+	sort.Strings(sorted)
+	if !reflect.DeepEqual(got, sorted) {
+		t.Fatalf("helpFlagTokens = %q, want exactly %q", helpFlagTokens, want)
+	}
+
+	// Prove the equivalence claim against the real flag package rather than
+	// trusting the comment: every spelling above must produce flag.ErrHelp from
+	// a FlagSet that does not define a help flag.
+	for _, spelling := range want {
+		set := flag.NewFlagSet("probe", flag.ContinueOnError)
+		set.SetOutput(io.Discard)
+		set.Bool("apply", false, "")
+		if err := set.Parse([]string{spelling}); !errors.Is(err, flag.ErrHelp) {
+			t.Fatalf("flag.Parse(%q) error = %v, want flag.ErrHelp", spelling, err)
+		}
+	}
+}
+
 // TestRequestedHelpDetection covers the shared help-token contract, including
 // the payload boundary: a help flag after the first bare `--` is data.
 func TestRequestedHelpDetection(t *testing.T) {
@@ -106,6 +146,16 @@ func TestRequestedHelpDetection(t *testing.T) {
 		{name: "no args is root help", args: nil, ok: true, root: true},
 		{name: "long root flag", args: []string{"--help"}, ok: true, root: true},
 		{name: "short root flag", args: []string{"-h"}, ok: true, root: true},
+		// The flag package strips one or two leading dashes before matching, so
+		// all four spellings are equivalent help requests to every leaf parser.
+		{name: "single dash long root flag", args: []string{"-help"}, ok: true, root: true},
+		{name: "double dash short root flag", args: []string{"--h"}, ok: true, root: true},
+		{name: "single dash long on route", args: []string{"switch", "-help"}, ok: true, path: []string{"switch"}},
+		{name: "double dash short on route", args: []string{"doctor", "--h"}, ok: true, path: []string{"doctor"}},
+		{name: "single dash long nested", args: []string{"setup", "terminal", "-help"}, ok: true, path: []string{"setup", "terminal"}},
+		{name: "double dash short hidden helper", args: []string{"popup-wait-key", "--h"}, ok: true, path: []string{"popup-wait-key"}},
+		{name: "single dash long after terminator is payload", args: []string{"ai", "split", "--", "-help"}, ok: false},
+		{name: "double dash short after terminator is payload", args: []string{"ai", "split", "--", "--h"}, ok: false},
 		{name: "root flag with trailing tokens", args: []string{"--help", "ai"}, ok: true, root: true},
 		{name: "top level route", args: []string{"ai", "--help"}, ok: true, path: []string{"ai"}},
 		{name: "short flag on route", args: []string{"ai", "-h"}, ok: true, path: []string{"ai"}},
@@ -218,22 +268,24 @@ func TestRenderHelpForEveryManifestRouteIsNonEmpty(t *testing.T) {
 	t.Parallel()
 
 	walkRoutes(Routes(), func(path []string, _ Route) {
-		args := append(append([]string{}, path...), "--help")
-		target, ok := RequestedHelp(args)
-		if !ok {
-			t.Errorf("RequestedHelp(%q) reported no help", args)
-			return
-		}
-		if !reflect.DeepEqual(target.Path, path) {
-			t.Errorf("RequestedHelp(%q) path = %q, want %q", args, target.Path, path)
-		}
-		var out bytes.Buffer
-		if err := RenderHelp(&out, target); err != nil {
-			t.Errorf("RenderHelp(%q) error = %v", args, err)
-			return
-		}
-		if !strings.HasPrefix(out.String(), "projmux "+strings.Join(path, " ")+"\n") {
-			t.Errorf("help for %q has unexpected header:\n%s", args, out.String())
+		for _, flag := range helpFlagTokens {
+			args := append(append([]string{}, path...), flag)
+			target, ok := RequestedHelp(args)
+			if !ok {
+				t.Errorf("RequestedHelp(%q) reported no help", args)
+				continue
+			}
+			if !reflect.DeepEqual(target.Path, path) {
+				t.Errorf("RequestedHelp(%q) path = %q, want %q", args, target.Path, path)
+			}
+			var out bytes.Buffer
+			if err := RenderHelp(&out, target); err != nil {
+				t.Errorf("RenderHelp(%q) error = %v", args, err)
+				continue
+			}
+			if !strings.HasPrefix(out.String(), "projmux "+strings.Join(path, " ")+"\n") {
+				t.Errorf("help for %q has unexpected header:\n%s", args, out.String())
+			}
 		}
 	})
 }

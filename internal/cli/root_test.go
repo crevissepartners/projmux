@@ -187,17 +187,23 @@ func TestHelpInvocationsInvokeNoHandler(t *testing.T) {
 	t.Parallel()
 
 	var argvs [][]string
-	argvs = append(argvs, nil, []string{"--help"}, []string{"-h"})
+	argvs = append(argvs, nil)
+	for _, flag := range helpFlagTokens {
+		argvs = append(argvs, []string{flag})
+	}
 	walkRoutes(Routes(), func(path []string, _ Route) {
-		argvs = append(argvs, append(append([]string{}, path...), "--help"))
-		argvs = append(argvs, append(append([]string{}, path...), "-h"))
+		for _, flag := range helpFlagTokens {
+			argvs = append(argvs, append(append([]string{}, path...), flag))
+		}
 	})
-	argvs = append(argvs,
-		[]string{"ai", "bogus", "--help"},
-		[]string{"setup", "terminal", "--apply", "--help"},
-		[]string{"popup-wait-key", "--help"},
-		[]string{"key-broker", "-h"},
-	)
+	for _, flag := range helpFlagTokens {
+		argvs = append(argvs,
+			[]string{"ai", "bogus", flag},
+			[]string{"setup", "terminal", "--apply", flag},
+			[]string{"popup-wait-key", flag},
+			[]string{"key-broker", flag},
+		)
+	}
 
 	for _, argv := range argvs {
 		var stdout, stderr bytes.Buffer

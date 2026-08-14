@@ -122,7 +122,10 @@ func Classify(args []string) CommandClass {
 
 func isDirectHelpArg(arg string) bool {
 	switch arg {
-	case "help", "-h", "--help", "-help":
+	// The flag package strips one or two leading dashes before matching, so
+	// `-h`, `--h`, `-help`, and `--help` are all help requests. `--h` is
+	// included so a help invocation is never recorded as a state change.
+	case "help", "-h", "--h", "--help", "-help":
 		return true
 	default:
 		return false

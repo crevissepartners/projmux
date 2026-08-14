@@ -205,7 +205,10 @@ func TestClassifyDirectHelpIsReadOnly(t *testing.T) {
 		{"settings", "-h"},
 		{"shell", "-help"},
 		{"switch", "--help"},
+		{"switch", "--h"},
 		{"upgrade", "--help"},
+		{"upgrade", "--h"},
+		{"current", "-help"},
 	}
 	for _, args := range tests {
 		class := Classify(args)

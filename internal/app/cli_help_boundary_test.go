@@ -9,26 +9,40 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
+// helpFlagSpellings are the four argv spellings the standard library `flag`
+// package treats as equivalent help requests. All four must clear the shared
+// help boundary; covering only `--help`/`-h` would let the other two reach the
+// leaf parser and record an operational error.
+var helpFlagSpellings = []string{"--help", "-help", "--h", "-h"}
+
 // helpBoundaryArgv is the maintained help matrix: root spellings, every public
-// route, every documented sub-route, and both hidden internal helpers.
+// route, every documented sub-route, and both hidden internal helpers, each
+// crossed with all four help flag spellings.
 func helpBoundaryArgv() [][]string {
-	argv := [][]string{nil, {"--help"}, {"-h"}}
+	argv := [][]string{nil}
+	for _, flag := range helpFlagSpellings {
+		argv = append(argv, []string{flag})
+	}
 	var walk func(prefix []string, routes []cli.Route)
 	walk = func(prefix []string, routes []cli.Route) {
 		for _, route := range routes {
 			path := append(append([]string{}, prefix...), route.Name)
-			argv = append(argv, append(append([]string{}, path...), "--help"))
-			argv = append(argv, append(append([]string{}, path...), "-h"))
+			for _, flag := range helpFlagSpellings {
+				argv = append(argv, append(append([]string{}, path...), flag))
+			}
 			walk(path, route.Children)
 		}
 	}
 	walk(nil, cli.Routes())
-	argv = append(argv,
-		[]string{"ai", "bogus", "--help"},
-		[]string{"setup", "terminal", "--apply", "--help"},
-	)
+	for _, flag := range helpFlagSpellings {
+		argv = append(argv,
+			[]string{"ai", "bogus", flag},
+			[]string{"setup", "terminal", "--apply", flag},
+		)
+	}
 	return argv
 }
 
@@ -92,6 +106,42 @@ func TestAppRunHelpDoesNotTouchTheFilesystemOrTmux(t *testing.T) {
 	}
 }
 
+// TestHelpBoundaryRecordsZeroOperationalErrors closes the "operational error log
+// 0" half of the help contract end to end. It mirrors what cmd/projmux/main.go
+// does for every invocation — run the command, then record the outcome through
+// the same policy — against a private journal, and requires the journal to hold
+// no error-level row for any help spelling of any route.
+func TestHelpBoundaryRecordsZeroOperationalErrors(t *testing.T) {
+	t.Parallel()
+
+	store := diagnostics.NewStore(filepath.Join(t.TempDir(), "operations.jsonl"))
+	app := New()
+	for _, argv := range helpBoundaryArgv() {
+		var stdout, stderr bytes.Buffer
+		started := time.Now()
+		err := app.Run(argv, &stdout, &stderr)
+		if err != nil {
+			t.Fatalf("Run(%q) error = %v, want nil", argv, err)
+		}
+		// Best-effort by contract; a write failure here would hide a regression.
+		if recordErr := diagnostics.RecordOutcome(
+			store, argv, "help-boundary", "test", "tmux", started, err, IsUsageError(err), false,
+		); recordErr != nil {
+			t.Fatalf("RecordOutcome(%q) error = %v", argv, recordErr)
+		}
+	}
+
+	events, err := store.Read()
+	if err != nil {
+		t.Fatalf("read journal: %v", err)
+	}
+	for _, event := range events {
+		if event.Level == "error" || event.Result == "error" {
+			t.Fatalf("help invocation recorded an operational error: %+v", event)
+		}
+	}
+}
+
 // TestPopupWaitKeyHelpDoesNotBlockOnTheTTY is a bounded-timeout regression test.
 // Before the shared help boundary, `projmux popup-wait-key --help` went straight
 // to a blocking single-key read on /dev/tty and never returned, which violates
@@ -99,7 +149,11 @@ func TestAppRunHelpDoesNotTouchTheFilesystemOrTmux(t *testing.T) {
 func TestPopupWaitKeyHelpDoesNotBlockOnTheTTY(t *testing.T) {
 	t.Parallel()
 
-	for _, argv := range [][]string{{"popup-wait-key", "--help"}, {"popup-wait-key", "-h"}, {"key-broker", "--help"}} {
+	var argvs [][]string
+	for _, flag := range helpFlagSpellings {
+		argvs = append(argvs, []string{"popup-wait-key", flag}, []string{"key-broker", flag})
+	}
+	for _, argv := range argvs {
 		done := make(chan error, 1)
 		var stdout, stderr bytes.Buffer
 		go func() {

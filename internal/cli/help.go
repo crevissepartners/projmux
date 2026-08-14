@@ -7,11 +7,17 @@ import (
 	"strings"
 )
 
-// helpFlagTokens are the argv tokens that request help. A bare `help` word is
-// deliberately absent: only the top-level `help` route (handled as a normal
-// route) and these flags request the shared help boundary, so nested handlers
-// that already own a `help` word keep their current behavior.
-var helpFlagTokens = []string{"--help", "-h"}
+// helpFlagTokens are the argv tokens that request help. All four spellings are
+// required: the standard library `flag` package strips one or two leading dashes
+// before matching a flag name, so `-h`, `--h`, `-help`, and `--help` are
+// equivalent help requests to every leaf parser. Covering only two of them would
+// leave the other two falling through to the leaf `flag.ErrHelp` failure path,
+// which exits non-zero and records an operational error.
+//
+// A bare `help` word is deliberately absent: only the top-level `help` route
+// (handled as a normal route) and these flags request the shared help boundary,
+// so nested handlers that already own a `help` word keep their current behavior.
+var helpFlagTokens = []string{"--help", "-help", "--h", "-h"}
 
 // argumentTerminator ends option scanning. Anything after the first bare `--`
 // is payload that projmux forwards untouched, so a `--help` there is data.
