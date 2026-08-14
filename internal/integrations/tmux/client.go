@@ -559,7 +559,7 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 
 	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
 	c.setProjectPathAnchor(ctx, sessionName, cwd)
-	c.runPostCreate(ctx, sessionName, cwd, "persistent")
+	c.runPostCreate(ctx, sessionName, cwd, "persistent", paneID)
 	c.runStartupCommand(ctx, sessionName, cwd, "persistent", paneID)
 	return nil
 }
@@ -593,7 +593,7 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 		// usable. The post-create hook still runs so the session gets the same
 		// lifecycle treatment as one whose marker stuck.
 	}
-	c.runPostCreate(ctx, sessionName, cwd, "ephemeral")
+	c.runPostCreate(ctx, sessionName, cwd, "ephemeral", paneID)
 	c.runStartupCommand(ctx, sessionName, cwd, "ephemeral", paneID)
 
 	return nil
@@ -605,7 +605,7 @@ func (c *Client) createDetachedSession(ctx context.Context, sessionName, cwd str
 		Session:      sessionName,
 		Cwd:          cwd,
 		Env:          env,
-		ReturnPaneID: c.lifecycle != nil,
+		ReturnPaneID: c.lifecycle != nil || c.postCreate != nil,
 	})
 }
 
@@ -642,6 +642,8 @@ func (c *Client) runPreCreate(ctx context.Context, sessionName, cwd, kind string
 	if c.lifecycle == nil {
 		return nil
 	}
+	// PaneID is intentionally empty: pre-create runs before tmux creates the
+	// first pane, unlike post-create which receives its exact returned id.
 	_, err := c.lifecycle.Run(ctx, hooks.EventPreCreate, hooks.Context{
 		SessionName: sessionName,
 		CWD:         cwd,
@@ -654,12 +656,13 @@ func (c *Client) runPreCreate(ctx context.Context, sessionName, cwd, kind string
 	return nil
 }
 
-func (c *Client) runPostCreate(ctx context.Context, sessionName, cwd, kind string) {
+func (c *Client) runPostCreate(ctx context.Context, sessionName, cwd, kind, paneID string) {
 	context := hooks.Context{
 		SessionName: sessionName,
 		CWD:         cwd,
 		Kind:        kind,
 		Socket:      c.socket,
+		PaneID:      paneID,
 	}
 	if c.lifecycle != nil {
 		_, _ = c.lifecycle.Run(ctx, hooks.EventPostCreate, context)
@@ -673,6 +676,7 @@ func (c *Client) runPostCreate(ctx context.Context, sessionName, cwd, kind strin
 		CWD:         cwd,
 		Kind:        kind,
 		Socket:      c.socket,
+		PaneID:      paneID,
 	})
 }
 

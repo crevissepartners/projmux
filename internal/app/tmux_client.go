@@ -15,7 +15,7 @@ import (
 // config dir; if that resolution fails we silently fall back to a hookless
 // client so session creation is never blocked by config errors.
 func defaultTmuxClient(recorders ...*diagnostics.LifecycleRecorder) *inttmux.Client {
-	opts := []inttmux.ClientOption{}
+	opts := []inttmux.ClientOption{inttmux.WithSocketName(defaultAppSocket)}
 	if len(recorders) > 0 && recorders[0] != nil {
 		opts = append(opts, inttmux.WithLifecycleDiagnostics(recorders[0]))
 	}

@@ -1998,7 +1998,7 @@ func TestClientEnsureSessionInvokesPostCreateRunnerOnNewSession(t *testing.T) {
 		t: t,
 		steps: []scriptedStep{
 			{err: exitError(t, 1)},
-			{},
+			{output: []byte("%11\n")},
 			{},
 		},
 	}
@@ -2017,6 +2017,7 @@ func TestClientEnsureSessionInvokesPostCreateRunnerOnNewSession(t *testing.T) {
 		CWD:         "/tmp/projmux",
 		Kind:        "persistent",
 		Socket:      "projmux",
+		PaneID:      "%11",
 	}
 	if got := hook.calls[0]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("post-create call = %#v, want %#v", got, want)
@@ -2065,6 +2066,41 @@ func TestClientEnsureSessionRunsLifecycleHooksForNewSession(t *testing.T) {
 	wantEvents := []hooks.Event{hooks.EventPreCreate, hooks.EventPostCreate}
 	if !reflect.DeepEqual(gotEvents, wantEvents) {
 		t.Fatalf("hook events = %#v, want pre-create and post-create", gotEvents)
+	}
+	if got := hook.calls[0].context.PaneID; got != "" {
+		t.Fatalf("pre-create PaneID = %q, want empty before pane creation", got)
+	}
+	if got := hook.calls[1].context.PaneID; got != "%7" {
+		t.Fatalf("post-create PaneID = %q, want exact created pane %%7", got)
+	}
+}
+
+func TestClientCreateEphemeralSessionPassesExactPaneToLifecyclePostCreate(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{output: []byte("%19\n")},
+			{},
+			{},
+		},
+	}
+	hook := &fakeLifecycleRunner{}
+	client := NewClient(runner, withLifecycleHookRunnerInterface(hook), WithSocketName("projmux"))
+
+	if err := client.CreateEphemeralSession(context.Background(), "scratch", "/tmp/projmux"); err != nil {
+		t.Fatalf("CreateEphemeralSession returned error: %v", err)
+	}
+
+	if gotEvents := hook.events(); !reflect.DeepEqual(gotEvents, []hooks.Event{hooks.EventPreCreate, hooks.EventPostCreate}) {
+		t.Fatalf("hook events = %#v, want pre-create and post-create", gotEvents)
+	}
+	if got := hook.calls[0].context.PaneID; got != "" {
+		t.Fatalf("pre-create PaneID = %q, want empty before pane creation", got)
+	}
+	if got := hook.calls[1].context.PaneID; got != "%19" {
+		t.Fatalf("post-create PaneID = %q, want exact created pane %%19", got)
 	}
 }
 
@@ -2324,7 +2360,7 @@ func TestClientCreateEphemeralSessionInvokesPostCreateRunner(t *testing.T) {
 
 	runner := &scriptedRunner{
 		t:     t,
-		steps: []scriptedStep{{}, {}, {}},
+		steps: []scriptedStep{{output: []byte("%13\n")}, {}, {}},
 	}
 	hook := &fakePostCreateRunner{}
 	client := NewClient(runner, withPostCreateRunnerInterface(hook), WithSocketName("projmux"))
@@ -2341,6 +2377,7 @@ func TestClientCreateEphemeralSessionInvokesPostCreateRunner(t *testing.T) {
 		CWD:         "/tmp/projmux",
 		Kind:        "ephemeral",
 		Socket:      "projmux",
+		PaneID:      "%13",
 	}
 	if got := hook.calls[0]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("post-create call = %#v, want %#v", got, want)
@@ -2353,7 +2390,7 @@ func TestClientCreateEphemeralSessionRunsHookEvenWhenMarkerFails(t *testing.T) {
 	runner := &scriptedRunner{
 		t: t,
 		steps: []scriptedStep{
-			{},
+			{output: []byte("%17\n")},
 			{},
 			{err: errors.New("set-option failed")},
 		},

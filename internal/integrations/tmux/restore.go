@@ -105,7 +105,9 @@ func (c *Client) RestoreSessionSnapshot(ctx context.Context, snap sessionstate.S
 	}
 	sessionEnv := c.projectSessionEnv(cwd)
 	c.applyProjectSessionEnv(ctx, snap.Session, sessionEnv)
-	c.runPostCreate(ctx, snap.Session, cwd, "persistent")
+	// Snapshot replay owns its pane topology and does not expose a single
+	// createDetachedSession pane id to this lifecycle boundary.
+	c.runPostCreate(ctx, snap.Session, cwd, "persistent", "")
 	if err := c.MarkSessionStateSource(ctx, snap.Session, source); err != nil {
 		return err
 	}

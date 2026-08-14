@@ -731,16 +731,28 @@ projmux does not run `post-attach` for outside-tmux attach paths in this phase.
 
 ## Environment
 
-Hooks inherit projmux's environment, plus:
+Hooks inherit projmux's environment. The lifecycle variables below are added by
+event; “omitted” means the variable is not added when its context value is
+empty.
 
-| Variable | Always set | Description |
-| --- | --- | --- |
-| `PROJMUX_SESSION` | yes | tmux session name |
-| `PROJMUX_CWD` | yes | lifecycle working directory; for creation events this is the new session directory |
-| `PROJMUX_SESSION_KIND` | yes | `persistent` or `ephemeral` for creation events; empty for `post-attach` |
-| `PROJMUX_VERSION` | yes | projmux version string |
-| `PROJMUX_SOCKET` | only if projmux used `tmux -L <socket>` | tmux socket name |
-| `PROJMUX_PANE` | only for pane events | tmux pane id such as `%7` |
+| Variable | `pre-create` | `post-create` | `post-attach` | `send-noti` |
+| --- | --- | --- | --- | --- |
+| `PROJMUX_SESSION` | new session name | new session name | target session name | target session when known; otherwise empty |
+| `PROJMUX_CWD` | requested session directory | created session directory | resolved target directory; may be empty if lookup fails | dispatcher working directory |
+| `PROJMUX_SESSION_KIND` | `persistent` or `ephemeral` | `persistent` or `ephemeral` | empty | empty |
+| `PROJMUX_VERSION` | projmux version | projmux version | projmux version | projmux version |
+| `PROJMUX_SOCKET` | app socket metadata (`projmux`) | app socket metadata (`projmux`) | app socket metadata (`projmux`) | queue-entry socket when known; otherwise omitted |
+| `PROJMUX_PANE` | omitted: no pane exists yet | exact id returned by standard persistent/ephemeral `tmux new-session`, such as `%7`; omitted for snapshot replay | omitted | target pane when known; otherwise omitted |
+
+`pre-create` intentionally has no `PROJMUX_PANE`: it runs before
+`tmux new-session` creates the first pane. Standard persistent and ephemeral
+`post-create` paths run after creation and therefore receive that exact pane
+id. Snapshot replay can restore multiple panes and does not expose a single
+returned pane at its lifecycle boundary, so it omits `PROJMUX_PANE`.
+`PROJMUX_SOCKET` is routing metadata for hook commands; it does not imply that
+the tmux client itself adds `-L` to its commands. The `post-attach` and
+`send-noti` cells describe their existing contexts; this contract adds no pane
+context to either event.
 
 ## Examples
 
@@ -749,6 +761,7 @@ Hooks inherit projmux's environment, plus:
 ```bash
 #!/usr/bin/env bash
 echo "session=$PROJMUX_SESSION cwd=$PROJMUX_CWD kind=$PROJMUX_SESSION_KIND"
+tmux -L "$PROJMUX_SOCKET" set-option -p -t "$PROJMUX_PANE" @projmux_initialized 1
 ```
 
 ### Project Startup Command
@@ -770,7 +783,7 @@ case "$PROJMUX_CWD" in
   *) exit 0 ;;
 esac
 
-tmux set-environment -t "$PROJMUX_SESSION" GH_TOKEN "$token"
+tmux -L "$PROJMUX_SOCKET" set-environment -t "$PROJMUX_SESSION" GH_TOKEN "$token"
 ```
 
 `set-environment` only seeds the session env that newly-spawned panes inherit;
