@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -177,7 +178,8 @@ func (r *Root) Execute(args []string) error {
 	}
 	r.cmd.SetArgs(args)
 	err := r.cmd.Execute()
-	if shielded, ok := err.(helpShieldedError); ok {
+	var shielded helpShieldedError
+	if errors.As(err, &shielded) {
 		return shielded.err
 	}
 	return err
