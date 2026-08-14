@@ -15,23 +15,27 @@ Exit codes:
 
 ## Help boundary
 
-`--help` and `-h` are handled once, at the root, from the shared command
-manifest rather than by each leaf parser:
+Help is handled once, at the root, from the shared command manifest rather than
+by each leaf parser. All four spellings the Go `flag` package treats as
+equivalent — `--help`, `-help`, `--h`, `-h` — go through this one boundary:
 
 - Every help invocation exits `0`, writes to **stdout** only, records no
   operational error, and performs no tmux, runtime, or lifecycle-migration
   access. This includes nested routes (`projmux ai settings --help`) and the
   hidden internal helpers (`projmux popup-wait-key --help`).
 - Help resolves to the deepest documented route and shows its summary, usage
-  synopsis, sub-routes, route-local output projections, and the canonical
-  route spelling it will move to. Leaf flag documentation still comes from the
-  command's own parser when the command is invoked directly.
+  synopsis, sub-routes, route-local output projections, and the canonical route
+  spelling it will move to. The synopsis names the route's flags (for example
+  `projmux setup terminal [terminal] [--apply] [--config <path>]
+  [--allow-symlink]`); the per-flag prose descriptions come from the command's
+  own parser and are not reproduced here.
 - A help flag after the first bare `--` is payload, not help:
   `projmux ai split -- --help` forwards `--help` to the launched process
   unchanged.
 - An unknown command keeps its `unknown command: <token>` error and exit `1`
   even with `--help`, and `projmux help` / bare `projmux` keep printing the
-  top-level list.
+  top-level list. A bare `help` word nested under a command
+  (`projmux pin help`) still reaches that command's own handler.
 
 ## Top-level
 
