@@ -3,6 +3,7 @@ package hooks
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -376,6 +377,330 @@ func TestUpdateProjectConfigRejectsInvalidEnvKey(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("UpdateProjectConfig accepted invalid env key")
+	}
+}
+
+func TestWriteProjectConfigFileModePathAndMetadataContracts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		setup         func(*testing.T, string) (path, target string, links []string)
+		wantMode      os.FileMode
+		wantPathIsReg bool
+	}{
+		{
+			name: "regular file",
+			setup: func(t *testing.T, root string) (string, string, []string) {
+				path := filepath.Join(root, "repo", ".projmux", "config.toml")
+				writeConfigFixture(t, path, "old\n", 0o640)
+				return path, path, nil
+			},
+			wantMode:      0o640,
+			wantPathIsReg: true,
+		},
+		{
+			name: "missing path",
+			setup: func(t *testing.T, root string) (string, string, []string) {
+				path := filepath.Join(root, "repo", ".projmux", "config.toml")
+				return path, path, nil
+			},
+			wantMode:      0o644,
+			wantPathIsReg: true,
+		},
+		{
+			name: "broken symlink falls back to link path",
+			setup: func(t *testing.T, root string) (string, string, []string) {
+				path := filepath.Join(root, "repo", ".projmux", "config.toml")
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				target := filepath.Join(root, "missing", "config.toml")
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+				return path, path, nil
+			},
+			wantMode:      0o644,
+			wantPathIsReg: true,
+		},
+		{
+			name: "relative symlink",
+			setup: func(t *testing.T, root string) (string, string, []string) {
+				path := filepath.Join(root, "repo", ".projmux", "config.toml")
+				target := filepath.Join(root, "repo", "config-targets", "project.toml")
+				writeConfigFixture(t, target, "old\n", 0o620)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				rel, err := filepath.Rel(filepath.Dir(path), target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(rel, path); err != nil {
+					t.Fatal(err)
+				}
+				return path, target, []string{path}
+			},
+			wantMode: 0o620,
+		},
+		{
+			name: "multi-hop relative symlink chain",
+			setup: func(t *testing.T, root string) (string, string, []string) {
+				path := filepath.Join(root, "repo", ".projmux", "config.toml")
+				middle := filepath.Join(root, "links", "project-config")
+				target := filepath.Join(root, "targets", "config.toml")
+				writeConfigFixture(t, target, "old\n", 0o600)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Dir(middle), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				middleRel, err := filepath.Rel(filepath.Dir(middle), target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(middleRel, middle); err != nil {
+					t.Fatal(err)
+				}
+				pathRel, err := filepath.Rel(filepath.Dir(path), middle)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(pathRel, path); err != nil {
+					t.Fatal(err)
+				}
+				return path, target, []string{path, middle}
+			},
+			wantMode: 0o600,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			path, target, links := tc.setup(t, t.TempDir())
+			beforeLinks := make([]os.FileInfo, len(links))
+			for i, link := range links {
+				info, err := os.Lstat(link)
+				if err != nil {
+					t.Fatal(err)
+				}
+				beforeLinks[i] = info
+			}
+			var beforeUID, beforeGID int
+			var beforeOwnerOK bool
+			if info, err := os.Stat(target); err == nil {
+				beforeUID, beforeGID, beforeOwnerOK = projectConfigFileOwner(info)
+			}
+
+			err := writeProjectConfigFileMode(path, ProjectConfig{StartupRun: "make ready"}, 0o644)
+			if err != nil {
+				t.Fatalf("writeProjectConfigFileMode() error = %v", err)
+			}
+
+			for i, link := range links {
+				after, err := os.Lstat(link)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if after.Mode()&os.ModeSymlink == 0 {
+					t.Fatalf("Lstat(%q) mode = %v, want symlink", link, after.Mode())
+				}
+				if !os.SameFile(beforeLinks[i], after) {
+					t.Fatalf("symlink inode at %q changed", link)
+				}
+			}
+			if tc.wantPathIsReg {
+				info, err := os.Lstat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !info.Mode().IsRegular() {
+					t.Fatalf("Lstat(%q) mode = %v, want regular file", path, info.Mode())
+				}
+			}
+			body, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := string(body), "[startup]\nrun = \"make ready\"\n"; got != want {
+				t.Fatalf("config body = %q, want %q", got, want)
+			}
+			info, err := os.Stat(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != tc.wantMode {
+				t.Fatalf("target mode = %#o, want %#o", got, tc.wantMode)
+			}
+			if afterUID, afterGID, ok := projectConfigFileOwner(info); beforeOwnerOK && (!ok || afterUID != beforeUID || afterGID != beforeGID) {
+				t.Fatalf("target owner = (%d,%d,%v), want (%d,%d,true)", afterUID, afterGID, ok, beforeUID, beforeGID)
+			}
+			assertNoProjectConfigTemps(t, filepath.Dir(path), filepath.Dir(target))
+		})
+	}
+}
+
+func TestWriteProjectConfigFileModeFailureCleansTempAndPreservesSymlinkTarget(t *testing.T) {
+	t.Parallel()
+
+	injected := errors.New("injected writer failure")
+	tests := []struct {
+		name           string
+		patch          func(*projectConfigFileOps, *int)
+		wantCloseCalls int
+	}{
+		{name: "lstat", patch: func(ops *projectConfigFileOps, _ *int) {
+			ops.lstat = func(string) (os.FileInfo, error) { return nil, injected }
+		}},
+		{name: "resolve", patch: func(ops *projectConfigFileOps, _ *int) {
+			ops.evalSymlinks = func(string) (string, error) { return "", injected }
+		}},
+		{name: "stat", patch: func(ops *projectConfigFileOps, _ *int) {
+			ops.stat = func(string) (os.FileInfo, error) { return nil, injected }
+		}},
+		{name: "create", patch: func(ops *projectConfigFileOps, _ *int) {
+			ops.createTemp = func(string, string) (projectConfigTempFile, error) { return nil, injected }
+		}},
+		{name: "write", patch: func(ops *projectConfigFileOps, closeCalls *int) {
+			createTemp := ops.createTemp
+			ops.createTemp = func(dir, pattern string) (projectConfigTempFile, error) {
+				file, err := createTemp(dir, pattern)
+				if err != nil {
+					return nil, err
+				}
+				return &failingProjectConfigTempFile{projectConfigTempFile: file, writeErr: injected, closeCalls: closeCalls}, nil
+			}
+		}, wantCloseCalls: 1},
+		{name: "close", patch: func(ops *projectConfigFileOps, closeCalls *int) {
+			createTemp := ops.createTemp
+			ops.createTemp = func(dir, pattern string) (projectConfigTempFile, error) {
+				file, err := createTemp(dir, pattern)
+				if err != nil {
+					return nil, err
+				}
+				return &failingProjectConfigTempFile{projectConfigTempFile: file, closeErr: injected, closeCalls: closeCalls}, nil
+			}
+		}, wantCloseCalls: 1},
+		{name: "chmod", patch: func(ops *projectConfigFileOps, _ *int) {
+			ops.chmod = func(string, os.FileMode) error { return injected }
+		}},
+		{name: "chown", patch: func(ops *projectConfigFileOps, _ *int) {
+			ops.chown = func(string, int, int) error { return injected }
+		}},
+		{name: "rename", patch: func(ops *projectConfigFileOps, _ *int) {
+			ops.rename = func(string, string) error { return injected }
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			path := filepath.Join(root, "repo", ".projmux", "config.toml")
+			target := filepath.Join(root, "target", "config.toml")
+			writeConfigFixture(t, target, "original\n", 0o640)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+			linkBefore, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			ops := defaultProjectConfigFileOps()
+			closeCalls := 0
+			tc.patch(&ops, &closeCalls)
+			err = writeProjectConfigFileModeWithOps(path, ProjectConfig{StartupRun: "changed"}, 0o644, ops)
+			if !errors.Is(err, injected) {
+				if tc.name == "chown" && runtime.GOOS == "windows" && err == nil {
+					t.Skip("ownership metadata is not exposed on Windows")
+				}
+				t.Fatalf("write error = %v, want injected failure", err)
+			}
+
+			linkAfter, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if linkAfter.Mode()&os.ModeSymlink == 0 || !os.SameFile(linkBefore, linkAfter) {
+				t.Fatalf("original symlink was not preserved after %s failure", tc.name)
+			}
+			body, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := string(body), "original\n"; got != want {
+				t.Fatalf("target after %s failure = %q, want %q", tc.name, got, want)
+			}
+			if closeCalls != tc.wantCloseCalls {
+				t.Fatalf("temporary file close calls after %s failure = %d, want %d", tc.name, closeCalls, tc.wantCloseCalls)
+			}
+			assertNoProjectConfigTemps(t, filepath.Dir(path), filepath.Dir(target))
+		})
+	}
+}
+
+type failingProjectConfigTempFile struct {
+	projectConfigTempFile
+	writeErr   error
+	closeErr   error
+	closeCalls *int
+}
+
+func (f *failingProjectConfigTempFile) WriteString(content string) (int, error) {
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
+	return f.projectConfigTempFile.WriteString(content)
+}
+
+func (f *failingProjectConfigTempFile) Close() error {
+	if f.closeCalls != nil {
+		(*f.closeCalls)++
+	}
+	err := f.projectConfigTempFile.Close()
+	if f.closeErr != nil {
+		return f.closeErr
+	}
+	return err
+}
+
+func writeConfigFixture(t *testing.T, path, body string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertNoProjectConfigTemps(t *testing.T, dirs ...string) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, dir := range dirs {
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		matches, err := filepath.Glob(filepath.Join(dir, "config.toml.tmp-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) != 0 {
+			t.Fatalf("temporary config artifacts in %q: %v", dir, matches)
+		}
 	}
 }
 

@@ -810,6 +810,72 @@ run = "echo b"
 	}
 }
 
+func TestSettingsProjectConfigWriterPreservesSymlink(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configHome := filepath.Join(home, "config")
+	stateHome := filepath.Join(home, "state")
+	repo := filepath.Join(home, "repo")
+	path := filepath.Join(repo, ".projmux", "config.toml")
+	target := filepath.Join(home, "config-targets", "project.toml")
+	writeFile(t, target, "[startup]\nrun = \"old\"\n")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(filepath.Dir(path), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(rel, path); err != nil {
+		t.Fatal(err)
+	}
+	linkBefore, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			switch name {
+			case "XDG_CONFIG_HOME":
+				return configHome
+			case "XDG_STATE_HOME":
+				return stateHome
+			default:
+				return ""
+			}
+		},
+	}
+	var stdout bytes.Buffer
+	err = cmd.saveProjectConfig(settingsProjectContext{Path: repo, Name: "repo"}, &stdout, func(cfg *hooks.ProjectConfig) error {
+		cfg.StartupRun = "make settings-smoke"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("saveProjectConfig() error = %v", err)
+	}
+
+	linkAfter, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkAfter.Mode()&os.ModeSymlink == 0 || !os.SameFile(linkBefore, linkAfter) {
+		t.Fatal("Settings project writer replaced the config symlink")
+	}
+	body, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(body); !strings.Contains(got, `run = "make settings-smoke"`) {
+		t.Fatalf("project target content = %q, want Settings update", got)
+	}
+	if _, err := os.Stat(filepath.Join(stateHome, "projmux", "trusted-projects.json")); err != nil {
+		t.Fatalf("Settings trust-store smoke: %v", err)
+	}
+}
+
 // --- helpers ----------------------------------------------------------------
 
 func assertEntryLabelContainsAll(t *testing.T, entries []intpickercompat.Entry, parts ...string) {

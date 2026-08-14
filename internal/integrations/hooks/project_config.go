@@ -1,10 +1,12 @@
 package hooks
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -497,17 +499,60 @@ func writePrivateProjectConfigFile(path string, cfg ProjectConfig) error {
 }
 
 func writeProjectConfigFileMode(path string, cfg ProjectConfig, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	return writeProjectConfigFileModeWithOps(path, cfg, mode, defaultProjectConfigFileOps())
+}
+
+type projectConfigTempFile interface {
+	Name() string
+	WriteString(string) (int, error)
+	Close() error
+}
+
+type projectConfigFileOps struct {
+	lstat        func(string) (os.FileInfo, error)
+	evalSymlinks func(string) (string, error)
+	stat         func(string) (os.FileInfo, error)
+	mkdirAll     func(string, os.FileMode) error
+	createTemp   func(string, string) (projectConfigTempFile, error)
+	chown        func(string, int, int) error
+	chmod        func(string, os.FileMode) error
+	rename       func(string, string) error
+	remove       func(string) error
+}
+
+func defaultProjectConfigFileOps() projectConfigFileOps {
+	return projectConfigFileOps{
+		lstat:        os.Lstat,
+		evalSymlinks: filepath.EvalSymlinks,
+		stat:         os.Stat,
+		mkdirAll:     os.MkdirAll,
+		createTemp: func(dir, pattern string) (projectConfigTempFile, error) {
+			return os.CreateTemp(dir, pattern)
+		},
+		chown:  os.Chown,
+		chmod:  os.Chmod,
+		rename: os.Rename,
+		remove: os.Remove,
+	}
+}
+
+func writeProjectConfigFileModeWithOps(path string, cfg ProjectConfig, mode os.FileMode, ops projectConfigFileOps) error {
+	writePath, existing, err := resolveProjectConfigWritePath(path, ops)
+	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, "config.toml.tmp-*")
+
+	dir := filepath.Dir(writePath)
+	if err := ops.mkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := ops.createTemp(dir, "config.toml.tmp-*")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
 	defer func() {
-		_ = os.Remove(tmpName)
+		_ = ops.remove(tmpName)
 	}()
 
 	if _, err := tmp.WriteString(renderProjectConfig(cfg)); err != nil {
@@ -517,14 +562,89 @@ func writeProjectConfigFileMode(path string, cfg ProjectConfig, mode os.FileMode
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	// CreateTemp requests 0600, which is already the private global-config
-	// mode. Only the shareable project-local writer needs to broaden it.
-	if mode != 0o600 {
-		if err := os.Chmod(tmpName, mode); err != nil {
-			return err
+
+	writeMode := mode
+	if existing != nil {
+		writeMode = existing.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
+		if uid, gid, ok := projectConfigFileOwner(existing); ok {
+			if err := ops.chown(tmpName, uid, gid); err != nil {
+				return err
+			}
 		}
 	}
-	return os.Rename(tmpName, path)
+	// Chown may clear set-ID bits, so restore the complete supported mode after
+	// ownership has been applied. Missing destinations retain the public 0644
+	// and private 0600 writer defaults.
+	if err := ops.chmod(tmpName, writeMode); err != nil {
+		return err
+	}
+	return ops.rename(tmpName, writePath)
+}
+
+func resolveProjectConfigWritePath(path string, ops projectConfigFileOps) (string, os.FileInfo, error) {
+	info, err := ops.lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return path, nil, nil
+		}
+		return "", nil, err
+	}
+
+	writePath := path
+	resolvedSymlink := info.Mode()&os.ModeSymlink != 0
+	if resolvedSymlink {
+		writePath, err = ops.evalSymlinks(path)
+		if err != nil {
+			// Preserve the historical recovery behaviour for a dangling link:
+			// replacing the link path produces a healthy regular config file.
+			if errors.Is(err, os.ErrNotExist) {
+				return path, nil, nil
+			}
+			return "", nil, err
+		}
+	}
+
+	existing, err := ops.stat(writePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && !resolvedSymlink {
+			return writePath, nil, nil
+		}
+		return "", nil, err
+	}
+	return writePath, existing, nil
+}
+
+// projectConfigFileOwner extracts Unix-like uid/gid metadata without making
+// the writer platform-specific. Platforms whose FileInfo.Sys value does not
+// expose those fields keep the atomic mode contract and skip ownership work.
+func projectConfigFileOwner(info os.FileInfo) (int, int, bool) {
+	if info == nil || info.Sys() == nil {
+		return 0, 0, false
+	}
+	value := reflect.ValueOf(info.Sys())
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return 0, 0, false
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return 0, 0, false
+	}
+	uid := value.FieldByName("Uid")
+	gid := value.FieldByName("Gid")
+	if !uid.IsValid() || !gid.IsValid() || !uid.CanUint() || !gid.CanUint() {
+		return 0, 0, false
+	}
+	uidValue, err := strconv.Atoi(strconv.FormatUint(uid.Uint(), 10))
+	if err != nil {
+		return 0, 0, false
+	}
+	gidValue, err := strconv.Atoi(strconv.FormatUint(gid.Uint(), 10))
+	if err != nil {
+		return 0, 0, false
+	}
+	return uidValue, gidValue, true
 }
 
 func renderProjectConfig(cfg ProjectConfig) string {
