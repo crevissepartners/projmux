@@ -23,9 +23,9 @@ projmux shell
 ```
 
 <p align="center">
-  <img src="docs/assets/projmux-ai-attention.gif" alt="projmux AI attention demo" width="820">
+  <img src="docs/assets/projmux-ai-attention.gif" alt="projmux AI session resume, agent permission, and grouped notification workflow" width="820">
   <br>
-  <em>Resume an existing AI session, keep working in another project, then jump back when the managed pane needs permission.</em>
+  <em>Resume an existing AI session, keep working in another project, then return through grouped notifications when the agent needs approval.</em>
 </p>
 
 ## Why
@@ -93,14 +93,18 @@ fallbacks.
   before switching.
 - Resume an existing Claude, Codex, or Antigravity conversation, or open a new
   managed AI split.
-- Review permission and completion events in one notification queue, then jump
-  directly to the pane that needs attention.
+- Review grouped permission and completion events, then jump directly to the
+  pane that needs attention.
+- Inspect live project, window, and pane CPU/RSS with the read-only Resource
+  Inspector on Linux/tmux.
+- Save and inspect Session State snapshots for window/pane layouts, shell cwd,
+  and supported AI resumes.
 - Use Settings > Project Picker to add roots and workdirs without editing env
   vars.
 - Use Settings > About > Update or `projmux update apply` to upgrade.
 
 <p align="center">
-  <img src="docs/assets/projmux-shell-sidebar.gif" alt="projmux project switch and managed Codex demo" width="820">
+  <img src="docs/assets/projmux-shell-sidebar.gif" alt="projmux project switch and managed Codex workflow" width="820">
   <br>
   <em>Switch projects, launch a managed Codex pane, and review its completion notification.</em>
 </p>
@@ -111,14 +115,14 @@ For update behavior by installer type, see [Upgrading](docs/upgrading.md).
 
 ## Multi-Agent Workflow
 
-Keep a shell and multiple managed agents visible in the same tmux window.
-Move between panes to start independent tasks while projmux collects their
-permission and completion events in one notification queue.
+Keep a shell and managed Claude, Codex, or Antigravity panes visible in the
+same tmux window. Move between projects and panes while projmux collects agent
+permission and completion events in one grouped inbox.
 
 <p align="center">
-  <img src="docs/assets/projmux-three-pane-workflow.gif" alt="projmux shell, Codex, and Claude 3-pane workflow demo" width="820">
+  <img src="docs/assets/projmux-three-pane-workflow.gif" alt="projmux shell, Codex, and Claude three-pane workflow" width="820">
   <br>
-  <em>Move across equal-width shell, Codex, and Claude panes while independent tasks report back through one notification queue.</em>
+  <em>Move across shell, Codex, and Claude panes while independent tasks report back through one notification queue.</em>
 </p>
 
 ## Automation With Agent Skills
@@ -143,6 +147,9 @@ Templates and naming conventions for Claude, Codex, and other agents are in
 - [Statusbar](docs/statusbar.md)
 - [Hooks](docs/hooks.md)
 - [Usage tracking](docs/usage-tracking.md)
+- [Resource Inspector](docs/resource-attribution.md)
+- [Session State](docs/session-restore.md)
+- [Operational Diagnostics](docs/operational-diagnostics.md)
 - [Agent Workflow](docs/agent-workflow.md)
 
 ## Development
