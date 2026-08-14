@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
@@ -250,7 +251,9 @@ func TestDoctorCanonicalHelpContract(t *testing.T) {
 	t.Parallel()
 
 	var root bytes.Buffer
-	printUsage(&root)
+	if err := cli.RenderRootHelp(&root); err != nil {
+		t.Fatalf("RenderRootHelp returned error: %v", err)
+	}
 	if !strings.Contains(root.String(), "doctor    Run read-only runtime and integration diagnostics") {
 		t.Fatalf("root help does not present doctor as read-only:\n%s", root.String())
 	}

@@ -2,7 +2,9 @@
 
 Every subcommand exposed by the `projmux` binary as of v0.4.0. Run
 `projmux help` for the live top-level list, or `projmux <cmd> --help` /
-`projmux <cmd> help` for the per-command usage string.
+`projmux <cmd> help` for the per-command usage string. See
+[Help boundary](#help-boundary) for the exit-code and stream contract shared by
+every `--help` invocation.
 
 Exit codes:
 
@@ -10,6 +12,26 @@ Exit codes:
 - `1` — runtime failure.
 - `2` — usage error (unknown flag, bad enum, missing required flag) or a
   deterministic semantic exit (e.g. `focus` cannot resolve the target).
+
+## Help boundary
+
+`--help` and `-h` are handled once, at the root, from the shared command
+manifest rather than by each leaf parser:
+
+- Every help invocation exits `0`, writes to **stdout** only, records no
+  operational error, and performs no tmux, runtime, or lifecycle-migration
+  access. This includes nested routes (`projmux ai settings --help`) and the
+  hidden internal helpers (`projmux popup-wait-key --help`).
+- Help resolves to the deepest documented route and shows its summary, usage
+  synopsis, sub-routes, route-local output projections, and the canonical
+  route spelling it will move to. Leaf flag documentation still comes from the
+  command's own parser when the command is invoked directly.
+- A help flag after the first bare `--` is payload, not help:
+  `projmux ai split -- --help` forwards `--help` to the launched process
+  unchanged.
+- An unknown command keeps its `unknown command: <token>` error and exit `1`
+  even with `--help`, and `projmux help` / bare `projmux` keep printing the
+  top-level list.
 
 ## Top-level
 

@@ -28,6 +28,33 @@ docker build \
   -t "$image" \
   "$docker_context"
 
+# Suite containers stay network-isolated, so the Go module cache they build
+# against must be populated beforehand. The prefetch runs in the same pinned
+# image with the network enabled and writes into a host-side cache directory
+# that the isolated run then mounts. The go.sum stamp keeps the prefetch a no-op
+# once the cache already matches the checked-in module graph.
+# Keep the cache outside the repository so repository-wide file scans (gofmt,
+# gitleaks working tree) never walk third-party module sources.
+modcache="${PROJMUX_TEST_GOMODCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/projmux/test-gomodcache}"
+mkdir -p "$modcache"
+stamp="$modcache/.projmux-go-sum"
+if ! cmp -s "$root/go.sum" "$stamp"; then
+  echo ">> prefetching Go modules into $modcache"
+  docker run --rm \
+    --network bridge \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp/projmux-home \
+    -e GOCACHE=/tmp/projmux-gocache \
+    -e GOMODCACHE=/gomodcache \
+    -e GOTOOLCHAIN=local \
+    -v "$root:/workspace:ro" \
+    -v "$modcache:/gomodcache:rw" \
+    -w /workspace \
+    "$image" \
+    go mod download
+  cp "$root/go.sum" "$stamp"
+fi
+
 docker run --rm \
   --network "$docker_network" \
   --user "$(id -u):$(id -g)" \
@@ -37,9 +64,10 @@ docker run --rm \
   -e XDG_RUNTIME_DIR=/tmp/projmux-runtime \
   -e XDG_STATE_HOME=/tmp/projmux-state \
   -e GOCACHE=/tmp/projmux-gocache \
-  -e GOMODCACHE=/tmp/projmux-gomodcache \
+  -e GOMODCACHE=/gomodcache \
   -e GOTOOLCHAIN=local \
   -v "$root:/workspace:rw" \
+  -v "$modcache:/gomodcache:rw" \
   -w /workspace \
   "$image" \
   bash "$suite" "$@"

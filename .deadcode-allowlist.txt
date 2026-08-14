@@ -257,3 +257,19 @@ tmuxStandaloneConfigWithKeymap
 tmuxStandaloneConfigWithKeymapTheme
 tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle
 tmuxStyledVisiblePaneLabelFormat
+
+# ---------------------------------------------------------------------------
+# MUST-KEEP: CLI information architecture v2 Phase 0 command manifest API.
+# internal/cli owns the canonical route catalog, the shared output projection
+# catalog, and the closed disposition set. Runtime help reads the manifest
+# through the unexported package-level tables, so these exported accessors are
+# reachable only from the coverage/orphan audit tests today; the generated CLI
+# reference Phase consumes them next. They MUST NOT be removed.
+# ---------------------------------------------------------------------------
+CanonicalRoutes
+LookupCanonicalRoute
+Dispositions
+Routes
+SharedOutputModes
+IsSharedOutputMode
+RouteLocalFieldProjections

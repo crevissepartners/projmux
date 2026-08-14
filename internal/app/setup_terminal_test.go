@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/cli"
 )
 
 func TestAppInitIsUnknownCommandForEveryLegacyIntent(t *testing.T) {
@@ -42,7 +44,9 @@ func TestTopLevelHelpShowsCanonicalSetupAndOmitsInit(t *testing.T) {
 	t.Parallel()
 
 	var usage bytes.Buffer
-	printUsage(&usage)
+	if err := cli.RenderRootHelp(&usage); err != nil {
+		t.Fatalf("RenderRootHelp returned error: %v", err)
+	}
 	out := usage.String()
 	if !strings.Contains(out, "setup     Probe terminal keys or remediate them with setup terminal") {
 		t.Fatalf("top-level help missing canonical setup terminal guidance:\n%s", out)
@@ -57,10 +61,26 @@ func TestSetupTerminalHelpAndFlagsOmitDryRun(t *testing.T) {
 
 	cmd := newInitCommand()
 	app := &App{setup: newSetupCommand(cmd)}
+
+	// `setup terminal --help` is answered by the shared manifest-driven help
+	// boundary: exit 0, stdout only, and no handler or filesystem access.
+	var routeHelp, routeErr bytes.Buffer
+	if err := app.Run([]string{"setup", "terminal", "--help"}, &routeHelp, &routeErr); err != nil {
+		t.Fatalf("App.Run(setup terminal --help) error = %v, want nil", err)
+	}
+	if !strings.HasPrefix(routeHelp.String(), "projmux setup terminal\n") || routeErr.Len() != 0 {
+		t.Fatalf("route help = %q stderr = %q", routeHelp.String(), routeErr.String())
+	}
+	if strings.Contains(routeHelp.String(), "dry-run") {
+		t.Fatalf("route help exposes removed --dry-run:\n%s", routeHelp.String())
+	}
+
+	// The leaf parser still owns its own flag documentation for direct
+	// invocation, and it still omits the removed --dry-run flag.
 	var help bytes.Buffer
-	err := app.Run([]string{"setup", "terminal", "--help"}, &bytes.Buffer{}, &help)
+	err := newSetupCommand(cmd).Run([]string{"terminal", "--help"}, &bytes.Buffer{}, &help)
 	if !errors.Is(err, flag.ErrHelp) {
-		t.Fatalf("App.Run(setup terminal --help) error = %v, want flag.ErrHelp", err)
+		t.Fatalf("setupCommand.Run(terminal --help) error = %v, want flag.ErrHelp", err)
 	}
 	for _, want := range []string{"Usage of projmux setup terminal:", "-apply", "-config", "-allow-symlink"} {
 		if !strings.Contains(help.String(), want) {
