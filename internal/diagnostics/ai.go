@@ -1,6 +1,7 @@
 package diagnostics
 
 import (
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,7 +54,6 @@ const (
 	AIFailureUnsupportedEvent AIFailure = "unsupported-event"
 	AIFailureRoute            AIFailure = "route-failed"
 	AIFailureWatcherLaunch    AIFailure = "watcher-launch-failed"
-	AIFailureWatcherState     AIFailure = "watcher-state-failed"
 )
 
 const ProviderTmuxBell Provider = "tmux-bell"
@@ -147,10 +147,11 @@ func aiTupleMatches(event Event) bool {
 		case AIResultPaneGone, AIResultHookActive:
 			return event.Level == "info" && event.Result == "success" && event.Kind == "" && failure == ""
 		case AIResultFailed:
-			return event.Level == "error" && event.Result == "error" && event.Kind == "runtime" && (failure == AIFailureWatcherLaunch || failure == AIFailureWatcherState)
+			return event.Level == "error" && event.Result == "error" && event.Kind == "runtime" && failure == AIFailureWatcherLaunch
 		}
 	case "ai.ingest.outcome":
-		if event.Provider == string(ProviderAI) || event.AIKind == string(AIKindWatcher) {
+		provider, kind := Provider(event.Provider), AIKind(event.AIKind)
+		if !aiProviderKindMatches(provider, kind) {
 			return false
 		}
 		if result == AIResultIgnored {
@@ -159,23 +160,43 @@ func aiTupleMatches(event Event) bool {
 			}
 			switch failure {
 			case AIFailureTargetInvalid:
-				return event.Provider == string(ProviderTmuxBell) && event.AIKind == string(AIKindBell)
+				return provider == ProviderTmuxBell && kind == AIKindBell
 			case AIFailureTargetUnmatched:
-				return true
+				return kind != AIKindPayload
 			case AIFailureUnsupportedEvent:
-				return event.AIKind == string(AIKindUnknown)
+				return provider != ProviderTmuxBell && kind == AIKindUnknown
 			}
 		}
 		if result == AIResultFailed {
 			switch failure {
 			case AIFailurePayloadInvalid, AIFailurePayloadRead, AIFailurePayloadOversized:
-				return event.AIKind == string(AIKindPayload) && event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
+				return provider != ProviderTmuxBell && kind == AIKindPayload && event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
 			case AIFailureRoute:
-				return event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
+				routeSeam := (provider == ProviderTmuxBell && kind == AIKindBell) || (provider == ProviderAntigravity && kind == AIKindTool)
+				return routeSeam && event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
 			}
 		}
 	}
 	return false
+}
+
+func aiProviderKindMatches(provider Provider, kind AIKind) bool {
+	switch provider {
+	case ProviderCodex:
+		return aiKindIn(kind, AIKindPayload, AIKindPrompt, AIKindPermission, AIKindStop, AIKindTool, AIKindSession, AIKindCompact, AIKindUnknown)
+	case ProviderClaude:
+		return aiKindIn(kind, AIKindPayload, AIKindPrompt, AIKindPermission, AIKindStop, AIKindNotification, AIKindTool, AIKindSession, AIKindCompact, AIKindSubagent, AIKindTeammate, AIKindLifecycle, AIKindUnknown)
+	case ProviderAntigravity:
+		return aiKindIn(kind, AIKindPayload, AIKindStop, AIKindStatusline, AIKindInvocation, AIKindTool, AIKindUnknown)
+	case ProviderTmuxBell:
+		return kind == AIKindBell
+	default:
+		return false
+	}
+}
+
+func aiKindIn(got AIKind, allowed ...AIKind) bool {
+	return slices.Contains(allowed, got)
 }
 
 // AI returns the Phase 5 recorder bound to the same run and logical outcome

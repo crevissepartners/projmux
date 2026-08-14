@@ -161,7 +161,7 @@ var (
 		string(ProviderClaude), string(ProviderCodex), string(ProviderAntigravity), string(ProviderAI), string(ProviderK8s), string(ProviderGit),
 		string(ProviderExternal), string(ProviderProjmux), string(ProviderOther),
 	)
-	allowedAIProviders = stringSet(string(ProviderCodex), string(ProviderClaude), string(ProviderAntigravity), string(ProviderTmuxBell), string(ProviderOther), string(ProviderAI))
+	allowedAIProviders = stringSet(string(ProviderCodex), string(ProviderClaude), string(ProviderAntigravity), string(ProviderTmuxBell), string(ProviderAI))
 	allowedCategories  = stringSet(
 		string(CategoryApprovalRequired), string(CategoryInputRequired), string(CategoryResponseComplete), string(CategoryError),
 		string(CategorySubagentStopped), string(CategoryTeammateWaiting), string(CategorySelectionRequired), string(CategoryConfirmationRequired),
@@ -182,7 +182,7 @@ var (
 	)
 	allowedAIFailures = stringSet(
 		string(AIFailurePayloadInvalid), string(AIFailurePayloadRead), string(AIFailurePayloadOversized), string(AIFailureTargetInvalid),
-		string(AIFailureTargetUnmatched), string(AIFailureUnsupportedEvent), string(AIFailureRoute), string(AIFailureWatcherLaunch), string(AIFailureWatcherState),
+		string(AIFailureTargetUnmatched), string(AIFailureUnsupportedEvent), string(AIFailureRoute), string(AIFailureWatcherLaunch),
 	)
 )
 

@@ -189,6 +189,7 @@ func (c *aiCommand) runIngestBell(args []string, stderr io.Writer) error {
 		return errors.New("ai ingest bell does not accept positional arguments")
 	}
 	if strings.TrimSpace(*paneID) == "" {
+		c.recordAIIngestIgnored(diagnostics.ProviderTmuxBell, diagnostics.AIKindBell, diagnostics.AIFailureTargetInvalid, true)
 		printAIUsage(stderr)
 		return errors.New("ai ingest bell requires --pane <pane_id>")
 	}

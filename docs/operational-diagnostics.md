@@ -92,29 +92,35 @@ tmux mutation, while `focus.transition` describes the request-level result.
 AI watcher and hook-ingest diagnostics use the same process `run_id` and add
 only closed `provider`, `ai_kind`, `ai_result`, and `failure` enums. The event
 families are `ai.watcher.transition` and `ai.ingest.outcome`. Watcher provider
-is the generic `ai`; ingest providers are `codex`, `claude`, `antigravity`,
-`tmux-bell`, or `other`. Provider event names are projected into semantic kinds
-such as `prompt`, `permission`, `stop`, `notification`, `tool`, `session`,
-`compact`, `subagent`, `teammate`, `statusline`, `invocation`, `lifecycle`,
-`bell`, `payload`, or `unknown`. A raw or future event name can therefore be
-diagnosed as `unknown` but can never extend the journal schema.
+is the generic `ai`; ingest providers are `codex`, `claude`, `antigravity`, or
+`tmux-bell`. Each provider accepts only its own closed semantic-kind catalog;
+for example, `tmux-bell` can only emit `bell`, while watcher events can only use
+the generic `ai` provider and `watcher` kind. Provider event names are projected
+into semantic kinds such as `prompt`, `permission`, `stop`, `notification`,
+`tool`, `session`, `compact`, `subagent`, `teammate`, `statusline`, `invocation`,
+`lifecycle`, `bell`, `payload`, or `unknown`. A raw or future event name can
+therefore be diagnosed as `unknown` but can never extend the journal schema.
 
 One watcher process emits at most one `started` transition, one terminal
 `pane-gone` or `hook-active` transition, and one copy of each distinct safe
-failure tuple. Launch and state-application failures use only
-`watcher-launch-failed` or `watcher-state-failed`. The terminal watcher event
-logically replaces its generic top-level outcome, including when append fails.
+failure tuple. The existing observable launch seam uses only
+`watcher-launch-failed`; status application remains the pre-existing
+best-effort operation and does not claim to expose swallowed tmux write errors.
+The terminal watcher event logically replaces its generic top-level outcome,
+including when append fails.
 The polling loop does not record snapshots, observed titles, captures, pane
 state, or a record per iteration.
 
 Hook ingest projects only anomalies: invalid/read/oversized payloads, unmatched
 or invalid targets, unsupported event classification, and terminal route
-failure. Identical safe anomaly tuples are coalesced per process. Successful
-state, notification, quiet, and bell-dedupe traffic emits zero common AI
-events. Notify enqueue/delivery remains owned by the Phase 4 notify recorder,
-so ingest does not add a second AI success outcome or claim a secondary notify
-outcome. An ingest failure owns the top-level error logically before its
-best-effort append, preventing a duplicate generic `command.outcome`.
+failure. Route failures are limited to the observable bell queue/store and
+Antigravity explicit-response seams. Identical safe anomaly tuples are
+coalesced per process. Successful state, notification, quiet, and bell-dedupe
+traffic emits zero common AI events. Notify enqueue/delivery remains owned by
+the Phase 4 notify recorder, so ingest does not add a second AI success outcome
+or claim a secondary notify outcome. An ingest failure owns the top-level error
+logically before its best-effort append, preventing a duplicate generic
+`command.outcome`.
 
 The common AI event never contains the raw hook payload or event name, prompt,
 transcript, tool name/input/output, notification summary/body, pane content,
@@ -203,12 +209,13 @@ The measured migration parity is:
 | Legacy `ai-ingest.log` result | Common operational projection |
 | --- | --- |
 | parse error with no classified event | `payload / failed / payload-invalid` |
-| classified handler/route error | allowlisted semantic kind / `failed / route-failed` |
+| bell queue/store or Antigravity response route error | allowlisted semantic kind / `failed / route-failed` |
 | no matching pane | allowlisted semantic kind / `ignored / target-unmatched` |
-| blank or invalid bell target | `bell / ignored / target-invalid` |
+| pane-not-found bell target | `bell / ignored / target-unmatched` |
 | unknown event recorded as quiet | `unknown / ignored / unsupported-event` |
 | normal `state`, `notify`, known `quiet`, or `deduped` | zero common AI events; existing state/notify owner remains authoritative |
 | stdin read or payload-size rejection before the legacy append seam | common-only `payload-read` or `payload-oversized`; no legacy row existed |
+| blank `ai ingest bell` CLI target rejected before the legacy append seam | common-only `bell / ignored / target-invalid`; exit semantics unchanged |
 
 This is a dual-run migration seam, not a deprecation. Operators who need the
 legacy detailed local view can keep using `ai ingest log`; support archives

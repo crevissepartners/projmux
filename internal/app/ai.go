@@ -553,9 +553,7 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 			c.recordAITopic(paneID, bestAITopic(snapshot.title, snapshot.capture), snapshot.topicManual)
 		}
 		if nextState != lastState || aiAttentionMismatch(nextState, snapshot.attentionState) || snapshot.aiState != nextState || aiBadgeKindMismatch(nextState, nextBadgeKind, snapshot.aiBadgeKind) {
-			if err := c.applyAIStatusWithBadgeKind(nextState, paneID, nextBadgeKind); err != nil {
-				c.recordAIWatcher(diagnostics.AIResultFailed, diagnostics.AIFailureWatcherState, started, false)
-			}
+			_ = c.applyAIStatusWithBadgeKind(nextState, paneID, nextBadgeKind)
 			lastState = nextState
 		}
 		c.sleepFor(interval)
