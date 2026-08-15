@@ -8,6 +8,7 @@ Commands:
   doctor    Run read-only runtime and integration diagnostics
   diagnostics  Read operational events or create an explicit local support report
   focus     Switch the active client to a session/window/pane target
+  get       Read Projmux resources by selector
   hook      List, edit, validate, and trust lifecycle hook config
   kill      Terminate tagged tmux sessions
   notify    Manage the pending AI notify queue (push/list/ack/reconcile)

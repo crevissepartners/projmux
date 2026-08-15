@@ -160,6 +160,30 @@ var routes = []Route{
 		Canonical: []string{"focus project", "focus window", "focus pane"},
 	},
 	{
+		// Phase 2 owns `get pane` because it is a read-only resolution. The
+		// rest of the get/describe verb-to-kind family, and the aliasing of the
+		// old routes onto it, belong to the public verb-to-kind Phase; this
+		// node deliberately carries exactly one kind today.
+		Name:        "get",
+		Summary:     "Read Projmux resources by selector",
+		Disposition: DispositionCanonical,
+		Usage: []string{
+			"projmux get pane --current -o cwd",
+			"projmux get pane --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]",
+		},
+		Canonical: []string{"get pane"},
+		Children: []Route{
+			{
+				Name:      "pane",
+				Summary:   "Read one Pane resource",
+				Usage:     []string{"projmux get pane [--current] [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]"},
+				Canonical: []string{"get pane"},
+				Outputs:   projectionCatalog,
+				Fields:    []FieldProjection{FieldProjectionCWD},
+			},
+		},
+	},
+	{
 		Name:        "hook",
 		Summary:     "List, edit, validate, and trust lifecycle hook config",
 		Disposition: DispositionCanonical,

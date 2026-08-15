@@ -1,6 +1,10 @@
 package cli
 
-import "slices"
+import (
+	"fmt"
+	"slices"
+	"strings"
+)
 
 // OutputMode is a member of the shared Projmux result projection catalog. The
 // CLI information architecture v2 contract pins exactly these seven modes for
@@ -76,4 +80,50 @@ func RouteLocalFieldProjections() []FieldProjection {
 	out := make([]FieldProjection, len(routeLocalFieldProjections))
 	copy(out, routeLocalFieldProjections)
 	return out
+}
+
+// AcceptedOutputTokens returns every `-o` token the canonical route accepts:
+// its shared output modes first, then its route-local field projections.
+func AcceptedOutputTokens(spelling string) []string {
+	route, ok := LookupCanonicalRoute(spelling)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(route.Outputs)+len(route.Fields))
+	for _, mode := range route.Outputs {
+		out = append(out, string(mode))
+	}
+	for _, field := range route.Fields {
+		out = append(out, string(field))
+	}
+	return out
+}
+
+// ResolveOutputToken maps one raw `-o` token onto the projection the canonical
+// route accepts. Exactly one of the returned mode and field is non-empty.
+//
+// This is the single scope gate for projections outside the shared enum. `cwd`
+// is declared on exactly one canonical route, so every other kind and every
+// mutation route rejects it here rather than in per-route argument parsing.
+//
+// An unknown token, a shared mode the route does not declare, and a field
+// projection owned by a different route all return an error, which the calling
+// route reports as a usage error (exit 2).
+func ResolveOutputToken(spelling, token string) (OutputMode, FieldProjection, error) {
+	route, ok := LookupCanonicalRoute(spelling)
+	if !ok {
+		return "", "", fmt.Errorf("unknown canonical route %q", spelling)
+	}
+	for _, mode := range route.Outputs {
+		if string(mode) == token {
+			return mode, "", nil
+		}
+	}
+	for _, field := range route.Fields {
+		if string(field) == token {
+			return "", field, nil
+		}
+	}
+	return "", "", fmt.Errorf("invalid --output %q for %s; accepted values: %s",
+		token, spelling, strings.Join(AcceptedOutputTokens(spelling), ", "))
 }
