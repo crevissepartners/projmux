@@ -50,7 +50,7 @@ func TestUsageHUDLightThemeDerivesDarkFg(t *testing.T) {
 	models := []modelDisplay{{label: "Claude", shortLabel: "C", hasFive: true, fivePct: 42, showAge: true, lastSync: now.Add(-2 * time.Hour)}}
 
 	withUsageStatusTheme(theme.ResolveTheme(usageLightThemeConfig()), func() {
-		out := renderTierLongHUDWithAge(models, now)
+		out := renderUsageSegment(models, now, newUsageSegmentPlan(models))
 		if strings.Contains(out, "#[fg="+theme.TmuxAccentAIFg) {
 			t.Fatalf("HUD label still carries %s under a light theme: %q", theme.TmuxAccentAIFg, out)
 		}
@@ -87,7 +87,7 @@ func TestUsageHUDFallbackByteIdentity(t *testing.T) {
 		{label: "Codex", shortLabel: "X", hasFive: true, fivePct: 97},
 	}
 	want := "#[fg=colour121,bold]Claude#[default] #[fg=colour244](2h~~)#[default] 5h [#[fg=colour72]████#[fg=colour238]░░░░░░] #[fg=colour72]42%#[default] · weekly [#[fg=colour214]█████████#[fg=colour238]░] #[fg=colour214]88%#[default]#[default]   #[fg=colour121,bold]Codex#[default] 5h [#[fg=colour160]██████████] #[fg=colour160]97%#[default]#[default]#[default]"
-	if got := renderTierLongHUDWithAge(models, now); got != want {
+	if got := renderUsageSegment(models, now, newUsageSegmentPlan(models)); got != want {
 		t.Fatalf("fallback usage HUD drifted:\n got %q\nwant %q", got, want)
 	}
 	if got, want := renderAgeIndicator(modelDisplay{showAge: true, lastSync: now.Add(-5 * time.Minute)}, now), "#[fg=colour245](5m)#[default]"; got != want {

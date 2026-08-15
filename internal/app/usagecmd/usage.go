@@ -753,32 +753,25 @@ type modelDisplay struct {
 	showAge bool
 }
 
-// formatStatusUsage produces the HUD-style tmux status segment. The output
-// degrades gracefully through seven tiers:
+// formatStatusUsage produces the HUD-style tmux status segment.
 //
-//  1. Long form with the full age indicator on every opted-in model + bars +
-//     weekly:
-//     `Claude (3m) 5h [████████░░] 80% · weekly [...]   Codex 5h [...] 20% · weekly [...]`
-//  2. Long form with the full age indicator on STALE models only — purely
-//     cosmetic level-0 ages such as `(3m)` are dropped first.
-//  3. Long form with only the compact `~` / `~~` staleness marker glued to the
-//     label (`Claude~~ 5h [bar] N% · weekly [bar] N%`). Collapses byte-exactly
-//     to the legacy no-indicator form when nothing is stale.
-//  4. Keep one primary bar per provider (5h, otherwise weekly), still carrying
-//     the compact marker.
-//  5. Drop bars entirely (`Claude 5h:80% weekly:30%`), still carrying the
-//     compact marker.
-//  6. Single-letter labels (`C 5h:80% weekly:30%`), still carrying the compact
-//     marker.
-//  7. Hard rune-truncation with trailing `…`.
+// Selection is NOT whole-segment. The segment starts from its richest render
+// and sheds ONE optional element at a time, in the order usageShedOrder
+// declares, until the result fits maxWidth. The predecessor of this code
+// picked "the first whole-segment tier that fits", which meant a single
+// provider's optional element — a cosmetic `(3m)` age on a healthy provider,
+// say — pushed the ENTIRE segment down a tier and took every other provider's
+// optional element with it, spending far more cells than the row was short.
 //
-// The ladder is deliberately granular along the age dimension. Tier selection
-// is whole-segment ("first tier that fits"), so an all-or-nothing age element
-// meant that at the statusbar's real budget the entire age block — including
-// the staleness marker the user actually needs — was discarded to buy room for
-// cosmetic `(3m)` indicators on healthy providers. Tiers 2 and 3 shed the
-// cosmetic part before the staleness part, which makes the marker a required
-// element and the level-0 age the optional one.
+// Two things are absent from usageShedOrder on purpose and therefore outlive
+// everything in it:
+//
+//   - the `~` / `~~` staleness marker (the contract PR #620 established), and
+//   - each provider's official window bar: 5h when the provider has one,
+//     otherwise weekly. No step hides a provider wholesale.
+//
+// Only hard rune-truncation — the last resort, reached when even the fully
+// shed segment overflows — can reach either of them.
 //
 // maxWidth is measured in display cells; tmux color escapes (`#[...]`) are
 // stripped before counting so adding color does not push the segment over
@@ -791,16 +784,13 @@ func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) stri
 	if len(models) == 0 {
 		return ""
 	}
-	tiers := []func([]modelDisplay, time.Time) string{
-		renderTierLongHUDWithAge,
-		renderTierLongHUDStaleAge,
-		renderTierLongHUD,
-		renderTierPrimaryHUD,
-		renderTierTextLong,
-		renderTierTextShort,
-	}
-	for _, tier := range tiers {
-		out := tier(models, now)
+	plan := newUsageSegmentPlan(models)
+	steps := usageShedSteps(models, now)
+	for step := 0; step <= len(steps); step++ {
+		if step > 0 {
+			steps[step-1].apply(&plan)
+		}
+		out := renderUsageSegment(models, now, plan)
 		if out == "" {
 			continue
 		}
@@ -808,60 +798,197 @@ func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) stri
 			return out
 		}
 	}
-	// Last resort: rune-truncate the shortest tier.
-	short := renderTierTextShort(models, now)
-	return truncateWithEllipsis(short, maxWidth)
+	// Last resort: hard rune-truncation of the fully shed segment. `plan` has
+	// had every step applied by now, so this is the narrowest thing the
+	// renderer can produce.
+	return truncateWithEllipsis(renderUsageSegment(models, now, plan), maxWidth)
 }
 
-// ageMode selects how much of a model's last-sync age a tier renders. The
-// modes are ordered widest-to-narrowest and are the axis the tier ladder walks
-// down before it starts sacrificing bars and labels.
+// usageSegmentPlan is the set of optional elements the segment is still
+// allowed to render. It starts permissive (newUsageSegmentPlan) and only ever
+// loses entries, one shed step at a time.
+//
+// What is NOT in this struct is the point: there is no field that can turn off
+// a provider's label, its official window, or its staleness marker, so no
+// sequence of shed steps can remove them.
+type usageSegmentPlan struct {
+	// ageText[i] renders model i's `(3m)` / `(3h~~)` age TEXT. When false the
+	// model falls back to the bare `~` / `~~` marker, which is not optional.
+	ageText []bool
+	// secondary[i] renders model i's non-official second window — weekly on a
+	// provider that also reports 5h. A provider with a single window has no
+	// secondary and is unaffected.
+	secondary []bool
+	// bars renders the graphical HUD (`5h [████░░░░░░] 42%`). When false every
+	// provider switches to the compact text pair (`5h:42% weekly:18%`), which
+	// costs so much less per provider that the secondary window comes back.
+	bars bool
+	// longLabels renders `Claude` rather than the legacy single letter `C`.
+	longLabels bool
+}
+
+// newUsageSegmentPlan is the richest render: every optional element on.
+func newUsageSegmentPlan(models []modelDisplay) usageSegmentPlan {
+	plan := usageSegmentPlan{
+		ageText:    make([]bool, len(models)),
+		secondary:  make([]bool, len(models)),
+		bars:       true,
+		longLabels: true,
+	}
+	for i := range models {
+		plan.ageText[i] = true
+		plan.secondary[i] = true
+	}
+	return plan
+}
+
+// ageMode maps a model's remaining age budget onto the renderer's age element.
+func (p usageSegmentPlan) ageMode(model int) ageMode {
+	if p.ageText[model] {
+		return ageModeFull
+	}
+	return ageModeStaleCompact
+}
+
+// usageShedRule is one entry in the usage segment's drop order.
+//
+// A rule with segment=true fires once for the whole segment. Otherwise it
+// fires once per eligible provider, tail-first (see usageShedSteps).
+type usageShedRule struct {
+	// name is the rule's identity in docs/statusbar.md and in test failures.
+	name string
+	// segment marks a rule that applies to the whole segment at once.
+	segment bool
+	// eligible reports whether a provider actually carries this element. A
+	// provider that does not is skipped rather than producing a no-op step.
+	eligible func(m modelDisplay, now time.Time) bool
+	// apply removes the element from the plan. model is -1 for segment rules.
+	apply func(plan *usageSegmentPlan, model int)
+}
+
+// usageShedOrder IS THE DROP ORDER. It is the single definition of what the
+// usage segment gives up first when the row is too narrow, in this package and
+// in the product; docs/statusbar.md ("Usage element drop order") mirrors it and
+// the width-sweep table test pins it. Index 0 goes first.
+//
+// Two invariants are structural rather than conventional:
+//
+//   - The `~` / `~~` staleness marker has NO entry here, so no width can shed
+//     it while any element in this list survives. That is PR #620's contract.
+//   - A provider's official window (5h, or weekly when 5h is absent) has NO
+//     entry either. Rule 3 sheds only the SECOND window of a provider that
+//     reports two; rules 4 and 5 change how the official window is drawn, never
+//     whether it is drawn.
+//
+// Within a per-provider rule, steps run tail-first over the canonical provider
+// order (claude, codex, antigravity), so the provider a user reads first is the
+// last to lose detail.
+var usageShedOrder = []usageShedRule{
+	{
+		// 1. The cosmetic age text on a provider that is NOT stale — `(3m)`.
+		// It is decoration: the data behind it is current.
+		name:     "cosmetic age text",
+		eligible: func(m modelDisplay, now time.Time) bool { return hasHUDAgeText(m, now) && modelStaleLevel(m, now) == 0 },
+		apply:    func(plan *usageSegmentPlan, model int) { plan.ageText[model] = false },
+	},
+	{
+		// 2. The age text on a STALE provider — `(3h~~)` collapses to `~~`.
+		// The marker survives; only the "how old exactly" text goes.
+		name:     "stale age text (the ~ / ~~ marker stays)",
+		eligible: func(m modelDisplay, now time.Time) bool { return hasHUDAgeText(m, now) && modelStaleLevel(m, now) > 0 },
+		apply:    func(plan *usageSegmentPlan, model int) { plan.ageText[model] = false },
+	},
+	{
+		// 3. A provider's SECOND window bar — Claude's weekly next to its 5h.
+		// The official window bar is never a candidate.
+		name:     "secondary window bar",
+		eligible: func(m modelDisplay, _ time.Time) bool { return m.hasFive && m.hasWeek },
+		apply:    func(plan *usageSegmentPlan, model int) { plan.secondary[model] = false },
+	},
+	{
+		// 4. Bars, segment-wide: `5h [████░░░░░░] 42%` becomes `5h:42%`. This
+		// is segment-wide because a row that mixes bar and text providers reads
+		// as a rendering bug, and because the text pair is cheap enough that
+		// every provider's second window comes back with it.
+		name:    "bars (every provider switches to text pairs)",
+		segment: true,
+		apply:   func(plan *usageSegmentPlan, _ int) { plan.bars = false },
+	},
+	{
+		// 5. Long labels, segment-wide: `Claude` becomes `C`.
+		name:    "long labels (single-letter fallback)",
+		segment: true,
+		apply:   func(plan *usageSegmentPlan, _ int) { plan.longLabels = false },
+	},
+}
+
+// usageShedStep is one concrete removal: a rule bound to a provider.
+type usageShedStep struct {
+	rule  int
+	model int // -1 for whole-segment rules.
+}
+
+// apply removes this step's element from the plan.
+func (s usageShedStep) apply(plan *usageSegmentPlan) {
+	usageShedOrder[s.rule].apply(plan, s.model)
+}
+
+// usageShedSteps expands usageShedOrder against a concrete provider set: every
+// rule in order, and inside a per-provider rule every eligible provider,
+// tail-first. The result is the exact, finite sequence of removals
+// formatStatusUsage walks — there is no other path to a degraded segment.
+func usageShedSteps(models []modelDisplay, now time.Time) []usageShedStep {
+	steps := make([]usageShedStep, 0, len(usageShedOrder)+2*len(models))
+	for i, rule := range usageShedOrder {
+		if rule.segment {
+			steps = append(steps, usageShedStep{rule: i, model: -1})
+			continue
+		}
+		for m := len(models) - 1; m >= 0; m-- {
+			if rule.eligible(models[m], now) {
+				steps = append(steps, usageShedStep{rule: i, model: m})
+			}
+		}
+	}
+	return steps
+}
+
+// hasHUDAgeText reports whether a provider would actually render an age text
+// element, so an ineligible provider never becomes a no-op shed step.
+func hasHUDAgeText(m modelDisplay, now time.Time) bool {
+	return renderHUDAgeSuffix(m, now, ageModeFull) != ""
+}
+
+// ageMode selects how much of a model's last-sync age the segment renders.
 type ageMode int
 
 const (
 	// ageModeFull renders the `(3m)` / `(15m~)` / `(3h~~)` indicator for every
 	// model that opted in, including purely cosmetic level-0 ages.
 	ageModeFull ageMode = iota
-	// ageModeStaleFull renders the same indicator, but only for models the
-	// staleness ladder already flags (level >= 1). Level-0 ages are dropped.
-	ageModeStaleFull
 	// ageModeStaleCompact drops the age text and keeps only the bare `~` /
 	// `~~` marker (1-2 cells). Renders nothing at all for a fresh model, so a
 	// fresh segment is byte-identical to one built with no age element.
 	ageModeStaleCompact
 )
 
-// renderTierLongHUDWithAge renders the long HUD plus a per-model
-// last-sync age indicator. Only models with showAge=true and a
-// non-empty rendered age (>= 60s old) emit the indicator — fresh data
-// keeps the segment tight.
-func renderTierLongHUDWithAge(models []modelDisplay, now time.Time) string {
-	return renderLongHUDInternal(models, now, ageModeFull)
+// renderUsageSegment renders the segment under a plan. It is the ONLY renderer
+// of the status usage segment: every width, degraded or not, comes out of here,
+// and the plan is the only thing that varies.
+func renderUsageSegment(models []modelDisplay, now time.Time, plan usageSegmentPlan) string {
+	if plan.bars {
+		return renderUsageHUD(models, now, plan)
+	}
+	return renderUsageText(models, now, plan)
 }
 
-// renderTierLongHUDStaleAge renders the long HUD keeping the full age
-// indicator only on models the staleness ladder flags (level >= 1). This is
-// the tier that buys back room at a constrained width without giving up the
-// staleness signal: the cosmetic `(3m)` on a healthy provider goes first.
-func renderTierLongHUDStaleAge(models []modelDisplay, now time.Time) string {
-	return renderLongHUDInternal(models, now, ageModeStaleFull)
-}
-
-// renderTierLongHUD renders the full HUD with the age text dropped, keeping
-// only the compact `~` / `~~` staleness marker on stale models. When no model
-// is stale this is byte-identical to the legacy no-indicator form, which is
-// what makes fresh installs render exactly as they did before the ladder grew
-// its stale-only tiers.
-func renderTierLongHUD(models []modelDisplay, now time.Time) string {
-	return renderLongHUDInternal(models, now, ageModeStaleCompact)
-}
-
-// renderLongHUDInternal is the shared implementation of the three long
-// HUD tiers. The age element selected by mode is injected right after the
-// model label (see renderHUDAgeSuffix for its exact shape).
-func renderLongHUDInternal(models []modelDisplay, now time.Time, mode ageMode) string {
+// renderUsageHUD renders the graphical form: `<label><age> 5h [bar] N% · weekly
+// [bar] N%` per provider. The age element selected by the plan is injected
+// right after the model label (see renderHUDAgeSuffix for its exact shape), and
+// the second window is emitted only while the plan still allows it.
+func renderUsageHUD(models []modelDisplay, now time.Time, plan usageSegmentPlan) string {
 	blocks := make([]string, 0, len(models))
-	for _, m := range models {
+	for i, m := range models {
 		if !m.hasFive && !m.hasWeek {
 			continue
 		}
@@ -869,7 +996,7 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, mode ageMode) s
 		b.WriteString("#[fg=" + statusRoles.AccentAIFg + ",bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
-		b.WriteString(renderHUDAgeSuffix(m, now, mode))
+		b.WriteString(renderHUDAgeSuffix(m, now, plan.ageMode(i)))
 		first := true
 		writePair := func(window string, pct float64) {
 			if first {
@@ -880,10 +1007,13 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, mode ageMode) s
 			}
 			b.WriteString(renderHUDPair(window, pct))
 		}
+		// The official window first: 5h when the provider reports one,
+		// otherwise weekly. Only the SECOND window is ever conditional, which
+		// is what keeps a weekly-only provider whole at every plan.
 		if m.hasFive {
 			writePair("5h", m.fivePct)
 		}
-		if m.hasWeek {
+		if m.hasWeek && (!m.hasFive || plan.secondary[i]) {
 			writePair("weekly", m.weekPct)
 		}
 		b.WriteString(statusDefaultReset)
@@ -895,60 +1025,18 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, mode ageMode) s
 	return strings.Join(blocks, statusModelSeparator) + statusDefaultReset
 }
 
-// renderTierPrimaryHUD keeps one official-window bar per provider: 5h when
-// present, otherwise weekly. This preserves weekly-only providers at every
-// provider-preserving tier before hard truncation. It still carries the
-// compact `~` / `~~` staleness marker, so shedding the weekly bar never sheds
-// the staleness signal with it.
-func renderTierPrimaryHUD(models []modelDisplay, now time.Time) string {
+// renderUsageText renders the colorless legacy form, `Claude 5h:42%
+// weekly:18%` or its single-letter variant. Both windows are always spelled
+// here: the whole text pair costs less than one bar, so the plan's secondary
+// flags do not apply.
+func renderUsageText(models []modelDisplay, now time.Time, plan usageSegmentPlan) string {
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
-		window := ""
-		var pct float64
-		switch {
-		case m.hasFive:
-			window, pct = "5h", m.fivePct
-		case m.hasWeek:
-			window, pct = "weekly", m.weekPct
-		default:
-			continue
+		label := m.shortLabel
+		if plan.longLabels {
+			label = m.label
 		}
-		var b strings.Builder
-		b.WriteString("#[fg=" + statusRoles.AccentAIFg + ",bold]")
-		b.WriteString(m.label)
-		b.WriteString(statusDefaultReset)
-		b.WriteString(renderHUDAgeSuffix(m, now, ageModeStaleCompact))
-		b.WriteByte(' ')
-		b.WriteString(renderHUDPair(window, pct))
-		b.WriteString(statusDefaultReset)
-		blocks = append(blocks, b.String())
-	}
-	if len(blocks) == 0 {
-		return ""
-	}
-	return strings.Join(blocks, statusModelSeparator) + statusDefaultReset
-}
-
-// renderTierTextLong drops bars entirely but keeps the long model labels.
-func renderTierTextLong(models []modelDisplay, now time.Time) string {
-	blocks := make([]string, 0, len(models))
-	for _, m := range models {
-		text := renderTextPair(m, m.label, staleMarkerText(modelStaleLevel(m, now)))
-		if text != "" {
-			blocks = append(blocks, text)
-		}
-	}
-	if len(blocks) == 0 {
-		return ""
-	}
-	return strings.Join(blocks, statusModelSeparator)
-}
-
-// renderTierTextShort uses single-letter labels (legacy form, no color).
-func renderTierTextShort(models []modelDisplay, now time.Time) string {
-	blocks := make([]string, 0, len(models))
-	for _, m := range models {
-		text := renderTextPair(m, m.shortLabel, staleMarkerText(modelStaleLevel(m, now)))
+		text := renderTextPair(m, label, staleMarkerText(modelStaleLevel(m, now)))
 		if text != "" {
 			blocks = append(blocks, text)
 		}
@@ -1079,26 +1167,21 @@ func staleMarkerText(level int) string {
 	}
 }
 
-// renderHUDAgeSuffix builds the age element the HUD tiers inject between a
-// model label and its first window pair, including any leading space. The
-// empty string means "render nothing", which is what the two stale-only modes
-// produce for any model at staleness level 0 — the property that keeps a
-// healthy install byte-identical across the whole ladder.
+// renderHUDAgeSuffix builds the age element the HUD injects between a model
+// label and its first window pair, including any leading space. The empty
+// string means "render nothing", which is what the compact mode produces for
+// any model at staleness level 0 — the property that keeps a healthy install
+// byte-identical however many elements the segment has shed.
 //
 //   - ageModeFull:         ` (3m)` / ` (15m~)` / ` (3h~~)`, colored.
-//   - ageModeStaleFull:    same, but only at level >= 1.
 //   - ageModeStaleCompact: `~` / `~~` glued to the label, muted, no age text.
 func renderHUDAgeSuffix(m modelDisplay, now time.Time, mode ageMode) string {
-	level := modelStaleLevel(m, now)
 	if mode == ageModeStaleCompact {
-		marker := staleMarkerText(level)
+		marker := staleMarkerText(modelStaleLevel(m, now))
 		if marker == "" {
 			return ""
 		}
 		return "#[fg=" + statusRoles.StatusTextMuted + "]" + marker + statusDefaultReset
-	}
-	if mode == ageModeStaleFull && level == 0 {
-		return ""
 	}
 	indicator := renderAgeIndicator(m, now)
 	if indicator == "" {

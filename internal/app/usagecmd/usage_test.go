@@ -30,6 +30,45 @@ func installedCacheFixture(now time.Time) []usage.Snapshot {
 	}
 }
 
+// The tests below drive the renderer through usageSegmentPlan values rather
+// than through named tiers: after the move to element-priority degradation
+// there is no whole-segment tier to call, only a plan with some optional
+// elements switched off. These four constructors name the plans the old tier
+// functions used to be, so the assertions stay readable.
+
+// usagePlanCompactAge drops every age TEXT, leaving the `~` / `~~` marker.
+func usagePlanCompactAge(models []modelDisplay) usageSegmentPlan {
+	plan := newUsageSegmentPlan(models)
+	for i := range models {
+		plan.ageText[i] = false
+	}
+	return plan
+}
+
+// usagePlanOfficialOnly additionally drops every provider's second window, so
+// only the official window bar (5h, otherwise weekly) is left.
+func usagePlanOfficialOnly(models []modelDisplay) usageSegmentPlan {
+	plan := usagePlanCompactAge(models)
+	for i := range models {
+		plan.secondary[i] = false
+	}
+	return plan
+}
+
+// usagePlanTextLong drops the bars, keeping the long labels.
+func usagePlanTextLong(models []modelDisplay) usageSegmentPlan {
+	plan := usagePlanOfficialOnly(models)
+	plan.bars = false
+	return plan
+}
+
+// usagePlanTextShort additionally drops the long labels.
+func usagePlanTextShort(models []modelDisplay) usageSegmentPlan {
+	plan := usagePlanTextLong(models)
+	plan.longLabels = false
+	return plan
+}
+
 func TestFormatStatusUsageRendersBothModelsHUD(t *testing.T) {
 	t.Parallel()
 
@@ -383,9 +422,9 @@ func TestCurrentCacheWidthTiersPreserveWeeklyOnlyProvider(t *testing.T) {
 	models := buildModelDisplays(projectStatusSnapshots(installedCacheFixture(now)))
 
 	for name, out := range map[string]string{
-		"long":        renderTierLongHUD(models, now),
-		"primary-bar": renderTierPrimaryHUD(models, now),
-		"text":        renderTierTextLong(models, now),
+		"long":        renderUsageSegment(models, now, usagePlanCompactAge(models)),
+		"primary-bar": renderUsageSegment(models, now, usagePlanOfficialOnly(models)),
+		"text":        renderUsageSegment(models, now, usagePlanTextLong(models)),
 	} {
 		for _, provider := range []string{"Claude", "Codex", "Antigravity"} {
 			if !strings.Contains(out, provider) {
@@ -396,7 +435,7 @@ func TestCurrentCacheWidthTiersPreserveWeeklyOnlyProvider(t *testing.T) {
 			t.Fatalf("%s tier did not preserve weekly-only Codex: %q", name, out)
 		}
 	}
-	short := renderTierTextShort(models, now)
+	short := renderUsageSegment(models, now, usagePlanTextShort(models))
 	for _, provider := range []string{"C ", "X weekly:12%", "A weekly:61%"} {
 		if !strings.Contains(short, provider) {
 			t.Fatalf("short text tier dropped %q: %q", provider, short)
@@ -1187,8 +1226,8 @@ func TestFormatStatusUsageTextTiersCarryPlainStaleMarker(t *testing.T) {
 	// (TestFormatStatusUsageStalenessSurvivesStatusbarWidths owns that).
 	models := buildModelDisplays(projectStatusSnapshots(snaps))
 	for want, got := range map[string]string{
-		"Claude~ 5h:42% weekly:18%": renderTierTextLong(models, now),
-		"C~ 5h:42% weekly:18%":      renderTierTextShort(models, now),
+		"Claude~ 5h:42% weekly:18%": renderUsageSegment(models, now, usagePlanTextLong(models)),
+		"C~ 5h:42% weekly:18%":      renderUsageSegment(models, now, usagePlanTextShort(models)),
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("text tier = %q, want it to contain %q", got, want)
@@ -1210,14 +1249,14 @@ func TestFormatStatusUsageTextTiersCarryPlainStaleMarker(t *testing.T) {
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: veryStale},
 		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}))
-	if got := renderTierTextShort(veryStaleOnly, now); !strings.Contains(got, "C~~ 5h:42%") {
+	if got := renderUsageSegment(veryStaleOnly, now, usagePlanTextShort(veryStaleOnly)); !strings.Contains(got, "C~~ 5h:42%") {
 		t.Fatalf("very-stale text tier = %q, want `C~~ 5h:42%%`", got)
 	}
 	// A fresh model keeps the historical marker-free bytes.
 	fresh := buildModelDisplays(projectStatusSnapshots([]usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}))
-	if got := renderTierTextLong(fresh, now); got != "Claude 5h:42%" {
+	if got := renderUsageSegment(fresh, now, usagePlanTextLong(fresh)); got != "Claude 5h:42%" {
 		t.Fatalf("fresh text tier = %q, want %q", got, "Claude 5h:42%")
 	}
 }
