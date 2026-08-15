@@ -221,6 +221,13 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	agentCmd := newAgentCommand()
 	agentCmd.ai = ai
 	agentCmd.usage = usageCmd
+	// `agent resume` materializes its new managed Pane on the create command's
+	// runtime -- the same transaction order, ledger, rollback, and detached
+	// materializer -- while keeping its own launch seam, which can only build a
+	// provider *resume* argv. Sharing the plumbing and not the launch is what
+	// keeps the two verbs one implementation of "make a managed pane" and two
+	// implementations of "which conversation does it join".
+	agentCmd.rebind = newAgentRebinder(createCmd, ai)
 	runtimeCmd := newRuntimeCommand()
 	runtimeCmd.sessions = sessions
 	runtimeCmd.attach = attach

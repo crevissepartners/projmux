@@ -40,6 +40,11 @@ type agentCommand struct {
 	ai           rawArgvCommand
 	usage        rawArgvCommand
 	loadRegistry func() (coremetadata.Registry, error)
+	// rebind materializes the new managed Pane of a resumed Agent. It is the
+	// only part of this namespace that mutates the registry, and it is held as
+	// its own seam so the read-only resolution and phase gate above it stay
+	// testable without a runtime.
+	rebind *agentRebinder
 }
 
 func newAgentCommand() *agentCommand {
@@ -85,11 +90,18 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 //     to look at a running Agent gets an error naming `focus pane` instead of a
 //     silent client move.
 //
-// The rebind itself needs a materialized managed Pane, which the runtime
-// materialization Phase owns. Until then a phase-eligible target stops with a
-// runtime error and zero mutations: a half-applied Pending transition with no
-// way to reach Running would be worse than not starting.
-func (c *agentCommand) runResume(args []string, _, stderr io.Writer) error {
+// The rebind itself reuses the existing Agent. `create agent` always mints a new
+// uid; this route never calls CreateAgent at all, so a resumed Agent keeps its
+// uid and its metadata.name by construction rather than by care. The two verbs
+// are deliberately not merged: a single verb that mints an identity or reuses
+// one depending on runtime state has an unpredictable cardinality, and its worst
+// failure mode -- a resume that cannot find its conversation quietly becoming a
+// fresh conversation -- is exactly the context loss the separation prevents.
+//
+// Every refusal below happens against a read-only registry snapshot, so a failed
+// resume opens no transaction, creates no tmux object, and starts no
+// conversation of any kind.
+func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error {
 	const spelling = "agent resume"
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
@@ -127,8 +139,11 @@ func (c *agentCommand) runResume(args []string, _, stderr io.Writer) error {
 	if err := requireResumablePhase(spelling, agent); err != nil {
 		return err
 	}
-	return fmt.Errorf("%s %s: binding a new managed Pane to an %s Agent needs runtime materialization, which is not wired yet",
-		spelling, agent.Metadata.Name, agent.Status.Phase)
+	plan, err := planAgentResume(spelling, registry, agent)
+	if err != nil {
+		return err
+	}
+	return c.rebind.rebind(spelling, plan, stdout, stderr)
 }
 
 // requireResumablePhase enforces the Agent lifecycle gate of resume.

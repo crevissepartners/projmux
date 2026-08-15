@@ -551,12 +551,21 @@ func TestGetAgentsSurfacesTheConversationPointer(t *testing.T) {
 	}
 }
 
-// TestAgentResumeIsUnchangedByAStoredSessionRef is acceptance criterion 4. The
-// Phase that persists the conversation pointer must not start consuming it: an
-// Offline Agent that now knows exactly which conversation it belongs to still
-// ends at the same materialization stub, byte for byte, and a Running one is
-// still refused with the same message.
-func TestAgentResumeIsUnchangedByAStoredSessionRef(t *testing.T) {
+// TestAgentResumeConsumesTheStoredSessionRefAndStillRefusesRunning is the
+// Phase 1 successor of Phase 0's "resume is unchanged by a stored ref" test.
+//
+// Phase 0 required the two invocations to be byte-identical, because persisting
+// the pointer was not allowed to start consuming it. This Phase is the one that
+// consumes it, so the requirement inverts for the resumable half and is kept for
+// the Running half:
+//
+//   - An Offline Agent *diverges* on the ref. Without one it refuses with the
+//     missing-ref message and starts nothing; with one it rebinds. The
+//     divergence is the feature.
+//   - A Running Agent is byte-identical with and without a ref. The phase gate
+//     runs before the ref is ever read, so knowing which conversation an Agent
+//     belongs to never makes a live Agent rebindable.
+func TestAgentResumeConsumesTheStoredSessionRefAndStillRefusesRunning(t *testing.T) {
 	t.Parallel()
 
 	ref := func() *coremetadata.AgentSessionRef {
@@ -567,67 +576,85 @@ func TestAgentResumeIsUnchangedByAStoredSessionRef(t *testing.T) {
 		}
 	}
 
-	for _, test := range []struct {
-		name string
-		uid  string
-		args []string
-	}{
-		{
-			name: "an Offline agent still stops at the materialization boundary",
-			uid:  "agt-beta-codex",
-			args: []string{"resume", "codex", "--project", "beta"},
-		},
-		{
-			name: "a Running agent is still refused",
-			uid:  "agt-alpha-codex",
-			args: []string{"resume", "codex", "--project", "alpha"},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+	t.Run("an Offline agent diverges on the stored ref", func(t *testing.T) {
+		t.Parallel()
 
-			// Run the identical invocation twice: once against the fixture as it
-			// is, and once with a session ref recorded on the target Agent. The
-			// two results must be indistinguishable.
-			without := newFakeResourceStore(t)
-			cmdWithout, aiWithout, usageWithout := newTestAgentCommand(t, without)
-			outWithout, errWithout, runErrWithout := runRoute(t, cmdWithout, test.args...)
+		without := newFakeResourceStore(t)
+		cmdWithout, _, _ := newTestAgentCommand(t, without)
+		outWithout, _, errWithout := runRoute(t, cmdWithout, "resume", "codex", "--project", "beta")
+		if errWithout == nil {
+			t.Fatal("an Agent with no conversation resumed anyway")
+		}
+		if !strings.Contains(errWithout.Error(), "has no provider session ref") {
+			t.Fatalf("error = %q, want the missing-ref refusal", errWithout)
+		}
+		if outWithout != "" || without.transactions != 0 {
+			t.Fatalf("stdout = %q, transactions = %d, want 0 bytes and 0", outWithout, without.transactions)
+		}
 
-			with := newFakeResourceStore(t)
-			setFixtureSessionRef(t, with, test.uid, ref())
-			cmdWith, aiWith, usageWith := newTestAgentCommand(t, with)
-			outWith, errWith, runErrWith := runRoute(t, cmdWith, test.args...)
+		with := newFakeResourceStore(t)
+		setFixtureSessionRef(t, with, "agt-beta-codex", ref())
+		tmux := newFakeTmux()
+		cmdWith, launcher, _, _ := newTestAgentResumeCommand(t, with, tmux)
+		outWith, _, errWith := runRoute(t, cmdWith, "resume", "codex", "--project", "beta")
+		if errWith != nil {
+			t.Fatalf("an Agent with a stored conversation failed to resume: %v", errWith)
+		}
+		if outWith != "agent/codex resumed\n" {
+			t.Fatalf("stdout = %q, want the resumed result line", outWith)
+		}
+		agent, _ := with.registry.Agent("agt-beta-codex")
+		if agent.Status.Phase != coremetadata.PhaseRunning {
+			t.Fatalf("phase = %q, want Running", agent.Status.Phase)
+		}
+		// The stored pointer is what the launch addressed, and it survives the
+		// rebind unchanged.
+		if len(launcher.plans) != 1 || launcher.plans[0].conversationID != "codex-thread-1" {
+			t.Fatalf("resume launches = %+v, want one addressing codex-thread-1", launcher.plans)
+		}
+		if !agent.Status.SessionRef.SameConversation(ref()) {
+			t.Fatalf("resume rewrote the stored conversation: %#v", agent.Status.SessionRef)
+		}
+	})
 
-			if outWithout != outWith || errWithout != errWith {
-				t.Fatalf("streams diverged:\nwithout stdout=%q stderr=%q\nwith stdout=%q stderr=%q",
-					outWithout, errWithout, outWith, errWith)
+	t.Run("a Running agent is refused identically with and without a ref", func(t *testing.T) {
+		t.Parallel()
+
+		without := newFakeResourceStore(t)
+		cmdWithout, aiWithout, usageWithout := newTestAgentCommand(t, without)
+		outWithout, errStreamWithout, runErrWithout := runRoute(t, cmdWithout, "resume", "codex", "--project", "alpha")
+
+		with := newFakeResourceStore(t)
+		setFixtureSessionRef(t, with, "agt-alpha-codex", ref())
+		cmdWith, aiWith, usageWith := newTestAgentCommand(t, with)
+		outWith, errStreamWith, runErrWith := runRoute(t, cmdWith, "resume", "codex", "--project", "alpha")
+
+		if outWithout != outWith || errStreamWithout != errStreamWith {
+			t.Fatalf("streams diverged:\nwithout stdout=%q stderr=%q\nwith stdout=%q stderr=%q",
+				outWithout, errStreamWithout, outWith, errStreamWith)
+		}
+		if runErrWithout == nil || runErrWith == nil {
+			t.Fatalf("a Running Agent resumed: without=%v with=%v", runErrWithout, runErrWith)
+		}
+		if runErrWithout.Error() != runErrWith.Error() {
+			t.Fatalf("error text diverged:\nwithout=%q\nwith=%q", runErrWithout, runErrWith)
+		}
+		if !IsUsageError(runErrWith) {
+			t.Fatalf("the Running refusal is no longer a usage error: %v", runErrWith)
+		}
+		for name, recorder := range map[string]*recordingArgv{
+			"ai without": aiWithout, "usage without": usageWithout,
+			"ai with": aiWith, "usage with": usageWith,
+		} {
+			if len(recorder.calls) != 0 {
+				t.Fatalf("%s handler was reached: %#v", name, recorder.calls)
 			}
-			if (runErrWithout == nil) != (runErrWith == nil) {
-				t.Fatalf("error presence diverged: without=%v with=%v", runErrWithout, runErrWith)
-			}
-			if runErrWithout != nil && runErrWithout.Error() != runErrWith.Error() {
-				t.Fatalf("error text diverged:\nwithout=%q\nwith=%q", runErrWithout, runErrWith)
-			}
-			if runErrWithout == nil {
-				t.Fatal("agent resume unexpectedly succeeded; the stub must still fail")
-			}
-			// The stored conversation must not have become an argv forwarded to
-			// another handler either.
-			for name, recorder := range map[string]*recordingArgv{
-				"ai without": aiWithout, "usage without": usageWithout,
-				"ai with": aiWith, "usage with": usageWith,
-			} {
-				if len(recorder.calls) != 0 {
-					t.Fatalf("%s handler was reached: %#v", name, recorder.calls)
-				}
-			}
-			// And it must not have been mutated by the read.
-			if agent, ok := with.registry.Agent(test.uid); !ok || !agent.Status.SessionRef.SameConversation(ref()) {
-				t.Fatal("agent resume disturbed the stored session ref")
-			}
-			if with.transactions != 0 {
-				t.Fatalf("agent resume opened %d registry transactions, want 0", with.transactions)
-			}
-		})
-	}
+		}
+		if agent, ok := with.registry.Agent("agt-alpha-codex"); !ok || !agent.Status.SessionRef.SameConversation(ref()) {
+			t.Fatal("the refused resume disturbed the stored session ref")
+		}
+		if with.transactions != 0 {
+			t.Fatalf("a refused resume opened %d registry transactions, want 0", with.transactions)
+		}
+	})
 }

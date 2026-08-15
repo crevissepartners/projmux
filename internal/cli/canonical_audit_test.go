@@ -80,11 +80,13 @@ type targetStateSummary struct {
 // persistent Project tags" is the worked example: it was retired rather than
 // recorded here, because a persistent Project-metadata tag is a decision that
 // was made against, not a Phase that has not landed.
+//
+// `agent resume` was removed from this record when its owning track landed the
+// rebind: the handler now does what the manifest promised, so the command tree
+// states the same sentence and there is no longer a half to defer. An entry
+// leaves this map by being built, by being corrected, or by being retired --
+// never by being forgotten.
 var canonicalTargetStateSummaries = map[string]targetStateSummary{
-	"agent resume": {
-		summary: "Rebind an Offline or Failed Agent to a new managed Pane",
-		owner:   "runtime materialization -- the rebind onto a new managed Pane",
-	},
 	"delete pane": {
 		summary: "Delete a Pane resource and its live binding",
 		owner:   "runtime materialization -- the tmux call that kills the live pane",

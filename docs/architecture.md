@@ -228,6 +228,44 @@ Agent provider session ref:
   hook whose provider contradicts the Agent's `spec.provider` is refused with
   zero mutations.
 
+Agent resume:
+
+- `agent resume <ref>` rebinds an existing Agent: it builds the provider's
+  **resume** argv from `status.sessionRef`, splits a new managed Pane detached on
+  the target Window's `spec.primaryPaneRef`, and attaches it to that Agent. The
+  `metadata.uid` and `metadata.name` do not change, `status.phase` becomes
+  `Running`, and `status.paneRef` points at the new Pane. `status.sessionRef`
+  itself is read and never rewritten by resume.
+- **A resume that cannot happen fails; it never becomes a create.** `create agent`
+  always mints a new uid and `agent resume` always reuses one, and the two are
+  not one code path: the resume route holds a launch seam whose only argv builder
+  takes a conversation id, so there is no fresh-start argv it can produce. Every
+  refusal below is decided against a read-only registry snapshot, so it opens
+  zero registry transactions and issues zero `split-window` calls.
+- The refusals are: a `Running` Agent (usage error naming `focus pane`); any
+  phase other than `Offline`/`Failed`; **an Agent with no `sessionRef` at all**,
+  which is the normal state of an Agent whose provider hook never ran and which
+  names `create agent` rather than performing it; a ref whose conversation id the
+  provider's own resume builder rejects; a ref contradicting a declared
+  `spec.provider`; a provider disabled in Settings; a provider binary that is not
+  installed; a `MissingRoot` Project; and a Window with no resolvable anchor Pane.
+- **Several Agents may point at one conversation, and the conversation is never a
+  selector.** Resume rebinds exactly the Agent the reference resolves to and
+  never searches the registry by conversation id to choose a different one, so
+  duplicates neither redirect nor block a rebind — refusing them would make the
+  state the observation write deliberately allows permanently unusable. The
+  duplicates are disclosed on stderr in uid order, which makes the disclosure
+  byte-identical regardless of registry order.
+- **`observedAt` is not a resume gate.** It records when projmux last *saw* the
+  conversation, not a provider timestamp, so it cannot answer "is this ref
+  stale": a conversation untouched for a month is perfectly resumable and one
+  observed a minute ago may already be deleted. The only authority is the
+  provider, and reading its store is permanently out of scope, so projmux checks
+  what it can see and hands the rest to the provider's resume argv.
+- Resume is **conversation-granularity for every provider**. Codex's turn id is
+  not stored and `codex resume <thread-id>` has no turn slot, so turn-level
+  resume is not something this surface can express today.
+
 Registry file and schema:
 
 - The registry lives at `<state>/projmux/metadata/registry.json` (0600 below a
