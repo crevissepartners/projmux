@@ -53,6 +53,11 @@ type Route struct {
 	// Hidden keeps a route out of the primary help listing. The two internal
 	// helpers invoked from generated popup/key payloads are hidden.
 	Hidden bool
+	// ProviderShortcut marks a `create <provider>` node. The contract keeps
+	// provider shortcuts out of the resource-kind listing, so the shared help
+	// renderer groups these separately and no reference or telemetry surface
+	// counts a provider as a resource kind.
+	ProviderShortcut bool
 	// Usage holds representative synopsis lines (not an exhaustive flag list).
 	Usage []string
 	// Canonical lists the canonical v2 route spellings this node maps onto.
@@ -72,6 +77,65 @@ type Route struct {
 // is the historical primary help order and is load bearing for root help
 // byte-identity.
 var routes = []Route{
+	{
+		// The Agent domain namespace. An Agent is a Window-owned workload with a
+		// provider conversation and an Offline/resumable life of its own, so its
+		// workflow verbs sit in a noun-first domain; the CRUD half of the Agent
+		// surface stays with the shared verbs (`create`, `get`, `describe`,
+		// `delete agent`).
+		//
+		// Every subcommand except `resume` is a parity alias that forwards raw
+		// argv to the handler that already owns the behavior, so stdout, stderr,
+		// the exit code, and the side effects are identical to the current
+		// spelling. `agent usage` in particular forwards to the existing usage
+		// handler unchanged: provider account quota is a read-only Agent-domain
+		// workflow, not an addressable `usage` resource.
+		//
+		// The namespace is not read-only as a whole -- `status set`, `topic
+		// set|clear`, and `integrate` all write -- so the summary says "manage"
+		// rather than "read".
+		//
+		// `resume` is the one route with logic of its own, and this release
+		// ships only its first half: resolution and the Agent phase gate. The
+		// rebind onto a new managed Pane arrives with runtime materialization in
+		// a later Phase, so the sub-route summary states the gate rather than the
+		// rebind.
+		Name:        "agent",
+		Summary:     "Manage Agent state, topic, integrations, and account usage",
+		Disposition: DispositionCanonical,
+		Usage: []string{
+			"projmux agent status [set <state> [pane]]",
+			"projmux agent topic [set|clear] ...",
+			"projmux agent resume <ref> [--project <ref>] [--window <ref>]...",
+			"projmux agent integrate <provider> [--dry-run]",
+			"projmux agent usage [--model <name>] [--window <name>] [--json] [--force]",
+		},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent integrate", "agent usage"},
+		Children: []Route{
+			{Name: "status", Summary: "Read or set the Agent status state", Usage: []string{"projmux agent status [set <state> [pane]]"}, Canonical: []string{"agent status"}},
+			{Name: "topic", Summary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic [set|clear] ..."}, Canonical: []string{"agent topic"}},
+			{
+				// Today this route is resolution plus the phase gate and nothing
+				// more: it resolves exactly one existing Agent, refuses a Running
+				// one, and stops. Binding a new managed Pane needs runtime
+				// materialization, which lands in a later Phase, so no argv
+				// reaches an actual rebind yet. The summary describes the half
+				// that ships rather than the capability the route will gain; the
+				// target-state wording lives in the canonical manifest.
+				Name:      "resume",
+				Summary:   "Resolve exactly one resumable Agent; Running is refused, never focused (the rebind is not wired yet)",
+				Usage:     []string{"projmux agent resume <ref> [--project <ref>] [--window <ref>]... [--selector key=value]..."},
+				Canonical: []string{"agent resume"},
+			},
+			{Name: "integrate", Summary: "Install or remove provider hook integrations", Usage: []string{"projmux agent integrate <provider> [--dry-run]"}, Canonical: []string{"agent integrate"}},
+			{
+				Name:      "usage",
+				Summary:   "Read provider account usage quota snapshots",
+				Usage:     []string{"projmux agent usage [--model <name>] [--window <name>] [--json] [--force]"},
+				Canonical: []string{"agent usage"},
+			},
+		},
+	},
 	{
 		Name:        "ai",
 		Summary:     "Manage tmux AI split launch and settings",
@@ -126,6 +190,68 @@ var routes = []Route{
 				Summary:   "Enter a Project runtime from outside tmux, materializing it when offline",
 				Usage:     []string{"projmux attach project <ref>"},
 				Canonical: []string{"attach project"},
+			},
+		},
+	},
+	{
+		// The create verb. This Phase owns the two kinds the Agent decomposition
+		// splits apart: an Agent split becomes `create agent`, and the legacy
+		// shell split becomes `create pane`, because a plain shell surface is a
+		// Pane and never an Agent.
+		//
+		// The kinds and the provider shortcuts share one handler and one schema.
+		// A shortcut is a spelling of `create agent --provider <id>`, so it is
+		// listed apart from the resource kinds and is never counted as one.
+		Name:        "create",
+		Summary:     "Create Projmux resources",
+		Disposition: DispositionCanonical,
+		Usage: []string{
+			"projmux create agent --provider <provider> [--placement right|down] [-o <mode>] [-- <payload>]",
+			"projmux create pane [--placement right|down] [-o <mode>]",
+			"projmux create codex|claude|antigravity [--placement right|down] [-o <mode>] [-- <payload>]",
+		},
+		Canonical: []string{"create agent", "create pane", "create codex", "create claude", "create antigravity"},
+		Children: []Route{
+			{
+				Name:    "agent",
+				Summary: "Create an Agent and its managed Pane; --provider is required",
+				Usage:   []string{"projmux create agent --provider <provider> [--placement right|down] [-o <mode>] [-- <payload>]"},
+				// The remaining shared modes need the resource-backed Agent
+				// create composition, so only the two projections this release
+				// actually produces are advertised here.
+				Outputs:   []OutputMode{OutputModePaneID, OutputModeNone},
+				Canonical: []string{"create agent"},
+			},
+			{
+				Name:      "pane",
+				Summary:   "Create a plain shell Pane in the current Window",
+				Usage:     []string{"projmux create pane [--placement right|down] [-o <mode>]"},
+				Outputs:   []OutputMode{OutputModePaneID, OutputModeNone},
+				Canonical: []string{"create pane"},
+			},
+			{
+				Name:             "codex",
+				Summary:          "Provider shortcut for create agent --provider codex",
+				Usage:            []string{"projmux create codex [--placement right|down] [-o <mode>] [-- <payload>]"},
+				ProviderShortcut: true,
+				Outputs:          []OutputMode{OutputModePaneID, OutputModeNone},
+				Canonical:        []string{"create codex"},
+			},
+			{
+				Name:             "claude",
+				Summary:          "Provider shortcut for create agent --provider claude",
+				Usage:            []string{"projmux create claude [--placement right|down] [-o <mode>] [-- <payload>]"},
+				ProviderShortcut: true,
+				Outputs:          []OutputMode{OutputModePaneID, OutputModeNone},
+				Canonical:        []string{"create claude"},
+			},
+			{
+				Name:             "antigravity",
+				Summary:          "Provider shortcut for create agent --provider antigravity",
+				Usage:            []string{"projmux create antigravity [--placement right|down] [-o <mode>] [-- <payload>]"},
+				ProviderShortcut: true,
+				Outputs:          []OutputMode{OutputModePaneID, OutputModeNone},
+				Canonical:        []string{"create antigravity"},
 			},
 		},
 	},

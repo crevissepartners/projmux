@@ -12,11 +12,12 @@ import (
 // the 2 hidden internal helpers to hold exactly one primary disposition, with
 // zero orphan routes, before any later Phase may move a namespace.
 //
-// The public count is 40: the 33 routes inventoried by the compatibility
-// contract plus 7 canonical nodes added by later Phases -- `get` from the
-// selector Phase, and `delete`, `describe`, `rebind`, `rename`, `restore`, and
-// `runtime` from the public verb-to-kind Phase. Every one of the 33 inventoried
-// routes is still present and still holds exactly one disposition.
+// The public count is 42: the 33 routes inventoried by the compatibility
+// contract plus 9 canonical nodes added by later Phases -- `get` from the
+// selector Phase, `delete`, `describe`, `rebind`, `rename`, `restore`, and
+// `runtime` from the public verb-to-kind Phase, and `agent` and `create` from
+// the Agent namespace Phase. Every one of the 33 inventoried routes is still
+// present and still holds exactly one disposition.
 func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	t.Parallel()
 
@@ -53,20 +54,21 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 40 {
-		t.Fatalf("public route count = %d, want 40", public)
+	if public != 42 {
+		t.Fatalf("public route count = %d, want 42", public)
 	}
 	if hidden != 2 {
 		t.Fatalf("hidden helper count = %d, want 2", hidden)
 	}
 	// The classification tally from the compatibility contract, counted over
-	// the 40 public top-level routes. Canonical is 15 rather than the
-	// contract's 8 because the 7 canonical verb/domain nodes are new surface,
+	// the 42 public top-level routes. Canonical is 17 rather than the
+	// contract's 8 because the 9 canonical verb/domain nodes are new surface,
 	// not members of the 33 inventoried current routes. The other three counts
 	// are unchanged, which is the invariant that proves no current route was
-	// removed, hidden, or reclassified.
+	// removed, hidden, or reclassified -- in particular `ai` and `usage` are
+	// still public compatibility routes after the Agent namespace was added.
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical:     15,
+		DispositionCanonical:     17,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 		DispositionInternal:      5,
@@ -76,7 +78,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	}
 	// Both hidden helpers are internal plumbing.
 	wantTally := map[Disposition]int{
-		DispositionCanonical:     15,
+		DispositionCanonical:     17,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 		DispositionInternal:      7,
@@ -376,7 +378,7 @@ func TestEveryInventoriedRouteSurvivesUnchanged(t *testing.T) {
 
 	// The routes this Phase adds are new surface, not inventory members, and all
 	// of them are canonical.
-	for _, token := range []string{"get", "describe", "delete", "rebind", "rename", "restore", "runtime"} {
+	for _, token := range []string{"get", "describe", "delete", "rebind", "rename", "restore", "runtime", "agent", "create"} {
 		if _, ok := inventoriedRoutes[token]; ok {
 			t.Fatalf("%q is listed as an inventoried route; it is new canonical surface", token)
 		}
