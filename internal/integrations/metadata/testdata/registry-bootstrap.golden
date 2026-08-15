@@ -1,0 +1,151 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-15T09:30:00Z",
+  "projects": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {
+        "uid": "project-01",
+        "name": "projmux",
+        "displayName": "projmux",
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "root": "/src/projmux"
+      },
+      "status": {}
+    }
+  ],
+  "windows": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-01",
+        "name": "nvim",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "primaryPaneRef": "pane-01"
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-02",
+        "name": "server",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "primaryPaneRef": "pane-02"
+      }
+    }
+  ],
+  "panes": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-01",
+        "name": "nvim",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell",
+        "cwd": "/src/projmux",
+        "command": "nvim"
+      },
+      "status": {}
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-02",
+        "name": "npm",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-02"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell",
+        "cwd": "/src/projmux",
+        "command": "npm run dev"
+      },
+      "status": {}
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-03",
+        "name": "htop",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-02"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell",
+        "cwd": "/src/projmux",
+        "command": "htop"
+      },
+      "status": {}
+    }
+  ],
+  "nameReservations": [
+    {
+      "kind": "Project",
+      "name": "projmux",
+      "uid": "project-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Window",
+      "name": "nvim",
+      "uid": "window-01"
+    },
+    {
+      "scope": "window-01",
+      "kind": "Pane",
+      "name": "nvim",
+      "uid": "pane-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Window",
+      "name": "server",
+      "uid": "window-02"
+    },
+    {
+      "scope": "window-02",
+      "kind": "Pane",
+      "name": "npm",
+      "uid": "pane-02"
+    },
+    {
+      "scope": "window-02",
+      "kind": "Pane",
+      "name": "htop",
+      "uid": "pane-03"
+    }
+  ]
+}

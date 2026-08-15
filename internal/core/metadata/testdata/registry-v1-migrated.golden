@@ -1,0 +1,137 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-14T00:00:00Z",
+  "projects": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {
+        "uid": "project-01",
+        "name": "projmux",
+        "displayName": "projmux",
+        "createdAt": "2026-08-14T00:00:00Z"
+      },
+      "spec": {
+        "root": "/src/projmux"
+      },
+      "status": {}
+    }
+  ],
+  "windows": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-01",
+        "name": "zsh",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-01"
+        },
+        "createdAt": "2026-08-14T00:00:00Z"
+      },
+      "spec": {
+        "primaryPaneRef": "pane-01"
+      }
+    }
+  ],
+  "panes": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-01",
+        "name": "zsh",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-14T00:00:00Z"
+      },
+      "spec": {
+        "role": "shell",
+        "cwd": "/src/projmux",
+        "command": "zsh"
+      },
+      "status": {}
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-02",
+        "name": "codex-pane",
+        "ownerRef": {
+          "kind": "Agent",
+          "uid": "agent-01"
+        },
+        "createdAt": "2026-08-14T00:00:00Z"
+      },
+      "spec": {
+        "role": "agent",
+        "cwd": "/src/projmux",
+        "command": "codex"
+      },
+      "status": {
+        "displayTitle": "refactor naming"
+      }
+    }
+  ],
+  "agents": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "agent-01",
+        "name": "codex",
+        "annotations": {
+          "projmux.io/agent-topic": "refactor naming"
+        },
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-14T00:00:00Z"
+      },
+      "spec": {
+        "provider": "codex"
+      },
+      "status": {
+        "phase": "Offline",
+        "lastTransitionAt": "2026-08-14T00:00:00Z"
+      }
+    }
+  ],
+  "nameReservations": [
+    {
+      "kind": "Project",
+      "name": "projmux",
+      "uid": "project-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Window",
+      "name": "zsh",
+      "uid": "window-01"
+    },
+    {
+      "scope": "window-01",
+      "kind": "Pane",
+      "name": "zsh",
+      "uid": "pane-01"
+    },
+    {
+      "scope": "agent-01",
+      "kind": "Pane",
+      "name": "codex-pane",
+      "uid": "pane-02"
+    },
+    {
+      "scope": "window-01",
+      "kind": "Agent",
+      "name": "codex",
+      "uid": "agent-01"
+    }
+  ]
+}

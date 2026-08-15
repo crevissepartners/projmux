@@ -103,6 +103,156 @@ Resource snapshots are not Session State and are never saved or restored. See
 [resource-attribution.md](resource-attribution.md) for metric, partial-state,
 host-remainder, privacy, and measurement contracts.
 
+## Resource metadata model
+
+`projmux` owns a persistent resource model that is independent of tmux
+lifecycle. It is the storage, ownership, and name-allocation foundation for the
+CLI information architecture v2 resource routes.
+
+Packages:
+
+- `internal/core/metadata` is pure: the resource model, validation, name
+  allocation, schema migration, snapshot reconciliation, and the operation
+  transaction. It performs no I/O; the clock, uid source, and root-directory
+  probe are injected through `Mutator`.
+- `internal/integrations/metadata` owns the registry file (lock, atomic write,
+  migration) and the tmux transport mirror.
+- `internal/integrations/tmuxopts` is a dependency-free leaf holding the
+  canonical spelling of every projmux-owned tmux option name, so the generated
+  tmux config, session-state replay, and the resource mirror cannot drift.
+
+Resources and ownership:
+
+- Kinds are `Project`, `Window`, `Pane`, and `Agent`, stamped with
+  `apiVersion: projmux.io/v1alpha1`.
+- `ownerRef` runs Project → Window → (shell Pane | Agent), and an Agent owns
+  its current managed Pane.
+- A persistent tmux **Session is not a resource**. It is a 1:1 runtime
+  projection of a Project recorded in `Project.status.session` with a `live`
+  flag, and it owns no uid, name, or ownerRef. Auto-attach ephemeral sessions
+  live only in runtime inventory, outside the Project hierarchy.
+- Every Window owns an initial Pane and stores its uid in
+  `spec.primaryPaneRef`. Project registration creates this topology **offline**,
+  with no tmux involvement, so Project and Window metadata stays queryable
+  while tmux is down.
+
+Identity and naming:
+
+- `metadata.uid` is opaque, immutable, and independent of tmux lifecycle. It
+  survives snapshot/restore, runtime creation, and root rebind.
+- `metadata.name` is the stable unique-within-scope query key. Project names
+  are unique across the registry; Window, Pane, and Agent names are unique
+  within their `ownerRef` scope.
+- `metadata.displayName` may duplicate and is never a selector, an ownerRef, or
+  identity. `metadata.labels` is key/value classification;
+  `metadata.annotations` is non-identifying metadata such as an AI topic.
+- Name bases are assigned once, at create or migration time, and are never
+  re-derived: Window uses explicit name → initial command basename → configured
+  shell basename → `window`; shell Pane uses command basename → shell basename
+  → `pane`; a Pane managed by an Agent uses `<agent-name>-pane`; Agent uses
+  explicit `--name` → normalized provider id → `agent`. Agent topics and raw
+  pane titles are excluded as name seeds everywhere.
+- Automatic collisions take the lowest free suffix (`Projmux-1`, `codex-1`)
+  from the persisted `nameReservations` table, scanning integer suffixes rather
+  than resource or map iteration order. An **explicit** `--name` or rename
+  collision never receives an implicit suffix: it fails with exit code 2 and
+  zero mutations.
+
+Root lifecycle:
+
+- `spec.root` is an absolute path. Rebind changes only `spec.root`, atomically,
+  never moves files, and never changes the uid. Rebinding onto a root already
+  bound to another Project fails with exit code 2 and zero mutations.
+- uids are never merged heuristically. Basename, git origin, inode, and scan
+  order are not consulted; only an exact saved root that reappears reuses its
+  uid.
+- A disappeared root records a `MissingRoot` condition with its first-observed
+  timestamp and preserves both the metadata and the name reservations. A
+  returning root recovers the same uid and clears the condition.
+
+Agent lifecycle:
+
+- The phase set is exactly `Pending`, `Running`, `Offline`, `Failed`. A normal
+  managed-Pane exit or an explicit pane deletion resolves to `Offline`; a launch
+  failure or an abnormal exit resolves to `Failed`. The Agent survives its Pane
+  as a resumable resource.
+
+Registry file and schema:
+
+- The registry lives at `<state>/projmux/metadata/registry.json` (0600 below a
+  0700 directory) behind an `O_CREATE|O_EXCL` lock file with bounded retry and
+  stale-lock breaking, matching the notify queue and recent-windows stores.
+- The envelope carries `schemaVersion: 1`. **v1 is the first envelope projmux
+  has ever written, and no migration step ships today**, so the current version
+  is the only version the registry accepts.
+- Everything else fails closed: the file is refused as unreadable and **no
+  write happens at all** — no rewrite, no backup, no staged temp file. This
+  covers a **newer** schemaVersion (which would destroy state a newer build
+  owns), malformed JSON, and a document that parses but carries **no**
+  `schemaVersion`. An absent field decodes as version `0`, which means unknown
+  rather than pre-release: migrating it would rewrite a corrupt or foreign file
+  at the registry path, which is exactly the write-on-unknown-input that
+  fail-closed exists to prevent. The registry is deliberately not quarantined
+  or reset the way a corrupt recent-windows file is.
+- A file that is absent, empty, or whitespace-only is still the legitimate
+  "no registry yet" case and yields a fresh empty registry. Only a file with
+  actual content and no usable `schemaVersion` is refused.
+- The migration machinery is generic and version-indexed, ready for the first
+  real schema bump: a registered older step is applied with backup → temp
+  write → validate → atomic replace, so an interrupted or failing migration
+  leaves either the original file or the fully migrated file, never a partial
+  one. Downgrade writes are unsupported. Because production registers no step,
+  that path is proven by tests that register one into a private migration set
+  (`MigrationSet`, `ClassifySchemaVersionWith`, `MigrateRegistryWith`, and the
+  store's private migration override) rather than by shipping a migration.
+- **Field spelling:** the registry file intentionally uses the resource-model
+  camelCase spelling (`apiVersion`, `schemaVersion`, `metadata`, `displayName`,
+  `ownerRef`, `primaryPaneRef`, `spec`, `status`) rather than the snake_case
+  used by the older projmux on-disk JSON. The two spellings coexist on purpose:
+  existing snake_case files are **not** retro-changed, and the resource registry
+  follows the resource-model contract.
+
+Session State interoperability:
+
+- Session snapshots carry resource identity through additive `omitempty`
+  `metadata` blocks at the unchanged snapshot `version: 1` — one for the owning
+  Project at the top level, one per Window, and one per Pane, each with
+  `uid`, `name`, `labels`, `owner_kind`, and `owner_uid` in the snapshot's own
+  snake_case spelling. No schema bump was needed, and a snapshot written
+  without resource metadata still serializes byte-identically to the older form.
+- Snapshots written before resource metadata existed still load and reconcile
+  deterministically: the Project is matched by session projection and then by
+  root, and Windows and Panes are matched positionally against the registry
+  topology in insertion order.
+
+tmux transport mirror:
+
+- Live resources mirror identity into tmux options: `@projmux_project_uid` and
+  `@projmux_project_name` on the session, the new window-scoped
+  `@projmux_window_uid` and `@projmux_window_name`, and pane-scoped
+  `@projmux_pane_uid` plus the existing `@projmux_pane_label` as the Pane
+  **name** mirror. These are the first window-scoped projmux options; every
+  earlier one was pane-, session-, or global-scoped.
+- `rename pane` changes `Pane.metadata.name` and its `@projmux_pane_label`
+  mirror only. It never writes the raw tmux `pane_title`.
+- `rename window` changes `Window.metadata.name`, its option mirror, and the
+  tmux `window_name`.
+- Registry-managed Windows are set to `automatic-rename off` so a focused-Pane
+  change cannot overwrite the Window name. The **global** `automatic-rename on`
+  plus visible-pane-label `automatic-rename-format` default in the generated
+  app config is unchanged, so unmanaged windows keep their existing behavior.
+- Legacy naming migration seeds a Window name once: an existing
+  `automatic-rename=off` window keeps its current `window_name`; an
+  `automatic-rename=on` window derives a stable base from user Pane label →
+  provider → known shell → `window`, and is then switched to
+  `automatic-rename off`. An existing `@projmux_pane_label` is the migration
+  seed and transport mirror for the Pane **name**; in the resource model that
+  value is a name, not a label, and `metadata.labels` stays reserved for
+  key/value classification.
+- `Pane.metadata.name` is the primary pane display source. The derived
+  `Pane.status.displayTitle` (Agent topic → known shell → raw pane title) is
+  secondary and is never a selector, an identity, or a Window name source.
+
 ## Naming metadata model
 
 Projmux keeps visible naming separate from source metadata:

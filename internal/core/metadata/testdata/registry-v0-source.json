@@ -1,0 +1,92 @@
+{
+  "updatedAt": "2026-08-14T00:00:00Z",
+  "projects": [
+    {
+      "metadata": {
+        "uid": "project-01",
+        "name": "projmux",
+        "displayName": "projmux",
+        "createdAt": "2026-08-14T00:00:00Z"
+      },
+      "spec": {
+        "root": "/src/projmux/"
+      },
+      "status": {}
+    }
+  ],
+  "windows": [
+    {
+      "metadata": {
+        "uid": "window-01",
+        "name": "zsh",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-01"
+        },
+        "createdAt": "2026-08-14T00:00:00Z"
+      },
+      "spec": {
+        "primaryPaneRef": "pane-01"
+      }
+    }
+  ],
+  "panes": [
+    {
+      "metadata": {
+        "uid": "pane-01",
+        "name": "zsh",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-14T00:00:00Z"
+      },
+      "spec": {
+        "cwd": "/src/projmux",
+        "command": "zsh"
+      },
+      "status": {}
+    },
+    {
+      "metadata": {
+        "uid": "pane-02",
+        "name": "codex-pane",
+        "ownerRef": {
+          "kind": "Agent",
+          "uid": "agent-01"
+        },
+        "createdAt": "2026-08-14T00:00:00Z"
+      },
+      "spec": {
+        "role": "agent",
+        "cwd": "/src/projmux",
+        "command": "codex"
+      },
+      "status": {
+        "displayTitle": "refactor naming"
+      }
+    }
+  ],
+  "agents": [
+    {
+      "metadata": {
+        "uid": "agent-01",
+        "name": "codex",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "annotations": {
+          "projmux.io/agent-topic": "refactor naming"
+        },
+        "createdAt": "2026-08-14T00:00:00Z"
+      },
+      "spec": {
+        "provider": "codex"
+      },
+      "status": {
+        "lastTransitionAt": "2026-08-14T00:00:00Z"
+      }
+    }
+  ]
+}
