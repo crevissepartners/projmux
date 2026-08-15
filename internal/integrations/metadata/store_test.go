@@ -139,6 +139,66 @@ func TestAnUnknownNewerSchemaVersionIsRejectedFailClosedWithNoWriteAtAll(t *test
 	}
 }
 
+// TestARegistryDocumentWithoutASchemaVersionIsRejectedFailClosedWithNoWriteAtAll
+// covers the unknown-document case: an absent schemaVersion decodes as 0, and
+// schemaVersion 1 is the first envelope projmux has ever written, so such a
+// file is a corrupt or foreign document rather than a pre-release registry. It
+// must be refused without a write, a backup, or a staged temp file.
+func TestARegistryDocumentWithoutASchemaVersionIsRejectedFailClosedWithNoWriteAtAll(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		run  func(store *Store) error
+	}{
+		{name: "load", run: func(store *Store) error {
+			_, err := store.Load()
+			return err
+		}},
+		{name: "update", run: func(store *Store) error {
+			_, err := store.Update(func(reg *coremetadata.Registry) error {
+				reg.Projects = nil
+				return nil
+			})
+			return err
+		}},
+		{name: "migrate", run: func(store *Store) error {
+			_, err := store.Migrate()
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := testStore(t)
+			writeRegistryFile(t, store, unversionedRegistry)
+			dir := filepath.Dir(store.Path())
+			bytesBefore := readFile(t, store.Path())
+			listingBefore := dirListing(t, dir)
+
+			err := tt.run(store)
+			if err == nil {
+				t.Fatal("a document without a schemaVersion must be refused")
+			}
+			if !errors.Is(err, coremetadata.ErrSchemaUnsupported) {
+				t.Fatalf("error %v does not wrap ErrSchemaUnsupported", err)
+			}
+			if got := readFile(t, store.Path()); got != bytesBefore {
+				t.Fatalf("the registry file was modified:\n--- got ---\n%s\n--- want ---\n%s", got, bytesBefore)
+			}
+			listingAfter := dirListing(t, dir)
+			if strings.Join(listingAfter, ",") != strings.Join(listingBefore, ",") {
+				t.Fatalf("the state directory changed: %v -> %v", listingBefore, listingAfter)
+			}
+			for _, name := range listingAfter {
+				if strings.Contains(name, ".bak") || strings.Contains(name, ".tmp-") || strings.Contains(name, "corrupt") || strings.Contains(name, "quarantine") {
+					t.Fatalf("fail-closed must not back up, quarantine, or stage an unknown registry: %q", name)
+				}
+			}
+		})
+	}
+}
+
 func TestMalformedRegistryJSONFailsClosedWithoutResettingTheFile(t *testing.T) {
 	t.Parallel()
 
@@ -154,10 +214,18 @@ func TestMalformedRegistryJSONFailsClosedWithoutResettingTheFile(t *testing.T) {
 	}
 }
 
-const preReleaseRegistry = `{
+// olderEnvelopeRegistry is a registry document at a hypothetical older
+// envelope version. Production ships no migration step for it -- schemaVersion
+// 1 is the first envelope projmux has ever written -- so the migration tests
+// register a step for this version into the store's private migration set.
+const olderEnvelopeRegistry = `{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 0,
   "updatedAt": "2026-08-14T00:00:00Z",
   "projects": [
     {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
       "metadata": {"uid": "project-01", "name": "projmux", "displayName": "projmux", "createdAt": "2026-08-14T00:00:00Z"},
       "spec": {"root": "/src/projmux"},
       "status": {}
@@ -165,19 +233,58 @@ const preReleaseRegistry = `{
   ],
   "windows": [
     {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
       "metadata": {"uid": "window-01", "name": "zsh", "ownerRef": {"kind": "Project", "uid": "project-01"}, "createdAt": "2026-08-14T00:00:00Z"},
       "spec": {"primaryPaneRef": "pane-01"}
     }
   ],
   "panes": [
     {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
       "metadata": {"uid": "pane-01", "name": "zsh", "ownerRef": {"kind": "Window", "uid": "window-01"}, "createdAt": "2026-08-14T00:00:00Z"},
-      "spec": {"cwd": "/src/projmux", "command": "zsh"},
+      "spec": {"role": "shell", "cwd": "/src/projmux", "command": "zsh"},
+      "status": {}
+    }
+  ],
+  "nameReservations": [
+    {"kind": "Project", "name": "projmux", "uid": "project-01"},
+    {"scope": "project-01", "kind": "Window", "name": "zsh", "uid": "window-01"},
+    {"scope": "window-01", "kind": "Pane", "name": "zsh", "uid": "pane-01"}
+  ]
+}
+`
+
+// unversionedRegistry parses as JSON but carries no schemaVersion. It stands
+// in for a corrupt or foreign file at the registry path: it is unknown, not
+// pre-release, so it must be refused without any write.
+const unversionedRegistry = `{
+  "apiVersion": "projmux.io/v1alpha1",
+  "updatedAt": "2026-08-14T00:00:00Z",
+  "projects": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {"uid": "project-01", "name": "projmux", "createdAt": "2026-08-14T00:00:00Z"},
+      "spec": {"root": "/src/projmux"},
       "status": {}
     }
   ]
 }
 `
+
+// withOlderEnvelopeStep registers a migration step for the older envelope
+// version into the store's private set, so the generic machinery and the
+// atomic write sequence can be exercised without shipping a migration.
+func withOlderEnvelopeStep(store *Store) {
+	store.migrations = coremetadata.MigrationSet{
+		0: func(reg *coremetadata.Registry) error {
+			reg.SchemaVersion = coremetadata.SchemaVersion
+			return nil
+		},
+	}
+}
 
 func TestSchemaMigrationIsAtomicAndAFailedStepLeavesTheOriginalState(t *testing.T) {
 	t.Parallel()
@@ -202,7 +309,8 @@ func TestSchemaMigrationIsAtomicAndAFailedStepLeavesTheOriginalState(t *testing.
 			t.Parallel()
 
 			store := testStore(t)
-			writeRegistryFile(t, store, preReleaseRegistry)
+			writeRegistryFile(t, store, olderEnvelopeRegistry)
+			withOlderEnvelopeStep(store)
 			dir := filepath.Dir(store.Path())
 			before := readFile(t, store.Path())
 			tt.hooks(store)
@@ -218,8 +326,8 @@ func TestSchemaMigrationIsAtomicAndAFailedStepLeavesTheOriginalState(t *testing.
 					t.Fatalf("a failed migration leaked a staged temp file: %q", name)
 				}
 			}
-			// The original file must still be readable as the pre-release
-			// document, so a retry can migrate it cleanly.
+			// The original file must still be readable at its older envelope,
+			// so a retry can migrate it cleanly.
 			registry, err := store.Load()
 			if err != nil {
 				t.Fatalf("reload after a failed migration: %v", err)
@@ -235,7 +343,8 @@ func TestSuccessfulSchemaMigrationBacksUpTheOriginalAndReplacesItAtomically(t *t
 	t.Parallel()
 
 	store := testStore(t)
-	writeRegistryFile(t, store, preReleaseRegistry)
+	writeRegistryFile(t, store, olderEnvelopeRegistry)
+	withOlderEnvelopeStep(store)
 	original := readFile(t, store.Path())
 
 	result, err := store.Migrate()
@@ -264,6 +373,11 @@ func TestSuccessfulSchemaMigrationBacksUpTheOriginalAndReplacesItAtomically(t *t
 	}
 	if len(migrated.NameReservations) != 3 {
 		t.Fatalf("reservations = %+v, want one per resource", migrated.NameReservations)
+	}
+	// The migrated file no longer classifies as older, so a reader without
+	// the registered step still accepts it.
+	if _, err := NewStore(store.Path()).Load(); err != nil {
+		t.Fatalf("a production reader must accept the migrated file: %v", err)
 	}
 
 	// Migrating again is a no-op and takes no second backup.
@@ -476,19 +590,42 @@ func TestConcurrentUpdatesSerializeThroughTheRegistryLock(t *testing.T) {
 	}
 }
 
-func TestMissingRegistryFileLoadsAnEmptyRegistryWithoutCreatingIt(t *testing.T) {
+// TestAnAbsentOrContentFreeRegistryFileLoadsAnEmptyRegistry keeps the
+// legitimate empty cases distinct from the fail-closed unknown-document case:
+// only a file with actual content that lacks a usable schemaVersion is
+// refused.
+func TestAnAbsentOrContentFreeRegistryFileLoadsAnEmptyRegistry(t *testing.T) {
 	t.Parallel()
+	tests := []struct {
+		name     string
+		contents string
+		seed     bool
+	}{
+		{name: "absent file"},
+		{name: "empty file", contents: "", seed: true},
+		{name: "whitespace only file", contents: "  \n\t\n", seed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	store := testStore(t)
-	registry, err := store.Load()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if registry.SchemaVersion != coremetadata.SchemaVersion || len(registry.Projects) != 0 {
-		t.Fatalf("registry = %+v, want an empty current-version registry", registry)
-	}
-	if _, err := os.Stat(store.Path()); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a read must not create the registry file: %v", err)
+			store := testStore(t)
+			if tt.seed {
+				writeRegistryFile(t, store, tt.contents)
+			}
+			registry, err := store.Load()
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if registry.SchemaVersion != coremetadata.SchemaVersion || len(registry.Projects) != 0 {
+				t.Fatalf("registry = %+v, want an empty current-version registry", registry)
+			}
+			if !tt.seed {
+				if _, err := os.Stat(store.Path()); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("a read must not create the registry file: %v", err)
+				}
+			}
+		})
 	}
 }
 

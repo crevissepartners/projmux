@@ -30,19 +30,55 @@ func (a SchemaAction) String() string {
 	}
 }
 
-// migrations maps a source envelope version onto the step that lifts it to the
-// next version. Version 0 is a pre-release registry document written before
-// the envelope carried an explicit schemaVersion.
-var migrations = map[int]func(*Registry) error{
-	0: migrateV0ToV1,
+// Migration lifts one registry document from an envelope version to the next.
+type Migration func(*Registry) error
+
+// MigrationSet maps a source envelope version onto the step that lifts it to
+// the next version.
+type MigrationSet map[int]Migration
+
+// productionMigrations is deliberately EMPTY.
+//
+// schemaVersion 1 is the first envelope projmux has ever written, so no older
+// registry document exists to migrate. A file that parses as JSON but carries
+// no schemaVersion decodes as version 0, and that is an *unknown* document
+// rather than a known older schema: accepting it would migrate and rewrite a
+// corrupt or foreign file, which is exactly the write-on-unknown-input that
+// fail-closed exists to prevent. Version 0 therefore has no step and is
+// refused like any other unsupported version.
+//
+// The generic machinery below, and its backup -> temp write -> validate ->
+// atomic replace sequence, is the contract for the first real schema bump.
+// Tests register a step into a private MigrationSet to exercise that path
+// without shipping one.
+var productionMigrations = MigrationSet{}
+
+// resolveMigrations treats a nil set as the production set, so callers that do
+// not override migrations automatically track whatever production ships.
+func resolveMigrations(set MigrationSet) MigrationSet {
+	if set == nil {
+		return productionMigrations
+	}
+	return set
 }
 
-// ClassifySchemaVersion decides how to read an envelope version.
-//
-// A newer-than-supported version is rejected fail-closed: the caller must not
-// quarantine, reset, truncate, or otherwise write the file, because doing so
-// would destroy state a newer build owns. Downgrade writes are unsupported.
+// ClassifySchemaVersion decides how to read an envelope version using the
+// production migration set.
 func ClassifySchemaVersion(version int) (SchemaAction, error) {
+	return ClassifySchemaVersionWith(nil, version)
+}
+
+// ClassifySchemaVersionWith decides how to read an envelope version against an
+// explicit migration set. A nil set means the production set.
+//
+// Everything that is not the current version and not covered by a registered
+// migration step is rejected fail-closed: the caller must not quarantine,
+// reset, truncate, or otherwise write the file. A newer version would destroy
+// state a newer build owns; an unversioned or otherwise unknown document is
+// not proven to be a projmux registry at all. Downgrade writes are
+// unsupported.
+func ClassifySchemaVersionWith(set MigrationSet, version int) (SchemaAction, error) {
+	set = resolveMigrations(set)
 	switch {
 	case version == SchemaVersion:
 		return SchemaCurrent, nil
@@ -53,7 +89,11 @@ func ClassifySchemaVersion(version int) (SchemaAction, error) {
 		return SchemaReject, stateErr("read registry", ErrSchemaUnsupported, "schemaVersion %d is negative", version)
 	}
 	for probe := version; probe < SchemaVersion; probe++ {
-		if _, ok := migrations[probe]; !ok {
+		if _, ok := set[probe]; !ok {
+			if probe == 0 {
+				return SchemaReject, stateErr("read registry", ErrSchemaUnsupported,
+					"registry document has no usable schemaVersion; schemaVersion %d is the first envelope projmux has ever written, so an unversioned document is refused rather than migrated", SchemaVersion)
+			}
 			return SchemaReject, stateErr("read registry", ErrSchemaUnsupported,
 				"no migration step from schemaVersion %d to %d", probe, probe+1)
 		}
@@ -61,11 +101,19 @@ func ClassifySchemaVersion(version int) (SchemaAction, error) {
 	return SchemaMigrate, nil
 }
 
-// MigrateRegistry lifts reg to the current schema version. It returns the
+// MigrateRegistry lifts reg to the current schema version using the production
+// migration set.
+func MigrateRegistry(reg Registry) (Registry, bool, error) {
+	return MigrateRegistryWith(nil, reg)
+}
+
+// MigrateRegistryWith lifts reg to the current schema version against an
+// explicit migration set. A nil set means the production set. It returns the
 // migrated copy and whether any step ran. The input is never mutated, so a
 // failing step can never leave a partially migrated value behind.
-func MigrateRegistry(reg Registry) (Registry, bool, error) {
-	action, err := ClassifySchemaVersion(reg.SchemaVersion)
+func MigrateRegistryWith(set MigrationSet, reg Registry) (Registry, bool, error) {
+	set = resolveMigrations(set)
+	action, err := ClassifySchemaVersionWith(set, reg.SchemaVersion)
 	if err != nil {
 		return Registry{}, false, err
 	}
@@ -75,7 +123,7 @@ func MigrateRegistry(reg Registry) (Registry, bool, error) {
 
 	working := reg.Clone()
 	for working.SchemaVersion < SchemaVersion {
-		step, ok := migrations[working.SchemaVersion]
+		step, ok := set[working.SchemaVersion]
 		if !ok {
 			return Registry{}, false, stateErr("migrate registry", ErrSchemaUnsupported,
 				"no migration step from schemaVersion %d", working.SchemaVersion)
@@ -85,39 +133,6 @@ func MigrateRegistry(reg Registry) (Registry, bool, error) {
 		}
 	}
 	return working.normalized(), true, nil
-}
-
-// migrateV0ToV1 lifts a pre-release, unversioned registry document to the v1
-// envelope: it stamps the api and schema versions on the document and on every
-// resource, and rebuilds any name reservations the document did not persist.
-func migrateV0ToV1(reg *Registry) error {
-	reg.APIVersion = APIVersion
-	reg.SchemaVersion = 1
-	for i := range reg.Projects {
-		reg.Projects[i].APIVersion = APIVersion
-		reg.Projects[i].Kind = KindProject
-		reg.Projects[i].Spec.Root = cleanRoot(reg.Projects[i].Spec.Root)
-	}
-	for i := range reg.Windows {
-		reg.Windows[i].APIVersion = APIVersion
-		reg.Windows[i].Kind = KindWindow
-	}
-	for i := range reg.Panes {
-		reg.Panes[i].APIVersion = APIVersion
-		reg.Panes[i].Kind = KindPane
-		if reg.Panes[i].Spec.Role == "" {
-			reg.Panes[i].Spec.Role = PaneRoleShell
-		}
-	}
-	for i := range reg.Agents {
-		reg.Agents[i].APIVersion = APIVersion
-		reg.Agents[i].Kind = KindAgent
-		if reg.Agents[i].Status.Phase == "" {
-			reg.Agents[i].Status.Phase = PhaseOffline
-		}
-	}
-	reg.rebuildMissingReservations()
-	return nil
 }
 
 // rebuildMissingReservations backfills a reservation for every resource name

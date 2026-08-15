@@ -182,15 +182,29 @@ Registry file and schema:
 - The registry lives at `<state>/projmux/metadata/registry.json` (0600 below a
   0700 directory) behind an `O_CREATE|O_EXCL` lock file with bounded retry and
   stale-lock breaking, matching the notify queue and recent-windows stores.
-- The envelope carries `schemaVersion: 1`. A **newer** schemaVersion fails
-  closed: the file is refused as unreadable and **no write happens at all**. It
-  is deliberately not quarantined or reset the way a corrupt recent-windows file
-  is, because quarantining a newer file destroys state a newer build owns.
-  Malformed registry JSON fails closed for the same reason.
-- A known older schema is migrated with backup → temp write → validate →
-  atomic replace, so an interrupted or failing migration leaves either the
-  original file or the fully migrated file, never a partial one. Downgrade
-  writes are unsupported.
+- The envelope carries `schemaVersion: 1`. **v1 is the first envelope projmux
+  has ever written, and no migration step ships today**, so the current version
+  is the only version the registry accepts.
+- Everything else fails closed: the file is refused as unreadable and **no
+  write happens at all** — no rewrite, no backup, no staged temp file. This
+  covers a **newer** schemaVersion (which would destroy state a newer build
+  owns), malformed JSON, and a document that parses but carries **no**
+  `schemaVersion`. An absent field decodes as version `0`, which means unknown
+  rather than pre-release: migrating it would rewrite a corrupt or foreign file
+  at the registry path, which is exactly the write-on-unknown-input that
+  fail-closed exists to prevent. The registry is deliberately not quarantined
+  or reset the way a corrupt recent-windows file is.
+- A file that is absent, empty, or whitespace-only is still the legitimate
+  "no registry yet" case and yields a fresh empty registry. Only a file with
+  actual content and no usable `schemaVersion` is refused.
+- The migration machinery is generic and version-indexed, ready for the first
+  real schema bump: a registered older step is applied with backup → temp
+  write → validate → atomic replace, so an interrupted or failing migration
+  leaves either the original file or the fully migrated file, never a partial
+  one. Downgrade writes are unsupported. Because production registers no step,
+  that path is proven by tests that register one into a private migration set
+  (`MigrationSet`, `ClassifySchemaVersionWith`, `MigrateRegistryWith`, and the
+  store's private migration override) rather than by shipping a migration.
 - **Field spelling:** the registry file intentionally uses the resource-model
   camelCase spelling (`apiVersion`, `schemaVersion`, `metadata`, `displayName`,
   `ownerRef`, `primaryPaneRef`, `spec`, `status`) rather than the snake_case

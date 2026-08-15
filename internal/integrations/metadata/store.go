@@ -62,6 +62,11 @@ type Store struct {
 	rngMu    sync.Mutex
 	rng      *rand.Rand
 	hooks    storeHooks
+	// migrations overrides the schema migration set. It is nil in production,
+	// which means the (currently empty) production set; the migration
+	// atomicity tests register a step here so the write sequence can be
+	// exercised without shipping a migration.
+	migrations coremetadata.MigrationSet
 }
 
 // NewStore builds a registry store for an explicit file path. Tests pass a
@@ -260,9 +265,11 @@ func (s *Store) read() (coremetadata.Registry, int, bool, error) {
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return coremetadata.Registry{}, 0, true, fmt.Errorf("%w %s: %w", ErrMalformedRegistry, s.path, err)
 	}
-	// Classify before decoding the body so a newer envelope is refused
-	// without this build reinterpreting fields it does not understand.
-	if _, err := coremetadata.ClassifySchemaVersion(envelope.SchemaVersion); err != nil {
+	// Classify before decoding the body so an unknown envelope is refused
+	// without this build reinterpreting fields it does not understand. An
+	// absent schemaVersion decodes as 0, which is unknown rather than
+	// pre-release, so it is refused here too.
+	if _, err := coremetadata.ClassifySchemaVersionWith(s.migrations, envelope.SchemaVersion); err != nil {
 		return coremetadata.Registry{}, envelope.SchemaVersion, true, fmt.Errorf("metadata: %s: %w", s.path, err)
 	}
 
@@ -270,7 +277,7 @@ func (s *Store) read() (coremetadata.Registry, int, bool, error) {
 	if err := json.Unmarshal(data, &registry); err != nil {
 		return coremetadata.Registry{}, envelope.SchemaVersion, true, fmt.Errorf("%w %s: %w", ErrMalformedRegistry, s.path, err)
 	}
-	migrated, _, err := coremetadata.MigrateRegistry(registry)
+	migrated, _, err := coremetadata.MigrateRegistryWith(s.migrations, registry)
 	if err != nil {
 		return coremetadata.Registry{}, envelope.SchemaVersion, true, fmt.Errorf("metadata: %s: %w", s.path, err)
 	}

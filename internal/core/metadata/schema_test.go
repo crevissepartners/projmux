@@ -7,7 +7,57 @@ import (
 	"testing"
 )
 
-func TestClassifySchemaVersionFailsClosedForNewerEnvelopes(t *testing.T) {
+// testMigrationSet is the private migration set the schema tests register a
+// step into. Production ships no migration step, because schemaVersion 1 is
+// the first envelope projmux has ever written; this fixture exercises the
+// generic machinery and the atomic write sequence that the first real schema
+// bump will use.
+func testMigrationSet() MigrationSet {
+	return MigrationSet{0: testMigrateV0ToV1}
+}
+
+// testMigrateV0ToV1 is a representative older-envelope step: it stamps the api
+// and schema versions on the document and on every resource, and rebuilds any
+// name reservations the document did not persist.
+func testMigrateV0ToV1(reg *Registry) error {
+	reg.APIVersion = APIVersion
+	reg.SchemaVersion = 1
+	for i := range reg.Projects {
+		reg.Projects[i].APIVersion = APIVersion
+		reg.Projects[i].Kind = KindProject
+		reg.Projects[i].Spec.Root = cleanRoot(reg.Projects[i].Spec.Root)
+	}
+	for i := range reg.Windows {
+		reg.Windows[i].APIVersion = APIVersion
+		reg.Windows[i].Kind = KindWindow
+	}
+	for i := range reg.Panes {
+		reg.Panes[i].APIVersion = APIVersion
+		reg.Panes[i].Kind = KindPane
+		if reg.Panes[i].Spec.Role == "" {
+			reg.Panes[i].Spec.Role = PaneRoleShell
+		}
+	}
+	for i := range reg.Agents {
+		reg.Agents[i].APIVersion = APIVersion
+		reg.Agents[i].Kind = KindAgent
+		if reg.Agents[i].Status.Phase == "" {
+			reg.Agents[i].Status.Phase = PhaseOffline
+		}
+	}
+	reg.rebuildMissingReservations()
+	return nil
+}
+
+func TestProductionShipsNoMigrationStepSoOnlyTheCurrentEnvelopeIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	if len(productionMigrations) != 0 {
+		t.Fatalf("production migrations = %v, want an empty set: schemaVersion %d is the first shipped envelope", productionMigrations, SchemaVersion)
+	}
+}
+
+func TestClassifySchemaVersionFailsClosedForNewerAndUnversionedEnvelopes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
@@ -16,7 +66,7 @@ func TestClassifySchemaVersionFailsClosedForNewerEnvelopes(t *testing.T) {
 		wantErr    error
 	}{
 		{name: "current version reads as is", version: SchemaVersion, wantAction: SchemaCurrent},
-		{name: "pre-release unversioned document migrates", version: 0, wantAction: SchemaMigrate},
+		{name: "an unversioned document is rejected fail closed", version: 0, wantAction: SchemaReject, wantErr: ErrSchemaUnsupported},
 		{name: "newer version is rejected fail closed", version: SchemaVersion + 1, wantAction: SchemaReject, wantErr: ErrSchemaTooNew},
 		{name: "far newer version is rejected fail closed", version: 99, wantAction: SchemaReject, wantErr: ErrSchemaTooNew},
 		{name: "negative version is unsupported", version: -1, wantAction: SchemaReject, wantErr: ErrSchemaUnsupported},
@@ -44,6 +94,53 @@ func TestClassifySchemaVersionFailsClosedForNewerEnvelopes(t *testing.T) {
 	}
 }
 
+func TestARegisteredOlderStepTurnsRejectionIntoMigrationWithoutChangingProduction(t *testing.T) {
+	t.Parallel()
+
+	// With no registered step, version 0 is refused.
+	if action, err := ClassifySchemaVersion(0); action != SchemaReject || !errors.Is(err, ErrSchemaUnsupported) {
+		t.Fatalf("production classify(0) = %s, %v; want reject", action, err)
+	}
+	// With a step registered in a private set, the same version migrates.
+	action, err := ClassifySchemaVersionWith(testMigrationSet(), 0)
+	if err != nil {
+		t.Fatalf("classify with an injected step: %v", err)
+	}
+	if action != SchemaMigrate {
+		t.Fatalf("classify with an injected step = %s, want migrate", action)
+	}
+	// Registering a step in a private set never mutates the production set.
+	if len(productionMigrations) != 0 {
+		t.Fatalf("production migrations were mutated: %v", productionMigrations)
+	}
+}
+
+func TestMigrateRegistryRejectsAnUnversionedDocumentWithoutTouchingTheInput(t *testing.T) {
+	t.Parallel()
+
+	source := Registry{
+		Projects: []Project{{Metadata: ObjectMeta{UID: "project-01", Name: "projmux"}, Spec: ProjectSpec{Root: "/src/projmux"}}},
+	}
+	if source.SchemaVersion != 0 {
+		t.Fatalf("fixture schemaVersion = %d, want the absent-field 0", source.SchemaVersion)
+	}
+
+	before := mustJSON(t, source)
+	_, ran, err := MigrateRegistry(source)
+	if !errors.Is(err, ErrSchemaUnsupported) {
+		t.Fatalf("error = %v, want ErrSchemaUnsupported", err)
+	}
+	if ran {
+		t.Fatal("no migration step may run for an unversioned document")
+	}
+	if got := mustJSON(t, source); got != before {
+		t.Fatalf("a rejected migration mutated its input:\nbefore=%s\nafter=%s", before, got)
+	}
+	if IsUsageError(err) {
+		t.Fatalf("an unknown registry document is not user input: %v", err)
+	}
+}
+
 func TestMigrateRegistryRejectsNewerEnvelopesWithoutTouchingTheInput(t *testing.T) {
 	t.Parallel()
 
@@ -60,7 +157,7 @@ func TestMigrateRegistryRejectsNewerEnvelopesWithoutTouchingTheInput(t *testing.
 	}
 }
 
-func TestMigrateRegistryLiftsAPreReleaseDocumentToTheCurrentEnvelope(t *testing.T) {
+func TestARegisteredOlderStepLiftsItsDocumentToTheCurrentEnvelope(t *testing.T) {
 	t.Parallel()
 
 	data, err := os.ReadFile("testdata/registry-v0-source.json")
@@ -72,10 +169,10 @@ func TestMigrateRegistryLiftsAPreReleaseDocumentToTheCurrentEnvelope(t *testing.
 		t.Fatalf("decode source: %v", err)
 	}
 	if source.SchemaVersion != 0 {
-		t.Fatalf("source schemaVersion = %d, want the unversioned 0", source.SchemaVersion)
+		t.Fatalf("source schemaVersion = %d, want the fixture's older 0", source.SchemaVersion)
 	}
 
-	migrated, ran, err := MigrateRegistry(source)
+	migrated, ran, err := MigrateRegistryWith(testMigrationSet(), source)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -96,7 +193,7 @@ func TestMigrateRegistryLiftsAPreReleaseDocumentToTheCurrentEnvelope(t *testing.
 	}
 
 	// The migration is idempotent: re-running it is a no-op.
-	again, ranAgain, err := MigrateRegistry(migrated)
+	again, ranAgain, err := MigrateRegistryWith(testMigrationSet(), migrated)
 	if err != nil {
 		t.Fatalf("re-migrate: %v", err)
 	}
@@ -118,7 +215,7 @@ func TestMigrationBackfillsNameReservationsWithoutRenumberingExistingResources(t
 			{Metadata: ObjectMeta{UID: "project-02", Name: "projmux-4"}, Spec: ProjectSpec{Root: "/src/b"}},
 		},
 	}
-	migrated, _, err := MigrateRegistry(source)
+	migrated, _, err := MigrateRegistryWith(testMigrationSet(), source)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

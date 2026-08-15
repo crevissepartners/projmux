@@ -442,3 +442,10 @@ stateErr
 tmuxFormat
 tmuxTruthyOption
 validateWrittenFile
+ClassifySchemaVersionWith
+MigrateRegistryWith
+ObjectMeta.OwnerUID
+Registry.rebuildMissingReservations
+Registry.reservationIndex
+cleanRoot
+resolveMigrations
