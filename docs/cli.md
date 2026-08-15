@@ -81,7 +81,7 @@ Subcommands:
 | --- | --- |
 | [`projmux agent status`](#projmux-agent-status) | Read or set the Agent status state |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear the Agent topic annotation |
-| [`projmux agent resume`](#projmux-agent-resume) | Resolve exactly one resumable Agent; Running is refused, never focused (the rebind is not wired yet) |
+| [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent to a new managed Pane |
 | [`projmux agent integrate`](#projmux-agent-integrate) | Install or remove provider hook integrations |
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
 
@@ -105,7 +105,7 @@ projmux agent topic [set|clear] ...
 
 ### `projmux agent resume`
 
-Resolve exactly one resumable Agent; Running is refused, never focused (the rebind is not wired yet)
+Rebind an Offline or Failed Agent to a new managed Pane
 
 ```
 projmux agent resume <ref> [--project <ref>] [--window <ref>]... [--selector key=value]...

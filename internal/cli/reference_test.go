@@ -230,12 +230,13 @@ func TestGeneratedReferenceExcludesEveryHiddenRoute(t *testing.T) {
 // canonicalManifestOnlySummaries returns the canonical-manifest summaries that
 // no command-tree node states verbatim.
 //
-// These are the strings that make the boundary necessary. `agent resume` is the
-// clearest survivor: the canonical manifest calls it "Rebind an Offline or
-// Failed Agent to a new managed Pane" while the handler resolves the Agent,
-// applies the phase gate, and stops, because the rebind needs runtime
-// materialization from another track. The command tree says what the route does
-// today; the canonical manifest says what the contract will eventually require.
+// These are the strings that make the boundary necessary: the command tree says
+// what a route does today, and the canonical manifest says what the contract
+// will eventually require, so the two diverge whenever a spelling is ahead of
+// its handler. `agent resume` used to be the clearest survivor and no longer is
+// -- its owning track landed the rebind, so both surfaces now say "Rebind an
+// Offline or Failed Agent to a new managed Pane" and it left this set by being
+// built. That is the intended way out of it.
 //
 // The public-spelling Phase shrank this set on purpose. `tag project`'s "Manage
 // persistent Project tags" used to be the headline entry; it was corrected
@@ -279,9 +280,14 @@ func TestGeneratedReferenceCarriesNoCanonicalManifestOnlySummary(t *testing.T) {
 	// set ever shrinks to wording differences alone: if one of these is corrected
 	// or deleted, whoever does it has to come back here and re-derive the
 	// boundary rather than let the assertion quietly cover nothing.
+	//
+	// "Rebind an Offline or Failed Agent to a new managed Pane" was removed from
+	// this list when the runtime materialization track wired the rebind: the
+	// command tree now states that sentence itself, so it is no longer divergent
+	// and pinning it here would fail. It left by being built, which is the exit
+	// this list is designed to force someone to come back and take.
 	knownTargetStateSummaries := []string{
 		// Owned by the runtime materialization track.
-		"Rebind an Offline or Failed Agent to a new managed Pane",
 		"Delete a Pane resource and its live binding",
 		// Owned by the session-state track.
 		"Restore a saved session snapshot",

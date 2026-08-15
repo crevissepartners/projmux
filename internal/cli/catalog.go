@@ -127,11 +127,9 @@ var routes = []Route{
 		// set|clear`, and `integrate` all write -- so the summary says "manage"
 		// rather than "read".
 		//
-		// `resume` is the one route with logic of its own, and this release
-		// ships only its first half: resolution and the Agent phase gate. The
-		// rebind onto a new managed Pane arrives with runtime materialization in
-		// a later Phase, so the sub-route summary states the gate rather than the
-		// rebind.
+		// `resume` is the one route with logic of its own: it resolves exactly
+		// one existing Agent, applies the phase gate, and rebinds it to a new
+		// managed Pane launched with the provider's resume argv.
 		Name:        "agent",
 		Summary:     "Manage Agent state, topic, integrations, and account usage",
 		Disposition: DispositionCanonical,
@@ -147,15 +145,14 @@ var routes = []Route{
 			{Name: "status", Summary: "Read or set the Agent status state", Usage: []string{"projmux agent status [set <state> [pane]]"}, Canonical: []string{"agent status"}},
 			{Name: "topic", Summary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic [set|clear] ..."}, Canonical: []string{"agent topic"}},
 			{
-				// Today this route is resolution plus the phase gate and nothing
-				// more: it resolves exactly one existing Agent, refuses a Running
-				// one, and stops. Binding a new managed Pane needs runtime
-				// materialization, which lands in a later Phase, so no argv
-				// reaches an actual rebind yet. The summary describes the half
-				// that ships rather than the capability the route will gain; the
-				// target-state wording lives in the canonical manifest.
+				// This route resolves exactly one existing Agent, refuses a
+				// Running one, and rebinds an Offline or Failed one to a new
+				// managed Pane built from the conversation its `status.sessionRef`
+				// records. The command tree and the canonical manifest now state
+				// the same sentence, because the route does what the contract
+				// asked for.
 				Name:      "resume",
-				Summary:   "Resolve exactly one resumable Agent; Running is refused, never focused (the rebind is not wired yet)",
+				Summary:   "Rebind an Offline or Failed Agent to a new managed Pane",
 				Usage:     []string{"projmux agent resume <ref> [--project <ref>] [--window <ref>]... [--selector key=value]..."},
 				Canonical: []string{"agent resume"},
 			},

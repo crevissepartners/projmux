@@ -169,10 +169,6 @@ var canonicalRoutes = []CanonicalRoute{
 	// agent domain
 	{Spelling: "agent status", Summary: "Read or set Agent status state", Sources: []string{"ai", "agent"}},
 	{Spelling: "agent topic", Summary: "Read, set, or clear the Agent topic annotation", Sources: []string{"ai", "agent"}},
-	// The rebind is a feature the runtime materialization track owns. Today the
-	// handler resolves exactly one Agent, applies the phase gate, and stops with
-	// a runtime error and zero mutations; catalog.go's sub-route summary states
-	// that half.
 	{Spelling: "agent resume", Summary: "Rebind an Offline or Failed Agent to a new managed Pane", Sources: []string{"ai", "agent"}},
 	{Spelling: "agent integrate", Summary: "Install or remove provider hook integrations", Sources: []string{"ai", "agent"}},
 	{Spelling: "agent usage", Summary: "Read provider account usage quota snapshots", Sources: []string{"usage", "status", "agent"}},
