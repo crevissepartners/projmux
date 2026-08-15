@@ -1,0 +1,408 @@
+package metadata
+
+import (
+	"maps"
+	"slices"
+	"time"
+)
+
+// APIVersion is the resource API version string stamped on every resource.
+const APIVersion = "projmux.io/v1alpha1"
+
+// SchemaVersion is the current registry envelope version. A registry file
+// carrying a higher value is rejected fail-closed; see schema.go.
+const SchemaVersion = 1
+
+// Kind is the closed set of Projmux resource kinds. A persistent tmux Session
+// is intentionally absent: it is a 1:1 runtime projection of a Project stored
+// in Project.status.session and owns no uid, name, or ownerRef of its own.
+type Kind string
+
+const (
+	KindProject Kind = "Project"
+	KindWindow  Kind = "Window"
+	KindPane    Kind = "Pane"
+	KindAgent   Kind = "Agent"
+)
+
+// Kinds returns the closed kind set in declaration order.
+func Kinds() []Kind {
+	return []Kind{KindProject, KindWindow, KindPane, KindAgent}
+}
+
+// OwnerRef points at the owning resource by opaque uid. It never carries a
+// displayName, a tmux target, or any other non-identifying value.
+type OwnerRef struct {
+	Kind Kind   `json:"kind"`
+	UID  string `json:"uid"`
+}
+
+// ObjectMeta is the metadata block shared by every resource.
+//
+//   - UID is opaque, immutable, and independent of tmux lifecycle.
+//   - Name is the stable unique-within-scope query key. Project names are
+//     unique across the registry; Window/Pane/Agent names are unique within
+//     their ownerRef scope.
+//   - DisplayName may duplicate and is never a selector, ownerRef, or identity.
+//   - Labels are key/value classification input.
+//   - Annotations are non-identifying metadata (AI topic, provider context).
+type ObjectMeta struct {
+	UID         string            `json:"uid"`
+	Name        string            `json:"name"`
+	DisplayName string            `json:"displayName,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+	OwnerRef    *OwnerRef         `json:"ownerRef,omitempty"`
+	CreatedAt   time.Time         `json:"createdAt"`
+}
+
+// Clone returns a deep copy of the metadata block.
+func (m ObjectMeta) Clone() ObjectMeta {
+	out := m
+	out.Labels = cloneStringMap(m.Labels)
+	out.Annotations = cloneStringMap(m.Annotations)
+	if m.OwnerRef != nil {
+		owner := *m.OwnerRef
+		out.OwnerRef = &owner
+	}
+	return out
+}
+
+// OwnerUID returns the owning uid, or "" for a root resource.
+func (m ObjectMeta) OwnerUID() string {
+	if m.OwnerRef == nil {
+		return ""
+	}
+	return m.OwnerRef.UID
+}
+
+// Condition records an observed resource condition with its first-observed
+// timestamp preserved across repeat observations.
+type Condition struct {
+	Type             string    `json:"type"`
+	Status           string    `json:"status"`
+	Reason           string    `json:"reason,omitempty"`
+	Message          string    `json:"message,omitempty"`
+	FirstObservedAt  time.Time `json:"firstObservedAt"`
+	LastTransitionAt time.Time `json:"lastTransitionAt"`
+}
+
+const (
+	// ConditionMissingRoot marks a Project whose spec.root has disappeared.
+	// The Project is never deleted or re-identified while it is set.
+	ConditionMissingRoot = "MissingRoot"
+
+	ConditionTrue  = "True"
+	ConditionFalse = "False"
+)
+
+// SessionProjection is the 1:1 runtime projection of a persistent tmux
+// session onto its Project. Auto-attach ephemeral sessions are never recorded
+// here; they live only in runtime inventory, outside the Project hierarchy.
+type SessionProjection struct {
+	Name string `json:"name"`
+	Live bool   `json:"live"`
+}
+
+// Project is the canonical Projmux root resource.
+type Project struct {
+	APIVersion string        `json:"apiVersion"`
+	Kind       Kind          `json:"kind"`
+	Metadata   ObjectMeta    `json:"metadata"`
+	Spec       ProjectSpec   `json:"spec"`
+	Status     ProjectStatus `json:"status"`
+}
+
+// ProjectSpec holds the absolute filesystem root the Project is bound to.
+type ProjectSpec struct {
+	Root string `json:"root"`
+}
+
+// ProjectStatus carries the runtime session projection and observed conditions.
+type ProjectStatus struct {
+	Session    *SessionProjection `json:"session,omitempty"`
+	Conditions []Condition        `json:"conditions,omitempty"`
+}
+
+// Clone returns a deep copy of the Project.
+func (p Project) Clone() Project {
+	out := p
+	out.Metadata = p.Metadata.Clone()
+	if p.Status.Session != nil {
+		session := *p.Status.Session
+		out.Status.Session = &session
+	}
+	out.Status.Conditions = slices.Clone(p.Status.Conditions)
+	return out
+}
+
+// Window is owned by exactly one Project and always owns an initial Pane.
+type Window struct {
+	APIVersion string     `json:"apiVersion"`
+	Kind       Kind       `json:"kind"`
+	Metadata   ObjectMeta `json:"metadata"`
+	Spec       WindowSpec `json:"spec"`
+}
+
+// WindowSpec records the uid of the Pane created together with the Window.
+type WindowSpec struct {
+	PrimaryPaneRef string `json:"primaryPaneRef"`
+}
+
+// Clone returns a deep copy of the Window.
+func (w Window) Clone() Window {
+	out := w
+	out.Metadata = w.Metadata.Clone()
+	return out
+}
+
+// PaneRole distinguishes a plain shell Pane from a Pane managed by an Agent.
+type PaneRole string
+
+const (
+	PaneRoleShell PaneRole = "shell"
+	PaneRoleAgent PaneRole = "agent"
+)
+
+// Pane is owned by a Window (shell role) or by an Agent (agent role).
+type Pane struct {
+	APIVersion string     `json:"apiVersion"`
+	Kind       Kind       `json:"kind"`
+	Metadata   ObjectMeta `json:"metadata"`
+	Spec       PaneSpec   `json:"spec"`
+	Status     PaneStatus `json:"status"`
+}
+
+// PaneSpec records the declared pane recipe inputs. Command is the one-time
+// name-derivation source; it is never re-read to rename an existing Pane.
+type PaneSpec struct {
+	Role    PaneRole `json:"role"`
+	CWD     string   `json:"cwd,omitempty"`
+	Command string   `json:"command,omitempty"`
+}
+
+// PaneStatus carries the derived secondary display title. DisplayTitle is
+// never a selector, an identity, or a Window name source.
+type PaneStatus struct {
+	DisplayTitle string `json:"displayTitle,omitempty"`
+}
+
+// Clone returns a deep copy of the Pane.
+func (p Pane) Clone() Pane {
+	out := p
+	out.Metadata = p.Metadata.Clone()
+	return out
+}
+
+// AgentPhase is the closed Agent lifecycle state set.
+type AgentPhase string
+
+const (
+	// PhasePending is an Agent whose managed Pane has not started yet.
+	PhasePending AgentPhase = "Pending"
+	// PhaseRunning is an Agent with a live managed Pane.
+	PhaseRunning AgentPhase = "Running"
+	// PhaseOffline follows a normal managed-Pane exit or an explicit pane
+	// deletion. The Agent survives as a resumable resource.
+	PhaseOffline AgentPhase = "Offline"
+	// PhaseFailed follows a launch failure or an abnormal exit.
+	PhaseFailed AgentPhase = "Failed"
+)
+
+// AgentPhases returns the closed phase set in lifecycle order.
+func AgentPhases() []AgentPhase {
+	return []AgentPhase{PhasePending, PhaseRunning, PhaseOffline, PhaseFailed}
+}
+
+// Agent is owned by a Window and owns its current managed Pane.
+type Agent struct {
+	APIVersion string      `json:"apiVersion"`
+	Kind       Kind        `json:"kind"`
+	Metadata   ObjectMeta  `json:"metadata"`
+	Spec       AgentSpec   `json:"spec"`
+	Status     AgentStatus `json:"status"`
+}
+
+// AgentSpec records the normalized provider id the Agent was created for.
+type AgentSpec struct {
+	Provider string `json:"provider,omitempty"`
+}
+
+// AgentStatus tracks the lifecycle phase and the current managed Pane uid.
+type AgentStatus struct {
+	Phase            AgentPhase `json:"phase"`
+	PaneRef          string     `json:"paneRef,omitempty"`
+	Reason           string     `json:"reason,omitempty"`
+	LastTransitionAt time.Time  `json:"lastTransitionAt"`
+}
+
+// Clone returns a deep copy of the Agent.
+func (a Agent) Clone() Agent {
+	out := a
+	out.Metadata = a.Metadata.Clone()
+	return out
+}
+
+// NameReservation is the persisted record of one allocated name. Reservations
+// are the authority for suffix allocation: the allocator never recomputes a
+// suffix from resource scan order.
+//
+// Scope is "" for the registry-wide Project scope and the owner uid for
+// Window, Pane, and Agent names.
+type NameReservation struct {
+	Scope string `json:"scope,omitempty"`
+	Kind  Kind   `json:"kind"`
+	Name  string `json:"name"`
+	UID   string `json:"uid"`
+}
+
+// Registry is the whole persisted resource set plus its name reservations.
+// Slice order is insertion order and is preserved verbatim so serialization is
+// deterministic without a sort pass.
+type Registry struct {
+	APIVersion       string            `json:"apiVersion"`
+	SchemaVersion    int               `json:"schemaVersion"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
+	Projects         []Project         `json:"projects,omitempty"`
+	Windows          []Window          `json:"windows,omitempty"`
+	Panes            []Pane            `json:"panes,omitempty"`
+	Agents           []Agent           `json:"agents,omitempty"`
+	NameReservations []NameReservation `json:"nameReservations,omitempty"`
+}
+
+// NewRegistry returns an empty registry stamped with the current envelope.
+func NewRegistry() Registry {
+	return Registry{APIVersion: APIVersion, SchemaVersion: SchemaVersion}
+}
+
+// Clone returns a deep copy of the registry so a failed mutation can never
+// leak a partially applied change back to the caller.
+func (r Registry) Clone() Registry {
+	out := r
+	out.Projects = cloneSlice(r.Projects, Project.Clone)
+	out.Windows = cloneSlice(r.Windows, Window.Clone)
+	out.Panes = cloneSlice(r.Panes, Pane.Clone)
+	out.Agents = cloneSlice(r.Agents, Agent.Clone)
+	out.NameReservations = slices.Clone(r.NameReservations)
+	return out
+}
+
+func cloneSlice[T any](in []T, clone func(T) T) []T {
+	if in == nil {
+		return nil
+	}
+	out := make([]T, len(in))
+	for i, item := range in {
+		out[i] = clone(item)
+	}
+	return out
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	maps.Copy(out, in)
+	return out
+}
+
+// Project returns the Project with uid.
+func (r *Registry) Project(uid string) (*Project, bool) {
+	for i := range r.Projects {
+		if r.Projects[i].Metadata.UID == uid {
+			return &r.Projects[i], true
+		}
+	}
+	return nil, false
+}
+
+// Window returns the Window with uid.
+func (r *Registry) Window(uid string) (*Window, bool) {
+	for i := range r.Windows {
+		if r.Windows[i].Metadata.UID == uid {
+			return &r.Windows[i], true
+		}
+	}
+	return nil, false
+}
+
+// Pane returns the Pane with uid.
+func (r *Registry) Pane(uid string) (*Pane, bool) {
+	for i := range r.Panes {
+		if r.Panes[i].Metadata.UID == uid {
+			return &r.Panes[i], true
+		}
+	}
+	return nil, false
+}
+
+// Agent returns the Agent with uid.
+func (r *Registry) Agent(uid string) (*Agent, bool) {
+	for i := range r.Agents {
+		if r.Agents[i].Metadata.UID == uid {
+			return &r.Agents[i], true
+		}
+	}
+	return nil, false
+}
+
+// ProjectByRoot returns the Project bound to an exact cleaned root path. Root
+// matching is exact and never heuristic: basename, git origin, inode, and scan
+// order are deliberately not consulted.
+func (r *Registry) ProjectByRoot(root string) (*Project, bool) {
+	root = cleanRoot(root)
+	if root == "" {
+		return nil, false
+	}
+	for i := range r.Projects {
+		if r.Projects[i].Spec.Root == root {
+			return &r.Projects[i], true
+		}
+	}
+	return nil, false
+}
+
+// ProjectByName returns the Project with the registry-unique name.
+func (r *Registry) ProjectByName(name string) (*Project, bool) {
+	for i := range r.Projects {
+		if r.Projects[i].Metadata.Name == name {
+			return &r.Projects[i], true
+		}
+	}
+	return nil, false
+}
+
+// WindowsOf returns the Windows owned by projectUID in insertion order.
+func (r *Registry) WindowsOf(projectUID string) []Window {
+	var out []Window
+	for _, window := range r.Windows {
+		if window.Metadata.OwnerUID() == projectUID {
+			out = append(out, window)
+		}
+	}
+	return out
+}
+
+// PanesOf returns the Panes owned by ownerUID in insertion order. The owner is
+// a Window for shell panes and an Agent for managed panes.
+func (r *Registry) PanesOf(ownerUID string) []Pane {
+	var out []Pane
+	for _, pane := range r.Panes {
+		if pane.Metadata.OwnerUID() == ownerUID {
+			out = append(out, pane)
+		}
+	}
+	return out
+}
+
+// AgentsOf returns the Agents owned by windowUID in insertion order.
+func (r *Registry) AgentsOf(windowUID string) []Agent {
+	var out []Agent
+	for _, agent := range r.Agents {
+		if agent.Metadata.OwnerUID() == windowUID {
+			out = append(out, agent)
+		}
+	}
+	return out
+}

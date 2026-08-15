@@ -25,34 +25,56 @@ var (
 	ErrInvalidSnapshot    = errors.New("invalid session snapshot")
 )
 
+// ResourceMetadata is the additive Projmux resource-metadata block carried by
+// a snapshot so restored resources keep their opaque identity.
+//
+// It is an omitempty addition at snapshot Version 1 rather than a schema bump:
+// snapshots written before it decode with a nil block, and snapshots written
+// without resource metadata still serialize byte-identically to the older
+// form. Field spelling stays snake_case to match the rest of this file; the
+// resource-model camelCase spelling is used only by the resource registry.
+type ResourceMetadata struct {
+	UID       string            `json:"uid,omitempty"`
+	Name      string            `json:"name,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	OwnerKind string            `json:"owner_kind,omitempty"`
+	OwnerUID  string            `json:"owner_uid,omitempty"`
+}
+
 // Snapshot is the versioned record for one tmux session. Phase 1 only
 // records enough metadata to read and write the snapshot; replay is handled
 // by the integrations adapter.
+//
+// Metadata carries the owning Project resource identity. The tmux session
+// itself owns no uid or name: it is a 1:1 runtime projection of the Project.
 type Snapshot struct {
-	Version    int       `json:"version"`
-	Session    string    `json:"session"`
-	Source     string    `json:"source,omitempty"`
-	DefaultCWD string    `json:"default_cwd,omitempty"`
-	SavedAt    time.Time `json:"saved_at"`
-	Windows    []Window  `json:"windows"`
+	Version    int               `json:"version"`
+	Session    string            `json:"session"`
+	Source     string            `json:"source,omitempty"`
+	DefaultCWD string            `json:"default_cwd,omitempty"`
+	SavedAt    time.Time         `json:"saved_at"`
+	Metadata   *ResourceMetadata `json:"metadata,omitempty"`
+	Windows    []Window          `json:"windows"`
 }
 
 // Window describes one tmux window in session order.
 type Window struct {
-	Index           int    `json:"index"`
-	Name            string `json:"name"`
-	Layout          string `json:"layout,omitempty"`
-	ActivePaneIndex int    `json:"active_pane_index"`
-	Panes           []Pane `json:"panes"`
+	Index           int               `json:"index"`
+	Name            string            `json:"name"`
+	Layout          string            `json:"layout,omitempty"`
+	ActivePaneIndex int               `json:"active_pane_index"`
+	Metadata        *ResourceMetadata `json:"metadata,omitempty"`
+	Panes           []Pane            `json:"panes"`
 }
 
 // Pane describes one tmux pane and the recipe metadata needed by future replay.
 type Pane struct {
-	Index  int    `json:"index"`
-	Label  string `json:"label,omitempty"`
-	Title  string `json:"title,omitempty"`
-	CWD    string `json:"cwd"`
-	Recipe Recipe `json:"recipe"`
+	Index    int               `json:"index"`
+	Label    string            `json:"label,omitempty"`
+	Title    string            `json:"title,omitempty"`
+	CWD      string            `json:"cwd"`
+	Metadata *ResourceMetadata `json:"metadata,omitempty"`
+	Recipe   Recipe            `json:"recipe"`
 }
 
 // Recipe records how a pane should be classified for future restore.
@@ -153,9 +175,15 @@ func (s Snapshot) Validate() error {
 	if s.DefaultCWD != "" && !filepath.IsAbs(s.DefaultCWD) {
 		return fmt.Errorf("%w: default_cwd must be absolute", ErrInvalidSnapshot)
 	}
+	if err := s.Metadata.validate("snapshot"); err != nil {
+		return err
+	}
 	for wi, window := range s.Windows {
 		if window.Index < 0 {
 			return fmt.Errorf("%w: window %d index must be non-negative", ErrInvalidSnapshot, wi)
+		}
+		if err := window.Metadata.validate(fmt.Sprintf("window %d", wi)); err != nil {
+			return err
 		}
 		if window.ActivePaneIndex < 0 {
 			return fmt.Errorf("%w: window %d active_pane_index must be non-negative", ErrInvalidSnapshot, wi)
@@ -174,6 +202,9 @@ func (s Snapshot) Validate() error {
 			if !filepath.IsAbs(pane.CWD) {
 				return fmt.Errorf("%w: window %d pane %d cwd must be absolute", ErrInvalidSnapshot, wi, pi)
 			}
+			if err := pane.Metadata.validate(fmt.Sprintf("window %d pane %d", wi, pi)); err != nil {
+				return err
+			}
 			if err := pane.Recipe.Validate(); err != nil {
 				return fmt.Errorf("%w: window %d pane %d recipe: %w", ErrInvalidSnapshot, wi, pi, err)
 			}
@@ -181,6 +212,25 @@ func (s Snapshot) Validate() error {
 		if !activePaneFound {
 			return fmt.Errorf("%w: window %d active_pane_index %d does not match a pane index", ErrInvalidSnapshot, wi, window.ActivePaneIndex)
 		}
+	}
+	return nil
+}
+
+// validate rejects a present-but-identity-free resource metadata block. A nil
+// block is always valid: snapshots written before resource metadata existed
+// must keep loading unchanged.
+func (m *ResourceMetadata) validate(where string) error {
+	if m == nil {
+		return nil
+	}
+	if strings.TrimSpace(m.UID) == "" {
+		return fmt.Errorf("%w: %s metadata requires uid", ErrInvalidSnapshot, where)
+	}
+	if strings.TrimSpace(m.Name) == "" {
+		return fmt.Errorf("%w: %s metadata requires name", ErrInvalidSnapshot, where)
+	}
+	if (m.OwnerKind == "") != (m.OwnerUID == "") {
+		return fmt.Errorf("%w: %s metadata owner_kind and owner_uid must be set together", ErrInvalidSnapshot, where)
 	}
 	return nil
 }

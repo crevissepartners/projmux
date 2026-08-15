@@ -41,10 +41,11 @@ var (
 // Snapshot, Window, Pane, and Recipe alias the core snapshot data model so
 // values flow between the adapter and core rules without conversion.
 type (
-	Snapshot = coresessionstate.Snapshot
-	Window   = coresessionstate.Window
-	Pane     = coresessionstate.Pane
-	Recipe   = coresessionstate.Recipe
+	Snapshot         = coresessionstate.Snapshot
+	Window           = coresessionstate.Window
+	Pane             = coresessionstate.Pane
+	Recipe           = coresessionstate.Recipe
+	ResourceMetadata = coresessionstate.ResourceMetadata
 )
 
 const (
