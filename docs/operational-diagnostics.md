@@ -230,7 +230,7 @@ failures are never recursively journaled.
 
 ## Inspecting records
 
-Use `projmux diagnostics log`; see [cli.md](cli.md#diagnostics). All text,
+Use `projmux diagnostics log`; see [cli-guide.md](cli-guide.md#diagnostics). All text,
 JSONL, tail, and filter views consume the same tolerant reader. A successful
 viewer read is excluded from success logging, so inspection does not create a
 recursion loop.
@@ -278,7 +278,7 @@ candidates only; Phase 6 removes, renames, ignores, or changes none of them.
 ## Explicit support report
 
 `projmux diagnostics report [--output <path>]` previews and then atomically
-publishes a private local `tar.gz`; see [cli.md](cli.md#diagnostics). The
+publishes a private local `tar.gz`; see [cli-guide.md](cli-guide.md#diagnostics). The
 manifest records report schema version 2, `default-hash-v1` redaction, every
 included entry, and stable missing/corrupt/permission omission reasons. Doctor
 JSON schema version 2 and the bounded operations decoder are reused rather than

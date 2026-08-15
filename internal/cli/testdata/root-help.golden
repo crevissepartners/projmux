@@ -22,7 +22,7 @@ Commands:
   rebind    Rebind a Project to a new absolute root without moving files
   rename    Rename a Projmux resource metadata.name
   resources Inspect live Project, Window, and Pane CPU/RSS attribution
-  restore   Restore a saved session snapshot
+  restore   Preview a saved session snapshot restore (--dry-run only in this release)
   runtime   Manage the live and ephemeral tmux runtime inventory
   sessions  Pick and open an existing tmux session
   session-state  Inspect and manage saved tmux session snapshots

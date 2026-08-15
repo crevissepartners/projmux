@@ -392,6 +392,23 @@ The hardcoded `prefix s r` sibling is usage-specific: it runs the existing
 throttled collector and then reopens the same display-only usage popup from
 cache.
 
+## Related design and inventory notes
+
+Contributor-facing companions to this document. They are design records and
+inventories rather than user documentation, so they are linked from here rather
+than from the README docs index.
+
+- [globalization.md](globalization.md) — the globalization contract: which
+  user-facing string families are translatable and how they are classified.
+- [migration-plan.md](migration-plan.md) — the standalone plan the shell-to-Go
+  migration follows, slice by slice.
+- [settings-ia.md](settings-ia.md) — the Settings information architecture:
+  section ownership, row density, and feedback rules.
+- [shell-autostart.md](shell-autostart.md) — shell auto-start integration and
+  its opt-out behavior.
+- [tmux-surface-inventory.md](tmux-surface-inventory.md) — the inventory of tmux
+  options, hooks, and bindings projmux owns.
+
 ## Non-goals
 
 - replacing tmux

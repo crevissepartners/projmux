@@ -143,7 +143,8 @@ Templates and naming conventions for Claude, Codex, and other agents are in
 - [Configuration](docs/configuration.md)
 - [Terminal Keybindings](docs/keybindings.md)
 - [AI Agent Shortcuts](docs/ai-agent-shortcuts.md)
-- [CLI Reference](docs/cli.md)
+- [CLI Reference](docs/cli.md) — generated from the command manifest
+- [CLI Task Guide](docs/cli-guide.md)
 - [Statusbar](docs/statusbar.md)
 - [Hooks](docs/hooks.md)
 - [Usage tracking](docs/usage-tracking.md)
