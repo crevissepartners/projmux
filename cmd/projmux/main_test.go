@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/app"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 )
 
 type testExitError struct{ code int }
@@ -147,5 +149,81 @@ func TestMetadataConflictsReachExitCodeTwoThroughTheUsageErrorPath(t *testing.T)
 				t.Fatalf("stderr = %q, want the metadata message", stderr.String())
 			}
 		})
+	}
+}
+
+// TestSelectorCardinalityFailureReachesExitCodeTwoWithNoStdout proves the
+// selector engine's bounded ambiguity error lands on the CLI's exit code 2
+// through the same usage-error seam, with the whole listing on stderr and zero
+// bytes on stdout.
+func TestSelectorCardinalityFailureReachesExitCodeTwoWithNoStdout(t *testing.T) {
+	t.Parallel()
+
+	// Two Panes named "zsh" in two Windows: a legal registry, and an ambiguous
+	// exact-one read.
+	registry := coremetadata.NewRegistry()
+	registry.Projects = []coremetadata.Project{{
+		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
+		Metadata: coremetadata.ObjectMeta{UID: "prj-1", Name: "alpha"},
+		Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha"},
+	}}
+	registry.NameReservations = []coremetadata.NameReservation{
+		{Kind: coremetadata.KindProject, Name: "alpha", UID: "prj-1"},
+		{Scope: "prj-1", Kind: coremetadata.KindWindow, Name: "one", UID: "win-1"},
+		{Scope: "prj-1", Kind: coremetadata.KindWindow, Name: "two", UID: "win-2"},
+		{Scope: "win-1", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-1"},
+		{Scope: "win-2", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-2"},
+	}
+	for _, window := range []struct{ uid, name, pane string }{{"win-1", "one", "pan-1"}, {"win-2", "two", "pan-2"}} {
+		registry.Windows = append(registry.Windows, coremetadata.Window{
+			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
+			Metadata: coremetadata.ObjectMeta{UID: window.uid, Name: window.name,
+				OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-1"}},
+			Spec: coremetadata.WindowSpec{PrimaryPaneRef: window.pane},
+		})
+		registry.Panes = append(registry.Panes, coremetadata.Pane{
+			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
+			Metadata: coremetadata.ObjectMeta{UID: window.pane, Name: "zsh",
+				OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindWindow, UID: window.uid}},
+			Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell},
+		})
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("fixture is not a valid registry: %v", err)
+	}
+
+	ref, err := selector.ParseRef(coremetadata.KindPane, "zsh")
+	if err != nil {
+		t.Fatalf("ParseRef error = %v", err)
+	}
+	query := selector.Query{Panes: []selector.Ref{ref}}
+	resolution, err := selector.New(registry).ResolvePanes(query)
+	if err != nil {
+		t.Fatalf("ResolvePanes error = %v", err)
+	}
+	source := selector.Enforce(
+		selector.Target{Verb: selector.VerbGet, Kind: coremetadata.KindPane},
+		selector.DescribeSelector(query), resolution)
+	if source == nil {
+		t.Fatal("an ambiguous exact-one read succeeded")
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := executeCLI(func() error {
+		// A read route writes nothing before its resolution succeeds.
+		return app.MapMetadataError(source)
+	}, func(error) {}, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want 0 bytes", stdout.String())
+	}
+	if stderr.String() != source.Error()+"\n" {
+		t.Fatalf("stderr = %q, want the bounded ambiguity listing", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "want exactly one") ||
+		!strings.Contains(stderr.String(), "owner=project/alpha window/one") {
+		t.Fatalf("stderr does not carry the bounded candidate context:\n%s", stderr.String())
 	}
 }

@@ -6,6 +6,7 @@ current hidden=false disableFlagParsing=true args=true children=0
 diagnostics hidden=false disableFlagParsing=true args=true children=0
 doctor hidden=false disableFlagParsing=true args=true children=0
 focus hidden=false disableFlagParsing=true args=true children=0
+get hidden=false disableFlagParsing=true args=true children=0
 help hidden=false disableFlagParsing=true args=true children=0
 hook hidden=false disableFlagParsing=true args=true children=0
 key-broker hidden=true disableFlagParsing=true args=true children=0

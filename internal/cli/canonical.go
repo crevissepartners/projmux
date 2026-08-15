@@ -37,7 +37,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{
 		Spelling: "get pane",
 		Summary:  "Read one Pane resource",
-		Sources:  []string{"current"},
+		Sources:  []string{"current", "get"},
 		Outputs:  projectionCatalog,
 		// `cwd` is a Pane-read route-local field projection. It is not a
 		// member of the shared create output enum, and using it on another

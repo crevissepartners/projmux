@@ -99,6 +99,7 @@ type App struct {
 	doctor       *doctorCommand
 	diagnostics  *diagnosticsCommand
 	focus        *focusCommand
+	get          *getCommand
 	hook         *hookCommand
 	keyBroker    *keyBrokerCommand
 	kill         *killCommand
@@ -186,6 +187,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		doctor:       newDoctorCommand(),
 		diagnostics:  newDiagnosticsCommand(),
 		focus:        focusCmd,
+		get:          newGetCommand(),
 		hook:         newHookCommand(),
 		keyBroker:    newKeyBrokerCommand(),
 		kill:         kill,
@@ -249,6 +251,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"doctor":      a.doctor,
 		"diagnostics": a.diagnostics,
 		"focus":       a.focus,
+		"get":         a.get,
 		"hook":        a.hook,
 		// Hidden Darwin helper: captures physical portable key chords while a
 		// projmux tmux client is focused and feeds them through its root table.
@@ -322,7 +325,12 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "doctor" {
+	switch args[0] {
+	// Doctor is a read-only diagnostic, and `get` is a read-only resource
+	// resolution. Neither may trigger the otherwise automatic legacy-hook
+	// filesystem migration: a read that resolves nothing must leave zero
+	// mutations behind, including this one.
+	case "doctor", "get":
 		return false
 	}
 	return !(len(args) >= 2 && args[0] == "diagnostics" && args[1] == "report")

@@ -667,3 +667,82 @@ func TestDefaultStorePathFollowsTheStateDirectoryLayout(t *testing.T) {
 		t.Fatalf("PathFor = %q, want %q", got, want)
 	}
 }
+
+// TestLoadReadOnlyCreatesNoDirectoryOrLockForAnAbsentRegistry pins the
+// zero-side-effect read the read-only routes need.
+//
+// Load takes the cross-process lock, and acquiring it creates the registry
+// directory and a lock file. An operator who has never registered a resource
+// must not get <state>/projmux/metadata/ materialized just by running a read,
+// so LoadReadOnly short-circuits before any directory is touched.
+func TestLoadReadOnlyCreatesNoDirectoryOrLockForAnAbsentRegistry(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	store := NewStore(PathFor(stateDir))
+	store.SetClock(func() time.Time { return fixedNow })
+	metadataDir := filepath.Dir(store.Path())
+
+	registry, err := store.LoadReadOnly()
+	if err != nil {
+		t.Fatalf("LoadReadOnly: %v", err)
+	}
+	if registry.SchemaVersion != coremetadata.SchemaVersion || len(registry.Projects) != 0 {
+		t.Fatalf("registry = %+v, want an empty current-version registry", registry)
+	}
+	if _, err := os.Stat(metadataDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("LoadReadOnly created %s: %v", metadataDir, err)
+	}
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		t.Fatalf("read state dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("LoadReadOnly created %d entries under the state dir", len(entries))
+	}
+
+	// A nil store answers an empty registry rather than panicking, matching
+	// Load.
+	var nilStore *Store
+	if registry, err = nilStore.LoadReadOnly(); err != nil || registry.SchemaVersion != coremetadata.SchemaVersion {
+		t.Fatalf("nil store LoadReadOnly = %+v, %v", registry, err)
+	}
+}
+
+// TestLoadReadOnlyReadsAnExistingRegistryAndStillFailsClosed proves the
+// short-circuit does not weaken the fail-closed contract: once the file exists,
+// LoadReadOnly is the ordinary locked read.
+func TestLoadReadOnlyReadsAnExistingRegistryAndStillFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	mutator := testMutator(map[string]bool{"/src/projmux": true})
+	if _, err := store.Update(func(registry *coremetadata.Registry) error {
+		_, err := mutator.RegisterProject(registry, coremetadata.RegisterProjectOptions{
+			Root:         "/src/projmux",
+			DefaultShell: "/bin/zsh",
+			OperationID:  "op-readonly-seed",
+		})
+		return err
+	}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	registry, err := store.LoadReadOnly()
+	if err != nil {
+		t.Fatalf("LoadReadOnly: %v", err)
+	}
+	if len(registry.Projects) != 1 {
+		t.Fatalf("registry holds %d projects, want 1", len(registry.Projects))
+	}
+
+	writeRegistryFile(t, store, fmt.Sprintf(`{"apiVersion":%q,"schemaVersion":%d}`,
+		coremetadata.APIVersion, coremetadata.SchemaVersion+1))
+	before := readFile(t, store.Path())
+	if _, err := store.LoadReadOnly(); !errors.Is(err, coremetadata.ErrSchemaTooNew) {
+		t.Fatalf("LoadReadOnly on a newer envelope = %v, want ErrSchemaTooNew", err)
+	}
+	if after := readFile(t, store.Path()); after != before {
+		t.Fatal("a refused LoadReadOnly rewrote the registry file")
+	}
+}

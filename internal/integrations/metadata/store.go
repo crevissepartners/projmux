@@ -158,6 +158,31 @@ func (s *Store) Load() (coremetadata.Registry, error) {
 	return out, nil
 }
 
+// LoadReadOnly reads the registry without creating anything at all.
+//
+// Load takes the cross-process lock, and acquiring that lock creates the
+// registry directory and a lock file. A read-only route must not do that: it
+// would materialize <state>/projmux/metadata/ for an operator who has never
+// registered a resource. So an absent registry file short-circuits to a fresh
+// empty registry before any directory is touched.
+//
+// When the file does exist the normal locked read runs, whose directory already
+// exists. Skipping the lock entirely would also be safe for readers, because
+// every write lands through an atomic rename, but taking it keeps the read
+// consistent with a concurrent migration.
+func (s *Store) LoadReadOnly() (coremetadata.Registry, error) {
+	if s == nil {
+		return coremetadata.NewRegistry(), nil
+	}
+	if _, err := os.Stat(s.path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return coremetadata.NewRegistry(), nil
+		}
+		return coremetadata.Registry{}, fmt.Errorf("metadata: stat registry %s: %w", s.path, err)
+	}
+	return s.Load()
+}
+
 // Update runs fn against a private copy of the registry under the store lock
 // and writes the result only when fn and validation both succeed.
 //

@@ -7,10 +7,14 @@ import (
 	"testing"
 )
 
-// TestRouteCoverageHasExactlyOneDispositionAndNoOrphans is the Phase 0 coverage
-// audit. The compatibility contract requires all 33 current public routes plus
+// TestRouteCoverageHasExactlyOneDispositionAndNoOrphans is the route coverage
+// audit. The compatibility contract requires every current public route plus
 // the 2 hidden internal helpers to hold exactly one primary disposition, with
 // zero orphan routes, before any later Phase may move a namespace.
+//
+// The public count is 34: the 33 routes inventoried by the compatibility
+// contract plus the canonical `get` node, which the selector Phase added for
+// the read-only `get pane` resolution.
 func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	t.Parallel()
 
@@ -47,16 +51,18 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 33 {
-		t.Fatalf("public route count = %d, want 33", public)
+	if public != 34 {
+		t.Fatalf("public route count = %d, want 34", public)
 	}
 	if hidden != 2 {
 		t.Fatalf("hidden helper count = %d, want 2", hidden)
 	}
 	// The classification tally from the compatibility contract, counted over
-	// the 33 public top-level routes.
+	// the 34 public top-level routes. Canonical is 9 rather than the
+	// contract's 8 because the canonical `get` node is new surface, not one of
+	// the 33 inventoried current routes.
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical:     8,
+		DispositionCanonical:     9,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 		DispositionInternal:      5,
@@ -66,7 +72,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	}
 	// Both hidden helpers are internal plumbing.
 	wantTally := map[Disposition]int{
-		DispositionCanonical:     8,
+		DispositionCanonical:     9,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 		DispositionInternal:      7,
