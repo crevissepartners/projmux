@@ -247,7 +247,7 @@ func (m Mutator) importLegacyWindowTx(txn *Transaction, reg *Registry, op, proje
 		}
 
 		if provider == "" {
-			pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", LegacyPaneNameSeed(legacyPane, defaultShell), legacyPane.Command, cwd, now)
+			pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", LegacyPaneNameSeed(legacyPane, defaultShell), legacyPane.Command, cwd, nil, now)
 			if err != nil {
 				return err
 			}
@@ -286,7 +286,7 @@ func (m Mutator) importLegacyWindowTx(txn *Transaction, reg *Registry, op, proje
 		reg.Agents = append(reg.Agents, agent)
 		txn.record(KindAgent, agentUID)
 
-		pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, "", ManagedPaneNameBase(agentName), legacyPane.Command, cwd, now)
+		pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, "", ManagedPaneNameBase(agentName), legacyPane.Command, cwd, nil, now)
 		if err != nil {
 			return err
 		}

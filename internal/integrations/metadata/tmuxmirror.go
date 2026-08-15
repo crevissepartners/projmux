@@ -13,6 +13,13 @@ import (
 // fieldSep matches the separator convention used by the existing tmux
 // inventory adapter: an ASCII unit separator, escaped for the tmux format
 // language.
+//
+// The two spellings are not interchangeable. tmux renders a non-printable byte
+// in list output as its octal escape, so a format carrying the escaped spelling
+// comes back as the four literal characters `\037` on every supported version,
+// while a format carrying the raw byte comes back raw on tmux 3.6 and escaped on
+// tmux 3.5a. Formats therefore always use escapedFieldSep, and parsing folds
+// that spelling back to fieldSep before splitting.
 const (
 	fieldSep        = "\x1f"
 	escapedFieldSep = "\\037"
@@ -194,29 +201,60 @@ func (m Mirror) SessionForProjectUID(ctx context.Context, uid string) (string, e
 	return "", fmt.Errorf("metadata: no live session mirrors project uid %q", uid)
 }
 
+// LegacyTargets carries the tmux transport handles of one observed legacy
+// session, positionally aligned with the LegacySession the same observation
+// produced.
+//
+// The alignment is what lets a migration mirror the uids it just allocated back
+// onto exactly the tmux objects it imported. Without it the import result only
+// knows list positions, and a position is not a tmux target: window_index is
+// sparse and reorderable.
+type LegacyTargets struct {
+	// Windows[i] is the tmux window id of LegacySession.Windows[i].
+	Windows []string
+	// Panes[i][j] is the tmux pane id of LegacySession.Windows[i].Panes[j].
+	Panes [][]string
+}
+
 // ObserveLegacySession reads one live session's pre-v2 naming state so it can
 // be imported into the resource registry. It performs no writes.
 func (m Mirror) ObserveLegacySession(ctx context.Context, sessionName string) (coremetadata.LegacySession, error) {
+	legacy, _, err := m.ObserveLegacySessionTargets(ctx, sessionName)
+	return legacy, err
+}
+
+// ObserveLegacySessionTargets reads one live session's pre-v2 naming state
+// together with the tmux ids of every observed window and pane. It performs no
+// writes.
+func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName string) (coremetadata.LegacySession, LegacyTargets, error) {
 	rootOut, err := m.run(ctx, "display-message", "-p", "-t", sessionName, "-F", "#{"+tmuxopts.ProjectPathSession+"}")
 	if err != nil {
-		return coremetadata.LegacySession{}, fmt.Errorf("metadata: read session project path: %w", err)
+		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: read session project path: %w", err)
 	}
 	legacy := coremetadata.LegacySession{
 		Session: sessionName,
 		Root:    strings.TrimSpace(string(rootOut)),
 	}
+	var targets LegacyTargets
 
-	windowsOut, err := m.run(ctx, "list-windows", "-t", sessionName, "-F", tmuxFormat("#{window_index}", "#{window_name}", "#{"+tmuxopts.AutomaticRenameWindow+"}"))
+	windowsOut, err := m.run(ctx, "list-windows", "-t", sessionName, "-F", tmuxFormat(
+		"#{window_index}",
+		"#{window_name}",
+		"#{"+tmuxopts.AutomaticRenameWindow+"}",
+		"#{window_id}",
+	))
 	if err != nil {
-		return coremetadata.LegacySession{}, fmt.Errorf("metadata: list session windows: %w", err)
+		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: list session windows: %w", err)
 	}
 	indexOrder := map[string]int{}
-	for _, fields := range parseRows(string(windowsOut), 3) {
+	for _, fields := range parseRows(string(windowsOut), 4) {
 		indexOrder[fields[0]] = len(legacy.Windows)
 		legacy.Windows = append(legacy.Windows, coremetadata.LegacyWindow{
 			Name:            fields[1],
 			AutomaticRename: tmuxTruthyOption(fields[2]),
 		})
+		targets.Windows = append(targets.Windows, fields[3])
+		targets.Panes = append(targets.Panes, nil)
 	}
 
 	panesOut, err := m.run(ctx, "list-panes", "-s", "-t", sessionName, "-F", tmuxFormat(
@@ -227,11 +265,12 @@ func (m Mirror) ObserveLegacySession(ctx context.Context, sessionName string) (c
 		"#{pane_current_command}",
 		"#{pane_title}",
 		"#{pane_current_path}",
+		"#{pane_id}",
 	))
 	if err != nil {
-		return coremetadata.LegacySession{}, fmt.Errorf("metadata: list session panes: %w", err)
+		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: list session panes: %w", err)
 	}
-	for _, fields := range parseRows(string(panesOut), 7) {
+	for _, fields := range parseRows(string(panesOut), 8) {
 		position, ok := indexOrder[fields[0]]
 		if !ok {
 			continue
@@ -244,8 +283,9 @@ func (m Mirror) ObserveLegacySession(ctx context.Context, sessionName string) (c
 			Title:    fields[5],
 			CWD:      fields[6],
 		})
+		targets.Panes[position] = append(targets.Panes[position], fields[7])
 	}
-	return legacy, nil
+	return legacy, targets, nil
 }
 
 // tmuxTruthyOption reads a tmux boolean option value.
@@ -263,6 +303,10 @@ func tmuxFormat(fields ...string) string {
 }
 
 func parseRows(output string, want int) [][]string {
+	// Fold the escaped separator tmux prints back into the raw byte. A field
+	// value that literally contains the four characters `\037` would be split
+	// here; no projmux-owned option, tmux id, or path ever does.
+	output = strings.ReplaceAll(output, escapedFieldSep, fieldSep)
 	var rows [][]string
 	for line := range strings.SplitSeq(output, "\n") {
 		line = strings.TrimRight(line, "\r")

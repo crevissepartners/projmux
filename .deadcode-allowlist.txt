@@ -285,12 +285,16 @@ RouteLocalFieldProjections
 #
 # The public verb-to-kind Phase consumed the mutation, naming, transaction, and
 # registry-write surface of this block through the get/describe/rename/rebind/
-# delete/prune routes, so those entries were removed from this list. What
-# remains is the surface no public route reaches yet: the tmux transport mirror
-# (Phase 5 internal plumbing and Phase 6-7 materialization), snapshot
-# reconciliation, and the schema migration machinery whose production migration
-# set is still deliberately empty. It MUST NOT be removed; it must instead keep
-# shrinking as those Phases wire it. Symbol matching is exact and
+# delete/prune routes. The detached materialization Phase then consumed the whole
+# tmux transport mirror: the resource-backed `create window` / `create pane`
+# routes mirror allocated identity onto live sessions, windows, and panes, and the
+# mutation-route registry reconciliation observes and migrates pre-v2 sessions
+# through it. Both groups of entries were removed from this list.
+#
+# What remains is the surface no production path reaches yet: snapshot
+# reconciliation and the schema migration machinery whose production migration set
+# is still deliberately empty. It MUST NOT be removed; it must instead keep
+# shrinking as later Phases wire it. Symbol matching is exact and
 # package-agnostic, which is the documented limitation of this baseline
 # mechanism.
 # ---------------------------------------------------------------------------
@@ -298,23 +302,6 @@ AttachSnapshotMetadata
 ClassifySchemaVersion
 Kinds
 MigrateRegistry
-Mirror.DisableAutomaticRename
-Mirror.MirrorPane
-Mirror.MirrorProject
-Mirror.MirrorWindow
-Mirror.ObserveLegacySession
-Mirror.PaneTargetForUID
-Mirror.RenamePane
-Mirror.RenameWindow
-Mirror.ResolvePaneUID
-Mirror.ResolveWindowUID
-Mirror.SessionForProjectUID
-Mirror.WindowTargetForUID
-Mirror.disableAutomaticRename
-Mirror.run
-Mirror.writePaneName
-Mirror.writeWindowName
-NewMirror
 ReconcileSnapshot
 Registry.snapshotPanesOf
 SchemaAction.String
@@ -323,11 +310,8 @@ Store.Path
 Store.SetClock
 UIDKind
 WindowTarget
-parseRows
 resolveSnapshotProject
 scopeFor
-tmuxFormat
-tmuxTruthyOption
 Registry.rebuildMissingReservations
 
 # ---------------------------------------------------------------------------
@@ -338,12 +322,29 @@ Registry.rebuildMissingReservations
 # matrix.
 #
 # The public verb-to-kind Phase wired the Window resolution and the resolved-uid
-# accessor into real routes, so those entries were removed. What remains are the
-# two whole-table accessors: `Matrix` is the copy used by the cardinality
-# adoption test, and `StageOrder` is the copy used by the stage-order test. The
-# routes themselves consume the matrix through `CardinalityFor`/`Enforce` and
-# the pipeline through `Resolution.Trace`, so both accessors stay reachable only
-# from tests until a generated reference or a diagnostics surface prints them.
+# accessor into real routes, so those entries were removed. The detached
+# materialization Phase then settled the two whole-table accessors that were
+# left, one each way.
+#
+# `StageOrder` was retired. Every one of its callers was in this package's own
+# tests, and Go in-package tests read unexported identifiers directly, so the
+# accessor did not need to exist at all: the tests now read the unexported
+# `stageOrder` table itself. Note the mechanism -- unexporting the function would
+# NOT have retired the entry, because deadcode analyses the non-test build and
+# reports an unexported test-only function just the same. Removing the function
+# is what removes the finding, which is the same move the Agent namespace Phase
+# used when it kept in-package tests on an unexported table instead of adding an
+# exported helper.
+#
+# `Matrix` stays, and stays exported, as a permanent cross-package test seam. It
+# is read from internal/app/cardinality_adoption_test.go, which is the record
+# that keeps the declared <verb, kind> matrix and the routes that enforce it from
+# drifting apart; a test in a different package cannot reach an unexported
+# symbol. Production consumes the matrix through `CardinalityFor`/`Enforce` and
+# the pipeline through `Resolution.Trace`, so a whole-table copy has no
+# production caller by design and manufacturing one would be worse than this
+# entry. This is NOT a shrinking-backlog item: it is not expected to be consumed
+# by a later Phase, and its absence from a future Phase's reclaim list is not a
+# signal about anything.
 # ---------------------------------------------------------------------------
 Matrix
-StageOrder

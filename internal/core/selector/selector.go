@@ -104,14 +104,14 @@ const (
 // stageOrder is the canonical stage sequence. Resolution.Trace always reports
 // exactly this sequence, so a reordering is a test failure rather than a silent
 // behavior change.
+//
+// There is deliberately no accessor. Every consumer of the order is one of this
+// package's own tests, which read this table directly; production consumes the
+// pipeline through Resolution.Trace. An exported copy-returning accessor would
+// be a test-only symbol on the production surface, and an unexported one would
+// still be a test-only function. Neither is worth carrying, so callers that need
+// a mutable list copy this slice themselves.
 var stageOrder = []Stage{StageNameUIDUnion, StageLabelFilter, StageUIDDedupe}
-
-// StageOrder returns the fixed resolution stage order. Callers receive a copy.
-func StageOrder() []Stage {
-	out := make([]Stage, len(stageOrder))
-	copy(out, stageOrder)
-	return out
-}
 
 // TraceStep records how many resources survived one stage.
 type TraceStep struct {

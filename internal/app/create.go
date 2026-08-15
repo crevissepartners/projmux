@@ -1,18 +1,24 @@
 package app
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 // createKinds lists the resource kinds `create` implements, in help order.
-var createKinds = []string{"agent", "pane"}
+var createKinds = []string{"window", "pane", "agent"}
 
 // placementDirections is the closed placement enum shared by the Pane and Agent
 // create routes. `left`/`up` are outside current parity and stay out of v2's
@@ -43,10 +49,50 @@ const defaultPlacement = "right"
 //     `--provider` as well is a usage error rather than a silent winner.
 type createCommand struct {
 	ai rawArgvCommand
+	// store is the locked registry file. Only the resource-backed routes touch
+	// it; the legacy `create pane` path never opens it.
+	store *resourceStore
+	// reconciler brings the registry up to date with the machine before a
+	// selector is resolved. Without it `--project <name>` has nothing to match:
+	// there is no other production path that registers a Project.
+	reconciler *registryReconciler
+	// runtime performs the detached tmux mutations and owns the rollback.
+	runtime *materializer
+	// shell is the configured shell whose basename seeds default names and
+	// whose process a payload-free Pane runs.
+	shell          string
+	sessionNameFor func(root string) string
+	newOperationID func() (string, error)
 }
 
 func newCreateCommand() *createCommand {
-	return &createCommand{}
+	runner := inttmux.ExecRunner{}
+	client := defaultTmuxClient()
+	home, _ := os.UserHomeDir()
+	namer := coresessions.NewNamer(home)
+	return &createCommand{
+		store:      newResourceStore(),
+		reconciler: newRegistryReconciler(runner, client),
+		runtime: &materializer{
+			runner:   runner,
+			mirror:   intmetadata.NewMirror(runner),
+			sessions: client,
+			warn:     os.Stderr,
+		},
+		shell:          configuredShell(os.Getenv),
+		sessionNameFor: namer.SessionName,
+		newOperationID: newCreateOperationID,
+	}
+}
+
+// newCreateOperationID mints the id that labels one create transaction and its
+// created-resource ledger.
+func newCreateOperationID() (string, error) {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("create: read operation id entropy: %w", err)
+	}
+	return "op-" + hex.EncodeToString(buf), nil
 }
 
 // Run dispatches one `create <kind|provider>` invocation.
@@ -60,7 +106,15 @@ func (c *createCommand) Run(args []string, stdout, stderr io.Writer) error {
 	switch token {
 	case "agent":
 		return c.runAgent(rest, stdout, stderr)
+	case "window":
+		return c.runResourceWindow(rest, stdout, stderr)
 	case "pane":
+		// Dispatch discriminator, not a mode flag. `--project` selects the
+		// canonical resource-backed Pane create; without it the invocation is
+		// the shell split this route already shipped, kept byte-identical.
+		if hasProjectFlag(rest) {
+			return c.runResourcePane(rest, stdout, stderr)
+		}
 		return c.runPane(rest, stdout, stderr)
 	}
 	// A provider shortcut normalizes to `create agent --provider <id>`; the

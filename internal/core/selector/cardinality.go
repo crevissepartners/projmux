@@ -99,10 +99,15 @@ var matrix = map[Target]Cardinality{
 	{Verb: VerbRename, Kind: metadata.KindPane}:    CardinalityExactOne,
 	{Verb: VerbRebind, Kind: metadata.KindProject}: CardinalityExactOne,
 
-	// create fans out over its resolved parent Windows and anchors on exactly
-	// one Pane inside each of them.
-	{Verb: VerbCreate, Kind: metadata.KindWindow}: CardinalityAtLeastOne,
-	{Verb: VerbCreate, Kind: metadata.KindPane}:   CardinalityExactOne,
+	// create resolves an exact-one Project scope, fans out over its resolved
+	// parent Windows, and anchors on exactly one Pane inside each of them.
+	//
+	// The Project cell is what `create window` selects: a Window is created
+	// below exactly one Project, so an ambiguous or absent --project is a usage
+	// error rather than a fan-out.
+	{Verb: VerbCreate, Kind: metadata.KindProject}: CardinalityExactOne,
+	{Verb: VerbCreate, Kind: metadata.KindWindow}:  CardinalityAtLeastOne,
+	{Verb: VerbCreate, Kind: metadata.KindPane}:    CardinalityExactOne,
 
 	// resume addresses exactly one existing Agent. It never fans out and never
 	// falls back to a focus target: rebinding the wrong conversation is worse

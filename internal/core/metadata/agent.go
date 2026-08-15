@@ -138,7 +138,7 @@ func (m Mutator) AttachAgentPane(reg *Registry, agentUID string, declared Bootst
 
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, declared.Name, ManagedPaneNameBase(agent.Metadata.Name), declared.Command, declared.CWD, now)
+	pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, declared.Name, ManagedPaneNameBase(agent.Metadata.Name), declared.Command, declared.CWD, declared.Labels, now)
 	if err != nil {
 		txn.Rollback()
 		return Pane{}, err
