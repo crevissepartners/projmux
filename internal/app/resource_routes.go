@@ -98,6 +98,27 @@ type resourceQueryFlags struct {
 	agents   []string
 	labels   repeatedFlag
 	output   string
+	// active observes the tmux target this invocation runs in, for the
+	// empty-selector fallback described in active_target.go.
+	//
+	// It is nil on every route that has not adopted the fallback, and a nil
+	// lookup is exactly the pre-fallback behavior, so opting in is a per-route
+	// decision made where the flags are built rather than a property of this
+	// struct. The destructive routes deliberately do not set it.
+	active activeTargetLookup
+}
+
+// selectorIsEmpty reports whether the invocation carried no selector at all:
+// no positional reference, no --project/--window/--pane occurrence, and no
+// --selector label.
+//
+// This is the only condition under which the active-target fallback fires. A
+// partially specified selector keeps its exact pre-fallback meaning, because
+// blending an implicit target into an explicit scope would make the same argv
+// mean different things in and out of tmux.
+func (f *resourceQueryFlags) selectorIsEmpty() bool {
+	return len(f.projects) == 0 && len(f.windows) == 0 && len(f.panes) == 0 &&
+		len(f.agents) == 0 && len(f.labels) == 0
 }
 
 func (f *resourceQueryFlags) register(fs *flag.FlagSet) {
@@ -257,10 +278,26 @@ func (f *resourceQueryFlags) resolveQuery(registry coremetadata.Registry, query 
 // resolve runs the kind's resolution pipeline and enforces the declared
 // <verb, kind> cardinality. Nothing is written before Enforce returns, so a
 // cardinality failure leaves zero bytes on stdout and zero mutations.
+//
+// A completely empty selector on a singular route resolves the active tmux
+// target first. The declared cardinality is untouched by that: the fallback
+// contributes exactly one uid occurrence and the same Enforce call still decides
+// whether the cell is satisfied. The list routes are excluded because a plural
+// read is a 0..N inventory; narrowing `get panes` to the focused pane would
+// answer a different question.
 func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry coremetadata.Registry) (selector.Resolution, error) {
 	query, err := f.query()
 	if err != nil {
 		return selector.Resolution{}, err
+	}
+	if !list && f.selectorIsEmpty() {
+		ref, resolved, err := activeTargetRef(f.active, f.kind, registry)
+		if err != nil {
+			return selector.Resolution{}, err
+		}
+		if resolved {
+			query = withActiveTargetRef(query, f.kind, ref)
+		}
 	}
 	resolution, err := f.resolveQuery(registry, query)
 	if err != nil {

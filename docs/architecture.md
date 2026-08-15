@@ -304,6 +304,49 @@ tmux transport mirror:
   `Pane.status.displayTitle` (Agent topic → known shell → raw pane title) is
   secondary and is never a selector, an identity, or a Window name source.
 
+Selector and the implicit active target:
+
+- A selector value is either `uid:<uid>` or a `metadata.name`. There is no
+  bare-uid form; `displayName`, `spec.root`, and tmux `%N`/`@N`/`$N` handles are
+  structurally unmatchable. `--project` is at-most-once and fixes the scope,
+  `--window`/`--pane` repeat and union, `--selector key=value` repeats and ANDs,
+  and how many targets a `<verb, kind>` pair accepts comes from one declared
+  cardinality matrix rather than per-route rules.
+- Inside tmux, an invocation of a **singular read or rename verb** that carries
+  no selector at all resolves the **active tmux target**: `get pane`,
+  `describe project|window|pane|agent`, `rename project|window|pane`, and
+  `rebind project`. Any reference, scope flag, or label keeps the pre-existing
+  whole-scope meaning; the plural 0..N reads, `create`, and `delete` are
+  unaffected.
+- There is **no sentinel value token**. `current` and `active` pass
+  `ValidateName`, so `--pane current` would shadow a resource that legitimately
+  carries that name. Omission is the only spelling. If an explicit one is ever
+  needed, `.` (reserved by `ValidateName`) and `@` (a forbidden name rune) are
+  the two collision-free candidates; neither is claimed today.
+- Being inside tmux is decided from `$TMUX_PANE` plus `$TMUX`, and that pane id
+  is passed as an explicit `-t` target. It is deliberately **not** decided by
+  whether a tmux command succeeds: a bare `display-message -p` from outside a
+  client still answers, for the most-recently-used session, which would silently
+  select a wrong target.
+- Only two options are read: `@projmux_pane_uid` on the active pane and
+  `@projmux_window_uid` on its window (window-scoped options resolve through a
+  pane target). Every ancestor above them comes from `ownerRef` — the Project is
+  the owner of the active Window, the Agent is the owner of the active Pane.
+  The session-scoped `@projmux_project_uid` is **not** consulted: it is
+  measurably empty on live sessions, so trusting it would refuse targets the
+  owner chain resolves.
+- There is no persistent, queryable scope and no `set-context` equivalent. The
+  observation is re-read on every invocation, which costs one `display-message`
+  and leaves nothing to go stale. `describe pane` with no selector is itself the
+  preview of what the family will act on, because every verb resolves through
+  the same seam.
+- An active target that maps onto no registry resource is a **refusal**, not a
+  fallthrough: exit `2`, zero stdout, no resource selected, nothing written, and
+  a message naming what was inspected. It is deliberately not the
+  `matched N ..., want exactly one` cardinality error, because an unmanaged pane
+  carrying no `@projmux_pane_uid` is the common case and presenting it as
+  ambiguity would hide the cause.
+
 ## Naming metadata model
 
 Projmux keeps visible naming separate from source metadata:

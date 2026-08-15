@@ -37,6 +37,10 @@ type getCommand struct {
 	currentPath  currentPathResolver
 	notify       rawArgvCommand
 	snapshots    rawArgvCommand
+	// activeTarget is the empty-selector fallback seam of the singular Pane
+	// read; see active_target.go. It is deliberately unrelated to `--current`:
+	// see runPane.
+	activeTarget activeTargetLookup
 }
 
 func newGetCommand() *getCommand {
@@ -45,7 +49,8 @@ func newGetCommand() *getCommand {
 		// No lifecycle recorder: the registry-backed reads perform no lifecycle
 		// operation, so they must not open an operations journal entry. The two
 		// delegating kinds keep whatever their own handler already records.
-		currentPath: defaultTmuxClient(),
+		currentPath:  defaultTmuxClient(),
+		activeTarget: defaultActiveTargetLookup(),
 	}
 }
 
@@ -170,6 +175,14 @@ func (c *getCommand) runPane(args []string, stdout, stderr io.Writer) error {
 		return usageError("-o cwd is only valid on the Pane current read; use `projmux get pane --current -o cwd`")
 	}
 
+	// `--current` and the empty-selector fallback below are two different
+	// routes to two different answers, which is why both survive. `--current`
+	// never reads the registry at all: it reports the live tmux
+	// `#{pane_current_path}` of the focused pane as a bare scalar, and it
+	// accepts no projection other than `cwd`. The fallback resolves a registry
+	// Pane *resource* and renders the shared resource projection. Different
+	// source, different output, different failure surface, so neither is a
+	// duplicate of the other and nothing is deprecated here.
 	if current {
 		if len(projects) > 0 || len(windows) > 0 || len(panes) > 0 || len(labels) > 0 {
 			return usageError("get pane --current reads the active tmux pane and does not accept selectors")
@@ -187,6 +200,18 @@ func (c *getCommand) runPane(args []string, stdout, stderr io.Writer) error {
 	registry, err := c.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)
+	}
+	// `get pane` builds its own flag set rather than sharing resourceQueryFlags,
+	// so the fallback is applied here against the same emptiness rule: any
+	// positional-free selector occurrence at all keeps the pre-fallback meaning.
+	if len(projects) == 0 && len(windows) == 0 && len(panes) == 0 && len(labels) == 0 {
+		ref, resolved, err := activeTargetRef(c.activeTarget, coremetadata.KindPane, registry)
+		if err != nil {
+			return MapMetadataError(err)
+		}
+		if resolved {
+			query = withActiveTargetRef(query, coremetadata.KindPane, ref)
+		}
 	}
 	resolution, err := selector.New(registry).ResolvePanes(query)
 	if err != nil {

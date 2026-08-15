@@ -24,10 +24,15 @@ var rebindKinds = []string{"project"}
 // shared inode, or scan order can never fold two Projects onto one uid.
 type rebindCommand struct {
 	store *resourceStore
+	// activeTarget is the empty-selector fallback seam; see active_target.go.
+	activeTarget activeTargetLookup
 }
 
 func newRebindCommand() *rebindCommand {
-	return &rebindCommand{store: newResourceStore()}
+	return &rebindCommand{
+		store:        newResourceStore(),
+		activeTarget: defaultActiveTargetLookup(),
+	}
 }
 
 // Run dispatches one `rebind <kind>` invocation.
@@ -47,7 +52,7 @@ func (c *rebindCommand) runProject(args []string, stdout, stderr io.Writer) erro
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	flags := resourceQueryFlags{kind: coremetadata.KindProject}
+	flags := resourceQueryFlags{kind: coremetadata.KindProject, active: c.activeTarget}
 	flags.register(fs)
 	root := fs.String("root", "", "the new absolute project root; it must already exist")
 	refs, err := parseWithPositionals(fs, args)

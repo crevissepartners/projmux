@@ -525,9 +525,19 @@ func unresolvedWindowNames(registry coremetadata.Registry, project coremetadata.
 //
 // An explicit --pane is resolved inside that Window's own owner scope and must
 // be exactly one. With no --pane the persisted spec.primaryPaneRef is the
-// anchor: there is deliberately no fallback to the active, focused, or
-// last-used Pane, and a missing or stale ref is a usage error rather than a
-// silent repair.
+// anchor: the *anchor* resolution has deliberately no fallback to the active,
+// focused, or last-used Pane, and a missing or stale ref is a usage error rather
+// than a silent repair.
+//
+// That is a property of this anchor, not a repo-wide rule. The empty-selector
+// read and rename verbs do resolve the active tmux target (see
+// active_target.go), because for them the omitted selector *is* the whole
+// selector and the resolved resource is what the operator is looking at. Here
+// the omitted --pane is not the selector: --project and --window already fixed
+// the target set, and the anchor is the structural point the new Pane is split
+// from inside each of them. Substituting the focused pane would silently split
+// somewhere the invocation never addressed, possibly in a different Window
+// entirely.
 func (c *createCommand) resolveAnchor(registry coremetadata.Registry, project coremetadata.Project, windowUID string, flags resourceCreateFlags, spelling string) (string, error) {
 	window, ok := registry.Window(windowUID)
 	if !ok {

@@ -22,10 +22,15 @@ var renameKinds = []string{"project", "window", "pane"}
 // reserved in the target scope is a usage error with zero mutations.
 type renameCommand struct {
 	store *resourceStore
+	// activeTarget is the empty-selector fallback seam; see active_target.go.
+	activeTarget activeTargetLookup
 }
 
 func newRenameCommand() *renameCommand {
-	return &renameCommand{store: newResourceStore()}
+	return &renameCommand{
+		store:        newResourceStore(),
+		activeTarget: defaultActiveTargetLookup(),
+	}
 }
 
 // Run dispatches one `rename <kind>` invocation.
@@ -46,7 +51,7 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	flags := resourceQueryFlags{kind: kind}
+	flags := resourceQueryFlags{kind: kind, active: c.activeTarget}
 	flags.register(fs)
 	name := fs.String("name", "", "the new Projmux metadata.name")
 	refs, err := parseWithPositionals(fs, args)

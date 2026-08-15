@@ -488,4 +488,43 @@ func TestSelectorErrorsAreUsageErrors(t *testing.T) {
 	}
 }
 
+// TestNoValueTokenCanBecomeAnActiveTargetSentinel is the falsifiable record
+// behind the decision that the implicit active target has no spelling of its
+// own: an empty selector is the only way to ask for it.
+//
+// The tempting alternative -- `--pane current`, `--pane active` -- cannot work.
+// ParseRef takes any non-`uid:` token as a bare metadata.name, and ValidateName
+// accepts both words, so a resource really can be named `current`. A sentinel
+// would therefore shadow that resource silently: the same argv would mean "the
+// pane named current" on one machine and "the focused pane" on another, and the
+// operator would have no way to address the former.
+//
+// The test also records the escape hatch for a future Phase that wants an
+// explicit spelling: `.` is already reserved by ValidateName and `@` is already
+// a forbidden name rune, so either could become a sentinel without shadowing
+// anything. Neither is claimed here.
+func TestNoValueTokenCanBecomeAnActiveTargetSentinel(t *testing.T) {
+	t.Parallel()
+
+	for _, candidate := range []string{"current", "active", "focused", "this", "here", "self"} {
+		if err := metadata.ValidateName(candidate); err != nil {
+			t.Fatalf("%q is not a legal resource name (%v); it could be a sentinel after all", candidate, err)
+		}
+		ref, err := ParseRef(metadata.KindPane, candidate)
+		if err != nil {
+			t.Fatalf("ParseRef(%q) error = %v", candidate, err)
+		}
+		if ref.IsUID() || ref.Name != candidate {
+			t.Fatalf("ParseRef(%q) = %+v, want a bare name occurrence", candidate, ref)
+		}
+	}
+
+	// The two collision-free candidates, recorded but deliberately unused.
+	for _, reserved := range []string{".", "@"} {
+		if err := metadata.ValidateName(reserved); err == nil {
+			t.Fatalf("%q became a legal name; the documented sentinel escape hatch is gone", reserved)
+		}
+	}
+}
+
 func refPtr(ref Ref) *Ref { return &ref }
