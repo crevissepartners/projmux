@@ -22,9 +22,11 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
 ```
 
 - Row 0 splits the line with `#[align=left]` (the pending AI notify
-  queue, capped at 80 cells) and `#[align=right]` (usage, capped at 120
-  cells). `notify` is the explicit-ack pending queue; live pane attention
-  badges are a separate state surface.
+  queue) and `#[align=right]` (usage). Both cell budgets are derived from
+  the width of the client the row is being drawn for — see
+  [Row 0 width budgets](#row-0-width-budgets). `notify` is the
+  explicit-ack pending queue; live pane attention badges are a separate
+  state surface.
 - Row 1 keeps tmux's native `window-status-format` so clicking a tab
   selects the window. The bind uses `if-shell -F
   "#{==:#{mouse_status_range},window}"` to run `select-window -t =`
@@ -111,6 +113,62 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
 - Both HUD segments degrade gracefully when the cell budget is tight; see
   [notify-queue.md](notify-queue.md) and [usage-tracking.md](usage-tracking.md)
   for the per-segment tier ladder.
+
+## Row 0 width budgets
+
+Row 0 does not share space with the window list — that lives on
+`status-format[1]` — so the whole client width is row 0's budget, and the two
+segments split it exactly:
+
+```
+notify = min(80, client_width / 2)
+usage  = client_width - notify
+```
+
+Both `--max-width` arguments are tmux formats, not constants:
+
+```tmux
+#(<projmux> internal status notify --max-width #{?#{e|<:#{client_width},160},#{e|/:#{client_width},2},80})
+#(<projmux> internal status usage  --max-width #{e|-:#{client_width},#{?#{e|<:#{client_width},160},#{e|/:#{client_width},2},80}})
+```
+
+80 is notify's own design budget and stays its effective cap on any row at
+least twice that wide, so notify's output is byte-identical on a normal
+terminal. usage gets every cell the row has beyond that reservation instead of
+a constant: a 200-column client reaches the old hardcoded 120 exactly, and
+anything wider passes it.
+
+Three tmux behaviours this relies on, all verified against a real server
+(tmux 3.6) rather than assumed:
+
+1. **tmux expands formats inside `#()` before running the job**, and keeps one
+   job per client. Two clients of different widths attached to the same session
+   each render row 0 at their own budget. Resizing changes the expanded command,
+   which makes tmux re-run that client's job immediately rather than waiting for
+   the next `status-interval` tick — the segments repaint at their new budgets as
+   soon as the terminal is resized. The re-run is a render from cache; usage
+   collection stays behind its own throttle, so resizing cannot drive adapter
+   traffic.
+2. **The numeric comparison must use the `e|` modifier.** tmux's bare
+   `#{<:a,b}` / `#{>:a,b}` are *string* comparisons — `#{>:191,80}` is `0` and
+   `#{>:9,10}` is `1` — so a bare comparison would silently never fire. The `<`
+   direction is also the fail-safe one: tmux treats an unevaluable condition as
+   false, so a build that cannot evaluate the comparison falls back to the
+   literal `80`, which is the historical behaviour.
+3. **When the two sections do not both fit, tmux draws the left one in full and
+   clips the right one from its LEFT edge.** An over-budget usage segment
+   therefore does not degrade through its own tier ladder — it loses its leading
+   provider blocks outright. That is why the two budgets sum to exactly the
+   client width rather than each being capped independently: the former
+   hardcoded pair (notify 80, usage 120) summed to 200 and was already clipping
+   the usage segment on any client narrower than that whenever the notify queue
+   was non-empty. The notify segment fills whatever budget it is given while
+   anything is queued — it clips its body text down to the cap rather than
+   rendering short — so the reservation has to be real.
+
+What this does *not* fix: the usage tier ladder is still whole-segment, so a
+narrow row can still cost a provider's bar wholesale. Per-provider tier
+selection is a separate change.
 
 A single tmux bind handles both lines:
 

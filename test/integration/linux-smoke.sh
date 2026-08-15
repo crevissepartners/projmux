@@ -356,7 +356,11 @@ skipped-root-no-adapter) ;;
 esac
 
 "$bin" tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux.conf"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal status notify --max-width 80"
+# Both row-0 HUD budgets are tmux formats derived from the attached client,
+# not literal cell counts; the generated config is where that derivation has
+# to survive quoting end to end.
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" 'internal status notify --max-width #{?#{e|<:#{client_width},160},#{e|/:#{client_width},2},80}'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" 'internal status usage --max-width #{e|-:#{client_width},#{?#{e|<:#{client_width},160},#{e|/:#{client_width},2},80}}'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal tmux popup-toggle"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal statusbar click"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "notify-sidebar"
