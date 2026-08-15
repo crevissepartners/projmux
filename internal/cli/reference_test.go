@@ -230,12 +230,17 @@ func TestGeneratedReferenceExcludesEveryHiddenRoute(t *testing.T) {
 // canonicalManifestOnlySummaries returns the canonical-manifest summaries that
 // no command-tree node states verbatim.
 //
-// These are the strings that make the boundary necessary. `tag project` is the
-// clearest: the canonical manifest calls it "Manage persistent Project tags"
-// while the route dispatches the ephemeral tagged session selection, because
-// the persistent half needs a Project registry writer that does not exist. The
-// command tree says what the route does; the canonical manifest says what the
-// contract will eventually require.
+// These are the strings that make the boundary necessary. `agent resume` is the
+// clearest survivor: the canonical manifest calls it "Rebind an Offline or
+// Failed Agent to a new managed Pane" while the handler resolves the Agent,
+// applies the phase gate, and stops, because the rebind needs runtime
+// materialization from another track. The command tree says what the route does
+// today; the canonical manifest says what the contract will eventually require.
+//
+// The public-spelling Phase shrank this set on purpose. `tag project`'s "Manage
+// persistent Project tags" used to be the headline entry; it was corrected
+// rather than deferred, because the persistent Project-metadata tag is a
+// permanently abandoned plan and not a feature waiting on a Phase.
 func canonicalManifestOnlySummaries() []string {
 	treeSummaries := map[string]bool{}
 	walkRoutes(Routes(), func(_ []string, route Route) {
@@ -268,13 +273,23 @@ func TestGeneratedReferenceCarriesNoCanonicalManifestOnlySummary(t *testing.T) {
 			"if the two manifests have genuinely converged, delete this test with the reason recorded")
 	}
 
-	// The known divergence the roadmap owner still has to close. Naming it keeps
-	// the test from silently degrading into a tautology if the derived set ever
-	// shrinks to wording differences alone.
-	const knownTargetStateSummary = "Manage persistent Project tags"
-	found := slices.Contains(divergent, knownTargetStateSummary)
-	if !found {
-		t.Fatalf("the canonical manifest no longer diverges on %q; re-derive the boundary before relaxing it", knownTargetStateSummary)
+	// The known divergences the roadmap owner still has to close, each naming a
+	// feature an owning track is building rather than an abandoned plan. Pinning
+	// them keeps the test from silently degrading into a tautology if the derived
+	// set ever shrinks to wording differences alone: if one of these is corrected
+	// or deleted, whoever does it has to come back here and re-derive the
+	// boundary rather than let the assertion quietly cover nothing.
+	knownTargetStateSummaries := []string{
+		// Owned by the runtime materialization track.
+		"Rebind an Offline or Failed Agent to a new managed Pane",
+		"Delete a Pane resource and its live binding",
+		// Owned by the session-state track.
+		"Restore a saved session snapshot",
+	}
+	for _, summary := range knownTargetStateSummaries {
+		if !slices.Contains(divergent, summary) {
+			t.Fatalf("the canonical manifest no longer diverges on %q; re-derive the boundary before relaxing it", summary)
+		}
 	}
 
 	// Compare on whole rendered strings rather than on substrings. Several

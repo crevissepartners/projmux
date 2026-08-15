@@ -78,10 +78,16 @@ type Route struct {
 // A `%N` pane id is a live transport binding rather than stored metadata, so
 // the read path answers `-o pane-id` with "needs a live transport binding,
 // which is not wired yet" and exits 1. The parser still accepts the token --
-// the canonical manifest is what `ResolveOutputToken` consults, and that
-// manifest is a target-state record -- but a route may not advertise a
+// `ResolveOutputToken` consults the canonical manifest, whose Outputs list is
+// parser input rather than advertising -- but a route may not advertise a
 // projection whose only outcome today is an error. The create routes, where the
 // projection does work, keep the full catalog.
+//
+// Splitting the two is what keeps the error classification stable. Dropping
+// `pane-id` from the manifest would make the token malformed rather than
+// unimplemented and move `get panes -o pane-id` from exit 1 to exit 2, which is
+// a behavior change; narrowing only what the route lists changes nothing a
+// caller can observe except the help text.
 var readProjectionCatalog = []OutputMode{
 	OutputModeUID,
 	OutputModeName,
@@ -177,9 +183,9 @@ var routes = []Route{
 				Outputs:   []OutputMode{OutputModePaneID},
 			},
 			{Name: "picker", Summary: "Open the interactive AI agent picker", Usage: []string{"projmux ai picker"}, Canonical: []string{"create agent"}},
-			{Name: "settings", Summary: "Open the AI settings surface", Usage: []string{"projmux ai settings"}, Canonical: []string{"config edit"}},
+			{Name: "settings", Summary: "Open the AI settings surface", Usage: []string{"projmux ai settings"}},
 			{Name: "status", Summary: "Read or set the AI pane status state", Usage: []string{"projmux ai status [set ...]"}, Canonical: []string{"agent status"}},
-			{Name: "notify", Summary: "Dispatch an AI pane notification", Usage: []string{"projmux ai notify ..."}, Canonical: []string{"notification ack"}},
+			{Name: "notify", Summary: "Dispatch an AI pane notification", Usage: []string{"projmux ai notify ..."}},
 			{Name: "watch-title", Summary: "Run the AI pane title watcher", Usage: []string{"projmux ai watch-title ..."}, Canonical: []string{"internal agent-hook"}},
 			{Name: "ingest", Summary: "Ingest provider hook and log events", Usage: []string{"projmux ai ingest <source>"}, Canonical: []string{"internal agent-hook"}},
 			{Name: "integrate", Summary: "Install or remove provider hook integrations", Usage: []string{"projmux ai integrate <provider> [--dry-run]"}, Canonical: []string{"agent integrate"}},
@@ -216,6 +222,73 @@ var routes = []Route{
 				Summary:   "Enter a Project runtime from outside tmux, materializing it when offline",
 				Usage:     []string{"projmux attach project <ref>"},
 				Canonical: []string{"attach project"},
+			},
+		},
+	},
+	{
+		// The public config domain. It closes the gap the CLI information
+		// architecture v2 track left open: generated tmux config was reachable
+		// only through `tmux`, a route the internal isolation Phase classified as
+		// plumbing and took out of the primary listing, so the two operations an
+		// operator genuinely runs by hand had no public spelling at all.
+		//
+		// Every route is a parity alias forwarding raw argv to the tmux handler,
+		// so stdout, stderr, the exit code, and the side effects are identical to
+		// `tmux print-config`, `tmux print-app-config`, and `tmux apply`.
+		//
+		// `render` takes the artifact as a positional kind because projmux
+		// generates two different tmux configs and the `tmux` route has always
+		// had two printers for them. Both `print-config` and `print-app-config`
+		// declare the canonical spelling `config render`, so a public `render`
+		// that reached only one of them would leave the other with no public door
+		// at all -- the same gap this route exists to close. Naming the artifact
+		// also keeps the node a pure forwarder: dispatch reads leading tokens and
+		// passes the remainder through untouched, so `DisableFlagParsing` stays
+		// on everywhere and `--bin` remains the leaf parser's business.
+		//
+		// `apply` takes no kind because there is one: it writes the app config and
+		// reloads the live server. `install` and `install-app` deliberately get no
+		// public spelling -- they are installer plumbing, reachable only through
+		// the hidden `tmux` / `internal tmux` routes, which are unchanged and
+		// undeprecated. The summaries below name the exact artifact each route
+		// touches so the public surface cannot be read as covering them.
+		Name:        "config",
+		Summary:     "Render or apply the generated tmux configuration",
+		Disposition: DispositionCanonical,
+		Usage: []string{
+			"projmux config render standalone|app [--bin <path>]",
+			"projmux config apply [--bin <path>] [--config <path>] [--socket <name>]",
+		},
+		Canonical: []string{"config render", "config apply"},
+		Children: []Route{
+			{
+				Name:    "render",
+				Summary: "Print a generated tmux config to stdout; writes nothing",
+				Usage: []string{
+					"projmux config render standalone [--bin <path>]",
+					"projmux config render app [--bin <path>]",
+				},
+				Canonical: []string{"config render"},
+				Children: []Route{
+					{
+						Name:      "standalone",
+						Summary:   "Print the snippet you source from your own tmux.conf",
+						Usage:     []string{"projmux config render standalone [--bin <path>]"},
+						Canonical: []string{"config render"},
+					},
+					{
+						Name:      "app",
+						Summary:   "Print the config the app-owned projmux tmux server runs from",
+						Usage:     []string{"projmux config render app [--bin <path>]"},
+						Canonical: []string{"config render"},
+					},
+				},
+			},
+			{
+				Name:      "apply",
+				Summary:   "Write the generated app tmux config and reload the live projmux server",
+				Usage:     []string{"projmux config apply [--bin <path>] [--config <path>] [--socket <name>]"},
+				Canonical: []string{"config apply"},
 			},
 		},
 	},
@@ -371,7 +444,6 @@ var routes = []Route{
 		Summary:     "Run read-only runtime and integration diagnostics",
 		Disposition: DispositionShortcut,
 		Usage:       []string{"projmux doctor [--json] [--section <name>] [--verbose]"},
-		Canonical:   []string{"diagnostics doctor"},
 	},
 	{
 		Name:        "diagnostics",
@@ -480,12 +552,12 @@ var routes = []Route{
 		Summary:     "Manage the pending AI notify queue (push/list/ack/reconcile)",
 		Disposition: DispositionCompatibility,
 		Usage:       []string{"projmux notify push|list|ack|reconcile"},
-		Canonical:   []string{"create notification", "get notifications", "delete notification", "notification ack", "notification reconcile"},
+		Canonical:   []string{"get notifications", "delete notification"},
 		Children: []Route{
-			{Name: "push", Summary: "Push a pending notification row", Canonical: []string{"create notification"}},
+			{Name: "push", Summary: "Push a pending notification row"},
 			{Name: "list", Summary: "List pending notification rows", Canonical: []string{"get notifications"}},
-			{Name: "ack", Summary: "Acknowledge notification rows", Canonical: []string{"notification ack"}},
-			{Name: "reconcile", Summary: "Reconcile the notification queue against live targets", Canonical: []string{"notification reconcile"}},
+			{Name: "ack", Summary: "Acknowledge notification rows"},
+			{Name: "reconcile", Summary: "Reconcile the notification queue against live targets"},
 		},
 	},
 	{
@@ -498,7 +570,12 @@ var routes = []Route{
 		},
 		Canonical: []string{"pin project"},
 		Children: []Route{
-			{Name: "project", Summary: "Manage pinned Project resources (canonical spelling)", Usage: []string{"projmux pin project list|add|remove|toggle|clear"}, Canonical: []string{"pin project"}},
+			// The store behind this route is a lines file of directory paths, not
+			// a Project registry: there is no uid, no ownerRef, and no resource
+			// document. So the summary says "project directories" like every
+			// sibling below it, rather than "Project resources", which would name
+			// a resource kind the route never touches.
+			{Name: "project", Summary: "Manage pinned project directories (canonical spelling)", Usage: []string{"projmux pin project list|add|remove|toggle|clear"}, Canonical: []string{"pin project"}},
 			{Name: "list", Summary: "List pinned project directories", Canonical: []string{"pin project"}},
 			{Name: "add", Summary: "Pin a project directory", Canonical: []string{"pin project"}},
 			{Name: "remove", Summary: "Unpin a project directory", Canonical: []string{"pin project"}},
@@ -557,7 +634,6 @@ var routes = []Route{
 		Summary:     "Quit the app-owned projmux tmux runtime",
 		Disposition: DispositionShortcut,
 		Usage:       []string{"projmux quit [--yes|--force]"},
-		Canonical:   []string{"runtime quit"},
 	},
 	{
 		Name:        "rebind",
@@ -595,7 +671,6 @@ var routes = []Route{
 		Summary:     "Inspect live Project, Window, and Pane CPU/RSS attribution",
 		Disposition: DispositionShortcut,
 		Usage:       []string{"projmux resources"},
-		Canonical:   []string{"diagnostics resources"},
 	},
 	{
 		// This release ships the preview half only. The handler refuses any
@@ -655,10 +730,10 @@ var routes = []Route{
 		Summary:     "Inspect and manage saved tmux session snapshots",
 		Disposition: DispositionCompatibility,
 		Usage:       []string{"projmux session-state status|save|delete|restore|preview|popup"},
-		Canonical:   []string{"get snapshots", "create snapshot", "delete snapshot", "restore snapshot"},
+		Canonical:   []string{"get snapshots", "delete snapshot", "restore snapshot"},
 		Children: []Route{
 			{Name: "status", Summary: "Show saved snapshot status", Canonical: []string{"get snapshots"}},
-			{Name: "save", Summary: "Save a session snapshot", Canonical: []string{"create snapshot"}},
+			{Name: "save", Summary: "Save a session snapshot"},
 			{Name: "delete", Summary: "Delete saved snapshots", Canonical: []string{"delete snapshot"}},
 			{Name: "restore", Summary: "Restore a snapshot (CLI allows --dry-run only)", Canonical: []string{"restore snapshot"}},
 			{Name: "preview", Summary: "Review a restore plan", Canonical: []string{"restore snapshot"}},
@@ -686,7 +761,6 @@ var routes = []Route{
 		Summary:     "Configure projmux",
 		Disposition: DispositionShortcut,
 		Usage:       []string{"projmux settings"},
-		Canonical:   []string{"config edit"},
 	},
 	{
 		Name:        "setup",
@@ -696,7 +770,7 @@ var routes = []Route{
 			"projmux setup",
 			"projmux setup terminal [terminal] [--apply]",
 		},
-		Canonical: []string{"setup probe", "setup terminal"},
+		Canonical: []string{"setup terminal"},
 		Children: []Route{
 			{Name: "terminal", Summary: "Show or apply terminal key remediation", Usage: []string{"projmux setup terminal [terminal] [--apply] [--config <path>] [--allow-symlink]"}, Canonical: []string{"setup terminal"}},
 		},
@@ -706,7 +780,6 @@ var routes = []Route{
 		Summary:     "Open the isolated projmux tmux app",
 		Disposition: DispositionShortcut,
 		Usage:       []string{"projmux shell [--session <name>]"},
-		Canonical:   []string{"runtime open"},
 	},
 	{
 		// Internal plumbing compatibility alias; canonical spelling is
@@ -775,8 +848,15 @@ var routes = []Route{
 	},
 	{
 		// Internal plumbing compatibility alias; canonical spelling is
-		// `internal tmux` (the config render/apply half moves to the `config`
-		// domain in a later Phase).
+		// `internal tmux`.
+		//
+		// The two operator-facing halves now also answer to the public `config`
+		// domain: `print-config` is `config render` and `apply` is `config
+		// apply`. Both spellings here stay dispatchable and undeprecated --
+		// `make install` invokes `projmux tmux apply` directly, and a running
+		// tmux server holds config generated by a previously installed binary.
+		// `print-app-config`, `install`, and `install-app` have no public
+		// spelling and are reachable only here and under `internal tmux`.
 		Name:        "tmux",
 		Summary:     "Open tmux popup entry helpers",
 		Disposition: DispositionInternal,
@@ -798,8 +878,8 @@ var routes = []Route{
 			{Name: "rename-pane", Summary: "Run the pane rename prompt helper", Canonical: []string{"rename pane"}},
 			{Name: "print-config", Summary: "Print the generated tmux config", Canonical: []string{"config render"}},
 			{Name: "print-app-config", Summary: "Print the generated app tmux config", Canonical: []string{"config render"}},
-			{Name: "install", Summary: "Install the generated tmux config", Canonical: []string{"config apply"}},
-			{Name: "install-app", Summary: "Install the generated app tmux config", Canonical: []string{"config apply"}},
+			{Name: "install", Summary: "Install the generated tmux config", Canonical: []string{"internal tmux"}},
+			{Name: "install-app", Summary: "Install the generated app tmux config", Canonical: []string{"internal tmux"}},
 			{Name: "apply", Summary: "Apply the generated tmux config to a live server", Canonical: []string{"config apply"}},
 			{Name: "autosave-session-state", Summary: "Run the debounced snapshot autosave hook", Canonical: []string{"internal tmux"}},
 		},
@@ -835,7 +915,6 @@ var routes = []Route{
 		Summary:     "Reprint the shell welcome guide",
 		Disposition: DispositionShortcut,
 		Usage:       []string{"projmux welcome [--popup [--force]]"},
-		Canonical:   []string{"setup welcome"},
 	},
 	{
 		Name:        "window",
@@ -922,8 +1001,8 @@ var routes = []Route{
 					{Name: "rename-pane", Summary: "Run the pane rename prompt helper", Canonical: []string{"rename pane"}},
 					{Name: "print-config", Summary: "Print the generated tmux config", Canonical: []string{"config render"}},
 					{Name: "print-app-config", Summary: "Print the generated app tmux config", Canonical: []string{"config render"}},
-					{Name: "install", Summary: "Install the generated tmux config", Canonical: []string{"config apply"}},
-					{Name: "install-app", Summary: "Install the generated app tmux config", Canonical: []string{"config apply"}},
+					{Name: "install", Summary: "Install the generated tmux config", Canonical: []string{"internal tmux"}},
+					{Name: "install-app", Summary: "Install the generated app tmux config", Canonical: []string{"internal tmux"}},
 					{Name: "apply", Summary: "Apply the generated tmux config to a live server", Canonical: []string{"config apply"}},
 					{Name: "autosave-session-state", Summary: "Run the debounced snapshot autosave hook", Canonical: []string{"internal tmux"}},
 				},

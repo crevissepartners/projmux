@@ -22,6 +22,16 @@ type routeCardinality struct {
 // This is the adoption record: the shared matrix is the single cardinality
 // authority, so a route may not invent its own "exactly one" or "at least one"
 // rule, and a cell may not be silently absent.
+//
+// Membership is decided by whether a route resolves a set of existing resources,
+// not by whether it is canonical. `config render standalone|app` and `config
+// apply` are canonical routes with no rows here on purpose: they take no
+// reference, no `--project`, and no `--selector`, and they resolve nothing out
+// of the registry. Their positional token names a generated artifact, which is a
+// fixed two-member enum owned by the route, not a Projmux resource kind with a
+// uid. A cardinality cell for them would be a rule about a set that never
+// exists. TestCanonicalRoutesWithoutAResourceSetHaveNoMatrixRow keeps that
+// judgment falsifiable rather than leaving it as an omission.
 var canonicalRouteCardinalities = []routeCardinality{
 	{"get projects", selector.Target{Verb: selector.VerbGet, Kind: coremetadata.KindProject, List: true}, selector.CardinalityAny},
 	{"get windows", selector.Target{Verb: selector.VerbGet, Kind: coremetadata.KindWindow, List: true}, selector.CardinalityAny},
@@ -255,5 +265,41 @@ func TestEveryCanonicalRouteCardinalityIsEnforcedAtTheRoute(t *testing.T) {
 				t.Fatalf("%s rejected a valid cardinality: %v", test.spelling, err)
 			}
 		})
+	}
+}
+
+// TestCanonicalRoutesWithoutAResourceSetHaveNoMatrixRow states the negative half
+// of the adoption record, so "this route needs no cardinality cell" is a checked
+// claim rather than a gap.
+//
+// A route earns a matrix row by resolving existing resources. The config-domain
+// routes do not: they accept no reference and no selector, and the only
+// positional they read is a generated-artifact name. Adding a row for one of
+// them would declare a cardinality over a target set the handler never builds,
+// which is how a shared authority quietly turns into decoration.
+func TestCanonicalRoutesWithoutAResourceSetHaveNoMatrixRow(t *testing.T) {
+	t.Parallel()
+
+	declared := map[string]bool{}
+	for _, route := range canonicalRouteCardinalities {
+		declared[route.spelling] = true
+	}
+	for _, spelling := range []string{
+		"config render",
+		"config render standalone",
+		"config render app",
+		"config apply",
+	} {
+		if declared[spelling] {
+			t.Errorf("route %q declares a cardinality cell but resolves no resource set", spelling)
+		}
+	}
+
+	// Non-vacuity: the record must still cover the routes that DO resolve a set,
+	// or the exclusion above would be trivially satisfied by an empty record.
+	for _, spelling := range []string{"get panes", "describe pane", "delete pane", "agent resume"} {
+		if !declared[spelling] {
+			t.Fatalf("the adoption record lost %q; the exclusion assertion is vacuous without it", spelling)
+		}
 	}
 }
