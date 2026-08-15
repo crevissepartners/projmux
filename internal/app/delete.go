@@ -30,12 +30,22 @@ var deleteRegistryKinds = map[string]coremetadata.Kind{
 // is removed, the plan is re-derived inside the store transaction and compared
 // against the approved one, and any mismatch or validation failure aborts the
 // transaction with zero mutations.
+//
+// An omitted selector no longer means the whole registry. `projmux delete pane`
+// with nothing else on the argv used to resolve every Pane and delete all of
+// them, in and out of tmux alike, because the declared 1..N cell is satisfied by
+// any match and an empty query matches everything. It now addresses the active
+// tmux Pane through the shared active-target seam, and refuses when no active
+// target resolves. The whole-registry fan-out survives only under its own
+// explicit flag; see deleteWholeSetFlag.
 type deleteCommand struct {
 	store        *resourceStore
 	confirm      *confirmer
 	notify       rawArgvCommand
 	snapshots    rawArgvCommand
 	resolveKinds map[string]coremetadata.Kind
+	// activeTarget is the empty-selector fallback seam; see active_target.go.
+	activeTarget activeTargetLookup
 }
 
 func newDeleteCommand() *deleteCommand {
@@ -43,8 +53,33 @@ func newDeleteCommand() *deleteCommand {
 		store:        newResourceStore(),
 		confirm:      newConfirmer(),
 		resolveKinds: deleteRegistryKinds,
+		activeTarget: defaultActiveTargetLookup(),
 	}
 }
+
+// deleteWholeSetFlag is the explicit whole-registry spelling of the destructive
+// verb, and the only way to ask for the fan-out an omitted selector used to
+// perform.
+//
+// It is a flag rather than a value token on purpose. selector.ParseRef treats
+// any non-`uid:` token as a bare metadata.name and metadata.ValidateName
+// reserves only `.` and `..`, so `all`, `current`, and `active` are all legal
+// resource names today: `projmux delete pane all` has to keep meaning the Pane
+// literally named `all`, and a sentinel token would silently widen it to the
+// registry. A flag lives in a namespace the resource names cannot reach.
+// `--all` is also the spelling kubectl already established for exactly this
+// operation, so the muscle memory transfers.
+//
+// kubectl's vocabulary splits along the scope boundary: `--all` is
+// all-within-the-current-namespace and `--all-namespaces` is the one that
+// crosses the boundary. `--all` here is the first of those two, and it reaches
+// the whole registry only because the registry is the one and only scope projmux
+// has -- there is nothing narrower for it to be bounded by. That is why every
+// string this route prints says "in the registry" instead of a bare "all": if a
+// narrower default scope is ever introduced, this flag's meaning has to be
+// re-adjudicated in the open rather than quietly re-read as "all within the new
+// scope" while the code still deletes registry-wide.
+const deleteWholeSetFlag = "--all"
 
 // Run dispatches one `delete <kind>` invocation.
 func (c *deleteCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -82,6 +117,11 @@ type deleteTarget struct {
 type deletePlan struct {
 	Kind    coremetadata.Kind
 	Targets []deleteTarget
+	// Unnamed reports that the invocation carried no selector at all, so the
+	// target set came from the active tmux target or from --all rather than from
+	// something the operator typed. It is not part of signature(): it describes
+	// how the plan was asked for, not what the plan removes.
+	Unnamed bool
 }
 
 // Cascades reports how many descendants the plan removes.
@@ -112,7 +152,19 @@ func (p deletePlan) signature() string {
 // needsConfirmation reports whether the plan is destructive enough to require an
 // explicit answer. The contract carves out exactly one exception: an exact-one
 // leaf Pane delete, which removes one resource and cascades to nothing.
+//
+// The carve-out is narrowed by exactly one condition: the operator has to have
+// named the target. It was written for `delete pane log --window main`, where
+// the argv already says which single cheap resource goes away, and the point of
+// skipping the prompt is that re-reading it back would add nothing. An empty
+// selector says none of that. Whether it resolved through the active tmux target
+// or through --all, the argv names no resource, so the prompt is the only place
+// the plan is ever stated before it runs -- and it is the same prompt either
+// way, which is what keeps --yes a confirmation answer rather than a scope.
 func (p deletePlan) needsConfirmation() bool {
+	if p.Unnamed {
+		return true
+	}
 	if len(p.Targets) == 1 && p.Kind == coremetadata.KindPane && len(p.Targets[0].Descendants) == 0 {
 		return false
 	}
@@ -128,6 +180,9 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	flags.register(fs)
 	dryRun := fs.Bool("dry-run", false, "print the full target and cascade plan without deleting anything")
 	yes := fs.Bool("yes", false, "skip the interactive confirmation")
+	all := fs.Bool("all", false,
+		"delete every "+strings.ToLower(string(kind))+" in the registry, the only scope projmux has today; "+
+			"it is the sole way to fan out without a selector")
 	refs, err := parseWithPositionals(fs, args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -137,6 +192,26 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	}
 	for _, ref := range refs {
 		flags.addPositionalRef(ref)
+	}
+
+	// The empty selector is the only argv shape whose meaning this route
+	// decides. Anything the operator typed -- a positional ref, a
+	// --project/--window/--pane scope, a --selector label -- keeps its exact
+	// historical meaning, so `--all` on top of one of those would be either a
+	// no-op or a second, contradictory answer to a question already answered.
+	// Refusing is the only reading that cannot surprise anyone.
+	implicit := flags.selectorIsEmpty()
+	switch {
+	case *all && !implicit:
+		return usageError(fmt.Sprintf("%s: %s addresses every %s in the registry and cannot be combined with a selector",
+			spelling, deleteWholeSetFlag, strings.ToLower(string(kind))))
+	case *all:
+		// Restore the pre-containment path exactly: no fallback is consulted and
+		// the empty query fans out over the whole registry, which is what the
+		// operator just asked for in writing.
+	default:
+		flags.active = c.activeTarget
+		flags.wholeSetFlag = deleteWholeSetFlag
 	}
 
 	registry, err := c.store.load()
@@ -160,6 +235,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 			spelling, strings.Join(unmatched, ", "), strings.ToLower(string(kind))))
 	}
 	plan := buildDeletePlan(registry, kind, resolution)
+	plan.Unnamed = implicit
 
 	if *dryRun {
 		return writeDeletePlan(stdout, spelling, plan, true)

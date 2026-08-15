@@ -131,6 +131,17 @@ var matrix = map[Target]Cardinality{
 	{Verb: VerbResume, Kind: metadata.KindAgent}: CardinalityExactOne,
 
 	// delete fans out over every resolved target.
+	//
+	// The cells stay 1..N under the active-target containment of the empty
+	// selector, and the containment is deliberately not expressed here.
+	// Cardinality answers "how many targets may a resolved selector address",
+	// and the answer for delete is still "as many as it resolved":
+	// `delete pane zsh log` and `delete pane --project alpha` fan out exactly as
+	// before. What changed is which resources an *empty* selector resolves in
+	// the first place, which is a question about the query, not about the cell.
+	// Tightening these to exact-one would have broken every explicit fan-out to
+	// fix an argv shape that does not reach this table -- the route refuses the
+	// unbounded empty selector before Enforce is ever called.
 	{Verb: VerbDelete, Kind: metadata.KindWindow}: CardinalityAtLeastOne,
 	{Verb: VerbDelete, Kind: metadata.KindPane}:   CardinalityAtLeastOne,
 	{Verb: VerbDelete, Kind: metadata.KindAgent}:  CardinalityAtLeastOne,
