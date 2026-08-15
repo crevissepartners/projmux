@@ -268,6 +268,145 @@ func TestEveryCanonicalRouteCardinalityIsEnforcedAtTheRoute(t *testing.T) {
 	}
 }
 
+// TestTheActiveTargetFallbackSatisfiesTheDeclaredCellWithoutRelaxingIt is the
+// adoption record of the empty-selector active-target fallback.
+//
+// The fallback changes which resources an empty selector addresses; it does not
+// change the cardinality rule, and it does not give the routes a private one.
+// Each row runs the same argv three ways against the same declared cell:
+//
+//  1. inside tmux on a mapped target, where the fallback contributes exactly one
+//     uid occurrence and the cell is satisfied,
+//  2. outside tmux, where the whole registry still enters the pipeline and the
+//     cell is violated with the historical message,
+//  3. inside tmux on an unmapped target, where the refusal is the fallback's own
+//     and is *not* the cardinality error, so the two failures stay
+//     distinguishable.
+//
+// Row 2 is what keeps the declared cell load bearing: if a route quietly relaxed
+// exact-one, the fallback would look like it was working while actually picking
+// the first of many.
+func TestTheActiveTargetFallbackSatisfiesTheDeclaredCellWithoutRelaxingIt(t *testing.T) {
+	t.Parallel()
+
+	for _, route := range []struct {
+		spelling string
+		target   selector.Target
+		run      func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) error
+	}{
+		{
+			spelling: "describe pane",
+			target:   selector.Target{Verb: selector.VerbDescribe, Kind: coremetadata.KindPane},
+			run: func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) error {
+				_, _, err := runRoute(t, newTestDescribeCommandWithActiveTarget(t, store, active), "pane")
+				return err
+			},
+		},
+		{
+			spelling: "describe window",
+			target:   selector.Target{Verb: selector.VerbDescribe, Kind: coremetadata.KindWindow},
+			run: func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) error {
+				_, _, err := runRoute(t, newTestDescribeCommandWithActiveTarget(t, store, active), "window")
+				return err
+			},
+		},
+		{
+			spelling: "describe project",
+			target:   selector.Target{Verb: selector.VerbDescribe, Kind: coremetadata.KindProject},
+			run: func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) error {
+				_, _, err := runRoute(t, newTestDescribeCommandWithActiveTarget(t, store, active), "project")
+				return err
+			},
+		},
+		{
+			spelling: "describe agent",
+			target:   selector.Target{Verb: selector.VerbDescribe, Kind: coremetadata.KindAgent},
+			run: func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) error {
+				_, _, err := runRoute(t, newTestDescribeCommandWithActiveTarget(t, store, active), "agent")
+				return err
+			},
+		},
+		{
+			spelling: "rename pane",
+			target:   selector.Target{Verb: selector.VerbRename, Kind: coremetadata.KindPane},
+			run: func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) error {
+				_, _, err := runRoute(t, newTestRenameCommandWithActiveTarget(store, active), "pane", "--name", "fallback")
+				return err
+			},
+		},
+		{
+			spelling: "rename window",
+			target:   selector.Target{Verb: selector.VerbRename, Kind: coremetadata.KindWindow},
+			run: func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) error {
+				_, _, err := runRoute(t, newTestRenameCommandWithActiveTarget(store, active), "window", "--name", "fallback")
+				return err
+			},
+		},
+		{
+			spelling: "rename project",
+			target:   selector.Target{Verb: selector.VerbRename, Kind: coremetadata.KindProject},
+			run: func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) error {
+				_, _, err := runRoute(t, newTestRenameCommandWithActiveTarget(store, active), "project", "--name", "fallback")
+				return err
+			},
+		},
+		{
+			spelling: "rebind project",
+			target:   selector.Target{Verb: selector.VerbRebind, Kind: coremetadata.KindProject},
+			run: func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) error {
+				store.dirs["/srv/rebound"] = true
+				_, _, err := runRoute(t, newTestRebindCommandWithActiveTarget(store, active), "project", "--root", "/srv/rebound")
+				return err
+			},
+		},
+		{
+			spelling: "get pane",
+			target:   selector.Target{Verb: selector.VerbGet, Kind: coremetadata.KindPane},
+			run: func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) error {
+				cmd := newTestPaneGetCommandWithActiveTarget(t, store, active, &stubCurrentPath{})
+				_, _, err := runRoute(t, cmd, "pane")
+				return err
+			},
+		},
+	} {
+		t.Run(route.spelling, func(t *testing.T) {
+			t.Parallel()
+
+			// Every adopting route resolves an exact-one cell; the fallback is
+			// never wired onto a 0..N or 1..N route.
+			declared, ok := selector.CardinalityFor(route.target)
+			if !ok || declared != selector.CardinalityExactOne {
+				t.Fatalf("route %q cell = %q/%v, want exact-one", route.spelling, declared, ok)
+			}
+
+			if err := route.run(t, newFakeResourceStore(t),
+				insideTmux("pan-alpha-codex", "win-alpha-main")); err != nil {
+				t.Fatalf("route %q rejected a mapped active target: %v", route.spelling, err)
+			}
+
+			err := route.run(t, newFakeResourceStore(t), outsideTmux())
+			if err == nil {
+				t.Fatalf("route %q accepted the whole registry outside tmux", route.spelling)
+			}
+			if !IsUsageError(err) || !strings.Contains(err.Error(), "want exactly one") {
+				t.Fatalf("route %q outside tmux = %v, want the exact-one cardinality failure", route.spelling, err)
+			}
+
+			err = route.run(t, newFakeResourceStore(t), insideTmux("", ""))
+			if err == nil {
+				t.Fatalf("route %q selected something for an unmapped active target", route.spelling)
+			}
+			if !IsUsageError(err) {
+				t.Fatalf("route %q unmapped refusal is not a usage error: %v", route.spelling, err)
+			}
+			if !strings.Contains(err.Error(), "nothing was selected") ||
+				strings.Contains(err.Error(), "want exactly one") {
+				t.Fatalf("route %q unmapped refusal collapsed onto the cardinality error: %v", route.spelling, err)
+			}
+		})
+	}
+}
+
 // TestCanonicalRoutesWithoutAResourceSetHaveNoMatrixRow states the negative half
 // of the adoption record, so "this route needs no cardinality cell" is a checked
 // claim rather than a gap.

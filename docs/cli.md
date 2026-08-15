@@ -566,26 +566,26 @@ projmux delete snapshot
 Describe one Projmux resource
 
 ```
-projmux describe project <ref> [-o <mode>]
-projmux describe window <ref> [--project <ref>] [-o <mode>]
-projmux describe pane <ref> [--project <ref>] [--window <ref>]... [-o <mode>]
-projmux describe agent <ref> [--project <ref>] [--window <ref>]... [-o <mode>]
+projmux describe project [<ref>] [-o <mode>]
+projmux describe window [<ref>] [--project <ref>] [-o <mode>]
+projmux describe pane [<ref>] [--project <ref>] [--window <ref>]... [-o <mode>]
+projmux describe agent [<ref>] [--project <ref>] [--window <ref>]... [-o <mode>]
 ```
 
 Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux describe project`](#projmux-describe-project) | Describe one Project resource |
-| [`projmux describe window`](#projmux-describe-window) | Describe one Window resource |
-| [`projmux describe pane`](#projmux-describe-pane) | Describe one Pane resource |
-| [`projmux describe agent`](#projmux-describe-agent) | Describe one Agent resource |
+| [`projmux describe project`](#projmux-describe-project) | Describe one Project resource; with no selector inside tmux, the active Project |
+| [`projmux describe window`](#projmux-describe-window) | Describe one Window resource; with no selector inside tmux, the active Window |
+| [`projmux describe pane`](#projmux-describe-pane) | Describe one Pane resource; with no selector inside tmux, the active Pane |
+| [`projmux describe agent`](#projmux-describe-agent) | Describe one Agent resource; with no selector inside tmux, the Agent owning the active Pane |
 
 Canonical spelling: `projmux describe project`, `projmux describe window`, `projmux describe pane`, `projmux describe agent`
 
 ### `projmux describe project`
 
-Describe one Project resource
+Describe one Project resource; with no selector inside tmux, the active Project
 
 ```
 projmux describe project
@@ -595,7 +595,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux describe window`
 
-Describe one Window resource
+Describe one Window resource; with no selector inside tmux, the active Window
 
 ```
 projmux describe window
@@ -605,7 +605,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux describe pane`
 
-Describe one Pane resource
+Describe one Pane resource; with no selector inside tmux, the active Pane
 
 ```
 projmux describe pane
@@ -615,7 +615,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux describe agent`
 
-Describe one Agent resource
+Describe one Agent resource; with no selector inside tmux, the Agent owning the active Pane
 
 ```
 projmux describe agent
@@ -718,7 +718,7 @@ Read Projmux resources by selector
 ```
 projmux get projects|windows|panes|agents [--project <ref>] [--selector key=value]... [-o <mode>]
 projmux get pane --current -o cwd
-projmux get pane --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
+projmux get pane [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Subcommands:
@@ -731,7 +731,7 @@ Subcommands:
 | [`projmux get agents`](#projmux-get-agents) | List Agent resources |
 | [`projmux get notifications`](#projmux-get-notifications) | List pending notification rows |
 | [`projmux get snapshots`](#projmux-get-snapshots) | List saved session snapshots |
-| [`projmux get pane`](#projmux-get-pane) | Read one Pane resource |
+| [`projmux get pane`](#projmux-get-pane) | Read one Pane resource; with no selector inside tmux, the active Pane |
 
 Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get panes`, `projmux get agents`, `projmux get notifications`, `projmux get snapshots`, `projmux get pane`
 
@@ -793,7 +793,7 @@ projmux get snapshots
 
 ### `projmux get pane`
 
-Read one Pane resource
+Read one Pane resource; with no selector inside tmux, the active Pane
 
 ```
 projmux get pane [--current] [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
@@ -1097,7 +1097,7 @@ projmux quit [--yes|--force]
 Rebind a Project to a new absolute root without moving files
 
 ```
-projmux rebind project <ref> --root <absolute-path>
+projmux rebind project [<ref>] --root <absolute-path>
 ```
 
 Subcommands:
@@ -1113,7 +1113,7 @@ Canonical spelling: `projmux rebind project`
 Rewrite one Project spec.root; no filesystem move, no heuristic uid merge
 
 ```
-projmux rebind project <ref> --root <absolute-path>
+projmux rebind project [<ref>] --root <absolute-path>
 ```
 
 ## `projmux rename`
@@ -1121,24 +1121,24 @@ projmux rebind project <ref> --root <absolute-path>
 Rename a Projmux resource metadata.name
 
 ```
-projmux rename project <ref> --name <name>
-projmux rename window <ref> --name <name> [--project <ref>]
-projmux rename pane <ref> --name <name> [--project <ref>] [--window <ref>]...
+projmux rename project [<ref>] --name <name>
+projmux rename window [<ref>] --name <name> [--project <ref>]
+projmux rename pane [<ref>] --name <name> [--project <ref>] [--window <ref>]...
 ```
 
 Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux rename project`](#projmux-rename-project) | Rename a Projmux Project resource |
-| [`projmux rename window`](#projmux-rename-window) | Rename a Projmux Window resource |
-| [`projmux rename pane`](#projmux-rename-pane) | Rename a Projmux Pane resource; does not change tmux pane_title |
+| [`projmux rename project`](#projmux-rename-project) | Rename a Projmux Project resource; with no selector inside tmux, the active Project |
+| [`projmux rename window`](#projmux-rename-window) | Rename a Projmux Window resource; with no selector inside tmux, the active Window |
+| [`projmux rename pane`](#projmux-rename-pane) | Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title |
 
 Canonical spelling: `projmux rename project`, `projmux rename window`, `projmux rename pane`
 
 ### `projmux rename project`
 
-Rename a Projmux Project resource
+Rename a Projmux Project resource; with no selector inside tmux, the active Project
 
 ```
 projmux rename project
@@ -1146,7 +1146,7 @@ projmux rename project
 
 ### `projmux rename window`
 
-Rename a Projmux Window resource
+Rename a Projmux Window resource; with no selector inside tmux, the active Window
 
 ```
 projmux rename window
@@ -1154,7 +1154,7 @@ projmux rename window
 
 ### `projmux rename pane`
 
-Rename a Projmux Pane resource; does not change tmux pane_title
+Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title
 
 ```
 projmux rename pane

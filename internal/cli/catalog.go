@@ -425,18 +425,23 @@ var routes = []Route{
 		Name:        "describe",
 		Summary:     "Describe one Projmux resource",
 		Disposition: DispositionCanonical,
+		// The `<ref>` is bracketed because omitting the whole selector is a
+		// meaningful invocation inside tmux, where it addresses the active
+		// target. Outside tmux it stays the ambiguity error it always was, so
+		// the per-kind summaries say "inside tmux" rather than implying the
+		// reference is optional everywhere.
 		Usage: []string{
-			"projmux describe project <ref> [-o <mode>]",
-			"projmux describe window <ref> [--project <ref>] [-o <mode>]",
-			"projmux describe pane <ref> [--project <ref>] [--window <ref>]... [-o <mode>]",
-			"projmux describe agent <ref> [--project <ref>] [--window <ref>]... [-o <mode>]",
+			"projmux describe project [<ref>] [-o <mode>]",
+			"projmux describe window [<ref>] [--project <ref>] [-o <mode>]",
+			"projmux describe pane [<ref>] [--project <ref>] [--window <ref>]... [-o <mode>]",
+			"projmux describe agent [<ref>] [--project <ref>] [--window <ref>]... [-o <mode>]",
 		},
 		Canonical: []string{"describe project", "describe window", "describe pane", "describe agent"},
 		Children: []Route{
-			{Name: "project", Summary: "Describe one Project resource", Canonical: []string{"describe project"}, Outputs: readProjectionCatalog},
-			{Name: "window", Summary: "Describe one Window resource", Canonical: []string{"describe window"}, Outputs: readProjectionCatalog},
-			{Name: "pane", Summary: "Describe one Pane resource", Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog},
-			{Name: "agent", Summary: "Describe one Agent resource", Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog},
+			{Name: "project", Summary: "Describe one Project resource; with no selector inside tmux, the active Project", Canonical: []string{"describe project"}, Outputs: readProjectionCatalog},
+			{Name: "window", Summary: "Describe one Window resource; with no selector inside tmux, the active Window", Canonical: []string{"describe window"}, Outputs: readProjectionCatalog},
+			{Name: "pane", Summary: "Describe one Pane resource; with no selector inside tmux, the active Pane", Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog},
+			{Name: "agent", Summary: "Describe one Agent resource; with no selector inside tmux, the Agent owning the active Pane", Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog},
 		},
 	},
 	{
@@ -503,7 +508,7 @@ var routes = []Route{
 		Usage: []string{
 			"projmux get projects|windows|panes|agents [--project <ref>] [--selector key=value]... [-o <mode>]",
 			"projmux get pane --current -o cwd",
-			"projmux get pane --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]",
+			"projmux get pane [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]",
 		},
 		Canonical: []string{"get projects", "get windows", "get panes", "get agents", "get notifications", "get snapshots", "get pane"},
 		Children: []Route{
@@ -515,7 +520,7 @@ var routes = []Route{
 			{Name: "snapshots", Summary: "List saved session snapshots", Canonical: []string{"get snapshots"}},
 			{
 				Name:      "pane",
-				Summary:   "Read one Pane resource",
+				Summary:   "Read one Pane resource; with no selector inside tmux, the active Pane",
 				Usage:     []string{"projmux get pane [--current] [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]"},
 				Canonical: []string{"get pane"},
 				Outputs:   readProjectionCatalog,
@@ -639,13 +644,13 @@ var routes = []Route{
 		Name:        "rebind",
 		Summary:     "Rebind a Project to a new absolute root without moving files",
 		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux rebind project <ref> --root <absolute-path>"},
+		Usage:       []string{"projmux rebind project [<ref>] --root <absolute-path>"},
 		Canonical:   []string{"rebind project"},
 		Children: []Route{
 			{
 				Name:      "project",
 				Summary:   "Rewrite one Project spec.root; no filesystem move, no heuristic uid merge",
-				Usage:     []string{"projmux rebind project <ref> --root <absolute-path>"},
+				Usage:     []string{"projmux rebind project [<ref>] --root <absolute-path>"},
 				Canonical: []string{"rebind project"},
 			},
 		},
@@ -655,15 +660,15 @@ var routes = []Route{
 		Summary:     "Rename a Projmux resource metadata.name",
 		Disposition: DispositionCanonical,
 		Usage: []string{
-			"projmux rename project <ref> --name <name>",
-			"projmux rename window <ref> --name <name> [--project <ref>]",
-			"projmux rename pane <ref> --name <name> [--project <ref>] [--window <ref>]...",
+			"projmux rename project [<ref>] --name <name>",
+			"projmux rename window [<ref>] --name <name> [--project <ref>]",
+			"projmux rename pane [<ref>] --name <name> [--project <ref>] [--window <ref>]...",
 		},
 		Canonical: []string{"rename project", "rename window", "rename pane"},
 		Children: []Route{
-			{Name: "project", Summary: "Rename a Projmux Project resource", Canonical: []string{"rename project"}},
-			{Name: "window", Summary: "Rename a Projmux Window resource", Canonical: []string{"rename window"}},
-			{Name: "pane", Summary: "Rename a Projmux Pane resource; does not change tmux pane_title", Canonical: []string{"rename pane"}},
+			{Name: "project", Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", Canonical: []string{"rename project"}},
+			{Name: "window", Summary: "Rename a Projmux Window resource; with no selector inside tmux, the active Window", Canonical: []string{"rename window"}},
+			{Name: "pane", Summary: "Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title", Canonical: []string{"rename pane"}},
 		},
 	},
 	{

@@ -24,10 +24,15 @@ var describeKinds = []string{"project", "window", "pane", "agent"}
 // resolution succeeds.
 type describeCommand struct {
 	loadRegistry func() (coremetadata.Registry, error)
+	// activeTarget is the empty-selector fallback seam; see active_target.go.
+	activeTarget activeTargetLookup
 }
 
 func newDescribeCommand() *describeCommand {
-	return &describeCommand{loadRegistry: loadResourceRegistry}
+	return &describeCommand{
+		loadRegistry: loadResourceRegistry,
+		activeTarget: defaultActiveTargetLookup(),
+	}
 }
 
 // Run dispatches one `describe <kind>` invocation.
@@ -48,7 +53,7 @@ func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []s
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	flags := resourceQueryFlags{kind: kind}
+	flags := resourceQueryFlags{kind: kind, active: c.activeTarget}
 	flags.register(fs)
 	flags.registerOutput(fs)
 	refs, err := parseWithPositionals(fs, args)

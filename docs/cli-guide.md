@@ -63,6 +63,98 @@ rendered from the same command manifest the binary renders `projmux help`
 from and is verified against it on every `make test`, so it cannot drift.
 Nothing in this guide restates it.
 
+## Resource selectors and the active target
+
+The resource routes (`get`, `describe`, `create`, `rename`, `rebind`, `delete`,
+`agent resume`) address stored resources through one shared selector grammar.
+
+The grammar in one paragraph: a value is either `uid:<uid>` or a bare
+`metadata.name`. There is no bare-uid form, values are never split on commas,
+and a `displayName`, a `spec.root` path, or a raw tmux `%N`/`@N`/`$N` handle
+never resolves anything. `--project` occurs at most once and fixes the scope;
+`--window` and `--pane` repeat and union in argv order; `--selector key=value`
+repeats and ANDs. A singular route also accepts the target as a positional
+`<ref>`, which may appear before or after the flags. How many resolved targets
+each `<verb, kind>` pair accepts is a declared matrix, not a per-route rule, and
+a violation is exit `2` with a candidate listing bounded to five rows.
+
+### Empty selector: the active tmux target
+
+Inside tmux, an invocation that carries **no selector at all** addresses the
+resource you are looking at instead of the whole registry:
+
+```
+projmux describe pane            # the active pane
+projmux describe window          # the window the active pane is in
+projmux describe project         # the Project that owns that window
+projmux describe agent           # the Agent that owns the active pane
+projmux rename pane --name build # renames the active pane
+projmux rebind project --root /new/path
+projmux get pane -o uid
+```
+
+The contract:
+
+- **Omission is the only spelling.** There is no `--pane current` and no
+  `--pane active`. Those are legal `metadata.name` values today — `rename pane
+  --name current` succeeds — so a sentinel token would silently shadow a real
+  resource.
+- **"No selector at all" means exactly that.** Any positional `<ref>`, any
+  `--project`/`--window`/`--pane`, or any `--selector` label keeps the
+  pre-existing behavior unchanged. The fallback is never blended into a
+  partially specified selector.
+- **Only the singular routes.** The plural reads (`get projects|windows|panes|
+  agents`) stay 0..N inventories over their whole scope. `delete` and `create`
+  are unchanged: `create`'s omitted `--pane` selects a split anchor inside an
+  already-chosen Window, which is not the same question.
+- **Inside tmux is decided by `$TMUX_PANE` plus `$TMUX`**, not by whether a tmux
+  server answers. A bare `display-message` from outside a client still succeeds
+  and answers for the most-recently-used session; projmux never uses that.
+  Outside tmux the empty-selector invocations keep their previous
+  `matched N ..., want exactly one` error and exit `2`.
+- **No persistent scope.** There is no `set-context` equivalent and no stored
+  "current pane": the target is read from tmux focus on every invocation, so
+  there is nothing to go stale and nothing to invalidate.
+- **`projmux describe pane` with no selector is the preview.** Because every
+  verb in this family resolves through the same seam, whatever `describe pane`
+  shows is exactly what `rename pane --name X` will act on;
+  `projmux get pane -o uid` (or `-o name`) gives the same answer as a scalar.
+
+Resolution reads only two tmux options — `@projmux_pane_uid` on the active pane
+and `@projmux_window_uid` on its window — and derives every ancestor from
+registry `ownerRef`. The session-scoped `@projmux_project_uid` is deliberately
+not consulted.
+
+### When the active target is not a Projmux resource
+
+A pane created outside the registry-backed routes carries no
+`@projmux_pane_uid`, so "the active pane is not a Pane resource" is an ordinary
+situation rather than a corner case. When that happens the command **refuses**:
+
+```
+$ projmux describe pane
+resolve pane: no selector was given and the active tmux pane %46 carries no
+@projmux_pane_uid; nothing was selected, so pass an explicit resource reference
+or --selector
+```
+
+It exits `2`, writes nothing to stdout, selects no other resource, and creates
+and mutates nothing. The message is deliberately *not* the
+`matched N ..., want exactly one` ambiguity error: that wording plus its
+candidate listing would read as ordinary ambiguity and hide the real cause. The
+variants name what was inspected — a missing `@projmux_window_uid`, a mirrored
+uid the registry does not hold, or an active pane that is a shell Pane with no
+owning Agent.
+
+### `get pane --current` is a different route
+
+`projmux get pane --current -o cwd` is unrelated to the fallback and is not
+deprecated by it. It never reads the resource registry: it prints the live tmux
+`#{pane_current_path}` of the focused pane as a bare path scalar, and `cwd` is
+the only projection it accepts. `projmux get pane` with no selector resolves a
+registry **Pane resource** and renders the shared resource projection. Different
+source, different output, different failure surface — both stay.
+
 ## Internal plumbing (`projmux internal ...`)
 
 `internal` is a hidden namespace for the routes generated tmux config, tmux
