@@ -290,25 +290,18 @@ RouteLocalFieldProjections
 # be removed. Symbol matching is exact and package-agnostic, which is the
 # documented limitation of this baseline mechanism.
 # ---------------------------------------------------------------------------
-Agent.Clone
 AgentExit.Phase
 AgentNameBase
-AgentPhases
 AttachSnapshotMetadata
 CanTransitionAgent
 ClassifySchemaVersion
 DefaultMutator
 DerivePaneDisplayTitle
 DirExists
-InputError.Error
-InputError.MetadataUsageError
-InputError.Unwrap
-IsUsageError
 Kinds
 LegacyPaneNameSeed
 LegacyWindowNameSeed
 ManagedPaneNameBase
-MapMetadataError
 MigrateRegistry
 Mirror.DisableAutomaticRename
 Mirror.MirrorPane
@@ -355,64 +348,31 @@ Mutator.importLegacyWindowTx
 Mutator.mintUID
 Mutator.registerProjectTx
 Mutator.validateRoot
-NewDefaultStore
 NewMirror
-NewRegistry
-NewStore
 NewUID
 NormalizeProvider
-ObjectMeta.Clone
-Pane.Clone
 PaneNameBase
-PathFor
-Project.Clone
-Project.HasCondition
 ProjectDisplayName
 ProjectNameBase
 ReconcileSnapshot
-Registry.Agent
-Registry.AgentsOf
-Registry.Clone
-Registry.Normalize
-Registry.Pane
-Registry.PanesOf
-Registry.Project
-Registry.ProjectByName
-Registry.ProjectByRoot
-Registry.ResolveProjectRef
-Registry.Validate
-Registry.Window
-Registry.WindowsOf
 Registry.allocateName
 Registry.deletePane
 Registry.firstWindowPaneUID
 Registry.nameOwner
-Registry.normalized
 Registry.projectPanes
 Registry.putReservation
 Registry.releaseNames
 Registry.removeCreated
-Registry.requireOwner
 Registry.reserveExplicitName
 Registry.snapshotPanesOf
 Registry.storePaneStatus
-Registry.validateReservations
-Registry.windowPaneUIDs
 SanitizeNameBase
 SchemaAction.String
-StateError.Error
-StateError.Unwrap
-Store.Load
 Store.Migrate
 Store.Path
 Store.SetClock
 Store.Update
-Store.acquireLock
 Store.backup
-Store.lockJitter
-Store.read
-Store.tryBreakStaleLock
-Store.withLock
 Store.write
 Store.writeAfterBackup
 Transaction.Commit
@@ -421,31 +381,39 @@ Transaction.ID
 Transaction.Rollback
 Transaction.record
 UIDKind
-ValidAgentPhase
-ValidateName
-Window.Clone
 WindowNameBase
 WindowTarget
 clearCondition
-cloneSlice
-cloneStringMap
 commandBase
-inputErr
 mustAgent
-nameRuneAllowed
 parseRows
 resolveSnapshotProject
 scopeFor
 setMissingRootCondition
 shellBase
-stateErr
 tmuxFormat
 tmuxTruthyOption
 validateWrittenFile
-ClassifySchemaVersionWith
-MigrateRegistryWith
-ObjectMeta.OwnerUID
 Registry.rebuildMissingReservations
 Registry.reservationIndex
-cleanRoot
-resolveMigrations
+
+# ---------------------------------------------------------------------------
+# MUST-KEEP: CLI information architecture v2 Phase 2 selector and read-only
+# resolution. internal/core/selector owns the pure selector grammar, the fixed
+# name/uid-union -> label-filter -> uid-dedupe pipeline, the live/offline/
+# MissingRoot status interpretation, and the declared <verb, kind> cardinality
+# matrix.
+#
+# The one live consumer this Phase ships is the read-only `get pane` route,
+# which resolves Panes. The Window resolution and the accessors below are the
+# same engine's declared surface for the routes that move next -- `get`/
+# `describe windows`, the create fan-out over repeated --window, and the delete
+# cascade -- so they are reachable only from the selector table tests today.
+# They MUST NOT be removed; they must instead disappear from this list as those
+# Phases wire them.
+# ---------------------------------------------------------------------------
+Matrix
+Resolution.UIDs
+Resolver.ResolveWindows
+Resolver.windowMatch
+StageOrder
