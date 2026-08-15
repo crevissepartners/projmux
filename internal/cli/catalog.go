@@ -543,7 +543,13 @@ var routes = []Route{
 		},
 		Canonical: []string{"tag project", "runtime tag"},
 		Children: []Route{
-			{Name: "project", Summary: "Manage Project tags (canonical spelling)", Usage: []string{"projmux tag project list|toggle|clear"}, Canonical: []string{"tag project"}},
+			// The contract splits `tag` into persistent Project-metadata tags and
+			// the ephemeral live-only selection. Only the second half exists
+			// today: the persistent half needs a Project registry writer, which
+			// arrives with a later Phase. So this canonical spelling is a pure
+			// parity alias over the tagged session selection, and its summary
+			// describes that rather than the capability it will eventually gain.
+			{Name: "project", Summary: "Manage the tagged session selection (canonical spelling)", Usage: []string{"projmux tag project list|toggle|clear"}, Canonical: []string{"tag project"}},
 			{Name: "list", Summary: "List the tagged session selection", Canonical: []string{"runtime tag"}},
 			{Name: "toggle", Summary: "Toggle a session tag", Canonical: []string{"runtime tag"}},
 			{Name: "clear", Summary: "Clear the tagged session selection", Canonical: []string{"runtime tag"}},
