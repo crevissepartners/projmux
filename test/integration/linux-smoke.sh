@@ -356,11 +356,31 @@ skipped-root-no-adapter) ;;
 esac
 
 "$bin" tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux.conf"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "status notify --max-width 80"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "tmux popup-toggle"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal status notify --max-width 80"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal tmux popup-toggle"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal statusbar click"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "notify-sidebar"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "set -g @projmux_live_resources off"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "status resources"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal status resources"
+# A newly installed binary must not emit a pre-namespace plumbing route into
+# generated config. Every occurrence is prefixed by the quoted binary path, so
+# anchoring on "'$bin' <route>" is what separates an emitted invocation from an
+# unrelated substring such as a popup mode name.
+for relocated in status statusbar preview session-popup tmux key-broker popup-wait-key; do
+  smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "'$bin' $relocated"
+done
+
+# Compatibility aliases: a tmux server that is already running holds config a
+# previously installed binary generated, so the pre-namespace spellings must
+# keep producing byte-identical output. `tmux print-config` is the deterministic
+# probe -- it renders the whole generated surface with no live state in it.
+"$bin" internal tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux-internal.conf"
+if ! diff -u "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "$PROJMUX_SMOKE_WORKDIR/projmux-internal.conf" \
+  >"$PROJMUX_SMOKE_WORKDIR/projmux-internal.diff"; then
+  echo "internal tmux print-config diverged from the compatibility spelling tmux print-config" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/projmux-internal.diff" >&2
+  exit 1
+fi
 
 mkdir -p "$XDG_CONFIG_HOME/projmux"
 printf 'on\n' >"$XDG_CONFIG_HOME/projmux/live-resources"

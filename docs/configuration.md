@@ -173,7 +173,7 @@ domains and remain visible in Settings when catalogued.
 
 `Resources:Open` is a user-configurable direct popup action with no built-in
 shortcut. Every configured alias renders the canonical client-scoped body
-`projmux tmux popup-toggle --client #{client_tty} resource-inspector`; pressing
+`projmux internal tmux popup-toggle --client #{client_tty} resource-inspector`; pressing
 the same alias again closes only that client's popup. It remains available on
 Linux/tmux even when the Labs live-resource status segment is off.
 
@@ -251,7 +251,7 @@ rectangle is not guaranteed; focus is reinforced by the tint plus the
 `pane-border-status top` topic line. This chrome preserves `pane-border-status
 top`, pane topics, AI badges, and visible pane labels.
 
-Native picker popups launched through `projmux tmux popup-toggle` also pass a
+Native picker popups launched through `projmux internal tmux popup-toggle` also pass a
 per-popup tmux 3.4 `display-popup -s` body style using the effective theme
 `surface` / `chrome_foreground` tmux tokens (popup/native backgrounds follow
 `surface`, while the bottom status bar follows `status_background`). This styles

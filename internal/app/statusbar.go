@@ -456,7 +456,7 @@ func (c *statusbarCommand) handlePopupToggleWithClient(stderr io.Writer, label, 
 	if c.runner == nil {
 		return c.runTmux(stderr, "display-message", fmt.Sprintf("statusbar %s: runner unavailable", label))
 	}
-	args := []string{"tmux", "popup-toggle"}
+	args := []string{"internal", "tmux", "popup-toggle"}
 	if strings.TrimSpace(clientTTY) != "" {
 		args = append(args, "--client", strings.TrimSpace(clientTTY))
 	}
@@ -1318,7 +1318,7 @@ func statusbarPopupCommand(payload, binaryPath string) string {
 	if binaryPath == "" {
 		return prefix + "; IFS= read -r _"
 	}
-	return prefix + "; " + tmuxShellQuote(binaryPath) + " popup-wait-key"
+	return prefix + "; " + tmuxShellQuote(binaryPath) + " internal popup-wait-key"
 }
 
 const displayOnlyPopupClosePrompt = "Press any key to close."

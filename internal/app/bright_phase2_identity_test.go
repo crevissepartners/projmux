@@ -46,36 +46,36 @@ func appLightThemeConfig() theme.ThemeConfig {
 // config contract additions update every digest together.
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
-		"standalone": "b9f075246a9dc30e1995d108c5c8c5d1e1f24fa87de5ddf5278afc42ffbce76b",
-		"app":        "a7489352c926413e17c4d8b2b05720c41e8c03fab9a101a47b00d16d77c05d56",
+		"standalone": "d50eadad1842cdf6d6340f4d27fd20c367bbfa524dfdb1f98aa146463ae01f07",
+		"app":        "194138d00ff14d20034c455740d1647ca89de5bd7b25a59d0b0b792aae98b0d1",
 	},
 	"projmux": {
-		"standalone": "3863425b1716054a94625226a749c369b2012162a6ce47e38d642b7b3451acf9",
-		"app":        "304e47ede432affc426dc86a22fa780d662aabe2dd1842ae015c1b72fe4d35da",
+		"standalone": "236d0e0edaa9c1453b71092b39f4c85987850c018aefb09d92bc5edb50f9c520",
+		"app":        "787688a2e434442ec84a807928ca73574e3880617833483cf30214148037aaeb",
 	},
 	"blue-hour": {
-		"standalone": "21a2731fa84824a1e34db43d8fb8d1b06dcb64c8cc0b82d2bc81a5cbb9d4a4b9",
-		"app":        "c25d6458c3faeb0ae4b2ebb49ac92fb12f870512d6f09110bd77b278b9fdae66",
+		"standalone": "f699616c49324854548a7931b7bedd8670719be44baae77d2f224f556c891533",
+		"app":        "f3fd9dd0502b8fbd6f40783764eeb2713c27acf7dc776451141d4ae333c3d917",
 	},
 	"carbon-violet": {
-		"standalone": "871b0d8ae99f66ad897be408122d121a7931abbc3a142cd53f8f7608db80609d",
-		"app":        "2752c3b0b43b686dd791a847677c696593c2cfc73e092284017500cc04e1e490",
+		"standalone": "02d05b6ebb57fd1c9ea06d83c19bcffc3c22292a2a7efdb36d53f0e86bd85179",
+		"app":        "63e865ce5d8d404ee046ac88cd4fa0d779a15903c737370744488bd3c9cdff0d",
 	},
 	"ember": {
-		"standalone": "cb6b8a300d674fc1cd616636eeec07177bd0732111028c7627e19caf7a65ac05",
-		"app":        "8005a9df37d64eac51428bf7421b9a7e6b451b68e71a1cea065adbd85f342ecf",
+		"standalone": "6faf8fce158f9bb11bf901d6b2438e2b82ce226c834fb08be3633a2df604aef2",
+		"app":        "4c5224ad757c674fe7ff8f5f99ab983e804789b5908bf4010dfeb9cd08d70e26",
 	},
 	"forest": {
-		"standalone": "4425e4fc1bb095d3e3e244af4202422c41586c0bfa8acc40c8c5bee7571e75ba",
-		"app":        "44c2f4527b2d7e8107da39cd5c8069c07bc761beb79f541a01f90b6ee12c64eb",
+		"standalone": "34e1c9822676157dec7c29b5c7d05a9c24dc0d4c6af9ff47430e5f0a42b4ec70",
+		"app":        "10046e881da2b237a983c6604332121e98977107c85a6b765bf1b1dbf872bdd8",
 	},
 	"rose": {
-		"standalone": "fbba581d56aaa99eba600ca1dd499f1ba608b833bd0a0ae8a2e4a8dc3d9168b9",
-		"app":        "f95eab88700b2bf491e2162c42893293cf475d5a8fdc93ae3a1521500160b6f6",
+		"standalone": "54e8f837ef45c0cd666255a42bb6f3db4aa4e98d29df0377d4e0b3756a7b8ed5",
+		"app":        "a5a432bbd5892b135740952a63d612f7b9a4067fdc3ac14354ebfa7e3a5d5c8b",
 	},
 	"high-contrast": {
-		"standalone": "901bad4cf3e7975a193ee1eda39be97ebc497113be466be34020764348b4c584",
-		"app":        "10c727b7fcc94983772496a37a4d185b6296dea9eb26f46a9b0f094cdd66d873",
+		"standalone": "8634028b4e561bc62a396927e0be845f31e76c036690cf41e4ca51fd42684ac3",
+		"app":        "729583b7dc0f9fa8924ffeb7a7899311b1f5a1cfa72421bcd442d93aa287e93d",
 	},
 }
 

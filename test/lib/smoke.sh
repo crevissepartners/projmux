@@ -64,3 +64,17 @@ smoke_assert_output_contains() {
     exit 1
   fi
 }
+
+# smoke_assert_file_lacks fails when the file contains needle. It is the
+# negative half used by the CLI internal-namespace audit: proving a generated
+# config no longer emits a relocated route needs an absence assertion, not
+# another presence assertion.
+smoke_assert_file_lacks() {
+  local path="$1"
+  local needle="$2"
+  if grep -Fq "$needle" "$path"; then
+    echo "expected $path to NOT contain: $needle" >&2
+    grep -Fn "$needle" "$path" >&2 || true
+    exit 1
+  fi
+}

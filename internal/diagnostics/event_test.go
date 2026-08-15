@@ -399,3 +399,54 @@ func TestLifecycleSchemaCompositeTransitionMatrix(t *testing.T) {
 		})
 	}
 }
+
+// TestClassifyInternalNamespaceMatchesThePreNamespaceSpelling keeps one
+// classification for one operation after the CLI relocated its machine-invoked
+// plumbing under the hidden `internal` namespace.
+//
+// The two spellings reach the same handler with the same side effects, so they
+// must also produce the same privacy-safe record. Classifying them separately
+// would split one operation across two command names in the journal and, worse,
+// would silently drop the state-changing verdict for every plumbing route the
+// moment generated tmux config moved onto the new spelling.
+func TestClassifyInternalNamespaceMatchesThePreNamespaceSpelling(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		relocated []string
+		current   []string
+	}{
+		{relocated: []string{"internal", "statusbar", "usage-refresh"}, current: []string{"statusbar", "usage-refresh"}},
+		{relocated: []string{"internal", "statusbar", "click", "notify"}, current: []string{"statusbar", "click", "notify"}},
+		{relocated: []string{"internal", "status", "usage"}, current: []string{"status", "usage"}},
+		{relocated: []string{"internal", "tmux", "autosave-session-state", "--quiet"}, current: []string{"tmux", "autosave-session-state", "--quiet"}},
+		{relocated: []string{"internal", "tmux", "print-config"}, current: []string{"tmux", "print-config"}},
+		{relocated: []string{"internal", "preview", "select"}, current: []string{"preview", "select"}},
+		{relocated: []string{"internal", "session-popup", "open"}, current: []string{"session-popup", "open"}},
+		{relocated: []string{"internal", "key-broker"}, current: []string{"key-broker"}},
+		{relocated: []string{"internal", "popup-wait-key"}, current: []string{"popup-wait-key"}},
+		// `agent-hook` is the one sub-namespace renamed rather than relocated
+		// verbatim; it still has to land on the rule that owns provider ingest.
+		{relocated: []string{"internal", "agent-hook", "ingest", "codex-hook"}, current: []string{"ai", "ingest", "codex-hook"}},
+		{relocated: []string{"internal", "agent-hook", "watch-title", "%9"}, current: []string{"ai", "watch-title", "%9"}},
+		// Direct help stays read-only through the namespace too.
+		{relocated: []string{"internal", "statusbar", "--help"}, current: []string{"statusbar", "--help"}},
+	} {
+		got := Classify(tt.relocated)
+		want := Classify(tt.current)
+		if got != want {
+			t.Errorf("Classify(%q) = %#v, want the %q classification %#v", tt.relocated, got, tt.current, want)
+		}
+		if want.Command == "" {
+			t.Errorf("Classify(%q) is unclassified; the audit row proves nothing", tt.current)
+		}
+	}
+
+	// A bare or unknown namespace is not a recorded operation, exactly like any
+	// other unknown argv.
+	for _, argv := range [][]string{{"internal"}, {"internal", "nosuchthing"}} {
+		if got := Classify(argv); got != (CommandClass{}) {
+			t.Errorf("Classify(%q) = %#v, want the empty class", argv, got)
+		}
+	}
+}

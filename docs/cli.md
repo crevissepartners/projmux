@@ -26,7 +26,7 @@ with it keeps one notion of help; the boundary never interprets a flag value:
 - Every help invocation exits `0`, writes to **stdout** only, records no
   operational error, and performs no tmux, runtime, or lifecycle-migration
   access. This includes nested routes (`projmux ai settings --help`) and the
-  hidden internal helpers (`projmux popup-wait-key --help`).
+  hidden internal namespace (`projmux internal popup-wait-key --help`).
 - Help resolves to the deepest documented route and shows its summary, usage
   synopsis, sub-routes, route-local output projections, and the canonical route
   spelling it will move to. The synopsis names the route's flags (for example
@@ -62,25 +62,56 @@ projmux <command> [args...]
 | `kill` | Terminate tagged tmux sessions. |
 | `notify` | Manage the pending AI notify queue (push/list/ack/reconcile). |
 | `pin` | Manage pinned project directories. |
-| `preview` | Manage persisted tmux preview selection. |
 | `prune` | Trim stale tmux lifecycle state and inspect preserved session snapshots. |
 | `quit` | Quit the app-owned projmux tmux runtime. |
 | `resources` | Inspect live Linux/tmux Project → Window → Pane CPU/RSS attribution. |
 | `sessions` | Pick and open an existing tmux session. |
-| `session-popup` | Read tmux popup preview state. |
 | `settings` | Configure projmux. |
 | `setup` | Probe terminal key delivery for projmux bindings. |
 | `shell` | Open the isolated projmux tmux app. |
-| `status` | Render tmux status bar segments. |
-| `statusbar` | Dispatch projmux status bar clicks and shortcuts. |
 | `switch` | Pick and open a project tmux session. |
 | `tag` | Manage tagged tmux sessions. |
-| `tmux` | Open tmux popup entry helpers / install generated config. |
 | `update` | Check installer-aware GitHub release update status. |
 | `upgrade` | Self-update via `go install`. |
 | `welcome` | Print the shell onboarding guide again. |
 | `usage` | Report AI usage across fixed windows and named account quota buckets. |
 | `version` | Print the current version. |
+
+## Internal plumbing (`projmux internal ...`)
+
+`internal` is a hidden namespace for the routes generated tmux config, tmux
+hooks, popup payloads, and provider hooks invoke. Nothing under it is meant to
+be typed at a prompt, so it is absent from `projmux help` and from the table
+above.
+
+| Route | Purpose |
+| --- | --- |
+| `internal tmux` | Generated config render/install/apply, popup entry helpers, pane rebalance/rename, snapshot autosave. |
+| `internal status` | Status bar segment renderers (`git`, `project`, `kube`, `usage`, `notify`, `resources`). |
+| `internal statusbar` | Status bar click and shortcut dispatch (`click`, `usage-refresh`). |
+| `internal preview` | Persisted preview cursor (`cycle-pane`, `cycle-window`, `select`). |
+| `internal session-popup` | Session popup preview/open and popup cursor movement. |
+| `internal agent-hook` | Provider hook ingest (`ingest`) and the Agent pane title watcher (`watch-title`). |
+| `internal key-broker` | Darwin physical key transport. |
+| `internal popup-wait-key` | Single-key reader that closes a display-only popup. |
+
+Every one of these routes is an alias over the handler that already owned the
+behavior, so stdout, stderr, the exit code, and the side effects are identical
+to the pre-namespace spelling.
+
+The pre-namespace spellings — `projmux status ...`, `projmux statusbar ...`,
+`projmux preview ...`, `projmux session-popup ...`, `projmux tmux ...`,
+`projmux key-broker`, `projmux popup-wait-key`, `projmux ai ingest ...`, and
+`projmux ai watch-title ...` — all still work and are **not** deprecated in
+this release. They must keep working: a tmux server that is already running was
+configured by a previously installed binary and keeps invoking them until the
+next `projmux tmux apply`. They are simply no longer listed in `projmux help`.
+Removing them is a separate breaking change.
+
+`projmux tmux print-config`, `print-app-config`, `install`, `install-app`, and
+`apply` sit here because the whole `tmux` route was classified as plumbing, but
+`projmux tmux apply` remains the supported CLI recovery/sync command after a
+config or keymap edit and is still documented as such throughout these docs.
 
 ## switch
 

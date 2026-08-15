@@ -110,7 +110,7 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}; !equalEntries(got, want) {
 		t.Fatalf("runner entries = %#v, want %#v", got, want)
 	}
-	if got, want := gotOptions.PreviewCommand, "exec '/tmp/proj mux/bin/projmux' 'session-popup' 'preview' {2}"; got != want {
+	if got, want := gotOptions.PreviewCommand, "exec '/tmp/proj mux/bin/projmux' 'internal' 'session-popup' 'preview' {2}"; got != want {
 		t.Fatalf("runner preview command = %q, want %q", got, want)
 	}
 	if got, want := gotOptions.PreviewWindow, "down,60%,border-top"; got != want {
@@ -119,10 +119,10 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	if got, want := gotOptions.Bindings, []string{
 		"esc:abort",
 		"ctrl-n:abort",
-		"left:execute-silent(exec '/tmp/proj mux/bin/projmux' 'session-popup' 'cycle-window' {2} 'prev')+refresh-preview",
-		"right:execute-silent(exec '/tmp/proj mux/bin/projmux' 'session-popup' 'cycle-window' {2} 'next')+refresh-preview",
-		"alt-up:execute-silent(exec '/tmp/proj mux/bin/projmux' 'session-popup' 'cycle-pane' {2} 'prev')+refresh-preview",
-		"alt-down:execute-silent(exec '/tmp/proj mux/bin/projmux' 'session-popup' 'cycle-pane' {2} 'next')+refresh-preview",
+		"left:execute-silent(exec '/tmp/proj mux/bin/projmux' 'internal' 'session-popup' 'cycle-window' {2} 'prev')+refresh-preview",
+		"right:execute-silent(exec '/tmp/proj mux/bin/projmux' 'internal' 'session-popup' 'cycle-window' {2} 'next')+refresh-preview",
+		"alt-up:execute-silent(exec '/tmp/proj mux/bin/projmux' 'internal' 'session-popup' 'cycle-pane' {2} 'prev')+refresh-preview",
+		"alt-down:execute-silent(exec '/tmp/proj mux/bin/projmux' 'internal' 'session-popup' 'cycle-pane' {2} 'next')+refresh-preview",
 	}; !equalStrings(got, want) {
 		t.Fatalf("runner bindings = %q, want %q", got, want)
 	}

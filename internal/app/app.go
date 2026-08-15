@@ -105,6 +105,7 @@ type App struct {
 	focus        *focusCommand
 	get          *getCommand
 	hook         *hookCommand
+	internal     *internalCommand
 	rebind       *rebindCommand
 	rename       *renameCommand
 	restore      *restoreCommand
@@ -216,6 +217,24 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	runtimeCmd.tag = tagCmd
 	runtimeCmd.prune = pruneCmd
 	attach.switcher = switcher
+	// The hidden internal plumbing namespace. Every entry is an alias over the
+	// handler that already owns the behavior, so the generated tmux config can
+	// move onto the canonical spellings without a second implementation.
+	keyBrokerCmd := newKeyBrokerCommand()
+	popupWaitKeyCmd := newPopupWaitKeyCommand()
+	previewCmd := newPreviewCommand()
+	sessionPopupCmd := newSessionPopupCommand(recorder)
+	statusCmd := newStatusCommand()
+	statusbarCmd := newStatusbarCommand()
+	internalCmd := newInternalCommand()
+	internalCmd.tmux = tmuxCmd
+	internalCmd.status = statusCmd
+	internalCmd.statusbar = statusbarCmd
+	internalCmd.preview = previewCmd
+	internalCmd.sessionPopup = sessionPopupCmd
+	internalCmd.ai = ai
+	internalCmd.keyBroker = keyBrokerCmd
+	internalCmd.popupWaitKey = popupWaitKeyCmd
 	return &App{
 		lifecycle:    recorder,
 		agent:        agentCmd,
@@ -231,27 +250,28 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		focus:        focusCmd,
 		get:          getCmd,
 		hook:         newHookCommand(),
+		internal:     internalCmd,
 		rebind:       newRebindCommand(),
 		rename:       newRenameCommand(),
 		restore:      restoreCmd,
 		runtime:      runtimeCmd,
-		keyBroker:    newKeyBrokerCommand(),
+		keyBroker:    keyBrokerCmd,
 		kill:         kill,
 		notify:       notifyCmd,
 		pin:          newPinCommand(),
-		popupWaitKey: newPopupWaitKeyCommand(),
-		preview:      newPreviewCommand(),
+		popupWaitKey: popupWaitKeyCmd,
+		preview:      previewCmd,
 		prune:        pruneCmd,
 		quit:         quit,
 		resources:    resourcesCmd,
 		sessions:     sessions,
 		sessionState: sessionStateCmd,
-		sessionPopup: newSessionPopupCommand(recorder),
+		sessionPopup: sessionPopupCmd,
 		settings:     settingsCmd,
 		setup:        newSetupCommand(initCmd),
 		shell:        newShellCommand(update, recorder),
-		status:       newStatusCommand(),
-		statusbar:    newStatusbarCommand(),
+		status:       statusCmd,
+		statusbar:    statusbarCmd,
 		switcher:     switcher,
 		tag:          tagCmd,
 		tmux:         tmuxCmd,
@@ -303,6 +323,10 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"focus":       a.focus,
 		"get":         a.get,
 		"hook":        a.hook,
+		// The hidden internal plumbing namespace. It aliases the machine-invoked
+		// routes below so generated tmux config, tmux hooks, and popup payloads
+		// can emit one namespace instead of eight top-level tokens.
+		"internal": a.internal,
 		// Hidden Darwin helper: captures physical portable key chords while a
 		// projmux tmux client is focused and feeds them through its root table.
 		"key-broker": a.keyBroker,

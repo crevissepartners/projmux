@@ -975,7 +975,7 @@ func renderTmuxBindingBody(binaryPath string, action keyBindingAction) string {
 	bin := tmuxShellQuote(binaryPath)
 	switch action.TmuxKind {
 	case tmuxBindingPopupToggle:
-		return "run-shell " + tmuxConfigQuote(bin+" tmux popup-toggle --client #{client_tty} "+action.TmuxBody)
+		return "run-shell " + tmuxConfigQuote(bin+" internal tmux popup-toggle --client #{client_tty} "+action.TmuxBody)
 	case tmuxBindingRunProjmux:
 		return "run-shell " + tmuxConfigQuote(bin+" "+action.TmuxBody)
 	case tmuxBindingCommand:

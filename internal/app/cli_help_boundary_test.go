@@ -193,7 +193,15 @@ func TestPopupWaitKeyHelpDoesNotBlockOnTheTTY(t *testing.T) {
 
 	var argvs [][]string
 	for _, flag := range helpFlagSpellings() {
-		argvs = append(argvs, []string{"popup-wait-key", flag}, []string{"key-broker", flag})
+		argvs = append(argvs,
+			[]string{"popup-wait-key", flag},
+			[]string{"key-broker", flag},
+			// The relocated spellings inherit the same hazard: both leaf handlers
+			// still read a key, so the boundary has to answer the namespaced
+			// spelling before argv reaches them.
+			[]string{"internal", "popup-wait-key", flag},
+			[]string{"internal", "key-broker", flag},
+		)
 	}
 	for _, argv := range argvs {
 		done := make(chan error, 1)

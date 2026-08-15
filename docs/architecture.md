@@ -370,7 +370,7 @@ session/window/path/git/kube/clock row. Line 1 splits the notification bar
 (left half, capped at 80 cells) and the AI usage HUD (right half, capped at
 120 cells) using tmux `#[align=left]` / `#[align=right]`. Each clickable
 segment is wrapped in a tmux user-defined range (`#[range=user|<id>]...
-#[norange]`) and dispatched through `projmux statusbar click <range-id>`. A
+#[norange]`) and dispatched through `projmux internal statusbar click <range-id>`. A
 single `bind -n MouseDown1Status` covers both lines because tmux fires
 `MouseDown1Status` from any line of a multi-line status bar with
 `#{mouse_status_range}` resolving to whichever range the cursor was over.

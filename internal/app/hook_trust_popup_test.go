@@ -40,7 +40,7 @@ func TestBuildHookTrustPopupArgsTargetsWidePopup(t *testing.T) {
 
 	command := args[len(args)-1]
 	for _, want := range []string{
-		"'/tmp/proj mux/bin/projmux' tmux hook-trust-prompt",
+		"'/tmp/proj mux/bin/projmux' internal tmux hook-trust-prompt",
 		"--request '/tmp/request file.json'",
 		"--decision '/tmp/decision file.txt'",
 	} {

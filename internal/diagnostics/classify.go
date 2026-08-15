@@ -56,11 +56,48 @@ type commandRule struct {
 	changing       map[string]struct{}
 }
 
+// internalNamespaceToken is the hidden CLI namespace that owns machine-invoked
+// plumbing (`internal statusbar click`, `internal tmux rebalance-panes`, ...).
+const internalNamespaceToken = "internal"
+
+// internalNamespaceAliases maps an `internal` sub-namespace onto the top-level
+// classification rule that already owns it. Only the sub-namespace whose name
+// differs from its current top-level spelling needs an entry.
+var internalNamespaceAliases = map[string]string{"agent-hook": "ai"}
+
+// stripInternalNamespace rewrites `internal <namespace> ...` onto the current
+// top-level spelling the namespace aliases.
+//
+// The internal namespace is a pure relocation: `internal statusbar click` and
+// `statusbar click` reach the same handler with the same side effects, so they
+// must also produce the same privacy-safe classification. Classifying the
+// relocated spelling separately would split one operation across two command
+// names in the journal and would silently drop the state-changing verdict for
+// every plumbing route the moment generated config moved onto the new
+// spelling.
+//
+// An `internal` invocation with no namespace, or with an unknown one, yields
+// nil, which classifies as the empty (unrecorded) class exactly like any other
+// unknown argv.
+func stripInternalNamespace(args []string) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	namespace := strings.TrimSpace(args[0])
+	if alias, ok := internalNamespaceAliases[namespace]; ok {
+		return append([]string{alias}, args[1:]...)
+	}
+	return append([]string{namespace}, args[1:]...)
+}
+
 // Classify discards every non-allowlisted argv value. It may inspect known
 // flags to decide whether a command mutates state, but it never returns them.
 func Classify(args []string) CommandClass {
 	if len(args) == 0 {
 		return CommandClass{}
+	}
+	if strings.TrimSpace(args[0]) == internalNamespaceToken {
+		return Classify(stripInternalNamespace(args[1:]))
 	}
 	command := strings.TrimSpace(args[0])
 	if command == "--version" || command == "-version" {

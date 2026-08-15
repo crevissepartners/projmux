@@ -129,6 +129,7 @@ func buildHookTrustPopupArgs(binaryPath, requestPath, decisionPath string, targe
 	}
 	command := strings.Join([]string{
 		tmuxShellQuote(binaryPath),
+		"internal",
 		"tmux",
 		"hook-trust-prompt",
 		"--request",

@@ -263,7 +263,7 @@ func TestSwitchExecuteSidebarTrustDenyRefreshesWithoutSessionCreate(t *testing.T
 		switchInitialQueryEnv + "='tar'",
 		switchInitialSelectionEnv + "=" + tmuxShellQuote(target),
 		switchStatusMessageEnv + "='Trust denied'",
-		"'/tmp/projmux' 'tmux' 'popup-toggle' '--client' '/dev/pts/9' 'sessionizer-sidebar'",
+		"'/tmp/projmux' 'internal' 'tmux' 'popup-toggle' '--client' '/dev/pts/9' 'sessionizer-sidebar'",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("reopen command = %q, want substring %q", command, want)

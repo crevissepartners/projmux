@@ -129,7 +129,7 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		runArgs = append(runArgs, "-c", target.CWD)
 	}
 	if c.shouldStartNativeKeyBroker() {
-		if err := c.start(context.Background(), binaryPath, "key-broker", "--socket", socketName); err != nil {
+		if err := c.start(context.Background(), binaryPath, "internal", "key-broker", "--socket", socketName); err != nil {
 			_, _ = fmt.Fprintf(stderr, "warning: start native macOS keybindings: %v\n", err)
 		}
 	}
