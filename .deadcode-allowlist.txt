@@ -220,7 +220,6 @@ UsageSupported
 
 # internal/app -- AI / notify / status / settings / tmux / switch surfaces
 # that are not currently reachable from the wired command paths.
-aiCommand.agentLaunchCommand
 aiSummaryForKind
 callName
 codexHooksBlock

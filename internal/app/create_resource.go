@@ -46,10 +46,29 @@ type resourceCreateFlags struct {
 	selectors    repeatedFlag
 	labels       repeatedFlag
 	name         string
+	provider     string
+	providerSet  bool
 	placement    string
 	createWindow bool
 	output       string
 	payload      []string
+}
+
+// resourceCreateShape selects which optional flag groups a resource-backed
+// create route registers.
+//
+// The groups are per-route rather than per-flag because they travel together:
+// a route that splits an existing Window needs the whole anchor surface, and a
+// route that creates an Agent needs the provider. Keeping them grouped is what
+// stops `create window` from silently accepting `--placement`.
+type resourceCreateShape struct {
+	// split registers the Window fan-out and split-anchor surface:
+	// --window, --pane, --selector, --create-window, --placement.
+	split bool
+	// provider registers --provider. The provider shortcuts register it too,
+	// so that respelling the provider they already name is rejected with the
+	// shortcut's own message instead of a bare "flag not defined".
+	provider bool
 }
 
 // hasProjectFlag reports whether argv carries a `--project` occurrence before
@@ -96,16 +115,20 @@ func splitPayload(spelling string, args []string) ([]string, []string, error) {
 }
 
 // parseResourceCreateFlags parses one resource-backed create argv.
-func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, pane bool) (resourceCreateFlags, error) {
+func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, shape resourceCreateShape) (resourceCreateFlags, error) {
 	head, payload, err := splitPayload(spelling, args)
 	if err != nil {
 		return resourceCreateFlags{}, err
 	}
 	out := resourceCreateFlags{payload: payload, placement: defaultPlacement}
+	pane := shape.split
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Var(&out.projects, "project", "exact-one Project selector: <name> or uid:<uid>")
+	if shape.provider {
+		fs.StringVar(&out.provider, "provider", "", "Agent provider: "+strings.Join(cli.AgentProviders(), "|"))
+	}
 	if pane {
 		fs.Var(&out.windows, "window", "repeatable Window selector: <name> or uid:<uid>")
 		fs.Var(&out.panes, "pane", "repeatable anchor Pane selector: <name> or uid:<uid>")
@@ -127,6 +150,11 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	if fs.NArg() != 0 {
 		return resourceCreateFlags{}, usageError(fmt.Sprintf("%s does not accept positional arguments; got %q", spelling, fs.Arg(0)))
 	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "provider" {
+			out.providerSet = true
+		}
+	})
 	if len(out.projects) != 1 {
 		return resourceCreateFlags{}, usageError(spelling + " requires exactly one --project <ref>")
 	}
@@ -189,7 +217,7 @@ func (f resourceCreateFlags) projectQuery() (selector.Query, error) {
 func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Writer) error {
 	const spelling = canonicalCreateWindow
 
-	flags, err := parseResourceCreateFlags(spelling, args, stderr, false)
+	flags, err := parseResourceCreateFlags(spelling, args, stderr, resourceCreateShape{})
 	if err != nil {
 		return err
 	}
@@ -251,7 +279,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer) error {
 	const spelling = canonicalCreatePane
 
-	flags, err := parseResourceCreateFlags(spelling, args, stderr, true)
+	flags, err := parseResourceCreateFlags(spelling, args, stderr, resourceCreateShape{split: true})
 	if err != nil {
 		return err
 	}
@@ -274,42 +302,18 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 			return err
 		}
 
-		// Full preflight. Every target Window and every anchor Pane is fixed
-		// before the first mutation, so a stale primaryPaneRef or an
-		// unsatisfiable cardinality leaves zero metadata writes and zero tmux
-		// objects behind.
-		plan, err := c.planPaneTargets(*working, project, flags)
+		// Full preflight plus the metadata half of the Window ensure. Every
+		// target Window and every anchor Pane is fixed, and every Window this
+		// operation must create is allocated, before the first tmux call.
+		plan, windows, err := c.resolveSplitTargets(working, mutator, project, flags,
+			selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, spelling, operationID)
 		if err != nil {
 			return err
-		}
-
-		// Metadata phase. Every Window ensure and every Pane allocation happens
-		// before the first tmux call, so an explicit --name collision or an
-		// exhausted suffix space cannot leave a materialized runtime behind.
-		var windows []windowWork
-		for _, missing := range plan.missingWindowNames {
-			work, err := c.allocateWindow(working, mutator, project, windowRequest{
-				name:        missing,
-				operationID: operationID,
-			})
-			if err != nil {
-				return err
-			}
-			windows = append(windows, work)
-			// The Window this operation created owns a brand new initial Pane,
-			// which is both its primaryPaneRef and this operation's anchor.
-			plan.targets = append(plan.targets, paneTarget{
-				windowUID: work.window.Metadata.UID,
-				anchorUID: work.initial.Metadata.UID,
-			})
 		}
 		if len(plan.targets) == 0 {
 			return usageError(fmt.Sprintf("%s resolved no target Window; %s matched at least one Window is required",
 				spelling, selector.DescribeSelector(plan.query)))
 		}
-		slices.SortStableFunc(plan.targets, func(a, b paneTarget) int {
-			return cmp.Compare(a.windowUID, b.windowUID)
-		})
 
 		panes := make([]paneWork, 0, len(plan.targets))
 		for _, target := range plan.targets {
@@ -393,9 +397,63 @@ type panePlan struct {
 	missingWindowNames []string
 }
 
+// resolveSplitTargets is the shared preflight of the two routes that split an
+// existing Window: `create pane --project` and `create agent --project`.
+//
+// It fixes every target Window and every anchor Pane, then promotes the missing
+// exact-name --window occurrences into real Window allocations when
+// --create-window asked for it. Both halves finish before the caller performs a
+// single tmux call, so a stale primaryPaneRef, an unsatisfiable cardinality, or
+// an explicit --name collision leaves zero metadata writes and zero tmux objects
+// behind.
+//
+// The returned targets are ordered by Window uid so a fan-out is deterministic
+// regardless of selector spelling; the human-facing output order is applied
+// separately by writeResults, which sorts by (project name, window name, uid).
+func (c *createCommand) resolveSplitTargets(
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	project coremetadata.Project,
+	flags resourceCreateFlags,
+	fanOut selector.Target,
+	spelling, operationID string,
+) (panePlan, []windowWork, error) {
+	plan, err := c.planPaneTargets(*working, project, flags, fanOut, spelling)
+	if err != nil {
+		return panePlan{}, nil, err
+	}
+	var windows []windowWork
+	for _, missing := range plan.missingWindowNames {
+		work, err := c.allocateWindow(working, mutator, project, windowRequest{
+			name:        missing,
+			operationID: operationID,
+		})
+		if err != nil {
+			return panePlan{}, nil, err
+		}
+		windows = append(windows, work)
+		// The Window this operation created owns a brand new initial Pane,
+		// which is both its primaryPaneRef and this operation's anchor.
+		plan.targets = append(plan.targets, paneTarget{
+			windowUID: work.window.Metadata.UID,
+			anchorUID: work.initial.Metadata.UID,
+		})
+	}
+	slices.SortStableFunc(plan.targets, func(a, b paneTarget) int {
+		return cmp.Compare(a.windowUID, b.windowUID)
+	})
+	return plan, windows, nil
+}
+
 // planPaneTargets resolves every target Window and its anchor Pane without
 // mutating anything.
-func (c *createCommand) planPaneTargets(registry coremetadata.Registry, project coremetadata.Project, flags resourceCreateFlags) (panePlan, error) {
+func (c *createCommand) planPaneTargets(
+	registry coremetadata.Registry,
+	project coremetadata.Project,
+	flags resourceCreateFlags,
+	fanOut selector.Target,
+	spelling string,
+) (panePlan, error) {
 	query, err := flags.projectQuery()
 	if err != nil {
 		return panePlan{}, err
@@ -428,12 +486,14 @@ func (c *createCommand) planPaneTargets(registry coremetadata.Registry, project 
 		plan.missingWindowNames = unresolvedWindowNames(registry, project, flags.windows)
 	}
 	if len(resolution.Matches) == 0 && len(plan.missingWindowNames) == 0 {
-		target := selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}
-		return panePlan{}, selector.Enforce(target, selector.DescribeSelector(query), resolution)
+		// The fan-out cell belongs to the caller, not to this helper: `create
+		// pane` fans out over the Windows it selected, and `create agent` over
+		// the Agents it produces, one per selected Window.
+		return panePlan{}, selector.Enforce(fanOut, selector.DescribeSelector(query), resolution)
 	}
 
 	for _, match := range resolution.Matches {
-		anchorUID, err := c.resolveAnchor(registry, project, match.UID, flags)
+		anchorUID, err := c.resolveAnchor(registry, project, match.UID, flags, spelling)
 		if err != nil {
 			return panePlan{}, err
 		}
@@ -468,10 +528,10 @@ func unresolvedWindowNames(registry coremetadata.Registry, project coremetadata.
 // anchor: there is deliberately no fallback to the active, focused, or
 // last-used Pane, and a missing or stale ref is a usage error rather than a
 // silent repair.
-func (c *createCommand) resolveAnchor(registry coremetadata.Registry, project coremetadata.Project, windowUID string, flags resourceCreateFlags) (string, error) {
+func (c *createCommand) resolveAnchor(registry coremetadata.Registry, project coremetadata.Project, windowUID string, flags resourceCreateFlags, spelling string) (string, error) {
 	window, ok := registry.Window(windowUID)
 	if !ok {
-		return "", fmt.Errorf("create pane: window %q disappeared during preflight", windowUID)
+		return "", fmt.Errorf("%s: window %q disappeared during preflight", spelling, windowUID)
 	}
 	if len(flags.panes) > 0 {
 		query := selector.Query{
@@ -503,13 +563,13 @@ func (c *createCommand) resolveAnchor(registry coremetadata.Registry, project co
 	anchor := strings.TrimSpace(window.Spec.PrimaryPaneRef)
 	if anchor == "" {
 		return "", usageError(fmt.Sprintf(
-			"create pane: window/%s (project/%s) has no spec.primaryPaneRef; pass an explicit --pane <ref>",
-			window.Metadata.Name, project.Metadata.Name))
+			"%s: window/%s (project/%s) has no spec.primaryPaneRef; pass an explicit --pane <ref>",
+			spelling, window.Metadata.Name, project.Metadata.Name))
 	}
 	if _, ok := registry.Pane(anchor); !ok {
 		return "", usageError(fmt.Sprintf(
-			"create pane: window/%s (project/%s) spec.primaryPaneRef %q resolves to no Pane; pass an explicit --pane <ref>",
-			window.Metadata.Name, project.Metadata.Name, anchor))
+			"%s: window/%s (project/%s) spec.primaryPaneRef %q resolves to no Pane; pass an explicit --pane <ref>",
+			spelling, window.Metadata.Name, project.Metadata.Name, anchor))
 	}
 	return anchor, nil
 }

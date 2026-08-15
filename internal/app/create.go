@@ -28,17 +28,35 @@ var placementDirections = []string{"right", "down"}
 // defaultPlacement matches the historical `ai split` default.
 const defaultPlacement = "right"
 
-// createCommand implements the canonical `create` verb for the two kinds the
-// Agent decomposition splits apart.
+// agentLauncher is the provider-launch seam the canonical Agent create
+// consumes.
 //
-// This is a parity-first alias, not a second implementation. `create agent` and
-// `create pane` normalize the spelling — an explicit `--provider`, a named
-// `--placement` instead of a bare positional, and `-o pane-id` instead of the
-// `--print-pane-id` boolean — and then hand the work to the existing `ai split`
-// handler, so the launched pane, the stdout bytes, and the exit code are the
-// ones that shipped before.
+// It is deliberately narrow. The legacy split handler owns three things: how a
+// provider is launched, where the pane comes from, and where the client ends up.
+// Only the first belongs on a detached create, so this interface exposes exactly
+// that and the managed-pane binding that follows it. The pane itself is created
+// by the materializer, which owns `-d` and the rollback ledger.
+type agentLauncher interface {
+	// RequireAgentEnabled applies the Settings enabled-agents gate.
+	RequireAgentEnabled(provider string) error
+	// PlanAgentLaunch builds the launch argv and the pane title for one
+	// provider. It creates nothing, so a failure here costs zero mutations.
+	PlanAgentLaunch(provider, contextDir string, payload []string) (title string, argv []string, err error)
+	// BindManagedAgentPane applies the managed-agent pane options and starts
+	// the title watcher on an already-created pane.
+	BindManagedAgentPane(paneID, provider, contextDir, title string)
+}
+
+// createCommand implements the canonical `create` verb.
 //
-// Three separations are load bearing:
+// Each kind has two halves separated by one discriminator. With `--project` the
+// route is the resource-backed detached create: it resolves the registry, splits
+// the resolved Windows through the materializer, and never moves the client.
+// Without it the route is the `ai split` bridge that shipped first, kept
+// byte-identical -- the launched pane, the stdout bytes, the exit code, and the
+// focus effect are the ones that shipped before.
+//
+// Three separations are load bearing on both halves:
 //
 //   - A plain shell split is a Pane, not an Agent, so it reaches `create pane`
 //     and `shell` is not a member of the provider enum.
@@ -49,6 +67,9 @@ const defaultPlacement = "right"
 //     `--provider` as well is a usage error rather than a silent winner.
 type createCommand struct {
 	ai rawArgvCommand
+	// agents builds the provider launch of the canonical `create agent` route.
+	// The legacy `--project`-less bridge never touches it.
+	agents agentLauncher
 	// store is the locked registry file. Only the resource-backed routes touch
 	// it; the legacy `create pane` path never opens it.
 	store *resourceStore
@@ -105,6 +126,13 @@ func (c *createCommand) Run(args []string, stdout, stderr io.Writer) error {
 	rest := args[1:]
 	switch token {
 	case "agent":
+		// Same dispatch discriminator as `create pane`. With `--project` this
+		// is the canonical resource-backed detached Agent create; without it
+		// the invocation is the `ai split` bridge this route already shipped,
+		// kept byte-identical down to the argv it forwards.
+		if hasProjectFlag(rest) {
+			return c.runResourceAgent("", rest, stdout, stderr)
+		}
 		return c.runAgent(rest, stdout, stderr)
 	case "window":
 		return c.runResourceWindow(rest, stdout, stderr)
@@ -121,6 +149,9 @@ func (c *createCommand) Run(args []string, stdout, stderr io.Writer) error {
 	// provider is already specified, so repeating it is an error.
 	for _, provider := range cli.ProviderCreateShortcuts() {
 		if token == provider {
+			if hasProjectFlag(rest) {
+				return c.runResourceAgent(provider, rest, stdout, stderr)
+			}
 			return c.runProviderShortcut(provider, rest, stdout, stderr)
 		}
 	}
@@ -187,12 +218,15 @@ func parseCreateFlags(spelling string, args []string, stderr io.Writer, withProv
 	return out, nil
 }
 
-// resolveCreateOutput maps the canonical `-o` token onto what this release can
-// actually emit.
+// resolveCreateOutput maps the `-o` token of the legacy `ai split` bridge onto
+// what that bridge can emit.
 //
-// The projections that need a registry-backed Agent resource are valid tokens
-// whose data does not exist yet, so they fail as runtime errors rather than
-// usage errors: exit 2 must keep meaning "the operator typed something wrong".
+// The bridge launches into the current Window and produces no Projmux resource,
+// so the identity projections have nothing to project. That is a fixable input
+// error rather than a missing feature: the same token works on the canonical
+// route, and the fix is a single flag. Naming that flag is the whole point of
+// the message, and exit 2 is correct because the operator typed a combination
+// that cannot mean anything.
 func resolveCreateOutput(spelling, token string) (bool, error) {
 	if token == "" {
 		return false, nil
@@ -210,7 +244,9 @@ func resolveCreateOutput(spelling, token string) (bool, error) {
 	case cli.OutputModeNone:
 		return false, nil
 	default:
-		return false, fmt.Errorf("%s -o %s needs the resource-backed Agent create composition, which is not wired yet", spelling, mode)
+		return false, usageError(fmt.Sprintf(
+			"%s -o %s projects a Projmux resource, which the compatibility split does not create; add --project <ref> for the resource-backed create",
+			spelling, mode))
 	}
 }
 

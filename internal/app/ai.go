@@ -684,9 +684,12 @@ type aiSplitInvocation struct {
 type aiSplitLaunchPath string
 
 const (
-	aiSplitLaunchDirect  aiSplitLaunchPath = "direct"
-	aiSplitLaunchDefault aiSplitLaunchPath = "default"
-	aiSplitLaunchPicker  aiSplitLaunchPath = "picker"
+	aiSplitLaunchDirect aiSplitLaunchPath = "direct"
+	// aiSplitLaunchCanonical is the resource-backed `create agent` route. It
+	// gets its own message because `--force-agent` does not exist there.
+	aiSplitLaunchCanonical aiSplitLaunchPath = "canonical"
+	aiSplitLaunchDefault   aiSplitLaunchPath = "default"
+	aiSplitLaunchPicker    aiSplitLaunchPath = "picker"
 )
 
 func (c *aiCommand) runSplit(args []string, stdout, stderr io.Writer) error {
@@ -1406,6 +1409,8 @@ func disabledAIAgentLaunchMessage(mode string, path aiSplitLaunchPath) string {
 		return fmt.Sprintf("AI split default %s is disabled in Settings > AI Settings > Enabled agents; choose another default or use --agent shell", mode)
 	case aiSplitLaunchPicker:
 		return fmt.Sprintf("AI agent %s is disabled in Settings > AI Settings > Enabled agents", mode)
+	case aiSplitLaunchCanonical:
+		return fmt.Sprintf("AI agent %s is disabled in Settings > AI Settings > Enabled agents; enable it there before creating an Agent", mode)
 	default:
 		return fmt.Sprintf("AI agent %s is disabled in Settings > AI Settings > Enabled agents; enable it or pass --force-agent for this direct launch", mode)
 	}
@@ -1549,21 +1554,91 @@ func (c *aiCommand) runAgentSplitResolvedWithOptions(mode, direction string, ext
 	return err
 }
 
-func (c *aiCommand) runAgentSplitResolvedWithOptionsResult(mode, direction string, extraArgs []string, targetPane, contextDir string, options aiSplitLaunchOptions) (string, error) {
-	execArgv := append([]string(nil), options.execArgv...)
-	pathPrepend := options.pathPrepend
+// agentLaunchPlan is one provider launch, constructed but not yet run.
+//
+// It exists so the detached resource-backed Agent create and the legacy focus-
+// following split share exactly one launch construction. Everything that makes
+// a pane an agent pane -- the PATH prepend for node-managed CLIs, the working
+// directory, the OSC-0 title, the exec argv -- is decided here; how the pane
+// comes into existence is the caller's business.
+type agentLaunchPlan struct {
+	// title is the agent pane title, also the seed of the pane's topic option.
+	title string
+	// command is the argv for a caller that runs the launch in place.
+	command []string
+	// commandArgs is the argv for a caller that hands the launch to a split.
+	commandArgs []string
+}
+
+// planAgentLaunch builds the launch for one provider without creating anything.
+//
+// A failure here -- a missing agent binary, an unusable exec argv -- happens
+// before any mutation, which is what lets the create routes guarantee a failed
+// launch leaves zero resources behind.
+func (c *aiCommand) planAgentLaunch(mode, contextDir string, extraArgs, execArgvOverride []string, pathPrependOverride string) (agentLaunchPlan, error) {
+	execArgv := append([]string(nil), execArgvOverride...)
+	pathPrepend := pathPrependOverride
 	if len(execArgv) == 0 {
 		var err error
 		execArgv, pathPrepend, err = c.agentExecArgv(mode, extraArgs)
 		if err != nil {
-			return "", err
+			return agentLaunchPlan{}, err
 		}
 	}
 	title := c.buildAgentTitle(mode, contextDir)
 	command, commandArgs, err := c.agentSplitCommand(mode, pathPrepend, contextDir, title, execArgv)
 	if err != nil {
+		return agentLaunchPlan{}, err
+	}
+	return agentLaunchPlan{title: title, command: command, commandArgs: commandArgs}, nil
+}
+
+// The three methods below are the seam the canonical `create agent` route
+// consumes. They are the launch half of the legacy split with the two halves
+// this Phase must not inherit removed: nothing here resolves a target pane,
+// splits a window, or calls applySplitLayout, so the detached materializer
+// stays the only thing that creates the pane and the client never moves.
+
+// PlanAgentLaunch builds the provider launch for one detached Agent create.
+func (c *aiCommand) PlanAgentLaunch(provider, contextDir string, payload []string) (title string, argv []string, err error) {
+	plan, err := c.planAgentLaunch(provider, contextDir, payload, nil, "")
+	if err != nil {
+		return "", nil, err
+	}
+	return plan.title, plan.commandArgs, nil
+}
+
+// RequireAgentEnabled applies the Settings enabled-agents gate to the canonical
+// route.
+//
+// The gate is deliberately shared with the legacy route: a provider the operator
+// switched off in Settings does not become launchable by spelling the command
+// differently. The message differs in one respect only -- it never mentions
+// `--force-agent`, which is a legacy compatibility flag and is not promoted to a
+// canonical flag, so advertising it here would promise a capability this route
+// does not have. The error classification is identical to the legacy path: a
+// plain error, which cmd/projmux reports on stderr and exits 1 for.
+func (c *aiCommand) RequireAgentEnabled(provider string) error {
+	return c.requireAIAgentEnabled(provider, aiSplitLaunchCanonical)
+}
+
+// BindManagedAgentPane applies the managed-agent pane options and starts the
+// title watcher on a pane the caller already created.
+//
+// This is what makes a resource-backed Agent pane indistinguishable from a
+// legacy one to the statusbar, the attention tracker, and the notification
+// pipeline. None of these calls moves a client.
+func (c *aiCommand) BindManagedAgentPane(paneID, provider, contextDir, title string) {
+	c.configureAIPane(paneID, provider, contextDir, title, aiPaneResumeMetadata{})
+	c.startAIWatchTitle(paneID)
+}
+
+func (c *aiCommand) runAgentSplitResolvedWithOptionsResult(mode, direction string, extraArgs []string, targetPane, contextDir string, options aiSplitLaunchOptions) (string, error) {
+	plan, err := c.planAgentLaunch(mode, contextDir, extraArgs, options.execArgv, options.pathPrepend)
+	if err != nil {
 		return "", err
 	}
+	title, command, commandArgs := plan.title, plan.command, plan.commandArgs
 	if targetPane == "" {
 		if options.requirePaneID {
 			return "", c.printPaneIDUnavailableError("")
@@ -1979,10 +2054,6 @@ func (c *aiCommand) buildAgentTitle(mode, contextDir string) string {
 	default:
 		return mode
 	}
-}
-
-func (c *aiCommand) agentLaunchCommand(mode, agentBin, contextDir, title string) string {
-	return c.agentLaunchCommandForArgv(mode, filepath.Dir(agentBin), contextDir, title, []string{agentBin})
 }
 
 func (c *aiCommand) agentSplitCommand(mode, pathPrepend, contextDir, title string, execArgv []string) ([]string, []string, error) {

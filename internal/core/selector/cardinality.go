@@ -45,9 +45,17 @@ const (
 
 // Target is one cell of the <verb, kind> cardinality matrix.
 //
-// Kind is the kind the route *selects*, which is not always the kind it
-// produces: `create agent --window a --window b` selects Windows and produces
-// Agents, so its target Kind is Window.
+// Kind is normally the kind the route *selects*, which is not always the kind
+// it produces: `create pane --window a --window b` selects Windows and produces
+// Panes, so its target Kind is Window.
+//
+// The create verb makes one documented exception, for a route whose produced
+// kind is never a kind it selects. `create agent` is the only such route: it
+// resolves no existing Agent anywhere -- rebinding an existing conversation is
+// `agent resume`, which owns its own exact-one cell -- so there is no Agent set
+// for a Window-shaped cell to describe. Its cell is therefore over the Agents
+// the invocation produces, one per resolved target Window, and it is the cell
+// the route enforces when its selector resolves nothing.
 //
 // List distinguishes the plural list spelling (`get windows`) from the singular
 // single-resource spelling (`get window`).
@@ -105,9 +113,17 @@ var matrix = map[Target]Cardinality{
 	// The Project cell is what `create window` selects: a Window is created
 	// below exactly one Project, so an ambiguous or absent --project is a usage
 	// error rather than a fan-out.
+	//
+	// The Window cell is `create pane`'s fan-out; the Agent cell is
+	// `create agent`'s. They are separate rows because the two routes fan out
+	// over the same selector but produce different kinds, and the Agent route
+	// resolves no existing Agent at all. Either way a selector that parses but
+	// matches nothing is a usage error rather than a successful invocation that
+	// created nothing.
 	{Verb: VerbCreate, Kind: metadata.KindProject}: CardinalityExactOne,
 	{Verb: VerbCreate, Kind: metadata.KindWindow}:  CardinalityAtLeastOne,
 	{Verb: VerbCreate, Kind: metadata.KindPane}:    CardinalityExactOne,
+	{Verb: VerbCreate, Kind: metadata.KindAgent}:   CardinalityAtLeastOne,
 
 	// resume addresses exactly one existing Agent. It never fans out and never
 	// falls back to a focus target: rebinding the wrong conversation is worse

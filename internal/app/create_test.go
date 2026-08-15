@@ -256,33 +256,51 @@ func TestCreateAgentRefusesEveryNonProviderSpellingWithoutLaunchingAnything(t *t
 	}
 }
 
-// TestCreateOutputProjectionsThatNeedCompositionFailAsRuntimeErrors keeps exit
-// code 2 meaning "the operator typed something wrong".
+// TestIdentityProjectionsOnTheCompatibilityBridgeNameTheMissingFlag is the
+// replacement for the Phase 4 row that reported these tokens as "not wired yet".
 //
-// `-o uid` is a valid token whose data needs the resource-backed create
-// composition, so it must not be reported as a usage error, and it must not
-// launch anything either.
-func TestCreateOutputProjectionsThatNeedCompositionFailAsRuntimeErrors(t *testing.T) {
+// That message is now false: the composition exists, and every one of these
+// projections works on the canonical route. What is missing is the flag that
+// selects it. A missing flag is something the operator typed, so this is exit 2
+// with the fix named in the message rather than exit 1 with an apology -- and it
+// must still launch nothing.
+func TestIdentityProjectionsOnTheCompatibilityBridgeNameTheMissingFlag(t *testing.T) {
 	t.Parallel()
 
-	for _, mode := range []string{"uid", "name", "ref", "metadata", "json"} {
-		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
-			create, split := newTestCreateCommand()
-			stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "-o", mode)
-			if err == nil {
-				t.Fatalf("-o %s succeeded", mode)
-			}
-			if IsUsageError(err) {
-				t.Fatalf("-o %s is a valid token; it must not be a usage error: %v", mode, err)
-			}
-			if !strings.Contains(err.Error(), "not wired yet") {
-				t.Fatalf("-o %s error = %q", mode, err)
-			}
-			if stdout != "" || len(split.calls) != 0 {
-				t.Fatalf("-o %s produced stdout %q and %d split calls", mode, stdout, len(split.calls))
-			}
-		})
+	for _, route := range []struct {
+		name string
+		args []string
+	}{
+		{name: "create agent", args: []string{"agent", "--provider", "codex"}},
+		{name: "create codex", args: []string{"codex"}},
+		// The bridge half of `create pane` has the same gap for the same
+		// reason, so it carries the same message rather than a stale one about
+		// the Agent composition.
+		{name: "create pane", args: []string{"pane"}},
+	} {
+		for _, mode := range []string{"uid", "name", "ref", "metadata", "json"} {
+			t.Run(route.name+" -o "+mode, func(t *testing.T) {
+				t.Parallel()
+				create, split := newTestCreateCommand()
+				args := append(append([]string(nil), route.args...), "-o", mode)
+				stdout, _, err := runRoute(t, create, args...)
+				if err == nil {
+					t.Fatalf("-o %s succeeded", mode)
+				}
+				if !IsUsageError(err) {
+					t.Fatalf("-o %s names a fixable input error, so it must be a usage error: %v", mode, err)
+				}
+				if !strings.Contains(err.Error(), "--project") {
+					t.Fatalf("-o %s error = %q, want it to name --project as the fix", mode, err)
+				}
+				if strings.Contains(err.Error(), "not wired yet") {
+					t.Fatalf("-o %s still claims the composition is missing: %q", mode, err)
+				}
+				if stdout != "" || len(split.calls) != 0 {
+					t.Fatalf("-o %s produced stdout %q and %d split calls", mode, stdout, len(split.calls))
+				}
+			})
+		}
 	}
 }
 
