@@ -8,11 +8,14 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
+// newTestAgentCommand wires the Agent namespace with a full resume rebinder, so
+// the refusal tests below observe the real route rather than a route that could
+// only fail. The rebinder's own handles are returned by
+// newTestAgentResumeCommand for the tests that need them.
 func newTestAgentCommand(t *testing.T, store *fakeResourceStore) (*agentCommand, *recordingArgv, *recordingArgv) {
 	t.Helper()
-	ai := &recordingArgv{}
-	usage := &recordingArgv{}
-	return &agentCommand{ai: ai, usage: usage, loadRegistry: store.store().load}, ai, usage
+	cmd, _, ai, usage := newTestAgentResumeCommand(t, store, newFakeTmux())
+	return cmd, ai, usage
 }
 
 // TestAgentDomainForwardsRawArgvToTheHandlersThatAlreadyOwnTheBehavior is the
@@ -119,6 +122,10 @@ func TestAgentUsageAndTheLegacyUsageSpellingShareOneHandlerAndOneArgv(t *testing
 // (exit 2) instead of being reinterpreted as navigation. The last one is why
 // the test also asserts nothing was forwarded anywhere: resume never degrades
 // into focus, into a picker, or into a new create.
+//
+// Every row here fails, and every row therefore also re-measures the Phase's
+// central guarantee from the selector side: a refusal opens zero registry
+// transactions, so no conversation of any kind is started by one.
 func TestAgentResumeTargetsExactlyOneExistingAgentAndOnlyOfflineOrFailed(t *testing.T) {
 	t.Parallel()
 
@@ -129,29 +136,33 @@ func TestAgentResumeTargetsExactlyOneExistingAgentAndOnlyOfflineOrFailed(t *test
 		args     []string
 		// wantUsage is true when the failure must be exit 2.
 		wantUsage bool
-		// wantEligible is true when the phase gate passes and the route stops at
-		// the materialization boundary instead.
+		// wantEligible is true when the phase gate passes and the route stops
+		// on something further down instead.
 		wantEligible bool
 		want         string
 	}{
 		{
-			name:         "an Offline agent is eligible and stops at the materialization boundary",
+			// The fixture Agent has no stored conversation, so the phase gate
+			// passes and the route then stops on the ref instead. That ordering
+			// is the point: Offline is eligible, and what it lacks is a
+			// conversation rather than permission.
+			name:         "an Offline agent is eligible and stops on its missing session ref",
 			args:         []string{"resume", "codex", "--project", "beta"},
 			wantEligible: true,
-			want:         "needs runtime materialization",
+			want:         "has no provider session ref",
 		},
 		{
 			name:         "a Failed agent is eligible too",
 			phaseFor:     map[string]coremetadata.AgentPhase{"agt-beta-codex": coremetadata.PhaseFailed},
 			args:         []string{"resume", "codex", "--project", "beta"},
 			wantEligible: true,
-			want:         "needs runtime materialization",
+			want:         "has no provider session ref",
 		},
 		{
 			name:         "the uid form addresses the same agent",
 			args:         []string{"resume", "uid:agt-beta-codex"},
 			wantEligible: true,
-			want:         "needs runtime materialization",
+			want:         "has no provider session ref",
 		},
 		{
 			name:      "a Running agent is refused, not focused",
@@ -232,7 +243,7 @@ func TestAgentResumeTargetsExactlyOneExistingAgentAndOnlyOfflineOrFailed(t *test
 
 			stdout, stderr, err := runRoute(t, agent, test.args...)
 			if err == nil {
-				t.Fatalf("agent %v succeeded; no release wires the rebind yet", test.args)
+				t.Fatalf("agent %v succeeded, want a refusal", test.args)
 			}
 			if test.wantUsage && !IsUsageError(err) {
 				t.Fatalf("agent %v error is not a usage error: %v", test.args, err)
@@ -251,8 +262,8 @@ func TestAgentResumeTargetsExactlyOneExistingAgentAndOnlyOfflineOrFailed(t *test
 			if len(ai.calls) != 0 || len(usage.calls) != 0 {
 				t.Fatalf("agent %v forwarded to ai=%q usage=%q, want neither", test.args, ai.calls, usage.calls)
 			}
-			// Nothing is written before materialization exists, so a half-applied
-			// Pending transition can never be left behind.
+			// Every refusal above is decided against a read-only snapshot, so a
+			// half-applied transition can never be left behind.
 			if store.transactions != 0 || store.writes != 0 {
 				t.Fatalf("agent %v opened %d transactions and committed %d writes, want 0/0",
 					test.args, store.transactions, store.writes)
@@ -400,7 +411,10 @@ func TestAPaneExitAndAnExplicitDeletePaneLeaveTheAgentOfflineNotDeleted(t *testi
 		agent, _, _ := newTestAgentCommand(t, store)
 		_, _, err = runRoute(t, agent, "resume", "uid:agt-alpha-codex")
 		if err == nil || IsUsageError(err) {
-			t.Fatalf("resume of the now-Offline agent = %v, want the materialization boundary", err)
+			t.Fatalf("resume of the now-Offline agent = %v, want a non-usage state failure", err)
+		}
+		if !strings.Contains(err.Error(), "has no provider session ref") {
+			t.Fatalf("resume of the now-Offline agent = %q, want the missing-ref refusal", err)
 		}
 	})
 }
