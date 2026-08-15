@@ -215,8 +215,8 @@ var routes = []Route{
 		Usage: []string{
 			"projmux create window --project <ref> [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 			"projmux create pane --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
-			"projmux create agent --provider <provider> [--placement right|down] [-o <mode>] [-- <payload>]",
-			"projmux create codex|claude|antigravity [--placement right|down] [-o <mode>] [-- <payload>]",
+			"projmux create agent --provider <provider> --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
+			"projmux create codex|claude|antigravity --project <ref> [--window <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
 		},
 		Canonical: []string{"create window", "create pane", "create agent", "create codex", "create claude", "create antigravity"},
 		Children: []Route{
@@ -250,37 +250,53 @@ var routes = []Route{
 				Canonical: []string{"create pane"},
 			},
 			{
+				// Two spellings share this node, on the same discriminator as
+				// `create pane`. With --project it is the canonical
+				// resource-backed Agent create: it allocates a Window-owned
+				// Agent plus its managed Pane, splits the resolved Windows
+				// detached, and never moves the client. Without --project it is
+				// the `ai split` compatibility bridge, which does follow focus
+				// and creates no Projmux resource; that half is unchanged.
 				Name:    "agent",
-				Summary: "Create an Agent and its managed Pane; --provider is required",
-				Usage:   []string{"projmux create agent --provider <provider> [--placement right|down] [-o <mode>] [-- <payload>]"},
-				// The remaining shared modes need the resource-backed Agent
-				// create composition, so only the two projections this release
-				// actually produces are advertised here.
-				Outputs:   []OutputMode{OutputModePaneID, OutputModeNone},
+				Summary: "Create an Agent and its managed Pane; --provider is required, and --project splits the resolved Windows detached",
+				Usage: []string{
+					"projmux create agent --provider <provider> --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
+					"projmux create agent --provider <provider> [--placement right|down] [-o pane-id|none] [-- <payload>]",
+				},
+				Outputs:   sharedOutputModes,
 				Canonical: []string{"create agent"},
 			},
 			{
-				Name:             "codex",
-				Summary:          "Provider shortcut for create agent --provider codex",
-				Usage:            []string{"projmux create codex [--placement right|down] [-o <mode>] [-- <payload>]"},
+				Name:    "codex",
+				Summary: "Provider shortcut for create agent --provider codex",
+				Usage: []string{
+					"projmux create codex --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
+					"projmux create codex [--placement right|down] [-o pane-id|none] [-- <payload>]",
+				},
 				ProviderShortcut: true,
-				Outputs:          []OutputMode{OutputModePaneID, OutputModeNone},
+				Outputs:          sharedOutputModes,
 				Canonical:        []string{"create codex"},
 			},
 			{
-				Name:             "claude",
-				Summary:          "Provider shortcut for create agent --provider claude",
-				Usage:            []string{"projmux create claude [--placement right|down] [-o <mode>] [-- <payload>]"},
+				Name:    "claude",
+				Summary: "Provider shortcut for create agent --provider claude",
+				Usage: []string{
+					"projmux create claude --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
+					"projmux create claude [--placement right|down] [-o pane-id|none] [-- <payload>]",
+				},
 				ProviderShortcut: true,
-				Outputs:          []OutputMode{OutputModePaneID, OutputModeNone},
+				Outputs:          sharedOutputModes,
 				Canonical:        []string{"create claude"},
 			},
 			{
-				Name:             "antigravity",
-				Summary:          "Provider shortcut for create agent --provider antigravity",
-				Usage:            []string{"projmux create antigravity [--placement right|down] [-o <mode>] [-- <payload>]"},
+				Name:    "antigravity",
+				Summary: "Provider shortcut for create agent --provider antigravity",
+				Usage: []string{
+					"projmux create antigravity --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
+					"projmux create antigravity [--placement right|down] [-o pane-id|none] [-- <payload>]",
+				},
 				ProviderShortcut: true,
-				Outputs:          []OutputMode{OutputModePaneID, OutputModeNone},
+				Outputs:          sharedOutputModes,
 				Canonical:        []string{"create antigravity"},
 			},
 		},

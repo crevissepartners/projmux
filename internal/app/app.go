@@ -207,6 +207,10 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	usageCmd := usagecmd.New(nil)
 	createCmd := newCreateCommand()
 	createCmd.ai = ai
+	// The same object serves both halves of `create agent`: raw argv for the
+	// compatibility bridge, and the narrow launch seam for the canonical
+	// resource-backed route.
+	createCmd.agents = ai
 	agentCmd := newAgentCommand()
 	agentCmd.ai = ai
 	agentCmd.usage = usageCmd

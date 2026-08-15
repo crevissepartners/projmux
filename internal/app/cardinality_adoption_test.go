@@ -46,6 +46,11 @@ var canonicalRouteCardinalities = []routeCardinality{
 	{"create window", selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindProject}, selector.CardinalityExactOne},
 	{"create pane", selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, selector.CardinalityAtLeastOne},
 	{"create pane anchor", selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindPane}, selector.CardinalityExactOne},
+	// The Agent create shares the per-Window anchor with `create pane` but owns
+	// its own fan-out cell: it never resolves an existing Agent, so the cell it
+	// enforces is over the Agents it produces, one per resolved target Window.
+	{"create agent", selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindAgent}, selector.CardinalityAtLeastOne},
+	{"create agent anchor", selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindPane}, selector.CardinalityExactOne},
 }
 
 // TestCanonicalRoutesAdoptTheDeclaredCardinalityMatrix proves the routes consume
@@ -172,6 +177,40 @@ func TestEveryCanonicalRouteCardinalityIsEnforcedAtTheRoute(t *testing.T) {
 			run: func(t *testing.T, store *fakeResourceStore) error {
 				create, _ := newTestResourceCreateCommand(t, store, newFakeTmux())
 				_, _, err := runRoute(t, create, "pane", "--project", "alpha", "--selector", "role=nosuch")
+				return err
+			},
+			wantFail: true,
+		},
+		{
+			spelling: "create agent",
+			run: func(t *testing.T, store *fakeResourceStore) error {
+				// 1..N accepts the whole Project scope: one Agent per Window.
+				create, _ := newTestAgentCreateCommand(t, store, newFakeTmux())
+				_, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha")
+				return err
+			},
+		},
+		{
+			spelling: "create agent empty",
+			run: func(t *testing.T, store *fakeResourceStore) error {
+				// Only an empty target set fails. This is the row that makes the
+				// declared <create, Agent> value load bearing: relaxing the cell
+				// to 0..N would turn this into a success that created nothing.
+				create, _ := newTestAgentCreateCommand(t, store, newFakeTmux())
+				_, _, err := runRoute(t, create,
+					"agent", "--provider", "codex", "--project", "alpha", "--selector", "role=nosuch")
+				return err
+			},
+			wantFail: true,
+		},
+		{
+			spelling: "create agent anchor",
+			run: func(t *testing.T, store *fakeResourceStore) error {
+				// Two anchors inside one Window violate the exact-one Pane cell,
+				// which the Agent route shares with `create pane`.
+				create, _ := newTestAgentCreateCommand(t, store, newFakeTmux())
+				_, _, err := runRoute(t, create, "agent", "--provider", "codex",
+					"--project", "alpha", "--window", "main", "--pane", "zsh", "--pane", "log")
 				return err
 			},
 			wantFail: true,

@@ -38,6 +38,11 @@ func TestCardinalityMatrixPinsTheContractCells(t *testing.T) {
 		{target: Target{Verb: VerbCreate, Kind: metadata.KindProject}, want: CardinalityExactOne},
 		{target: Target{Verb: VerbCreate, Kind: metadata.KindPane}, want: CardinalityExactOne},
 
+		// The Agent create yields one Agent per resolved target Window, so an
+		// invocation that resolves nothing is a usage error rather than a
+		// success that created nothing.
+		{target: Target{Verb: VerbCreate, Kind: metadata.KindAgent}, want: CardinalityAtLeastOne},
+
 		// delete fans out.
 		{target: Target{Verb: VerbDelete, Kind: metadata.KindAgent}, want: CardinalityAtLeastOne},
 	} {

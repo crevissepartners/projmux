@@ -693,6 +693,190 @@ if [[ "$(md5sum "$create_registry" | cut -d' ' -f1)" != "$rollback_registry_befo
 fi
 smoke_assert_file_contains "$create_root/rollback.err" "injected split failure"
 
+# 8. Agent create composition: a detached Agent split that really launches the
+#    provider, allocates a Window-owned Agent plus its managed Pane, never
+#    reuses an existing Agent, and never moves the client.
+#
+#    The provider is a stub binary rather than a real agent CLI. That is the
+#    point of the check: the launch construction, the detached split, and the
+#    managed-pane binding are what this Phase owns, and a stub proves all three
+#    ran by leaving a marker with its own cwd and argv.
+agent_home="$create_root/agent-home"
+mkdir -p "$agent_home/.local/bin"
+cat >"$agent_home/.local/bin/codex" <<AGENT_STUB
+#!/usr/bin/env bash
+{
+  printf 'cwd=%s\n' "\$PWD"
+  printf 'args=%s\n' "\$*"
+} >>$(printf %q "$create_root/agent-launch.log")
+# Stay alive so the pane survives long enough to be inspected.
+exec sleep 600
+AGENT_STUB
+chmod 0755 "$agent_home/.local/bin/codex"
+
+pmx_agent() {
+  env -u TMUX -u TMUX_PANE \
+    PATH="$create_shim:$agent_home/.local/bin:$PATH" \
+    HOME="$agent_home" \
+    TMUX_TMPDIR="$create_root/tt" \
+    XDG_STATE_HOME="$create_root/state" \
+    XDG_CONFIG_HOME="$create_root/config" \
+    PROJMUX_MANAGED_ROOTS="$create_root/work" \
+    SHELL=/bin/bash \
+    "$bin" "$@"
+}
+
+agent_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
+agent_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
+
+pmx_agent create agent --provider codex --project alpha --window buildlog -o pane-id \
+  >"$create_root/agent.out" 2>"$create_root/agent.err"
+agent_pane="$(tr -d '[:space:]' <"$create_root/agent.out")"
+if [[ ! "$agent_pane" =~ ^%[0-9]+$ ]]; then
+  echo "create agent -o pane-id = $agent_pane, want a raw %N handle" >&2
+  cat "$create_root/agent.err" >&2 || true
+  exit 1
+fi
+
+# The provider really launched inside the pane the create made.
+for _ in {1..200}; do
+  [[ -s "$create_root/agent-launch.log" ]] && break
+  sleep 0.05
+done
+if ! grep -Fq "cwd=$create_root/work/alpha" "$create_root/agent-launch.log"; then
+  echo "the provider stub did not launch in the project root" >&2
+  cat "$create_root/agent-launch.log" >&2 || true
+  exit 1
+fi
+
+# The managed pane carries both identities: the Projmux Pane uid mirror and the
+# AI managed-pane options the statusbar and attention tracker read.
+if [[ -z "$(ctx display-message -p -t "$agent_pane" '#{@projmux_pane_uid}')" ]]; then
+  echo "the managed Agent pane has no Projmux uid mirror" >&2
+  exit 1
+fi
+if [[ "$(ctx display-message -p -t "$agent_pane" '#{@projmux_ai_managed}')" != "1" ]]; then
+  echo "the managed Agent pane is not marked as an AI pane" >&2
+  exit 1
+fi
+if [[ "$(ctx display-message -p -t "$agent_pane" '#{@projmux_ai_agent}')" != "codex" ]]; then
+  echo "the managed Agent pane does not record its provider" >&2
+  exit 1
+fi
+
+# The client never moved and the new pane is not active.
+if [[ "$(ctx display-message -p -t legacy-alpha '#{window_id}')" != "$agent_window_before" ]] ||
+  [[ "$(ctx display-message -p -t legacy-alpha '#{pane_id}')" != "$agent_pane_before" ]]; then
+  echo "a detached Agent create moved the active window or pane" >&2
+  exit 1
+fi
+if [[ "$(ctx display-message -p -t "$agent_pane" '#{?pane_active,1,0}')" != "0" ]]; then
+  echo "the detached Agent split left $agent_pane active" >&2
+  exit 1
+fi
+
+# 9. The shortcut normalizes onto the same route, and a second create allocates a
+#    new Agent instead of reusing the first.
+pmx_agent create codex --project alpha --window buildlog -o name >"$create_root/agent-second.out"
+if [[ "$(tr -d '[:space:]' <"$create_root/agent-second.out")" != "codex-1" ]]; then
+  echo "the second Agent name = $(cat "$create_root/agent-second.out"), want codex-1" >&2
+  exit 1
+fi
+pmx_agent get agents --project alpha -o name >"$create_root/agent-list.out"
+for want in codex codex-1; do
+  if ! grep -qx "$want" "$create_root/agent-list.out"; then
+    echo "get agents is missing $want:" >&2
+    cat "$create_root/agent-list.out" >&2
+    exit 1
+  fi
+done
+
+# 10. The payload after -- reaches the provider and never the naming.
+: >"$create_root/agent-launch.log"
+pmx_agent create agent --provider codex --project alpha --window buildlog -o name \
+  -- --topic "release triage" >"$create_root/agent-payload.out"
+if [[ "$(tr -d '[:space:]' <"$create_root/agent-payload.out")" != "codex-2" ]]; then
+  echo "a payload changed the Agent name: $(cat "$create_root/agent-payload.out")" >&2
+  exit 1
+fi
+for _ in {1..200}; do
+  [[ -s "$create_root/agent-launch.log" ]] && break
+  sleep 0.05
+done
+if ! grep -Fq -- "args=--topic release triage" "$create_root/agent-launch.log"; then
+  echo "the payload did not reach the provider:" >&2
+  cat "$create_root/agent-launch.log" >&2 || true
+  exit 1
+fi
+
+# 11. A missing provider is exit 2 with zero mutations and zero stdout.
+agent_registry_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
+set +e
+pmx_agent create agent --project alpha --window buildlog \
+  >"$create_root/agent-noprovider.out" 2>"$create_root/agent-noprovider.err"
+agent_noprovider_status=$?
+set -e
+if [[ "$agent_noprovider_status" != "2" ]]; then
+  echo "create agent without --provider exit = $agent_noprovider_status, want 2" >&2
+  cat "$create_root/agent-noprovider.err" >&2 || true
+  exit 1
+fi
+if [[ -s "$create_root/agent-noprovider.out" ]]; then
+  echo "create agent without --provider wrote to stdout" >&2
+  exit 1
+fi
+if [[ "$(md5sum "$create_registry" | cut -d' ' -f1)" != "$agent_registry_before" ]]; then
+  echo "create agent without --provider mutated the registry" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$create_root/agent-noprovider.err" "requires --provider"
+
+# 12. An explicit name that collides inside the target Window is exit 2 with no
+#     implicit suffix and no new pane.
+agent_panes_before="$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)"
+set +e
+pmx_agent create agent --provider codex --project alpha --window buildlog --name codex \
+  >"$create_root/agent-collide.out" 2>"$create_root/agent-collide.err"
+agent_collide_status=$?
+set -e
+if [[ "$agent_collide_status" != "2" ]]; then
+  echo "an explicit Agent name collision exit = $agent_collide_status, want 2" >&2
+  cat "$create_root/agent-collide.err" >&2 || true
+  exit 1
+fi
+if [[ -s "$create_root/agent-collide.out" ]]; then
+  echo "an explicit Agent name collision wrote to stdout" >&2
+  exit 1
+fi
+if [[ "$(md5sum "$create_registry" | cut -d' ' -f1)" != "$agent_registry_before" ]]; then
+  echo "an explicit Agent name collision mutated the registry" >&2
+  exit 1
+fi
+if [[ "$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)" != "$agent_panes_before" ]]; then
+  echo "an explicit Agent name collision created a pane" >&2
+  exit 1
+fi
+
+# 13. The compatibility bridge is untouched: with no --project the invocation is
+#     still the legacy `ai split`, and its identity projections name the flag
+#     that would make them work.
+set +e
+pmx_agent create agent --provider codex -o uid \
+  >"$create_root/agent-bridge.out" 2>"$create_root/agent-bridge.err"
+agent_bridge_status=$?
+set -e
+if [[ "$agent_bridge_status" != "2" ]]; then
+  echo "the bridge identity projection exit = $agent_bridge_status, want 2" >&2
+  exit 1
+fi
+if [[ -s "$create_root/agent-bridge.out" ]]; then
+  echo "the bridge identity projection wrote to stdout" >&2
+  exit 1
+fi
+# The needle deliberately starts with a word: the helper passes it to grep as a
+# pattern, so a leading `--` would be read as an option.
+smoke_assert_file_contains "$create_root/agent-bridge.err" "add --project <ref>"
+
 create_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> create e2e passed: socket=$create_socket path=$create_socket_path"

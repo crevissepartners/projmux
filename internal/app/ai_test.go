@@ -1310,7 +1310,8 @@ func TestAISplitCodexRunsNativeTmuxSplitAndStartsWatcher(t *testing.T) {
 
 func TestAgentLaunchCommandPrependsAgentBinDirToPath(t *testing.T) {
 	cmd := &aiCommand{}
-	got := cmd.agentLaunchCommand("codex", "/home/u/.nvm/versions/node/v24.0.0/bin/codex", "/work/repo", "codex:repo")
+	const agentBin = "/home/u/.nvm/versions/node/v24.0.0/bin/codex"
+	got := cmd.agentLaunchCommandForArgv("codex", filepath.Dir(agentBin), "/work/repo", "codex:repo", []string{agentBin})
 	want := `export PATH='/home/u/.nvm/versions/node/v24.0.0/bin'":$PATH"`
 	if !strings.HasPrefix(got, want+" && ") {
 		t.Fatalf("agentLaunchCommand = %q, want it to start with %q", got, want)
