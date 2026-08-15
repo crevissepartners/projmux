@@ -112,8 +112,8 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
   The chip does not append an extra default-styled trailing space after
   `#[default]`, so the painted button reaches the status row's right edge.
 - Both HUD segments degrade gracefully when the cell budget is tight; see
-  [notify-queue.md](notify-queue.md) and [usage-tracking.md](usage-tracking.md)
-  for the per-segment tier ladder.
+  [notify-queue.md](notify-queue.md) for notify's ladder and
+  [Usage element drop order](#usage-element-drop-order) below for usage's.
 
 ## Row 0 width budgets
 
@@ -200,7 +200,7 @@ Four tmux behaviours this relies on, all verified against a real server
    row with a queued notification drew
    `… · 1분 전   +7░░░] 39% · weekly […`, i.e. the usage segment lost its
    leading `Claude (4m) 5h [███` outright instead of degrading through its own
-   tier ladder. That is why the two budgets sum to exactly the client width
+   drop order. That is why the two budgets sum to exactly the client width
    rather than each being capped independently, and why the reservation cannot
    simply be dropped: the notify segment fills whatever budget it is given while
    anything is queued — its rendered display width equals its budget exactly, up
@@ -215,14 +215,13 @@ Claude's official weekly bar back, 134 adds the age indicator. A cell moved
 from notify to usage can restore a whole provider window; the same cell moved
 the other way buys one character.
 
-Two things this does *not* fix. The usage tier ladder is still whole-segment,
-so a row narrower than 144 columns can still cost a provider's bar wholesale;
-per-provider tier selection is a separate change. And below 140 columns "usage
-keeps its historical 120 cells" and "notify keeps a usable segment" are
-physically incompatible — 120 usage cells plus any notify at all does not fit —
-so notify's 20-cell floor wins there and usage gets `client_width - 20`. That
-is never less than the previous even split gave, and strictly more above 40
-columns.
+One thing the budget derivation does *not* fix. Below 140 columns "usage keeps
+its historical 120 cells" and "notify keeps a usable segment" are physically
+incompatible — 120 usage cells plus any notify at all does not fit — so
+notify's 20-cell floor wins there and usage gets `client_width - 20`. That is
+never less than the previous even split gave, and strictly more above 40
+columns. How the usage segment then spends the cells it does get is the drop
+order below.
 
 A single tmux bind handles both lines:
 
@@ -234,6 +233,53 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 
 `MouseDown1Status` fires from any line of a multi-line status bar with
 `#{mouse_status_range}` resolving to the range under the cursor.
+
+## Usage element drop order
+
+The usage segment does not pick a whole-segment tier. It starts from its
+richest render and sheds **one optional element at a time** until the result
+fits its budget. The order below is the drop order; index 1 goes first.
+
+1. `cosmetic age text` — the `(3m)` on a provider that is *not* stale. Per
+   provider.
+2. `stale age text (the ~ / ~~ marker stays)` — `(3d~~)` collapses to `~~`.
+   Only the "how old exactly" text goes. Per provider.
+3. `secondary window bar` — the *second* window of a provider that reports two,
+   i.e. Claude's weekly next to its 5h. Per provider.
+4. `bars (every provider switches to text pairs)` — `5h [████░░░░░░] 42%`
+   becomes `5h:42%`. Segment-wide, because a row that mixes bar and text
+   providers reads as a rendering bug, and because the text pair is cheap
+   enough that every provider's second window comes back with it.
+5. `long labels (single-letter fallback)` — `Claude` becomes `C`.
+   Segment-wide.
+
+Then, and only then, hard rune-truncation with a trailing `…`.
+
+Two elements are deliberately **absent** from that list, which is what makes
+them survive everything in it:
+
+- **The `~` / `~~` staleness marker.** It has no entry, so no width sheds it
+  while any listed element still renders. This is the contract PR #620
+  established, and rule 2 exists precisely so the age *text* can go without the
+  marker going with it.
+- **Each provider's official window bar** — 5h when the provider reports one,
+  otherwise weekly. Rule 3 only ever touches a *second* window; rules 4 and 5
+  change how the official window is drawn, never whether it is drawn. No step
+  hides a provider wholesale.
+
+Only hard rune-truncation, below every listed step, can reach either.
+
+Within a per-provider rule the steps run **tail-first** over the canonical
+provider order (Claude, Codex, Antigravity), so the provider a user reads first
+is the last to lose detail. This is why a 120-cell budget renders
+`Claude 5h [bar] · weekly [bar]   Codex 5h [bar]   Antigravity~~ weekly [bar]`
+— Codex's second window paid for Claude's — where whole-segment tier selection
+dropped both second windows at once and rendered 92 cells into a 120-cell row.
+
+The order lives in **exactly one place in code**: `usageShedOrder` in
+`internal/app/usagecmd/usage.go`. The entry names above are that variable's
+`name` fields verbatim, and `TestDropOrderMatchesTheDocumentedOrder` reads this
+section to prove the two have not drifted.
 
 ## Range catalogue
 

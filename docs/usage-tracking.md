@@ -210,15 +210,16 @@ without rewriting the cache. Context, `3p-weekly`, and unknown quota buckets
 do not participate in status width. Claude `limits[]` named/model rows are also
 excluded; only its aggregate official `5h` and `weekly` rows reach the HUD.
 
-Output degrades through six tiers as `--max-width` shrinks:
+As `--max-width` shrinks the segment does not fall to a coarser whole-segment
+tier. It sheds **one optional element at a time** — a cosmetic age indicator
+first, a provider's *second* window bar much later — so one provider's
+decoration can no longer cost another provider its official window bar. The
+staleness marker and every provider's official window survive the entire order.
 
-1. Long form with last-sync age + bars: `Claude (3m) 5h [████████░░]
-   80% · weekly [...]   Antigravity weekly [...]`
-2. Drop the age indicator (legacy long form).
-3. Keep one primary bar per provider (`5h`, or `weekly` when 5h is absent).
-4. Drop bars entirely (`Claude 5h:80% weekly:30%`).
-5. Single-letter labels (`C 5h:80% weekly:30%`).
-6. Hard rune-truncate with trailing `…`.
+That order is defined in exactly one place in code, `usageShedOrder` in
+`internal/app/usagecmd/usage.go`, and documented in exactly one place in prose:
+[statusbar.md → Usage element drop order](statusbar.md#usage-element-drop-order).
+It is deliberately not repeated here.
 
 The age indicator is the HUD's staleness signal, and it uses the same two
 thresholds as the `STALE` column and the JSON `stale` flag — `staleAfter` (10m)
@@ -231,9 +232,10 @@ and `veryStaleAfter` (1h). There is no separate age constant:
 | `> 10m` … `1h` | `(15m~)` | muted grey |
 | `> 1h` | `(3h~~)` | muted grey |
 
-The `~` / `~~` markers are the legacy stale vocabulary, now carried inside the
-indicator rather than appended to the per-window pairs. Staleness stays muted at
-every tier: warning and critical colors are reserved for usage thresholds, not
+The `~` / `~~` markers are the legacy stale vocabulary, carried inside the
+indicator while the age text is still rendered and glued to the label once the
+drop order has shed it. Staleness stays muted however far the segment has
+degraded: warning and critical colors are reserved for usage thresholds, not
 cache age. Codex opts out of the indicator because the rollout file is always
 near-current (no throttle gap to report).
 
