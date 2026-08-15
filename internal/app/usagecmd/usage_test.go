@@ -380,7 +380,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 func TestCurrentCacheWidthTiersPreserveWeeklyOnlyProvider(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 12, 5, 0, 0, 0, time.UTC)
-	models := buildModelDisplays(projectStatusSnapshots(installedCacheFixture(now)), now)
+	models := buildModelDisplays(projectStatusSnapshots(installedCacheFixture(now)))
 
 	for name, out := range map[string]string{
 		"long":        renderTierLongHUD(models, now),
@@ -1127,12 +1127,12 @@ func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
 	}
 }
 
-func TestFormatStatusUsageHUDOmitsTildeStaleMarker(t *testing.T) {
+func TestFormatStatusUsageHUDConfinesTildeToAgeIndicator(t *testing.T) {
 	t.Parallel()
 
-	// Schema v3 of the HUD replaces the legacy `~` / `~~` stale
-	// markers with an explicit age indicator (see TestFormatStatusUsageAge*).
-	// The colored marker forms must never appear in the rendered output.
+	// The `~` / `~~` stale vocabulary lives INSIDE the age indicator and
+	// nowhere else: the per-window pairs stay marker-free, and a model
+	// that opted out of the indicator (Codex) never carries one at all.
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	stale := now.Add(-15 * time.Minute)
 	snaps := []usage.Snapshot{
@@ -1140,12 +1140,22 @@ func TestFormatStatusUsageHUDOmitsTildeStaleMarker(t *testing.T) {
 		{Model: "codex", Window: usage.Window5h, Pct: 50, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 	}
 	got := formatStatusUsage(snaps, 0, now)
-	if strings.Contains(got, "~") {
-		t.Fatalf("HUD must not emit `~` stale marker: %q", got)
+	if !strings.Contains(got, "(15m~)") {
+		t.Fatalf("stale claude age indicator missing its `~` marker: %q", got)
 	}
-	// Codex stays clean too — no age, no `~`.
-	if strings.Contains(got, "(") && strings.Contains(got, ")Codex") {
-		t.Fatalf("codex must not carry an age indicator: %q", got)
+	if strings.Count(got, "~") != 1 {
+		t.Fatalf("`~` escaped the age indicator: %q", got)
+	}
+	claudeBlock, codexBlock, ok := strings.Cut(got, "Codex")
+	if !ok {
+		t.Fatalf("codex block missing: %q", got)
+	}
+	if strings.Contains(codexBlock, "~") || strings.Contains(codexBlock, "(") {
+		t.Fatalf("codex must not carry an age indicator: %q", codexBlock)
+	}
+	// The marker sits in the indicator, not on the 5h/weekly pair.
+	if strings.Contains(claudeBlock[strings.Index(claudeBlock, "5h"):], "~") {
+		t.Fatalf("window pair carried a stale marker: %q", claudeBlock)
 	}
 }
 
@@ -1496,8 +1506,26 @@ func TestFormatStatusUsageAgeMinutesGrey(t *testing.T) {
 	}
 }
 
-// TestFormatStatusUsageAgeWarnMuted covers the >=1h band — the indicator
-// stays muted so warning colors remain reserved for usage thresholds.
+// TestFormatStatusUsageAgeStaleBandMarksStale covers the level-1 band
+// (>staleAfter, <=veryStaleAfter). A value the table already calls stale must
+// read as stale in the HUD too: single `~`, muted, never a warning color.
+func TestFormatStatusUsageAgeStaleBandMarksStale(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(time.Hour), UpdatedAt: now.Add(-15 * time.Minute)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-15 * time.Minute)},
+	}
+	got := formatStatusUsage(snaps, 0, now)
+	if !strings.Contains(got, "#[fg=colour244](15m~)#[default]") {
+		t.Fatalf("missing muted (15m~) stale age indicator: %q", got)
+	}
+}
+
+// TestFormatStatusUsageAgeWarnMuted covers the >1h band — the marker doubles
+// but the indicator stays muted so warning/critical colors remain reserved
+// for usage thresholds.
 func TestFormatStatusUsageAgeWarnMuted(t *testing.T) {
 	t.Parallel()
 
@@ -1507,8 +1535,13 @@ func TestFormatStatusUsageAgeWarnMuted(t *testing.T) {
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-90 * time.Minute)},
 	}
 	got := formatStatusUsage(snaps, 0, now)
-	if !strings.Contains(got, "#[fg=colour244](1h)#[default]") {
-		t.Fatalf("missing muted (1h) age indicator: %q", got)
+	if !strings.Contains(got, "#[fg=colour244](1h~~)#[default]") {
+		t.Fatalf("missing muted (1h~~) age indicator: %q", got)
+	}
+	for _, reserved := range []string{"colour214", "colour160"} {
+		if strings.Contains(strings.SplitN(got, "5h", 2)[0], reserved) {
+			t.Fatalf("staleness borrowed a warning/critical color: %q", got)
+		}
 	}
 }
 
@@ -1524,8 +1557,8 @@ func TestFormatStatusUsageAgeVeryStaleStaysMuted(t *testing.T) {
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 9, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now.Add(-8 * time.Hour)},
 	}
 	got := formatStatusUsage(snaps, 0, now)
-	if !strings.Contains(got, "#[fg=colour244](8h)#[default]") {
-		t.Fatalf("missing muted (8h) age indicator: %q", got)
+	if !strings.Contains(got, "#[fg=colour244](8h~~)#[default]") {
+		t.Fatalf("missing muted (8h~~) age indicator: %q", got)
 	}
 }
 

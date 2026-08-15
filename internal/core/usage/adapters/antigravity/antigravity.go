@@ -90,6 +90,7 @@ func (a *Adapter) Collect(_ context.Context) ([]usage.Snapshot, error) {
 		return nil, nil
 	}
 	var snaps []usage.Snapshot
+	var skipped []string
 	quotaRec, ok, err := readJSON[QuotaRecord](filepath.Join(a.baseDir, QuotaFileName))
 	if err != nil {
 		return nil, fmt.Errorf("read quota: %w", err)
@@ -97,8 +98,18 @@ func (a *Adapter) Collect(_ context.Context) ([]usage.Snapshot, error) {
 		buckets := append([]QuotaBucketRecord(nil), quotaRec.Buckets...)
 		sort.Slice(buckets, func(i, j int) bool { return buckets[i].ID < buckets[j].ID })
 		seen := map[string]bool{}
-		for _, bucket := range buckets {
-			if !ValidQuotaBucket(bucket) || seen[bucket.ID] {
+		for i, bucket := range buckets {
+			// Row-level skip: an invalid or duplicate bucket is dropped and
+			// reported, the remaining buckets still reach the snapshot. The
+			// reason carries the sorted row index and the defect class only —
+			// bucket IDs are opaque upstream identities and must not appear in
+			// a warning or in the operations journal.
+			if !ValidQuotaBucket(bucket) {
+				skipped = append(skipped, fmt.Sprintf("bucket %d: invalid quota bucket", i))
+				continue
+			}
+			if seen[bucket.ID] {
+				skipped = append(skipped, fmt.Sprintf("bucket %d: duplicate bucket id", i))
 				continue
 			}
 			seen[bucket.ID] = true
@@ -113,7 +124,7 @@ func (a *Adapter) Collect(_ context.Context) ([]usage.Snapshot, error) {
 			})
 		}
 	}
-	return snaps, nil
+	return snaps, usage.RowSkipWarning(skipped)
 }
 
 func readJSON[T any](path string) (T, bool, error) {

@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -127,18 +128,21 @@ func TestRateLimitsToSnapshotsSkipsUnknownWindow(t *testing.T) {
 	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
 	rl := rateLimits{
 		Primary: &rateLimitWindow{
-			UsedPercent:   91,
+			UsedPercent:   pct(91),
 			WindowMinutes: 1440,
 			ResetsAt:      1777559543,
 		},
 		Secondary: &rateLimitWindow{
-			UsedPercent:   12,
+			UsedPercent:   pct(12),
 			WindowMinutes: 10080,
 			ResetsAt:      1777966095,
 		},
 	}
 
-	snaps := rl.toSnapshots(now)
+	snaps, skipped := rl.toSnapshots(now)
+	if len(skipped) != 0 {
+		t.Fatalf("unknown window must not be reported as a row defect: %v", skipped)
+	}
 	if len(snaps) != 1 {
 		t.Fatalf("len(snaps) = %d, want 1", len(snaps))
 	}
@@ -280,5 +284,62 @@ func TestAdapterCollectSkipsOldFiles(t *testing.T) {
 	}
 	if snaps != nil {
 		t.Fatalf("snaps = %+v, want nil (file mtime predates window)", snaps)
+	}
+}
+
+// pct is the test helper for the pointer-valued used_percent field, which
+// distinguishes an absent percentage from a genuine 0%.
+func pct(v float64) *float64 { return &v }
+
+// TestCollectSkipsSlotMissingUsedPercentWithoutFabricating is the row-level
+// skip rule for the codex payload: a window slot that carries no
+// `used_percent` used to be projected as a genuine 0%. It must now be dropped
+// with a bounded reason while the other slot still reaches the snapshot.
+func TestCollectSkipsSlotMissingUsedPercentWithoutFabricating(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	mtime := time.Date(2026, 4, 30, 9, 30, 0, 0, time.UTC)
+	body := `{"timestamp":"2026-04-30T09:30:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"window_minutes":300,"resets_at":1777559543},"secondary":{"used_percent":12,"window_minutes":10080,"resets_at":1777966095}}}}` + "\n"
+	writeRollout(t, root, "2026-04-30", body, mtime)
+
+	a := NewWithRoot(root)
+	a.now = func() time.Time { return time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC) }
+	snaps, err := a.Collect(context.Background())
+	if len(snaps) != 1 || snaps[0].Window != usage.WindowWeekly || snaps[0].Pct != 12 {
+		t.Fatalf("snaps = %#v, want only the healthy weekly slot", snaps)
+	}
+	for _, s := range snaps {
+		if s.Window == usage.Window5h {
+			t.Fatalf("skipped slot was fabricated as a 0%% row: %#v", s)
+		}
+	}
+	want := "skipped 1 usage row: primary: missing used_percent"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Collect warning = %v, want %q", err, want)
+	}
+	if !errors.Is(err, usage.ErrRowsSkipped) {
+		t.Fatalf("Collect error %v is not classified as a row-skip warning", err)
+	}
+}
+
+// TestCollectHealthyRolloutEmitsNoWarning keeps the healthy path silent: a
+// complete payload must not produce a warning the user has to learn to ignore.
+func TestCollectHealthyRolloutEmitsNoWarning(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeRollout(t, root, "2026-04-30",
+		rolloutWithRateLimits(5.0, 12.0, 1777559543, 1777966095),
+		time.Date(2026, 4, 30, 9, 30, 0, 0, time.UTC))
+
+	a := NewWithRoot(root)
+	a.now = func() time.Time { return time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC) }
+	snaps, err := a.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("healthy collect warning = %v, want none", err)
+	}
+	if len(snaps) != 2 {
+		t.Fatalf("snaps = %#v, want both windows", snaps)
 	}
 }

@@ -3,9 +3,11 @@ package antigravity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,8 +174,52 @@ func TestCollectRejectsInvalidQuotaRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	snaps, err := New(dir).Collect(context.Background())
-	if err != nil || len(snaps) != 0 {
-		t.Fatalf("Collect invalid quota = (%#v, %v), want empty clean degrade", snaps, err)
+	if len(snaps) != 0 {
+		t.Fatalf("Collect invalid quota rows = %#v, want none fabricated", snaps)
+	}
+	// Row-level skip rule: the buckets are dropped rather than coerced, and
+	// the drop is now visible instead of silently degrading to nothing.
+	want := "skipped 4 usage rows: bucket 0: invalid quota bucket; bucket 1: invalid quota bucket; bucket 2: invalid quota bucket; bucket 3: invalid quota bucket"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Collect warning = %v, want %q", err, want)
+	}
+	if !errors.Is(err, usage.ErrRowsSkipped) {
+		t.Fatalf("Collect error %v is not classified as a row-skip warning", err)
+	}
+}
+
+// TestCollectSkipsInvalidBucketsAndKeepsTheRest is the row-level-skip
+// contract: a broken bucket must not cost the user the healthy ones, and the
+// reason must carry the row index only — bucket IDs are opaque upstream
+// identities that must never reach a warning or the operations journal.
+func TestCollectSkipsInvalidBucketsAndKeepsTheRest(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	data := []byte(`{"buckets":[` +
+		`{"id":"aaa-keep","remaining_fraction":0.25},` +
+		`{"id":"bbb-secret-bucket-id","remaining_fraction":1.5},` +
+		`{"id":"ccc-keep","remaining_fraction":0.75},` +
+		`{"id":"ccc-keep","remaining_fraction":0.10}` +
+		`],"updated_at":"2026-08-12T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(dir, QuotaFileName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := New(dir).Collect(context.Background())
+	if len(snaps) != 2 {
+		t.Fatalf("snaps = %#v, want the two healthy buckets", snaps)
+	}
+	if snaps[0].Bucket != "aaa-keep" || snaps[1].Bucket != "ccc-keep" {
+		t.Fatalf("surviving buckets = %#v", snaps)
+	}
+	if snaps[0].Pct != 75 || snaps[1].Pct != 25 {
+		t.Fatalf("surviving percentages = %#v, want the upstream values untouched", snaps)
+	}
+	want := "skipped 2 usage rows: bucket 1: invalid quota bucket; bucket 3: duplicate bucket id"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Collect warning = %v, want %q", err, want)
+	}
+	if strings.Contains(err.Error(), "bbb-secret-bucket-id") {
+		t.Fatalf("warning leaked an opaque bucket identity: %v", err)
 	}
 }
 
