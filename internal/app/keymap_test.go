@@ -60,8 +60,8 @@ func TestRenamePaneLabelCatalogExcludesRetiredTopicAlias(t *testing.T) {
 			t.Fatalf("canonical aliases = %#v, did not want retired action %s", canonical.Aliases, retiredPaneRenameActionID)
 		}
 	}
-	if canonical.DisplayName != "Rename Pane" || canonical.ProbeLabel != "Ctrl-Shift-M" {
-		t.Fatalf("rename action display/default = (%q, %q), want Rename Pane and unchanged Ctrl-Shift-M", canonical.DisplayName, canonical.ProbeLabel)
+	if keyBindingDisplayName(canonical) != "Rename Pane" || canonical.ProbeLabel != "Ctrl-Shift-M" {
+		t.Fatalf("rename action display/default = (%q, %q), want Rename Pane and unchanged Ctrl-Shift-M", keyBindingDisplayName(canonical), canonical.ProbeLabel)
 	}
 	// tmux invokes the body only when command-prompt confirms. Esc is therefore
 	// a native cancellation with no alternate/direct action body to run.
@@ -116,7 +116,7 @@ func TestRecentWindowsOpenOwnsAltThreeDefault(t *testing.T) {
 	if !ok {
 		t.Fatalf("catalog missing RecentWindows:Open")
 	}
-	if got, want := keyBindingDisplayName(recent), "Recent Windows"; got != want {
+	if got, want := keyBindingDisplayName(recent), "Open Recent Windows"; got != want {
 		t.Fatalf("RecentWindows:Open display name = %q, want %q", got, want)
 	}
 	if got, want := keyBindingEffectivePlainChords(recent), []string{"M-3"}; !equalStrings(got, want) {

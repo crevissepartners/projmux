@@ -66,66 +66,47 @@ type settingsLegacyScript struct {
 	Symlink bool
 }
 
-func (c *settingsCommand) globalHookEntries() []intpickercompat.Entry {
-	entries := []intpickercompat.Entry{settingsBackEntry()}
-
-	configPath, err := c.globalConfigPath()
-	if err != nil {
-		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("Hooks", err.Error()),
-			Value: settingsNoopValue,
-		})
-	}
-	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabelInfo("Global config", configPath, "[hooks.<event>]"),
-		Value: settingsNoopValue,
-	})
-
-	cfg, _ := hooks.LoadGlobalConfig(configPath)
-	legacy := globalLegacyScriptMap(c.homeDir, c.lookupEnv)
-
-	for _, event := range settingsHookEvents {
-		row := settingsHookRow{
-			Event:      event.Name,
-			Scope:      hookScopeGlobal,
-			Declared:   declaredHookRun(cfg, event.Name),
-			ConfigPath: configPath,
-			Legacy:     legacy[event.Name],
-		}
-		entries = append(entries, renderHookRowEntries(row)...)
-	}
-	return entries
-}
-
+// projectHookEntries renders the Project hooks container: the session
+// lifecycle collection and the notification fan-out event. Both are Views, so
+// entering a row never writes a hook; the command state and its mutation rows
+// live one level down in the event detail.
 func (c *settingsCommand) projectHookEntries(ctx settingsProjectContext) []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{settingsBackEntry()}
 	if !ctx.hasProject() {
 		// Phase 2.7: the frame title chip strip already announces the
 		// active scope, so drop the redundant "Project context" row.
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("Hooks (project)", "disabled - no project context"),
+			Label: settingsLabelDim(settingsNavLabel(settingsNavProjectHooks), "disabled - no project context"),
 			Value: settingsNoopValue,
 		})
 	}
-
-	// Phase 2.7: drop the "Project context" info row — chip strip is the
-	// source of truth.
-
-	configPath := filepath.Join(ctx.Path, ".projmux", "config.toml")
-	cfg, _ := loadProjectConfigForRead(configPath)
-	legacy := projectLegacyScriptMap(ctx.Path)
-
-	for _, event := range settingsHookEvents {
-		row := settingsHookRow{
-			Event:      event.Name,
-			Scope:      hookScopeProject,
-			Declared:   declaredHookRun(cfg, event.Name),
-			ConfigPath: configPath,
-			Legacy:     legacy[event.Name],
-		}
-		entries = append(entries, renderHookRowEntries(row)...)
-	}
+	entries = append(entries, intpickercompat.Entry{
+		Label:     settingsLabelInfo("Project config", filepath.Join(ctx.Path, ".projmux", "config.toml"), "[hooks.<event>]"),
+		Value:     settingsNoopValue,
+		SearchKey: "project config hooks source path",
+	})
+	entries = append(entries, intpickercompat.Entry{
+		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectHooks+".lifecycle"), c.projectHookLifecycleSummary()),
+		Value:     settingsProjectAutomationLifecycle,
+		SearchKey: "project hooks lifecycle pre-create post-create post-attach",
+	})
+	entries = append(entries, intpickercompat.Entry{
+		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectHooks+".send-noti"), c.automationEventSummary(hookScopeProject, string(hooks.EventSendNoti))),
+		Value:     settingsProjectAutomationSendNoti,
+		SearchKey: "project hooks send-noti notification queued fan-out",
+	})
 	return entries
+}
+
+func (c *settingsCommand) projectHookLifecycleSummary() string {
+	active := 0
+	for _, event := range settingsAutomationLifecycleEvents {
+		command, _, _ := c.hookEventState(hookScopeProject, event)
+		if strings.TrimSpace(command) != "" {
+			active++
+		}
+	}
+	return settingsLifecycleSummaryLocale(c.locale(), active, len(settingsAutomationLifecycleEvents))
 }
 
 func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error {
@@ -135,7 +116,6 @@ func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error
 		_, _ = hooks.MigrateProjectLegacyScripts(ctx.Path, "", stderr)
 	}
 	for {
-		ctx := c.resolveSettingsProjectContext()
 		options, err := c.sectionOptions(settingsSectionProjectHooks)
 		if err != nil {
 			return err
@@ -148,16 +128,17 @@ func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error
 		if result.Key != "enter" || action == "" {
 			return errSettingsClosed
 		}
-		switch {
-		case action == settingsBackValue:
+		switch action {
+		case settingsBackValue:
 			return nil
-		case action == settingsNoopValue:
+		case settingsNoopValue:
 			continue
-		case strings.HasPrefix(action, settingsActionPrefixHookAdd),
-			strings.HasPrefix(action, settingsActionPrefixHookEdit),
-			strings.HasPrefix(action, settingsActionPrefixHookRemove),
-			strings.HasPrefix(action, settingsActionPrefixHookView):
-			if err := c.runHookMakerActionWithFeedback(ctx, action, stdout, stderr); err != nil {
+		case settingsProjectAutomationLifecycle:
+			if err := c.runProjectHooksLifecycleSection(stdout, stderr); err != nil {
+				return err
+			}
+		case settingsProjectAutomationSendNoti:
+			if err := c.runHookEventDetailSection(hookScopeProject, string(hooks.EventSendNoti), stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -166,108 +147,6 @@ func (c *settingsCommand) runProjectHooksSection(stdout, stderr io.Writer) error
 	}
 }
 
-func (c *settingsCommand) runGlobalHooksSection(stdout, stderr io.Writer) error {
-	// Same best-effort migration for the global hooks dir.
-	_, _ = hooks.MigrateGlobalLegacyScripts(c.lookupEnv, c.homeDir, "", stderr)
-	for {
-		options, err := c.sectionOptions(settingsSectionGlobalHooks)
-		if err != nil {
-			return err
-		}
-		result, err := c.runPicker(options)
-		if err != nil {
-			return err
-		}
-		action := strings.TrimSpace(result.Value)
-		if result.Key != "enter" || action == "" {
-			return errSettingsClosed
-		}
-		switch {
-		case action == settingsBackValue:
-			return nil
-		case action == settingsNoopValue:
-			continue
-		case strings.HasPrefix(action, settingsActionPrefixHookAdd),
-			strings.HasPrefix(action, settingsActionPrefixHookEdit),
-			strings.HasPrefix(action, settingsActionPrefixHookRemove),
-			strings.HasPrefix(action, settingsActionPrefixHookView):
-			if err := c.runHookMakerActionWithFeedback(settingsProjectContext{}, action, stdout, stderr); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unknown hook settings action: %s", action)
-		}
-	}
-}
-
-// renderHookRowEntries emits picker rows for a single lifecycle event using
-// the Phase 2.6 declarative-only model. The row is one of:
-//   - active: a single edit row whose label includes the run line
-//   - missing: a single [+ Add] row that opens the inline editor
-//
-// When a legacy multi-line script remains in the historical location, an
-// additional dim "(legacy script)" row is appended below to nudge the user
-// toward manual cleanup.
-func renderHookRowEntries(row settingsHookRow) []intpickercompat.Entry {
-	entries := make([]intpickercompat.Entry, 0, 2)
-	if strings.TrimSpace(row.Declared) != "" {
-		entries = append(entries, settingsHookActiveEntry(row))
-	} else if hookRowInAppEditable(row) {
-		entries = append(entries, settingsHookAddRow(row))
-	} else {
-		entries = append(entries, settingsHookReadonlyMissingEntry(row))
-	}
-	if row.Legacy.Path != "" {
-		entries = append(entries, settingsHookLegacyEntry(row))
-	}
-	return entries
-}
-
-func hookRowInAppEditable(row settingsHookRow) bool {
-	return row.Scope == hookScopeProject
-}
-
-func settingsHookAddRow(row settingsHookRow) intpickercompat.Entry {
-	desc := "missing - " + row.ConfigPath + " [hooks." + row.Event + "] [+ Add]"
-	return intpickercompat.Entry{
-		Label: settingsLabel(settingsGlyphAdd, settingsColorAdd, row.Event, desc),
-		Value: settingsActionPrefixHookAdd + row.Scope + ":" + row.Event,
-	}
-}
-
-func settingsHookActiveEntry(row settingsHookRow) intpickercompat.Entry {
-	desc := "active - run = " + row.Declared
-	value := settingsActionPrefixHookEdit + row.Scope + ":" + row.Event
-	glyph := settingsGlyphToggle
-	color := settingsColorAdd
-	search := row.Event + " active run " + row.Declared
-	if !hookRowInAppEditable(row) {
-		desc = "read-only - " + row.ConfigPath + " [hooks." + row.Event + "]"
-		value = settingsActionPrefixHookView + row.Scope + ":" + row.Event
-		glyph = settingsGlyphOpen
-		color = settingsColorType
-		search += " read-only global system " + row.ConfigPath
-	}
-	return intpickercompat.Entry{
-		Label:     settingsLabel(glyph, color, row.Event, desc),
-		Value:     value,
-		SearchKey: search,
-	}
-}
-
-func settingsHookReadonlyMissingEntry(row settingsHookRow) intpickercompat.Entry {
-	desc := "missing - " + row.ConfigPath + " [hooks." + row.Event + "] read-only"
-	return intpickercompat.Entry{
-		Label:     settingsLabelDim(row.Event, desc),
-		Value:     settingsNoopValue,
-		SearchKey: row.Event + " missing read-only global system " + row.ConfigPath,
-	}
-}
-
-// settingsHookLegacyEntry surfaces a multi-line or symlinked script left
-// behind after migration. The runner does not execute it; the row is
-// informational and non-interactive. Single-line regular files are migrated
-// automatically and never produce this row.
 func settingsHookLegacyEntry(row settingsHookRow) intpickercompat.Entry {
 	var (
 		title string

@@ -56,7 +56,6 @@ type keyBindingAction struct {
 	ID          string
 	Aliases     []string
 	Description string
-	DisplayName string
 	Kind        keyBindingActionKind
 	Tier        keyBindingTier
 	Surface     string
@@ -94,7 +93,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "ProjectSidebarToggle",
 			Description:     "Project sidebar",
-			DisplayName:     "Toggle Project Sidebar",
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierGuaranteedLaunchDefault,
 			Scope:           keyBindingScopeStandalone,
@@ -120,7 +118,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "NotifySidebarToggle",
 			Description:    "Notify sidebar",
-			DisplayName:    "Toggle Notify Sidebar",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
@@ -144,7 +141,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopupToggle",
 			Description: "Existing session popup",
-			DisplayName: "Toggle Session Popup",
 			Kind:        keyBindingActionTogglePopup,
 			Tier:        keyBindingTierUserConfigurableDirect,
 			Scope:       keyBindingScopeStandalone,
@@ -155,7 +151,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Resources:Open",
 			Description: "Open the read-only Project, Window, and Pane resource inspector",
-			DisplayName: "Resources",
 			Kind:        keyBindingActionTogglePopup,
 			Tier:        keyBindingTierUserConfigurableDirect,
 			Scope:       keyBindingScopeStandalone,
@@ -166,7 +161,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "RecentWindows:Open",
 			Description:    "Recent windows queue across projects; switches to a live window without restoring a historical pane, distinct from last-pane and the existing-session popup.",
-			DisplayName:    "Recent Windows",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
@@ -190,7 +184,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "AISplitPickerToggle",
 			Description:     "Toggle the popup picker for choosing an AI split mode",
-			DisplayName:     "Toggle AI Split Picker Popup",
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierUserConfigurableDirect,
 			Scope:           keyBindingScopeStandalone,
@@ -215,7 +208,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "SettingsToggle",
 			Description:    "Settings",
-			DisplayName:    "Toggle Settings",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
 			Scope:          keyBindingScopeStandalone,
@@ -239,7 +231,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:              "AIResumePickerToggle",
 			Description:     "Toggle the popup picker for resuming AI sessions",
-			DisplayName:     "Toggle AI Resume Picker Popup",
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierGuaranteedLaunchDefault,
 			Scope:           keyBindingScopeStandalone,
@@ -264,7 +255,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "ProjectSwitcherToggle",
 			Description:    "Project switcher popup",
-			DisplayName:    "Toggle Project Switcher",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
@@ -297,7 +287,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             paneRenameActionID,
 			Description:    "Set or clear the current tmux pane's user label",
-			DisplayName:    "Rename Pane",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
 			Scope:          keyBindingScopeStandalone,
@@ -311,7 +300,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "ai-split-right",
 			Description: "Open a new AI split to the right",
-			DisplayName: "Open AI Split Right",
 			Kind:        keyBindingActionCommand,
 			Tier:        keyBindingTierUserConfigurableDirect,
 			Scope:       keyBindingScopeStandalone,
@@ -328,7 +316,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "ai-split-down",
 			Description: "Open a new AI split below",
-			DisplayName: "Open AI Split Down",
 			Kind:        keyBindingActionCommand,
 			Tier:        keyBindingTierUserConfigurableDirect,
 			Scope:       keyBindingScopeStandalone,
@@ -345,7 +332,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "ai-split-codex-right",
 			Description:    "Open a Codex split to the right without the picker",
-			DisplayName:    "Open Codex Split Right",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
@@ -356,7 +342,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "ai-split-codex-down",
 			Description:    "Open a Codex split below without the picker",
-			DisplayName:    "Open Codex Split Down",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
@@ -367,7 +352,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "ai-split-claude-right",
 			Description:    "Open a Claude split to the right without the picker",
-			DisplayName:    "Open Claude Split Right",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
@@ -378,7 +362,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "ai-split-claude-down",
 			Description:    "Open a Claude split below without the picker",
-			DisplayName:    "Open Claude Split Down",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
@@ -389,7 +372,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "ai-split-shell-right",
 			Description:    "Open a shell split to the right without the picker",
-			DisplayName:    "Open Shell Split Right",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
@@ -400,7 +382,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "ai-split-shell-down",
 			Description:    "Open a shell split below without the picker",
-			DisplayName:    "Open Shell Split Down",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
@@ -530,7 +511,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:             "last-pane",
 			Description:    "Return to the previously active pane",
-			DisplayName:    "Return to Previously Active Pane",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeApp,
@@ -550,7 +530,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Sidebar:PinProject",
 			Description: "Pin or unpin the focused project",
-			DisplayName: "Project Sidebar: Pin Project",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Sidebar",
@@ -559,7 +538,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Sidebar:KillSession",
 			Description: "Kill the focused existing session",
-			DisplayName: "Project Sidebar: Kill Session",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Sidebar",
@@ -568,7 +546,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:KillSession",
 			Description: "Kill the focused existing session",
-			DisplayName: "Session Popup: Kill Session",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -577,7 +554,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:OpenState",
 			Description: "Open session state for the focused session",
-			DisplayName: "Session Popup: Open Session State",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -586,7 +562,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewWindowPrev",
 			Description: "Preview previous window",
-			DisplayName: "Session Popup: Preview Previous Window",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -595,7 +570,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewWindowNext",
 			Description: "Preview next window",
-			DisplayName: "Session Popup: Preview Next Window",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -604,7 +578,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewPanePrev",
 			Description: "Preview previous pane",
-			DisplayName: "Session Popup: Preview Previous Pane",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -613,7 +586,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:CyclePreviewPaneNext",
 			Description: "Preview next pane",
-			DisplayName: "Session Popup: Preview Next Pane",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -622,7 +594,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:FocusAndAck",
 			Description: "Focus and acknowledge the selected notification",
-			DisplayName: "Notify Sidebar: Focus and Acknowledge",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -631,7 +602,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:Ack",
 			Description: "Acknowledge the selected notification",
-			DisplayName: "Notify Sidebar: Acknowledge",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -640,7 +610,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:AckGroup",
 			Description: "Acknowledge every visible notification in the selected group",
-			DisplayName: "Notify Sidebar: Acknowledge Group",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -649,7 +618,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:ClearNonCritical",
 			Description: "Clear non-critical notifications",
-			DisplayName: "Notify Sidebar: Clear Non-Critical",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -658,7 +626,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:ClearAll",
 			Description: "Clear all notifications",
-			DisplayName: "Notify Sidebar: Clear All",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -667,7 +634,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "NotifySidebar:ClearGone",
 			Description: "Clear gone notifications",
-			DisplayName: "Notify Sidebar: Clear Gone",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "NotifySidebar",
@@ -676,7 +642,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Settings:SwitchTabPrev",
 			Description: "Switch Settings tab left",
-			DisplayName: "Previous Settings Tab",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Settings",
@@ -685,7 +650,6 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Settings:SwitchTabNext",
 			Description: "Switch Settings tab right",
-			DisplayName: "Next Settings Tab",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Settings",
@@ -708,11 +672,237 @@ func keyBindingCatalogForScopeFrom(catalog []keyBindingAction, scope keyBindingS
 	return out
 }
 
+// Settings-owned keybinding navigation categories. Every catalog action
+// belongs to exactly one category, and the assignment is explicit metadata in
+// keyBindingCategoryByActionID: it is never inferred from the action ID prefix,
+// because the IDs are a compatibility surface and their spelling is not a
+// product taxonomy.
+const (
+	keyBindingCategoryLaunch     = "launch-and-popups"
+	keyBindingCategoryAgentPane  = "agent-and-pane-launch"
+	keyBindingCategoryNavigation = "pane-and-window-navigation"
+	keyBindingCategorySurfaces   = "sidebar-and-picker-actions"
+	keyBindingCategoryInput      = "input-delivery"
+
+	keyBindingCategoryLaunchLabel     = "Launch & popups"
+	keyBindingCategoryAgentPaneLabel  = "Agent & Pane launch"
+	keyBindingCategoryNavigationLabel = "Pane & Window navigation"
+	keyBindingCategorySurfacesLabel   = "Sidebar & picker actions"
+	keyBindingCategoryInputLabel      = "Input delivery"
+)
+
+// keyBindingCategoryOrder is the render order of the Keybindings categories.
+// Input delivery holds no keymap action; it owns the native-key toggle only.
+var keyBindingCategoryOrder = []struct {
+	ID    string
+	Label string
+}{
+	{keyBindingCategoryLaunch, keyBindingCategoryLaunchLabel},
+	{keyBindingCategoryAgentPane, keyBindingCategoryAgentPaneLabel},
+	{keyBindingCategoryNavigation, keyBindingCategoryNavigationLabel},
+	{keyBindingCategorySurfaces, keyBindingCategorySurfacesLabel},
+	{keyBindingCategoryInput, keyBindingCategoryInputLabel},
+}
+
+// keyBindingSurfaceOrder is the second navigation level inside the
+// sidebar/picker category. The surface keys are the existing catalog `Surface`
+// values; only the display labels follow the canonical resource vocabulary.
+var keyBindingSurfaceOrder = []struct {
+	ID    string
+	Label string
+}{
+	{"Sidebar", "Project Sidebar"},
+	{"SessionPopup", "Session Picker"},
+	{"NotifySidebar", "Notification Sidebar"},
+	{"Settings", "Settings"},
+}
+
+// keyBindingCategoryByActionID assigns every catalog action to exactly one
+// category. Exhaustiveness in both directions is a test.
+var keyBindingCategoryByActionID = map[string]string{
+	"ProjectSidebarToggle":  keyBindingCategoryLaunch,
+	"NotifySidebarToggle":   keyBindingCategoryLaunch,
+	"SessionPopupToggle":    keyBindingCategoryLaunch,
+	"Resources:Open":        keyBindingCategoryLaunch,
+	"RecentWindows:Open":    keyBindingCategoryLaunch,
+	"AISplitPickerToggle":   keyBindingCategoryLaunch,
+	"SettingsToggle":        keyBindingCategoryLaunch,
+	"AIResumePickerToggle":  keyBindingCategoryLaunch,
+	"ProjectSwitcherToggle": keyBindingCategoryLaunch,
+
+	"ai-split-right":        keyBindingCategoryAgentPane,
+	"ai-split-down":         keyBindingCategoryAgentPane,
+	"ai-split-codex-right":  keyBindingCategoryAgentPane,
+	"ai-split-codex-down":   keyBindingCategoryAgentPane,
+	"ai-split-claude-right": keyBindingCategoryAgentPane,
+	"ai-split-claude-down":  keyBindingCategoryAgentPane,
+	"ai-split-shell-right":  keyBindingCategoryAgentPane,
+	"ai-split-shell-down":   keyBindingCategoryAgentPane,
+
+	"current-project-session": keyBindingCategoryNavigation,
+	"new-window":              keyBindingCategoryNavigation,
+	"rename-window":           keyBindingCategoryNavigation,
+	paneRenameActionID:        keyBindingCategoryNavigation,
+	"toggle-mouse":            keyBindingCategoryNavigation,
+	"previous-window":         keyBindingCategoryNavigation,
+	"next-window":             keyBindingCategoryNavigation,
+	"last-pane":               keyBindingCategoryNavigation,
+	"select-pane-left":        keyBindingCategoryNavigation,
+	"select-pane-right":       keyBindingCategoryNavigation,
+	"select-pane-up":          keyBindingCategoryNavigation,
+	"select-pane-down":        keyBindingCategoryNavigation,
+
+	"Sidebar:PinProject":                  keyBindingCategorySurfaces,
+	"Sidebar:KillSession":                 keyBindingCategorySurfaces,
+	"SessionPopup:KillSession":            keyBindingCategorySurfaces,
+	"SessionPopup:OpenState":              keyBindingCategorySurfaces,
+	"SessionPopup:CyclePreviewWindowPrev": keyBindingCategorySurfaces,
+	"SessionPopup:CyclePreviewWindowNext": keyBindingCategorySurfaces,
+	"SessionPopup:CyclePreviewPanePrev":   keyBindingCategorySurfaces,
+	"SessionPopup:CyclePreviewPaneNext":   keyBindingCategorySurfaces,
+	"NotifySidebar:FocusAndAck":           keyBindingCategorySurfaces,
+	"NotifySidebar:Ack":                   keyBindingCategorySurfaces,
+	"NotifySidebar:AckGroup":              keyBindingCategorySurfaces,
+	"NotifySidebar:ClearNonCritical":      keyBindingCategorySurfaces,
+	"NotifySidebar:ClearAll":              keyBindingCategorySurfaces,
+	"NotifySidebar:ClearGone":             keyBindingCategorySurfaces,
+	"Settings:SwitchTabPrev":              keyBindingCategorySurfaces,
+	"Settings:SwitchTabNext":              keyBindingCategorySurfaces,
+}
+
+// keyBindingDisplayNames is the canonical display label for every catalog
+// action. The labels follow the shared resource vocabulary (Project, Window,
+// Pane, Agent, Provider, Notification, Snapshot); the keymap action IDs above
+// keep their current spelling, so a label change never rewrites a saved
+// `keymap.toml` table or a runtime route.
+var keyBindingDisplayNames = map[string]string{
+	"ProjectSidebarToggle":  "Open / close Project Sidebar",
+	"NotifySidebarToggle":   "Open / close Notification Sidebar",
+	"SessionPopupToggle":    "Open / close Session Picker",
+	"Resources:Open":        "Open Resource Inspector",
+	"RecentWindows:Open":    "Open Recent Windows",
+	"AISplitPickerToggle":   "Open Agent / Pane Launcher",
+	"SettingsToggle":        "Open / close Settings",
+	"AIResumePickerToggle":  "Open Agent Resume Picker",
+	"ProjectSwitcherToggle": "Open Project Picker",
+
+	"ai-split-right":        "Launch default target right",
+	"ai-split-down":         "Launch default target down",
+	"ai-split-codex-right":  "Create Codex Agent right",
+	"ai-split-codex-down":   "Create Codex Agent down",
+	"ai-split-claude-right": "Create Claude Agent right",
+	"ai-split-claude-down":  "Create Claude Agent down",
+	"ai-split-shell-right":  "Create Shell Pane right",
+	"ai-split-shell-down":   "Create Shell Pane down",
+
+	"current-project-session": "Open Project for Current Directory",
+	"new-window":              "Create Window",
+	"rename-window":           "Rename Window",
+	paneRenameActionID:        "Rename Pane",
+	"toggle-mouse":            "Toggle mouse",
+	"previous-window":         "Focus previous Window",
+	"next-window":             "Focus next Window",
+	"last-pane":               "Focus last Pane",
+	"select-pane-left":        "Focus Pane left",
+	"select-pane-right":       "Focus Pane right",
+	"select-pane-up":          "Focus Pane up",
+	"select-pane-down":        "Focus Pane down",
+
+	"Sidebar:PinProject":                  "Pin / unpin Project",
+	"Sidebar:KillSession":                 "Stop Project Runtime",
+	"SessionPopup:KillSession":            "Stop Runtime Session",
+	"SessionPopup:OpenState":              "Open Snapshots",
+	"SessionPopup:CyclePreviewWindowPrev": "Preview previous Window",
+	"SessionPopup:CyclePreviewWindowNext": "Preview next Window",
+	"SessionPopup:CyclePreviewPanePrev":   "Preview previous Pane",
+	"SessionPopup:CyclePreviewPaneNext":   "Preview next Pane",
+	"NotifySidebar:FocusAndAck":           "Focus source and acknowledge Notification",
+	"NotifySidebar:Ack":                   "Acknowledge Notification",
+	"NotifySidebar:AckGroup":              "Acknowledge Notification group",
+	"NotifySidebar:ClearNonCritical":      "Clear non-critical Notifications",
+	"NotifySidebar:ClearAll":              "Clear all Notifications",
+	"NotifySidebar:ClearGone":             "Clear gone Notifications",
+	"Settings:SwitchTabPrev":              "Previous Settings tab",
+	"Settings:SwitchTabNext":              "Next Settings tab",
+}
+
+// keyBindingActionSemantics is the product meaning of a key action, projected
+// into the Settings action detail. It answers the four questions the target
+// action detail asks — what resource the action targets, what it produces,
+// where the result is placed, and which anchor it is placed against — without
+// touching the action ID, the tmux body, or the keymap file.
+//
+// The anchor field is the contract that keeps interactive splits adjacent to
+// the pane the user pressed the key in: an interactive right/down action
+// passes the current Pane as an explicit anchor, and never falls back to a
+// Window's persisted primary Pane or to whatever pane happens to be focused.
+type keyBindingActionSemantics struct {
+	TargetKind string
+	ResultKind string
+	Placement  string
+	Anchor     string
+}
+
+const (
+	keyBindingAnchorCurrentPane = "current Pane (explicit)"
+	keyBindingPlacementRight    = "right"
+	keyBindingPlacementDown     = "down"
+)
+
+// keyBindingActionSemanticsByID declares the semantics of the actions whose
+// target/result is a product decision rather than a self-evident one. Actions
+// with no entry render no semantic rows.
+var keyBindingActionSemanticsByID = map[string]keyBindingActionSemantics{
+	"ai-split-right": {TargetKind: "Pane", ResultKind: "default launch target", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPane},
+	"ai-split-down":  {TargetKind: "Pane", ResultKind: "default launch target", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPane},
+
+	"ai-split-codex-right":  {TargetKind: "Agent", ResultKind: "always a new Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPane},
+	"ai-split-codex-down":   {TargetKind: "Agent", ResultKind: "always a new Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPane},
+	"ai-split-claude-right": {TargetKind: "Agent", ResultKind: "always a new Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPane},
+	"ai-split-claude-down":  {TargetKind: "Agent", ResultKind: "always a new Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPane},
+
+	"ai-split-shell-right": {TargetKind: "Pane", ResultKind: "Shell Pane", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPane},
+	"ai-split-shell-down":  {TargetKind: "Pane", ResultKind: "Shell Pane", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPane},
+
+	"AIResumePickerToggle": {TargetKind: "Agent", ResultKind: "resume an existing Offline or Failed Agent"},
+	"AISplitPickerToggle":  {TargetKind: "Agent", ResultKind: "choose a launch target"},
+
+	"new-window":               {TargetKind: "Window", ResultKind: "new Window with its initial Pane"},
+	"current-project-session":  {TargetKind: "Project", ResultKind: "open the Project for the current directory"},
+	"Sidebar:KillSession":      {TargetKind: "Project", ResultKind: "stop the Project runtime; Project metadata is kept"},
+	"SessionPopup:KillSession": {TargetKind: "Session", ResultKind: "stop a runtime Session"},
+	"SessionPopup:OpenState":   {TargetKind: "Snapshot", ResultKind: "open Snapshots for the focused Session"},
+}
+
+func keyBindingActionSemanticsFor(action keyBindingAction) (keyBindingActionSemantics, bool) {
+	semantics, ok := keyBindingActionSemanticsByID[action.ID]
+	return semantics, ok
+}
+
 func keyBindingDisplayName(action keyBindingAction) string {
-	if name := strings.TrimSpace(action.DisplayName); name != "" {
+	if name := strings.TrimSpace(keyBindingDisplayNames[action.ID]); name != "" {
 		return name
 	}
 	return humanizeKeyBindingActionID(action.ID)
+}
+
+// keyBindingActionCategory returns the navigation category an action belongs
+// to. An unassigned action returns false so the Settings loop can fail loudly
+// instead of hiding the action from every category.
+func keyBindingActionCategory(action keyBindingAction) (string, bool) {
+	category, ok := keyBindingCategoryByActionID[action.ID]
+	return category, ok
+}
+
+// keyBindingSurfaceLabel maps a catalog `Surface` value to its canonical
+// display label.
+func keyBindingSurfaceLabel(surface string) (string, bool) {
+	for _, entry := range keyBindingSurfaceOrder {
+		if entry.ID == surface {
+			return entry.Label, true
+		}
+	}
+	return "", false
 }
 
 func humanizeKeyBindingActionID(id string) string {

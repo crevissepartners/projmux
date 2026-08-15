@@ -1,6 +1,7 @@
 package app
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -209,33 +210,45 @@ func TestEffectiveMergeEntriesHandleMissingGlobal(t *testing.T) {
 // effective-merge section value to the new handler — guards against
 // regressions where a new section is added but the dispatch table is
 // forgotten.
-func TestRunSectionDispatchesEffectiveMerge(t *testing.T) {
+// TestRunSectionDoesNotRouteRetiredSections is the removed-path negative
+// guard. The effective merge and project recipe handlers still exist in the
+// tree (their hard removal is a later slice), but Phase 0 leaves them with no
+// route at all: not a visible row, and not a hidden redirect either. Asking
+// runSection for one is an unknown-section error that opens zero pickers.
+func TestRunSectionDoesNotRouteRetiredSections(t *testing.T) {
 	t.Parallel()
 
-	// Drive the picker once: first call returns the page entries (so we
-	// can assert the section opened), second call returns Back to exit.
-	var calls int
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		if calls == 1 {
-			// Confirm the popup UI key matches the effective merge page.
-			if got, want := options.UI, "settings-effective-merge"; got != want {
-				t.Fatalf("first picker UI = %q, want %q", got, want)
-			}
-		}
-		return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-	})
+	for _, section := range []string{
+		settingsSectionEffectiveMerge,
+		settingsSectionProjectConfig,
+		settingsSectionLabs,
+		settingsSectionGlobalTheme,
+		settingsSectionGlobalHooks,
+	} {
+		t.Run(section, func(t *testing.T) {
+			t.Parallel()
 
-	cmd := &settingsCommand{
-		runner:       runner,
-		nativePicker: nativePickerFromCompatRunner(runner),
-		lookupEnv:    func(string) string { return "" },
-	}
-	if err := cmd.runSection(settingsSectionEffectiveMerge, nil, nil); err != nil {
-		t.Fatalf("runSection() error = %v", err)
-	}
-	if calls < 1 {
-		t.Fatalf("runSection did not invoke picker (calls = %d)", calls)
+			var calls int
+			runner := switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+				calls++
+				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			})
+			cmd := &settingsCommand{
+				runner:       runner,
+				nativePicker: nativePickerFromCompatRunner(runner),
+				lookupEnv:    func(string) string { return "" },
+			}
+			err := cmd.runSection(section, io.Discard, io.Discard)
+			if err == nil {
+				t.Fatalf("runSection(%q) = nil, want an unknown-section error", section)
+			}
+			if !strings.Contains(err.Error(), "unknown settings section") {
+				t.Fatalf("runSection(%q) error = %v, want an unknown-section error", section, err)
+			}
+			if calls != 0 {
+				t.Fatalf("runSection(%q) opened %d pickers, want 0", section, calls)
+			}
+		})
 	}
 }
 

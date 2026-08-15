@@ -195,8 +195,8 @@ func TestSettingsLiveResourcesTogglePersistsAndUpdatesTmux(t *testing.T) {
 	if mode, source, supported := cmd.currentLiveResourcesMode(); mode != config.LiveResourcesOff || source != "default" || !supported {
 		t.Fatalf("default currentLiveResourcesMode() = %q, %q, %v", mode, source, supported)
 	}
-	if !hasEntryValue(cmd.labsEntries(), settingsActionPrefixLiveResources+string(config.LiveResourcesOn)) {
-		t.Fatalf("Labs entries do not expose live resources on action: %#v", cmd.labsEntries())
+	if !hasEntryValue(cmd.statusBarEntries(), settingsActionPrefixLiveResources+string(config.LiveResourcesOn)) {
+		t.Fatalf("Status Bar entries do not expose the Resources on action: %#v", cmd.statusBarEntries())
 	}
 	if err := cmd.setLiveResourcesMode("on"); err != nil {
 		t.Fatalf("setLiveResourcesMode(on) error = %v", err)
@@ -211,8 +211,8 @@ func TestSettingsLiveResourcesTogglePersistsAndUpdatesTmux(t *testing.T) {
 	if !reflect.DeepEqual(calls, [][]string{{"tmux", "set-option", "-g", liveResourcesTmuxOption, "on"}}) {
 		t.Fatalf("tmux calls = %#v", calls)
 	}
-	if !hasEntryValue(cmd.labsEntries(), settingsActionPrefixLiveResources+string(config.LiveResourcesOff)) {
-		t.Fatalf("Labs entries do not expose live resources off action: %#v", cmd.labsEntries())
+	if !hasEntryValue(cmd.statusBarEntries(), settingsActionPrefixLiveResources+string(config.LiveResourcesOff)) {
+		t.Fatalf("Status Bar entries do not expose the Resources off action: %#v", cmd.statusBarEntries())
 	}
 }
 
@@ -230,9 +230,9 @@ func TestSettingsLiveResourcesUsesKoreanCatalog(t *testing.T) {
 			return ""
 		},
 	}
-	entries := cmd.labsEntries()
-	if !hasEntryLabelContainingAll(entries, "실시간 시스템 리소스", "꺼짐", "현재 시스템 기준") {
-		t.Fatalf("Korean Labs entries = %#v", entries)
+	entries := cmd.statusBarEntries()
+	if !hasEntryLabelContainingAll(entries, "리소스", "꺼짐") {
+		t.Fatalf("Korean Status Bar entries = %#v", entries)
 	}
 }
 

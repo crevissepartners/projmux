@@ -68,15 +68,11 @@ func (c *settingsCommand) runSessionStateSection(stdout, stderr io.Writer) error
 		}
 		switch action {
 		case settingsSessionStateAutosaveDetail:
-			if err := c.runSessionStateToggleDetail("Session State - Auto-save", "Settings > Session State > Auto-save > ", func() []intpickercompat.Entry {
+			if err := c.runSessionStateToggleDetail("Snapshots - Auto-save", "Settings > Snapshots > Auto-save > ", func() []intpickercompat.Entry {
 				autosave := c.currentSessionStateAutosave()
 				interval := c.currentSessionStateAutosaveInterval()
 				return c.sessionStateAutosaveDetailEntries(autosave, interval)
 			}, stdout, stderr); err != nil {
-				return err
-			}
-		case settingsSessionStateSidebarStartupPickerDetail:
-			if err := c.runSidebarStartupPickerDetail(stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -86,7 +82,7 @@ func (c *settingsCommand) runSessionStateSection(stdout, stderr io.Writer) error
 }
 
 func (c *settingsCommand) runSidebarStartupPickerDetail(stdout, stderr io.Writer) error {
-	return c.runSessionStateToggleDetail("Session State - Sidebar startup picker", "Settings > Session State > Sidebar startup picker > ", func() []intpickercompat.Entry {
+	return c.runSessionStateToggleDetail("Projects - Closed Project startup", "Settings > Projects > Project Sidebar > Closed Project startup > ", func() []intpickercompat.Entry {
 		sidebarStartup := c.currentSidebarStartupPicker()
 		return c.sidebarStartupPickerEntries(sidebarStartup)
 	}, stdout, stderr)
@@ -169,8 +165,8 @@ func (c *settingsCommand) runProjectSessionStateAutosaveDetail(stdout, stderr io
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-project-sessionstate-autosave",
 			Entries:    c.projectSessionStateAutosaveDetailEntries(),
-			Title:      "Session State - Project auto-save",
-			Prompt:     "Settings > Project > Session State > Auto-save > ",
+			Title:      "Snapshots - Auto-save override",
+			Prompt:     "Settings > Project > Snapshots > Auto-save override > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -202,8 +198,8 @@ func (c *settingsCommand) runProjectSessionStateActionsDetail(stdout, stderr io.
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-project-sessionstate-actions",
 			Entries:    c.projectSessionStateActionsDetailEntries(),
-			Title:      "Session State - Project snapshot actions",
-			Prompt:     "Settings > Project > Session State > Snapshot actions > ",
+			Title:      "Snapshots - Saved Snapshots",
+			Prompt:     "Settings > Project > Snapshots > Saved Snapshots > ",
 			Footer:     projmuxFooter("Enter: action  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   settingsCloseBindings(),
@@ -244,32 +240,29 @@ func (c *settingsCommand) runProjectSessionStateActionsDetail(stdout, stderr io.
 func (c *settingsCommand) projectSessionStateTitle() string {
 	identity := c.projectSessionStateIdentity(c.resolveSettingsProjectContext())
 	if identity.Err != nil {
-		return "Session State - Project settings unavailable"
+		return "Snapshots - Project settings unavailable"
 	}
-	return "Session State - " + identity.Project.Name + " settings"
+	return "Snapshots - " + identity.Project.Name
 }
 
+// sessionStateEntries renders the Global Snapshots view. The visible noun is
+// the Snapshot resource; the `session-state` config and route spelling stays
+// exactly as shipped and is only visible as source detail. The closed-Project
+// startup policy moved to Projects > Project Sidebar, because it is Project
+// navigation policy rather than a Snapshot setting.
 func (c *settingsCommand) sessionStateEntries() []intpickercompat.Entry {
 	autosave := c.currentSessionStateAutosave()
 	interval := c.currentSessionStateAutosaveInterval()
-	sidebarStartup := c.currentSidebarStartupPicker()
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Auto-save", string(autosave.Mode)+" - interval "+formatSessionStateAutosaveInterval(interval.Duration)+" - "+autosave.Source),
+			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavSnapshots+".autosave"), string(autosave.Mode)+" - interval "+formatSessionStateAutosaveInterval(interval.Duration)+" - "+autosave.Source),
 			Value: settingsSessionStateAutosaveDetail,
 		},
 		{
-			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Sidebar startup picker", string(sidebarStartup.Mode)+" - "+sidebarStartup.Source),
-			Value: settingsSessionStateSidebarStartupPickerDetail,
-		},
-		{
-			Label: c.rowLabelInfo("Storage", "latest snapshot store", "per-session JSON under XDG state"),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: c.rowLabelInfo("Retention", "latest snapshot only", "named snapshots are manual project files"),
-			Value: settingsNoopValue,
+			Label:     c.rowLabelInfo(settingsNavLabel(settingsNavSnapshots+".storage"), "latest snapshot only", "per-session JSON under XDG state; named snapshots are manual project files"),
+			Value:     settingsNoopValue,
+			SearchKey: "snapshot storage retention location session-state",
 		},
 	}
 	return entries
@@ -343,11 +336,21 @@ func (c *settingsCommand) sessionStateAutosaveDetailEntries(autosave sessionStat
 	return entries
 }
 
+// sidebarStartupChoiceLabel renders the saved on/off toggle as the product
+// choice it actually is: whether a closed Project asks for a Snapshot or goes
+// straight to its stored topology.
+func sidebarStartupChoiceLabel(mode config.SessionStateToggle) string {
+	if mode.Enabled() {
+		return "Ask for Snapshot or Project topology"
+	}
+	return "Use Project topology"
+}
+
 func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStateEffectiveToggle) []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.rowLabelInfo("Sidebar startup picker", string(sidebarStartup.Mode), sidebarStartup.Source),
+			Label: c.rowLabelInfo(settingsNavLabel(settingsNavProjectsSidebar+".closed-startup"), sidebarStartupChoiceLabel(sidebarStartup.Mode), sidebarStartup.Source),
 			Value: settingsNoopValue,
 		},
 	}
@@ -355,8 +358,8 @@ func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStat
 		mode config.SessionStateToggle
 		desc string
 	}{
-		{config.SessionStateToggleOn, "show Start project step in the sidebar"},
-		{config.SessionStateToggleOff, "open closed sidebar projects as empty sessions"},
+		{config.SessionStateToggleOn, "ask whether to restore a Snapshot or use the Project topology"},
+		{config.SessionStateToggleOff, "materialize the Project topology directly"},
 	} {
 		glyph := settingsGlyphInactive
 		color := settingsColorDim
@@ -365,9 +368,9 @@ func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStat
 			color = settingsColorAdd
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(glyph, color, "Sidebar startup picker "+string(item.mode), item.desc+" - "+sidebarStartup.Source),
+			Label:     c.rowLabel(glyph, color, sidebarStartupChoiceLabel(item.mode), item.desc+" - "+sidebarStartup.Source),
 			Value:     settingsActionPrefixSessionState + "sidebar-startup:" + string(item.mode),
-			SearchKey: "Sidebar startup picker Start project empty session on off",
+			SearchKey: "closed project startup snapshot topology sidebar startup picker on off",
 		})
 	}
 	return entries
@@ -380,7 +383,7 @@ func (c *settingsCommand) runSessionStateAutosaveIntervalTyped(stdout, stderr io
 		Entries:      nil,
 		AcceptQuery:  true,
 		InitialQuery: formatSessionStateAutosaveInterval(interval.Duration),
-		Title:        "Session State - Auto-save interval",
+		Title:        "Snapshots - Auto-save interval",
 		Prompt:       "Auto-save interval > ",
 		Footer:       projmuxFooter("Enter: save  |  Examples: 30s, 2m, 90 "),
 		ExpectKeys:   []string{"enter"},
@@ -395,10 +398,10 @@ func (c *settingsCommand) runSessionStateAutosaveIntervalTyped(stdout, stderr io
 	value, err := parseSessionStateAutosaveInterval(result.Query)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
-		c.setSettingsFeedback("Session State interval failed", err.Error())
+		c.setSettingsFeedback("Snapshots interval failed", err.Error())
 		return nil
 	}
-	return c.runSettingsMutation("Session State interval", stdout, stderr, func(out, _ io.Writer) error {
+	return c.runSettingsMutation("Snapshots interval", stdout, stderr, func(out, _ io.Writer) error {
 		return c.setSessionStateAutosaveInterval(value, out)
 	})
 }
@@ -1050,7 +1053,7 @@ func (c *settingsCommand) confirmProjectSessionStateDelete() (bool, error) {
 	if identity.Err != nil {
 		return false, identity.Err
 	}
-	return c.confirmSessionStateDeleteForSession(identity.Session, "settings-project-sessionstate-delete-confirm", "Settings > Project > Session State > Delete snapshot > ")
+	return c.confirmSessionStateDeleteForSession(identity.Session, "settings-project-sessionstate-delete-confirm", "Settings > Project > Snapshots > Delete snapshot > ")
 }
 
 func (c *settingsCommand) confirmSessionStateDeleteForSession(sessionName, ui, prompt string) (bool, error) {

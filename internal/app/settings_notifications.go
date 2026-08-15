@@ -38,12 +38,12 @@ func (c *settingsCommand) runNotificationsSection(stdout, stderr io.Writer) erro
 			if err := c.runNotificationsDesktopSection(stdout, stderr); err != nil {
 				return err
 			}
-		case action == settingsNotificationsAIDedupe:
-			if err := c.runNotificationsAIDedupeSection(stdout, stderr); err != nil {
+		case action == settingsNotificationsProviders:
+			if err := c.runProviderIntegrationsSection(stdout, stderr); err != nil {
 				return err
 			}
-		case action == settingsNotificationsDelivery:
-			if err := c.runNotificationsDeliverySourcesSection(stdout, stderr); err != nil {
+		case action == settingsNotificationsTmuxSource:
+			if err := c.runTmuxEventSourceSection(stdout, stderr); err != nil {
 				return err
 			}
 		case action == settingsNotificationsHookActions:
@@ -153,47 +153,139 @@ func (c *settingsCommand) runNotificationsDesktopSection(stdout, stderr io.Write
 			return nil
 		case action == settingsNoopValue:
 			continue
-		case strings.HasPrefix(action, settingsActionPrefixDesktopNotifyMode):
-			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
+		case action == settingsActionPrefixDesktopNotifyMode+"choose":
+			if err := c.runDesktopNotifyModeChooser(stdout, stderr); err != nil {
+				return err
+			}
+		case action == settingsNotificationsAIDedupe:
+			if err := c.runNotificationsAIDedupeSection(stdout, stderr); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("unknown desktop notification settings action: %s", action)
+			return fmt.Errorf("unknown desktop delivery settings action: %s", action)
 		}
 	}
 }
 
+// runDesktopNotifyModeChooser is the transient Delivery mode chooser. It
+// returns to Desktop delivery as soon as a mode is applied.
+func (c *settingsCommand) runDesktopNotifyModeChooser(stdout, stderr io.Writer) error {
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-notifications-desktop-mode",
+			Entries:    c.desktopNotifyModeEntries(),
+			Title:      settingsNotificationsDesktopTitle(locale),
+			Prompt:     settingsNotificationsDesktopPrompt(locale) + "Delivery mode > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixDesktopNotifyMode):
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
+				return err
+			}
+			return nil
+		default:
+			return fmt.Errorf("unknown desktop delivery mode action: %s", action)
+		}
+	}
+}
+
+// notificationsEntries renders the Notifications container. The four rows are
+// the delivery and policy concepts a Notification actually has: how it reaches
+// the desktop, which Provider integrations produce it, which tmux producer
+// produces it, and how Agent events project onto it. Notification stays the
+// persistent queue resource; live Pane attention is an Appearance concern.
 func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	notifyMode, notifySource := settingsDesktopNotifyResolver(c.homeDir, c.lookupEnv).resolveMode()
-	dedupe := c.currentAINotifyDedupeSeconds()
 	return []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNotificationsDesktopLabel(locale), desktopNotifyDisplayName(notifyMode)+" - "+string(notifySource)),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyDesktop), desktopNotifyDisplayName(notifyMode)+" - "+string(notifySource)),
 			Value:     settingsNotificationsDesktop,
-			SearchKey: "desktop notifications off none notify toast",
+			SearchKey: "desktop delivery notifications off notify toast dedupe external sender",
 		},
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "AI notification dedupe", fmt.Sprintf("%ds - %s", dedupe.Seconds, dedupe.Source)),
-			Value:     settingsNotificationsAIDedupe,
-			SearchKey: "AI notification dedupe seconds duration duplicate collapse desktop",
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyProviders), c.providerIntegrationsSummary()),
+			Value:     settingsNotificationsProviders,
+			SearchKey: "provider integrations codex claude antigravity wiring install remove setup",
 		},
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Delivery sources", c.aiNotifyDiagnosticsSummary()),
-			Value:     settingsNotificationsDelivery,
-			SearchKey: "delivery sources producer setup doctor codex claude tmux bell hooks diagnostics",
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyTmuxSource), c.tmuxEventSourceSummary()),
+			Value:     settingsNotificationsTmuxSource,
+			SearchKey: "tmux event source bell producer wiring fallback",
 		},
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Hook quiet policy", c.aiHookActionsSummary()),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyAgentEvents), c.aiHookActionsSummary()),
 			Value:     settingsNotificationsHookActions,
-			SearchKey: "hook quiet policy runtime action codex claude notify state quiet",
+			SearchKey: "agent event behavior provider event default notify state only quiet",
 		},
 	}
 }
 
-func settingsNotificationsDesktopLabel(locale i18n.Locale) string {
-	return localizeText(locale, i18n.KeySettingsNotificationsDesktop, string(i18n.KeySettingsNotificationsDesktop))
+// settingsTmuxBellDiagnosticID is the shipped diagnostic id of the tmux bell
+// producer. It is the one notify producer that is not an Agent Provider, which
+// is exactly why the target IA gives it its own destination.
+const settingsTmuxBellDiagnosticID = "tmux-bell"
+
+// notifyProviderDiagnostics splits the shipped notify diagnostics into the two
+// product concepts the target IA separates: Provider integrations (the
+// Claude/Codex/Antigravity producers) and the tmux bell event source. The split
+// is by producer identity rather than by a presentation flag, so a provider
+// diagnostic can never fall into the event-source bucket.
+func (c *settingsCommand) notifyProviderDiagnostics() []doctorAINotifyIntegration {
+	all := c.currentAINotifyDiagnostics()
+	providers := make([]doctorAINotifyIntegration, 0, len(all))
+	for _, diag := range all {
+		if diag.ID != settingsTmuxBellDiagnosticID {
+			providers = append(providers, diag)
+		}
+	}
+	return providers
+}
+
+func (c *settingsCommand) notifyTmuxEventDiagnostics() []doctorAINotifyIntegration {
+	all := c.currentAINotifyDiagnostics()
+	sources := make([]doctorAINotifyIntegration, 0, 1)
+	for _, diag := range all {
+		if diag.ID == settingsTmuxBellDiagnosticID {
+			sources = append(sources, diag)
+		}
+	}
+	return sources
+}
+
+func (c *settingsCommand) providerIntegrationsSummary() string {
+	return summarizeNotifyDiagnostics(c.notifyProviderDiagnostics())
+}
+
+func (c *settingsCommand) tmuxEventSourceSummary() string {
+	return summarizeNotifyDiagnostics(c.notifyTmuxEventDiagnostics())
+}
+
+func summarizeNotifyDiagnostics(diagnostics []doctorAINotifyIntegration) string {
+	if len(diagnostics) == 0 {
+		return "no wiring reported"
+	}
+	parts := make([]string, 0, len(diagnostics))
+	for _, diag := range diagnostics {
+		parts = append(parts, diag.Name+" "+string(diag.Status))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func settingsNotificationsDesktopTitle(locale i18n.Locale) string {
@@ -209,8 +301,8 @@ func (c *settingsCommand) runNotificationsHookActionsSection(stdout, stderr io.W
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-notifications-hook-actions",
 			Entries:    c.aiHookProviderEntries(),
-			Title:      "Notifications - Hook quiet policy",
-			Prompt:     "Settings > Notifications > Hook quiet policy > ",
+			Title:      "Notifications - Agent event behavior",
+			Prompt:     "Settings > Notifications > Agent event behavior > ",
 			Footer:     projmuxFooter("Enter: view hooks  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -243,8 +335,8 @@ func (c *settingsCommand) runAIHookProviderActionSection(provider string, stdout
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-notifications-hook-provider",
 			Entries:    c.aiHookEventEntries(provider),
-			Title:      "Hook quiet policy - " + aiHookProviderLabel(provider),
-			Prompt:     "Settings > Notifications > Hook quiet policy > " + aiHookProviderLabel(provider) + " > ",
+			Title:      "Agent event behavior - " + aiHookProviderLabel(provider),
+			Prompt:     "Settings > Notifications > Agent event behavior > " + aiHookProviderLabel(provider) + " > ",
 			Footer:     projmuxFooter("Enter: change action  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -280,8 +372,8 @@ func (c *settingsCommand) runAIHookEventActionSection(provider, event string, st
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-notifications-hook-event",
 			Entries:    c.aiHookActionChoiceEntries(provider, event),
-			Title:      "Hook quiet policy - " + aiHookProviderLabel(provider) + " " + event,
-			Prompt:     "Settings > Notifications > Hook quiet policy > " + aiHookProviderLabel(provider) + " > " + event + " > ",
+			Title:      "Agent event behavior - " + aiHookProviderLabel(provider) + " " + event,
+			Prompt:     "Settings > Notifications > Agent event behavior > " + aiHookProviderLabel(provider) + " > " + event + " > ",
 			Footer:     projmuxFooter("Enter: save  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -304,14 +396,14 @@ func (c *settingsCommand) runAIHookEventActionSection(provider, event string, st
 				return fmt.Errorf("unknown AI hook action choice: %s", action)
 			}
 			if next == "default" {
-				if err := c.runSettingsMutation("Hook quiet policy", stdout, stderr, func(out, _ io.Writer) error {
+				if err := c.runSettingsMutation("Agent event behavior", stdout, stderr, func(out, _ io.Writer) error {
 					return c.clearAIHookAction(provider, event, out)
 				}); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := c.runSettingsMutation("Hook quiet policy", stdout, stderr, func(out, _ io.Writer) error {
+			if err := c.runSettingsMutation("Agent event behavior", stdout, stderr, func(out, _ io.Writer) error {
 				return c.setAIHookAction(provider, event, next, out)
 			}); err != nil {
 				return err
@@ -322,14 +414,40 @@ func (c *settingsCommand) runAIHookEventActionSection(provider, event string, st
 	}
 }
 
-func (c *settingsCommand) runNotificationsDeliverySourcesSection(stdout, stderr io.Writer) error {
+// runProviderIntegrationsSection lists the Agent Provider producers. It is a
+// read-only diagnostic collection plus copyable commands: Settings reports the
+// wiring and never installs or removes it.
+func (c *settingsCommand) runProviderIntegrationsSection(stdout, stderr io.Writer) error {
+	return c.runNotifyDiagnosticsCollection(
+		"settings-notifications-providers",
+		"Notifications - Provider Integrations",
+		"Settings > Notifications > Provider Integrations > ",
+		c.notifyProviderDiagnostics,
+		stdout, stderr,
+	)
+}
+
+// runTmuxEventSourceSection is the tmux bell producer. It is deliberately not
+// a member of the Provider inventory: tmux is an event source, not an Agent
+// Provider.
+func (c *settingsCommand) runTmuxEventSourceSection(stdout, stderr io.Writer) error {
+	return c.runNotifyDiagnosticsCollection(
+		"settings-notifications-tmux-source",
+		"Notifications - tmux event source",
+		"Settings > Notifications > tmux event source > ",
+		c.notifyTmuxEventDiagnostics,
+		stdout, stderr,
+	)
+}
+
+func (c *settingsCommand) runNotifyDiagnosticsCollection(ui, title, prompt string, load func() []doctorAINotifyIntegration, stdout, stderr io.Writer) error {
 	_ = stdout
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
-			UI:         "settings-notifications-delivery",
-			Entries:    c.aiNotifyDiagnosticEntries(),
-			Title:      "Notifications - Delivery sources",
-			Prompt:     "Settings > Notifications > Delivery sources > ",
+			UI:         ui,
+			Entries:    c.notifyDiagnosticCollectionEntries(load()),
+			Title:      title,
+			Prompt:     prompt,
 			Footer:     projmuxFooter("Enter: view details  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -348,20 +466,32 @@ func (c *settingsCommand) runNotificationsDeliverySourcesSection(stdout, stderr 
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixAINotifyDiagnostic):
 			id := strings.TrimPrefix(action, settingsActionPrefixAINotifyDiagnostic)
-			if err := c.runAINotifyDiagnosticDetail(id, stderr); err != nil {
+			if err := c.runAINotifyDiagnosticDetail(id, prompt, stderr); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("unknown AI notify diagnostics action: %s", action)
+			return fmt.Errorf("unknown notify diagnostics action: %s", action)
 		}
 	}
 }
 
-func (c *settingsCommand) runAINotifyDiagnosticsSection(stdout, stderr io.Writer) error {
-	return c.runNotificationsDeliverySourcesSection(stdout, stderr)
+func (c *settingsCommand) notifyDiagnosticCollectionEntries(diagnostics []doctorAINotifyIntegration) []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	entries := make([]intpickercompat.Entry, 0, len(diagnostics)+1)
+	entries = append(entries, settingsBackEntryLocale(locale))
+	if len(diagnostics) == 0 {
+		return append(entries, intpickercompat.Entry{
+			Label: settingsLabelDimLocale(locale, "Wiring status", "no wiring reported"),
+			Value: settingsNoopValue,
+		})
+	}
+	for _, diag := range diagnostics {
+		entries = append(entries, aiNotifyDiagnosticEntryLocale(locale, diag))
+	}
+	return entries
 }
 
-func (c *settingsCommand) runAINotifyDiagnosticDetail(id string, stderr io.Writer) error {
+func (c *settingsCommand) runAINotifyDiagnosticDetail(id, parentPrompt string, stderr io.Writer) error {
 	for {
 		diag, ok := c.aiNotifyDiagnosticByID(id)
 		if !ok {
@@ -370,8 +500,8 @@ func (c *settingsCommand) runAINotifyDiagnosticDetail(id string, stderr io.Write
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-notifications-delivery-detail",
 			Entries:    aiNotifyDiagnosticDetailEntriesLocale(c.locale(), diag),
-			Title:      "AI Notify - " + diag.Name,
-			Prompt:     "Settings > Notifications > Delivery sources > " + diag.Name + " > ",
+			Title:      "Notifications - " + diag.Name,
+			Prompt:     parentPrompt + diag.Name + " > ",
 			Footer:     projmuxFooter("Enter: copy command  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -432,60 +562,6 @@ func (c *settingsCommand) copySettingsCommand(label, command string, stderr io.W
 		return
 	}
 	_, _ = runner.Run(context.Background(), "tmux", "display-message", label+" copied to clipboard")
-}
-
-func (c *settingsCommand) aiNotifyDiagnosticsSummary() string {
-	counts := map[doctorAINotifyStatus]int{}
-	for _, diag := range c.currentAINotifyDiagnostics() {
-		counts[diag.Status]++
-	}
-	parts := make([]string, 0, 3)
-	for _, status := range []doctorAINotifyStatus{
-		doctorAINotifyStatusInstalled,
-		doctorAINotifyStatusStale,
-		doctorAINotifyStatusConflict,
-		doctorAINotifyStatusMissing,
-		doctorAINotifyStatusSkip,
-	} {
-		if counts[status] > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", counts[status], status))
-		}
-	}
-	if len(parts) == 0 {
-		parts = append(parts, "read-only doctor status")
-	}
-	return strings.Join(append(parts, c.notifyHookOverrideSummary()), ", ")
-}
-
-func (c *settingsCommand) notifyHookOverrideSummary() string {
-	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("PROJMUX_NOTIFY_HOOK")) != "" {
-		return "hook override set"
-	}
-	return "built-in desktop sender"
-}
-
-func (c *settingsCommand) aiNotifyDiagnosticEntries() []intpickercompat.Entry {
-	locale := appLocale(c.homeDir, c.lookupEnv)
-	diagnostics := c.currentAINotifyDiagnostics()
-	entries := make([]intpickercompat.Entry, 0, len(diagnostics)+2)
-	entries = append(entries, settingsBackEntryLocale(locale))
-	hookValue := "not set"
-	hookSource := "built-in platform sender"
-	if c.lookupEnv != nil {
-		if value := strings.TrimSpace(c.lookupEnv("PROJMUX_NOTIFY_HOOK")); value != "" {
-			hookValue = value
-			hookSource = "PROJMUX_NOTIFY_HOOK env"
-		}
-	}
-	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelInfoLocale(locale, "Desktop sender override", hookValue, hookSource),
-		Value:     settingsNoopValue,
-		SearchKey: "PROJMUX_NOTIFY_HOOK desktop sender override env",
-	})
-	for _, diag := range diagnostics {
-		entries = append(entries, aiNotifyDiagnosticEntryLocale(locale, diag))
-	}
-	return entries
 }
 
 func (c *settingsCommand) aiNotifyDiagnosticByID(id string) (doctorAINotifyIntegration, bool) {
@@ -629,13 +705,56 @@ func (c *settingsCommand) setDesktopNotifyMode(value string) error {
 	return nil
 }
 
+// desktopNotifyEntries renders the Desktop delivery View: what the effective
+// sender is, the two value rows the user can change, and the external sender
+// override state. The `PROJMUX_NOTIFY_HOOK` override is folded in here as
+// state rather than being a row of its own, and it is never presented as an
+// alternative to the `[hooks.send-noti]` fan-out, which is Automation.
 func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	notifyMode, notifySource := settingsDesktopNotifyResolver(c.homeDir, c.lookupEnv).resolveMode()
+	dedupe := c.currentAINotifyDedupeSeconds()
+	externalSender := "not set"
+	externalSource := "built-in platform sender"
+	if c.lookupEnv != nil {
+		if value := strings.TrimSpace(c.lookupEnv("PROJMUX_NOTIFY_HOOK")); value != "" {
+			externalSender = value
+			externalSource = "PROJMUX_NOTIFY_HOOK env"
+		}
+	}
+	return []intpickercompat.Entry{
+		settingsBackEntryLocale(locale),
+		{
+			Label:     settingsLabelInfoLocale(locale, "Effective sender", desktopNotifyDisplayName(notifyMode), string(notifySource)),
+			Value:     settingsNoopValue,
+			SearchKey: "effective desktop sender source availability",
+		},
+		{
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyDesktop+".mode"), desktopNotifyDisplayName(notifyMode)),
+			Value:     settingsActionPrefixDesktopNotifyMode + "choose",
+			SearchKey: "delivery mode off notify desktop toast",
+		},
+		{
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyDesktop+".dedupe"), fmt.Sprintf("%ds - %s", dedupe.Seconds, dedupe.Source)),
+			Value:     settingsNotificationsAIDedupe,
+			SearchKey: "dedupe window seconds duplicate collapse desktop",
+		},
+		{
+			Label:     settingsLabelInfoLocale(locale, "External desktop sender", externalSender, externalSource),
+			Value:     settingsNoopValue,
+			SearchKey: "external desktop sender PROJMUX_NOTIFY_HOOK environment fallback",
+		},
+	}
+}
+
+// desktopNotifyModeEntries is the compact Delivery mode chooser.
+func (c *settingsCommand) desktopNotifyModeEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	notifyMode, notifySource := settingsDesktopNotifyResolver(c.homeDir, c.lookupEnv).resolveMode()
 	entries := []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
-			Label: settingsLabelInfoLocale(locale, settingsNotificationsDesktopLabel(locale), desktopNotifyDisplayName(notifyMode), string(notifySource)),
+			Label: settingsLabelInfoLocale(locale, settingsNavLabel(settingsNavNotifyDesktop+".mode"), desktopNotifyDisplayName(notifyMode), string(notifySource)),
 			Value: settingsNoopValue,
 		},
 	}

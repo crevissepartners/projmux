@@ -1,6 +1,7 @@
 package app
 
 import (
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"slices"
 	"strings"
 	"testing"
@@ -51,10 +52,7 @@ func TestThemeEntriesRenderTokensWithoutGroupRows(t *testing.T) {
 		homeDir:   func() (string, error) { return t.TempDir(), nil },
 		lookupEnv: func(string) string { return "" },
 	}
-	entries, err := cmd.themeEntries()
-	if err != nil {
-		t.Fatalf("themeEntries() error = %v", err)
-	}
+	entries := themeTokenRows(t, cmd)
 
 	prefixByToken := map[theme.ColorToken]string{}
 	for _, group := range themeTokenGroups {
@@ -97,4 +95,28 @@ func TestThemeEntriesRenderTokensWithoutGroupRows(t *testing.T) {
 	if len(seen) != len(themeSettingsColorTokens()) {
 		t.Fatalf("themeEntries() rendered %d token rows, want %d; seen=%#v", len(seen), len(themeSettingsColorTokens()), seen)
 	}
+}
+
+// themeTokenRows flattens the token rows the Theme view now nests under
+// Tokens > <group>. The rows themselves are unchanged; only their owning View
+// moved, so the coverage assertions stay on the same data.
+func themeTokenRows(t *testing.T, cmd *settingsCommand) []intpickercompat.Entry {
+	t.Helper()
+
+	var rows []intpickercompat.Entry
+	for _, group := range themeTokenGroups {
+		cfg, err := cmd.currentGlobalProjectConfig()
+		if err != nil {
+			t.Fatalf("currentGlobalProjectConfig() error = %v", err)
+		}
+		effective := theme.ResolveTheme(cfg.Theme)
+		for _, token := range group.Tokens {
+			rows = append(rows, intpickercompat.Entry{
+				Label:     cmd.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), group.Prefix+" "+themeColorSummaryEffective(cfg.Theme, effective, token)),
+				Value:     themeAction("color:" + string(token)),
+				SearchKey: "theme color " + group.Prefix + " " + strings.Trim(group.Prefix, "[]") + " swatch hex input " + string(token),
+			})
+		}
+	}
+	return rows
 }

@@ -118,56 +118,45 @@ func (c *settingsCommand) rootEntriesForAxis(axis SettingsAxis) []intpickercompa
 	return c.rootEntriesForAxisLocale(axis, settingsLocale())
 }
 
+// settingsRootDescriptions is the one-line ownership summary each Global root
+// row renders. The keys are navigation node IDs, so a root that exists in the
+// tree without a description (or the other way round) is a test failure rather
+// than a silently blank row.
+var settingsRootDescriptions = map[string]string{
+	settingsNavProjects:      "discovery roots, pinned Projects, sidebar policy",
+	settingsNavAI:            "default launch target, enabled Providers, Agent Resume Picker",
+	settingsNavNotifications: "desktop delivery, Provider Integrations, Agent event behavior",
+	settingsNavAutomation:    "Projmux lifecycle scripts and project automation policy",
+	settingsNavAppearance:    "Theme, Status Bar, language, Agent attention badge",
+	settingsNavKeybindings:   "keys by surface and action category",
+	settingsNavAbout:         "version, updates, welcome, and quit",
+}
+
+// rootEntriesForAxisLocale renders the Global root from the navigation
+// catalog. The row order, labels and destinations come from settingsNavCatalog
+// rather than from a second hand-maintained list, so the visible root cannot
+// drift from the tree the golden freezes.
 func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18n.Locale) []intpickercompat.Entry {
-	all := []intpickercompat.Entry{
-		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Project Picker", "project roots, workdirs, and pins"),
-			Value: settingsSectionProject,
-		},
-		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "AI Settings", "default split mode, enabled agents"),
-			Value: settingsSectionAI,
-		},
-		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Notifications", "desktop mode, delivery sources, and hook quiet policy"),
-			Value: settingsSectionNotifications,
-		},
-		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Hooks", "global lifecycle hook paths"),
-			Value: settingsSectionGlobalHooks,
-		},
-		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Appearance", "language, AI badge, status/notify icon decoration"),
-			Value: settingsSectionStatusbar,
-		},
-		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Theme", "global preset, color tokens, and font hints"),
-			Value: settingsSectionGlobalTheme,
-		},
-		{
-			Label: c.sessionStateSettingsRootLabelLocale(locale),
-			Value: settingsSectionSessionState,
-		},
-		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Keybindings", "edit tmux plain and prefix chords"),
-			Value: settingsSectionKeybindings,
-		},
-		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "Labs", "experimental features"),
-			Value: settingsSectionLabs,
-		},
-		{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, "About", "version, updates, welcome, and quit"),
-			Value: settingsSectionAbout,
-		},
-	}
-	entries := make([]intpickercompat.Entry, 0, len(all))
-	for _, entry := range all {
-		meta, ok := settingsEntryMetaForValue(entry.Value)
+	children := settingsNavChildren(settingsNavScopeGlobal)
+	entries := make([]intpickercompat.Entry, 0, len(children))
+	for _, node := range children {
+		meta, ok := settingsEntryMetaForValue(node.Value)
 		if !ok || meta.Axis&axis == 0 {
 			continue
 		}
-		entries = append(entries, entry)
+		// Snapshots carries live autosave state in its description, so it
+		// keeps its own label builder; every other root is a static summary.
+		if node.ID == settingsNavSnapshots {
+			entries = append(entries, intpickercompat.Entry{
+				Label: c.sessionStateSettingsRootLabelLocale(locale),
+				Value: node.Value,
+			})
+			continue
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, node.Label, settingsRootDescriptions[node.ID]),
+			Value: node.Value,
+		})
 	}
 	return entries
 }
@@ -226,7 +215,7 @@ func (c *settingsCommand) sessionStateSettingsRootLabelLocale(locale i18n.Locale
 		"{mode}", mode,
 		"{interval}", formatSessionStateAutosaveInterval(interval.Duration),
 	).Replace(localizeText(locale, "settings.text.session_state_summary", "autosave {mode}, interval {interval}"))
-	return settingsRootLabelLocale(locale, settingsGlyphOpen, "Session State", desc)
+	return settingsRootLabelLocale(locale, settingsGlyphOpen, settingsNavLabel(settingsNavSnapshots), desc)
 }
 
 func (c *settingsCommand) projectSessionStateSettingsRootLabel(ctx settingsProjectContext) string {
@@ -235,5 +224,5 @@ func (c *settingsCommand) projectSessionStateSettingsRootLabel(ctx settingsProje
 	if identity.Err == nil {
 		desc = identity.Session
 	}
-	return settingsRootLabel(settingsGlyphOpen, "Session State", desc)
+	return settingsRootLabel(settingsGlyphOpen, settingsNavLabel(settingsNavProjectSnapshots), desc)
 }

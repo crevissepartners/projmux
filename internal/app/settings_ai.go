@@ -43,10 +43,6 @@ func (c *settingsCommand) runAISection(stdout, stderr io.Writer) error {
 			if err := c.runAIResumePickerSection(stdout, stderr); err != nil {
 				return err
 			}
-		case action == settingsAINotifyDiagnostics:
-			if err := c.runAINotifyDiagnosticsSection(stdout, stderr); err != nil {
-				return err
-			}
 		case strings.HasPrefix(action, settingsActionPrefixAI):
 			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
@@ -62,8 +58,8 @@ func (c *settingsCommand) runAIEnabledAgentsSection(stdout, stderr io.Writer) er
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-ai-enabled-agents",
 			Entries:    c.aiEnabledAgentEntries(),
-			Title:      "AI Settings - Enabled agents",
-			Prompt:     "Settings > AI Settings > Enabled agents > ",
+			Title:      "AI - Enabled providers",
+			Prompt:     "Settings > AI > Enabled providers > ",
 			Footer:     projmuxFooter("Enter: toggle  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -82,7 +78,7 @@ func (c *settingsCommand) runAIEnabledAgentsSection(stdout, stderr io.Writer) er
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixAIEnabledAgent):
 			provider := strings.TrimPrefix(action, settingsActionPrefixAIEnabledAgent)
-			if err := c.runSettingsMutation("Enabled agents", stdout, stderr, func(io.Writer, io.Writer) error {
+			if err := c.runSettingsMutation("Enabled providers", stdout, stderr, func(io.Writer, io.Writer) error {
 				return c.toggleAIEnabledAgent(provider)
 			}); err != nil {
 				return err
@@ -103,8 +99,8 @@ func (c *settingsCommand) runAIResumePickerSection(stdout, stderr io.Writer) err
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-ai-resume-picker",
 			Entries:    c.aiResumePickerEntries(),
-			Title:      "AI Settings - Resume picker",
-			Prompt:     "Settings > AI Settings > Resume picker > ",
+			Title:      "AI - Agent Resume Picker",
+			Prompt:     "Settings > AI > Agent Resume Picker > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -143,8 +139,8 @@ func (c *settingsCommand) runAIResumePickerLimitSection(stdout, stderr io.Writer
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-ai-resume-picker-limit",
 			Entries:    c.aiResumePickerLimitEntries(),
-			Title:      "AI Settings - Picker limit",
-			Prompt:     "Settings > AI Settings > Resume picker > Picker limit > ",
+			Title:      "AI - Picker limit",
+			Prompt:     "Settings > AI > Agent Resume Picker > Picker limit > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -189,8 +185,8 @@ func (c *settingsCommand) runAIResumePickerDepthSection(stdout, stderr io.Writer
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-ai-resume-picker-depth",
 			Entries:    c.aiResumePickerDepthEntries(),
-			Title:      "AI Settings - Scan depth",
-			Prompt:     "Settings > AI Settings > Resume picker > Scan depth > ",
+			Title:      "AI - Scan depth",
+			Prompt:     "Settings > AI > Agent Resume Picker > Scan depth > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -234,7 +230,7 @@ func (c *settingsCommand) runAIResumePickerLimitCustom(stdout, stderr io.Writer)
 		Entries:      nil,
 		AcceptQuery:  true,
 		InitialQuery: strconv.Itoa(current.Limit),
-		Title:        "AI Settings - Custom resume picker limit",
+		Title:        "AI - Custom picker limit",
 		Prompt:       "Resume picker limit > ",
 		Footer:       projmuxFooter("Enter: save  |  Example: 30 "),
 		ExpectKeys:   []string{"enter"},
@@ -264,7 +260,7 @@ func (c *settingsCommand) runAIResumePickerDepthCustom(stdout, stderr io.Writer)
 		Entries:      nil,
 		AcceptQuery:  true,
 		InitialQuery: strconv.Itoa(current.Depth),
-		Title:        "AI Settings - Custom resume scan depth",
+		Title:        "AI - Custom scan depth",
 		Prompt:       "Resume scan depth > ",
 		Footer:       projmuxFooter("Enter: save  |  Example: 2 "),
 		ExpectKeys:   []string{"enter"},
@@ -287,19 +283,30 @@ func (c *settingsCommand) runAIResumePickerDepthCustom(stdout, stderr io.Writer)
 	})
 }
 
-// aiResumePickerEntries builds the Resume picker navigation view: two drill-in
-// rows (Picker limit, Scan depth), each showing the resolved value + source and
-// routing into its own deeper section.
+// aiResumePickerEntries builds the Agent Resume Picker view. The two read-only
+// rows name what resume actually operates on: an existing Agent in an Offline
+// or Failed phase, and a new-action label that creates a new Agent rather than
+// resuming one. The two value rows keep their own chooser.
 func (c *settingsCommand) aiResumePickerEntries() []intpickercompat.Entry {
 	return []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, "Picker limit", c.aiResumePickerLimitSummary()),
+			Label:     c.rowLabelInfo("Effective behavior", "resume an existing Agent", "eligible phases: Offline, Failed"),
+			Value:     settingsNoopValue,
+			SearchKey: "agent resume picker eligible phases offline failed existing agent",
+		},
+		{
+			Label:     c.rowLabelInfo("New action label", "Create New Agent", "always creates a new Agent"),
+			Value:     settingsNoopValue,
+			SearchKey: "create new agent resume picker new action label",
+		},
+		{
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAIResumePicker+".limit"), c.aiResumePickerLimitSummary()),
 			Value:     settingsAIResumePickerLimit,
 			SearchKey: "resume picker limit max sessions resume_picker_limit",
 		},
 		{
-			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, "Scan depth", c.aiResumeScanDepthSummary()),
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAIResumePicker+".depth"), c.aiResumeScanDepthSummary()),
 			Value:     settingsAIResumePickerDepth,
 			SearchKey: "resume scan depth cwd child directories resume_scan_depth",
 		},
@@ -379,8 +386,8 @@ func (c *settingsCommand) runAIDefaultModeSection(stdout, stderr io.Writer) erro
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-ai-default-mode",
 			Entries:    c.aiEntries(),
-			Title:      "AI Settings - Default split mode",
-			Prompt:     "Settings > AI Settings > Default split mode > ",
+			Title:      "AI - Default launch target",
+			Prompt:     "Settings > AI > Default launch target > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -420,19 +427,19 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 	}
 	return append(entries,
 		intpickercompat.Entry{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Default split mode", defaultDesc),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAI+".launch-target"), defaultDesc),
 			Value:     settingsAIDefaultMode,
-			SearchKey: "default split mode claude codex antigravity shell selective",
+			SearchKey: "default launch target agent provider claude codex antigravity shell pane choose at launch",
 		},
 		intpickercompat.Entry{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Enabled agents", c.aiEnabledAgentsSummary()),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAIProviders), c.aiEnabledAgentsSummary()),
 			Value:     settingsAIEnabledAgents,
-			SearchKey: "enabled agents claude codex antigravity",
+			SearchKey: "enabled providers claude codex antigravity",
 		},
 		intpickercompat.Entry{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Resume picker", c.aiResumePickerSummary()),
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAIResumePicker), c.aiResumePickerSummary()),
 			Value:     settingsAIResumePicker,
-			SearchKey: "resume picker limit max sessions resume_picker_limit scan depth cwd resume_scan_depth",
+			SearchKey: "agent resume picker limit sessions resume_picker_limit scan depth cwd resume_scan_depth offline failed",
 		},
 	)
 }
@@ -488,7 +495,7 @@ func (c *settingsCommand) aiEntries() []intpickercompat.Entry {
 	entries = append(entries, c.backEntry())
 	if warning := c.aiDefaultModeDisabledWarning(); warning != "" {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabelDim("Warning", "saved Default split mode "+warning),
+			Label:     c.rowLabelDim("Warning", "saved Default launch target "+warning),
 			Value:     settingsNoopValue,
 			SearchKey: "default split mode disabled enabled agents",
 		})
@@ -516,13 +523,13 @@ func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.rowLabelInfo("Enabled agents", c.aiEnabledAgentsSummary(), "~/.config/projmux/"+config.AIEnabledAgentsFileName),
+			Label: c.rowLabelInfo("Enabled providers", c.aiEnabledAgentsSummary(), "~/.config/projmux/"+config.AIEnabledAgentsFileName),
 			Value: settingsNoopValue,
 		},
 	}
 	if warning := c.aiDefaultModeDisabledWarning(); warning != "" {
 		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabelDim("Warning", "saved Default split mode "+warning),
+			Label: c.rowLabelDim("Warning", "saved Default launch target "+warning),
 			Value: settingsNoopValue,
 		})
 	}

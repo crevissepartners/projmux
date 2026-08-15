@@ -922,11 +922,11 @@ func TestResourcesActionSettingsVisibilityAndLabsOffConfigOpen(t *testing.T) {
 	settings := testKeybindingSettingsCommand(t, home, func(intpickercompat.Options) (intpickercompat.Result, error) {
 		return intpickercompat.Result{}, nil
 	})
-	entries, err := settings.keybindingEntries()
+	entries, err := settings.keybindingCategoryEntries(keyBindingCategoryLaunch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasEntryValue(entries, settingsActionPrefixKeymap+"Resources:Open") || !hasEntryLabelContaining(entries, "Resources") {
+	if !hasEntryValue(entries, settingsActionPrefixKeymap+"Resources:Open") || !hasEntryLabelContaining(entries, "Resource Inspector") {
 		t.Fatalf("Settings keybinding entries = %#v, want Resources:Open visible", entries)
 	}
 	settings.lookupEnv = func(name string) string {
@@ -935,7 +935,7 @@ func TestResourcesActionSettingsVisibilityAndLabsOffConfigOpen(t *testing.T) {
 		}
 		return ""
 	}
-	entries, err = settings.keybindingEntries()
+	entries, err = settings.keybindingCategoryEntries(keyBindingCategoryLaunch)
 	if err != nil {
 		t.Fatal(err)
 	}

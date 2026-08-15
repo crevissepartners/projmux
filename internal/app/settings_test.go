@@ -37,15 +37,13 @@ func TestSettingsRootEntriesHaveAxisMetadata(t *testing.T) {
 		name string
 		axis SettingsAxis
 	}{
-		settingsSectionProject:       {name: "Project Picker", axis: settingsAxisGlobal},
-		settingsSectionGlobalHooks:   {name: "Hooks", axis: settingsAxisGlobal},
-		settingsSectionAI:            {name: "AI Settings", axis: settingsAxisGlobal},
+		settingsSectionProject:       {name: "Projects", axis: settingsAxisGlobal},
+		settingsSectionAI:            {name: "AI", axis: settingsAxisGlobal},
 		settingsSectionNotifications: {name: "Notifications", axis: settingsAxisGlobal},
+		settingsSectionAutomation:    {name: "Automation", axis: settingsAxisGlobal},
 		settingsSectionStatusbar:     {name: "Appearance", axis: settingsAxisGlobal},
-		settingsSectionGlobalTheme:   {name: "Theme", axis: settingsAxisGlobal},
-		settingsSectionSessionState:  {name: "Session State", axis: settingsAxisGlobal},
+		settingsSectionSessionState:  {name: "Snapshots", axis: settingsAxisGlobal},
 		settingsSectionKeybindings:   {name: "Keybindings", axis: settingsAxisGlobal},
-		settingsSectionLabs:          {name: "Labs", axis: settingsAxisGlobal},
 		settingsSectionAbout:         {name: "About", axis: settingsAxisGlobal},
 	}
 
@@ -113,12 +111,10 @@ func TestSettingsRootOptionsDefaultGlobalTab(t *testing.T) {
 		settingsSectionProject,
 		settingsSectionAI,
 		settingsSectionNotifications,
-		settingsSectionGlobalHooks,
+		settingsSectionAutomation,
 		settingsSectionStatusbar,
-		settingsSectionGlobalTheme,
 		settingsSectionSessionState,
 		settingsSectionKeybindings,
-		settingsSectionLabs,
 		settingsSectionAbout,
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root settings entry order = %#v, want %#v", got, want)
@@ -181,11 +177,11 @@ func TestSettingsRootOptionsKoreanCatalogDoesNotOverflow(t *testing.T) {
 	if got, want := options.Footer, "행을 열거나 범위 칩을 클릭해 탭을 전환합니다."; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContaining(options.Entries, "프로젝트 선택기") {
-		t.Fatalf("root settings entries = %#v, want Korean Project Picker row", options.Entries)
+	if !hasEntryLabelContaining(options.Entries, "프로젝트") {
+		t.Fatalf("root settings entries = %#v, want Korean Projects row", options.Entries)
 	}
 	if !hasEntryLabelContaining(options.Entries, "자동 저장 꺼짐, 간격 1m") || hasEntryLabelContaining(options.Entries, "autosave off") {
-		t.Fatalf("root settings entries = %#v, want localized Korean Session State summary", options.Entries)
+		t.Fatalf("root settings entries = %#v, want localized Korean Snapshots summary", options.Entries)
 	}
 	projectPicker, err := cmd.sectionOptions(settingsSectionProject)
 	if err != nil {
@@ -228,7 +224,7 @@ func TestSettingsRootOptionsUsesCommandLookupEnvLocale(t *testing.T) {
 	if got, want := options.Footer, "행을 열거나 범위 칩을 클릭해 탭을 전환합니다."; got != want {
 		t.Fatalf("root settings footer = %q, want command lookup locale %q", got, want)
 	}
-	if !hasEntryLabelContaining(options.Entries, "프로젝트 선택기") {
+	if !hasEntryLabelContaining(options.Entries, "프로젝트") {
 		t.Fatalf("root settings entries = %#v, want command lookup locale Korean labels", options.Entries)
 	}
 }
@@ -255,7 +251,7 @@ locale = "ko-KR"
 	if got, want := options.Title, "설정"; got != want {
 		t.Fatalf("root settings title = %q, want global config locale %q", got, want)
 	}
-	if !hasEntryLabelContaining(options.Entries, "프로젝트 선택기") {
+	if !hasEntryLabelContaining(options.Entries, "프로젝트") {
 		t.Fatalf("root settings entries = %#v, want Korean labels from global config locale", options.Entries)
 	}
 }
@@ -305,7 +301,7 @@ locale = "ko-KR"
 	if got, want := appearanceOptions.Locale, i18n.Locale("ko-KR"); got != want {
 		t.Fatalf("appearance options locale = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContaining(appearanceOptions.Entries, "경로 아이콘") {
+	if !hasEntryLabelContaining(appearanceOptions.Entries, "상태 표시줄") {
 		t.Fatalf("appearance entries = %#v, want Korean depth-2 row label", appearanceOptions.Entries)
 	}
 	if got := appearanceOptions.TitleChips; len(got) < 1 || got[0].Label != "전체" {
@@ -348,8 +344,8 @@ func TestSettingsCommandLocalePrecedenceForRenderedRows(t *testing.T) {
 				return ""
 			},
 			wantLocale: i18n.Locale("en-US"),
-			wantLabel:  "Path icon",
-			reject:     "경로 아이콘",
+			wantLabel:  "Status Bar",
+			reject:     "상태 표시줄",
 			wantChip:   "Global",
 			rejectChip: "전체",
 		},
@@ -363,8 +359,8 @@ func TestSettingsCommandLocalePrecedenceForRenderedRows(t *testing.T) {
 				return ""
 			},
 			wantLocale: i18n.Locale("ko-KR"),
-			wantLabel:  "경로 아이콘",
-			reject:     "Path icon",
+			wantLabel:  "상태 표시줄",
+			reject:     "Status Bar",
 			wantChip:   "전체",
 			rejectChip: "Global",
 		},
@@ -382,8 +378,8 @@ func TestSettingsCommandLocalePrecedenceForRenderedRows(t *testing.T) {
 				}
 			},
 			wantLocale: i18n.Locale("en-US"),
-			wantLabel:  "Path icon",
-			reject:     "경로 아이콘",
+			wantLabel:  "Status Bar",
+			reject:     "상태 표시줄",
 			wantChip:   "Global",
 			rejectChip: "전체",
 		},
@@ -455,8 +451,8 @@ func TestSettingsCommandLocalePrecedenceForAIDepthRows(t *testing.T) {
 				return ""
 			},
 			wantLocale:   i18n.Locale("en-US"),
-			wantRow:      "Default split mode",
-			rejectRow:    "기본 분할 모드",
+			wantRow:      "Default launch target",
+			rejectRow:    "기본 실행 대상",
 			wantBack:     "Back",
 			rejectBack:   "뒤로",
 			wantDetailUI: "settings-ai-default-mode",
@@ -471,8 +467,8 @@ func TestSettingsCommandLocalePrecedenceForAIDepthRows(t *testing.T) {
 				return ""
 			},
 			wantLocale:   i18n.Locale("ko-KR"),
-			wantRow:      "기본 분할 모드",
-			rejectRow:    "Default split mode",
+			wantRow:      "기본 실행 대상",
+			rejectRow:    "Default launch target",
 			wantBack:     "뒤로",
 			rejectBack:   "Back",
 			wantDetailUI: "settings-ai-default-mode",
@@ -623,10 +619,10 @@ func settingsKoreanVisibleOptionSamples(t *testing.T, cmd *settingsCommand) []in
 	for _, section := range []string{
 		settingsSectionProject,
 		settingsSectionNotifications,
+		settingsSectionAutomation,
 		settingsSectionStatusbar,
 		settingsSectionSessionState,
 		settingsSectionKeybindings,
-		settingsSectionLabs,
 		settingsSectionAbout,
 	} {
 		options, err := cmd.sectionOptions(section)
@@ -674,36 +670,42 @@ func settingsVisibleOptionStrings(options intpickercompat.Options) []string {
 func settingsKoreanStaticRowSamples() []string {
 	locale := i18n.Locale("ko-KR")
 	samples := []string{
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Root", "not configured"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Workdirs", "add or remove scan roots"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Pinned Projects", "add or remove pins"),
-		settingsLabelInfoLocale(locale, "Saved workdirs", "(none)", "~/.config/projmux/workdirs"),
-		settingsLabelInfoLocale(locale, "Effective Project Root", "not configured", "no env, tmux option, or saved value"),
-		settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Use Current Project as Root", "/tmp/project"),
-		settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Remove", "/tmp/project"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Desktop notifications", "notify - default"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "AI notification dedupe", "60s - default"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Delivery sources", "doctor"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Hook quiet policy", "catalog defaults"),
-		settingsLabelInfoLocale(locale, "Desktop sender override", "PROJMUX_NOTIFY_HOOK", "PROJMUX_NOTIFY_HOOK env"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Path icon", "symbol"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Git icon", "emoji"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Notify icon", "off"),
-		settingsLabelInfoLocale(locale, "Current", "symbol", "bell marker in notification sidebar"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Primary discovery root", "not configured"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Additional discovery roots", "discovery roots scanned for Projects"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Pinned Projects", "pinned Projects and their roots"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Sidebar", "closed Project startup"),
+		settingsLabelInfoLocale(locale, "Effective roots", "(none)", "~/.config/projmux/workdirs"),
+		settingsLabelInfoLocale(locale, "Effective discovery root", "not configured", "no env, tmux option, or saved value"),
+		settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Use current directory", "/tmp/project"),
+		settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Remove discovery root", "/tmp/project"),
+		settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Rebind Project root", "/tmp/project"),
+		settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Unpin Project", "/tmp/project"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Desktop delivery", "notify - default"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Dedupe window", "60s - default"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Provider Integrations", "doctor"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "tmux event source", "doctor"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Agent event behavior", "catalog defaults"),
+		settingsLabelInfoLocale(locale, "External desktop sender", "PROJMUX_NOTIFY_HOOK", "PROJMUX_NOTIFY_HOOK env"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Working directory", "symbol"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Git", "emoji"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Notifications HUD", "off"),
+		settingsLabelLocale(locale, settingsGlyphToggle, settingsColorAdd, "Resources", "on - saved"),
+		settingsLabelInfoLocale(locale, "Current", "symbol", "Notification queue HUD and its icon"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Auto-save", "on - default"),
-		settingsLabelInfoLocale(locale, "Storage", "latest snapshot store", "per-session JSON under XDG state"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Snapshot actions", "latest/named save"),
-		settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Save latest snapshot", "capture live project session as latest"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Preview restore", "dry-run only"),
-		settingsLabelInfoLocale(locale, "Action", "Toggle Settings", "Settings"),
+		settingsLabelInfoLocale(locale, "Storage / Retention", "latest snapshot only", "per-session JSON under XDG state"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Projmux session lifecycle", "1 of 3 events have a command"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "After notification queued", "no command"),
+		settingsLabelLocale(locale, settingsGlyphToggle, settingsColorAdd, "Project automation policy", "on - default"),
+		settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Add or edit command", "[hooks.post-create]"),
+		settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Remove command", "[hooks.post-create]"),
+		settingsLabelInfoLocale(locale, "Action", "Open / close Settings", "Settings"),
 		settingsLabelInfoLocale(locale, "Action ID", "SettingsToggle", ""),
 		settingsLabelInfoLocale(locale, "Terminal", "Ghostty", "supported mappings: projmux setup terminal ghostty"),
 		settingsLabelLocale(locale, settingsGlyphType, settingsColorType, "Add key", "press desired key"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Hooks", "on - default"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Sidebar startup picker", "on - default"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Closed Project startup", "Use Project topology - default"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Welcome", "revisit the shell quickstart guide"),
-		settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Quit projmux", "open quit actions"),
-		settingsLabelInfoLocale(locale, "Latest", "v0.0.0", "cache"),
+		settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Quit Projmux", "stops the app-owned runtime and its socket"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Updates", "current v0.0.0, latest v0.0.0"),
 	}
 	for i := range samples {
 		samples[i] = stripANSI(samples[i])
@@ -738,31 +740,41 @@ func settingsEnglishChromeResidue(visible string) (string, bool) {
 	for _, phrase := range []string{
 		"Settings >",
 		"Back row",
-		"Project Picker",
-		"Project Root",
-		"Workdirs",
+		"Projects",
+		"Primary discovery root",
+		"Additional discovery roots",
 		"Pinned Projects",
+		"Project Sidebar",
+		"Closed Project startup",
 		"Notifications",
-		"Desktop notifications",
-		"AI notification dedupe",
-		"Delivery sources",
-		"Hook quiet policy",
-		"Desktop sender override",
+		"Desktop delivery",
+		"Dedupe window",
+		"Provider Integrations",
+		"event source",
+		"Agent event behavior",
+		"External desktop sender",
+		"Automation",
+		"session lifecycle",
+		"After notification queued",
+		"Project automation policy",
+		"Add or edit command",
+		"Remove command",
 		"Appearance",
-		"Path icon",
-		"Git icon",
-		"Notify icon",
+		"Status Bar",
+		"Working directory",
+		"Notifications HUD",
+		"Resources",
 		"Current",
-		"Session State",
+		"Snapshots",
 		"Auto-save",
-		"Snapshot actions",
+		"Storage / Retention",
 		"Keybindings",
-		"Labs",
 		"About",
 		"Welcome",
-		"Quit projmux",
-		"Update Now",
-		"Check Updates",
+		"Updates",
+		"Quit Projmux",
+		"Update now",
+		"Check for updates",
 		"Pending Notifications",
 	} {
 		if strings.Contains(normalized, phrase) {
@@ -1132,7 +1144,7 @@ func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 	if !hasEntryLabelContaining(options.Entries, "Project context") {
 		t.Fatalf("project tab entries = %#v, want one Project context guidance row", options.Entries)
 	}
-	for _, repeated := range []string{"Trust", "Hooks (project)", "Project recipe", "Effective merge view", "disabled - no project context"} {
+	for _, repeated := range []string{"Trust", "Project hooks", "Project recipe", "Effective merge view", "disabled - no project context"} {
 		if hasEntryLabelContaining(options.Entries, repeated) {
 			t.Fatalf("project tab entries = %#v, want no repeated disabled copy %q", options.Entries, repeated)
 		}
@@ -1144,18 +1156,21 @@ func TestSettingsRootDescriptionOwnershipBoundaries(t *testing.T) {
 
 	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
 	entries := cmd.rootEntriesForAxisLocale(settingsAxisGlobal, i18n.FallbackLocale)
-	if !hasEntryLabelContainingAll(entries, "Appearance", "language, AI badge, status/notify icon decoration") {
-		t.Fatalf("root entries = %#v, want Appearance limited to language/badge/icon ownership", entries)
-	}
-	if !hasEntryLabelContainingAll(entries, "Theme", "global preset, color tokens, and font hints") {
-		t.Fatalf("root entries = %#v, want Theme preset/token/font ownership", entries)
+	// Appearance now owns every visual surface, Theme included: the target IA
+	// has no separate Theme root, so the row must name Theme and Status Bar.
+	if !hasEntryLabelContainingAll(entries, "Appearance", "Theme, Status Bar, language, Agent attention badge") {
+		t.Fatalf("root entries = %#v, want Appearance to own Theme and Status Bar", entries)
 	}
 	if !hasEntryLabelContainingAll(entries, "About", "version, updates, welcome, and quit") {
 		t.Fatalf("root entries = %#v, want About description to match retained surface", entries)
 	}
-	appearance := entryWithLabelContaining(entries, "Appearance")
-	if appearance == nil || strings.Contains(appearance.Label, "theme") || strings.Contains(appearance.Label, "font") {
-		t.Fatalf("Appearance row = %#v, want no Theme ownership copy", appearance)
+	if entryWithLabelContaining(entries, "Labs") != nil {
+		t.Fatalf("root entries = %#v, want no Labs root", entries)
+	}
+	for _, entry := range entries {
+		if entry.Value == settingsSectionGlobalTheme {
+			t.Fatalf("root entries = %#v, want no separate Theme root", entries)
+		}
 	}
 }
 
@@ -1175,11 +1190,10 @@ func TestSettingsProjectContextKeepsActionableRows(t *testing.T) {
 		},
 	}
 	entries := cmd.projectTabEntries()
+	// The Project tab is two containers now: Automation owns trust and the
+	// project hooks, Snapshots owns the auto-save override and the snapshots.
 	for _, value := range []string{
-		settingsSectionProjectTrust,
-		settingsSectionProjectHooks,
-		settingsSectionProjectConfig,
-		settingsSectionEffectiveMerge,
+		settingsSectionProjectAutomation,
 		settingsSectionProjectSessionState,
 	} {
 		if !hasEntryValue(entries, value) {
@@ -1314,8 +1328,6 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsRootTabProjectValue, settingsAxisBoth},
 		{settingsSectionGlobalHooks, settingsAxisGlobal},
 		{settingsSectionProjectHooks, settingsAxisProject},
-		{settingsSectionProjectConfig, settingsAxisProject},
-		{settingsSectionEffectiveMerge, settingsAxisProject},
 		{settingsSectionProjectSessionState, settingsAxisProject},
 		{settingsProjectRootManage, settingsAxisGlobal},
 		{settingsWorkdirList, settingsAxisGlobal},
@@ -1324,7 +1336,6 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsAIEnabledAgents, settingsAxisGlobal},
 		{settingsSectionNotifications, settingsAxisGlobal},
 		{settingsNotificationsDesktop, settingsAxisGlobal},
-		{settingsLabsProjectHooks, settingsAxisGlobal},
 		{settingsActionPrefixAI + aiModeCodex, settingsAxisGlobal},
 		{settingsActionPrefixAIEnabledAgent + aiModeCodex, settingsAxisGlobal},
 		{settingsActionPrefixAIBadgeStyle + string(config.AIBadgeStyleEmoji), settingsAxisGlobal},
@@ -1388,8 +1399,10 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	assertCataloguedEntries("ai resume picker depth", cmd.aiResumePickerDepthEntries())
 	assertCataloguedEntries("notifications", cmd.notificationsEntries())
 	assertCataloguedEntries("desktop notifications", cmd.desktopNotifyEntries())
-	assertCataloguedEntries("AI notification dedupe", cmd.aiNotifyDedupeEntries())
-	assertCataloguedEntries("delivery sources", cmd.aiNotifyDiagnosticEntries())
+	assertCataloguedEntries("Dedupe window", cmd.aiNotifyDedupeEntries())
+	assertCataloguedEntries("provider integrations", cmd.notifyDiagnosticCollectionEntries(cmd.notifyProviderDiagnostics()))
+	assertCataloguedEntries("tmux event source", cmd.notifyDiagnosticCollectionEntries(cmd.notifyTmuxEventDiagnostics()))
+	assertCataloguedEntries("desktop delivery mode", cmd.desktopNotifyModeEntries())
 	assertCataloguedEntries("hook providers", cmd.aiHookProviderEntries())
 	assertCataloguedEntries("hook events", cmd.aiHookEventEntries(aiHookProviderCodex))
 	assertCataloguedEntries("hook action choices", cmd.aiHookActionChoiceEntries(aiHookProviderCodex, "Stop"))
@@ -1400,13 +1413,18 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	assertCataloguedEntries("session state", cmd.sessionStateEntries())
 	assertCataloguedEntries("project session state", cmd.projectSessionStateEntries())
 	assertCataloguedEntries("project picker", cmd.projectPickerEntries())
-	assertCataloguedEntries("labs", cmd.labsEntries())
-	assertCataloguedEntries("labs project hooks", cmd.labsProjectHooksEntries())
+	assertCataloguedEntries("status bar", cmd.statusBarEntries())
+	assertCataloguedEntries("status bar icon chooser", cmd.statusbarDecorationIconEntries(statusbarDecorationTargetGit))
+	assertCataloguedEntries("automation", cmd.automationEntries())
+	assertCataloguedEntries("automation lifecycle", cmd.hookLifecycleEntries(hookScopeGlobal))
+	assertCataloguedEntries("automation event", cmd.hookEventDetailEntries(hookScopeGlobal, "post-create"))
+	assertCataloguedEntries("projects sidebar", cmd.projectSidebarEntries())
+	assertCataloguedEntries("about updates", cmd.aboutUpdateEntries())
 	assertCataloguedEntries("about", cmd.aboutEntries())
 	assertCataloguedEntries("about welcome", cmd.welcomeSettingsViewerOptions().Entries)
 	assertCataloguedEntries("theme presets", cmd.themePresetEntries())
 	assertCataloguedEntries("theme color", cmd.themeColorEntries(theme.TokenSurface))
-	assertCataloguedEntries("global hooks", cmd.globalHookEntries())
+	assertCataloguedEntries("project automation", cmd.projectAutomationEntries())
 
 	ctx := settingsProjectContext{Path: filepath.Join(home, "project"), Name: "project", Source: "test"}
 	mkdirAll(t, ctx.Path)
@@ -1442,10 +1460,7 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	}
 	assertCataloguedEntries("theme", themeEntries)
 
-	keybindingEntries, err := cmd.keybindingEntries()
-	if err != nil {
-		t.Fatalf("keybindingEntries() error = %v", err)
-	}
+	keybindingEntries := settingsKeybindingActionRows(t, cmd)
 	assertCataloguedEntries("keybindings", keybindingEntries)
 	keybindingDetail, _, err := cmd.keybindingDetailEntries("ProjectSidebarToggle")
 	if err != nil {
@@ -1594,12 +1609,10 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 		settingsSectionProject,
 		settingsSectionAI,
 		settingsSectionNotifications,
-		settingsSectionGlobalHooks,
+		settingsSectionAutomation,
 		settingsSectionStatusbar,
-		settingsSectionGlobalTheme,
 		settingsSectionSessionState,
 		settingsSectionKeybindings,
-		settingsSectionLabs,
 		settingsSectionAbout,
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root settings entry order = %#v, want %#v", got, want)
@@ -1610,13 +1623,13 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got, want := aiOptions.UI, "settings-ai"; got != want {
 		t.Fatalf("AI settings UI = %q, want %q", got, want)
 	}
-	if got, want := aiOptions.Title, "AI Settings"; got != want {
+	if got, want := aiOptions.Title, "AI - Launch target, Providers, Agent Resume Picker"; got != want {
 		t.Fatalf("AI settings title = %q, want %q", got, want)
 	}
 	if got := aiOptions.Header; got != "" {
 		t.Fatalf("AI settings header = %q, want description only in title", got)
 	}
-	if got, want := aiOptions.Prompt, "Settings > AI Settings > "; got != want {
+	if got, want := aiOptions.Prompt, "Settings > AI > "; got != want {
 		t.Fatalf("AI settings prompt = %q, want %q", got, want)
 	}
 	if !hasEntryValue(aiOptions.Entries, settingsBackValue) {
@@ -1765,11 +1778,11 @@ func TestSettingsAIEnabledAgentsWarnsWhenDefaultModeDisabled(t *testing.T) {
 		lookupEnv: func(string) string { return "" },
 	}
 
-	if !hasEntryLabelContainingAll(cmd.aiRootEntries(), "Default split mode", "codex", "disabled") {
+	if !hasEntryLabelContainingAll(cmd.aiRootEntries(), "Default launch target", "codex", "disabled") {
 		t.Fatalf("AI root entries = %#v, want disabled default-mode warning", cmd.aiRootEntries())
 	}
 	detail := cmd.aiEnabledAgentEntries()
-	if !hasEntryLabelContainingAll(detail, "Warning", "Default split mode", "codex disabled") {
+	if !hasEntryLabelContainingAll(detail, "Warning", "Default launch target", "codex disabled") {
 		t.Fatalf("AI enabled agents entries = %#v, want disabled default-mode warning", detail)
 	}
 	defaultModeDetail := cmd.aiEntries()
@@ -1779,26 +1792,27 @@ func TestSettingsAIEnabledAgentsWarnsWhenDefaultModeDisabled(t *testing.T) {
 	if !hasEntryValue(defaultModeDetail, settingsActionPrefixAI+aiModeClaude) {
 		t.Fatalf("AI default mode entries = %#v, want enabled Claude row", defaultModeDetail)
 	}
-	if !hasEntryLabelContainingAll(defaultModeDetail, "Warning", "Default split mode", "codex disabled") {
+	if !hasEntryLabelContainingAll(defaultModeDetail, "Warning", "Default launch target", "codex disabled") {
 		t.Fatalf("AI default mode entries = %#v, want disabled default-mode warning", defaultModeDetail)
 	}
-	if !hasEntryLabelContainingAll(detail, "Enabled agents", "Claude") {
+	if !hasEntryLabelContainingAll(detail, "Enabled providers", "Claude") {
 		t.Fatalf("AI enabled agents entries = %#v, want current enabled set", detail)
 	}
-	if hasEntryLabelContainingAll(detail, "Enabled agents", "Codex") {
+	if hasEntryLabelContainingAll(detail, "Enabled providers", "Codex") {
 		t.Fatalf("AI enabled agents entries = %#v, want current enabled set without Codex", detail)
 	}
 }
 
-func TestSettingsHubKeepsLabsSectionWithoutRetiredPickerChoices(t *testing.T) {
+func TestSettingsHubAutomationReplacesLabsAndKeepsRetiredRowsOut(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	var labsOptions intpickercompat.Options
+	var rootOptions, automationOptions intpickercompat.Options
 	var tmuxCalls [][]string
 	runner, native := scriptedPicker(t, []pickerStep{
-		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}},
-		{observe: func(o intpickercompat.Options) { labsOptions = o },
+		{observe: func(o intpickercompat.Options) { rootOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAutomation}},
+		{observe: func(o intpickercompat.Options) { automationOptions = o },
 			reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
 	cmd := &settingsCommand{
@@ -1822,35 +1836,34 @@ func TestSettingsHubKeepsLabsSectionWithoutRetiredPickerChoices(t *testing.T) {
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := labsOptions.UI, "settings-labs"; got != want {
-		t.Fatalf("labs settings UI = %q, want %q", got, want)
+	// Labs is gone as a root, and it left no visible or hidden redirect.
+	if hasEntryValue(rootOptions.Entries, settingsSectionLabs) || hasEntryLabelContaining(rootOptions.Entries, "Labs") {
+		t.Fatalf("root entries = %#v, want no Labs root", rootOptions.Entries)
 	}
-	if !hasEntryValue(labsOptions.Entries, settingsLabsProjectHooks) {
-		t.Fatalf("labs settings entries = %#v, want project hooks overview row", labsOptions.Entries)
+	if _, ok := settingsEntryMetaForValue(settingsSectionLabs); ok {
+		t.Fatal("section:labs must not retain an owner contract after the Labs container is retired")
 	}
-	if hasEntryLabelContaining(labsOptions.Entries, "Sidebar startup picker") {
-		t.Fatalf("labs settings entries = %#v, want sidebar startup picker moved to Session State", labsOptions.Entries)
+	if _, ok := settingsEntryMetaForValue(settingsLabsProjectHooks); ok {
+		t.Fatal("labs:project-hooks must not retain an owner contract after the row is promoted to Automation")
 	}
-	if hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:off") ||
-		hasEntryValue(labsOptions.Entries, settingsActionPrefixSessionState+"sidebar-startup:on") {
-		t.Fatalf("labs settings entries = %#v, want no direct sidebar startup picker mutation rows", labsOptions.Entries)
+	if got, want := automationOptions.UI, "settings-automation"; got != want {
+		t.Fatalf("automation settings UI = %q, want %q", got, want)
 	}
-	if hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOn)) ||
-		hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
-		t.Fatalf("labs settings entries = %#v, want no direct project hooks mutation rows", labsOptions.Entries)
+	// The promoted policy row is a Toggle in Automation itself: it has no
+	// detail route of its own, and it is the only mutation row here.
+	if !hasEntryLabelContaining(automationOptions.Entries, "Project automation policy") {
+		t.Fatalf("automation entries = %#v, want the promoted project automation policy toggle", automationOptions.Entries)
 	}
-	if hasEntryValue(labsOptions.Entries, settingsNotificationsDesktop) ||
-		hasEntryLabelContaining(labsOptions.Entries, "Desktop notifications") {
-		t.Fatalf("labs settings entries = %#v, want Desktop notifications moved to Notifications", labsOptions.Entries)
+	if hasEntryValue(automationOptions.Entries, settingsLabsProjectHooks) {
+		t.Fatalf("automation entries = %#v, want no Labs project hooks route", automationOptions.Entries)
 	}
-	if hasEntryLabelContaining(labsOptions.Entries, "Picker source") {
-		t.Fatalf("labs settings entries = %#v, want no picker source row", labsOptions.Entries)
+	for _, absent := range []string{"Sidebar startup picker", "Desktop notifications", "Picker source", "Live system resources"} {
+		if hasEntryLabelContaining(automationOptions.Entries, absent) {
+			t.Fatalf("automation entries = %#v, want %q owned elsewhere", automationOptions.Entries, absent)
+		}
 	}
 	if _, ok := settingsEntryMetaForValue("picker-backend:native"); ok {
 		t.Fatal("retired picker backend action must not retain an owner contract")
-	}
-	if hasEntryValue(labsOptions.Entries, "labs:keybindings") {
-		t.Fatalf("labs settings entries = %#v, want no hidden keybindings compatibility producer", labsOptions.Entries)
 	}
 	if _, ok := settingsEntryMetaForValue("labs:keybindings"); ok {
 		t.Fatal("labs:keybindings must not retain an owner contract after its producer and compatibility handler are removed")
@@ -1869,11 +1882,11 @@ func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
 	var overviewOptions intpickercompat.Options
 	var tmuxCalls [][]string
 	runner, native := scriptedPicker(t, []pickerStep{
-		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAutomation}},
 		{observe: func(o intpickercompat.Options) { labsOptions = o },
-			reply: intpickercompat.Result{Key: "enter", Value: settingsLabsProjectHooks}},
-		{observe: func(o intpickercompat.Options) { overviewOptions = o },
 			reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHooks + string(config.ProjectHooksOff)}},
+		{observe: func(o intpickercompat.Options) { overviewOptions = o },
+			reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
@@ -1896,11 +1909,11 @@ func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !hasEntryValue(labsOptions.Entries, settingsLabsProjectHooks) {
-		t.Fatalf("labs settings entries = %#v, want project hooks overview row", labsOptions.Entries)
+	if !hasEntryValue(labsOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
+		t.Fatalf("automation entries = %#v, want the project automation policy toggle", labsOptions.Entries)
 	}
-	if !hasEntryValue(overviewOptions.Entries, settingsActionPrefixHooks+string(config.ProjectHooksOff)) {
-		t.Fatalf("project hooks overview entries = %#v, want project hooks off row", overviewOptions.Entries)
+	if !hasEntryLabelContaining(overviewOptions.Entries, "Project automation policy") {
+		t.Fatalf("refreshed automation entries = %#v, want the toggle to render its new state", overviewOptions.Entries)
 	}
 
 	paths, err := config.Homes{HomeDir: home}.Paths()
@@ -1975,6 +1988,7 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 			actionPrefix := settingsActionPrefixStatusbar + string(tc.target)
 			runner, native := scriptedPicker(t, []pickerStep{
 				{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionStatusbar}},
+				{reply: intpickercompat.Result{Key: "enter", Value: settingsAppearanceStatusBar}},
 				{observe: func(o intpickercompat.Options) {
 					statusbarOptions = o
 					sawChangePage = sawChangePage || o.UI == "settings-statusbar-change"
@@ -1984,7 +1998,8 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 					detailOptions = o
 					sawChangePage = sawChangePage || o.UI == "settings-statusbar-change"
 				},
-					reply: intpickercompat.Result{Key: "enter", Value: actionPrefix + ":" + string(tc.selects)}},
+					reply: intpickercompat.Result{Key: "enter", Value: statusbarDecorationIconValue(tc.target)}},
+				{reply: intpickercompat.Result{Key: "enter", Value: actionPrefix + ":" + string(tc.selects)}},
 				{observe: func(o intpickercompat.Options) {
 					refreshedOptions = o
 					sawChangePage = sawChangePage || o.UI == "settings-statusbar-change"
@@ -2011,20 +2026,20 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 			if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
-			if got, want := statusbarOptions.UI, "settings-statusbar"; got != want {
-				t.Fatalf("statusbar settings UI = %q, want %q", got, want)
+			if got, want := statusbarOptions.UI, "settings-status-bar"; got != want {
+				t.Fatalf("status bar settings UI = %q, want %q", got, want)
 			}
-			if got, want := statusbarOptions.Title, "Appearance - Language, AI badge, status/notify icons"; got != want {
-				t.Fatalf("statusbar settings title = %q, want %q", got, want)
+			if got, want := statusbarOptions.Title, "Appearance - Status Bar"; got != want {
+				t.Fatalf("status bar settings title = %q, want %q", got, want)
 			}
-			if got, want := statusbarOptions.Prompt, "Settings > Appearance > "; got != want {
-				t.Fatalf("statusbar settings prompt = %q, want %q", got, want)
+			if got, want := statusbarOptions.Prompt, "Settings > Appearance > Status Bar > "; got != want {
+				t.Fatalf("status bar settings prompt = %q, want %q", got, want)
 			}
 			if got := statusbarOptions.Header; got != "" {
-				t.Fatalf("statusbar settings header = %q, want description only in title", got)
+				t.Fatalf("status bar settings header = %q, want description only in title", got)
 			}
 			if got := statusbarOptions.TitleChips; len(got) < 2 || !got[0].Active || strings.TrimSpace(got[0].ClickValue) != "" {
-				t.Fatalf("statusbar settings chips = %#v, want passive Global/Project tabs", got)
+				t.Fatalf("status bar settings chips = %#v, want passive Global/Project tabs", got)
 			}
 			for _, target := range []statusbarDecorationTarget{statusbarDecorationTargetCwd, statusbarDecorationTargetGit, statusbarDecorationTargetNotify} {
 				if !hasEntryValue(statusbarOptions.Entries, settingsActionPrefixStatusbar+string(target)) {
@@ -2040,20 +2055,23 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 			if strings.Contains(detailOptions.Title, "Change") || strings.Contains(detailOptions.Prompt, "Change") {
 				t.Fatalf("detail options = %#v, want no Change page title or prompt", detailOptions)
 			}
+			// The component View owns state plus the icon Choice; the modes
+			// themselves live in the compact chooser that row opens.
+			if !hasEntryValue(detailOptions.Entries, statusbarDecorationIconValue(tc.target)) {
+				t.Fatalf("detail entries = %#v, want the icon choice row", detailOptions.Entries)
+			}
+			chooser := cmd.statusbarDecorationIconEntries(tc.target)
 			for _, mode := range statusbarDecorationModes() {
 				value := actionPrefix + ":" + string(mode)
-				if !hasEntryValue(detailOptions.Entries, value) {
-					t.Fatalf("detail entries = %#v, want direct %s row", detailOptions.Entries, value)
+				if !hasEntryValue(chooser, value) {
+					t.Fatalf("icon chooser entries = %#v, want direct %s row", chooser, value)
 				}
-				if !hasEntryLabelContaining(detailOptions.Entries, "Preview "+string(mode)) {
-					t.Fatalf("detail entries = %#v, want preview label for %s", detailOptions.Entries, mode)
+				if !hasEntryLabelContaining(chooser, "Preview "+string(mode)) {
+					t.Fatalf("icon chooser entries = %#v, want preview label for %s", chooser, mode)
 				}
 			}
 			if !hasEntryLabelContaining(detailOptions.Entries, "Current") {
 				t.Fatalf("detail entries = %#v, want current row", detailOptions.Entries)
-			}
-			if !hasEntryLabelContaining(detailOptions.Entries, tc.preview) {
-				t.Fatalf("detail entries = %#v, want preview %q", detailOptions.Entries, tc.preview)
 			}
 			if hasEntryValue(detailOptions.Entries, actionPrefix+":change") || hasEntryLabelContaining(detailOptions.Entries, "Change") {
 				t.Fatalf("detail entries = %#v, want no Change row", detailOptions.Entries)
@@ -2061,11 +2079,13 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 			if sawChangePage {
 				t.Fatalf("picker opened settings-statusbar-change")
 			}
+			// Applying a mode returns to the component View, whose Current row
+			// now shows the saved value and its preview.
 			if !hasEntryLabelContainingAll(refreshedOptions.Entries, "Current", string(tc.selects)) {
 				t.Fatalf("refreshed entries = %#v, want current display refreshed to %s", refreshedOptions.Entries, tc.selects)
 			}
-			if !hasEntryLabelContainingAll(refreshedOptions.Entries, "Preview "+string(tc.selects), "current") {
-				t.Fatalf("refreshed entries = %#v, want selected preview marked current", refreshedOptions.Entries)
+			if !hasEntryLabelContaining(refreshedOptions.Entries, tc.preview) {
+				t.Fatalf("refreshed entries = %#v, want preview %q", refreshedOptions.Entries, tc.preview)
 			}
 
 			got, err := config.LoadStatusbarDecorationFile(statusbarDecorationTargetFile(paths, tc.target))
@@ -2264,10 +2284,7 @@ background = "#010203"
 		},
 	}
 
-	entries, err := cmd.themeEntries()
-	if err != nil {
-		t.Fatalf("themeEntries error: %v", err)
-	}
+	entries := themeTokenRows(t, cmd)
 	// Legacy foreground is readable through the new split rows, but Settings no
 	// longer encourages writing foreground directly.
 	if hasEntryLabelContainingAll(entries, "foreground", "#eeeeee", "set override") {
@@ -2279,8 +2296,8 @@ background = "#010203"
 	if !hasEntryLabelContainingAll(entries, "chrome foreground", "#eeeeee", "legacy foreground") {
 		t.Fatalf("global theme entries = %#v, want legacy foreground fill on chrome_foreground", entries)
 	}
-	if hasEntryValue(entries, settingsNoopValue) && hasEntryLabelContaining(entries, "Core") {
-		t.Fatalf("global theme entries = %#v, must not include non-actionable theme group rows", entries)
+	if hasEntryValue(entries, settingsNoopValue) {
+		t.Fatalf("global theme token entries = %#v, must not include non-actionable rows", entries)
 	}
 	// An UNSET token shows the resolved fallback value with a (fallback) label
 	// and a fallback source.
@@ -2501,6 +2518,7 @@ func TestSettingsHubStatusbarDecorationChangeActionIsUnreachable(t *testing.T) {
 	actionPrefix := settingsActionPrefixStatusbar + string(statusbarDecorationTargetGit)
 	runner, native := scriptedPicker(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionStatusbar}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsAppearanceStatusBar}},
 		{reply: intpickercompat.Result{Key: "enter", Value: actionPrefix}},
 		{reply: intpickercompat.Result{Key: "enter", Value: actionPrefix + ":change"}},
 	})
@@ -2520,7 +2538,7 @@ func TestSettingsHubStatusbarDecorationChangeActionIsUnreachable(t *testing.T) {
 	}
 
 	err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "unknown appearance detail action") {
+	if err == nil || !strings.Contains(err.Error(), "unknown status bar component action") {
 		t.Fatalf("Run() error = %v, want stale Change action rejected", err)
 	}
 }
@@ -2771,7 +2789,9 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	var notificationsOptions intpickercompat.Options
 	var listOptions intpickercompat.Options
 	var detailOptions intpickercompat.Options
-	visibleDiagnostics := diagnostics[1:]
+	// The tmux bell producer moved to its own destination, so the Provider
+	// Integrations collection lists every diagnostic except that one.
+	visibleDiagnostics := []doctorAINotifyIntegration{diagnostics[1], diagnostics[3]}
 	tmuxRunner := &recordingTmuxRunner{}
 	cmd := &settingsCommand{
 		ai:                  testAICommand(t.TempDir()),
@@ -2792,7 +2812,7 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
 			case 2:
 				notificationsOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDelivery}, nil
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsProviders}, nil
 			case 3:
 				listOptions = options
 				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyDiagnostic + "codex-hooks"}, nil
@@ -2818,10 +2838,10 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !hasEntryValue(notificationsOptions.Entries, settingsNotificationsDelivery) {
+	if !hasEntryValue(notificationsOptions.Entries, settingsNotificationsProviders) {
 		t.Fatalf("Notifications entries = %#v, want delivery sources row", notificationsOptions.Entries)
 	}
-	if got, want := listOptions.UI, "settings-notifications-delivery"; got != want {
+	if got, want := listOptions.UI, "settings-notifications-providers"; got != want {
 		t.Fatalf("delivery sources UI = %q, want %q", got, want)
 	}
 	if got, want := listOptions.Footer, "Enter: view details"; !strings.Contains(got, want) {
@@ -2837,6 +2857,13 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 		if !hasEntryLabelContaining(listOptions.Entries, string(diag.Status)) {
 			t.Fatalf("AI notify diagnostics entries = %#v, want status %q", listOptions.Entries, diag.Status)
 		}
+	}
+	// The tmux bell producer is an event source, not a Provider integration.
+	if hasEntryValue(listOptions.Entries, settingsActionPrefixAINotifyDiagnostic+"tmux-bell") {
+		t.Fatalf("provider integration entries = %#v, want the tmux bell producer in its own destination", listOptions.Entries)
+	}
+	if !hasEntryValue(cmd.notifyDiagnosticCollectionEntries(cmd.notifyTmuxEventDiagnostics()), settingsActionPrefixAINotifyDiagnostic+"tmux-bell") {
+		t.Fatalf("tmux event source entries = %#v, want the tmux bell producer", cmd.notifyDiagnosticCollectionEntries(cmd.notifyTmuxEventDiagnostics()))
 	}
 	if !hasEntryLabelContaining(listOptions.Entries, "unmanaged notify command") {
 		t.Fatalf("delivery sources entries = %#v, want conflict reason", listOptions.Entries)
@@ -2924,7 +2951,7 @@ func TestSettingsNotificationsDeliveryShowsAntigravityManagedCommands(t *testing
 			case 1:
 				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
 			case 2:
-				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDelivery}, nil
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsProviders}, nil
 			case 3:
 				listOptions = options
 				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyDiagnostic + "antigravity-hooks"}, nil
@@ -3002,7 +3029,7 @@ func TestSettingsAINotifyDiagnosticsDetailCommandRowsCopyCommands(t *testing.T) 
 			case 1:
 				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
 			case 2:
-				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDelivery}, nil
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsProviders}, nil
 			case 3:
 				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyDiagnostic + "claude-hooks"}, nil
 			case 4:
@@ -3070,7 +3097,7 @@ func TestSettingsAINotifyDiagnosticsCommandCopyFailureStaysInDetail(t *testing.T
 			case 1:
 				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
 			case 2:
-				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDelivery}, nil
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsProviders}, nil
 			case 3:
 				return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixAINotifyDiagnostic + "claude-hooks"}, nil
 			case 4:
@@ -3134,13 +3161,21 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 		t.Fatalf("notifications entries = %#v, want Desktop notifications detail row", root)
 	}
 	for _, want := range []string{
-		settingsNotificationsAIDedupe,
-		settingsNotificationsDelivery,
+		settingsNotificationsProviders,
+		settingsNotificationsTmuxSource,
 		settingsNotificationsHookActions,
 	} {
 		if !hasEntryValue(root, want) {
 			t.Fatalf("notifications entries = %#v, want row %q", root, want)
 		}
+	}
+	// The dedupe window is a value row inside Desktop delivery, not a
+	// Notifications root row.
+	if hasEntryValue(root, settingsNotificationsAIDedupe) {
+		t.Fatalf("notifications entries = %#v, want the dedupe window inside Desktop delivery", root)
+	}
+	if !hasEntryValue(cmd.desktopNotifyEntries(), settingsNotificationsAIDedupe) {
+		t.Fatalf("desktop delivery entries = %#v, want the dedupe window row", cmd.desktopNotifyEntries())
 	}
 	for _, removed := range []string{"In-app queue", "Notification hook override"} {
 		if hasEntryLabelContaining(root, removed) {
@@ -3168,18 +3203,18 @@ func TestSettingsNotificationsDesktopNotifyDetailRows(t *testing.T) {
 		}
 	}
 
-	detail := cmd.desktopNotifyEntries()
+	detail := cmd.desktopNotifyModeEntries()
 	for _, want := range []string{
 		settingsActionPrefixDesktopNotifyMode + string(config.DesktopNotifyModeOff),
 		settingsActionPrefixDesktopNotifyMode + string(desktopNotifyModeNotify),
 	} {
 		if !hasEntryValue(detail, want) {
-			t.Fatalf("desktop notification entries = %#v, want row %q", detail, want)
+			t.Fatalf("desktop delivery mode entries = %#v, want row %q", detail, want)
 		}
 	}
 	var sawInfo bool
-	for _, entry := range detail {
-		if strings.Contains(entry.Label, "Desktop notifications") &&
+	for _, entry := range cmd.desktopNotifyEntries() {
+		if strings.Contains(entry.Label, "Effective sender") &&
 			strings.Contains(entry.Label, "notify") &&
 			strings.Contains(entry.Label, "env") {
 			sawInfo = true
@@ -3210,7 +3245,7 @@ func TestSettingsDesktopNotifyDetailOffersExactlyTwoModes(t *testing.T) {
 					return ""
 				},
 			}
-			detail := cmd.desktopNotifyEntries()
+			detail := cmd.desktopNotifyModeEntries()
 			var actions []string
 			for _, entry := range detail {
 				if after, ok := strings.CutPrefix(entry.Value, settingsActionPrefixDesktopNotifyMode); ok {
@@ -3255,13 +3290,13 @@ func TestSettingsNotificationsDeliveryMergesHookOverrideAndConsumesInfoEnter(t *
 				return intpickercompat.Result{Key: "enter", Value: settingsSectionNotifications}, nil
 			case 2:
 				notificationsOptions = options
-				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsDelivery}, nil
+				return intpickercompat.Result{Key: "enter", Value: settingsNotificationsProviders}, nil
 			case 3:
 				deliveryOptions = options
 				return intpickercompat.Result{Key: "enter", Value: settingsNoopValue}, nil
-			case 4:
+			case 4, 5:
 				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-			case 5:
+			case 6:
 				return intpickercompat.Result{}, nil
 			default:
 				t.Fatalf("unexpected settings picker call %d", calls)
@@ -3274,20 +3309,25 @@ func TestSettingsNotificationsDeliveryMergesHookOverrideAndConsumesInfoEnter(t *
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v; info Enter must remain a no-op", err)
 	}
-	if !hasEntryLabelContainingAll(notificationsOptions.Entries, "Delivery sources", "hook override set") {
-		t.Fatalf("notifications entries = %#v, want hook override in Delivery sources summary", notificationsOptions.Entries)
+	if !hasEntryLabelContainingAll(cmd.desktopNotifyEntries(), "External desktop sender", "PROJMUX_NOTIFY_HOOK env") {
+		t.Fatalf("desktop delivery entries = %#v, want the external sender override state", cmd.desktopNotifyEntries())
 	}
 	for _, removed := range []string{"In-app queue", "Notification hook override"} {
 		if hasEntryLabelContaining(notificationsOptions.Entries, removed) {
 			t.Fatalf("notifications entries = %#v, want standalone %q removed", notificationsOptions.Entries, removed)
 		}
 	}
-	if !hasEntryLabelContainingAll(deliveryOptions.Entries, "Desktop sender override", hook, "PROJMUX_NOTIFY_HOOK env") {
-		t.Fatalf("delivery entries = %#v, want merged hook override detail", deliveryOptions.Entries)
+	if !hasEntryLabelContainingAll(cmd.desktopNotifyEntries(), "External desktop sender", hook, "PROJMUX_NOTIFY_HOOK env") {
+		t.Fatalf("desktop delivery entries = %#v, want merged hook override detail", cmd.desktopNotifyEntries())
+	}
+	// The Provider Integrations collection is read-only wiring status: with no
+	// diagnostics configured it renders one passive row whose Enter is a no-op.
+	if len(deliveryOptions.Entries) == 0 || !hasEntryLabelContaining(deliveryOptions.Entries, "no wiring reported") {
+		t.Fatalf("provider integration entries = %#v, want the empty wiring state", deliveryOptions.Entries)
 	}
 }
 
-func TestSettingsLabsProjectHooksConsumesInfoEnter(t *testing.T) {
+func TestSettingsAutomationConsumesInfoEnter(t *testing.T) {
 	t.Parallel()
 
 	var calls int
@@ -3297,14 +3337,16 @@ func TestSettingsLabsProjectHooksConsumesInfoEnter(t *testing.T) {
 			calls++
 			switch calls {
 			case 1:
-				return intpickercompat.Result{Key: "enter", Value: settingsSectionLabs}, nil
+				return intpickercompat.Result{Key: "enter", Value: settingsSectionAutomation}, nil
 			case 2:
-				return intpickercompat.Result{Key: "enter", Value: settingsLabsProjectHooks}, nil
+				return intpickercompat.Result{Key: "enter", Value: settingsAutomationLifecycle}, nil
 			case 3:
-				return intpickercompat.Result{Key: "enter", Value: settingsNoopValue}, nil
+				return intpickercompat.Result{Key: "enter", Value: settingsHookEventValue(hookScopeGlobal, "post-create")}, nil
 			case 4:
+				return intpickercompat.Result{Key: "enter", Value: settingsNoopValue}, nil
+			case 5, 6, 7:
 				return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-			case 5:
+			case 8:
 				return intpickercompat.Result{}, nil
 			default:
 				t.Fatalf("unexpected settings picker call %d", calls)
@@ -3315,7 +3357,7 @@ func TestSettingsLabsProjectHooksConsumesInfoEnter(t *testing.T) {
 	cmd.nativePicker = nativePickerFromCompatRunner(cmd.runner)
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v; Labs info Enter must remain a no-op", err)
+		t.Fatalf("Run() error = %v; a passive Automation row's Enter must remain a no-op", err)
 	}
 }
 
@@ -3368,11 +3410,11 @@ func TestSettingsNotificationsDesktopNotifyRowsUseKoreanCatalog(t *testing.T) {
 	if got, want := desktopOptions.Prompt, "설정 > 알림 > 데스크톱 알림 > "; got != want {
 		t.Fatalf("desktop notifications prompt = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContaining(notificationsOptions.Entries, "데스크톱 알림") {
-		t.Fatalf("notifications entries = %#v, want Korean desktop notifications row", notificationsOptions.Entries)
+	if !hasEntryLabelContaining(notificationsOptions.Entries, "데스크톱 전달") {
+		t.Fatalf("notifications entries = %#v, want Korean desktop delivery row", notificationsOptions.Entries)
 	}
-	if !hasEntryLabelContaining(desktopOptions.Entries, "데스크톱 알림") {
-		t.Fatalf("desktop notification entries = %#v, want Korean info row", desktopOptions.Entries)
+	if !hasEntryLabelContaining(desktopOptions.Entries, "적용 중인 발신기") {
+		t.Fatalf("desktop delivery entries = %#v, want Korean effective sender row", desktopOptions.Entries)
 	}
 	visible := strings.Join([]string{
 		notificationsOptions.Title,
@@ -3564,9 +3606,9 @@ func TestSettingsNotificationsAIDedupeRowsAndCustomWrite(t *testing.T) {
 		lookupEnv: func(name string) string { return "" },
 	}
 
-	root := cmd.notificationsEntries()
+	root := cmd.desktopNotifyEntries()
 	if !hasEntryValue(root, settingsNotificationsAIDedupe) {
-		t.Fatalf("notifications entries = %#v, want AI dedupe row", root)
+		t.Fatalf("desktop delivery entries = %#v, want the dedupe window row", root)
 	}
 
 	detail := cmd.aiNotifyDedupeEntries()
@@ -3645,12 +3687,7 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 		sessionStateAutosaveEnv + " env",
 		"interval",
 		"1m",
-		"Sidebar startup picker",
-		"off",
-		"default",
-		"Storage",
-		"latest snapshot store",
-		"Retention",
+		"Storage / Retention",
 		"latest snapshot only",
 	} {
 		if !hasEntryLabelContaining(entries, want) {
@@ -3664,7 +3701,6 @@ func TestSettingsSessionStateDetailRowsUseEnvAndSnapshotSummary(t *testing.T) {
 	}
 	for _, want := range []string{
 		settingsSessionStateAutosaveDetail,
-		settingsSessionStateSidebarStartupPickerDetail,
 	} {
 		if !hasEntryValue(entries, want) {
 			t.Fatalf("session state entries = %#v, want %q", entries, want)
@@ -3741,11 +3777,11 @@ func TestSettingsProjectSessionStateUsesDerivedProjectIdentity(t *testing.T) {
 	if got, want := options.UI, "settings-project-sessionstate"; got != want {
 		t.Fatalf("project session state UI = %q, want %q", got, want)
 	}
-	if got, want := options.Prompt, "Settings > Project > Session State > "; got != want {
+	if got, want := options.Prompt, "Settings > Project > Snapshots > "; got != want {
 		t.Fatalf("project session state prompt = %q, want %q", got, want)
 	}
-	if !strings.Contains(options.Title, "settings") {
-		t.Fatalf("project session state title = %q, want settings", options.Title)
+	if !strings.Contains(options.Title, "Snapshots") {
+		t.Fatalf("project snapshots title = %q, want the Snapshot noun", options.Title)
 	}
 	for _, want := range []string{
 		"Project",
@@ -3793,7 +3829,7 @@ func TestSettingsSessionStateGlobalDefaultAutosaveOffAndNoTree(t *testing.T) {
 
 	cmd := &settingsCommand{homeDir: func() (string, error) { return t.TempDir(), nil }}
 	entries := cmd.sessionStateEntries()
-	for _, want := range []string{"Auto-save", "off", "default", "Sidebar startup picker", "Storage", "Retention"} {
+	for _, want := range []string{"Auto-save", "off", "default", "Storage / Retention"} {
 		if !hasEntryLabelContaining(entries, want) {
 			t.Fatalf("session state entries = %#v, want %q", entries, want)
 		}
@@ -3814,22 +3850,22 @@ func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *t
 		calls++
 		switch calls {
 		case 1:
-			if got, want := options.UI, "settings-sessionstate"; got != want {
-				t.Fatalf("session state UI = %q, want %q", got, want)
+			if got, want := options.UI, "settings-projects-sidebar"; got != want {
+				t.Fatalf("project sidebar UI = %q, want %q", got, want)
 			}
 			if !hasEntryValue(options.Entries, settingsSessionStateSidebarStartupPickerDetail) {
-				t.Fatalf("session state entries = %#v, want sidebar startup picker detail row", options.Entries)
+				t.Fatalf("project sidebar entries = %#v, want the closed Project startup row", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsSessionStateSidebarStartupPickerDetail}, nil
 		case 2:
 			if got, want := options.UI, "settings-sessionstate-detail"; got != want {
-				t.Fatalf("sidebar startup detail UI = %q, want %q", got, want)
+				t.Fatalf("closed Project startup detail UI = %q, want %q", got, want)
 			}
-			if got, want := options.Title, "Session State - Sidebar startup picker"; got != want {
-				t.Fatalf("sidebar startup detail title = %q, want %q", got, want)
+			if got, want := options.Title, "Projects - Closed Project startup"; got != want {
+				t.Fatalf("closed Project startup detail title = %q, want %q", got, want)
 			}
-			if got, want := options.Prompt, "Settings > Session State > Sidebar startup picker > "; got != want {
-				t.Fatalf("sidebar startup detail prompt = %q, want %q", got, want)
+			if got, want := options.Prompt, "Settings > Projects > Project Sidebar > Closed Project startup > "; got != want {
+				t.Fatalf("closed Project startup detail prompt = %q, want %q", got, want)
 			}
 			if strings.Contains(options.Title, "Labs") || strings.Contains(options.Prompt, "Labs") {
 				t.Fatalf("sidebar startup detail chrome = title %q prompt %q, want no Labs path", options.Title, options.Prompt)
@@ -3840,8 +3876,8 @@ func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *t
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSessionState + "sidebar-startup:on"}, nil
 		case 3:
-			if !hasEntryLabelContaining(options.Entries, "on") {
-				t.Fatalf("sidebar startup detail entries after save = %#v, want on state", options.Entries)
+			if !hasEntryLabelContaining(options.Entries, "Ask for Snapshot or Project topology") {
+				t.Fatalf("closed Project startup entries after save = %#v, want the ask state", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 4:
@@ -3862,8 +3898,8 @@ func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *t
 		},
 	}
 
-	if err := cmd.runSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runSessionStateSection() error = %v", err)
+	if err := cmd.runProjectSidebarSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectSidebarSection() error = %v", err)
 	}
 	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
 	if err != nil {
@@ -4561,7 +4597,7 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), "[bindings.ProjectSidebarToggle]\nplain = \"M-a\"\nprefix = \"A\"\n")
 
 	var calls int
-	var keybindingOptions intpickercompat.Options
+	var keybindingOptions, categoryOptions intpickercompat.Options
 	cmd := testKeybindingSettingsCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
 		calls++
 		switch calls {
@@ -4569,8 +4605,13 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
 		case 2:
 			keybindingOptions = options
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymapCategory + keyBindingCategoryLaunch}, nil
 		case 3:
+			categoryOptions = options
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 5:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -4587,31 +4628,49 @@ func TestSettingsHubKeybindingsListsCurrentValues(t *testing.T) {
 	if !hasEntryValue(keybindingOptions.Entries, settingsBackValue) {
 		t.Fatalf("keybindings entries = %#v, want back entry", keybindingOptions.Entries)
 	}
-	if !hasEntryLabelContaining(keybindingOptions.Entries, "Actions are listed with active keys and state") {
-		t.Fatalf("keybindings entries = %#v, want compact action-list note", keybindingOptions.Entries)
-	}
-	for _, absent := range []string{"Bindings", "Diagnostic", "Probe", "Init", "terminal mappings", "source ", "delivery "} {
+	// The flat action wall is gone: the root lists categories only, and the
+	// implementation-named surfaces stay out of the first screen.
+	for _, absent := range []string{"Bindings", "Diagnostic", "Probe", "Init", "terminal mappings"} {
 		if hasEntryLabelContaining(keybindingOptions.Entries, absent) {
 			t.Fatalf("keybindings entries = %#v, did not want first-class %q surface", keybindingOptions.Entries, absent)
 		}
 	}
-	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
-		t.Fatalf("keybindings entries = %#v, want canonical ProjectSidebarToggle action", keybindingOptions.Entries)
+	for _, entry := range keybindingOptions.Entries {
+		if strings.HasPrefix(entry.Value, settingsActionPrefixKeymap) {
+			t.Fatalf("keybindings root entries = %#v, want categories only, not a flat action row", keybindingOptions.Entries)
+		}
 	}
-	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"Sidebar:PinProject") {
-		t.Fatalf("keybindings entries = %#v, want native picker internal action in Settings list", keybindingOptions.Entries)
+	for _, category := range keyBindingCategoryOrder {
+		if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymapCategory+category.ID) {
+			t.Fatalf("keybindings entries = %#v, want the %q category row", keybindingOptions.Entries, category.ID)
+		}
 	}
-	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"previous-window") {
-		t.Fatalf("keybindings entries = %#v, want previous-window action in Settings list", keybindingOptions.Entries)
+	// Search still crosses the category boundary: the root row carries its
+	// members' action IDs, display labels, chords and state.
+	launchRow := entryWithValue(keybindingOptions.Entries, settingsActionPrefixKeymapCategory+keyBindingCategoryLaunch)
+	if launchRow == nil || !strings.Contains(launchRow.SearchKey, "ProjectSidebarToggle") {
+		t.Fatalf("launch category row = %#v, want cross-category search text", launchRow)
 	}
-	if !hasEntryValue(keybindingOptions.Entries, settingsActionPrefixKeymap+"select-pane-left") {
-		t.Fatalf("keybindings entries = %#v, want select-pane-left action in Settings list", keybindingOptions.Entries)
+	if got, want := categoryOptions.UI, "settings-keybindings-category"; got != want {
+		t.Fatalf("category UI = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContaining(keybindingOptions.Entries, "keys Alt-A (M-a)  state Custom") {
-		t.Fatalf("keybindings entries = %#v, want custom plain value", keybindingOptions.Entries)
+	if !hasEntryValue(categoryOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
+		t.Fatalf("category entries = %#v, want canonical ProjectSidebarToggle action", categoryOptions.Entries)
 	}
-	if !hasEntryLabelContaining(keybindingOptions.Entries, "state Available") {
-		t.Fatalf("keybindings entries = %#v, want available unassigned action state", keybindingOptions.Entries)
+	if !hasEntryLabelContaining(categoryOptions.Entries, "keys Alt-A (M-a)  state Custom") {
+		t.Fatalf("category entries = %#v, want custom plain value", categoryOptions.Entries)
+	}
+
+	// Every action stays reachable through exactly one category, including
+	// the picker-internal and movement actions.
+	rows := settingsKeybindingActionRows(t, cmd)
+	for _, id := range []string{"ProjectSidebarToggle", "Sidebar:PinProject", "previous-window", "select-pane-left"} {
+		if !hasEntryValue(rows, settingsActionPrefixKeymap+id) {
+			t.Fatalf("category action rows = %#v, want %q", rows, id)
+		}
+	}
+	if !hasEntryLabelContaining(rows, "state Available") {
+		t.Fatalf("category action rows = %#v, want available unassigned action state", rows)
 	}
 }
 
@@ -4619,10 +4678,7 @@ func TestSettingsHubKeybindingsUsesReadableKeyLabels(t *testing.T) {
 	t.Parallel()
 
 	cmd := &settingsCommand{}
-	entries, err := cmd.keybindingEntries()
-	if err != nil {
-		t.Fatalf("keybindingEntries() error = %v", err)
-	}
+	entries := settingsKeybindingActionRows(t, cmd)
 
 	projectIndex := entryIndexValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle")
 	if projectIndex < 0 {
@@ -4636,7 +4692,7 @@ func TestSettingsHubKeybindingsUsesReadableKeyLabels(t *testing.T) {
 		t.Fatalf("project sidebar row index = %d, notify row index = %d; want project sidebar listed first", projectIndex, notifyIndex)
 	}
 	projectLabel := entries[projectIndex].Label
-	for _, want := range []string{"Toggle Project Sidebar", "Alt-1", "M-1"} {
+	for _, want := range []string{"Open / close Project Sidebar", "Alt-1", "M-1"} {
 		if !strings.Contains(projectLabel, want) {
 			t.Fatalf("project sidebar label = %q, want %q", projectLabel, want)
 		}
@@ -4649,7 +4705,7 @@ func TestSettingsHubKeybindingsUsesReadableKeyLabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries() error = %v", err)
 	}
-	if got, want := title, "Keybinding - Toggle Project Sidebar"; got != want {
+	if got, want := title, "Keybinding - Open / close Project Sidebar"; got != want {
 		t.Fatalf("detail title = %q, want %q", got, want)
 	}
 	if !hasEntryLabelContainingAll(detailEntries, "Keys", "Alt-1", "M-1") {
@@ -4668,7 +4724,7 @@ func TestSettingsHubKeybindingsUsesReadableKeyLabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries(RecentWindows:Open) error = %v", err)
 	}
-	if got, want := recentTitle, "Keybinding - Recent Windows"; got != want {
+	if got, want := recentTitle, "Keybinding - Open Recent Windows"; got != want {
 		t.Fatalf("recent windows detail title = %q, want %q", got, want)
 	}
 	if !hasEntryLabelContainingAll(recentDetail, "Keys", "Alt-3", "M-3") {
@@ -4718,7 +4774,7 @@ func TestSettingsKeybindingDetailStaysLogicalKeyActionCentered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries(previous-window) error = %v", err)
 	}
-	for _, want := range []string{"Previous Window", "Keys", "Alt-Shift-Left", "M-S-Left"} {
+	for _, want := range []string{"Focus previous Window", "Keys", "Alt-Shift-Left", "M-S-Left"} {
 		if !hasEntryLabelContaining(detailEntries, want) {
 			t.Fatalf("detail entries = %#v, want logical action/key copy %q", detailEntries, want)
 		}
@@ -4738,10 +4794,7 @@ func TestSettingsKeybindingsActionListIsPreviewOnly(t *testing.T) {
 	// carries a mutation verb. The one native transport policy toggle is a
 	// section-level setting rather than a keybinding action.
 	cmd := &settingsCommand{}
-	listEntries, err := cmd.keybindingEntries()
-	if err != nil {
-		t.Fatalf("keybindingEntries() error = %v", err)
-	}
+	listEntries := settingsKeybindingActionRows(t, cmd)
 
 	mutationSuffixes := []string{":add", ":capture", ":type", ":advanced", ":unbind", ":reset", ":key:", ":remove:", ":test:"}
 	var navigableRows int
@@ -4785,6 +4838,36 @@ func TestSettingsKeybindingsActionListIsPreviewOnly(t *testing.T) {
 	}
 }
 
+// settingsKeybindingActionRows flattens every action row reachable from the
+// Keybindings categories. Phase 0 replaced the flat action wall with
+// category -> (surface) -> action navigation, so tests that care about action
+// rows walk the same path a user does instead of reading one list.
+func settingsKeybindingActionRows(t *testing.T, cmd *settingsCommand) []intpickercompat.Entry {
+	t.Helper()
+
+	var rows []intpickercompat.Entry
+	for _, category := range keyBindingCategoryOrder {
+		entries, err := cmd.keybindingCategoryEntries(category.ID)
+		if err != nil {
+			t.Fatalf("keybindingCategoryEntries(%q) error = %v", category.ID, err)
+		}
+		for _, entry := range entries {
+			switch {
+			case strings.HasPrefix(entry.Value, settingsActionPrefixKeymapSurface):
+				surface := strings.TrimPrefix(entry.Value, settingsActionPrefixKeymapSurface)
+				surfaceEntries, err := cmd.keybindingSurfaceEntries(surface)
+				if err != nil {
+					t.Fatalf("keybindingSurfaceEntries(%q) error = %v", surface, err)
+				}
+				rows = append(rows, surfaceEntries...)
+			default:
+				rows = append(rows, entry)
+			}
+		}
+	}
+	return rows
+}
+
 func TestSettingsKeybindingsListKeysPreviewCompression(t *testing.T) {
 	t.Parallel()
 
@@ -4798,10 +4881,7 @@ func TestSettingsKeybindingsListKeysPreviewCompression(t *testing.T) {
 		return intpickercompat.Result{}, nil
 	})
 
-	entries, err := cmd.keybindingEntries()
-	if err != nil {
-		t.Fatalf("keybindingEntries() error = %v", err)
-	}
+	entries := settingsKeybindingActionRows(t, cmd)
 
 	idx := entryIndexValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle")
 	if idx < 0 {
@@ -4836,10 +4916,7 @@ func TestSettingsKeybindingsMutationLivesInDetailNotList(t *testing.T) {
 	const actionID = "ProjectSidebarToggle"
 	prefix := settingsActionPrefixKeymap + actionID + ":"
 
-	listEntries, err := cmd.keybindingEntries()
-	if err != nil {
-		t.Fatalf("keybindingEntries() error = %v", err)
-	}
+	listEntries := settingsKeybindingActionRows(t, cmd)
 	detailEntries, _, err := cmd.keybindingDetailEntries(actionID)
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries() error = %v", err)
@@ -4940,10 +5017,7 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 	t.Parallel()
 
 	cmd := &settingsCommand{}
-	entries, err := cmd.keybindingEntries()
-	if err != nil {
-		t.Fatalf("keybindingEntries() error = %v", err)
-	}
+	entries := settingsKeybindingActionRows(t, cmd)
 
 	cases := []struct {
 		id             string
@@ -4951,26 +5025,26 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 		wants          []string
 		wantSearchText string
 	}{
-		{settingsActionPrefixKeymap + "Sidebar:PinProject", "Project Sidebar: Pin Project", []string{"Alt-P", "M-p", "state Default"}, "Project Sidebar"},
-		{settingsActionPrefixKeymap + "Sidebar:KillSession", "Project Sidebar: Kill Session", []string{"Ctrl-X", "C-x", "state Default"}, "Project Sidebar"},
-		{settingsActionPrefixKeymap + "SessionPopup:KillSession", "Session Popup: Kill Session", []string{"Ctrl-X", "C-x", "state Default"}, "Session Popup"},
-		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewWindowPrev", "Session Popup: Preview Previous Window", []string{"Left", "state Default"}, "Session Popup"},
-		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewPanePrev", "Session Popup: Preview Previous Pane", []string{"Alt-Up", "M-Up", "state Default"}, "Session Popup"},
-		{settingsActionPrefixKeymap + "NotifySidebar:Ack", "Notify Sidebar: Acknowledge", []string{"A", "a", "state Default"}, "Notify Sidebar"},
-		{settingsActionPrefixKeymap + "NotifySidebar:AckGroup", "Notify Sidebar: Acknowledge Group", []string{"A", "state Default"}, "Notify Sidebar"},
-		{settingsActionPrefixKeymap + "NotifySidebar:ClearAll", "Notify Sidebar: Clear All", []string{"Ctrl-X", "C-x", "state Default"}, "Notify Sidebar"},
-		{settingsActionPrefixKeymap + "Settings:SwitchTabNext", "Next Settings Tab", []string{"Alt-Shift-Right", "M-S-Right", "state Default"}, "Next Settings Tab"},
-		{settingsActionPrefixKeymap + "previous-window", "Previous Window", []string{"Alt-Shift-Left", "M-S-Left", "state Default"}, "Previous Window"},
-		{settingsActionPrefixKeymap + "next-window", "Next Window", []string{"Alt-Shift-Right", "M-S-Right", "state Default"}, "Next Window"},
-		{settingsActionPrefixKeymap + "RecentWindows:Open", "Recent Windows", []string{"Alt-3", "M-3", "state Default"}, "Recent windows queue"},
-		{settingsActionPrefixKeymap + "select-pane-left", "Select Pane Left", []string{"Alt-Left", "M-Left", "state Default"}, "Select Pane Left"},
-		{settingsActionPrefixKeymap + "select-pane-right", "Select Pane Right", []string{"Alt-Right", "M-Right", "state Default"}, "Select Pane Right"},
-		{settingsActionPrefixKeymap + "select-pane-up", "Select Pane Up", []string{"Alt-Up", "M-Up", "state Default"}, "Select Pane Up"},
-		{settingsActionPrefixKeymap + "select-pane-down", "Select Pane Down", []string{"Alt-Down", "M-Down", "state Default"}, "Select Pane Down"},
-		{settingsActionPrefixKeymap + "last-pane", "Return to Previously Active Pane", []string{"Not bound", "state Available"}, "previously active pane"},
-		{settingsActionPrefixKeymap + "ai-split-codex-right", "Open Codex Split Right", []string{"Not bound", "state Available"}, "Codex split"},
-		{settingsActionPrefixKeymap + "ai-split-claude-down", "Open Claude Split Down", []string{"Not bound", "state Available"}, "Claude split"},
-		{settingsActionPrefixKeymap + "ai-split-shell-right", "Open Shell Split Right", []string{"Not bound", "state Available"}, "shell split"},
+		{settingsActionPrefixKeymap + "Sidebar:PinProject", "Pin / unpin Project", []string{"Alt-P", "M-p", "state Default"}, "Pin / unpin Project"},
+		{settingsActionPrefixKeymap + "Sidebar:KillSession", "Stop Project Runtime", []string{"Ctrl-X", "C-x", "state Default"}, "Stop Project Runtime"},
+		{settingsActionPrefixKeymap + "SessionPopup:KillSession", "Stop Runtime Session", []string{"Ctrl-X", "C-x", "state Default"}, "Stop Runtime Session"},
+		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewWindowPrev", "Preview previous Window", []string{"Left", "state Default"}, "Preview previous Window"},
+		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewPanePrev", "Preview previous Pane", []string{"Alt-Up", "M-Up", "state Default"}, "Preview previous Pane"},
+		{settingsActionPrefixKeymap + "NotifySidebar:Ack", "Acknowledge Notification", []string{"A", "a", "state Default"}, "Acknowledge Notification"},
+		{settingsActionPrefixKeymap + "NotifySidebar:AckGroup", "Acknowledge Notification group", []string{"A", "state Default"}, "Acknowledge Notification group"},
+		{settingsActionPrefixKeymap + "NotifySidebar:ClearAll", "Clear all Notifications", []string{"Ctrl-X", "C-x", "state Default"}, "Clear all Notifications"},
+		{settingsActionPrefixKeymap + "Settings:SwitchTabNext", "Next Settings tab", []string{"Alt-Shift-Right", "M-S-Right", "state Default"}, "Next Settings tab"},
+		{settingsActionPrefixKeymap + "previous-window", "Focus previous Window", []string{"Alt-Shift-Left", "M-S-Left", "state Default"}, "Focus previous Window"},
+		{settingsActionPrefixKeymap + "next-window", "Focus next Window", []string{"Alt-Shift-Right", "M-S-Right", "state Default"}, "Focus next Window"},
+		{settingsActionPrefixKeymap + "RecentWindows:Open", "Open Recent Windows", []string{"Alt-3", "M-3", "state Default"}, "Recent windows queue"},
+		{settingsActionPrefixKeymap + "select-pane-left", "Focus Pane left", []string{"Alt-Left", "M-Left", "state Default"}, "Focus Pane left"},
+		{settingsActionPrefixKeymap + "select-pane-right", "Focus Pane right", []string{"Alt-Right", "M-Right", "state Default"}, "Focus Pane right"},
+		{settingsActionPrefixKeymap + "select-pane-up", "Focus Pane up", []string{"Alt-Up", "M-Up", "state Default"}, "Focus Pane up"},
+		{settingsActionPrefixKeymap + "select-pane-down", "Focus Pane down", []string{"Alt-Down", "M-Down", "state Default"}, "Focus Pane down"},
+		{settingsActionPrefixKeymap + "last-pane", "Focus last Pane", []string{"Not bound", "state Available"}, "previously active pane"},
+		{settingsActionPrefixKeymap + "ai-split-codex-right", "Create Codex Agent right", []string{"Not bound", "state Available"}, "Codex split"},
+		{settingsActionPrefixKeymap + "ai-split-claude-down", "Create Claude Agent down", []string{"Not bound", "state Available"}, "Claude split"},
+		{settingsActionPrefixKeymap + "ai-split-shell-right", "Create Shell Pane right", []string{"Not bound", "state Available"}, "shell split"},
 	}
 	for _, tc := range cases {
 		idx := entryIndexValue(entries, tc.id)
@@ -5019,10 +5093,7 @@ func TestSettingsHubKeybindingsLastPaneHasKoreanSearchText(t *testing.T) {
 			return ""
 		},
 	}
-	entries, err := cmd.keybindingEntries()
-	if err != nil {
-		t.Fatalf("keybindingEntries() error = %v", err)
-	}
+	entries := settingsKeybindingActionRows(t, cmd)
 	idx := entryIndexValue(entries, settingsActionPrefixKeymap+"last-pane")
 	if idx < 0 {
 		t.Fatalf("keybindings entries missing last-pane: %#v", entries)
@@ -5042,11 +5113,11 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject"}, nil
-		case 3:
+		case 2:
 			popupDetail = options
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window"}, nil
@@ -5055,16 +5126,17 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 6:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 7:
-			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
 			return intpickercompat.Result{}, nil
 		}
 	})
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.runKeybindingSurfaceSection(keyBindingCategorySurfacesLabel, "Sidebar", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingSurfaceSection() error = %v", err)
+	}
+	if err := cmd.runKeybindingCategorySection(keyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	if got, want := popupDetail.UI, "settings-keybinding-detail"; got != want {
 		t.Fatalf("popup detail UI = %q, want %q", got, want)
@@ -5137,10 +5209,8 @@ func TestSettingsHubKeybindingsTypedTransportKeyWritesOnlyCustomKey(t *testing.T
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window"}, nil
-		case 3:
+		case 2:
 			if !hasEntryLabelContaining(options.Entries, "Add key") {
 				t.Fatalf("transport detail entries = %#v, want Add key", options.Entries)
 			}
@@ -5148,7 +5218,7 @@ func TestSettingsHubKeybindingsTypedTransportKeyWritesOnlyCustomKey(t *testing.T
 				t.Fatalf("transport detail entries = %#v, did not want basic typed entry", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:add"}, nil
-		case 4:
+		case 3:
 			if got, want := options.UI, "settings-keybinding-add"; got != want {
 				t.Fatalf("add key UI = %q, want %q", got, want)
 			}
@@ -5161,7 +5231,7 @@ func TestSettingsHubKeybindingsTypedTransportKeyWritesOnlyCustomKey(t *testing.T
 				t.Fatalf("add key entries = %#v, did not want typed entry before Advanced", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:advanced"}, nil
-		case 5:
+		case 4:
 			if got, want := options.UI, "settings-keybinding-add-advanced"; got != want {
 				t.Fatalf("advanced add key UI = %q, want %q", got, want)
 			}
@@ -5171,7 +5241,7 @@ func TestSettingsHubKeybindingsTypedTransportKeyWritesOnlyCustomKey(t *testing.T
 				}
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:type"}, nil
-		case 6:
+		case 5:
 			if got, want := options.UI, "settings-keybinding-type"; got != want {
 				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
 			}
@@ -5185,20 +5255,18 @@ func TestSettingsHubKeybindingsTypedTransportKeyWritesOnlyCustomKey(t *testing.T
 				t.Fatalf("typed keybinding AcceptQuery = false, want true")
 			}
 			return intpickercompat.Result{Key: "enter", Query: "M-["}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 7:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 8:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 9:
-			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
 			return intpickercompat.Result{}, nil
 		}
 	})
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.runKeybindingCategorySection(keyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
 	if !strings.Contains(keymap, "[bindings.previous-window]\nkeys = [\"M-[\"]\n") {
@@ -5218,34 +5286,30 @@ func TestSettingsHubKeybindingsTypedPopupLocalKeyWritesQuotedKeymap(t *testing.T
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject"}, nil
-		case 3:
+		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:add"}, nil
-		case 4:
+		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:advanced"}, nil
-		case 5:
+		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:type"}, nil
-		case 6:
+		case 5:
 			if got, want := options.UI, "settings-keybinding-type"; got != want {
 				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
 			}
 			return intpickercompat.Result{Key: "enter", Query: "p"}, nil
+		case 6:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 7:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 8:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 9:
-			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
 			return intpickercompat.Result{}, nil
 		}
 	})
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.runKeybindingSurfaceSection(keyBindingCategorySurfacesLabel, "Sidebar", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingSurfaceSection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
 	if !strings.Contains(keymap, "[bindings.\"Sidebar:PinProject\"]\nkeys = [\"M-p\", \"p\"]\n") {
@@ -5262,12 +5326,10 @@ func TestSettingsHubKeybindingsCapturePrintableKeyWritesQuotedKeymap(t *testing.
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject"}, nil
-		case 3:
+		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:add"}, nil
-		case 4:
+		case 3:
 			if got, want := options.UI, "settings-keybinding-add"; got != want {
 				t.Fatalf("add key UI = %q, want %q", got, want)
 			}
@@ -5275,12 +5337,10 @@ func TestSettingsHubKeybindingsCapturePrintableKeyWritesQuotedKeymap(t *testing.
 				t.Fatalf("add key entries = %#v, want default press-key flow", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:capture"}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 5:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 7:
-			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
 			return intpickercompat.Result{}, nil
@@ -5291,8 +5351,8 @@ func TestSettingsHubKeybindingsCapturePrintableKeyWritesQuotedKeymap(t *testing.
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.runKeybindingSurfaceSection(keyBindingCategorySurfacesLabel, "Sidebar", &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingSurfaceSection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
 	if !strings.Contains(keymap, "[bindings.\"Sidebar:PinProject\"]\nkeys = [\"M-p\", \"p\"]\n") {
@@ -5498,28 +5558,24 @@ func TestSettingsHubKeybindingsUnbindWritesEmptyKeys(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window"}, nil
-		case 3:
+		case 2:
 			if !hasEntryLabelContainingAll(options.Entries, "Unbind", "remove all active keys") {
 				t.Fatalf("detail entries = %#v, want unbind row", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:unbind"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
 			return intpickercompat.Result{}, nil
 		}
 	})
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.runKeybindingCategorySection(keyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
 	if !strings.Contains(keymap, "[bindings.previous-window]\nkeys = []\n") {
@@ -5529,7 +5585,7 @@ func TestSettingsHubKeybindingsUnbindWritesEmptyKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries(previous-window) error = %v", err)
 	}
-	if !hasEntryLabelContainingAll(entries, "Previous Window", "Unbound") {
+	if !hasEntryLabelContainingAll(entries, "Focus previous Window", "Unbound") {
 		t.Fatalf("detail entries = %#v, want unbound state after keys = []", entries)
 	}
 }
@@ -5571,12 +5627,10 @@ func TestSettingsHubKeybindingsPopupLocalConflictIsRejected(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject"}, nil
-		case 3:
+		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:type"}, nil
-		case 4:
+		case 3:
 			return intpickercompat.Result{Key: "enter", Query: "C-x"}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -5584,9 +5638,9 @@ func TestSettingsHubKeybindingsPopupLocalConflictIsRejected(t *testing.T) {
 		}
 	})
 
-	err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{})
+	err := cmd.runKeybindingSurfaceSection(keyBindingCategorySurfacesLabel, "Sidebar", &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), `key "C-x" is bound to both Sidebar:PinProject and Sidebar:KillSession in Sidebar`) {
-		t.Fatalf("Run() error = %v, want same-surface conflict", err)
+		t.Fatalf("runKeybindingSurfaceSection() error = %v, want same-surface conflict", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
 		t.Fatalf("keymap stat error = %v, want no invalid keymap written", err)
@@ -5598,33 +5652,33 @@ func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 
 	catalog := defaultKeyBindingCatalog()
 	cases := map[string]string{
-		"ProjectSidebarToggle":      "Toggle Project Sidebar",
-		"NotifySidebarToggle":       "Toggle Notify Sidebar",
-		"SessionPopupToggle":        "Toggle Session Popup",
-		"AISplitPickerToggle":       "Toggle AI Split Picker Popup",
-		"SettingsToggle":            "Toggle Settings",
-		"ProjectSwitcherToggle":     "Toggle Project Switcher",
-		"Sidebar:PinProject":        "Project Sidebar: Pin Project",
-		"Sidebar:KillSession":       "Project Sidebar: Kill Session",
-		"SessionPopup:KillSession":  "Session Popup: Kill Session",
-		"NotifySidebar:Ack":         "Notify Sidebar: Acknowledge",
-		"NotifySidebar:AckGroup":    "Notify Sidebar: Acknowledge Group",
-		"NotifySidebar:ClearAll":    "Notify Sidebar: Clear All",
-		"NotifySidebar:FocusAndAck": "Notify Sidebar: Focus and Acknowledge",
-		"Settings:SwitchTabPrev":    "Previous Settings Tab",
-		"RecentWindows:Open":        "Recent Windows",
+		"ProjectSidebarToggle":      "Open / close Project Sidebar",
+		"NotifySidebarToggle":       "Open / close Notification Sidebar",
+		"SessionPopupToggle":        "Open / close Session Picker",
+		"AISplitPickerToggle":       "Open Agent / Pane Launcher",
+		"SettingsToggle":            "Open / close Settings",
+		"ProjectSwitcherToggle":     "Open Project Picker",
+		"Sidebar:PinProject":        "Pin / unpin Project",
+		"Sidebar:KillSession":       "Stop Project Runtime",
+		"SessionPopup:KillSession":  "Stop Runtime Session",
+		"NotifySidebar:Ack":         "Acknowledge Notification",
+		"NotifySidebar:AckGroup":    "Acknowledge Notification group",
+		"NotifySidebar:ClearAll":    "Clear all Notifications",
+		"NotifySidebar:FocusAndAck": "Focus source and acknowledge Notification",
+		"Settings:SwitchTabPrev":    "Previous Settings tab",
+		"RecentWindows:Open":        "Open Recent Windows",
 		"rename-window":             "Rename Window",
 		"rename-pane-label":         "Rename Pane",
-		"current-project-session":   "Current Project Session",
-		"ai-split-right":            "Open AI Split Right",
-		"ai-split-down":             "Open AI Split Down",
-		"ai-split-codex-right":      "Open Codex Split Right",
-		"ai-split-codex-down":       "Open Codex Split Down",
-		"ai-split-claude-right":     "Open Claude Split Right",
-		"ai-split-claude-down":      "Open Claude Split Down",
-		"ai-split-shell-right":      "Open Shell Split Right",
-		"ai-split-shell-down":       "Open Shell Split Down",
-		"last-pane":                 "Return to Previously Active Pane",
+		"current-project-session":   "Open Project for Current Directory",
+		"ai-split-right":            "Launch default target right",
+		"ai-split-down":             "Launch default target down",
+		"ai-split-codex-right":      "Create Codex Agent right",
+		"ai-split-codex-down":       "Create Codex Agent down",
+		"ai-split-claude-right":     "Create Claude Agent right",
+		"ai-split-claude-down":      "Create Claude Agent down",
+		"ai-split-shell-right":      "Create Shell Pane right",
+		"ai-split-shell-down":       "Create Shell Pane down",
+		"last-pane":                 "Focus last Pane",
 	}
 	for id, want := range cases {
 		action, ok := keyBindingActionByID(catalog, id)
@@ -5644,10 +5698,7 @@ func TestSettingsKeybindingsExposeOnlyCanonicalPaneRenameAction(t *testing.T) {
 	cmd := testKeybindingSettingsCommand(t, home, func(intpickercompat.Options) (intpickercompat.Result, error) {
 		return intpickercompat.Result{}, nil
 	})
-	entries, err := cmd.keybindingEntries()
-	if err != nil {
-		t.Fatalf("keybindingEntries() error = %v", err)
-	}
+	entries := settingsKeybindingActionRows(t, cmd)
 	if !hasEntryValue(entries, settingsActionPrefixKeymap+paneRenameActionID) {
 		t.Fatalf("entries = %#v, want canonical pane rename action", entries)
 	}
@@ -5682,9 +5733,9 @@ func TestKeyBindingDisplayNameKeepsLaunchToggleLabelsHumanReadable(t *testing.T)
 
 	catalog := defaultKeyBindingCatalog()
 	cases := map[string]string{
-		"ProjectSidebarToggle": "Toggle Project Sidebar",
-		"NotifySidebarToggle":  "Toggle Notify Sidebar",
-		"SessionPopupToggle":   "Toggle Session Popup",
+		"ProjectSidebarToggle": "Open / close Project Sidebar",
+		"NotifySidebarToggle":  "Open / close Notification Sidebar",
+		"SessionPopupToggle":   "Open / close Session Picker",
 	}
 	for id, want := range cases {
 		action, ok := keyBindingActionByID(catalog, id)
@@ -5711,17 +5762,13 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
-		case 3:
+		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:capture"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
 			return intpickercompat.Result{}, nil
@@ -5742,8 +5789,8 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.runKeybindingCategorySection(keyBindingCategoryLaunch, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
 	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"M-a\"]\n") {
@@ -6256,17 +6303,13 @@ func TestSettingsHubKeybindingsRejectsUnsafeRawCapture(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
-		case 3:
+		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:capture"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
 			return intpickercompat.Result{}, nil
@@ -6277,8 +6320,8 @@ func TestSettingsHubKeybindingsRejectsUnsafeRawCapture(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.runKeybindingCategorySection(keyBindingCategoryLaunch, &stdout, &stderr); err != nil {
+		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
 		t.Fatalf("keymap stat error = %v, want missing file after invalid chord", err)
@@ -6304,17 +6347,13 @@ func TestSettingsHubKeybindingsCaptureTimeoutDoesNotSaveOrReload(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
-		case 3:
+		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:capture"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
 			return intpickercompat.Result{}, nil
@@ -6335,8 +6374,8 @@ func TestSettingsHubKeybindingsCaptureTimeoutDoesNotSaveOrReload(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.runKeybindingCategorySection(keyBindingCategoryLaunch, &stdout, &stderr); err != nil {
+		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
 		t.Fatalf("keymap stat error = %v, want missing file after typed cancel", err)
@@ -6391,8 +6430,8 @@ func TestSettingsKeybindingsTogglesNativeMacOSKeybindings(t *testing.T) {
 		nativePicker: native,
 	}
 
-	if err := cmd.runKeybindingsSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runKeybindingsSection() error = %v", err)
+	if err := cmd.runKeybindingCategorySection(keyBindingCategoryInput, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	if !hasEntryLabelContainingAll(first.Entries, "Native macOS keybindings", "on", "processed locally") {
 		t.Fatalf("initial keybinding entries = %#v, want enabled native key toggle", first.Entries)
@@ -6427,17 +6466,13 @@ func TestSettingsHubKeybindingsResetRemovesOverride(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
-		case 3:
+		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:reset"}, nil
+		case 3:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
 			return intpickercompat.Result{}, nil
@@ -6445,8 +6480,8 @@ func TestSettingsHubKeybindingsResetRemovesOverride(t *testing.T) {
 	})
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.runKeybindingCategorySection(keyBindingCategoryLaunch, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
 	if strings.Contains(keymap, "[bindings.ProjectSidebarToggle]") || strings.Contains(keymap, "plain =") {
@@ -6532,14 +6567,23 @@ func TestSettingsKeybindingsLegacyModeOptionsReturnRootList(t *testing.T) {
 	if hasEntryLabelContaining(listOptions.Entries, "Ghostty") {
 		t.Fatalf("keybindings entries = %#v, did not want diagnostic terminal rows", listOptions.Entries)
 	}
-	if !hasEntryValue(listOptions.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
-		t.Fatalf("keybindings entries = %#v, want root action list", listOptions.Entries)
+	// The legacy tab spelling still resolves to the same root, which is now
+	// the category list rather than the flat action wall.
+	if !hasEntryValue(listOptions.Entries, settingsActionPrefixKeymapCategory+keyBindingCategoryLaunch) {
+		t.Fatalf("keybindings entries = %#v, want the category root list", listOptions.Entries)
 	}
-	if !hasEntryLabelContaining(listOptions.Entries, "Toggle Project Sidebar") {
-		t.Fatalf("keybindings entries = %#v, want readable action label", listOptions.Entries)
+	launchEntries, err := cmd.keybindingCategoryEntries(keyBindingCategoryLaunch)
+	if err != nil {
+		t.Fatalf("keybindingCategoryEntries() error = %v", err)
 	}
-	if !hasEntryLabelContaining(listOptions.Entries, "keys Alt-A (M-a)  state Custom") {
-		t.Fatalf("keybindings entries = %#v, want custom plain summary", listOptions.Entries)
+	if !hasEntryValue(launchEntries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
+		t.Fatalf("launch category entries = %#v, want the action row", launchEntries)
+	}
+	if !hasEntryLabelContaining(launchEntries, "Open / close Project Sidebar") {
+		t.Fatalf("launch category entries = %#v, want readable action label", launchEntries)
+	}
+	if !hasEntryLabelContaining(launchEntries, "keys Alt-A (M-a)  state Custom") {
+		t.Fatalf("launch category entries = %#v, want custom plain summary", launchEntries)
 	}
 }
 
@@ -6598,8 +6642,8 @@ func TestSettingsKeybindingsDoesNotExposeTerminalMappingRows(t *testing.T) {
 			t.Fatalf("keybindings entries = %#v, did not want %q", options.Entries, absent)
 		}
 	}
-	if !hasEntryValue(options.Entries, settingsActionPrefixKeymap+"ProjectSidebarToggle") {
-		t.Fatalf("keybindings entries = %#v, want root action list", options.Entries)
+	if !hasEntryValue(options.Entries, settingsActionPrefixKeymapCategory+keyBindingCategoryLaunch) {
+		t.Fatalf("keybindings entries = %#v, want the category root list", options.Entries)
 	}
 }
 
@@ -6662,11 +6706,13 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	if !hasEntryValue(aboutOptions.Entries, settingsBackValue) {
 		t.Fatalf("settings about entries = %#v, want back entry", aboutOptions.Entries)
 	}
-	if !hasEntryValue(aboutOptions.Entries, settingsUpdateCheck) {
-		t.Fatalf("settings about entries = %#v, want update check action", aboutOptions.Entries)
+	// The update actions moved one level down into the Updates View; About
+	// keeps identity, the Updates entry, Welcome and the confirmed quit.
+	if !hasEntryValue(aboutOptions.Entries, settingsAboutUpdates) {
+		t.Fatalf("settings about entries = %#v, want the Updates view row", aboutOptions.Entries)
 	}
-	if !hasEntryValue(aboutOptions.Entries, settingsUpdateApply) {
-		t.Fatalf("settings about entries = %#v, want update apply action", aboutOptions.Entries)
+	if hasEntryValue(aboutOptions.Entries, settingsUpdateCheck) || hasEntryValue(aboutOptions.Entries, settingsUpdateApply) {
+		t.Fatalf("settings about entries = %#v, want the update actions owned by the Updates view", aboutOptions.Entries)
 	}
 	if !hasEntryValue(aboutOptions.Entries, settingsQuitOpen) {
 		t.Fatalf("settings about entries = %#v, want quit action", aboutOptions.Entries)
@@ -6674,17 +6720,27 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	for _, want := range []string{
 		"projmux " + version.String(),
 		"https://github.com/crevissepartners/projmux",
-		"Update Now",
-		"Check Updates",
-		"Quit projmux",
+		"Quit Projmux",
+	} {
+		if !hasEntryLabelContaining(aboutOptions.Entries, want) {
+			t.Fatalf("settings about entries = %#v, want label containing %q", aboutOptions.Entries, want)
+		}
+	}
+	updateEntries := cmd.aboutUpdateEntries()
+	if !hasEntryValue(updateEntries, settingsUpdateCheck) || !hasEntryValue(updateEntries, settingsUpdateApply) {
+		t.Fatalf("about update entries = %#v, want both update actions", updateEntries)
+	}
+	for _, want := range []string{
+		"Update now",
+		"Check for updates",
 		latest,
 		"update_available",
 		"Installer",
 		"Installed with Go tooling",
 		"https://github.com/crevissepartners/projmux/releases/tag/" + latest,
 	} {
-		if !hasEntryLabelContaining(aboutOptions.Entries, want) {
-			t.Fatalf("settings about entries = %#v, want label containing %q", aboutOptions.Entries, want)
+		if !hasEntryLabelContaining(updateEntries, want) {
+			t.Fatalf("about update entries = %#v, want label containing %q", updateEntries, want)
 		}
 	}
 	for _, removed := range []string{
@@ -6841,9 +6897,10 @@ func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
 
 	runner, native := scriptedPicker(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAbout}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsAboutUpdates}},
 		{observe: func(o intpickercompat.Options) {
 			if !hasEntryValue(o.Entries, settingsUpdateApply) {
-				t.Fatalf("settings about entries = %#v, want update apply action", o.Entries)
+				t.Fatalf("about update entries = %#v, want update apply action", o.Entries)
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsUpdateApply}},
 		{observe: func(o intpickercompat.Options) {
@@ -7048,7 +7105,7 @@ func TestSettingsHandledCustomValidationFeedbackInventory(t *testing.T) {
 		{name: "notification dedupe", summary: "AI notification dedupe failed", run: func(c *settingsCommand, stderr io.Writer) error {
 			return c.runNotificationsAIDedupeCustom(&bytes.Buffer{}, stderr)
 		}},
-		{name: "session interval", summary: "Session State interval failed", run: func(c *settingsCommand, stderr io.Writer) error {
+		{name: "session interval", summary: "Snapshots interval failed", run: func(c *settingsCommand, stderr io.Writer) error {
 			return c.runSessionStateAutosaveIntervalTyped(&bytes.Buffer{}, stderr)
 		}},
 	}
@@ -7091,9 +7148,10 @@ func TestSettingsHubRunsUpdateCheckAction(t *testing.T) {
 	var refreshedAbout intpickercompat.Options
 	runner, native := scriptedPicker(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAbout}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsAboutUpdates}},
 		{observe: func(o intpickercompat.Options) {
 			if !hasEntryValue(o.Entries, settingsUpdateCheck) {
-				t.Fatalf("settings about entries = %#v, want update check action", o.Entries)
+				t.Fatalf("about update entries = %#v, want update check action", o.Entries)
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsUpdateCheck}},
 		{observe: func(o intpickercompat.Options) { refreshedAbout = o },
@@ -7145,11 +7203,14 @@ func TestSettingsHubAddProjectScansFilesystem(t *testing.T) {
 			if got, want := o.UI, "settings-project-pins"; got != want {
 				t.Fatalf("pinned projects UI = %q, want %q", got, want)
 			}
-			if got := entryIndexValue(o.Entries, settingsProjectAdd); got != 1 {
-				t.Fatalf("pinned project entries = %#v, want Add Project at index 1, got %d", o.Entries, got)
+			// The collection owns Add; the two add rows come after the
+			// item rows so the pins themselves stay at the top.
+			addIdx := entryIndexValue(o.Entries, settingsProjectAdd)
+			if addIdx < 0 {
+				t.Fatalf("pinned project entries = %#v, want the Select Project to pin row", o.Entries)
 			}
-			if got := entryIndexLabelContaining(o.Entries, "Add Current Project"); got != 2 {
-				t.Fatalf("pinned project entries = %#v, want Add Current Project at index 2, got %d", o.Entries, got)
+			if addIdx != len(o.Entries)-1 {
+				t.Fatalf("pinned project entries = %#v, want the collection Add rows last", o.Entries)
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsProjectAdd}},
 		{observe: func(o intpickercompat.Options) {
@@ -7196,8 +7257,16 @@ func TestSettingsHubPinnedProjectsRemovesPins(t *testing.T) {
 			if got, want := o.UI, "settings-project-pins"; got != want {
 				t.Fatalf("pinned projects UI = %q, want %q", got, want)
 			}
-			if !hasEntryValue(o.Entries, settingsActionPrefixSwitch+"clear") {
-				t.Fatalf("pinned project entries = %#v, want clear", o.Entries)
+			if !hasEntryValue(o.Entries, settingsActionPrefixPinItem+pin) {
+				t.Fatalf("pinned project entries = %#v, want the pinned Project item view", o.Entries)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixPinItem + pin}},
+		{observe: func(o intpickercompat.Options) {
+			if got, want := o.UI, "settings-project-pin-item"; got != want {
+				t.Fatalf("pinned project item UI = %q, want %q", got, want)
+			}
+			if !hasEntryLabelContaining(o.Entries, "Unpin Project") {
+				t.Fatalf("pinned project item entries = %#v, want the item-owned Unpin row", o.Entries)
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSwitch + "pin:" + pin}},
 	})
@@ -7239,14 +7308,17 @@ func TestProjectPickerEntriesIncludesWorkdirsRows(t *testing.T) {
 	if !hasEntryValue(entries, settingsWorkdirList) {
 		t.Fatalf("project picker entries = %#v, want Workdirs entry", entries)
 	}
-	if hasEntryLabelContaining(entries, "Add Workdir...") {
-		t.Fatalf("project picker entries = %#v, want no root-level 'Add Workdir...' label", entries)
+	if hasEntryLabelContaining(entries, "Add path") {
+		t.Fatalf("project picker entries = %#v, want the collection to own Add, not the root", entries)
 	}
-	if hasEntryLabelContaining(entries, "Add Current Project") {
-		t.Fatalf("project picker entries = %#v, want no root-level 'Add Current Project' label", entries)
+	if hasEntryLabelContaining(entries, "Pin current Project") {
+		t.Fatalf("project picker entries = %#v, want no root-level pin action", entries)
 	}
-	if !hasEntryLabelContaining(entries, "Workdirs") {
-		t.Fatalf("project picker entries = %#v, want 'Workdirs' label", entries)
+	if !hasEntryLabelContaining(entries, "Additional discovery roots") {
+		t.Fatalf("project picker entries = %#v, want the 'Additional discovery roots' label", entries)
+	}
+	if !hasEntryValue(entries, settingsProjectsSidebar) {
+		t.Fatalf("project picker entries = %#v, want the Project Sidebar row", entries)
 	}
 }
 
@@ -7336,8 +7408,21 @@ func TestSettingsHubWorkdirsListRemovesSavedEntry(t *testing.T) {
 			if got, want := o.UI, "settings-workdirs"; got != want {
 				t.Fatalf("workdirs list UI = %q, want %q", got, want)
 			}
+			// The collection lists the root as an item View; Remove is owned
+			// by that item, one level down.
+			if !hasEntryValue(o.Entries, settingsActionPrefixWorkdirItem+target) {
+				t.Fatalf("workdirs list entries = %#v, want the discovery root item view", o.Entries)
+			}
+			if hasEntryValue(o.Entries, removeAction) {
+				t.Fatalf("workdirs list entries = %#v, want Remove owned by the item view", o.Entries)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixWorkdirItem + target}},
+		{observe: func(o intpickercompat.Options) {
+			if got, want := o.UI, "settings-workdir-item"; got != want {
+				t.Fatalf("discovery root item UI = %q, want %q", got, want)
+			}
 			if !hasEntryValue(o.Entries, removeAction) {
-				t.Fatalf("workdirs list entries = %#v, want %q", o.Entries, removeAction)
+				t.Fatalf("discovery root item entries = %#v, want %q", o.Entries, removeAction)
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: removeAction}},
 		// After remove, list should be empty (just back + placeholder).
@@ -7390,8 +7475,8 @@ func TestWorkdirListEntriesSurfacesEnvSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workdirListEntries() error = %v", err)
 	}
-	if got, savedRow := entryIndexValue(entries, settingsWorkdirAdd), entryIndexLabelContaining(entries, "Saved workdirs"); got < 0 || savedRow < 0 || got <= savedRow {
-		t.Fatalf("workdir list entries = %#v, want Add Workdir after the saved summary block", entries)
+	if got, savedRow := entryIndexValue(entries, settingsWorkdirAdd), entryIndexLabelContaining(entries, "Effective roots"); got < 0 || savedRow < 0 || got <= savedRow {
+		t.Fatalf("workdir list entries = %#v, want Add path after the effective-roots state row", entries)
 	}
 	if !hasEntryLabelContaining(entries, "/saved/a") {
 		t.Fatalf("workdir list entries = %#v, want saved entry", entries)
@@ -7500,7 +7585,7 @@ func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
 	if !typedOptions.AcceptQuery {
 		t.Fatalf("typed picker AcceptQuery = false, want true")
 	}
-	if got, want := typedOptions.Prompt, "Type workdir path > "; got != want {
+	if got, want := typedOptions.Prompt, "Type discovery root path > "; got != want {
 		t.Fatalf("typed picker prompt = %q, want %q", got, want)
 	}
 
@@ -7532,7 +7617,7 @@ func TestSettingsHubAddWorkdirTypedRejectsRelativePath(t *testing.T) {
 		{reply: intpickercompat.Result{Key: "enter", Query: "relative/path"}},
 		// After typed-flow falls back, the workdirs list owns the handled error.
 		{observe: func(o intpickercompat.Options) {
-			feedback := entryWithLabelContaining(o.Entries, "Workdir failed")
+			feedback := entryWithLabelContaining(o.Entries, "Discovery root failed")
 			if feedback == nil || feedback.Value != settingsNoopValue || !strings.Contains(feedback.Label, "absolute path") {
 				t.Fatalf("workdir failure feedback = %#v, want passive popup row", feedback)
 			}
@@ -7798,8 +7883,8 @@ func TestProjectPickerEntriesIncludesProjdirRow(t *testing.T) {
 	}
 
 	entries := cmd.projectPickerEntries()
-	if !hasEntryLabelContaining(entries, "Project Root") {
-		t.Fatalf("project picker entries = %#v, want Project Root row", entries)
+	if !hasEntryLabelContaining(entries, "Primary discovery root") {
+		t.Fatalf("project picker entries = %#v, want the Primary discovery root row", entries)
 	}
 	if !hasEntryLabelContaining(entries, "/from/projdir") {
 		t.Fatalf("project picker entries = %#v, want resolved value in label", entries)
@@ -7825,8 +7910,8 @@ func TestProjectPickerEntriesShowsUnconfiguredProjdir(t *testing.T) {
 	}
 
 	entries := cmd.projectPickerEntries()
-	if !hasEntryLabelContaining(entries, "Project Root") {
-		t.Fatalf("project picker entries = %#v, want Project Root row", entries)
+	if !hasEntryLabelContaining(entries, "Primary discovery root") {
+		t.Fatalf("project picker entries = %#v, want the Primary discovery root row", entries)
 	}
 	if !hasEntryLabelContaining(entries, "not configured") {
 		t.Fatalf("project picker entries = %#v, want not configured label", entries)
@@ -7858,7 +7943,7 @@ func TestProjectRootEntriesShowShadowedSavedProjdir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("projectRootEntries() error = %v", err)
 	}
-	if !hasEntryLabelContaining(entries, "Effective Project Root") {
+	if !hasEntryLabelContaining(entries, "Effective discovery root") {
 		t.Fatalf("project root entries = %#v, want effective row", entries)
 	}
 	if !hasEntryLabelContaining(entries, "/from/env") {
@@ -7867,7 +7952,7 @@ func TestProjectRootEntriesShowShadowedSavedProjdir(t *testing.T) {
 	if !hasEntryLabelContaining(entries, "("+projdirSourcePROJDIRenv+")") {
 		t.Fatalf("project root entries = %#v, want env source label", entries)
 	}
-	if !hasEntryLabelContaining(entries, "Saved Project Root") {
+	if !hasEntryLabelContaining(entries, "Saved discovery root") {
 		t.Fatalf("project root entries = %#v, want saved row", entries)
 	}
 	if !hasEntryLabelContaining(entries, "/from/saved") {
@@ -7919,7 +8004,7 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 			if got, want := o.UI, "settings-project-root"; got != want {
 				t.Fatalf("project root UI = %q, want %q", got, want)
 			}
-			if got, want := o.Title, "Project Root - Effective and saved root"; got != want {
+			if got, want := o.Title, "Primary discovery root - Effective and saved root"; got != want {
 				t.Fatalf("project root title = %q, want %q", got, want)
 			}
 			if got := o.Header; got != "" {
@@ -8055,6 +8140,16 @@ func hasEntryValue(entries []intpickercompat.Entry, value string) bool {
 		}
 	}
 	return false
+}
+
+// entryWithValue returns the entry carrying an exact picker value.
+func entryWithValue(entries []intpickercompat.Entry, value string) *intpickercompat.Entry {
+	for i := range entries {
+		if entries[i].Value == value {
+			return &entries[i]
+		}
+	}
+	return nil
 }
 
 func entryIndexValue(entries []intpickercompat.Entry, value string) int {
@@ -8353,12 +8448,10 @@ func TestSettingsHubKeybindingsAddRoutesRecorderWhenCaptureUnavailable(t *testin
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionKeybindings}, nil
-		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle"}, nil
-		case 3:
+		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "ProjectSidebarToggle:add"}, nil
-		case 4:
+		case 3:
 			if got, want := options.UI, "settings-keybinding-recorder"; got != want {
 				t.Fatalf("add key UI = %q, want %q", got, want)
 			}
@@ -8372,12 +8465,10 @@ func TestSettingsHubKeybindingsAddRoutesRecorderWhenCaptureUnavailable(t *testin
 				t.Fatalf("recorder normalize ctrl-r = %q, %v; want C-r", got, err)
 			}
 			return intpickercompat.Result{Key: "enter", Value: "C-r"}, nil
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 5:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 7:
-			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
 			return intpickercompat.Result{}, nil
@@ -8385,8 +8476,8 @@ func TestSettingsHubKeybindingsAddRoutesRecorderWhenCaptureUnavailable(t *testin
 	})
 	cmd.physicalCaptureAvailable = func() bool { return false }
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.runKeybindingCategorySection(keyBindingCategoryLaunch, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
 	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"C-r\"]\n") {

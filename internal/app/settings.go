@@ -149,23 +149,17 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	if section == settingsSectionProject {
 		return c.runProjectPickerSection(stdout, stderr)
 	}
+	if section == settingsSectionAutomation {
+		return c.runAutomationSection(stdout, stderr)
+	}
+	if section == settingsSectionProjectAutomation {
+		return c.runProjectAutomationSection(stdout, stderr)
+	}
 	if section == settingsSectionProjectHooks {
 		return c.runProjectHooksSection(stdout, stderr)
 	}
-	if section == settingsSectionGlobalHooks {
-		return c.runGlobalHooksSection(stdout, stderr)
-	}
-	if section == settingsSectionProjectConfig {
-		return c.runProjectConfigSection(stdout, stderr)
-	}
 	if section == settingsSectionProjectTrust {
 		return c.runProjectTrustSection(stdout, stderr)
-	}
-	if section == settingsSectionEffectiveMerge {
-		return c.runEffectiveMergeSection(stdout, stderr)
-	}
-	if section == settingsSectionGlobalTheme {
-		return c.runThemeSection(stdout, stderr)
 	}
 	if section == settingsSectionProjectSessionState {
 		return c.runProjectSessionStateSection(stdout, stderr)
@@ -185,8 +179,8 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 	if section == settingsSectionStatusbar {
 		return c.runAppearanceSection(stdout, stderr)
 	}
-	if section == settingsSectionLabs {
-		return c.runLabsSection(stdout, stderr)
+	if section == settingsSectionAbout {
+		return c.runAboutSection(stdout, stderr)
 	}
 
 	for {
@@ -486,16 +480,16 @@ func settingsMutationLabel(value string) (string, bool) {
 		prefix string
 		label  string
 	}{
-		{settingsActionPrefixAI, "AI default mode"},
-		{settingsActionPrefixDesktopNotifyMode, "Desktop notifications"},
-		{settingsActionPrefixHooks, "Project Hooks"},
-		{settingsActionPrefixLiveResources, "Live system resources"},
-		{settingsActionPrefixProjdir, "Project Root"},
-		{settingsActionPrefixSessionState, "Session State"},
-		{settingsActionPrefixStatusbar, "Appearance"},
-		{settingsActionPrefixSwitch, "Pinned project"},
+		{settingsActionPrefixAI, "Default launch target"},
+		{settingsActionPrefixDesktopNotifyMode, "Desktop delivery"},
+		{settingsActionPrefixHooks, "Project automation policy"},
+		{settingsActionPrefixLiveResources, "Resources"},
+		{settingsActionPrefixProjdir, "Primary discovery root"},
+		{settingsActionPrefixSessionState, "Snapshots"},
+		{settingsActionPrefixStatusbar, "Status Bar"},
+		{settingsActionPrefixSwitch, "Pinned Project"},
 		{settingsActionPrefixUpdate, "Update"},
-		{settingsActionPrefixWorkdir, "Workdir"},
+		{settingsActionPrefixWorkdir, "Discovery root"},
 	} {
 		if strings.HasPrefix(value, candidate.prefix) {
 			return candidate.label, true

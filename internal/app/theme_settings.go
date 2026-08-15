@@ -66,6 +66,10 @@ func (c *settingsCommand) runThemeSection(stdout, stderr io.Writer) error {
 			if err := c.runThemePresetSection(stdout, stderr); err != nil {
 				return err
 			}
+		case action == themeAction("tokens"):
+			if err := c.runThemeTokensSection(stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, themeAction("color:")):
 			token, ok := parseThemeColorAction(strings.TrimPrefix(action, themeAction("color:")))
 			if !ok {
@@ -96,11 +100,21 @@ func (c *settingsCommand) themeOptions() (intpickercompat.Options, error) {
 		Entries:    entries,
 		Title:      "Theme - Global values",
 		TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), c.locale()),
-		Prompt:     "Settings > Theme > Global > ",
+		Prompt:     "Settings > Appearance > Theme > ",
 		Footer:     projmuxFooter("Enter: open/apply  |  Back row: parent "),
 		ExpectKeys: []string{"enter"},
 		Bindings:   settingsCloseBindings(),
 	}, nil
+}
+
+// themeSettingsSummary is the one-line Theme state rendered on the Appearance
+// row: the active preset plus how many tokens carry an explicit global value.
+func (c *settingsCommand) themeSettingsSummary() string {
+	cfg, err := c.currentGlobalProjectConfig()
+	if err != nil {
+		return "theme state unavailable"
+	}
+	return themePresetSummary(cfg.Theme)
 }
 
 func (c *settingsCommand) currentGlobalProjectConfig() (hooks.ProjectConfig, error) {
@@ -111,6 +125,35 @@ func (c *settingsCommand) currentGlobalProjectConfig() (hooks.ProjectConfig, err
 	return hooks.LoadGlobalConfig(path)
 }
 
+// themeGroupLabels maps the stored `[group]` prefix to its display label. The
+// prefixes stay the config spelling; only the navigation label is product copy.
+var themeGroupLabels = map[string]string{
+	"[core]":    "Core",
+	"[surface]": "Surface",
+	"[state]":   "State",
+	"[chrome]":  "Chrome",
+}
+
+func themeGroupLabel(prefix string) string {
+	if label, ok := themeGroupLabels[prefix]; ok {
+		return label
+	}
+	return strings.Trim(prefix, "[]")
+}
+
+func themeGroupByPrefix(prefix string) (themeTokenGroup, bool) {
+	for _, group := range themeTokenGroups {
+		if group.Prefix == prefix {
+			return group, true
+		}
+	}
+	return themeTokenGroup{}, false
+}
+
+// themeEntries renders the Theme view: the preset chooser, the Tokens
+// collection and the reset confirmation. The individual colour rows moved one
+// level down into Tokens > <group>, which is what keeps the first Theme screen
+// readable instead of a flat wall of 15 tokens.
 func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
 	cfg, err := c.currentGlobalProjectConfig()
 	if err != nil {
@@ -118,26 +161,19 @@ func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
 	}
 	entries := []intpickercompat.Entry{c.backEntry()}
 	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, "Preset selector", themePresetSummary(cfg.Theme)),
+		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAppearanceTheme+".preset"), themePresetSummary(cfg.Theme)),
 		Value:     themeAction("preset"),
 		SearchKey: "theme preset selector swatch colors",
 	})
 	effective := theme.ResolveTheme(cfg.Theme)
-	// Present the editable color tokens grouped by priority/meaning while keeping
-	// the rows directly selectable. `foreground` remains parseable as a legacy
-	// config key, but Settings steers users to text_primary/chrome_foreground.
-	for _, group := range themeTokenGroups {
-		for _, token := range group.Tokens {
-			entries = append(entries, intpickercompat.Entry{
-				Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), group.Prefix+" "+themeColorSummaryEffective(cfg.Theme, effective, token)),
-				Value:     themeAction("color:" + string(token)),
-				SearchKey: "theme color " + group.Prefix + " " + strings.Trim(group.Prefix, "[]") + " swatch hex input " + string(token),
-			})
-		}
-	}
+	entries = append(entries, intpickercompat.Entry{
+		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAppearanceTheme+".tokens"), themeTokenGroupsSummary()),
+		Value:     themeAction("tokens"),
+		SearchKey: "theme color tokens core surface state chrome swatch hex",
+	})
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Reset theme values", "remove only global theme values"),
+			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, settingsNavLabel(settingsNavAppearanceTheme+".reset"), "remove only global theme values"),
 			Value: themeAction("reset"),
 		},
 	)
@@ -150,6 +186,122 @@ func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
 		})
 	}
 	return entries, nil
+}
+
+func themeTokenGroupsSummary() string {
+	labels := make([]string, 0, len(themeTokenGroups))
+	for _, group := range themeTokenGroups {
+		labels = append(labels, themeGroupLabel(group.Prefix))
+	}
+	return strings.Join(labels, " / ")
+}
+
+// runThemeTokensSection is the Tokens collection: one row per token group.
+func (c *settingsCommand) runThemeTokensSection(stdout, stderr io.Writer) error {
+	for {
+		entries := []intpickercompat.Entry{c.backEntry()}
+		for _, group := range themeTokenGroups {
+			entries = append(entries, intpickercompat.Entry{
+				Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeGroupLabel(group.Prefix), group.Prefix+" "+themeGroupTokenNames(group)),
+				Value:     themeAction("group:" + group.Prefix),
+				SearchKey: "theme tokens " + themeGroupLabel(group.Prefix) + " " + group.Prefix + " " + themeGroupTokenNames(group),
+			})
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-theme-tokens",
+			Entries:    entries,
+			Title:      "Theme - Tokens",
+			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), c.locale()),
+			Prompt:     "Settings > Appearance > Theme > Tokens > ",
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, themeAction("group:")):
+			group, ok := themeGroupByPrefix(strings.TrimPrefix(action, themeAction("group:")))
+			if !ok {
+				return fmt.Errorf("unknown theme token group: %s", action)
+			}
+			if err := c.runThemeTokenGroupSection(group, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown theme tokens action: %s", action)
+		}
+	}
+}
+
+func themeGroupTokenNames(group themeTokenGroup) string {
+	names := make([]string, 0, len(group.Tokens))
+	for _, token := range group.Tokens {
+		names = append(names, themeColorLabel(token))
+	}
+	return strings.Join(names, ", ")
+}
+
+// runThemeTokenGroupSection lists one group's tokens. Each row shows its
+// effective value inline and opens the existing token detail.
+func (c *settingsCommand) runThemeTokenGroupSection(group themeTokenGroup, stdout, stderr io.Writer) error {
+	for {
+		cfg, err := c.currentGlobalProjectConfig()
+		if err != nil {
+			return err
+		}
+		effective := theme.ResolveTheme(cfg.Theme)
+		entries := []intpickercompat.Entry{c.backEntry()}
+		for _, token := range group.Tokens {
+			entries = append(entries, intpickercompat.Entry{
+				Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, themeColorLabel(token), group.Prefix+" "+themeColorSummaryEffective(cfg.Theme, effective, token)),
+				Value:     themeAction("color:" + string(token)),
+				SearchKey: "theme color " + group.Prefix + " " + strings.Trim(group.Prefix, "[]") + " swatch hex input " + string(token),
+			})
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-theme-token-group",
+			Entries:    entries,
+			Title:      "Theme - " + themeGroupLabel(group.Prefix),
+			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), c.locale()),
+			Prompt:     "Settings > Appearance > Theme > Tokens > " + themeGroupLabel(group.Prefix) + " > ",
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, themeAction("color:")):
+			token, ok := parseThemeColorAction(strings.TrimPrefix(action, themeAction("color:")))
+			if !ok {
+				return fmt.Errorf("unknown theme color action: %s", action)
+			}
+			if err := c.runThemeColorSection(token, stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown theme token action: %s", action)
+		}
+	}
 }
 
 func (c *settingsCommand) runThemePresetSection(stdout, stderr io.Writer) error {
