@@ -51,6 +51,16 @@ func (c *pinCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch fs.Arg(0) {
+	// `pin project <action>` is the canonical spelling: it names the resource
+	// kind the pin list has always held. It forwards the remaining argv to the
+	// same actions, so both spellings share one implementation and one output.
+	case "project":
+		rest := fs.Args()[1:]
+		if len(rest) > 0 && rest[0] == "project" {
+			printPinUsage(stderr)
+			return fmt.Errorf("unknown pin project subcommand: %s", rest[0])
+		}
+		return c.Run(rest, stdout, stderr)
 	case "list":
 		return c.runList(fs.Args()[1:], stdout, stderr)
 	case "add":

@@ -381,7 +381,6 @@ func TestGetPaneRejectsInvalidOutputTokensAndPositionalArguments(t *testing.T) {
 		{args: []string{"pane", "--selector", "role"}, want: "must be key=value"},
 		{args: []string{"pane", "--bogus-flag"}, want: "flag provided but not defined"},
 		{args: []string{}, want: "get requires a resource kind"},
-		{args: []string{"windows"}, want: "not available"},
 		{args: []string{"bogus"}, want: "not available"},
 	} {
 		stdout, _, err := runGet(t, newTestGetCommand(t, &stubCurrentPath{}), test.args...)

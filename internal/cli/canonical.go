@@ -28,12 +28,12 @@ var projectionCatalog = sharedOutputModes
 // architecture v2 contract. Order follows the canonical tree draft.
 var canonicalRoutes = []CanonicalRoute{
 	// get
-	{Spelling: "get projects", Summary: "List Project resources", Outputs: projectionCatalog},
-	{Spelling: "get windows", Summary: "List Window resources", Sources: []string{"window"}, Outputs: projectionCatalog},
-	{Spelling: "get panes", Summary: "List Pane resources", Outputs: projectionCatalog},
-	{Spelling: "get agents", Summary: "List Agent resources", Sources: []string{"ai"}, Outputs: projectionCatalog},
-	{Spelling: "get notifications", Summary: "List pending notification rows", Sources: []string{"notify"}, Outputs: projectionCatalog},
-	{Spelling: "get snapshots", Summary: "List saved session snapshots", Sources: []string{"session-state"}, Outputs: projectionCatalog},
+	{Spelling: "get projects", Summary: "List Project resources", Sources: []string{"get"}, Outputs: projectionCatalog},
+	{Spelling: "get windows", Summary: "List Window resources", Sources: []string{"window", "get"}, Outputs: projectionCatalog},
+	{Spelling: "get panes", Summary: "List Pane resources", Sources: []string{"get"}, Outputs: projectionCatalog},
+	{Spelling: "get agents", Summary: "List Agent resources", Sources: []string{"ai", "get"}, Outputs: projectionCatalog},
+	{Spelling: "get notifications", Summary: "List pending notification rows", Sources: []string{"notify", "get"}, Outputs: projectionCatalog},
+	{Spelling: "get snapshots", Summary: "List saved session snapshots", Sources: []string{"session-state", "get"}, Outputs: projectionCatalog},
 	{
 		Spelling: "get pane",
 		Summary:  "Read one Pane resource",
@@ -46,10 +46,10 @@ var canonicalRoutes = []CanonicalRoute{
 	},
 
 	// describe
-	{Spelling: "describe project", Summary: "Describe one Project resource", Outputs: projectionCatalog},
-	{Spelling: "describe window", Summary: "Describe one Window resource", Sources: []string{"window"}, Outputs: projectionCatalog},
-	{Spelling: "describe pane", Summary: "Describe one Pane resource", Outputs: projectionCatalog},
-	{Spelling: "describe agent", Summary: "Describe one Agent resource", Sources: []string{"ai"}, Outputs: projectionCatalog},
+	{Spelling: "describe project", Summary: "Describe one Project resource", Sources: []string{"describe"}, Outputs: projectionCatalog},
+	{Spelling: "describe window", Summary: "Describe one Window resource", Sources: []string{"window", "describe"}, Outputs: projectionCatalog},
+	{Spelling: "describe pane", Summary: "Describe one Pane resource", Sources: []string{"describe"}, Outputs: projectionCatalog},
+	{Spelling: "describe agent", Summary: "Describe one Agent resource", Sources: []string{"ai", "describe"}, Outputs: projectionCatalog},
 
 	// create
 	{Spelling: "create window", Summary: "Create a Window with its initial Pane", Sources: []string{"window"}, Outputs: projectionCatalog},
@@ -68,25 +68,25 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "focus pane", Summary: "Move the current client to a live Pane", Sources: []string{"focus"}},
 
 	// rename / rebind
-	{Spelling: "rename project", Summary: "Rename a Projmux Project resource"},
-	{Spelling: "rename window", Summary: "Rename a Projmux Window resource", Sources: []string{"window"}},
-	{Spelling: "rename pane", Summary: "Rename a Projmux Pane resource; does not change tmux pane_title", Sources: []string{"tmux"}},
-	{Spelling: "rebind project", Summary: "Rebind one Project spec.root to a new absolute directory"},
+	{Spelling: "rename project", Summary: "Rename a Projmux Project resource", Sources: []string{"rename"}},
+	{Spelling: "rename window", Summary: "Rename a Projmux Window resource", Sources: []string{"window", "rename"}},
+	{Spelling: "rename pane", Summary: "Rename a Projmux Pane resource; does not change tmux pane_title", Sources: []string{"tmux", "rename"}},
+	{Spelling: "rebind project", Summary: "Rebind one Project spec.root to a new absolute directory", Sources: []string{"rebind"}},
 
 	// delete / restore
-	{Spelling: "delete window", Summary: "Delete a Window and its descendants"},
-	{Spelling: "delete pane", Summary: "Delete a Pane resource and its live binding"},
-	{Spelling: "delete agent", Summary: "Delete an Agent and its managed Panes"},
-	{Spelling: "delete notification", Summary: "Delete pending notification rows", Sources: []string{"notify"}},
-	{Spelling: "delete snapshot", Summary: "Delete saved session snapshots", Sources: []string{"session-state", "prune"}},
-	{Spelling: "restore snapshot", Summary: "Restore a saved session snapshot", Sources: []string{"session-state"}},
+	{Spelling: "delete window", Summary: "Delete a Window and its descendants", Sources: []string{"delete"}},
+	{Spelling: "delete pane", Summary: "Delete a Pane resource and its live binding", Sources: []string{"delete"}},
+	{Spelling: "delete agent", Summary: "Delete an Agent and its managed Panes", Sources: []string{"delete"}},
+	{Spelling: "delete notification", Summary: "Delete pending notification rows", Sources: []string{"notify", "delete"}},
+	{Spelling: "delete snapshot", Summary: "Delete saved session snapshots", Sources: []string{"session-state", "prune", "delete"}},
+	{Spelling: "restore snapshot", Summary: "Restore a saved session snapshot", Sources: []string{"session-state", "restore"}},
 
 	// classification
 	{Spelling: "pin project", Summary: "Manage pinned Project resources", Sources: []string{"pin"}},
 	{Spelling: "tag project", Summary: "Manage persistent Project tags", Sources: []string{"tag"}},
 
 	// prune
-	{Spelling: "prune project", Summary: "Prune Projects whose spec.root has been missing for a bounded age"},
+	{Spelling: "prune project", Summary: "Prune Projects whose spec.root has been missing for a bounded age", Sources: []string{"prune"}},
 	{Spelling: "prune snapshot", Summary: "Prune preserved session snapshots", Sources: []string{"prune"}},
 
 	// agent domain
@@ -123,11 +123,11 @@ var canonicalRoutes = []CanonicalRoute{
 	// runtime domain
 	{Spelling: "runtime open", Summary: "Start or attach the app-owned tmux runtime", Sources: []string{"shell"}},
 	{Spelling: "runtime quit", Summary: "Quit the app-owned tmux runtime", Sources: []string{"quit"}},
-	{Spelling: "runtime sessions", Summary: "Pick a live or ephemeral tmux session", Sources: []string{"sessions"}},
-	{Spelling: "runtime attach", Summary: "Attach a live or ephemeral runtime without Project identity", Sources: []string{"attach"}},
-	{Spelling: "runtime stop", Summary: "Terminate live tmux sessions by tagged selection", Sources: []string{"kill"}},
-	{Spelling: "runtime tag", Summary: "Manage the ephemeral tagged session selection", Sources: []string{"tag"}},
-	{Spelling: "runtime prune", Summary: "Trim old ephemeral tmux sessions", Sources: []string{"prune"}},
+	{Spelling: "runtime sessions", Summary: "Pick a live or ephemeral tmux session", Sources: []string{"sessions", "runtime"}},
+	{Spelling: "runtime attach", Summary: "Attach a live or ephemeral runtime without Project identity", Sources: []string{"attach", "runtime"}},
+	{Spelling: "runtime stop", Summary: "Terminate live tmux sessions by tagged selection", Sources: []string{"kill", "runtime"}},
+	{Spelling: "runtime tag", Summary: "Manage the ephemeral tagged session selection", Sources: []string{"tag", "runtime"}},
+	{Spelling: "runtime prune", Summary: "Trim old ephemeral tmux sessions", Sources: []string{"prune", "runtime"}},
 
 	// diagnostics domain
 	{Spelling: "diagnostics doctor", Summary: "Run read-only runtime and integration diagnostics", Sources: []string{"doctor"}},

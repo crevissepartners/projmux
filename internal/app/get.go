@@ -19,10 +19,8 @@ import (
 // the Pane-read `cwd` field projection.
 const canonicalGetPane = "get pane"
 
-// getPaneKinds lists the resource kinds `get` implements today. The remaining
-// kinds of the verb-to-kind family arrive with the public route relocation
-// Phase; naming them here would promise a route that does not exist.
-var getKinds = []string{"pane"}
+// getKinds lists the resource kinds `get` implements, in help order.
+var getKinds = []string{"projects", "windows", "panes", "agents", "notifications", "snapshots", "pane"}
 
 // getCommand implements the read-only `get` verb.
 //
@@ -30,16 +28,23 @@ var getKinds = []string{"pane"}
 // without creating it, reads the active tmux pane path with a display-message
 // query, and writes to stdout only after a successful resolution. A selector or
 // cardinality failure therefore leaves zero bytes on stdout and zero mutations.
+//
+// `notifications` and `snapshots` are parity aliases: they forward raw argv to
+// the notify queue and session snapshot handlers so stdout, stderr, and the exit
+// code stay identical to the current public spellings.
 type getCommand struct {
 	loadRegistry func() (coremetadata.Registry, error)
 	currentPath  currentPathResolver
+	notify       rawArgvCommand
+	snapshots    rawArgvCommand
 }
 
 func newGetCommand() *getCommand {
 	return &getCommand{
 		loadRegistry: loadResourceRegistry,
-		// No lifecycle recorder: this route performs no lifecycle operation, so
-		// it must not open an operations journal entry.
+		// No lifecycle recorder: the registry-backed reads perform no lifecycle
+		// operation, so they must not open an operations journal entry. The two
+		// delegating kinds keep whatever their own handler already records.
 		currentPath: defaultTmuxClient(),
 	}
 }
@@ -61,10 +66,56 @@ func (c *getCommand) Run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "pane":
 		return c.runPane(args[1:], stdout, stderr)
+	case "projects", "windows", "panes", "agents":
+		return c.runList(args[0], args[1:], stdout, stderr)
+	case "notifications":
+		return forwardRawArgv(c.notify, "get notifications", "notify", []string{"list"}, args[1:], stdout, stderr)
+	case "snapshots":
+		return forwardRawArgv(c.snapshots, "get snapshots", "session-state", []string{"status"}, args[1:], stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("get %s is not available; this release implements: %s",
 			args[0], strings.Join(getKinds, ", ")))
 	}
+}
+
+// runList answers one plural read. The list cardinality is 0..N, so an empty
+// result is a success with empty stdout rather than a not-resolved error.
+func (c *getCommand) runList(token string, args []string, stdout, stderr io.Writer) error {
+	kind := resourceListKindTokens[token]
+	spelling := "get " + token
+
+	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	flags := resourceQueryFlags{kind: kind}
+	flags.register(fs)
+	flags.registerOutput(fs)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
+	}
+	if fs.NArg() != 0 {
+		return usageError(fmt.Sprintf("%s does not accept positional arguments; got %q", spelling, fs.Arg(0)))
+	}
+
+	mode, field, err := resolveOutputMode(spelling, flags.output)
+	if err != nil {
+		return err
+	}
+	if field != "" {
+		return usageError(fmt.Sprintf("-o %s is not a %s projection", field, spelling))
+	}
+
+	registry, err := c.loadRegistry()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	resolution, err := flags.resolve(selector.VerbGet, true, registry)
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	return writeResourceProjection(stdout, spelling, mode, kind, resolution.Matches, registry, true)
 }
 
 // repeatedFlag collects every occurrence of a repeatable singular selector
@@ -203,44 +254,9 @@ func buildPaneQuery(projects, windows, panes, labels []string) (selector.Query, 
 // writePaneProjection renders one resolved Pane.
 //
 // `get pane` is an exact-one read, so the structured modes emit a single JSON
-// document rather than a list envelope; the list envelopes belong to the
-// fan-out create routes.
+// document rather than a list envelope; the list envelopes belong to the plural
+// read spellings and the fan-out create routes.
 func writePaneProjection(stdout io.Writer, mode cli.OutputMode, match selector.Match, registry coremetadata.Registry) error {
-	switch mode {
-	case cli.OutputModeNone:
-		return nil
-	case cli.OutputModeUID:
-		_, err := fmt.Fprintln(stdout, match.UID)
-		return err
-	case cli.OutputModeName:
-		_, err := fmt.Fprintln(stdout, match.Name)
-		return err
-	case cli.OutputModeRef:
-		_, err := fmt.Fprintln(stdout, "pane/"+match.Name)
-		return err
-	case cli.OutputModeMetadata:
-		pane, ok := registry.Pane(match.UID)
-		if !ok {
-			return fmt.Errorf("get pane: resolved uid %q is no longer in the registry", match.UID)
-		}
-		return writeJSON(stdout, pane.Metadata)
-	case cli.OutputModeJSON:
-		pane, ok := registry.Pane(match.UID)
-		if !ok {
-			return fmt.Errorf("get pane: resolved uid %q is no longer in the registry", match.UID)
-		}
-		return writeJSON(stdout, pane)
-	case cli.OutputModePaneID:
-		// A raw `%N` handle is a live transport binding, not stored metadata.
-		// It becomes available when the runtime materialization Phase wires the
-		// tmux mirror into the read path.
-		return errors.New("get pane -o pane-id needs a live transport binding, which is not wired yet")
-	default:
-		summary := "pane/" + match.Name + " status=" + string(match.Status)
-		if owner := match.Owner.String(); owner != "" {
-			summary += " owner=" + owner
-		}
-		_, err := fmt.Fprintln(stdout, summary)
-		return err
-	}
+	return writeResourceProjection(stdout, canonicalGetPane, mode, coremetadata.KindPane,
+		[]selector.Match{match}, registry, false)
 }

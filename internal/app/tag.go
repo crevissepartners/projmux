@@ -49,6 +49,19 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch fs.Arg(0) {
+	// `tag project <action>` is the canonical spelling of the tagged selection
+	// this route has always managed, and `runtime tag <action>` reaches the same
+	// actions from the runtime domain. Both forward the remaining argv here, so
+	// the three spellings share one implementation and one output. Splitting the
+	// persistent Project classification away from the live-only selection is a
+	// later Phase; this Phase only relocates the spelling.
+	case "project":
+		rest := fs.Args()[1:]
+		if len(rest) > 0 && rest[0] == "project" {
+			printTagUsage(stderr)
+			return fmt.Errorf("unknown tag project subcommand: %s", rest[0])
+		}
+		return c.Run(rest, stdout, stderr)
 	case "list":
 		return c.runList(fs.Args()[1:], stdout, stderr)
 	case "toggle":

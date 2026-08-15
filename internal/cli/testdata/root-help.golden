@@ -5,6 +5,8 @@ Commands:
   attention View and manage live tmux pane attention state
   attach    Open tmux lifecycle entry helpers
   current   Resolve the active tmux pane path
+  delete    Delete Projmux resources with an explicit cascade plan
+  describe  Describe one Projmux resource
   doctor    Run read-only runtime and integration diagnostics
   diagnostics  Read operational events or create an explicit local support report
   focus     Switch the active client to a session/window/pane target
@@ -16,7 +18,11 @@ Commands:
   preview   Manage persisted tmux preview selection
   prune     Trim stale lifecycle state and inspect preserved snapshots
   quit      Quit the app-owned projmux tmux runtime
+  rebind    Rebind a Project to a new absolute root without moving files
+  rename    Rename a Projmux resource metadata.name
   resources Inspect live Project, Window, and Pane CPU/RSS attribution
+  restore   Restore a saved session snapshot
+  runtime   Manage the live and ephemeral tmux runtime inventory
   sessions  Pick and open an existing tmux session
   session-state  Inspect and manage saved tmux session snapshots
   session-popup  Read tmux popup preview state

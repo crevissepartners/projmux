@@ -63,10 +63,11 @@ func (t Target) String() string {
 
 // matrix is the declared <verb, kind> cardinality table.
 //
-// It is a read-only declaration. Phase 2 consumes only the `get pane` row from
-// a live route; the remaining rows are the pinned contract the mutation phases
-// adopt when their routes move, which is why they are asserted by tests rather
-// than reachable from a handler today.
+// It is the single cardinality authority for every route that resolves an
+// existing target set: the public verb-to-kind routes call Enforce against
+// their own cell rather than re-deciding "exactly one" or "at least one" per
+// handler. The create rows stay declaration-only until the materialization
+// Phases move those routes.
 var matrix = map[Target]Cardinality{
 	// Reads. A plural list read succeeds on an empty result; a singular read
 	// addresses exactly one resource.
@@ -312,6 +313,11 @@ func DescribeSelector(q Query) string {
 	}
 	for _, ref := range q.Panes {
 		parts = append(parts, "--pane "+ref.Raw)
+	}
+	// Agent refs arrive positionally, not through a scope flag, so they render
+	// as the bare resource reference the operator actually typed.
+	for _, ref := range q.Agents {
+		parts = append(parts, "agent "+ref.Raw)
 	}
 	for _, label := range q.Labels {
 		parts = append(parts, "--selector "+label.String())

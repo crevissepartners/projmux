@@ -96,11 +96,17 @@ type App struct {
 	attention    *attentionCommand
 	attach       *attachCommand
 	current      *currentCommand
+	delete       *deleteCommand
+	describe     *describeCommand
 	doctor       *doctorCommand
 	diagnostics  *diagnosticsCommand
 	focus        *focusCommand
 	get          *getCommand
 	hook         *hookCommand
+	rebind       *rebindCommand
+	rename       *renameCommand
+	restore      *restoreCommand
+	runtime      *runtimeCommand
 	keyBroker    *keyBrokerCommand
 	kill         *killCommand
 	notify       *notifyCommand
@@ -178,17 +184,43 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	focusCmd.notifyDiagnostics = notifyFocusDiagnostics
 	resourcesCmd := newResourceCommand()
 	resourcesCmd.diagnostics = resourceOperationalDiagnostics
+	// Canonical verb-to-kind routes. The registry-backed kinds own their own
+	// handler; the kinds whose behavior already exists forward raw argv to the
+	// current handler, so the canonical spelling is a parity alias rather than a
+	// second implementation.
+	tagCmd := newTagCommand()
+	getCmd := newGetCommand()
+	getCmd.notify = notifyCmd
+	getCmd.snapshots = sessionStateCmd
+	deleteCmd := newDeleteCommand()
+	deleteCmd.notify = notifyCmd
+	deleteCmd.snapshots = sessionStateCmd
+	restoreCmd := newRestoreCommand()
+	restoreCmd.snapshots = sessionStateCmd
+	runtimeCmd := newRuntimeCommand()
+	runtimeCmd.sessions = sessions
+	runtimeCmd.attach = attach
+	runtimeCmd.kill = kill
+	runtimeCmd.tag = tagCmd
+	runtimeCmd.prune = pruneCmd
+	attach.switcher = switcher
 	return &App{
 		lifecycle:    recorder,
 		ai:           ai,
 		attention:    attentionCmd,
 		attach:       attach,
 		current:      newCurrentCommand(recorder),
+		delete:       deleteCmd,
+		describe:     newDescribeCommand(),
 		doctor:       newDoctorCommand(),
 		diagnostics:  newDiagnosticsCommand(),
 		focus:        focusCmd,
-		get:          newGetCommand(),
+		get:          getCmd,
 		hook:         newHookCommand(),
+		rebind:       newRebindCommand(),
+		rename:       newRenameCommand(),
+		restore:      restoreCmd,
+		runtime:      runtimeCmd,
 		keyBroker:    newKeyBrokerCommand(),
 		kill:         kill,
 		notify:       notifyCmd,
@@ -207,7 +239,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		status:       newStatusCommand(),
 		statusbar:    newStatusbarCommand(),
 		switcher:     switcher,
-		tag:          newTagCommand(),
+		tag:          tagCmd,
 		tmux:         tmuxCmd,
 		update:       update,
 		upgrade:      newUpgradeCommand(),
@@ -248,6 +280,8 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"attention":   a.attention,
 		"attach":      a.attach,
 		"current":     a.current,
+		"delete":      a.delete,
+		"describe":    a.describe,
 		"doctor":      a.doctor,
 		"diagnostics": a.diagnostics,
 		"focus":       a.focus,
@@ -267,7 +301,11 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"preview":        a.preview,
 		"prune":          a.prune,
 		"quit":           a.quit,
+		"rebind":         a.rebind,
+		"rename":         a.rename,
 		"resources":      a.resources,
+		"restore":        a.restore,
+		"runtime":        a.runtime,
 		"sessions":       a.sessions,
 		"session-state":  a.sessionState,
 		"session-popup":  a.sessionPopup,
@@ -326,11 +364,14 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	// Doctor is a read-only diagnostic, and `get` is a read-only resource
-	// resolution. Neither may trigger the otherwise automatic legacy-hook
-	// filesystem migration: a read that resolves nothing must leave zero
-	// mutations behind, including this one.
-	case "doctor", "get":
+	// Doctor is a read-only diagnostic, and `get`/`describe` are read-only
+	// resource resolutions. None of them may trigger the otherwise automatic
+	// legacy-hook filesystem migration: a read that resolves nothing must leave
+	// zero mutations behind, including this one. The two delegating read kinds
+	// (`get notifications`, `get snapshots`) therefore skip a pre-dispatch write
+	// their current spellings still perform; their stdout, stderr, and exit code
+	// are unchanged.
+	case "doctor", "get", "describe":
 		return false
 	}
 	return !(len(args) >= 2 && args[0] == "diagnostics" && args[1] == "report")
