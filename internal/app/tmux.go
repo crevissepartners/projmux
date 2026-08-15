@@ -1298,14 +1298,14 @@ func statusbarSettingsButtonBody(label string) string {
 // and tmux-native de-slug `#{s|^[^-]*-||:session_name}` (app) segments; the
 // tmux regex de-slug is gone (naming v2 Phase 1b).
 func statusbarSessionLeftFormat(bin string, roles theme.RenderRoles) string {
-	return "#[range=user|session]#[bold,fg=" + roles.IdentityFg + ",bg=" + roles.IdentityBg + "] #(" + bin + " status project) #[default]#[norange] "
+	return "#[range=user|session]#[bold,fg=" + roles.IdentityFg + ",bg=" + roles.IdentityBg + "] #(" + bin + " internal status project) #[default]#[norange] "
 }
 
 func statusbarAuxLineFormat(bin string, autosave bool) string {
-	line := "#[align=left range=user|notify]#(" + bin + " status notify --max-width 80)#[norange]" +
-		"#[align=right range=user|usage]#(" + bin + " status usage --max-width 120)#[norange]"
+	line := "#[align=left range=user|notify]#(" + bin + " internal status notify --max-width 80)#[norange]" +
+		"#[align=right range=user|usage]#(" + bin + " internal status usage --max-width 120)#[norange]"
 	if autosave {
-		line += "#(" + bin + " tmux autosave-session-state --quiet)"
+		line += "#(" + bin + " internal tmux autosave-session-state --quiet)"
 	}
 	return line
 }
@@ -1441,8 +1441,8 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveReso
 		"set-hook -g pane-focus-out "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g pane-focus-in "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id} >/dev/null 2>&1 || true")),
-		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes >/dev/null 2>&1 || true")),
-		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" tmux rebalance-panes >/dev/null 2>&1 || true")),
+		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" internal tmux rebalance-panes >/dev/null 2>&1 || true")),
+		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" internal tmux rebalance-panes >/dev/null 2>&1 || true")),
 	)
 	lines = append(lines, tmuxRecentWindowRecordHookLines(bin)...)
 	lines = append(lines,
@@ -1452,7 +1452,7 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveReso
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
 		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin, roles)),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat(roles)+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]"+statusbarLiveResourcesSegment(bin)+"#[fg="+roles.StatusTextSecondary+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux", roles)),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat(roles)+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" internal status kube)#[norange]#[range=user|git]#("+bin+" internal status git)#[norange]"+statusbarLiveResourcesSegment(bin)+"#[fg="+roles.StatusTextSecondary+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux", roles)),
 		// Two-line status bar: line 0 is the notify/HUD control row; line 1 is
 		// tmux's native session/window/path row. Setting both rows explicitly is
 		// required because tmux's built-in row otherwise stays at index 0.
@@ -1576,7 +1576,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(b
 	lines = append(lines,
 		"set -g status 2",
 		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin, roles)),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat(roles)+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" status kube)#[norange]#[range=user|git]#("+bin+" status git)#[norange]"+statusbarLiveResourcesSegment(bin)+"#[fg="+roles.StatusTextSecondary+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon, roles)),
+		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat(roles)+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" internal status kube)#[norange]#[range=user|git]#("+bin+" internal status git)#[norange]"+statusbarLiveResourcesSegment(bin)+"#[fg="+roles.StatusTextSecondary+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon, roles)),
 		"set -g status-format[0] "+tmuxConfigQuote(statusbarAuxLineFormat(bin, true)),
 		"set -g status-format[1] "+tmuxConfigQuote(statusbarWindowLineFormat()),
 		"set -gu status-format[2]",
@@ -1635,7 +1635,7 @@ func tmuxAppKeyBindings(catalog []keyBindingAction, keymapPresent bool) []string
 // the throttled refresh subcommand before reopening the same popup.
 func tmuxStatusbarKeyBindings(binaryPath string) []string {
 	bin := tmuxShellQuote(binaryPath)
-	clickCmd := bin + " statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\" --mouse-window \"#{mouse_window}\""
+	clickCmd := bin + " internal statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\" --mouse-window \"#{mouse_window}\""
 	// Use tmux's `{...}` block syntax for the if-shell branches so the nested
 	// quotes inside `run-shell` don't need to be escaped through another layer
 	// of tmux config quoting (which the parser rejects). Block syntax requires
@@ -1648,13 +1648,13 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 		"unbind-key -q -n MouseDown1Status",
 		mouseDownBind,
 		"bind-key s switch-client -T projmux-status",
-		"bind-key -T projmux-status u run-shell " + tmuxConfigQuote(bin+" statusbar click usage"),
-		"bind-key -T projmux-status r run-shell " + tmuxConfigQuote(bin+" statusbar usage-refresh"),
-		"bind-key -T projmux-status n run-shell " + tmuxConfigQuote(bin+" statusbar click notify"),
-		"bind-key -T projmux-status g run-shell " + tmuxConfigQuote(bin+" statusbar click git"),
-		"bind-key -T projmux-status k run-shell " + tmuxConfigQuote(bin+" statusbar click kube"),
-		"bind-key -T projmux-status p run-shell " + tmuxConfigQuote(bin+" statusbar click pwd"),
-		"bind-key -T projmux-status s run-shell " + tmuxConfigQuote(bin+" statusbar click session"),
+		"bind-key -T projmux-status u run-shell " + tmuxConfigQuote(bin+" internal statusbar click usage"),
+		"bind-key -T projmux-status r run-shell " + tmuxConfigQuote(bin+" internal statusbar usage-refresh"),
+		"bind-key -T projmux-status n run-shell " + tmuxConfigQuote(bin+" internal statusbar click notify"),
+		"bind-key -T projmux-status g run-shell " + tmuxConfigQuote(bin+" internal statusbar click git"),
+		"bind-key -T projmux-status k run-shell " + tmuxConfigQuote(bin+" internal statusbar click kube"),
+		"bind-key -T projmux-status p run-shell " + tmuxConfigQuote(bin+" internal statusbar click pwd"),
+		"bind-key -T projmux-status s run-shell " + tmuxConfigQuote(bin+" internal statusbar click session"),
 	}
 }
 

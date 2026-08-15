@@ -17,7 +17,6 @@ Commands:
   kill      Terminate tagged tmux sessions
   notify    Manage the pending AI notify queue (push/list/ack/reconcile)
   pin       Manage pinned project directories
-  preview   Manage persisted tmux preview selection
   prune     Trim stale lifecycle state and inspect preserved snapshots
   quit      Quit the app-owned projmux tmux runtime
   rebind    Rebind a Project to a new absolute root without moving files
@@ -27,15 +26,11 @@ Commands:
   runtime   Manage the live and ephemeral tmux runtime inventory
   sessions  Pick and open an existing tmux session
   session-state  Inspect and manage saved tmux session snapshots
-  session-popup  Read tmux popup preview state
   settings  Configure projmux
   setup     Probe terminal keys or remediate them with setup terminal
   shell     Open the isolated projmux tmux app
-  status    Render tmux status bar segments
-  statusbar Dispatch projmux status bar clicks and shortcuts
   switch    Pick and open a project tmux session
   tag       Manage tagged tmux sessions
-  tmux      Open tmux popup entry helpers
   update    Check installer-aware release update status
   upgrade   Self-update projmux via go install
   usage     Report AI token usage across 5h and weekly windows

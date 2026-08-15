@@ -1468,7 +1468,7 @@ func (c *aiCommand) openPickerToggle(direction string) error {
 	if direction == "down" {
 		mode = "ai-split-picker-down"
 	}
-	args := []string{"tmux", "popup-toggle"}
+	args := []string{"internal", "tmux", "popup-toggle"}
 	if clientKey := c.readTrimmed("tmux", "display-message", "-p", "-F", "#{client_tty}"); clientKey != "" {
 		args = append(args, "--client", clientKey)
 	}
@@ -1485,7 +1485,7 @@ func (c *aiCommand) openResumePickerToggle(direction string) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"tmux", "popup-toggle"}
+	args := []string{"internal", "tmux", "popup-toggle"}
 	if clientKey := c.readTrimmed("tmux", "display-message", "-p", "-F", "#{client_tty}"); clientKey != "" {
 		args = append(args, "--client", clientKey)
 	}
@@ -2058,7 +2058,7 @@ func (c *aiCommand) startAIWatchTitle(paneID string) {
 		c.recordAIWatcher(diagnostics.AIResultFailed, diagnostics.AIFailureWatcherLaunch, started, false)
 		return
 	}
-	if err := c.run("tmux", "run-shell", "-b", shellQuote(binaryPath)+" ai watch-title "+shellQuote(paneID)); err != nil {
+	if err := c.run("tmux", "run-shell", "-b", shellQuote(binaryPath)+" internal agent-hook watch-title "+shellQuote(paneID)); err != nil {
 		c.recordAIWatcher(diagnostics.AIResultFailed, diagnostics.AIFailureWatcherLaunch, started, false)
 	}
 }

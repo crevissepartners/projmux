@@ -1811,7 +1811,7 @@ func TestBuildPopupPreviewCommandQuotesBinaryPathAndSession(t *testing.T) {
 		t.Fatalf("BuildPopupPreviewCommand returned error: %v", err)
 	}
 
-	const want = "exec '/tmp/projmux'\\''s bin' 'session-popup' 'preview' 'team'\\''s/dev'"
+	const want = "exec '/tmp/projmux'\\''s bin' 'internal' 'session-popup' 'preview' 'team'\\''s/dev'"
 	if command != want {
 		t.Fatalf("command = %q, want %q", command, want)
 	}
@@ -1885,7 +1885,7 @@ func TestBuildSessionPopupPreviewCommandQuotesBinaryPath(t *testing.T) {
 		t.Fatalf("BuildSessionPopupPreviewCommand returned error: %v", err)
 	}
 
-	const want = "exec '/tmp/projmux'\\''s bin' 'session-popup' 'preview' {2}"
+	const want = "exec '/tmp/projmux'\\''s bin' 'internal' 'session-popup' 'preview' {2}"
 	if command != want {
 		t.Fatalf("command = %q, want %q", command, want)
 	}
@@ -1907,7 +1907,7 @@ func TestBuildSessionPopupCycleCommandQuotesInputs(t *testing.T) {
 		t.Fatalf("BuildSessionPopupCycleCommand returned error: %v", err)
 	}
 
-	const want = "exec '/tmp/projmux'\\''s bin' 'session-popup' 'cycle-window' {2} 'next'"
+	const want = "exec '/tmp/projmux'\\''s bin' 'internal' 'session-popup' 'cycle-window' {2} 'next'"
 	if command != want {
 		t.Fatalf("command = %q, want %q", command, want)
 	}

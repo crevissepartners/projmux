@@ -8,16 +8,18 @@ import (
 )
 
 // TestRouteCoverageHasExactlyOneDispositionAndNoOrphans is the route coverage
-// audit. The compatibility contract requires every current public route plus
-// the 2 hidden internal helpers to hold exactly one primary disposition, with
-// zero orphan routes, before any later Phase may move a namespace.
+// audit. The compatibility contract requires every current route, public or
+// hidden, to hold exactly one primary disposition, with zero orphan routes,
+// before any later Phase may move a namespace.
 //
-// The public count is 42: the 33 routes inventoried by the compatibility
+// The public count is 37: the 33 routes inventoried by the compatibility
 // contract plus 9 canonical nodes added by later Phases -- `get` from the
 // selector Phase, `delete`, `describe`, `rebind`, `rename`, `restore`, and
 // `runtime` from the public verb-to-kind Phase, and `agent` and `create` from
-// the Agent namespace Phase. Every one of the 33 inventoried routes is still
-// present and still holds exactly one disposition.
+// the Agent namespace Phase -- minus the 5 internal plumbing routes the
+// internal isolation Phase moved out of the primary listing. Every one of the
+// 33 inventoried routes is still present, still dispatchable, and still holds
+// exactly one disposition; hiding is not removal.
 func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	t.Parallel()
 
@@ -54,37 +56,76 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 42 {
-		t.Fatalf("public route count = %d, want 42", public)
+	if public != 37 {
+		t.Fatalf("public route count = %d, want 37", public)
 	}
-	if hidden != 2 {
-		t.Fatalf("hidden helper count = %d, want 2", hidden)
+	// The 2 original hidden helpers, the 5 plumbing routes the internal
+	// isolation Phase hid, and the `internal` namespace itself.
+	if hidden != 8 {
+		t.Fatalf("hidden route count = %d, want 8", hidden)
 	}
 	// The classification tally from the compatibility contract, counted over
-	// the 42 public top-level routes. Canonical is 17 rather than the
+	// the 37 public top-level routes. Canonical is 17 rather than the
 	// contract's 8 because the 9 canonical verb/domain nodes are new surface,
-	// not members of the 33 inventoried current routes. The other three counts
-	// are unchanged, which is the invariant that proves no current route was
-	// removed, hidden, or reclassified -- in particular `ai` and `usage` are
-	// still public compatibility routes after the Agent namespace was added.
+	// not members of the 33 inventoried current routes.
+	//
+	// The public internal count is 0: that is the whole point of the internal
+	// isolation Phase, and it is the assertion that fails the moment a plumbing
+	// route leaks back into the primary listing. The shortcut and compatibility
+	// counts are unchanged, which is the invariant that proves no user-facing
+	// route was removed or reclassified along the way -- in particular `ai` and
+	// `usage` are still public compatibility routes.
 	wantPublicTally := map[Disposition]int{
 		DispositionCanonical:     17,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
-		DispositionInternal:      5,
 	}
 	if !reflect.DeepEqual(publicTally, wantPublicTally) {
 		t.Fatalf("public disposition tally = %v, want %v", publicTally, wantPublicTally)
 	}
-	// Both hidden helpers are internal plumbing.
+	// Every hidden route is internal plumbing.
 	wantTally := map[Disposition]int{
 		DispositionCanonical:     17,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
-		DispositionInternal:      7,
+		DispositionInternal:      8,
 	}
 	if !reflect.DeepEqual(tally, wantTally) {
 		t.Fatalf("disposition tally = %v, want %v", tally, wantTally)
+	}
+}
+
+// TestNoInternalRouteIsPubliclyListed is the acceptance assertion of the
+// internal isolation Phase, stated directly rather than inferred from a tally:
+// a route classified as plumbing may not appear in the primary listing, and the
+// `internal` namespace itself may not either.
+func TestNoInternalRouteIsPubliclyListed(t *testing.T) {
+	t.Parallel()
+
+	for _, route := range Routes() {
+		if route.Disposition == DispositionInternal && !route.Hidden {
+			t.Errorf("internal route %q is visible in the primary help listing", route.Name)
+		}
+	}
+	internal, ok := LookupRoute("internal")
+	if !ok {
+		t.Fatal("the internal namespace route is missing")
+	}
+	if !internal.Hidden || internal.Disposition != DispositionInternal {
+		t.Fatalf("internal route hidden=%v disposition=%q, want a hidden internal node", internal.Hidden, internal.Disposition)
+	}
+	// Every plumbing spelling the canonical manifest declares must be reachable
+	// as a real `internal <namespace>` route, or the generated tmux config would
+	// be emitting a route that does not exist.
+	for _, canonical := range CanonicalRoutes() {
+		namespace, ok := strings.CutPrefix(canonical.Spelling, "internal ")
+		if !ok {
+			continue
+		}
+		path, _, resolved := Resolve([]string{"internal", namespace})
+		if !resolved || !reflect.DeepEqual(path, []string{"internal", namespace}) {
+			t.Errorf("canonical route %q does not resolve to an executable node (path=%v ok=%v)", canonical.Spelling, path, resolved)
+		}
 	}
 }
 
@@ -306,10 +347,20 @@ func walkRoutes(nodes []Route, visit func(path []string, route Route)) {
 
 // inventoriedRoutes is the compatibility contract's original inventory: the 33
 // public top-level routes plus the 2 hidden internal helpers, each with the
-// primary disposition Phase 0 assigned it.
+// primary disposition Phase 0 assigned it and the listing visibility it holds
+// after the internal isolation Phase.
 //
 // It is written out in full rather than derived, because its whole job is to
-// fail when a later Phase removes, hides, or reclassifies one of them.
+// fail when a later Phase removes or reclassifies one of them.
+//
+// The `hidden` column changed for the 5 plumbing routes (`preview`,
+// `session-popup`, `status`, `statusbar`, `tmux`) when the internal isolation
+// Phase moved them under the hidden `internal` namespace. Hiding is a listing
+// decision, not a removal: TestEveryInventoriedRouteSurvivesUnchanged still
+// requires every one of them to resolve and dispatch, because a tmux server
+// that is already running holds config generated by a previously installed
+// binary and keeps invoking the current spellings. Their disposition is
+// unchanged, and no route ever moved between dispositions.
 var inventoriedRoutes = map[string]struct {
 	disposition Disposition
 	hidden      bool
@@ -325,21 +376,21 @@ var inventoriedRoutes = map[string]struct {
 	"kill":           {DispositionCompatibility, false},
 	"notify":         {DispositionCompatibility, false},
 	"pin":            {DispositionCompatibility, false},
-	"preview":        {DispositionInternal, false},
+	"preview":        {DispositionInternal, true},
 	"prune":          {DispositionCompatibility, false},
 	"quit":           {DispositionShortcut, false},
 	"resources":      {DispositionShortcut, false},
 	"sessions":       {DispositionCompatibility, false},
 	"session-state":  {DispositionCompatibility, false},
-	"session-popup":  {DispositionInternal, false},
+	"session-popup":  {DispositionInternal, true},
 	"settings":       {DispositionShortcut, false},
 	"setup":          {DispositionCanonical, false},
 	"shell":          {DispositionShortcut, false},
-	"status":         {DispositionInternal, false},
-	"statusbar":      {DispositionInternal, false},
+	"status":         {DispositionInternal, true},
+	"statusbar":      {DispositionInternal, true},
 	"switch":         {DispositionShortcut, false},
 	"tag":            {DispositionCompatibility, false},
-	"tmux":           {DispositionInternal, false},
+	"tmux":           {DispositionInternal, true},
 	"update":         {DispositionCanonical, false},
 	"upgrade":        {DispositionCompatibility, false},
 	"usage":          {DispositionCompatibility, false},

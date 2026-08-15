@@ -985,7 +985,7 @@ func TestAISplitSelectiveDelegatesToPopupToggle(t *testing.T) {
 
 	want := []recordedAICommand{{
 		name: "/tmp/projmux bin",
-		args: []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-picker-right"},
+		args: []string{"internal", "tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-picker-right"},
 	}}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
@@ -1288,7 +1288,7 @@ func TestAISplitCodexRunsNativeTmuxSplitAndStartsWatcher(t *testing.T) {
 	if containsAICommandArgs(commands, "tmux", []string{"resize-pane", "-t", "%8", "-x", "13"}) {
 		t.Fatalf("commands = %#v, did not expect resize outside target row", commands)
 	}
-	if !containsAICommandArgs(commands, "tmux", []string{"run-shell", "-b", "'/tmp/projmux' ai watch-title '%9'"}) {
+	if !containsAICommandArgs(commands, "tmux", []string{"run-shell", "-b", "'/tmp/projmux' internal agent-hook watch-title '%9'"}) {
 		t.Fatalf("commands = %#v, want codex watch-title run-shell", commands)
 	}
 	for _, want := range [][]string{
@@ -1512,7 +1512,7 @@ func TestAISplitCodexExtraArgsKeepsPaneSetupWatcherAndLayout(t *testing.T) {
 		{"set-option", "-p", "-t", "%9", aiPaneContextOption, work},
 		{"set-option", "-p", "-t", "%9", aiPaneTopicOption, "repo"},
 		{"set-option", "-p", "-t", "%9", aiPaneStateOption, "idle"},
-		{"run-shell", "-b", "'/tmp/projmux' ai watch-title '%9'"},
+		{"run-shell", "-b", "'/tmp/projmux' internal agent-hook watch-title '%9'"},
 		{"resize-pane", "-t", "%7", "-x", "40"},
 		{"resize-pane", "-t", "%9", "-x", "40"},
 	} {
@@ -1577,7 +1577,7 @@ func TestAISplitAgentSelectiveDelegatesToPickerWithoutChangingDefault(t *testing
 	}
 	want := []recordedAICommand{{
 		name: "/tmp/projmux bin",
-		args: []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-picker-right"},
+		args: []string{"internal", "tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-picker-right"},
 	}}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
@@ -1608,7 +1608,7 @@ func TestAISplitAgentResumeDelegatesToResumePickerWithoutChangingDefault(t *test
 	}
 	want := []recordedAICommand{{
 		name: "/tmp/projmux bin",
-		args: []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-resume-right"},
+		args: []string{"internal", "tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-resume-right"},
 	}}
 	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
@@ -1873,7 +1873,7 @@ func TestAISplitAgentShellUsesPlainShellSplit(t *testing.T) {
 	for _, forbidden := range [][]string{
 		{"set-option", "-p", "-t", "%9", aiPaneManagedOption, "1"},
 		{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeShell},
-		{"run-shell", "-b", "'/tmp/projmux' ai watch-title '%9'"},
+		{"run-shell", "-b", "'/tmp/projmux' internal agent-hook watch-title '%9'"},
 	} {
 		if containsAICommandArgs(cmdRecorder(cmd).commands, "tmux", forbidden) {
 			t.Fatalf("commands = %#v, did not expect managed AI command %v", cmdRecorder(cmd).commands, forbidden)

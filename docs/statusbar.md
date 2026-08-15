@@ -1,9 +1,12 @@
 # Statusbar
 
 `projmux shell` configures tmux with `status 2` and renders a two-line
-clickable status bar. The same dispatcher (`projmux statusbar click`)
+clickable status bar. The same dispatcher (`projmux internal statusbar click`)
 handles both mouse clicks and the keyboard chord, so adding a new
-segment only requires one wiring point.
+segment only requires one wiring point. `statusbar` is machine-invoked
+plumbing, so it lives in the hidden `internal` namespace; the pre-namespace
+`projmux statusbar click` spelling still works for config a previously
+installed binary generated.
 
 The built-in fallback colors used by the statusbar are semantic tokens in
 `internal/theme/palette.go`; see [theme-palette.md](theme-palette.md) for the
@@ -27,7 +30,7 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
   "#{==:#{mouse_status_range},window}"` to run `select-window -t =`
   natively when the click lands on the window list, so the
   mouse-target context resolves the clicked window directly. All
-  other ranges fall through to `run-shell projmux statusbar click
+  other ranges fall through to `run-shell projmux internal statusbar click
   ...`, which dispatches by range id. The in-config short-circuit
   is required because `#{mouse_window}` is empty for window-list
   clicks on tmux 3.4+, so a `run-shell` handler can't recover the
@@ -126,12 +129,12 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 | -------- | ------------- | ----------------------------------------- | ------------- |
 | `notify`  | `status-format[0]` | `projmux focus --target <newest> --source status-bar --kind segment-click [--client <tty>]`, then ack on focus success | `prefix s n`  |
 | `usage`   | `status-format[0]` | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
-| `session` | `status-format[1]` | `projmux tmux popup-toggle sessionizer-sidebar` | `prefix s s` |
+| `session` | `status-format[1]` | `projmux internal tmux popup-toggle sessionizer-sidebar` | `prefix s s` |
 | `pwd`     | `status-format[1]` | show a native-framed current-path popup; no clipboard or tmux buffer copy | `prefix s p`  |
-| `kube`    | `status-format[1]` | `projmux tmux popup-toggle sessionizer`   | `prefix s k`  |
-| `git`     | `status-format[1]` | `projmux tmux popup-toggle sessionizer`   | `prefix s g`  |
-| `resources` | `status-format[1]` | `projmux tmux popup-toggle --client <tty> resource-inspector` | mouse or custom `Resources:Open`; no default key |
-| `settings` | `status-format[1]` | `projmux tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
+| `kube`    | `status-format[1]` | `projmux internal tmux popup-toggle sessionizer` | `prefix s k`  |
+| `git`     | `status-format[1]` | `projmux internal tmux popup-toggle sessionizer` | `prefix s g`  |
+| `resources` | `status-format[1]` | `projmux internal tmux popup-toggle --client <tty> resource-inspector` | mouse or custom `Resources:Open`; no default key |
+| `settings` | `status-format[1]` | `projmux internal tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
 
 `notify` reads the pending queue only. For a live pane-state view that is
 independent of queued reminders, use `projmux attention list`. To explain why

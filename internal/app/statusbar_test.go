@@ -230,7 +230,7 @@ func TestStatusbarClickSessionOpensProjectSidebar(t *testing.T) {
 	if err := cmd.Run([]string{"click", "session", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "sessionizer-sidebar"}) {
+	if !sawProjmuxArgs(runner.calls, []string{"internal", "tmux", "popup-toggle", "--client", "/dev/pts/7", "sessionizer-sidebar"}) {
 		t.Fatalf("missing client-scoped sessionizer-sidebar popup-toggle; calls = %#v", runner.calls)
 	}
 }
@@ -397,7 +397,7 @@ func TestStatusbarClickKubeOpensProjectSwitcher(t *testing.T) {
 	if err := cmd.Run([]string{"click", "kube", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "sessionizer"}) {
+	if !sawProjmuxArgs(runner.calls, []string{"internal", "tmux", "popup-toggle", "--client", "/dev/pts/7", "sessionizer"}) {
 		t.Fatalf("missing client-scoped project switcher popup-toggle; calls = %#v", runner.calls)
 	}
 }
@@ -411,7 +411,7 @@ func TestStatusbarClickGitOpensProjectSwitcher(t *testing.T) {
 	if err := cmd.Run([]string{"click", "git", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "sessionizer"}) {
+	if !sawProjmuxArgs(runner.calls, []string{"internal", "tmux", "popup-toggle", "--client", "/dev/pts/7", "sessionizer"}) {
 		t.Fatalf("missing client-scoped project switcher popup-toggle; calls = %#v", runner.calls)
 	}
 }
@@ -425,7 +425,7 @@ func TestStatusbarClickSettingsOpensSettingsPopupForClient(t *testing.T) {
 	if err := cmd.Run([]string{"click", "settings", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !sawProjmuxArgs(runner.calls, []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-settings"}) {
+	if !sawProjmuxArgs(runner.calls, []string{"internal", "tmux", "popup-toggle", "--client", "/dev/pts/7", "ai-split-settings"}) {
 		t.Fatalf("missing settings popup-toggle for client; calls = %#v", runner.calls)
 	}
 }
@@ -437,7 +437,7 @@ func TestStatusbarClickResourcesUsesCanonicalClientScopedPopup(t *testing.T) {
 	if err := cmd.Run([]string{"click", "resources", "--client", "/dev/pts/7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"tmux", "popup-toggle", "--client", "/dev/pts/7", resourceInspectorPopupMode}
+	want := []string{"internal", "tmux", "popup-toggle", "--client", "/dev/pts/7", resourceInspectorPopupMode}
 	if !sawProjmuxArgs(runner.calls, want) {
 		t.Fatalf("calls = %#v, want exact canonical args %#v", runner.calls, want)
 	}
@@ -445,7 +445,7 @@ func TestStatusbarClickResourcesUsesCanonicalClientScopedPopup(t *testing.T) {
 	if !ok || action.TmuxBody != resourceInspectorPopupMode || action.PlainChord != "" || len(action.PlainChords) != 0 {
 		t.Fatalf("Resources:Open = %#v, want same canonical mode and no default shortcut", action)
 	}
-	if got := renderTmuxBindingBody("/usr/local/bin/projmux", action); got != "run-shell \"'/usr/local/bin/projmux' tmux popup-toggle --client #{client_tty} resource-inspector\"" {
+	if got := renderTmuxBindingBody("/usr/local/bin/projmux", action); got != "run-shell \"'/usr/local/bin/projmux' internal tmux popup-toggle --client #{client_tty} resource-inspector\"" {
 		t.Fatalf("action body = %q, want byte-equivalent canonical popup path", got)
 	}
 }
@@ -1997,7 +1997,7 @@ func TestStatusbarPopupCommandPrefersHelperSubcommand(t *testing.T) {
 	t.Parallel()
 
 	cmd := statusbarPopupCommand("top\nbottom\n", "/usr/local/bin/projmux")
-	want := "printf %s 'top\nbottom'; '/usr/local/bin/projmux' popup-wait-key"
+	want := "printf %s 'top\nbottom'; '/usr/local/bin/projmux' internal popup-wait-key"
 	if cmd != want {
 		t.Fatalf("popup command = %q, want %q", cmd, want)
 	}

@@ -958,7 +958,7 @@ func TestResourcesActionSettingsVisibilityAndLabsOffConfigOpen(t *testing.T) {
 	configText := fallbackRenderThemeSource().tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(
 		"/tmp/projmux", statusbarDecorationSet{}, config.AIBadgeStyleDot, config.DefaultDesktopNotifyMode, config.LiveResourcesOff, catalog, true,
 	)
-	if !strings.Contains(configText, "set -g "+liveResourcesTmuxOption+" off") || !strings.Contains(configText, "bind-key -n M-u run-shell \"'/tmp/projmux' tmux popup-toggle --client #{client_tty} resource-inspector\"") {
+	if !strings.Contains(configText, "set -g "+liveResourcesTmuxOption+" off") || !strings.Contains(configText, "bind-key -n M-u run-shell \"'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} resource-inspector\"") {
 		t.Fatalf("Labs-off generated config missing independent Resources action: %s", configText)
 	}
 }

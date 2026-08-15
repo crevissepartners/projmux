@@ -150,14 +150,19 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "version", Summary: "Print the current version", Sources: []string{"version"}},
 
 	// hidden internal namespace
-	{Spelling: "internal tmux", Summary: "Generated tmux config and popup plumbing", Sources: []string{"tmux"}},
-	{Spelling: "internal status", Summary: "tmux status segment renderer", Sources: []string{"status"}},
-	{Spelling: "internal statusbar", Summary: "tmux status bar click and key dispatcher", Sources: []string{"statusbar"}},
-	{Spelling: "internal preview", Summary: "Persisted preview cursor plumbing", Sources: []string{"preview"}},
-	{Spelling: "internal session-popup", Summary: "Generated session popup payload", Sources: []string{"session-popup"}},
-	{Spelling: "internal agent-hook", Summary: "Provider hook ingest and title watcher plumbing", Sources: []string{"ai"}},
-	{Spelling: "internal key-broker", Summary: "Darwin physical key transport", Sources: []string{"key-broker"}},
-	{Spelling: "internal popup-wait-key", Summary: "Display-only popup single-key reader", Sources: []string{"popup-wait-key"}},
+	//
+	// The internal plumbing Phase made these executable. Each spelling now names
+	// the hidden `internal` route as a source alongside the current spelling it
+	// aliases, and both remain dispatchable until the separate breaking-change
+	// Phase removes the compatibility half.
+	{Spelling: "internal tmux", Summary: "Generated tmux config and popup plumbing", Sources: []string{"tmux", "internal"}},
+	{Spelling: "internal status", Summary: "tmux status segment renderer", Sources: []string{"status", "internal"}},
+	{Spelling: "internal statusbar", Summary: "tmux status bar click and key dispatcher", Sources: []string{"statusbar", "internal"}},
+	{Spelling: "internal preview", Summary: "Persisted preview cursor plumbing", Sources: []string{"preview", "internal"}},
+	{Spelling: "internal session-popup", Summary: "Generated session popup payload", Sources: []string{"session-popup", "internal"}},
+	{Spelling: "internal agent-hook", Summary: "Provider hook ingest and title watcher plumbing", Sources: []string{"ai", "internal"}},
+	{Spelling: "internal key-broker", Summary: "Darwin physical key transport", Sources: []string{"key-broker", "internal"}},
+	{Spelling: "internal popup-wait-key", Summary: "Display-only popup single-key reader", Sources: []string{"popup-wait-key", "internal"}},
 }
 
 // CanonicalRoutes returns the canonical route manifest in contract order.

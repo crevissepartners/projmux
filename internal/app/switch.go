@@ -1795,7 +1795,7 @@ func (c *switchCommand) reopenSidebarAfterTrust(ctx context.Context, client stri
 		switchInitialSelectionEnv: cleanOptionalPath(resume.Selection),
 		switchStatusMessageEnv:    strings.TrimSpace(resume.Message),
 	}
-	command := buildShellCommand(binaryPath, []string{"tmux", "popup-toggle", "--client", strings.TrimSpace(client), "sessionizer-sidebar"}, env)
+	command := buildShellCommand(binaryPath, []string{"internal", "tmux", "popup-toggle", "--client", strings.TrimSpace(client), "sessionizer-sidebar"}, env)
 	if _, err := c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", command); err != nil {
 		return fmt.Errorf("reopen sidebar after trust: %w", err)
 	}

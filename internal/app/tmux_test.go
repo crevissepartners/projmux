@@ -170,7 +170,7 @@ func TestAppRunTmuxPopupPreviewUsesDefaultOptions(t *testing.T) {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
 
-	const wantCommand = "exec '/tmp/proj mux/bin/projmux' 'session-popup' 'preview' 'dev'"
+	const wantCommand = "exec '/tmp/proj mux/bin/projmux' 'internal' 'session-popup' 'preview' 'dev'"
 	if popup.command != wantCommand {
 		t.Fatalf("popup command = %q, want %q", popup.command, wantCommand)
 	}
@@ -1409,11 +1409,11 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	output := stdout.String()
 	for _, want := range []string{
 		"bind-key -n M-1 run-shell",
-		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		"bind-key -n M-2 run-shell",
-		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} notify-sidebar",
+		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} notify-sidebar",
 		"bind-key -n M-3 run-shell",
-		"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} recent-windows",
+		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} recent-windows",
 		"unbind-key -q F",
 		"set-hook -g pane-focus-out",
 		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane} >/dev/null 2>&1 || true",
@@ -1422,22 +1422,22 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set-hook -g after-select-pane",
 		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id} >/dev/null 2>&1 || true",
 		"set-hook -g pane-exited",
-		"sleep 0.05; '/tmp/proj mux/bin/projmux' tmux rebalance-panes >/dev/null 2>&1 || true",
+		"sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true",
 		"set-hook -g after-kill-pane",
 		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",
 		"set-hook -g after-select-window",
 		"set-hook -g client-session-changed",
 		"run-shell -b \"'/tmp/proj mux/bin/projmux' window record >/dev/null 2>&1 || true\"",
 		"#[bold,fg=colour230,bg=colour29]#[range=user|settings]  projmux #[norange]#[default]",
-		"'/tmp/proj mux/bin/projmux' status kube",
-		"'/tmp/proj mux/bin/projmux' status git",
+		"'/tmp/proj mux/bin/projmux' internal status kube",
+		"'/tmp/proj mux/bin/projmux' internal status git",
 		"set -g @projmux_statusbar_decoration off",
 		"set -g @projmux_statusbar_decoration_cwd off",
 		"set -g @projmux_statusbar_decoration_git off",
 		"set -g @projmux_statusbar_decoration_notify off",
 		"set -g status 2",
 		"set -g status-left-length 20",
-		"#[range=user|session]#[bold,fg=colour254,bg=colour60] #('/tmp/proj mux/bin/projmux' status project) #[default]#[norange] ",
+		"#[range=user|session]#[bold,fg=colour254,bg=colour60] #('/tmp/proj mux/bin/projmux' internal status project) #[default]#[norange] ",
 		"#{n:window_name}",
 		"#{=/7/...:window_name}",
 		"@projmux_statusbar_decoration_cwd",
@@ -1449,7 +1449,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"range=user|usage",
 		"set -g status-format[0]",
 		"set -g status-format[1]",
-		"#[align=left range=user|notify]#('/tmp/proj mux/bin/projmux' status notify --max-width 80)#[norange]#[align=right range=user|usage]#('/tmp/proj mux/bin/projmux' status usage --max-width 120)#[norange]",
+		"#[align=left range=user|notify]#('/tmp/proj mux/bin/projmux' internal status notify --max-width 80)#[norange]#[align=right range=user|usage]#('/tmp/proj mux/bin/projmux' internal status usage --max-width 120)#[norange]",
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
@@ -1469,7 +1469,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"tmux autosave-session-state --quiet",
 		"bind-key R command-prompt",
 		"'/tmp/proj mux/bin/projmux' window recent",
-		"bind-key -n M-3 run-shell \"'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} session-popup\"",
+		"bind-key -n M-3 run-shell \"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} session-popup\"",
 		"set-hook -g session-window-changed",
 		"set -s user-keys",
 		"bind-key -n User",
@@ -1710,7 +1710,7 @@ func TestTmuxPrintConfigKeymapOverrideChangesBindAndUnbindsStaleDefault(t *testi
 		"unbind-key -q F",
 		"unbind-key -q A",
 		"bind-key -n M-a run-shell",
-		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
@@ -1955,7 +1955,7 @@ func TestTmuxPrintConfigShortCircuitsWindowListClicksToNativeSelectWindow(t *tes
 		"{ select-window -t = }",
 		// Projmux fallback path for non-window ranges still goes through run-shell,
 		// now wrapped in a `{ ... }` block instead of an extra layer of quoting.
-		`{ run-shell "'/tmp/proj mux/bin/projmux' statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\" --mouse-window \"#{mouse_window}\"" }`,
+		`{ run-shell "'/tmp/proj mux/bin/projmux' internal statusbar click \"#{mouse_status_range}\" --client \"#{client_tty}\" --mouse-window \"#{mouse_window}\"" }`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
@@ -1980,7 +1980,7 @@ func TestTmuxPrintConfigBindsHardcodedStatusbarUsageRefresh(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	want := `bind-key -T projmux-status r run-shell "'/tmp/proj mux/bin/projmux' statusbar usage-refresh"`
+	want := `bind-key -T projmux-status r run-shell "'/tmp/proj mux/bin/projmux' internal statusbar usage-refresh"`
 	if !strings.Contains(stdout.String(), want) {
 		t.Fatalf("print-config output = %q, want substring %q", stdout.String(), want)
 	}
@@ -2007,7 +2007,7 @@ func TestTmuxPrintConfigBindsPaneContextMenu(t *testing.T) {
 		// picker via the same popup-toggle entrypoint as the C-r keybinding
 		// (`ai picker` directly would fail: run-shell has no TMUX env, so the
 		// picker cannot resolve its context cwd).
-		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
+		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
 		// Stock split items (stock names + key shortcuts).
 		"\"Horizontal Split\" h { split-window -h }",
 		"\"Vertical Split\" v { split-window -v }",
@@ -2080,7 +2080,7 @@ func TestTmuxPrintAppConfigBindsPaneContextMenu(t *testing.T) {
 		"unbind-key -q -n MouseDown3Pane",
 		"bind-key -n MouseDown3Pane if-shell -F -t = ",
 		"display-menu -T \"#[align=centre]#{pane_index} (#{pane_id})\" -t = -x M -y M",
-		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
+		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
 		"\"Horizontal Split\" h { split-window -h }",
 		"\"Vertical Split\" v { split-window -v }",
 	} {
@@ -2209,8 +2209,8 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"bind-key -n M-S-Left previous-window",
 		"bind-key -n M-S-Right next-window",
 		"set -g status-left-length 20",
-		"set -g status-left \"#[range=user|session]#[bold,fg=colour254,bg=colour60] #('/tmp/projmux' status project) #[default]#[norange] \"",
-		"#[bold,fg=colour254,bg=colour60] #('/tmp/projmux' status project) #[default]",
+		"set -g status-left \"#[range=user|session]#[bold,fg=colour254,bg=colour60] #('/tmp/projmux' internal status project) #[default]#[norange] \"",
+		"#[bold,fg=colour254,bg=colour60] #('/tmp/projmux' internal status project) #[default]",
 		"#{n:window_name}",
 		"#{=/7/...:window_name}",
 		"set -g @projmux_statusbar_decoration off",
@@ -2221,15 +2221,15 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"#[fg=colour220] ",
 		"#[fg=colour220]📁 ",
 		"#[fg=colour245]#{=-28/...:pane_current_path}#[norange]",
-		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		"#[fg=colour245]   %Y-%m-%d %H:%M #[bold,fg=colour230,bg=colour29]#[range=user|settings]   #[norange]#[default]",
 		"set -g status 2",
 		"range=user|notify",
 		"range=user|usage",
 		"set -g status-format[0]",
 		"set -g status-format[1]",
-		"#[align=left range=user|notify]#('/tmp/projmux' status notify --max-width 80)#[norange]#[align=right range=user|usage]#('/tmp/projmux' status usage --max-width 120)#[norange]",
-		"#('/tmp/projmux' tmux autosave-session-state --quiet)",
+		"#[align=left range=user|notify]#('/tmp/projmux' internal status notify --max-width 80)#[norange]#[align=right range=user|usage]#('/tmp/projmux' internal status usage --max-width 120)#[norange]",
+		"#('/tmp/projmux' internal tmux autosave-session-state --quiet)",
 		"align=left",
 		"align=right",
 		"set -gu status-format[2]",
@@ -2801,7 +2801,7 @@ func TestTmuxPrintAppConfigKeepsStandaloneAndAppKeymapScopesSeparated(t *testing
 	output := stdout.String()
 	for _, want := range []string{
 		"bind-key -n M-a run-shell",
-		"'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
 		"bind-key -n C-t new-window -c \"#{pane_current_path}\"",
 		"unbind-key -q -n C-t",
 	} {
@@ -2960,7 +2960,7 @@ func TestTmuxInstallWritesSnippetAndIncludesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(snippet), "'/tmp/projmux' tmux popup-toggle --client #{client_tty} sessionizer") {
+	if !strings.Contains(string(snippet), "'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer") {
 		t.Fatalf("snippet = %q, want projmux binding", string(snippet))
 	}
 	config, err := os.ReadFile(configPath)

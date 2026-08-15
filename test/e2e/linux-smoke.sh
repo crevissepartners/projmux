@@ -106,8 +106,18 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/focus.json" '"ok":true'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/focus.json" 'notify-only'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/focus-hook.log" "session ready: e2e-beta"
 
+# The pre-namespace spelling is what a tmux server configured by a previously
+# installed binary still invokes, so it is exercised here verbatim; the
+# relocated spelling must render the same segment against the same live state.
 status_notify="$("$bin" status notify --max-width 80)"
 smoke_assert_output_contains "$status_notify" "docker e2e"
+internal_status_notify="$("$bin" internal status notify --max-width 80)"
+if [[ "$internal_status_notify" != "$status_notify" ]]; then
+  echo "internal status notify diverged from the compatibility spelling status notify" >&2
+  echo "compatibility: $status_notify" >&2
+  echo "internal:      $internal_status_notify" >&2
+  exit 1
+fi
 
 "$bin" statusbar click notify >"$PROJMUX_SMOKE_WORKDIR/statusbar-notify-click.out"
 "$bin" notify list --json >"$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json"
