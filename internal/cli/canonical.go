@@ -53,13 +53,13 @@ var canonicalRoutes = []CanonicalRoute{
 
 	// create
 	{Spelling: "create window", Summary: "Create a Window with its initial Pane", Sources: []string{"window"}, Outputs: projectionCatalog},
-	{Spelling: "create pane", Summary: "Create a shell Pane in an existing Window", Sources: []string{"ai"}, Outputs: projectionCatalog},
-	{Spelling: "create agent", Summary: "Create an Agent and its managed Pane", Sources: []string{"ai"}, Outputs: projectionCatalog},
+	{Spelling: "create pane", Summary: "Create a shell Pane in an existing Window", Sources: []string{"ai", "create"}, Outputs: projectionCatalog},
+	{Spelling: "create agent", Summary: "Create an Agent and its managed Pane", Sources: []string{"ai", "create"}, Outputs: projectionCatalog},
 	{Spelling: "create notification", Summary: "Create a pending notification row", Sources: []string{"notify"}, Outputs: projectionCatalog},
 	{Spelling: "create snapshot", Summary: "Create a session snapshot", Sources: []string{"session-state"}, Outputs: projectionCatalog},
-	{Spelling: "create codex", Summary: "Provider shortcut for create agent --provider codex", Outputs: projectionCatalog},
-	{Spelling: "create claude", Summary: "Provider shortcut for create agent --provider claude", Outputs: projectionCatalog},
-	{Spelling: "create antigravity", Summary: "Provider shortcut for create agent --provider antigravity", Outputs: projectionCatalog},
+	{Spelling: "create codex", Summary: "Provider shortcut for create agent --provider codex", Sources: []string{"create"}, Outputs: projectionCatalog},
+	{Spelling: "create claude", Summary: "Provider shortcut for create agent --provider claude", Sources: []string{"create"}, Outputs: projectionCatalog},
+	{Spelling: "create antigravity", Summary: "Provider shortcut for create agent --provider antigravity", Sources: []string{"create"}, Outputs: projectionCatalog},
 
 	// navigation and binding
 	{Spelling: "attach project", Summary: "Enter a Project runtime from outside tmux", Sources: []string{"attach"}},
@@ -90,11 +90,11 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "prune snapshot", Summary: "Prune preserved session snapshots", Sources: []string{"prune"}},
 
 	// agent domain
-	{Spelling: "agent status", Summary: "Read or set Agent status state", Sources: []string{"ai"}},
-	{Spelling: "agent topic", Summary: "Read, set, or clear the Agent topic annotation", Sources: []string{"ai"}},
-	{Spelling: "agent resume", Summary: "Rebind an Offline or Failed Agent to a new managed Pane", Sources: []string{"ai"}},
-	{Spelling: "agent integrate", Summary: "Install or remove provider hook integrations", Sources: []string{"ai"}},
-	{Spelling: "agent usage", Summary: "Read provider account usage quota snapshots", Sources: []string{"usage", "status"}},
+	{Spelling: "agent status", Summary: "Read or set Agent status state", Sources: []string{"ai", "agent"}},
+	{Spelling: "agent topic", Summary: "Read, set, or clear the Agent topic annotation", Sources: []string{"ai", "agent"}},
+	{Spelling: "agent resume", Summary: "Rebind an Offline or Failed Agent to a new managed Pane", Sources: []string{"ai", "agent"}},
+	{Spelling: "agent integrate", Summary: "Install or remove provider hook integrations", Sources: []string{"ai", "agent"}},
+	{Spelling: "agent usage", Summary: "Read provider account usage quota snapshots", Sources: []string{"usage", "status", "agent"}},
 
 	// attention domain
 	{Spelling: "attention list", Summary: "List live Pane attention state", Sources: []string{"attention"}},

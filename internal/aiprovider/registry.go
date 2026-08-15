@@ -24,6 +24,12 @@ type Metadata struct {
 	SettingsVisible bool
 	PickerEligible  bool
 	UsageSupported  bool
+	// CreateShortcut opts this provider into a top-level `projmux create <id>`
+	// shortcut. It is deliberately explicit: the CLI information architecture v2
+	// contract forbids the public command surface from growing just because a
+	// provider was discovered at runtime, so a new registry entry adds no CLI
+	// node until this flag is set.
+	CreateShortcut  bool
 	Integrate       SupportMetadata
 	HookDiagnostics SupportMetadata
 	SessionState    SupportMetadata
@@ -50,6 +56,7 @@ var registry = []Metadata{
 		SettingsVisible: true,
 		PickerEligible:  true,
 		UsageSupported:  true,
+		CreateShortcut:  true,
 		Integrate: SupportMetadata{
 			Supported: true,
 			Command:   "projmux ai integrate claude",
@@ -73,6 +80,7 @@ var registry = []Metadata{
 		SettingsVisible: true,
 		PickerEligible:  true,
 		UsageSupported:  true,
+		CreateShortcut:  true,
 		Integrate: SupportMetadata{
 			Supported: true,
 			Command:   "projmux ai integrate codex",
@@ -96,6 +104,7 @@ var registry = []Metadata{
 		SettingsVisible: true,
 		PickerEligible:  true,
 		UsageSupported:  true,
+		CreateShortcut:  true,
 		Integrate: SupportMetadata{
 			Supported: true,
 			Command:   "projmux ai integrate antigravity",
@@ -109,6 +118,22 @@ var registry = []Metadata{
 		SettingsOrder: 30,
 		PickerOrder:   30,
 	},
+}
+
+// CreateShortcuts returns the providers that own a `projmux create <id>`
+// shortcut, in picker order.
+//
+// The shortcut is a spelling of `create agent --provider <id>`; it is not a
+// resource kind, so the canonical route, the operations record, and the
+// generated reference all keep using `create agent` plus the provider field.
+func CreateShortcuts() []Metadata {
+	out := filter(func(provider Metadata) bool {
+		return provider.CreateShortcut
+	})
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].PickerOrder < out[j].PickerOrder
+	})
+	return out
 }
 
 func All() []Metadata {

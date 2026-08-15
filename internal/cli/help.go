@@ -166,14 +166,12 @@ func RenderRouteHelp(w io.Writer, path []string, route Route) error {
 				width = len(child.Name) + 2
 			}
 		}
-		b.WriteString("\nSubcommands:\n")
-		for _, child := range route.Children {
-			b.WriteString("  ")
-			b.WriteString(child.Name)
-			b.WriteString(strings.Repeat(" ", width-len(child.Name)))
-			b.WriteString(child.Summary)
-			b.WriteString("\n")
-		}
+		// Provider shortcuts are spellings of `create agent --provider <id>`, not
+		// resource kinds, so they get their own group rather than sitting in the
+		// kind listing. Both groups share one column width so the two blocks line
+		// up as a single table.
+		writeChildGroup(&b, "Subcommands", route.Children, width, false)
+		writeChildGroup(&b, "Provider shortcuts", route.Children, width, true)
 	}
 	if len(route.Outputs) > 0 {
 		b.WriteString("\nOutput modes:\n")
@@ -205,6 +203,30 @@ func RenderRouteHelp(w io.Writer, path []string, route Route) error {
 	b.WriteString("\nRun 'projmux help' for the full command list.\n")
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeChildGroup writes one titled child listing, skipping the group entirely
+// when no child belongs to it.
+func writeChildGroup(b *strings.Builder, title string, children []Route, width int, shortcuts bool) {
+	var group []Route
+	for _, child := range children {
+		if child.ProviderShortcut == shortcuts {
+			group = append(group, child)
+		}
+	}
+	if len(group) == 0 {
+		return
+	}
+	b.WriteString("\n")
+	b.WriteString(title)
+	b.WriteString(":\n")
+	for _, child := range group {
+		b.WriteString("  ")
+		b.WriteString(child.Name)
+		b.WriteString(strings.Repeat(" ", width-len(child.Name)))
+		b.WriteString(child.Summary)
+		b.WriteString("\n")
+	}
 }
 
 // padName pads a listing name to the shared help name column.

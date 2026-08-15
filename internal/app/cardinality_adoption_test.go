@@ -39,6 +39,7 @@ var canonicalRouteCardinalities = []routeCardinality{
 	{"delete window", selector.Target{Verb: selector.VerbDelete, Kind: coremetadata.KindWindow}, selector.CardinalityAtLeastOne},
 	{"delete pane", selector.Target{Verb: selector.VerbDelete, Kind: coremetadata.KindPane}, selector.CardinalityAtLeastOne},
 	{"delete agent", selector.Target{Verb: selector.VerbDelete, Kind: coremetadata.KindAgent}, selector.CardinalityAtLeastOne},
+	{"agent resume", selector.Target{Verb: selector.VerbResume, Kind: coremetadata.KindAgent}, selector.CardinalityExactOne},
 }
 
 // TestCanonicalRoutesAdoptTheDeclaredCardinalityMatrix proves the routes consume
@@ -127,6 +128,17 @@ func TestEveryCanonicalRouteCardinalityIsEnforcedAtTheRoute(t *testing.T) {
 				_, _, err := runRoute(t, newTestDeleteCommand(store, false, false, nil), "pane", "zsh", "--yes")
 				return err
 			},
+		},
+		{
+			spelling: "agent resume",
+			run: func(t *testing.T, store *fakeResourceStore) error {
+				// `codex` names an Agent in two Windows, so the exact-one cell is
+				// what stops resume from picking one.
+				cmd, _, _ := newTestAgentCommand(t, store)
+				_, _, err := runRoute(t, cmd, "resume", "codex")
+				return err
+			},
+			wantFail: true,
 		},
 		{
 			spelling: "delete pane empty",

@@ -92,8 +92,10 @@ func IsUsageError(err error) bool {
 // App wires the CLI entrypoints to concrete command handlers.
 type App struct {
 	lifecycle    *diagnostics.LifecycleRecorder
+	agent        *agentCommand
 	ai           *aiCommand
 	attention    *attentionCommand
+	create       *createCommand
 	attach       *attachCommand
 	current      *currentCommand
 	delete       *deleteCommand
@@ -197,6 +199,16 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	deleteCmd.snapshots = sessionStateCmd
 	restoreCmd := newRestoreCommand()
 	restoreCmd.snapshots = sessionStateCmd
+	// The Agent namespace. `create` and `agent` normalize the Agent spellings
+	// the `ai` route mixes together; every subcommand except `agent resume`
+	// forwards raw argv to the handler that already owns the behavior, so the
+	// canonical spelling is a parity alias rather than a second implementation.
+	usageCmd := usagecmd.New(nil)
+	createCmd := newCreateCommand()
+	createCmd.ai = ai
+	agentCmd := newAgentCommand()
+	agentCmd.ai = ai
+	agentCmd.usage = usageCmd
 	runtimeCmd := newRuntimeCommand()
 	runtimeCmd.sessions = sessions
 	runtimeCmd.attach = attach
@@ -206,8 +218,10 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	attach.switcher = switcher
 	return &App{
 		lifecycle:    recorder,
+		agent:        agentCmd,
 		ai:           ai,
 		attention:    attentionCmd,
+		create:       createCmd,
 		attach:       attach,
 		current:      newCurrentCommand(recorder),
 		delete:       deleteCmd,
@@ -243,7 +257,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		tmux:         tmuxCmd,
 		update:       update,
 		upgrade:      newUpgradeCommand(),
-		usage:        usagecmd.New(nil),
+		usage:        usageCmd,
 		welcome:      newWelcomeCommand(update),
 		window:       newWindowCommand(recorder),
 	}
@@ -276,7 +290,9 @@ type rawArgvCommand interface {
 // current command graph; `help` and `version` are owned by the root policy.
 func (a *App) routeHandlers() map[string]cli.Handler {
 	commands := map[string]rawArgvCommand{
+		"agent":       a.agent,
 		"ai":          a.ai,
+		"create":      a.create,
 		"attention":   a.attention,
 		"attach":      a.attach,
 		"current":     a.current,

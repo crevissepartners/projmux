@@ -1,7 +1,9 @@
 root use="projmux" disableFlagParsing=true silenceUsage=true silenceErrors=true disableSuggestions=true completionDisabled=true
+agent hidden=false disableFlagParsing=true args=true children=0
 ai hidden=false disableFlagParsing=true args=true children=0
 attach hidden=false disableFlagParsing=true args=true children=0
 attention hidden=false disableFlagParsing=true args=true children=0
+create hidden=false disableFlagParsing=true args=true children=0
 current hidden=false disableFlagParsing=true args=true children=0
 delete hidden=false disableFlagParsing=true args=true children=0
 describe hidden=false disableFlagParsing=true args=true children=0

@@ -36,6 +36,11 @@ const (
 	VerbRename   Verb = "rename"
 	VerbRebind   Verb = "rebind"
 	VerbDelete   Verb = "delete"
+	// VerbResume is the Agent-domain resume workflow. It is spelled
+	// `agent resume` rather than `resume agent`, but it resolves an existing
+	// target set exactly like the shared verbs, so it belongs in this matrix
+	// instead of re-deciding its own cardinality inside the handler.
+	VerbResume Verb = "resume"
 )
 
 // Target is one cell of the <verb, kind> cardinality matrix.
@@ -98,6 +103,11 @@ var matrix = map[Target]Cardinality{
 	// one Pane inside each of them.
 	{Verb: VerbCreate, Kind: metadata.KindWindow}: CardinalityAtLeastOne,
 	{Verb: VerbCreate, Kind: metadata.KindPane}:   CardinalityExactOne,
+
+	// resume addresses exactly one existing Agent. It never fans out and never
+	// falls back to a focus target: rebinding the wrong conversation is worse
+	// than refusing an ambiguous reference.
+	{Verb: VerbResume, Kind: metadata.KindAgent}: CardinalityExactOne,
 
 	// delete fans out over every resolved target.
 	{Verb: VerbDelete, Kind: metadata.KindWindow}: CardinalityAtLeastOne,
