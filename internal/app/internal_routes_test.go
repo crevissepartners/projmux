@@ -161,8 +161,11 @@ func TestGeneratedConfigReachesEveryRelocatedPlumbingRouteThroughTheInternalName
 	joined := strings.Join(mapValues(generatedConfigSurfaces(t)), "\n")
 	for _, want := range []string{
 		"' internal status project",
-		"' internal status notify --max-width 80",
-		"' internal status usage --max-width 120",
+		// Both HUD segments now receive a tmux format instead of a literal
+		// cell count, so the expected substring is built from the same
+		// derivation the generator uses.
+		"' internal status notify --max-width " + statusbarNotifyBudgetFormat(),
+		"' internal status usage --max-width " + statusbarUsageBudgetFormat(),
 		"' internal status kube",
 		"' internal status git",
 		"' internal status resources",

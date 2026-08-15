@@ -1301,9 +1301,88 @@ func statusbarSessionLeftFormat(bin string, roles theme.RenderRoles) string {
 	return "#[range=user|session]#[bold,fg=" + roles.IdentityFg + ",bg=" + roles.IdentityBg + "] #(" + bin + " internal status project) #[default]#[norange] "
 }
 
+// statusbarNotifyMaxWidth is the notify segment's own design budget in cells.
+// It is a notify-side number: that segment's clipping ladder was tuned against
+// it, and it stays notify's effective cap on every row wide enough to afford it
+// without starving usage, so notify's bytes are unchanged on a normal terminal.
+// The usage segment deliberately has no counterpart constant — it gets
+// whatever of the row notify does not reserve.
+const statusbarNotifyMaxWidth = 80
+
+// statusbarSharedRowMinWidth is the narrowest `status-format[0]` on which
+// notify can still be handed its whole design budget and leave usage an equal
+// share. Below it the row is split evenly instead, because holding a fixed
+// 80-cell reservation on, say, a 100-column client would leave usage 20 cells.
+const statusbarSharedRowMinWidth = 2 * statusbarNotifyMaxWidth
+
+// statusbarClientWidthFormat expands to the width, in cells, of the client the
+// status line is currently being drawn for.
+//
+// tmux expands the inside of `#()` before it runs the job (verified on tmux
+// 3.6: a `#(cmd #{client_width})` job receives the real width as argv), and it
+// keeps one job per client, so two clients of different sizes attached to the
+// same session each render their own width. Changing the expansion — a resize
+// — makes tmux re-run that client's job immediately instead of waiting for the
+// next `status-interval` tick, which is why the segments repaint at their new
+// budgets as soon as the terminal is resized.
+const statusbarClientWidthFormat = "#{client_width}"
+
+// statusbarNotifyBudgetFormat expands to the notify segment's cell budget:
+// notify's full design budget on a row at least twice that wide, and half the
+// row below that.
+//
+// The numeric comparison must go through the `e|` modifier. tmux's bare
+// `#{<:a,b}` / `#{>:a,b}` are STRING comparisons — verified on tmux 3.6,
+// where `#{>:191,80}` is 0 and `#{>:9,10}` is 1 — so a bare comparison here
+// would silently never fire. The `<` form is also the fail-safe direction: tmux
+// treats an unevaluable condition as false, so a tmux that cannot evaluate the
+// comparison falls back to the literal 80, which is the historical behaviour.
+func statusbarNotifyBudgetFormat() string {
+	half := "#{e|/:" + statusbarClientWidthFormat + ",2}"
+	return "#{?#{e|<:" + statusbarClientWidthFormat + "," + strconv.Itoa(statusbarSharedRowMinWidth) + "}," +
+		half + "," + strconv.Itoa(statusbarNotifyMaxWidth) + "}"
+}
+
+// statusbarUsageBudgetFormat expands to everything on the row that notify did
+// not reserve. The two budgets sum to exactly the client width at every width,
+// which is what keeps tmux from ever having to clip either segment.
+func statusbarUsageBudgetFormat() string {
+	return "#{e|-:" + statusbarClientWidthFormat + "," + statusbarNotifyBudgetFormat() + "}"
+}
+
+// statusbarAuxLineFormat renders `status-format[0]`, the HUD row that carries
+// the notify queue on the left and the usage bar on the right.
+//
+// Both `--max-width` budgets are derived from the client the row is drawn for
+// rather than hardcoded. The row does not share space with the window list
+// — that lives on `status-format[1]` — so the whole client width is this
+// row's budget, and the two segments split it exactly:
+//
+//	notify = min(80, client_width / 2)
+//	usage  = client_width - notify
+//
+// Splitting, rather than handing usage the whole width, is forced by two
+// measured facts. First, the notify segment fills whatever budget it is given
+// whenever the queue is non-empty: it clips its body text down to the cap
+// rather than rendering short. Second, when the `#[align=left]` and
+// `#[align=right]` sections of one status row do not both fit, tmux draws the
+// left section in full and clips the right one FROM ITS LEFT EDGE — so an
+// over-budget usage segment does not degrade through its own tier ladder, it
+// loses its leading provider blocks outright (verified on tmux 3.6 and
+// reproduced end to end against a real client at widths 191/140/80). Budgeting
+// usage at the full client width would therefore hide a provider's official
+// window bar wholesale whenever anything is queued, which is exactly what the
+// segment's ladder exists to prevent.
+//
+// The former hardcoded pair (notify 80, usage 120) summed to 200 and so was
+// already over-committing every row narrower than that: on a 140-column client
+// with a non-empty queue tmux was clipping the usage segment. Deriving both
+// budgets from the client removes that class of defect at every width and
+// gives usage every cell the row has beyond notify's reservation, instead of a
+// constant that happened to be tuned for one terminal size.
 func statusbarAuxLineFormat(bin string, autosave bool) string {
-	line := "#[align=left range=user|notify]#(" + bin + " internal status notify --max-width 80)#[norange]" +
-		"#[align=right range=user|usage]#(" + bin + " internal status usage --max-width 120)#[norange]"
+	line := "#[align=left range=user|notify]#(" + bin + " internal status notify --max-width " + statusbarNotifyBudgetFormat() + ")#[norange]" +
+		"#[align=right range=user|usage]#(" + bin + " internal status usage --max-width " + statusbarUsageBudgetFormat() + ")#[norange]"
 	if autosave {
 		line += "#(" + bin + " internal tmux autosave-session-state --quiet)"
 	}
@@ -1570,9 +1649,10 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(b
 	// may have stuck a leftover `status-format[1]` showing pane debug info —
 	// we explicitly overwrite the line so it always reflects this build's
 	// intent. `set -gu status-format[2]` clears any stale third row inherited
-	// from the previous three-line layout. Width caps (80/120) target typical
-	// 200+ col terminals; the HUD's full form is ~100 cells, so 120 leaves a
-	// small buffer while still fitting alongside notify.
+	// from the previous three-line layout. Both segments' width budgets are
+	// derived from `#{client_width}` by statusbarAuxLineFormat rather than
+	// hardcoded, so a wide terminal is no longer rendered against a narrow
+	// terminal's cap.
 	lines = append(lines,
 		"set -g status 2",
 		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin, roles)),

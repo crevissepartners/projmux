@@ -52,7 +52,8 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/installed-report-doctor.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "atomically replaced $installed"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "reloaded tmux server -L projmux: 1 sessions"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/make-install.out" "reconcile:"
-smoke_assert_file_contains "$HOME/.config/projmux/tmux.conf" "internal status notify --max-width 80"
+smoke_assert_file_contains "$HOME/.config/projmux/tmux.conf" 'internal status notify --max-width #{?#{e|<:#{client_width},160},#{e|/:#{client_width},2},80}'
+smoke_assert_file_contains "$HOME/.config/projmux/tmux.conf" 'internal status usage --max-width #{e|-:#{client_width},#{?#{e|<:#{client_width},160},#{e|/:#{client_width},2},80}}'
 # The installed config is what a live tmux server sources, so it is the one
 # place the internal-namespace relocation has to hold end to end.
 smoke_assert_file_contains "$HOME/.config/projmux/tmux.conf" "internal statusbar click"
