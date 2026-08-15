@@ -12,14 +12,15 @@ import (
 // hidden, to hold exactly one primary disposition, with zero orphan routes,
 // before any later Phase may move a namespace.
 //
-// The public count is 37: the 33 routes inventoried by the compatibility
-// contract plus 9 canonical nodes added by later Phases -- `get` from the
+// The public count is 38: the 33 routes inventoried by the compatibility
+// contract plus 10 canonical nodes added by later Phases -- `get` from the
 // selector Phase, `delete`, `describe`, `rebind`, `rename`, `restore`, and
-// `runtime` from the public verb-to-kind Phase, and `agent` and `create` from
-// the Agent namespace Phase -- minus the 5 internal plumbing routes the
-// internal isolation Phase moved out of the primary listing. Every one of the
-// 33 inventoried routes is still present, still dispatchable, and still holds
-// exactly one disposition; hiding is not removal.
+// `runtime` from the public verb-to-kind Phase, `agent` and `create` from the
+// Agent namespace Phase, and `config` from the public-spelling Phase -- minus
+// the 5 internal plumbing routes the internal isolation Phase moved out of the
+// primary listing. Every one of the 33 inventoried routes is still present,
+// still dispatchable, and still holds exactly one disposition; hiding is not
+// removal.
 func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	t.Parallel()
 
@@ -56,8 +57,8 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 37 {
-		t.Fatalf("public route count = %d, want 37", public)
+	if public != 38 {
+		t.Fatalf("public route count = %d, want 38", public)
 	}
 	// The 2 original hidden helpers, the 5 plumbing routes the internal
 	// isolation Phase hid, and the `internal` namespace itself.
@@ -65,8 +66,8 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		t.Fatalf("hidden route count = %d, want 8", hidden)
 	}
 	// The classification tally from the compatibility contract, counted over
-	// the 37 public top-level routes. Canonical is 17 rather than the
-	// contract's 8 because the 9 canonical verb/domain nodes are new surface,
+	// the 38 public top-level routes. Canonical is 18 rather than the
+	// contract's 8 because the 10 canonical verb/domain nodes are new surface,
 	// not members of the 33 inventoried current routes.
 	//
 	// The public internal count is 0: that is the whole point of the internal
@@ -76,7 +77,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	// route was removed or reclassified along the way -- in particular `ai` and
 	// `usage` are still public compatibility routes.
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical:     17,
+		DispositionCanonical:     18,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 	}
@@ -85,7 +86,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	}
 	// Every hidden route is internal plumbing.
 	wantTally := map[Disposition]int{
-		DispositionCanonical:     17,
+		DispositionCanonical:     18,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 		DispositionInternal:      8,
@@ -129,6 +130,36 @@ func TestNoInternalRouteIsPubliclyListed(t *testing.T) {
 	}
 }
 
+// routesWithoutACanonicalSpelling is the exact set of routes the public-spelling
+// Phase left without a canonical v2 mapping, each with the canonical namespace
+// that was deleted from the manifest rather than built.
+//
+// Every one of these routes works today and is unchanged. What was deleted is
+// the *renaming plan*: each of these canonical namespaces would need its own
+// leaf parser, its own cardinality-matrix rows, and its own tests, and two of
+// them (`config show`, `config edit`) belong to a separately tracked Settings
+// information-architecture effort. The roadmap owner's rule is that a plan
+// needing its own slice does not get parked in this manifest, so the spellings
+// were removed and handed back to the roadmap hub as Backlog candidates.
+//
+// The set is written out rather than derived. Its whole job is to fail when some
+// later change drops a canonical mapping that nobody adjudicated, so a route
+// silently losing its v2 spelling is a test failure and never an omission.
+var routesWithoutACanonicalSpelling = map[string]string{
+	"ai settings":        "config edit",
+	"ai notify":          "notification ack",
+	"doctor":             "diagnostics doctor",
+	"notify push":        "create notification",
+	"notify ack":         "notification ack",
+	"notify reconcile":   "notification reconcile",
+	"quit":               "runtime quit",
+	"resources":          "diagnostics resources",
+	"session-state save": "create snapshot",
+	"settings":           "config edit",
+	"shell":              "runtime open",
+	"welcome":            "setup welcome",
+}
+
 // TestEveryRouteCanonicalSpellingResolves proves there is no dangling canonical
 // reference: every canonical spelling named by a current route (at any depth)
 // exists in the canonical manifest.
@@ -136,16 +167,61 @@ func TestEveryRouteCanonicalSpellingResolves(t *testing.T) {
 	t.Parallel()
 
 	walkRoutes(Routes(), func(path []string, route Route) {
-		if len(route.Canonical) == 0 {
-			t.Errorf("route %q names no canonical route", strings.Join(path, " "))
-			return
-		}
 		for _, spelling := range route.Canonical {
 			if _, ok := LookupCanonicalRoute(spelling); !ok {
 				t.Errorf("route %q references unknown canonical route %q", strings.Join(path, " "), spelling)
 			}
 		}
 	})
+}
+
+// TestOnlyTheDeletedCanonicalNamespacesLeaveARouteUnmapped is the other half of
+// the coverage claim, and it is stated as a two-way diff so it cannot rot into a
+// permission slip.
+//
+// Left to right: every route the record names must really have no canonical
+// mapping, so a spelling quietly restored to the manifest without updating the
+// record fails here. Right to left: every unmapped route must be in the record,
+// so a future change that drops a canonical mapping without adjudicating it
+// fails here too. Coverage stays total for everything else.
+func TestOnlyTheDeletedCanonicalNamespacesLeaveARouteUnmapped(t *testing.T) {
+	t.Parallel()
+
+	unmapped := map[string]bool{}
+	walkRoutes(Routes(), func(path []string, route Route) {
+		if len(route.Canonical) == 0 {
+			unmapped[strings.Join(path, " ")] = true
+		}
+	})
+
+	for spelling := range routesWithoutACanonicalSpelling {
+		tokens := strings.Fields(spelling)
+		if path, _, ok := Resolve(tokens); !ok || len(path) != len(tokens) {
+			t.Errorf("record names %q, which is not a route", spelling)
+			continue
+		}
+		if !unmapped[spelling] {
+			t.Errorf("route %q now names a canonical spelling; drop it from routesWithoutACanonicalSpelling", spelling)
+		}
+	}
+	for spelling := range unmapped {
+		if _, ok := routesWithoutACanonicalSpelling[spelling]; !ok {
+			t.Errorf("route %q has no canonical spelling and is not in the adjudicated record", spelling)
+		}
+	}
+
+	// The deleted namespaces must really be gone, or the record above would be
+	// describing a state the manifest does not hold.
+	for spelling, deleted := range routesWithoutACanonicalSpelling {
+		if _, ok := LookupCanonicalRoute(deleted); ok {
+			t.Errorf("canonical route %q still exists, so route %q should name it", deleted, spelling)
+		}
+	}
+
+	// Non-vacuity: the diff proves nothing if every route happens to be mapped.
+	if len(unmapped) == 0 {
+		t.Fatal("no route is unmapped, so this assertion is vacuous; delete it with the reason recorded")
+	}
 }
 
 // TestEveryCanonicalSourceRouteBackReferences proves the mapping is closed in
@@ -429,7 +505,7 @@ func TestEveryInventoriedRouteSurvivesUnchanged(t *testing.T) {
 
 	// The routes this Phase adds are new surface, not inventory members, and all
 	// of them are canonical.
-	for _, token := range []string{"get", "describe", "delete", "rebind", "rename", "restore", "runtime", "agent", "create"} {
+	for _, token := range []string{"get", "describe", "delete", "rebind", "rename", "restore", "runtime", "agent", "create", "config"} {
 		if _, ok := inventoriedRoutes[token]; ok {
 			t.Fatalf("%q is listed as an inventoried route; it is new canonical surface", token)
 		}

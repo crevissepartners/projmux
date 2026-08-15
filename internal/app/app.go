@@ -97,6 +97,7 @@ type App struct {
 	attention    *attentionCommand
 	create       *createCommand
 	attach       *attachCommand
+	config       *configCommand
 	current      *currentCommand
 	delete       *deleteCommand
 	describe     *describeCommand
@@ -181,6 +182,12 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	settingsCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	tmuxCmd := newTmuxCommand(recorder)
 	tmuxCmd.sessionStateDiagnostics = sessionStateDiagnostics
+	// The public config domain. Both routes are parity aliases over the tmux
+	// handler that already owns generated-config rendering and application, so
+	// the public spelling is a second door onto one implementation rather than a
+	// second implementation.
+	configCmd := newConfigCommand()
+	configCmd.tmux = tmuxCmd
 	attentionCmd := newAttentionCommand()
 	attentionCmd.producer = newAttentionNotifyProducer(notifyFocusDiagnostics)
 	focusCmd := newFocusCommand(recorder)
@@ -246,6 +253,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		attention:    attentionCmd,
 		create:       createCmd,
 		attach:       attach,
+		config:       configCmd,
 		current:      newCurrentCommand(recorder),
 		delete:       deleteCmd,
 		describe:     newDescribeCommand(),
@@ -319,6 +327,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"create":      a.create,
 		"attention":   a.attention,
 		"attach":      a.attach,
+		"config":      a.config,
 		"current":     a.current,
 		"delete":      a.delete,
 		"describe":    a.describe,

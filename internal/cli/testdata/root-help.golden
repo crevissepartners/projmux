@@ -5,6 +5,7 @@ Commands:
   ai        Manage tmux AI split launch and settings
   attention View and manage live tmux pane attention state
   attach    Open tmux lifecycle entry helpers
+  config    Render or apply the generated tmux configuration
   create    Create Projmux resources
   current   Resolve the active tmux pane path
   delete    Delete Projmux resources with an explicit cascade plan

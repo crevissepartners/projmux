@@ -97,12 +97,27 @@ next `projmux tmux apply`. They are simply no longer listed in `projmux help`.
 Removing them is a separate breaking change.
 
 `projmux tmux print-config`, `print-app-config`, `install`, `install-app`, and
-`apply` sit here because the whole `tmux` route was classified as plumbing, but
-`projmux tmux apply` remains the supported CLI recovery/sync command after a
-config or keymap edit and is still documented as such throughout these docs.
-`make install` calls it directly. It is an internal/compatibility spelling, not
-a public route: there is no `projmux config apply` in this build, and the
-generated reference deliberately does not list one.
+`apply` sit here because the whole `tmux` route was classified as plumbing.
+Three of the five now also have a public spelling under [`config`](#config):
+
+| hidden spelling | public spelling |
+| --- | --- |
+| `projmux tmux print-config` | `projmux config render standalone` |
+| `projmux tmux print-app-config` | `projmux config render app` |
+| `projmux tmux apply` | `projmux config apply` |
+| `projmux tmux install` | *(none — installer plumbing)* |
+| `projmux tmux install-app` | *(none — installer plumbing)* |
+
+The public spellings are parity aliases: same stdout, same stderr, same exit
+code, same side effects. Neither half is deprecated and neither prints a
+migration warning. `make install` still calls `projmux tmux apply` directly, and
+a tmux server that is already running keeps invoking the hidden spellings until
+the next apply, so both must keep working.
+
+`install` and `install-app` deliberately have no public spelling. They write and
+wire up config files as part of the install pipeline rather than answering an
+operator's question, so they stay reachable only as `projmux tmux ...` /
+`projmux internal tmux ...`.
 
 ## switch
 
@@ -1026,13 +1041,51 @@ AI topic ownership separate from the user pane label and raw pane title.
 `apply` regenerates the app tmux config and reloads the live `-L projmux`
 server without restarting it. `make install` and `projmux upgrade` invoke it
 after replacing the binary. Settings > Keybindings normally runs the same
-save/config/reload flow automatically; use `projmux tmux apply` as the CLI
-recovery or sync path after hand-editing `keymap.toml`, after saving Settings
-outside tmux, or after resolving a reported config-generation or live-reload
-failure. Reload also removes the known retired no-prefix `C-t` pane-label
-binding from older live servers before installing current bindings. If the
-current keymap assigns `C-t` to another action, that current action is bound
-after cleanup and remains the owner.
+save/config/reload flow automatically; use `projmux config apply` (or its
+hidden equivalent `projmux tmux apply`) as the CLI recovery or sync path after
+hand-editing `keymap.toml`, after saving Settings outside tmux, or after
+resolving a reported config-generation or live-reload failure. Reload also
+removes the known retired no-prefix `C-t` pane-label binding from older live
+servers before installing current bindings. If the current keymap assigns `C-t`
+to another action, that current action is bound after cleanup and remains the
+owner.
+
+## config
+
+```
+projmux config render standalone [--bin <path>]
+projmux config render app        [--bin <path>]
+projmux config apply             [--bin <path>] [--config <path>] [--socket <name>]
+```
+
+The public door onto generated tmux config. Every route here is a parity alias
+over the `tmux` handler that already owned the behavior — identical stdout,
+stderr, exit code, and side effects — so this section describes *which* artifact
+each one touches rather than restating the behavior.
+
+`render` takes the artifact as a positional token because projmux generates two
+different tmux configs, not two views of one:
+
+- `standalone` is the snippet you source from your own `~/.tmux.conf`. It prints
+  to stdout and writes nothing. Equivalent to `projmux tmux print-config`.
+- `app` is the config the app-owned `-L projmux` server runs from. It carries the
+  default shell and the app-only bindings on top of the standalone content, and
+  it also only prints. Equivalent to `projmux tmux print-app-config`.
+
+A bare `projmux config render` is a usage error (exit 2) listing the two
+artifacts. There is deliberately no default: silently choosing one would leave
+the other with no obvious public spelling, which is the gap this route exists to
+close.
+
+`apply` takes no artifact. It writes the app tmux config and reloads the live
+`-L projmux` server, which is one operation over one file. Equivalent to
+`projmux tmux apply`.
+
+Writing the standalone snippet and wiring the `source-file` line into your
+`~/.tmux.conf` is `projmux tmux install`, and writing the app config without
+reloading is `projmux tmux install-app`. Both are install-pipeline plumbing and
+have no public spelling; see
+[Internal plumbing](#internal-plumbing-projmux-internal-).
 
 ## update
 

@@ -14,7 +14,20 @@ type CanonicalRoute struct {
 	// behavior today. An empty list means no current public route exists and
 	// the route is introduced by a later Phase.
 	Sources []string
-	// Outputs pins the shared `-o` modes this route accepts.
+	// Outputs pins the shared `-o` modes this route accepts. It is parser
+	// input, not advertising: ResolveOutputToken reads it to decide whether a
+	// token is well-formed for the route, and what a well-formed token then
+	// does is the handler's business.
+	//
+	// The distinction is load bearing for `pane-id`. A `%N` handle is a live
+	// transport binding rather than stored metadata, so the registry read path
+	// answers `-o pane-id` with "needs a live transport binding, which is not
+	// wired yet" and exits 1 -- an unimplemented-but-valid token, owned by the
+	// runtime materialization track. Dropping the token from this list would
+	// not make the read routes honest; it would reclassify that invocation as
+	// malformed input and move it to exit 2. The advertising was narrowed
+	// instead, in catalog.go, where readProjectionCatalog omits `pane-id` from
+	// what the read routes list in help and in the generated reference.
 	Outputs []OutputMode
 	// Fields pins route-local field projections outside the shared catalog.
 	Fields []FieldProjection
@@ -27,36 +40,48 @@ var projectionCatalog = sharedOutputModes
 // canonicalRoutes is the canonical namespace tree from the CLI information
 // architecture v2 contract. Order follows the canonical tree draft.
 //
-// This manifest is a target-state contract record, not a description of the
-// shipped binary, and it is deliberately absent from every user-visible
-// surface. Runtime help renders `routes` in catalog.go; so does the generated
-// reference in docs/cli.md. Neither reads a summary from here.
+// This manifest is deliberately absent from every user-visible surface. Runtime
+// help renders `routes` in catalog.go; so does the generated reference in
+// docs/cli.md. Neither reads a summary from here. The public-spelling Phase
+// kept that boundary and closed the manifest itself, so the two are now honest
+// for different reasons rather than for the same one.
 //
-// The boundary exists because entries in this manifest diverge from today's
-// behavior in two ways, and both would become false advertising the moment a
-// user-visible surface rendered them:
+// The rule this manifest now holds to: a spelling stays only when argv can
+// reach it today, or when the behavior it names is a feature another track is
+// actually building. A spelling that would need its own slice -- its own leaf
+// parser, its own cardinality-matrix rows, its own tests -- is not a plan this
+// file gets to keep on someone else's behalf. Twelve such spellings were
+// deleted rather than aliased or left standing:
 //
-//   - Spellings with no route. Fourteen canonical spellings do not resolve to
-//     an executable node at all -- the whole `config` namespace (`show`, `edit`,
-//     `render`, `apply`), `runtime open`, `runtime quit`, `diagnostics doctor`,
+//   - `config show` named a non-interactive effective-config printer that
+//     exists nowhere, under no spelling. The only effective merge view is a page
+//     inside the Settings popup.
+//   - `config edit`, `runtime open`, `runtime quit`, `diagnostics doctor`,
 //     `diagnostics resources`, `setup probe`, `setup welcome`, `create
 //     notification`, `create snapshot`, `notification ack`, and `notification
-//     reconcile`. `config show` has no Sources at all, so no current route
-//     reaches that behavior under any spelling; the rest name a capability that
-//     exists today only under its legacy spelling.
-//   - Summaries that describe capability nobody built. `tag project` says
-//     "Manage persistent Project tags" while the route dispatches the ephemeral
-//     tagged session selection, because the persistent half needs a Project
-//     registry writer that does not exist yet. `agent resume` says "Rebind an
-//     Offline or Failed Agent to a new managed Pane" while the handler resolves
-//     the Agent, applies the phase gate, and stops.
+//     reconcile` each named behavior that ships today under its legacy spelling
+//     (`settings`, `shell`, `quit`, `doctor`, `resources`, `setup`, `welcome`,
+//     `notify push`, `session-state save`, `notify ack`, `notify reconcile`).
+//     Nothing was removed from the binary; only the renaming plan was, because
+//     each rename is a slice of its own and two of them belong to a separately
+//     tracked Settings information-architecture effort.
 //
-// The generated-reference Phase judged this and chose the boundary over a
-// rewrite: correcting the summaries would turn the contract record into a
-// second, redundant copy of catalog.go and would still have nothing to say
-// about the spellings that have no route. Honesty is enforced in catalog.go,
-// which is what users read; closing the divergences is roadmap work, tracked
-// per route rather than per string.
+// The routes those deletions leave without a canonical mapping are enumerated
+// and enforced in TestOnlyTheDeletedCanonicalNamespacesLeaveARouteUnmapped, so
+// "this route has no canonical v2 spelling" is a checked statement rather than
+// an omission nobody notices.
+//
+// Two divergences remain on purpose, and both name a feature an owning track is
+// building rather than an abandoned plan:
+//
+//   - `agent resume` says "Rebind an Offline or Failed Agent to a new managed
+//     Pane" while the handler resolves the Agent, applies the phase gate, and
+//     stops. The rebind needs runtime materialization.
+//   - `restore snapshot` and `delete pane` likewise describe the whole
+//     operation while only part of it is wired.
+//
+// Their command-tree summaries in catalog.go state the half that ships, which
+// is what users read.
 //
 // TestGeneratedReferenceCarriesNoCanonicalManifestOnlySummary derives the
 // divergent summary set from these two manifests at run time and fails if any
@@ -90,8 +115,6 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "create window", Summary: "Create a Window with its initial Pane", Sources: []string{"window"}, Outputs: projectionCatalog},
 	{Spelling: "create pane", Summary: "Create a shell Pane in an existing Window", Sources: []string{"ai", "create"}, Outputs: projectionCatalog},
 	{Spelling: "create agent", Summary: "Create an Agent and its managed Pane", Sources: []string{"ai", "create"}, Outputs: projectionCatalog},
-	{Spelling: "create notification", Summary: "Create a pending notification row", Sources: []string{"notify"}, Outputs: projectionCatalog},
-	{Spelling: "create snapshot", Summary: "Create a session snapshot", Sources: []string{"session-state"}, Outputs: projectionCatalog},
 	{Spelling: "create codex", Summary: "Provider shortcut for create agent --provider codex", Sources: []string{"create"}, Outputs: projectionCatalog},
 	{Spelling: "create claude", Summary: "Provider shortcut for create agent --provider claude", Sources: []string{"create"}, Outputs: projectionCatalog},
 	{Spelling: "create antigravity", Summary: "Provider shortcut for create agent --provider antigravity", Sources: []string{"create"}, Outputs: projectionCatalog},
@@ -110,15 +133,34 @@ var canonicalRoutes = []CanonicalRoute{
 
 	// delete / restore
 	{Spelling: "delete window", Summary: "Delete a Window and its descendants", Sources: []string{"delete"}},
+	// The live binding half is a feature the runtime materialization track owns:
+	// the handler is registry-only today and makes zero tmux calls, so the live
+	// pane survives a delete. `internal/app/delete.go` and the command-tree
+	// summary in catalog.go both describe the registry half that ships.
 	{Spelling: "delete pane", Summary: "Delete a Pane resource and its live binding", Sources: []string{"delete"}},
 	{Spelling: "delete agent", Summary: "Delete an Agent and its managed Panes", Sources: []string{"delete"}},
 	{Spelling: "delete notification", Summary: "Delete pending notification rows", Sources: []string{"notify", "delete"}},
 	{Spelling: "delete snapshot", Summary: "Delete saved session snapshots", Sources: []string{"session-state", "prune", "delete"}},
+	// Only the preview half ships: the handler rejects an invocation without
+	// `--dry-run`. The actual replay is a feature the session-state track owns.
 	{Spelling: "restore snapshot", Summary: "Restore a saved session snapshot", Sources: []string{"session-state", "restore"}},
 
 	// classification
-	{Spelling: "pin project", Summary: "Manage pinned Project resources", Sources: []string{"pin"}},
-	{Spelling: "tag project", Summary: "Manage persistent Project tags", Sources: []string{"tag"}},
+	//
+	// Both of these name the classification store the route has always managed,
+	// and neither is a Projmux resource. The pin store is a lines file of
+	// directory paths; the tag store is a lines file of live session names. There
+	// is no uid, no ownerRef, and no registry document behind either, and
+	// `pin project` / `tag project` are self-recursive spellings of the same flat
+	// actions rather than a second, resource-aware implementation.
+	//
+	// The persistent Project-metadata tag the earlier draft of this manifest
+	// promised is not a deferred feature. The product decision of 2026-08-15
+	// settled that a tag is an ephemeral session-scoped marker and that the
+	// persistent half will never be built, so the summary states what the route
+	// manages instead of a capability with no owner.
+	{Spelling: "pin project", Summary: "Manage pinned project directories", Sources: []string{"pin"}},
+	{Spelling: "tag project", Summary: "Manage the ephemeral tagged session selection", Sources: []string{"tag"}},
 
 	// prune
 	{Spelling: "prune project", Summary: "Prune Projects whose spec.root has been missing for a bounded age", Sources: []string{"prune"}},
@@ -127,6 +169,10 @@ var canonicalRoutes = []CanonicalRoute{
 	// agent domain
 	{Spelling: "agent status", Summary: "Read or set Agent status state", Sources: []string{"ai", "agent"}},
 	{Spelling: "agent topic", Summary: "Read, set, or clear the Agent topic annotation", Sources: []string{"ai", "agent"}},
+	// The rebind is a feature the runtime materialization track owns. Today the
+	// handler resolves exactly one Agent, applies the phase gate, and stops with
+	// a runtime error and zero mutations; catalog.go's sub-route summary states
+	// that half.
 	{Spelling: "agent resume", Summary: "Rebind an Offline or Failed Agent to a new managed Pane", Sources: []string{"ai", "agent"}},
 	{Spelling: "agent integrate", Summary: "Install or remove provider hook integrations", Sources: []string{"ai", "agent"}},
 	{Spelling: "agent usage", Summary: "Read provider account usage quota snapshots", Sources: []string{"usage", "status", "agent"}},
@@ -138,10 +184,6 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "attention arm", Summary: "Arm focus-only attention consumption", Sources: []string{"attention"}},
 	{Spelling: "attention window", Summary: "Render window-scoped attention badges", Sources: []string{"attention"}},
 
-	// notification domain
-	{Spelling: "notification ack", Summary: "Acknowledge notification rows", Sources: []string{"notify", "ai"}},
-	{Spelling: "notification reconcile", Summary: "Reconcile the notification queue against live targets", Sources: []string{"notify"}},
-
 	// hook domain
 	{Spelling: "hook list", Summary: "List lifecycle hook config", Sources: []string{"hook"}},
 	{Spelling: "hook edit", Summary: "Edit lifecycle hook config", Sources: []string{"hook"}},
@@ -150,14 +192,25 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "hook untrust", Summary: "Revoke project hook config trust", Sources: []string{"hook"}},
 
 	// config domain
-	{Spelling: "config show", Summary: "Show effective projmux configuration"},
-	{Spelling: "config edit", Summary: "Open the interactive configuration UI", Sources: []string{"settings", "ai"}},
-	{Spelling: "config render", Summary: "Render the generated tmux configuration", Sources: []string{"tmux"}},
-	{Spelling: "config apply", Summary: "Install or apply the generated tmux configuration", Sources: []string{"tmux"}},
+	//
+	// Two spellings, both executable. `render` is one canonical spelling over two
+	// artifacts, which is exactly how the `tmux` route already maps: both
+	// `print-config` and `print-app-config` declare `config render`, because
+	// projmux generates two different tmux configs. The public route takes the
+	// artifact as a positional kind (`config render standalone|app`) so both
+	// halves are reachable and neither is silently the default; the summary says
+	// "a generated tmux config" rather than naming one of them.
+	//
+	// `apply` is 1:1 with `tmux apply`: one artifact, written and reloaded.
+	//
+	// The `tmux` route's remaining two config spellings -- `install` and
+	// `install-app` -- have no canonical entry and no public spelling. They are
+	// installer plumbing whose canonical home is `internal tmux`, which is where
+	// they already resolve.
+	{Spelling: "config render", Summary: "Print a generated tmux config to stdout", Sources: []string{"tmux", "config"}},
+	{Spelling: "config apply", Summary: "Write the generated app tmux config and reload the live server", Sources: []string{"tmux", "config"}},
 
 	// runtime domain
-	{Spelling: "runtime open", Summary: "Start or attach the app-owned tmux runtime", Sources: []string{"shell"}},
-	{Spelling: "runtime quit", Summary: "Quit the app-owned tmux runtime", Sources: []string{"quit"}},
 	{Spelling: "runtime sessions", Summary: "Pick a live or ephemeral tmux session", Sources: []string{"sessions", "runtime"}},
 	{Spelling: "runtime attach", Summary: "Attach a live or ephemeral runtime without Project identity", Sources: []string{"attach", "runtime"}},
 	{Spelling: "runtime stop", Summary: "Terminate live tmux sessions by tagged selection", Sources: []string{"kill", "runtime"}},
@@ -165,15 +218,11 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "runtime prune", Summary: "Trim old ephemeral tmux sessions", Sources: []string{"prune", "runtime"}},
 
 	// diagnostics domain
-	{Spelling: "diagnostics doctor", Summary: "Run read-only runtime and integration diagnostics", Sources: []string{"doctor"}},
 	{Spelling: "diagnostics log", Summary: "Read the bounded local operations journal", Sources: []string{"diagnostics"}},
 	{Spelling: "diagnostics report", Summary: "Create an explicit redacted local support report", Sources: []string{"diagnostics"}},
-	{Spelling: "diagnostics resources", Summary: "Inspect live Project/Window/Pane CPU and RSS attribution", Sources: []string{"resources"}},
 
 	// setup domain
-	{Spelling: "setup probe", Summary: "Probe terminal key delivery", Sources: []string{"setup"}},
 	{Spelling: "setup terminal", Summary: "Show or apply terminal key remediation", Sources: []string{"setup", "tmux"}},
-	{Spelling: "setup welcome", Summary: "Reopen the onboarding guide", Sources: []string{"welcome"}},
 
 	// update domain
 	{Spelling: "update status", Summary: "Show read-only update status", Sources: []string{"update"}},

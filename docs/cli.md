@@ -28,6 +28,7 @@ projmux <command> [args...]
 | [`projmux ai`](#projmux-ai) | compatibility | Manage tmux AI split launch and settings |
 | [`projmux attention`](#projmux-attention) | canonical | View and manage live tmux pane attention state |
 | [`projmux attach`](#projmux-attach) | compatibility | Open tmux lifecycle entry helpers |
+| [`projmux config`](#projmux-config) | canonical | Render or apply the generated tmux configuration |
 | [`projmux create`](#projmux-create) | canonical | Create Projmux resources |
 | [`projmux current`](#projmux-current) | compatibility | Resolve the active tmux pane path |
 | [`projmux delete`](#projmux-delete) | canonical | Delete Projmux resources with an explicit cascade plan |
@@ -328,6 +329,68 @@ Enter a Project runtime from outside tmux, materializing it when offline
 
 ```
 projmux attach project <ref>
+```
+
+## `projmux config`
+
+Render or apply the generated tmux configuration
+
+```
+projmux config render standalone|app [--bin <path>]
+projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux config render`](#projmux-config-render) | Print a generated tmux config to stdout; writes nothing |
+| [`projmux config apply`](#projmux-config-apply) | Write the generated app tmux config and reload the live projmux server |
+
+Canonical spelling: `projmux config render`, `projmux config apply`
+
+### `projmux config render`
+
+Print a generated tmux config to stdout; writes nothing
+
+```
+projmux config render standalone [--bin <path>]
+projmux config render app [--bin <path>]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux config render standalone`](#projmux-config-render-standalone) | Print the snippet you source from your own tmux.conf |
+| [`projmux config render app`](#projmux-config-render-app) | Print the config the app-owned projmux tmux server runs from |
+
+#### `projmux config render standalone`
+
+Print the snippet you source from your own tmux.conf
+
+```
+projmux config render standalone [--bin <path>]
+```
+
+Canonical spelling: `projmux config render`
+
+#### `projmux config render app`
+
+Print the config the app-owned projmux tmux server runs from
+
+```
+projmux config render app [--bin <path>]
+```
+
+Canonical spelling: `projmux config render`
+
+### `projmux config apply`
+
+Write the generated app tmux config and reload the live projmux server
+
+```
+projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
 ```
 
 ## `projmux create`
@@ -892,7 +955,7 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux pin project`](#projmux-pin-project) | Manage pinned Project resources (canonical spelling) |
+| [`projmux pin project`](#projmux-pin-project) | Manage pinned project directories (canonical spelling) |
 | [`projmux pin list`](#projmux-pin-list) | List pinned project directories |
 | [`projmux pin add`](#projmux-pin-add) | Pin a project directory |
 | [`projmux pin remove`](#projmux-pin-remove) | Unpin a project directory |
@@ -903,7 +966,7 @@ Canonical spelling: `projmux pin project`
 
 ### `projmux pin project`
 
-Manage pinned Project resources (canonical spelling)
+Manage pinned project directories (canonical spelling)
 
 ```
 projmux pin project list|add|remove|toggle|clear
