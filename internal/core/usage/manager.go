@@ -158,7 +158,7 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 		}
 		snaps, err := adapter.Collect(ctx)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			errs = append(errs, &AdapterError{Model: name, Err: err})
 		}
 		// Stamp UpdatedAt so the renderer can show "as of" without callers
 		// having to thread the clock through every adapter.

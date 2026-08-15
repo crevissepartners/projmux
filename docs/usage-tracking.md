@@ -61,9 +61,14 @@ floor.
   byte-for-byte unchanged. No model-family inference, aliasing, aggregation, or
   percentage-to-count derivation is performed.
 - `limits[]` is capped at 64 rows and required field presence/types are checked
-  explicitly. A malformed container or row fails that adapter collection so the
-  manager retains the complete last-known-good Claude slice. A valid
-  aggregate-only response succeeds and therefore removes obsolete named rows.
+  explicitly. Validation is **row-level**: a row that fails a field check is
+  dropped, the remaining rows still reach the snapshot, and the drop is
+  reported through the warning channel (see [Collection
+  failures](#collection-failures)). Only two shape failures still abort the
+  whole collection so the manager retains the complete last-known-good Claude
+  slice: a `limits` value that is not a JSON array, and a row count above the
+  64-row cap. A valid aggregate-only response succeeds and therefore removes
+  obsolete named rows.
 - Null legacy top-level model hints and unknown experiment keys are ignored.
   Billing/credit blocks such as `extra_usage` and `spend` are not ingested or
   rendered.
@@ -86,7 +91,12 @@ Local rollout JSONL parser. No network calls.
     "secondary": { "used_percent": 4.5, "resets_at": "..." }
   }
   ```
-- `primary` → 5h window, `secondary` → weekly window.
+- `primary` → 5h window, `secondary` → weekly window. Window classification is
+  by `window_minutes` (`300` → 5h, `10080` → weekly); an unrecognised cadence is
+  a window this build does not render, not a defective row, so it is skipped
+  silently.
+- A slot that is present but carries no `used_percent` is a defective row: it is
+  dropped and reported rather than projected as a genuine `0%`.
 
 Codex shares the manager's default `30s` throttle (no
 `ThrottleHinter`). It does not implement `BackoffStater` — local-only
@@ -104,7 +114,9 @@ Local managed-statusline sidecars. No network or credential reads.
   `quota/<upstream ID>` on account-inspection surfaces.
 - Used percent is `100 * (1 - remaining_fraction)`. Non-finite or values
   outside `[0,1]`, empty IDs, null/disabled entries, and negative relative
-  resets are ignored safely.
+  resets are ignored safely. Rejected and duplicate buckets are skipped
+  individually — the healthy buckets in the same map still become rows — and the
+  skip is reported by sorted row index only, never by bucket ID.
 - `reset_time` and optional `reset_in_seconds` are stored independently. An
   absent relative reset differs from explicit zero; no value is derived from
   the other.
@@ -130,7 +142,10 @@ JSON document keyed by adapter, recording:
 - per-adapter `Backoff{Until, Consecutive}` (drives the cooldown)
 
 Adapter failures merge over the prior slice rather than replacing it,
-so a 429 keeps the last known good rows visible. Force-redirect the
+so a 429 keeps the last known good rows visible. A *partial* collect — some
+rows dropped, some kept — still counts as a successful refresh for the models
+it touched, so the surviving rows replace the prior slice rather than
+preserving it. Force-redirect the
 file at install time via `PROJMUX_USAGE_STATE_DIR` to share the cache
 across machines (Dropbox, iCloud Drive).
 
@@ -205,10 +220,65 @@ Output degrades through six tiers as `--max-width` shrinks:
 5. Single-letter labels (`C 5h:80% weekly:30%`).
 6. Hard rune-truncate with trailing `…`.
 
-The age indicator stays muted as data gets older: dim grey below 1h, then
-muted grey at 1h and beyond. Warning and critical colors are reserved for
-usage thresholds rather than cache age. Codex opts out of the indicator
-because the rollout file is always near-current (no throttle gap to report).
+The age indicator is the HUD's staleness signal, and it uses the same two
+thresholds as the `STALE` column and the JSON `stale` flag — `staleAfter` (10m)
+and `veryStaleAfter` (1h). There is no separate age constant:
+
+| age | indicator | color |
+| --- | --- | --- |
+| `< 1m` | none | — |
+| `1m` … `10m` | `(3m)` | dim grey |
+| `> 10m` … `1h` | `(15m~)` | muted grey |
+| `> 1h` | `(3h~~)` | muted grey |
+
+The `~` / `~~` markers are the legacy stale vocabulary, now carried inside the
+indicator rather than appended to the per-window pairs. Staleness stays muted at
+every tier: warning and critical colors are reserved for usage thresholds, not
+cache age. Codex opts out of the indicator because the rollout file is always
+near-current (no throttle gap to report).
+
+The statusbar usage **popup**'s sync line is a different surface with a
+different meaning (last successful collect, 60s amber threshold) and is
+unaffected by these thresholds.
+
+## Collection failures
+
+When a collection fails, the failure is visible in three places:
+
+1. **The rest of the response survives.** A defective row is dropped, never
+   substituted — no synthesized `0%`, zero time, or invented reset. The healthy
+   rows still refresh, so a single broken row can no longer freeze a provider's
+   whole slice while `last_collect` keeps advancing.
+2. **A bounded warning.** `projmux usage` prints one line to stderr:
+
+   ```
+   usage: warning: claude: skipped 2 usage rows: row 0: missing kind; row 2: missing resets_at
+   ```
+
+   Reasons are row-index plus field-name context only. Raw upstream values,
+   reset timestamps, opaque bucket identities, and wrapped decoder messages are
+   never included — decoder errors routinely quote the offending input. The
+   reason list is capped at five entries with a `(+N more)` suffix so a hostile
+   payload cannot dictate the length of the line.
+3. **The operations journal.** Each failing provider produces one
+   `usage.collect.outcome` row in the private journal
+   (`internal/diagnostics`), readable with:
+
+   ```
+   projmux diagnostics log --component usage --tail 20
+   ```
+
+   The row carries the provider and a closed failure enum and nothing else:
+   `collect-failed` (whole-adapter failure, `level=error`) or `rows-skipped`
+   (partial failure, `level=info`). A successful collection writes no row at
+   all. Identical `(provider, failure)` tuples are recorded at most once per
+   process run — the same suppression the notify/focus recorder uses — so a
+   repeating failure cannot flood the bounded journal. Journal writes are
+   best-effort and never change what the usage command returns.
+
+   Because `projmux status usage` runs as a short-lived process per refresh,
+   the once-per-run suppression bounds repeats within a single invocation; the
+   cross-invocation rate is bounded by the adapter throttle instead.
 
 ### Statusbar usage popup
 

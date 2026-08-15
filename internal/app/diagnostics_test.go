@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
@@ -146,5 +147,57 @@ func TestAppTopLevelDispatchesDiagnostics(t *testing.T) {
 	want := filepath.Join(stateHome, "projmux", "logs", diagnostics.LogFileName)
 	if strings.TrimSpace(out.String()) != want {
 		t.Fatalf("path = %q, want %q", strings.TrimSpace(out.String()), want)
+	}
+}
+
+// TestDiagnosticsLogSurfacesUsageCollectionFailures is the end-to-end check
+// that a usage collection failure recorded by the usage command is readable
+// through `projmux diagnostics log --component usage --tail N` — the surface
+// the user actually reaches for after the warning has scrolled away.
+func TestDiagnosticsLogSurfacesUsageCollectionFailures(t *testing.T) {
+	stateHome := t.TempDir()
+	path := filepath.Join(stateHome, "projmux", "logs", diagnostics.LogFileName)
+	recorder := diagnostics.NewUsageRecorder(diagnostics.NewStore(path), "usagerun", "0.10.0", diagnostics.MuxBackend())
+	started := time.Now()
+	// The same tuple repeated must collapse to one row; a different provider
+	// keeps its own.
+	for range 5 {
+		recorder.RecordCollectFailure(diagnostics.ProviderClaude, diagnostics.UsageFailureCollect, started)
+	}
+	recorder.RecordCollectFailure(diagnostics.ProviderCodex, diagnostics.UsageFailureRowsSkipped, started)
+
+	cmd := &diagnosticsCommand{lookupEnv: func(name string) string {
+		if name == "XDG_STATE_HOME" {
+			return stateHome
+		}
+		return ""
+	}, homeDir: func() (string, error) { return "/unused", nil }}
+
+	var out bytes.Buffer
+	if err := cmd.Run([]string{"log", "--component=usage", "--tail=10"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("usage rows = %q, want one per distinct tuple", out.String())
+	}
+	for _, want := range []string{"ERROR usage usage.collect.outcome error", "provider=claude", "failure=collect-failed"} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("claude row %q missing %q", lines[0], want)
+		}
+	}
+	for _, want := range []string{"INFO usage usage.collect.outcome success", "provider=codex", "failure=rows-skipped"} {
+		if !strings.Contains(lines[1], want) {
+			t.Fatalf("codex row %q missing %q", lines[1], want)
+		}
+	}
+
+	// The error-level filter still isolates the hard failure.
+	var errorsOnly bytes.Buffer
+	if err := cmd.Run([]string{"log", "--component=usage", "--level=error", "--tail=10"}, &errorsOnly, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(strings.TrimSpace(errorsOnly.String()), "\n") != 0 {
+		t.Fatalf("error-level usage rows = %q, want exactly one", errorsOnly.String())
 	}
 }

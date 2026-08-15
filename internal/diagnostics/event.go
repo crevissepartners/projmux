@@ -104,8 +104,8 @@ func SanitizeMessage(message, home string) string {
 
 var (
 	allowedLevels     = stringSet("info", "error")
-	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome")
+	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome")
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -190,6 +190,12 @@ var (
 	)
 	allowedResourceResults = stringSet(
 		string(ResourceResultUnavailable), string(ResourceResultPartial), string(ResourceResultStale), string(ResourceResultError), string(ResourceResultScanBudgetExceeded),
+	)
+	allowedUsageProviders = stringSet(
+		string(ProviderClaude), string(ProviderCodex), string(ProviderAntigravity), string(ProviderOther),
+	)
+	allowedUsageFailures = stringSet(
+		string(UsageFailureCollect), string(UsageFailureRowsSkipped),
 	)
 	allowedResourceFailures = stringSet(
 		string(ResourceFailureSampleUnavailable), string(ResourceFailureSamplePartial), string(ResourceFailureSampleStale), string(ResourceFailureInventory),
@@ -393,6 +399,22 @@ func validateEventShape(event Event) error {
 		}
 		if !resourceTupleMatches(event) {
 			return fmt.Errorf("invalid resource diagnostic tuple")
+		}
+	case "usage.collect.outcome":
+		if event.Component != "usage" || event.Command != "" || event.Subcommand != "" || event.Message != "" ||
+			event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() ||
+			event.Transition != "" || event.Disposition != "" || event.Category != "" || event.Route != "" ||
+			event.AIKind != "" || event.AIResult != "" || event.hasResourceFields() {
+			return fmt.Errorf("invalid usage diagnostic shape")
+		}
+		if _, ok := allowedUsageProviders[event.Provider]; !ok {
+			return fmt.Errorf("invalid usage provider")
+		}
+		if _, ok := allowedUsageFailures[event.Failure]; !ok {
+			return fmt.Errorf("invalid usage failure")
+		}
+		if !usageTupleMatches(event) {
+			return fmt.Errorf("invalid usage diagnostic tuple")
 		}
 	}
 	if event.Operation != "" {

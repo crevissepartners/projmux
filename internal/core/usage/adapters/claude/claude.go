@@ -262,7 +262,10 @@ func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
 	a.backoffUntil = time.Time{}
 	a.consecutive429 = 0
 	a.mu.Unlock()
-	return resp.toSnapshots(a.now().UTC()), nil
+	// Rows that failed field validation were dropped, not substituted. The
+	// surviving rows still reach the snapshot; the warning rides alongside
+	// them so the failure is visible instead of silently freezing the cache.
+	return resp.toSnapshots(a.now().UTC()), usage.RowSkipWarning(resp.SkipReasons)
 }
 
 // recordBackoff applies the exponential-backoff policy. retryAfter > 0
@@ -408,6 +411,11 @@ type usageResponse struct {
 	} `json:"seven_day"`
 	LimitsRaw json.RawMessage `json:"limits"`
 	Limits    []usageLimit    `json:"-"`
+	// SkipReasons holds the bounded, row-index + field-name context for
+	// every `limits[]` row that failed validation and was therefore
+	// dropped. Never populated with raw upstream values (see the privacy
+	// note on parseUsageResponse).
+	SkipReasons []string `json:"-"`
 }
 
 // The usage body is already capped at 1 MiB by fetchUsage. A row cap keeps a
@@ -443,35 +451,51 @@ func parseUsageResponse(body []byte) (*usageResponse, error) {
 		// below reports only bounded row/shape context for the same reason.
 		return nil, errors.New("claude: parse usage response: invalid typed payload")
 	}
-	limits, err := parseUsageLimits(r.LimitsRaw)
+	limits, skipped, err := parseUsageLimits(r.LimitsRaw)
 	if err != nil {
 		return nil, fmt.Errorf("claude: parse usage response limits: %w", err)
 	}
 	r.Limits = limits
+	r.SkipReasons = skipped
 	return &r, nil
 }
 
-func parseUsageLimits(raw json.RawMessage) ([]usageLimit, error) {
+// parseUsageLimits decodes the `limits[]` array with row-level tolerance: a
+// row that fails field validation is DROPPED and its bounded reason returned,
+// while every other row still reaches the snapshot. One broken row must not
+// cost the user the rest of the response.
+//
+// Two failures still abort the whole parse because they describe the payload's
+// shape rather than a single row's contents: a payload that is not a JSON
+// array, and a row count above maxUsageLimits (the DoS guard).
+//
+// Skipped rows are never substituted with a synthesized value — no 0%, no zero
+// time, no invented resets_at. A dropped row is simply absent.
+func parseUsageLimits(raw json.RawMessage) ([]usageLimit, []string, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var rows []json.RawMessage
 	if err := json.Unmarshal(raw, &rows); err != nil {
-		return nil, fmt.Errorf("expected array: %w", err)
+		return nil, nil, fmt.Errorf("expected array: %w", err)
 	}
 	if len(rows) > maxUsageLimits {
-		return nil, fmt.Errorf("contains %d rows, limit is %d", len(rows), maxUsageLimits)
+		return nil, nil, fmt.Errorf("contains %d rows, limit is %d", len(rows), maxUsageLimits)
 	}
 	out := make([]usageLimit, 0, len(rows))
+	var skipped []string
 	for i, row := range rows {
 		parsed, err := parseUsageLimit(row)
 		if err != nil {
-			return nil, fmt.Errorf("row %d: %w", i, err)
+			// parseUsageLimit only ever returns bounded field-name context,
+			// so row index + that context is safe to surface verbatim.
+			skipped = append(skipped, fmt.Sprintf("row %d: %s", i, err.Error()))
+			continue
 		}
 		out = append(out, parsed)
 	}
-	return out, nil
+	return out, skipped, nil
 }
 
 func parseUsageLimit(raw json.RawMessage) (usageLimit, error) {
@@ -485,7 +509,10 @@ func parseUsageLimit(raw json.RawMessage) (usageLimit, error) {
 		Scope    json.RawMessage `json:"scope"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return usageLimit{}, err
+		// Bounded on purpose: the decoder message names the offending field
+		// and can quote the raw upstream value, and this reason is now
+		// surfaced to the user as a warning and to the operations journal.
+		return usageLimit{}, errors.New("invalid row object")
 	}
 	if wire.Kind == nil || *wire.Kind == "" {
 		return usageLimit{}, errors.New("missing kind")
@@ -537,7 +564,7 @@ func parseUsageLimitScope(raw json.RawMessage) (*usageLimitScope, error) {
 		Surface json.RawMessage `json:"surface"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, err
+		return nil, errors.New("expected object")
 	}
 	model, err := parseUsageLimitModel(wire.Model)
 	if err != nil {
@@ -560,7 +587,7 @@ func parseUsageLimitModel(raw json.RawMessage) (*usageLimitModel, error) {
 		DisplayName *string         `json:"display_name"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, err
+		return nil, errors.New("expected object")
 	}
 	id, err := parseNullableString(wire.ID)
 	if err != nil {

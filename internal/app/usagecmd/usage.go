@@ -24,6 +24,7 @@ import (
 	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
 	claudeadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/claude"
 	codexadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/codex"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
@@ -36,6 +37,14 @@ type Command struct {
 	enabledAgentsFn func() ([]config.AIAgentProvider, error)
 	now             func() time.Time
 	lookupEnv       func(string) string
+
+	// journalFn resolves the operations-journal recorder used to record
+	// usage collection failures; nil selects the default private journal.
+	// journal caches the resolved recorder so one process emits one run
+	// identity. Both are touched only from the single-threaded CLI entry
+	// path, matching the statusRoles package-var pattern above.
+	journalFn func() *diagnostics.UsageRecorder
+	journal   *diagnostics.UsageRecorder
 }
 
 // New builds the usage command. now is the wall clock injected into the
@@ -118,6 +127,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 		snaps      []usage.Snapshot
 		collectErr error
 	)
+	started := time.Now()
 	if len(modelScope) > 0 {
 		if *force {
 			snaps, collectErr = mgr.ForceCollect(context.Background())
@@ -133,6 +143,10 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	if collectErr != nil {
 		fmt.Fprintf(stderr, "usage: warning: %v\n", collectErr)
 	}
+	// The warning above only exists while the user is looking at it; the
+	// journal is what makes a provider that stopped refreshing discoverable
+	// later. Best-effort: it never changes what this command returns.
+	c.recordCollectDiagnostics(collectErr, started)
 
 	// Conversation-local context fullness is diagnostic hook metadata, not
 	// account usage. Suppress legacy cached context rows before every CLI
@@ -239,18 +253,21 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 	// Default path: opportunistic, throttled refresh. Errors here are
 	// non-fatal; on debug builds we echo to stderr so the user can
 	// investigate why the cache is stale.
+	started := time.Now()
+	var refreshErr error
 	if *force {
-		if _, refreshErr := mgr.ForceCollect(context.Background()); refreshErr != nil {
-			if c.env(usageDebugEnvVar) != "" {
-				fmt.Fprintf(stderr, "usage: refresh: %v\n", refreshErr)
-			}
-		}
+		_, refreshErr = mgr.ForceCollect(context.Background())
 	} else {
-		if _, refreshErr := mgr.MaybeCollect(context.Background(), statusRefreshThrottle); refreshErr != nil {
-			if c.env(usageDebugEnvVar) != "" {
-				fmt.Fprintf(stderr, "usage: refresh: %v\n", refreshErr)
-			}
+		_, refreshErr = mgr.MaybeCollect(context.Background(), statusRefreshThrottle)
+	}
+	if refreshErr != nil {
+		if c.env(usageDebugEnvVar) != "" {
+			fmt.Fprintf(stderr, "usage: refresh: %v\n", refreshErr)
 		}
+		// The status segment stays silent by contract, so the journal is the
+		// only place a repeated collection failure on this path becomes
+		// visible. Best-effort; the segment still renders from cache.
+		c.recordCollectDiagnostics(refreshErr, started)
 	}
 
 	snaps, err := mgr.LoadAll()
@@ -681,7 +698,15 @@ func staleLevel(s usage.Snapshot, now time.Time) int {
 	if now.IsZero() || s.UpdatedAt.IsZero() {
 		return 0
 	}
-	age := now.Sub(s.UpdatedAt)
+	return staleLevelForAge(now.Sub(s.UpdatedAt))
+}
+
+// staleLevelForAge is the single staleness ladder for this package. Both the
+// per-snapshot staleLevel and the model-level age indicator read it, so
+// staleAfter / veryStaleAfter are the only staleness thresholds usagecmd owns
+// — the indicator no longer carries a private constant that could drift away
+// from the value the table and the JSON `stale` flag use.
+func staleLevelForAge(age time.Duration) int {
 	switch {
 	case age > veryStaleAfter:
 		return 2
@@ -701,16 +726,6 @@ const (
 	statusDefaultReset   = "#[default]"
 )
 
-// Age-indicator colour threshold for the Claude HUD block. The age indicator
-// carries the staleness signal (it replaces the legacy `~` / `~~` markers)
-// and stays muted so usage threshold warning/critical colors remain reserved:
-//
-//   - age <  ageWarnAfter (1h) → dim grey
-//   - age >= ageWarnAfter (1h) → muted grey
-const (
-	ageWarnAfter = 1 * time.Hour
-)
-
 // modelDisplay is the in-memory representation of a single model's
 // snapshots. Pct values are floats so the >100% over-limit branch can
 // surface the actual number (e.g. `319%`) instead of capping at 100%.
@@ -727,10 +742,8 @@ type modelDisplay struct {
 	shortLabel string // legacy single-letter (C / X / ...).
 	hasFive    bool
 	fivePct    float64
-	fiveStale  int
 	hasWeek    bool
 	weekPct    float64
-	weekStale  int
 	// lastSync is max(fiveUpdatedAt, weekUpdatedAt). Used together
 	// with `now` to compute the age indicator. Zero when no row
 	// supplied an UpdatedAt timestamp.
@@ -759,7 +772,7 @@ type modelDisplay struct {
 // `now` is the wall-clock used for staleness detection. Pass time.Time{}
 // to disable the marker (e.g. in tests that don't care).
 func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) string {
-	models := buildModelDisplays(projectStatusSnapshots(snaps), now)
+	models := buildModelDisplays(projectStatusSnapshots(snaps))
 	if len(models) == 0 {
 		return ""
 	}
@@ -965,11 +978,21 @@ func formatLastSyncAge(d time.Duration) string {
 // renderAgeIndicator returns the colored `(<age>)` block injected
 // between the model label and the 5h bar. Returns "" when the age is
 // fresh (<1m), the model opted out (Codex), or the now/lastSync clock
-// is missing. Staleness stays muted here so warning/critical colors are
-// reserved for usage thresholds:
+// is missing.
 //
-//   - <1h:  secondary text
-//   - >=1h: muted text
+// The indicator's tier is driven by the package's staleness thresholds
+// (staleAfter / veryStaleAfter) so a value the table already calls stale
+// cannot render as if it were current. The legacy `~` / `~~` marker
+// vocabulary is restored INSIDE the indicator, which is where staleness
+// now lives:
+//
+//   - <1m:            no indicator at all
+//   - level 0 (≤10m): `(3m)`   secondary text
+//   - level 1 (≤1h):  `(15m~)` muted text
+//   - level 2 (>1h):  `(3h~~)` muted text
+//
+// Staleness stays muted at every tier: warning/critical colors are
+// reserved for usage thresholds, and a stale value is not a usage alarm.
 func renderAgeIndicator(m modelDisplay, now time.Time) string {
 	if !m.showAge || now.IsZero() || m.lastSync.IsZero() {
 		return ""
@@ -980,8 +1003,11 @@ func renderAgeIndicator(m modelDisplay, now time.Time) string {
 		return ""
 	}
 	color := statusRoles.StatusTextSecondary
-	if age >= ageWarnAfter {
-		color = statusRoles.StatusTextMuted
+	switch staleLevelForAge(age) {
+	case 1:
+		color, text = statusRoles.StatusTextMuted, text+"~"
+	case 2:
+		color, text = statusRoles.StatusTextMuted, text+"~~"
 	}
 	return fmt.Sprintf("#[fg=%s](%s)%s", color, text, statusDefaultReset)
 }
@@ -1098,7 +1124,7 @@ func projectStatusSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
 // ResetsAt is the zero time — those are placeholders that represent "no
 // data" rather than a genuine 0% (e.g. when the upstream returned
 // `seven_day_oauth_apps: null`).
-func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
+func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
 	snaps = usage.SortedSnapshots(snaps)
 	byModel := make(map[string]*modelDisplay)
 	order := make([]string, 0, 2)
@@ -1117,16 +1143,16 @@ func buildModelDisplays(snaps []usage.Snapshot, now time.Time) []modelDisplay {
 			byModel[s.Model] = row
 			order = append(order, s.Model)
 		}
-		level := staleLevel(s, now)
+		// Per-window staleness is deliberately NOT tracked here: the HUD's
+		// staleness signal is model-level (the lastSync age indicator), and a
+		// second, competing per-window notion would be written and never read.
 		switch s.Window {
 		case usage.Window5h:
 			row.hasFive = true
 			row.fivePct = s.Pct
-			row.fiveStale = level
 		case usage.WindowWeekly:
 			row.hasWeek = true
 			row.weekPct = s.Pct
-			row.weekStale = level
 		}
 		// lastSync tracks the most recent successful refresh
 		// across the model's rows; the long HUD tier renders its

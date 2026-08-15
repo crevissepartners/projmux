@@ -74,13 +74,19 @@ func TestUsageHUDLightThemeDerivesDarkFg(t *testing.T) {
 
 // TestUsageHUDFallbackByteIdentity locks the HUD output under the fallback
 // role state to the exact bytes captured at main fa3da53 (pre-Phase 2).
+//
+// The only intentional drift since that capture is the `~~` suffix inside the
+// age indicator: the 2h fixture is past veryStaleAfter, and the age indicator
+// now restores the legacy stale marker. Every colour role in the expectation
+// is unchanged, which is what this test exists to lock — including the muted
+// colour244 the indicator keeps at that tier.
 func TestUsageHUDFallbackByteIdentity(t *testing.T) {
 	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
 	models := []modelDisplay{
 		{label: "Claude", shortLabel: "C", hasFive: true, fivePct: 42, hasWeek: true, weekPct: 88, showAge: true, lastSync: now.Add(-2 * time.Hour)},
 		{label: "Codex", shortLabel: "X", hasFive: true, fivePct: 97},
 	}
-	want := "#[fg=colour121,bold]Claude#[default] #[fg=colour244](2h)#[default] 5h [#[fg=colour72]████#[fg=colour238]░░░░░░] #[fg=colour72]42%#[default] · weekly [#[fg=colour214]█████████#[fg=colour238]░] #[fg=colour214]88%#[default]#[default]   #[fg=colour121,bold]Codex#[default] 5h [#[fg=colour160]██████████] #[fg=colour160]97%#[default]#[default]#[default]"
+	want := "#[fg=colour121,bold]Claude#[default] #[fg=colour244](2h~~)#[default] 5h [#[fg=colour72]████#[fg=colour238]░░░░░░] #[fg=colour72]42%#[default] · weekly [#[fg=colour214]█████████#[fg=colour238]░] #[fg=colour214]88%#[default]#[default]   #[fg=colour121,bold]Codex#[default] 5h [#[fg=colour160]██████████] #[fg=colour160]97%#[default]#[default]#[default]"
 	if got := renderTierLongHUDWithAge(models, now); got != want {
 		t.Fatalf("fallback usage HUD drifted:\n got %q\nwant %q", got, want)
 	}

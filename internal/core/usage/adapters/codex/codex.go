@@ -115,7 +115,10 @@ func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
 		if !found {
 			continue
 		}
-		return rl.toSnapshots(now), nil
+		// Row-level skip: a window slot that fails field validation is
+		// dropped and reported, the other slot still reaches the snapshot.
+		snaps, skipped := rl.toSnapshots(now)
+		return snaps, usage.RowSkipWarning(skipped)
 	}
 	return nil, nil
 }
@@ -138,34 +141,52 @@ type rateLimits struct {
 	Secondary *rateLimitWindow `json:"secondary"`
 }
 
+// rateLimitWindow uses a pointer for UsedPercent so a slot that is present
+// but carries no percentage is distinguishable from a genuine 0%. Without
+// that distinction the adapter fabricated a 0% row for a partial payload.
 type rateLimitWindow struct {
-	UsedPercent   float64 `json:"used_percent"`
-	WindowMinutes int     `json:"window_minutes"`
-	ResetsAt      int64   `json:"resets_at"`
+	UsedPercent   *float64 `json:"used_percent"`
+	WindowMinutes int      `json:"window_minutes"`
+	ResetsAt      int64    `json:"resets_at"`
 }
 
-func (rl *rateLimits) toSnapshots(now time.Time) []usage.Snapshot {
+// toSnapshots projects the two window slots, returning the bounded reasons for
+// any slot it had to drop. A dropped slot is absent, never substituted with a
+// zero percentage or a synthesized reset.
+//
+// An unrecognised window_minutes is NOT a row defect: window classification is
+// the adapter's own semantic mapping (300 → 5h, 10080 → weekly) and an unknown
+// cadence is simply a window this build does not render. Those stay silent.
+func (rl *rateLimits) toSnapshots(now time.Time) ([]usage.Snapshot, []string) {
 	out := make([]usage.Snapshot, 0, 2)
-	for _, limit := range []*rateLimitWindow{rl.Primary, rl.Secondary} {
-		if limit == nil {
+	var skipped []string
+	for _, slot := range []struct {
+		name  string
+		limit *rateLimitWindow
+	}{{"primary", rl.Primary}, {"secondary", rl.Secondary}} {
+		if slot.limit == nil {
 			continue
 		}
-		window, supported := usageWindow(limit.WindowMinutes)
+		if slot.limit.UsedPercent == nil {
+			skipped = append(skipped, slot.name+": missing used_percent")
+			continue
+		}
+		window, supported := usageWindow(slot.limit.WindowMinutes)
 		if !supported {
 			continue
 		}
 		s := usage.Snapshot{
 			Model:     Name,
 			Window:    window,
-			Pct:       limit.UsedPercent,
+			Pct:       *slot.limit.UsedPercent,
 			UpdatedAt: now,
 		}
-		if limit.ResetsAt > 0 {
-			s.ResetsAt = time.Unix(limit.ResetsAt, 0).UTC()
+		if slot.limit.ResetsAt > 0 {
+			s.ResetsAt = time.Unix(slot.limit.ResetsAt, 0).UTC()
 		}
 		out = append(out, s)
 	}
-	return out
+	return out, skipped
 }
 
 func usageWindow(windowMinutes int) (usage.Window, bool) {
