@@ -104,8 +104,30 @@ type resourceQueryFlags struct {
 	// It is nil on every route that has not adopted the fallback, and a nil
 	// lookup is exactly the pre-fallback behavior, so opting in is a per-route
 	// decision made where the flags are built rather than a property of this
-	// struct. The destructive routes deliberately do not set it.
+	// struct.
 	active activeTargetLookup
+	// wholeSetFlag is the explicit spelling that opts a route back into the
+	// whole-registry fan-out an empty selector used to mean.
+	//
+	// A non-empty value contains the empty selector: when the active-target
+	// fallback resolves nothing -- outside tmux above all -- the invocation is
+	// refused instead of quietly addressing every resource of the kind. That is
+	// the whole point on a destructive verb, where the historical meaning of
+	// `projmux delete pane` was "delete every Pane in the registry".
+	//
+	// The value is the flag name the refusal tells the operator to pass, so the
+	// remedy can never name a flag the route does not register. It stays empty
+	// on every route that keeps the historical meaning, and the flag itself
+	// clears both this field and `active`, which is what makes the explicit
+	// spelling restore the pre-containment code path exactly rather than
+	// approximate it.
+	wholeSetFlag string
+	// scopes records the scope-flag spellings register actually installed, which
+	// differ per kind: a Window route has no --pane, an Agent route has neither
+	// --pane nor an --agent. Refusal text is built from this rather than from a
+	// second copy of register's switch, so a message can never advise a flag the
+	// route does not accept.
+	scopes []string
 }
 
 // selectorIsEmpty reports whether the invocation carried no selector at all:
@@ -122,13 +144,17 @@ func (f *resourceQueryFlags) selectorIsEmpty() bool {
 }
 
 func (f *resourceQueryFlags) register(fs *flag.FlagSet) {
-	fs.Var(&f.projects, "project", "exact-one Project selector: <name> or uid:<uid>")
+	scope := func(name string, value *repeatedFlag, usage string) {
+		fs.Var(value, name, usage)
+		f.scopes = append(f.scopes, "--"+name)
+	}
+	scope("project", &f.projects, "exact-one Project selector: <name> or uid:<uid>")
 	switch f.kind {
 	case coremetadata.KindWindow, coremetadata.KindPane, coremetadata.KindAgent:
-		fs.Var(&f.windows, "window", "repeatable Window selector: <name> or uid:<uid>")
+		scope("window", &f.windows, "repeatable Window selector: <name> or uid:<uid>")
 	}
 	if f.kind == coremetadata.KindPane {
-		fs.Var(&f.panes, "pane", "repeatable Pane selector: <name> or uid:<uid>")
+		scope("pane", &f.panes, "repeatable Pane selector: <name> or uid:<uid>")
 	}
 	fs.Var(&f.labels, "selector", "repeatable label filter: key=value (AND)")
 }
@@ -285,6 +311,13 @@ func (f *resourceQueryFlags) resolveQuery(registry coremetadata.Registry, query 
 // whether the cell is satisfied. The list routes are excluded because a plural
 // read is a 0..N inventory; narrowing `get panes` to the focused pane would
 // answer a different question.
+//
+// A route that also set wholeSetFlag refuses the empty selector outright when
+// the fallback resolved nothing. On a 1..N cell that is the only thing standing
+// between "no selector" and the whole registry: Enforce is satisfied by any
+// match, so an empty query would sail through it with every resource of the kind
+// in hand. An exact-one route needs no such guard, because its own cell already
+// rejects the wide set.
 func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry coremetadata.Registry) (selector.Resolution, error) {
 	query, err := f.query()
 	if err != nil {
@@ -295,8 +328,11 @@ func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry cor
 		if err != nil {
 			return selector.Resolution{}, err
 		}
-		if resolved {
+		switch {
+		case resolved:
 			query = withActiveTargetRef(query, f.kind, ref)
+		case f.wholeSetFlag != "":
+			return selector.Resolution{}, f.emptySelectorRefusal()
 		}
 	}
 	resolution, err := f.resolveQuery(registry, query)
@@ -308,6 +344,32 @@ func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry cor
 		return selector.Resolution{}, err
 	}
 	return resolution, nil
+}
+
+// emptySelectorRefusal is the containment refusal of a route that declared a
+// wholeSetFlag.
+//
+// It is deliberately not the ordinary cardinality failure and not the
+// active-target refusal either. There is no cardinality violation to report --
+// the empty query matches plenty -- and nothing was inspected on a tmux target,
+// so the seam's "the active tmux pane %s carries no ..." wording would name a
+// pane that was never read. What actually happened is that the operator asked
+// for an unbounded destructive fan-out by omission, and the route requires that
+// to be asked for on purpose.
+//
+// It is a *selector.SelectorError with no Want and no Candidates, so it exits 2
+// with zero bytes on stdout like every other selector refusal while staying
+// distinguishable from a no-match: SelectorError.IsNoMatch is false, so it does
+// not unwrap to metadata.ErrNotFound. Listing candidates here would be actively
+// wrong -- they are not ambiguity, they are the blast radius.
+func (f *resourceQueryFlags) emptySelectorRefusal() error {
+	subject := strings.ToLower(string(f.kind))
+	return &selector.SelectorError{
+		Op: "resolve " + subject,
+		Detail: "no selector was given and no active tmux target resolved, so nothing was selected; " +
+			"pass an explicit resource reference, a " + strings.Join(f.scopes, "/") + " scope, --selector, or " +
+			f.wholeSetFlag + " to address every " + subject + " in the registry",
+	}
 }
 
 // resolveOutputMode maps the raw `-o` token onto the projection the canonical

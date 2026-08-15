@@ -504,18 +504,18 @@ Canonical spelling: `projmux get pane`
 Delete Projmux resources with an explicit cascade plan
 
 ```
-projmux delete window <ref>... [--project <ref>] [--selector key=value]... [--dry-run] [--yes]
-projmux delete pane <ref>... [--project <ref>] [--window <ref>]... [--dry-run] [--yes]
-projmux delete agent <ref>... [--project <ref>] [--window <ref>]... [--dry-run] [--yes]
+projmux delete window [<ref>...] [--project <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]
+projmux delete pane [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]
+projmux delete agent [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]
 ```
 
 Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux delete window`](#projmux-delete-window) | Delete Windows and every descendant Agent and Pane |
-| [`projmux delete pane`](#projmux-delete-pane) | Delete Panes; an Agent-owned current Pane leaves its Agent Offline |
-| [`projmux delete agent`](#projmux-delete-agent) | Delete Agents and their managed Panes |
+| [`projmux delete window`](#projmux-delete-window) | Delete Windows and every descendant Agent and Pane; no selector inside tmux means the active Window, and --all means every Window in the registry |
+| [`projmux delete pane`](#projmux-delete-pane) | Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry |
+| [`projmux delete agent`](#projmux-delete-agent) | Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry |
 | [`projmux delete notification`](#projmux-delete-notification) | Delete pending notification rows |
 | [`projmux delete snapshot`](#projmux-delete-snapshot) | Delete saved session snapshots |
 
@@ -523,26 +523,26 @@ Canonical spelling: `projmux delete window`, `projmux delete pane`, `projmux del
 
 ### `projmux delete window`
 
-Delete Windows and every descendant Agent and Pane
+Delete Windows and every descendant Agent and Pane; no selector inside tmux means the active Window, and --all means every Window in the registry
 
 ```
-projmux delete window
+projmux delete window [<ref>...] [--project <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]
 ```
 
 ### `projmux delete pane`
 
-Delete Panes; an Agent-owned current Pane leaves its Agent Offline
+Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry
 
 ```
-projmux delete pane
+projmux delete pane [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]
 ```
 
 ### `projmux delete agent`
 
-Delete Agents and their managed Panes
+Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry
 
 ```
-projmux delete agent
+projmux delete agent [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]
 ```
 
 ### `projmux delete notification`

@@ -404,16 +404,47 @@ var routes = []Route{
 		Name:        "delete",
 		Summary:     "Delete Projmux resources with an explicit cascade plan",
 		Disposition: DispositionCanonical,
+		// The `<ref>` is bracketed for the same reason it is on `describe`:
+		// omitting the whole selector is a meaningful invocation inside tmux,
+		// where it addresses the active target. It is spelled `[<ref>...]`
+		// rather than `<ref>...` and paired with `[--all]` because the two
+		// bracketed forms are not interchangeable here -- an omitted selector
+		// deletes exactly one resource, and the whole-registry fan-out has to be
+		// asked for by name.
+		//
+		// Every summary below says "in the registry" rather than a bare "all",
+		// deliberately and permanently. `--all` is the all-within-current-scope
+		// spelling, and projmux has exactly one scope today: the registry. If a
+		// later change ever gives the CLI a narrower default scope, "all" would
+		// start reading as "all within that scope" while this route kept
+		// deleting registry-wide, and that drift would be silent on a
+		// destructive verb. Naming the scope in the string it prints is what
+		// makes the drift loud instead.
 		Usage: []string{
-			"projmux delete window <ref>... [--project <ref>] [--selector key=value]... [--dry-run] [--yes]",
-			"projmux delete pane <ref>... [--project <ref>] [--window <ref>]... [--dry-run] [--yes]",
-			"projmux delete agent <ref>... [--project <ref>] [--window <ref>]... [--dry-run] [--yes]",
+			"projmux delete window [<ref>...] [--project <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]",
+			"projmux delete pane [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]",
+			"projmux delete agent [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]",
 		},
 		Canonical: []string{"delete window", "delete pane", "delete agent", "delete notification", "delete snapshot"},
 		Children: []Route{
-			{Name: "window", Summary: "Delete Windows and every descendant Agent and Pane", Canonical: []string{"delete window"}},
-			{Name: "pane", Summary: "Delete Panes; an Agent-owned current Pane leaves its Agent Offline", Canonical: []string{"delete pane"}},
-			{Name: "agent", Summary: "Delete Agents and their managed Panes", Canonical: []string{"delete agent"}},
+			{
+				Name:      "window",
+				Summary:   "Delete Windows and every descendant Agent and Pane; no selector inside tmux means the active Window, and --all means every Window in the registry",
+				Usage:     []string{"projmux delete window [<ref>...] [--project <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]"},
+				Canonical: []string{"delete window"},
+			},
+			{
+				Name:      "pane",
+				Summary:   "Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry",
+				Usage:     []string{"projmux delete pane [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]"},
+				Canonical: []string{"delete pane"},
+			},
+			{
+				Name:      "agent",
+				Summary:   "Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry",
+				Usage:     []string{"projmux delete agent [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]"},
+				Canonical: []string{"delete agent"},
+			},
 			{Name: "notification", Summary: "Delete pending notification rows", Canonical: []string{"delete notification"}},
 			{Name: "snapshot", Summary: "Delete saved session snapshots", Canonical: []string{"delete snapshot"}},
 		},

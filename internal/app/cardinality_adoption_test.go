@@ -372,8 +372,14 @@ func TestTheActiveTargetFallbackSatisfiesTheDeclaredCellWithoutRelaxingIt(t *tes
 		t.Run(route.spelling, func(t *testing.T) {
 			t.Parallel()
 
-			// Every adopting route resolves an exact-one cell; the fallback is
-			// never wired onto a 0..N or 1..N route.
+			// Every route in this table resolves an exact-one cell, which is
+			// what makes row 2 below a cardinality violation.
+			//
+			// The delete routes also adopt the fallback but sit on 1..N cells,
+			// so an empty selector violates nothing there and this table cannot
+			// describe them. They are contained by their own refusal instead,
+			// and TestDeleteEmptySelectorWithYesCannotTouchTheWholeRegistry is
+			// where that is proven.
 			declared, ok := selector.CardinalityFor(route.target)
 			if !ok || declared != selector.CardinalityExactOne {
 				t.Fatalf("route %q cell = %q/%v, want exact-one", route.spelling, declared, ok)
