@@ -189,8 +189,27 @@ func (e *SelectorError) Error() string {
 // classifier maps it to CLI exit code 2.
 func (e *SelectorError) MetadataUsageError() bool { return true }
 
-// Unwrap exposes the metadata sentinel so callers can classify with errors.Is.
-func (e *SelectorError) Unwrap() error { return metadata.ErrNotFound }
+// IsNoMatch reports whether this error means the selector resolved nothing.
+//
+// Only a cardinality failure can be a no-match: Want is set by cardinalityErr
+// and left empty by inputErr, so a malformed selector value is never reported
+// as a missing resource even though it also resolved zero targets.
+func (e *SelectorError) IsNoMatch() bool { return e.Want != "" && e.Got == 0 }
+
+// Unwrap exposes metadata.ErrNotFound for a no-match failure only.
+//
+// metadata.ErrNotFound marks an unresolvable resource, so wrapping it
+// unconditionally would report "not found" for the two failures that are not:
+// a cardinality violation where too many targets matched, and a malformed
+// selector value. Callers classifying with errors.Is need those to stay
+// distinguishable. Exit code 2 does not depend on this: MetadataUsageError is
+// the marker metadata.IsUsageError matches with errors.As.
+func (e *SelectorError) Unwrap() error {
+	if e.IsNoMatch() {
+		return metadata.ErrNotFound
+	}
+	return nil
+}
 
 func inputErr(op, format string, args ...any) error {
 	return &SelectorError{Op: op, Detail: fmt.Sprintf(format, args...)}

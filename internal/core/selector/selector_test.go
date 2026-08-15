@@ -473,8 +473,11 @@ func TestSelectorErrorsAreUsageErrors(t *testing.T) {
 	if !metadata.IsUsageError(err) {
 		t.Fatalf("selector error is not a usage error: %v", err)
 	}
+	// "nosuch" resolves zero Projects, so this is the one failure class that
+	// does wrap ErrNotFound. The too-many and malformed cases must not;
+	// TestOnlyANoMatchFailureWrapsErrNotFound pins all three together.
 	if !errors.Is(err, metadata.ErrNotFound) {
-		t.Fatalf("selector error does not wrap ErrNotFound: %v", err)
+		t.Fatalf("no-match selector error does not wrap ErrNotFound: %v", err)
 	}
 	var selectorErr *SelectorError
 	if !errors.As(err, &selectorErr) {

@@ -1,6 +1,7 @@
 package selector
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -232,6 +233,81 @@ func TestStageOrderIsACopy(t *testing.T) {
 	order[0] = "tampered"
 	if StageOrder()[0] != StageNameUIDUnion {
 		t.Fatal("StageOrder returned a mutable view")
+	}
+}
+
+// TestOnlyANoMatchFailureWrapsErrNotFound pins the error classification the
+// mutation Phases need when they resolve targets before mutating.
+//
+// metadata.ErrNotFound marks an unresolvable resource. Exactly one selector
+// failure means that: a cardinality violation that resolved zero targets. A
+// violation that resolved too many is the opposite condition, and a malformed
+// selector value never got as far as looking, so neither may wrap it even
+// though both are usage errors that exit 2.
+func TestOnlyANoMatchFailureWrapsErrNotFound(t *testing.T) {
+	t.Parallel()
+
+	b := newBuilder(t)
+	b.project("prj-dup", "dup", "", "/srv/dup", nil, false)
+	for _, suffix := range []string{"a", "b"} {
+		windowUID := "win-dup-" + suffix
+		b.window(windowUID, "w"+suffix, "prj-dup", nil)
+		b.shellPane("pan-dup-"+suffix, "zsh", "display", windowUID, "/srv/dup", nil)
+	}
+	resolver := New(b.build())
+	target := Target{Verb: VerbGet, Kind: metadata.KindPane}
+
+	resolveErr := func(t *testing.T, name string) error {
+		t.Helper()
+		query := Query{Panes: []Ref{mustRef(t, metadata.KindPane, name)}}
+		resolution, err := resolver.ResolvePanes(query)
+		if err != nil {
+			t.Fatalf("ResolvePanes error = %v", err)
+		}
+		return Enforce(target, DescribeSelector(query), resolution)
+	}
+
+	// A parse failure: --selector without an "=" never reaches resolution.
+	_, parseErr := ParseLabel("nosuchequals")
+	if parseErr == nil {
+		t.Fatal("malformed label parsed")
+	}
+
+	for _, test := range []struct {
+		name        string
+		err         error
+		wantNoMatch bool
+		wantGot     int
+	}{
+		{name: "no match", err: resolveErr(t, "absent"), wantNoMatch: true, wantGot: 0},
+		{name: "too many", err: resolveErr(t, "zsh"), wantNoMatch: false, wantGot: 2},
+		{name: "parse failure", err: parseErr, wantNoMatch: false, wantGot: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if test.err == nil {
+				t.Fatal("expected a selector error")
+			}
+			// Every case stays a usage error, so exit code 2 is unaffected by
+			// the ErrNotFound classification.
+			if !metadata.IsUsageError(test.err) {
+				t.Fatalf("not a usage error: %v", test.err)
+			}
+			var selectorErr *SelectorError
+			if !asSelectorError(test.err, &selectorErr) {
+				t.Fatalf("not a *SelectorError: %v", test.err)
+			}
+			if selectorErr.Got != test.wantGot {
+				t.Fatalf("Got = %d, want %d", selectorErr.Got, test.wantGot)
+			}
+			if got := selectorErr.IsNoMatch(); got != test.wantNoMatch {
+				t.Fatalf("IsNoMatch() = %t, want %t (%v)", got, test.wantNoMatch, test.err)
+			}
+			if got := errors.Is(test.err, metadata.ErrNotFound); got != test.wantNoMatch {
+				t.Fatalf("errors.Is(err, ErrNotFound) = %t, want %t (%v)", got, test.wantNoMatch, test.err)
+			}
+		})
 	}
 }
 
