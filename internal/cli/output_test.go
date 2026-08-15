@@ -103,10 +103,11 @@ func TestResolveOutputTokenAcceptsSharedModesAndRejectsUnknownTokens(t *testing.
 	}
 }
 
-// TestGetRouteOwnsOnlyThePaneKind keeps this Phase inside its boundary: the
-// `get` node exists to make the read-only Pane resolution reachable and must
-// not quietly grow the rest of the verb-to-kind family.
-func TestGetRouteOwnsOnlyThePaneKind(t *testing.T) {
+// TestGetRouteOwnsTheReadKindFamily pins the shape of the `get` node: the six
+// kinds of the read family plus the singular Pane read that owns the route-local
+// `cwd` projection, and nothing else. It also proves the compatibility routes
+// this family will eventually replace are still intact.
+func TestGetRouteOwnsTheReadKindFamily(t *testing.T) {
 	t.Parallel()
 
 	route, ok := LookupRoute("get")
@@ -120,8 +121,19 @@ func TestGetRouteOwnsOnlyThePaneKind(t *testing.T) {
 	for _, child := range route.Children {
 		children = append(children, child.Name)
 	}
-	if !reflect.DeepEqual(children, []string{"pane"}) {
-		t.Fatalf("get children = %v, want only [pane]", children)
+	want := []string{"projects", "windows", "panes", "agents", "notifications", "snapshots", "pane"}
+	if !reflect.DeepEqual(children, want) {
+		t.Fatalf("get children = %v, want %v", children, want)
+	}
+	// `cwd` stays scoped to the singular Pane read. No plural kind may declare
+	// it, which is what keeps the field projection from leaking across kinds.
+	for _, child := range route.Children {
+		if child.Name == "pane" {
+			continue
+		}
+		if len(child.Fields) != 0 {
+			t.Fatalf("get %s declares field projections %v, want none", child.Name, child.Fields)
+		}
 	}
 
 	pane, ok := findChild(route, "pane")
@@ -135,8 +147,9 @@ func TestGetRouteOwnsOnlyThePaneKind(t *testing.T) {
 		t.Fatalf("get pane outputs = %v, want the shared catalog", pane.Outputs)
 	}
 
-	// The compatibility route it will eventually replace is untouched: this
-	// Phase adds the canonical read and leaves old-route aliasing alone.
+	// The compatibility route it will eventually replace is untouched: the
+	// canonical read is added alongside it and no old route is removed or
+	// reclassified.
 	current, ok := LookupRoute("current")
 	if !ok {
 		t.Fatal("current route missing")

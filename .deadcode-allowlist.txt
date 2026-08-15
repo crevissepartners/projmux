@@ -283,25 +283,20 @@ RouteLocalFieldProjections
 # app.MapMetadataError is the single seam mapping the core's typed input
 # errors onto the CLI usage-error -> exit 2 path.
 #
-# This phase deliberately moves NO public CLI route (route moves are Phase 3
-# and Phase 5, live create is Phase 6-7), so the entire surface is reachable
-# only from its unit, golden, and round-trip tests today. It is the storage,
-# ownership, and naming foundation the later phases consume, and it MUST NOT
-# be removed. Symbol matching is exact and package-agnostic, which is the
-# documented limitation of this baseline mechanism.
+# The public verb-to-kind Phase consumed the mutation, naming, transaction, and
+# registry-write surface of this block through the get/describe/rename/rebind/
+# delete/prune routes, so those entries were removed from this list. What
+# remains is the surface no public route reaches yet: the tmux transport mirror
+# (Phase 5 internal plumbing and Phase 6-7 materialization), snapshot
+# reconciliation, and the schema migration machinery whose production migration
+# set is still deliberately empty. It MUST NOT be removed; it must instead keep
+# shrinking as those Phases wire it. Symbol matching is exact and
+# package-agnostic, which is the documented limitation of this baseline
+# mechanism.
 # ---------------------------------------------------------------------------
-AgentExit.Phase
-AgentNameBase
 AttachSnapshotMetadata
-CanTransitionAgent
 ClassifySchemaVersion
-DefaultMutator
-DerivePaneDisplayTitle
-DirExists
 Kinds
-LegacyPaneNameSeed
-LegacyWindowNameSeed
-ManagedPaneNameBase
 MigrateRegistry
 Mirror.DisableAutomaticRename
 Mirror.MirrorPane
@@ -319,83 +314,21 @@ Mirror.disableAutomaticRename
 Mirror.run
 Mirror.writePaneName
 Mirror.writeWindowName
-Mutator.AddPane
-Mutator.AddWindow
-Mutator.AttachAgentPane
-Mutator.Begin
-Mutator.BindProjectSession
-Mutator.CreateAgent
-Mutator.DeleteAgent
-Mutator.DeletePane
-Mutator.DeleteProject
-Mutator.DeleteWindow
-Mutator.ImportLegacySession
-Mutator.ObserveProjectRoots
-Mutator.RebindProjectRoot
-Mutator.RegisterProject
-Mutator.ReleaseAgentPane
-Mutator.RenamePane
-Mutator.RenameProject
-Mutator.RenameWindow
-Mutator.SetPaneDisplayTitle
-Mutator.TransitionAgent
-Mutator.addPaneTx
-Mutator.addWindowTx
-Mutator.clock
-Mutator.dirExists
-Mutator.importLegacySessionTx
-Mutator.importLegacyWindowTx
-Mutator.mintUID
-Mutator.registerProjectTx
-Mutator.validateRoot
 NewMirror
-NewUID
-NormalizeProvider
-PaneNameBase
-ProjectDisplayName
-ProjectNameBase
 ReconcileSnapshot
-Registry.allocateName
-Registry.deletePane
-Registry.firstWindowPaneUID
-Registry.nameOwner
-Registry.projectPanes
-Registry.putReservation
-Registry.releaseNames
-Registry.removeCreated
-Registry.reserveExplicitName
 Registry.snapshotPanesOf
-Registry.storePaneStatus
-SanitizeNameBase
 SchemaAction.String
 Store.Migrate
 Store.Path
 Store.SetClock
-Store.Update
-Store.backup
-Store.write
-Store.writeAfterBackup
-Transaction.Commit
-Transaction.Created
-Transaction.ID
-Transaction.Rollback
-Transaction.record
 UIDKind
-WindowNameBase
 WindowTarget
-clearCondition
-commandBase
-mustAgent
 parseRows
 resolveSnapshotProject
 scopeFor
-setMissingRootCondition
-shellBase
 tmuxFormat
 tmuxTruthyOption
-validateWrittenFile
 Registry.rebuildMissingReservations
-Registry.reservationIndex
 
 # ---------------------------------------------------------------------------
 # MUST-KEEP: CLI information architecture v2 Phase 2 selector and read-only
@@ -404,16 +337,13 @@ Registry.reservationIndex
 # MissingRoot status interpretation, and the declared <verb, kind> cardinality
 # matrix.
 #
-# The one live consumer this Phase ships is the read-only `get pane` route,
-# which resolves Panes. The Window resolution and the accessors below are the
-# same engine's declared surface for the routes that move next -- `get`/
-# `describe windows`, the create fan-out over repeated --window, and the delete
-# cascade -- so they are reachable only from the selector table tests today.
-# They MUST NOT be removed; they must instead disappear from this list as those
-# Phases wire them.
+# The public verb-to-kind Phase wired the Window resolution and the resolved-uid
+# accessor into real routes, so those entries were removed. What remains are the
+# two whole-table accessors: `Matrix` is the copy used by the cardinality
+# adoption test, and `StageOrder` is the copy used by the stage-order test. The
+# routes themselves consume the matrix through `CardinalityFor`/`Enforce` and
+# the pipeline through `Resolution.Trace`, so both accessors stay reachable only
+# from tests until a generated reference or a diagnostics surface prints them.
 # ---------------------------------------------------------------------------
 Matrix
-Resolution.UIDs
-Resolver.ResolveWindows
-Resolver.windowMatch
 StageOrder

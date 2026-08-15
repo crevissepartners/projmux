@@ -3,6 +3,8 @@ ai hidden=false disableFlagParsing=true args=true children=0
 attach hidden=false disableFlagParsing=true args=true children=0
 attention hidden=false disableFlagParsing=true args=true children=0
 current hidden=false disableFlagParsing=true args=true children=0
+delete hidden=false disableFlagParsing=true args=true children=0
+describe hidden=false disableFlagParsing=true args=true children=0
 diagnostics hidden=false disableFlagParsing=true args=true children=0
 doctor hidden=false disableFlagParsing=true args=true children=0
 focus hidden=false disableFlagParsing=true args=true children=0
@@ -17,7 +19,11 @@ popup-wait-key hidden=true disableFlagParsing=true args=true children=0
 preview hidden=false disableFlagParsing=true args=true children=0
 prune hidden=false disableFlagParsing=true args=true children=0
 quit hidden=false disableFlagParsing=true args=true children=0
+rebind hidden=false disableFlagParsing=true args=true children=0
+rename hidden=false disableFlagParsing=true args=true children=0
 resources hidden=false disableFlagParsing=true args=true children=0
+restore hidden=false disableFlagParsing=true args=true children=0
+runtime hidden=false disableFlagParsing=true args=true children=0
 session-popup hidden=false disableFlagParsing=true args=true children=0
 session-state hidden=false disableFlagParsing=true args=true children=0
 sessions hidden=false disableFlagParsing=true args=true children=0

@@ -114,10 +114,19 @@ var routes = []Route{
 		Name:        "attach",
 		Summary:     "Open tmux lifecycle entry helpers",
 		Disposition: DispositionCompatibility,
-		Usage:       []string{"projmux attach auto [--keep=N] [--fallback=home|ephemeral]"},
-		Canonical:   []string{"attach project", "runtime attach"},
+		Usage: []string{
+			"projmux attach auto [--keep=N] [--fallback=home|ephemeral]",
+			"projmux attach project <ref>",
+		},
+		Canonical: []string{"attach project", "runtime attach"},
 		Children: []Route{
 			{Name: "auto", Summary: "Auto-attach with keep and fallback policy", Usage: []string{"projmux attach auto [--keep=N] [--fallback=home|ephemeral]"}, Canonical: []string{"runtime attach"}},
+			{
+				Name:      "project",
+				Summary:   "Enter a Project runtime from outside tmux, materializing it when offline",
+				Usage:     []string{"projmux attach project <ref>"},
+				Canonical: []string{"attach project"},
+			},
 		},
 	},
 	{
@@ -127,6 +136,44 @@ var routes = []Route{
 		Usage:       []string{"projmux current"},
 		Canonical:   []string{"get pane"},
 		Fields:      []FieldProjection{FieldProjectionCWD},
+	},
+	{
+		// The registry-backed kinds own the cascade planner; `notification` and
+		// `snapshot` forward raw argv to the handlers that already own them.
+		Name:        "delete",
+		Summary:     "Delete Projmux resources with an explicit cascade plan",
+		Disposition: DispositionCanonical,
+		Usage: []string{
+			"projmux delete window <ref>... [--project <ref>] [--selector key=value]... [--dry-run] [--yes]",
+			"projmux delete pane <ref>... [--project <ref>] [--window <ref>]... [--dry-run] [--yes]",
+			"projmux delete agent <ref>... [--project <ref>] [--window <ref>]... [--dry-run] [--yes]",
+		},
+		Canonical: []string{"delete window", "delete pane", "delete agent", "delete notification", "delete snapshot"},
+		Children: []Route{
+			{Name: "window", Summary: "Delete Windows and every descendant Agent and Pane", Canonical: []string{"delete window"}},
+			{Name: "pane", Summary: "Delete Panes; an Agent-owned current Pane leaves its Agent Offline", Canonical: []string{"delete pane"}},
+			{Name: "agent", Summary: "Delete Agents and their managed Panes", Canonical: []string{"delete agent"}},
+			{Name: "notification", Summary: "Delete pending notification rows", Canonical: []string{"delete notification"}},
+			{Name: "snapshot", Summary: "Delete saved session snapshots", Canonical: []string{"delete snapshot"}},
+		},
+	},
+	{
+		Name:        "describe",
+		Summary:     "Describe one Projmux resource",
+		Disposition: DispositionCanonical,
+		Usage: []string{
+			"projmux describe project <ref> [-o <mode>]",
+			"projmux describe window <ref> [--project <ref>] [-o <mode>]",
+			"projmux describe pane <ref> [--project <ref>] [--window <ref>]... [-o <mode>]",
+			"projmux describe agent <ref> [--project <ref>] [--window <ref>]... [-o <mode>]",
+		},
+		Canonical: []string{"describe project", "describe window", "describe pane", "describe agent"},
+		Children: []Route{
+			{Name: "project", Summary: "Describe one Project resource", Canonical: []string{"describe project"}, Outputs: projectionCatalog},
+			{Name: "window", Summary: "Describe one Window resource", Canonical: []string{"describe window"}, Outputs: projectionCatalog},
+			{Name: "pane", Summary: "Describe one Pane resource", Canonical: []string{"describe pane"}, Outputs: projectionCatalog},
+			{Name: "agent", Summary: "Describe one Agent resource", Canonical: []string{"describe agent"}, Outputs: projectionCatalog},
+		},
 	},
 	{
 		Name:        "doctor",
@@ -156,23 +203,53 @@ var routes = []Route{
 		Usage: []string{
 			"projmux focus --target <target>",
 			"projmux focus --uri <uri>",
+			"projmux focus project <ref>",
+			"projmux focus window <ref> --project <ref>",
+			"projmux focus pane <ref> --project <ref> --window <ref>",
 		},
 		Canonical: []string{"focus project", "focus window", "focus pane"},
+		Children: []Route{
+			{
+				Name:      "project",
+				Summary:   "Move the current client to an already-live Project; never materializes",
+				Usage:     []string{"projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]"},
+				Canonical: []string{"focus project"},
+			},
+			{
+				Name:      "window",
+				Summary:   "Move the current client to an already-live Window; never materializes",
+				Usage:     []string{"projmux focus window <ref> --project <ref> [--socket <path>] [--client <tty>] [--json]"},
+				Canonical: []string{"focus window"},
+			},
+			{
+				Name:      "pane",
+				Summary:   "Move the current client to an already-live Pane; never materializes",
+				Usage:     []string{"projmux focus pane <ref> --project <ref> --window <ref> [--socket <path>] [--json]"},
+				Canonical: []string{"focus pane"},
+			},
+		},
 	},
 	{
-		// Phase 2 owns `get pane` because it is a read-only resolution. The
-		// rest of the get/describe verb-to-kind family, and the aliasing of the
-		// old routes onto it, belong to the public verb-to-kind Phase; this
-		// node deliberately carries exactly one kind today.
+		// The plural kinds are 0..N reads over the resource registry; the
+		// singular `pane` is the exact-one read that also owns the `cwd` field
+		// projection. `notifications` and `snapshots` forward raw argv to the
+		// handlers that already own them.
 		Name:        "get",
 		Summary:     "Read Projmux resources by selector",
 		Disposition: DispositionCanonical,
 		Usage: []string{
+			"projmux get projects|windows|panes|agents [--project <ref>] [--selector key=value]... [-o <mode>]",
 			"projmux get pane --current -o cwd",
 			"projmux get pane --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]",
 		},
-		Canonical: []string{"get pane"},
+		Canonical: []string{"get projects", "get windows", "get panes", "get agents", "get notifications", "get snapshots", "get pane"},
 		Children: []Route{
+			{Name: "projects", Summary: "List Project resources", Canonical: []string{"get projects"}, Outputs: projectionCatalog},
+			{Name: "windows", Summary: "List Window resources", Canonical: []string{"get windows"}, Outputs: projectionCatalog},
+			{Name: "panes", Summary: "List Pane resources", Canonical: []string{"get panes"}, Outputs: projectionCatalog},
+			{Name: "agents", Summary: "List Agent resources", Canonical: []string{"get agents"}, Outputs: projectionCatalog},
+			{Name: "notifications", Summary: "List pending notification rows", Canonical: []string{"get notifications"}},
+			{Name: "snapshots", Summary: "List saved session snapshots", Canonical: []string{"get snapshots"}},
 			{
 				Name:      "pane",
 				Summary:   "Read one Pane resource",
@@ -224,9 +301,13 @@ var routes = []Route{
 		Name:        "pin",
 		Summary:     "Manage pinned project directories",
 		Disposition: DispositionCompatibility,
-		Usage:       []string{"projmux pin list|add|remove|toggle|clear"},
-		Canonical:   []string{"pin project"},
+		Usage: []string{
+			"projmux pin list|add|remove|toggle|clear",
+			"projmux pin project list|add|remove|toggle|clear",
+		},
+		Canonical: []string{"pin project"},
 		Children: []Route{
+			{Name: "project", Summary: "Manage pinned Project resources (canonical spelling)", Usage: []string{"projmux pin project list|add|remove|toggle|clear"}, Canonical: []string{"pin project"}},
 			{Name: "list", Summary: "List pinned project directories", Canonical: []string{"pin project"}},
 			{Name: "add", Summary: "Pin a project directory", Canonical: []string{"pin project"}},
 			{Name: "remove", Summary: "Unpin a project directory", Canonical: []string{"pin project"}},
@@ -254,11 +335,25 @@ var routes = []Route{
 			"projmux prune ephemeral [--keep=N]",
 			"projmux prune session-state [--older-than <duration>]",
 			"projmux prune session-state delete <session>...",
+			"projmux prune snapshot [--older-than <duration>]",
+			"projmux prune project --missing --older-than <duration> [--yes]",
 		},
 		Canonical: []string{"runtime prune", "prune project", "prune snapshot"},
 		Children: []Route{
 			{Name: "ephemeral", Summary: "Trim old ephemeral tmux sessions", Canonical: []string{"runtime prune"}},
 			{Name: "session-state", Summary: "Inspect or delete preserved session snapshots", Canonical: []string{"prune snapshot", "delete snapshot"}},
+			{
+				Name:      "project",
+				Summary:   "Delete Projects whose spec.root has been missing for a bounded age",
+				Usage:     []string{"projmux prune project --missing --older-than <duration> [--yes]"},
+				Canonical: []string{"prune project"},
+			},
+			{
+				Name:      "snapshot",
+				Summary:   "Inspect or delete preserved session snapshots (canonical spelling)",
+				Usage:     []string{"projmux prune snapshot [--older-than <duration>]", "projmux prune snapshot delete <session>..."},
+				Canonical: []string{"prune snapshot", "delete snapshot"},
+			},
 		},
 	},
 	{
@@ -269,11 +364,76 @@ var routes = []Route{
 		Canonical:   []string{"runtime quit"},
 	},
 	{
+		Name:        "rebind",
+		Summary:     "Rebind a Project to a new absolute root without moving files",
+		Disposition: DispositionCanonical,
+		Usage:       []string{"projmux rebind project <ref> --root <absolute-path>"},
+		Canonical:   []string{"rebind project"},
+		Children: []Route{
+			{
+				Name:      "project",
+				Summary:   "Rewrite one Project spec.root; no filesystem move, no heuristic uid merge",
+				Usage:     []string{"projmux rebind project <ref> --root <absolute-path>"},
+				Canonical: []string{"rebind project"},
+			},
+		},
+	},
+	{
+		Name:        "rename",
+		Summary:     "Rename a Projmux resource metadata.name",
+		Disposition: DispositionCanonical,
+		Usage: []string{
+			"projmux rename project <ref> --name <name>",
+			"projmux rename window <ref> --name <name> [--project <ref>]",
+			"projmux rename pane <ref> --name <name> [--project <ref>] [--window <ref>]...",
+		},
+		Canonical: []string{"rename project", "rename window", "rename pane"},
+		Children: []Route{
+			{Name: "project", Summary: "Rename a Projmux Project resource", Canonical: []string{"rename project"}},
+			{Name: "window", Summary: "Rename a Projmux Window resource", Canonical: []string{"rename window"}},
+			{Name: "pane", Summary: "Rename a Projmux Pane resource; does not change tmux pane_title", Canonical: []string{"rename pane"}},
+		},
+	},
+	{
 		Name:        "resources",
 		Summary:     "Inspect live Project, Window, and Pane CPU/RSS attribution",
 		Disposition: DispositionShortcut,
 		Usage:       []string{"projmux resources"},
 		Canonical:   []string{"diagnostics resources"},
+	},
+	{
+		Name:        "restore",
+		Summary:     "Restore a saved session snapshot",
+		Disposition: DispositionCanonical,
+		Usage:       []string{"projmux restore snapshot <session> [--dry-run]"},
+		Canonical:   []string{"restore snapshot"},
+		Children: []Route{
+			{Name: "snapshot", Summary: "Restore a saved session snapshot", Canonical: []string{"restore snapshot"}},
+		},
+	},
+	{
+		// The runtime domain owns the live and ephemeral tmux inventory, which
+		// carries no uid, name reservation, or ownerRef and is therefore not a
+		// Projmux resource. Every subcommand forwards raw argv to the handler
+		// that already owns the behavior.
+		Name:        "runtime",
+		Summary:     "Manage the live and ephemeral tmux runtime inventory",
+		Disposition: DispositionCanonical,
+		Usage: []string{
+			"projmux runtime sessions [--ui=popup|sidebar]",
+			"projmux runtime attach [--keep=N] [--fallback=home|ephemeral]",
+			"projmux runtime stop [<session>...]",
+			"projmux runtime tag list|toggle|clear",
+			"projmux runtime prune [--keep=N]",
+		},
+		Canonical: []string{"runtime sessions", "runtime attach", "runtime stop", "runtime tag", "runtime prune"},
+		Children: []Route{
+			{Name: "sessions", Summary: "Pick a live or ephemeral tmux session", Canonical: []string{"runtime sessions"}},
+			{Name: "attach", Summary: "Attach a live or ephemeral runtime without Project identity", Canonical: []string{"runtime attach"}},
+			{Name: "stop", Summary: "Terminate live tmux sessions by tagged selection", Canonical: []string{"runtime stop"}},
+			{Name: "tag", Summary: "Manage the ephemeral tagged session selection", Canonical: []string{"runtime tag"}},
+			{Name: "prune", Summary: "Trim old ephemeral tmux sessions", Canonical: []string{"runtime prune"}},
+		},
 	},
 	{
 		Name:        "sessions",
@@ -377,9 +537,13 @@ var routes = []Route{
 		Name:        "tag",
 		Summary:     "Manage tagged tmux sessions",
 		Disposition: DispositionCompatibility,
-		Usage:       []string{"projmux tag list|toggle|clear"},
-		Canonical:   []string{"tag project", "runtime tag"},
+		Usage: []string{
+			"projmux tag list|toggle|clear",
+			"projmux tag project list|toggle|clear",
+		},
+		Canonical: []string{"tag project", "runtime tag"},
 		Children: []Route{
+			{Name: "project", Summary: "Manage Project tags (canonical spelling)", Usage: []string{"projmux tag project list|toggle|clear"}, Canonical: []string{"tag project"}},
 			{Name: "list", Summary: "List the tagged session selection", Canonical: []string{"runtime tag"}},
 			{Name: "toggle", Summary: "Toggle a session tag", Canonical: []string{"runtime tag"}},
 			{Name: "clear", Summary: "Clear the tagged session selection", Canonical: []string{"runtime tag"}},

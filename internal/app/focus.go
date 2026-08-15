@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // focusExitNotResolved is the exit code emitted when an explicit target cannot
@@ -59,6 +61,20 @@ type focusOptions struct {
 	Kind   string
 	URI    string
 	JSON   bool
+	// ExactOnly is set by the canonical `focus <kind>` routes. Those routes
+	// move the client to an already-live exact-one target, so a session
+	// fallback match and a window/pane coordinate that does not resolve are
+	// both "not resolved" (exit 2) rather than a degraded success. The legacy
+	// `focus --target` spelling leaves it false and keeps its fallbacks.
+	ExactOnly bool
+	// NavKind is the canonical navigation kind ("project", "window", "pane"),
+	// or "" for the legacy --target/--uri spellings. The three Nav* fields
+	// below carry the operator's references until they are resolved into a
+	// tmux coordinate against the live inventory.
+	NavKind    string
+	NavProject string
+	NavWindow  string
+	NavRef     string
 }
 
 type focusResult struct {
@@ -98,15 +114,36 @@ func newFocusCommand(recorders ...*diagnostics.LifecycleRecorder) *focusCommand 
 	return cmd
 }
 
+// focusKinds lists the resource kinds the canonical `focus` verb navigates to.
+var focusKinds = []string{"project", "window", "pane"}
+
 // Run is the dispatcher entry point.
-func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) (runErr error) {
+//
+// It accepts two spellings that share one dispatch: the legacy
+// `focus --target SESSION[:WINDOW[.PANE]]` coordinate, and the canonical
+// `focus <kind> <ref>` navigation. Neither one ever creates a tmux session,
+// window, or pane: focus only redirects an already attached client, so an
+// offline target is a not-resolved exit rather than an implicit materialization.
+func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) error {
 	c.stdout = stdout
 	c.stderr = stderr
 
+	if len(args) > 0 && slices.Contains(focusKinds, args[0]) {
+		opts, err := parseCanonicalFocusArgs(args[0], args[1:], stderr)
+		if err != nil {
+			return err
+		}
+		return c.dispatch(opts, stdout, stderr)
+	}
 	opts, err := parseFocusArgs(args, stderr)
 	if err != nil {
 		return err
 	}
+	return c.dispatch(opts, stdout, stderr)
+}
+
+// dispatch runs one resolved focus request.
+func (c *focusCommand) dispatch(opts focusOptions, stdout, stderr io.Writer) (runErr error) {
 	diagnosticsStarted := time.Now()
 	var diagnosticsTarget corefocus.Target
 	var diagnosticsSocket string
@@ -124,17 +161,23 @@ func (c *focusCommand) Run(args []string, stdout, stderr io.Writer) (runErr erro
 		return err
 	}
 
+	socket := c.resolveSocket(opts.Socket)
+	diagnosticsSocket = socket
+	resolvedTarget, err := c.resolveNavigationTarget(context.Background(), socket, opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return err
+	}
+	opts.Target = resolvedTarget
+
 	target, err := corefocus.Parse(opts.Target)
 	if err != nil {
 		return err
 	}
 	diagnosticsTarget = target
-
-	socket := c.resolveSocket(opts.Socket)
-	diagnosticsSocket = socket
 	c.logTelemetry(newFocusTelemetry(opts, target, socket))
 
-	res, err := c.execute(context.Background(), target, socket, opts.Client)
+	res, err := c.execute(context.Background(), target, socket, opts.Client, opts.ExactOnly)
 	res.Target = target.Raw
 	res.Socket = socket
 	res.OriginClient = strings.TrimSpace(opts.Client)
@@ -264,7 +307,197 @@ func parseFocusArgs(args []string, stderr io.Writer) (focusOptions, error) {
 	return opts, nil
 }
 
-func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, socket, preferredClient string) (focusResult, error) {
+// parseCanonicalFocusArgs parses one `focus project|window|pane <ref>`
+// invocation into the shared focus request.
+//
+// The refs are runtime coordinates: a Project ref names its live tmux session,
+// and the Window and Pane refs name a window and a pane inside it. Each kind
+// requires the scope above it, because a Window ref alone does not identify a
+// target. Nothing here reads or writes the resource registry and nothing here
+// creates a runtime.
+func parseCanonicalFocusArgs(kind string, args []string, stderr io.Writer) (focusOptions, error) {
+	spelling := "focus " + kind
+	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	opts := focusOptions{ExactOnly: true}
+	var project, window string
+	if kind != "project" {
+		fs.StringVar(&project, "project", "", "the live Project whose runtime scopes the target")
+	}
+	if kind == "pane" {
+		fs.StringVar(&window, "window", "", "the live Window that owns the target Pane")
+	}
+	fs.StringVar(&opts.Socket, "socket", "", "tmux socket path (overrides $TMUX)")
+	fs.StringVar(&opts.Client, "client", "", "preferred origin tmux client tty")
+	fs.StringVar(&opts.Source, "source", "", "Telemetry label: ai|status-bar|external|os-notification|toast")
+	fs.StringVar(&opts.Kind, "kind", "", "Telemetry label: reply-ready|busy-cleared|segment-click|toast-click|custom")
+	fs.BoolVar(&opts.JSON, "json", false, "Emit a single-line JSON result")
+
+	refs, err := parseWithPositionals(fs, args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return focusOptions{}, err
+		}
+		return focusOptions{}, usageError(err.Error())
+	}
+	if len(refs) != 1 {
+		return focusOptions{}, usageError(fmt.Sprintf("%s requires exactly one resource reference", spelling))
+	}
+	ref := strings.TrimSpace(refs[0])
+	if ref == "" {
+		return focusOptions{}, usageError(spelling + " requires a non-empty resource reference")
+	}
+	// A canonical ref names one resource. Accepting a raw `session:window.pane`
+	// coordinate here would quietly reintroduce the legacy target grammar under
+	// a kind that promises something narrower.
+	if strings.ContainsAny(ref, ":.") {
+		return focusOptions{}, usageError(fmt.Sprintf(
+			"%s takes one %s reference, not a session:window.pane coordinate; use `projmux focus --target` for raw coordinates", spelling, kind))
+	}
+
+	opts.NavKind = kind
+	opts.NavRef = ref
+	opts.NavProject = strings.TrimSpace(project)
+	opts.NavWindow = strings.TrimSpace(window)
+	switch kind {
+	case "project":
+		opts.Target = ref
+	case "window":
+		if opts.NavProject == "" {
+			return focusOptions{}, usageError(spelling + " requires --project <ref>")
+		}
+	case "pane":
+		if opts.NavProject == "" {
+			return focusOptions{}, usageError(spelling + " requires --project <ref>")
+		}
+		if opts.NavWindow == "" {
+			return focusOptions{}, usageError(spelling + " requires --window <ref>")
+		}
+	}
+	return opts, nil
+}
+
+// resolveNavigationTarget turns a canonical `focus <kind> <ref>` request into the
+// tmux coordinate the shared dispatch understands.
+//
+// Every lookup here is a read: list-windows and list-panes only report the live
+// inventory. A reference that matches nothing, or matches more than one live
+// resource, is a not-resolved exit rather than a create, which is what keeps
+// `focus` free of materialization at the Window and Pane levels too.
+func (c *focusCommand) resolveNavigationTarget(ctx context.Context, socket string, opts focusOptions) (string, error) {
+	if opts.NavKind == "" || opts.NavKind == "project" {
+		return opts.Target, nil
+	}
+	windowID, err := c.resolveLiveWindow(ctx, socket, opts.NavProject, navWindowRef(opts))
+	if err != nil {
+		return "", err
+	}
+	if opts.NavKind == "window" {
+		return opts.NavProject + ":" + windowID, nil
+	}
+	paneID, err := c.resolveLivePane(ctx, socket, opts.NavProject, windowID, opts.NavRef)
+	if err != nil {
+		return "", err
+	}
+	return opts.NavProject + ":" + windowID + "." + paneID, nil
+}
+
+// navWindowRef returns the Window reference of a navigation request: the
+// positional reference for `focus window`, and --window for `focus pane`.
+func navWindowRef(opts focusOptions) string {
+	if opts.NavKind == "window" {
+		return opts.NavRef
+	}
+	return opts.NavWindow
+}
+
+// resolveLiveWindow maps a Window name (or a raw `@id`) to the live tmux window
+// id inside one session.
+func (c *focusCommand) resolveLiveWindow(ctx context.Context, socket, session, ref string) (string, error) {
+	format := strings.Join([]string{"#{window_id}", "#{window_name}", "#{@" + strings.TrimPrefix(tmuxopts.WindowName, "@") + "}"}, focusFieldSeparator)
+	rows, err := c.listTargets(ctx, socket, "list-windows", session, format)
+	if err != nil {
+		return "", newFocusNotResolved("window %q in session %q: %v", ref, session, err)
+	}
+	return pickLiveTarget("window", ref, session, rows)
+}
+
+// resolveLivePane maps a Pane name (or a raw `%id`) to the live tmux pane id
+// inside one window.
+func (c *focusCommand) resolveLivePane(ctx context.Context, socket, session, windowID, ref string) (string, error) {
+	format := strings.Join([]string{"#{pane_id}", "#{@" + strings.TrimPrefix(tmuxopts.PaneName, "@") + "}"}, focusFieldSeparator)
+	rows, err := c.listTargets(ctx, socket, "list-panes", session+":"+windowID, format)
+	if err != nil {
+		return "", newFocusNotResolved("pane %q in %s:%s: %v", ref, session, windowID, err)
+	}
+	return pickLiveTarget("pane", ref, session+":"+windowID, rows)
+}
+
+// listTargets runs one read-only tmux inventory query and splits its rows.
+func (c *focusCommand) listTargets(ctx context.Context, socket, verb, target, format string) ([][]string, error) {
+	if c.runner == nil {
+		return nil, errors.New("focus runner is not configured")
+	}
+	out, err := c.runner.Run(ctx, "tmux", c.tmuxArgs(socket, verb, "-t", target, "-F", format)...)
+	if err != nil {
+		return nil, err
+	}
+	var rows [][]string
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, focusFieldSeparator)
+		if len(fields) == 1 {
+			fields = strings.Split(line, "\t")
+		}
+		rows = append(rows, fields)
+	}
+	return rows, nil
+}
+
+// pickLiveTarget selects the exact-one live row a reference addresses.
+//
+// The first field of every row is the tmux id; the remaining fields are the
+// candidate names. A reference matches either the id itself or one of the names
+// exactly. Substring and prefix matching are deliberately absent: this route
+// promises an exact-one target.
+func pickLiveTarget(kind, ref, scope string, rows [][]string) (string, error) {
+	var matched []string
+	for _, fields := range rows {
+		if len(fields) == 0 || fields[0] == "" {
+			continue
+		}
+		if fields[0] == ref {
+			matched = append(matched, fields[0])
+			continue
+		}
+		for _, name := range fields[1:] {
+			if strings.TrimSpace(name) == ref {
+				matched = append(matched, fields[0])
+				break
+			}
+		}
+	}
+	switch len(matched) {
+	case 1:
+		return matched[0], nil
+	case 0:
+		return "", newFocusNotResolved("%s %q is not live in %s", kind, ref, scope)
+	default:
+		return "", newFocusNotResolved("%s %q matched %d live %ss in %s, want exactly one", kind, ref, len(matched), kind, scope)
+	}
+}
+
+// newFocusNotResolved builds the deterministic not-resolved exit used by the
+// canonical navigation routes.
+func newFocusNotResolved(format string, args ...any) error {
+	return focusExitError{code: focusExitNotResolved, err: fmt.Errorf("focus: "+format, args...)}
+}
+
+func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, socket, preferredClient string, exactOnly bool) (focusResult, error) {
 	preferredClient = strings.TrimSpace(preferredClient)
 	inventory, err := c.listSessionInventory(ctx, socket)
 	if err != nil {
@@ -273,6 +506,17 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 
 	resolution, ok := corefocus.Resolve(target.Session, inventory)
 	if !ok {
+		return focusResult{
+				OriginClient: preferredClient,
+				SessionState: "unresolved",
+				Reason:       "session-unresolved",
+			},
+			&focusUnresolvedError{session: target.Session, socket: socket}
+	}
+	// The canonical routes address one already-live target. A fallback match is
+	// a different live session, so it is not the requested target and must not
+	// be silently focused instead of it.
+	if exactOnly && resolution.Fallback != "" {
 		return focusResult{
 				OriginClient: preferredClient,
 				SessionState: "unresolved",
@@ -328,8 +572,8 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 		if err := c.selectWindow(ctx, socket, windowTarget); err != nil {
 			// Window selection failure is recoverable when only an index was
 			// provided (split layout could have changed). With an explicit
-			// id we surface the error.
-			if target.WindowID != "" {
+			// id, and for the canonical exact-one routes, we surface the error.
+			if target.WindowID != "" || exactOnly {
 				base.WindowState = "id-unresolved"
 				base.Reason = "window-id-unresolved"
 				return base, err
@@ -347,7 +591,7 @@ func (c *focusCommand) execute(ctx context.Context, target corefocus.Target, soc
 		if target.HasPane() {
 			paneTarget := fmt.Sprintf("%s.%s", windowTarget, target.PaneSelector())
 			if err := c.selectPane(ctx, socket, paneTarget); err != nil {
-				if target.PaneID != "" {
+				if target.PaneID != "" || exactOnly {
 					base.PaneState = "id-unresolved"
 					base.Reason = "pane-id-unresolved"
 					return base, err

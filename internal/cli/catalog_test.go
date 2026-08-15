@@ -12,9 +12,11 @@ import (
 // the 2 hidden internal helpers to hold exactly one primary disposition, with
 // zero orphan routes, before any later Phase may move a namespace.
 //
-// The public count is 34: the 33 routes inventoried by the compatibility
-// contract plus the canonical `get` node, which the selector Phase added for
-// the read-only `get pane` resolution.
+// The public count is 40: the 33 routes inventoried by the compatibility
+// contract plus 7 canonical nodes added by later Phases -- `get` from the
+// selector Phase, and `delete`, `describe`, `rebind`, `rename`, `restore`, and
+// `runtime` from the public verb-to-kind Phase. Every one of the 33 inventoried
+// routes is still present and still holds exactly one disposition.
 func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	t.Parallel()
 
@@ -51,18 +53,20 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 34 {
-		t.Fatalf("public route count = %d, want 34", public)
+	if public != 40 {
+		t.Fatalf("public route count = %d, want 40", public)
 	}
 	if hidden != 2 {
 		t.Fatalf("hidden helper count = %d, want 2", hidden)
 	}
 	// The classification tally from the compatibility contract, counted over
-	// the 34 public top-level routes. Canonical is 9 rather than the
-	// contract's 8 because the canonical `get` node is new surface, not one of
-	// the 33 inventoried current routes.
+	// the 40 public top-level routes. Canonical is 15 rather than the
+	// contract's 8 because the 7 canonical verb/domain nodes are new surface,
+	// not members of the 33 inventoried current routes. The other three counts
+	// are unchanged, which is the invariant that proves no current route was
+	// removed, hidden, or reclassified.
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical:     9,
+		DispositionCanonical:     15,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 		DispositionInternal:      5,
@@ -72,7 +76,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	}
 	// Both hidden helpers are internal plumbing.
 	wantTally := map[Disposition]int{
-		DispositionCanonical:     9,
+		DispositionCanonical:     15,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 		DispositionInternal:      7,
@@ -141,13 +145,22 @@ func TestCanonicalManifestPinsRequiredPhaseZeroSpellings(t *testing.T) {
 		}
 	}
 
-	// `rebind project` and `prune project` are new canonical surface with no
-	// current public route. Phase 0 pins the spelling only; it must not become
-	// executable here.
-	for _, spelling := range []string{"rebind project", "prune project"} {
+	// `rebind project` and `prune project` were manifest-only spellings in
+	// Phase 0 because no handler could give them parity. The public
+	// verb-to-kind Phase supplies those handlers, so both now resolve to a real
+	// route and must name it.
+	for spelling, want := range map[string]string{
+		"rebind project": "rebind",
+		"prune project":  "prune",
+	} {
 		canonical, _ := LookupCanonicalRoute(spelling)
-		if len(canonical.Sources) != 0 {
-			t.Fatalf("%q sources = %v, want none in Phase 0", spelling, canonical.Sources)
+		if !slices.Contains(canonical.Sources, want) {
+			t.Fatalf("%q sources = %v, want the executable %q route", spelling, canonical.Sources, want)
+		}
+		kind := strings.Fields(spelling)[1]
+		path, _, ok := Resolve([]string{want, kind})
+		if !ok || !reflect.DeepEqual(path, []string{want, kind}) {
+			t.Fatalf("%q resolved to %v (ok=%v), want the executable route node", spelling, path, ok)
 		}
 	}
 
@@ -287,4 +300,120 @@ func walkRoutes(nodes []Route, visit func(path []string, route Route)) {
 		}
 	}
 	walk(nil, nodes)
+}
+
+// inventoriedRoutes is the compatibility contract's original inventory: the 33
+// public top-level routes plus the 2 hidden internal helpers, each with the
+// primary disposition Phase 0 assigned it.
+//
+// It is written out in full rather than derived, because its whole job is to
+// fail when a later Phase removes, hides, or reclassifies one of them.
+var inventoriedRoutes = map[string]struct {
+	disposition Disposition
+	hidden      bool
+}{
+	"ai":             {DispositionCompatibility, false},
+	"attention":      {DispositionCanonical, false},
+	"attach":         {DispositionCompatibility, false},
+	"current":        {DispositionCompatibility, false},
+	"doctor":         {DispositionShortcut, false},
+	"diagnostics":    {DispositionCanonical, false},
+	"focus":          {DispositionCompatibility, false},
+	"hook":           {DispositionCanonical, false},
+	"kill":           {DispositionCompatibility, false},
+	"notify":         {DispositionCompatibility, false},
+	"pin":            {DispositionCompatibility, false},
+	"preview":        {DispositionInternal, false},
+	"prune":          {DispositionCompatibility, false},
+	"quit":           {DispositionShortcut, false},
+	"resources":      {DispositionShortcut, false},
+	"sessions":       {DispositionCompatibility, false},
+	"session-state":  {DispositionCompatibility, false},
+	"session-popup":  {DispositionInternal, false},
+	"settings":       {DispositionShortcut, false},
+	"setup":          {DispositionCanonical, false},
+	"shell":          {DispositionShortcut, false},
+	"status":         {DispositionInternal, false},
+	"statusbar":      {DispositionInternal, false},
+	"switch":         {DispositionShortcut, false},
+	"tag":            {DispositionCompatibility, false},
+	"tmux":           {DispositionInternal, false},
+	"update":         {DispositionCanonical, false},
+	"upgrade":        {DispositionCompatibility, false},
+	"usage":          {DispositionCompatibility, false},
+	"welcome":        {DispositionShortcut, false},
+	"window":         {DispositionCanonical, false},
+	"help":           {DispositionCanonical, false},
+	"version":        {DispositionCanonical, false},
+	"key-broker":     {DispositionInternal, true},
+	"popup-wait-key": {DispositionInternal, true},
+}
+
+// TestEveryInventoriedRouteSurvivesUnchanged is the compatibility half of the
+// coverage invariant: adding canonical surface must never remove, hide, or
+// reclassify one of the routes the contract inventoried.
+//
+// Removal is a separate breaking-change Phase, so until then this test is the
+// guard that no relocation Phase quietly drops a public spelling.
+func TestEveryInventoriedRouteSurvivesUnchanged(t *testing.T) {
+	t.Parallel()
+
+	if len(inventoriedRoutes) != 35 {
+		t.Fatalf("inventory size = %d, want the 33 public routes plus 2 hidden helpers", len(inventoriedRoutes))
+	}
+	for token, want := range inventoriedRoutes {
+		route, ok := LookupRoute(token)
+		if !ok {
+			t.Fatalf("inventoried route %q was removed", token)
+		}
+		if route.Disposition != want.disposition {
+			t.Fatalf("route %q disposition = %q, want %q", token, route.Disposition, want.disposition)
+		}
+		if route.Hidden != want.hidden {
+			t.Fatalf("route %q hidden = %v, want %v", token, route.Hidden, want.hidden)
+		}
+	}
+
+	// The routes this Phase adds are new surface, not inventory members, and all
+	// of them are canonical.
+	for _, token := range []string{"get", "describe", "delete", "rebind", "rename", "restore", "runtime"} {
+		if _, ok := inventoriedRoutes[token]; ok {
+			t.Fatalf("%q is listed as an inventoried route; it is new canonical surface", token)
+		}
+		route, ok := LookupRoute(token)
+		if !ok {
+			t.Fatalf("canonical route %q is missing", token)
+		}
+		if route.Disposition != DispositionCanonical || route.Hidden {
+			t.Fatalf("route %q disposition=%q hidden=%v, want a public canonical node", token, route.Disposition, route.Hidden)
+		}
+	}
+}
+
+// TestCanonicalSubRoutesDoNotShadowAnExistingSubcommand keeps the compatibility
+// spellings intact where a canonical kind token was added next to them.
+func TestCanonicalSubRoutesDoNotShadowAnExistingSubcommand(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		parent string
+		want   []string
+	}{
+		{parent: "pin", want: []string{"project", "list", "add", "remove", "toggle", "clear"}},
+		{parent: "tag", want: []string{"project", "list", "toggle", "clear"}},
+		{parent: "prune", want: []string{"ephemeral", "session-state", "project", "snapshot"}},
+		{parent: "attach", want: []string{"auto", "project"}},
+	} {
+		route, ok := LookupRoute(test.parent)
+		if !ok {
+			t.Fatalf("route %q missing", test.parent)
+		}
+		var got []string
+		for _, child := range route.Children {
+			got = append(got, child.Name)
+		}
+		if !reflect.DeepEqual(got, test.want) {
+			t.Fatalf("%s children = %v, want %v", test.parent, got, test.want)
+		}
+	}
 }

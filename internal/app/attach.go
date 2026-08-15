@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
@@ -38,6 +39,10 @@ type attachCommand struct {
 	workingDir           func() (string, error)
 	now                  func() time.Time
 	cleanupKilledSession func(string)
+	// lookupEnv answers the inside-tmux question for `attach project`.
+	lookupEnv func(string) string
+	// switcher owns the Project open path that `attach project` forwards to.
+	switcher rawArgvCommand
 }
 
 func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachCommand {
@@ -50,6 +55,7 @@ func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachComman
 		homeDir:     os.UserHomeDir,
 		workingDir:  os.Getwd,
 		now:         time.Now,
+		lookupEnv:   os.Getenv,
 	}
 }
 
@@ -68,6 +74,8 @@ func (c *attachCommand) Run(args []string, stdout, stderr io.Writer) error {
 	switch fs.Arg(0) {
 	case "auto":
 		return c.runAuto(fs.Args()[1:], stdout, stderr)
+	case "project":
+		return c.runProject(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printAttachUsage(stdout)
 		return nil
@@ -75,6 +83,44 @@ func (c *attachCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printAttachUsage(stderr)
 		return fmt.Errorf("unknown attach subcommand: %s", fs.Arg(0))
 	}
+}
+
+// runProject is the canonical `attach project <ref>` entry point.
+//
+// This is the one navigation route that is allowed to materialize a Project: a
+// caller outside tmux has no client to redirect, so entering a Project runtime
+// means creating the tmux session when it is missing and then attaching to it.
+// Called from inside a tmux client it refuses with exit 2 and points at `focus
+// project`, which moves the existing client and never materializes anything.
+func (c *attachCommand) runProject(args []string, stdout, stderr io.Writer) error {
+	const spelling = "attach project"
+
+	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err.Error())
+	}
+	if fs.NArg() != 1 {
+		return usageError(spelling + " requires exactly one Project reference")
+	}
+	if c.insideTmuxClient() {
+		return usageError(fmt.Sprintf(
+			"%s is the outside-tmux entry point; from inside a tmux client run `projmux focus project %s` instead",
+			spelling, fs.Arg(0)))
+	}
+	return forwardRawArgv(c.switcher, spelling, "switch", []string{"open"}, fs.Args(), stdout, stderr)
+}
+
+// insideTmuxClient reports whether this invocation already runs inside a tmux
+// client. $TMUX is the tmux-set marker for exactly that.
+func (c *attachCommand) insideTmuxClient() bool {
+	if c.lookupEnv == nil {
+		return false
+	}
+	return strings.TrimSpace(c.lookupEnv("TMUX")) != ""
 }
 
 func (c *attachCommand) runAuto(args []string, _ io.Writer, stderr io.Writer) error {

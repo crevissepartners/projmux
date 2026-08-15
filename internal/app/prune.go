@@ -44,6 +44,10 @@ type pruneCommand struct {
 	cleanupKilledSession    func(string)
 	sessionStore            func() (sessionstate.Store, error)
 	now                     func() time.Time
+	// project owns the canonical `prune project` route. It is a separate
+	// handler because it prunes resource metadata rather than tmux runtime
+	// state, which is the split the runtime/resource namespace boundary makes.
+	project rawArgvCommand
 }
 
 type previewSelectionDeleter interface {
@@ -84,6 +88,7 @@ func newPruneCommand(recorders ...*diagnostics.LifecycleRecorder) *pruneCommand 
 		killer:       client,
 		sessionStore: sessionstate.NewDefaultStoreFromEnv,
 		now:          time.Now,
+		project:      newPruneProjectCommand(),
 	}
 }
 
@@ -104,6 +109,17 @@ func (c *pruneCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runEphemeral(fs.Args()[1:], stdout, stderr)
 	case "session-state":
 		return c.runSessionState(fs.Args()[1:], stdout, stderr)
+	// `prune snapshot` is the canonical spelling of the existing session-state
+	// retention route and forwards raw argv to it, so both spellings share one
+	// implementation. `prune project` is the new bounded missing-root prune and
+	// has no current public counterpart.
+	case "snapshot":
+		return c.runSessionState(fs.Args()[1:], stdout, stderr)
+	case "project":
+		if c.project == nil {
+			return errors.New("prune project: the resource registry handler is not configured")
+		}
+		return c.project.Run(fs.Args()[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printPruneUsage(stdout)
 		return nil
