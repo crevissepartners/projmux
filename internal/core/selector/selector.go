@@ -71,13 +71,19 @@ func flagNameFor(kind metadata.Kind) string {
 
 // Query is one route's selector input, already parsed.
 //
-// Project is the at-most-once exact-one scope. Windows and Panes hold every
-// repeated occurrence in argv order. Labels apply to the target kind only, not
-// to the scoping refs.
+// Project is the at-most-once exact-one scope. Windows, Panes, and Agents hold
+// every repeated occurrence in argv order. Labels apply to the target kind
+// only, not to the scoping refs.
+//
+// Agents carries the Agent name/uid occurrences of an Agent-kind route. There is
+// no public `--agent` scope selector: the grammar contract fixes the repeatable
+// scope flags at --project/--window/--pane, so this field is only ever filled
+// from the positional resource ref of an Agent route.
 type Query struct {
 	Project *Ref
 	Windows []Ref
 	Panes   []Ref
+	Agents  []Ref
 	Labels  []Label
 }
 
@@ -235,6 +241,23 @@ func (r *Resolver) ResolveProject(ref Ref) (Match, error) {
 		"--project "+ref.Raw, candidates)
 }
 
+// ResolveProjects resolves the Project target set for q.
+//
+// --project is the at-most-once Project occurrence, so the union stage sees at
+// most one ref; with none the whole registry enters the pipeline, which is what
+// makes a bare `get projects` a list. It returns no error because there is no
+// enclosing scope to fail to resolve: cardinality is enforced by the caller
+// against the declared <verb, kind> cell.
+func (r *Resolver) ResolveProjects(q Query) (Resolution, error) {
+	var refs []Ref
+	if q.Project != nil {
+		refs = []Ref{*q.Project}
+	}
+	return runPipeline(metadata.KindProject, r.registry.Projects, refs, q.Labels,
+		func(project metadata.Project) metadata.ObjectMeta { return project.Metadata },
+		func(project metadata.Project) Match { return r.projectMatch(project) }), nil
+}
+
 // ResolveWindows resolves the Window target set for q.
 func (r *Resolver) ResolveWindows(q Query) (Resolution, error) {
 	scope, err := r.windowScope(q)
@@ -253,13 +276,9 @@ func (r *Resolver) ResolveWindows(q Query) (Resolution, error) {
 // Agents. A Pane name is unique inside its owner scope, not globally, so the
 // same name legitimately appears under several Windows.
 func (r *Resolver) ResolvePanes(q Query) (Resolution, error) {
-	windows, err := r.windowScope(q)
+	windows, err := r.selectedWindows(q)
 	if err != nil {
 		return Resolution{}, err
-	}
-	if len(q.Windows) > 0 {
-		windows = filterByRefs(windows, q.Windows, func(window metadata.Window) metadata.ObjectMeta { return window.Metadata })
-		windows = dedupe(windows, func(window metadata.Window) string { return window.Metadata.UID })
 	}
 	var scope []metadata.Pane
 	for _, window := range windows {
@@ -271,6 +290,40 @@ func (r *Resolver) ResolvePanes(q Query) (Resolution, error) {
 	return runPipeline(metadata.KindPane, scope, q.Panes, q.Labels,
 		func(pane metadata.Pane) metadata.ObjectMeta { return pane.Metadata },
 		func(pane metadata.Pane) Match { return r.paneMatch(pane) }), nil
+}
+
+// ResolveAgents resolves the Agent target set for q.
+//
+// Agents are Window-owned, so the enclosing scope is the same --project /
+// --window scope the Pane resolution uses. Agent name uniqueness is Window
+// scoped, so the same Agent name legitimately appears under several Windows.
+func (r *Resolver) ResolveAgents(q Query) (Resolution, error) {
+	windows, err := r.selectedWindows(q)
+	if err != nil {
+		return Resolution{}, err
+	}
+	var scope []metadata.Agent
+	for _, window := range windows {
+		scope = append(scope, r.registry.AgentsOf(window.Metadata.UID)...)
+	}
+	return runPipeline(metadata.KindAgent, scope, q.Agents, q.Labels,
+		func(agent metadata.Agent) metadata.ObjectMeta { return agent.Metadata },
+		func(agent metadata.Agent) Match { return r.agentMatch(agent) }), nil
+}
+
+// selectedWindows returns the Windows the query addresses: the --project scope
+// narrowed by the repeated --window occurrences when there are any. It is the
+// shared enclosing scope of the Pane and Agent universes.
+func (r *Resolver) selectedWindows(q Query) ([]metadata.Window, error) {
+	windows, err := r.windowScope(q)
+	if err != nil {
+		return nil, err
+	}
+	if len(q.Windows) == 0 {
+		return windows, nil
+	}
+	windows = filterByRefs(windows, q.Windows, func(window metadata.Window) metadata.ObjectMeta { return window.Metadata })
+	return dedupe(windows, func(window metadata.Window) string { return window.Metadata.UID }), nil
 }
 
 // windowScope returns the Windows visible to q: one Project's Windows when
@@ -398,6 +451,29 @@ func (r *Resolver) windowMatch(window metadata.Window) Match {
 		UID:         window.Metadata.UID,
 		Name:        window.Metadata.Name,
 		DisplayName: window.Metadata.DisplayName,
+		Owner:       owner,
+		Status:      status,
+	}
+}
+
+// agentMatch renders one Agent with its Window/Project owner chain. An Agent has
+// no runtime projection of its own, so it inherits the owning Project status the
+// same way a Window does.
+func (r *Resolver) agentMatch(agent metadata.Agent) Match {
+	owner := OwnerContext{}
+	status := StatusOffline
+	if window, ok := r.registry.Window(agent.Metadata.OwnerUID()); ok {
+		owner.Window = window.Metadata.Name
+		if project, ok := r.registry.Project(window.Metadata.OwnerUID()); ok {
+			owner.Project = project.Metadata.Name
+			status = ProjectStatus(*project)
+		}
+	}
+	return Match{
+		Kind:        metadata.KindAgent,
+		UID:         agent.Metadata.UID,
+		Name:        agent.Metadata.Name,
+		DisplayName: agent.Metadata.DisplayName,
 		Owner:       owner,
 		Status:      status,
 	}
