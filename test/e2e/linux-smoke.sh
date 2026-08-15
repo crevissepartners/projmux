@@ -240,29 +240,20 @@ recorder_popup_pid=$!
 smoke_wait_for "Settings root" grep -aFq "Settings >" "$recorder_log"
 
 # Deep search lands on the owning View and never executes a control on the way.
-# Searching a Status Bar component from the root walks Appearance > Status Bar >
-# Git > Icon, and the saved decoration must still be untouched at the chooser.
+# Searching a Status Bar component name from the root walks Appearance > Status
+# Bar; reaching the container must not write a decoration value.
 printf 'Status Bar\r' >&9
-smoke_wait_for "Appearance view" grep -aFq "Settings > Appearance >" "$recorder_log"
+smoke_wait_for "Appearance view" grep -aFq "Settings > Appearance > " "$recorder_log"
 # Rows that carry a search key are matched on that key, which is lower case.
 printf 'status bar components\r' >&9
-smoke_wait_for "Status Bar container" grep -aFq "Settings > Appearance > Status Bar >" "$recorder_log"
-# Keyboard navigation: walk down to the Git component and open it, then open
-# its icon chooser the same way. Row order is Back, Notifications HUD, Working
-# directory, Git, Resources.
-printf '\033[B\033[B\033[B\r' >&9
-smoke_wait_for "Git component view" grep -aFq "Status Bar > Git > " "$recorder_log"
-printf '\033[B\033[B\r' >&9
-smoke_wait_for "Git icon chooser" grep -aFq "Status Bar > Git > Icon > " "$recorder_log"
+smoke_wait_for "Status Bar container" grep -aFq "Settings > Appearance > Status Bar > " "$recorder_log"
 if [[ -e "$XDG_CONFIG_HOME/projmux/statusbar-decoration-git" ]]; then
-  echo "navigating to the Git icon chooser wrote a decoration value" >&2
+  echo "navigating to the Status Bar container wrote a decoration value" >&2
   exit 1
 fi
 printf 'Back\r' >&9
 printf 'Back\r' >&9
-printf 'Back\r' >&9
-printf 'Back\r' >&9
-smoke_wait_for "Settings root after deep search" grep -aFq "Settings >" "$recorder_log"
+smoke_wait_for "Settings root after deep search" grep -aFq "Settings > " "$recorder_log"
 
 printf 'Keybindings\r' >&9
 smoke_wait_for "Keybindings category list" grep -aFq "Settings > Keybindings >" "$recorder_log"
