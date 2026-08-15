@@ -1303,17 +1303,57 @@ func statusbarSessionLeftFormat(bin string, roles theme.RenderRoles) string {
 
 // statusbarNotifyMaxWidth is the notify segment's own design budget in cells.
 // It is a notify-side number: that segment's clipping ladder was tuned against
-// it, and it stays notify's effective cap on every row wide enough to afford it
-// without starving usage, so notify's bytes are unchanged on a normal terminal.
-// The usage segment deliberately has no counterpart constant — it gets
-// whatever of the row notify does not reserve.
+// it, and it stays notify's effective cap on a row wide enough to hand it over
+// without starving usage, so notify's bytes are unchanged on a large terminal.
 const statusbarNotifyMaxWidth = 80
 
-// statusbarSharedRowMinWidth is the narrowest `status-format[0]` on which
-// notify can still be handed its whole design budget and leave usage an equal
-// share. Below it the row is split evenly instead, because holding a fixed
-// 80-cell reservation on, say, a 100-column client would leave usage 20 cells.
-const statusbarSharedRowMinWidth = 2 * statusbarNotifyMaxWidth
+// statusbarNotifyMinWidth is the notify segment's RESERVATION — the cells row 0
+// holds back for notify before usage gets the rest. It is deliberately notify's
+// minimum, not its maximum, and it is the number PR #624 got backwards.
+//
+// Measured against a live queue on tmux 3.6 (escapes stripped, display cells
+// counted), the notify segment renders exactly its budget and degrades LINEARLY:
+//
+//	budget 8    Cl…   +7
+//	budget 20   Claude · 응답 …   +7          <- dotless narrow fallback
+//	budget 22    projmux   INA  …   +7        <- project pill + severity badge return
+//	budget 32    projmux   INA  C… · 8분 전   +7   <- compact age returns
+//	budget 44+   ... one more body character per extra cell, forever
+//
+// Every cell above ~32 buys notify exactly one more character of body text. The
+// usage segment's ladder is the opposite — DISCRETE. On the same machine:
+//
+//	budget 70..97    Claude 5h:39% weekly:24%          (text tier)
+//	budget 98..123   Claude 5h [bar] 39%               (weekly bar GONE)
+//	budget 124..133  Claude 5h [bar] 39% · weekly [bar] 24%
+//	budget 134+      Claude (2m) 5h [bar] ... (adds the age indicator)
+//
+// so a cell moved from notify to usage can restore a provider's whole official
+// window bar, while the same cell moved the other way buys one character. That
+// asymmetry is the entire argument for reserving notify's floor instead of its
+// cap.
+const statusbarNotifyMinWidth = 20
+
+// statusbarUsageMinWidth is the cell budget the usage segment was hardcoded to
+// before the budgets became client-derived. It is the regression floor: on any
+// row that can physically host it alongside notify's reservation, usage still
+// gets at least the cells it used to get.
+const statusbarUsageMinWidth = 120
+
+// statusbarNotifySurplusFromWidth is the row width at which notify starts
+// growing past its reservation: usage's floor plus notify's floor. Below it the
+// row cannot host both, and notify stays at its reservation.
+const statusbarNotifySurplusFromWidth = statusbarUsageMinWidth + statusbarNotifyMinWidth
+
+// statusbarEvenSplitMaxWidth is the width below which even notify's reservation
+// would take more than half the row. Such a row is split evenly instead, which
+// keeps both budgets non-zero — `--max-width 0` means "no truncation" to both
+// renderers, so a zero budget is read as UNBOUNDED and overflows the row.
+const statusbarEvenSplitMaxWidth = 2 * statusbarNotifyMinWidth
+
+// statusbarNotifySurplusCapWidth is the width at which notify's growth reaches
+// its design cap and stops.
+const statusbarNotifySurplusCapWidth = statusbarNotifySurplusFromWidth + statusbarNotifyMaxWidth
 
 // statusbarClientWidthFormat expands to the width, in cells, of the client the
 // status line is currently being drawn for.
@@ -1327,20 +1367,37 @@ const statusbarSharedRowMinWidth = 2 * statusbarNotifyMaxWidth
 // budgets as soon as the terminal is resized.
 const statusbarClientWidthFormat = "#{client_width}"
 
-// statusbarNotifyBudgetFormat expands to the notify segment's cell budget:
-// notify's full design budget on a row at least twice that wide, and half the
-// row below that.
+// statusbarClientWidthLessThan builds `#{?#{e|<:client_width,n},then,otherwise}`.
 //
 // The numeric comparison must go through the `e|` modifier. tmux's bare
-// `#{<:a,b}` / `#{>:a,b}` are STRING comparisons — verified on tmux 3.6,
-// where `#{>:191,80}` is 0 and `#{>:9,10}` is 1 — so a bare comparison here
-// would silently never fire. The `<` form is also the fail-safe direction: tmux
-// treats an unevaluable condition as false, so a tmux that cannot evaluate the
-// comparison falls back to the literal 80, which is the historical behaviour.
+// `#{<:a,b}` / `#{>:a,b}` are STRING comparisons — verified on tmux 3.6, where
+// `#{>:191,80}` is 0 and `#{>:9,10}` is 1 — so a bare comparison here would
+// silently never fire. The `<` form is also the fail-safe direction: tmux treats
+// an unevaluable condition as false, so a tmux that cannot evaluate any of these
+// comparisons walks every false branch and lands on the literal 80, which is the
+// historical reservation.
+func statusbarClientWidthLessThan(n int, then, otherwise string) string {
+	return "#{?#{e|<:" + statusbarClientWidthFormat + "," + strconv.Itoa(n) + "}," + then + "," + otherwise + "}"
+}
+
+// statusbarNotifyBudgetFormat expands to the notify segment's cell budget:
+//
+//	client_width < 40   half the row          (neither budget may reach 0)
+//	client_width < 160  20  — the reservation (usage keeps its 120 floor)
+//	client_width < 220  client_width - 140    (notify grows on the surplus)
+//	otherwise           80  — the design cap
+//
+// which is `min(client_width/2, clamp(client_width-140, 20, 80))`. tmux has no
+// min/max operator (`e|` offers + - * / m %% and comparisons only, verified
+// against tmux 3.6's format(1) surface), so the clamp is spelled as nested
+// conditionals. The branches are continuous at both joins — 160-140 = 20 and
+// 220-140 = 80 — so the budget never jumps.
 func statusbarNotifyBudgetFormat() string {
 	half := "#{e|/:" + statusbarClientWidthFormat + ",2}"
-	return "#{?#{e|<:" + statusbarClientWidthFormat + "," + strconv.Itoa(statusbarSharedRowMinWidth) + "}," +
-		half + "," + strconv.Itoa(statusbarNotifyMaxWidth) + "}"
+	surplus := "#{e|-:" + statusbarClientWidthFormat + "," + strconv.Itoa(statusbarNotifySurplusFromWidth) + "}"
+	return statusbarClientWidthLessThan(statusbarEvenSplitMaxWidth, half,
+		statusbarClientWidthLessThan(statusbarNotifySurplusFromWidth+statusbarNotifyMinWidth, strconv.Itoa(statusbarNotifyMinWidth),
+			statusbarClientWidthLessThan(statusbarNotifySurplusCapWidth, surplus, strconv.Itoa(statusbarNotifyMaxWidth))))
 }
 
 // statusbarUsageBudgetFormat expands to everything on the row that notify did
@@ -1358,28 +1415,45 @@ func statusbarUsageBudgetFormat() string {
 // — that lives on `status-format[1]` — so the whole client width is this
 // row's budget, and the two segments split it exactly:
 //
-//	notify = min(80, client_width / 2)
+//	notify = min(client_width/2, clamp(client_width-140, 20, 80))
 //	usage  = client_width - notify
 //
-// Splitting, rather than handing usage the whole width, is forced by two
-// measured facts. First, the notify segment fills whatever budget it is given
-// whenever the queue is non-empty: it clips its body text down to the cap
-// rather than rendering short. Second, when the `#[align=left]` and
-// `#[align=right]` sections of one status row do not both fit, tmux draws the
-// left section in full and clips the right one FROM ITS LEFT EDGE — so an
-// over-budget usage segment does not degrade through its own tier ladder, it
-// loses its leading provider blocks outright (verified on tmux 3.6 and
-// reproduced end to end against a real client at widths 191/140/80). Budgeting
-// usage at the full client width would therefore hide a provider's official
-// window bar wholesale whenever anything is queued, which is exactly what the
-// segment's ladder exists to prevent.
+// A reservation is unavoidable, for two facts measured on tmux 3.6 against the
+// real generated config rather than a synthetic case. First, the notify segment
+// fills whatever budget it is given whenever the queue is non-empty: rendered
+// display width equals the budget exactly, up to the queue's natural length.
+// Second, when the `#[align=left]` and `#[align=right]` sections of one status
+// row do not both fit, tmux draws the left section in full and clips the right
+// one FROM ITS LEFT EDGE. Budgeting usage at the whole client width on a
+// 191-column row with a queued notification produced, verbatim:
 //
-// The former hardcoded pair (notify 80, usage 120) summed to 200 and so was
-// already over-committing every row narrower than that: on a 140-column client
-// with a non-empty queue tmux was clipping the usage segment. Deriving both
-// budgets from the client removes that class of defect at every width and
-// gives usage every cell the row has beyond notify's reservation, instead of a
-// constant that happened to be tuned for one terminal size.
+//	projmux   GON  Claude · 응답 완료 · … · 1분 전   +7░░░] 39% · weekly [...]
+//
+// — the usage segment lost its leading `Claude (4m) 5h [███` outright instead of
+// degrading through its own tier ladder. A format cannot avoid this by measuring
+// notify either: `#{w:#(cmd)}` and `#{n:#(cmd)}` both expand to 0 on tmux 3.6,
+// in `display-message` and in a live status line alike, even though the same
+// `#(cmd)` renders fine on its own. The modifiers only measure formats, not job
+// output.
+//
+// What PR #624 got wrong was the SIZE of the reservation, not its existence. It
+// reserved notify's design cap (80) unconditionally, which left a 191-column
+// client — the width this was reported from — 111 usage cells where the old
+// hardcoded constant gave 120, and every client under 200 columns less than it
+// had before. Reserving notify's FLOOR instead (20, see statusbarNotifyMinWidth
+// for the measured ladders) gives that client 140 cells, past the measured 124
+// where Claude's weekly bar returns and past the 134 the full HUD needs, while
+// notify keeps a legible pill and recovers its full 80 cells on a 220-column
+// row. usage also never drops below the 120 it was hardcoded to on any row that
+// can physically host 120 cells plus notify's floor, i.e. from 140 columns up.
+//
+// Below 140 columns the two goals are physically incompatible: 120 usage cells
+// plus any notify at all does not fit, and a 0-cell notify budget is NOT a
+// no-op — `--max-width 0` means "no truncation", so notify would render its full
+// natural width (84 cells on the measured queue), overflow an 80-column row and
+// erase the usage segment entirely. Notify's floor therefore wins below 140, and
+// usage gets `client_width - 20`. That is never less than PR #624's even split
+// gave, and strictly more above 40 columns.
 func statusbarAuxLineFormat(bin string, autosave bool) string {
 	line := "#[align=left range=user|notify]#(" + bin + " internal status notify --max-width " + statusbarNotifyBudgetFormat() + ")#[norange]" +
 		"#[align=right range=user|usage]#(" + bin + " internal status usage --max-width " + statusbarUsageBudgetFormat() + ")#[norange]"

@@ -23,7 +23,8 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
 
 - Row 0 splits the line with `#[align=left]` (the pending AI notify
   queue) and `#[align=right]` (usage). Both cell budgets are derived from
-  the width of the client the row is being drawn for — see
+  the width of the client the row is being drawn for, and the row holds back
+  notify's *minimum* rather than its design cap — see
   [Row 0 width budgets](#row-0-width-budgets). `notify` is the
   explicit-ack pending queue; live pane attention badges are a separate
   state surface.
@@ -121,24 +122,53 @@ Row 0 does not share space with the window list — that lives on
 segments split it exactly:
 
 ```
-notify = min(80, client_width / 2)
+notify = min(client_width / 2, clamp(client_width - 140, 20, 80))
 usage  = client_width - notify
 ```
 
 Both `--max-width` arguments are tmux formats, not constants:
 
 ```tmux
-#(<projmux> internal status notify --max-width #{?#{e|<:#{client_width},160},#{e|/:#{client_width},2},80})
-#(<projmux> internal status usage  --max-width #{e|-:#{client_width},#{?#{e|<:#{client_width},160},#{e|/:#{client_width},2},80}})
+#(<projmux> internal status notify --max-width <N>)
+#(<projmux> internal status usage  --max-width #{e|-:#{client_width},<N>})
+
+N = #{?#{e|<:#{client_width},40},#{e|/:#{client_width},2},
+     #{?#{e|<:#{client_width},160},20,
+      #{?#{e|<:#{client_width},220},#{e|-:#{client_width},140},80}}}
 ```
 
-80 is notify's own design budget and stays its effective cap on any row at
-least twice that wide, so notify's output is byte-identical on a normal
-terminal. usage gets every cell the row has beyond that reservation instead of
-a constant: a 200-column client reaches the old hardcoded 120 exactly, and
-anything wider passes it.
+The reservation is notify's **minimum**, not its design cap. 20 cells is the
+narrowest budget at which the notify segment still renders body text plus the
+`+N` older-entry count, and 140 is `120 + 20` — usage's historical hardcoded
+budget plus that floor, so usage recovers exactly the cells it used to get from
+a 140-column client up. Above 160 columns notify grows on the surplus until it
+reaches its unchanged 80-cell design cap on a 220-column row. Below 40 columns
+neither budget can be met and the row is split evenly instead, because
+`--max-width 0` means "no truncation" to both renderers, so a zero budget is
+read as *unbounded* and overflows the row.
 
-Three tmux behaviours this relies on, all verified against a real server
+Measured against a real attached client on tmux 3.6 (the number in the middle
+column is what `tmux display-message -p '<the format above>'` answered, and the
+right column is what that integer then rendered):
+
+| client | notify | usage | Claude weekly bar |
+| ---: | ---: | ---: | --- |
+| 40 | 20 | 20 | no |
+| 60 | 20 | 40 | no |
+| 80 | 20 | 60 | no |
+| 100 | 20 | 80 | no |
+| 120 | 20 | 100 | no |
+| 140 | 20 | 120 | no |
+| 144 | 20 | 124 | **yes** |
+| 160 | 20 | 140 | yes |
+| 180 | 40 | 140 | yes |
+| 191 | 51 | 140 | yes |
+| 200 | 60 | 140 | yes |
+| 219 | 79 | 140 | yes |
+| 220 | 80 | 140 | yes |
+| 240 | 80 | 160 | yes |
+
+Four tmux behaviours this relies on, all verified against a real server
 (tmux 3.6) rather than assumed:
 
 1. **tmux expands formats inside `#()` before running the job**, and keeps one
@@ -153,22 +183,46 @@ Three tmux behaviours this relies on, all verified against a real server
    `#{<:a,b}` / `#{>:a,b}` are *string* comparisons — `#{>:191,80}` is `0` and
    `#{>:9,10}` is `1` — so a bare comparison would silently never fire. The `<`
    direction is also the fail-safe one: tmux treats an unevaluable condition as
-   false, so a build that cannot evaluate the comparison falls back to the
-   literal `80`, which is the historical behaviour.
-3. **When the two sections do not both fit, tmux draws the left one in full and
-   clips the right one from its LEFT edge.** An over-budget usage segment
-   therefore does not degrade through its own tier ladder — it loses its leading
-   provider blocks outright. That is why the two budgets sum to exactly the
-   client width rather than each being capped independently: the former
-   hardcoded pair (notify 80, usage 120) summed to 200 and was already clipping
-   the usage segment on any client narrower than that whenever the notify queue
-   was non-empty. The notify segment fills whatever budget it is given while
-   anything is queued — it clips its body text down to the cap rather than
-   rendering short — so the reservation has to be real.
+   false, so a build that cannot evaluate the comparisons walks every false
+   branch to the literal `80`, the historical reservation. tmux has no `min`/
+   `max` operator (`e|` offers `+ - * / m %%` and comparisons only), which is
+   why the clamp is spelled as nested conditionals.
+3. **A tmux format cannot measure a `#()` job's output.** `#{w:...}` and
+   `#{n:...}` measure a *format*, not a job: `#{w:#{client_width}}` is `3` on a
+   191-column client, but `#{w:#(printf …)}` and `#{n:#(printf …)}` are both `0`
+   — in `display-message` and in a live status line alike, even where the same
+   `#()` renders normally on its own. So row 0 cannot learn how long the notify
+   segment actually came out and size usage from it; the reservation has to be
+   a static derivation from the client width.
+4. **When the two sections do not both fit, tmux draws the left one in full and
+   clips the right one from its LEFT edge.** Re-verified against this exact
+   generated config: budgeting usage at the whole client width on a 191-column
+   row with a queued notification drew
+   `… · 1분 전   +7░░░] 39% · weekly […`, i.e. the usage segment lost its
+   leading `Claude (4m) 5h [███` outright instead of degrading through its own
+   tier ladder. That is why the two budgets sum to exactly the client width
+   rather than each being capped independently, and why the reservation cannot
+   simply be dropped: the notify segment fills whatever budget it is given while
+   anything is queued — its rendered display width equals its budget exactly, up
+   to the queue's natural length.
 
-What this does *not* fix: the usage tier ladder is still whole-segment, so a
-narrow row can still cost a provider's bar wholesale. Per-provider tier
-selection is a separate change.
+Why the reservation is notify's floor and not its cap: the two segments degrade
+on different curves. Notify's ladder is **linear** — from about 32 cells up,
+every extra cell buys exactly one more character of body text, and the project
+pill, severity badge, age and `+N` count are complete by then. The usage
+ladder is **discrete** — 98 cells buys a primary bar per provider, 124 buys
+Claude's official weekly bar back, 134 adds the age indicator. A cell moved
+from notify to usage can restore a whole provider window; the same cell moved
+the other way buys one character.
+
+Two things this does *not* fix. The usage tier ladder is still whole-segment,
+so a row narrower than 144 columns can still cost a provider's bar wholesale;
+per-provider tier selection is a separate change. And below 140 columns "usage
+keeps its historical 120 cells" and "notify keeps a usable segment" are
+physically incompatible — 120 usage cells plus any notify at all does not fit —
+so notify's 20-cell floor wins there and usage gets `client_width - 20`. That
+is never less than the previous even split gave, and strictly more above 40
+columns.
 
 A single tmux bind handles both lines:
 
