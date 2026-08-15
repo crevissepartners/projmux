@@ -157,6 +157,17 @@ func describeSpecRows(resource any) [][2]string {
 		if typed.Status.PaneRef != "" {
 			rows = append(rows, [2]string{"PaneRef", typed.Status.PaneRef})
 		}
+		// The session ref rows are rendered from the populated provider member,
+		// so the key names differ per provider (Claude reports a SessionID and a
+		// TranscriptPath, Codex a ThreadID and a SessionID, Antigravity a
+		// ConversationID). That is the point of the union: describe shows the
+		// identifiers the provider actually issued instead of a normalized
+		// lowest common denominator.
+		if ref := typed.Status.SessionRef; !ref.Empty() {
+			rows = append(rows, [2]string{"SessionProvider", ref.Provider})
+			rows = append(rows, ref.Fields()...)
+			rows = append(rows, [2]string{"SessionObservedAt", ref.ObservedAt.UTC().Format("2006-01-02T15:04:05Z")})
+		}
 		return rows
 	default:
 		return nil

@@ -228,18 +228,40 @@ type AgentSpec struct {
 	Provider string `json:"provider,omitempty"`
 }
 
-// AgentStatus tracks the lifecycle phase and the current managed Pane uid.
+// AgentStatus tracks the lifecycle phase, the current managed Pane uid, and the
+// durable pointer to the provider conversation the Agent belongs to.
+//
+// PaneRef and SessionRef have deliberately different lifetimes. PaneRef is the
+// *current* binding and is cleared by ReleaseAgentPane, DeletePane, and every
+// non-Running transition. SessionRef is the durable conversation pointer and is
+// never cleared by any of them: an Offline Agent that has lost its Pane still
+// knows which conversation it is.
+//
+// SessionRef is an optional pointer with omitempty. That is the whole
+// read-compatibility story for registry files written before it existed: an
+// absent key decodes to nil, a nil ref re-encodes to an absent key, and the
+// document round-trips byte-identically. It is additive inside schemaVersion 1
+// and needs no migration step — bumping the envelope would make every already
+// installed build reject the file fail-closed with ErrSchemaTooNew, which is a
+// hard downgrade break bought for nothing.
+//
+// One conversation may be pointed at by more than one Agent. That is NOT
+// prevented, and the registry treats it as legal state; see the note on
+// NewAgentSessionRef and the Agent section of docs/agent-workflow.md for the
+// reasoning.
 type AgentStatus struct {
-	Phase            AgentPhase `json:"phase"`
-	PaneRef          string     `json:"paneRef,omitempty"`
-	Reason           string     `json:"reason,omitempty"`
-	LastTransitionAt time.Time  `json:"lastTransitionAt"`
+	Phase            AgentPhase       `json:"phase"`
+	PaneRef          string           `json:"paneRef,omitempty"`
+	SessionRef       *AgentSessionRef `json:"sessionRef,omitempty"`
+	Reason           string           `json:"reason,omitempty"`
+	LastTransitionAt time.Time        `json:"lastTransitionAt"`
 }
 
 // Clone returns a deep copy of the Agent.
 func (a Agent) Clone() Agent {
 	out := a
 	out.Metadata = a.Metadata.Clone()
+	out.Status.SessionRef = a.Status.SessionRef.Clone()
 	return out
 }
 

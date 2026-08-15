@@ -120,6 +120,9 @@ func (r Registry) Validate() error {
 		if agent.Status.Phase == PhaseRunning && agent.Status.PaneRef == "" {
 			return stateErr(op, ErrInvalidRegistry, "agent %q is Running without a managed pane", agent.Metadata.Name)
 		}
+		if err := validateSessionRef(op, agent); err != nil {
+			return err
+		}
 	}
 
 	for _, window := range r.Windows {
