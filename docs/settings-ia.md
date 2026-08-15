@@ -1,171 +1,167 @@
 # Settings Information Architecture
 
-This branch finishes the current Settings/onboarding roadmap slice with a
-view-first layout:
+Settings is container-first with progressive disclosure. A category row is a
+**View** you navigate into; a simple value is edited inside the View that owns
+it. The visible tree below is the shipped architecture — it is generated from
+the navigation catalog in `internal/app/settings_nav.go` and frozen by
+`internal/app/testdata/settings-nav-tree.golden`, so an IA change is a diff on
+that golden rather than a behavior discovered at runtime.
 
-- Every Settings surface keeps the Global/Project tab strip visible so nested
-  pages still show their scope. Detail pages may render the strip as passive
-  context when changing tabs from that nested page would skip an explicit Back
-  boundary.
-- Settings uses a view-first rule: overview rows open details; details show the
-  current state, source, and expected rendered result before offering mutation
-  rows. If a detail opens a dedicated `Change` page, that page is mutation-only
-  and does not repeat the same read-only view rows.
-- Every rendered non-empty row value is classified as navigation, actionable,
-  or passive information/disabled state and is mapped to a closed owner-loop
-  contract before rendering. An unowned value is a Settings error; Enter on a
-  passive row is consumed as a no-op.
-- `Settings > Project Picker > Workdirs` is the list/overview entry. Add/remove
-  actions live inside that view.
-- `Settings > Project Picker > Project Root` shows effective and saved values
-  first, then the edit actions, then the explanatory hints.
-- `Settings > Keybindings` is a single action list plus a simple action detail.
-  It does not expose `Bindings`, `Diagnostic`, `Probe`, or `Init` as first-class
-  chips/tabs in the Settings root flow.
-- `Settings > Keybindings` is a keybinding discovery surface, not only a
-  launch-toggle editor. It must show `Toggle Project Sidebar` with the
-  guaranteed `Alt-1` / `M-1` default, plus sidebar-local commands, picker-local
-  commands, `Pane navigation`, `Window navigation`, and `Rename` groups or
-  equivalent searchable rows.
-- `Settings > Keybindings > Action` keeps the user-facing edit path small:
-  action label, state, a flat Keys list, Options, and a collapsed
-  Troubleshooting row. Keys shows only currently active/effective keys plus
-  `+ Add key`. Pressing a key row opens key detail, where Remove key and Test
-  key live. Options offers Unbind and Reset to default/Use default when
-  state-appropriate. Add key opens the default Press a key flow with Cancel and
-  Advanced...; typed key-name entry and raw diagnostics live under Advanced. It
-  does not expose Default key, Apply State, Delivery, Advanced Delivery,
-  key-role replacement, terminal mapping preview, or terminal mapping apply
-  rows as always-visible sections.
-- Terminal delivery remediation lives outside Settings primary flow. The
-  supported order is `projmux shell` first, then `projmux setup`, then
-  `projmux setup terminal` for supported terminal adapters.
-- Rows that cannot safely be edited still stay visible. Mark diagnostic-only
-  rows with the delivery path and reason instead of hiding them or turning them
-  into unsupported editable keys. Transport-dependent rows stay visible with
-  their default transport key and additive custom-key entry; replacing or
-  disabling the transport default is not exposed.
-- `Alt-1..5` are the only guaranteed zero-config launch defaults. `UserN` and
-  `CSI-u` are legacy/removal/unsupported targets, not supported fallback
-  guidance for Settings, setup, init, or docs.
-- The launcher checkout policy applies in Settings: the project sidebar is a
-  first-class row, action rows use human-readable labels, internal IDs appear
-  only in detail/source/keymap contexts, and runtime footers are status hints,
-  not key discovery.
-- `Settings > Theme` (Global) is the single theme view. There is no separate
-  `Effective theme` item: the Global theme view shows each color token's value
-  inline. A token set globally (explicit value or via a global preset) shows its
-  set/override/preset summary; an UNSET token shows the resolved fallback value
-  with a dim swatch, a `(fallback)` label, and a `fallback` source. Resolver
-  warnings render as dim info rows after the token rows. Project `.projmux`
-  `[theme]` is never resolved or shown here.
-- `Settings > Notifications` owns notification delivery IA. Desktop notification
-  mode, AI desktop notification dedupe duration, delivery source diagnostics,
-  and AI hook quiet policy live together without mixing mutation boundaries.
-  The in-app queue is consumed from the statusbar/sidebar, not from a standalone
-  Settings row. `PROJMUX_NOTIFY_HOOK` override presence is folded into Delivery
-  sources summary/detail instead of appearing as a separate root row.
-- `Settings > Notifications > Desktop notifications` owns the desktop
-  notification mode. The detail choices are exactly `off` and `notify`. The
-  retired `raise` mode is not offered; existing saved `raise` values are read
-  as `notify`.
-- `Settings > Notifications > AI notification dedupe` owns the duplicate
-  desktop AI notification collapse window. It stores integer seconds and shows
-  the effective source; `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` remains the top
-  override. The tmux bell fallback keeps its fixed 5 second window.
-- `Settings > Notifications > Delivery sources` shows Codex, Claude,
-  Antigravity, and tmux producer diagnostics, the effective desktop sender
-  override state, and copyable install/remove/dry-run commands. Settings copies
-  command text only; it does not install or remove external notify wiring. The
-  legacy Codex notify source is intentionally omitted from Settings.
-- `Settings > Notifications > Hook quiet policy` shows Codex/Claude hook
-  runtime action values and writes only
-  `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json`. It does not
-  edit catalog `install` values or run agent install/remove commands.
-- `Settings > Session State > Sidebar startup picker` controls the Alt-1
-  project-open startup selector. The saved file remains
-  `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sidebar-startup-picker`.
-- `Settings > Labs` contains only Live system resources and Project Hooks.
-  Keybindings live at `Settings > Keybindings`; Labs has no visible or hidden
-  keybindings redirect. The native picker is the product picker, so Labs does
-  not render picker source information.
-- `Settings > Labs > Live system resources` is a direct global on/off toggle
-  for the macOS/Linux/WSL lower-status-row `CPU N%  MEM N%` segment. It defaults
-  off, updates live tmux state when toggled, and renders unavailable on
-  unsupported platforms. CPU and memory use fixed independent semantic
-  thresholds (CPU warning/critical at 70/90; memory at 75/90); the toggle does
-  not expose threshold customization. WSL values describe the Linux guest/VM
-  view.
-- `Settings > Labs > Project Hooks` is overview-first. The Labs root opens the
-  overview, and the on/off mutation rows live one level deeper.
-- `Settings > AI Settings` is view-first. The root contains `Default split
-  mode`, `Enabled agents`, and `Resume picker`; the default-mode detail contains
-  the `Claude`, `Codex`, `Antigravity`, `Shell`, and `Selective` choices.
-- `Settings > Project > Project recipe` is the functional label for
-  `.projmux/config.toml`. Search still matches `config.toml` as an alias.
-- `Settings > Project > Project recipe` is view-first. The root contains section
-  rows such as `Startup command`, `Kube`, and `Environment`; mutation actions
-  such as `Set startup command...`, `Clear startup command`, kube edits, and env
-  add/remove rows live inside those details.
-- `Settings > Appearance` is view-first. The root opens `Path icon`, `Git icon`,
-  and `Notify icon` details. Each detail shows the current mode plus
-  immediately selectable off/symbol/emoji preview rows. There is no separate
-  `Change` page for icon decoration.
-- `Settings > Appearance > Language / Locale` is the global/user language
-  detail. The root row shows the saved `[ui].locale` value and the currently
-  effective locale. The detail shows `Current`, `[ui].locale`, optional
-  `PROJMUX_LOCALE` env override, and direct choices for `auto`, `en-US`, and
-  `ko-KR`. When `auto` is active it must show the detected source (`LC_ALL`,
-  `LC_MESSAGES`, `LANG`, or fallback). Unsupported locale tags must remain
-  visible as warnings and fall back to `en-US`.
-- Global root descriptions keep ownership explicit: Appearance owns language,
-  AI badge style, and status/notification icon decoration; Theme owns presets,
-  and color tokens. About describes only the surface it retains.
-- `Settings > About` is intentionally compact: Version, Source, update
-  status/actions (including Latest, Update state, Installer, and Release notes
-  when available), Welcome, and Quit. It does not reproduce static key,
-  terminal, dependency, terminal-emulator, or documentation guides. Key
-  delivery discovery lives in `projmux setup`, supported terminal remediation
-  in `projmux setup terminal`, read-only dependency/runtime diagnostics in
-  `projmux doctor`, and broader orientation in Welcome and maintained docs.
-- Without an actionable project context, the Project surface renders one
-  passive context-guidance row instead of repeating the same disabled reason
-  for Trust, Hooks, Project recipe, and Effective merge view. With project
-  context, those four rows and Session State retain their existing actions.
+## Row affordances
 
-Settings mutation feedback follows one transient contract. The next picker
-frame inserts one passive `Feedback` row after Back; the row uses the catalogued
+Every rendered row has exactly one affordance. A row never both navigates and
+mutates.
+
+- `[View]` — a navigation boundary: a category, a collection, or a component
+  with more than one setting. Entering a View never changes a saved value.
+- `[State]` — read-only current value, source, and availability. Enter is a
+  no-op consumed by the owning loop.
+- `[Toggle]` — a simple, immediately reversible boolean inside its owning View.
+  A boolean never gets a `Visibility View → Show/Hide` route of its own.
+- `[Choice]` — a small enum/value row. Enter opens a compact chooser and
+  returns to the same View; it is not a separate breadcrumb route.
+- `[Edit]` — a path, command, or name change that needs typed input or a picker.
+- `[Action]` — check, copy, preview, test, update: an observable execution.
+- `[Confirm]` — remove, reset, unbind, untrust, quit. The row names both the
+  target and the consequence, so a confirmation is never a bare yes/no.
+
+Collections own `Add`; the item owns `Remove`. Current values are visible on the
+leaf row itself, and a non-default source, conflict, or unavailability is a
+badge or secondary text rather than a mandatory intermediate screen. A control
+that cannot act is a disabled row carrying its reason and the canonical next
+step, never a silent no-op.
+
+## Global
+
+- **Projects** — Project discovery, pins, and sidebar policy. Settings manages
+  discovery and pinning; the runtime picker UI keeps the name `Project Picker`.
+  - `Primary discovery root [View]` — effective/saved/source state, then
+    `Use current directory`, `Enter path`, `Clear saved root`.
+  - `Additional discovery roots [View]` — the collection owns the two add rows;
+    each saved root is an item View that owns `Remove discovery root`.
+  - `Pinned Projects [View]` — each pin is an item View showing the Project's
+    display name, unique name, uid, bound root, condition, missing-since and
+    runtime separately. A `MissingRoot` Project is never hidden, deleted, or
+    re-pinned under a new identity: the item offers `Rebind Project root`, which
+    calls the canonical `rebind project` route and keeps the same uid. Settings
+    performs no heuristic uid merge and no automatic prune.
+  - `Project Sidebar [View]` — `Closed Project startup` chooses between using
+    the stored Project topology and asking for a Snapshot. The saved file keeps
+    its `sidebar-startup-picker` spelling.
+- **AI** — `AI` is a product category, never an addressable resource.
+  - `Default launch target [Choice]` — an Agent Provider, a Shell Pane, or
+    choose-at-launch. It is a keybinding/picker preference and does not weaken
+    the canonical `create agent` explicit-provider requirement.
+  - `Enabled providers [View]` — Claude, Codex, and Antigravity are Providers;
+    `Shell`, `Selective` and `Resume` are not Providers and never appear here.
+  - `Agent Resume Picker [View]` — states that resume targets an existing Agent
+    in the `Offline` or `Failed` phase and that its new action is
+    `Create New Agent`, then the picker limit and scan depth.
+- **Notifications** — the persistent Notification queue and how it is delivered.
+  Live Pane attention is a presentation concern and lives under Appearance.
+  - `Desktop delivery [View]` — effective sender/source, `Delivery mode`
+    (`off`/`notify`), `Dedupe window`, and the `PROJMUX_NOTIFY_HOOK` external
+    sender as read-only state. The external sender is never presented as an
+    alternative to the `[hooks.send-noti]` fan-out, which is Automation.
+  - `Provider Integrations [View]` — Codex/Claude/Antigravity producer wiring,
+    status, conflict, config path, and copyable install/remove commands.
+    Settings copies command text; it never installs or removes wiring.
+  - `tmux event source [View]` — the tmux bell producer. It is an event source,
+    not a Provider, so it is not a member of the Provider inventory.
+  - `Agent event behavior [View]` — per Provider, per event: default / notify /
+    state only / quiet. It writes only
+    `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json`.
+- **Automation** — Projmux-owned user scripts and the policy that gates the
+  project-local ones. It does not own Provider wiring or desktop delivery.
+  - `Projmux session lifecycle [View]` — `Before session create`,
+    `After session create`, `After session attach`. Each event is a View showing
+    the command, its effective state, and its source before any mutation row.
+  - `After notification queued [View]` — `[hooks.send-noti]`, the user fan-out
+    that runs after the durable queue write.
+  - `Project automation policy [Toggle]` — the promoted execution gate for
+    project-local automation.
+  - Global `[hooks.*]` stays read-only in app: its edit and remove rows render
+    as disabled rows naming the config path and `projmux hook edit <event>`.
+- **Appearance** — every visual surface has one destination here.
+  - `Theme [View]` — `Preset`, `Tokens [View] → Core/Surface/State/Chrome →
+    <token>`, and `Reset theme`. Only the global `[theme]` block is edited;
+    project-local `[theme]` remains deprecated migration data.
+  - `Status Bar [View]` — the Projmux-owned status segments. `Notifications
+    HUD`, `Working directory` and `Git` are component Views with a current/
+    source/preview state row and an icon `Choice`; `Resources` is a plain
+    `Toggle` whose off state stops the segment and the host sampler together.
+    Per-component visibility storage for the remaining components is a later
+    slice; this container ships only the rows whose control exists, because a
+    row that cannot act is an empty placeholder.
+  - `Language / Locale [Choice]` and `Agent attention badge style [Choice]`.
+- **Snapshots** — the visible noun is the Snapshot resource. `session-state`
+  remains the config/route spelling and appears only as source detail.
+- **Keybindings** — `Launch & popups`, `Agent & Pane launch`,
+  `Pane & Window navigation`, `Sidebar & picker actions` (nested by surface:
+  Project Sidebar, Session Picker, Notification Sidebar, Settings), and
+  `Input delivery`. Every catalog action belongs to exactly one category, the
+  assignment is explicit metadata rather than an ID-prefix inference, and the
+  category rows carry their members' search text so search crosses categories.
+  An action detail shows the action, its target kind, result kind, placement and
+  anchor, its effective keys and source, then the Keys collection and the
+  unbind/reset confirmations.
+- **About** — version/source state, `Updates [View]` (current/latest/installer/
+  release notes, `Check for updates`, `Update now`), `Welcome`, and
+  `Quit Projmux`, whose confirmation names the app-owned runtime and socket.
+
+## Project
+
+- **Automation** — `Trust [View]` (trust state, project config hash, source, and
+  the approve/revoke actions) and `Project hooks [View]` (`Session lifecycle`
+  plus `After notification queued`, with the same per-event Views the global
+  scope uses, extended by a trust state row).
+- **Snapshots** — the auto-save override and the saved snapshots.
+
+Without an actionable project context the Project surface renders a single
+passive guidance row rather than repeating a disabled reason per row.
+
+## Vocabulary and compatibility
+
+Visible nouns follow the shared resource vocabulary: `Project`, `Window`,
+`Pane`, `Agent`, `Provider`, `Notification`, `Snapshot`, with `AI` as a category
+and `Session` as the runtime projection. The Agent Usage HUD is a presentation
+of what the canonical `agent usage` command provides; there is no addressable
+`Usage` resource, and Settings never spells usage as a readable resource kind.
+
+Renaming is display-only. Keymap action IDs (`new-window`, `Sidebar:KillSession`,
+`ai-split-right`, …), config keys, `[hooks.*]` tables, environment variables and
+runtime compatibility routes keep their shipped spelling, so a saved
+`keymap.toml`, a saved config file and every runtime route behave exactly as
+before the rename.
+
+Interactive right/down keybindings pass the Pane the user pressed the key in as
+an explicit anchor. Automation that omits an anchor uses the Window's persisted
+`spec.primaryPaneRef` and never silently recovers a stale reference from the
+focused Pane.
+
+## Retired destinations
+
+`Labs`, the separate `Theme` root, `Project recipe`, `Effective merge view` and
+the flat Keybindings action wall are gone from navigation. They are not visible
+rows and not hidden redirects: their values carry no catalog metadata and
+`runSection` refuses them. The project recipe and effective-merge handlers still
+exist in the tree; their hard removal is a later slice.
+
+Removed guidance keeps canonical destinations elsewhere: key delivery discovery
+in `projmux setup`, supported terminal remediation in `projmux setup terminal`,
+and read-only dependency/runtime diagnostics in `projmux doctor`.
+
+## Mutation feedback
+
+Settings mutation feedback follows one transient contract. The next picker frame
+inserts one passive `Feedback` row after Back; the row uses the catalogued
 `settingsNoopValue`, so Enter cannot create an unknown action. Selecting another
 navigation/action clears the old row before that operation runs, and a handled
-result replaces it. The inventory includes AI defaults/enabled agents/resume
-limits, notification modes/dedupe/hook policy, Appearance and locale choices,
-Labs toggles, project roots/workdirs/pins, project hooks/recipe/trust, Theme,
-Session State, direct keybinding reset/remove/toggle operations, and About
-update apply/check. Typed validation and staged apply failures stay in the
-popup instead of being visible only on stdout/stderr.
+result replaces it. Typed validation and staged apply failures stay in the popup
+instead of being visible only on stdout/stderr.
 
-The generic feedback inventory deliberately excludes Welcome, Quit,
-read-only hook/effective/notification diagnostics, Session State preview, and
-key capture/probe/diagnostic bodies. Those flows own a viewer, confirmation, or
+The generic feedback inventory deliberately excludes Welcome, Quit, read-only
+hook/effective/notification diagnostics, Snapshot preview, and key
+capture/probe/diagnostic bodies. Those flows own a viewer, confirmation, or
 multi-step output surface; only an actual Settings write at their boundary is
 eligible for transient mutation feedback.
-
-Hooks remain the reference pattern for this IA:
-
-- project-scoped rows stay editable in-app
-- global/system rows are read-only in-app
-- project overrides are created intentionally from the project surface or
-  `projmux hook edit <event> --project`
-- `Settings > Project > Hooks` lists hook events only. It does not nest the
-  Project recipe row; Project recipe belongs under the Project tab.
-- The Settings hook event list includes `send-noti` for both global and project
-  hook views.
-
-Shell bootstrap UX is phase-split:
-
-- `projmux welcome` remains the stdout revisit command.
-- `Settings > About > Welcome` opens a visible native viewer independent of
-  shell skip state.
-- Legacy shell `skip_version` state remains readable for compatibility but no
-  longer suppresses the automatic `projmux shell` prompt; release skips live in
-  `update-skip.json` and do not hide manual revisit surfaces.

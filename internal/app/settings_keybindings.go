@@ -67,28 +67,134 @@ func (c *settingsCommand) runKeybindingsSectionWithActive(initial string, stdout
 		if action == settingsNoopValue {
 			continue
 		}
-		if action == settingsNativeKeysToggle {
-			enabled, err := c.currentNativeKeysSetting()
-			if err != nil {
-				c.setSettingsFeedback("Native macOS keybindings failed", err.Error())
-				continue
-			}
-			if err := c.runSettingsMutation("Native macOS keybindings", stdout, stderr, func(io.Writer, io.Writer) error {
-				return c.setNativeKeysSetting(!enabled)
-			}); err != nil {
-				return err
-			}
-			continue
-		}
-		if after, ok := strings.CutPrefix(action, settingsActionPrefixKeymap); ok {
-			id := after
-			if err := c.runKeybindingDetail(id, stdout, stderr); err != nil {
+		if categoryID, ok := strings.CutPrefix(action, settingsActionPrefixKeymapCategory); ok {
+			if err := c.runKeybindingCategorySection(categoryID, stdout, stderr); err != nil {
 				return err
 			}
 			continue
 		}
 		return fmt.Errorf("unknown keybinding settings action: %s", action)
 	}
+}
+
+// runKeybindingCategorySection drives one Keybindings category.
+func (c *settingsCommand) runKeybindingCategorySection(categoryID string, stdout, stderr io.Writer) error {
+	label, ok := keyBindingCategoryLabelByID(categoryID)
+	if !ok {
+		return fmt.Errorf("unknown keybinding category: %s", categoryID)
+	}
+	for {
+		entries, err := c.keybindingCategoryEntries(categoryID)
+		if err != nil {
+			entries = []intpickercompat.Entry{
+				c.backEntry(),
+				{Label: c.rowLabelDim("Keymap error", err.Error()), Value: settingsNoopValue},
+			}
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-keybindings-category",
+			Entries:    entries,
+			Title:      "Keybindings - " + label,
+			Prompt:     "Settings > Keybindings > " + label + " > ",
+			Footer:     projmuxFooter("Actions show their active keys and current state."),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsNativeKeysToggle:
+			if err := c.toggleNativeKeysSetting(stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixKeymapSurface):
+			surface := strings.TrimPrefix(action, settingsActionPrefixKeymapSurface)
+			if err := c.runKeybindingSurfaceSection(label, surface, stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixKeymap):
+			if err := c.runKeybindingDetail(strings.TrimPrefix(action, settingsActionPrefixKeymap), stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown keybinding category action: %s", action)
+		}
+	}
+}
+
+// runKeybindingSurfaceSection drives one surface group inside the
+// sidebar/picker category.
+func (c *settingsCommand) runKeybindingSurfaceSection(categoryLabel, surface string, stdout, stderr io.Writer) error {
+	surfaceLabel, ok := keyBindingSurfaceLabel(surface)
+	if !ok {
+		return fmt.Errorf("unknown keybinding surface: %s", surface)
+	}
+	for {
+		entries, err := c.keybindingSurfaceEntries(surface)
+		if err != nil {
+			entries = []intpickercompat.Entry{
+				c.backEntry(),
+				{Label: c.rowLabelDim("Keymap error", err.Error()), Value: settingsNoopValue},
+			}
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-keybindings-surface",
+			Entries:    entries,
+			Title:      "Keybindings - " + surfaceLabel,
+			Prompt:     "Settings > Keybindings > " + categoryLabel + " > " + surfaceLabel + " > ",
+			Footer:     projmuxFooter("Actions show their active keys and current state."),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixKeymap):
+			if err := c.runKeybindingDetail(strings.TrimPrefix(action, settingsActionPrefixKeymap), stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown keybinding surface action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) toggleNativeKeysSetting(stdout, stderr io.Writer) error {
+	enabled, err := c.currentNativeKeysSetting()
+	if err != nil {
+		c.setSettingsFeedback("Native macOS keybindings failed", err.Error())
+		return nil
+	}
+	return c.runSettingsMutation("Native macOS keybindings", stdout, stderr, func(io.Writer, io.Writer) error {
+		return c.setNativeKeysSetting(!enabled)
+	})
+}
+
+func keyBindingCategoryLabelByID(id string) (string, bool) {
+	for _, category := range keyBindingCategoryOrder {
+		if category.ID == id {
+			return category.Label, true
+		}
+	}
+	return "", false
 }
 
 func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io.Writer) error {
@@ -823,18 +929,155 @@ func renderKeybindingDeliveryDiagnostic(res probeResult) []string {
 	}
 }
 
+// keybindingEntries renders the Keybindings root: one row per navigation
+// category. The flat action wall is gone; every action is reachable through
+// exactly one category, and search still crosses categories because each
+// category row carries its members' search text.
 func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 	keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return nil, err
 	}
-	defaults := defaultKeyBindingCatalog()
-	entries := make([]intpickercompat.Entry, 0, len(actions)+3)
+	locale := c.locale()
+	entries := make([]intpickercompat.Entry, 0, len(keyBindingCategoryOrder)+1)
 	entries = append(entries, c.backEntry())
-	entries = append(entries, intpickercompat.Entry{
-		Label: "  " + settingsColorDim + settingsCatalogTextLocale(c.locale(), "Actions are listed with active keys and state.") + settingsColorReset,
-		Value: settingsNoopValue,
-	})
+	for _, category := range keyBindingCategoryOrder {
+		if category.ID == keyBindingCategoryInput {
+			entries = append(entries, intpickercompat.Entry{
+				Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, category.Label, c.keybindingInputDeliverySummary()),
+				Value:     settingsActionPrefixKeymapCategory + category.ID,
+				SearchKey: "input delivery native macOS keybindings Accessibility Option",
+			})
+			continue
+		}
+		members := keybindingActionsInCategory(actions, category.ID)
+		entries = append(entries, intpickercompat.Entry{
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, category.Label, fmt.Sprintf("%d actions", len(members))),
+			Value:     settingsActionPrefixKeymapCategory + category.ID,
+			SearchKey: keybindingCategorySearchText(locale, keymap, members),
+		})
+	}
+	return entries, nil
+}
+
+// keybindingActionsInCategory returns the catalog actions assigned to one
+// category, in catalog order.
+func keybindingActionsInCategory(actions []keyBindingAction, category string) []keyBindingAction {
+	members := make([]keyBindingAction, 0, len(actions))
+	for _, action := range actions {
+		if assigned, ok := keyBindingActionCategory(action); ok && assigned == category {
+			members = append(members, action)
+		}
+	}
+	return members
+}
+
+func keybindingCategorySearchText(locale i18n.Locale, keymap keymapFile, members []keyBindingAction) string {
+	parts := make([]string, 0, len(members)*3)
+	defaults := defaultKeyBindingCatalog()
+	for _, action := range members {
+		defaultAction, _ := keyBindingActionByID(defaults, action.ID)
+		parts = append(parts,
+			action.ID,
+			keyBindingDisplayName(action),
+			action.Surface,
+			action.Description,
+			strings.Join(keybindingVisibleChords(action), " "),
+			keybindingState(keymap, action, defaultAction),
+			keybindingLocalizedSearchText(locale, action),
+		)
+	}
+	return strings.Join(parts, " ")
+}
+
+func (c *settingsCommand) keybindingInputDeliverySummary() string {
+	enabled, err := c.currentNativeKeysSetting()
+	switch {
+	case err != nil:
+		return "global config unreadable"
+	case !nativeKeysEnvEnabled(c.lookupEnv):
+		return "native macOS keybindings off - PROJMUX_NATIVE_KEYS override"
+	case enabled:
+		return "native macOS keybindings on"
+	default:
+		return "native macOS keybindings off"
+	}
+}
+
+// keybindingCategoryEntries renders one category. The sidebar/picker category
+// nests one more level by surface, because its actions only make sense
+// alongside the surface that owns them.
+func (c *settingsCommand) keybindingCategoryEntries(category string) ([]intpickercompat.Entry, error) {
+	if category == keyBindingCategoryInput {
+		return c.keybindingInputDeliveryEntries(), nil
+	}
+	keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return nil, err
+	}
+	locale := c.locale()
+	members := keybindingActionsInCategory(actions, category)
+	entries := []intpickercompat.Entry{c.backEntry()}
+	if category == keyBindingCategorySurfaces {
+		for _, surface := range keyBindingSurfaceOrder {
+			surfaceMembers := keybindingActionsInSurface(members, surface.ID)
+			if len(surfaceMembers) == 0 {
+				continue
+			}
+			entries = append(entries, intpickercompat.Entry{
+				Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, surface.Label, fmt.Sprintf("%d actions", len(surfaceMembers))),
+				Value:     settingsActionPrefixKeymapSurface + surface.ID,
+				SearchKey: keybindingCategorySearchText(locale, keymap, surfaceMembers),
+			})
+		}
+		return entries, nil
+	}
+	return append(entries, c.keybindingActionEntries(keymap, members)...), nil
+}
+
+func keybindingActionsInSurface(actions []keyBindingAction, surface string) []keyBindingAction {
+	members := make([]keyBindingAction, 0, len(actions))
+	for _, action := range actions {
+		if action.Surface == surface {
+			members = append(members, action)
+		}
+	}
+	return members
+}
+
+func (c *settingsCommand) keybindingSurfaceEntries(surface string) ([]intpickercompat.Entry, error) {
+	keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return nil, err
+	}
+	members := keybindingActionsInSurface(keybindingActionsInCategory(actions, keyBindingCategorySurfaces), surface)
+	return append([]intpickercompat.Entry{c.backEntry()}, c.keybindingActionEntries(keymap, members)...), nil
+}
+
+// keybindingActionEntries renders action rows with their active keys and
+// state. Each row opens the action detail; no row mutates a binding.
+func (c *settingsCommand) keybindingActionEntries(keymap keymapFile, members []keyBindingAction) []intpickercompat.Entry {
+	defaults := defaultKeyBindingCatalog()
+	locale := c.locale()
+	entries := make([]intpickercompat.Entry, 0, len(members))
+	for _, action := range members {
+		defaultAction, _ := keyBindingActionByID(defaults, action.ID)
+		state := keybindingState(keymap, action, defaultAction)
+		displayName := keyBindingDisplayName(action)
+		entries = append(entries, intpickercompat.Entry{
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, displayName, keybindingListSummary(action, state)),
+			Value:     settingsActionPrefixKeymap + action.ID,
+			SearchKey: strings.Join([]string{action.ID, displayName, action.Surface, action.Description, strings.Join(keybindingVisibleChords(action), " "), keybindingLocalizedSearchText(locale, action)}, " "),
+		})
+	}
+	return entries
+}
+
+// keybindingInputDeliveryEntries is the Input delivery category: the native
+// key toggle only. It holds no keymap action, which is why it is declared as a
+// category rather than derived from the action catalog.
+func (c *settingsCommand) keybindingInputDeliveryEntries() []intpickercompat.Entry {
+	entries := []intpickercompat.Entry{c.backEntry()}
 	enabled, settingErr := c.currentNativeKeysSetting()
 	switch {
 	case settingErr != nil:
@@ -862,19 +1105,34 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 			SearchKey: "native macOS keybindings Accessibility Option off",
 		})
 	}
-	locale := c.locale()
-	for _, action := range actions {
-		defaultAction, _ := keyBindingActionByID(defaults, action.ID)
-		state := keybindingState(keymap, action, defaultAction)
-		desc := keybindingListSummary(action, state)
-		displayName := keyBindingDisplayName(action)
+	return entries
+}
+
+// keybindingSemanticEntries renders the action's product semantics as
+// read-only rows: what it targets, what it produces, and — for the interactive
+// splits — where the result lands and which anchor it is placed against.
+func (c *settingsCommand) keybindingSemanticEntries(action keyBindingAction) []intpickercompat.Entry {
+	semantics, ok := keyBindingActionSemanticsFor(action)
+	if !ok {
+		return nil
+	}
+	entries := make([]intpickercompat.Entry, 0, 4)
+	for _, row := range [][2]string{
+		{"Target kind", semantics.TargetKind},
+		{"Result kind", semantics.ResultKind},
+		{"Placement", semantics.Placement},
+		{"Anchor", semantics.Anchor},
+	} {
+		if strings.TrimSpace(row[1]) == "" {
+			continue
+		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, displayName, desc),
-			Value:     settingsActionPrefixKeymap + action.ID,
-			SearchKey: strings.Join([]string{action.ID, displayName, action.Surface, action.Description, strings.Join(keybindingVisibleChords(action), " "), keybindingLocalizedSearchText(locale, action)}, " "),
+			Label:     c.rowLabelInfo(row[0], row[1], ""),
+			Value:     settingsNoopValue,
+			SearchKey: strings.ToLower(row[0] + " " + row[1]),
 		})
 	}
-	return entries, nil
+	return entries
 }
 
 func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickercompat.Entry, string, error) {
@@ -899,6 +1157,7 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: settingsNoopValue,
 		},
 	}
+	entries = append(entries, c.keybindingSemanticEntries(action)...)
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	for _, key := range keybindingVisibleChords(action) {
 		entries = append(entries, intpickercompat.Entry{
@@ -1090,7 +1349,7 @@ func keybindingLocalizedSearchText(locale i18n.Locale, action keyBindingAction) 
 		return settingsCatalogTextLocale(locale, "previously active pane / last pane")
 	case "Resources:Open":
 		return strings.Join([]string{
-			settingsCatalogTextLocale(locale, action.DisplayName),
+			settingsCatalogTextLocale(locale, keyBindingDisplayName(action)),
 			settingsCatalogTextLocale(locale, action.Description),
 		}, " ")
 	default:

@@ -347,3 +347,67 @@ Registry.rebuildMissingReservations
 # signal about anything.
 # ---------------------------------------------------------------------------
 Matrix
+
+# ---------------------------------------------------------------------------
+# Settings IA re-cut Phase 0 — retired destinations whose handlers are kept on
+# purpose.
+#
+# The Phase 0 cutover removes `Project recipe` and `Project > Effective merge
+# view` from navigation: they are neither rendered rows nor hidden redirects,
+# and `runSection` refuses their section values (see
+# TestRunSectionDoesNotRouteRetiredSections). The handlers themselves stay in
+# the tree because their hard removal — together with the `[kube]` parser, the
+# runtime projection and the statusbar segment — is one later slice, and
+# deleting the UI half now would split that removal across two releases with a
+# half-retired recipe concept in between. They keep their in-package tests, so
+# these are unreachable-from-main, not untested.
+#
+# This IS a shrinking-backlog group: the slice that retires the recipe concept
+# deletes these functions and these lines together.
+settingsCommand.runEffectiveMergeSection
+settingsCommand.effectiveMergeOptions
+settingsCommand.effectiveMergeEntries
+renderEffectiveHooksSection
+hookRunDisplayValue
+renderEffectiveSection
+effectiveEntryDisplayValue
+settingsCommand.loadGlobalConfigForMerge
+settingsCommand.loadProjectConfigForMerge
+settingsCommand.globalConfigFilePath
+sourceFileState
+configHasContent
+DisplayEnvValue
+settingsProjectConfigState
+settingsProjectConfigSummary
+settingsCommand.runProjectConfigSection
+settingsCommand.runProjectConfigStartupSection
+settingsCommand.runProjectConfigKubeSection
+settingsCommand.runProjectConfigEnvSection
+settingsCommand.executeProjectConfigAction
+settingsCommand.executeProjectConfigActionWithFeedback
+settingsCommand.projectConfigOptions
+settingsCommand.projectConfigEntries
+projectConfigRootEntries
+projectConfigStartupEntries
+projectConfigKubeEntries
+projectConfigEnvEntries
+settingsCommand.runProjectConfigStringField
+settingsCommand.runProjectConfigAddEnv
+settingsCommand.runProjectConfigEnvAction
+settingsCommand.currentProjectConfig
+
+# ---------------------------------------------------------------------------
+# Settings IA re-cut Phase 0 — navigation catalog accessors.
+#
+# The navigation catalog is the single structural source of truth for the
+# visible Settings tree. Production renders from the catalog through
+# `settingsNavChildren`/`settingsNavLabel`; these four functions exist for the
+# contract that keeps the catalog honest — the tree golden
+# (internal/app/testdata/settings-nav-tree.golden) and the structural,
+# affordance-exclusivity and control-owner-cardinality tests. Manufacturing a
+# production caller for a renderer whose only job is to freeze the tree would be
+# worse than this entry. This is NOT a shrinking-backlog item.
+settingsNavByID
+settingsNavByValue
+renderSettingsNavTree
+writeSettingsNavNode

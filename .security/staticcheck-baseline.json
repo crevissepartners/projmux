@@ -7,56 +7,19 @@
       "rule": "multiple",
       "scope": "47 pre-existing findings from the 2026-07-29 audit",
       "reason": "reviewed per rule, path, message, source fingerprint, and maximum count"
+    },
+    {
+      "rule": "U1000",
+      "scope": "internal/app/effective_merge.go runEffectiveMergeSection",
+      "reason": "Settings IA re-cut Phase 0 removes the Effective merge view from navigation without a hidden redirect, so its section entry point has no caller. The handler and its in-package tests stay until the slice that retires the Project recipe concept deletes both; that slice removes this entry with the code."
     }
   ],
   "entries": [
-    {
-      "rule": "S1000",
-      "path": "internal/app/popup_wait_key_test.go",
-      "message": "should use a simple channel send/receive instead of select with a single case",
-      "source": "select {",
-      "max_count": 1
-    },
-    {
-      "rule": "S1002",
-      "path": "internal/theme/resolve.go",
-      "message": "should omit comparison to bool constant, can be simplified to !strings.EqualFold(value, \"inherit\")",
-      "source": "return value != \"\" && strings.EqualFold(value, \"inherit\") == false",
-      "max_count": 1
-    },
-    {
-      "rule": "S1016",
-      "path": "internal/core/recentwindows/model.go",
-      "message": "should convert window (type LiveWindow) to WindowKey instead of using struct literal",
-      "source": "key := normalizeKey(WindowKey{",
-      "max_count": 1
-    },
-    {
-      "rule": "S1030",
-      "path": "internal/app/doctor_test.go",
-      "message": "should use stdout.String() instead of string(stdout.Bytes())",
-      "source": "if !strings.Contains(string(stdout.Bytes()), `\"status\": \"stale\"`) {",
-      "max_count": 1
-    },
     {
       "rule": "S1031",
       "path": "internal/app/ai_integrate.go",
       "message": "unnecessary nil check around range",
       "source": "if hooks != nil {",
-      "max_count": 1
-    },
-    {
-      "rule": "SA4006",
-      "path": "internal/app/tmux.go",
-      "message": "this value of commandArgs is never used",
-      "source": "commandArgs := []string{}",
-      "max_count": 1
-    },
-    {
-      "rule": "SA4010",
-      "path": "internal/app/sessions.go",
-      "message": "this result of append is never used, except maybe in other appends",
-      "source": "nextSummaries = append(nextSummaries, summary)",
       "max_count": 1
     },
     {
@@ -78,6 +41,20 @@
       "path": "internal/app/ai_integrate.go",
       "message": "error strings should not be capitalized",
       "source": "return nil, false, \"\", fmt.Errorf(\"Claude settings %s hook event %s must be an array\", path, event)",
+      "max_count": 1
+    },
+    {
+      "rule": "S1030",
+      "path": "internal/app/doctor_test.go",
+      "message": "should use stdout.String() instead of string(stdout.Bytes())",
+      "source": "if !strings.Contains(string(stdout.Bytes()), `\"status\": \"stale\"`) {",
+      "max_count": 1
+    },
+    {
+      "rule": "U1000",
+      "path": "internal/app/effective_merge.go",
+      "message": "func (*settingsCommand).runEffectiveMergeSection is unused",
+      "source": "func (c *settingsCommand) runEffectiveMergeSection(stdout, stderr io.Writer) error {",
       "max_count": 1
     },
     {
@@ -116,6 +93,20 @@
       "max_count": 1
     },
     {
+      "rule": "S1000",
+      "path": "internal/app/popup_wait_key_test.go",
+      "message": "should use a simple channel send/receive instead of select with a single case",
+      "source": "select {",
+      "max_count": 1
+    },
+    {
+      "rule": "SA4010",
+      "path": "internal/app/sessions.go",
+      "message": "this result of append is never used, except maybe in other appends",
+      "source": "nextSummaries = append(nextSummaries, summary)",
+      "max_count": 1
+    },
+    {
       "rule": "U1000",
       "path": "internal/app/status.go",
       "message": "var notifySeverityWarn is unused",
@@ -144,6 +135,13 @@
       "max_count": 1
     },
     {
+      "rule": "SA4006",
+      "path": "internal/app/tmux.go",
+      "message": "this value of commandArgs is never used",
+      "source": "commandArgs := []string{}",
+      "max_count": 1
+    },
+    {
       "rule": "U1000",
       "path": "internal/app/usagecmd/usage.go",
       "message": "func runeLen is unused",
@@ -151,10 +149,24 @@
       "max_count": 1
     },
     {
+      "rule": "S1016",
+      "path": "internal/core/recentwindows/model.go",
+      "message": "should convert window (type LiveWindow) to WindowKey instead of using struct literal",
+      "source": "key := normalizeKey(WindowKey{",
+      "max_count": 1
+    },
+    {
       "rule": "U1000",
       "path": "internal/integrations/tmux/client.go",
       "message": "type lifecycleHookInspector is unused",
       "source": "type lifecycleHookInspector interface {",
+      "max_count": 1
+    },
+    {
+      "rule": "S1002",
+      "path": "internal/theme/resolve.go",
+      "message": "should omit comparison to bool constant, can be simplified to !strings.EqualFold(value, \"inherit\")",
+      "source": "return value != \"\" && strings.EqualFold(value, \"inherit\") == false",
       "max_count": 1
     },
     {

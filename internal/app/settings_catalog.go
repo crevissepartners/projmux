@@ -59,6 +59,8 @@ const (
 	settingsOwnerProject
 	settingsOwnerTheme
 	settingsOwnerAINotifyDiagnostics
+	settingsOwnerAutomation
+	settingsOwnerProjectAutomation
 )
 
 func settingsActionMeta(name string, axis SettingsAxis, owner settingsEntryOwner) settingsEntryMeta {
@@ -73,76 +75,95 @@ func settingsPassiveMeta(name string, axis SettingsAxis) settingsEntryMeta {
 	return settingsEntryMeta{Name: name, Axis: axis, Kind: settingsEntryPassive, Owner: settingsOwnerPassiveLoop}
 }
 
+// settingsEntryCatalog maps a rendered picker value to its interaction kind,
+// scope axis and owning loop. Retired routes are absent by design: a value with
+// no entry here cannot be rendered at all, which is what keeps the removed
+// Labs, Theme root, Project recipe and Effective merge destinations from
+// coming back as a hidden redirect.
 var settingsEntryCatalog = map[string]settingsEntryMeta{
-	settingsBackValue:                  settingsNavigationMeta("Back", settingsAxisBoth, settingsOwnerPassiveLoop),
-	settingsNoopValue:                  settingsPassiveMeta("Info or disabled", settingsAxisBoth),
-	settingsRootTabGlobalValue:         settingsNavigationMeta("Global Settings", settingsAxisBoth, settingsOwnerRoot),
-	settingsRootTabProjectValue:        settingsNavigationMeta("Project Settings", settingsAxisBoth, settingsOwnerRoot),
-	settingsSectionProject:             settingsNavigationMeta("Project Picker", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionGlobalHooks:         settingsNavigationMeta("Hooks", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionProjectHooks:        settingsNavigationMeta("Hooks", settingsAxisProject, settingsOwnerRoot),
-	settingsSectionProjectConfig:       settingsNavigationMeta("Project recipe", settingsAxisProject, settingsOwnerRoot),
-	settingsSectionProjectTrust:        settingsNavigationMeta("Trust", settingsAxisProject, settingsOwnerRoot),
-	settingsSectionEffectiveMerge:      settingsNavigationMeta("Effective merge view", settingsAxisProject, settingsOwnerRoot),
-	settingsSectionGlobalTheme:         settingsNavigationMeta("Theme", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionProjectSessionState: settingsNavigationMeta("Session State", settingsAxisProject, settingsOwnerRoot),
-	settingsSectionAI:                  settingsNavigationMeta("AI Settings", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionNotifications:       settingsNavigationMeta("Notifications", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionStatusbar:           settingsNavigationMeta("Appearance", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionSessionState:        settingsNavigationMeta("Session State", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionKeybindings:         settingsNavigationMeta("Keybindings", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionLabs:                settingsNavigationMeta("Labs", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionAbout:               settingsNavigationMeta("About", settingsAxisGlobal, settingsOwnerRoot),
-	settingsProjectAdd:                 settingsActionMeta("Add Project", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsProjectPins:                settingsNavigationMeta("Pinned Projects", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsProjectRootManage:          settingsNavigationMeta("Project Root", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsProjdirClear:               settingsActionMeta("Clear Project Root", settingsAxisGlobal, settingsOwnerProject),
-	settingsProjdirSetCurrent:          settingsActionMeta("Use Current Project as Root", settingsAxisGlobal, settingsOwnerProject),
-	settingsProjdirSetTyped:            settingsActionMeta("Set Project Root", settingsAxisGlobal, settingsOwnerProject),
-	settingsWorkdirAdd:                 settingsActionMeta("Add Workdir", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsWorkdirList:                settingsNavigationMeta("Workdirs", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsWorkdirTyped:               settingsActionMeta("Type Workdir", settingsAxisGlobal, settingsOwnerProject),
-	settingsKeybindingsBindings:        settingsNavigationMeta("Keybindings", settingsAxisGlobal, settingsOwnerKeybindings),
-	settingsKeybindingsDiagnostic:      settingsNavigationMeta("Keybinding Diagnostic", settingsAxisGlobal, settingsOwnerKeybindings),
-	settingsKeybindingsProbe:           settingsNavigationMeta("Keybinding Probe", settingsAxisGlobal, settingsOwnerKeybindings),
-	settingsAIDefaultMode:              settingsNavigationMeta("Default split mode", settingsAxisGlobal, settingsOwnerAI),
-	settingsAIEnabledAgents:            settingsNavigationMeta("Enabled agents", settingsAxisGlobal, settingsOwnerAI),
-	settingsAIResumePicker:             settingsNavigationMeta("Resume picker", settingsAxisGlobal, settingsOwnerAI),
-	settingsAIResumePickerLimit:        settingsNavigationMeta("Resume picker limit", settingsAxisGlobal, settingsOwnerAI),
-	settingsAIResumePickerDepth:        settingsNavigationMeta("Resume picker depth", settingsAxisGlobal, settingsOwnerAI),
-	settingsAINotifyDiagnostics:        settingsNavigationMeta("AI notify diagnostics", settingsAxisGlobal, settingsOwnerAI),
-	settingsNotificationsDesktop:       settingsNavigationMeta("Desktop notification settings", settingsAxisGlobal, settingsOwnerNotifications),
-	settingsNotificationsAIDedupe:      settingsNavigationMeta("AI notification dedupe", settingsAxisGlobal, settingsOwnerNotifications),
-	settingsNotificationsDelivery:      settingsNavigationMeta("Delivery sources", settingsAxisGlobal, settingsOwnerNotifications),
-	settingsNotificationsHookActions:   settingsNavigationMeta("Hook quiet policy", settingsAxisGlobal, settingsOwnerNotifications),
-	settingsAppearanceLanguage:         settingsNavigationMeta("Language / Locale", settingsAxisGlobal, settingsOwnerAppearance),
-	settingsNativeKeysToggle:           settingsActionMeta("Native macOS keybindings", settingsAxisGlobal, settingsOwnerKeybindings),
-	settingsLabsProjectHooks:           settingsNavigationMeta("Project Hooks", settingsAxisGlobal, settingsOwnerLabs),
-	settingsSessionStateDelete:         settingsActionMeta("Delete session snapshot", settingsAxisGlobal, settingsOwnerSessionState),
-	settingsUpdateApply:                settingsActionMeta("Update Now", settingsAxisGlobal, settingsOwnerAbout),
-	settingsUpdateCheck:                settingsActionMeta("Check Updates", settingsAxisGlobal, settingsOwnerAbout),
-	settingsWelcomeShow:                settingsNavigationMeta("Welcome", settingsAxisGlobal, settingsOwnerAbout),
-	settingsQuitOpen:                   settingsNavigationMeta("Quit projmux", settingsAxisGlobal, settingsOwnerAbout),
+	settingsBackValue:                              settingsNavigationMeta("Back", settingsAxisBoth, settingsOwnerPassiveLoop),
+	settingsNoopValue:                              settingsPassiveMeta("Info or disabled", settingsAxisBoth),
+	settingsRootTabGlobalValue:                     settingsNavigationMeta("Global Settings", settingsAxisBoth, settingsOwnerRoot),
+	settingsRootTabProjectValue:                    settingsNavigationMeta("Project Settings", settingsAxisBoth, settingsOwnerRoot),
+	settingsSectionProject:                         settingsNavigationMeta("Projects", settingsAxisGlobal, settingsOwnerRoot),
+	settingsSectionAutomation:                      settingsNavigationMeta("Automation", settingsAxisGlobal, settingsOwnerRoot),
+	settingsSectionProjectAutomation:               settingsNavigationMeta("Automation", settingsAxisProject, settingsOwnerRoot),
+	settingsSectionGlobalHooks:                     settingsNavigationMeta("Projmux session lifecycle", settingsAxisGlobal, settingsOwnerAutomation),
+	settingsSectionProjectHooks:                    settingsNavigationMeta("Project hooks", settingsAxisProject, settingsOwnerProjectAutomation),
+	settingsSectionProjectTrust:                    settingsNavigationMeta("Trust", settingsAxisProject, settingsOwnerProjectAutomation),
+	settingsSectionProjectSessionState:             settingsNavigationMeta("Snapshots", settingsAxisProject, settingsOwnerRoot),
+	settingsSectionAI:                              settingsNavigationMeta("AI", settingsAxisGlobal, settingsOwnerRoot),
+	settingsSectionNotifications:                   settingsNavigationMeta("Notifications", settingsAxisGlobal, settingsOwnerRoot),
+	settingsSectionStatusbar:                       settingsNavigationMeta("Appearance", settingsAxisGlobal, settingsOwnerRoot),
+	settingsSectionSessionState:                    settingsNavigationMeta("Snapshots", settingsAxisGlobal, settingsOwnerRoot),
+	settingsSectionKeybindings:                     settingsNavigationMeta("Keybindings", settingsAxisGlobal, settingsOwnerRoot),
+	settingsSectionAbout:                           settingsNavigationMeta("About", settingsAxisGlobal, settingsOwnerRoot),
+	settingsProjectAdd:                             settingsActionMeta("Select Project to pin", settingsAxisGlobal, settingsOwnerProjectPicker),
+	settingsProjectPins:                            settingsNavigationMeta("Pinned Projects", settingsAxisGlobal, settingsOwnerProjectPicker),
+	settingsProjectRootManage:                      settingsNavigationMeta("Primary discovery root", settingsAxisGlobal, settingsOwnerProjectPicker),
+	settingsProjectsSidebar:                        settingsNavigationMeta("Project Sidebar", settingsAxisGlobal, settingsOwnerProjectPicker),
+	settingsProjdirClear:                           settingsActionMeta("Clear saved root", settingsAxisGlobal, settingsOwnerProject),
+	settingsProjdirSetCurrent:                      settingsActionMeta("Use current directory", settingsAxisGlobal, settingsOwnerProject),
+	settingsProjdirSetTyped:                        settingsActionMeta("Enter path", settingsAxisGlobal, settingsOwnerProject),
+	settingsWorkdirAdd:                             settingsActionMeta("Add current directory", settingsAxisGlobal, settingsOwnerProjectPicker),
+	settingsWorkdirList:                            settingsNavigationMeta("Additional discovery roots", settingsAxisGlobal, settingsOwnerProjectPicker),
+	settingsWorkdirTyped:                           settingsActionMeta("Add path", settingsAxisGlobal, settingsOwnerProject),
+	settingsKeybindingsBindings:                    settingsNavigationMeta("Keybindings", settingsAxisGlobal, settingsOwnerKeybindings),
+	settingsKeybindingsDiagnostic:                  settingsNavigationMeta("Keybinding Diagnostic", settingsAxisGlobal, settingsOwnerKeybindings),
+	settingsKeybindingsProbe:                       settingsNavigationMeta("Keybinding Probe", settingsAxisGlobal, settingsOwnerKeybindings),
+	settingsAIDefaultMode:                          settingsNavigationMeta("Default launch target", settingsAxisGlobal, settingsOwnerAI),
+	settingsAIEnabledAgents:                        settingsNavigationMeta("Enabled providers", settingsAxisGlobal, settingsOwnerAI),
+	settingsAIResumePicker:                         settingsNavigationMeta("Agent Resume Picker", settingsAxisGlobal, settingsOwnerAI),
+	settingsAIResumePickerLimit:                    settingsNavigationMeta("Picker limit", settingsAxisGlobal, settingsOwnerAI),
+	settingsAIResumePickerDepth:                    settingsNavigationMeta("Scan depth", settingsAxisGlobal, settingsOwnerAI),
+	settingsNotificationsDesktop:                   settingsNavigationMeta("Desktop delivery", settingsAxisGlobal, settingsOwnerNotifications),
+	settingsNotificationsAIDedupe:                  settingsNavigationMeta("Dedupe window", settingsAxisGlobal, settingsOwnerNotifications),
+	settingsNotificationsDelivery:                  settingsNavigationMeta("Provider Integrations", settingsAxisGlobal, settingsOwnerNotifications),
+	settingsNotificationsProviders:                 settingsNavigationMeta("Provider Integrations", settingsAxisGlobal, settingsOwnerNotifications),
+	settingsNotificationsTmuxSource:                settingsNavigationMeta("tmux event source", settingsAxisGlobal, settingsOwnerNotifications),
+	settingsNotificationsHookActions:               settingsNavigationMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications),
+	settingsAppearanceLanguage:                     settingsNavigationMeta("Language / Locale", settingsAxisGlobal, settingsOwnerAppearance),
+	settingsAppearanceTheme:                        settingsNavigationMeta("Theme", settingsAxisGlobal, settingsOwnerAppearance),
+	settingsAppearanceStatusBar:                    settingsNavigationMeta("Status Bar", settingsAxisGlobal, settingsOwnerAppearance),
+	settingsAutomationLifecycle:                    settingsNavigationMeta("Projmux session lifecycle", settingsAxisGlobal, settingsOwnerAutomation),
+	settingsAutomationSendNoti:                     settingsNavigationMeta("After notification queued", settingsAxisGlobal, settingsOwnerAutomation),
+	settingsProjectAutomationLifecycle:             settingsNavigationMeta("Session lifecycle", settingsAxisProject, settingsOwnerProjectAutomation),
+	settingsProjectAutomationSendNoti:              settingsNavigationMeta("After notification queued", settingsAxisProject, settingsOwnerProjectAutomation),
+	settingsNativeKeysToggle:                       settingsActionMeta("Native macOS keybindings", settingsAxisGlobal, settingsOwnerKeybindings),
+	settingsSessionStateDelete:                     settingsActionMeta("Delete snapshot", settingsAxisGlobal, settingsOwnerSessionState),
+	settingsSessionStateSidebarStartupPickerDetail: settingsNavigationMeta("Closed Project startup", settingsAxisGlobal, settingsOwnerProjectPicker),
+	settingsAboutUpdates:                           settingsNavigationMeta("Updates", settingsAxisGlobal, settingsOwnerAbout),
+	settingsUpdateApply:                            settingsActionMeta("Update now", settingsAxisGlobal, settingsOwnerAbout),
+	settingsUpdateCheck:                            settingsActionMeta("Check for updates", settingsAxisGlobal, settingsOwnerAbout),
+	settingsWelcomeShow:                            settingsNavigationMeta("Welcome", settingsAxisGlobal, settingsOwnerAbout),
+	settingsQuitOpen:                               settingsNavigationMeta("Quit Projmux", settingsAxisGlobal, settingsOwnerAbout),
 }
 
 var settingsEntryPrefixCatalog = []struct {
 	prefix string
 	meta   settingsEntryMeta
 }{
-	{settingsActionPrefixAI, settingsActionMeta("AI Settings", settingsAxisGlobal, settingsOwnerAI)},
-	{settingsActionPrefixAIEnabledAgent, settingsActionMeta("Enabled agents", settingsAxisGlobal, settingsOwnerAI)},
-	{settingsActionPrefixAINotifyDiagnostic, settingsNavigationMeta("AI notify diagnostics", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAI, settingsActionMeta("Default launch target", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAIEnabledAgent, settingsActionMeta("Enabled providers", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAINotifyDiagnostic, settingsNavigationMeta("Provider Integrations", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixAINotifyCommand, settingsActionMeta("AI notify diagnostic command", settingsAxisGlobal, settingsOwnerAINotifyDiagnostics)},
-	{settingsActionPrefixAIBadgeStyle, settingsActionMeta("AI badge style", settingsAxisGlobal, settingsOwnerAppearance)},
-	{settingsActionPrefixDesktopNotifyMode, settingsActionMeta("Desktop notification mode", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAINotifyDedupe, settingsActionMeta("AI notification dedupe", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAIResumeLimit, settingsActionMeta("Resume picker", settingsAxisGlobal, settingsOwnerAI)},
-	{settingsActionPrefixAIResumeDepth, settingsActionMeta("Resume picker depth", settingsAxisGlobal, settingsOwnerAI)},
-	{settingsActionPrefixAIHookProvider, settingsNavigationMeta("Hook quiet policy", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAIHookEvent, settingsNavigationMeta("Hook quiet policy", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAIHookSet, settingsActionMeta("Hook quiet policy", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixHooks, settingsActionMeta("Project hook policy", settingsAxisGlobal, settingsOwnerLabs)},
-	{settingsActionPrefixLiveResources, settingsActionMeta("Live system resources", settingsAxisGlobal, settingsOwnerLabs)},
+	{settingsActionPrefixAIBadgeStyle, settingsActionMeta("Agent attention badge style", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixDesktopNotifyMode, settingsActionMeta("Delivery mode", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAINotifyDedupe, settingsActionMeta("Dedupe window", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAIResumeLimit, settingsActionMeta("Agent Resume Picker", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAIResumeDepth, settingsActionMeta("Scan depth", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAIHookProvider, settingsNavigationMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAIHookEvent, settingsNavigationMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAIHookSet, settingsActionMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixHooks, settingsActionMeta("Project automation policy", settingsAxisGlobal, settingsOwnerAutomation)},
+	{settingsActionPrefixLiveResources, settingsActionMeta("Resources", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixHookEvent + hookScopeGlobal + ":", settingsNavigationMeta("Automation event", settingsAxisGlobal, settingsOwnerAutomation)},
+	{settingsActionPrefixHookEvent + hookScopeProject + ":", settingsNavigationMeta("Project automation event", settingsAxisProject, settingsOwnerProjectAutomation)},
+	{settingsActionPrefixKeymapCategory, settingsNavigationMeta("Keybindings category", settingsAxisGlobal, settingsOwnerKeybindings)},
+	{settingsActionPrefixKeymapSurface, settingsNavigationMeta("Keybindings surface", settingsAxisGlobal, settingsOwnerKeybindings)},
+	{settingsActionPrefixWorkdirItem, settingsNavigationMeta("Additional discovery roots", settingsAxisGlobal, settingsOwnerProjectPicker)},
+	{settingsActionPrefixPinItem, settingsNavigationMeta("Pinned Projects", settingsAxisGlobal, settingsOwnerProjectPicker)},
+	{settingsActionPrefixSessionStateSidebarStartup, settingsActionMeta("Closed Project startup", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixHookAdd, settingsActionMeta("Hook maker - add", settingsAxisBoth, settingsOwnerHooks)},
 	{settingsActionPrefixHookEdit, settingsActionMeta("Hook maker - edit", settingsAxisBoth, settingsOwnerHooks)},
 	{settingsActionPrefixHookRemove, settingsActionMeta("Hook maker - remove", settingsAxisBoth, settingsOwnerHooks)},
@@ -152,13 +173,13 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixProjectConfig, settingsActionMeta("Project recipe", settingsAxisProject, settingsOwnerProject)},
 	{settingsActionPrefixWelcome, settingsNavigationMeta("Welcome", settingsAxisGlobal, settingsOwnerAbout)},
 	{settingsActionPrefixTrust, settingsActionMeta("Trust", settingsAxisProject, settingsOwnerProject)},
-	{settingsActionPrefixProjdir, settingsActionMeta("Project Root", settingsAxisGlobal, settingsOwnerProject)},
-	{settingsActionPrefixSessionState, settingsActionMeta("Session State", settingsAxisGlobal, settingsOwnerSessionState)},
-	{settingsActionPrefixStatusbar, settingsActionMeta("Appearance", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixProjdir, settingsActionMeta("Primary discovery root", settingsAxisGlobal, settingsOwnerProject)},
+	{settingsActionPrefixSessionState, settingsActionMeta("Snapshots", settingsAxisGlobal, settingsOwnerSessionState)},
+	{settingsActionPrefixStatusbar, settingsActionMeta("Status Bar", settingsAxisGlobal, settingsOwnerAppearance)},
 	{settingsActionPrefixSwitch, settingsActionMeta("Pinned Projects", settingsAxisGlobal, settingsOwnerProject)},
 	{settingsActionPrefixTheme, settingsActionMeta("Theme", settingsAxisBoth, settingsOwnerTheme)},
 	{settingsActionPrefixUpdate, settingsActionMeta("About", settingsAxisGlobal, settingsOwnerAbout)},
-	{settingsActionPrefixWorkdir, settingsActionMeta("Workdirs", settingsAxisGlobal, settingsOwnerProject)},
+	{settingsActionPrefixWorkdir, settingsActionMeta("Additional discovery roots", settingsAxisGlobal, settingsOwnerProject)},
 }
 
 func settingsEntryMetaForValue(value string) (settingsEntryMeta, bool) {
@@ -202,18 +223,21 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 	case settingsOwnerRoot:
 		switch value {
 		case settingsRootTabGlobalValue, settingsRootTabProjectValue,
-			settingsSectionProject, settingsSectionGlobalHooks, settingsSectionProjectHooks,
-			settingsSectionProjectConfig, settingsSectionProjectTrust, settingsSectionEffectiveMerge,
-			settingsSectionGlobalTheme, settingsSectionProjectSessionState, settingsSectionAI,
-			settingsSectionNotifications, settingsSectionStatusbar, settingsSectionSessionState,
-			settingsSectionKeybindings, settingsSectionLabs, settingsSectionAbout:
+			settingsSectionProject, settingsSectionAI, settingsSectionNotifications,
+			settingsSectionAutomation, settingsSectionStatusbar, settingsSectionSessionState,
+			settingsSectionKeybindings, settingsSectionAbout,
+			settingsSectionProjectAutomation, settingsSectionProjectSessionState:
 			return true
 		}
 	case settingsOwnerProjectPicker:
 		switch value {
-		case settingsProjectAdd, settingsProjectPins, settingsProjectRootManage, settingsWorkdirAdd, settingsWorkdirList:
+		case settingsProjectAdd, settingsProjectPins, settingsProjectRootManage, settingsWorkdirAdd,
+			settingsWorkdirList, settingsProjectsSidebar, settingsSessionStateSidebarStartupPickerDetail:
 			return true
 		}
+		return strings.HasPrefix(value, settingsActionPrefixWorkdirItem) ||
+			strings.HasPrefix(value, settingsActionPrefixPinItem) ||
+			strings.HasPrefix(value, settingsActionPrefixSessionStateSidebarStartup)
 	case settingsOwnerAI:
 		return value == settingsAIDefaultMode || value == settingsAIEnabledAgents ||
 			value == settingsAIResumePicker || value == settingsAIResumePickerLimit ||
@@ -225,6 +249,7 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 	case settingsOwnerNotifications:
 		return value == settingsNotificationsDesktop || value == settingsNotificationsAIDedupe ||
 			value == settingsNotificationsDelivery || value == settingsNotificationsHookActions ||
+			value == settingsNotificationsProviders || value == settingsNotificationsTmuxSource ||
 			strings.HasPrefix(value, settingsActionPrefixAINotifyDiagnostic) ||
 			strings.HasPrefix(value, settingsActionPrefixDesktopNotifyMode) ||
 			strings.HasPrefix(value, settingsActionPrefixAINotifyDedupe) ||
@@ -232,20 +257,33 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 			strings.HasPrefix(value, settingsActionPrefixAIHookEvent) ||
 			strings.HasPrefix(value, settingsActionPrefixAIHookSet)
 	case settingsOwnerAppearance:
-		return value == settingsAppearanceLanguage || strings.HasPrefix(value, settingsActionPrefixAIBadgeStyle) ||
-			strings.HasPrefix(value, settingsActionPrefixLocale) || strings.HasPrefix(value, settingsActionPrefixStatusbar)
+		return value == settingsAppearanceLanguage || value == settingsAppearanceTheme ||
+			value == settingsAppearanceStatusBar ||
+			strings.HasPrefix(value, settingsActionPrefixAIBadgeStyle) ||
+			strings.HasPrefix(value, settingsActionPrefixLocale) ||
+			strings.HasPrefix(value, settingsActionPrefixStatusbar) ||
+			strings.HasPrefix(value, settingsActionPrefixLiveResources)
 	case settingsOwnerSessionState:
 		return value == settingsSessionStateDelete || strings.HasPrefix(value, settingsActionPrefixSessionState)
 	case settingsOwnerKeybindings:
 		return value == settingsKeybindingsBindings || value == settingsKeybindingsDiagnostic ||
 			value == settingsKeybindingsProbe ||
-			value == settingsNativeKeysToggle || strings.HasPrefix(value, settingsActionPrefixKeymap)
-	case settingsOwnerLabs:
-		return value == settingsLabsProjectHooks || strings.HasPrefix(value, settingsActionPrefixHooks) ||
-			strings.HasPrefix(value, settingsActionPrefixLiveResources)
+			value == settingsNativeKeysToggle || strings.HasPrefix(value, settingsActionPrefixKeymap) ||
+			strings.HasPrefix(value, settingsActionPrefixKeymapCategory) ||
+			strings.HasPrefix(value, settingsActionPrefixKeymapSurface)
+	case settingsOwnerAutomation:
+		return value == settingsSectionGlobalHooks || value == settingsAutomationLifecycle ||
+			value == settingsAutomationSendNoti ||
+			strings.HasPrefix(value, settingsActionPrefixHooks) ||
+			strings.HasPrefix(value, settingsActionPrefixHookEvent)
+	case settingsOwnerProjectAutomation:
+		return value == settingsSectionProjectHooks || value == settingsSectionProjectTrust ||
+			value == settingsProjectAutomationLifecycle || value == settingsProjectAutomationSendNoti ||
+			strings.HasPrefix(value, settingsActionPrefixHookEvent)
 	case settingsOwnerAbout:
 		return value == settingsUpdateApply || value == settingsUpdateCheck || value == settingsWelcomeShow ||
-			value == settingsQuitOpen || strings.HasPrefix(value, settingsActionPrefixUpdate) ||
+			value == settingsQuitOpen || value == settingsAboutUpdates ||
+			strings.HasPrefix(value, settingsActionPrefixUpdate) ||
 			strings.HasPrefix(value, settingsActionPrefixWelcome)
 	case settingsOwnerHooks:
 		return strings.HasPrefix(value, settingsActionPrefixHookAdd) || strings.HasPrefix(value, settingsActionPrefixHookEdit) ||
@@ -269,6 +307,8 @@ const (
 	settingsRootTabGlobalValue             = "__settings_tab_global__"
 	settingsRootTabProjectValue            = "__settings_tab_project__"
 	settingsSectionAI                      = "section:ai"
+	settingsSectionAutomation              = "section:automation"
+	settingsSectionProjectAutomation       = "section:project-automation"
 	settingsSectionGlobalHooks             = "section:hooks-global"
 	settingsSectionProjectHooks            = "section:hooks-project"
 	settingsSectionProjectConfig           = "section:project-config"
@@ -298,51 +338,71 @@ const (
 	settingsActionPrefixHooks              = "project-hooks:"
 	settingsActionPrefixLiveResources      = "live-resources:"
 	settingsActionPrefixKeymap             = "keymap:"
-	settingsActionPrefixLocale             = "locale:"
-	settingsActionPrefixProjectConfig      = "project-config:"
-	settingsActionPrefixWelcome            = "welcome:"
-	settingsActionPrefixTrust              = "trust:"
-	settingsActionPrefixProjdir            = "projdir:"
-	settingsActionPrefixSessionState       = "sessionstate:"
-	settingsActionPrefixStatusbar          = "statusbar-decoration:"
-	settingsActionPrefixSwitch             = "switch:"
-	settingsActionPrefixTheme              = "theme:"
-	settingsActionPrefixUpdate             = "update:"
-	settingsActionPrefixWorkdir            = "workdir:"
-	settingsActionPrefixQuit               = "quit:"
-	settingsProjectAdd                     = "project:add"
-	settingsProjectPins                    = "project:pins"
-	settingsProjectRootManage              = "project-root:manage"
-	settingsProjdirClear                   = "projdir:clear"
-	settingsProjdirSetCurrent              = "projdir:set-current"
-	settingsProjdirSetTyped                = "projdir:set-typed"
-	settingsUpdateApply                    = "update:apply"
-	settingsUpdateCheck                    = "update:check"
-	settingsQuitOpen                       = "quit:open"
-	settingsWorkdirAdd                     = "workdir:add"
-	settingsWorkdirList                    = "workdir:list"
-	settingsWorkdirTyped                   = "workdir:typed"
-	settingsKeybindingsBindings            = "keybindings:bindings"
-	settingsKeybindingsDiagnostic          = "keybindings:diagnostic"
-	settingsKeybindingsProbe               = "keybindings:probe"
-	settingsAIDefaultMode                  = "ai-default-mode"
-	settingsAIEnabledAgents                = "ai-enabled-agents"
-	settingsAIResumePicker                 = "ai-resume-picker"
-	settingsAIResumePickerLimit            = "ai-resume-picker-limit"
-	settingsAIResumePickerDepth            = "ai-resume-picker-depth"
-	settingsAINotifyDiagnostics            = "ai-notify-diagnostics"
-	settingsNotificationsDesktop           = "notifications:desktop"
-	settingsNotificationsAIDedupe          = "notifications:ai-dedupe"
-	settingsNotificationsDelivery          = "notifications:delivery"
-	settingsNotificationsHookActions       = "notifications:hook-actions"
-	settingsAppearanceLanguage             = "appearance:language"
-	settingsNativeKeysToggle               = "native-keys:toggle"
-	settingsLabsProjectHooks               = "labs:project-hooks"
-	settingsSessionStateDelete             = "sessionstate:delete"
-	settingsWelcomeShow                    = "welcome:show"
-	settingsKeymapFieldPlain               = "plain"
-	settingsKeymapFieldKeys                = "keys"
-	settingsKeymapFieldPrefix              = "prefix"
+	settingsActionPrefixKeymapCategory     = "keymap-category:"
+	settingsActionPrefixKeymapSurface      = "keymap-surface:"
+	settingsActionPrefixWorkdirItem        = "workdir-item:"
+	settingsActionPrefixPinItem            = "pin-item:"
+	settingsActionPrefixHookEvent          = "hook-event:"
+	// settingsActionPrefixSessionStateSidebarStartup keeps the shipped
+	// `sessionstate:` config/action spelling while the row itself moves under
+	// Projects > Project Sidebar. Only the destination and the label change.
+	settingsActionPrefixSessionStateSidebarStartup = settingsActionPrefixSessionState + "sidebar-startup:"
+	settingsActionPrefixLocale                     = "locale:"
+	settingsActionPrefixProjectConfig              = "project-config:"
+	settingsActionPrefixWelcome                    = "welcome:"
+	settingsActionPrefixTrust                      = "trust:"
+	settingsActionPrefixProjdir                    = "projdir:"
+	settingsActionPrefixSessionState               = "sessionstate:"
+	settingsActionPrefixStatusbar                  = "statusbar-decoration:"
+	settingsActionPrefixSwitch                     = "switch:"
+	settingsActionPrefixTheme                      = "theme:"
+	settingsActionPrefixUpdate                     = "update:"
+	settingsActionPrefixWorkdir                    = "workdir:"
+	settingsActionPrefixQuit                       = "quit:"
+	settingsProjectAdd                             = "project:add"
+	settingsProjectPins                            = "project:pins"
+	settingsProjectRootManage                      = "project-root:manage"
+	settingsProjdirClear                           = "projdir:clear"
+	settingsProjdirSetCurrent                      = "projdir:set-current"
+	settingsProjdirSetTyped                        = "projdir:set-typed"
+	settingsUpdateApply                            = "update:apply"
+	settingsUpdateCheck                            = "update:check"
+	settingsQuitOpen                               = "quit:open"
+	settingsWorkdirAdd                             = "workdir:add"
+	settingsWorkdirList                            = "workdir:list"
+	settingsWorkdirTyped                           = "workdir:typed"
+	settingsKeybindingsBindings                    = "keybindings:bindings"
+	settingsKeybindingsDiagnostic                  = "keybindings:diagnostic"
+	settingsKeybindingsProbe                       = "keybindings:probe"
+	settingsAIDefaultMode                          = "ai-default-mode"
+	settingsAIEnabledAgents                        = "ai-enabled-agents"
+	settingsAIResumePicker                         = "ai-resume-picker"
+	settingsAIResumePickerLimit                    = "ai-resume-picker-limit"
+	settingsAIResumePickerDepth                    = "ai-resume-picker-depth"
+	settingsAINotifyDiagnostics                    = "ai-notify-diagnostics"
+	settingsNotificationsDesktop                   = "notifications:desktop"
+	settingsNotificationsAIDedupe                  = "notifications:ai-dedupe"
+	settingsNotificationsDelivery                  = "notifications:delivery"
+	settingsNotificationsHookActions               = "notifications:hook-actions"
+	settingsAppearanceLanguage                     = "appearance:language"
+	settingsAppearanceTheme                        = "appearance:theme"
+	settingsAppearanceStatusBar                    = "appearance:status-bar"
+	settingsAutomationLifecycle                    = "automation:lifecycle"
+	settingsAutomationSendNoti                     = "automation:send-noti"
+	settingsAutomationProjectPolicy                = "automation:project-policy"
+	settingsProjectAutomationLifecycle             = "project-automation:lifecycle"
+	settingsProjectAutomationSendNoti              = "project-automation:send-noti"
+	settingsProjectsSidebar                        = "projects:sidebar"
+	settingsNotificationsProviders                 = "notifications:provider-integrations"
+	settingsNotificationsTmuxSource                = "notifications:tmux-event-source"
+	settingsAboutUpdates                           = "about:updates"
+	settingsNativeKeysToggle                       = "native-keys:toggle"
+	settingsLabsProjectHooks                       = "labs:project-hooks"
+	settingsSessionStateDelete                     = "sessionstate:delete"
+	settingsWelcomeShow                            = "welcome:show"
+	settingsKeymapFieldPlain                       = "plain"
+	settingsKeymapFieldKeys                        = "keys"
+	settingsKeymapFieldPrefix                      = "prefix"
 )
 
 func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Options, error) {
@@ -351,8 +411,8 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 		return intpickercompat.Options{
 			UI:         "settings-ai",
 			Entries:    c.aiRootEntries(),
-			Title:      "AI Settings",
-			Prompt:     "Settings > AI Settings > ",
+			Title:      "AI - Launch target, Providers, Agent Resume Picker",
+			Prompt:     "Settings > AI > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -361,30 +421,39 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 		return intpickercompat.Options{
 			UI:         "settings-notifications",
 			Entries:    c.notificationsEntries(),
-			Title:      "Notifications - Delivery and desktop controls",
+			Title:      "Notifications - Delivery, integrations, and Agent events",
 			Prompt:     "Settings > Notifications > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
 		}, nil
-	case settingsSectionGlobalHooks:
+	case settingsSectionAutomation:
 		return intpickercompat.Options{
-			UI:         "settings-hooks-global",
-			Entries:    c.globalHookEntries(),
-			Title:      "Hooks - Global lifecycle hook paths",
-			Prompt:     "Settings > Hooks > ",
-			Footer:     projmuxFooter("Enter: edit/add  |  Back row: parent "),
+			UI:         "settings-automation",
+			Entries:    c.automationEntries(),
+			Title:      "Automation - Projmux lifecycle scripts and project policy",
+			Prompt:     "Settings > Automation > ",
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		}, nil
+	case settingsSectionProjectAutomation:
+		return intpickercompat.Options{
+			UI:         "settings-project-automation",
+			Entries:    c.projectAutomationEntries(),
+			Title:      "Project automation - Trust and project hooks",
+			Prompt:     "Settings > Project > Automation > ",
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionProjectHooks:
-		ctx := c.resolveSettingsProjectContext()
 		return intpickercompat.Options{
 			UI:         "settings-hooks-project",
-			Entries:    c.projectHookEntries(ctx),
-			Title:      "Hooks - Project lifecycle hook paths",
-			Prompt:     "Settings > Project > Hooks > ",
-			Footer:     projmuxFooter("Enter: edit/add  |  Back row: parent "),
+			Entries:    c.projectHookEntries(c.resolveSettingsProjectContext()),
+			Title:      "Project automation - Project hooks",
+			Prompt:     "Settings > Project > Automation > Project hooks > ",
+			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
 		}, nil
@@ -392,8 +461,8 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 		return intpickercompat.Options{
 			UI:         "settings-project-picker",
 			Entries:    c.projectPickerEntries(),
-			Title:      "Project Picker - Project roots, workdirs, and pinned projects",
-			Prompt:     "Settings > Project Picker > ",
+			Title:      "Projects - Discovery roots, pinned Projects, sidebar policy",
+			Prompt:     "Settings > Projects > ",
 			Footer:     projmuxFooter("Enter: back/open  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -403,7 +472,7 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 		return intpickercompat.Options{
 			UI:         "settings-statusbar",
 			Entries:    c.statusbarEntries(),
-			Title:      "Appearance - Language, AI badge, status/notify icons",
+			Title:      "Appearance - Theme, Status Bar, language, Agent badge",
 			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, ctx.hasProject(), c.locale()),
 			Prompt:     "Settings > Appearance > ",
 			Footer:     projmuxFooter("Enter: open  |  Back row: parent "),
@@ -414,8 +483,8 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 		return intpickercompat.Options{
 			UI:         "settings-sessionstate",
 			Entries:    c.sessionStateEntries(),
-			Title:      "Session State - Restore and autosave controls",
-			Prompt:     "Settings > Session State > ",
+			Title:      "Snapshots - Auto-save and storage",
+			Prompt:     "Settings > Snapshots > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -425,23 +494,13 @@ func (c *settingsCommand) sectionOptions(section string) (intpickercompat.Option
 			UI:         "settings-project-sessionstate",
 			Entries:    c.projectSessionStateEntries(),
 			Title:      c.projectSessionStateTitle(),
-			Prompt:     "Settings > Project > Session State > ",
+			Prompt:     "Settings > Project > Snapshots > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
 		}, nil
 	case settingsSectionKeybindings:
 		return c.keybindingsOptions(settingsKeybindingsBindings), nil
-	case settingsSectionLabs:
-		return intpickercompat.Options{
-			UI:         "settings-labs",
-			Entries:    c.labsEntries(),
-			Title:      "Labs - Experimental features",
-			Prompt:     "Settings > Labs > ",
-			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
-			ExpectKeys: []string{"enter"},
-			Bindings:   c.settingsCloseBindings(),
-		}, nil
 	case settingsSectionAbout:
 		return intpickercompat.Options{
 			UI:         "settings-about",

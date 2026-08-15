@@ -29,14 +29,16 @@ func TestSettingsGlobalHooksListShowsConfigPathAndAddRows(t *testing.T) {
 		},
 	}
 
-	entries := cmd.globalHookEntries()
 	wantConfig := filepath.Join(configHome, "projmux", "config.toml")
-	assertEntryLabelContainsAll(t, entries, "Global config", wantConfig)
-	assertEntryLabelContainsAll(t, entries, "post-create", "missing", "read-only")
-	assertEntryLabelContainsAll(t, entries, "send-noti", "missing", "read-only")
+	entries := cmd.hookEventDetailEntries(hookScopeGlobal, "post-create")
+	assertEntryLabelContainsAll(t, entries, "Command", "no command", wantConfig, "[hooks.post-create]")
+	assertEntryLabelContainsAll(t, entries, "Add or edit command", "read-only here")
+	assertEntryLabelContainsAll(t, entries, "Remove command", "read-only here")
 	if hasEntryValue(entries, settingsActionPrefixHookAdd+"global:post-create") {
 		t.Fatalf("entries = %#v, did not expect editable global add row", entries)
 	}
+	sendNoti := cmd.hookEventDetailEntries(hookScopeGlobal, "send-noti")
+	assertEntryLabelContainsAll(t, sendNoti, "Command", "no command", "[hooks.send-noti]")
 }
 
 func TestSettingsGlobalHooksListShowsActiveDeclarativeEntry(t *testing.T) {
@@ -62,10 +64,11 @@ run = "echo global-active"
 			return ""
 		},
 	}
-	entries := cmd.globalHookEntries()
-	assertEntryLabelContainsAll(t, entries, "post-create", "read-only", "[hooks.post-create]")
-	if !hasEntryValue(entries, settingsActionPrefixHookView+"global:post-create") {
-		t.Fatalf("entries = %#v, want read-only global view row", entries)
+	entries := cmd.hookEventDetailEntries(hookScopeGlobal, "post-create")
+	assertEntryLabelContainsAll(t, entries, "Command", "run = echo global-active", "[hooks.post-create]")
+	assertEntryLabelContainsAll(t, entries, "Add or edit command", "read-only here")
+	if hasEntryValue(entries, settingsActionPrefixHookEdit+"global:post-create") {
+		t.Fatalf("entries = %#v, did not expect an editable global row", entries)
 	}
 }
 
@@ -81,9 +84,13 @@ func TestSettingsProjectHooksListAllMissingRendersAddRows(t *testing.T) {
 			return ""
 		},
 	}
-	entries := cmd.projectHookEntries(cmd.resolveSettingsProjectContext())
 	for _, event := range []string{"pre-create", "post-create", "post-attach", "send-noti"} {
-		assertEntryLabelContainsAll(t, entries, event, "missing", "[+ Add]")
+		entries := cmd.hookEventDetailEntries(hookScopeProject, event)
+		assertEntryLabelContainsAll(t, entries, "Command", "no command", "[hooks."+event+"]")
+		assertEntryLabelContainsAll(t, entries, "Add or edit command", "[hooks."+event+"]")
+		if !hasEntryValue(entries, settingsActionPrefixHookAdd+"project:"+event) {
+			t.Fatalf("entries = %#v, want the project add action for %q", entries, event)
+		}
 	}
 }
 
@@ -95,7 +102,7 @@ func TestSettingsProjectHooksListNoProjectUsesDisabledState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sectionOptions(project hooks) error = %v", err)
 	}
-	assertEntryLabelContainsAll(t, options.Entries, "Hooks (project)", "disabled", "no project context")
+	assertEntryLabelContainsAll(t, options.Entries, "Project hooks", "disabled", "no project context")
 	if hasEntryLabelContaining(options.Entries, "post-create") {
 		t.Fatalf("project hooks entries = %#v, want no hook event rows without project context", options.Entries)
 	}
@@ -235,23 +242,27 @@ FOO = "bar"
 func TestSettingsHookmakerAndProjectRecipeStateColors(t *testing.T) {
 	t.Parallel()
 
-	addRow := settingsHookAddRow(settingsHookRow{
-		Event:      "post-create",
-		Scope:      hookScopeProject,
-		ConfigPath: "/repo/.projmux/config.toml",
-	})
-	if !strings.Contains(addRow.Label, settingsColorAdd+"post-create") {
-		t.Fatalf("hook add label = %q, want action color %q", addRow.Label, settingsColorAdd)
+	// The per-event Automation detail owns the mutation rows now: the add/edit
+	// row keeps the action colour and the remove row the destructive one.
+	repo := t.TempDir()
+	cmd := &settingsCommand{
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return repo
+			}
+			return ""
+		},
 	}
+	addEntries := cmd.hookEventDetailEntries(hookScopeProject, "post-create")
+	assertEntryColorForValue(t, addEntries, settingsActionPrefixHookAdd+"project:post-create", settingsColorAdd)
 
-	activeRow := settingsHookActiveEntry(settingsHookRow{
-		Event:    "post-create",
-		Scope:    hookScopeProject,
-		Declared: "echo ok",
-	})
-	if !strings.Contains(activeRow.Label, settingsColorAdd+"post-create") {
-		t.Fatalf("hook active label = %q, want action/add color %q", activeRow.Label, settingsColorAdd)
-	}
+	writeFile(t, filepath.Join(repo, ".projmux", "config.toml"), `
+[hooks.post-create]
+run = "echo ok"
+`)
+	activeEntries := cmd.hookEventDetailEntries(hookScopeProject, "post-create")
+	assertEntryColorForValue(t, activeEntries, settingsActionPrefixHookEdit+"project:post-create", settingsColorAdd)
+	assertEntryColorForValue(t, activeEntries, settingsActionPrefixHookRemove+"project:post-create", settingsColorRemove)
 
 	startupEntries := projectConfigStartupEntries(hooks.ProjectConfig{StartupRun: "make dev"})
 	assertEntryColorForValue(t, startupEntries, settingsActionPrefixProjectConfig+"startup:set", settingsColorType)
@@ -292,8 +303,8 @@ run = "codex"
 	if err != nil {
 		t.Fatalf("sectionOptions(project hooks) error = %v", err)
 	}
-	assertEntryLabelContainsAll(t, hookOptions.Entries, "post-create", "active", "echo declared-post")
-	assertEntryLabelContainsAll(t, hookOptions.Entries, "pre-create", "missing", "[+ Add]")
+	assertEntryLabelContainsAll(t, cmd.hookEventDetailEntries(hookScopeProject, "post-create"), "Command", "run = echo declared-post")
+	assertEntryLabelContainsAll(t, cmd.hookEventDetailEntries(hookScopeProject, "pre-create"), "Command", "no command")
 	for _, entry := range hookOptions.Entries {
 		if entry.Value == settingsSectionProjectConfig || strings.Contains(entry.Label, "Project recipe") {
 			t.Fatalf("hook options = %#v, want no nested Project recipe row", hookOptions.Entries)
@@ -360,7 +371,7 @@ func TestSettingsHookMakerLegacyMultiLineScriptRendersLegacyRow(t *testing.T) {
 			return ""
 		},
 	}
-	entries := cmd.projectHookEntries(cmd.resolveSettingsProjectContext())
+	entries := cmd.hookEventDetailEntries(hookScopeProject, "post-create")
 	assertEntryLabelContainsAll(t, entries, "legacy script", scriptPath, "not executed")
 }
 
@@ -391,7 +402,7 @@ func TestSettingsHookMakerLegacySymlinkRendersDotfilesNotice(t *testing.T) {
 			return ""
 		},
 	}
-	entries := cmd.projectHookEntries(cmd.resolveSettingsProjectContext())
+	entries := cmd.hookEventDetailEntries(hookScopeProject, "post-create")
 	assertEntryLabelContainsAll(t, entries, "post-create", "legacy script: symlink", scriptPath)
 	assertEntryLabelContainsAll(t, entries, "post-create", "dotfiles repo")
 
@@ -435,7 +446,10 @@ func TestSettingsHookMakerHooksPageDoesNotMutateTrustStore(t *testing.T) {
 		},
 	}
 
-	_ = cmd.globalHookEntries()
+	for _, event := range settingsAutomationLifecycleEvents {
+		_ = cmd.hookEventDetailEntries(hookScopeGlobal, event)
+		_ = cmd.hookEventDetailEntries(hookScopeProject, event)
+	}
 	_ = cmd.projectHookEntries(cmd.resolveSettingsProjectContext())
 
 	got, err := os.ReadFile(trustStore)
@@ -485,8 +499,8 @@ func TestSettingsHookMakerProjectAddDeclarativeOpensInlineForm(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	if err := cmd.runProjectHooksSection(&stdout, &stderr); err != nil {
-		t.Fatalf("runProjectHooksSection: %v", err)
+	if err := cmd.runHookEventDetailSection(hookScopeProject, "post-create", &stdout, &stderr); err != nil {
+		t.Fatalf("runHookEventDetailSection: %v", err)
 	}
 	configPath := filepath.Join(repo, ".projmux", "config.toml")
 	body := readFile(t, configPath)
@@ -535,8 +549,8 @@ run = "echo original"
 	})
 
 	var stdout, stderr bytes.Buffer
-	if err := cmd.runProjectHooksSection(&stdout, &stderr); err != nil {
-		t.Fatalf("runProjectHooksSection: %v", err)
+	if err := cmd.runHookEventDetailSection(hookScopeProject, "post-create", &stdout, &stderr); err != nil {
+		t.Fatalf("runHookEventDetailSection: %v", err)
 	}
 	body := readFile(t, configPath)
 	if !strings.Contains(body, `run = "echo updated"`) {
@@ -560,22 +574,40 @@ run = "echo global-declarative"
 		calls++
 		switch calls {
 		case 1:
-			if hasEntryValue(options.Entries, settingsActionPrefixHookAdd+"global:post-create") {
-				t.Fatalf("entries = %#v, did not expect global add row", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixHookView + "global:post-create"}, nil
-		case 2:
-			if got, want := options.UI, "settings-hook-readonly"; got != want {
+			if got, want := options.UI, "settings-automation"; got != want {
 				t.Fatalf("UI = %q, want %q", got, want)
 			}
-			if !hasEntryLabelContaining(options.Entries, "Read-only") {
-				t.Fatalf("readonly entries = %#v, want read-only notice", options.Entries)
+			return intpickercompat.Result{Key: "enter", Value: settingsAutomationLifecycle}, nil
+		case 2:
+			if got, want := options.UI, "settings-automation-lifecycle"; got != want {
+				t.Fatalf("UI = %q, want %q", got, want)
 			}
-			if !hasEntryLabelContaining(options.Entries, "Project override") {
-				t.Fatalf("readonly entries = %#v, want project override hint", options.Entries)
+			if !hasEntryValue(options.Entries, settingsHookEventValue(hookScopeGlobal, "post-create")) {
+				t.Fatalf("entries = %#v, want an After session create view row", options.Entries)
+			}
+			return intpickercompat.Result{Key: "enter", Value: settingsHookEventValue(hookScopeGlobal, "post-create")}, nil
+		case 3:
+			if got, want := options.UI, "settings-automation-event"; got != want {
+				t.Fatalf("UI = %q, want %q", got, want)
+			}
+			// Global `[hooks.*]` stays read-only in app: the mutation rows
+			// are disabled with a reason instead of offering an edit that
+			// cannot run.
+			if hasEntryValue(options.Entries, settingsActionPrefixHookAdd+"global:post-create") ||
+				hasEntryValue(options.Entries, settingsActionPrefixHookEdit+"global:post-create") ||
+				hasEntryValue(options.Entries, settingsActionPrefixHookRemove+"global:post-create") {
+				t.Fatalf("entries = %#v, did not expect a global mutation row", options.Entries)
+			}
+			if !hasEntryLabelContaining(options.Entries, "read-only here") {
+				t.Fatalf("entries = %#v, want the read-only reason", options.Entries)
+			}
+			if !hasEntryLabelContaining(options.Entries, "projmux hook edit post-create") {
+				t.Fatalf("entries = %#v, want the canonical next step", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 3:
+		case 4:
+			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		case 5:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		default:
 			t.Fatalf("unexpected runner call %d", calls)
@@ -584,8 +616,8 @@ run = "echo global-declarative"
 	})
 
 	var stdout, stderr bytes.Buffer
-	if err := cmd.runGlobalHooksSection(&stdout, &stderr); err != nil {
-		t.Fatalf("runGlobalHooksSection: %v", err)
+	if err := cmd.runAutomationSection(&stdout, &stderr); err != nil {
+		t.Fatalf("runAutomationSection: %v", err)
 	}
 	if got := readFile(t, filepath.Join(configHome, "projmux", "config.toml")); !strings.Contains(got, `run = "echo global-declarative"`) {
 		t.Fatalf("global config changed unexpectedly: %s", got)
@@ -612,13 +644,6 @@ run = "echo post"
 		calls++
 		switch calls {
 		case 1:
-			return intpickercompat.Result{Key: "ctrl-p"}, nil
-		case 2:
-			if !hasEntryValue(options.Entries, settingsSectionProjectConfig) {
-				t.Fatalf("project tab entries = %#v, want Project recipe row", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsSectionProjectConfig}, nil
-		case 3:
 			if got, want := options.UI, "settings-project-config"; got != want {
 				t.Fatalf("project config UI = %q, want %q", got, want)
 			}
@@ -632,7 +657,7 @@ run = "echo post"
 				t.Fatalf("project config entries = %#v, want no hook commands row", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "startup"}, nil
-		case 4:
+		case 2:
 			if got, want := options.UI, "settings-project-config-startup"; got != want {
 				t.Fatalf("startup UI = %q, want %q", got, want)
 			}
@@ -640,46 +665,46 @@ run = "echo post"
 				t.Fatalf("startup entries = %#v, want startup set action", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "startup:set"}, nil
-		case 5:
+		case 3:
 			if got, want := options.UI, "settings-project-config-typed"; got != want {
 				t.Fatalf("typed UI = %q, want %q", got, want)
 			}
 			return intpickercompat.Result{Key: "enter", Query: "codex"}, nil
-		case 6:
+		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 7:
+		case 5:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "kube"}, nil
-		case 8:
+		case 6:
 			if got, want := options.UI, "settings-project-config-kube"; got != want {
 				t.Fatalf("kube UI = %q, want %q", got, want)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "kube:context:set"}, nil
-		case 9:
+		case 7:
 			return intpickercompat.Result{Key: "enter", Query: "dev"}, nil
-		case 10:
+		case 8:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 11:
+		case 9:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "env"}, nil
-		case 12:
+		case 10:
 			if got, want := options.UI, "settings-project-config-env"; got != want {
 				t.Fatalf("environment UI = %q, want %q", got, want)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "env:add"}, nil
-		case 13:
+		case 11:
 			return intpickercompat.Result{Key: "enter", Query: "FOO"}, nil
-		case 14:
+		case 12:
 			return intpickercompat.Result{Key: "enter", Query: "bar"}, nil
-		case 15:
+		case 13:
 			if !hasEntryLabelContaining(options.Entries, "FOO") {
 				t.Fatalf("refreshed env entries = %#v, want saved env value", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 16:
+		case 14:
 			if !hasEntryLabelContaining(options.Entries, "codex") || !hasEntryLabelContaining(options.Entries, "dev") || !hasEntryLabelContaining(options.Entries, "1 var") {
 				t.Fatalf("refreshed project config root entries = %#v, want saved section summaries", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 17:
+		case 15:
 			return intpickercompat.Result{}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -705,8 +730,10 @@ run = "echo post"
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	// The Project recipe handler survives Phase 0 with no visible route: its
+	// hard removal is a later slice, so it is exercised directly here.
+	if err := cmd.runProjectConfigSection(&stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectConfigSection() error = %v", err)
 	}
 	got := readFile(t, configPath)
 	for _, want := range []string{
