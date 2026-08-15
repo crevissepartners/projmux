@@ -286,6 +286,21 @@ func (f *fakeTmux) runListWindows(args []string) ([]byte, error) {
 }
 
 func (f *fakeTmux) runListPanes(args []string) ([]byte, error) {
+	// `-a` is the server-wide inventory the mirrored-uid lookup and the
+	// dead-pane sweep both read. It ignores `-t` entirely, exactly like tmux.
+	if slices.Contains(args, "-a") {
+		format := flagValue(args, "-F")
+		var b strings.Builder
+		for _, s := range f.sessions {
+			for _, w := range s.windows {
+				for _, p := range w.panes {
+					b.WriteString(renderFormat(format, s, w, p))
+					b.WriteString("\n")
+				}
+			}
+		}
+		return []byte(b.String()), nil
+	}
 	target := flagValue(args, "-t")
 	session, window := f.window(target)
 	if window == nil {
