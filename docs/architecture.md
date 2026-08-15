@@ -177,6 +177,57 @@ Agent lifecycle:
   failure or an abnormal exit resolves to `Failed`. The Agent survives its Pane
   as a resumable resource.
 
+Agent provider session ref:
+
+- `status.sessionRef` is the durable pointer from an Agent to the provider
+  conversation it belongs to. It is in **status, not spec**, because nothing
+  declares it: a provider hook reports it after the fact, exactly like
+  `status.paneRef`.
+- The two status refs have deliberately different lifetimes. `status.paneRef` is
+  the *current* managed-Pane binding and is cleared by `ReleaseAgentPane`,
+  `DeletePane`, and every non-`Running` transition. `status.sessionRef` is
+  cleared by none of them: an `Offline` Agent that has lost its Pane still knows
+  which conversation it is.
+- It is **not** a duplicate of the tmux pane option `@projmux_ai_session_id`,
+  and that option is not going away. The pane option is the *live routing
+  index*: hook ingest scans the live pane list and matches on it to decide which
+  pane an incoming event belongs to, so following pane lifetime is correct for
+  it. `status.sessionRef` answers "which conversation is this Agent" and must
+  outlive the Pane. Ingest writes both.
+- The shape is a **per-provider discriminated union**, not one flat string:
+  `provider` is the discriminator and exactly one of `claude`, `codex`, or
+  `antigravity` is populated. Providers disagree on what identifies a
+  conversation — Claude reports a session id plus a transcript path, Codex a
+  thread id and a session id, Antigravity a single conversation id — and
+  flattening them would assert a false equivalence between a Codex thread id and
+  a Claude session id.
+- Codex's turn id is deliberately **not** stored. A turn addresses one turn
+  inside the conversation and changes on every hook event, so it is not a
+  pointer to the conversation.
+- Transcript **paths** are recorded as the hook reported them. Nothing reads
+  provider config files or transcript **contents**; that is permanently out of
+  scope.
+- The field is additive inside `schemaVersion: 1`. It is an optional pointer
+  with `omitempty`, so a registry written before it existed decodes with a nil
+  ref, validates, and re-encodes byte-identically. Bumping the envelope would
+  make every already-installed build refuse the file fail-closed with
+  `ErrSchemaTooNew`, which is a hard downgrade break bought for nothing.
+- **"One conversation ↔ at most one live Agent" is deliberately NOT enforced.**
+  Two Agents may carry the same conversation, and `get agents` / `describe agent`
+  will show both. Enforcing it would mean a best-effort hook observation could be
+  *refused*, making the registry describe a world that does not exist: the same
+  conversation really can be attached twice (a manual resume of the same session
+  id in a second pane already does that), and an `Offline` Agent keeps its ref
+  forever, so a later Agent observing the same conversation would be permanently
+  unable to record it. Choosing between several Agents that point at one
+  conversation is a resume-time decision and belongs to the resume
+  materialization Phase, not to an observation write.
+- The write is narrow and idempotent: it touches `status.sessionRef` and nothing
+  else — not the phase, not `lastTransitionAt`, not `paneRef` — and
+  re-observing the same conversation opens no registry transaction at all. A
+  hook whose provider contradicts the Agent's `spec.provider` is refused with
+  zero mutations.
+
 Registry file and schema:
 
 - The registry lives at `<state>/projmux/metadata/registry.json` (0600 below a

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
@@ -517,6 +518,16 @@ func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, tran
 	if transcriptPath = strings.TrimSpace(transcriptPath); transcriptPath != "" {
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTranscriptPathOption, transcriptPath)
 	}
+	// The pane options above are the live routing index and stay exactly as
+	// they were. This is the second, additive home: the durable conversation
+	// pointer on the Agent resource, which survives the Pane the options die
+	// with.
+	c.recordAgentSessionRef(paneID, coremetadata.AgentSessionObservation{
+		Provider:       agent,
+		SessionID:      sessionID,
+		ThreadID:       threadID,
+		TranscriptPath: transcriptPath,
+	})
 }
 
 func (c *aiCommand) writeAIHookResumeMetadata(paneID, resumeID string) {

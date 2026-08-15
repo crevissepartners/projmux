@@ -22,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -90,6 +91,13 @@ type aiCommand struct {
 	notifyDiagnostics          *diagnostics.NotifyFocusRecorder
 	operationalDiagnostics     *diagnostics.AIRecorder
 	notifyDeliveryOwnsTopLevel bool
+	// loadRegistry and updateRegistry are the resource registry seam the hook
+	// ingest path uses to persist the provider session ref onto the Agent. Both
+	// are nil unless explicitly wired, and a nil seam disables the write
+	// entirely: the many fixtures that build an aiCommand literal must never
+	// reach the real state directory just because a hook was ingested.
+	loadRegistry   func() (coremetadata.Registry, error)
+	updateRegistry func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
 }
 
 func newAICommand() *aiCommand {
@@ -107,6 +115,11 @@ func newAICommand() *aiCommand {
 		now:          time.Now,
 		sleep:        time.Sleep,
 		producer:     newAttentionNotifyProducer(),
+		// The read is the zero-side-effect LoadReadOnly path and the write is
+		// the store's locked read -> mutate -> validate -> atomic replace
+		// transaction, so ingest can never create or corrupt the registry.
+		loadRegistry:   loadResourceRegistry,
+		updateRegistry: updateResourceRegistry,
 	}
 }
 

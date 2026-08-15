@@ -1,0 +1,181 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-15T10:00:00Z",
+  "projects": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {
+        "uid": "project-01",
+        "name": "app",
+        "displayName": "app",
+        "createdAt": "2026-08-15T10:00:00Z"
+      },
+      "spec": {
+        "root": "/src/app"
+      },
+      "status": {}
+    }
+  ],
+  "windows": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-01",
+        "name": "zsh",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-01"
+        },
+        "createdAt": "2026-08-15T10:00:00Z"
+      },
+      "spec": {
+        "primaryPaneRef": "pane-01"
+      }
+    }
+  ],
+  "panes": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-01",
+        "name": "zsh",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-15T10:00:00Z"
+      },
+      "spec": {
+        "role": "shell",
+        "cwd": "/src/app"
+      },
+      "status": {}
+    }
+  ],
+  "agents": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "agent-01",
+        "name": "claude",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-15T10:00:00Z"
+      },
+      "spec": {
+        "provider": "claude"
+      },
+      "status": {
+        "phase": "Pending",
+        "sessionRef": {
+          "provider": "claude",
+          "observedAt": "2026-08-15T10:00:00Z",
+          "claude": {
+            "sessionId": "claude-session-1",
+            "transcriptPath": "/home/u/.claude/projects/app/claude-session-1.jsonl"
+          }
+        },
+        "lastTransitionAt": "2026-08-15T10:00:00Z"
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "agent-02",
+        "name": "codex",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-15T10:00:00Z"
+      },
+      "spec": {
+        "provider": "codex"
+      },
+      "status": {
+        "phase": "Pending",
+        "sessionRef": {
+          "provider": "codex",
+          "observedAt": "2026-08-15T10:00:00Z",
+          "codex": {
+            "threadId": "codex-thread-1",
+            "sessionId": "codex-session-1"
+          }
+        },
+        "lastTransitionAt": "2026-08-15T10:00:00Z"
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Agent",
+      "metadata": {
+        "uid": "agent-03",
+        "name": "antigravity",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-01"
+        },
+        "createdAt": "2026-08-15T10:00:00Z"
+      },
+      "spec": {
+        "provider": "antigravity"
+      },
+      "status": {
+        "phase": "Pending",
+        "sessionRef": {
+          "provider": "antigravity",
+          "observedAt": "2026-08-15T10:00:00Z",
+          "antigravity": {
+            "conversationId": "antigravity-conversation-1"
+          }
+        },
+        "lastTransitionAt": "2026-08-15T10:00:00Z"
+      }
+    }
+  ],
+  "nameReservations": [
+    {
+      "kind": "Project",
+      "name": "app",
+      "uid": "project-01"
+    },
+    {
+      "scope": "project-01",
+      "kind": "Window",
+      "name": "zsh",
+      "uid": "window-01"
+    },
+    {
+      "scope": "window-01",
+      "kind": "Pane",
+      "name": "zsh",
+      "uid": "pane-01"
+    },
+    {
+      "scope": "window-01",
+      "kind": "Agent",
+      "name": "claude",
+      "uid": "agent-01"
+    },
+    {
+      "scope": "window-01",
+      "kind": "Agent",
+      "name": "codex",
+      "uid": "agent-02"
+    },
+    {
+      "scope": "window-01",
+      "kind": "Agent",
+      "name": "antigravity",
+      "uid": "agent-03"
+    }
+  ]
+}

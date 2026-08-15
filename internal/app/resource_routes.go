@@ -331,12 +331,26 @@ func resourceRef(match selector.Match) string {
 }
 
 // resourceSummary is the default human projection of one match.
-func resourceSummary(match selector.Match) string {
+//
+// The registry is consulted only for the fields no selector.Match carries. An
+// Agent gains a `session=<provider>:<conversation-id>` suffix when it has a
+// stored provider session ref, which is what makes the durable conversation
+// pointer visible from the plural read rather than only from `describe` or the
+// structured `-o json` shape. An Agent that has never had a hook report a
+// conversation renders exactly as before.
+func resourceSummary(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry) string {
 	summary := resourceRef(match) + " status=" + string(match.Status)
 	if owner := match.Owner.String(); owner != "" {
 		summary += " owner=" + owner
 	}
-	return summary
+	if kind != coremetadata.KindAgent {
+		return summary
+	}
+	agent, ok := registry.Agent(match.UID)
+	if !ok || agent.Status.SessionRef.Empty() {
+		return summary
+	}
+	return summary + " session=" + agent.Status.SessionRef.Summary()
 }
 
 // writeResourceProjection renders a resolution through the shared output
@@ -368,7 +382,7 @@ func writeResourceProjection(
 			case cli.OutputModeRef:
 				line = resourceRef(match)
 			default:
-				line = resourceSummary(match)
+				line = resourceSummary(match, kind, registry)
 			}
 			if _, err := fmt.Fprintln(stdout, line); err != nil {
 				return err
