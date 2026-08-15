@@ -241,19 +241,29 @@ smoke_wait_for "Settings root" grep -aFq "Settings >" "$recorder_log"
 
 # Deep search lands on the owning View and never executes a control on the way.
 # Searching a Status Bar component name from the root walks Appearance > Status
-# Bar; reaching the container must not write a decoration value.
+# Bar; reaching the container must not write a decoration value. Each wait is
+# anchored to a byte offset so a frame from an earlier screen cannot satisfy it.
+settings_nav_offset="$(stat -c %s "$recorder_log")"
 printf 'Status Bar\r' >&9
-smoke_wait_for "Appearance view" grep -aFq "Settings > Appearance > " "$recorder_log"
+smoke_wait_for "Appearance view" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Appearance > '"
 # Rows that carry a search key are matched on that key, which is lower case.
+settings_nav_offset="$(stat -c %s "$recorder_log")"
 printf 'status bar components\r' >&9
-smoke_wait_for "Status Bar container" grep -aFq "Settings > Appearance > Status Bar > " "$recorder_log"
+smoke_wait_for "Status Bar container" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Appearance > Status Bar > '"
 if [[ -e "$XDG_CONFIG_HOME/projmux/statusbar-decoration-git" ]]; then
   echo "navigating to the Status Bar container wrote a decoration value" >&2
   exit 1
 fi
+settings_nav_offset="$(stat -c %s "$recorder_log")"
 printf 'Back\r' >&9
+smoke_wait_for "Appearance view after Back" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Agent attention badge style'"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
 printf 'Back\r' >&9
-smoke_wait_for "Settings root after deep search" grep -aFq "Settings > " "$recorder_log"
+smoke_wait_for "Settings root after deep search" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Keybindings'"
 
 printf 'Keybindings\r' >&9
 smoke_wait_for "Keybindings category list" grep -aFq "Settings > Keybindings >" "$recorder_log"
