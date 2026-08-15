@@ -163,18 +163,18 @@ func TestEvalTmuxFormatModelsTheStringComparisonTrap(t *testing.T) {
 	t.Parallel()
 
 	bare := strings.ReplaceAll(statusbarNotifyBudgetFormat(), "#{e|<:", "#{<:")
-	// "90" > "160" as strings, so the string spelling takes the WIDE branch on a
-	// 90-column client and reserves 80 of its 90 cells for notify — the exact
-	// over-commit this derivation exists to prevent.
+	// "90" > "40", "160" and "220" as strings, so the string spelling walks every
+	// false branch on a 90-column client and reserves 80 of its 90 cells for
+	// notify — the exact over-commit this derivation exists to prevent.
 	if got := evalTmuxFormat(t, bare, 90); got != "80" {
 		t.Fatalf("string-comparison spelling should misfire at 90, got %q", got)
 	}
-	if got := evalTmuxFormat(t, statusbarNotifyBudgetFormat(), 90); got != "45" {
-		t.Fatalf("numeric-comparison spelling should halve a 90-column row, got %q", got)
+	if got := evalTmuxFormat(t, statusbarNotifyBudgetFormat(), 90); got != "20" {
+		t.Fatalf("numeric-comparison spelling should reserve notify's floor on a 90-column row, got %q", got)
 	}
-	// And the wide case still resolves to notify's full budget.
-	if got := evalTmuxFormat(t, statusbarNotifyBudgetFormat(), 191); got != "80" {
-		t.Fatalf("numeric-comparison spelling should give notify its full budget at 191, got %q", got)
+	// And the reported width resolves to the reservation, not the design cap.
+	if got := evalTmuxFormat(t, statusbarNotifyBudgetFormat(), 191); got != "51" {
+		t.Fatalf("numeric-comparison spelling should reserve 191-140 at 191, got %q", got)
 	}
 }
 
@@ -184,18 +184,21 @@ func TestEvalTmuxFormatModelsTheStringComparisonTrap(t *testing.T) {
 var statusbarBudgetCases = []struct{ clientWidth, notify, usage int }{
 	{clientWidth: 400, notify: 80, usage: 320},
 	{clientWidth: 240, notify: 80, usage: 160},
-	{clientWidth: 204, notify: 80, usage: 124},
-	{clientWidth: 200, notify: 80, usage: 120},
-	{clientWidth: 191, notify: 80, usage: 111},
-	{clientWidth: 180, notify: 80, usage: 100},
-	{clientWidth: 160, notify: 80, usage: 80},
-	{clientWidth: 159, notify: 79, usage: 80},
-	{clientWidth: 140, notify: 70, usage: 70},
-	{clientWidth: 120, notify: 60, usage: 60},
-	{clientWidth: 100, notify: 50, usage: 50},
-	{clientWidth: 80, notify: 40, usage: 40},
-	{clientWidth: 60, notify: 30, usage: 30},
+	{clientWidth: 220, notify: 80, usage: 140},
+	{clientWidth: 219, notify: 79, usage: 140},
+	{clientWidth: 200, notify: 60, usage: 140},
+	{clientWidth: 191, notify: 51, usage: 140},
+	{clientWidth: 180, notify: 40, usage: 140},
+	{clientWidth: 160, notify: 20, usage: 140},
+	{clientWidth: 159, notify: 20, usage: 139},
+	{clientWidth: 144, notify: 20, usage: 124},
+	{clientWidth: 140, notify: 20, usage: 120},
+	{clientWidth: 120, notify: 20, usage: 100},
+	{clientWidth: 100, notify: 20, usage: 80},
+	{clientWidth: 80, notify: 20, usage: 60},
+	{clientWidth: 60, notify: 20, usage: 40},
 	{clientWidth: 40, notify: 20, usage: 20},
+	{clientWidth: 39, notify: 19, usage: 20},
 	{clientWidth: 20, notify: 10, usage: 10},
 }
 
@@ -242,15 +245,103 @@ func TestStatusbarSegmentBudgetsSplitTheRowExactly(t *testing.T) {
 		if usage == 0 {
 			t.Fatalf("client width %d: usage budget 0 would be read as unbounded", clientWidth)
 		}
-		// On any row that can afford it, notify keeps exactly its historical
-		// cap, so notify's bytes are unchanged there.
-		if clientWidth >= statusbarSharedRowMinWidth && notify != statusbarNotifyMaxWidth {
+		// On any row that can afford it, notify still reaches exactly its
+		// historical cap, so notify's bytes are unchanged on a large terminal.
+		if clientWidth >= statusbarNotifySurplusCapWidth && notify != statusbarNotifyMaxWidth {
 			t.Fatalf("client width %d: notify budget = %d, want the unchanged %d",
 				clientWidth, notify, statusbarNotifyMaxWidth)
 		}
 		if notify > statusbarNotifyMaxWidth {
 			t.Fatalf("client width %d: notify budget = %d, above its design cap", clientWidth, notify)
 		}
+		// And notify is never squeezed below its reservation on a row that can
+		// host it, so the usage floor can never erase the notify segment.
+		if clientWidth >= statusbarEvenSplitMaxWidth && notify < statusbarNotifyMinWidth {
+			t.Fatalf("client width %d: notify budget = %d, below its %d reservation",
+				clientWidth, notify, statusbarNotifyMinWidth)
+		}
+	}
+}
+
+// TestStatusbarUsageBudgetNeverRegressesBelowItsHistoricalWidth is the
+// corrective's regression guard. PR #624 derived both budgets from the client
+// but reserved notify's design CAP, so every client narrower than 200 columns
+// ended up with less usage budget than the hardcoded 120 it replaced — the
+// reported 191-column terminal dropped from 120 to 111 and lost Claude's weekly
+// bar. usage must never again come out below the constant it used to have.
+//
+// The guard is stated as `min(client_width - notifyMin, usageMin)` and not a
+// flat 120 because of a physical conflict this change cannot dissolve: a
+// 120-column row cannot hold 120 usage cells AND any notify cells, and a notify
+// budget of 0 is read by the renderer as "unbounded" rather than "nothing", so
+// it would overflow the row and erase usage entirely. Below 140 columns notify's
+// 20-cell floor wins and usage gets the rest.
+func TestStatusbarUsageBudgetNeverRegressesBelowItsHistoricalWidth(t *testing.T) {
+	t.Parallel()
+
+	usageFormat := statusbarUsageBudgetFormat()
+	for clientWidth := statusbarEvenSplitMaxWidth; clientWidth <= 400; clientWidth++ {
+		usage := mustAtoi(t, evalTmuxFormat(t, usageFormat, clientWidth))
+		want := min(clientWidth-statusbarNotifyMinWidth, statusbarUsageMinWidth)
+		if usage < want {
+			t.Fatalf("client width %d: usage budget %d, want at least %d", clientWidth, usage, want)
+		}
+	}
+	// Spelled out at the widths the reports and the sweep used, so a reviewer
+	// reads the outcome instead of re-deriving it. The `vs 120` column is the
+	// pre-#624 hardcoded constant.
+	for _, tc := range []struct{ clientWidth, usage int }{
+		{clientWidth: 80, usage: 60},
+		{clientWidth: 100, usage: 80},
+		{clientWidth: 120, usage: 100},
+		{clientWidth: 140, usage: 120},
+		{clientWidth: 160, usage: 140},
+		{clientWidth: 180, usage: 140},
+		{clientWidth: 191, usage: 140},
+		{clientWidth: 200, usage: 140},
+		{clientWidth: 240, usage: 160},
+	} {
+		if got := mustAtoi(t, evalTmuxFormat(t, usageFormat, tc.clientWidth)); got != tc.usage {
+			t.Errorf("client width %d: usage budget %d, want %d", tc.clientWidth, got, tc.usage)
+		}
+	}
+}
+
+// statusbarReportedClientWidth is the terminal the defect was reported from, and
+// statusbarClaudeWeeklyBarBudget is the measured budget at which the installed
+// provider shape's second-bar tier fits (see
+// internal/app/usagecmd/status_golden_test.go, which pins the renderer side of
+// the same number against a fixture).
+const (
+	statusbarReportedClientWidth   = 191
+	statusbarClaudeWeeklyBarBudget = 124
+)
+
+// TestStatusbarUsageBudgetReachesTheClaudeWeeklyBarOnTheReportedTerminal is the
+// product acceptance. PR #624 met its stated mechanism — both budgets derive
+// from `#{client_width}` — while inverting its own goal: on the 191-column
+// terminal the track exists for, the Claude weekly bar was still missing
+// afterwards, because 191-80 = 111 is below the 124 the tier needs.
+func TestStatusbarUsageBudgetReachesTheClaudeWeeklyBarOnTheReportedTerminal(t *testing.T) {
+	t.Parallel()
+
+	usage := mustAtoi(t, evalTmuxFormat(t, statusbarUsageBudgetFormat(), statusbarReportedClientWidth))
+	if usage < statusbarClaudeWeeklyBarBudget {
+		t.Fatalf("a %d-column client gets %d usage cells, below the %d Claude's weekly bar needs",
+			statusbarReportedClientWidth, usage, statusbarClaudeWeeklyBarBudget)
+	}
+	// And the first width that clears the threshold is low enough to be an
+	// ordinary terminal, not only a very wide one.
+	first := 0
+	for clientWidth := 2; clientWidth <= 400; clientWidth++ {
+		if mustAtoi(t, evalTmuxFormat(t, statusbarUsageBudgetFormat(), clientWidth)) >= statusbarClaudeWeeklyBarBudget {
+			first = clientWidth
+			break
+		}
+	}
+	// 144: the reservation is 20 up to 160, so usage first reaches 124 at 144.
+	if first != 144 {
+		t.Fatalf("the Claude weekly bar first fits on a %d-column client; the derivation moved", first)
 	}
 }
 
@@ -270,38 +361,50 @@ func TestStatusbarUsageBudgetGrowsWithTheClient(t *testing.T) {
 		}
 		previous = usage
 	}
-	// The old hardcoded 120 is reached and passed by a wide terminal instead of
-	// being the ceiling for every terminal.
-	if got := mustAtoi(t, evalTmuxFormat(t, usageFormat, 200)); got != 120 {
-		t.Fatalf("a 200-column client should reach the old constant exactly, got %d", got)
+	// The old hardcoded 120 is passed by an ordinary terminal instead of being
+	// the ceiling for every terminal.
+	if got := mustAtoi(t, evalTmuxFormat(t, usageFormat, 140)); got != statusbarUsageMinWidth {
+		t.Fatalf("a 140-column client should reach the old constant exactly, got %d", got)
 	}
-	if got := mustAtoi(t, evalTmuxFormat(t, usageFormat, 400)); got <= 120 {
+	if got := mustAtoi(t, evalTmuxFormat(t, usageFormat, 400)); got <= statusbarUsageMinWidth {
 		t.Fatalf("a 400-column client is still capped at the old constant: %d", got)
 	}
 }
 
 // TestStatusbarNotifyBudgetFallsBackToItsDesignCap pins the fail-safe direction
-// of the comparison. tmux treats an unevaluable condition as false, so the else
-// branch is what a tmux that cannot evaluate the numeric comparison would use —
-// and it must be the historical literal, not half a row.
+// of the comparisons. tmux treats an unevaluable condition as false, so the
+// innermost else branch is what a tmux that cannot evaluate `e|<` would use —
+// and it must be the historical literal 80, not half a row and not the floor.
 func TestStatusbarNotifyBudgetFallsBackToItsDesignCap(t *testing.T) {
 	t.Parallel()
 
 	format := statusbarNotifyBudgetFormat()
-	body, size := tmuxFormatBody(t, format)
-	if size != len(format) {
-		t.Fatalf("the notify budget is no longer a single #{...} construct: %q", format)
-	}
-	if !strings.HasPrefix(body, "?") {
-		t.Fatalf("the notify budget is no longer a conditional: %q", body)
-	}
-	args := splitTmuxFormatArgs(t, body[1:])
-	if len(args) != 3 {
-		t.Fatalf("conditional arity changed: %q", body)
-	}
-	if args[2] != strconv.Itoa(statusbarNotifyMaxWidth) {
-		t.Fatalf("false branch = %q, want the literal %d so an unevaluable condition degrades to today's cap",
-			args[2], statusbarNotifyMaxWidth)
+	for depth := 0; ; depth++ {
+		body, size := tmuxFormatBody(t, format)
+		if size != len(format) {
+			t.Fatalf("the notify budget is no longer a single #{...} construct: %q", format)
+		}
+		if !strings.HasPrefix(body, "?") {
+			t.Fatalf("the notify budget is no longer a conditional: %q", body)
+		}
+		args := splitTmuxFormatArgs(t, body[1:])
+		if len(args) != 3 {
+			t.Fatalf("conditional arity changed: %q", body)
+		}
+		if !strings.HasPrefix(args[0], "#{e|<:") {
+			t.Fatalf("depth %d condition %q is not the fail-safe numeric `<` form", depth, args[0])
+		}
+		if !strings.HasPrefix(args[2], "#{?") {
+			if args[2] != strconv.Itoa(statusbarNotifyMaxWidth) {
+				t.Fatalf("innermost false branch = %q, want the literal %d so an unevaluable condition degrades to today's cap",
+					args[2], statusbarNotifyMaxWidth)
+			}
+			return
+		}
+		format = args[2]
+		if depth > 8 {
+			t.Fatalf("the notify budget conditional nests deeper than expected: %q", statusbarNotifyBudgetFormat())
+		}
 	}
 }
 

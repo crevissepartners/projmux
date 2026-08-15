@@ -84,21 +84,25 @@ func TestStatusUsageGoldensDifferByStalenessTier(t *testing.T) {
 // reservation. A contract honoured at only one of these numbers is, in product
 // terms, not honoured.
 //
-// Each entry is the budget an ordinary terminal produces:
+// Each entry is the budget an ordinary terminal produces. The mapping is the
+// one measured against a real attached client on tmux 3.6, after the corrective
+// that stopped reserving notify's design cap unconditionally:
 //
-//	client 80  -> 40    the narrowest terminal worth supporting
-//	client 120 -> 60
-//	client 160 -> 80
-//	client 200 -> 120   the cell count the segment used to be hardcoded to
+//	client 60  -> 40    a pane-sized row
+//	client 80  -> 60    the narrowest terminal worth supporting
+//	client 120 -> 100
+//	client 140 -> 120   the cell count the segment used to be hardcoded to
+//	client 160 -> 140   \ the plateau: notify grows on the surplus here, so
+//	client 191 -> 140   / the reported terminal and a 200-column one match
 //	client 240 -> 160
-var statusbarUsageBudgets = []int{40, 60, 80, 120, 160}
+var statusbarUsageBudgets = []int{40, 60, 100, 120, 140, 160}
 
 // statusbarLadderUsageBudgets drops the two narrowest entries, because the
 // width-parameterized staleness table below locates the marker by the
 // `Antigravity` label and the ladder switches to single-letter labels under
 // 70-odd cells. The narrow budgets are not skipped, they are covered by
-// TestStalenessAtTheNarrowestClientBudgets and frozen in the golden, so what an
-// 80- or 120-column client sees stays visible to a reviewer.
+// TestStalenessAtTheNarrowestClientBudgets and frozen in the golden, so what a
+// 60- or 80-column client sees stays visible to a reviewer.
 var statusbarLadderUsageBudgets = statusbarUsageBudgets[2:]
 
 // statusbarGoldenSnapshots is the three-provider shape a real install renders:
@@ -280,11 +284,16 @@ func claudeWeeklyBarPresent(out string) bool {
 // tunable: the tier renders 124 cells, so 124 is where Claude's weekly bar
 // comes back.
 //
-// With `status-format[0]` split as `usage = client_width - notify`, that budget
-// arrives on a 204-column client. It is ABOVE the widths the ladder can serve
-// on a 140- or 191-column terminal, which is the honest limit of a Phase that
-// only re-derives the budget: making a 140-column client show the weekly bar
-// needs per-provider tier selection, not more cells.
+// With `status-format[0]` reserving notify's FLOOR instead of its design cap,
+// that budget arrives on a 144-column client, and the 191-column terminal the
+// defect was reported from gets 140 cells — past this threshold and past the
+// 134 the full HUD tier needs. Under PR #624 the same client got 111 and the
+// bar stayed missing; that inversion is what this file's threshold now guards.
+//
+// A 140-column client still lands four cells short at 120. That is the honest
+// remaining limit of a change that only re-derives the budget: making a
+// 140-column row show the weekly bar needs per-provider tier selection, not
+// more cells.
 const installedShapeWeeklyBarBudget = 124
 
 // TestAWideEnoughClientRecoversTheClaudeWeeklyBar is the product acceptance
@@ -328,8 +337,8 @@ func TestAWideEnoughClientRecoversTheClaudeWeeklyBar(t *testing.T) {
 // statusbarUsageBudgets actually render, because the width-parameterized table
 // above cannot reach them.
 //
-// At 60 cells (a 120-column client) the ladder is on its single-letter tier and
-// the marker is intact and level-distinguishable. At 40 (an 80-column client)
+// At 60 cells (an 80-column client) the ladder is on its single-letter tier and
+// the marker is intact and level-distinguishable. At 40 (a 60-column client)
 // the ladder is in hard rune-truncation, and a `~~` can be cut down to a single
 // `~` — level 2 stops being distinguishable from level 1. That is a limit of
 // the tier ladder, not of the budget: no budget an 80-column row can offer
