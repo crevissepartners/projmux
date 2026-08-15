@@ -14,6 +14,7 @@ import (
 	antigravityagent "github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	claudeagent "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	codexagent "github.com/crevissepartners/projmux/internal/integrations/agents/codex"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // Runner is the command execution surface used by replay. It intentionally
@@ -64,7 +65,10 @@ type replayOptions struct {
 }
 
 const (
-	paneLabelOption         = "@projmux_pane_label"
+	// paneLabelOption is the pane-name transport mirror. The canonical
+	// spelling lives in internal/integrations/tmuxopts so replay, the
+	// generated tmux config, and the resource mirror cannot drift apart.
+	paneLabelOption         = tmuxopts.PaneName
 	recipeKindOption        = "@projmux_recipe_kind"
 	startupCommandOption    = "@projmux_startup_command"
 	aiManagedOption         = "@projmux_ai_managed"

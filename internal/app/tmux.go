@@ -22,6 +22,7 @@ import (
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
@@ -31,12 +32,15 @@ import (
 // Both surfaces source from the same palette so the popup tab chip strip
 // stays visually congruent with the tmux window-status row.
 const (
-	tmuxWindowInactiveBg   = projmuxpicker.TmuxWindowInactiveBg
-	tmuxWindowInactiveFg   = projmuxpicker.TmuxWindowInactiveFg
-	tmuxWindowActiveBg     = projmuxpicker.TmuxWindowActiveBg
-	tmuxWindowActiveFg     = projmuxpicker.TmuxWindowActiveFg
-	tmuxWindowTitleWidth   = 10
-	paneLabelOption        = "@projmux_pane_label"
+	tmuxWindowInactiveBg = projmuxpicker.TmuxWindowInactiveBg
+	tmuxWindowInactiveFg = projmuxpicker.TmuxWindowInactiveFg
+	tmuxWindowActiveBg   = projmuxpicker.TmuxWindowActiveBg
+	tmuxWindowActiveFg   = projmuxpicker.TmuxWindowActiveFg
+	tmuxWindowTitleWidth = 10
+	// paneLabelOption is the pane-name transport mirror. The canonical
+	// spelling lives in internal/integrations/tmuxopts so the mirror, the
+	// replay adapter, and the generated tmux config cannot drift apart.
+	paneLabelOption        = tmuxopts.PaneName
 	tmuxConfigDigestOption = "@projmux_config_digest"
 
 	tmuxAccentAttentionBg = theme.TmuxAccentAttentionBg
