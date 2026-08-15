@@ -50,6 +50,7 @@ Files:
 - `internal/app/status.go`
 - `docs/statusbar.md`
 - `docs/cli.md`
+- `docs/cli-guide.md`
 
 Classification:
 
@@ -108,6 +109,7 @@ Files:
 - `internal/app/settings*.go`
 - `internal/app/*help*`
 - `docs/cli.md`
+- `docs/cli-guide.md`
 - `docs/agent-workflow.md`
 
 Classification:

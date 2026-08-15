@@ -142,7 +142,8 @@ Claude, Codex를 비롯한 여러 에이전트용 템플릿과 이름 규칙은
 - [설정](docs/configuration.md)
 - [터미널 키 설정](docs/keybindings.md)
 - [AI 에이전트 바로가기](docs/ai-agent-shortcuts.md)
-- [CLI 명령어](docs/cli.md)
+- [CLI 명령어](docs/cli.md) — 커맨드 매니페스트에서 생성됨
+- [CLI 사용 가이드](docs/cli-guide.md)
 - [상태 표시줄](docs/statusbar.md)
 - [훅](docs/hooks.md)
 - [사용량 추적](docs/usage-tracking.md)

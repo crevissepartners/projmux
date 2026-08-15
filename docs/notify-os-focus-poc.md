@@ -118,8 +118,8 @@ Independent of the terminal: "raise this app to the foreground." Fill the
 Each terminal adapter has to detect that it's the right one to run before
 touching IPC. These are the env vars / files we can rely on. The precedent for
 this style of detection is
-[`internal/app/init_ghostty.go`](../internal/app/init_ghostty.go) and
-[`internal/app/init_windows_terminal.go`](../internal/app/init_windows_terminal.go) —
+[`internal/app/initcmd/init_ghostty.go`](../internal/app/initcmd/init_ghostty.go) and
+[`internal/app/initcmd/init_windows_terminal.go`](../internal/app/initcmd/init_windows_terminal.go) —
 the new `osfocus` adapters should reuse the same detect-then-dispatch pattern.
 
 | Terminal | Signal(s) |
@@ -419,8 +419,8 @@ summary.
   pushes notifications from the attention state machine.
 - [`internal/app/notify_reconcile.go`](../internal/app/notify_reconcile.go) —
   back-fills the queue from live tmux state.
-- [`internal/app/init_ghostty.go`](../internal/app/init_ghostty.go),
-  [`internal/app/init_windows_terminal.go`](../internal/app/init_windows_terminal.go) —
+- [`internal/app/initcmd/init_ghostty.go`](../internal/app/initcmd/init_ghostty.go),
+  [`internal/app/initcmd/init_windows_terminal.go`](../internal/app/initcmd/init_windows_terminal.go) —
   precedent for terminal detection and per-terminal adapter dispatch.
 - [`internal/integrations/tmux/`](../internal/integrations/tmux/) — external
   process helpers; pattern to reuse for the new adapters.

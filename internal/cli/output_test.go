@@ -2,6 +2,7 @@ package cli
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -143,8 +144,19 @@ func TestGetRouteOwnsTheReadKindFamily(t *testing.T) {
 	if !reflect.DeepEqual(pane.Fields, []FieldProjection{FieldProjectionCWD}) {
 		t.Fatalf("get pane fields = %v, want [cwd]", pane.Fields)
 	}
-	if !reflect.DeepEqual(pane.Outputs, SharedOutputModes()) {
-		t.Fatalf("get pane outputs = %v, want the shared catalog", pane.Outputs)
+	// The read routes advertise the shared catalog minus `pane-id`. The token is
+	// still a member of the shared enum and the canonical manifest still pins it
+	// on this route, so `ResolveOutputToken` keeps accepting it; what changed is
+	// that the route no longer advertises a projection whose only outcome on a
+	// read is "needs a live transport binding, which is not wired yet".
+	if !reflect.DeepEqual(pane.Outputs, readProjectionCatalog) {
+		t.Fatalf("get pane outputs = %v, want the read catalog %v", pane.Outputs, readProjectionCatalog)
+	}
+	if slices.Contains(pane.Outputs, OutputModePaneID) {
+		t.Fatal("a read route advertises -o pane-id, which it answers with an error")
+	}
+	if !IsSharedOutputMode(OutputModePaneID) {
+		t.Fatal("pane-id left the shared catalog; only the read-route advertisement was meant to change")
 	}
 
 	// The compatibility route it will eventually replace is untouched: the

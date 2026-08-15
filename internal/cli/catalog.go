@@ -72,6 +72,25 @@ type Route struct {
 	Children []Route
 }
 
+// readProjectionCatalog is the shared `-o` catalog minus `pane-id`, and it is
+// what the registry read routes advertise.
+//
+// A `%N` pane id is a live transport binding rather than stored metadata, so
+// the read path answers `-o pane-id` with "needs a live transport binding,
+// which is not wired yet" and exits 1. The parser still accepts the token --
+// the canonical manifest is what `ResolveOutputToken` consults, and that
+// manifest is a target-state record -- but a route may not advertise a
+// projection whose only outcome today is an error. The create routes, where the
+// projection does work, keep the full catalog.
+var readProjectionCatalog = []OutputMode{
+	OutputModeUID,
+	OutputModeName,
+	OutputModeRef,
+	OutputModeMetadata,
+	OutputModeJSON,
+	OutputModeNone,
+}
+
 // routes is the maintained Phase 0 manifest of the current CLI surface: the 33
 // top-level routes the compatibility contract inventoried, the canonical
 // top-level nodes added by later Phases, and the hidden internal plumbing.
@@ -341,10 +360,10 @@ var routes = []Route{
 		},
 		Canonical: []string{"describe project", "describe window", "describe pane", "describe agent"},
 		Children: []Route{
-			{Name: "project", Summary: "Describe one Project resource", Canonical: []string{"describe project"}, Outputs: projectionCatalog},
-			{Name: "window", Summary: "Describe one Window resource", Canonical: []string{"describe window"}, Outputs: projectionCatalog},
-			{Name: "pane", Summary: "Describe one Pane resource", Canonical: []string{"describe pane"}, Outputs: projectionCatalog},
-			{Name: "agent", Summary: "Describe one Agent resource", Canonical: []string{"describe agent"}, Outputs: projectionCatalog},
+			{Name: "project", Summary: "Describe one Project resource", Canonical: []string{"describe project"}, Outputs: readProjectionCatalog},
+			{Name: "window", Summary: "Describe one Window resource", Canonical: []string{"describe window"}, Outputs: readProjectionCatalog},
+			{Name: "pane", Summary: "Describe one Pane resource", Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog},
+			{Name: "agent", Summary: "Describe one Agent resource", Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog},
 		},
 	},
 	{
@@ -416,10 +435,10 @@ var routes = []Route{
 		},
 		Canonical: []string{"get projects", "get windows", "get panes", "get agents", "get notifications", "get snapshots", "get pane"},
 		Children: []Route{
-			{Name: "projects", Summary: "List Project resources", Canonical: []string{"get projects"}, Outputs: projectionCatalog},
-			{Name: "windows", Summary: "List Window resources", Canonical: []string{"get windows"}, Outputs: projectionCatalog},
-			{Name: "panes", Summary: "List Pane resources", Canonical: []string{"get panes"}, Outputs: projectionCatalog},
-			{Name: "agents", Summary: "List Agent resources", Canonical: []string{"get agents"}, Outputs: projectionCatalog},
+			{Name: "projects", Summary: "List Project resources", Canonical: []string{"get projects"}, Outputs: readProjectionCatalog},
+			{Name: "windows", Summary: "List Window resources", Canonical: []string{"get windows"}, Outputs: readProjectionCatalog},
+			{Name: "panes", Summary: "List Pane resources", Canonical: []string{"get panes"}, Outputs: readProjectionCatalog},
+			{Name: "agents", Summary: "List Agent resources", Canonical: []string{"get agents"}, Outputs: readProjectionCatalog},
 			{Name: "notifications", Summary: "List pending notification rows", Canonical: []string{"get notifications"}},
 			{Name: "snapshots", Summary: "List saved session snapshots", Canonical: []string{"get snapshots"}},
 			{
@@ -427,7 +446,7 @@ var routes = []Route{
 				Summary:   "Read one Pane resource",
 				Usage:     []string{"projmux get pane [--current] [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]"},
 				Canonical: []string{"get pane"},
-				Outputs:   projectionCatalog,
+				Outputs:   readProjectionCatalog,
 				Fields:    []FieldProjection{FieldProjectionCWD},
 			},
 		},
@@ -579,13 +598,25 @@ var routes = []Route{
 		Canonical:   []string{"diagnostics resources"},
 	},
 	{
+		// This release ships the preview half only. The handler refuses any
+		// invocation without `--dry-run` and names the snapshot with
+		// `--session <name>` rather than positionally, so the previous synopsis
+		// -- `restore snapshot <session> [--dry-run]` -- described an
+		// invocation that exits 1 on both counts. The summary and the synopsis
+		// state the half that ships; the target-state wording stays in the
+		// canonical manifest.
 		Name:        "restore",
-		Summary:     "Restore a saved session snapshot",
+		Summary:     "Preview a saved session snapshot restore (--dry-run only in this release)",
 		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux restore snapshot <session> [--dry-run]"},
+		Usage:       []string{"projmux restore snapshot --dry-run [--session <name>]"},
 		Canonical:   []string{"restore snapshot"},
 		Children: []Route{
-			{Name: "snapshot", Summary: "Restore a saved session snapshot", Canonical: []string{"restore snapshot"}},
+			{
+				Name:      "snapshot",
+				Summary:   "Preview a saved session snapshot restore; --dry-run is required",
+				Usage:     []string{"projmux restore snapshot --dry-run [--session <name>]"},
+				Canonical: []string{"restore snapshot"},
+			},
 		},
 	},
 	{

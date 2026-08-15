@@ -19,7 +19,9 @@ DEADCODE_ALLOWLIST ?= .deadcode-allowlist.txt
 SECURITY_BIN_DIR ?= $(BUILD_DIR)/security-tools
 SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
-.PHONY: fmt fmt-check fix build install npm-pack test test-integration test-install-smoke test-e2e test-e2e-update e2e verify deadcode security security-tools
+DOCS_REFERENCE ?= docs/cli.md
+
+.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-update e2e verify deadcode security security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -40,6 +42,15 @@ install: build
 
 npm-pack:
 	scripts/package-npm.sh --pack
+
+# docs regenerates the generated CLI reference from the command manifest. The
+# render goes through a temp file so a failed generator can never leave a
+# truncated page behind. `make test` fails when the checked-in page and the
+# manifest disagree, so regenerating is mandatory whenever a route changes.
+docs:
+	@$(GO) run ./internal/tools/gendocs > $(DOCS_REFERENCE).tmp
+	@mv $(DOCS_REFERENCE).tmp $(DOCS_REFERENCE)
+	@echo ">> regenerated $(DOCS_REFERENCE)"
 
 fmt:
 	@if [ -n "$(GO_FILES)" ]; then \

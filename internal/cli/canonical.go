@@ -26,6 +26,41 @@ var projectionCatalog = sharedOutputModes
 
 // canonicalRoutes is the canonical namespace tree from the CLI information
 // architecture v2 contract. Order follows the canonical tree draft.
+//
+// This manifest is a target-state contract record, not a description of the
+// shipped binary, and it is deliberately absent from every user-visible
+// surface. Runtime help renders `routes` in catalog.go; so does the generated
+// reference in docs/cli.md. Neither reads a summary from here.
+//
+// The boundary exists because entries in this manifest diverge from today's
+// behavior in two ways, and both would become false advertising the moment a
+// user-visible surface rendered them:
+//
+//   - Spellings with no route. Fourteen canonical spellings do not resolve to
+//     an executable node at all -- the whole `config` namespace (`show`, `edit`,
+//     `render`, `apply`), `runtime open`, `runtime quit`, `diagnostics doctor`,
+//     `diagnostics resources`, `setup probe`, `setup welcome`, `create
+//     notification`, `create snapshot`, `notification ack`, and `notification
+//     reconcile`. `config show` has no Sources at all, so no current route
+//     reaches that behavior under any spelling; the rest name a capability that
+//     exists today only under its legacy spelling.
+//   - Summaries that describe capability nobody built. `tag project` says
+//     "Manage persistent Project tags" while the route dispatches the ephemeral
+//     tagged session selection, because the persistent half needs a Project
+//     registry writer that does not exist yet. `agent resume` says "Rebind an
+//     Offline or Failed Agent to a new managed Pane" while the handler resolves
+//     the Agent, applies the phase gate, and stops.
+//
+// The generated-reference Phase judged this and chose the boundary over a
+// rewrite: correcting the summaries would turn the contract record into a
+// second, redundant copy of catalog.go and would still have nothing to say
+// about the spellings that have no route. Honesty is enforced in catalog.go,
+// which is what users read; closing the divergences is roadmap work, tracked
+// per route rather than per string.
+//
+// TestGeneratedReferenceCarriesNoCanonicalManifestOnlySummary derives the
+// divergent summary set from these two manifests at run time and fails if any
+// of it reaches docs/cli.md, so the boundary is checked rather than trusted.
 var canonicalRoutes = []CanonicalRoute{
 	// get
 	{Spelling: "get projects", Summary: "List Project resources", Sources: []string{"get"}, Outputs: projectionCatalog},
