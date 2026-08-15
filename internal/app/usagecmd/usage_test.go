@@ -319,7 +319,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour)},
 	}
 
-	// Tier 1: long HUD with both bars per model.
+	// Widest tier: long HUD with both bars per model.
 	long := formatStatusUsage(snaps, 200, now)
 	if !strings.Contains(long, "Claude") || !strings.Contains(long, "weekly ") {
 		t.Fatalf("tier1 long HUD missing weekly bar: %q", long)
@@ -328,7 +328,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 		t.Fatalf("tier1 visualLen=%d > 200", intrender.VisualLen(long))
 	}
 
-	// Tier 2: drop weekly bars (label + 5h only).
+	// Primary-bar tier: drop weekly bars (label + 5h only).
 	tier2 := formatStatusUsage(snaps, 60, now)
 	if intrender.VisualLen(tier2) > 60 {
 		t.Fatalf("tier2 visualLen=%d > 60: %q", intrender.VisualLen(tier2), tier2)
@@ -343,7 +343,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 		t.Fatalf("tier2 must drop weekly bar: %q", tier2)
 	}
 
-	// Tier 3: drop bars, keep long labels.
+	// Long-text tier: drop bars, keep long labels.
 	tier3 := formatStatusUsage(snaps, 50, now)
 	if intrender.VisualLen(tier3) > 50 {
 		t.Fatalf("tier3 visualLen=%d > 50: %q", intrender.VisualLen(tier3), tier3)
@@ -355,7 +355,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 		t.Fatalf("tier3 must not contain bar runes: %q", tier3)
 	}
 
-	// Tier 4: single-letter labels.
+	// Short-text tier: single-letter labels.
 	tier4 := formatStatusUsage(snaps, 45, now)
 	if intrender.VisualLen(tier4) > 45 {
 		t.Fatalf("tier4 visualLen=%d > 45: %q", intrender.VisualLen(tier4), tier4)
@@ -367,7 +367,7 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 		t.Fatalf("tier4 must drop long labels: %q", tier4)
 	}
 
-	// Tier 5: hard truncate with ellipsis.
+	// Last resort: hard truncate with ellipsis.
 	tier5 := formatStatusUsage(snaps, 15, now)
 	if intrender.VisualLen(tier5) > 15 {
 		t.Fatalf("tier5 visualLen=%d > 15: %q", intrender.VisualLen(tier5), tier5)
@@ -1130,9 +1130,12 @@ func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
 func TestFormatStatusUsageHUDConfinesTildeToAgeIndicator(t *testing.T) {
 	t.Parallel()
 
-	// The `~` / `~~` stale vocabulary lives INSIDE the age indicator and
-	// nowhere else: the per-window pairs stay marker-free, and a model
+	// At an unconstrained width the `~` / `~~` stale vocabulary lives INSIDE
+	// the age indicator: the per-window pairs stay marker-free, and a model
 	// that opted out of the indicator (Codex) never carries one at all.
+	// Narrower widths move the marker onto the label as the compact form —
+	// see TestFormatStatusUsageStalenessSurvivesStatusbarWidths — but it never
+	// reaches the window pairs at any width.
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	stale := now.Add(-15 * time.Minute)
 	snaps := []usage.Snapshot{
@@ -1159,13 +1162,15 @@ func TestFormatStatusUsageHUDConfinesTildeToAgeIndicator(t *testing.T) {
 	}
 }
 
-func TestFormatStatusUsageTextTiersOmitTildeMarker(t *testing.T) {
+func TestFormatStatusUsageTextTiersCarryPlainStaleMarker(t *testing.T) {
 	t.Parallel()
 
-	// Text tiers used to append `~` / `~~` to stale rows. Those
-	// markers are gone everywhere now (the long HUD tier carries the
-	// signal via the age indicator; verbose CLI inspection uses the
-	// `STALE` column in `projmux usage`'s table form).
+	// The colorless text tiers carry staleness as the plain `~` / `~~`
+	// marker glued to the label. Dropping it here was the whole defect:
+	// these tiers are what a narrow terminal actually renders, so a tier
+	// that cannot express staleness makes the marker width-dependent.
+	// Fresh models stay marker-free, which is what keeps the historical
+	// bytes intact on a healthy install.
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	stale := now.Add(-15 * time.Minute)
 	veryStale := now.Add(-90 * time.Minute)
@@ -1175,13 +1180,45 @@ func TestFormatStatusUsageTextTiersOmitTildeMarker(t *testing.T) {
 		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour), UpdatedAt: now},
 	}
-	// Width=45 lands us in the long-text tier. Width=30 lands us in
-	// the short-label tier. Both must be `~`-free.
-	for _, w := range []int{45, 30} {
-		got := formatStatusUsage(snaps, w, now)
-		if strings.Contains(got, "~") {
-			t.Fatalf("text tier (width=%d) emitted `~`: %q", w, got)
+	// Claude's lastSync is max(5h, weekly) = -15m, i.e. level 1 → `~`.
+	// The two tiers are exercised directly: their selection depends on cell
+	// budgets that shift whenever a bar or a label changes, and this test is
+	// about the marker's SHAPE, not about which budget selects which tier
+	// (TestFormatStatusUsageStalenessSurvivesStatusbarWidths owns that).
+	models := buildModelDisplays(projectStatusSnapshots(snaps))
+	for want, got := range map[string]string{
+		"Claude~ 5h:42% weekly:18%": renderTierTextLong(models, now),
+		"C~ 5h:42% weekly:18%":      renderTierTextShort(models, now),
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("text tier = %q, want it to contain %q", got, want)
 		}
+		// Plain tiers stay colorless: the marker must not drag tmux escapes in.
+		if strings.Contains(got, "#[") {
+			t.Fatalf("text tier emitted a color escape: %q", got)
+		}
+		// Codex opted out of the age signal, so it never carries a marker.
+		if _, codex, ok := strings.Cut(got, "5h:71%"); ok && strings.Contains(codex, "~") {
+			t.Fatalf("codex carried a stale marker: %q", got)
+		}
+		if strings.Count(got, "~") != 1 {
+			t.Fatalf("text tier marker count = %d, want 1: %q", strings.Count(got, "~"), got)
+		}
+	}
+	// Level 2 doubles the marker in exactly the same position.
+	veryStaleOnly := buildModelDisplays(projectStatusSnapshots([]usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: veryStale},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}))
+	if got := renderTierTextShort(veryStaleOnly, now); !strings.Contains(got, "C~~ 5h:42%") {
+		t.Fatalf("very-stale text tier = %q, want `C~~ 5h:42%%`", got)
+	}
+	// A fresh model keeps the historical marker-free bytes.
+	fresh := buildModelDisplays(projectStatusSnapshots([]usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
+	}))
+	if got := renderTierTextLong(fresh, now); got != "Claude 5h:42%" {
+		t.Fatalf("fresh text tier = %q, want %q", got, "Claude 5h:42%")
 	}
 }
 
@@ -1581,12 +1618,14 @@ func TestFormatStatusUsageCodexNoAgeIndicator(t *testing.T) {
 	}
 }
 
-// TestFormatStatusUsageAgeDropsOnTier2 verifies that when the budget
-// can't fit the long-with-age tier, the renderer falls back to the
-// (current default) long form WITHOUT the age block — rather than
-// jumping straight to the bar-less text tier. This matches the spec's
-// width-tier degradation table.
-func TestFormatStatusUsageAgeDropsOnTier2(t *testing.T) {
+// TestFormatStatusUsageCosmeticAgeDropsBeforeBars verifies that when the
+// budget can't fit the full-age tier, the renderer falls back to a long form
+// WITHOUT the age block — rather than jumping straight to the bar-less text
+// tier. The fixture here is entirely level 0, so the age block is purely
+// cosmetic and is exactly what the ladder is supposed to shed first; a stale
+// fixture instead keeps its marker (see
+// TestFormatStatusUsageStalenessSurvivesStatusbarWidths).
+func TestFormatStatusUsageCosmeticAgeDropsBeforeBars(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
