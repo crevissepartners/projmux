@@ -754,16 +754,31 @@ type modelDisplay struct {
 }
 
 // formatStatusUsage produces the HUD-style tmux status segment. The output
-// degrades gracefully through six tiers:
+// degrades gracefully through seven tiers:
 //
-//  1. Long form with age indicator + bars + weekly:
+//  1. Long form with the full age indicator on every opted-in model + bars +
+//     weekly:
 //     `Claude (3m) 5h [████████░░] 80% · weekly [...]   Codex 5h [...] 20% · weekly [...]`
-//  2. Drop the age indicator (the legacy `Claude 5h [bar] N% · weekly [bar] N%`
-//     form, current default).
-//  3. Keep one primary bar per provider (5h, otherwise weekly).
-//  4. Drop bars entirely (`Claude 5h:80% weekly:30%`).
-//  5. Single-letter labels (`C 5h:80% weekly:30%`).
-//  6. Hard rune-truncation with trailing `…`.
+//  2. Long form with the full age indicator on STALE models only — purely
+//     cosmetic level-0 ages such as `(3m)` are dropped first.
+//  3. Long form with only the compact `~` / `~~` staleness marker glued to the
+//     label (`Claude~~ 5h [bar] N% · weekly [bar] N%`). Collapses byte-exactly
+//     to the legacy no-indicator form when nothing is stale.
+//  4. Keep one primary bar per provider (5h, otherwise weekly), still carrying
+//     the compact marker.
+//  5. Drop bars entirely (`Claude 5h:80% weekly:30%`), still carrying the
+//     compact marker.
+//  6. Single-letter labels (`C 5h:80% weekly:30%`), still carrying the compact
+//     marker.
+//  7. Hard rune-truncation with trailing `…`.
+//
+// The ladder is deliberately granular along the age dimension. Tier selection
+// is whole-segment ("first tier that fits"), so an all-or-nothing age element
+// meant that at the statusbar's real budget the entire age block — including
+// the staleness marker the user actually needs — was discarded to buy room for
+// cosmetic `(3m)` indicators on healthy providers. Tiers 2 and 3 shed the
+// cosmetic part before the staleness part, which makes the marker a required
+// element and the level-0 age the optional one.
 //
 // maxWidth is measured in display cells; tmux color escapes (`#[...]`) are
 // stripped before counting so adding color does not push the segment over
@@ -778,6 +793,7 @@ func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) stri
 	}
 	tiers := []func([]modelDisplay, time.Time) string{
 		renderTierLongHUDWithAge,
+		renderTierLongHUDStaleAge,
 		renderTierLongHUD,
 		renderTierPrimaryHUD,
 		renderTierTextLong,
@@ -797,26 +813,53 @@ func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) stri
 	return truncateWithEllipsis(short, maxWidth)
 }
 
+// ageMode selects how much of a model's last-sync age a tier renders. The
+// modes are ordered widest-to-narrowest and are the axis the tier ladder walks
+// down before it starts sacrificing bars and labels.
+type ageMode int
+
+const (
+	// ageModeFull renders the `(3m)` / `(15m~)` / `(3h~~)` indicator for every
+	// model that opted in, including purely cosmetic level-0 ages.
+	ageModeFull ageMode = iota
+	// ageModeStaleFull renders the same indicator, but only for models the
+	// staleness ladder already flags (level >= 1). Level-0 ages are dropped.
+	ageModeStaleFull
+	// ageModeStaleCompact drops the age text and keeps only the bare `~` /
+	// `~~` marker (1-2 cells). Renders nothing at all for a fresh model, so a
+	// fresh segment is byte-identical to one built with no age element.
+	ageModeStaleCompact
+)
+
 // renderTierLongHUDWithAge renders the long HUD plus a per-model
 // last-sync age indicator. Only models with showAge=true and a
 // non-empty rendered age (>= 60s old) emit the indicator — fresh data
 // keeps the segment tight.
 func renderTierLongHUDWithAge(models []modelDisplay, now time.Time) string {
-	return renderLongHUDInternal(models, now, true)
+	return renderLongHUDInternal(models, now, ageModeFull)
 }
 
-// renderTierLongHUD renders the full HUD without the age indicator
-// (current-default form). Used as tier 2 once the age block doesn't
-// fit the budget.
+// renderTierLongHUDStaleAge renders the long HUD keeping the full age
+// indicator only on models the staleness ladder flags (level >= 1). This is
+// the tier that buys back room at a constrained width without giving up the
+// staleness signal: the cosmetic `(3m)` on a healthy provider goes first.
+func renderTierLongHUDStaleAge(models []modelDisplay, now time.Time) string {
+	return renderLongHUDInternal(models, now, ageModeStaleFull)
+}
+
+// renderTierLongHUD renders the full HUD with the age text dropped, keeping
+// only the compact `~` / `~~` staleness marker on stale models. When no model
+// is stale this is byte-identical to the legacy no-indicator form, which is
+// what makes fresh installs render exactly as they did before the ladder grew
+// its stale-only tiers.
 func renderTierLongHUD(models []modelDisplay, now time.Time) string {
-	return renderLongHUDInternal(models, now, false)
+	return renderLongHUDInternal(models, now, ageModeStaleCompact)
 }
 
-// renderLongHUDInternal is the shared implementation of the two long
-// HUD tiers (with/without age indicator). When withAge is true and the
-// model carries showAge + an age >= 60s, the indicator is injected
-// between the label and the 5h bar.
-func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) string {
+// renderLongHUDInternal is the shared implementation of the three long
+// HUD tiers. The age element selected by mode is injected right after the
+// model label (see renderHUDAgeSuffix for its exact shape).
+func renderLongHUDInternal(models []modelDisplay, now time.Time, mode ageMode) string {
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
 		if !m.hasFive && !m.hasWeek {
@@ -826,12 +869,7 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 		b.WriteString("#[fg=" + statusRoles.AccentAIFg + ",bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
-		if withAge {
-			if ind := renderAgeIndicator(m, now); ind != "" {
-				b.WriteByte(' ')
-				b.WriteString(ind)
-			}
-		}
+		b.WriteString(renderHUDAgeSuffix(m, now, mode))
 		first := true
 		writePair := func(window string, pct float64) {
 			if first {
@@ -859,9 +897,10 @@ func renderLongHUDInternal(models []modelDisplay, now time.Time, withAge bool) s
 
 // renderTierPrimaryHUD keeps one official-window bar per provider: 5h when
 // present, otherwise weekly. This preserves weekly-only providers at every
-// provider-preserving tier before hard truncation.
+// provider-preserving tier before hard truncation. It still carries the
+// compact `~` / `~~` staleness marker, so shedding the weekly bar never sheds
+// the staleness signal with it.
 func renderTierPrimaryHUD(models []modelDisplay, now time.Time) string {
-	_ = now
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
 		window := ""
@@ -878,6 +917,7 @@ func renderTierPrimaryHUD(models []modelDisplay, now time.Time) string {
 		b.WriteString("#[fg=" + statusRoles.AccentAIFg + ",bold]")
 		b.WriteString(m.label)
 		b.WriteString(statusDefaultReset)
+		b.WriteString(renderHUDAgeSuffix(m, now, ageModeStaleCompact))
 		b.WriteByte(' ')
 		b.WriteString(renderHUDPair(window, pct))
 		b.WriteString(statusDefaultReset)
@@ -891,10 +931,9 @@ func renderTierPrimaryHUD(models []modelDisplay, now time.Time) string {
 
 // renderTierTextLong drops bars entirely but keeps the long model labels.
 func renderTierTextLong(models []modelDisplay, now time.Time) string {
-	_ = now
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
-		text := renderTextPair(m, m.label)
+		text := renderTextPair(m, m.label, staleMarkerText(modelStaleLevel(m, now)))
 		if text != "" {
 			blocks = append(blocks, text)
 		}
@@ -907,10 +946,9 @@ func renderTierTextLong(models []modelDisplay, now time.Time) string {
 
 // renderTierTextShort uses single-letter labels (legacy form, no color).
 func renderTierTextShort(models []modelDisplay, now time.Time) string {
-	_ = now
 	blocks := make([]string, 0, len(models))
 	for _, m := range models {
-		text := renderTextPair(m, m.shortLabel)
+		text := renderTextPair(m, m.shortLabel, staleMarkerText(modelStaleLevel(m, now)))
 		if text != "" {
 			blocks = append(blocks, text)
 		}
@@ -921,12 +959,17 @@ func renderTierTextShort(models []modelDisplay, now time.Time) string {
 	return strings.Join(blocks, statusModelSeparator)
 }
 
-// renderTextPair builds a `<label> 5h:N% weekly:N%` substring used by both
-// non-HUD tiers. Returns "" when the model has nothing to show. The
-// legacy `~` / `~~` stale markers are not emitted here — the long HUD
-// tier carries staleness via the age indicator. The non-JSON `usage`
-// table CLI still surfaces a STALE column for verbose inspection.
-func renderTextPair(m modelDisplay, label string) string {
+// renderTextPair builds a `<label><marker> 5h:N% weekly:N%` substring used by
+// both non-HUD tiers. Returns "" when the model has nothing to show.
+//
+// These two tiers are the colorless legacy forms, so staleness is carried as
+// the plain, uncolored `~` / `~~` marker glued directly to the label
+// (`Claude~ 5h:80%`, `A~~ weekly:38%`) — same vocabulary as the colored HUD
+// indicator, minus the age text and the tmux escapes these tiers never emit.
+// marker is "" for a fresh model, which makes the output byte-identical to the
+// historical marker-free form. The non-JSON `usage` table CLI still surfaces a
+// STALE column for verbose inspection.
+func renderTextPair(m modelDisplay, label, marker string) string {
 	parts := make([]string, 0, 2)
 	if m.hasFive {
 		parts = append(parts, fmt.Sprintf("5h:%s", PercentText(m.fivePct)))
@@ -937,7 +980,7 @@ func renderTextPair(m modelDisplay, label string) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return label + " " + strings.Join(parts, " ")
+	return label + marker + " " + strings.Join(parts, " ")
 }
 
 // renderHUDPair renders a single `<window> [bar] N%` substring with color
@@ -997,19 +1040,71 @@ func renderAgeIndicator(m modelDisplay, now time.Time) string {
 	if !m.showAge || now.IsZero() || m.lastSync.IsZero() {
 		return ""
 	}
-	age := now.Sub(m.lastSync)
-	text := formatLastSyncAge(age)
+	text := formatLastSyncAge(now.Sub(m.lastSync))
 	if text == "" {
 		return ""
 	}
 	color := statusRoles.StatusTextSecondary
-	switch staleLevelForAge(age) {
-	case 1:
-		color, text = statusRoles.StatusTextMuted, text+"~"
-	case 2:
-		color, text = statusRoles.StatusTextMuted, text+"~~"
+	if marker := staleMarkerText(modelStaleLevel(m, now)); marker != "" {
+		color, text = statusRoles.StatusTextMuted, text+marker
 	}
 	return fmt.Sprintf("#[fg=%s](%s)%s", color, text, statusDefaultReset)
+}
+
+// modelStaleLevel is the model-level view of the package's single staleness
+// ladder: 0 fresh, 1 stale (>staleAfter), 2 very stale (>veryStaleAfter). It
+// returns 0 for models that opted out of the age signal (Codex, whose data is
+// re-read from the latest rollout on every call) and for missing clocks, which
+// keeps the marker and the indicator agreeing on exactly one definition of
+// "stale" rather than each carrying its own gate.
+func modelStaleLevel(m modelDisplay, now time.Time) int {
+	if !m.showAge || now.IsZero() || m.lastSync.IsZero() {
+		return 0
+	}
+	return staleLevelForAge(now.Sub(m.lastSync))
+}
+
+// staleMarkerText maps a staleness level onto the package's marker
+// vocabulary: "" fresh, `~` stale, `~~` very stale. It is the one place the
+// marker runes are spelled, shared by the colored HUD indicator, the compact
+// HUD marker and the plain text tiers.
+func staleMarkerText(level int) string {
+	switch level {
+	case 1:
+		return "~"
+	case 2:
+		return "~~"
+	default:
+		return ""
+	}
+}
+
+// renderHUDAgeSuffix builds the age element the HUD tiers inject between a
+// model label and its first window pair, including any leading space. The
+// empty string means "render nothing", which is what the two stale-only modes
+// produce for any model at staleness level 0 — the property that keeps a
+// healthy install byte-identical across the whole ladder.
+//
+//   - ageModeFull:         ` (3m)` / ` (15m~)` / ` (3h~~)`, colored.
+//   - ageModeStaleFull:    same, but only at level >= 1.
+//   - ageModeStaleCompact: `~` / `~~` glued to the label, muted, no age text.
+func renderHUDAgeSuffix(m modelDisplay, now time.Time, mode ageMode) string {
+	level := modelStaleLevel(m, now)
+	if mode == ageModeStaleCompact {
+		marker := staleMarkerText(level)
+		if marker == "" {
+			return ""
+		}
+		return "#[fg=" + statusRoles.StatusTextMuted + "]" + marker + statusDefaultReset
+	}
+	if mode == ageModeStaleFull && level == 0 {
+		return ""
+	}
+	indicator := renderAgeIndicator(m, now)
+	if indicator == "" {
+		return ""
+	}
+	return " " + indicator
 }
 
 // PercentText formats a percentage. Negative values are clamped to 0.
