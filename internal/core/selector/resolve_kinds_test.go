@@ -50,8 +50,8 @@ func TestResolveProjectsIsAListReadOverTheWholeRegistry(t *testing.T) {
 			if got := resolution.UIDs(); !reflect.DeepEqual(got, test.want) && !(len(got) == 0 && len(test.want) == 0) {
 				t.Fatalf("uids = %v, want %v", got, test.want)
 			}
-			if !reflect.DeepEqual(traceStages(resolution), StageOrder()) {
-				t.Fatalf("trace stages = %v, want %v", traceStages(resolution), StageOrder())
+			if !reflect.DeepEqual(traceStages(resolution), stageOrder) {
+				t.Fatalf("trace stages = %v, want %v", traceStages(resolution), stageOrder)
 			}
 		})
 	}

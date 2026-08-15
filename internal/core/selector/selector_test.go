@@ -145,8 +145,8 @@ func TestResolutionRunsNameUIDUnionThenLabelFilterThenUIDDedupe(t *testing.T) {
 	for _, step := range resolution.Trace {
 		stages = append(stages, step.Stage)
 	}
-	if !reflect.DeepEqual(stages, StageOrder()) {
-		t.Fatalf("trace stages = %v, want the fixed order %v", stages, StageOrder())
+	if !reflect.DeepEqual(stages, stageOrder) {
+		t.Fatalf("trace stages = %v, want the fixed order %v", stages, stageOrder)
 	}
 	if got := resolution.UIDs(); !reflect.DeepEqual(got, []string{"pan-alpha-zsh"}) {
 		t.Fatalf("resolved uids = %v, want [pan-alpha-zsh]", got)

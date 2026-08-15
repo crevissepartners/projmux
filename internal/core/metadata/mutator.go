@@ -77,6 +77,9 @@ type BootstrapPane struct {
 	Command string
 	// CWD is the declared pane working directory.
 	CWD string
+	// Labels are creation-time key/value classification metadata. They are a
+	// creation option, never a selector input for the resource being created.
+	Labels map[string]string
 }
 
 // BootstrapWindow declares one Window of a Project startup topology. Every
@@ -84,7 +87,9 @@ type BootstrapPane struct {
 type BootstrapWindow struct {
 	Name    string
 	Command string
-	Panes   []BootstrapPane
+	// Labels are creation-time key/value classification metadata.
+	Labels map[string]string
+	Panes  []BootstrapPane
 }
 
 // RegisterProjectOptions is the input to offline Project registration.
@@ -265,6 +270,7 @@ func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op, projectUID str
 		Metadata: ObjectMeta{
 			UID:       windowUID,
 			Name:      name,
+			Labels:    cloneStringMap(declared.Labels),
 			OwnerRef:  &OwnerRef{Kind: KindProject, UID: projectUID},
 			CreatedAt: now,
 		},
@@ -283,7 +289,7 @@ func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op, projectUID str
 		if cwd == "" {
 			cwd = defaultCWD
 		}
-		pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, declaredPane.Name, PaneNameBase(declaredPane.Command, defaultShell), declaredPane.Command, cwd, now)
+		pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, declaredPane.Name, PaneNameBase(declaredPane.Command, defaultShell), declaredPane.Command, cwd, declaredPane.Labels, now)
 		if err != nil {
 			return Window{}, nil, err
 		}
@@ -295,7 +301,7 @@ func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op, projectUID str
 	return stored.Clone(), panes, nil
 }
 
-func (m Mutator) addPaneTx(txn *Transaction, reg *Registry, op, ownerUID string, ownerKind Kind, role PaneRole, explicitName, nameBase, command, cwd string, now time.Time) (Pane, error) {
+func (m Mutator) addPaneTx(txn *Transaction, reg *Registry, op, ownerUID string, ownerKind Kind, role PaneRole, explicitName, nameBase, command, cwd string, labels map[string]string, now time.Time) (Pane, error) {
 	paneUID, err := m.mintUID(KindPane)
 	if err != nil {
 		return Pane{}, err
@@ -320,6 +326,7 @@ func (m Mutator) addPaneTx(txn *Transaction, reg *Registry, op, ownerUID string,
 		Metadata: ObjectMeta{
 			UID:       paneUID,
 			Name:      name,
+			Labels:    cloneStringMap(labels),
 			OwnerRef:  &OwnerRef{Kind: ownerKind, UID: ownerUID},
 			CreatedAt: now,
 		},
@@ -346,7 +353,7 @@ func (m Mutator) AddPane(reg *Registry, windowUID string, declared BootstrapPane
 	}
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, declared.Name, PaneNameBase(declared.Command, defaultShell), declared.Command, cwd, now)
+	pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, declared.Name, PaneNameBase(declared.Command, defaultShell), declared.Command, cwd, declared.Labels, now)
 	if err != nil {
 		txn.Rollback()
 		return Pane{}, err
@@ -565,17 +572,8 @@ func (r *Registry) projectPanes(projectUID string) []Pane {
 	return out
 }
 
-// ResolveProjectRef resolves a uid or a registry-unique name to one Project.
-func (r *Registry) ResolveProjectRef(ref string) (*Project, error) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return nil, inputErr("resolve project", ErrNotFound, "project reference must not be empty")
-	}
-	if project, ok := r.Project(ref); ok {
-		return project, nil
-	}
-	if project, ok := r.ProjectByName(ref); ok {
-		return project, nil
-	}
-	return nil, inputErr("resolve project", ErrNotFound, "no project matches %q", ref)
-}
+// Project ref resolution deliberately lives in exactly one place: the selector
+// package. An accessor here that accepted a bare uid would be a second, laxer
+// grammar for the same `--project <ref>` input -- the contract requires the
+// `uid:` prefix, because uids and names share a character set and an unprefixed
+// value is ambiguous. See internal/core/selector.ParseRef.

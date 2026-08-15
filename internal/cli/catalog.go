@@ -213,12 +213,42 @@ var routes = []Route{
 		Summary:     "Create Projmux resources",
 		Disposition: DispositionCanonical,
 		Usage: []string{
+			"projmux create window --project <ref> [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
+			"projmux create pane --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
 			"projmux create agent --provider <provider> [--placement right|down] [-o <mode>] [-- <payload>]",
-			"projmux create pane [--placement right|down] [-o <mode>]",
 			"projmux create codex|claude|antigravity [--placement right|down] [-o <mode>] [-- <payload>]",
 		},
-		Canonical: []string{"create agent", "create pane", "create codex", "create claude", "create antigravity"},
+		Canonical: []string{"create window", "create pane", "create agent", "create codex", "create claude", "create antigravity"},
 		Children: []Route{
+			{
+				// A Window is always created together with the initial Pane it
+				// owns, and that Pane's uid is stored as the Window's
+				// spec.primaryPaneRef -- the anchor a later `create pane` splits
+				// when no explicit --pane is given.
+				Name:    "window",
+				Summary: "Create a Window and its initial Pane below one Project; the runtime is materialized detached",
+				Usage: []string{
+					"projmux create window --project <ref> [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
+				},
+				Outputs:   sharedOutputModes,
+				Canonical: []string{"create window"},
+			},
+			{
+				// Two spellings share this node. With --project it is the
+				// canonical resource-backed Pane create: it resolves Windows from
+				// the registry, anchors on each Window's primaryPaneRef, splits
+				// detached, and never moves the client. Without --project it is
+				// the shell split the route already shipped, which does follow
+				// focus; that half is unchanged.
+				Name:    "pane",
+				Summary: "Create a shell Pane; --project splits the resolved Windows detached, without it the current Window",
+				Usage: []string{
+					"projmux create pane --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
+					"projmux create pane [--placement right|down] [-o <mode>]",
+				},
+				Outputs:   sharedOutputModes,
+				Canonical: []string{"create pane"},
+			},
 			{
 				Name:    "agent",
 				Summary: "Create an Agent and its managed Pane; --provider is required",
@@ -228,13 +258,6 @@ var routes = []Route{
 				// actually produces are advertised here.
 				Outputs:   []OutputMode{OutputModePaneID, OutputModeNone},
 				Canonical: []string{"create agent"},
-			},
-			{
-				Name:      "pane",
-				Summary:   "Create a plain shell Pane in the current Window",
-				Usage:     []string{"projmux create pane [--placement right|down] [-o <mode>]"},
-				Outputs:   []OutputMode{OutputModePaneID, OutputModeNone},
-				Canonical: []string{"create pane"},
 			},
 			{
 				Name:             "codex",

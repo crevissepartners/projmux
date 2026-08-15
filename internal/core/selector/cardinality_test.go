@@ -33,7 +33,9 @@ func TestCardinalityMatrixPinsTheContractCells(t *testing.T) {
 		{target: Target{Verb: VerbFocus, Kind: metadata.KindPane}, want: CardinalityExactOne},
 		{target: Target{Verb: VerbRebind, Kind: metadata.KindProject}, want: CardinalityExactOne},
 
-		// create anchors on exactly one Pane inside each resolved Window.
+		// create scopes to exactly one Project and anchors on exactly one Pane
+		// inside each resolved Window.
+		{target: Target{Verb: VerbCreate, Kind: metadata.KindProject}, want: CardinalityExactOne},
 		{target: Target{Verb: VerbCreate, Kind: metadata.KindPane}, want: CardinalityExactOne},
 
 		// delete fans out.
@@ -222,17 +224,20 @@ func TestDescribeSelectorRendersEveryOccurrence(t *testing.T) {
 	}
 }
 
-// TestStageOrderIsACopy keeps the exported stage order immutable.
-func TestStageOrderIsACopy(t *testing.T) {
+// TestTheCanonicalStageOrderIsPinnedLiterally is the one assertion a reordering
+// of the stage table cannot pass.
+//
+// It replaces the retired StageOrder accessor's test. The copy half of that test
+// is gone with the accessor: nothing outside this package can reach the table
+// any more, and Resolution.Trace is built from TraceStep literals, so no caller
+// is ever handed a view of it to mutate. The half that was load bearing is this
+// one -- every other stage-order test compares a resolution's trace *against*
+// this table, so all of them stay green if the table itself is reordered.
+func TestTheCanonicalStageOrderIsPinnedLiterally(t *testing.T) {
 	t.Parallel()
 
-	order := StageOrder()
-	if !reflect.DeepEqual(order, []Stage{StageNameUIDUnion, StageLabelFilter, StageUIDDedupe}) {
-		t.Fatalf("stage order = %v", order)
-	}
-	order[0] = "tampered"
-	if StageOrder()[0] != StageNameUIDUnion {
-		t.Fatal("StageOrder returned a mutable view")
+	if !reflect.DeepEqual(stageOrder, []Stage{StageNameUIDUnion, StageLabelFilter, StageUIDDedupe}) {
+		t.Fatalf("stage order = %v", stageOrder)
 	}
 }
 

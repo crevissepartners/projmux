@@ -368,3 +368,331 @@ exec 9>&-
 # between save and restore to prove replay uses returned %pane_id targets.
 PROJMUX_REAL_TMUX_TEST=1 go test ./internal/integrations/tmux \
   -run '^TestRealTmuxSessionStateSaveDestroyReplayFieldFidelity$' -count=1
+
+# ---------------------------------------------------------------------------
+# Detached Project runtime materialization and Window/Pane create.
+#
+# The registry file, the legacy naming migration, and the detached split have
+# never run against a real tmux server in production, so this block does all
+# three end to end on a dedicated exact socket.
+#
+# Isolation follows the four mandatory conditions: inherited TMUX/TMUX_PANE are
+# stripped from every call, the server lives under a run-unique TMUX_TMPDIR with
+# its own -L name, the real #{socket_path} is queried and proven to sit inside
+# the smoke root, and only that exact socket is killed.
+# ---------------------------------------------------------------------------
+create_root="$PROJMUX_SMOKE_WORKDIR/create-e2e"
+create_socket="projmux-create-e2e-$$-$RANDOM"
+mkdir -p "$create_root/tt" "$create_root/state" "$create_root/config" "$create_root/work/alpha" "$create_root/work/beta"
+create_real_tmux="$(command -v tmux)"
+
+ctx() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$create_root/tt" "$create_real_tmux" -L "$create_socket" "$@"; }
+
+# projmux shells out to a bare `tmux`, so route it onto this exact socket.
+create_shim="$create_root/shim"
+mkdir -p "$create_shim"
+cat >"$create_shim/tmux" <<CREATE_SHIM
+#!/usr/bin/env bash
+if [[ "\${PROJMUX_CREATE_FAIL_SPLIT:-}" == "1" && "\${1:-}" == "split-window" ]]; then
+  echo "injected split failure" >&2
+  exit 1
+fi
+exec env TMUX_TMPDIR=$(printf %q "$create_root/tt") $(printf %q "$create_real_tmux") -L $(printf %q "$create_socket") "\$@"
+CREATE_SHIM
+chmod 0755 "$create_shim/tmux"
+
+pmx() {
+  env -u TMUX -u TMUX_PANE \
+    PATH="$create_shim:$PATH" \
+    TMUX_TMPDIR="$create_root/tt" \
+    XDG_STATE_HOME="$create_root/state" \
+    XDG_CONFIG_HOME="$create_root/config" \
+    PROJMUX_MANAGED_ROOTS="$create_root/work" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+create_registry="$create_root/state/projmux/metadata/registry.json"
+if [[ -e "$create_registry" ]]; then
+  echo "create e2e did not start from an empty registry" >&2
+  exit 1
+fi
+
+# A pre-v2 session for the legacy naming migration: automatic-rename on, a user
+# pane label, and a raw pane title that must never become the Window name.
+ctx new-session -d -s legacy-alpha -c "$create_root/work/alpha" sleep 600
+ctx set-option -t legacy-alpha -q @projmux_project_path "$create_root/work/alpha"
+ctx set-option -w -t legacy-alpha:0 automatic-rename on
+legacy_pane="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
+ctx set-option -p -t "$legacy_pane" @projmux_pane_label "buildlog"
+ctx select-pane -T "raw title must not win" -t "$legacy_pane"
+
+create_socket_path="$(ctx display-message -p -t legacy-alpha '#{socket_path}')"
+case "$create_socket_path" in
+  "$create_root"/*) ;;
+  *)
+    echo "create e2e socket escaped the smoke root: $create_socket_path" >&2
+    exit 1
+    ;;
+esac
+echo ">> create e2e socket=$create_socket path=$create_socket_path"
+
+create_cleanup() {
+  local actual
+  actual="$(ctx display-message -p '#{socket_path}' 2>/dev/null || true)"
+  if [[ -n "$actual" ]]; then
+    case "$actual" in
+      "$create_root"/*)
+        env -u TMUX -u TMUX_PANE "$create_real_tmux" -S "$actual" kill-server >/dev/null 2>&1 || true
+        ;;
+      *)
+        echo "refusing create e2e cleanup outside the smoke root: $actual" >&2
+        ;;
+    esac
+  fi
+}
+trap 'create_cleanup; smoke_cleanup_env' EXIT
+
+# 1. A pre-create hook refusal aborts with zero mutations.
+mkdir -p "$create_root/config/projmux"
+cat >"$create_root/config/projmux/config.toml" <<'PRECREATE'
+[hooks.pre-create]
+run = "exit 7"
+PRECREATE
+create_sessions_before="$(ctx list-sessions -F '#{session_name}' | wc -l)"
+set +e
+pmx create window --project beta >"$create_root/precreate.out" 2>"$create_root/precreate.err"
+precreate_status=$?
+set -e
+if [[ "$precreate_status" == "0" ]]; then
+  echo "a pre-create hook refusal still created the Window" >&2
+  exit 1
+fi
+if [[ -s "$create_root/precreate.out" ]]; then
+  echo "a pre-create hook refusal wrote to stdout" >&2
+  exit 1
+fi
+if [[ -e "$create_registry" ]]; then
+  echo "a pre-create hook refusal created the registry" >&2
+  exit 1
+fi
+if [[ "$(ctx list-sessions -F '#{session_name}' | wc -l)" != "$create_sessions_before" ]]; then
+  echo "a pre-create hook refusal materialized a session" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$create_root/precreate.err" "status 7"
+
+# 2. A post-create hook failure is a logged success.
+cat >"$create_root/config/projmux/config.toml" <<'POSTCREATE'
+[hooks.post-create]
+run = "exit 9"
+POSTCREATE
+pmx create window --project beta >"$create_root/postcreate.out" 2>"$create_root/postcreate.err"
+smoke_assert_file_contains "$create_root/postcreate.out" "created"
+smoke_assert_file_contains "$create_root/postcreate.err" "post-create"
+rm -f "$create_root/config/projmux/config.toml"
+if [[ ! -f "$create_registry" ]]; then
+  echo "the first successful create did not write the registry" >&2
+  exit 1
+fi
+if [[ "$(stat -c '%a' "$create_registry")" != "600" ]]; then
+  echo "registry mode = $(stat -c '%a' "$create_registry"), want 600" >&2
+  exit 1
+fi
+
+# 3. The legacy migration seeded a stable Window name from the user pane label,
+#    turned automatic-rename off, and mirrored the allocated uids back.
+legacy_window_name="$(ctx display-message -p -t legacy-alpha:0 '#{window_name}')"
+if [[ "$legacy_window_name" != "buildlog" ]]; then
+  echo "legacy migration Window name = $legacy_window_name, want buildlog" >&2
+  exit 1
+fi
+if [[ "$(ctx show-options -wqv -t legacy-alpha:0 automatic-rename)" != "off" ]]; then
+  echo "legacy migration left automatic-rename on for a managed Window" >&2
+  exit 1
+fi
+if [[ -z "$(ctx display-message -p -t legacy-alpha:0 '#{@projmux_window_uid}')" ]]; then
+  echo "legacy migration did not mirror the Window uid" >&2
+  exit 1
+fi
+if [[ -z "$(ctx display-message -p -t "$legacy_pane" '#{@projmux_pane_uid}')" ]]; then
+  echo "legacy migration did not mirror the Pane uid" >&2
+  exit 1
+fi
+pmx get windows --project alpha -o name >"$create_root/alpha-windows.out"
+smoke_assert_file_contains "$create_root/alpha-windows.out" "buildlog"
+
+# 4. right and down produce the two split axes, detached, with no focus change.
+#    The create runs inside a real pane and the completion signal is the exit
+#    code marker the runner writes, never pane contents and never send-keys.
+create_markers="$create_root/markers"
+mkdir -p "$create_markers"
+run_in_pane() {
+  local label="$1"
+  shift
+  local script="$create_root/run-$label.sh"
+  {
+    printf '#!/usr/bin/env bash\n'
+    # shellcheck disable=SC2016 # $PATH must stay unexpanded: it is resolved
+    # inside the generated runner, not here.
+    printf 'PATH=%q:$PATH \\\n' "$create_shim"
+    printf '  TMUX_TMPDIR=%q \\\n' "$create_root/tt"
+    printf '  XDG_STATE_HOME=%q \\\n' "$create_root/state"
+    printf '  XDG_CONFIG_HOME=%q \\\n' "$create_root/config"
+    printf '  PROJMUX_MANAGED_ROOTS=%q \\\n' "$create_root/work"
+    printf '  SHELL=/bin/sh \\\n'
+    printf '  %q' "$bin"
+    printf ' %q' "$@"
+    printf ' >%q 2>%q\n' "$create_root/run-$label.out" "$create_root/run-$label.err"
+    printf 'printf "%%s" "$?" >%q\n' "$create_markers/$label.code"
+  } >"$script"
+  chmod 0755 "$script"
+  ctx new-window -d -t legacy-alpha: -n "runner-$label" "$script"
+  for _ in {1..200}; do
+    if [[ -f "$create_markers/$label.code" ]]; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for the $label runner exit-code marker" >&2
+  cat "$create_root/run-$label.err" >&2 || true
+  return 1
+}
+
+create_active_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
+create_active_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
+create_panes_before="$(ctx list-panes -t legacy-alpha:buildlog -F '#{pane_id}' | wc -l)"
+
+run_in_pane right create pane --project alpha --window buildlog --placement right -o pane-id
+run_in_pane down create pane --project alpha --window buildlog --placement down -o pane-id
+for label in right down; do
+  if [[ "$(cat "$create_markers/$label.code")" != "0" ]]; then
+    echo "create pane --placement $label exited $(cat "$create_markers/$label.code")" >&2
+    cat "$create_root/run-$label.err" >&2 || true
+    exit 1
+  fi
+done
+right_pane="$(tr -d '[:space:]' <"$create_root/run-right.out")"
+down_pane="$(tr -d '[:space:]' <"$create_root/run-down.out")"
+if [[ ! "$right_pane" =~ ^%[0-9]+$ ]] || [[ ! "$down_pane" =~ ^%[0-9]+$ ]]; then
+  echo "expected raw %N pane ids, got right=$right_pane down=$down_pane" >&2
+  exit 1
+fi
+create_panes_after="$(ctx list-panes -t legacy-alpha:buildlog -F '#{pane_id}' | wc -l)"
+if [[ "$create_panes_after" != "$((create_panes_before + 2))" ]]; then
+  echo "expected two new panes, got $create_panes_before -> $create_panes_after" >&2
+  exit 1
+fi
+# right splits on the horizontal axis (the new pane starts to the right of the
+# anchor); down splits on the vertical axis (same column, lower row).
+anchor_left="$(ctx display-message -p -t "$legacy_pane" '#{pane_left}')"
+anchor_top="$(ctx display-message -p -t "$legacy_pane" '#{pane_top}')"
+right_left="$(ctx display-message -p -t "$right_pane" '#{pane_left}')"
+down_left="$(ctx display-message -p -t "$down_pane" '#{pane_left}')"
+down_top="$(ctx display-message -p -t "$down_pane" '#{pane_top}')"
+if [[ "$right_left" -le "$anchor_left" ]]; then
+  echo "--placement right did not split horizontally: anchor_left=$anchor_left new_left=$right_left" >&2
+  exit 1
+fi
+if [[ "$down_left" != "$anchor_left" ]] || [[ "$down_top" -le "$anchor_top" ]]; then
+  echo "--placement down did not split vertically: anchor=($anchor_left,$anchor_top) new=($down_left,$down_top)" >&2
+  exit 1
+fi
+# The client never moved: the session's active window and active pane are the
+# ones that were active before either split, and neither new pane is active.
+if [[ "$(ctx display-message -p -t legacy-alpha '#{window_id}')" != "$create_active_window_before" ]] ||
+  [[ "$(ctx display-message -p -t legacy-alpha '#{pane_id}')" != "$create_active_pane_before" ]]; then
+  echo "a detached create moved the active window or pane" >&2
+  exit 1
+fi
+for pane in "$right_pane" "$down_pane"; do
+  if [[ "$(ctx display-message -p -t "$pane" '#{?pane_active,1,0}')" != "0" ]]; then
+    echo "detached split left $pane active" >&2
+    exit 1
+  fi
+done
+
+# 5. --create-window is the opt-in Window ensure, and the result is still a Pane.
+pmx create pane --project alpha --window review --create-window -o ref >"$create_root/ensure.out"
+if [[ "$(head -c 5 "$create_root/ensure.out")" != "pane/" ]]; then
+  echo "--create-window returned $(cat "$create_root/ensure.out"), want a pane/ ref" >&2
+  exit 1
+fi
+if [[ "$(ctx list-windows -t legacy-alpha -F '#{window_name}' | grep -cx review)" != "1" ]]; then
+  echo "--create-window did not converge on exactly one review Window" >&2
+  exit 1
+fi
+
+# 6. A stale primaryPaneRef is exit 2 with zero mutations and zero stdout.
+cp "$create_registry" "$create_root/registry.intact"
+# The registry is written with MarshalIndent, so every primaryPaneRef sits alone
+# on its own line and the substitution cannot reach any other field.
+sed -i 's/"primaryPaneRef": "pane-[a-z0-9]*"/"primaryPaneRef": "pane-doesnotexist"/' "$create_registry"
+if ! grep -Fq '"primaryPaneRef": "pane-doesnotexist"' "$create_registry"; then
+  echo "the stale primaryPaneRef fixture did not apply" >&2
+  exit 1
+fi
+stale_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
+stale_panes_before="$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)"
+set +e
+pmx create pane --project alpha --window review >"$create_root/stale.out" 2>"$create_root/stale.err"
+stale_status=$?
+set -e
+if [[ "$stale_status" != "2" ]]; then
+  echo "stale primaryPaneRef exit = $stale_status, want 2" >&2
+  cat "$create_root/stale.err" >&2 || true
+  exit 1
+fi
+if [[ -s "$create_root/stale.out" ]]; then
+  echo "stale primaryPaneRef wrote to stdout" >&2
+  exit 1
+fi
+if [[ "$(md5sum "$create_registry" | cut -d' ' -f1)" != "$stale_before" ]]; then
+  echo "stale primaryPaneRef mutated the registry" >&2
+  exit 1
+fi
+if [[ "$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)" != "$stale_panes_before" ]]; then
+  echo "stale primaryPaneRef fell back to a live pane" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$create_root/stale.err" "primaryPaneRef"
+cp "$create_root/registry.intact" "$create_registry"
+
+# 7. A tmux failure after the Window exists rolls the operation back to exactly
+#    the state it started from.
+rollback_windows_before="$(ctx list-windows -t legacy-alpha -F '#{window_id}' | wc -l)"
+rollback_registry_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
+set +e
+env PROJMUX_CREATE_FAIL_SPLIT=1 \
+  PATH="$create_shim:$PATH" \
+  TMUX_TMPDIR="$create_root/tt" \
+  XDG_STATE_HOME="$create_root/state" \
+  XDG_CONFIG_HOME="$create_root/config" \
+  PROJMUX_MANAGED_ROOTS="$create_root/work" \
+  SHELL=/bin/sh \
+  env -u TMUX -u TMUX_PANE "$bin" create pane --project alpha --window rollback --create-window \
+  >"$create_root/rollback.out" 2>"$create_root/rollback.err"
+rollback_status=$?
+set -e
+if [[ "$rollback_status" == "0" ]]; then
+  echo "the injected split failure did not fail the create" >&2
+  exit 1
+fi
+if [[ -s "$create_root/rollback.out" ]]; then
+  echo "a rolled back create wrote to stdout" >&2
+  exit 1
+fi
+if [[ "$(ctx list-windows -t legacy-alpha -F '#{window_id}' | wc -l)" != "$rollback_windows_before" ]]; then
+  echo "rollback left the Window it created behind" >&2
+  ctx list-windows -t legacy-alpha -F '#{window_index} #{window_name}' >&2
+  exit 1
+fi
+if [[ "$(md5sum "$create_registry" | cut -d' ' -f1)" != "$rollback_registry_before" ]]; then
+  echo "a rolled back create committed registry state" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$create_root/rollback.err" "injected split failure"
+
+create_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> create e2e passed: socket=$create_socket path=$create_socket_path"

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -183,8 +184,10 @@ func (s *fakeResourceStore) mutator() coremetadata.Mutator {
 	return coremetadata.Mutator{
 		Now:       func() time.Time { return s.now },
 		DirExists: func(path string) (bool, error) { return s.dirs[path], nil },
+		// Deterministic but unique: an operation that creates several resources of
+		// one kind must not be handed the same uid twice.
 		NewUID: func(kind coremetadata.Kind) (string, error) {
-			uid := strings.ToLower(string(kind)) + "-test"
+			uid := fmt.Sprintf("%s-test-%d", strings.ToLower(string(kind)), len(s.newUIDs)+1)
 			s.newUIDs = append(s.newUIDs, uid)
 			return uid, nil
 		},

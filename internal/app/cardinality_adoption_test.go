@@ -40,6 +40,12 @@ var canonicalRouteCardinalities = []routeCardinality{
 	{"delete pane", selector.Target{Verb: selector.VerbDelete, Kind: coremetadata.KindPane}, selector.CardinalityAtLeastOne},
 	{"delete agent", selector.Target{Verb: selector.VerbDelete, Kind: coremetadata.KindAgent}, selector.CardinalityAtLeastOne},
 	{"agent resume", selector.Target{Verb: selector.VerbResume, Kind: coremetadata.KindAgent}, selector.CardinalityExactOne},
+	// The resource-backed create routes resolve three cells: the Project scope
+	// they create below, the parent Windows they fan out over, and the anchor
+	// Pane they split inside each of those Windows.
+	{"create window", selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindProject}, selector.CardinalityExactOne},
+	{"create pane", selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, selector.CardinalityAtLeastOne},
+	{"create pane anchor", selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindPane}, selector.CardinalityExactOne},
 }
 
 // TestCanonicalRoutesAdoptTheDeclaredCardinalityMatrix proves the routes consume
@@ -136,6 +142,47 @@ func TestEveryCanonicalRouteCardinalityIsEnforcedAtTheRoute(t *testing.T) {
 				// what stops resume from picking one.
 				cmd, _, _ := newTestAgentCommand(t, store)
 				_, _, err := runRoute(t, cmd, "resume", "codex")
+				return err
+			},
+			wantFail: true,
+		},
+		{
+			spelling: "create window",
+			run: func(t *testing.T, store *fakeResourceStore) error {
+				// The exact-one Project cell is what stops a create from fanning
+				// out below every Project that matched.
+				create, _ := newTestResourceCreateCommand(t, store, newFakeTmux())
+				_, _, err := runRoute(t, create, "window", "--project", "nosuch")
+				return err
+			},
+			wantFail: true,
+		},
+		{
+			spelling: "create pane",
+			run: func(t *testing.T, store *fakeResourceStore) error {
+				// 1..N accepts the whole Project scope; only an empty Window set
+				// fails.
+				create, _ := newTestResourceCreateCommand(t, store, newFakeTmux())
+				_, _, err := runRoute(t, create, "pane", "--project", "alpha")
+				return err
+			},
+		},
+		{
+			spelling: "create pane empty",
+			run: func(t *testing.T, store *fakeResourceStore) error {
+				create, _ := newTestResourceCreateCommand(t, store, newFakeTmux())
+				_, _, err := runRoute(t, create, "pane", "--project", "alpha", "--selector", "role=nosuch")
+				return err
+			},
+			wantFail: true,
+		},
+		{
+			spelling: "create pane anchor",
+			run: func(t *testing.T, store *fakeResourceStore) error {
+				// Two anchors inside one Window violate the exact-one Pane cell.
+				create, _ := newTestResourceCreateCommand(t, store, newFakeTmux())
+				_, _, err := runRoute(t, create,
+					"pane", "--project", "alpha", "--window", "main", "--pane", "zsh", "--pane", "log")
 				return err
 			},
 			wantFail: true,

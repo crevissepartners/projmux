@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -127,7 +128,8 @@ func TestMirrorWritesResourceIdentityIntoScopedTmuxOptionsAndTurnsOffAutomaticRe
 func TestMirrorResolvesUIDsAndTmuxTargetsInBothDirections(t *testing.T) {
 	t.Parallel()
 
-	sep := "\x1f"
+	// Real tmux prints the escaped separator spelling, not a raw 0x1F byte.
+	sep := escapedFieldSep
 	runner := &fakeRunner{outputs: map[string]string{
 		"list-panes":    "pane-1" + sep + "%7\n" + "pane-2" + sep + "%8\n",
 		"list-windows":  "win-1" + sep + "projmux" + sep + "0\n" + "win-2" + sep + "projmux" + sep + "1\n",
@@ -161,19 +163,29 @@ func TestMirrorResolvesUIDsAndTmuxTargetsInBothDirections(t *testing.T) {
 func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.T) {
 	t.Parallel()
 
-	sep := "\x1f"
+	// Real tmux prints the escaped separator spelling, not a raw 0x1F byte.
+	sep := escapedFieldSep
 	runner := &fakeRunner{outputs: map[string]string{
 		"@projmux_project_path": "/src/projmux\n",
-		"list-windows":          "0" + sep + "editor" + sep + "off\n" + "1" + sep + "zsh" + sep + "on\n",
+		"list-windows":          "0" + sep + "editor" + sep + "off" + sep + "@4\n" + "1" + sep + "zsh" + sep + "on" + sep + "@5\n",
 		"list-panes": strings.Join([]string{
-			strings.Join([]string{"0", "nvim", "", "", "nvim", "src/main.go", "/src/projmux"}, sep),
-			strings.Join([]string{"0", "", "codex", "refactor naming", "codex", "codex", "/src/projmux"}, sep),
-			strings.Join([]string{"1", "", "", "", "zsh", "~/src/projmux", "/src/projmux"}, sep),
+			strings.Join([]string{"0", "nvim", "", "", "nvim", "src/main.go", "/src/projmux", "%1"}, sep),
+			strings.Join([]string{"0", "", "codex", "refactor naming", "codex", "codex", "/src/projmux", "%2"}, sep),
+			strings.Join([]string{"1", "", "", "", "zsh", "~/src/projmux", "/src/projmux", "%3"}, sep),
 		}, "\n") + "\n",
 	}}
-	legacy, err := NewMirror(runner).ObserveLegacySession(context.Background(), "projmux")
+	legacy, targets, err := NewMirror(runner).ObserveLegacySessionTargets(context.Background(), "projmux")
 	if err != nil {
 		t.Fatalf("observe: %v", err)
+	}
+	// The transport handles are positionally aligned with the observed model,
+	// which is what lets a migration mirror allocated uids back onto exactly the
+	// objects it imported.
+	if !reflect.DeepEqual(targets.Windows, []string{"@4", "@5"}) {
+		t.Fatalf("window targets = %v, want [@4 @5]", targets.Windows)
+	}
+	if !reflect.DeepEqual(targets.Panes, [][]string{{"%1", "%2"}, {"%3"}}) {
+		t.Fatalf("pane targets = %v, want [[%%1 %%2] [%%3]]", targets.Panes)
 	}
 	for _, call := range runner.calls {
 		if strings.Contains(call, "set-option") || strings.Contains(call, "rename-window") {
