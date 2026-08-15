@@ -19,6 +19,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -82,6 +83,10 @@ type tmuxCommand struct {
 	popupOptions            func(sessionName string, ctx tmuxPopupContext) inttmux.PopupOptions
 	switchPopup             func(ctx tmuxPopupContext) inttmux.PopupOptions
 	sessionsPopup           func(ctx tmuxPopupContext) inttmux.PopupOptions
+	// resources is the resource registry seam of the pane-exit sweep. It is the
+	// only tmux helper route that touches the registry, and it is a field so a
+	// test can point the sweep at a temporary store.
+	resources *resourceStore
 }
 
 func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
@@ -97,6 +102,7 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 		readFile:      os.ReadFile,
 		now:           time.Now,
 		sessionStore:  sessionstate.NewDefaultStoreFromEnv,
+		resources:     newResourceStore(),
 		popupOptions:  defaultPopupPreviewOptions,
 		switchPopup:   defaultPopupSwitchOptions,
 		sessionsPopup: defaultPopupSessionsOptions,
@@ -133,6 +139,8 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runPopupToggle(fs.Args()[1:], stderr)
 	case "rebalance-panes":
 		return c.runRebalancePanes(fs.Args()[1:], stderr)
+	case "release-dead-agent-panes":
+		return c.runReleaseDeadAgentPanes(fs.Args()[1:], stderr)
 	case "rename-pane":
 		return c.runRenamePane(fs.Args()[1:], stderr)
 	case "print-config":
@@ -335,6 +343,28 @@ func (c *tmuxCommand) runRebalancePanes(args []string, stderr io.Writer) error {
 		_, _ = c.runner.Run(context.Background(), "tmux", "select-layout", "-t", strings.TrimSpace(windowID), "-E")
 	}
 	return nil
+}
+
+// runReleaseDeadAgentPanes is the pane-exit hook half of the dead-pane sweep:
+// it releases every Agent whose managed Pane is no longer a live tmux pane.
+//
+// It is its own hidden route rather than extra work inside rebalance-panes.
+// Rebalance is pane layout behavior that has to stay byte-identical, and the
+// hook runs both under `|| true`, so a registry the sweep cannot open can never
+// cost the operator their pane layout.
+func (c *tmuxCommand) runReleaseDeadAgentPanes(args []string, stderr io.Writer) error {
+	if len(args) != 0 {
+		printTmuxUsage(stderr)
+		return fmt.Errorf("tmux release-dead-agent-panes accepts no arguments")
+	}
+	if c.runner == nil {
+		return errors.New("configure tmux runner: tmux runner is not configured")
+	}
+	store := c.resources
+	if store == nil {
+		store = newResourceStore()
+	}
+	return runDeadAgentPaneSweep(context.Background(), intmetadata.NewMirror(c.runner), store)
 }
 
 func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
@@ -1594,8 +1624,8 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveReso
 		"set-hook -g pane-focus-out "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g pane-focus-in "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id} >/dev/null 2>&1 || true")),
-		"set-hook -g pane-exited "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" internal tmux rebalance-panes >/dev/null 2>&1 || true")),
-		"set-hook -g after-kill-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote("sleep 0.05; "+bin+" internal tmux rebalance-panes >/dev/null 2>&1 || true")),
+		"set-hook -g pane-exited "+tmuxConfigQuote(tmuxPaneExitHookBody(bin)),
+		"set-hook -g after-kill-pane "+tmuxConfigQuote(tmuxPaneExitHookBody(bin)),
 	)
 	lines = append(lines, tmuxRecentWindowRecordHookLines(bin)...)
 	lines = append(lines,
@@ -1625,6 +1655,23 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveReso
 	lines = append(lines, tmuxStatusbarKeyBindings(binaryPath)...)
 	lines = append(lines, tmuxPaneContextMenuBindings(binaryPath)...)
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// tmuxPaneExitHookBody is the shared body of the two pane-exit hooks.
+//
+// Both hooks have to run both halves. `pane-exited` covers a child process that
+// ended; `after-kill-pane` covers `tmux kill-pane` and the pane close key, and
+// it fires with an empty #{hook_pane}, so neither hook can name the pane that
+// died. That is why the second half is an inventory sweep with no arguments
+// rather than a per-pane handler.
+//
+// The rebalance half is unchanged, still first, and still independently
+// `|| true`-guarded: pane layout must not depend on whether the registry sweep
+// succeeded, and the sweep must still run when there was no layout to rebalance.
+func tmuxPaneExitHookBody(bin string) string {
+	return "run-shell -b " + tmuxConfigQuote(
+		"sleep 0.05; "+bin+" internal tmux rebalance-panes >/dev/null 2>&1 || true; "+
+			bin+" internal tmux release-dead-agent-panes >/dev/null 2>&1 || true")
 }
 
 func tmuxRecentWindowRecordHookLines(bin string) []string {

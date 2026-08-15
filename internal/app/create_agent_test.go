@@ -249,6 +249,11 @@ func TestCreateAgentNeverReusesAnExistingAgent(t *testing.T) {
 
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
+	// The fixture Agent's managed Pane has to be a live tmux pane. Reconciliation
+	// releases an Agent whose managed Pane is gone, so an unmirrored fixture would
+	// make "the existing Agent kept its pane" unobservable for a reason that has
+	// nothing to do with reuse.
+	seedLiveAgentPane(t, tmux, "alpha", "win-alpha-main", "pan-alpha-zsh", "pan-alpha-codex")
 	create, _ := newTestAgentCreateCommand(t, store, tmux)
 
 	existing := agentNamed(t, store, "win-alpha-main", "codex")

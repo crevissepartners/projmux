@@ -157,19 +157,54 @@ func (m Mirror) ResolveWindowUID(ctx context.Context, target string) (string, er
 	return strings.TrimSpace(string(out)), nil
 }
 
+// livePaneRows reads the (mirrored Pane uid, tmux pane id) row of every pane on
+// the server.
+//
+// It is the single query behind both the uid -> target lookup and the
+// mirrored-uid inventory, so the two can never disagree about which Panes still
+// have a transport binding.
+func (m Mirror) livePaneRows(ctx context.Context) ([][]string, error) {
+	out, err := m.run(ctx, "list-panes", "-a", "-F", tmuxFormat("#{"+tmuxopts.PaneUID+"}", "#{pane_id}"))
+	if err != nil {
+		return nil, fmt.Errorf("metadata: list panes: %w", err)
+	}
+	return parseRows(string(out), 2), nil
+}
+
 // PaneTargetForUID scans every live pane for the mirrored uid and returns its
 // tmux pane id.
 func (m Mirror) PaneTargetForUID(ctx context.Context, uid string) (string, error) {
-	out, err := m.run(ctx, "list-panes", "-a", "-F", tmuxFormat("#{"+tmuxopts.PaneUID+"}", "#{pane_id}"))
+	rows, err := m.livePaneRows(ctx)
 	if err != nil {
-		return "", fmt.Errorf("metadata: list panes: %w", err)
+		return "", err
 	}
-	for _, fields := range parseRows(string(out), 2) {
+	for _, fields := range rows {
 		if fields[0] == uid && fields[0] != "" {
 			return fields[1], nil
 		}
 	}
 	return "", fmt.Errorf("metadata: no live pane mirrors uid %q", uid)
+}
+
+// LivePaneUIDs returns the set of Projmux Pane uids that a live tmux pane still
+// mirrors.
+//
+// A pane carrying no mirrored uid contributes nothing, so the result is exactly
+// the Panes the resource model still owns a transport binding for. That makes
+// it the inventory half of a registry-versus-machine diff: a Pane uid the
+// registry holds but this set does not is a Pane whose tmux pane is gone.
+func (m Mirror) LivePaneUIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := m.livePaneRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	uids := make(map[string]bool, len(rows))
+	for _, fields := range rows {
+		if fields[0] != "" {
+			uids[fields[0]] = true
+		}
+	}
+	return uids, nil
 }
 
 // WindowTargetForUID scans every live window for the mirrored uid and returns
