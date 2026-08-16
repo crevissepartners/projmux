@@ -272,21 +272,21 @@ func TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow(t *test
 	}
 }
 
-// TestTheFirstLegacyMigrationSeedsStableNamesOnceAndMirrorsThemBack is the
-// legacy-state check at the reconciler seam.
+// TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNames
+// is the legacy-state check at the reconciler and describe seams.
 //
 // The tmux ids come back from the observation, so the migration can mirror the
 // uids it allocated onto exactly the objects it imported. Without that, a
 // migrated Window has registry identity and no transport binding, and the next
 // create builds a duplicate next to it.
-func TestTheFirstLegacyMigrationSeedsStableNamesOnceAndMirrorsThemBack(t *testing.T) {
+func TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNames(t *testing.T) {
 	t.Parallel()
 
 	fixture := newOnDiskFixture(t)
 	root := t.TempDir()
 	session := fixture.tmux.addSession("legacy")
-	// Two pre-v2 windows: one with automatic-rename off (its window_name is the
-	// seed) and one with automatic-rename on (the user pane label is the seed).
+	// Two pre-v2 windows with every formerly trusted runtime seed populated. None
+	// of those values may become metadata.name; window_name is displayName only.
 	editor := session.windows[0]
 	editor.name = "editor"
 	extra := &fakeTmuxWindow{id: fixture.tmux.mint("@"), name: "zsh", opts: map[string]string{}}
@@ -320,7 +320,7 @@ func TestTheFirstLegacyMigrationSeedsStableNamesOnceAndMirrorsThemBack(t *testin
 			}, nil
 	}
 
-	if _, _, err := runRoute(t, fixture.command(observe), "pane", "--project", filepath.Base(root), "--window", "editor"); err != nil {
+	if _, _, err := runRoute(t, fixture.command(observe), "pane", "--project", filepath.Base(root), "--window", "window"); err != nil {
 		t.Fatalf("create over a legacy session error = %v", err)
 	}
 
@@ -330,14 +330,35 @@ func TestTheFirstLegacyMigrationSeedsStableNamesOnceAndMirrorsThemBack(t *testin
 		t.Fatalf("the legacy session did not become a Project:\n%+v", registry.Projects)
 	}
 	windows := registry.WindowsOf(project.Metadata.UID)
-	var names []string
+	var names, displayNames []string
 	for _, window := range windows {
 		names = append(names, window.Metadata.Name)
+		displayNames = append(displayNames, window.Metadata.DisplayName)
 	}
-	// automatic-rename off keeps its window_name; automatic-rename on takes the
-	// user pane label, never the raw title or the topic.
-	if !slices.Contains(names, "editor") || !slices.Contains(names, "logs") {
-		t.Fatalf("migrated Window names = %v, want editor and logs", names)
+	if !slices.Equal(names, []string{"window", "window-1"}) {
+		t.Fatalf("migrated Window names = %v, want window and window-1", names)
+	}
+	if !slices.Equal(displayNames, []string{"editor", "zsh"}) {
+		t.Fatalf("migrated Window displayNames = %v, want observed editor and zsh", displayNames)
+	}
+	if editor.name != "editor" || extra.name != "zsh" {
+		t.Fatalf("runtime window names changed: %q/%q, want observed editor/zsh", editor.name, extra.name)
+	}
+
+	describe := &describeCommand{
+		loadRegistry: func() (coremetadata.Registry, error) { return fixture.load(t), nil },
+	}
+	description, stderr, err := runRoute(t, describe, "window", "window", "--project", filepath.Base(root))
+	if err != nil {
+		t.Fatalf("describe imported window: %v (stderr=%s)", err, stderr)
+	}
+	hasName, hasDisplayName := false, false
+	for line := range strings.SplitSeq(description, "\n") {
+		hasName = hasName || (strings.HasPrefix(line, "Name:") && strings.TrimSpace(strings.TrimPrefix(line, "Name:")) == "window")
+		hasDisplayName = hasDisplayName || (strings.HasPrefix(line, "DisplayName:") && strings.TrimSpace(strings.TrimPrefix(line, "DisplayName:")) == "editor")
+	}
+	if !hasName || !hasDisplayName {
+		t.Fatalf("describe window did not separate identity and display:\n%s", description)
 	}
 	// The allocated uids are mirrored back onto the live objects.
 	if got := editor.opts[tmuxopts.WindowUID]; got == "" {
@@ -355,7 +376,7 @@ func TestTheFirstLegacyMigrationSeedsStableNamesOnceAndMirrorsThemBack(t *testin
 
 	// The migration is one-time: a second run assigns nothing new.
 	before := len(registry.Windows)
-	if _, _, err := runRoute(t, fixture.command(observe), "pane", "--project", filepath.Base(root), "--window", "editor"); err != nil {
+	if _, _, err := runRoute(t, fixture.command(observe), "pane", "--project", filepath.Base(root), "--window", "window"); err != nil {
 		t.Fatalf("second create error = %v", err)
 	}
 	after := fixture.load(t)

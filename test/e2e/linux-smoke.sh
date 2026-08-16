@@ -528,14 +528,17 @@ if [[ -e "$create_registry" ]]; then
   exit 1
 fi
 
-# A pre-v2 session for the legacy naming migration: automatic-rename on, a user
-# pane label, and a raw pane title that must never become the Window name.
+# A pre-v2 session for the legacy naming migration: window_name, automatic
+# rename, a user pane label, and a raw pane title must never become the stable
+# Window metadata.name. window_name is retained as displayName.
 ctx new-session -d -s legacy-alpha -c "$create_root/work/alpha" sleep 600
 ctx set-option -t legacy-alpha -q @projmux_project_path "$create_root/work/alpha"
 ctx set-option -w -t legacy-alpha:0 automatic-rename on
 legacy_pane="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
+legacy_window_id="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
 ctx set-option -p -t "$legacy_pane" @projmux_pane_label "buildlog"
 ctx select-pane -T "raw title must not win" -t "$legacy_pane"
+legacy_window_name_before="$(ctx display-message -p -t "$legacy_window_id" '#{window_name}')"
 
 create_socket_path="$(ctx display-message -p -t legacy-alpha '#{socket_path}')"
 case "$create_socket_path" in
@@ -610,11 +613,12 @@ if [[ "$(stat -c '%a' "$create_registry")" != "600" ]]; then
   exit 1
 fi
 
-# 3. The legacy migration seeded a stable Window name from the user pane label,
-#    turned automatic-rename off, and mirrored the allocated uids back.
+# 3. The legacy migration allocated a stable Window name independently of every
+#    runtime attribute, retained window_name as displayName, turned
+#    automatic-rename off, and mirrored the allocated uids back.
 legacy_window_name="$(ctx display-message -p -t legacy-alpha:0 '#{window_name}')"
-if [[ "$legacy_window_name" != "buildlog" ]]; then
-  echo "legacy migration Window name = $legacy_window_name, want buildlog" >&2
+if [[ "$legacy_window_name" != "$legacy_window_name_before" ]]; then
+  echo "legacy migration runtime display = $legacy_window_name, want preserved $legacy_window_name_before" >&2
   exit 1
 fi
 if [[ "$(ctx show-options -wqv -t legacy-alpha:0 automatic-rename)" != "off" ]]; then
@@ -630,7 +634,10 @@ if [[ -z "$(ctx display-message -p -t "$legacy_pane" '#{@projmux_pane_uid}')" ]]
   exit 1
 fi
 pmx get windows --project alpha -o name >"$create_root/alpha-windows.out"
-smoke_assert_file_contains "$create_root/alpha-windows.out" "buildlog"
+smoke_assert_file_contains "$create_root/alpha-windows.out" "window"
+pmx describe window window --project alpha >"$create_root/alpha-window.describe"
+smoke_assert_file_contains "$create_root/alpha-window.describe" "DisplayName:"
+smoke_assert_file_contains "$create_root/alpha-window.describe" "$legacy_window_name_before"
 
 # 4. right and down produce the two split axes, detached, with no focus change.
 #    The create runs inside a real pane and the completion signal is the exit
@@ -671,10 +678,10 @@ run_in_pane() {
 
 create_active_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
 create_active_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
-create_panes_before="$(ctx list-panes -t legacy-alpha:buildlog -F '#{pane_id}' | wc -l)"
+create_panes_before="$(ctx list-panes -t "$legacy_window_id" -F '#{pane_id}' | wc -l)"
 
-run_in_pane right create pane --project alpha --window buildlog --placement right -o pane-id
-run_in_pane down create pane --project alpha --window buildlog --placement down -o pane-id
+run_in_pane right create pane --project alpha --window window --placement right -o pane-id
+run_in_pane down create pane --project alpha --window window --placement down -o pane-id
 for label in right down; do
   if [[ "$(cat "$create_markers/$label.code")" != "0" ]]; then
     echo "create pane --placement $label exited $(cat "$create_markers/$label.code")" >&2
@@ -688,7 +695,7 @@ if [[ ! "$right_pane" =~ ^%[0-9]+$ ]] || [[ ! "$down_pane" =~ ^%[0-9]+$ ]]; then
   echo "expected raw %N pane ids, got right=$right_pane down=$down_pane" >&2
   exit 1
 fi
-create_panes_after="$(ctx list-panes -t legacy-alpha:buildlog -F '#{pane_id}' | wc -l)"
+create_panes_after="$(ctx list-panes -t "$legacy_window_id" -F '#{pane_id}' | wc -l)"
 if [[ "$create_panes_after" != "$((create_panes_before + 2))" ]]; then
   echo "expected two new panes, got $create_panes_before -> $create_panes_after" >&2
   exit 1
@@ -839,7 +846,7 @@ pmx_agent() {
 agent_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
 agent_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
 
-pmx_agent create agent --provider codex --project alpha --window buildlog -o pane-id \
+pmx_agent create agent --provider codex --project alpha --window window -o pane-id \
   >"$create_root/agent.out" 2>"$create_root/agent.err"
 agent_pane="$(tr -d '[:space:]' <"$create_root/agent.out")"
 if [[ ! "$agent_pane" =~ ^%[0-9]+$ ]]; then
@@ -887,7 +894,7 @@ fi
 
 # 9. The shortcut normalizes onto the same route, and a second create allocates a
 #    new Agent instead of reusing the first.
-pmx_agent create codex --project alpha --window buildlog -o name >"$create_root/agent-second.out"
+pmx_agent create codex --project alpha --window window -o name >"$create_root/agent-second.out"
 if [[ "$(tr -d '[:space:]' <"$create_root/agent-second.out")" != "codex-1" ]]; then
   echo "the second Agent name = $(cat "$create_root/agent-second.out"), want codex-1" >&2
   exit 1
@@ -903,7 +910,7 @@ done
 
 # 10. The payload after -- reaches the provider and never the naming.
 : >"$create_root/agent-launch.log"
-pmx_agent create agent --provider codex --project alpha --window buildlog -o name \
+pmx_agent create agent --provider codex --project alpha --window window -o name \
   -- --topic "release triage" >"$create_root/agent-payload.out"
 if [[ "$(tr -d '[:space:]' <"$create_root/agent-payload.out")" != "codex-2" ]]; then
   echo "a payload changed the Agent name: $(cat "$create_root/agent-payload.out")" >&2
@@ -922,7 +929,7 @@ fi
 # 11. A missing provider is exit 2 with zero mutations and zero stdout.
 agent_registry_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
 set +e
-pmx_agent create agent --project alpha --window buildlog \
+pmx_agent create agent --project alpha --window window \
   >"$create_root/agent-noprovider.out" 2>"$create_root/agent-noprovider.err"
 agent_noprovider_status=$?
 set -e
@@ -945,7 +952,7 @@ smoke_assert_file_contains "$create_root/agent-noprovider.err" "requires --provi
 #     implicit suffix and no new pane.
 agent_panes_before="$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)"
 set +e
-pmx_agent create agent --provider codex --project alpha --window buildlog --name codex \
+pmx_agent create agent --provider codex --project alpha --window window --name codex \
   >"$create_root/agent-collide.out" 2>"$create_root/agent-collide.err"
 agent_collide_status=$?
 set -e

@@ -3,8 +3,6 @@ package metadata
 import (
 	"strings"
 	"time"
-
-	"github.com/crevissepartners/projmux/internal/core/paneidentity"
 )
 
 // LegacyPane is one observed pre-v2 tmux pane. Label is the existing
@@ -52,38 +50,11 @@ type LegacySession struct {
 	Windows []LegacyWindow
 }
 
-// LegacyWindowNameSeed derives the one-time Window name base for a legacy
-// window.
-//
-//   - automatic-rename off: the current window_name is the seed.
-//   - automatic-rename on: derive a stable base once, in order user Pane label,
-//     provider, known shell, then "window".
-//
-// Agent topic and raw pane title are excluded from both paths.
-func LegacyWindowNameSeed(window LegacyWindow) string {
-	if !window.AutomaticRename {
-		if base := SanitizeNameBase(window.Name); base != "" {
-			return base
-		}
-	}
-	for _, pane := range window.Panes {
-		if base := SanitizeNameBase(pane.Label); base != "" {
-			return base
-		}
-	}
-	for _, pane := range window.Panes {
-		if provider := NormalizeProvider(pane.Provider); provider != "" {
-			return provider
-		}
-	}
-	for _, pane := range window.Panes {
-		command := strings.TrimSpace(pane.Command)
-		if paneidentity.KnownInteractiveShell(command) {
-			if base := SanitizeNameBase(command); base != "" {
-				return base
-			}
-		}
-	}
+// LegacyWindowNameSeed returns the stable allocator base for a newly imported
+// Window. Nothing observed from tmux -- window_name, Pane label, provider,
+// command, shell, topic, or title -- is an identity input. The observed
+// window_name is projected separately onto metadata.displayName.
+func LegacyWindowNameSeed(_ LegacyWindow) string {
 	return FallbackWindowNameBase
 }
 
@@ -309,10 +280,11 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 			APIVersion: APIVersion,
 			Kind:       KindWindow,
 			Metadata: ObjectMeta{
-				UID:       uid,
-				Name:      windowName,
-				OwnerRef:  &OwnerRef{Kind: KindProject, UID: projectUID},
-				CreatedAt: now,
+				UID:         uid,
+				Name:        windowName,
+				DisplayName: legacyWindow.Name,
+				OwnerRef:    &OwnerRef{Kind: KindProject, UID: projectUID},
+				CreatedAt:   now,
 			},
 		})
 		txn.record(KindWindow, uid)
@@ -356,6 +328,12 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 	stored, _ := reg.Window(windowUID)
 	if strings.TrimSpace(stored.Spec.PrimaryPaneRef) == "" {
 		stored.Spec.PrimaryPaneRef = primaryPaneRef
+	}
+	// Existing identity is deliberately untouched. The runtime-owned spelling
+	// has a separate duplicate-allowed projection, so an adopted or rebound
+	// Window keeps its uid, metadata.name, owner, and reservation.
+	if _, err := m.ObserveWindowDisplayName(reg, windowUID, legacyWindow.Name); err != nil {
+		return err
 	}
 	return nil
 }

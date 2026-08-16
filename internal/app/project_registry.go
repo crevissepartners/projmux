@@ -28,10 +28,11 @@ import (
 //
 //  1. Import live tmux sessions first. A session that predates the resource
 //     model carries the operator's real Windows and Panes, and importing it is
-//     what seeds their stable names once. Registering the same root from
-//     discovery first would create a default one-Window topology, and the
-//     importer would then adopt *that* bootstrap Window instead of seeding a
-//     name from the tmux window the operator actually has.
+//     what preserves that topology while recording the observed Window display
+//     names. Registering the same root from discovery first would create a
+//     default one-Window topology, and the importer would then adopt *that*
+//     bootstrap Window instead of representing the tmux windows the operator
+//     actually has.
 //  2. Register the remaining selectable workdirs with the bootstrap topology.
 //  3. Observe roots and refresh the live session projection.
 //  4. Reapply the tmux bindings of every live session the import step could not
@@ -399,7 +400,11 @@ func (r *registryReconciler) reapplySessionBindings(
 		if !ok {
 			continue
 		}
-		if err := r.mirror.MirrorWindow(ctx, session.targets.Windows[wi], *window); err != nil {
+		projected, err := mutator.ObserveWindowDisplayName(registry, window.Metadata.UID, legacyWindow.Name)
+		if err != nil {
+			continue
+		}
+		if err := r.mirror.MirrorWindow(ctx, session.targets.Windows[wi], projected); err != nil {
 			continue
 		}
 		if wi >= len(session.targets.Panes) {

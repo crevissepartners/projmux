@@ -3,6 +3,7 @@ package metadata
 import (
 	"maps"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -207,6 +208,17 @@ type Window struct {
 	Metadata   ObjectMeta   `json:"metadata"`
 	Spec       WindowSpec   `json:"spec"`
 	Status     WindowStatus `json:"status,omitzero"`
+}
+
+// DisplayName returns the duplicate-allowed user-facing Window name. Registry
+// files written before Window display names were projected leave the field
+// empty, so those Windows safely fall back to their stable metadata.name until
+// a runtime observation supplies the tmux window_name.
+func (w Window) DisplayName() string {
+	if strings.TrimSpace(w.Metadata.DisplayName) != "" {
+		return w.Metadata.DisplayName
+	}
+	return w.Metadata.Name
 }
 
 // WindowSpec records the uid of the Pane created together with the Window.
