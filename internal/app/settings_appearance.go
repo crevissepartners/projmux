@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -29,7 +30,7 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavStatusBar), c.statusBarSummary()),
 		Value:     settingsAppearanceStatusBar,
-		SearchKey: "appearance status bar components notifications hud working directory git resources",
+		SearchKey: "appearance status bar components notifications agent usage hud providers windows working directory git resources",
 	})
 	entries = append(entries, c.localeSettingsEntry())
 	entries = append(entries, intpickercompat.Entry{
@@ -82,7 +83,12 @@ func (c *settingsCommand) statusBarEntries() []intpickercompat.Entry {
 			SearchKey: "status bar component " + string(target) + " " + string(mode) + " " + meta.Name + " " + meta.Description,
 		})
 		if target == statusbarDecorationTargetNotify {
-			entries = append(entries, c.statusBarHUDVisibilityEntry(locale, statusbarHUDAgentUsage))
+			usageState := loadStatusbarHUDVisibilityState(c.homeDir, c.lookupEnv, statusbarHUDAgentUsage)
+			entries = append(entries, intpickercompat.Entry{
+				Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Agent Usage HUD", agentUsageVisibilityStateText(locale, usageState, usageState)),
+				Value:     settingsAppearanceAgentUsageHUD,
+				SearchKey: "status bar agent usage hud providers windows visible source preview",
+			})
 			entries = append(entries, c.statusBarRowOneVisibilityEntry(locale, statusbarRowOneProject))
 		}
 	}
@@ -343,6 +349,10 @@ func (c *settingsCommand) runStatusBarSection(stdout, stderr io.Writer) error {
 			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
+		case action == settingsAppearanceAgentUsageHUD:
+			if err := c.runAgentUsageHUDSection(stdout, stderr); err != nil {
+				return err
+			}
 		case strings.HasPrefix(action, settingsActionPrefixHUDVisibility):
 			if err := c.runStatusbarVisibilityMutation(strings.TrimPrefix(action, settingsActionPrefixHUDVisibility), stdout, stderr); err != nil {
 				return err
@@ -351,6 +361,153 @@ func (c *settingsCommand) runStatusBarSection(stdout, stderr io.Writer) error {
 			return fmt.Errorf("unknown status bar action: %s", action)
 		}
 	}
+}
+
+func (c *settingsCommand) runAgentUsageHUDSection(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-agent-usage-hud",
+			Entries:    c.agentUsageHUDEntries(),
+			Title:      "Appearance - Status Bar - Agent Usage HUD",
+			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), c.locale()),
+			Prompt:     "Settings > Appearance > Status Bar > Agent Usage HUD > ",
+			Footer:     projmuxFooter("Enter: open/apply  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsAppearanceAgentUsageProviderPrefix):
+			provider := strings.TrimPrefix(action, settingsAppearanceAgentUsageProviderPrefix)
+			if err := c.runAgentUsageProviderSection(provider, stdout, stderr); err != nil {
+				return err
+			}
+		case strings.HasPrefix(action, settingsActionPrefixHUDVisibility):
+			if err := c.runStatusbarVisibilityMutation(strings.TrimPrefix(action, settingsActionPrefixHUDVisibility), stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown Agent Usage HUD action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAgentUsageProviderSection(provider string, stdout, stderr io.Writer) error {
+	capability, ok := agentUsageProviderCapability(provider)
+	if !ok {
+		return fmt.Errorf("unknown Agent Usage HUD provider: %s", provider)
+	}
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-agent-usage-provider",
+			Entries:    c.agentUsageProviderEntries(string(capability.ID)),
+			Title:      "Agent Usage HUD - " + capability.DisplayName,
+			TitleChips: settingsPassiveRootTabChipsLocale(settingsRootTabGlobal, c.resolveSettingsProjectContext().hasProject(), c.locale()),
+			Prompt:     "Settings > Appearance > Status Bar > Agent Usage HUD > " + capability.DisplayName + " > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixHUDVisibility):
+			if err := c.runStatusbarVisibilityMutation(strings.TrimPrefix(action, settingsActionPrefixHUDVisibility), stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown Agent Usage HUD provider action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) agentUsageHUDEntries() []intpickercompat.Entry {
+	locale := c.locale()
+	overall := loadStatusbarHUDVisibilityState(c.homeDir, c.lookupEnv, statusbarHUDAgentUsage)
+	entries := []intpickercompat.Entry{
+		settingsBackEntryLocale(locale),
+		{Label: settingsLabelInfoLocale(locale, "Current", agentUsageVisibilityStateText(locale, overall, overall), settingsCatalogTextLocale(locale, "ambient status usage projection")), Value: settingsNoopValue, SearchKey: "agent usage hud current saved effective source preview"},
+		agentUsageVisibilityToggleEntry(locale, "Visible", agentUsageVisibilityLeaf{}, overall, overall),
+	}
+	for _, capability := range usagecmd.HUDProviderCapabilities() {
+		saved := loadAgentUsageVisibilityState(c.homeDir, c.lookupEnv, agentUsageVisibilityLeaf{provider: string(capability.ID)})
+		effective := gatedStatusbarVisibility(saved, overall)
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, capability.DisplayName, agentUsageVisibilityStateText(locale, saved, effective)),
+			Value:     settingsAppearanceAgentUsageProviderPrefix + string(capability.ID),
+			SearchKey: "agent usage hud provider " + string(capability.ID) + " visible windows source",
+		})
+	}
+	return entries
+}
+
+func (c *settingsCommand) agentUsageProviderEntries(provider string) []intpickercompat.Entry {
+	locale := c.locale()
+	capability, _ := agentUsageProviderCapability(provider)
+	overall := loadStatusbarHUDVisibilityState(c.homeDir, c.lookupEnv, statusbarHUDAgentUsage)
+	providerSaved := loadAgentUsageVisibilityState(c.homeDir, c.lookupEnv, agentUsageVisibilityLeaf{provider: provider})
+	providerEffective := gatedStatusbarVisibility(providerSaved, overall)
+	entries := []intpickercompat.Entry{
+		settingsBackEntryLocale(locale),
+		{Label: settingsLabelInfoLocale(locale, "Current", agentUsageVisibilityStateText(locale, providerSaved, providerEffective), settingsCatalogTextLocale(locale, "ambient provider usage projection")+" - "+capability.DisplayName), Value: settingsNoopValue, SearchKey: "agent usage provider current saved effective source"},
+		agentUsageVisibilityToggleEntry(locale, "Visible", agentUsageVisibilityLeaf{provider: provider}, providerSaved, providerEffective),
+	}
+	for _, window := range capability.Windows {
+		leaf := agentUsageVisibilityLeaf{provider: provider, window: window.Key}
+		saved := loadAgentUsageVisibilityState(c.homeDir, c.lookupEnv, leaf)
+		effective := gatedStatusbarVisibility(saved, overall, providerSaved)
+		entries = append(entries, agentUsageVisibilityToggleEntry(locale, window.Label, leaf, saved, effective))
+	}
+	return entries
+}
+
+func agentUsageVisibilityToggleEntry(locale i18n.Locale, label string, leaf agentUsageVisibilityLeaf, saved, effective config.StatusbarVisibilityState) intpickercompat.Entry {
+	next := config.StatusbarVisibilityOff
+	glyph := settingsGlyphToggle
+	color := settingsColorAdd
+	if saved.Effective == config.StatusbarVisibilityOff {
+		next = config.StatusbarVisibilityOn
+		glyph = settingsGlyphInactive
+		color = settingsColorDim
+	}
+	action := string(statusbarHUDAgentUsage) + ":" + string(next)
+	if leaf.provider != "" && leaf.window == "" {
+		action = agentUsageProviderVisibilityAction + ":" + leaf.provider + ":" + string(next)
+	} else if leaf.provider != "" {
+		action = agentUsageWindowVisibilityAction + ":" + leaf.provider + ":" + leaf.window + ":" + string(next)
+	}
+	return intpickercompat.Entry{
+		Label:     settingsLabelLocale(locale, glyph, color, label, agentUsageVisibilityStateText(locale, saved, effective)),
+		Value:     settingsActionPrefixHUDVisibility + action,
+		SearchKey: "agent usage visibility " + leaf.provider + " " + leaf.window + " saved effective source on off",
+	}
+}
+
+func agentUsageVisibilityStateText(locale i18n.Locale, saved, effective config.StatusbarVisibilityState) string {
+	source := settingsCatalogTextLocale(locale, string(saved.Source))
+	if saved.Invalid != "" {
+		source += " (" + settingsCatalogTextLocale(locale, "invalid saved value ignored") + ")"
+	}
+	return settingsCatalogTextLocale(locale, "saved") + " " + string(saved.Effective) + " - " + settingsCatalogTextLocale(locale, "effective") + " " + string(effective.Effective) + " - " + source
 }
 
 func (c *settingsCommand) runAIBadgeStyleSection(stdout, stderr io.Writer) error {
@@ -570,6 +727,20 @@ func (c *settingsCommand) statusbarDecorationTargetEntries(target statusbarDecor
 }
 
 func (c *settingsCommand) runStatusbarVisibilityMutation(raw string, stdout, stderr io.Writer) error {
+	if leaf, mode, ok := parseAgentUsageVisibilityAction(raw); ok {
+		name := leaf.provider
+		if capability, found := agentUsageProviderCapability(leaf.provider); found {
+			name = capability.DisplayName
+		}
+		if leaf.window != "" {
+			if window, found := agentUsageWindowCapability(leaf.provider, leaf.window); found {
+				name += " " + window.Label
+			}
+		}
+		return c.runSettingsMutation(name, stdout, stderr, func(io.Writer, io.Writer) error {
+			return c.setAgentUsageVisibility(leaf, mode)
+		})
+	}
 	if component, mode, ok := parseStatusbarHUDVisibilityAction(raw); ok {
 		return c.runSettingsMutation(statusbarHUDComponentName(component), stdout, stderr, func(io.Writer, io.Writer) error {
 			return c.setStatusbarHUDVisibility(component, mode)

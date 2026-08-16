@@ -29,7 +29,11 @@ row 1  [#S]  #{pane_current_path}  <git>  CPU 12%  MEM 41%   %H:%M
   explicit-ack pending queue; live pane attention badges are a separate
   state surface.
   Settings > Appearance > Status Bar controls `Notifications HUD` and `Agent
-  Usage HUD` independently. Each defaults on. When only one is visible, its
+  Usage HUD` independently. Agent Usage HUD is a View whose `Visible` parent
+  contains Claude/Codex/Antigravity provider Views; each provider has its own
+  `Visible` plus explicit supported windows (Claude/Codex: `5h`, `Weekly`;
+  Antigravity: `Weekly`). Every leaf defaults on. Parent off preserves saved
+  children, and returning it on restores them. When only one HUD is visible, its
   sole range receives the full `#{client_width}` budget and the absent range and
   alignment are not emitted. When both are hidden, tmux collapses to one line
   with `status on`,
@@ -37,6 +41,10 @@ row 1  [#S]  #{pane_current_path}  <git>  CPU 12%  MEM 41%   %H:%M
   and keeps the app's quiet Session State autosave job on that surviving row;
   there is no empty HUD row. These toggles hide presentation only and do not
   mutate the Notification queue or usage collection/cache/API state.
+  Provider/window visibility also changes only the ambient status projection;
+  the cached popup and explicit `agent usage` table/JSON stay lossless. If every
+  provider/window is hidden, the usage command emits empty text without
+  changing the overall saved HUD value or row-0 structural policy.
 - Row 1 keeps tmux's native `window-status-format` so clicking a tab
   selects the window. The bind uses `if-shell -F
   "#{==:#{mouse_status_range},window}"` to run `select-window -t =`
@@ -275,6 +283,10 @@ them survive everything in it:
   otherwise weekly. Rule 3 only ever touches a *second* window; rules 4 and 5
   change how the official window is drawn, never whether it is drawn. No step
   hides a provider wholesale.
+
+Visibility filtering runs before this classification. Thus hiding `5h` while
+keeping `Weekly` makes Weekly the provider's official window; it is not treated
+as a secondary bar and cannot be shed by rule 3.
 
 Only hard rune-truncation, below every listed step, can reach either.
 

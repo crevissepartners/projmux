@@ -390,6 +390,9 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		return c.setLiveResourcesMode(strings.TrimPrefix(value, settingsActionPrefixLiveResources))
 	case strings.HasPrefix(value, settingsActionPrefixHUDVisibility):
 		raw := strings.TrimPrefix(value, settingsActionPrefixHUDVisibility)
+		if leaf, mode, ok := parseAgentUsageVisibilityAction(raw); ok {
+			return c.setAgentUsageVisibility(leaf, mode)
+		}
 		if component, mode, ok := parseStatusbarHUDVisibilityAction(raw); ok {
 			return c.setStatusbarHUDVisibility(component, mode)
 		}

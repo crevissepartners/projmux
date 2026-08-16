@@ -104,14 +104,20 @@ step, never a silent no-op.
   - `Status Bar [View]` — the Projmux-owned status segments. `Notifications
     HUD`, `Working directory` and `Git` are component Views because each owns a
     `Visible` Toggle plus an icon `Choice`; cwd/Git icon `off` removes only the
-    icon and leaves the text segment visible. `Agent Usage HUD`, `Project`,
-    `Clock` and `Settings launcher` are direct visibility Toggles. These global
+    icon and leaves the text segment visible. `Agent Usage HUD` is a component
+    View with `Visible`, then Claude/Codex/Antigravity provider Views in the
+    usage-supported catalog order. Each provider owns `Visible` plus only its
+    explicit HUD windows: Claude/Codex own `5h` and `Weekly`; Antigravity owns
+    `Weekly` only. Parent off states gate effective visibility without rewriting
+    saved child values. Provider/window rows show saved, effective, and source.
+    `Project`, `Clock` and `Settings launcher` are direct visibility Toggles. These global
     presentation values default on and report saved/default source; hiding the
     Settings launcher removes only its mouse chip, not the CLI or keybinding
     entry. `Resources` remains one enablement Toggle backed only by
     `live-resources` (default off): off removes its segment and sampler/cache
-    mutation. Notifications and Agent Usage visibility remain presentation-only
-    and do not disable their underlying producers.
+    mutation. Notifications and every Agent Usage visibility depth remain
+    presentation-only and do not disable their underlying producers, cache,
+    backoff, explicit table/JSON command, or cached popup.
   - `Language / Locale [Choice]` and `Agent attention badge style [Choice]`.
 - **Snapshots** — the visible noun is the Snapshot resource. `session-state`
   remains the config/route spelling and appears only as source detail.

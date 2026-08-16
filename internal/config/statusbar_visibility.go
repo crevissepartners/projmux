@@ -9,13 +9,15 @@ import (
 )
 
 const (
-	StatusbarNotificationsHUDVisibilityFileName = "statusbar-visibility-notifications-hud"
-	StatusbarAgentUsageHUDVisibilityFileName    = "statusbar-visibility-agent-usage-hud"
-	StatusbarProjectVisibilityFileName          = "statusbar-visibility-project"
-	StatusbarWorkingDirectoryVisibilityFileName = "statusbar-visibility-working-directory"
-	StatusbarGitVisibilityFileName              = "statusbar-visibility-git"
-	StatusbarClockVisibilityFileName            = "statusbar-visibility-clock"
-	StatusbarSettingsLauncherVisibilityFileName = "statusbar-visibility-settings-launcher"
+	StatusbarNotificationsHUDVisibilityFileName     = "statusbar-visibility-notifications-hud"
+	StatusbarAgentUsageHUDVisibilityFileName        = "statusbar-visibility-agent-usage-hud"
+	StatusbarAgentUsageProviderVisibilityFilePrefix = "statusbar-visibility-agent-usage-provider-"
+	StatusbarAgentUsageWindowVisibilityFilePrefix   = "statusbar-visibility-agent-usage-window-"
+	StatusbarProjectVisibilityFileName              = "statusbar-visibility-project"
+	StatusbarWorkingDirectoryVisibilityFileName     = "statusbar-visibility-working-directory"
+	StatusbarGitVisibilityFileName                  = "statusbar-visibility-git"
+	StatusbarClockVisibilityFileName                = "statusbar-visibility-clock"
+	StatusbarSettingsLauncherVisibilityFileName     = "statusbar-visibility-settings-launcher"
 
 	StatusbarVisibilityOn  StatusbarVisibility = "on"
 	StatusbarVisibilityOff StatusbarVisibility = "off"
@@ -58,6 +60,20 @@ func (p Paths) StatusbarNotificationsHUDVisibilityFile() string {
 
 func (p Paths) StatusbarAgentUsageHUDVisibilityFile() string {
 	return filepath.Join(p.ConfigDir, StatusbarAgentUsageHUDVisibilityFileName)
+}
+
+// StatusbarAgentUsageProviderVisibilityFile returns the presentation-only
+// visibility leaf for a canonical usage provider. Callers must pass a provider
+// key declared by the usage HUD capability catalog.
+func (p Paths) StatusbarAgentUsageProviderVisibilityFile(provider string) string {
+	return filepath.Join(p.ConfigDir, StatusbarAgentUsageProviderVisibilityFilePrefix+strings.ToLower(strings.TrimSpace(provider)))
+}
+
+// StatusbarAgentUsageWindowVisibilityFile returns the presentation-only
+// visibility leaf for one canonical provider/window projection.
+func (p Paths) StatusbarAgentUsageWindowVisibilityFile(provider, window string) string {
+	leaf := strings.ToLower(strings.TrimSpace(provider)) + "-" + strings.ToLower(strings.TrimSpace(window))
+	return filepath.Join(p.ConfigDir, StatusbarAgentUsageWindowVisibilityFilePrefix+leaf)
 }
 
 func (p Paths) StatusbarProjectVisibilityFile() string {

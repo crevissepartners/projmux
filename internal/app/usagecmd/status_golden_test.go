@@ -118,7 +118,7 @@ func statusbarGoldenSnapshots(antigravityAge time.Duration) []usage.Snapshot {
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: claude},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: claude},
 		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow},
-		{Model: "antigravity", Window: usage.WindowWeekly, Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow.Add(-antigravityAge)},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow.Add(-antigravityAge)},
 	}
 }
 
@@ -200,7 +200,7 @@ func statusbarInstalledShapeSnapshots(antigravityAge time.Duration) []usage.Snap
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: claude},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: claude},
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 20, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow},
-		{Model: "antigravity", Window: usage.WindowWeekly, Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow.Add(-antigravityAge)},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow.Add(-antigravityAge)},
 	}
 }
 
@@ -476,7 +476,7 @@ func usageSweepFixtures() []usageSweepFixture {
 				{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: cosmetic},
 				{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow},
 				{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow},
-				{Model: "antigravity", Window: usage.WindowWeekly, Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: cosmetic2},
+				{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: cosmetic2},
 			},
 			ageProviders: []string{"Claude", "Antigravity"},
 		},
@@ -487,7 +487,7 @@ func usageSweepFixtures() []usageSweepFixture {
 				{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: cosmetic},
 				{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow},
 				{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow},
-				{Model: "antigravity", Window: usage.WindowWeekly, Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: veryStale},
+				{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: veryStale},
 			},
 			ageProviders: []string{"Claude", "Antigravity"},
 		},

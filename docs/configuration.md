@@ -782,13 +782,24 @@ fallback default when a per-surface file is absent.
 independent global presentation preferences:
 
 - `Notifications HUD > Visible`
-- `Agent Usage HUD`
+- `Agent Usage HUD > Visible`
+- `Agent Usage HUD > Claude|Codex|Antigravity > Visible`
+- each provider's supported HUD windows (`Claude`/`Codex`: `5h`, `Weekly`;
+  `Antigravity`: `Weekly`)
 
 The saved values are `on` or `off` in these files:
 
 ```text
 ~/.config/projmux/statusbar-visibility-notifications-hud
 ~/.config/projmux/statusbar-visibility-agent-usage-hud
+~/.config/projmux/statusbar-visibility-agent-usage-provider-claude
+~/.config/projmux/statusbar-visibility-agent-usage-provider-codex
+~/.config/projmux/statusbar-visibility-agent-usage-provider-antigravity
+~/.config/projmux/statusbar-visibility-agent-usage-window-claude-5h
+~/.config/projmux/statusbar-visibility-agent-usage-window-claude-weekly
+~/.config/projmux/statusbar-visibility-agent-usage-window-codex-5h
+~/.config/projmux/statusbar-visibility-agent-usage-window-codex-weekly
+~/.config/projmux/statusbar-visibility-agent-usage-window-antigravity-weekly
 ```
 
 Missing, empty, and invalid values resolve to the compatibility default `on`;
@@ -797,10 +808,19 @@ marks an invalid saved value as ignored. Saving a toggle regenerates the app
 and standalone tmux output, and Settings source-reloads the generated app config
 when it is running inside tmux.
 
+Parent visibility gates only the effective projection. Turning the overall HUD
+or a provider off does not rewrite its provider/window leaf files; turning the
+parent back on restores the saved child selection. Provider rows follow the
+usage-supported provider catalog. Window rows come only from the explicit HUD
+capability map, so opaque quota buckets never create settings and Antigravity
+never gains a fabricated `5h` row.
+
 Visibility does not enable or disable either producer. Hiding Notifications HUD
 does not change the persistent queue, desktop delivery, or Notification
 Sidebar. Hiding Agent Usage HUD does not change the `agent usage` command,
 Provider snapshot cache, upstream API collection, quota, or refresh policy.
+Provider/window leaves likewise filter only `projmux status usage`; explicit
+`agent usage` table/JSON and the cached statusbar popup remain lossless.
 
 ## Row 1 Segment Visibility
 

@@ -125,6 +125,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsAppearanceLanguage:                     settingsNavigationMeta("Language / Locale", settingsAxisGlobal, settingsOwnerAppearance),
 	settingsAppearanceTheme:                        settingsNavigationMeta("Theme", settingsAxisGlobal, settingsOwnerAppearance),
 	settingsAppearanceStatusBar:                    settingsNavigationMeta("Status Bar", settingsAxisGlobal, settingsOwnerAppearance),
+	settingsAppearanceAgentUsageHUD:                settingsNavigationMeta("Agent Usage HUD", settingsAxisGlobal, settingsOwnerAppearance),
 	settingsAutomationLifecycle:                    settingsNavigationMeta("Projmux session lifecycle", settingsAxisGlobal, settingsOwnerAutomation),
 	settingsAutomationSendNoti:                     settingsNavigationMeta("After notification queued", settingsAxisGlobal, settingsOwnerAutomation),
 	settingsProjectAutomationLifecycle:             settingsNavigationMeta("Session lifecycle", settingsAxisProject, settingsOwnerProjectAutomation),
@@ -143,6 +144,7 @@ var settingsEntryPrefixCatalog = []struct {
 	prefix string
 	meta   settingsEntryMeta
 }{
+	{settingsAppearanceAgentUsageProviderPrefix, settingsNavigationMeta("Agent Usage HUD provider", settingsAxisGlobal, settingsOwnerAppearance)},
 	{settingsActionPrefixAI, settingsActionMeta("Default launch target", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAIEnabledAgent, settingsActionMeta("Enabled providers", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAINotifyDiagnostic, settingsNavigationMeta("Provider Integrations", settingsAxisGlobal, settingsOwnerNotifications)},
@@ -261,6 +263,8 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 	case settingsOwnerAppearance:
 		return value == settingsAppearanceLanguage || value == settingsAppearanceTheme ||
 			value == settingsAppearanceStatusBar ||
+			value == settingsAppearanceAgentUsageHUD ||
+			strings.HasPrefix(value, settingsAppearanceAgentUsageProviderPrefix) ||
 			strings.HasPrefix(value, settingsActionPrefixAIBadgeStyle) ||
 			strings.HasPrefix(value, settingsActionPrefixLocale) ||
 			strings.HasPrefix(value, settingsActionPrefixStatusbar) ||
@@ -390,6 +394,8 @@ const (
 	settingsAppearanceLanguage                     = "appearance:language"
 	settingsAppearanceTheme                        = "appearance:theme"
 	settingsAppearanceStatusBar                    = "appearance:status-bar"
+	settingsAppearanceAgentUsageHUD                = "appearance:status-bar:agent-usage-hud"
+	settingsAppearanceAgentUsageProviderPrefix     = "appearance:status-bar:agent-usage-provider:"
 	settingsAutomationLifecycle                    = "automation:lifecycle"
 	settingsAutomationSendNoti                     = "automation:send-noti"
 	settingsAutomationProjectPolicy                = "automation:project-policy"

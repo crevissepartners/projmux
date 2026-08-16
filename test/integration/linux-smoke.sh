@@ -620,6 +620,59 @@ printf 'on\n' >"$usage_visibility"
 "$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 assert_live_hud_row 2 on on
 
+# Agent Usage HUD provider/window leaves are consumed by the status command at
+# render time, after the enabled-provider collection/cache path. Seed a
+# backoff-guarded cache so this isolated real-tmux smoke is deterministic, then
+# exercise all-on parity, provider-off, weekly-only official shedding, and
+# all-provider-off empty text without changing the live row structure.
+usage_leaf_state="$PROJMUX_SMOKE_WORKDIR/usage-visibility-cache"
+mkdir -p "$usage_leaf_state"
+cat >"$usage_leaf_state/snapshots.json" <<'USAGE_VISIBILITY_JSON'
+{
+  "version": 2,
+  "last_collect": {"claude": "2026-08-16T12:00:00Z"},
+  "backoff": {"claude": {"until": "2099-08-16T13:00:00Z", "consecutive": 2}},
+  "snapshots": [
+    {"model":"claude","window":"5h","pct":42,"resets_at":"2026-08-16T17:00:00Z","updated_at":"2026-08-16T12:00:00Z"},
+    {"model":"claude","window":"weekly","pct":18,"resets_at":"2026-08-23T12:00:00Z","updated_at":"2026-08-16T12:00:00Z"}
+  ]
+}
+USAGE_VISIBILITY_JSON
+printf 'claude\n' >"$XDG_CONFIG_HOME/projmux/ai-enabled-agents"
+claude_provider_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-agent-usage-provider-claude"
+claude_5h_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-agent-usage-window-claude-5h"
+claude_weekly_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-agent-usage-window-claude-weekly"
+
+usage_missing_wide="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 200)"
+usage_missing_narrow="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 40)"
+printf 'on\n' >"$claude_provider_visibility"
+printf 'on\n' >"$claude_5h_visibility"
+printf 'on\n' >"$claude_weekly_visibility"
+usage_on_wide="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 200)"
+usage_on_narrow="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 40)"
+[[ "$usage_missing_wide" == "$usage_on_wide" ]] || { echo "all-on wide usage bytes drifted" >&2; exit 1; }
+[[ "$usage_missing_narrow" == "$usage_on_narrow" ]] || { echo "all-on narrow usage bytes drifted" >&2; exit 1; }
+
+printf 'off\n' >"$claude_provider_visibility"
+[[ -z "$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 200)" ]] || { echo "provider-off usage text was not empty" >&2; exit 1; }
+printf 'on\n' >"$claude_provider_visibility"
+printf 'off\n' >"$claude_weekly_visibility"
+five_only="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 200)"
+[[ "$five_only" == *"5h"* && "$five_only" != *"weekly"* ]] || { echo "5h-only official projection drifted: $five_only" >&2; exit 1; }
+printf 'on\n' >"$claude_weekly_visibility"
+printf 'off\n' >"$claude_5h_visibility"
+weekly_only="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 24)"
+[[ "$weekly_only" == *"weekly"* && "$weekly_only" != *"5h"* ]] || { echo "weekly-only official projection drifted: $weekly_only" >&2; exit 1; }
+printf 'off\n' >"$claude_weekly_visibility"
+[[ -z "$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 200)" ]] || { echo "all-window-off usage text was not empty" >&2; exit 1; }
+
+explicit_usage="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" agent usage --model claude --json)"
+[[ "$explicit_usage" == *'"window": "5h"'* && "$explicit_usage" == *'"window": "weekly"'* ]] || { echo "explicit usage lost hidden windows: $explicit_usage" >&2; exit 1; }
+printf 'claude,codex,antigravity\n' >"$XDG_CONFIG_HOME/projmux/ai-enabled-agents"
+printf 'on\n' >"$claude_provider_visibility"
+printf 'on\n' >"$claude_5h_visibility"
+printf 'on\n' >"$claude_weekly_visibility"
+
 # Row-1 component visibility shares the same production exact-socket apply
 # path. Exercise a representative mixed layout and an empty row, proving
 # ranges/jobs and owned spacing disappear together while the default Settings

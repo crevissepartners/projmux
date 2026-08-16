@@ -1,13 +1,18 @@
 package app
 
 import (
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	corenotify "github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/i18n"
+	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 func TestStatusbarHUDRowFourVisibilityCombinations(t *testing.T) {
@@ -69,6 +74,241 @@ func TestStatusbarHUDRowFourVisibilityCombinations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgentUsageVisibilityParentChildMatrixPreservesSavedLeaves(t *testing.T) {
+	t.Parallel()
+
+	for _, overall := range []config.StatusbarVisibility{config.StatusbarVisibilityOn, config.StatusbarVisibilityOff} {
+		for _, provider := range []config.StatusbarVisibility{config.StatusbarVisibilityOn, config.StatusbarVisibilityOff} {
+			for _, window := range []config.StatusbarVisibility{config.StatusbarVisibilityOn, config.StatusbarVisibilityOff} {
+				name := string(overall) + "/" + string(provider) + "/" + string(window)
+				t.Run(name, func(t *testing.T) {
+					overallState := config.StatusbarVisibilityState{Effective: overall, Saved: string(overall), Source: config.StatusbarVisibilitySourceSaved}
+					providerState := config.StatusbarVisibilityState{Effective: provider, Saved: string(provider), Source: config.StatusbarVisibilitySourceSaved}
+					windowState := config.StatusbarVisibilityState{Effective: window, Saved: string(window), Source: config.StatusbarVisibilitySourceSaved}
+					gotProvider := gatedStatusbarVisibility(providerState, overallState)
+					gotWindow := gatedStatusbarVisibility(windowState, overallState, providerState)
+					wantProvider := provider
+					if overall == config.StatusbarVisibilityOff {
+						wantProvider = config.StatusbarVisibilityOff
+					}
+					wantWindow := window
+					if overall == config.StatusbarVisibilityOff || provider == config.StatusbarVisibilityOff {
+						wantWindow = config.StatusbarVisibilityOff
+					}
+					if gotProvider.Effective != wantProvider || gotWindow.Effective != wantWindow {
+						t.Fatalf("effective provider/window = %s/%s, want %s/%s", gotProvider.Effective, gotWindow.Effective, wantProvider, wantWindow)
+					}
+					if gotProvider.Saved != string(provider) || gotWindow.Saved != string(window) {
+						t.Fatalf("parent gate rewrote saved values: provider=%#v window=%#v", gotProvider, gotWindow)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestAgentUsageSettingsCapabilityOrderRowsAndLocaleProjection(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := settingsNavTestCommand(t, home)
+	rows := cmd.agentUsageHUDEntries()
+	positions := make([]int, 3)
+	for i, provider := range []string{"Claude", "Codex", "Antigravity"} {
+		positions[i] = entryLabelIndex(rows, provider)
+		if positions[i] < 0 {
+			t.Fatalf("missing provider row %s: %#v", provider, rows)
+		}
+	}
+	if !(positions[0] < positions[1] && positions[1] < positions[2]) {
+		t.Fatalf("provider order = %v, want UsageSupported declared order", positions)
+	}
+	if got := cmd.agentUsageProviderEntries("antigravity"); !hasEntryLabelContainingAll(got, "Weekly") || hasEntryLabelContainingAll(got, "5h") {
+		t.Fatalf("Antigravity rows = %#v, want Weekly only", got)
+	}
+	claudeRows := cmd.agentUsageProviderEntries("claude")
+	if !hasEntryLabelContainingAll(claudeRows, "5h", "saved on", "effective on", "default") || !hasEntryLabelContainingAll(claudeRows, "Weekly", "saved on", "effective on", "default") {
+		t.Fatalf("missing leaf defaults = %#v, want on/default", claudeRows)
+	}
+	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, ".config")}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.ConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.StatusbarAgentUsageWindowVisibilityFile("claude", "5h"), []byte("broken\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	claudeRows = cmd.agentUsageProviderEntries("claude")
+	if !hasEntryLabelContainingAll(claudeRows, "5h", "saved on", "effective on", "default", "invalid saved value ignored") {
+		t.Fatalf("invalid leaf projection = %#v", claudeRows)
+	}
+	for _, locale := range []i18n.Locale{i18n.FallbackLocale, i18n.Locale("ko-KR")} {
+		text := agentUsageVisibilityStateText(locale, config.DefaultStatusbarVisibilityState(), config.DefaultStatusbarVisibilityState())
+		invalidState := config.DefaultStatusbarVisibilityState()
+		invalidState.Invalid = "broken"
+		invalidText := agentUsageVisibilityStateText(locale, invalidState, invalidState)
+		overallInfo := settingsLabelInfoLocale(locale, "Current", text, settingsCatalogTextLocale(locale, "ambient status usage projection"))
+		providerInfo := settingsLabelInfoLocale(locale, "Current", text, settingsCatalogTextLocale(locale, "ambient provider usage projection")+" - Claude")
+		if locale == i18n.Locale("ko-KR") {
+			if !strings.Contains(text, "저장됨") || !strings.Contains(text, "적용 중") || !strings.Contains(text, "기본값") || strings.Contains(text, "effective") ||
+				!strings.Contains(invalidText, "잘못된 저장값 무시됨") ||
+				!strings.Contains(overallInfo, "상태바 사용량 표시") || !strings.Contains(providerInfo, "상태바 제공자 사용량 표시 - Claude") {
+				t.Fatalf("Korean state/info text = %q / %q / %q / %q", text, invalidText, overallInfo, providerInfo)
+			}
+		} else if !strings.Contains(text, "saved") || !strings.Contains(text, "effective") || !strings.Contains(text, "default") ||
+			!strings.Contains(invalidText, "invalid saved value ignored") ||
+			!strings.Contains(overallInfo, "ambient status usage projection") || !strings.Contains(providerInfo, "ambient provider usage projection - Claude") {
+			t.Fatalf("English state/info text = %q / %q / %q / %q", text, invalidText, overallInfo, providerInfo)
+		}
+	}
+}
+
+func TestAgentUsageLeafPersistenceLiveApplyAndParentPreservation(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	stateHome := filepath.Join(home, ".local", "state")
+	var calls [][]string
+	cmd := &settingsCommand{
+		homeDir: func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "HOME" {
+				return home
+			}
+			if name == "XDG_CONFIG_HOME" {
+				return configHome
+			}
+			if name == "XDG_STATE_HOME" {
+				return stateHome
+			}
+			if name == "TMUX" {
+				return "isolated-client"
+			}
+			return ""
+		},
+		runCommand: func(name string, args ...string) error {
+			calls = append(calls, append([]string{name}, args...))
+			return nil
+		},
+	}
+	paths, err := config.Homes{HomeDir: home, ConfigHome: configHome, StateHome: stateHome}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	usagePath := filepath.Join(paths.StateDir, "usage", "snapshots.json")
+	if err := os.MkdirAll(filepath.Dir(usagePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	usageSentinel := []byte(`{"snapshots":[{"model":"claude","window":"5h","pct":42}],"last_collect":{"claude":"2026-08-16T12:00:00Z"},"backoff":{"claude":{"until":"2026-08-16T13:00:00Z","consecutive":2}}}`)
+	if err := os.WriteFile(usagePath, usageSentinel, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveAIEnabledAgentsFile(paths.AIEnabledAgentsFile(), []config.AIAgentProvider{config.AIAgentClaude, config.AIAgentCodex}); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2026, 8, 16, 11, 0, 0, 0, time.UTC)
+	for _, path := range []string{usagePath, paths.AIEnabledAgentsFile()} {
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usageBefore := statFileSentinel(t, usagePath)
+	enabledBefore := statFileSentinel(t, paths.AIEnabledAgentsFile())
+	if err := cmd.setAgentUsageVisibility(agentUsageVisibilityLeaf{provider: "claude", window: "weekly"}, config.StatusbarVisibilityOff); err != nil {
+		t.Fatal(err)
+	}
+	generatedBefore, err := os.ReadFile(filepath.Join(paths.ConfigDir, "tmux.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.setAgentUsageVisibility(agentUsageVisibilityLeaf{provider: "claude"}, config.StatusbarVisibilityOff); err != nil {
+		t.Fatal(err)
+	}
+	generatedAfter, err := os.ReadFile(filepath.Join(paths.ConfigDir, "tmux.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(generatedAfter) != string(generatedBefore) {
+		t.Fatal("presentation leaf changed generated tmux bytes instead of the status command's ambient projection")
+	}
+	windowPath := paths.StatusbarAgentUsageWindowVisibilityFile("claude", "weekly")
+	windowState, err := config.LoadStatusbarVisibilityFile(windowPath)
+	if err != nil || windowState.Effective != config.StatusbarVisibilityOff {
+		t.Fatalf("window state = %#v, %v", windowState, err)
+	}
+	info, err := os.Stat(windowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("window leaf mode = %v; want 0600", info.Mode().Perm())
+	}
+	if got := loadAgentUsageVisibilityState(cmd.homeDir, cmd.lookupEnv, agentUsageVisibilityLeaf{provider: "claude", window: "weekly"}); got.Effective != config.StatusbarVisibilityOff || got.Source != config.StatusbarVisibilitySourceSaved {
+		t.Fatalf("child after provider off = %#v, want saved off preserved", got)
+	}
+	if err := cmd.setAgentUsageVisibility(agentUsageVisibilityLeaf{provider: "claude"}, config.StatusbarVisibilityOn); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadAgentUsageVisibilityState(cmd.homeDir, cmd.lookupEnv, agentUsageVisibilityLeaf{provider: "claude", window: "weekly"}); got.Effective != config.StatusbarVisibilityOff || got.Source != config.StatusbarVisibilitySourceSaved {
+		t.Fatalf("child after provider restore = %#v, want saved off restored", got)
+	}
+	if err := cmd.setStatusbarHUDVisibility(statusbarHUDAgentUsage, config.StatusbarVisibilityOff); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.setStatusbarHUDVisibility(statusbarHUDAgentUsage, config.StatusbarVisibilityOn); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadAgentUsageVisibilityState(cmd.homeDir, cmd.lookupEnv, agentUsageVisibilityLeaf{provider: "claude", window: "weekly"}); got.Effective != config.StatusbarVisibilityOff || got.Source != config.StatusbarVisibilitySourceSaved {
+		t.Fatalf("child after overall restore = %#v, want saved off restored", got)
+	}
+	if len(calls) != 5 {
+		t.Fatalf("live source-file calls = %#v, want 5", calls)
+	}
+	if got := statFileSentinel(t, usagePath); got != usageBefore {
+		t.Fatalf("usage cache/backoff sentinel changed:\n before=%#v\n after=%#v", usageBefore, got)
+	}
+	if got := statFileSentinel(t, paths.AIEnabledAgentsFile()); got != enabledBefore {
+		t.Fatalf("provider enablement sentinel changed:\n before=%#v\n after=%#v", enabledBefore, got)
+	}
+}
+
+type fileSentinel struct {
+	Hash    [32]byte
+	Inode   uint64
+	Size    int64
+	Mode    os.FileMode
+	ModTime int64
+}
+
+func statFileSentinel(t *testing.T, path string) fileSentinel {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("%s has no syscall.Stat_t", path)
+	}
+	return fileSentinel{Hash: sha256.Sum256(body), Inode: stat.Ino, Size: info.Size(), Mode: info.Mode().Perm(), ModTime: info.ModTime().UnixNano()}
+}
+
+func entryLabelIndex(entries []intpickercompat.Entry, needle string) int {
+	for i, entry := range entries {
+		if strings.Contains(entry.Label, needle) {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestStatusbarHUDDefaultGeneratedConfigIsByteIdentical(t *testing.T) {
@@ -139,8 +379,12 @@ func TestStatusbarHUDSettingsRowsProjectEffectiveSourceAndOppositeAction(t *test
 	cmd := settingsNavTestCommand(t, home)
 	rows := cmd.statusBarEntries()
 	if !hasEntryLabelContainingAll(rows, "Notifications HUD", "on", "default") ||
-		!hasEntryValue(rows, settingsActionPrefixHUDVisibility+string(statusbarHUDAgentUsage)+":off") {
+		!hasEntryValue(rows, settingsAppearanceAgentUsageHUD) {
 		t.Fatalf("default status bar rows = %#v, want both HUDs on/default with off actions", rows)
+	}
+	usageRows := cmd.agentUsageHUDEntries()
+	if !hasEntryValue(usageRows, settingsActionPrefixHUDVisibility+string(statusbarHUDAgentUsage)+":off") {
+		t.Fatalf("default Agent Usage HUD detail = %#v, want Visible off action", usageRows)
 	}
 
 	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, ".config")}.Paths()
@@ -160,9 +404,13 @@ func TestStatusbarHUDSettingsRowsProjectEffectiveSourceAndOppositeAction(t *test
 	if !hasEntryLabelContainingAll(rows, "Notifications HUD", "on", "default", "invalid saved value ignored") {
 		t.Fatalf("invalid Notifications row = %#v, want on/default fallback with invalid projection", rows)
 	}
-	if !hasEntryLabelContainingAll(rows, "Agent Usage HUD", "off", "saved") ||
-		!hasEntryValue(rows, settingsActionPrefixHUDVisibility+string(statusbarHUDAgentUsage)+":on") {
+	if !hasEntryLabelContainingAll(rows, "Agent Usage HUD", "saved off", "effective off", "saved") ||
+		!hasEntryValue(rows, settingsAppearanceAgentUsageHUD) {
 		t.Fatalf("saved Agent Usage row = %#v, want off/saved with on action", rows)
+	}
+	usageRows = cmd.agentUsageHUDEntries()
+	if !hasEntryValue(usageRows, settingsActionPrefixHUDVisibility+string(statusbarHUDAgentUsage)+":on") {
+		t.Fatalf("saved Agent Usage detail = %#v, want on action", usageRows)
 	}
 	detail := cmd.statusbarDecorationTargetEntries(statusbarDecorationTargetNotify)
 	if !hasEntryValue(detail, settingsActionPrefixHUDVisibility+string(statusbarHUDNotifications)+":off") {

@@ -200,15 +200,29 @@ enabled AI agents, then triggers an opportunistic refresh:
 `MaybeCollect(throttle=30s)` (subject to per-adapter throttle and active
 backoff). Disabled providers are not refreshed just to be hidden. Errors
 are swallowed unless `PROJMUX_USAGE_DEBUG` is set. Then it loads the
-cache, filters to the same enabled-agent scope, and renders. If no AI
+cache, filters to the same enabled-agent scope, applies provider/window
+presentation preferences, and renders. Preference filtering therefore happens
+after collection, throttle/backoff, and cache load. If no AI
 agents are enabled, the status segment emits nothing.
 
 The HUD first derives an ambient projection separate from lossless account
-snapshots. Canonical `5h`/`weekly` rows are eligible for every provider;
-Antigravity's exact `quota/gemini-weekly` identity is projected as `weekly`
+snapshots. The explicit HUD capability map admits Claude/Codex `5h` and
+`weekly`, while Antigravity's exact `quota/gemini-weekly` identity alone is
+projected as `weekly`
 without rewriting the cache. Context, `3p-weekly`, and unknown quota buckets
 do not participate in status width. Claude `limits[]` named/model rows are also
 excluded; only its aggregate official `5h` and `weekly` rows reach the HUD.
+The Settings provider list consumes `aiprovider.UsageSupported()` order, but a
+window toggle exists only when this same projection seam declares it. A future
+provider or an opaque bucket cannot manufacture a window row.
+
+Settings > Appearance > Status Bar > Agent Usage HUD can hide the whole HUD,
+a provider, or one supported window. Parent off states preserve child saved
+values. The filter is ambient-only: `agent usage` table/JSON, explicit model or
+window reads, `CachedState` popup data, provider enablement, refresh/backoff,
+and snapshot bytes are unchanged. After filtering, official/secondary is
+recomputed; a weekly-only provider keeps weekly as its official window through
+the normal width shed order.
 
 As `--max-width` shrinks the segment does not fall to a coarser whole-segment
 tier. It sheds **one optional element at a time** — a cosmetic age indicator
