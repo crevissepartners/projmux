@@ -54,7 +54,17 @@ const (
 // Terminal init adapters and tmux config rendering derive their concrete
 // trigger/action tables from these entries.
 type keyBindingAction struct {
-	ID          string
+	// ID is the runtime identity of the action. Settings navigation routes,
+	// i18n search keys and every in-process lookup key off it, and the v0
+	// keymap schema stored it directly as the `[bindings.<id>]` table name.
+	// It stays a read alias forever: a v0 file on disk still names it.
+	ID string
+	// CanonicalID is the action's `schema_version = 1` spelling — the dotted,
+	// CLI-vocabulary name a v1 keymap writes. It is a file-schema identity,
+	// not a second runtime identity, which is why it lives beside ID instead
+	// of replacing it. See keymapActionManifest for the full old→canonical
+	// table and its dispositions.
+	CanonicalID string
 	Aliases     []string
 	Description string
 	Kind        keyBindingActionKind
@@ -93,6 +103,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 	return []keyBindingAction{
 		{
 			ID:              "ProjectSidebarToggle",
+			CanonicalID:     "project-sidebar.toggle",
 			Description:     "Project sidebar",
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierGuaranteedLaunchDefault,
@@ -118,6 +129,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "NotifySidebarToggle",
+			CanonicalID:    "notification-sidebar.toggle",
 			Description:    "Notify sidebar",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
@@ -141,6 +153,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopupToggle",
+			CanonicalID: "session-picker.toggle",
 			Description: "Existing session popup",
 			Kind:        keyBindingActionTogglePopup,
 			Tier:        keyBindingTierUserConfigurableDirect,
@@ -151,6 +164,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "Resources:Open",
+			CanonicalID: "resource-inspector.open",
 			Description: "Open the read-only Project, Window, and Pane resource inspector",
 			Kind:        keyBindingActionTogglePopup,
 			Tier:        keyBindingTierUserConfigurableDirect,
@@ -161,6 +175,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "RecentWindows:Open",
+			CanonicalID:    "recent-windows.open",
 			Description:    "Recent windows queue across projects; switches to a live window without restoring a historical pane, distinct from last-pane and the existing-session popup.",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
@@ -184,6 +199,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:              "AISplitPickerToggle",
+			CanonicalID:     "agent-pane-launcher.toggle",
 			Description:     "Toggle the popup picker for choosing an AI split mode",
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierUserConfigurableDirect,
@@ -208,6 +224,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "SettingsToggle",
+			CanonicalID:    "settings.toggle",
 			Description:    "Settings",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierGuaranteedLaunchDefault,
@@ -231,6 +248,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:              "AIResumePickerToggle",
+			CanonicalID:     "agent-resume-picker.toggle",
 			Description:     "Toggle the popup picker for resuming AI sessions",
 			Kind:            keyBindingActionTogglePopup,
 			Tier:            keyBindingTierGuaranteedLaunchDefault,
@@ -255,6 +273,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ProjectSwitcherToggle",
+			CanonicalID:    "project-picker.toggle",
 			Description:    "Project switcher popup",
 			Kind:           keyBindingActionTogglePopup,
 			Tier:           keyBindingTierUserConfigurableDirect,
@@ -271,6 +290,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "rename-window",
+			CanonicalID:    "window.rename",
 			Description:    "Rename the current tmux window",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
@@ -287,6 +307,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             paneRenameActionID,
+			CanonicalID:    "pane.rename",
 			Description:    "Set or clear the current tmux pane's user label",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
@@ -300,6 +321,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "ai-split-right",
+			CanonicalID: "agent-pane.launch-default.right",
 			Description: "Open a new AI split to the right",
 			Kind:        keyBindingActionCommand,
 			Tier:        keyBindingTierUserConfigurableDirect,
@@ -316,6 +338,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "ai-split-down",
+			CanonicalID: "agent-pane.launch-default.down",
 			Description: "Open a new AI split below",
 			Kind:        keyBindingActionCommand,
 			Tier:        keyBindingTierUserConfigurableDirect,
@@ -332,6 +355,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-codex-right",
+			CanonicalID:    "agent.create.codex.right",
 			Description:    "Open a Codex split to the right without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
@@ -342,6 +366,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-codex-down",
+			CanonicalID:    "agent.create.codex.down",
 			Description:    "Open a Codex split below without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
@@ -352,6 +377,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-claude-right",
+			CanonicalID:    "agent.create.claude.right",
 			Description:    "Open a Claude split to the right without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
@@ -362,6 +388,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-claude-down",
+			CanonicalID:    "agent.create.claude.down",
 			Description:    "Open a Claude split below without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
@@ -372,6 +399,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-shell-right",
+			CanonicalID:    "pane.create.shell.right",
 			Description:    "Open a shell split to the right without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
@@ -382,6 +410,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-shell-down",
+			CanonicalID:    "pane.create.shell.down",
 			Description:    "Open a shell split below without the picker",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
@@ -392,6 +421,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "current-project-session",
+			CanonicalID: "project.open-for-current-directory",
 			Description: "Jump to current pane project session",
 			Kind:        keyBindingActionCommand,
 			Tier:        keyBindingTierUserConfigurableDirect,
@@ -401,6 +431,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "new-window",
+			CanonicalID:    "window.create",
 			Description:    "New tmux window in the current pane directory",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
@@ -427,6 +458,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			// entirely because its default behaviour already emits the
 			// xterm sequence.
 			ID:             "previous-window",
+			CanonicalID:    "window.focus-previous",
 			Description:    "Previous tmux window",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
@@ -448,6 +480,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			// See `previous-window` above — the same reasoning applies to the
 			// next-window chord (xterm sequence `\x1b[1;4C`).
 			ID:             "next-window",
+			CanonicalID:    "window.focus-next",
 			Description:    "Next tmux window",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
@@ -467,6 +500,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "select-pane-left",
+			CanonicalID:    "pane.focus-left",
 			Description:    "Move focus to the left pane",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
@@ -478,6 +512,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "select-pane-right",
+			CanonicalID:    "pane.focus-right",
 			Description:    "Move focus to the right pane",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
@@ -489,6 +524,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "select-pane-up",
+			CanonicalID:    "pane.focus-up",
 			Description:    "Move focus to the pane above",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
@@ -500,6 +536,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "select-pane-down",
+			CanonicalID:    "pane.focus-down",
 			Description:    "Move focus to the pane below",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierTransportDependent,
@@ -511,6 +548,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "last-pane",
+			CanonicalID:    "pane.focus-last",
 			Description:    "Return to the previously active pane",
 			Kind:           keyBindingActionCommand,
 			Tier:           keyBindingTierUserConfigurableDirect,
@@ -521,6 +559,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "toggle-mouse",
+			CanonicalID: "mouse.toggle",
 			Description: "Toggle tmux mouse mode",
 			Kind:        keyBindingActionCommand,
 			Tier:        keyBindingTierUserConfigurableDirect,
@@ -530,6 +569,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "Sidebar:PinProject",
+			CanonicalID: "project-sidebar.project.pin-toggle",
 			Description: "Pin or unpin the focused project",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -538,6 +578,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "Sidebar:KillSession",
+			CanonicalID: "project-sidebar.runtime.stop",
 			Description: "Kill the focused existing session",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -546,6 +587,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:KillSession",
+			CanonicalID: "session-picker.runtime.stop",
 			Description: "Kill the focused existing session",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -554,6 +596,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:OpenState",
+			CanonicalID: "session-picker.snapshots.open",
 			Description: "Open session state for the focused session",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -562,6 +605,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewWindowPrev",
+			CanonicalID: "session-picker.preview.window-previous",
 			Description: "Preview previous window",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -570,6 +614,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewWindowNext",
+			CanonicalID: "session-picker.preview.window-next",
 			Description: "Preview next window",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -578,6 +623,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewPanePrev",
+			CanonicalID: "session-picker.preview.pane-previous",
 			Description: "Preview previous pane",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -586,6 +632,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewPaneNext",
+			CanonicalID: "session-picker.preview.pane-next",
 			Description: "Preview next pane",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -594,6 +641,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:FocusAndAck",
+			CanonicalID: "notification-sidebar.focus-and-acknowledge",
 			Description: "Focus and acknowledge the selected notification",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -602,6 +650,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:Ack",
+			CanonicalID: "notification-sidebar.acknowledge",
 			Description: "Acknowledge the selected notification",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -610,6 +659,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:AckGroup",
+			CanonicalID: "notification-sidebar.acknowledge-group",
 			Description: "Acknowledge every visible notification in the selected group",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -618,6 +668,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:ClearNonCritical",
+			CanonicalID: "notification-sidebar.clear-non-critical",
 			Description: "Clear non-critical notifications",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -626,6 +677,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:ClearAll",
+			CanonicalID: "notification-sidebar.clear-all",
 			Description: "Clear all notifications",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -634,6 +686,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:ClearGone",
+			CanonicalID: "notification-sidebar.clear-gone",
 			Description: "Clear gone notifications",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -642,6 +695,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "Settings:SwitchTabPrev",
+			CanonicalID: "settings.tab-previous",
 			Description: "Switch Settings tab left",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -650,6 +704,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "Settings:SwitchTabNext",
+			CanonicalID: "settings.tab-next",
 			Description: "Switch Settings tab right",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
@@ -1136,8 +1191,16 @@ func isDigitASCII(r rune) bool {
 	return r >= '0' && r <= '9'
 }
 
+// keyBindingActionAliases lists every keymap table id that resolves to this
+// action, most-canonical first.
+//
+// The v1 canonical id leads because that is what a migrated file names, but the
+// v0 runtime id and any explicit legacy aliases stay in the set: dual-read is
+// the whole point of the versioned schema, and an unmigrated file must keep
+// merging exactly as it did before.
 func keyBindingActionAliases(action keyBindingAction) []string {
-	return uniqueNonEmptyStrings(append([]string{action.ID}, action.Aliases...))
+	ids := []string{action.CanonicalID, action.ID}
+	return uniqueNonEmptyStrings(append(ids, action.Aliases...))
 }
 
 func keyBindingActionIsPopupToggle(action keyBindingAction) bool {

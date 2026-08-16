@@ -5900,10 +5900,15 @@ func TestSettingsHubKeybindingsApplyReportsConfigGenerationFailure(t *testing.T)
 
 	home := t.TempDir()
 	homeCalls := 0
+	// The save resolves home once for the pre-save keymap schema preflight and
+	// once for the durable write; generated-config rendering is the third
+	// resolution. Failing from the third call on is what isolates the config
+	// generation stage, which is the stage this test is about.
+	const homeCallsBeforeConfigGeneration = 2
 	cmd := &settingsCommand{
 		homeDir: func() (string, error) {
 			homeCalls++
-			if homeCalls > 1 {
+			if homeCalls > homeCallsBeforeConfigGeneration {
 				return "", errors.New("home unavailable")
 			}
 			return home, nil

@@ -460,13 +460,47 @@ if [[ "$ma_binding" != *"sessionizer-sidebar"* ]]; then
   echo "expected unrelated current M-a binding to survive apply, got: $ma_binding" >&2
   exit 1
 fi
-cmp "$PROJMUX_SMOKE_WORKDIR/keymap-mp.before" "$keymap_path"
+
+# The first apply against an unversioned (v0) keymap migrates it to
+# schema_version = 1 and leaves one digest-named backup holding the untouched
+# original. The rewrite happens before any generated config is written, and the
+# effective bindings asserted above are what prove it preserved behaviour.
+smoke_assert_keymap_backup_count() {
+  local want="$1"
+  local got
+  got="$(find "$XDG_CONFIG_HOME/projmux" -maxdepth 1 -name 'keymap.toml.pre-v1-*.bak' | wc -l)"
+  if [[ "$got" != "$want" ]]; then
+    echo "expected $want keymap pre-v1 backup(s), got $got" >&2
+    find "$XDG_CONFIG_HOME/projmux" -maxdepth 1 -name 'keymap.toml*' >&2
+    exit 1
+  fi
+}
+smoke_assert_file_contains "$keymap_path" "schema_version = 1"
+smoke_assert_file_contains "$keymap_path" '[bindings."pane.rename"]'
+smoke_assert_file_contains "$keymap_path" '[bindings."project-sidebar.toggle"]'
+smoke_assert_keymap_backup_count 1
+cmp "$PROJMUX_SMOKE_WORKDIR/keymap-mp.before" \
+  "$(find "$XDG_CONFIG_HOME/projmux" -maxdepth 1 -name 'keymap.toml.pre-v1-*.bak')"
+cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-mp.migrated"
 cp "$XDG_CONFIG_HOME/projmux/tmux.conf" "$PROJMUX_SMOKE_WORKDIR/tmux-mp.first"
+
+# Rendering is a read: it reports the pending migration on stderr when there is
+# one and never touches the keymap.
+render_err="$PROJMUX_SMOKE_WORKDIR/config-render-app.err"
+"$bin" config render app --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/config-render-app.out" 2>"$render_err"
+cmp "$PROJMUX_SMOKE_WORKDIR/keymap-mp.migrated" "$keymap_path"
+smoke_assert_keymap_backup_count 1
+if [[ -s "$render_err" ]] && ! grep -q "keymap migration" "$render_err"; then
+  echo "unexpected config render stderr: $(cat "$render_err")" >&2
+  exit 1
+fi
 
 repeat_apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
 smoke_assert_output_contains "$repeat_apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
 cmp "$PROJMUX_SMOKE_WORKDIR/tmux-mp.first" "$XDG_CONFIG_HOME/projmux/tmux.conf"
-cmp "$PROJMUX_SMOKE_WORKDIR/keymap-mp.before" "$keymap_path"
+# Repeat apply on an already-current keymap writes no bytes and adds no backup.
+cmp "$PROJMUX_SMOKE_WORKDIR/keymap-mp.migrated" "$keymap_path"
+smoke_assert_keymap_backup_count 1
 if tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t >/dev/null 2>&1; then
   echo "repeated apply restored retired C-t binding" >&2
   exit 1
@@ -477,6 +511,8 @@ fi
 # the stale pane-label body.
 install -m 0644 "$smoke_root/test/fixtures/keymaps/stale-pane-label-ct-reassigned.toml" "$keymap_path"
 cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before"
+# Re-seeding a v0 file means the next apply migrates again, against a different
+# original, so this one earns its own backup.
 reassign_apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
 smoke_assert_output_contains "$reassign_apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
 ct_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t)"
@@ -492,12 +528,16 @@ if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-F12)" != *"unr
   echo "expected unrelated live binding to survive C-t reassignment apply" >&2
   exit 1
 fi
-cmp "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before" "$keymap_path"
+smoke_assert_file_contains "$keymap_path" "schema_version = 1"
+smoke_assert_file_contains "$keymap_path" '[bindings."window.create"]'
+smoke_assert_keymap_backup_count 2
+cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.migrated"
 cp "$XDG_CONFIG_HOME/projmux/tmux.conf" "$PROJMUX_SMOKE_WORKDIR/tmux-ct-reassigned.first"
 "$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
   >"$PROJMUX_SMOKE_WORKDIR/reassign-repeat-apply.out"
 cmp "$PROJMUX_SMOKE_WORKDIR/tmux-ct-reassigned.first" "$XDG_CONFIG_HOME/projmux/tmux.conf"
-cmp "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before" "$keymap_path"
+cmp "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.migrated" "$keymap_path"
+smoke_assert_keymap_backup_count 2
 ct_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t)"
 if [[ "$ct_binding" != *"new-window"* || "$ct_binding" == *"pane label:"* ]]; then
   echo "repeated reassignment apply changed C-t ownership: $ct_binding" >&2

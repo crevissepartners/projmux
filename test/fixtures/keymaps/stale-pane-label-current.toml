@@ -1,4 +1,6 @@
-# apply must preserve these bytes, including comments and spacing
+# unversioned (v0) file; the first apply migrates it to schema_version = 1 and
+# keeps these bytes in a pre-v1 backup. Hand-written comments do not survive the
+# rewrite -- the writer regenerates the file from the parsed bindings.
 [bindings.rename-pane-label]
 keys = ["M-p"]
 

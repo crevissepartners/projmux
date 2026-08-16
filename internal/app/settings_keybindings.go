@@ -1899,13 +1899,72 @@ func (c *settingsCommand) keymapStore() keymapStore {
 }
 
 func (c *settingsCommand) saveKeymapKeysAndApply(actionID string, keys []string, stdout io.Writer) error {
-	path, err := saveKeymapKeys(c.keymapStore(), actionID, keys)
-	return c.finishKeymapApply(path, err, stdout)
+	schema, err := c.migrateKeymapBeforeSave(stdout)
+	if err != nil {
+		return err
+	}
+	path, saveErr := saveKeymapKeys(c.keymapStore(), actionID, keys)
+	return c.finishKeymapApply(schema, path, saveErr, stdout)
 }
 
 func (c *settingsCommand) resetKeymapKeysAndApply(actionID string, stdout io.Writer) error {
-	path, err := resetKeymapKeys(c.keymapStore(), actionID)
-	return c.finishKeymapApply(path, err, stdout)
+	schema, err := c.migrateKeymapBeforeSave(stdout)
+	if err != nil {
+		return err
+	}
+	path, resetErr := resetKeymapKeys(c.keymapStore(), actionID)
+	return c.finishKeymapApply(schema, path, resetErr, stdout)
+}
+
+// migrateKeymapBeforeSave brings the keymap to the current schema before a
+// Settings write touches it, and returns the Schema stage to report.
+//
+// This is the lazy-convergence leg of the migration contract. A user who
+// installed by unpacking a tarball over the old binary never ran an updater, so
+// the first Settings key save is where their v0 file meets the new schema. It
+// runs before the save rather than after so that the save writes canonical table
+// ids directly instead of adding a v0 table that the next migration would have
+// to rename.
+//
+// A *preflight* failure is deliberately not fatal here and returns a nil error.
+// The preflight fails on exactly the conditions the save is about to fail on
+// anyway — an unreadable home, an unparseable keymap, a chord conflict — and the
+// pre-existing Saved-stage diagnostic names those better than a schema-stage one
+// would. Only a failure of the migration itself (an irreconcilable table pair, a
+// backup that could not be created, a verification that did not hold) abandons
+// the save, because those are the ones where continuing would write into a file
+// whose shape is no longer known.
+func (c *settingsCommand) migrateKeymapBeforeSave(stdout io.Writer) (keymapApplyStage, error) {
+	store := c.keymapStore()
+	plan, err := planKeymapMigration(store)
+	if err != nil {
+		return keymapApplyStage{Status: keymapApplySkipped, Detail: "keymap could not be read"}, nil
+	}
+	result, err := applyKeymapMigration(store, plan)
+	if err != nil {
+		report := keymapApplyReport{
+			Migrated: keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("keymap schema", err)},
+			Saved:    keymapApplyStage{Status: keymapApplySkipped, Detail: "keymap schema was not migrated"},
+			Prepared: keymapApplyStage{Status: keymapApplySkipped, Detail: "keymap schema was not migrated"},
+			Live:     keymapApplyStage{Status: keymapApplySkipped, Detail: "keymap schema was not migrated"},
+		}
+		_ = writeKeymapApplyReport(stdout, report)
+		return report.Migrated, fmt.Errorf("migrate keymap schema: %w", err)
+	}
+	return keymapSchemaStage(result), nil
+}
+
+// keymapSchemaStage describes the schema the keymap carries after a migration.
+//
+// An already-current file reports ok without claiming a migration happened;
+// only a run that actually rewrote bytes names the backup it left behind.
+func keymapSchemaStage(result keymapMigrationResult) keymapApplyStage {
+	detail := fmt.Sprintf("schema_version %d", keymapSchemaVersion)
+	if result.Migrated {
+		detail = fmt.Sprintf("migrated schema_version %d -> %d, backup: %s",
+			result.Plan.FromVersion, keymapSchemaVersion, result.BackupPath)
+	}
+	return keymapApplyStage{Status: keymapApplyOK, Detail: detail}
 }
 
 func (c *settingsCommand) removeKeymapKeyAndApply(actionID, chord string, stdout io.Writer) error {
@@ -1996,8 +2055,9 @@ func keymapOverrideForAction(keymap keymapFile, action keyBindingAction) (keymap
 	return keymapOverride{}, false
 }
 
-func (c *settingsCommand) finishKeymapApply(path string, err error, stdout io.Writer) error {
+func (c *settingsCommand) finishKeymapApply(schema keymapApplyStage, path string, err error, stdout io.Writer) error {
 	report := keymapApplyReport{
+		Migrated: schema,
 		Saved:    keymapApplyStage{Status: keymapApplyOK},
 		Prepared: keymapApplyStage{Status: keymapApplySkipped, Detail: "waiting for saved keybinding"},
 		Live:     keymapApplyStage{Status: keymapApplySkipped, Detail: "waiting for prepared config"},
@@ -2071,6 +2131,12 @@ type keymapApplyStage struct {
 }
 
 type keymapApplyReport struct {
+	// Migrated is the keymap schema stage. It leads because a v0 file must
+	// reach v1 before a save writes into it, and because a migration failure
+	// has to be reportable as its own stage: "the schema did not move, so
+	// nothing else did either" is a different problem from a save that failed
+	// on its own terms.
+	Migrated keymapApplyStage
 	Saved    keymapApplyStage
 	Prepared keymapApplyStage
 	Live     keymapApplyStage
@@ -2092,6 +2158,7 @@ func writeKeymapApplyReport(w io.Writer, report keymapApplyReport) error {
 			return err
 		}
 		for _, line := range []string{
+			keymapApplyLine("Schema", report.Migrated, false),
 			keymapApplyLine("Saved", report.Saved, false),
 			keymapApplyLine("Prepared", report.Prepared, false),
 			keymapApplyLine("Running session", report.Live, false),
@@ -2107,6 +2174,7 @@ func writeKeymapApplyReport(w io.Writer, report keymapApplyReport) error {
 		return err
 	}
 	for _, line := range []string{
+		keymapApplyLine("Schema", report.Migrated, true),
 		keymapApplyLine("Saved", report.Saved, true),
 		keymapApplyLine("Prepared", report.Prepared, true),
 		keymapApplyLine("Running session", report.Live, true),
@@ -2116,6 +2184,9 @@ func writeKeymapApplyReport(w io.Writer, report keymapApplyReport) error {
 		}
 	}
 	switch {
+	case report.Migrated.Status == keymapApplyFailed:
+		_, err := fmt.Fprintln(w, "Recovery: resolve the keymap schema problem, then try the Settings change again.")
+		return err
 	case report.Saved.Status == keymapApplyFailed:
 		_, err := fmt.Fprintln(w, "Recovery: fix the keymap.toml problem, then try the Settings change again.")
 		return err

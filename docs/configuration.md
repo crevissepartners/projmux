@@ -125,16 +125,18 @@ absent, generated tmux config stays on the built-in defaults.
 Supported schema:
 
 ```toml
-[bindings.ProjectSidebarToggle]
+schema_version = 1
+
+[bindings."project-sidebar.toggle"]
 keys = ["M-1", "M-a"]
 
-[bindings.new-window]
+[bindings."window.create"]
 keys = ["C-t"]
 
-[bindings."Sidebar:PinProject"]
+[bindings."project-sidebar.project.pin-toggle"]
 keys = ["M-p", "p"]
 
-[bindings."Resources:Open"]
+[bindings."resource-inspector.open"]
 keys = ["M-u"]
 ```
 
@@ -144,6 +146,19 @@ Each table is `[bindings.<action-id>]`. Supported keys are:
 | --- | --- |
 | `keys` | A list of no-prefix tmux plain chords such as `M-a`, `C-t`, or `M-S-Left`. |
 | `plain` | Legacy single-primary replacement. Still read, but not written by Settings. |
+
+The root `schema_version` marker is the file's own version. A file without one
+is v0 and uses the runtime action ids (`ProjectSidebarToggle`, `new-window`,
+`Sidebar:PinProject`); `schema_version = 1` uses canonical dotted ids. Both read
+— the v0 spelling of every action is a permanent read alias — and the migration
+that rewrites v0 to v1 runs at `projmux config apply` or at the first Settings
+key save. [docs/keybindings.md](keybindings.md#schema-versions) has the full
+table, the upgrade ordering and the downgrade procedure.
+
+This marker is a separate version domain from the CLI resource registry's
+`apiVersion: projmux.io/v1alpha1` / camelCase `schemaVersion: 1` envelope. The
+two have separate markers, separate backups and separate rollbacks; neither one
+failing affects the other.
 
 Legacy `prefix = ...` entries still parse during migration so existing files
 do not break. Settings preserves existing prefix entries when rewriting the
@@ -160,20 +175,21 @@ Use an empty `keys` list to disable direct plain keys for the action when
 editing the file by hand:
 
 ```toml
-[bindings.ProjectSidebarToggle]
+[bindings."project-sidebar.toggle"]
 keys = []
 ```
 
 In Settings, reset removes the saved override and returns to the built-in
-default. Legacy popup IDs such as
-`sessionizer-sidebar` still read, but new writes use canonical toggle names
-such as `ProjectSidebarToggle`, `NotifySidebarToggle`, `SessionPopupToggle`,
-`AISplitPickerToggle`, `SettingsToggle`, and `ProjectSwitcherToggle`. Internal
-popup commands use `Surface:Action` IDs and have surface-local conflict
-domains and remain visible in Settings when catalogued.
+default. Popup *mode* names such as `sessionizer-sidebar` are not action ids and
+resolve to nothing; a migration preserves such a table and reports it rather
+than remapping it. Internal picker commands keep surface-local conflict domains
+under their canonical ids (`session-picker.*`, `notification-sidebar.*`,
+`project-sidebar.*`, `settings.*`) and remain visible in Settings when
+catalogued.
 
-`Resources:Open` is a user-configurable direct popup action with no built-in
-shortcut. Every configured alias renders the canonical client-scoped body
+`resource-inspector.open` (v0 `Resources:Open`) is a user-configurable direct
+popup action with no built-in shortcut. Every configured alias renders the
+canonical client-scoped body
 `projmux internal tmux popup-toggle --client #{client_tty} resource-inspector`; pressing
 the same alias again closes only that client's popup. It remains available on
 Linux/tmux even when the Labs live-resource status segment is off.
@@ -182,9 +198,11 @@ The Settings writer is deterministic and rewrites the supported saved subset
 only. If the existing file has parse errors or unknown action IDs, Settings
 shows the keymap error row and refuses to overwrite it until the file is fixed.
 
-The file currently affects generated tmux config from `projmux tmux
-print-config`, `projmux tmux install`, `projmux tmux print-app-config`,
-`projmux tmux install-app`, and `projmux shell`. Terminal remediation adapters such as
+The file currently affects generated tmux config from `projmux config render
+standalone`, `projmux config render app`, `projmux config apply`, the hidden
+`projmux tmux install` / `install-app` installer plumbing, and `projmux shell`.
+The render routes never write the keymap; `projmux config apply` migrates it
+first and only applies once that succeeds. Terminal remediation adapters such as
 Ghostty and Windows Terminal install built-in plain-byte mappings where needed;
 they do not read `keymap.toml` or copy saved keys into terminal configs.
 Changing terminal-layer mappings still requires rerunning `projmux setup

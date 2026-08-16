@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -21,8 +22,28 @@ type keymapOverride struct {
 }
 
 type keymapFile struct {
-	Bindings map[string]keymapOverride
+	// SchemaVersion is the root `schema_version` marker. A file that has no
+	// marker is v0 — the only shape projmux wrote before this schema existed —
+	// and decodes as 0 rather than as "assume current", so the migrator can
+	// tell an unversioned file apart from a migrated one.
+	SchemaVersion int
+	Bindings      map[string]keymapOverride
 }
+
+// keymapSchemaVersion is the keymap TOML schema this binary writes.
+//
+// This marker is its own version domain. It is deliberately *not* shared with
+// the CLI resource registry's `apiVersion: projmux.io/v1alpha1` /
+// `schemaVersion: 1` envelope: the two have separate markers, separate backups,
+// separate migrators and separate rollback paths, so one can fail and be
+// recovered without touching the other.
+const (
+	keymapSchemaVersionV0 = 0
+	keymapSchemaVersionV1 = 1
+	keymapSchemaVersion   = keymapSchemaVersionV1
+)
+
+const keymapSchemaVersionKey = "schema_version"
 
 type keymapLoader struct {
 	homeDir   func() (string, error)
@@ -110,7 +131,7 @@ func saveKeymapOverride(store keymapStore, actionID, field string, value *string
 	if !ok {
 		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	actionID = action.ID
+	actionID = keymapBindingKeyForAction(current, action)
 
 	override := current.Bindings[actionID]
 	if current.Bindings == nil {
@@ -195,7 +216,7 @@ func resetKeymapKeys(store keymapStore, actionID string) (string, error) {
 	if !ok {
 		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	actionID = action.ID
+	actionID = keymapBindingKeyForAction(current, action)
 
 	override := current.Bindings[actionID]
 	if current.Bindings == nil {
@@ -235,18 +256,28 @@ func keyBindingActionByID(actions []keyBindingAction, id string) (keyBindingActi
 }
 
 func writeKeymapFile(path string, keymap keymapFile, writeFile func(string, []byte, os.FileMode) error) error {
+	return writeKeymapBytes(path, []byte(renderKeymapFile(keymap)), writeFile)
+}
+
+// writeKeymapBytes is the one durable keymap write. The Settings writer, the
+// schema migrator and the migration rollback all go through it, so they share a
+// single directory-creation, injection-seam and atomic-replacement policy.
+func writeKeymapBytes(path string, body []byte, writeFile func(string, []byte, os.FileMode) error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create keymap directory: %w", err)
 	}
-	body := []byte(renderKeymapFile(keymap))
 	if writeFile != nil {
-		return writeFile(path, body, 0o644)
+		return writeFile(path, body, defaultKeymapFileMode)
 	}
 	return atomicWriteKeymapFile(path, body)
 }
 
 func atomicWriteKeymapFile(path string, body []byte) error {
-	dir := filepath.Dir(path)
+	target, mode, err := resolveKeymapWriteTarget(path)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(target)
 	tmp, err := os.CreateTemp(dir, config.KeymapFileName+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create keymap temp file: %w", err)
@@ -263,13 +294,52 @@ func atomicWriteKeymapFile(path string, body []byte) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close keymap temp file: %w", err)
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
+	if err := os.Chmod(tmpName, mode); err != nil {
 		return fmt.Errorf("chmod keymap temp file: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := os.Rename(tmpName, target); err != nil {
 		return fmt.Errorf("rename keymap temp file: %w", err)
 	}
 	return nil
+}
+
+// defaultKeymapFileMode is the mode a keymap projmux creates gets. An existing
+// file keeps whatever mode it already had.
+const defaultKeymapFileMode os.FileMode = 0o644
+
+// resolveKeymapWriteTarget returns the path an atomic replacement must rename
+// onto, plus the mode the replacement must carry.
+//
+// Renaming onto a symlink replaces the *link* with a regular file, which
+// silently detaches a keymap someone deliberately pointed at a dotfiles
+// checkout. So a symlinked keymap is resolved first and the replacement lands
+// on the real file. Only the supported shape is accepted — a symlink chain that
+// resolves to a regular file. Anything else (a directory, a device, a dangling
+// link) is refused rather than clobbered.
+func resolveKeymapWriteTarget(path string) (string, os.FileMode, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return path, defaultKeymapFileMode, nil
+		}
+		return "", 0, fmt.Errorf("inspect keymap %s: %w", path, err)
+	}
+	target := path
+	if info.Mode()&os.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return "", 0, fmt.Errorf("resolve keymap symlink %s: %w", path, err)
+		}
+		target = resolved
+		info, err = os.Lstat(target)
+		if err != nil {
+			return "", 0, fmt.Errorf("inspect keymap symlink target %s: %w", target, err)
+		}
+	}
+	if !info.Mode().IsRegular() {
+		return "", 0, fmt.Errorf("keymap %s is not a regular file", target)
+	}
+	return target, info.Mode().Perm(), nil
 }
 
 func renderKeymapFile(keymap keymapFile) string {
@@ -284,6 +354,12 @@ func renderKeymapFile(keymap keymapFile) string {
 
 	var b strings.Builder
 	b.WriteString("# Generated by projmux Settings. Edit manually only with supported [bindings.<action-id>] keys arrays.\n")
+	if keymap.SchemaVersion >= keymapSchemaVersionV1 {
+		b.WriteString(keymapSchemaVersionKey)
+		b.WriteString(" = ")
+		b.WriteString(strconv.Itoa(keymap.SchemaVersion))
+		b.WriteString("\n")
+	}
 	for i, id := range ids {
 		if i > 0 {
 			b.WriteString("\n")
@@ -371,6 +447,7 @@ func keymapPath(homeDir func() (string, error), lookupEnv func(string) string) (
 func parseKeymapFile(path, raw string) (keymapFile, error) {
 	out := keymapFile{Bindings: map[string]keymapOverride{}}
 	currentID := ""
+	schemaVersionLine := 0
 	for lineNo, original := range strings.Split(raw, "\n") {
 		line := strings.TrimSpace(stripKeymapComment(original))
 		if line == "" {
@@ -386,8 +463,9 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 				return out, keymapParseError(path, lineNo+1, "unsupported table %q; use [bindings.<action-id>]", table)
 			}
 			id := strings.TrimSpace(strings.TrimPrefix(table, prefix))
+			quoted := len(id) >= 2 && strings.HasPrefix(id, `"`) && strings.HasSuffix(id, `"`)
 			id = strings.Trim(id, `"`)
-			if !validActionID(id) {
+			if !validActionID(id, quoted) {
 				return out, keymapParseError(path, lineNo+1, "invalid action id %q", id)
 			}
 			if id == retiredPaneRenameActionID {
@@ -406,14 +484,27 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 			}
 			continue
 		}
-		if currentID == "" {
-			return out, keymapParseError(path, lineNo+1, "key/value entry must appear under [bindings.<action-id>]")
-		}
 		key, valueText, ok := strings.Cut(line, "=")
 		if !ok {
 			return out, keymapParseError(path, lineNo+1, "expected key = \"value\"")
 		}
 		key = strings.TrimSpace(key)
+		if currentID == "" {
+			if key != keymapSchemaVersionKey {
+				return out, keymapParseError(path, lineNo+1, "key/value entry must appear under [bindings.<action-id>]")
+			}
+			if schemaVersionLine > 0 {
+				return out, keymapParseError(path, lineNo+1,
+					"duplicate %q entry; first set on line %d", keymapSchemaVersionKey, schemaVersionLine)
+			}
+			version, err := parseKeymapSchemaVersion(strings.TrimSpace(valueText))
+			if err != nil {
+				return out, keymapParseError(path, lineNo+1, "%s: %v", keymapSchemaVersionKey, err)
+			}
+			out.SchemaVersion = version
+			schemaVersionLine = lineNo + 1
+			continue
+		}
 		override := out.Bindings[currentID]
 		if override.lineByKey == nil {
 			override.lineByKey = map[string]int{}
@@ -484,6 +575,26 @@ func stripKeymapComment(line string) string {
 		}
 	}
 	return line
+}
+
+// parseKeymapSchemaVersion reads the root `schema_version` marker.
+//
+// A version newer than this binary writes fails closed rather than being read
+// as best-effort: a forward file may name actions or fields this binary has no
+// disposition for, and merging it would silently drop them on the next write.
+func parseKeymapSchemaVersion(text string) (int, error) {
+	version, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil {
+		return 0, fmt.Errorf("value must be an integer")
+	}
+	if version < keymapSchemaVersionV1 {
+		return 0, fmt.Errorf("value must be at least %d; omit the marker for an unversioned file", keymapSchemaVersionV1)
+	}
+	if version > keymapSchemaVersion {
+		return 0, fmt.Errorf("schema version %d is newer than the supported version %d; upgrade projmux to read this keymap",
+			version, keymapSchemaVersion)
+	}
+	return version, nil
 }
 
 func parseKeymapString(text string) (string, error) {
@@ -725,8 +836,18 @@ func validateKeymapConflicts(actions []keyBindingAction) error {
 	return nil
 }
 
-func validActionID(id string) bool {
-	if id == "" || strings.Contains(id, ".") || strings.ContainsAny(id, " \t\r\n\"") {
+// validActionID reports whether a `[bindings.<id>]` table names a usable action.
+//
+// A dot is only legal in a quoted id. Unquoted, `[bindings.window.create]` is a
+// nested TOML table rather than a key named `window.create`, and silently
+// accepting it would make the v1 canonical ids look writable in a spelling this
+// parser and a real TOML parser would disagree about. The v1 writer always
+// quotes a dotted id, so the strict reading costs nothing.
+func validActionID(id string, quoted bool) bool {
+	if id == "" || strings.ContainsAny(id, " \t\r\n\"") {
+		return false
+	}
+	if strings.Contains(id, ".") && !quoted {
 		return false
 	}
 	return true

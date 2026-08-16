@@ -188,6 +188,9 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 				return err
 			}
 		}
+		if _, err := fmt.Fprintln(stdout, keymapMigrationStagePreviewLine("the updated binary")); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -207,6 +210,39 @@ type updateApplyCommand struct {
 	Args []string
 }
 
+// postUpdateApplyArgs is the argv every installer path hands the *new* binary
+// once it is in place.
+//
+// The new binary always runs, even under `--no-apply`. `--no-apply` means "do
+// not disturb my running tmux server", and it is honoured by suppressing the
+// reload rather than by skipping the step: the keymap schema migration lives
+// behind this call, and an installer that skipped it would leave the user on a
+// v0 keymap under a binary that writes v1 — exactly the split state the
+// versioned schema exists to prevent.
+//
+// It also has to be the new binary that runs. The old one has no idea what the
+// new canonical ids are, so only the freshly installed binary can compute the
+// real rename table.
+func postUpdateApplyArgs(noApply bool) []string {
+	args := []string{"tmux", "apply"}
+	if noApply {
+		args = append(args, "--no-reload")
+	}
+	return args
+}
+
+// keymapMigrationStagePreviewLine describes the migration step for a dry run.
+//
+// It names the stage and stops there. The exact old→canonical rename table is
+// owned by the candidate binary, which is not installed yet and may not even be
+// downloaded, so promising a diff here would be promising something this
+// process cannot know.
+func keymapMigrationStagePreviewLine(target string) string {
+	return fmt.Sprintf(
+		"would migrate: keymap schema via %s (the installed binary computes the exact action-id table; this preview does not)",
+		target)
+}
+
 func (c updateApplyCommand) String() string {
 	parts := append([]string{c.Name}, c.Args...)
 	return strings.Join(parts, " ")
@@ -221,9 +257,7 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 		// pulls the newest published release and re-resolves the per-platform
 		// optionalDependency, which is what "update" must actually do.
 		commands := []updateApplyCommand{{Name: "npm", Args: []string{"install", "-g", "projmux@latest"}}}
-		if !noApply {
-			commands = append(commands, updateApplyCommand{Name: "projmux", Args: []string{"tmux", "apply"}})
-		}
+		commands = append(commands, updateApplyCommand{Name: "projmux", Args: postUpdateApplyArgs(noApply)})
 		return commands, nil
 	case "go":
 		exe, err := c.currentExecutable()
@@ -260,10 +294,12 @@ func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writ
 	if _, err := fmt.Fprintf(stdout, "would replace: %s (atomic via temp file)\n", target); err != nil {
 		return err
 	}
-	if !noApply {
-		if _, err := fmt.Fprintf(stdout, "would run: %s tmux apply\n", target); err != nil {
-			return err
-		}
+	if _, err := fmt.Fprintf(stdout, "would run: %s %s\n",
+		target, strings.Join(postUpdateApplyArgs(noApply), " ")); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(stdout, keymapMigrationStagePreviewLine(target)); err != nil {
+		return err
 	}
 	return nil
 }
@@ -316,14 +352,16 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 	}
 	cleanup = false
 
+	applyArgs := postUpdateApplyArgs(noApply)
 	if noApply {
-		return nil
-	}
-	if _, err := fmt.Fprintln(stdout, ">> applying live config..."); err != nil {
+		if _, err := fmt.Fprintln(stdout, ">> migrating config without reloading the live server..."); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintln(stdout, ">> applying live config..."); err != nil {
 		return err
 	}
-	if err := c.externalRunner()(target, []string{"tmux", "apply"}, stdout, stderr); err != nil {
-		return fmt.Errorf("apply live config via %s tmux apply: %w", target, err)
+	if err := c.externalRunner()(target, applyArgs, stdout, stderr); err != nil {
+		return fmt.Errorf("apply live config via %s %s: %w", target, strings.Join(applyArgs, " "), err)
 	}
 	return nil
 }
