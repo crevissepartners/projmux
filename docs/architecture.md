@@ -517,6 +517,39 @@ Binding reapply and adoption:
   step, or that step would stamp `MissingRuntime` on a Window this same pass
   just reattached.
 
+Managed runtime binding convergence:
+
+- Binding repair has two explicit mutation boundaries. A normal
+  `projmux tmux apply --socket <name>` first completes config preflight and a
+  successful `source-file`, then runs the existing registry reconciler against
+  that same exact `tmux -L <name>` server. The app-generated config also owns
+  synchronous `after-new-window` and `after-split-window` hooks. Each hook
+  expands tmux's absolute `#{socket_path}` and passes it to hidden internal
+  plumbing that routes every reconciler read and mirror write through
+  `tmux -S <absolute-path>`. Neither path falls back to the default socket or
+  inherited `$TMUX`.
+- The lifecycle hooks are synchronous so a newly bindable Window or Pane has a
+  registry binding before the creating tmux command returns and before the next
+  implicit read can run. Mirror writes use `set-option` and `rename-window`, not
+  creation commands, so they cannot recursively fire either creation hook.
+- `tmux apply --no-reload` stops before any live-server query, and config or
+  keymap preflight failure does the same. A server on a second socket is never
+  inventoried or mutated. `get`, `describe`, and implicit active-target
+  resolution remain read-only and never invoke convergence or open a registry
+  transaction.
+- The existing `BindingMatcher`, `registryReconciler`, and metadata `Mirror`
+  remain the only matcher, orchestrator, and tmux uid writer. Missing bindings
+  take the existing complete mirror path; ambiguous and foreign objects keep
+  the existing refusal rules. A resource already carrying its exact registry
+  uid skips the mirror, and the convergent store suppresses an atomic registry
+  replace when normalization finds no semantic change. Repeating apply or the
+  lifecycle boundary therefore issues no `set-option`/`rename-window` writes
+  and performs no registry byte write.
+- This boundary adds no public command, option, environment variable, or
+  registry schema. It does not add persistent Project scope, matching by name,
+  cwd, or a new ordinal heuristic, uid merge/reassignment, pruning, or forced
+  adoption. The Project scope remains derived from the active binding on read.
+
 Agent runtime linkage:
 
 - Once a live tmux pane has settled on a registry Pane, reconcile decides which

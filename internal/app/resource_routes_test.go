@@ -206,21 +206,40 @@ func (s *fakeResourceStore) mutator() coremetadata.Mutator {
 }
 
 func (s *fakeResourceStore) store() *resourceStore {
+	update := func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		s.transactions++
+		working := s.registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, err
+		}
+		working = working.Normalize()
+		if err := working.Validate(); err != nil {
+			return coremetadata.Registry{}, err
+		}
+		s.registry = working
+		s.writes++
+		return working, nil
+	}
 	return &resourceStore{
-		load: func() (coremetadata.Registry, error) { return s.registry.Clone(), nil },
-		update: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		load:   func() (coremetadata.Registry, error) { return s.registry.Clone(), nil },
+		update: update,
+		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
 			s.transactions++
+			before := s.registry.Clone().Normalize()
 			working := s.registry.Clone()
 			if err := fn(&working); err != nil {
-				return coremetadata.Registry{}, err
+				return coremetadata.Registry{}, false, err
 			}
 			working = working.Normalize()
 			if err := working.Validate(); err != nil {
-				return coremetadata.Registry{}, err
+				return coremetadata.Registry{}, false, err
+			}
+			if reflect.DeepEqual(before, working) {
+				return working, false, nil
 			}
 			s.registry = working
 			s.writes++
-			return working, nil
+			return working, true, nil
 		},
 		mutator: s.mutator,
 	}

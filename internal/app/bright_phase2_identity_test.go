@@ -47,35 +47,35 @@ func appLightThemeConfig() theme.ThemeConfig {
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
 		"standalone": "cb65d5625ae758c955d4a5ac340dd9826c234918d4d5c7952d81c2a1b566b2bd",
-		"app":        "7e00150037f870a6292c234477e373cbf0fdde9b062d21f0dc1cd43b77cf9f35",
+		"app":        "3faaaa144f988c3971295363f5cff8d15f37f3f04875ff6a0c7a2ee2ddee2925",
 	},
 	"projmux": {
 		"standalone": "9bcefa26e62069f17c100ea2d3aeafb16e030ade79ce727bb2c1d911ff6c8f57",
-		"app":        "32773694c1e351166c5ee91aacf086790ec6621a2b4cea47ddb064e1988a470e",
+		"app":        "b37d60984c3866dbede771085f2e9a43716ee4fce4e9d2de2aab6e3b94ea7e99",
 	},
 	"blue-hour": {
 		"standalone": "3889772d6a23937deedf67f0354e95a20bd972b11a2f1db4034dcf73bb7e5ce0",
-		"app":        "ff736860dc05602622a8899e1315ad97d15ffa3934018ee3b8173984d99f43e1",
+		"app":        "fdc62d2d47c65d7a558a36b0b4e15a6ac28a8494748f0be369d2f1e772385fd0",
 	},
 	"carbon-violet": {
 		"standalone": "8aa6cfeef91ef743e4a86388cc13e91e53fc8d594ef8e24692f0861201428828",
-		"app":        "788c9e5258f4f61364917f4fcb7e4084430f491942e8f39099401e9319627010",
+		"app":        "af3fcbd42e9651c229a97f710cb0714fae80c04e1cfadff70b1c839d508969b6",
 	},
 	"ember": {
 		"standalone": "c9dbbb13d64701d607573b691199c7687ed54d7d25899d4b54d8020d0f9b2774",
-		"app":        "7f7de48dae99a80800fa2f54ec6d414fff89436c6de67a92a6e1fc27dcdb4fbf",
+		"app":        "5e5238755d137664392b2c4c60c2b28b541ad81b6e4503a16cf82f97e49309c9",
 	},
 	"forest": {
 		"standalone": "b1a314336d10d1749ceebe37e436b4c45e8519d0d6064f0ad162147c9209932a",
-		"app":        "4d19ced769878a379fd41fe578b5f260e87657c31295092a04e16c2627ccc895",
+		"app":        "2b997ca15253be8a4ba1982ac0c6e53712f6e92180fc53899ef22707921cadfd",
 	},
 	"rose": {
 		"standalone": "ae936c9291500c87e420146e8a47c9eb34fbbbcef69e67174c31391889fe6b3b",
-		"app":        "69dc1114edfd6805259d4c9d0cc973d7f15409f02967dfe5f36ad794e9880118",
+		"app":        "ae6379f96ac98f89c32094ac4d9d71eeb195c575cc9bd07520a992e0da478fc8",
 	},
 	"high-contrast": {
 		"standalone": "893f6c6dfc71a638167418c0b4312d9958637e0c241c7f000800010c7086bbf7",
-		"app":        "3a4ffc2d74aeedf021833cef169842a76c0ea8c8e44462790ce0add946d5256c",
+		"app":        "652bd30d0506785e27108948614557e4a3237335f738c863d4dcb30405124fba",
 	},
 }
 

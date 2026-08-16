@@ -997,3 +997,215 @@ smoke_assert_file_contains "$create_root/agent-bridge.err" "add --project <ref>"
 create_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> create e2e passed: socket=$create_socket path=$create_socket_path"
+
+# Managed runtime binding convergence runs on its own two exact sockets. Every
+# client call strips inherited TMUX/TMUX_PANE; only the one implicit read below
+# receives a synthetic client identity after the binding has already converged.
+binding_root="$PROJMUX_SMOKE_WORKDIR/managed-binding-phase3"
+binding_socket="projmux-binding-$RANDOM-$$"
+binding_second_socket="projmux-binding-second-$RANDOM-$$"
+binding_session="managed-binding"
+mkdir -p \
+  "$binding_root/home" \
+  "$binding_root/config" \
+  "$binding_root/state" \
+  "$binding_root/runtime" \
+  "$binding_root/tmux" \
+  "$binding_root/work/alpha"
+chmod 0700 "$binding_root/runtime" "$binding_root/tmux"
+
+binding_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$binding_root/home" \
+    XDG_CONFIG_HOME="$binding_root/config" \
+    XDG_STATE_HOME="$binding_root/state" \
+    XDG_RUNTIME_DIR="$binding_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$binding_root/work" \
+    TMUX_TMPDIR="$binding_root/tmux" \
+    SHELL=/bin/sh \
+    tmux -L "$binding_socket" "$@"
+}
+
+binding_second_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$binding_root/home" \
+    XDG_CONFIG_HOME="$binding_root/config" \
+    XDG_STATE_HOME="$binding_root/state" \
+    XDG_RUNTIME_DIR="$binding_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$binding_root/work" \
+    TMUX_TMPDIR="$binding_root/tmux" \
+    SHELL=/bin/sh \
+    tmux -L "$binding_second_socket" "$@"
+}
+
+binding_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$binding_root/home" \
+    XDG_CONFIG_HOME="$binding_root/config" \
+    XDG_STATE_HOME="$binding_root/state" \
+    XDG_RUNTIME_DIR="$binding_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$binding_root/work" \
+    TMUX_TMPDIR="$binding_root/tmux" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+binding_tmux new-session -d -s "$binding_session" -n initial -c "$binding_root/work/alpha" sleep 600
+binding_tmux set-option -t "$binding_session" -q @projmux_project_path "$binding_root/work/alpha"
+binding_second_tmux new-session -d -s untouched -c "$binding_root/work/alpha" sleep 600
+binding_second_tmux set-option -gq @projmux_phase3_sentinel unchanged
+
+binding_socket_path="$(binding_tmux display-message -p -t "$binding_session" '#{socket_path}')"
+binding_second_socket_path="$(binding_second_tmux display-message -p -t untouched '#{socket_path}')"
+for actual in "$binding_socket_path" "$binding_second_socket_path"; do
+  case "$actual" in
+    "$binding_root"/*) ;;
+    *)
+      echo "managed binding e2e socket escaped the smoke root: $actual" >&2
+      exit 1
+      ;;
+  esac
+done
+echo ">> managed binding e2e sockets primary=$binding_socket_path second=$binding_second_socket_path"
+
+binding_cleanup() {
+  local socket actual
+  for socket in "$binding_socket" "$binding_second_socket"; do
+    actual="$(
+      env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$binding_root/tmux" \
+        tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true
+    )"
+    if [[ -z "$actual" ]]; then
+      continue
+    fi
+    case "$actual" in
+      "$binding_root"/*)
+        # The app config owns background pane-exit/focus hooks. Disable them on
+        # this exact server before kill-server so no detached helper races the
+        # smoke root cleanup by recreating state after the server is gone.
+        local hook
+        for hook in pane-exited after-kill-pane pane-focus-out pane-focus-in after-select-pane after-select-window client-session-changed; do
+          env -u TMUX -u TMUX_PANE tmux -S "$actual" set-hook -gu "$hook" >/dev/null 2>&1 || true
+        done
+        env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+        ;;
+      *)
+        echo "refusing managed binding e2e cleanup outside the smoke root: $actual" >&2
+        ;;
+    esac
+  done
+}
+trap 'binding_cleanup; smoke_cleanup_env' EXIT
+
+binding_second_before="$(binding_second_tmux show-options -gqv @projmux_phase3_sentinel):$(binding_second_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}')"
+binding_config="$binding_root/config/projmux/tmux.conf"
+binding_pmx tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
+  >"$binding_root/first-apply.out"
+smoke_assert_file_contains "$binding_root/first-apply.out" "reloaded tmux server -L $binding_socket"
+
+binding_window="$(binding_tmux display-message -p -t "$binding_session:0" '#{window_id}')"
+binding_pane="$(binding_tmux display-message -p -t "$binding_session:0.0" '#{pane_id}')"
+binding_window_uid="$(binding_tmux show-options -wqv -t "$binding_window" @projmux_window_uid)"
+binding_pane_uid="$(binding_tmux show-options -pqv -t "$binding_pane" @projmux_pane_uid)"
+if [[ -z "$binding_window_uid" ]] || [[ -z "$binding_pane_uid" ]]; then
+  echo "first exact-socket apply did not bind the managed Window/Pane" >&2
+  exit 1
+fi
+
+# Deleting only the transport options must not change registry identity. The
+# next normal apply restores the exact same Window and Pane uids.
+binding_tmux set-option -wu -t "$binding_window" @projmux_window_uid
+binding_tmux set-option -pu -t "$binding_pane" @projmux_pane_uid
+binding_pmx tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
+  >"$binding_root/repair-apply.out"
+if [[ "$(binding_tmux show-options -wqv -t "$binding_window" @projmux_window_uid)" != "$binding_window_uid" ]]; then
+  echo "apply did not restore the original Window uid $binding_window_uid" >&2
+  exit 1
+fi
+if [[ "$(binding_tmux show-options -pqv -t "$binding_pane" @projmux_pane_uid)" != "$binding_pane_uid" ]]; then
+  echo "apply did not restore the original Pane uid $binding_pane_uid" >&2
+  exit 1
+fi
+
+binding_registry="$binding_root/state/projmux/metadata/registry.json"
+cp "$binding_registry" "$binding_root/registry.before-repeat"
+binding_registry_stat="$(stat -c '%i:%s:%y' "$binding_registry")"
+cp "$binding_config" "$binding_root/config.before-repeat"
+binding_config_stat="$(stat -c '%i:%s:%y' "$binding_config")"
+binding_pmx tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
+  >"$binding_root/repeat-apply.out"
+cmp "$binding_root/registry.before-repeat" "$binding_registry"
+if [[ "$(stat -c '%i:%s:%y' "$binding_registry")" != "$binding_registry_stat" ]]; then
+  echo "repeat apply rewrote byte-identical registry content" >&2
+  exit 1
+fi
+cmp "$binding_root/config.before-repeat" "$binding_config"
+if [[ "$(stat -c '%i:%s:%y' "$binding_config")" != "$binding_config_stat" ]]; then
+  echo "repeat apply rewrote byte-identical generated config" >&2
+  exit 1
+fi
+
+# The generated hooks are synchronous. Therefore these options must be visible
+# immediately after new-window/split-window returns, without a polling loop.
+lifecycle_window="$(
+  binding_tmux new-window -d -t "$binding_session:" -n lifecycle -c "$binding_root/work/alpha" \
+    -P -F '#{window_id}' sleep 600
+)"
+lifecycle_window_uid="$(binding_tmux show-options -wqv -t "$lifecycle_window" @projmux_window_uid)"
+lifecycle_initial_pane="$(binding_tmux display-message -p -t "$lifecycle_window" '#{pane_id}')"
+lifecycle_initial_pane_uid="$(binding_tmux show-options -pqv -t "$lifecycle_initial_pane" @projmux_pane_uid)"
+if [[ -z "$lifecycle_window_uid" ]] || [[ -z "$lifecycle_initial_pane_uid" ]]; then
+  echo "after-new-window returned before its Window/Pane binding converged" >&2
+  exit 1
+fi
+
+lifecycle_split_pane="$(
+  binding_tmux split-window -d -t "$lifecycle_initial_pane" -c "$binding_root/work/alpha" \
+    -P -F '#{pane_id}' sleep 600
+)"
+lifecycle_split_uid="$(binding_tmux show-options -pqv -t "$lifecycle_split_pane" @projmux_pane_uid)"
+if [[ -z "$lifecycle_split_uid" ]]; then
+  echo "after-split-window returned before its Pane binding converged" >&2
+  exit 1
+fi
+
+# The immediately following selector-omitted read resolves that exact Pane.
+binding_server_pid="$(binding_tmux display-message -p -t "$lifecycle_split_pane" '#{pid}')"
+env \
+  HOME="$binding_root/home" \
+  XDG_CONFIG_HOME="$binding_root/config" \
+  XDG_STATE_HOME="$binding_root/state" \
+  XDG_RUNTIME_DIR="$binding_root/runtime" \
+  PROJMUX_MANAGED_ROOTS="$binding_root/work" \
+  TMUX_TMPDIR="$binding_root/tmux" \
+  TMUX="$binding_socket_path,$binding_server_pid,0" \
+  TMUX_PANE="$lifecycle_split_pane" \
+  SHELL=/bin/sh \
+  "$bin" describe pane -o uid >"$binding_root/implicit-read.out"
+if [[ "$(tr -d '[:space:]' <"$binding_root/implicit-read.out")" != "$lifecycle_split_uid" ]]; then
+  echo "implicit read did not resolve the synchronously bound Pane" >&2
+  cat "$binding_root/implicit-read.out" >&2
+  exit 1
+fi
+
+# Re-running the exact hidden lifecycle boundary with no new object is
+# byte-write-free. Unit tests additionally inspect the generated hook and the
+# fake tmux call log for zero set-option/rename calls.
+cp "$binding_registry" "$binding_root/registry.before-repeat-hook"
+binding_registry_stat="$(stat -c '%i:%s:%y' "$binding_registry")"
+binding_pmx internal tmux reconcile-bindings --socket-path "$binding_socket_path"
+cmp "$binding_root/registry.before-repeat-hook" "$binding_registry"
+if [[ "$(stat -c '%i:%s:%y' "$binding_registry")" != "$binding_registry_stat" ]]; then
+  echo "repeat lifecycle convergence rewrote byte-identical registry content" >&2
+  exit 1
+fi
+
+binding_second_after="$(binding_second_tmux show-options -gqv @projmux_phase3_sentinel):$(binding_second_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}')"
+if [[ "$binding_second_after" != "$binding_second_before" ]]; then
+  echo "primary apply/lifecycle touched the second socket" >&2
+  exit 1
+fi
+
+binding_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> managed binding e2e passed: socket=$binding_socket path=$binding_socket_path"

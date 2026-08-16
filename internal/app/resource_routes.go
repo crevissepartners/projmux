@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -25,9 +26,10 @@ import (
 // read -> mutate -> validate -> atomic replace transaction, so a mutation that
 // fails validation leaves the file byte-identical.
 type resourceStore struct {
-	load    func() (coremetadata.Registry, error)
-	update  func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
-	mutator func() coremetadata.Mutator
+	load             func() (coremetadata.Registry, error)
+	update           func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
+	updateConvergent func(func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
+	mutator          func() coremetadata.Mutator
 }
 
 func newResourceStore() *resourceStore {
@@ -35,7 +37,40 @@ func newResourceStore() *resourceStore {
 		load:    loadResourceRegistry,
 		update:  updateResourceRegistry,
 		mutator: intmetadata.DefaultMutator,
+		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+			paths, err := config.DefaultPathsFromEnv()
+			if err != nil {
+				return coremetadata.Registry{}, false, fmt.Errorf("resolve projmux state paths: %w", err)
+			}
+			return intmetadata.NewDefaultStore(paths).UpdateConvergent(fn)
+		},
 	}
+}
+
+// converge runs the registry half of runtime binding convergence.
+//
+// Some existing mutators conservatively refresh Registry.UpdatedAt even when
+// the projected value is already equal. That timestamp is useful for a real
+// mutation but would turn a repeat reconciliation into a disk write. If it is
+// the only difference, preserve the previous timestamp before the store's
+// convergent equality check.
+func (s *resourceStore) converge(apply func(*coremetadata.Registry, coremetadata.Mutator) error) (bool, error) {
+	if s == nil || s.updateConvergent == nil || s.mutator == nil {
+		return false, errors.New("resource registry convergence store is not configured")
+	}
+	_, changed, err := s.updateConvergent(func(working *coremetadata.Registry) error {
+		before := working.Clone()
+		if err := apply(working, s.mutator()); err != nil {
+			return err
+		}
+		updatedAt := working.UpdatedAt
+		working.UpdatedAt = before.UpdatedAt
+		if !reflect.DeepEqual(working.Normalize(), before.Normalize()) {
+			working.UpdatedAt = updatedAt
+		}
+		return nil
+	})
+	return changed, MapMetadataError(err)
 }
 
 // updateResourceRegistry applies one transaction to the resource registry.

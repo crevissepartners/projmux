@@ -96,6 +96,24 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	}
 }
 
+// Binding convergence is lifecycle plumbing inside the existing raw tmux
+// handler. It must not become a public option or a catalogued route: doing so
+// would widen the CLI surface for an apply/lifecycle-only mutation boundary.
+func TestManagedBindingConvergenceIsAbsentFromTheCommandCatalog(t *testing.T) {
+	t.Parallel()
+
+	walkRoutes(Routes(), func(path []string, route Route) {
+		if route.Name == "reconcile-bindings" || slices.Contains(route.Usage, "--socket-path") {
+			t.Fatalf("binding convergence leaked into command catalog at %q: %#v", strings.Join(path, " "), route)
+		}
+		for _, usage := range route.Usage {
+			if strings.Contains(usage, "reconcile-bindings") || strings.Contains(usage, "--socket-path") {
+				t.Fatalf("binding convergence leaked into command catalog usage at %q: %q", strings.Join(path, " "), usage)
+			}
+		}
+	})
+}
+
 // TestNoInternalRouteIsPubliclyListed is the acceptance assertion of the
 // internal isolation Phase, stated directly rather than inferred from a tally:
 // a route classified as plumbing may not appear in the primary listing, and the

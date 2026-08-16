@@ -172,6 +172,59 @@ func TestActiveTargetReadsOnlyTheOptionItsKindNeeds(t *testing.T) {
 	}
 }
 
+// Managed binding repair belongs only to apply/lifecycle mutation boundaries.
+// The two implicit read routes and their active resolver must stay read-only:
+// one option read is allowed, but no registry transaction or tmux mutation is.
+func TestImplicitReadRoutesNeverConvergeManagedBindings(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		run  func(*fakeResourceStore, activeTargetLookup) error
+	}{
+		{
+			name: "describe pane",
+			run: func(store *fakeResourceStore, active activeTargetLookup) error {
+				cmd := &describeCommand{loadRegistry: store.store().load, activeTarget: active, runtime: liveAlphaRuntime()}
+				_, _, err := runRoute(t, cmd, "pane")
+				return err
+			},
+		},
+		{
+			name: "get pane",
+			run: func(store *fakeResourceStore, active activeTargetLookup) error {
+				cmd := &getCommand{loadRegistry: store.store().load, currentPath: &stubCurrentPath{}, activeTarget: active, runtime: liveAlphaRuntime()}
+				_, _, err := runRoute(t, cmd, "pane")
+				return err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			before := store.snapshot()
+			runner := &activeTargetTmuxRunner{replies: map[string]string{
+				"display-message -p -t %46 -F #{@projmux_pane_uid}": "pan-alpha-zsh",
+			}}
+			active := tmuxActiveTargetLookup(
+				func(key string) string {
+					return map[string]string{"TMUX": "/tmp/exact.sock,1,0", "TMUX_PANE": "%46"}[key]
+				},
+				intmetadata.NewMirror(runner),
+			)
+			if err := test.run(store, active); err != nil {
+				t.Fatalf("read route: %v", err)
+			}
+			if store.transactions != 0 || store.writes != 0 || store.snapshot() != before {
+				t.Fatalf("read route mutated registry: transactions=%d writes=%d", store.transactions, store.writes)
+			}
+			if len(runner.calls) != 1 || len(runner.calls[0]) < 2 || runner.calls[0][1] != "display-message" {
+				t.Fatalf("read route tmux calls = %v, want one display-message", runner.calls)
+			}
+		})
+	}
+}
+
 // TestActiveTargetResolvesAncestorsThroughRegistryOwnership is the crux of the
 // design.
 //

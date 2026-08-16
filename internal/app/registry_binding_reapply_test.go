@@ -241,6 +241,7 @@ func TestReattachingADriftedRegistryIsIdempotent(t *testing.T) {
 	}
 	afterFirst := registry.Clone()
 	tmuxAfterFirst := tmux.state()
+	tmux.calls = nil
 
 	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
 		t.Fatalf("second reconcile: %v", err)
@@ -250,6 +251,9 @@ func TestReattachingADriftedRegistryIsIdempotent(t *testing.T) {
 	}
 	if got := tmux.state(); got != tmuxAfterFirst {
 		t.Fatalf("a second reconcile changed tmux:\nbefore\n%s\nafter\n%s", tmuxAfterFirst, got)
+	}
+	if got := bindingWriteCalls(tmux.calls); got != 0 {
+		t.Fatalf("a second reconcile issued %d set-option/rename writes: %v", got, tmux.calls)
 	}
 }
 

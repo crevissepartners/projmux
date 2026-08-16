@@ -363,10 +363,11 @@ func (r *registryReconciler) projectsBySessionName(registry coremetadata.Registr
 // every window and pane it can pair, through the same mirror write path a
 // freshly imported object uses.
 //
-// There is one write convention, not two. A uid-only variant would drift from
-// what MirrorWindow and MirrorPane do -- automatic-rename off, the name mirror,
-// the tmux window_name -- and a reattached object would then be bound but
-// differently configured from an imported one.
+// Missing bindings use the one existing write convention. A uid-only variant
+// would drift from what MirrorWindow and MirrorPane do -- automatic-rename off,
+// the name mirror, and the tmux window_name. An exact rebind, however, already
+// carries that binding and is skipped so repeated lifecycle/apply passes issue
+// no tmux writes.
 //
 // The Window layer only ever pairs. The Pane layer additionally mints, because
 // pairing cannot reach the state this phase closes; paneBindingFor carries that
@@ -404,8 +405,14 @@ func (r *registryReconciler) reapplySessionBindings(
 		if err != nil {
 			continue
 		}
-		if err := r.mirror.MirrorWindow(ctx, session.targets.Windows[wi], projected); err != nil {
-			continue
+		// Rebind means the exact registry uid is already on this live Window.
+		// Reasserting the whole mirror would issue four writes (including a
+		// rename) on every apply/lifecycle pass. Adoption is the missing-binding
+		// case and still takes the existing whole MirrorWindow path.
+		if match.Kind != coremetadata.AdoptionRebind {
+			if err := r.mirror.MirrorWindow(ctx, session.targets.Windows[wi], projected); err != nil {
+				continue
+			}
 		}
 		if wi >= len(session.targets.Panes) {
 			continue
@@ -415,7 +422,7 @@ func (r *registryReconciler) reapplySessionBindings(
 			if pi >= len(row) {
 				break
 			}
-			paneUID, ok := r.paneBindingFor(registry, mutator, operationID, match.UID, legacyPane, binder)
+			paneUID, needsMirror, ok := r.paneBindingFor(registry, mutator, operationID, match.UID, legacyPane, binder)
 			if !ok {
 				continue
 			}
@@ -433,7 +440,9 @@ func (r *registryReconciler) reapplySessionBindings(
 			}
 			// A write that fails is skipped, not retried and not escalated. The
 			// next pass observes the same drift and tries again.
-			_ = r.mirror.MirrorPane(ctx, row[pi], *pane)
+			if needsMirror {
+				_ = r.mirror.MirrorPane(ctx, row[pi], *pane)
+			}
 		}
 	}
 }
@@ -476,26 +485,26 @@ func (r *registryReconciler) paneBindingFor(
 	windowUID string,
 	legacyPane coremetadata.LegacyPane,
 	binder *coremetadata.BindingMatcher,
-) (string, bool) {
+) (string, bool, bool) {
 	match := binder.MatchPane(registry, windowUID, legacyPane.UID)
 	if match.Matched() {
-		return match.UID, true
+		return match.UID, match.Kind != coremetadata.AdoptionRebind, true
 	}
 	if match.Kind == coremetadata.AdoptionRefused {
-		return "", false
+		return "", false, false
 	}
 	pane, err := mutator.ImportOrphanPane(registry, windowUID, legacyPane, operationID)
 	if err != nil {
 		// Per object tolerant, exactly like the binding writes around it. One
 		// pane that cannot be minted must not fail the create that happened to
 		// trigger the reconcile; the next pass sees the same orphan and retries.
-		return "", false
+		return "", false, false
 	}
 	// Claimed for the rest of the pass, the way the import path claims what it
 	// mints. Without it the next live pane of this Window would find a Pane that
 	// is unbound only because it was created seconds ago, and adopt it.
 	binder.Claim(pane.Metadata.UID)
-	return pane.Metadata.UID, true
+	return pane.Metadata.UID, true, true
 }
 
 // mirrorImported writes the uids a legacy import settled on back onto exactly
@@ -505,12 +514,10 @@ func (r *registryReconciler) paneBindingFor(
 // transport binding, so an anchor lookup would find nothing live and every
 // create against a pre-existing session would build a duplicate Window.
 //
-// Created, adopted, and rebound objects are all mirrored, and through the same
-// call. A created object has no binding yet; an adopted one has a binding the
-// registry lost; a rebound one has a binding that may still be there but costs
-// nothing to reassert. Making the write conditional on which of the three it is
-// would trade one tmux option write for a class of "bound on paper, blank on
-// the machine" states that no later pass would notice.
+// Created and adopted objects are mirrored through the same existing calls. A
+// rebound object already carries the exact registry uid and is skipped. This
+// distinction preserves the full mirror contract on a missing binding while
+// making a repeated lifecycle/apply pass a tmux-write-free no-op.
 func (r *registryReconciler) mirrorImported(
 	ctx context.Context,
 	registry coremetadata.Registry,
@@ -518,6 +525,9 @@ func (r *registryReconciler) mirrorImported(
 	targets intmetadata.LegacyTargets,
 ) error {
 	for _, imported := range result.Windows {
+		if imported.Origin == coremetadata.ImportRebound {
+			continue
+		}
 		if imported.SourceIndex < 0 || imported.SourceIndex >= len(targets.Windows) {
 			continue
 		}
@@ -530,6 +540,9 @@ func (r *registryReconciler) mirrorImported(
 		}
 	}
 	for _, imported := range result.Panes {
+		if imported.Origin == coremetadata.ImportRebound {
+			continue
+		}
 		if imported.WindowIndex < 0 || imported.WindowIndex >= len(targets.Panes) {
 			continue
 		}

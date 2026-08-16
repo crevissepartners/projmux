@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -218,6 +219,53 @@ func (s *Store) Update(fn func(*coremetadata.Registry) error) (coremetadata.Regi
 		return coremetadata.Registry{}, err
 	}
 	return out, nil
+}
+
+// UpdateConvergent is Update with a byte-write no-op for an unchanged
+// registry. Runtime binding convergence uses it because the authoritative
+// identity lives in the registry while the repaired copy lives in tmux: once
+// the two agree, another lifecycle/apply pass must not replace registry.json
+// merely because it took the mutation lock.
+//
+// The callback still runs under the normal cross-process lock and the result is
+// still normalized and validated before comparison. Only the final temp-file
+// and rename sequence is skipped, so callers do not gain a weaker transaction
+// or schema path.
+func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+	if s == nil {
+		return coremetadata.Registry{}, false, errors.New("metadata: nil registry store")
+	}
+	var out coremetadata.Registry
+	changed := false
+	err := s.withLock(func() error {
+		registry, onDiskVersion, existed, err := s.read()
+		if err != nil {
+			return err
+		}
+		working := registry.Clone()
+		if err := fn(&working); err != nil {
+			return err
+		}
+		working = working.Normalize()
+		if err := working.Validate(); err != nil {
+			return err
+		}
+		if existed && onDiskVersion == coremetadata.SchemaVersion && reflect.DeepEqual(working, registry.Normalize()) {
+			out = working
+			return nil
+		}
+		migrating := existed && onDiskVersion != coremetadata.SchemaVersion
+		if err := s.write(working, migrating); err != nil {
+			return err
+		}
+		out = working
+		changed = true
+		return nil
+	})
+	if err != nil {
+		return coremetadata.Registry{}, false, err
+	}
+	return out, changed, nil
 }
 
 // MigrationResult reports what Migrate did.

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -87,6 +88,12 @@ type tmuxCommand struct {
 	// only tmux helper route that touches the registry, and it is a field so a
 	// test can point the sweep at a temporary store.
 	resources *resourceStore
+	// bindingConverger is the test seam for the apply/lifecycle mutation
+	// boundary. Production leaves it nil and uses convergeRuntimeBindings.
+	bindingConverger func(context.Context, explicitTmuxTarget) error
+	// bindingReconciler replaces only construction in tests; production still
+	// uses the one registryReconciler implementation.
+	bindingReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler
 }
 
 func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
@@ -141,6 +148,8 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runRebalancePanes(fs.Args()[1:], stderr)
 	case "release-dead-agent-panes":
 		return c.runReleaseDeadAgentPanes(fs.Args()[1:], stderr)
+	case "reconcile-bindings":
+		return c.runReconcileBindings(fs.Args()[1:], stderr)
 	case "rename-pane":
 		return c.runRenamePane(fs.Args()[1:], stderr)
 	case "print-config":
@@ -365,6 +374,27 @@ func (c *tmuxCommand) runReleaseDeadAgentPanes(args []string, stderr io.Writer) 
 		store = newResourceStore()
 	}
 	return runDeadAgentPaneSweep(context.Background(), intmetadata.NewMirror(c.runner), store)
+}
+
+// runReconcileBindings is the hidden generated-lifecycle mutation boundary.
+// The config passes tmux's expanded absolute #{socket_path}; accepting no
+// implicit target is what keeps the hook independent of inherited $TMUX and of
+// whatever server happens to own the default socket.
+func (c *tmuxCommand) runReconcileBindings(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("internal tmux reconcile-bindings", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	socketPath := fs.String("socket-path", "", "absolute tmux socket path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return usageError("internal tmux reconcile-bindings does not accept positional arguments")
+	}
+	target, err := tmuxSocketPathTarget(*socketPath)
+	if err != nil {
+		return usageError(err.Error())
+	}
+	return c.convergeBindings(context.Background(), target)
 }
 
 func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
@@ -763,7 +793,17 @@ func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (str
 	if err != nil {
 		return "", err
 	}
-	if err := c.writeFile(config, []byte(c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	generated := []byte(c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	// Apply is also a convergence boundary for the generated artifact. Avoid a
+	// truncate/write when the bytes are already exact so repeat apply preserves
+	// the file identity and mtime along with registry/tmux no-op behavior. A
+	// failed/absent read keeps the historical writer path and its error surface.
+	if c.readFile != nil {
+		if current, readErr := c.readFile(config); readErr == nil && bytes.Equal(current, generated) {
+			return config, nil
+		}
+	}
+	if err := c.writeFile(config, generated, 0o644); err != nil {
 		return "", fmt.Errorf("write tmux app config: %w", err)
 	}
 	return config, nil
@@ -916,6 +956,19 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "tmux source-file failed on -L %s: %v\n", socketName, err)
 		_, err2 := fmt.Fprintf(stdout, "skipped reload: source-file failed on -L %s\n", socketName)
 		return err2
+	}
+
+	// Reload is the live mutation preflight for convergence. Nothing above the
+	// source-file success reaches the registry or binding inventories, so
+	// --no-reload and every config/keymap preflight failure remain strict
+	// live-server no-touch paths. Reuse the exact -L target the reload used;
+	// convergence never falls back to a default socket or inherited $TMUX.
+	target, targetErr := tmuxSocketNameTarget(socketName)
+	if targetErr != nil {
+		return targetErr
+	}
+	if err := c.convergeBindings(ctx, target); err != nil {
+		return fmt.Errorf("converge managed runtime bindings on -L %s: %w", socketName, err)
 	}
 
 	count := 0
@@ -1840,6 +1893,10 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(b
 	}
 	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, catalog, keymapPresent, effective)), "\n")[1:]...)
 	lines = append(lines,
+		"set-hook -g after-new-window "+tmuxConfigQuote(tmuxBindingConvergenceHookBody(bin)),
+		"set-hook -g after-split-window "+tmuxConfigQuote(tmuxBindingConvergenceHookBody(bin)),
+	)
+	lines = append(lines,
 		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
 	)
 	lines = append(lines, tmuxAppKeyBindings(catalog, keymapPresent)...)
@@ -1864,6 +1921,16 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(b
 		"set -gu status-format[2]",
 	)
 	return withTmuxConfigDigest(strings.Join(lines, "\n") + "\n")
+}
+
+// tmuxBindingConvergenceHookBody is synchronous on purpose: after-new-window
+// and after-split-window are the lifecycle boundary, and the next implicit read
+// must not race the binding write. MirrorWindow's set-option/rename-window and
+// MirrorPane's set-option do not fire either creation hook, so convergence
+// cannot recursively trigger itself.
+func tmuxBindingConvergenceHookBody(bin string) string {
+	return "run-shell " + tmuxConfigQuote(
+		bin+" internal tmux reconcile-bindings --socket-path '#{socket_path}' >/dev/null 2>&1")
 }
 
 func withTmuxConfigDigest(body string) string {

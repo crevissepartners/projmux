@@ -320,6 +320,21 @@ func (f *fakeTmux) runListPanes(args []string) ([]byte, error) {
 		return []byte(b.String()), nil
 	}
 	target := flagValue(args, "-t")
+	if slices.Contains(args, "-s") {
+		session := f.session(target)
+		if session == nil {
+			return nil, fmt.Errorf("fake tmux: list-panes: no session %q", target)
+		}
+		format := flagValue(args, "-F")
+		var b strings.Builder
+		for _, window := range session.windows {
+			for _, pane := range window.panes {
+				b.WriteString(renderFormat(format, session, window, pane))
+				b.WriteString("\n")
+			}
+		}
+		return []byte(b.String()), nil
+	}
 	session, window := f.window(target)
 	if window == nil {
 		if s := f.session(target); s != nil && len(s.windows) > 0 {
@@ -460,10 +475,14 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, session.name)
 		case token == "window_id" && window != nil:
 			out = append(out, window.id)
+		case token == "window_index" && session != nil && window != nil:
+			out = append(out, fmt.Sprintf("%d", slices.Index(session.windows, window)))
 		case token == "window_name" && window != nil:
 			out = append(out, window.name)
 		case token == "pane_id" && pane != nil:
 			out = append(out, pane.id)
+		case token == "pane_index" && window != nil && pane != nil:
+			out = append(out, fmt.Sprintf("%d", slices.Index(window.panes, pane)))
 		case strings.HasPrefix(token, "@"):
 			out = append(out, scopedOption(token, session, window, pane))
 		default:
