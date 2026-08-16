@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -66,6 +67,38 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(data)
+}
+
+func TestUpdateConvergentSkipsTheAtomicWriteForAnUnchangedRegistry(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	seed, err := store.Update(func(*coremetadata.Registry) error { return nil })
+	if err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+	bytesBefore := readFile(t, store.Path())
+	writes := 0
+	store.hooks.afterBackup = func() error {
+		writes++
+		return nil
+	}
+
+	got, changed, err := store.UpdateConvergent(func(working *coremetadata.Registry) error {
+		if !reflect.DeepEqual(*working, seed) {
+			t.Fatalf("callback registry = %+v, want seeded registry %+v", *working, seed)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed || writes != 0 {
+		t.Fatalf("unchanged convergence changed=%v writes=%d", changed, writes)
+	}
+	if !reflect.DeepEqual(got, seed) || readFile(t, store.Path()) != bytesBefore {
+		t.Fatal("unchanged convergence did not preserve the registry bytes")
+	}
 }
 
 const newerSchemaRegistry = `{
