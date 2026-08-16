@@ -115,10 +115,10 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 		},
 		{
 			kind: "panes",
-			want: "NAME        STATUS   PROJECT  WINDOW\n" +
+			want: "NAME        STATUS   PROJECT  WINDOW  AGENT\n" +
 				"zsh         live     alpha    main\n" +
 				"log         live     alpha    main\n" +
-				"codex-pane  live     alpha    main\n" +
+				"codex-pane  live     alpha    main    codex\n" +
 				"zsh         live     alpha    review\n" +
 				"zsh         offline  beta     main\n",
 		},
@@ -174,7 +174,7 @@ func TestResourceTableColumnsAreTheCanonicalContract(t *testing.T) {
 	}{
 		{coremetadata.KindProject, []string{"NAME", "STATUS"}},
 		{coremetadata.KindWindow, []string{"NAME", "STATUS", "PROJECT"}},
-		{coremetadata.KindPane, []string{"NAME", "STATUS", "PROJECT", "WINDOW"}},
+		{coremetadata.KindPane, []string{"NAME", "STATUS", "PROJECT", "WINDOW", "AGENT"}},
 		{coremetadata.KindAgent, []string{"NAME", "STATUS", "PROJECT", "WINDOW", "SESSION"}},
 	} {
 		got := resourceTableColumns[test.kind]
@@ -215,7 +215,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p3", Name: "빌드로그", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "알파", Window: "review"}},
 			},
-			want: "NAME      STATUS   PROJECT  WINDOW\n" +
+			want: "NAME      STATUS   PROJECT  WINDOW  AGENT\n" +
 				"쉘        live     알파     메인\n" +
 				"log       offline  alpha    main\n" +
 				"빌드로그  live     알파     review\n",
@@ -241,9 +241,26 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p2", Name: "zsh", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "NAME    STATUS   PROJECT  WINDOW\n" +
+			want: "NAME    STATUS   PROJECT  WINDOW  AGENT\n" +
 				"orphan  offline\n" +
 				"zsh     live     alpha    main\n",
+		},
+		{
+			// The AGENT column is the third leg of a Pane's owner chain, which
+			// the one-line summary rendered as `agent/<name>`. A managed Pane
+			// fills it; a shell Pane leaves it empty without disturbing the
+			// columns to its left.
+			name: "a managed pane fills AGENT and a shell pane leaves it empty",
+			kind: coremetadata.KindPane,
+			matches: []selector.Match{
+				{Kind: coremetadata.KindPane, UID: "p1", Name: "codex-pane", Status: selector.StatusLive,
+					Owner: selector.OwnerContext{Project: "alpha", Window: "main", Agent: "codex"}},
+				{Kind: coremetadata.KindPane, UID: "p2", Name: "zsh", Status: selector.StatusLive,
+					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
+			},
+			want: "NAME        STATUS  PROJECT  WINDOW  AGENT\n" +
+				"codex-pane  live    alpha    main    codex\n" +
+				"zsh         live    alpha    main\n",
 		},
 		{
 			name: "an empty trailing cell ends the line rather than padding it",
@@ -385,10 +402,10 @@ func TestGetListWithHangulNamesStaysAligned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get panes error = %v (stderr %q)", err, stderr)
 	}
-	const want = "NAME        STATUS  PROJECT  WINDOW\n" +
+	const want = "NAME        STATUS  PROJECT  WINDOW  AGENT\n" +
 		"쉘          live    알파     메인\n" +
 		"log         live    알파     메인\n" +
-		"codex-pane  live    알파     메인\n" +
+		"codex-pane  live    알파     메인    codex\n" +
 		"zsh         live    알파     review\n"
 	if stdout != want {
 		t.Fatalf("get panes stdout =\n%q\nwant\n%q", stdout, want)
