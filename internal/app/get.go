@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
@@ -50,6 +51,22 @@ type getCommand struct {
 	// read; see active_target.go. It is deliberately unrelated to `--current`:
 	// see runPane.
 	activeTarget activeTargetLookup
+	// now is the clock the plural read's AGE column is measured against.
+	//
+	// It exists so a golden can pin the column: a renderer that called time.Now
+	// itself would produce output no test could freeze. A nil value is the real
+	// clock, which keeps every existing construction of this struct -- including
+	// the literals the tests build -- valid without a clock they do not care
+	// about.
+	now func() time.Time
+}
+
+// clock answers the invocation's current time, defaulting to the wall clock.
+func (c *getCommand) clock() time.Time {
+	if c == nil || c.now == nil {
+		return time.Now()
+	}
+	return c.now()
 }
 
 func newGetCommand() *getCommand {
@@ -140,7 +157,7 @@ func (c *getCommand) runList(token string, args []string, stdout, stderr io.Writ
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	return writeResourceProjection(stdout, spelling, mode, kind, resolution.Matches, registry, true)
+	return writeResourceProjection(stdout, spelling, mode, kind, resolution.Matches, registry, true, c.clock())
 }
 
 // repeatedFlag collects every occurrence of a repeatable singular selector
@@ -302,6 +319,7 @@ func buildPaneQuery(projects, windows, panes, labels []string) (selector.Query, 
 // document rather than a list envelope; the list envelopes belong to the plural
 // read spellings and the fan-out create routes.
 func writePaneProjection(stdout io.Writer, mode cli.OutputMode, match selector.Match, registry coremetadata.Registry) error {
+	// The singular read renders no elapsed time, so it passes no clock.
 	return writeResourceProjection(stdout, canonicalGetPane, mode, coremetadata.KindPane,
-		[]selector.Match{match}, registry, false)
+		[]selector.Match{match}, registry, false, time.Time{})
 }
