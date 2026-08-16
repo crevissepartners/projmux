@@ -40,10 +40,6 @@ func loadLiveResourcesMode(homeDir func() (string, error), lookupEnv func(string
 	return mode
 }
 
-func statusbarLiveResourcesSegment(bin string) string {
-	return "#{?#{==:#{" + liveResourcesTmuxOption + "},on},#[range=user|resources]#(" + bin + " internal status resources)#[norange],}"
-}
-
 func formatLiveResourcesStatus(metrics systemstatus.Metrics) string {
 	return formatLiveResourcesStatusWithRoles(metrics, statusSegmentRoles)
 }

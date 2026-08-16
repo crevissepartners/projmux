@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -208,11 +209,21 @@ func TestSettingsLiveResourcesTogglePersistsAndUpdatesTmux(t *testing.T) {
 	if got, err := config.LoadLiveResourcesFile(paths.LiveResourcesFile()); err != nil || got != config.LiveResourcesOn {
 		t.Fatalf("saved live resources = %q, %v, want on", got, err)
 	}
-	if !reflect.DeepEqual(calls, [][]string{{"tmux", "set-option", "-g", liveResourcesTmuxOption, "on"}}) {
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	if !reflect.DeepEqual(calls, [][]string{{"tmux", "source-file", configPath}}) {
 		t.Fatalf("tmux calls = %#v", calls)
+	}
+	if generated, err := os.ReadFile(configPath); err != nil || !strings.Contains(string(generated), "range=user|resources") {
+		t.Fatalf("generated live-resources config = %q, %v; want enabled segment", generated, err)
 	}
 	if !hasEntryValue(cmd.statusBarEntries(), settingsActionPrefixLiveResources+string(config.LiveResourcesOff)) {
 		t.Fatalf("Status Bar entries do not expose the Resources off action: %#v", cmd.statusBarEntries())
+	}
+	if err := os.WriteFile(paths.LiveResourcesFile(), []byte("sometimes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if mode, source, supported := cmd.currentLiveResourcesMode(); mode != config.LiveResourcesOff || source != "default (invalid saved value ignored)" || !supported {
+		t.Fatalf("invalid currentLiveResourcesMode() = %q, %q, %v", mode, source, supported)
 	}
 }
 
@@ -261,7 +272,7 @@ func TestTmuxPrintConfigLoadsLiveResourcesModeAndPlacesSegment(t *testing.T) {
 	output := stdout.String()
 	for _, want := range []string{
 		"set -g " + liveResourcesTmuxOption + " on",
-		"#{?#{==:#{" + liveResourcesTmuxOption + "},on},#[range=user|resources]#('/tmp/projmux' internal status resources)#[norange],}",
+		"#[range=user|resources]#('/tmp/projmux' internal status resources)#[norange]",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output missing %q: %s", want, output)
@@ -293,14 +304,14 @@ func TestGeneratedTmuxConfigsPreserveLiveResourcesModesAndOrdering(t *testing.T)
 				if !strings.Contains(output, "set -g "+liveResourcesTmuxOption+" "+string(mode)) {
 					t.Fatalf("generated config missing %s mode %q", name, mode)
 				}
-				condition := "#{?#{==:#{" + liveResourcesTmuxOption + "},on},#[range=user|resources]#('/tmp/projmux' internal status resources)#[norange],}"
-				if !strings.Contains(output, condition) {
-					t.Fatalf("generated config missing conditional resources segment: %s", output)
+				segment := "#[range=user|resources]#('/tmp/projmux' internal status resources)#[norange]"
+				if got := strings.Contains(output, segment); got != (mode == config.LiveResourcesOn) {
+					t.Fatalf("generated config resources segment present = %v for mode %s", got, mode)
 				}
 				gitAt := strings.Index(output, "status git")
 				resourcesAt := strings.Index(output, "status resources")
 				clockAt := strings.Index(output, " %Y-%m-%d %H:%M")
-				if gitAt < 0 || resourcesAt < gitAt || clockAt < resourcesAt {
+				if gitAt < 0 || clockAt < gitAt || (mode == config.LiveResourcesOn && (resourcesAt < gitAt || clockAt < resourcesAt)) || (mode == config.LiveResourcesOff && resourcesAt >= 0) {
 					t.Fatalf("%s/%s status-right ordering git=%d resources=%d clock=%d", name, mode, gitAt, resourcesAt, clockAt)
 				}
 			})

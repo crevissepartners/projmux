@@ -802,16 +802,52 @@ does not change the persistent queue, desktop delivery, or Notification
 Sidebar. Hiding Agent Usage HUD does not change the `agent usage` command,
 Provider snapshot cache, upstream API collection, quota, or refresh policy.
 
-## Live System Resources Lab
+## Row 1 Segment Visibility
 
-`Settings > Labs > Live system resources` controls the experimental compact
+`Settings > Appearance > Status Bar` controls these retained lower-row
+components independently:
+
+- `Project`
+- `Working directory > Visible`
+- `Git > Visible`
+- `Clock`
+- `Settings launcher`
+
+Their global saved values are `on` or `off` in:
+
+```text
+~/.config/projmux/statusbar-visibility-project
+~/.config/projmux/statusbar-visibility-working-directory
+~/.config/projmux/statusbar-visibility-git
+~/.config/projmux/statusbar-visibility-clock
+~/.config/projmux/statusbar-visibility-settings-launcher
+```
+
+Missing, empty, and invalid values resolve to `on`; Settings reports the
+effective value and whether it came from `saved` or `default`. Each save is an
+atomic 0600 replacement, regenerates both app and standalone output, and
+source-loads the generated app config when Settings is inside tmux. Off removes
+the complete segment, including its mouse range and owned spacing. Working
+directory/Git icon mode remains a separate setting, so icon `off` leaves the
+text visible. Settings launcher `off` removes only its mouse chip; CLI and
+keybinding entry remain.
+
+Resources intentionally does not use one of these visibility files. Its
+existing `~/.config/projmux/live-resources` value is the only enabled source
+and controls both the segment and sampler/cache mutation.
+
+## Live System Resources
+
+`Settings > Appearance > Status Bar > Resources` controls the compact
 CPU/memory segment on the lower status row. The saved global value is:
 
 ```text
 ~/.config/projmux/live-resources
 ```
 
-Accepted values are `off` (default) and `on`. The feature is available on
+Accepted values are `off` (default) and `on`. A missing, empty, or invalid
+saved value resolves to `off` with source `default`; valid saved values report
+source `saved`. The feature is available on
 macOS, native Linux, and WSL. Linux reads procfs directly; macOS reads Mach host
 statistics and `hw.memsize`. Neither path launches `top`, `vm_stat`, `free`,
 PowerShell, or another metrics process. On macOS, available memory is free plus
@@ -821,8 +857,9 @@ Windows host utilization. These are host-scoped values and do not attribute
 usage to a pane, window, project, or session.
 
 When enabled, the compact segment is also the clickable `resources` statusbar
-range and opens the Resource Inspector. Turning the Lab off hides only this
-segment; it does not disable `projmux resources` or a custom-bound
+range and opens the Resource Inspector. Turning Resources off hides the segment
+and stops its host sampler/cache writes; it does not disable the explicit
+`projmux resources` inspector or a custom-bound
 `Resources:Open` action. Inspector samples are memory-only for the popup
 lifetime and are unrelated to the status segment's host CPU reference cache.
 

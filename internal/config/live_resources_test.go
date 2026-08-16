@@ -26,12 +26,23 @@ func TestLiveResourcesPathsAndRoundTrip(t *testing.T) {
 	if got, err := LoadLiveResourcesFile(paths.LiveResourcesFile()); err != nil || got != LiveResourcesOn {
 		t.Fatalf("LoadLiveResourcesFile() = %q, %v, want on, nil", got, err)
 	}
+	state, err := LoadLiveResourcesStateFile(paths.LiveResourcesFile())
+	if err != nil || state.Effective != LiveResourcesOn || state.Saved != "on" || state.Source != LiveResourcesSourceSaved || state.Invalid != "" {
+		t.Fatalf("saved live resources state = %#v, %v, want on/saved", state, err)
+	}
 	info, err := os.Stat(paths.LiveResourcesFile())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("live resources file mode = %o, want 600", got)
+	}
+	if err := os.WriteFile(paths.LiveResourcesFile(), []byte("sometimes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err = LoadLiveResourcesStateFile(paths.LiveResourcesFile())
+	if err != nil || state.Effective != LiveResourcesOff || state.Saved != "" || state.Source != LiveResourcesSourceDefault || state.Invalid != "sometimes" {
+		t.Fatalf("invalid live resources state = %#v, %v, want off/default with invalid projection", state, err)
 	}
 }
 

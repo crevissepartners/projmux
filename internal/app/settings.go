@@ -389,11 +389,15 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 	case strings.HasPrefix(value, settingsActionPrefixLiveResources):
 		return c.setLiveResourcesMode(strings.TrimPrefix(value, settingsActionPrefixLiveResources))
 	case strings.HasPrefix(value, settingsActionPrefixHUDVisibility):
-		component, mode, ok := parseStatusbarHUDVisibilityAction(strings.TrimPrefix(value, settingsActionPrefixHUDVisibility))
+		raw := strings.TrimPrefix(value, settingsActionPrefixHUDVisibility)
+		if component, mode, ok := parseStatusbarHUDVisibilityAction(raw); ok {
+			return c.setStatusbarHUDVisibility(component, mode)
+		}
+		component, mode, ok := parseStatusbarRowOneVisibilityAction(raw)
 		if !ok {
 			return fmt.Errorf("unknown status bar visibility action: %s", value)
 		}
-		return c.setStatusbarHUDVisibility(component, mode)
+		return c.setStatusbarRowOneVisibility(component, mode)
 	case strings.HasPrefix(value, settingsActionPrefixProjdir):
 		action := strings.TrimPrefix(value, settingsActionPrefixProjdir)
 		if c.switcher == nil {

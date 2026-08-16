@@ -17,6 +17,17 @@ func TestStatusbarVisibilityDefaultSavedInvalidAndRoundTrip(t *testing.T) {
 	if got, want := paths.StatusbarAgentUsageHUDVisibilityFile(), filepath.Join(paths.ConfigDir, StatusbarAgentUsageHUDVisibilityFileName); got != want {
 		t.Fatalf("agent usage HUD path = %q, want %q", got, want)
 	}
+	for name, got := range map[string]string{
+		StatusbarProjectVisibilityFileName:          paths.StatusbarProjectVisibilityFile(),
+		StatusbarWorkingDirectoryVisibilityFileName: paths.StatusbarWorkingDirectoryVisibilityFile(),
+		StatusbarGitVisibilityFileName:              paths.StatusbarGitVisibilityFile(),
+		StatusbarClockVisibilityFileName:            paths.StatusbarClockVisibilityFile(),
+		StatusbarSettingsLauncherVisibilityFileName: paths.StatusbarSettingsLauncherVisibilityFile(),
+	} {
+		if want := filepath.Join(paths.ConfigDir, name); got != want {
+			t.Fatalf("%s path = %q, want %q", name, got, want)
+		}
+	}
 
 	state, err := LoadStatusbarVisibilityFile(path)
 	if err != nil {

@@ -365,7 +365,7 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal tmux 
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal statusbar click"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "notify-sidebar"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "set -g @projmux_live_resources off"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal status resources"
+smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "internal status resources"
 # A newly installed binary must not emit a pre-namespace plumbing route into
 # generated config. Every occurrence is prefixed by the quoted binary path, so
 # anchoring on "'$bin' <route>" is what separates an emitted invocation from an
@@ -619,6 +619,66 @@ printf 'on\n' >"$notifications_visibility"
 printf 'on\n' >"$usage_visibility"
 "$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 assert_live_hud_row 2 on on
+
+# Row-1 component visibility shares the same production exact-socket apply
+# path. Exercise a representative mixed layout and the smallest retained layout
+# (Kube only until Phase 6), proving ranges/jobs and owned spacing disappear
+# together while the default Settings keybinding remains.
+project_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-project"
+cwd_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-working-directory"
+git_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-git"
+clock_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-clock"
+settings_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-settings-launcher"
+live_resources="$XDG_CONFIG_HOME/projmux/live-resources"
+
+printf 'off\n' >"$project_visibility"
+printf 'on\n' >"$cwd_visibility"
+printf 'off\n' >"$git_visibility"
+printf 'off\n' >"$clock_visibility"
+printf 'on\n' >"$settings_visibility"
+printf 'on\n' >"$live_resources"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+row1_left="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv status-left)"
+row1_right="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv status-right)"
+if [[ -n "$row1_left" || "$row1_right" != *"range=user|pwd"* || "$row1_right" != *"range=user|kube"* || "$row1_right" != *"range=user|resources"* || "$row1_right" != *"range=user|settings"* ]]; then
+  echo "mixed row-1 live layout missing retained components: left=$row1_left right=$row1_right" >&2
+  exit 1
+fi
+if [[ "$row1_right" == *"range=user|git"* || "$row1_right" == *"internal status git"* || "$row1_right" == *" %Y-%m-%d %H:%M"* ]]; then
+  echo "mixed row-1 live layout retained hidden component residue: $row1_right" >&2
+  exit 1
+fi
+
+printf 'off\n' >"$cwd_visibility"
+printf 'off\n' >"$settings_visibility"
+printf 'off\n' >"$live_resources"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+row1_right="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv status-right)"
+if [[ "$row1_right" != *"range=user|kube"* ]]; then
+  echo "minimal row-1 live layout lost Phase 6-owned Kube: $row1_right" >&2
+  exit 1
+fi
+for hidden_range in pwd git resources settings; do
+  if [[ "$row1_right" == *"range=user|$hidden_range"* ]]; then
+    echo "minimal row-1 live layout retained $hidden_range range: $row1_right" >&2
+    exit 1
+  fi
+done
+if [[ "$row1_right" == *"internal status resources"* || "$row1_right" == *" %Y-%m-%d %H:%M"* ]]; then
+  echo "minimal row-1 live layout retained sampler/clock residue: $row1_right" >&2
+  exit 1
+fi
+if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-5)" != *"ai-split-settings"* ]]; then
+  echo "Settings launcher off removed the Settings keybinding" >&2
+  exit 1
+fi
+
+# Restore compatibility defaults for the remaining integration assertions.
+for visibility_path in "$project_visibility" "$cwd_visibility" "$git_visibility" "$clock_visibility" "$settings_visibility"; do
+  printf 'on\n' >"$visibility_path"
+done
+printf 'on\n' >"$live_resources"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 
 # Doctor probes a fixed closed `tmux -L projmux show-options` argv. This test
 # wrapper routes only that fixed name to the run-unique real socket so the
@@ -925,10 +985,11 @@ exec 9>&-
 wait "$control_pid" || true
 
 # Each explicit apply owns one correlated lifecycle pair and suppresses the
-# older generic top-level outcome. Eleven apply invocations ran above: the
-# existing six plus five row-0 visibility convergence applies.
+# older generic top-level outcome. Fourteen apply invocations ran above: the
+# existing six, five row-0 visibility convergence applies, and three row-1
+# mixed/minimal/default convergence applies.
 operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
-expected_apply_count=11
+expected_apply_count=14
 apply_starts="$(grep -c '"event":"lifecycle.start".*"operation":"tmux.apply"' "$operations_log")"
 apply_outcomes="$(grep -c '"event":"lifecycle.outcome".*"operation":"tmux.apply"' "$operations_log")"
 if [[ "$apply_starts" != "$expected_apply_count" || "$apply_outcomes" != "$expected_apply_count" ]]; then

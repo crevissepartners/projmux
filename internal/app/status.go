@@ -472,6 +472,13 @@ func (c *statusCommand) runResources(args []string, stdout, stderr io.Writer) er
 	if !systemstatus.Supported() {
 		return nil
 	}
+	// live-resources is the single enablement source for both presentation and
+	// sampling. This guard also protects a stale generated config or a direct
+	// internal invocation from mutating the sampler cache after Settings turns
+	// the component off.
+	if loadLiveResourcesMode(c.homeDir, c.lookupEnv) != config.LiveResourcesOn {
+		return nil
+	}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return nil

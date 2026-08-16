@@ -105,14 +105,14 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
   free and inactive pages. The first CPU
   sample renders `CPU --%` until a second counter sample exists. WSL values are
   the Linux guest/VM view, not whole-Windows host utilization. The generated
-  tmux condition prevents the status subprocess from running while the Lab is
+  generated config prevents the status subprocess from running while Resources is
   off. CPU reference samples older than 30 seconds are discarded, so
   re-enabling after a pause starts at `CPU --%` instead of showing a long-term
   average. Missing or malformed procfs data degrades to `--` or an empty segment
   without producing a tmux error popup.
   The complete live segment is wrapped in `#[range=user|resources]...#[norange]`.
   Clicking it opens the same canonical client-scoped `resource-inspector`
-  popup as the `Resources:Open` keybinding action. Disabling the Lab hides only
+  popup as the `Resources:Open` keybinding action. Turning Resources off hides only
   the segment; it does not disable a custom action or `projmux resources`.
 - The settings chip keeps its label padding inside the `settings` range
   and inside the chip background. The compact app chip renders `` with
@@ -444,22 +444,24 @@ emits a deterministic block per segment), regenerate, and re-apply:
 projmux tmux apply
 ```
 
-Settings > Appearance controls optional icon decoration separately for the
-path/cwd marker, git branch marker, and notification sidebar header. Each row
+Settings > Appearance > Status Bar controls Project, Working directory, Git,
+Resources, Clock, and the Settings launcher independently. Working directory
+and Git keep icon decoration as a separate choice: icon `off` never hides the
+text segment. Each icon row
 can be `off` (default, font-safe), `symbol` (Nerd Font-style folder,
 git-provider, or bell icon), or `emoji`. Git branch decoration follows
 `remote.origin.url`: GitHub remotes use a cat-style mark, GitLab remotes use a
-fox-style mark, and other remotes use a generic git branch mark. Settings also
-updates the matching live tmux option
-(`@projmux_statusbar_decoration_cwd`, `_git`, or `_notify`) when run inside
-tmux. The legacy `~/.config/projmux/statusbar-decoration` and
+fox-style mark, and other remotes use a generic git branch mark. Saving
+visibility or Resources regenerates the app/standalone config and source-loads
+the generated app config when Settings is running inside tmux. The legacy
+`~/.config/projmux/statusbar-decoration` and
 `@projmux_statusbar_decoration` remain fallback defaults for older configs.
 Settings > Theme controls the bottom status bar background through
 `status_background`; `surface` controls popup and native frame backgrounds.
 
-Settings > Labs controls the experimental live resource segment. Its saved
-value is `~/.config/projmux/live-resources`; changing it inside tmux updates
-`@projmux_live_resources` immediately. CPU sampling state is an internal,
+Resources uses `~/.config/projmux/live-resources` as its single saved enabled
+state; there is no separate Resources visibility file or duplicate toggle. CPU
+sampling state is an internal,
 atomically replaced file under `${XDG_STATE_HOME:-~/.local/state}/projmux/`
 and is not a user-edited setting.
 
