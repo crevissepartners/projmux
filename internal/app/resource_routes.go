@@ -14,6 +14,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
 // resourceStore is the shared registry seam of the canonical verb-to-kind
@@ -464,12 +465,139 @@ func resourceSummary(match selector.Match, kind coremetadata.Kind, registry core
 	return summary + " session=" + agent.Status.SessionRef.Summary()
 }
 
+// resourceTableColumns is the canonical column contract of the columnar plural
+// read, keyed by kind and ordered exactly as the columns are printed.
+//
+// The header set is fixed per kind rather than derived from the rows, so a
+// column never disappears because every row happened to leave it empty. NAME is
+// `metadata.Name` without the `kind/` prefix the one-line summary carries: the
+// spelling the operator typed already states the kind, exactly as it does for
+// `kubectl get pods`.
+var resourceTableColumns = map[coremetadata.Kind][]string{
+	coremetadata.KindProject: {"NAME", "STATUS"},
+	coremetadata.KindWindow:  {"NAME", "STATUS", "PROJECT"},
+	coremetadata.KindPane:    {"NAME", "STATUS", "PROJECT", "WINDOW"},
+	coremetadata.KindAgent:   {"NAME", "STATUS", "PROJECT", "WINDOW", "SESSION"},
+}
+
+// resourceTableGap is the minimum run of spaces between two columns. It is the
+// only separator: the columnar projection draws no rules, no borders, and no
+// box characters, so every byte between two cells is a space.
+const resourceTableGap = 2
+
+// resourceTableRow projects one match onto its kind's columns.
+//
+// It carries exactly what the one-line summary carried, split apart: the status
+// of `status=`, and the owner chain of `owner=project/X window/Y` as two
+// columns. The registry is consulted for the one field no selector.Match holds,
+// the Agent's provider session ref, which is the same lookup and the same
+// `<provider>:<conversation-id>` rendering the summary appended as `session=`.
+func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry) []string {
+	row := []string{match.Name, string(match.Status)}
+	switch kind {
+	case coremetadata.KindWindow:
+		return append(row, match.Owner.Project)
+	case coremetadata.KindPane:
+		return append(row, match.Owner.Project, match.Owner.Window)
+	case coremetadata.KindAgent:
+		return append(row, match.Owner.Project, match.Owner.Window, resourceSessionCell(match, registry))
+	default:
+		return row
+	}
+}
+
+// resourceSessionCell renders the SESSION column of one Agent. An Agent that has
+// never had a hook report a conversation leaves the cell empty.
+func resourceSessionCell(match selector.Match, registry coremetadata.Registry) string {
+	agent, ok := registry.Agent(match.UID)
+	if !ok || agent.Status.SessionRef.Empty() {
+		return ""
+	}
+	return agent.Status.SessionRef.Summary()
+}
+
+// resourceCellWidth is the display width of one cell, in terminal cells.
+//
+// It is deliberately not a rune count and deliberately not text/tabwriter: a
+// Hangul resource name is one rune per two columns, so rune-count padding walks
+// every following column left by one position per syllable. VisibleLen is the
+// repo's existing East-Asian-aware measurement, already used by the native
+// picker for exactly this reason.
+func resourceCellWidth(cell string) int {
+	return projmuxpicker.VisibleLen(cell)
+}
+
+// writeResourceTable renders the columnar default projection of a plural read:
+// one uppercase header line followed by one line per match, columns separated
+// by padding spaces.
+//
+// Zero matches emit zero bytes -- no header and no message. The plural read's
+// 0..N cardinality already makes an empty result a success with empty stdout
+// (see getCommand.runList), the render seam has no stderr to write a kubectl
+// style `No resources found` note to, and a header row over no rows would
+// announce a table that has nothing in it. Keeping the empty case byte-identical
+// to the pre-columnar behavior also keeps its exit code trivially unchanged.
+func writeResourceTable(stdout io.Writer, spelling string, kind coremetadata.Kind, matches []selector.Match, registry coremetadata.Registry) error {
+	headers, ok := resourceTableColumns[kind]
+	if !ok {
+		return fmt.Errorf("%s: no column contract is declared for kind %q", spelling, kind)
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+
+	rows := make([][]string, 0, len(matches)+1)
+	rows = append(rows, headers)
+	for _, match := range matches {
+		rows = append(rows, resourceTableRow(match, kind, registry))
+	}
+
+	widths := make([]int, len(headers))
+	for _, row := range rows {
+		for i, cell := range row {
+			if width := resourceCellWidth(cell); width > widths[i] {
+				widths[i] = width
+			}
+		}
+	}
+
+	for _, row := range rows {
+		if _, err := fmt.Fprintln(stdout, resourceTableLine(row, widths)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resourceTableLine pads one row to the measured column widths.
+//
+// The last cell is never padded and the line is right-trimmed, so an empty
+// trailing cell -- an Agent with no conversation pointer -- ends the line where
+// its last populated column ends rather than trailing whitespace onto stdout.
+func resourceTableLine(row []string, widths []int) string {
+	var line strings.Builder
+	for i, cell := range row {
+		line.WriteString(cell)
+		if i == len(row)-1 {
+			break
+		}
+		line.WriteString(strings.Repeat(" ", widths[i]-resourceCellWidth(cell)+resourceTableGap))
+	}
+	return strings.TrimRight(line.String(), " ")
+}
+
 // writeResourceProjection renders a resolution through the shared output
 // catalog.
 //
 // A singular route emits one document; a list route emits one line per match in
 // resolution order for the scalar modes and a single List envelope for the
 // structured modes, which is the fan-out contract for read results.
+//
+// The default projection is the one place the two paths diverge in shape rather
+// than in count: a list read renders the columnar table, a singular read the
+// one-line `kind/name status=... owner=...` summary. The existing `list` flag is
+// the whole discriminator, so nothing about describe, rename, or `get pane`
+// moves.
 func writeResourceProjection(
 	stdout io.Writer,
 	spelling string,
@@ -483,6 +611,9 @@ func writeResourceProjection(
 	case cli.OutputModeNone:
 		return nil
 	case cli.OutputModeUID, cli.OutputModeName, cli.OutputModeRef, cli.OutputModeDefault:
+		if mode == cli.OutputModeDefault && list {
+			return writeResourceTable(stdout, spelling, kind, matches, registry)
+		}
 		for _, match := range matches {
 			var line string
 			switch mode {

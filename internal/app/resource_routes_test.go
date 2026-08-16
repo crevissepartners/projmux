@@ -313,9 +313,9 @@ func TestGetReadFamilyResolvesEveryKindWithListCardinality(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "the default projection reports status and owner context",
+			name: "the default projection is a header plus space-aligned columns",
 			args: []string{"windows", "--project", "beta"},
-			want: "window/main status=offline owner=project/beta\n",
+			want: "NAME  STATUS   PROJECT\nmain  offline  beta\n",
 		},
 		{
 			name: "ref projection carries the kind",

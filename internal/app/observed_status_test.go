@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -65,15 +64,33 @@ func (f *observedStatusFixture) get(t *testing.T, args ...string) string {
 	return stdout
 }
 
-// liveCount counts the `status=live` rows of a plural read.
-func liveCount(stdout string) int {
+// liveCount counts the rows of a plural read whose STATUS column reads `live`.
+//
+// The plural default projection is columnar, so this parses the header line and
+// reads the named column rather than substring-matching a line: a resource whose
+// *name* happens to be "live" must not be counted, and neither must the header.
+func liveCount(t *testing.T, stdout string) int {
+	t.Helper()
 	count := 0
-	for line := range strings.SplitSeq(strings.TrimSpace(stdout), "\n") {
-		if strings.Contains(line, "status=live") {
+	for _, row := range columnarRows(t, stdout) {
+		if row["STATUS"] == "live" {
 			count++
 		}
 	}
 	return count
+}
+
+// hasRow reports whether the read listed a row with this NAME and STATUS. The
+// fixture repeats resource names across owner scopes on purpose, so this is an
+// existence question rather than a lookup.
+func hasRow(t *testing.T, stdout, name, status string) bool {
+	t.Helper()
+	for _, row := range columnarRows(t, stdout) {
+		if row["NAME"] == name && row["STATUS"] == status {
+			return true
+		}
+	}
+	return false
 }
 
 // TestGetPanesNeverReportsMoreLivePanesThanTmuxHas is acceptance criterion 1,
@@ -93,7 +110,7 @@ func TestGetPanesNeverReportsMoreLivePanesThanTmuxHas(t *testing.T) {
 	if got, want := fixture.tmux.paneCount(), 4; got != want {
 		t.Fatalf("fixture tmux pane count = %d, want %d", got, want)
 	}
-	if got := liveCount(fixture.get(t, "panes")); got != 3 {
+	if got := liveCount(t, fixture.get(t, "panes")); got != 3 {
 		t.Fatalf("live panes = %d, want the 3 mirrored ones", got)
 	}
 
@@ -101,7 +118,7 @@ func TestGetPanesNeverReportsMoreLivePanesThanTmuxHas(t *testing.T) {
 	// reported live count must still be no more than what tmux has.
 	for {
 		panes := fixture.tmux.paneCount()
-		got := liveCount(fixture.get(t, "panes"))
+		got := liveCount(t, fixture.get(t, "panes"))
 		if got > panes {
 			t.Fatalf("reported %d live panes against a tmux server with %d panes", got, panes)
 		}
@@ -113,7 +130,7 @@ func TestGetPanesNeverReportsMoreLivePanesThanTmuxHas(t *testing.T) {
 			t.Fatalf("kill-pane %s: %v", id, err)
 		}
 	}
-	if got := liveCount(fixture.get(t, "panes")); got != 0 {
+	if got := liveCount(t, fixture.get(t, "panes")); got != 0 {
 		t.Fatalf("live panes = %d against an empty tmux server, want 0", got)
 	}
 }
@@ -141,7 +158,7 @@ func TestClosingAPaneOfflinesItOnTheNextQueryWithNoHookFired(t *testing.T) {
 
 	fixture := newObservedStatusFixture(t)
 	before := fixture.get(t, "panes")
-	if !strings.Contains(before, "pane/log status=live") {
+	if !hasRow(t, before, "log", "live") {
 		t.Fatalf("the mirrored pane did not start live:\n%s", before)
 	}
 
@@ -153,22 +170,22 @@ func TestClosingAPaneOfflinesItOnTheNextQueryWithNoHookFired(t *testing.T) {
 	}
 
 	after := fixture.get(t, "panes")
-	if !strings.Contains(after, "pane/log status=offline") {
+	if !hasRow(t, after, "log", "offline") {
 		t.Fatalf("the closed pane is still not offline on the next query:\n%s", after)
 	}
 	// Criterion 5: the panes that are genuinely still running must not have
 	// been dragged offline with it.
-	if !strings.Contains(after, "pane/zsh status=live") {
+	if !hasRow(t, after, "zsh", "live") {
 		t.Fatalf("a live pane was mis-reported offline:\n%s", after)
 	}
-	if got := liveCount(after); got != 2 {
+	if got := liveCount(t, after); got != 2 {
 		t.Fatalf("live panes = %d after closing one of three, want 2:\n%s", got, after)
 	}
 	// Criterion 4, the read half: the Pane is still fully queryable.
 	if _, ok := fixture.registry.Pane("pan-beta-second"); !ok {
 		t.Fatal("a closed pane removed its registry resource")
 	}
-	if got := fixture.get(t, "panes", "--pane", "log"); !strings.Contains(got, "pane/log") {
+	if got := fixture.get(t, "panes", "--pane", "log"); !hasRow(t, got, "log", "offline") {
 		t.Fatalf("the closed pane is no longer selectable: %q", got)
 	}
 }
@@ -213,18 +230,18 @@ func TestNothingIsLiveWhenNothingMirrorsAUID(t *testing.T) {
 
 	for _, kind := range []string{"windows", "panes"} {
 		stdout := fixture.get(t, kind)
-		if got := liveCount(stdout); got != 0 {
+		if got := liveCount(t, stdout); got != 0 {
 			t.Fatalf("get %s reported %d live against a server mirroring no uid:\n%s", kind, got, stdout)
 		}
 		// Preserved, not deleted: every resource still lists.
-		if strings.Count(strings.TrimSpace(stdout), "\n")+1 < 2 {
+		if len(columnarRows(t, stdout)) < 2 {
 			t.Fatalf("get %s stopped listing offline resources:\n%s", kind, stdout)
 		}
 	}
 
 	// The Project's own status is unchanged by this Phase: its runtime object
 	// is a tmux session, not a mirrored uid.
-	if got := liveCount(fixture.get(t, "projects")); got != 1 {
+	if got := liveCount(t, fixture.get(t, "projects")); got != 1 {
 		t.Fatal("the Project session projection stopped being the Project's status source")
 	}
 }
@@ -268,13 +285,13 @@ func TestStoredSessionLivenessCannotMakeAWindowOrPaneLive(t *testing.T) {
 			t.Fatalf("get %s changed with the stored session bool:\nlive=true:\n%s\nlive=false:\n%s",
 				kind, outputs[true], outputs[false])
 		}
-		if kind == "panes" && liveCount(outputs[true]) != 1 {
+		if kind == "panes" && liveCount(t, outputs[true]) != 1 {
 			t.Fatalf("get panes reported %d live, want exactly the mirrored one:\n%s",
-				liveCount(outputs[true]), outputs[true])
+				liveCount(t, outputs[true]), outputs[true])
 		}
-		if kind == "windows" && liveCount(outputs[true]) != 0 {
+		if kind == "windows" && liveCount(t, outputs[true]) != 0 {
 			t.Fatalf("get windows reported %d live with no mirrored window uid:\n%s",
-				liveCount(outputs[true]), outputs[true])
+				liveCount(t, outputs[true]), outputs[true])
 		}
 	}
 }
