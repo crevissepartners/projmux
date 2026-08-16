@@ -313,6 +313,37 @@ func (r *Registry) putReservation(scope string, kind Kind, name, uid string) {
 	}
 }
 
+// rescopeName moves one uid's existing reservation from oldScope to newScope,
+// keeping the name byte-identical.
+//
+// Reservations are keyed by (scope, kind, name) and the scope of a Pane is its
+// owner uid, so re-parenting a Pane under an Agent has to move its reservation
+// or validateReservations stops finding one in the scope the resource now
+// reports. The name itself is deliberately untouched: the product contract says
+// existing names are never silently rewritten, and a re-parent is not a rename.
+//
+// It reports false and writes nothing when the name is already taken in
+// newScope by a different uid. A caller that cannot move the reservation must
+// not move the resource either, or the two would disagree.
+func (r *Registry) rescopeName(oldScope, newScope string, kind Kind, name, uid string) bool {
+	if oldScope == newScope {
+		return true
+	}
+	if owner, taken := r.nameOwner(newScope, kind, name); taken && owner != uid {
+		return false
+	}
+	kept := r.NameReservations[:0]
+	for _, reservation := range r.NameReservations {
+		if reservation.Scope == oldScope && reservation.Kind == kind && reservation.UID == uid {
+			continue
+		}
+		kept = append(kept, reservation)
+	}
+	r.NameReservations = kept
+	r.putReservation(newScope, kind, name, uid)
+	return true
+}
+
 // releaseNames drops every reservation held by uid, in any scope, and every
 // reservation scoped to uid as an owner. Deleting a resource frees both the
 // name it held and the scope it owned.

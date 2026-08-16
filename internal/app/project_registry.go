@@ -370,6 +370,12 @@ func (r *registryReconciler) projectsBySessionName(registry coremetadata.Registr
 // The Window layer only ever pairs. The Pane layer additionally mints, because
 // pairing cannot reach the state this phase closes; paneBindingFor carries that
 // argument and the boundary it stays inside.
+//
+// The Agent layer rides on the settled Pane rather than walking tmux again. An
+// Agent owns no tmux object of its own, so there is nothing to pair it against
+// directly; its runtime object is the managed Pane, and the pane this loop just
+// resolved is exactly that. LinkAgentPane carries the evidence rule and the
+// refusals.
 func (r *registryReconciler) reapplySessionBindings(
 	ctx context.Context,
 	registry *coremetadata.Registry,
@@ -408,6 +414,14 @@ func (r *registryReconciler) reapplySessionBindings(
 			if !ok {
 				continue
 			}
+			// Agent runtime linkage rides on the Pane the walk just settled on,
+			// because an Agent's runtime object *is* that Pane. The error is
+			// discarded rather than escalated *or* used to skip the binding
+			// write below: the binding is what makes the pane addressable at
+			// all, so a link that could not be made must not cost the pane the
+			// work that already succeeded. LinkAgentPane writes nothing when it
+			// fails, and the next pass sees the same pane and tries again.
+			_, _ = mutator.LinkAgentPane(registry, match.UID, paneUID, legacyPane, binder, operationID)
 			pane, ok := registry.Pane(paneUID)
 			if !ok {
 				continue

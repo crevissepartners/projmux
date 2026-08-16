@@ -527,23 +527,43 @@ func (r *Resolver) windowMatch(window metadata.Window) Match {
 	}
 }
 
-// agentMatch renders one Agent with its Window/Project owner chain.
+// agentMatch renders one Agent with its Window/Project owner chain and its
+// observed status.
 //
 // An Agent owns no tmux object of its own: there is no @projmux_agent_uid to
 // observe, and there must not be one, because an Agent outlives the managed
-// Pane it is currently bound to. It therefore reports the status of the Window
-// it lives in -- the nearest enclosing thing that *is* observable. Its own
-// lifecycle state is status.phase, which `describe agent` renders separately
-// and which the Agent liveness sweep owns; nothing here duplicates or infers a
-// phase.
+// Pane it is currently bound to. Its runtime object is that managed Pane, named
+// by status.paneRef, and that is what is observed here.
+//
+// It used to report the status of the owning Window instead -- the nearest
+// enclosing thing that was observable at the time. That was the last surviving
+// piece of status inheritance, and it produced exactly the contradiction the
+// observation contract exists to prevent: once one Window was adopted and went
+// live, every Agent under it read live whether or not it had a pane, so
+// `get agents` said live for the same resource `describe agent` said was
+// Offline with no managed pane.
+//
+// The Window still contributes one thing and only one: whether the owning
+// Project carries MissingRoot. Its liveness is deliberately not read. A Window
+// that is live says nothing about whether a particular Agent inside it is
+// running, which is the whole defect.
+//
+// status.phase is deliberately not an input either. Phase is lifecycle -- a
+// stored value the Agent liveness track owns and this file must not infer,
+// duplicate, or transition -- while Status is an observation, and mixing a
+// stored value back into the observation is the thing the product contract
+// forbids. They cannot contradict anyway: the registry's own invariant is that
+// every non-Running phase clears paneRef, so a non-Running Agent has no runtime
+// object to observe and reports offline on the observation alone.
 func (r *Resolver) agentMatch(agent metadata.Agent) Match {
 	owner := OwnerContext{}
-	status := StatusOffline
+	missingRoot := false
 	if window, ok := r.registry.Window(agent.Metadata.OwnerUID()); ok {
 		owner.Window = window.Metadata.Name
-		windowMatch := r.windowMatch(*window)
-		owner.Project = windowMatch.Owner.Project
-		status = windowMatch.Status
+		if project, ok := r.registry.Project(window.Metadata.OwnerUID()); ok {
+			owner.Project = project.Metadata.Name
+			missingRoot = hasMissingRoot(*project)
+		}
 	}
 	return Match{
 		Kind:        metadata.KindAgent,
@@ -551,8 +571,32 @@ func (r *Resolver) agentMatch(agent metadata.Agent) Match {
 		Name:        agent.Metadata.Name,
 		DisplayName: agent.Metadata.DisplayName,
 		Owner:       owner,
-		Status:      status,
+		Status:      ObservedStatus(missingRoot, r.agentBound(agent)),
 	}
+}
+
+// agentBound reports whether an Agent's own runtime object was observed live.
+//
+// An empty paneRef is false, which is the answer for every Agent released by
+// the liveness sweep and every Agent that has never been attached: it has no
+// runtime object, so nothing about it can be observed live. That is a real
+// state, not a missing one, and it is why offline is the right report rather
+// than some third value -- the Agent's metadata stays fully queryable and
+// nothing prunes it.
+//
+// The Pane must still exist in the registry as well as in tmux. A paneRef that
+// names a Pane the registry no longer holds is not a runtime observation of
+// anything, and reporting live from it would make `get agents` disagree with a
+// `get panes` that has no such row.
+func (r *Resolver) agentBound(agent metadata.Agent) bool {
+	paneUID := agent.Status.PaneRef
+	if paneUID == "" {
+		return false
+	}
+	if _, ok := r.registry.Pane(paneUID); !ok {
+		return false
+	}
+	return r.observed.BoundPane(paneUID)
 }
 
 // paneMatch renders one Pane with its observed status.

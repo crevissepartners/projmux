@@ -361,10 +361,25 @@ Runtime observation and resource status:
   owning Project lost its root even while tmux is still running them.
 - A **Project** is the one kind whose runtime object is a tmux *session*, which
   has no `@projmux` uid of its own, so Project status still reads
-  `status.session` as refreshed by the reconciler. An **Agent** owns no tmux
-  object at all — it outlives the managed Pane it is bound to — so it reports
-  its owning Window's observed status; its own lifecycle lives in
-  `status.phase`.
+  `status.session` as refreshed by the reconciler.
+- An **Agent** owns no tmux object of its own — there is no `@projmux_agent_uid`
+  and there must not be one, because an Agent outlives the managed Pane it is
+  bound to. Its runtime object is **that managed Pane**, named by
+  `status.paneRef`, and that is what is observed: an Agent is `live` only while
+  a live tmux pane still mirrors the uid its `paneRef` points at. An empty
+  `paneRef` — the state of every released, pending, or failed Agent — is
+  `offline`, and `missing-root` still outranks both.
+- Agent status is **not** inherited from the owning Window. It used to be, and
+  that was the last surviving inheritance path: once one Window was adopted and
+  went live, every Agent under it read `live` whether or not it had a pane, so
+  `get agents` said `live` for a resource `describe agent` reported as `Offline`
+  with no managed pane. The Window now contributes exactly one fact — whether
+  the owning Project carries `MissingRoot` — and specifically not its liveness.
+- `status.phase` is **not** an input to status either. Phase is lifecycle (a
+  stored value, owned by the Agent liveness rules) and Status is observation;
+  folding a stored value back into the observation is what the contract forbids.
+  They cannot contradict anyway: every non-`Running` transition clears
+  `paneRef`, so a non-`Running` Agent has no runtime object to observe.
 - The observation is taken **at the command entrypoint, once per process
   invocation**, and costs exactly two reads: `list-panes -a` and
   `list-windows -a` (~3ms each). It is lazy, so a route that never renders
@@ -459,9 +474,9 @@ Binding reapply and adoption:
   through the registry's own allocator, never from `pane_current_command`:
   `metadata.name` is not derived from a runtime attribute, and the command
   changes the moment the operator runs something else. The runtime reading goes
-  to `status.displayTitle` instead. **No Agent is minted**, whatever the pane is
-  running — deciding registry topology from pane options or a title is a content
-  heuristic, and Agent phase belongs to its own track.
+  to `status.displayTitle` instead. The mint itself never creates an Agent: it
+  adds one Pane and stops. Linking that Pane to an Agent is the separate step
+  below, which runs on the Pane the walk just settled on.
 - **Nothing is ever re-identified.** Adoption changes no uid, merges no uid, and
   reassigns no uid; it only decides which registry object a live tmux object is
   the runtime of, and then writes that object's existing uid. Adopted objects
@@ -488,6 +503,62 @@ Binding reapply and adoption:
   before we got here". The binding writes land before the runtime-observation
   step, or that step would stamp `MissingRuntime` on a Window this same pass
   just reattached.
+
+Agent runtime linkage:
+
+- Once a live tmux pane has settled on a registry Pane, reconcile decides which
+  **Agent** that Pane is the managed Pane of. Without this step the registry had
+  running agents with no Agent resource and Agent resources with no
+  `status.paneRef`, so `get panes` printed an empty AGENT column for every row
+  and `get agents` listed finished conversations while hiding running ones.
+- **The evidence is authorship, not a command name.** `pane_current_command ==
+  claude` says a process called claude is running; it is equally true of a pane
+  the operator typed `claude` into by hand, and nothing here reads it. The
+  evidence is `@projmux_ai_agent`, the pane option the AI routes write when
+  *projmux itself* launches an agent into a pane. A pane without it gets no
+  Agent — Phase 1's refuse rule, unchanged. The legacy import path already
+  trusted exactly this option to mint an Agent on its create path; linkage makes
+  the adopt and rebind paths agree with it.
+- **Which Agent, in order.** (1) The Pane is already Agent-owned: that Agent is
+  the answer and only `status.paneRef` is repaired. (2) An Agent in the same
+  Window already records the same provider conversation in `status.sessionRef`
+  as the pane carries in `@projmux_ai_session_id` / `@projmux_ai_thread_id` —
+  an exact identifier equality on a value both sides got from the provider, with
+  `provider` compared too so a Codex thread id is never equated with a Claude
+  session id. (3) Otherwise a new Agent is minted, named through the registry's
+  own allocator over the provider name base, with the observed topic going to the
+  non-identifying `projmux.io/agent-topic` annotation.
+- **Ambiguity mints rather than guesses.** Two Agents recording one conversation
+  is legal registry state, so an ambiguous conversation match cannot be resolved
+  to "the first one"; taking a binding that might belong to the other Agent is
+  the mistake no later pass can undo, while an extra Agent is inert and visible.
+  A candidate already claimed by this pass, or one whose `paneRef` is some other
+  Pane, is not a candidate at all — one Agent is the runtime owner of at most one
+  live pane. The candidate set is the paired Window's Agents and nothing else, so
+  the Project boundary is structural here too.
+- **A linked Pane is promoted, and that is the one rewrite of an existing
+  resource.** Its `spec.role` becomes `agent` and its `ownerRef` moves from the
+  Window to the Agent, with its name reservation following it into the Agent's
+  scope. The uid does not change, the name does not change, and the Project and
+  Window it sits under do not change — the Agent is owned by the very Window that
+  owned the Pane. `ownerRef` is the single edge every other reader resolves
+  Agent↔Pane through (the AGENT column, hook session-ref attribution, cascading
+  delete), so expressing the link only in `status.paneRef` would create a second,
+  disagreeing source of truth.
+- `status.sessionRef` is **not** written here. The pane option is a live routing
+  index and the durable conversation pointer belongs to hook ingest, which
+  reaches the Agent on its own once the Pane is Agent-owned.
+- **A promoted Pane joins the managed-Pane lifecycle**, which is a visible
+  consequence: the dead-agent-pane sweep releases an Agent whose managed Pane
+  died and removes that Pane row, where a Window-owned shell Pane was never in
+  its reach. That is the existing managed-Pane contract applying to panes that
+  genuinely are managed. The **Agent** is preserved either way — same uid, same
+  name, same `sessionRef`, still resumable.
+- Linkage is idempotent: the next pass finds the Pane already Agent-owned and
+  reasserts nothing, so a reconciler that runs on every mutation route converges
+  instead of accumulating Agents. It is tolerant like the writes around it — a
+  link that cannot be made writes nothing, does not cost the pane the binding
+  that already succeeded, and does not fail the operator's command.
 - Reapply stays a **mutation-route** concern, like the rest of reconcile. Read
   verbs still `LoadReadOnly` and still never materialize the registry. A tmux
   server that is absent or erroring still fails closed with no error, and a

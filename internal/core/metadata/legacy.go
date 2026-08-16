@@ -25,6 +25,13 @@ type LegacyPane struct {
 	// it to tell "already ours" from "blank", and refuses either way to
 	// re-identify anything.
 	UID string
+	// SessionID and ThreadID are the provider conversation identifiers the AI
+	// routes wrote onto the live pane. They are read for exactly one decision --
+	// whether an Agent that already records the same conversation in
+	// status.sessionRef is the one this live pane belongs to -- and are never a
+	// name seed, a selector, or a uid.
+	SessionID string
+	ThreadID  string
 }
 
 // LegacyWindow is one observed pre-v2 tmux window.
@@ -356,11 +363,13 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 // bindLegacyPaneTx binds one observed tmux pane inside an already-bound Window
 // and returns the registry Pane uid it settled on, empty when it refused.
 //
-// A pane that resolves to an existing registry Pane is reported and left alone:
-// no Agent is minted for it even when the live pane looks like an AI pane.
-// Minting one would be a content heuristic deciding registry topology, and it
-// would fight the ordinal alignment that put the two together in the first
-// place.
+// A pane that resolves to an existing registry Pane keeps that Pane -- the
+// ordinal alignment that put the two together is not second-guessed and no
+// second Pane is minted for it. It is linked to an Agent when, and only when,
+// the live pane carries the `@projmux_ai_agent` authorship marker this same
+// function already trusts on its create path below. Linking there but not here
+// was the inconsistency that left running agents invisible; see agentlinkage.go
+// for why that marker is authorship rather than a content heuristic.
 func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID, root, defaultShell string, windowIndex, paneIndex int, legacyPane LegacyPane, now time.Time, result *ImportResult, binder *BindingMatcher) (string, error) {
 	match := binder.MatchPane(reg, windowUID, legacyPane.UID)
 	if match.Kind == AdoptionRefused {
@@ -377,6 +386,22 @@ func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID
 		origin := ImportAdopted
 		if match.Kind == AdoptionRebind {
 			origin = ImportRebound
+		}
+		linkage, err := m.linkAgentPaneTx(txn, reg, op, windowUID, pane.Metadata.UID, legacyPane, binder, now)
+		if err != nil {
+			return "", err
+		}
+		if linkage.Kind == AgentLinkMinted {
+			agent, ok := reg.Agent(linkage.AgentUID)
+			if ok {
+				result.Agents = append(result.Agents, ImportedAgent{
+					UID:         agent.Metadata.UID,
+					Name:        agent.Metadata.Name,
+					PaneUID:     pane.Metadata.UID,
+					WindowIndex: windowIndex,
+					PaneIndex:   paneIndex,
+				})
+			}
 		}
 		result.Panes = append(result.Panes, ImportedPane{
 			UID:         pane.Metadata.UID,

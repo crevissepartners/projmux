@@ -143,6 +143,21 @@ func (b *BindingMatcher) Claim(uid string) {
 	}
 }
 
+// Claimed reports whether this pass already paired a registry uid.
+//
+// Agent runtime linkage reads it for the same reason the pane and window walks
+// keep the set at all: one registry object is the runtime of at most one live
+// tmux object, so an Agent a previous pane of this pass already attached to is
+// no longer a candidate for the next one. Agent uids share this set with Window
+// and Pane uids because uids are globally unique across kinds, which the
+// registry's own Validate enforces.
+func (b *BindingMatcher) Claimed(uid string) bool {
+	if b == nil {
+		return false
+	}
+	return b.claimed[strings.TrimSpace(uid)]
+}
+
 // MatchWindow decides which registry Window of projectUID a live tmux window is
 // the runtime of. observedUID is the `@projmux_window_uid` the live window
 // already carries, empty when it carries none.

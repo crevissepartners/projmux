@@ -42,6 +42,17 @@ const (
 	// AgentTopicPane is the pane-scoped topic option. The topic is a derived
 	// display source only and is never a name seed.
 	AgentTopicPane = "@projmux_ai_topic"
+	// AgentSessionIDPane and AgentThreadIDPane are the pane-scoped provider
+	// conversation identifiers the AI routes write when they launch an agent.
+	//
+	// They are a live routing index, not identity: hook ingest matches an
+	// incoming event against them to decide which pane it belongs to. Agent
+	// runtime linkage reads them for one narrow purpose -- deciding whether a
+	// live agent pane is the runtime of an Agent resource that already records
+	// the same conversation in status.sessionRef. Neither value is ever a name
+	// seed, a selector, or a uid.
+	AgentSessionIDPane = "@projmux_ai_session_id"
+	AgentThreadIDPane  = "@projmux_ai_thread_id"
 
 	// AutomaticRenameWindow is turned off on every registry-managed Window so
 	// a focused-Pane change cannot overwrite the Window name. The global
