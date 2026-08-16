@@ -1,5 +1,10 @@
 package cli
 
+import (
+	"slices"
+	"strings"
+)
+
 // Disposition is the primary Phase 0 classification of a current public or
 // hidden route. Every current route carries exactly one disposition; the
 // compatibility contract keeps orphan routes at zero for every later Phase.
@@ -42,8 +47,25 @@ func Dispositions() []Disposition {
 // sub-route tree used by the shared help renderer and carry no disposition of
 // their own (the parent's disposition covers the whole node).
 type Route struct {
-	// Name is the exact current argv token for this node.
+	// Name is the exact current argv token for this node. It is the canonical
+	// spelling: everything a route prints about itself is built from it, and an
+	// alias never replaces it anywhere.
 	Name string
+	// Aliases are extra argv tokens that reach this exact node.
+	//
+	// An alias is a spelling and never a second behavior. Dispatch normalizes it
+	// to Name before the handler runs, so both spellings share one flag set, one
+	// output-catalog lookup, one cardinality cell, and one error vocabulary --
+	// which is what makes the two byte-identical rather than merely similar.
+	//
+	// The resource verbs use this to accept the singular and the plural of every
+	// kind they implement, because `get panes` next to `describe pane` made the
+	// operator memorize a form per verb for no gain. The one spelling that is
+	// deliberately absent is `get pane`: it is not the singular of `get panes`
+	// but a separate exact-one read that owns the `--current -o cwd` projection,
+	// so it stays its own canonical child rather than becoming an alias of the
+	// list.
+	Aliases []string
 	// Summary is the one-line description. For top-level visible routes this
 	// string is byte-identical to the historical `printUsage` column so root
 	// help stays stable while its source of truth moves into this manifest.
@@ -430,23 +452,26 @@ var routes = []Route{
 			{
 				Name:      "window",
 				Summary:   "Delete Windows and every descendant Agent and Pane; no selector inside tmux means the active Window, and --all means every Window in the registry",
+				Aliases:   []string{"windows"},
 				Usage:     []string{"projmux delete window [<ref>...] [--project <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]"},
 				Canonical: []string{"delete window"},
 			},
 			{
 				Name:      "pane",
 				Summary:   "Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry",
+				Aliases:   []string{"panes"},
 				Usage:     []string{"projmux delete pane [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]"},
 				Canonical: []string{"delete pane"},
 			},
 			{
 				Name:      "agent",
 				Summary:   "Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry",
+				Aliases:   []string{"agents"},
 				Usage:     []string{"projmux delete agent [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]"},
 				Canonical: []string{"delete agent"},
 			},
-			{Name: "notification", Summary: "Delete pending notification rows", Canonical: []string{"delete notification"}},
-			{Name: "snapshot", Summary: "Delete saved session snapshots", Canonical: []string{"delete snapshot"}},
+			{Name: "notification", Summary: "Delete pending notification rows", Aliases: []string{"notifications"}, Canonical: []string{"delete notification"}},
+			{Name: "snapshot", Summary: "Delete saved session snapshots", Aliases: []string{"snapshots"}, Canonical: []string{"delete snapshot"}},
 		},
 	},
 	{
@@ -466,10 +491,10 @@ var routes = []Route{
 		},
 		Canonical: []string{"describe project", "describe window", "describe pane", "describe agent"},
 		Children: []Route{
-			{Name: "project", Summary: "Describe one Project resource; with no selector inside tmux, the active Project", Canonical: []string{"describe project"}, Outputs: readProjectionCatalog},
-			{Name: "window", Summary: "Describe one Window resource; with no selector inside tmux, the active Window", Canonical: []string{"describe window"}, Outputs: readProjectionCatalog},
-			{Name: "pane", Summary: "Describe one Pane resource; with no selector inside tmux, the active Pane", Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog},
-			{Name: "agent", Summary: "Describe one Agent resource; with no selector inside tmux, the Agent owning the active Pane", Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog},
+			{Name: "project", Summary: "Describe one Project resource; with no selector inside tmux, the active Project", Aliases: []string{"projects"}, Canonical: []string{"describe project"}, Outputs: readProjectionCatalog},
+			{Name: "window", Summary: "Describe one Window resource; with no selector inside tmux, the active Window", Aliases: []string{"windows"}, Canonical: []string{"describe window"}, Outputs: readProjectionCatalog},
+			{Name: "pane", Summary: "Describe one Pane resource; with no selector inside tmux, the active Pane", Aliases: []string{"panes"}, Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog},
+			{Name: "agent", Summary: "Describe one Agent resource; with no selector inside tmux, the Agent owning the active Pane", Aliases: []string{"agents"}, Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog},
 		},
 	},
 	{
@@ -530,6 +555,14 @@ var routes = []Route{
 		// singular `pane` is the exact-one read that also owns the `cwd` field
 		// projection. `notifications` and `snapshots` forward raw argv to the
 		// handlers that already own them.
+		//
+		// Every plural kind here accepts its singular as an alias except
+		// `panes`. `pane` is already taken by the exact-one read below, and that
+		// read is not the singular of this list: it resolves one Pane resource,
+		// it owns `--current -o cwd`, and it is what `projmux current` maps onto.
+		// Aliasing `pane` onto `panes` would delete a shipped route's meaning, so
+		// the two stay separate canonical children and the asymmetry is
+		// deliberate rather than an omission.
 		Name:        "get",
 		Summary:     "Read Projmux resources by selector",
 		Disposition: DispositionCanonical,
@@ -540,12 +573,12 @@ var routes = []Route{
 		},
 		Canonical: []string{"get projects", "get windows", "get panes", "get agents", "get notifications", "get snapshots", "get pane"},
 		Children: []Route{
-			{Name: "projects", Summary: "List Project resources", Canonical: []string{"get projects"}, Outputs: readProjectionCatalog},
-			{Name: "windows", Summary: "List Window resources", Canonical: []string{"get windows"}, Outputs: readProjectionCatalog},
+			{Name: "projects", Summary: "List Project resources", Aliases: []string{"project"}, Canonical: []string{"get projects"}, Outputs: readProjectionCatalog},
+			{Name: "windows", Summary: "List Window resources", Aliases: []string{"window"}, Canonical: []string{"get windows"}, Outputs: readProjectionCatalog},
 			{Name: "panes", Summary: "List Pane resources", Canonical: []string{"get panes"}, Outputs: readProjectionCatalog},
-			{Name: "agents", Summary: "List Agent resources", Canonical: []string{"get agents"}, Outputs: readProjectionCatalog},
-			{Name: "notifications", Summary: "List pending notification rows", Canonical: []string{"get notifications"}},
-			{Name: "snapshots", Summary: "List saved session snapshots", Canonical: []string{"get snapshots"}},
+			{Name: "agents", Summary: "List Agent resources", Aliases: []string{"agent"}, Canonical: []string{"get agents"}, Outputs: readProjectionCatalog},
+			{Name: "notifications", Summary: "List pending notification rows", Aliases: []string{"notification"}, Canonical: []string{"get notifications"}},
+			{Name: "snapshots", Summary: "List saved session snapshots", Aliases: []string{"snapshot"}, Canonical: []string{"get snapshots"}},
 			{
 				Name:      "pane",
 				Summary:   "Read one Pane resource; with no selector inside tmux, the active Pane",
@@ -694,9 +727,9 @@ var routes = []Route{
 		},
 		Canonical: []string{"rename project", "rename window", "rename pane"},
 		Children: []Route{
-			{Name: "project", Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", Canonical: []string{"rename project"}},
-			{Name: "window", Summary: "Rename a Projmux Window resource; with no selector inside tmux, the active Window", Canonical: []string{"rename window"}},
-			{Name: "pane", Summary: "Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title", Canonical: []string{"rename pane"}},
+			{Name: "project", Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", Aliases: []string{"projects"}, Canonical: []string{"rename project"}},
+			{Name: "window", Summary: "Rename a Projmux Window resource; with no selector inside tmux, the active Window", Aliases: []string{"windows"}, Canonical: []string{"rename window"}},
+			{Name: "pane", Summary: "Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title", Aliases: []string{"panes"}, Canonical: []string{"rename pane"}},
 		},
 	},
 	{
@@ -1180,11 +1213,64 @@ func Resolve(tokens []string) (path []string, route Route, ok bool) {
 	return path, current, true
 }
 
+// findChild resolves one child token, canonical spelling first.
+//
+// The two passes are ordered rather than merged so a canonical name always
+// wins: `get pane` is a child in its own right and must never be reached as
+// some other child's alias, whatever order the manifest happens to list them
+// in. TestNoChildAliasShadowsACanonicalSpelling makes that a checked property
+// instead of a comment.
 func findChild(parent Route, token string) (Route, bool) {
 	for _, child := range parent.Children {
 		if child.Name == token {
 			return child, true
 		}
 	}
+	for _, child := range parent.Children {
+		if slices.Contains(child.Aliases, token) {
+			return child, true
+		}
+	}
 	return Route{}, false
+}
+
+// CanonicalChildToken normalizes one child token of a top-level route onto the
+// canonical spelling of the node it addresses.
+//
+// This is the single normalization point the resource verbs dispatch through.
+// Returning the canonical token rather than a bool-plus-original is what makes
+// an alias byte-identical to what it aliases: everything downstream -- the flag
+// set name, the `-o` catalog lookup keyed by `<verb> <kind>`, every usage and
+// selector message that interpolates the spelling -- is built from the returned
+// token, so no per-alias string can exist to drift.
+func CanonicalChildToken(parent, token string) (string, bool) {
+	route, ok := LookupRoute(parent)
+	if !ok {
+		return "", false
+	}
+	child, ok := findChild(route, token)
+	if !ok {
+		return "", false
+	}
+	return child.Name, true
+}
+
+// ChildSpellings renders the accepted child tokens of a top-level route in
+// manifest order, each canonical spelling followed by its aliases joined with
+// `|`.
+//
+// The unknown-kind refusals are built from this, so a spelling the manifest
+// accepts can never be missing from the list the refusal offers. A child with
+// no alias renders as the bare canonical token, which is what keeps `get pane`
+// visibly distinct from `panes` in the same line.
+func ChildSpellings(parent string) []string {
+	route, ok := LookupRoute(parent)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(route.Children))
+	for _, child := range route.Children {
+		out = append(out, strings.Join(append([]string{child.Name}, child.Aliases...), "|"))
+	}
+	return out
 }

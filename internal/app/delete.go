@@ -7,12 +7,14 @@ import (
 	"io"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 )
 
-// deleteKinds lists the resource kinds `delete` implements, in help order.
-var deleteKinds = []string{"window", "pane", "agent", "notification", "snapshot"}
+// deleteKinds lists the kind spellings `delete` implements, in help order, each
+// canonical token followed by its accepted aliases. See getKinds.
+var deleteKinds = cli.ChildSpellings("delete")
 
 // deleteRegistryKinds are the kinds this verb deletes out of the resource
 // registry. `notification` and `snapshot` are parity aliases over the existing
@@ -86,18 +88,28 @@ func (c *deleteCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return usageError(fmt.Sprintf("delete requires a resource kind: %s", strings.Join(deleteKinds, ", ")))
 	}
-	switch args[0] {
+	// Normalizing the alias first is what keeps the destructive verb's plural
+	// spelling from being a second implementation: `delete panes` reaches the
+	// same cascade planner, the same confirmation prompt, and the same
+	// --all containment as `delete pane`, because by this line it *is*
+	// `delete pane`.
+	token, ok := cli.CanonicalChildToken("delete", args[0])
+	if !ok {
+		return usageError(fmt.Sprintf("delete %s is not available; this release implements: %s",
+			args[0], strings.Join(deleteKinds, ", ")))
+	}
+	switch token {
 	case "notification":
 		return forwardRawArgv(c.notify, "delete notification", "notify", []string{"ack"}, args[1:], stdout, stderr)
 	case "snapshot":
 		return forwardRawArgv(c.snapshots, "delete snapshot", "session-state", []string{"delete"}, args[1:], stdout, stderr)
 	}
-	kind, ok := c.resolveKinds[args[0]]
+	kind, ok := c.resolveKinds[token]
 	if !ok {
 		return usageError(fmt.Sprintf("delete %s is not available; this release implements: %s",
 			args[0], strings.Join(deleteKinds, ", ")))
 	}
-	return c.runKind(args[0], kind, args[1:], stdout, stderr)
+	return c.runKind(token, kind, args[1:], stdout, stderr)
 }
 
 // deleteDescendant is one resource the cascade removes together with a target.

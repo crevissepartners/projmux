@@ -7,12 +7,14 @@ import (
 	"io"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 )
 
-// renameKinds lists the resource kinds `rename` implements, in help order.
-var renameKinds = []string{"project", "window", "pane"}
+// renameKinds lists the kind spellings `rename` implements, in help order, each
+// canonical token followed by its accepted aliases. See getKinds.
+var renameKinds = cli.ChildSpellings("rename")
 
 // renameCommand implements the canonical `rename` verb.
 //
@@ -42,12 +44,20 @@ func (c *renameCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return usageError(fmt.Sprintf("rename requires a resource kind: %s", strings.Join(renameKinds, ", ")))
 	}
-	kind, ok := resourceKindTokens[args[0]]
-	if !ok || args[0] == "agent" {
+	// `agent` and `agents` need no special case here any more: the manifest node
+	// for `rename` has no Agent child, so neither spelling normalizes and both
+	// land on the same refusal every other unknown kind gets.
+	token, ok := cli.CanonicalChildToken("rename", args[0])
+	if !ok {
 		return usageError(fmt.Sprintf("rename %s is not available; this release implements: %s",
 			args[0], strings.Join(renameKinds, ", ")))
 	}
-	return c.runKind(args[0], kind, args[1:], stdout, stderr)
+	kind, ok := resourceKindTokens[token]
+	if !ok {
+		return usageError(fmt.Sprintf("rename %s is not available; this release implements: %s",
+			args[0], strings.Join(renameKinds, ", ")))
+	}
+	return c.runKind(token, kind, args[1:], stdout, stderr)
 }
 
 func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []string, stdout, stderr io.Writer) error {
