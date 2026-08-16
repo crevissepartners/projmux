@@ -110,6 +110,21 @@ func (b *builder) agentWithPane(agentUID, agentName, windowUID, paneUID, paneNam
 	b.reserve(agentUID, metadata.KindPane, paneName, paneUID)
 }
 
+// paneLessAgent adds an Agent that owns no managed Pane: the shape every
+// released, pending, or failed Agent has, because the registry clears
+// status.paneRef on every non-Running transition.
+func (b *builder) paneLessAgent(agentUID, agentName, windowUID string, phase metadata.AgentPhase) {
+	agentOwner := &metadata.OwnerRef{Kind: metadata.KindWindow, UID: windowUID}
+	b.registry.Agents = append(b.registry.Agents, metadata.Agent{
+		APIVersion: metadata.APIVersion,
+		Kind:       metadata.KindAgent,
+		Metadata:   b.meta(agentUID, agentName, "", agentOwner, nil),
+		Spec:       metadata.AgentSpec{Provider: agentName},
+		Status:     metadata.AgentStatus{Phase: phase, LastTransitionAt: fixtureClock},
+	})
+	b.reserve(windowUID, metadata.KindAgent, agentName, agentUID)
+}
+
 // build derives primaryPaneRef for every Window and validates the result.
 func (b *builder) build() metadata.Registry {
 	b.t.Helper()

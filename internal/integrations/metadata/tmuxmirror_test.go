@@ -171,10 +171,12 @@ func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.
 		// object already carries: window 0 is still bound, window 1 is blank.
 		"list-windows": "0" + sep + "editor" + sep + "off" + sep + "@4" + sep + "win-editor\n" +
 			"1" + sep + "zsh" + sep + "on" + sep + "@5" + sep + "\n",
+		// The last two pane fields are the provider conversation ids the AI
+		// routes wrote onto the live pane; only the agent pane carries them.
 		"list-panes": strings.Join([]string{
-			strings.Join([]string{"0", "nvim", "", "", "nvim", "src/main.go", "/src/projmux", "%1", "pan-nvim"}, sep),
-			strings.Join([]string{"0", "", "codex", "refactor naming", "codex", "codex", "/src/projmux", "%2", ""}, sep),
-			strings.Join([]string{"1", "", "", "", "zsh", "~/src/projmux", "/src/projmux", "%3", ""}, sep),
+			strings.Join([]string{"0", "nvim", "", "", "nvim", "src/main.go", "/src/projmux", "%1", "pan-nvim", "", ""}, sep),
+			strings.Join([]string{"0", "", "codex", "refactor naming", "codex", "codex", "/src/projmux", "%2", "", "sess-9", "thread-9"}, sep),
+			strings.Join([]string{"1", "", "", "", "zsh", "~/src/projmux", "/src/projmux", "%3", "", "", ""}, sep),
 		}, "\n") + "\n",
 	}}
 	legacy, targets, err := NewMirror(runner).ObserveLegacySessionTargets(context.Background(), "projmux")
@@ -217,6 +219,14 @@ func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.
 	}
 	if legacy.Windows[0].Panes[0].UID != "pan-nvim" || legacy.Windows[0].Panes[1].UID != "" {
 		t.Fatalf("observed pane uids = %q/%q, want pan-nvim and blank", legacy.Windows[0].Panes[0].UID, legacy.Windows[0].Panes[1].UID)
+	}
+	// The provider conversation ids ride along on the same query, so agent
+	// runtime linkage never pays for a second per-pane read.
+	if got := legacy.Windows[0].Panes[1]; got.SessionID != "sess-9" || got.ThreadID != "thread-9" {
+		t.Fatalf("observed conversation ids = %q/%q, want sess-9 and thread-9", got.SessionID, got.ThreadID)
+	}
+	if got := legacy.Windows[0].Panes[0]; got.SessionID != "" || got.ThreadID != "" {
+		t.Fatalf("a non-agent pane must carry no conversation ids, got %q/%q", got.SessionID, got.ThreadID)
 	}
 
 	// The observed state drives the same seeds the pure core computes.

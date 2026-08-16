@@ -308,6 +308,12 @@ func (m Mirror) ObserveLegacySession(ctx context.Context, sessionName string) (c
 // unbound registry object; an object still carrying a uid the registry knows,
 // whose binding is simply reapplied; and an object carrying a foreign uid,
 // which is evidence of "not ours" and is left untouched.
+//
+// It reads the pane-scoped provider conversation ids in the same pass, for the
+// same reason: agent runtime linkage has to tell "this live agent pane belongs
+// to an Agent resource that already records this conversation" from "this
+// conversation has no Agent yet", and paying for a second per-pane query to
+// answer that would double the reconciler's tmux budget.
 func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName string) (coremetadata.LegacySession, LegacyTargets, error) {
 	rootOut, err := m.run(ctx, "display-message", "-p", "-t", sessionName, "-F", "#{"+tmuxopts.ProjectPathSession+"}")
 	if err != nil {
@@ -353,23 +359,27 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 		"#{pane_current_path}",
 		"#{pane_id}",
 		"#{"+tmuxopts.PaneUID+"}",
+		"#{"+tmuxopts.AgentSessionIDPane+"}",
+		"#{"+tmuxopts.AgentThreadIDPane+"}",
 	))
 	if err != nil {
 		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: list session panes: %w", err)
 	}
-	for _, fields := range parseRows(string(panesOut), 9) {
+	for _, fields := range parseRows(string(panesOut), 11) {
 		position, ok := indexOrder[fields[0]]
 		if !ok {
 			continue
 		}
 		legacy.Windows[position].Panes = append(legacy.Windows[position].Panes, coremetadata.LegacyPane{
-			Label:    fields[1],
-			Provider: fields[2],
-			Topic:    fields[3],
-			Command:  fields[4],
-			Title:    fields[5],
-			CWD:      fields[6],
-			UID:      strings.TrimSpace(fields[8]),
+			Label:     fields[1],
+			Provider:  fields[2],
+			Topic:     fields[3],
+			Command:   fields[4],
+			Title:     fields[5],
+			CWD:       fields[6],
+			UID:       strings.TrimSpace(fields[8]),
+			SessionID: strings.TrimSpace(fields[9]),
+			ThreadID:  strings.TrimSpace(fields[10]),
 		})
 		targets.Panes[position] = append(targets.Panes[position], fields[7])
 	}
