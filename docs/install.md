@@ -52,7 +52,6 @@ Normal use needs:
 Useful optional tools:
 
 - `git` for branch/status metadata.
-- `kubectl` for the Kubernetes status segment.
 - `notify-send` on Linux, or `powershell.exe` under WSL, for built-in desktop
   notifications.
 

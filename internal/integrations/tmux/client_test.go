@@ -2273,48 +2273,6 @@ func TestClientEnsureSessionAppliesProjectSessionEnvOnCreateAndAfterCreate(t *te
 	}
 }
 
-func TestClientEnsureSessionAppliesProjectKubeSessionEnvOnCreate(t *testing.T) {
-	t.Parallel()
-
-	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-			{},
-			{},
-			{},
-			{},
-			{},
-			{},
-		},
-	}
-	hook := &fakeLifecycleRunner{
-		sessionEnv: map[string]string{
-			"PROJMUX_KUBE_CONTEXT":   "dev",
-			"KUBE_CONTEXT":           "dev",
-			"PROJMUX_KUBE_NAMESPACE": "tools",
-			"KUBE_NAMESPACE":         "tools",
-		},
-	}
-	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
-
-	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
-		t.Fatalf("EnsureSession returned error: %v", err)
-	}
-
-	wantCreate := []string{
-		"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux",
-		"-e", "KUBE_CONTEXT=dev",
-		"-e", "KUBE_NAMESPACE=tools",
-		"-e", "PROJMUX_KUBE_CONTEXT=dev",
-		"-e", "PROJMUX_KUBE_NAMESPACE=tools",
-		"-P", "-F", "#{pane_id}",
-	}
-	if !reflect.DeepEqual(runner.calls[1].args, wantCreate) {
-		t.Fatalf("new-session args = %#v, want %#v", runner.calls[1].args, wantCreate)
-	}
-}
-
 func TestClientEnsureSessionSkipsPostCreateWhenSessionExists(t *testing.T) {
 	t.Parallel()
 

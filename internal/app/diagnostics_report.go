@@ -202,7 +202,7 @@ func supportDoctorSafeStringValues() map[string]map[string]bool {
 		"provider_id": {},
 		"agent":       {},
 		"confidence":  {"high": true, "medium": true, "low": true, "none": true},
-		"name":        {"tmux": true, "git": true, "stty": true, "kubectl": true, "tmux bell fallback": true},
+		"name":        {"tmux": true, "git": true, "stty": true, "tmux bell fallback": true},
 		"id":          {"tmux-bell": true},
 		"severity":    {string(doctorSeverityInfo): true, string(doctorSeverityWarning): true, string(doctorSeverityError): true},
 		"code":        {},

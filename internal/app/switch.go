@@ -126,7 +126,6 @@ type switchCommand struct {
 	workingDir              func() (string, error)
 	lookupEnv               func(string) string
 	gitBranch               func(string) string
-	kubeInfo                func(sessionName string) switchKubeInfo
 	loadProjdir             func(homeDir string) (string, error)
 	saveProjdir             func(homeDir, value string) error
 	loadWorkdirs            func(homeDir string) ([]string, error)
@@ -135,11 +134,6 @@ type switchCommand struct {
 	focusSession            string
 	sidebarResume           switchSidebarResume
 	cleanupKilledSession    func(string)
-}
-
-type switchKubeInfo struct {
-	Context   string
-	Namespace string
 }
 
 type switchPlan struct {
@@ -188,7 +182,6 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		workingDir:    os.Getwd,
 		lookupEnv:     os.Getenv,
 		gitBranch:     detectGitBranch,
-		kubeInfo:      defaultSwitchKubeInfo,
 		loadProjdir:   config.LoadProjdir,
 		saveProjdir:   config.SaveProjdir,
 		loadWorkdirs:  config.LoadWorkdirs,
@@ -820,12 +813,6 @@ func (c *switchCommand) previewModel(ctx context.Context, target string) (corepr
 	if !exists {
 		return corepreview.BuildSwitchReadModel(modelInputs), nil
 	}
-	if c.kubeInfo != nil {
-		kube := c.kubeInfo(sessionName)
-		modelInputs.KubeContext = kube.Context
-		modelInputs.KubeNamespace = kube.Namespace
-	}
-
 	store, err := c.requireSwitchPreviewStore()
 	if err != nil {
 		return corepreview.SwitchReadModel{}, err
@@ -3341,53 +3328,6 @@ func detectGitBranchWithRunner(path string, limit time.Duration, runner func(con
 
 func runSwitchGitCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
-}
-
-func defaultSwitchKubeInfo(sessionName string) switchKubeInfo {
-	sessionName = strings.TrimSpace(sessionName)
-	if sessionName == "" {
-		return switchKubeInfo{}
-	}
-	path := switchKubeSessionPath(sessionName)
-	if path == "" {
-		return switchKubeInfo{}
-	}
-	if _, err := os.Stat(path); err != nil {
-		return switchKubeInfo{}
-	}
-	if _, err := exec.LookPath("kubectl"); err != nil {
-		return switchKubeInfo{}
-	}
-	return switchKubeInfo{
-		Context:   runKubectlConfig(path, "current-context"),
-		Namespace: runKubectlConfig(path, "view", "--minify", "--output", "jsonpath={..namespace}"),
-	}
-}
-
-func switchKubeSessionPath(sessionName string) string {
-	root := strings.TrimRight(os.Getenv("XDG_RUNTIME_DIR"), string(filepath.Separator))
-	if root == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil || strings.TrimSpace(homeDir) == "" {
-			return ""
-		}
-		root = filepath.Join(homeDir, ".cache")
-	}
-	return filepath.Join(root, "kube-sessions", sessionName+".yaml")
-}
-
-func runKubectlConfig(kubeconfig string, args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-
-	fullArgs := append([]string{"config"}, args...)
-	cmd := exec.CommandContext(ctx, "kubectl", fullArgs...)
-	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(output))
 }
 
 func (c *switchCommand) clearPins() error {

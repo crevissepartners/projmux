@@ -1430,7 +1430,6 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set-hook -g client-session-changed",
 		"run-shell -b \"'/tmp/proj mux/bin/projmux' window record >/dev/null 2>&1 || true\"",
 		"#[bold,fg=colour230,bg=colour29]#[range=user|settings]  projmux #[norange]#[default]",
-		"'/tmp/proj mux/bin/projmux' internal status kube",
 		"'/tmp/proj mux/bin/projmux' internal status git",
 		"set -g @projmux_statusbar_decoration off",
 		"set -g @projmux_statusbar_decoration_cwd off",
@@ -1478,6 +1477,9 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"\\033[901",
 		"range=user|sessionstate",
 		"statusbar click sessionstate",
+		"internal status kube",
+		"statusbar click kube",
+		"bind-key -T projmux-status k",
 	} {
 		if strings.Contains(output, banned) {
 			t.Fatalf("print-config output = %q, did not expect substring %q", output, banned)

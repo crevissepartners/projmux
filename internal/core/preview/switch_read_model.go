@@ -4,16 +4,14 @@ import "strings"
 
 // SwitchReadModel captures the preview context for a switch candidate path.
 type SwitchReadModel struct {
-	Path          string
-	DisplayPath   string
-	SessionName   string
-	SessionMode   string
-	GitBranch     string
-	KubeContext   string
-	KubeNamespace string
-	Windows       []Window
-	Panes         []Pane
-	Popup         PopupReadModel
+	Path        string
+	DisplayPath string
+	SessionName string
+	SessionMode string
+	GitBranch   string
+	Windows     []Window
+	Panes       []Pane
+	Popup       PopupReadModel
 }
 
 // SwitchReadModelInputs captures the pure inputs needed to derive switch
@@ -24,8 +22,6 @@ type SwitchReadModelInputs struct {
 	SessionName        string
 	SessionExists      bool
 	GitBranch          string
-	KubeContext        string
-	KubeNamespace      string
 	StoredSelection    Selection
 	HasStoredSelection bool
 	Windows            []Window
@@ -36,15 +32,13 @@ type SwitchReadModelInputs struct {
 // optional tmux inventory.
 func BuildSwitchReadModel(inputs SwitchReadModelInputs) SwitchReadModel {
 	model := SwitchReadModel{
-		Path:          strings.TrimSpace(inputs.Path),
-		DisplayPath:   strings.TrimSpace(inputs.DisplayPath),
-		SessionName:   strings.TrimSpace(inputs.SessionName),
-		SessionMode:   "new",
-		GitBranch:     strings.TrimSpace(inputs.GitBranch),
-		KubeContext:   strings.TrimSpace(inputs.KubeContext),
-		KubeNamespace: strings.TrimSpace(inputs.KubeNamespace),
-		Windows:       normalizedWindows(inputs.Windows),
-		Panes:         normalizedPanes(inputs.Panes),
+		Path:        strings.TrimSpace(inputs.Path),
+		DisplayPath: strings.TrimSpace(inputs.DisplayPath),
+		SessionName: strings.TrimSpace(inputs.SessionName),
+		SessionMode: "new",
+		GitBranch:   strings.TrimSpace(inputs.GitBranch),
+		Windows:     normalizedWindows(inputs.Windows),
+		Panes:       normalizedPanes(inputs.Panes),
 	}
 
 	if !inputs.SessionExists {

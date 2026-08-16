@@ -240,8 +240,6 @@ func TestRenderRolesFallbackUsesTerminalDefaultPaneAndPopupBackgrounds(t *testin
 		GitBehind:         TmuxStateBehindFg,
 		DecorationCwd:     TmuxDecorationCwdFg,
 		DecorationGitLab:  TmuxDecorationGitLabFg,
-		KubeContext:       TmuxKubeContextFg,
-		KubeNamespace:     TmuxKubeNamespaceFg,
 		IdentityBg:        TmuxIdentityBg,
 		IdentityFg:        TmuxIdentityFg,
 		ActionBg:          TmuxActionBg,

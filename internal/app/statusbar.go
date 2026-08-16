@@ -5,7 +5,7 @@
 // "#{mouse_status_range}" --client "#{client_tty}" --mouse-window
 // "#{mouse_window}"'` invokes us with the matching range id, client tty, and
 // the window id under the cursor, and the
-// `prefix s {u,n,g,k,p,s}` shortcuts call us with hard-coded ids, while
+// `prefix s {u,n,g,p,s}` shortcuts call us with hard-coded ids, while
 // `prefix s r` invokes the dedicated throttled usage refresh subcommand.
 //
 // When the click lands outside any user-defined range (e.g. on a window-list
@@ -41,7 +41,6 @@ type statusbarRangeID string
 const (
 	statusbarRangeSession   statusbarRangeID = "session"
 	statusbarRangePwd       statusbarRangeID = "pwd"
-	statusbarRangeKube      statusbarRangeID = "kube"
 	statusbarRangeGit       statusbarRangeID = "git"
 	statusbarRangeUsage     statusbarRangeID = "usage"
 	statusbarRangeNotify    statusbarRangeID = "notify"
@@ -363,7 +362,6 @@ func (c *statusbarCommand) dispatchTable() map[statusbarRangeID]func(statusbarCl
 	return map[statusbarRangeID]func(statusbarClickOptions, io.Writer, io.Writer) error{
 		statusbarRangeSession: c.handleSession,
 		statusbarRangePwd:     c.handlePwd,
-		statusbarRangeKube:    c.handleKube,
 		statusbarRangeGit:     c.handleGit,
 		statusbarRangeUsage: func(opts statusbarClickOptions, stdout, stderr io.Writer) error {
 			return c.handleUsage(false, opts, stdout, stderr)
@@ -424,13 +422,6 @@ func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Write
 	}
 
 	return c.runTmux(stderr, "display-message", "path: "+shortenStatusbarToast(path, 180))
-}
-
-// handleKube opens the project switcher. There is no kube-specific filter
-// surface yet; the switch picker is the existing navigation surface that
-// already renders kube metadata for candidates.
-func (c *statusbarCommand) handleKube(opts statusbarClickOptions, _, stderr io.Writer) error {
-	return c.handlePopupToggleWithClient(stderr, "kube", "sessionizer", opts.ClientTTY)
 }
 
 // handleGit opens the project switcher. There is no git-specific filter
@@ -1459,7 +1450,7 @@ func printStatusbarUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-window <id>] [--mouse-x N] [--mouse-y N]")
 	fmt.Fprintln(w, "  projmux statusbar usage-refresh")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Range ids: session pwd kube git usage notify settings")
+	fmt.Fprintln(w, "Range ids: session pwd git usage notify resources settings")
 }
 
 type statusbarExecRunner struct{}

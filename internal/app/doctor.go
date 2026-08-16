@@ -61,7 +61,6 @@ type doctorDepCategory string
 const (
 	doctorCategoryCore     doctorDepCategory = "core"
 	doctorCategoryWorkflow doctorDepCategory = "workflow"
-	doctorCategoryOptional doctorDepCategory = "optional"
 )
 
 type doctorDep struct {
@@ -146,12 +145,6 @@ func doctorDeps() []doctorDep {
 		{Name: "tmux", Required: true, Category: doctorCategoryCore, MinVersion: "3.4"},
 		{Name: "git", Required: true, Category: doctorCategoryWorkflow},
 		{Name: "stty", Required: true, Category: doctorCategoryWorkflow, SkipOnWindows: true},
-		{
-			Name:         "kubectl",
-			Required:     false,
-			Category:     doctorCategoryOptional,
-			OptionalNote: "optional; install if you use the kubectl switcher",
-		},
 	}
 }
 
@@ -675,11 +668,9 @@ func hasOnPath(lookPath func(string) (string, error), name string) bool {
 }
 
 // versionProbeArgs maps a binary name to the argv that prints its version.
-// Most tools accept --version, but tmux uses -V and kubectl uses
-// `version --client` (its --version flag is unsupported).
+// Most tools accept --version, but tmux uses -V.
 var versionProbeArgs = map[string][]string{
-	"tmux":    {"-V"},
-	"kubectl": {"version", "--client"},
+	"tmux": {"-V"},
 }
 
 // doctorVersionPattern matches the first version-looking token in a string,

@@ -150,9 +150,7 @@ func (c *settingsCommand) runProjectTrustSection(stdout, stderr io.Writer) error
 	}
 }
 
-// projectTrustOptions builds the Trust subsection picker. Layout mirrors
-// the Effective merge view page so the two project-scope pages feel
-// consistent (info rows + a small set of actionable rows).
+// projectTrustOptions builds the Trust subsection picker.
 func (c *settingsCommand) projectTrustOptions(ctx settingsProjectContext) intpickercompat.Options {
 	return intpickercompat.Options{
 		UI:         "settings-project-trust",
@@ -238,7 +236,7 @@ func (c *settingsCommand) projectTrustEntries(ctx settingsProjectContext) []intp
 		})
 	case hooks.ProjectConfigTrustAbsent:
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("No actions", "create "+filepath.Base(configPath)+" first via Project recipe row"),
+			Label: settingsLabelDim("No actions", "create "+filepath.Base(configPath)+" with a project hook before trusting it"),
 			Value: settingsNoopValue,
 		})
 	}

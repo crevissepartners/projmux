@@ -150,96 +150,7 @@ func TestSettingsProjectHooksListOmitsProjectContextRow(t *testing.T) {
 	})
 }
 
-// TestSettingsProjectConfigOmitsProjectContextRow is a Phase 2.7
-// regression guard for the Project recipe subpage — same reasoning as the
-// Hooks page guard above.
-func TestSettingsProjectConfigOmitsProjectContextRow(t *testing.T) {
-	t.Parallel()
-
-	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".projmux"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := &settingsCommand{
-		lookupEnv: func(name string) string {
-			if name == "PROJMUX_CWD" {
-				return repo
-			}
-			return ""
-		},
-	}
-	ctx := cmd.resolveSettingsProjectContext()
-	entries := cmd.projectConfigEntries(ctx)
-	if hasEntryLabelContaining(entries, "Project context") {
-		t.Fatalf("project config entries = %#v, want no \"Project context\" info row", entries)
-	}
-}
-
-func TestSettingsProjectConfigRootUsesDetailRows(t *testing.T) {
-	t.Parallel()
-
-	repo := t.TempDir()
-	writeFile(t, filepath.Join(repo, ".projmux", "config.toml"), `
-[startup]
-run = "codex"
-
-[kube]
-context = "dev"
-namespace = "apps"
-
-[env]
-FOO = "bar"
-`)
-	cmd := &settingsCommand{
-		lookupEnv: func(name string) string {
-			if name == "PROJMUX_CWD" {
-				return repo
-			}
-			return ""
-		},
-	}
-
-	entries := cmd.projectConfigEntries(cmd.resolveSettingsProjectContext())
-	for _, want := range []string{
-		settingsActionPrefixProjectConfig + "startup",
-		settingsActionPrefixProjectConfig + "kube",
-		settingsActionPrefixProjectConfig + "env",
-	} {
-		if !hasEntryValue(entries, want) {
-			t.Fatalf("project config root entries = %#v, want detail row %q", entries, want)
-		}
-	}
-	for _, label := range []string{"Startup command", "Kube", "Environment"} {
-		if !hasEntryLabelContaining(entries, label) {
-			t.Fatalf("project config root entries = %#v, want label %q", entries, label)
-		}
-	}
-	for _, disallowed := range []string{
-		settingsActionPrefixProjectConfig + "startup:set",
-		settingsActionPrefixProjectConfig + "startup:clear",
-		settingsActionPrefixProjectConfig + "kube:context:set",
-		settingsActionPrefixProjectConfig + "kube:context:clear",
-		settingsActionPrefixProjectConfig + "kube:namespace:set",
-		settingsActionPrefixProjectConfig + "kube:namespace:clear",
-		settingsActionPrefixProjectConfig + "env:add",
-		settingsActionPrefixProjectConfig + "env:FOO:set",
-		settingsActionPrefixProjectConfig + "env:FOO:remove",
-	} {
-		if hasEntryValue(entries, disallowed) {
-			t.Fatalf("project config root entries = %#v, want no mutation action %q", entries, disallowed)
-		}
-	}
-
-	startupEntries := projectConfigStartupEntries(cmd.currentProjectConfig(cmd.resolveSettingsProjectContext()))
-	if !hasEntryValue(startupEntries, settingsActionPrefixProjectConfig+"startup:set") {
-		t.Fatalf("startup detail entries = %#v, want set action", startupEntries)
-	}
-	if !hasEntryValue(startupEntries, settingsActionPrefixProjectConfig+"startup:clear") {
-		t.Fatalf("startup detail entries = %#v, want clear action", startupEntries)
-	}
-}
-
-func TestSettingsHookmakerAndProjectRecipeStateColors(t *testing.T) {
+func TestSettingsHookmakerStateColors(t *testing.T) {
 	t.Parallel()
 
 	// The per-event Automation detail owns the mutation rows now: the add/edit
@@ -263,15 +174,6 @@ run = "echo ok"
 	activeEntries := cmd.hookEventDetailEntries(hookScopeProject, "post-create")
 	assertEntryColorForValue(t, activeEntries, settingsActionPrefixHookEdit+"project:post-create", settingsColorAdd)
 	assertEntryColorForValue(t, activeEntries, settingsActionPrefixHookRemove+"project:post-create", settingsColorRemove)
-
-	startupEntries := projectConfigStartupEntries(hooks.ProjectConfig{StartupRun: "make dev"})
-	assertEntryColorForValue(t, startupEntries, settingsActionPrefixProjectConfig+"startup:set", settingsColorType)
-	assertEntryColorForValue(t, startupEntries, settingsActionPrefixProjectConfig+"startup:clear", settingsColorRemove)
-
-	envEntries := projectConfigEnvEntries(hooks.ProjectConfig{Env: map[string]string{"FOO": "bar"}})
-	assertEntryColorForValue(t, envEntries, settingsActionPrefixProjectConfig+"env:add", settingsColorAdd)
-	assertEntryColorForValue(t, envEntries, settingsActionPrefixProjectConfig+"env:FOO:set", settingsColorType)
-	assertEntryColorForValue(t, envEntries, settingsActionPrefixProjectConfig+"env:FOO:remove", settingsColorRemove)
 }
 
 func TestSettingsProjectHooksListWithDeclarativeContext(t *testing.T) {
@@ -306,8 +208,8 @@ run = "codex"
 	assertEntryLabelContainsAll(t, cmd.hookEventDetailEntries(hookScopeProject, "post-create"), "Command", "run = echo declared-post")
 	assertEntryLabelContainsAll(t, cmd.hookEventDetailEntries(hookScopeProject, "pre-create"), "Command", "no command")
 	for _, entry := range hookOptions.Entries {
-		if entry.Value == settingsSectionProjectConfig || strings.Contains(entry.Label, "Project recipe") {
-			t.Fatalf("hook options = %#v, want no nested Project recipe row", hookOptions.Entries)
+		if entry.Value == "section:project-config" || strings.Contains(entry.Label, "Project recipe") {
+			t.Fatalf("hook options = %#v, want retired Project recipe route absent", hookOptions.Entries)
 		}
 	}
 }
@@ -626,218 +528,7 @@ run = "echo global-declarative"
 
 // --- Project config section tests preserved from Phase 2.5 -----------------
 
-func TestSettingsProjectConfigEditorWritesAndTrustsConfig(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	configHome := t.TempDir()
-	stateHome := t.TempDir()
-	repo := t.TempDir()
-	configPath := filepath.Join(repo, ".projmux", "config.toml")
-	writeFile(t, configPath, `
-[hooks.post-create]
-run = "echo post"
-`)
-
-	var calls int
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			if got, want := options.UI, "settings-project-config"; got != want {
-				t.Fatalf("project config UI = %q, want %q", got, want)
-			}
-			if !hasEntryValue(options.Entries, settingsActionPrefixProjectConfig+"startup") {
-				t.Fatalf("project config entries = %#v, want Startup command detail row", options.Entries)
-			}
-			if hasEntryValue(options.Entries, settingsActionPrefixProjectConfig+"startup:set") {
-				t.Fatalf("project config entries = %#v, want no root startup mutation action", options.Entries)
-			}
-			if hasEntryLabelContaining(options.Entries, "Hook commands") {
-				t.Fatalf("project config entries = %#v, want no hook commands row", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "startup"}, nil
-		case 2:
-			if got, want := options.UI, "settings-project-config-startup"; got != want {
-				t.Fatalf("startup UI = %q, want %q", got, want)
-			}
-			if !hasEntryValue(options.Entries, settingsActionPrefixProjectConfig+"startup:set") {
-				t.Fatalf("startup entries = %#v, want startup set action", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "startup:set"}, nil
-		case 3:
-			if got, want := options.UI, "settings-project-config-typed"; got != want {
-				t.Fatalf("typed UI = %q, want %q", got, want)
-			}
-			return intpickercompat.Result{Key: "enter", Query: "codex"}, nil
-		case 4:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "kube"}, nil
-		case 6:
-			if got, want := options.UI, "settings-project-config-kube"; got != want {
-				t.Fatalf("kube UI = %q, want %q", got, want)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "kube:context:set"}, nil
-		case 7:
-			return intpickercompat.Result{Key: "enter", Query: "dev"}, nil
-		case 8:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 9:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "env"}, nil
-		case 10:
-			if got, want := options.UI, "settings-project-config-env"; got != want {
-				t.Fatalf("environment UI = %q, want %q", got, want)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "env:add"}, nil
-		case 11:
-			return intpickercompat.Result{Key: "enter", Query: "FOO"}, nil
-		case 12:
-			return intpickercompat.Result{Key: "enter", Query: "bar"}, nil
-		case 13:
-			if !hasEntryLabelContaining(options.Entries, "FOO") {
-				t.Fatalf("refreshed env entries = %#v, want saved env value", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 14:
-			if !hasEntryLabelContaining(options.Entries, "codex") || !hasEntryLabelContaining(options.Entries, "dev") || !hasEntryLabelContaining(options.Entries, "1 var") {
-				t.Fatalf("refreshed project config root entries = %#v, want saved section summaries", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 15:
-			return intpickercompat.Result{}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	})
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "PROJMUX_CWD":
-				return repo
-			case "XDG_CONFIG_HOME":
-				return configHome
-			case "XDG_STATE_HOME":
-				return stateHome
-			default:
-				return ""
-			}
-		},
-		runner:       runner,
-		nativePicker: nativePickerFromCompatRunner(runner),
-	}
-
-	var stdout bytes.Buffer
-	// The Project recipe handler survives Phase 0 with no visible route: its
-	// hard removal is a later slice, so it is exercised directly here.
-	if err := cmd.runProjectConfigSection(&stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runProjectConfigSection() error = %v", err)
-	}
-	got := readFile(t, configPath)
-	for _, want := range []string{
-		"[hooks.post-create]",
-		`run = "echo post"`,
-		"[startup]",
-		`run = "codex"`,
-		"[env]",
-		`FOO = "bar"`,
-		"[kube]",
-		`context = "dev"`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("config.toml =\n%s\nwant containing %q", got, want)
-		}
-	}
-	trustStore := readFile(t, filepath.Join(stateHome, "projmux", "trusted-projects.json"))
-	if !strings.Contains(trustStore, repo) || !strings.Contains(trustStore, ".projmux/config.toml") {
-		t.Fatalf("trust store = %s, want repo config hash", trustStore)
-	}
-	if count := strings.Count(stdout.String(), "trusted "+configPath); count != 3 {
-		t.Fatalf("stdout = %q, want three trust writes", stdout.String())
-	}
-}
-
-func TestSettingsProjectConfigEditorRejectsInvalidEnvKey(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	stateHome := t.TempDir()
-	repo := t.TempDir()
-	var calls int
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixProjectConfig + "env:add"}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Query: "1BAD"}, nil
-		case 3:
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
-	})
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "PROJMUX_CWD":
-				return repo
-			case "XDG_STATE_HOME":
-				return stateHome
-			default:
-				return ""
-			}
-		},
-		runner:       runner,
-		nativePicker: nativePickerFromCompatRunner(runner),
-	}
-
-	var stderr bytes.Buffer
-	if err := cmd.runProjectConfigSection(&bytes.Buffer{}, &stderr); err != nil {
-		t.Fatalf("runProjectConfigSection() error = %v", err)
-	}
-	if !strings.Contains(stderr.String(), "invalid env key") {
-		t.Fatalf("stderr = %q, want invalid env key warning", stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(repo, ".projmux", "config.toml")); !os.IsNotExist(err) {
-		t.Fatalf("config.toml stat error = %v, want missing file", err)
-	}
-}
-
-func TestSettingsHookMakerConfigSectionHasNoHookCommandsRow(t *testing.T) {
-	t.Parallel()
-
-	repo := t.TempDir()
-	cfgPath := filepath.Join(repo, ".projmux", "config.toml")
-	writeFile(t, cfgPath, `
-[hooks.post-create]
-run = "echo a"
-
-[hooks.send-noti]
-run = "echo b"
-`)
-	cmd := &settingsCommand{
-		lookupEnv: func(name string) string {
-			if name == "PROJMUX_CWD" {
-				return repo
-			}
-			return ""
-		},
-	}
-	ctx := cmd.resolveSettingsProjectContext()
-	entries := cmd.projectConfigEntries(ctx)
-	for _, entry := range entries {
-		if strings.Contains(entry.Label, "Hook commands") {
-			t.Fatalf("config.toml section still renders hook commands row: %#v", entry)
-		}
-	}
-}
-
-func TestSettingsProjectConfigWriterPreservesSymlink(t *testing.T) {
+func TestSettingsProjectHookWriterPreservesSymlinkAndRefreshesTrust(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -846,7 +537,7 @@ func TestSettingsProjectConfigWriterPreservesSymlink(t *testing.T) {
 	repo := filepath.Join(home, "repo")
 	path := filepath.Join(repo, ".projmux", "config.toml")
 	target := filepath.Join(home, "config-targets", "project.toml")
-	writeFile(t, target, "[startup]\nrun = \"old\"\n")
+	writeFile(t, target, "[hooks.post-create]\nrun = \"old\"\n")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -877,7 +568,7 @@ func TestSettingsProjectConfigWriterPreservesSymlink(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	err = cmd.saveProjectConfig(settingsProjectContext{Path: repo, Name: "repo"}, &stdout, func(cfg *hooks.ProjectConfig) error {
-		cfg.StartupRun = "make settings-smoke"
+		cfg.Hooks[hooks.EventPostCreate] = "make settings-smoke"
 		return nil
 	})
 	if err != nil {
@@ -896,7 +587,7 @@ func TestSettingsProjectConfigWriterPreservesSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := string(body); !strings.Contains(got, `run = "make settings-smoke"`) {
-		t.Fatalf("project target content = %q, want Settings update", got)
+		t.Fatalf("project target content = %q, want project hook update", got)
 	}
 	if _, err := os.Stat(filepath.Join(stateHome, "projmux", "trusted-projects.json")); err != nil {
 		t.Fatalf("Settings trust-store smoke: %v", err)

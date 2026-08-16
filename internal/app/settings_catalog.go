@@ -172,7 +172,6 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixHookView, settingsNavigationMeta("Hook maker - view", settingsAxisBoth, settingsOwnerHooks)},
 	{settingsActionPrefixKeymap, settingsActionMeta("Keybindings", settingsAxisGlobal, settingsOwnerKeybindings)},
 	{settingsActionPrefixLocale, settingsActionMeta("Language / Locale", settingsAxisGlobal, settingsOwnerAppearance)},
-	{settingsActionPrefixProjectConfig, settingsActionMeta("Project recipe", settingsAxisProject, settingsOwnerProject)},
 	{settingsActionPrefixWelcome, settingsNavigationMeta("Welcome", settingsAxisGlobal, settingsOwnerAbout)},
 	{settingsActionPrefixTrust, settingsActionMeta("Trust", settingsAxisProject, settingsOwnerProject)},
 	{settingsActionPrefixProjdir, settingsActionMeta("Primary discovery root", settingsAxisGlobal, settingsOwnerProject)},
@@ -294,7 +293,7 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 			strings.HasPrefix(value, settingsActionPrefixHookRemove) || strings.HasPrefix(value, settingsActionPrefixHookView)
 	case settingsOwnerProject:
 		return value == settingsProjdirClear || value == settingsProjdirSetCurrent || value == settingsProjdirSetTyped ||
-			value == settingsWorkdirTyped || strings.HasPrefix(value, settingsActionPrefixProjectConfig) ||
+			value == settingsWorkdirTyped ||
 			strings.HasPrefix(value, settingsActionPrefixTrust) || strings.HasPrefix(value, settingsActionPrefixProjdir) ||
 			strings.HasPrefix(value, settingsActionPrefixSwitch) || strings.HasPrefix(value, settingsActionPrefixWorkdir)
 	case settingsOwnerTheme:
@@ -316,9 +315,7 @@ const (
 	settingsSectionProjectAutomation       = "section:project-automation"
 	settingsSectionGlobalHooks             = "section:hooks-global"
 	settingsSectionProjectHooks            = "section:hooks-project"
-	settingsSectionProjectConfig           = "section:project-config"
 	settingsSectionProjectTrust            = "section:project-trust"
-	settingsSectionEffectiveMerge          = "section:effective-merge"
 	settingsSectionGlobalTheme             = "section:theme-global"
 	settingsSectionProjectSessionState     = "section:project-sessionstate"
 	settingsSectionKeybindings             = "section:keybindings"
@@ -355,7 +352,6 @@ const (
 	// Projects > Project Sidebar. Only the destination and the label change.
 	settingsActionPrefixSessionStateSidebarStartup = settingsActionPrefixSessionState + "sidebar-startup:"
 	settingsActionPrefixLocale                     = "locale:"
-	settingsActionPrefixProjectConfig              = "project-config:"
 	settingsActionPrefixWelcome                    = "welcome:"
 	settingsActionPrefixTrust                      = "trust:"
 	settingsActionPrefixProjdir                    = "projdir:"

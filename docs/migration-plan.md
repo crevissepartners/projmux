@@ -25,7 +25,6 @@ The current target is a standalone app that can generate the tmux bindings and p
 - popup toggle orchestration
 - auto-attach logic
 - ephemeral prune logic
-- kube session helpers
 
 ### Phase 4
 - standalone tmux popup toggle entrypoints
@@ -36,7 +35,7 @@ The current target is a standalone app that can generate the tmux bindings and p
 - pane attention toggle/clear/window badge commands
 - generated tmux window-status and pane-focus hooks backed by `projmux attention`
 - AI pane status, Codex title watcher, and desktop notification commands
-- status bar git/kube segments
+- status bar git segment
 
 ## What stays outside standalone projmux
 
@@ -70,7 +69,7 @@ The standalone tmux path is:
 3. `projmux tmux popup-toggle <mode>` replaces `tmux-popup-toggle.sh` for sessionizer, session popup, sidebar, AI picker, and the unified settings popup.
 4. `projmux attention <toggle|clear|window>` replaces tmux attention wrapper scripts for pane focus hooks and window badges.
 5. `projmux ai status`, `projmux ai notify`, and `projmux ai watch-title` replace the AI pane state and notification shell scripts.
-6. `projmux status <git|kube>` replaces tmux status-bar segment scripts for git branch and kube context rendering.
+6. `projmux status git` replaces the tmux status-bar segment script for git branch rendering.
 
 ## App tmux runtime
 

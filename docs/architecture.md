@@ -31,7 +31,6 @@ Adapters for external systems.
 
 Initial adapters:
 - tmux
-- kubeconfig per-session state
 - filesystem
 - git metadata for preview enrichment
 
@@ -76,7 +75,6 @@ Candidate areas:
 - default home-like roots
 - preview preferences
 - session naming exceptions
-- kube session settings
 - ephemeral session retention defaults
 
 ## State model
@@ -787,7 +785,7 @@ refresh, rollout schema).
 ## Two-line clickable status bar
 
 projmux configures tmux with `status 2`. Line 0 is the existing
-session/window/path/git/kube/clock row. Line 1 splits the notification bar
+session/window/path/git/clock row. Line 1 splits the notification bar
 (left half, capped at 80 cells) and the AI usage HUD (right half, capped at
 120 cells) using tmux `#[align=left]` / `#[align=right]`. Each clickable
 segment is wrapped in a tmux user-defined range (`#[range=user|<id>]...
@@ -800,7 +798,6 @@ single `bind -n MouseDown1Status` covers both lines because tmux fires
 |----------|------|-------------------------------------------|--------------|
 | session  | 0    | popup `projmux sessions --ui=popup`       | prefix+s s   |
 | pwd      | 0    | show pane_current_path in a display-only path popup | prefix+s p   |
-| kube     | 0    | popup `projmux switch --ui=popup`         | prefix+s k   |
 | git      | 0    | popup `projmux switch --ui=popup`         | prefix+s g   |
 | usage    | 1    | popup `projmux usage`                     | prefix+s u   |
 | notify   | 1    | focus origin pane of newest notification  | prefix+s n   |

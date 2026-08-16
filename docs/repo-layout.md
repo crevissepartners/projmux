@@ -17,7 +17,6 @@ projmux/
     integrations/
       filesystem/
       git/
-      kube/
       tmux/
     state/
     tools/

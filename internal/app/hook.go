@@ -231,7 +231,7 @@ func (c *hookCommand) writeEffectiveTable(stdout io.Writer, globalPath, projectP
 		return err
 	}
 
-	// Data-only effective sections (env / kube / startup) — we skip Hooks
+	// Data-only effective sections (env / startup) — we skip Hooks
 	// in this loop because it was already rendered above with the EVENT
 	// header. Sensitive-value redaction is scoped to [env] keys; applying
 	// it to [hooks] or [startup] would mangle legitimate command lines

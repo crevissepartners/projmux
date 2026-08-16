@@ -167,7 +167,7 @@ hook payload, or a `make install` log.
 | Route | Purpose |
 | --- | --- |
 | `internal tmux` | Generated config render/install/apply, popup entry helpers, pane rebalance/rename, snapshot autosave. |
-| `internal status` | Status bar segment renderers (`git`, `project`, `kube`, `usage`, `notify`, `resources`). |
+| `internal status` | Status bar segment renderers (`git`, `project`, `usage`, `notify`, `resources`). |
 | `internal statusbar` | Status bar click and shortcut dispatch (`click`, `usage-refresh`). |
 | `internal preview` | Persisted preview cursor (`cycle-pane`, `cycle-window`, `select`). |
 | `internal session-popup` | Session popup preview/open and popup cursor movement. |
@@ -270,8 +270,7 @@ projmux doctor [--json] [--section deps|runtime|integrations|session-state|logs]
 ```
 
 Runs read-only diagnostics, including a dependency check for `tmux ≥ 3.4`,
-`git`, `stty` (POSIX only), and
-`kubectl` (optional), then reports read-only AI notify integration diagnostics
+`git`, and `stty` (POSIX only), then reports read-only AI notify integration diagnostics
 for Codex hooks, Claude Code hooks, Antigravity hooks/statusline, and the tmux bell
 fallback. AI notify integration statuses are `installed`, `missing`, or
 `conflict`; missing or conflicting integrations are informational and do not
@@ -610,12 +609,11 @@ host-only statusbar renderer.
 
 ## status
 
-Per-segment status-bar renderers. All five are silent on failure — the
+Per-segment status-bar renderers. All are silent on failure — the
 tmux status interval polls them and must never produce a stack trace.
 
 ```
 projmux status git    [path]
-projmux status kube   [session]
 projmux status usage  [--max-width N] [--force|-f]
 projmux status notify [--max-width N]
 projmux status resources
@@ -626,10 +624,6 @@ projmux status resources
   repo. `<state>` is omitted when clean, otherwise it may include `*` for
   local changes, `+N` staged entries, and `↑N`/`↓N` ahead/behind counts, with
   compact per-token colors in tmux output.
-- `kube` — `⎈ <context>/<namespace>` segment. Reads
-  `~/.cache/tmux/kube-segment-<session>.txt` first (TTL governed by
-  `TMUX_KUBE_CACHE_TTL`, default `5s`). Picks up a per-session
-  `KUBECONFIG` from `${XDG_RUNTIME_DIR:-~/.cache}/kube-sessions/<session>.yaml`.
 - `usage` — HUD-style provider blocks containing only official `5h` and
   `weekly` windows. Antigravity's exact `quota/gemini-weekly` snapshot is
   projected as `weekly` without changing its cached identity; other named
@@ -662,13 +656,13 @@ projmux statusbar usage-refresh
 ```
 
 Click/keyboard dispatcher for the two-line status bar. Implemented range ids:
-`session pwd kube git resources usage notify settings`. The bare `window` /
+`session pwd git resources usage notify settings`. The bare `window` /
 `window|<idx>` token (tmux's built-in window-list range) and the empty
 range fall through to `select-window -t @<mouse_window>` so the native
 click-to-switch tab affordance is preserved on row 1. Unknown range ids are
 non-specialized placeholders and no-op. `session` opens the existing-session
 popup; `pwd` shows the current pane path in a native-framed display-only
-popup; `kube` and `git` open the project switcher popup;
+popup; `git` opens the project switcher popup;
 `settings` toggles the settings popup for the tmux client; `usage` opens the
 detailed cached account-usage popup. Legacy context rows are suppressed and
 named quotas retain exact identity/reset/freshness values. Claude model-scoped

@@ -27,10 +27,6 @@ func RenderSwitchPreviewWithAIBadgeStyle(model corepreview.SwitchReadModel, ui, 
 	writePopupKV(&builder, "session", sanitizeCell(model.SessionName))
 	writePopupKV(&builder, "mode", formatPopupSwitchPreviewMode(model.SessionMode))
 
-	if kube := formatKubeSummary(model); kube != "" {
-		writePopupKV(&builder, "k8s", kube)
-	}
-
 	builder.WriteString("\n")
 
 	if model.SessionMode != "existing" {
@@ -81,12 +77,6 @@ func renderSidebarSwitchPreview(model corepreview.SwitchReadModel, badgeStyle st
 		return builder.String()
 	}
 
-	if kube := formatKubeSummary(model); kube != "" {
-		builder.WriteString("k8s:")
-		builder.WriteString(kube)
-		builder.WriteString("\n\n")
-	}
-
 	writeSidebarSection(&builder, "Windows")
 	if len(model.Windows) == 0 {
 		builder.WriteString("(none)\n")
@@ -99,18 +89,6 @@ func renderSidebarSwitchPreview(model corepreview.SwitchReadModel, badgeStyle st
 	}
 
 	return builder.String()
-}
-
-func formatKubeSummary(model corepreview.SwitchReadModel) string {
-	context := sanitizeCell(model.KubeContext)
-	if context == "" {
-		return ""
-	}
-	namespace := sanitizeCell(model.KubeNamespace)
-	if namespace == "" {
-		namespace = "default"
-	}
-	return ansiRed + context + ansiReset + "/" + ansiBlue + namespace + ansiReset
 }
 
 func writeSidebarSection(builder *strings.Builder, title string) {

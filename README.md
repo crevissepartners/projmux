@@ -89,7 +89,7 @@ fallbacks.
 
 - Pick a project directory and projmux creates or reuses its tmux session.
 - Pin important projects so they stay easy to reach.
-- Preview windows, panes, git branch, Kubernetes context, and AI pane state
+- Preview windows, panes, git branch, and AI pane state
   before switching.
 - Resume an existing Claude, Codex, or Antigravity conversation, or open a new
   managed AI split.

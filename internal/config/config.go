@@ -77,7 +77,7 @@ func (p Paths) HookPath(name string) string {
 
 // GlobalConfigFile returns the default location for the optional
 // global projmux config.toml that mirrors the project-local config schema
-// (env, kube, startup, hooks).
+// (env, startup, hooks, theme, UI, and AI preferences).
 func (p Paths) GlobalConfigFile() string {
 	return filepath.Join(p.ConfigDir, GlobalConfigFileName)
 }

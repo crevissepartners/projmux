@@ -641,7 +641,6 @@ func settingsKoreanVisibleOptionSamples(t *testing.T, cmd *settingsCommand) []in
 	} else {
 		t.Fatalf("themeOptions(): %v", err)
 	}
-	add(cmd.effectiveMergeOptions(settingsProjectContext{}))
 	add(intpickercompat.Options{
 		UI:      "settings-notifications-desktop",
 		Entries: cmd.desktopNotifyEntries(),
@@ -1343,7 +1342,6 @@ func TestSettingsEntryCatalogClassifiesRelevantRowsAndActions(t *testing.T) {
 		{settingsActionPrefixKeymap + "settings", settingsAxisGlobal},
 		{settingsActionPrefixHooks + string(config.ProjectHooksOn), settingsAxisGlobal},
 		{settingsActionPrefixLiveResources + string(config.LiveResourcesOn), settingsAxisGlobal},
-		{settingsActionPrefixProjectConfig + "startup:set", settingsAxisProject},
 	}
 
 	for _, tc := range cases {
@@ -1429,9 +1427,7 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	ctx := settingsProjectContext{Path: filepath.Join(home, "project"), Name: "project", Source: "test"}
 	mkdirAll(t, ctx.Path)
 	assertCataloguedEntries("project hooks", cmd.projectHookEntries(ctx))
-	assertCataloguedEntries("project recipe", cmd.projectConfigEntries(ctx))
 	assertCataloguedEntries("project trust", cmd.projectTrustEntries(ctx))
-	assertCataloguedEntries("effective merge", cmd.effectiveMergeEntries(ctx))
 
 	autosave := sessionStateEffectiveToggle{Mode: config.SessionStateToggleOff, Source: "default"}
 	interval := sessionStateEffectiveInterval{Duration: time.Minute, Source: "default"}

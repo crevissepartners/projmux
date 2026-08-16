@@ -128,9 +128,4 @@ const (
 
 	TmuxDecorationCwdFg    = "colour220"
 	TmuxDecorationGitLabFg = "colour215"
-
-	// Kube keeps tmux's named red/blue for output compatibility with the
-	// existing status segment until the segment gets a dedicated redesign.
-	TmuxKubeContextFg   = "red"
-	TmuxKubeNamespaceFg = "blue"
 )

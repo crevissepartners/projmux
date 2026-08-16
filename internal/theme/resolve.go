@@ -227,7 +227,7 @@ type EffectiveTheme struct {
 //     token; the literal is carried under a role name but not derived.
 //
 // Phase 2 only WIRES the window/status/pane chrome roles below. Other clusters
-// (state/AI/git/usage/notify/decoration/kube/native-UI) keep consuming literals
+// (state/AI/git/usage/notify/decoration/native-UI) keep consuming literals
 // directly and are intentionally absent here until later phases promote them.
 type RenderRoles struct {
 	// surface — base chrome. Tier A.
@@ -296,11 +296,6 @@ type RenderRoles struct {
 	// colors reuse GitAhead/GitStaged (single source) and so have no field here.
 	DecorationCwd    string // decoration.cwd    Tier C renderer-only (colour220) — independent of state.progress
 	DecorationGitLab string // decoration.gitlab Tier C renderer-only (colour215)
-
-	// statusbar kube cluster (Phase 4). tmux named colors carried verbatim for
-	// output compatibility with the existing segment.
-	KubeContext   string // kube.context   Tier C renderer-only ("red")
-	KubeNamespace string // kube.namespace Tier C renderer-only ("blue")
 
 	// statusbar identity/action chrome (Phase 4). Renderer-only literals.
 	IdentityBg string // identity.bg Tier C renderer-only (colour60)
@@ -399,10 +394,6 @@ func RenderRolesFromEffective(effective EffectiveTheme) RenderRoles {
 		// depend on status_background.
 		DecorationCwd:    tmuxLumaContrastOrLiteral(effective.StatusBackground, TmuxDecorationCwdFg),
 		DecorationGitLab: TmuxDecorationGitLabFg,
-
-		// kube: tmux named colors carried verbatim (Tier C).
-		KubeContext:   TmuxKubeContextFg,
-		KubeNamespace: TmuxKubeNamespaceFg,
 
 		// identity/action chrome: Tier C renderer-only literals.
 		IdentityBg: TmuxIdentityBg,

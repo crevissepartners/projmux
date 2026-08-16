@@ -159,6 +159,25 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}
 }
 
+func stripAnsi(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b {
+			j := i + 1
+			for j < len(s) && s[j] != 'm' {
+				j++
+			}
+			if j < len(s) {
+				i = j + 1
+				continue
+			}
+		}
+		out = append(out, s[i])
+		i++
+	}
+	return string(out)
+}
+
 func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *testing.T) {
 	t.Parallel()
 

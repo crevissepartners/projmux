@@ -27,8 +27,6 @@ func TestBuildSwitchReadModelUsesPopupSelectionForExistingSessions(t *testing.T)
 		DisplayPath:        "~rp/app",
 		SessionName:        "app",
 		SessionExists:      true,
-		KubeContext:        "kind-dev",
-		KubeNamespace:      "apps",
 		StoredSelection:    Selection{SessionName: "app", WindowIndex: "2", PaneIndex: "1"},
 		HasStoredSelection: true,
 		Windows: []Window{
@@ -49,11 +47,5 @@ func TestBuildSwitchReadModelUsesPopupSelectionForExistingSessions(t *testing.T)
 	}
 	if got, want := model.Popup.SelectedPaneIndex, "1"; got != want {
 		t.Fatalf("SelectedPaneIndex = %q, want %q", got, want)
-	}
-	if got, want := model.KubeContext, "kind-dev"; got != want {
-		t.Fatalf("KubeContext = %q, want %q", got, want)
-	}
-	if got, want := model.KubeNamespace, "apps"; got != want {
-		t.Fatalf("KubeNamespace = %q, want %q", got, want)
 	}
 }

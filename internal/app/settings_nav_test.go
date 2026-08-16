@@ -241,6 +241,33 @@ func TestSettingsRemovedRoutesAreUnreachable(t *testing.T) {
 	}
 }
 
+func TestProjectSettingsTreeHasOnlyAutomationAndSnapshotsAndRejectsRetiredRoutes(t *testing.T) {
+	t.Parallel()
+
+	children := settingsNavChildren(settingsNavScopeProject)
+	if len(children) != 2 || children[0].ID != settingsNavProjectAutomation || children[1].ID != settingsNavProjectSnapshots {
+		t.Fatalf("Project Settings children = %#v, want only Automation and Snapshots", children)
+	}
+	home := t.TempDir()
+	cmd := settingsNavTestCommand(t, home)
+	rendered := settingsNavAllRenderedEntries(t, cmd)
+	for _, retired := range []string{"section:project-config", "section:effective-merge", "project-config:kube", "project-config:kube:context:set", "project-config:env", "project-config:startup"} {
+		for _, entry := range rendered {
+			if strings.TrimSpace(entry.Value) == retired {
+				t.Fatalf("retired Project route %q is still rendered: %#v", retired, entry)
+			}
+		}
+		if _, ok := settingsEntryMetaForValue(retired); ok {
+			t.Fatalf("retired Project route %q still has catalog metadata", retired)
+		}
+	}
+	for _, retiredSection := range []string{"section:project-config", "section:effective-merge"} {
+		if _, err := cmd.sectionOptions(retiredSection); err == nil {
+			t.Fatalf("retired Project section %q still resolves", retiredSection)
+		}
+	}
+}
+
 // TestSettingsLegacyVisibleCopyIsRetired is the legacy-copy negative guard.
 // The retired vocabulary must not survive as a navigation label or as a
 // rendered Settings row.

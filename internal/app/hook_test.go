@@ -164,8 +164,8 @@ func TestHookList_ScopeFlagsMutuallyExclusive(t *testing.T) {
 // requirement: the `--effective` view delegates to hooks.MergeEffective
 // so its source labels match the Settings popup. Project-defined hooks
 // outrank global ones with the same event. After main #165 added the
-// Hooks field to EffectiveConfig, the same engine drives [env] / [kube]
-// / [startup] AND [hooks] — the CLI surfaces all four sections.
+// Hooks field to EffectiveConfig, the same engine drives [env], [startup],
+// and [hooks].
 func TestHookList_EffectiveUsesMergeEngine(t *testing.T) {
 	t.Parallel()
 
@@ -222,9 +222,8 @@ run = "echo global-attach"
 	if !strings.Contains(out, "vim") {
 		t.Fatalf("EDITOR row missing global value: %q", out)
 	}
-	// kube + startup sections appear even when unset (default).
-	if !strings.Contains(out, "[kube]") || !strings.Contains(out, "[startup]") {
-		t.Fatalf("kube/startup section headers missing: %q", out)
+	if strings.Contains(out, "[kube]") || !strings.Contains(out, "[startup]") {
+		t.Fatalf("effective output retained kube or lost startup: %q", out)
 	}
 }
 
@@ -671,6 +670,13 @@ func TestHookResolveProjectContextExplicitEnvWinsUnderTempRoot(t *testing.T) {
 }
 
 // --- small helpers --------------------------------------------------------
+
+func mustMkdirAll(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // wrapLookupEnv returns a lookup function that overrides values for the
 // supplied keys while delegating everything else to base. Used to inject

@@ -16,19 +16,12 @@ func TestMergeEffectiveProjectWinsConflicts(t *testing.T) {
 			"EDITOR":       "vim",
 			"DATABASE_URL": "postgres://global",
 		},
-		Kube: KubeConfig{
-			Context:   "global-cluster",
-			Namespace: "default",
-		},
 	}
 	project := ProjectConfig{
 		StartupRun: "claude",
 		Env: map[string]string{
 			"DATABASE_URL": "postgres://project",
 			"GH_TOKEN":     "ghp_abc",
-		},
-		Kube: KubeConfig{
-			Context: "dev-cluster",
 		},
 	}
 
@@ -46,18 +39,6 @@ func TestMergeEffectiveProjectWinsConflicts(t *testing.T) {
 	}
 	if got.Env.Source != EffectiveSourceMerged {
 		t.Fatalf("env section source = %q, want merged", got.Env.Source)
-	}
-
-	// [kube] — context: project wins (project value); namespace: only in global.
-	wantKube := []EffectiveEntry{
-		{Key: "context", Value: "dev-cluster", Source: EffectiveSourceProject},
-		{Key: "namespace", Value: "default", Source: EffectiveSourceGlobal},
-	}
-	if !reflect.DeepEqual(got.Kube.Entries, wantKube) {
-		t.Fatalf("kube entries = %+v, want %+v", got.Kube.Entries, wantKube)
-	}
-	if got.Kube.Source != EffectiveSourceMerged {
-		t.Fatalf("kube section source = %q, want merged", got.Kube.Source)
 	}
 
 	// [startup] — single scalar, project wins.
@@ -83,16 +64,7 @@ func TestMergeEffectiveDefaultsWhenBothEmpty(t *testing.T) {
 	if got.Env.Source != EffectiveSourceDefault {
 		t.Fatalf("env source on empty merge = %q, want default", got.Env.Source)
 	}
-	// kube / startup always emit scalar rows (so the UI keeps stable
-	// row positions); when unset they label as default.
-	for _, entry := range got.Kube.Entries {
-		if entry.Source != EffectiveSourceDefault {
-			t.Fatalf("kube entry %q source = %q, want default", entry.Key, entry.Source)
-		}
-	}
-	if got.Kube.Source != EffectiveSourceDefault {
-		t.Fatalf("kube section source = %q, want default", got.Kube.Source)
-	}
+	// Startup always emits a scalar row; when unset it labels as default.
 	for _, entry := range got.Startup.Entries {
 		if entry.Source != EffectiveSourceDefault {
 			t.Fatalf("startup entry %q source = %q, want default", entry.Key, entry.Source)
@@ -103,19 +75,11 @@ func TestMergeEffectiveDefaultsWhenBothEmpty(t *testing.T) {
 func TestMergeEffectiveGlobalOnlySectionLabel(t *testing.T) {
 	t.Parallel()
 
-	global := ProjectConfig{
-		Env: map[string]string{"EDITOR": "vim"},
-		Kube: KubeConfig{
-			Namespace: "team-foo",
-		},
-	}
+	global := ProjectConfig{Env: map[string]string{"EDITOR": "vim"}}
 	got := MergeEffective(global, ProjectConfig{})
 
 	if got.Env.Source != EffectiveSourceGlobal {
 		t.Fatalf("env section source = %q, want global (only global entries)", got.Env.Source)
-	}
-	if got.Kube.Source != EffectiveSourceGlobal {
-		t.Fatalf("kube section source = %q, want global (only global namespace defined)", got.Kube.Source)
 	}
 }
 
@@ -192,20 +156,6 @@ func TestIsSensitiveEnvKey(t *testing.T) {
 		if IsSensitiveEnvKey(key) {
 			t.Fatalf("IsSensitiveEnvKey(%q) = true, want false", key)
 		}
-	}
-}
-
-func TestDisplayEnvValueRedactsSensitive(t *testing.T) {
-	t.Parallel()
-
-	if got := DisplayEnvValue("GH_TOKEN", "ghp_abc123"); got != SensitiveRedaction {
-		t.Fatalf("DisplayEnvValue sensitive = %q, want %q", got, SensitiveRedaction)
-	}
-	if got := DisplayEnvValue("EDITOR", "vim"); got != "vim" {
-		t.Fatalf("DisplayEnvValue plain = %q, want vim", got)
-	}
-	if got := DisplayEnvValue("EDITOR", ""); got != "(unset)" {
-		t.Fatalf("DisplayEnvValue empty = %q, want (unset)", got)
 	}
 }
 
@@ -360,13 +310,12 @@ func TestMergeEffectiveHooksRowOrderFollowsSupportedEvents(t *testing.T) {
 }
 
 // TestEffectiveConfigSectionsIncludesHooks pins the Sections() display order:
-// env, kube, startup, then hooks. The settings popup depends on this order
-// to lay out the page.
+// env, startup, then hooks.
 func TestEffectiveConfigSectionsIncludesHooks(t *testing.T) {
 	t.Parallel()
 
 	got := MergeEffective(ProjectConfig{}, ProjectConfig{}).Sections()
-	wantNames := []string{"env", "kube", "startup", "hooks"}
+	wantNames := []string{"env", "startup", "hooks"}
 	if len(got) != len(wantNames) {
 		t.Fatalf("Sections() len = %d, want %d: %+v", len(got), len(wantNames), got)
 	}

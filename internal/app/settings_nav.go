@@ -291,15 +291,9 @@ var settingsNavCatalog = []settingsNavNode{
 // settingsNavRemovedRoots are the pre-cutover destinations that must not be
 // reachable after Phase 0, as visible rows or as hidden redirects. The negative
 // guard test asserts none of them is rendered from any Settings surface.
-//
-// The Kube recipe parser, the hidden recipe handler and the effective-merge
-// handler still exist in the tree: Phase 0 removes them from visible
-// navigation, and their hard removal is a later slice.
 var settingsNavRemovedRoots = []string{
 	settingsSectionLabs,
 	settingsSectionGlobalTheme,
-	settingsSectionProjectConfig,
-	settingsSectionEffectiveMerge,
 	settingsLabsProjectHooks,
 }
 

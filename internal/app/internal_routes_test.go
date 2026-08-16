@@ -166,7 +166,6 @@ func TestGeneratedConfigReachesEveryRelocatedPlumbingRouteThroughTheInternalName
 		// derivation the generator uses.
 		"' internal status notify --max-width " + statusbarNotifyBudgetFormat(),
 		"' internal status usage --max-width " + statusbarUsageBudgetFormat(),
-		"' internal status kube",
 		"' internal status git",
 		"' internal status resources",
 		"' internal statusbar click ",
@@ -182,6 +181,41 @@ func TestGeneratedConfigReachesEveryRelocatedPlumbingRouteThroughTheInternalName
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("generated payloads no longer contain %q", want)
+		}
+	}
+}
+
+func TestRetiredKubeStatusRoutesAreAbsentFromPublicInternalCatalogAndGeneratedConfig(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range [][]string{{"status"}, {"internal", "status"}} {
+		route, ok := cli.LookupRoute(path[0])
+		if !ok {
+			t.Fatalf("missing parent route %q", path[0])
+		}
+		if len(path) == 2 {
+			found := false
+			for _, child := range route.Children {
+				if child.Name == path[1] {
+					route = child
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("missing route %q", strings.Join(path, " "))
+			}
+		}
+		for _, child := range route.Children {
+			if child.Name == "kube" {
+				t.Fatalf("retired route %q still has kube child", strings.Join(path, " "))
+			}
+		}
+	}
+	joined := strings.Join(mapValues(generatedConfigSurfaces(t)), "\n")
+	for _, retired := range []string{"status kube", "range=user|kube", "statusbar click kube", "projmux-status k"} {
+		if strings.Contains(joined, retired) {
+			t.Fatalf("generated config retained %q", retired)
 		}
 	}
 }

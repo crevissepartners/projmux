@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -23,12 +22,10 @@ import (
 )
 
 const (
-	defaultKubeCacheTTL       = 5 * time.Second
-	defaultKubeCommandLimit   = 400 * time.Millisecond
 	defaultStatusCommandLimit = 500 * time.Millisecond
 )
 
-// statusbar git segment / kube colors source from the semantic role map
+// statusbar git segment colors source from the semantic role map
 // (single source shared with the decoration renderer) instead of bare tmux
 // literals. The defaults below are the fallback role map, whose values equal
 // the historical literals (byte-identical); applyStatusSegmentTheme repoints
@@ -122,8 +119,6 @@ func (c *statusCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runGit(args[1:], stdout, stderr)
 	case "project":
 		return c.runProject(args[1:], stdout, stderr)
-	case "kube":
-		return c.runKube(args[1:], stdout, stderr)
 	case "usage":
 		if c.usage == nil {
 			c.usage = usagecmd.New(nil)
@@ -250,152 +245,6 @@ func (c *statusCommand) statusbarDecoration() config.StatusbarDecoration {
 	return loadStatusbarDecorationForTarget(c.homeDir, c.lookupEnv, statusbarDecorationTargetGit, loadStatusbarDecoration(c.homeDir, c.lookupEnv))
 }
 
-func (c *statusCommand) runKube(args []string, stdout, stderr io.Writer) error {
-	if len(args) > 1 {
-		printStatusUsage(stderr)
-		return errors.New("status kube accepts at most 1 [session] argument")
-	}
-	sessionName := ""
-	if len(args) == 1 {
-		sessionName = strings.TrimSpace(args[0])
-	} else {
-		sessionName = c.readTrimmed("tmux", "display-message", "-p", "#S")
-	}
-	if sessionName == "" {
-		return nil
-	}
-	segment := c.kubeSegment(sessionName)
-	if segment == "" {
-		return nil
-	}
-	_, err := fmt.Fprint(stdout, segment)
-	return err
-}
-
-func (c *statusCommand) kubeSegment(sessionName string) string {
-	if c.readTrimmed("command", "-v", "kubectl") == "" {
-		return ""
-	}
-	cacheFile := c.kubeCacheFile(sessionName)
-	cached := readTextFile(cacheFile)
-	if info, err := os.Stat(cacheFile); err == nil && c.now().Sub(info.ModTime()) < c.kubeCacheTTL() {
-		return cached
-	}
-
-	kubeConfig := c.kubeSessionPath(sessionName)
-	if kubeConfig != "" {
-		if _, err := os.Stat(kubeConfig); err != nil {
-			kubeConfig = ""
-		}
-	}
-
-	ctx := c.kubectlTrimmed(kubeConfig, "config", "current-context")
-	if ctx == "" {
-		return cached
-	}
-	ns := c.kubectlTrimmed(kubeConfig, "config", "view", "--minify", "--output", "jsonpath={..namespace}")
-	if ns == "" {
-		ns = "default"
-	}
-	segment := fmt.Sprintf("⎈ #[fg=%s]%s#[default]/#[fg=%s]%s#[default]", statusSegmentRoles.KubeContext, ctx, statusSegmentRoles.KubeNamespace, ns)
-	_ = os.MkdirAll(filepath.Dir(cacheFile), 0o755)
-	_ = os.WriteFile(cacheFile, []byte(segment), 0o644)
-	return segment
-}
-
-func (c *statusCommand) kubectlTrimmed(kubeConfig string, args ...string) string {
-	command := append([]string{"kubectl"}, args...)
-	if kubeConfig != "" {
-		command = append([]string{"KUBECONFIG=" + kubeConfig}, command...)
-		return c.readTrimmedWithLimit(c.kubeCommandLimit(), "env", command...)
-	}
-	return c.readTrimmedWithLimit(c.kubeCommandLimit(), command[0], command[1:]...)
-}
-
-func (c *statusCommand) kubeSessionPath(sessionName string) string {
-	if strings.TrimSpace(sessionName) == "" {
-		return ""
-	}
-	return filepath.Join(c.kubeSessionBaseDir(), sessionName+".yaml")
-}
-
-func (c *statusCommand) kubeSessionBaseDir() string {
-	root := strings.TrimRight(c.env("XDG_RUNTIME_DIR"), string(os.PathSeparator))
-	if root == "" {
-		homeDir, err := c.home()
-		if err != nil || strings.TrimSpace(homeDir) == "" {
-			root = "."
-		} else {
-			root = filepath.Join(homeDir, ".cache")
-		}
-	}
-	return filepath.Join(root, "kube-sessions")
-}
-
-func (c *statusCommand) kubeCacheFile(sessionName string) string {
-	slug := strings.ReplaceAll(sessionName, "/", "-")
-	slug = strings.ReplaceAll(slug, ".", "_")
-	return filepath.Join(c.kubeCacheDir(), "kube-segment-"+slug+".txt")
-}
-
-func (c *statusCommand) kubeCacheDir() string {
-	cacheHome := strings.TrimRight(c.env("XDG_CACHE_HOME"), string(os.PathSeparator))
-	if cacheHome == "" {
-		homeDir, err := c.home()
-		if err != nil || strings.TrimSpace(homeDir) == "" {
-			cacheHome = ".cache"
-		} else {
-			cacheHome = filepath.Join(homeDir, ".cache")
-		}
-	}
-	return filepath.Join(cacheHome, "tmux")
-}
-
-func (c *statusCommand) kubeCacheTTL() time.Duration {
-	seconds := parsePositiveInt(c.env("TMUX_KUBE_CACHE_TTL"))
-	if seconds <= 0 {
-		return defaultKubeCacheTTL
-	}
-	return time.Duration(seconds) * time.Second
-}
-
-func (c *statusCommand) kubeCommandLimit() time.Duration {
-	value := strings.TrimSpace(c.env("TMUX_KUBE_TIMEOUT"))
-	if value == "" {
-		return defaultKubeCommandLimit
-	}
-	if strings.ContainsAny(value, "hmsuµns") {
-		if d, err := time.ParseDuration(value); err == nil && d > 0 {
-			return d
-		}
-	}
-	parts := strings.SplitN(value, ".", 2)
-	seconds := parsePositiveInt(parts[0])
-	millis := 0
-	if len(parts) == 2 {
-		frac := parts[1]
-		if len(frac) > 3 {
-			frac = frac[:3]
-		}
-		for len(frac) < 3 {
-			frac += "0"
-		}
-		millis = parsePositiveInt(frac)
-	}
-	d := time.Duration(seconds)*time.Second + time.Duration(millis)*time.Millisecond
-	if d <= 0 {
-		return defaultKubeCommandLimit
-	}
-	return d
-}
-
-func (c *statusCommand) home() (string, error) {
-	if c.homeDir == nil {
-		return "", errors.New("status home directory resolver is not configured")
-	}
-	return c.homeDir()
-}
-
 func (c *statusCommand) env(name string) string {
 	if c.lookupEnv == nil {
 		return ""
@@ -431,14 +280,6 @@ func (c *statusCommand) readTrimmed(name string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func (c *statusCommand) readTrimmedWithLimit(limit time.Duration, name string, args ...string) string {
-	out, err := c.readWithLimit(limit, name, args...)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
 func (c *statusCommand) statusCommandLimit() time.Duration {
 	if c.commandLimit > 0 {
 		return c.commandLimit
@@ -446,19 +287,10 @@ func (c *statusCommand) statusCommandLimit() time.Duration {
 	return defaultStatusCommandLimit
 }
 
-func readTextFile(path string) string {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(content)
-}
-
 func printStatusUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  projmux status git [path]")
 	fmt.Fprintln(w, "  projmux status project")
-	fmt.Fprintln(w, "  projmux status kube [session]")
 	fmt.Fprintln(w, "  projmux status usage [--max-width N]")
 	fmt.Fprintln(w, "  projmux status notify [--max-width N]")
 	fmt.Fprintln(w, "  projmux status resources")
