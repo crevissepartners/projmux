@@ -465,6 +465,61 @@ func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID
 	return pane.Metadata.UID, nil
 }
 
+// ImportOrphanPane mints the shell Pane a live tmux pane has never had, inside
+// a Window that is already paired with a live tmux window.
+//
+// Adoption alone cannot reach this state. Adoption pairs a live tmux object
+// with a registry object that already exists, and a pane produced by a route
+// that registers nothing -- `projmux ai split` is the measured one -- has no
+// registry counterpart to pair with. Those panes stayed permanently unbound, so
+// `projmux delete pane` with no selector kept refusing with "carries no
+// @projmux_pane_uid" in the operator's own active pane. Something has to be
+// created before a uid exists to mirror back.
+//
+// The name base is FallbackPaneNameBase, uniquified by the registry's own
+// allocator, and deliberately *not* LegacyPaneNameSeed. That seed reads
+// `pane_current_command`, which changes the moment the operator runs something
+// else in the pane, and the product contract is that metadata.name is never
+// derived from a runtime attribute. What the runtime reported goes to
+// status.displayTitle instead -- the duplicate-allowed field that exists for
+// exactly this, and the same field the import path fills.
+//
+// No Agent is minted, whatever the pane happens to be running. Reading the pane
+// options or its title to decide that a Window owes an Agent resource would be a
+// content heuristic deciding registry topology, which is the judgment
+// bindLegacyPaneTx already records for an adopted pane. Agent phase belongs to
+// its own track.
+//
+// Nothing existing is touched: no uid is changed, merged, or reassigned, and no
+// Window spec is rewritten. This adds one Pane and stops.
+func (m Mutator) ImportOrphanPane(reg *Registry, windowUID string, observed LegacyPane, operationID string) (Pane, error) {
+	const op = "import orphan pane"
+
+	window, ok := reg.Window(windowUID)
+	if !ok {
+		return Pane{}, stateErr(op, ErrNotFound, "window %q does not exist", windowUID)
+	}
+	cwd := strings.TrimSpace(observed.CWD)
+	if cwd == "" {
+		if project, ok := reg.Project(window.Metadata.OwnerUID()); ok {
+			cwd = project.Spec.Root
+		}
+	}
+
+	now := m.clock()().UTC()
+	txn := m.Begin(reg, operationID)
+	pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", FallbackPaneNameBase, observed.Command, cwd, nil, now)
+	if err != nil {
+		txn.Rollback()
+		return Pane{}, err
+	}
+	pane.Status.DisplayTitle = DerivePaneDisplayTitle(observed.Provider, observed.Topic, observed.Command, observed.Title)
+	reg.storePaneStatus(pane.Metadata.UID, pane.Status)
+	txn.Commit()
+	reg.UpdatedAt = now
+	return pane, nil
+}
+
 // AnnotationAgentTopic is the non-identifying annotation that carries an AI
 // topic. Topics are never a name or a selector input.
 const AnnotationAgentTopic = "projmux.io/agent-topic"

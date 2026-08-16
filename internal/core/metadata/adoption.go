@@ -55,16 +55,21 @@ const (
 	// unbound registry object of the scope, in creation order, takes it.
 	AdoptionAdopt AdoptionKind = "adopt"
 	// AdoptionUnmatched means the live object carries no uid and the scope has
-	// no eligible registry object left. The import path creates one here; the
-	// binding-repair path leaves the live object alone.
+	// no eligible registry object left. Both write paths create here, but not
+	// for the same kinds. The import path mints whichever object is missing,
+	// Window or Pane, because its `@projmux_project_path` anchor is what makes
+	// minting a whole topology safe. The binding-repair path has no anchor, so
+	// it mints a Pane only, and only inside a Window it has already paired --
+	// a live window it could not match is still left exactly as it was found.
 	AdoptionUnmatched AdoptionKind = "unmatched"
 	// AdoptionForeign means the live object carries a uid this registry has
 	// never heard of. It is never adopted -- pointing an existing registry
 	// object at it would be re-identification on the strength of a blank
 	// lookup, which is precisely the heuristic uid merge the contract forbids.
 	//
-	// It is treated as unmatched by the import path, which mints a fresh object
-	// for it rather than reusing one. That is not a re-identification: no
+	// It is treated as unmatched by whichever path is allowed to create there,
+	// which mints a fresh object for it rather than reusing one. That is not a
+	// re-identification: no
 	// registry uid changes, a new one is allocated. And it is the only reading
 	// that does not strand the machine, because projmux itself produces
 	// unknown uids -- a reconcile whose transaction is later rolled back by a

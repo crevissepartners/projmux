@@ -42,8 +42,9 @@ import (
 //     then release every Agent whose managed Pane no longer exists in tmux.
 //
 // Nothing here renumbers or merges an existing Project: first registration wins
-// and names stay stable. Nothing here re-identifies a Window or a Pane either;
-// steps 1 and 4 write tmux options, never uids.
+// and names stay stable. Nothing here re-identifies a Window or a Pane either:
+// steps 1 and 4 may mint a new object, but no existing uid is ever changed,
+// merged, or reassigned, and nothing is ever deleted or pruned.
 type registryReconciler struct {
 	// discoverRoots returns the selectable workdirs, already absolute.
 	discoverRoots func() ([]string, error)
@@ -163,7 +164,7 @@ func (r *registryReconciler) reconcile(ctx context.Context, working *coremetadat
 	if err := r.refreshSessionProjections(working, mutator, live); err != nil {
 		return err
 	}
-	r.reapplyUnresolvedBindings(ctx, working, unresolved, binder)
+	r.reapplyUnresolvedBindings(ctx, working, mutator, operationID, unresolved, binder)
 	// Last on purpose. The two binding steps are what mirror a Window's and a
 	// Pane's uid onto their tmux objects, so observing before they ran would
 	// diff the registry against an inventory that does not yet carry the uids
@@ -291,10 +292,13 @@ func (r *registryReconciler) importLiveSessions(
 // the Project and compare. A session name is never parsed back into a path;
 // that direction would be the heuristic the contract forbids.
 //
-// It creates nothing. A live window with no eligible registry Window left is
+// It creates no Window. A live window with no eligible registry Window left is
 // left exactly as it was found: creating registry topology for a session
 // projmux cannot even resolve to a root is the import path's job, and the
-// import path has the anchor it needs to do it safely.
+// import path has the anchor it needs to do it safely. Panes are the single
+// exception, and only underneath a Window this pass already paired -- see
+// reapplySessionBindings for why that exception had to exist and why it stays
+// closed inside one Project.
 //
 // It is tolerant, per session and per object. This is maintenance riding along
 // inside somebody else's transaction, so one session whose tmux state changed
@@ -302,6 +306,8 @@ func (r *registryReconciler) importLiveSessions(
 func (r *registryReconciler) reapplyUnresolvedBindings(
 	ctx context.Context,
 	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	operationID string,
 	sessions []observedSession,
 	binder *coremetadata.BindingMatcher,
 ) {
@@ -314,7 +320,7 @@ func (r *registryReconciler) reapplyUnresolvedBindings(
 		if projectUID == "" {
 			continue
 		}
-		r.reapplySessionBindings(ctx, working, projectUID, session, binder)
+		r.reapplySessionBindings(ctx, working, mutator, operationID, projectUID, session, binder)
 	}
 }
 
@@ -360,9 +366,15 @@ func (r *registryReconciler) projectsBySessionName(registry coremetadata.Registr
 // what MirrorWindow and MirrorPane do -- automatic-rename off, the name mirror,
 // the tmux window_name -- and a reattached object would then be bound but
 // differently configured from an imported one.
+//
+// The Window layer only ever pairs. The Pane layer additionally mints, because
+// pairing cannot reach the state this phase closes; paneBindingFor carries that
+// argument and the boundary it stays inside.
 func (r *registryReconciler) reapplySessionBindings(
 	ctx context.Context,
 	registry *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	operationID string,
 	projectUID string,
 	session observedSession,
 	binder *coremetadata.BindingMatcher,
@@ -392,11 +404,11 @@ func (r *registryReconciler) reapplySessionBindings(
 			if pi >= len(row) {
 				break
 			}
-			paneMatch := binder.MatchPane(registry, match.UID, legacyPane.UID)
-			if !paneMatch.Matched() {
+			paneUID, ok := r.paneBindingFor(registry, mutator, operationID, match.UID, legacyPane, binder)
+			if !ok {
 				continue
 			}
-			pane, ok := registry.Pane(paneMatch.UID)
+			pane, ok := registry.Pane(paneUID)
 			if !ok {
 				continue
 			}
@@ -405,6 +417,66 @@ func (r *registryReconciler) reapplySessionBindings(
 			_ = r.mirror.MirrorPane(ctx, row[pi], *pane)
 		}
 	}
+}
+
+// paneBindingFor resolves the registry Pane one live tmux pane is the runtime
+// of, minting one when the pane has never had a registry counterpart at all.
+// The bool is false when the pane must be left exactly as it was found.
+//
+// Minting is here because pairing cannot close the measured gap. Phase 1 taught
+// this path to adopt, and adoption needs an existing registry Pane to adopt
+// *into*; the panes `projmux ai split` produces have none, because that route
+// registers nothing. On the measured machine one live pane out of seven had a
+// binding, and the operator's own active pane was not it -- which is what made
+// the shipped "omit the selector, act on the active target" behavior
+// unreachable for `delete pane`.
+//
+// The Project boundary is structural here, not checked. The Window this mints
+// into was itself paired earlier in this same walk, and that Window is owned by
+// the single Project the session name resolved to; a session two Projects claim
+// resolves to none at all. There is no code path from a live pane to a Project
+// it does not already sit under, so cross-project registration is not refused --
+// it is unreachable.
+//
+// AdoptionForeign mints too, for the reason the import path gives: a uid nothing
+// in the registry knows is never adopted, but projmux itself produces unknown
+// uids -- a reconcile rolled back by a pre-create hook refusal has already
+// written its allocated uids onto non-transactional tmux options -- and leaving
+// those panes unmanageable forever is the worse answer. Minting allocates a new
+// uid beside it and re-identifies nothing.
+//
+// AdoptionRefused still creates nothing, and that is the half of Phase 1 this
+// phase must not undo. A refusal means a real registry object sits on the other
+// side of the ambiguity, so minting there would leave two registry Panes for one
+// tmux pane. Ambiguity resolved by guessing is the one mistake no later pass can
+// undo.
+func (r *registryReconciler) paneBindingFor(
+	registry *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	operationID string,
+	windowUID string,
+	legacyPane coremetadata.LegacyPane,
+	binder *coremetadata.BindingMatcher,
+) (string, bool) {
+	match := binder.MatchPane(registry, windowUID, legacyPane.UID)
+	if match.Matched() {
+		return match.UID, true
+	}
+	if match.Kind == coremetadata.AdoptionRefused {
+		return "", false
+	}
+	pane, err := mutator.ImportOrphanPane(registry, windowUID, legacyPane, operationID)
+	if err != nil {
+		// Per object tolerant, exactly like the binding writes around it. One
+		// pane that cannot be minted must not fail the create that happened to
+		// trigger the reconcile; the next pass sees the same orphan and retries.
+		return "", false
+	}
+	// Claimed for the rest of the pass, the way the import path claims what it
+	// mints. Without it the next live pane of this Window would find a Pane that
+	// is unbound only because it was created seconds ago, and adopt it.
+	binder.Claim(pane.Metadata.UID)
+	return pane.Metadata.UID, true
 }
 
 // mirrorImported writes the uids a legacy import settled on back onto exactly
