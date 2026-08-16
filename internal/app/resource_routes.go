@@ -476,7 +476,7 @@ func resourceSummary(match selector.Match, kind coremetadata.Kind, registry core
 var resourceTableColumns = map[coremetadata.Kind][]string{
 	coremetadata.KindProject: {"NAME", "STATUS"},
 	coremetadata.KindWindow:  {"NAME", "STATUS", "PROJECT"},
-	coremetadata.KindPane:    {"NAME", "STATUS", "PROJECT", "WINDOW"},
+	coremetadata.KindPane:    {"NAME", "STATUS", "PROJECT", "WINDOW", "AGENT"},
 	coremetadata.KindAgent:   {"NAME", "STATUS", "PROJECT", "WINDOW", "SESSION"},
 }
 
@@ -488,9 +488,13 @@ const resourceTableGap = 2
 // resourceTableRow projects one match onto its kind's columns.
 //
 // It carries exactly what the one-line summary carried, split apart: the status
-// of `status=`, and the owner chain of `owner=project/X window/Y` as two
-// columns. The registry is consulted for the one field no selector.Match holds,
-// the Agent's provider session ref, which is the same lookup and the same
+// of `status=`, and the owner chain of `owner=project/X window/Y` as one column
+// per leg. A Pane's chain has a third leg -- a managed Pane is owned by its
+// Agent, so the summary rendered `owner=project/X window/Y agent/Z` -- and the
+// AGENT column is that leg. A shell Pane owns no Agent and leaves the cell
+// empty, exactly as an Agent with no conversation leaves SESSION empty. The
+// registry is consulted for the one field no selector.Match holds, the Agent's
+// provider session ref, which is the same lookup and the same
 // `<provider>:<conversation-id>` rendering the summary appended as `session=`.
 func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry) []string {
 	row := []string{match.Name, string(match.Status)}
@@ -498,7 +502,7 @@ func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry cor
 	case coremetadata.KindWindow:
 		return append(row, match.Owner.Project)
 	case coremetadata.KindPane:
-		return append(row, match.Owner.Project, match.Owner.Window)
+		return append(row, match.Owner.Project, match.Owner.Window, match.Owner.Agent)
 	case coremetadata.KindAgent:
 		return append(row, match.Owner.Project, match.Owner.Window, resourceSessionCell(match, registry))
 	default:
