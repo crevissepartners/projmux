@@ -23,7 +23,9 @@ projmux update apply
 ```
 
 Use `--dry-run` to see the planned action and `--no-apply` to skip reloading
-the live tmux config after the binary changes.
+the live tmux config after the binary changes. `--no-apply` suppresses the
+reload only; the new binary still runs to migrate the keymap schema and write
+the generated config. See [Keymap schema migration](#keymap-schema-migration).
 
 Shell Upgrade invokes only `projmux update apply`, then reports success or the
 specific failure inline and continues into the shell either way (a failed
@@ -46,6 +48,37 @@ The deprecated top-level `projmux init` command and its legacy-only
 `--dry-run` flag have been removed. Use the exact replacement
 `projmux setup terminal`; it previews by default, and accepts `--apply`,
 `--config <path>`, and `--allow-symlink` when those behaviors are needed.
+
+### Keymap schema migration
+
+`~/.config/projmux/keymap.toml` is now versioned by a root `schema_version`
+marker. A file without one is v0 and uses the action ids projmux has always
+written; `schema_version = 1` uses canonical dotted ids such as
+`window.create` and `project-sidebar.runtime.stop`. Both read — the v0 spelling
+of every action stays a permanent read alias.
+
+The migration needs no command of its own. Every installer path ends by running
+the newly installed binary's `projmux tmux apply`, which migrates first and only
+then writes generated config and reloads the live server. An install that never
+went through an updater converges on the first Settings key save or the next
+`projmux config apply`.
+
+Before it replaces anything it writes `keymap.toml.pre-v1-<digest>.bak`. Running
+the migration again on an already-migrated file writes no bytes. If it cannot
+proceed — most often because a file carries both a legacy and a canonical table
+for one action with different keys — nothing is written at all and the report
+says so.
+
+**Downgrading to a projmux that predates the schema:** restore the backup first.
+
+```sh
+cp ~/.config/projmux/keymap.toml.pre-v1-<digest>.bak ~/.config/projmux/keymap.toml
+```
+
+An older binary reads `schema_version` as an unsupported root key and refuses
+the file, so restoring before installing avoids the failure.
+[docs/keybindings.md](keybindings.md#schema-versions) has the id table and the
+full ordering.
 
 ### Pane rename keymap action ID removed
 
@@ -174,7 +207,7 @@ projmux upgrade                                  # @latest, replace + apply
 projmux upgrade --ref @v0.4.0                    # pin a specific tag
 projmux upgrade --ref @main                      # track a branch
 projmux upgrade --target /usr/local/bin/projmux  # replace another path
-projmux upgrade --no-apply                       # skip 'projmux tmux apply'
+projmux upgrade --no-apply                       # migrate + write config, skip the live reload
 projmux upgrade --dry-run                        # print the steps only
 ```
 
@@ -200,7 +233,8 @@ PROJMUX_PROJDIR="/main/repos:/secondary/repos" projmux upgrade
 When `PROJMUX_INSTALLER=github-release`, `projmux update apply` downloads the
 latest matching `projmux_<version>_<goos>_<goarch>.tar.gz` asset from GitHub
 Releases, extracts the binary, atomically replaces the current executable, and
-then runs `projmux tmux apply` unless `--no-apply` is set.
+then runs the new binary's `projmux tmux apply` — or `tmux apply --no-reload`
+when `--no-apply` is set, so the keymap schema migration still happens.
 
 Set the installer explicitly if you manage a release binary outside npm or Go:
 

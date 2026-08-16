@@ -109,8 +109,10 @@ export PROJMUX_INSTALLER=github-release
 ```
 
 With that set, `projmux update apply` downloads the latest matching release
-asset, replaces the current executable, and reapplies the live tmux config
-unless `--no-apply` is used.
+asset, replaces the current executable, and reapplies the live tmux config.
+`--no-apply` skips the live reload only — the new binary still runs to migrate
+the keymap schema and write the generated config. See
+[Upgrading](upgrading.md#keymap-schema-migration).
 
 ## npm Packaging Details
 
