@@ -75,7 +75,7 @@ func reduceRecorderState(state RecorderState, event recorderEvent, normalize fun
 		}
 		if validate != nil {
 			if err := validate(state.Candidate); err != nil {
-				state.Message = "Cannot save: " + err.Error() + ". Choose another key or use Advanced typed entry."
+				state.Message = "Cannot save: " + err.Error() + ". Choose another key or use Enter key name manually."
 				return state, recorderContinue
 			}
 		}
@@ -84,7 +84,7 @@ func reduceRecorderState(state RecorderState, event recorderEvent, normalize fun
 		return state, recorderConfirm
 	case recorderCandidate:
 		if normalize == nil {
-			state.Message = "Cannot record this input. Choose another key or use Advanced typed entry."
+			state.Message = "Cannot record this input. Choose another key or use Enter key name manually."
 			return state, recorderContinue
 		}
 		candidate, err := normalize(event.key)
@@ -94,7 +94,7 @@ func reduceRecorderState(state RecorderState, event recorderEvent, normalize fun
 			if err != nil && strings.TrimSpace(err.Error()) != "" {
 				detail += ": " + err.Error()
 			}
-			state.Message = detail + ". Choose another key or use Advanced typed entry."
+			state.Message = detail + ". Choose another key or use Enter key name manually."
 			return state, recorderContinue
 		}
 		state.Phase = RecorderStaged

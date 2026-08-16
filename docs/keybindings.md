@@ -132,9 +132,13 @@ The Settings flow is intentionally simple: the root has one native macOS
 transport policy toggle followed by the action list with a key summary and
 state. The key summary uses the first key plus `+N`, or `Not bound` when no key
 is active. State vocabulary is limited to Default, Custom, Available, and
-Unbound. Each action detail shows the action label, state, a flat Keys list
-with `+ Add key`, Options, and a collapsed Troubleshooting row. Key rows open
-key detail for Remove key and Test key. In a Linux/WSL tmux popup, `+ Add key`
+Unbound. Each action detail shows the action label, state, the action's target
+kind, result kind, placement and anchor, the exact shipped handler it dispatches
+to, a flat Keys list with `+ Add key` and `Enter key name manually`, and
+Options. There is no `Advanced` and no `Troubleshooting` container: both named
+an implementation layer instead of an outcome, and both fronted rows that did
+nothing. Key rows open key detail for the canonical key, the delivery path,
+Remove key, and Test delivery. In a Linux/WSL tmux popup, `+ Add key`
 enters a purpose-built recorder immediately: Recording waits for one chord,
 Staged previews its normalized tmux key name without writing, Enter saves and
 applies, and Esc discards it. Another chord replaces the staged candidate.
@@ -144,16 +148,35 @@ Escape are accepted only when the native picker can decode them to a stable
 modified key name. Conflict and invalid-key feedback remains in the recorder so
 the user can choose another chord before any write.
 
-Advanced typed entry remains available from Action detail for literal
-`Enter`/`Escape`, nonstandard tmux key names, the safe direct key pool,
-risky/reserved key copy, and raw diagnostics. Advanced delivery is still owned
-by the selected Projmux action. The native macOS app-socket adapter reads the
-same safe chords directly; supported Ghostty and Windows Terminal mappings for
-other paths are previewed/applied through `projmux setup terminal`, not by storing raw
-sequences in the primary keymap. Options covers unbinding the action and
-reset/use-default flows. Diagnostic/probe/init workflows are not first-class
-Settings tabs; use `projmux setup` and, where the native adapter does not apply,
+`Enter key name manually` is reachable from both Action detail and the Add key
+view. It is the path for literal `Enter`/`Escape` and for nonstandard tmux key
+names, and it runs the same normalization and the same pre-write conflict
+validation the recorder runs, so a chord rejected in one path is rejected in the
+other with the same reason and neither writes `keymap.toml` first. The Add key
+view also states the safe direct key pool and the sequences that are observed
+but never saved (raw escape, CSI-u, xterm modified-key bytes, tmux
+UserKey/UserSequence). The native macOS app-socket adapter reads the same safe
+chords directly; supported Ghostty and Windows Terminal mappings for other paths
+are previewed and applied by `projmux setup terminal ... --apply` from a shell —
+Settings reports which adapter owns the action and never applies a terminal
+snippet itself, and it never stores a raw sequence in the primary keymap.
+Options covers unbinding the action and reset/use-default flows.
+Diagnostic/probe/init workflows are not first-class Settings tabs; use
+`projmux setup` and, where the native adapter does not apply,
 `projmux setup terminal` from the terminal when key delivery needs remediation.
+
+`Test delivery` in key detail is an observable action, not a diagnostic dump. It
+reports the logical key, the raw observation, the key tmux received, and one of
+`delivered`, `key-did-not-arrive`, `ambiguous-key`, or `adapter-needed`. It
+writes nothing and reloads nothing, so a raw observation can never be promoted
+into the stored logical-key model. Exactly one reader is live at a time: inside
+a tmux popup the picker's own recorder reads the key (the popup client owns the
+tty, so the controlling-TTY probe is never started and cannot hang on its
+timeout), and outside tmux the probe reads it with a bounded timeout that
+reports `key-did-not-arrive` rather than blocking. Where no reader can be owned,
+or where the chord is a plain `Enter`/`Escape` that the recorder consumes as its
+own control, the row is disabled and states the reason plus the next step:
+`projmux setup`, then `projmux setup terminal <terminal> --apply`.
 
 Optional direct keys can be added for actions such as:
 

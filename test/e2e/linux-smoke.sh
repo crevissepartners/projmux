@@ -335,12 +335,57 @@ printf '\033' >&9
 # Wait until tmux's own Escape disambiguation window has elapsed and the
 # recorder has returned to a newly rendered Action detail. Sending the next
 # byte before this boundary would correctly turn the pair into a modified key.
+# The returned Action detail carries the cancellation as an observable
+# feedback row, which is also the Phase 2 zero-silent-no-op contract. The row
+# is asserted rather than "+ Add key" because the detail is taller than the
+# 20-row popup and the Add row can sit below the visible window.
 smoke_wait_for "Action detail after Esc cancellation" sh -c \
-  "tail -c +$((recorder_cancel_log_offset + 1)) '$recorder_log' | grep -aFq '+ Add key'"
+  "tail -c +$((recorder_cancel_log_offset + 1)) '$recorder_log' | grep -aFq 'Keybinding cancelled'"
 if grep -Fq '"M-s"' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
   echo "recorder persisted M-s after Esc cancellation" >&2
   exit 1
 fi
+
+# Phase 2 action-detail correctness on the same real client. The detail
+# projects the action's semantics and the shipped handler, the retired
+# Advanced/Troubleshooting containers are gone, and the key detail's Test
+# delivery row reports a result instead of returning to the same loop.
+recorder_detail_offset="$(stat -c %s "$recorder_log")"
+for marker in 'Target kind' 'Result kind' 'Handler'; do
+  smoke_wait_for "action detail $marker" sh -c \
+    "tail -c +$((recorder_detail_offset + 1)) '$recorder_log' | grep -aFq '$marker'"
+done
+if tail -c +$((recorder_detail_offset + 1)) "$recorder_log" | grep -aEq 'Troubleshooting|Advanced\.\.\.'; then
+  echo "action detail still renders a retired Advanced/Troubleshooting container" >&2
+  exit 1
+fi
+recorder_keydetail_offset="$(stat -c %s "$recorder_log")"
+# The row value is part of the searchable text, so `key:C-r` addresses the
+# C-r key row exactly. Searching the readable chord would also match the
+# passive Keys summary row, which lists every active chord.
+printf 'key:C-r\r' >&9
+smoke_wait_for "key detail" sh -c \
+  "tail -c +$((recorder_keydetail_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Keybindings > Action > Key > '"
+smoke_wait_for "key detail Test delivery row" sh -c \
+  "tail -c +$((recorder_keydetail_offset + 1)) '$recorder_log' | grep -aFq 'Test delivery'"
+keymap_before_test="$(cat "$XDG_CONFIG_HOME/projmux/keymap.toml")"
+recorder_testdelivery_offset="$(stat -c %s "$recorder_log")"
+printf 'Test delivery\r' >&9
+smoke_wait_for "Test delivery reader" sh -c \
+  "tail -c +$((recorder_testdelivery_offset + 1)) '$recorder_log' | grep -aFq 'Press a key combination'"
+recorder_teststage_offset="$(stat -c %s "$recorder_log")"
+printf '\022' >&9
+smoke_wait_for "Test delivery observed C-r" sh -c \
+  "tail -c +$((recorder_teststage_offset + 1)) '$recorder_log' | grep -aFq 'Staged: C-r'"
+recorder_testresult_offset="$(stat -c %s "$recorder_log")"
+printf '\r' >&9
+smoke_wait_for "Test delivery observable result" sh -c \
+  "tail -c +$((recorder_testresult_offset + 1)) '$recorder_log' | grep -aFq 'Test delivery complete'"
+if [[ "$keymap_before_test" != "$(cat "$XDG_CONFIG_HOME/projmux/keymap.toml")" ]]; then
+  echo "Test delivery mutated keymap.toml" >&2
+  exit 1
+fi
+
 printf '\003' >&9
 smoke_wait_for "Settings popup exit" sh -c "! kill -0 '$recorder_popup_pid' 2>/dev/null"
 wait "$recorder_popup_pid"

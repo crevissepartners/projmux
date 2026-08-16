@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/app/initcmd"
+	"github.com/crevissepartners/projmux/internal/cli"
 )
 
 type keyBindingScope string
@@ -844,39 +845,210 @@ type keyBindingActionSemantics struct {
 }
 
 const (
-	keyBindingAnchorCurrentPane = "current Pane (explicit)"
-	keyBindingPlacementRight    = "right"
-	keyBindingPlacementDown     = "down"
+	// keyBindingAnchorCurrentPaneSplitTarget is the exact anchor an interactive
+	// right/down action passes. The shipped handler resolves it in
+	// aiCommand.resolveTargetPane: an explicit TMUX_SPLIT_TARGET_PANE when the
+	// launch came from a popup, otherwise `display-message -p -F '#{pane_id}'`
+	// read at press time. Both spellings are the raw `%N` transport id, so this
+	// row says `%N` and never says uid -- no `metadata.uid` is read anywhere on
+	// that path, and calling a raw pane id a uid is exactly the Pane vocabulary
+	// mixing the resource contract forbids. What the row does assert is the
+	// part that is true and load bearing: the target is explicit and pinned at
+	// press time, so it is neither "whatever Pane is focused when the split
+	// lands" nor the Window's persisted `spec.primaryPaneRef`.
+	keyBindingAnchorCurrentPaneSplitTarget = "current Pane %N transport id (explicit split target; not the Window primaryPaneRef)"
+	// keyBindingAnchorActiveTmuxPane is the anchor of the direct tmux
+	// navigation commands. They carry no `-t`, so tmux itself resolves the
+	// active Pane of the key-press context; nothing is passed and nothing is
+	// persisted.
+	keyBindingAnchorActiveTmuxPane = "active tmux Pane at press time (tmux resolves it; no explicit target is passed)"
+	// keyBindingAnchorCurrentPaneCwdInput is the anchor of the one action that
+	// consumes the current Pane only as a read-only cwd input. Saying so on the
+	// row is what keeps the cwd query from reading as the action's outcome.
+	keyBindingAnchorCurrentPaneCwdInput = "current Pane cwd (read-only input, not the outcome)"
+	// keyBindingAnchorCurrentPaneCwdSeed is the `new-window -c
+	// "#{pane_current_path}"` anchor: the current Pane contributes its cwd to
+	// the new Window's initial Pane and nothing else. tmux, not the binding,
+	// chooses the Window index.
+	keyBindingAnchorCurrentPaneCwdSeed = "current Pane cwd (seeds the initial Pane; tmux chooses the Window index)"
+	keyBindingAnchorFocusedRow         = "focused row in the open picker"
+
+	keyBindingPlacementRight = "right"
+	keyBindingPlacementDown  = "down"
+	keyBindingPlacementLeft  = "left"
+	keyBindingPlacementUp    = "up"
+	// keyBindingPlacementPopup is the placement of every popup surface: tmux
+	// owns the popup geometry and it is scoped to the client, not to a Pane.
+	keyBindingPlacementPopup           = "client-scoped popup"
+	keyBindingPlacementInFocusedWindow = "in the focused Window"
+	keyBindingPlacementInOpenPicker    = "inside the open picker"
 )
 
-// keyBindingActionSemanticsByID declares the semantics of the actions whose
-// target/result is a product decision rather than a self-evident one. Actions
-// with no entry render no semantic rows.
+// keyBindingActionSemanticsByID declares the product semantics of every catalog
+// action. Coverage is exhaustive in both directions (a test pins it) so an
+// action detail can never silently fall back to "no semantics"; Placement and
+// Anchor stay empty only where the action has no spatial result at all.
 var keyBindingActionSemanticsByID = map[string]keyBindingActionSemantics{
-	"ai-split-right": {TargetKind: "Pane", ResultKind: "default launch target", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPane},
-	"ai-split-down":  {TargetKind: "Pane", ResultKind: "default launch target", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPane},
+	// --- Launch & popups -------------------------------------------------
+	"ProjectSidebarToggle":  {TargetKind: "Project", ResultKind: "open or close the Project Sidebar", Placement: keyBindingPlacementPopup},
+	"NotifySidebarToggle":   {TargetKind: "Notification", ResultKind: "open or close the Notification Sidebar", Placement: keyBindingPlacementPopup},
+	"SessionPopupToggle":    {TargetKind: "Session", ResultKind: "open or close the Session Picker", Placement: keyBindingPlacementPopup},
+	"Resources:Open":        {TargetKind: "Project, Window, Pane", ResultKind: "open the read-only Resource Inspector", Placement: keyBindingPlacementPopup},
+	"RecentWindows:Open":    {TargetKind: "Window", ResultKind: "open the recent Windows queue", Placement: keyBindingPlacementPopup},
+	"AISplitPickerToggle":   {TargetKind: "Agent", ResultKind: "choose a launch target; the chosen target then creates", Placement: keyBindingPlacementPopup},
+	"SettingsToggle":        {TargetKind: "Settings", ResultKind: "open or close Settings", Placement: keyBindingPlacementPopup},
+	"AIResumePickerToggle":  {TargetKind: "Agent", ResultKind: "resume one existing Offline or Failed Agent; never creates an Agent", Placement: keyBindingPlacementPopup},
+	"ProjectSwitcherToggle": {TargetKind: "Project", ResultKind: "open the Project Picker", Placement: keyBindingPlacementPopup},
 
-	"ai-split-codex-right":  {TargetKind: "Agent", ResultKind: "always a new Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPane},
-	"ai-split-codex-down":   {TargetKind: "Agent", ResultKind: "always a new Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPane},
-	"ai-split-claude-right": {TargetKind: "Agent", ResultKind: "always a new Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPane},
-	"ai-split-claude-down":  {TargetKind: "Agent", ResultKind: "always a new Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPane},
+	// --- Agent & Pane launch ---------------------------------------------
+	"ai-split-right": {TargetKind: "Pane", ResultKind: "the configured default launch target", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+	"ai-split-down":  {TargetKind: "Pane", ResultKind: "the configured default launch target", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 
-	"ai-split-shell-right": {TargetKind: "Pane", ResultKind: "Shell Pane", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPane},
-	"ai-split-shell-down":  {TargetKind: "Pane", ResultKind: "Shell Pane", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPane},
+	"ai-split-codex-right":  {TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+	"ai-split-codex-down":   {TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+	"ai-split-claude-right": {TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+	"ai-split-claude-down":  {TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 
-	"AIResumePickerToggle": {TargetKind: "Agent", ResultKind: "resume an existing Offline or Failed Agent"},
-	"AISplitPickerToggle":  {TargetKind: "Agent", ResultKind: "choose a launch target"},
+	"ai-split-shell-right": {TargetKind: "Pane", ResultKind: "a new Shell Pane", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
+	"ai-split-shell-down":  {TargetKind: "Pane", ResultKind: "a new Shell Pane", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 
-	"new-window":               {TargetKind: "Window", ResultKind: "new Window with its initial Pane"},
-	"current-project-session":  {TargetKind: "Project", ResultKind: "open the Project for the current directory"},
-	"Sidebar:KillSession":      {TargetKind: "Project", ResultKind: "stop the Project runtime; Project metadata is kept"},
-	"SessionPopup:KillSession": {TargetKind: "Session", ResultKind: "stop a runtime Session"},
-	"SessionPopup:OpenState":   {TargetKind: "Snapshot", ResultKind: "open Snapshots for the focused Session"},
+	// --- Pane & Window navigation ----------------------------------------
+	//
+	// current-project-session keeps the legacy `current` route spelling. Its
+	// Result kind states the navigation outcome and its Anchor states that the
+	// Pane cwd is a read-only input, so the row can never be read as "the cwd
+	// query succeeded, therefore the action succeeded".
+	"current-project-session": {TargetKind: "Project", ResultKind: "ensure and attach the Project runtime derived from the current Pane cwd", Anchor: keyBindingAnchorCurrentPaneCwdInput},
+	"new-window":              {TargetKind: "Window", ResultKind: "new Window with its initial Pane", Placement: "next index in the current Session", Anchor: keyBindingAnchorCurrentPaneCwdSeed},
+	"rename-window":           {TargetKind: "Window", ResultKind: "rename the focused Window", Placement: keyBindingPlacementInFocusedWindow},
+	paneRenameActionID:        {TargetKind: "Pane", ResultKind: "set or clear the focused Pane label", Placement: keyBindingPlacementInFocusedWindow},
+	"toggle-mouse":            {TargetKind: "tmux runtime", ResultKind: "turn tmux mouse mode on or off for the running server"},
+	"previous-window":         {TargetKind: "Window", ResultKind: "focus the previous Window", Placement: keyBindingPlacementLeft},
+	"next-window":             {TargetKind: "Window", ResultKind: "focus the next Window", Placement: keyBindingPlacementRight},
+	"last-pane":               {TargetKind: "Pane", ResultKind: "focus the previously active Pane", Anchor: keyBindingAnchorActiveTmuxPane},
+	"select-pane-left":        {TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementLeft, Anchor: keyBindingAnchorActiveTmuxPane},
+	"select-pane-right":       {TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorActiveTmuxPane},
+	"select-pane-up":          {TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementUp, Anchor: keyBindingAnchorActiveTmuxPane},
+	"select-pane-down":        {TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorActiveTmuxPane},
+
+	// --- Sidebar & picker actions ----------------------------------------
+	"Sidebar:PinProject":                  {TargetKind: "Project", ResultKind: "pin or unpin the focused Project", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"Sidebar:KillSession":                 {TargetKind: "Project", ResultKind: "stop the Project runtime; Project metadata is kept", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"SessionPopup:KillSession":            {TargetKind: "Session", ResultKind: "stop a runtime Session", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"SessionPopup:OpenState":              {TargetKind: "Snapshot", ResultKind: "open Snapshots for the focused Session", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"SessionPopup:CyclePreviewWindowPrev": {TargetKind: "Window", ResultKind: "preview the previous Window", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"SessionPopup:CyclePreviewWindowNext": {TargetKind: "Window", ResultKind: "preview the next Window", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"SessionPopup:CyclePreviewPanePrev":   {TargetKind: "Pane", ResultKind: "preview the previous Pane", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"SessionPopup:CyclePreviewPaneNext":   {TargetKind: "Pane", ResultKind: "preview the next Pane", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"NotifySidebar:FocusAndAck":           {TargetKind: "Notification", ResultKind: "focus the source Pane and acknowledge the Notification", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"NotifySidebar:Ack":                   {TargetKind: "Notification", ResultKind: "acknowledge the focused Notification", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"NotifySidebar:AckGroup":              {TargetKind: "Notification", ResultKind: "acknowledge every visible Notification in the focused group", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"NotifySidebar:ClearNonCritical":      {TargetKind: "Notification", ResultKind: "clear non-critical Notifications", Placement: keyBindingPlacementInOpenPicker},
+	"NotifySidebar:ClearAll":              {TargetKind: "Notification", ResultKind: "clear all Notifications", Placement: keyBindingPlacementInOpenPicker},
+	"NotifySidebar:ClearGone":             {TargetKind: "Notification", ResultKind: "clear gone Notifications", Placement: keyBindingPlacementInOpenPicker},
+	"Settings:SwitchTabPrev":              {TargetKind: "Settings", ResultKind: "move to the previous Settings scope tab", Placement: keyBindingPlacementInOpenPicker},
+	"Settings:SwitchTabNext":              {TargetKind: "Settings", ResultKind: "move to the next Settings scope tab", Placement: keyBindingPlacementInOpenPicker},
 }
 
 func keyBindingActionSemanticsFor(action keyBindingAction) (keyBindingActionSemantics, bool) {
 	semantics, ok := keyBindingActionSemanticsByID[action.ID]
 	return semantics, ok
+}
+
+// keyBindingActionHandler pins the exact shipped handler one key action
+// dispatches to. It exists so an action detail can never imply a handler the
+// action does not have: Invocation is what the generated tmux config actually
+// runs, and Manifest/Disposition/Canonical are projected from the shipped CLI
+// command manifest in internal/cli rather than from a second hand-kept table.
+type keyBindingActionHandler struct {
+	// Invocation is the exact shipped command the binding runs.
+	Invocation string
+	// Manifest is the resolved manifest route path. It is empty when the
+	// handler is not a projmux route at all (a direct tmux command, or a
+	// command handled inside the running picker).
+	Manifest string
+	// Disposition is the manifest classification of the resolved route.
+	Disposition string
+	// Canonical is the manifest's canonical spelling list for the route.
+	Canonical []string
+	// Note pins a handler boundary the invocation alone does not state.
+	Note string
+}
+
+// keyBindingActionHandlerNotes pins the handler boundaries that the invocation
+// string alone leaves implicit. The `current` entry is the reason this map
+// exists: the shipped manifest classifies `projmux current` as a compatibility
+// route whose canonical projection is the read-only `get pane` cwd field, while
+// the shipped handler also ensures and attaches the derived runtime. Naming
+// both halves on the row is what stops the read-only query from being read as
+// the action's outcome.
+var keyBindingActionHandlerNotes = map[string]string{
+	"current-project-session": "compatibility route; the manifest canonical `get pane` cwd projection is the read-only input step only, and the ensure/attach outcome is owned by this route",
+	"toggle-mouse":            "tmux `if-shell` flips the server-wide mouse option",
+}
+
+// keyBindingActionHandlerFor projects one action's shipped handler.
+func keyBindingActionHandlerFor(action keyBindingAction) (keyBindingActionHandler, bool) {
+	handler, ok := keyBindingActionShippedInvocation(action)
+	if !ok {
+		return keyBindingActionHandler{}, false
+	}
+	handler.Note = keyBindingActionHandlerNotes[action.ID]
+	return handler, true
+}
+
+func keyBindingActionShippedInvocation(action keyBindingAction) (keyBindingActionHandler, bool) {
+	if action.Kind == keyBindingActionPickerInternal {
+		label, ok := keyBindingSurfaceLabel(action.Surface)
+		if !ok {
+			label = action.Surface
+		}
+		return keyBindingActionHandler{Invocation: "handled inside the open " + label + " picker"}, true
+	}
+	switch action.TmuxKind {
+	case tmuxBindingPopupToggle:
+		return keyBindingHandlerFromManifest(
+			[]string{"internal", "tmux", "popup-toggle"},
+			"projmux internal tmux popup-toggle "+strings.TrimSpace(action.TmuxBody),
+		), true
+	case tmuxBindingRunProjmux:
+		body := strings.TrimSpace(action.TmuxBody)
+		return keyBindingHandlerFromManifest(strings.Fields(body), "projmux "+body), true
+	case tmuxBindingCommand:
+		return keyBindingActionHandler{Invocation: "tmux " + condenseTmuxHandlerBody(action.TmuxBody)}, true
+	case tmuxBindingCommandPrompt:
+		return keyBindingActionHandler{Invocation: "tmux command-prompt then " + condenseTmuxHandlerBody(action.TmuxBody)}, true
+	}
+	return keyBindingActionHandler{}, false
+}
+
+func keyBindingHandlerFromManifest(tokens []string, invocation string) keyBindingActionHandler {
+	handler := keyBindingActionHandler{Invocation: invocation}
+	path, route, ok := cli.Resolve(tokens)
+	if !ok {
+		return handler
+	}
+	handler.Manifest = strings.Join(path, " ")
+	top, found := cli.LookupRoute(path[0])
+	if found {
+		handler.Disposition = string(top.Disposition)
+	}
+	handler.Canonical = append([]string{}, route.Canonical...)
+	if len(handler.Canonical) == 0 && found {
+		handler.Canonical = append([]string{}, top.Canonical...)
+	}
+	return handler
+}
+
+// condenseTmuxHandlerBody keeps a direct tmux body readable in one popup row
+// without hiding which tmux command actually runs.
+func condenseTmuxHandlerBody(body string) string {
+	condensed := strings.Join(strings.Fields(body), " ")
+	const max = 44
+	if len(condensed) <= max {
+		return condensed
+	}
+	return strings.TrimSpace(condensed[:max]) + " ..."
 }
 
 func keyBindingDisplayName(action keyBindingAction) string {

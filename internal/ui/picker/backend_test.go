@@ -653,7 +653,7 @@ func TestRecorderStateKeepsActionableValidationAndNormalizationErrors(t *testing
 	state, outcome := reduceRecorderState(newRecorderState(), recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "mouse"}}, func(RecorderKey) (string, error) {
 		return "", errors.New("no stable tmux key name")
 	}, nil)
-	if outcome != recorderContinue || state.Candidate != "" || !strings.Contains(state.Message, "Advanced typed entry") {
+	if outcome != recorderContinue || state.Candidate != "" || !strings.Contains(state.Message, "Enter key name manually") {
 		t.Fatalf("invalid candidate = (%#v, %v), want actionable recording error", state, outcome)
 	}
 
