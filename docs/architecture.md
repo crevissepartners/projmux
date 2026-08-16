@@ -438,8 +438,30 @@ Binding reapply and adoption:
   `status.session.name` when set, otherwise the name `sessionNameFor` gives its
   root. That is used **forward only** — compute the expected name from the
   Project and compare. Parsing a session name back into a path would be the
-  heuristic. The session-name path never creates registry topology; only the
-  anchored import path does.
+  heuristic. The session-name path never creates a **Window**; only the anchored
+  import path does.
+- **An orphan live pane is registered, and that is the one thing the
+  session-name path creates.** Adoption needs an existing registry Pane to adopt
+  *into*, and a pane produced by a route that registers nothing — `projmux ai
+  split` is the measured one — has none, so it stayed unbound forever and
+  `projmux delete pane` with no selector kept refusing in the operator's own
+  active pane. Reconcile therefore mints a **shell-role Pane owned by the
+  already-paired Window** for every live pane inside it that matches nothing, and
+  mirrors that Pane's uid back through the same `Mirror.MirrorPane` write. The
+  Project boundary is structural rather than checked: the Window was paired
+  earlier in the same walk and belongs to the single Project the session name
+  resolved to, so there is no code path from a live pane to a Project it does not
+  already sit under. A live *window* that matches nothing still creates nothing,
+  and neither does a **refused** pane — a refusal means a real registry Pane sits
+  on the other side of the ambiguity, so minting beside it would leave two Panes
+  describing one tmux pane.
+- The registered Pane is named from `FallbackPaneNameBase` (`pane`, `pane-1`, …)
+  through the registry's own allocator, never from `pane_current_command`:
+  `metadata.name` is not derived from a runtime attribute, and the command
+  changes the moment the operator runs something else. The runtime reading goes
+  to `status.displayTitle` instead. **No Agent is minted**, whatever the pane is
+  running — deciding registry topology from pane options or a title is a content
+  heuristic, and Agent phase belongs to its own track.
 - **Nothing is ever re-identified.** Adoption changes no uid, merges no uid, and
   reassigns no uid; it only decides which registry object a live tmux object is
   the runtime of, and then writes that object's existing uid. Adopted objects
@@ -459,7 +481,8 @@ Binding reapply and adoption:
   a pre-create hook refusal has already written its allocated uids onto tmux,
   and tmux options are not transactional — and refusing outright would leave
   those windows permanently unmanageable. Minting changes no existing uid. The
-  session-name repair path, which has no anchor, only skips.
+  session-name repair path, which has no anchor, mints only the Pane case and
+  skips the window.
 - The "already bound elsewhere" set is one observation taken **before** the pass
   writes anything, shared by both binding steps, so "already bound" means "bound
   before we got here". The binding writes land before the runtime-observation
@@ -468,8 +491,10 @@ Binding reapply and adoption:
 - Reapply stays a **mutation-route** concern, like the rest of reconcile. Read
   verbs still `LoadReadOnly` and still never materialize the registry. A tmux
   server that is absent or erroring still fails closed with no error, and a
-  binding write that fails is skipped rather than escalated — the next pass sees
-  the same drift and tries again.
+  binding write or an orphan registration that fails is skipped rather than
+  escalated — the next pass sees the same drift and tries again. It is
+  maintenance riding along inside somebody else's transaction: one pane it cannot
+  register must not fail the `create` that happened to trigger it.
 
 Selector and the implicit active target:
 
