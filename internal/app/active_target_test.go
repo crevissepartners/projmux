@@ -73,6 +73,200 @@ func newTestPaneGetCommandWithActiveTarget(t *testing.T, store *fakeResourceStor
 	return &getCommand{loadRegistry: store.store().load, currentPath: current, activeTarget: active.lookup, runtime: liveAlphaRuntime()}
 }
 
+func newTestListGetCommandWithActiveTarget(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) *getCommand {
+	t.Helper()
+	cmd := newTestListGetCommand(t, store)
+	cmd.activeTarget = active.lookup
+	return cmd
+}
+
+// TestPluralReadsUseTheActiveProjectDefault pins the namespace-like Project
+// boundary for the three registry plural reads, including the explicit global
+// escape and the outside-tmux compatibility path.
+func TestPluralReadsUseTheActiveProjectDefault(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		kind       string
+		projectUID string
+		globalUIDs []string
+	}{
+		{kind: "windows", projectUID: "win-alpha-main\nwin-alpha-review\n", globalUIDs: []string{"win-alpha-main", "win-alpha-review", "win-beta-main"}},
+		{kind: "panes", projectUID: "pan-alpha-zsh\npan-alpha-log\npan-alpha-codex\npan-alpha-review\n", globalUIDs: []string{"pan-alpha-zsh", "pan-alpha-log", "pan-alpha-codex", "pan-alpha-review", "pan-beta-zsh"}},
+		{kind: "agents", projectUID: "agt-alpha-codex\n", globalUIDs: []string{"agt-alpha-codex", "agt-beta-codex"}},
+	} {
+		t.Run(test.kind, func(t *testing.T) {
+			t.Parallel()
+
+			store := newFakeResourceStore(t)
+			inside := insideTmux("pan-alpha-zsh", "win-alpha-main")
+			stdout, stderr, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, inside), test.kind, "-o", "uid")
+			if err != nil {
+				t.Fatalf("get %s inside tmux: %v", test.kind, err)
+			}
+			if stdout != test.projectUID || stderr != "" {
+				t.Fatalf("get %s inside = stdout %q stderr %q, want %q and no stderr", test.kind, stdout, stderr, test.projectUID)
+			}
+			if inside.calls != 1 {
+				t.Fatalf("get %s consulted active Project %d times, want 1", test.kind, inside.calls)
+			}
+
+			outside := outsideTmux()
+			stdout, stderr, err = runRoute(t, newTestListGetCommandWithActiveTarget(t, store, outside), test.kind, "-o", "uid")
+			if err != nil {
+				t.Fatalf("get %s outside tmux: %v", test.kind, err)
+			}
+			for _, uid := range test.globalUIDs {
+				if !strings.Contains(stdout, uid+"\n") {
+					t.Fatalf("get %s outside is missing %s: %q", test.kind, uid, stdout)
+				}
+			}
+			if stderr != "" {
+				t.Fatalf("get %s outside stderr = %q", test.kind, stderr)
+			}
+
+			inside = insideTmux("pan-alpha-zsh", "win-alpha-main")
+			stdout, stderr, err = runRoute(t, newTestListGetCommandWithActiveTarget(t, store, inside), test.kind, "--all-projects", "-o", "uid")
+			if err != nil {
+				t.Fatalf("get %s --all-projects: %v", test.kind, err)
+			}
+			for _, uid := range test.globalUIDs {
+				if !strings.Contains(stdout, uid+"\n") {
+					t.Fatalf("get %s --all-projects is missing %s: %q", test.kind, uid, stdout)
+				}
+			}
+			if stderr != "" || inside.calls != 0 {
+				t.Fatalf("get %s --all-projects stderr=%q active calls=%d, want neither", test.kind, stderr, inside.calls)
+			}
+		})
+	}
+}
+
+// TestPluralReadProjectScopeBoundaries covers the refusal and compatibility
+// edges around the default without changing any explicitly selected query.
+func TestPluralReadProjectScopeBoundaries(t *testing.T) {
+	t.Parallel()
+
+	t.Run("explicit Project is unchanged and skips the active lookup", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		active := insideTmux("pan-alpha-zsh", "win-alpha-main")
+		stdout, _, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active),
+			"panes", "--project", "beta", "-o", "uid")
+		if err != nil {
+			t.Fatalf("explicit Project: %v", err)
+		}
+		if stdout != "pan-beta-zsh\n" || active.calls != 0 {
+			t.Fatalf("explicit Project stdout=%q active calls=%d", stdout, active.calls)
+		}
+	})
+
+	t.Run("missing active Project binding refuses without global fallback", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		active := insideTmux("pan-alpha-zsh", "")
+		stdout, _, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active), "panes", "-o", "uid")
+		if err == nil || !IsUsageError(err) {
+			t.Fatalf("missing binding error = %v, want a usage refusal", err)
+		}
+		if stdout != "" || !strings.Contains(err.Error(), "carries no @projmux_window_uid") {
+			t.Fatalf("missing binding stdout=%q error=%v", stdout, err)
+		}
+	})
+
+	for _, test := range []struct {
+		name  string
+		owner *coremetadata.OwnerRef
+	}{
+		{name: "active Window has no Project owner"},
+		{name: "active Window names a missing Project", owner: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-missing"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			window, ok := store.registry.Window("win-alpha-main")
+			if !ok {
+				t.Fatal("fixture is missing win-alpha-main")
+			}
+			window.Metadata.OwnerRef = test.owner
+			active := insideTmux("pan-alpha-zsh", "win-alpha-main")
+			stdout, _, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active), "panes", "-o", "uid")
+			if err == nil || !IsUsageError(err) || stdout != "" || !strings.Contains(err.Error(), "has no owning Project in the registry") {
+				t.Fatalf("broken owner chain stdout=%q error=%v", stdout, err)
+			}
+		})
+	}
+
+	t.Run("all-projects conflicts only with explicit Project", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		stdout, _, err := runRoute(t, newTestListGetCommand(t, store),
+			"windows", "--all-projects", "--project", "alpha")
+		if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "cannot be combined") || stdout != "" {
+			t.Fatalf("conflict stdout=%q error=%v", stdout, err)
+		}
+	})
+
+	t.Run("all-projects combines with target and label selectors", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		active := insideTmux("pan-alpha-zsh", "win-alpha-main")
+		stdout, _, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active),
+			"panes", "--all-projects", "--window", "main", "--pane", "zsh", "--selector", "role=shell", "-o", "uid")
+		if err != nil {
+			t.Fatalf("all-projects with selectors: %v", err)
+		}
+		if stdout != "pan-alpha-zsh\npan-beta-zsh\n" || active.calls != 0 {
+			t.Fatalf("all-projects with selectors stdout=%q active calls=%d", stdout, active.calls)
+		}
+	})
+
+	t.Run("bare all remains unavailable on read routes", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		stdout, _, err := runRoute(t, newTestListGetCommand(t, store), "panes", "--all")
+		if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "flag provided but not defined: -all") || stdout != "" {
+			t.Fatalf("bare --all stdout=%q error=%v", stdout, err)
+		}
+	})
+
+	t.Run("Project inventory remains global and never reads the active target", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		active := insideTmux("pan-alpha-zsh", "win-alpha-main")
+		stdout, _, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active), "projects", "-o", "uid")
+		if err != nil {
+			t.Fatalf("get projects: %v", err)
+		}
+		if stdout != "prj-alpha\nprj-beta\nprj-gone\n" || active.calls != 0 {
+			t.Fatalf("get projects stdout=%q active calls=%d", stdout, active.calls)
+		}
+	})
+
+	t.Run("notification and snapshot forwarding never enters Project scope", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		active := insideTmux("pan-alpha-zsh", "win-alpha-main")
+		notify := &recordedRawArgv{stdout: "notifications\n"}
+		snapshots := &recordedRawArgv{stdout: "snapshots\n"}
+		cmd := newTestListGetCommandWithActiveTarget(t, store, active)
+		cmd.notify = notify
+		cmd.snapshots = snapshots
+
+		stdout, _, err := runRoute(t, cmd, "notifications", "--all-projects")
+		if err != nil || stdout != "notifications\n" || len(notify.calls) != 1 || strings.Join(notify.calls[0], " ") != "list --all-projects" {
+			t.Fatalf("notification forwarding stdout=%q calls=%v error=%v", stdout, notify.calls, err)
+		}
+		stdout, _, err = runRoute(t, cmd, "snapshots", "--all-projects")
+		if err != nil || stdout != "snapshots\n" || len(snapshots.calls) != 1 || strings.Join(snapshots.calls[0], " ") != "status --all-projects" {
+			t.Fatalf("snapshot forwarding stdout=%q calls=%v error=%v", stdout, snapshots.calls, err)
+		}
+		if active.calls != 0 {
+			t.Fatalf("forwarded subsystems consulted active Project %d times", active.calls)
+		}
+	})
+}
+
 // TestActiveTargetIsDecidedByTheEnvironmentNotByWhetherTmuxAnswers pins the
 // inside-tmux test itself.
 //

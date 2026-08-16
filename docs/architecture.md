@@ -625,8 +625,25 @@ Selector and the implicit active target:
   no selector at all resolves the **active tmux target**: `get pane`,
   `describe project|window|pane|agent`, `rename project|window|pane`, and
   `rebind project`. Any reference, scope flag, or label keeps the pre-existing
-  whole-scope meaning; the plural 0..N reads, `create`, and `delete` are
-  unaffected.
+  singular-target meaning; `create` and the destructive routes are unaffected.
+- Project is also the namespace-like default scope of the plural registry reads
+  `get windows|panes|agents`. When `--project` is absent inside tmux, the active
+  Window uid mirror and its registry owner chain derive a Project on every
+  invocation. This narrows the Window universe only; it never chooses one
+  Window, Pane, or Agent for the operator. `get projects` is above that scope,
+  while notifications and snapshots belong to separate stores, so all three
+  remain global.
+- `--all-projects` is the explicit registry-wide escape for those three reads.
+  It is deliberately different from destructive `delete --all`, whose existing
+  whole-registry compatibility meaning is unchanged. A bare `--all` is not a
+  read flag. Explicit `--project` keeps its prior result and cannot be combined
+  with `--all-projects`.
+- Outside tmux, an omitted Project scope keeps the historical whole-registry
+  inventory. Inside tmux, a missing Window binding or broken Project owner chain
+  is a usage refusal with zero stdout, never a silent global fallback. The
+  selector engine's `windowScope` is the single choice point for explicit
+  Project, active-derived default, or global scope, shared by Window, Pane, and
+  Agent resolution.
 - There is **no sentinel value token**. `current` and `active` pass
   `ValidateName`, so `--pane current` would shadow a resource that legitimately
   carries that name. Omission is the only spelling. If an explicit one is ever
@@ -647,8 +664,9 @@ Selector and the implicit active target:
 - There is no persistent, queryable scope and no `set-context` equivalent. The
   observation is re-read on every invocation, which costs one `display-message`
   and leaves nothing to go stale. `describe pane` with no selector is itself the
-  preview of what the family will act on, because every verb resolves through
-  the same seam.
+  preview of what the singular family will act on; the plural-read Project
+  default consumes the same observation and owner chain without choosing an
+  individual resource.
 - An active target that maps onto no registry resource is a **refusal**, not a
   fallthrough: exit `2`, zero stdout, no resource selected, nothing written, and
   a message naming what was inspected. It is deliberately not the

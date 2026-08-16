@@ -564,7 +564,9 @@ func TestDeleteEmptySelectorWithYesCannotTouchTheWholeRegistry(t *testing.T) {
 //
 // `--all` restores the historical plan byte for byte, in and out of tmux alike,
 // and it is measured to consult the active-target seam zero times: an explicit
-// registry-wide request must not depend on where it was typed.
+// registry-wide request must not depend on where it was typed. This is also the
+// negative parity guard for the later Project-scoped read default: read-side
+// `--all-projects` cannot reinterpret or route destructive `delete --all`.
 func TestDeleteWholeRegistryFanOutNeedsTheExplicitAllFlag(t *testing.T) {
 	t.Parallel()
 

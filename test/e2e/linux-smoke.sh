@@ -999,19 +999,21 @@ trap smoke_cleanup_env EXIT
 echo ">> create e2e passed: socket=$create_socket path=$create_socket_path"
 
 # Managed runtime binding convergence runs on its own two exact sockets. Every
-# client call strips inherited TMUX/TMUX_PANE; only the one implicit read below
-# receives a synthetic client identity after the binding has already converged.
+# client call strips inherited TMUX/TMUX_PANE; only the implicit reads below
+# receive a synthetic client identity after the binding has already converged.
 binding_root="$PROJMUX_SMOKE_WORKDIR/managed-binding-phase3"
 binding_socket="projmux-binding-$RANDOM-$$"
 binding_second_socket="projmux-binding-second-$RANDOM-$$"
 binding_session="managed-binding"
+binding_beta_session="managed-binding-beta"
 mkdir -p \
   "$binding_root/home" \
   "$binding_root/config" \
   "$binding_root/state" \
   "$binding_root/runtime" \
   "$binding_root/tmux" \
-  "$binding_root/work/alpha"
+  "$binding_root/work/alpha" \
+  "$binding_root/work/beta"
 chmod 0700 "$binding_root/runtime" "$binding_root/tmux"
 
 binding_tmux() {
@@ -1052,6 +1054,8 @@ binding_pmx() {
 
 binding_tmux new-session -d -s "$binding_session" -n initial -c "$binding_root/work/alpha" sleep 600
 binding_tmux set-option -t "$binding_session" -q @projmux_project_path "$binding_root/work/alpha"
+binding_tmux new-session -d -s "$binding_beta_session" -n initial -c "$binding_root/work/beta" sleep 600
+binding_tmux set-option -t "$binding_beta_session" -q @projmux_project_path "$binding_root/work/beta"
 binding_second_tmux new-session -d -s untouched -c "$binding_root/work/alpha" sleep 600
 binding_second_tmux set-option -gq @projmux_phase3_sentinel unchanged
 
@@ -1105,9 +1109,14 @@ smoke_assert_file_contains "$binding_root/first-apply.out" "reloaded tmux server
 
 binding_window="$(binding_tmux display-message -p -t "$binding_session:0" '#{window_id}')"
 binding_pane="$(binding_tmux display-message -p -t "$binding_session:0.0" '#{pane_id}')"
+binding_beta_window="$(binding_tmux display-message -p -t "$binding_beta_session:0" '#{window_id}')"
+binding_beta_pane="$(binding_tmux display-message -p -t "$binding_beta_session:0.0" '#{pane_id}')"
 binding_window_uid="$(binding_tmux show-options -wqv -t "$binding_window" @projmux_window_uid)"
 binding_pane_uid="$(binding_tmux show-options -pqv -t "$binding_pane" @projmux_pane_uid)"
-if [[ -z "$binding_window_uid" ]] || [[ -z "$binding_pane_uid" ]]; then
+binding_beta_window_uid="$(binding_tmux show-options -wqv -t "$binding_beta_window" @projmux_window_uid)"
+binding_beta_pane_uid="$(binding_tmux show-options -pqv -t "$binding_beta_pane" @projmux_pane_uid)"
+if [[ -z "$binding_window_uid" ]] || [[ -z "$binding_pane_uid" ]] || \
+  [[ -z "$binding_beta_window_uid" ]] || [[ -z "$binding_beta_pane_uid" ]]; then
   echo "first exact-socket apply did not bind the managed Window/Pane" >&2
   exit 1
 fi
@@ -1187,6 +1196,81 @@ if [[ "$(tr -d '[:space:]' <"$binding_root/implicit-read.out")" != "$lifecycle_s
   cat "$binding_root/implicit-read.out" >&2
   exit 1
 fi
+
+# The plural registry reads use Project as a namespace-like default. The
+# synthetic client sits in alpha: its default Pane and Window inventories must
+# exclude beta, while --all-projects and the outside-tmux compatibility path
+# must include both. Project inventory itself remains global.
+binding_inside_pmx() {
+  env \
+    HOME="$binding_root/home" \
+    XDG_CONFIG_HOME="$binding_root/config" \
+    XDG_STATE_HOME="$binding_root/state" \
+    XDG_RUNTIME_DIR="$binding_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$binding_root/work" \
+    TMUX_TMPDIR="$binding_root/tmux" \
+    TMUX="$binding_socket_path,$binding_server_pid,0" \
+    TMUX_PANE="$lifecycle_split_pane" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+binding_inside_pmx get panes -o uid >"$binding_root/project-panes.out"
+smoke_assert_file_contains "$binding_root/project-panes.out" "$lifecycle_split_uid"
+if grep -Fqx "$binding_beta_pane_uid" "$binding_root/project-panes.out"; then
+  echo "active Project Pane inventory crossed into beta" >&2
+  exit 1
+fi
+
+binding_inside_pmx get windows -o uid >"$binding_root/project-windows.out"
+smoke_assert_file_contains "$binding_root/project-windows.out" "$lifecycle_window_uid"
+if grep -Fqx "$binding_beta_window_uid" "$binding_root/project-windows.out"; then
+  echo "active Project Window inventory crossed into beta" >&2
+  exit 1
+fi
+
+binding_inside_pmx get panes --all-projects -o uid >"$binding_root/all-project-panes.out"
+smoke_assert_file_contains "$binding_root/all-project-panes.out" "$lifecycle_split_uid"
+smoke_assert_file_contains "$binding_root/all-project-panes.out" "$binding_beta_pane_uid"
+binding_pmx get panes -o uid >"$binding_root/outside-panes.out"
+sort "$binding_root/all-project-panes.out" >"$binding_root/all-project-panes.sorted"
+sort "$binding_root/outside-panes.out" >"$binding_root/outside-panes.sorted"
+cmp "$binding_root/all-project-panes.sorted" "$binding_root/outside-panes.sorted"
+
+binding_inside_pmx get panes --project beta -o uid >"$binding_root/explicit-beta-panes.out"
+smoke_assert_file_contains "$binding_root/explicit-beta-panes.out" "$binding_beta_pane_uid"
+if grep -Fqx "$lifecycle_split_uid" "$binding_root/explicit-beta-panes.out"; then
+  echo "explicit --project beta included an alpha Pane" >&2
+  exit 1
+fi
+
+binding_inside_pmx get projects -o name >"$binding_root/projects.out"
+smoke_assert_file_contains "$binding_root/projects.out" "alpha"
+smoke_assert_file_contains "$binding_root/projects.out" "beta"
+
+set +e
+binding_inside_pmx get panes --all >"$binding_root/bare-all.out" 2>"$binding_root/bare-all.err"
+binding_bare_all_status=$?
+set -e
+if [[ "$binding_bare_all_status" == "0" ]] || [[ -s "$binding_root/bare-all.out" ]]; then
+  echo "get panes accepted destructive bare --all" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$binding_root/bare-all.err" "flag provided but not defined: -all"
+
+# A client is still inside tmux when its Window mirror is missing, so the read
+# must refuse instead of falling back to the outside-tmux global inventory.
+binding_tmux set-option -wu -t "$lifecycle_window" @projmux_window_uid
+set +e
+binding_inside_pmx get panes -o uid >"$binding_root/missing-binding.out" 2>"$binding_root/missing-binding.err"
+binding_missing_status=$?
+set -e
+if [[ "$binding_missing_status" == "0" ]] || [[ -s "$binding_root/missing-binding.out" ]]; then
+  echo "missing active Project binding fell back to global Pane inventory" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$binding_root/missing-binding.err" "carries no @projmux_window_uid"
+binding_tmux set-option -wq -t "$lifecycle_window" @projmux_window_uid "$lifecycle_window_uid"
 
 # Re-running the exact hidden lifecycle boundary with no new object is
 # byte-write-free. Unit tests additionally inspect the generated hook and the
