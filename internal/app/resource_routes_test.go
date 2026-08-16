@@ -248,12 +248,12 @@ func runRoute(t *testing.T, cmd rawArgvCommand, args ...string) (string, string,
 
 func newTestDescribeCommand(t *testing.T, store *fakeResourceStore) *describeCommand {
 	t.Helper()
-	return &describeCommand{loadRegistry: store.store().load}
+	return &describeCommand{loadRegistry: store.store().load, runtime: liveAlphaRuntime()}
 }
 
 func newTestListGetCommand(t *testing.T, store *fakeResourceStore) *getCommand {
 	t.Helper()
-	return &getCommand{loadRegistry: store.store().load, currentPath: &stubCurrentPath{}}
+	return &getCommand{loadRegistry: store.store().load, currentPath: &stubCurrentPath{}, runtime: liveAlphaRuntime()}
 }
 
 // TestGetReadFamilyResolvesEveryKindWithListCardinality is the read half of the

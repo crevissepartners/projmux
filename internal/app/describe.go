@@ -24,6 +24,9 @@ var describeKinds = []string{"project", "window", "pane", "agent"}
 // resolution succeeds.
 type describeCommand struct {
 	loadRegistry func() (coremetadata.Registry, error)
+	// runtime is the live-tmux observation Window and Pane status is derived
+	// from; see runtime_observation.go.
+	runtime runtimeLookup
 	// activeTarget is the empty-selector fallback seam; see active_target.go.
 	activeTarget activeTargetLookup
 }
@@ -31,6 +34,7 @@ type describeCommand struct {
 func newDescribeCommand() *describeCommand {
 	return &describeCommand{
 		loadRegistry: loadResourceRegistry,
+		runtime:      defaultRuntimeLookup(),
 		activeTarget: defaultActiveTargetLookup(),
 	}
 }
@@ -53,7 +57,7 @@ func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []s
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	flags := resourceQueryFlags{kind: kind, active: c.activeTarget}
+	flags := resourceQueryFlags{kind: kind, active: c.activeTarget, runtime: c.runtime}
 	flags.register(fs)
 	flags.registerOutput(fs)
 	refs, err := parseWithPositionals(fs, args)
@@ -138,13 +142,10 @@ func describeSpecRows(resource any) [][2]string {
 		if session := typed.Status.Session; session != nil {
 			rows = append(rows, [2]string{"Session", fmt.Sprintf("%s live=%t", session.Name, session.Live)})
 		}
-		for _, condition := range typed.Status.Conditions {
-			rows = append(rows, [2]string{"Condition", fmt.Sprintf("%s=%s reason=%s firstObservedAt=%s",
-				condition.Type, condition.Status, condition.Reason, condition.FirstObservedAt.UTC().Format("2006-01-02T15:04:05Z"))})
-		}
-		return rows
+		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Window:
-		return [][2]string{{"PrimaryPaneRef", typed.Spec.PrimaryPaneRef}}
+		rows := [][2]string{{"PrimaryPaneRef", typed.Spec.PrimaryPaneRef}}
+		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Pane:
 		rows := [][2]string{{"Role", string(typed.Spec.Role)}}
 		if typed.Spec.CWD != "" {
@@ -156,7 +157,7 @@ func describeSpecRows(resource any) [][2]string {
 		if typed.Status.DisplayTitle != "" {
 			rows = append(rows, [2]string{"DisplayTitle", typed.Status.DisplayTitle})
 		}
-		return rows
+		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Agent:
 		rows := [][2]string{{"Provider", typed.Spec.Provider}, {"Phase", string(typed.Status.Phase)}}
 		if typed.Status.PaneRef != "" {
@@ -177,6 +178,22 @@ func describeSpecRows(resource any) [][2]string {
 	default:
 		return nil
 	}
+}
+
+// describeConditionRows renders the observed conditions of one resource.
+//
+// This is how the *reason* a runtime object went away stays visible after the
+// observation that noticed it is gone. Status says a Window or Pane is offline;
+// its MissingRuntime condition says since when and against what. The resource
+// itself is never deleted, so both rows keep answering for as long as the
+// operator cares to ask.
+func describeConditionRows(conditions []coremetadata.Condition) [][2]string {
+	rows := make([][2]string, 0, len(conditions))
+	for _, condition := range conditions {
+		rows = append(rows, [2]string{"Condition", fmt.Sprintf("%s=%s reason=%s firstObservedAt=%s",
+			condition.Type, condition.Status, condition.Reason, condition.FirstObservedAt.UTC().Format("2006-01-02T15:04:05Z"))})
+	}
+	return rows
 }
 
 // describeMapRows renders a metadata map in deterministic key order.

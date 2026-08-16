@@ -117,6 +117,7 @@ func newTestGetCommand(t *testing.T, current *stubCurrentPath) *getCommand {
 	return &getCommand{
 		loadRegistry: func() (coremetadata.Registry, error) { return registry, nil },
 		currentPath:  current,
+		runtime:      liveAlphaRuntime(),
 	}
 }
 

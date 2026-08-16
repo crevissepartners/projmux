@@ -8,7 +8,7 @@ import (
 )
 
 func newTestRenameCommand(store *fakeResourceStore) *renameCommand {
-	return &renameCommand{store: store.store()}
+	return &renameCommand{store: store.store(), runtime: liveAlphaRuntime()}
 }
 
 func newTestRebindCommand(store *fakeResourceStore) *rebindCommand {

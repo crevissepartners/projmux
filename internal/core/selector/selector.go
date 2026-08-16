@@ -121,16 +121,23 @@ type TraceStep struct {
 
 // Status is the interpreted live/offline/missing-root state of a resource.
 //
-// Window, Pane, and Agent resources have no runtime projection of their own:
-// their status is the status of the Project that transitively owns them, which
-// is why offline metadata stays queryable after tmux goes away.
+// Status is an *observation*, never a stored field a read path trusts. Spec is
+// the opposite: stored spec is authoritative. A Window or Pane is live because
+// a live tmux object still mirrors its uid right now, not because something
+// once wrote a bool saying so.
+//
+// Offline metadata stays fully queryable. Nothing here deletes, prunes, or
+// re-identifies a resource whose runtime went away.
 type Status string
 
 // The closed status set.
 const (
-	// StatusLive means the owning Project has a live tmux session projection.
+	// StatusLive means the resource's own runtime object was observed live:
+	// a mirrored uid on a live tmux window or pane for a Window or Pane, and a
+	// live session projection for a Project.
 	StatusLive Status = "live"
-	// StatusOffline means the resource exists in metadata with no live session.
+	// StatusOffline means the resource exists in metadata and its runtime
+	// object was not observed. Its metadata is untouched and still selectable.
 	StatusOffline Status = "offline"
 	// StatusMissingRoot means the owning Project carries a MissingRoot
 	// condition: spec.root disappeared. The resource is preserved, never
@@ -138,19 +145,47 @@ const (
 	StatusMissingRoot Status = "missing-root"
 )
 
+// ObservedStatus is the single status-derivation rule in the codebase.
+//
+// Every kind goes through it -- Project, Window, Pane, and Agent -- so the
+// precedence can never drift per kind. It takes exactly two facts and no
+// resource, which is the point: there is no third input a caller could smuggle
+// a stored liveness bool in through.
+//
+//   - missingRoot outranks everything. A resource whose owning Project lost its
+//     spec.root needs an explicit rebind or prune regardless of what tmux is
+//     doing, so a stale live session must not hide it. This is the preservation
+//     contract StatusMissingRoot established and it is unchanged.
+//   - bound is the live observation of the resource's own runtime object. It is
+//     supplied by the caller from a live-tmux snapshot; an absent observation is
+//     false, which can only downgrade a resource to offline and can never
+//     invent a live one.
+func ObservedStatus(missingRoot, bound bool) Status {
+	switch {
+	case missingRoot:
+		return StatusMissingRoot
+	case bound:
+		return StatusLive
+	default:
+		return StatusOffline
+	}
+}
+
 // ProjectStatus interprets one Project's runtime and reconciliation state.
 //
-// MissingRoot outranks the session projection because a Project whose root has
-// disappeared needs explicit rebind or prune regardless of whether a stale tmux
-// session is still up.
+// A Project is the one kind whose runtime object is a tmux *session*, which the
+// reconciler projects onto status.session. It is deliberately not part of the
+// Window/Pane uid observation: a session has no @projmux uid of its own, and
+// the two observed sets are the whole tmux-query budget of one invocation.
 func ProjectStatus(project metadata.Project) Status {
-	if condition, ok := project.HasCondition(metadata.ConditionMissingRoot); ok && condition.Status == metadata.ConditionTrue {
-		return StatusMissingRoot
-	}
-	if project.Status.Session != nil && project.Status.Session.Live {
-		return StatusLive
-	}
-	return StatusOffline
+	return ObservedStatus(hasMissingRoot(project), project.Status.Session != nil && project.Status.Session.Live)
+}
+
+// hasMissingRoot reports whether a Project carries an active MissingRoot
+// condition.
+func hasMissingRoot(project metadata.Project) bool {
+	condition, ok := project.HasCondition(metadata.ConditionMissingRoot)
+	return ok && condition.Status == metadata.ConditionTrue
 }
 
 // OwnerContext is the human-readable owner chain of a match. It carries names
@@ -206,15 +241,44 @@ func (r Resolution) UIDs() []string {
 	return out
 }
 
-// Resolver answers selector queries against one registry snapshot.
+// Resolver answers selector queries against one registry snapshot plus one
+// live-tmux observation.
+//
+// The two are separate inputs on purpose. The registry answers "which resources
+// exist and what are they called"; the observation answers "which of them still
+// have a runtime object". Identity resolution never consults the observation,
+// so an offline resource resolves exactly like a live one -- only its reported
+// Status differs.
 type Resolver struct {
 	registry metadata.Registry
+	observed metadata.RuntimeObservation
 }
 
-// New builds a Resolver over a private copy of registry, so a caller can never
-// observe the resolver mutating shared state.
+// New builds a Resolver with no live-tmux observation.
+//
+// With no observation every Window and Pane reports offline. That is the
+// fail-closed reading of "nothing was observed" and it is correct for the
+// callers that use it: create's Project scope, target-Window, and anchor-Pane
+// lookups need identity resolution only and never render Status, so paying for
+// two tmux queries to fill a field nobody prints would be waste.
+//
+// A route that *renders* Status must use NewObserved. There is no third option
+// and there is deliberately no fallback to a stored value: reporting live from
+// something the registry once wrote down is the exact defect this constructor
+// pair exists to make impossible.
 func New(registry metadata.Registry) *Resolver {
-	return &Resolver{registry: registry.Clone()}
+	return NewObserved(registry, metadata.RuntimeObservation{})
+}
+
+// NewObserved builds a Resolver over a private copy of registry and observed,
+// so a caller can never observe the resolver mutating shared state.
+//
+// observed is one snapshot taken once per process invocation and thrown away
+// with it. It is not a cache and it is never persisted: the next invocation
+// takes a fresh one, which is what makes closing a pane visible to the very
+// next query with no hook involved.
+func NewObserved(registry metadata.Registry, observed metadata.RuntimeObservation) *Resolver {
+	return &Resolver{registry: registry.Clone(), observed: observed.Clone()}
 }
 
 // ResolveProject resolves the exact-one --project selector.
@@ -439,12 +503,19 @@ func (r *Resolver) projectMatch(project metadata.Project) Match {
 	}
 }
 
+// windowMatch renders one Window with its observed status.
+//
+// The Window's own runtime object is a tmux window carrying @projmux_window_uid.
+// The owning Project contributes exactly one thing to the answer -- whether it
+// carries MissingRoot -- and specifically not its session projection: a Window
+// under a Project whose session bool says live is still offline when no live
+// tmux window mirrors its uid, which is the whole point of the change.
 func (r *Resolver) windowMatch(window metadata.Window) Match {
 	owner := OwnerContext{}
-	status := StatusOffline
+	missingRoot := false
 	if project, ok := r.registry.Project(window.Metadata.OwnerUID()); ok {
 		owner.Project = project.Metadata.Name
-		status = ProjectStatus(*project)
+		missingRoot = hasMissingRoot(*project)
 	}
 	return Match{
 		Kind:        metadata.KindWindow,
@@ -452,22 +523,27 @@ func (r *Resolver) windowMatch(window metadata.Window) Match {
 		Name:        window.Metadata.Name,
 		DisplayName: window.Metadata.DisplayName,
 		Owner:       owner,
-		Status:      status,
+		Status:      ObservedStatus(missingRoot, r.observed.BoundWindow(window.Metadata.UID)),
 	}
 }
 
-// agentMatch renders one Agent with its Window/Project owner chain. An Agent has
-// no runtime projection of its own, so it inherits the owning Project status the
-// same way a Window does.
+// agentMatch renders one Agent with its Window/Project owner chain.
+//
+// An Agent owns no tmux object of its own: there is no @projmux_agent_uid to
+// observe, and there must not be one, because an Agent outlives the managed
+// Pane it is currently bound to. It therefore reports the status of the Window
+// it lives in -- the nearest enclosing thing that *is* observable. Its own
+// lifecycle state is status.phase, which `describe agent` renders separately
+// and which the Agent liveness sweep owns; nothing here duplicates or infers a
+// phase.
 func (r *Resolver) agentMatch(agent metadata.Agent) Match {
 	owner := OwnerContext{}
 	status := StatusOffline
 	if window, ok := r.registry.Window(agent.Metadata.OwnerUID()); ok {
 		owner.Window = window.Metadata.Name
-		if project, ok := r.registry.Project(window.Metadata.OwnerUID()); ok {
-			owner.Project = project.Metadata.Name
-			status = ProjectStatus(*project)
-		}
+		windowMatch := r.windowMatch(*window)
+		owner.Project = windowMatch.Owner.Project
+		status = windowMatch.Status
 	}
 	return Match{
 		Kind:        metadata.KindAgent,
@@ -479,22 +555,32 @@ func (r *Resolver) agentMatch(agent metadata.Agent) Match {
 	}
 }
 
+// paneMatch renders one Pane with its observed status.
+//
+// The Pane's own runtime object is a tmux pane carrying @projmux_pane_uid, so a
+// Pane is judged directly rather than through its Window: closing one pane in a
+// live window offlines exactly that Pane.
 func (r *Resolver) paneMatch(pane metadata.Pane) Match {
-	owner, status := r.paneOwner(pane)
+	owner, missingRoot := r.paneOwner(pane)
 	return Match{
 		Kind:        metadata.KindPane,
 		UID:         pane.Metadata.UID,
 		Name:        pane.Metadata.Name,
 		DisplayName: pane.Metadata.DisplayName,
 		Owner:       owner,
-		Status:      status,
+		Status:      ObservedStatus(missingRoot, r.observed.BoundPane(pane.Metadata.UID)),
 		CWD:         pane.Spec.CWD,
 	}
 }
 
 // paneOwner walks the owner chain up to the Project. A shell Pane is owned by
 // its Window; a managed Pane is owned by its Agent, which is owned by a Window.
-func (r *Resolver) paneOwner(pane metadata.Pane) (OwnerContext, Status) {
+//
+// The second result is the owning Project's MissingRoot flag, which is the only
+// thing the ancestry contributes to a Pane's status. A Pane whose owner chain is
+// broken reports no MissingRoot: it is judged purely on its own observation, so
+// a live tmux pane is never called offline just because its owner row is gone.
+func (r *Resolver) paneOwner(pane metadata.Pane) (OwnerContext, bool) {
 	owner := OwnerContext{}
 	windowUID := pane.Metadata.OwnerUID()
 	if agent, ok := r.registry.Agent(windowUID); ok {
@@ -503,13 +589,13 @@ func (r *Resolver) paneOwner(pane metadata.Pane) (OwnerContext, Status) {
 	}
 	window, ok := r.registry.Window(windowUID)
 	if !ok {
-		return owner, StatusOffline
+		return owner, false
 	}
 	owner.Window = window.Metadata.Name
 	project, ok := r.registry.Project(window.Metadata.OwnerUID())
 	if !ok {
-		return owner, StatusOffline
+		return owner, false
 	}
 	owner.Project = project.Metadata.Name
-	return owner, ProjectStatus(*project)
+	return owner, hasMissingRoot(*project)
 }

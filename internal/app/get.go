@@ -34,9 +34,12 @@ var getKinds = []string{"projects", "windows", "panes", "agents", "notifications
 // code stay identical to the current public spellings.
 type getCommand struct {
 	loadRegistry func() (coremetadata.Registry, error)
-	currentPath  currentPathResolver
-	notify       rawArgvCommand
-	snapshots    rawArgvCommand
+	// runtime is the live-tmux observation Window and Pane status is derived
+	// from; see runtime_observation.go.
+	runtime     runtimeLookup
+	currentPath currentPathResolver
+	notify      rawArgvCommand
+	snapshots   rawArgvCommand
 	// activeTarget is the empty-selector fallback seam of the singular Pane
 	// read; see active_target.go. It is deliberately unrelated to `--current`:
 	// see runPane.
@@ -46,6 +49,7 @@ type getCommand struct {
 func newGetCommand() *getCommand {
 	return &getCommand{
 		loadRegistry: loadResourceRegistry,
+		runtime:      defaultRuntimeLookup(),
 		// No lifecycle recorder: the registry-backed reads perform no lifecycle
 		// operation, so they must not open an operations journal entry. The two
 		// delegating kinds keep whatever their own handler already records.
@@ -91,7 +95,7 @@ func (c *getCommand) runList(token string, args []string, stdout, stderr io.Writ
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	flags := resourceQueryFlags{kind: kind}
+	flags := resourceQueryFlags{kind: kind, runtime: c.runtime}
 	flags.register(fs)
 	flags.registerOutput(fs)
 	if err := fs.Parse(args); err != nil {
@@ -213,7 +217,7 @@ func (c *getCommand) runPane(args []string, stdout, stderr io.Writer) error {
 			query = withActiveTargetRef(query, coremetadata.KindPane, ref)
 		}
 	}
-	resolution, err := selector.New(registry).ResolvePanes(query)
+	resolution, err := selector.NewObserved(registry, c.runtime.observation()).ResolvePanes(query)
 	if err != nil {
 		return MapMetadataError(err)
 	}

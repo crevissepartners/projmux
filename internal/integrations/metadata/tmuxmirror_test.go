@@ -231,3 +231,73 @@ func TestMirrorRequiresARunnerAndSurfacesCommandFailures(t *testing.T) {
 		t.Fatalf("error = %v, want the runner failure", err)
 	}
 }
+
+// TestLiveUIDInventoriesAreTheMachineHalfOfTheRegistryDiff pins the two read
+// queries the observed-status contract is built on.
+//
+// A tmux object carrying no mirrored uid contributes nothing, so the result is
+// exactly the set of resources that still have a transport binding. That is
+// what makes "the registry holds this uid, the inventory does not" a sound
+// orphan judgment rather than a guess.
+func TestLiveUIDInventoriesAreTheMachineHalfOfTheRegistryDiff(t *testing.T) {
+	t.Parallel()
+
+	sep := escapedFieldSep
+	runner := &fakeRunner{outputs: map[string]string{
+		// The middle row of each inventory is an unclaimed tmux object: real,
+		// live, and carrying no projmux identity.
+		"list-panes": "pane-1" + sep + "%7\n" + sep + "%8\n" + "pane-2" + sep + "%9\n",
+		"list-windows": "win-1" + sep + "projmux" + sep + "0\n" +
+			sep + "projmux" + sep + "1\n" +
+			"win-2" + sep + "projmux" + sep + "2\n",
+	}}
+	m := NewMirror(runner)
+	ctx := context.Background()
+
+	panes, err := m.LivePaneUIDs(ctx)
+	if err != nil {
+		t.Fatalf("LivePaneUIDs: %v", err)
+	}
+	if want := map[string]bool{"pane-1": true, "pane-2": true}; !reflect.DeepEqual(panes, want) {
+		t.Fatalf("LivePaneUIDs = %v, want %v", panes, want)
+	}
+
+	windows, err := m.LiveWindowUIDs(ctx)
+	if err != nil {
+		t.Fatalf("LiveWindowUIDs: %v", err)
+	}
+	if want := map[string]bool{"win-1": true, "win-2": true}; !reflect.DeepEqual(windows, want) {
+		t.Fatalf("LiveWindowUIDs = %v, want %v", windows, want)
+	}
+
+	// One query each, and both are reads. The inventory must never write,
+	// re-mirror, or adopt a uid onto a live tmux object: reattaching a lost
+	// binding is a separate concern with its own failure modes.
+	for _, call := range runner.calls {
+		if !strings.HasPrefix(call, "tmux list-panes -a") && !strings.HasPrefix(call, "tmux list-windows -a") {
+			t.Fatalf("the inventory issued a non-inventory command: %q", call)
+		}
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("issued %d commands, want exactly one per inventory:\n%s", len(runner.calls), strings.Join(runner.calls, "\n"))
+	}
+}
+
+// TestLiveUIDInventoriesPropagateAQueryFailure keeps the fail-closed decision
+// at the caller. An empty map and an error must stay distinguishable: the
+// reconciler treats a failed query as "record nothing", which it can only do if
+// the failure is reported rather than flattened into an empty inventory.
+func TestLiveUIDInventoriesPropagateAQueryFailure(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{err: errors.New("no server running on /tmp/tmux-1000/projmux")}
+	m := NewMirror(runner)
+	ctx := context.Background()
+
+	if _, err := m.LivePaneUIDs(ctx); err == nil {
+		t.Fatal("LivePaneUIDs swallowed a query failure")
+	}
+	if _, err := m.LiveWindowUIDs(ctx); err == nil {
+		t.Fatal("LiveWindowUIDs swallowed a query failure")
+	}
+}

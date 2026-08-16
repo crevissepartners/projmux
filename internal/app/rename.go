@@ -22,6 +22,9 @@ var renameKinds = []string{"project", "window", "pane"}
 // reserved in the target scope is a usage error with zero mutations.
 type renameCommand struct {
 	store *resourceStore
+	// runtime is the live-tmux observation the rendered result's Window and
+	// Pane status is derived from; see runtime_observation.go.
+	runtime runtimeLookup
 	// activeTarget is the empty-selector fallback seam; see active_target.go.
 	activeTarget activeTargetLookup
 }
@@ -29,6 +32,7 @@ type renameCommand struct {
 func newRenameCommand() *renameCommand {
 	return &renameCommand{
 		store:        newResourceStore(),
+		runtime:      defaultRuntimeLookup(),
 		activeTarget: defaultActiveTargetLookup(),
 	}
 }
@@ -51,7 +55,7 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	flags := resourceQueryFlags{kind: kind, active: c.activeTarget}
+	flags := resourceQueryFlags{kind: kind, active: c.activeTarget, runtime: c.runtime}
 	flags.register(fs)
 	name := fs.String("name", "", "the new Projmux metadata.name")
 	refs, err := parseWithPositionals(fs, args)
