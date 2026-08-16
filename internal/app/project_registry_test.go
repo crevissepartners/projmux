@@ -352,7 +352,12 @@ func TestReconcileFailsClosedWhenTheInventoryCannotBeRead(t *testing.T) {
 	session := tmux.addSession(filepath.Base(root))
 	seedLiveWindow(t, tmux, session, "win-alpha", "pan-alpha")
 	seedLiveWindow(t, tmux, session, "win-beta", "pan-beta")
+	// Armed for the whole pass. Reconcile reads the pane inventory twice now --
+	// once before it writes any binding, once after -- and a one-shot trigger
+	// would leave the second read succeeding, which is not the machine state
+	// this test is about.
 	tmux.fail = []string{"list-panes", "-a"}
+	tmux.failAlways = true
 
 	reconciler := newTestReconciler(tmux, []string{root})
 	mutator := coremetadata.Mutator{

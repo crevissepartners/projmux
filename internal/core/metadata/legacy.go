@@ -20,6 +20,11 @@ type LegacyPane struct {
 	Command string
 	Title   string
 	CWD     string
+	// UID is the `@projmux_pane_uid` the live tmux pane already carries, empty
+	// when it carries none. It is a binding, never a name seed: adoption reads
+	// it to tell "already ours" from "blank", and refuses either way to
+	// re-identify anything.
+	UID string
 }
 
 // LegacyWindow is one observed pre-v2 tmux window.
@@ -27,7 +32,10 @@ type LegacyWindow struct {
 	Name string
 	// AutomaticRename is the observed window-scoped automatic-rename value.
 	AutomaticRename bool
-	Panes           []LegacyPane
+	// UID is the `@projmux_window_uid` the live tmux window already carries,
+	// empty when it carries none. Same role as LegacyPane.UID.
+	UID   string
+	Panes []LegacyPane
 }
 
 // LegacySession is one observed pre-v2 tmux session anchored at a project root.
@@ -82,8 +90,30 @@ func LegacyPaneNameSeed(pane LegacyPane, defaultShell string) string {
 	return PaneNameBase(pane.Command, defaultShell)
 }
 
-// ImportedWindow reports one Window created by a legacy import together with
-// the transport work the tmux adapter still owes it.
+// ImportOrigin records how one reported Window or Pane came to be reported.
+//
+// The distinction matters to exactly two callers and for opposite reasons. The
+// tmux adapter treats all three identically -- every reported object gets its
+// binding written through the one mirror write path, because a created object
+// has no binding yet and an adopted or rebound one has a binding that may have
+// been wiped. The transaction ledger treats only ImportCreated as created: an
+// adopted object existed before this operation, so rolling the operation back
+// must not delete it.
+type ImportOrigin string
+
+const (
+	// ImportCreated is a Window or Pane this import minted.
+	ImportCreated ImportOrigin = "created"
+	// ImportAdopted is a pre-existing registry object this import paired with a
+	// live tmux object that carried no uid.
+	ImportAdopted ImportOrigin = "adopted"
+	// ImportRebound is a pre-existing registry object whose live tmux object
+	// still carried its uid. Reported so its binding is reapplied.
+	ImportRebound ImportOrigin = "rebound"
+)
+
+// ImportedWindow reports one Window a legacy import bound to a live tmux
+// window, together with the transport work the tmux adapter still owes it.
 type ImportedWindow struct {
 	UID         string
 	Name        string
@@ -91,14 +121,18 @@ type ImportedWindow struct {
 	// NeedsAutomaticRenameOff is true for every managed Window, so a
 	// focused-Pane change can never overwrite the Window name.
 	NeedsAutomaticRenameOff bool
+	// Origin distinguishes a minted Window from an adopted or rebound one.
+	Origin ImportOrigin
 }
 
-// ImportedPane reports one Pane created by a legacy import.
+// ImportedPane reports one Pane a legacy import bound to a live tmux pane.
 type ImportedPane struct {
 	UID         string
 	Name        string
 	WindowIndex int
 	PaneIndex   int
+	// Origin distinguishes a minted Pane from an adopted or rebound one.
+	Origin ImportOrigin
 }
 
 // ImportedAgent reports one Agent created by a legacy import.
@@ -111,6 +145,12 @@ type ImportedAgent struct {
 }
 
 // ImportResult is the outcome of one legacy session import.
+//
+// Windows and Panes report every object the import bound to a live tmux object,
+// created or not, because the adapter owes all of them a mirror write. Created
+// reports only what the transaction minted, so a rollback still removes exactly
+// what this operation brought into existence and never an adopted object that
+// predates it.
 type ImportResult struct {
 	Project       Project
 	ProjectReused bool
@@ -122,24 +162,33 @@ type ImportResult struct {
 }
 
 // ImportLegacySession converts one observed pre-v2 tmux session into Projmux
-// resources.
+// resources, and reattaches the ones that already exist.
 //
 // Name collisions during import are automatic, not explicit, so they receive
 // the lowest free suffix rather than failing: two projects whose roots share a
 // basename become `name` and `name-1`, and two agents of the same provider in
 // one window become `codex` and `codex-1`. An exact saved root that reappears
 // reuses the same Project uid; nothing else merges uids.
-func (m Mutator) ImportLegacySession(reg *Registry, legacy LegacySession, defaultShell, operationID string) (ImportResult, error) {
+//
+// binder carries the adoption decision across the whole reconciliation pass so
+// one registry Window is never handed to two live tmux windows. A nil binder
+// gets a private one over an empty observation, which is the right reading for
+// a caller importing a single session in isolation: adoption still happens, and
+// nothing is known to be bound elsewhere.
+func (m Mutator) ImportLegacySession(reg *Registry, legacy LegacySession, defaultShell, operationID string, binder *BindingMatcher) (ImportResult, error) {
 	const op = "import legacy session"
 
 	root, err := m.validateRoot(op, legacy.Root)
 	if err != nil {
 		return ImportResult{}, err
 	}
+	if binder == nil {
+		binder = NewBindingMatcher(RuntimeObservation{})
+	}
 
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	result, err := m.importLegacySessionTx(txn, reg, op, legacy, root, defaultShell, now)
+	result, err := m.importLegacySessionTx(txn, reg, op, legacy, root, defaultShell, now, binder)
 	if err != nil {
 		txn.Rollback()
 		return ImportResult{}, err
@@ -151,7 +200,7 @@ func (m Mutator) ImportLegacySession(reg *Registry, legacy LegacySession, defaul
 	return result, nil
 }
 
-func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op string, legacy LegacySession, root, defaultShell string, now time.Time) (ImportResult, error) {
+func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op string, legacy LegacySession, root, defaultShell string, now time.Time, binder *BindingMatcher) (ImportResult, error) {
 	result := ImportResult{}
 
 	var projectUID string
@@ -189,11 +238,19 @@ func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op strin
 		}
 	}
 
-	if !result.ProjectReused || len(reg.WindowsOf(projectUID)) == 0 {
-		for wi, legacyWindow := range legacy.Windows {
-			if err := m.importLegacyWindowTx(txn, reg, op, projectUID, root, defaultShell, wi, legacyWindow, now, &result); err != nil {
-				return ImportResult{}, err
-			}
+	// Every observed window is walked, every time.
+	//
+	// This used to be guarded by `!result.ProjectReused || len(WindowsOf) == 0`,
+	// which skipped the whole topology for a Project that already owned Windows.
+	// That guard avoided duplicates instead of repairing drift: once the
+	// registry and the machine disagreed -- a tmux server restart wiping every
+	// mirrored uid is enough -- no later pass could ever bring them back
+	// together. The walk below reaches the same "no duplicate Window" outcome by
+	// adopting rather than by skipping, and it additionally reapplies the
+	// bindings the old path left permanently lost.
+	for wi, legacyWindow := range legacy.Windows {
+		if err := m.bindLegacyWindowTx(txn, reg, op, projectUID, root, defaultShell, wi, legacyWindow, now, &result, binder); err != nil {
+			return ImportResult{}, err
 		}
 	}
 
@@ -202,112 +259,210 @@ func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op strin
 	return result, nil
 }
 
-func (m Mutator) importLegacyWindowTx(txn *Transaction, reg *Registry, op, projectUID, root, defaultShell string, windowIndex int, legacyWindow LegacyWindow, now time.Time, result *ImportResult) error {
-	windowUID, err := m.mintUID(KindWindow)
-	if err != nil {
-		return err
+// bindLegacyWindowTx binds one observed tmux window to a registry Window and
+// then binds that window's panes.
+//
+// The window resolves through the adoption matcher into exactly one of four
+// outcomes, and the pane cascade below repeats the same four inside it:
+//
+//   - rebound: the live window still carries a uid this Project owns.
+//   - adopted: the live window carries no uid and an unbound registry Window of
+//     this Project, next in creation order, takes it.
+//   - created: no eligible registry Window is left -- or the live window carries
+//     a uid nothing in this registry knows -- so one is minted. This is the
+//     pre-existing import path, unchanged.
+//   - refused: the live window carries a uid that exists and belongs to
+//     somebody else. Nothing is created, nothing is bound, and none of its
+//     panes are considered either, because a pane can only be paired inside a
+//     Window that was itself paired.
+func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, projectUID, root, defaultShell string, windowIndex int, legacyWindow LegacyWindow, now time.Time, result *ImportResult, binder *BindingMatcher) error {
+	match := binder.MatchWindow(reg, projectUID, legacyWindow.UID)
+	if match.Kind == AdoptionRefused {
+		return nil
 	}
-	windowName, err := reg.allocateName(op, projectUID, KindWindow, LegacyWindowNameSeed(legacyWindow), windowUID)
-	if err != nil {
-		return err
+
+	windowUID := match.UID
+	origin := ImportAdopted
+	if match.Kind == AdoptionRebind {
+		origin = ImportRebound
 	}
-	window := Window{
-		APIVersion: APIVersion,
-		Kind:       KindWindow,
-		Metadata: ObjectMeta{
-			UID:       windowUID,
-			Name:      windowName,
-			OwnerRef:  &OwnerRef{Kind: KindProject, UID: projectUID},
-			CreatedAt: now,
-		},
+	legacyPanes := legacyWindow.Panes
+
+	if match.Kind == AdoptionUnmatched || match.Kind == AdoptionForeign {
+		origin = ImportCreated
+		uid, err := m.mintUID(KindWindow)
+		if err != nil {
+			return err
+		}
+		windowName, err := reg.allocateName(op, projectUID, KindWindow, LegacyWindowNameSeed(legacyWindow), uid)
+		if err != nil {
+			return err
+		}
+		reg.Windows = append(reg.Windows, Window{
+			APIVersion: APIVersion,
+			Kind:       KindWindow,
+			Metadata: ObjectMeta{
+				UID:       uid,
+				Name:      windowName,
+				OwnerRef:  &OwnerRef{Kind: KindProject, UID: projectUID},
+				CreatedAt: now,
+			},
+		})
+		txn.record(KindWindow, uid)
+		binder.Claim(uid)
+		windowUID = uid
+		// A minted Window must end up with a primary Pane, so an observation
+		// with no panes at all still materializes one. An adopted Window keeps
+		// the topology it already has; synthesizing there would invent a Pane
+		// that no tmux pane corresponds to.
+		if len(legacyPanes) == 0 {
+			legacyPanes = []LegacyPane{{}}
+		}
 	}
-	reg.Windows = append(reg.Windows, window)
-	txn.record(KindWindow, windowUID)
+
+	window, ok := reg.Window(windowUID)
+	if !ok {
+		return nil
+	}
 	result.Windows = append(result.Windows, ImportedWindow{
 		UID:                     windowUID,
-		Name:                    windowName,
+		Name:                    window.Metadata.Name,
 		SourceIndex:             windowIndex,
 		NeedsAutomaticRenameOff: true,
+		Origin:                  origin,
 	})
-
-	legacyPanes := legacyWindow.Panes
-	if len(legacyPanes) == 0 {
-		legacyPanes = []LegacyPane{{}}
-	}
 
 	primaryPaneRef := ""
 	for pi, legacyPane := range legacyPanes {
-		cwd := strings.TrimSpace(legacyPane.CWD)
-		if cwd == "" {
-			cwd = root
-		}
-		provider := NormalizeProvider(legacyPane.Provider)
-		if provider == "" && strings.TrimSpace(legacyPane.Provider) != "" {
-			provider = FallbackAgentNameBase
-		}
-
-		if provider == "" {
-			pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", LegacyPaneNameSeed(legacyPane, defaultShell), legacyPane.Command, cwd, nil, now)
-			if err != nil {
-				return err
-			}
-			pane.Status.DisplayTitle = DerivePaneDisplayTitle(legacyPane.Provider, legacyPane.Topic, legacyPane.Command, legacyPane.Title)
-			reg.storePaneStatus(pane.Metadata.UID, pane.Status)
-			result.Panes = append(result.Panes, ImportedPane{UID: pane.Metadata.UID, Name: pane.Metadata.Name, WindowIndex: windowIndex, PaneIndex: pi})
-			if primaryPaneRef == "" {
-				primaryPaneRef = pane.Metadata.UID
-			}
-			continue
-		}
-
-		agentUID, err := m.mintUID(KindAgent)
+		paneUID, err := m.bindLegacyPaneTx(txn, reg, op, windowUID, root, defaultShell, windowIndex, pi, legacyPane, now, result, binder)
 		if err != nil {
 			return err
 		}
-		agentName, err := reg.allocateName(op, windowUID, KindAgent, AgentNameBase("", legacyPane.Provider), agentUID)
-		if err != nil {
-			return err
-		}
-		agent := Agent{
-			APIVersion: APIVersion,
-			Kind:       KindAgent,
-			Metadata: ObjectMeta{
-				UID:       agentUID,
-				Name:      agentName,
-				OwnerRef:  &OwnerRef{Kind: KindWindow, UID: windowUID},
-				CreatedAt: now,
-			},
-			Spec:   AgentSpec{Provider: NormalizeProvider(legacyPane.Provider)},
-			Status: AgentStatus{Phase: PhasePending, LastTransitionAt: now},
-		}
-		if topic := strings.TrimSpace(legacyPane.Topic); topic != "" {
-			agent.Metadata.Annotations = map[string]string{AnnotationAgentTopic: topic}
-		}
-		reg.Agents = append(reg.Agents, agent)
-		txn.record(KindAgent, agentUID)
-
-		pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, "", ManagedPaneNameBase(agentName), legacyPane.Command, cwd, nil, now)
-		if err != nil {
-			return err
-		}
-		pane.Status.DisplayTitle = DerivePaneDisplayTitle(legacyPane.Provider, legacyPane.Topic, legacyPane.Command, legacyPane.Title)
-		reg.storePaneStatus(pane.Metadata.UID, pane.Status)
-
-		stored, _ := reg.Agent(agentUID)
-		stored.Status.Phase = PhaseRunning
-		stored.Status.PaneRef = pane.Metadata.UID
-		stored.Status.LastTransitionAt = now
-
-		result.Agents = append(result.Agents, ImportedAgent{UID: agentUID, Name: agentName, PaneUID: pane.Metadata.UID, WindowIndex: windowIndex, PaneIndex: pi})
-		result.Panes = append(result.Panes, ImportedPane{UID: pane.Metadata.UID, Name: pane.Metadata.Name, WindowIndex: windowIndex, PaneIndex: pi})
-		if primaryPaneRef == "" {
-			primaryPaneRef = pane.Metadata.UID
+		if paneUID != "" && primaryPaneRef == "" {
+			primaryPaneRef = paneUID
 		}
 	}
 
+	// Only ever fills a gap. An adopted Window already names its primary Pane,
+	// and overwriting that from a tmux pane order the operator may have
+	// rearranged would be a rename by another route.
 	stored, _ := reg.Window(windowUID)
-	stored.Spec.PrimaryPaneRef = primaryPaneRef
+	if strings.TrimSpace(stored.Spec.PrimaryPaneRef) == "" {
+		stored.Spec.PrimaryPaneRef = primaryPaneRef
+	}
 	return nil
+}
+
+// bindLegacyPaneTx binds one observed tmux pane inside an already-bound Window
+// and returns the registry Pane uid it settled on, empty when it refused.
+//
+// A pane that resolves to an existing registry Pane is reported and left alone:
+// no Agent is minted for it even when the live pane looks like an AI pane.
+// Minting one would be a content heuristic deciding registry topology, and it
+// would fight the ordinal alignment that put the two together in the first
+// place.
+func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID, root, defaultShell string, windowIndex, paneIndex int, legacyPane LegacyPane, now time.Time, result *ImportResult, binder *BindingMatcher) (string, error) {
+	match := binder.MatchPane(reg, windowUID, legacyPane.UID)
+	if match.Kind == AdoptionRefused {
+		return "", nil
+	}
+	// AdoptionForeign falls through to the create path below, for the same
+	// reason the Window branch does: a uid nothing knows is never adopted, but
+	// leaving the pane unmanaged forever is worse than minting a Pane for it.
+	if match.Matched() {
+		pane, ok := reg.Pane(match.UID)
+		if !ok {
+			return "", nil
+		}
+		origin := ImportAdopted
+		if match.Kind == AdoptionRebind {
+			origin = ImportRebound
+		}
+		result.Panes = append(result.Panes, ImportedPane{
+			UID:         pane.Metadata.UID,
+			Name:        pane.Metadata.Name,
+			WindowIndex: windowIndex,
+			PaneIndex:   paneIndex,
+			Origin:      origin,
+		})
+		return pane.Metadata.UID, nil
+	}
+
+	cwd := strings.TrimSpace(legacyPane.CWD)
+	if cwd == "" {
+		cwd = root
+	}
+	provider := NormalizeProvider(legacyPane.Provider)
+	if provider == "" && strings.TrimSpace(legacyPane.Provider) != "" {
+		provider = FallbackAgentNameBase
+	}
+
+	if provider == "" {
+		pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", LegacyPaneNameSeed(legacyPane, defaultShell), legacyPane.Command, cwd, nil, now)
+		if err != nil {
+			return "", err
+		}
+		pane.Status.DisplayTitle = DerivePaneDisplayTitle(legacyPane.Provider, legacyPane.Topic, legacyPane.Command, legacyPane.Title)
+		reg.storePaneStatus(pane.Metadata.UID, pane.Status)
+		binder.Claim(pane.Metadata.UID)
+		result.Panes = append(result.Panes, ImportedPane{
+			UID:         pane.Metadata.UID,
+			Name:        pane.Metadata.Name,
+			WindowIndex: windowIndex,
+			PaneIndex:   paneIndex,
+			Origin:      ImportCreated,
+		})
+		return pane.Metadata.UID, nil
+	}
+
+	agentUID, err := m.mintUID(KindAgent)
+	if err != nil {
+		return "", err
+	}
+	agentName, err := reg.allocateName(op, windowUID, KindAgent, AgentNameBase("", legacyPane.Provider), agentUID)
+	if err != nil {
+		return "", err
+	}
+	agent := Agent{
+		APIVersion: APIVersion,
+		Kind:       KindAgent,
+		Metadata: ObjectMeta{
+			UID:       agentUID,
+			Name:      agentName,
+			OwnerRef:  &OwnerRef{Kind: KindWindow, UID: windowUID},
+			CreatedAt: now,
+		},
+		Spec:   AgentSpec{Provider: NormalizeProvider(legacyPane.Provider)},
+		Status: AgentStatus{Phase: PhasePending, LastTransitionAt: now},
+	}
+	if topic := strings.TrimSpace(legacyPane.Topic); topic != "" {
+		agent.Metadata.Annotations = map[string]string{AnnotationAgentTopic: topic}
+	}
+	reg.Agents = append(reg.Agents, agent)
+	txn.record(KindAgent, agentUID)
+
+	pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, "", ManagedPaneNameBase(agentName), legacyPane.Command, cwd, nil, now)
+	if err != nil {
+		return "", err
+	}
+	pane.Status.DisplayTitle = DerivePaneDisplayTitle(legacyPane.Provider, legacyPane.Topic, legacyPane.Command, legacyPane.Title)
+	reg.storePaneStatus(pane.Metadata.UID, pane.Status)
+
+	stored, _ := reg.Agent(agentUID)
+	stored.Status.Phase = PhaseRunning
+	stored.Status.PaneRef = pane.Metadata.UID
+	stored.Status.LastTransitionAt = now
+	binder.Claim(pane.Metadata.UID)
+
+	result.Agents = append(result.Agents, ImportedAgent{UID: agentUID, Name: agentName, PaneUID: pane.Metadata.UID, WindowIndex: windowIndex, PaneIndex: paneIndex})
+	result.Panes = append(result.Panes, ImportedPane{
+		UID:         pane.Metadata.UID,
+		Name:        pane.Metadata.Name,
+		WindowIndex: windowIndex,
+		PaneIndex:   paneIndex,
+		Origin:      ImportCreated,
+	})
+	return pane.Metadata.UID, nil
 }
 
 // AnnotationAgentTopic is the non-identifying annotation that carries an AI
