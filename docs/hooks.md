@@ -3,8 +3,7 @@
 projmux runs optional user scripts at selected tmux lifecycle points. Hooks are
 the project-agnostic extension point for behavior projmux itself stays out of:
 injecting per-session env via `tmux set-environment`, selecting repository
-tokens, exporting a Kubernetes context, kicking off a background sync, or
-sending an initial pane command.
+tokens, kicking off a background sync, or sending an initial pane command.
 
 projmux-owned internal tmux hooks such as `pane-focus-in`, `pane-focus-out`,
 `after-select-pane`, and `after-kill-pane` are not exposed as user hook events.
@@ -66,10 +65,6 @@ run = "jq -r '.message' | xargs -I{} send-slack \"{}\""
 
 [env]
 FOO = "bar"
-
-[kube]
-context = "dev-cluster"
-namespace = "tools"
 ```
 
 Only quoted string values are supported. Unknown sections or keys make the
@@ -100,10 +95,22 @@ KEY VALUE` after creation for later panes. projmux's reserved `PROJMUX_*` hook
 variables are appended after `[env]` in hook process environments, so the hook
 contract cannot be overridden by project config.
 
-`[kube] context` and `namespace` are reflected as hook and session environment:
-`PROJMUX_KUBE_CONTEXT`, `KUBE_CONTEXT`, `PROJMUX_KUBE_NAMESPACE`, and
-`KUBE_NAMESPACE`. projmux does not synthesize kubeconfig files from these two
-values.
+### Removed `[kube]` input
+
+The former `[kube]` section is no longer a product or runtime feature. projmux
+does not project Kube-specific hook/session variables and does not rewrite a
+legacy file. If a config still contains `[kube]`, every config write stops
+before changing the file and reports this exact diagnostic:
+
+```text
+legacy [kube] support was removed; manually move context to [env] KUBE_CONTEXT and namespace to [env] KUBE_NAMESPACE, then remove [kube]; original config was not changed
+```
+
+Migration is deliberately manual: copy the former `context` value to an
+explicit `KUBE_CONTEXT` key under generic `[env]`, and the former `namespace`
+value to `KUBE_NAMESPACE`, then remove `[kube]`. Those names are examples, not
+special fields—`[env]` preserves any valid user-supplied key verbatim and no
+`PROJMUX_KUBE_*` variable is synthesized.
 
 ## Trust Model
 

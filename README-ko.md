@@ -87,7 +87,7 @@ projmux 안에서는 다음 키를 사용합니다.
   세션을 다시 사용합니다.
 - 자주 쓰는 프로젝트는 `pin`으로 고정해 목록 위쪽에서 쉽게 찾을 수
   있습니다.
-- 전환하기 전에 창(window)과 pane, Git 브랜치, Kubernetes 컨텍스트, AI pane
+- 전환하기 전에 창(window)과 pane, Git 브랜치, AI pane
   상태를 미리 확인할 수 있습니다.
 - 기존 Claude, Codex, Antigravity 대화를 이어서 열거나 projmux가 관리하는 새
   AI 분할 창을 만들 수 있습니다.

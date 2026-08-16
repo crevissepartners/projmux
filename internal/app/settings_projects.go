@@ -29,15 +29,15 @@ func (ctx settingsProjectContext) hasProject() bool {
 func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 	ctx := c.resolveSettingsProjectContext()
 	if !ctx.hasProject() {
-		// Keep one textual explanation instead of repeating it on Trust,
-		// Hooks, Project recipe, and Effective merge view. The disabled
+		// Keep one textual explanation instead of repeating it on Automation
+		// and Snapshots. The disabled
 		// Project chip remains the scope signal; this passive row explains
 		// how to make that scope actionable.
 		return []intpickercompat.Entry{
 			{
 				Label:     settingsRootLabelDim("Project context", "open Settings from a managed project to enable project actions"),
 				Value:     settingsNoopValue,
-				SearchKey: "project context managed project trust hooks recipe effective merge",
+				SearchKey: "project context managed project trust hooks automation snapshots",
 			},
 		}
 	}

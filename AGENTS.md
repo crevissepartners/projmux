@@ -95,7 +95,6 @@ Tunables (rarely touched):
 
 - `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` — top-level override for the AI desktop notification dedupe window; Settings saved value and default are used only when this env is unset or invalid.
 - `PROJMUX_CODEX_TITLE_WATCH_INTERVAL`, `PROJMUX_CODEX_REPLY_SETTLE_LOOPS` — pacing knobs for the AI title-watch loop.
-- `TMUX_KUBE_CACHE_TTL`, `TMUX_KUBE_TIMEOUT` — knob for the kube status segment cache and the kubectl invocation budget.
 
 ## Review Expectations
 - Reviews should be small enough to reason about quickly.

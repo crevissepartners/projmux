@@ -870,12 +870,11 @@ var routes = []Route{
 		Summary:     "Render tmux status bar segments",
 		Disposition: DispositionInternal,
 		Hidden:      true,
-		Usage:       []string{"projmux status git|project|kube|usage|notify|resources"},
+		Usage:       []string{"projmux status git|project|usage|notify|resources"},
 		Canonical:   []string{"internal status", "agent usage"},
 		Children: []Route{
 			{Name: "git", Summary: "Render the git status segment", Canonical: []string{"internal status"}},
 			{Name: "project", Summary: "Render the project status segment", Canonical: []string{"internal status"}},
-			{Name: "kube", Summary: "Render the kube status segment", Canonical: []string{"internal status"}},
 			{Name: "usage", Summary: "Render the AI usage status segment", Canonical: []string{"agent usage"}},
 			{Name: "notify", Summary: "Render the notify status segment", Canonical: []string{"internal status"}},
 			{Name: "resources", Summary: "Render the live resource status segment", Canonical: []string{"internal status"}},
@@ -1048,7 +1047,7 @@ var routes = []Route{
 		Hidden:      true,
 		Usage: []string{
 			"projmux internal tmux print-config|apply|popup-toggle|rebalance-panes|autosave-session-state ...",
-			"projmux internal status git|project|kube|usage|notify|resources",
+			"projmux internal status git|project|usage|notify|resources",
 			"projmux internal statusbar click|usage-refresh ...",
 			"projmux internal preview cycle-pane|cycle-window|select ...",
 			"projmux internal session-popup preview|open|cycle-pane|cycle-window ...",
@@ -1091,12 +1090,11 @@ var routes = []Route{
 			{
 				Name:      "status",
 				Summary:   "Render tmux status bar segments",
-				Usage:     []string{"projmux internal status git|project|kube|usage|notify|resources"},
+				Usage:     []string{"projmux internal status git|project|usage|notify|resources"},
 				Canonical: []string{"internal status", "agent usage"},
 				Children: []Route{
 					{Name: "git", Summary: "Render the git status segment", Canonical: []string{"internal status"}},
 					{Name: "project", Summary: "Render the project status segment", Canonical: []string{"internal status"}},
-					{Name: "kube", Summary: "Render the kube status segment", Canonical: []string{"internal status"}},
 					{Name: "usage", Summary: "Render the AI usage status segment", Canonical: []string{"agent usage"}},
 					{Name: "notify", Summary: "Render the notify status segment", Canonical: []string{"internal status"}},
 					{Name: "resources", Summary: "Render the live resource status segment", Canonical: []string{"internal status"}},

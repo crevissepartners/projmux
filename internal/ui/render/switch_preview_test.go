@@ -12,13 +12,11 @@ func TestRenderSwitchPreviewForExistingSession(t *testing.T) {
 	t.Parallel()
 
 	got := RenderSwitchPreview(corepreview.SwitchReadModel{
-		Path:          "/home/tester/source/repos/app",
-		DisplayPath:   "~rp/app",
-		SessionName:   "app",
-		SessionMode:   "existing",
-		GitBranch:     "main",
-		KubeContext:   "kind-dev",
-		KubeNamespace: "apps",
+		Path:        "/home/tester/source/repos/app",
+		DisplayPath: "~rp/app",
+		SessionName: "app",
+		SessionMode: "existing",
+		GitBranch:   "main",
 		Windows: []corepreview.Window{
 			{Index: "1", Name: "shell", PaneCount: 1, Path: "~/"},
 			{Index: "2", Name: "app", PaneCount: 2, Path: "~rp/app"},
@@ -47,7 +45,7 @@ func TestRenderSwitchPreviewForExistingSession(t *testing.T) {
 		"\x1b[1m\x1b[36mTarget\x1b[0m\n" +
 		"  \x1b[2msession\x1b[0m  app\n" +
 		"  \x1b[2mmode\x1b[0m  \x1b[32mexisting\x1b[0m\n" +
-		"  \x1b[2mk8s\x1b[0m  \x1b[31mkind-dev\x1b[0m/\x1b[34mapps\x1b[0m\n\n" +
+		"\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
 		"[1] shell               1p\n" +
 		"\x1b[1m\x1b[32m[2] app                 2p\x1b[0m\n\n" +
@@ -83,6 +81,22 @@ func TestRenderSwitchPreviewForNewSessionShowsEmptyInventory(t *testing.T) {
 	}
 }
 
+func TestSwitchPreviewHasNoKubeProjection(t *testing.T) {
+	t.Parallel()
+
+	for _, ui := range []string{"popup", "sidebar"} {
+		got := RenderSwitchPreview(corepreview.SwitchReadModel{
+			SessionName: "app",
+			SessionMode: "existing",
+		}, ui)
+		for _, retired := range []string{"k8s", "kube", "context", "namespace"} {
+			if strings.Contains(strings.ToLower(got), retired) {
+				t.Fatalf("%s switch preview retained %q: %q", ui, retired, got)
+			}
+		}
+	}
+}
+
 func TestRenderSwitchPreviewForSidebarMatchesLegacySections(t *testing.T) {
 	t.Parallel()
 
@@ -91,7 +105,6 @@ func TestRenderSwitchPreviewForSidebarMatchesLegacySections(t *testing.T) {
 		DisplayPath: "~rp/app",
 		SessionName: "app",
 		SessionMode: "existing",
-		KubeContext: "kind-dev",
 		Windows: []corepreview.Window{
 			{Index: "1", Name: "shell"},
 			{Index: "2", Name: "app"},
@@ -105,7 +118,6 @@ func TestRenderSwitchPreviewForSidebarMatchesLegacySections(t *testing.T) {
 	}, "sidebar")
 
 	want := "" +
-		"k8s:\x1b[31mkind-dev\x1b[0m/\x1b[34mdefault\x1b[0m\n\n" +
 		"\x1b[1m\x1b[36mWindows\x1b[0m\n" +
 		"[1] shell\n" +
 		"[2] server | \x1b[38;2;255;204;102m●\x1b[0m tests | \x1b[32m●\x1b[0m projmux-2\n"

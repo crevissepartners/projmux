@@ -105,9 +105,6 @@ Rules:
   `colourN` token for 256-color-only renderer roles.
 - Native chip/sidebar badge tokens use 256-color SGR when they intentionally
   mirror tmux colors.
-- Output compatibility wins inside this baseline. For example, the kube
-  segment keeps tmux's named `red` and `blue` behind semantic tokens until that
-  segment gets a separate redesign.
 - Renderers should reference semantic names instead of spelling color literals
   directly. Test fixtures may still pin rendered escape strings.
 

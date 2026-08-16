@@ -648,9 +648,9 @@ only the default for the current host.
 
 Hook details for new-session lifecycle hooks and project-local
 `.projmux/config.toml` live in [Hooks](hooks.md).
-Settings names that entry point as **Project recipe** (search still matches
-`config.toml` as an alias) to avoid leaking internal file names in the primary
-Settings view.
+Settings exposes project-local executable automation under **Project >
+Automation**. `[startup]` and generic `[env]` remain config-file compatibility
+inputs and are not Settings authoring destinations.
 
 ### Toast click handler (WSL + Windows Terminal) — retired in 0.11.0
 
@@ -886,5 +886,3 @@ These are intended for debugging or local policy, not routine setup:
 | `PROJMUX_TMUX_NOTIFY_DEDUPE_SECONDS` | Override the Settings/default collapse window for duplicate AI desktop notifications keyed on the pane-local AI notification key. |
 | `PROJMUX_CODEX_TITLE_WATCH_INTERVAL` | Title-watch loop pacing for Codex panes. |
 | `PROJMUX_CODEX_REPLY_SETTLE_LOOPS` | Reply-detection settle-loop pacing for Codex panes. |
-| `TMUX_KUBE_CACHE_TTL` | Kubernetes status segment cache TTL. |
-| `TMUX_KUBE_TIMEOUT` | kubectl invocation budget for the Kubernetes status segment. |

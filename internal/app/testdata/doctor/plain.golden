@@ -2,7 +2,7 @@ projmux doctor
 read-only diagnostics; displayed remediation is never executed
 
 Dependencies
-  Summary: 4 ok, 0 missing, 0 stale, 0 skipped, 0 hint.
+  Summary: 3 ok, 0 missing, 0 stale, 0 skipped, 0 hint.
 
 Runtime
   Summary: 2 info, 2 warning, 0 error.

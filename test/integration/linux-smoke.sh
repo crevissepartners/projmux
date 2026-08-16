@@ -621,9 +621,9 @@ printf 'on\n' >"$usage_visibility"
 assert_live_hud_row 2 on on
 
 # Row-1 component visibility shares the same production exact-socket apply
-# path. Exercise a representative mixed layout and the smallest retained layout
-# (Kube only until Phase 6), proving ranges/jobs and owned spacing disappear
-# together while the default Settings keybinding remains.
+# path. Exercise a representative mixed layout and an empty row, proving
+# ranges/jobs and owned spacing disappear together while the default Settings
+# keybinding remains. The retired Kube range/job must never be generated.
 project_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-project"
 cwd_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-working-directory"
 git_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-git"
@@ -640,11 +640,11 @@ printf 'on\n' >"$live_resources"
 "$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 row1_left="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv status-left)"
 row1_right="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv status-right)"
-if [[ -n "$row1_left" || "$row1_right" != *"range=user|pwd"* || "$row1_right" != *"range=user|kube"* || "$row1_right" != *"range=user|resources"* || "$row1_right" != *"range=user|settings"* ]]; then
+if [[ -n "$row1_left" || "$row1_right" != *"range=user|pwd"* || "$row1_right" != *"range=user|resources"* || "$row1_right" != *"range=user|settings"* ]]; then
   echo "mixed row-1 live layout missing retained components: left=$row1_left right=$row1_right" >&2
   exit 1
 fi
-if [[ "$row1_right" == *"range=user|git"* || "$row1_right" == *"internal status git"* || "$row1_right" == *" %Y-%m-%d %H:%M"* ]]; then
+if [[ "$row1_right" == *"range=user|git"* || "$row1_right" == *"internal status git"* || "$row1_right" == *"range=user|kube"* || "$row1_right" == *"status kube"* || "$row1_right" == *"projmux-status k"* || "$row1_right" == *" %Y-%m-%d %H:%M"* ]]; then
   echo "mixed row-1 live layout retained hidden component residue: $row1_right" >&2
   exit 1
 fi
@@ -654,11 +654,11 @@ printf 'off\n' >"$settings_visibility"
 printf 'off\n' >"$live_resources"
 "$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 row1_right="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv status-right)"
-if [[ "$row1_right" != *"range=user|kube"* ]]; then
-  echo "minimal row-1 live layout lost Phase 6-owned Kube: $row1_right" >&2
+if [[ -n "$row1_right" ]]; then
+  echo "empty row-1 live layout retained product residue: $row1_right" >&2
   exit 1
 fi
-for hidden_range in pwd git resources settings; do
+for hidden_range in pwd git resources settings kube; do
   if [[ "$row1_right" == *"range=user|$hidden_range"* ]]; then
     echo "minimal row-1 live layout retained $hidden_range range: $row1_right" >&2
     exit 1

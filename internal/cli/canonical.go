@@ -54,8 +54,8 @@ var projectionCatalog = sharedOutputModes
 // deleted rather than aliased or left standing:
 //
 //   - `config show` named a non-interactive effective-config printer that
-//     exists nowhere, under no spelling. The only effective merge view is a page
-//     inside the Settings popup.
+//     exists nowhere, under no spelling. Settings also has no standalone
+//     effective-config dump.
 //   - `config edit`, `runtime open`, `runtime quit`, `diagnostics doctor`,
 //     `diagnostics resources`, `setup probe`, `setup welcome`, `create
 //     notification`, `create snapshot`, `notification ack`, and `notification

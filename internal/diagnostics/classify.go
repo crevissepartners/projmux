@@ -37,7 +37,7 @@ var commandRules = map[string]commandRule{
 	"settings":       {alwaysChanging: true},
 	"setup":          {subcommands: stringSet("terminal")},
 	"shell":          {alwaysChanging: true},
-	"status":         {subcommands: stringSet("git", "project", "kube", "usage", "notify", "resources")},
+	"status":         {subcommands: stringSet("git", "project", "usage", "notify", "resources")},
 	"statusbar":      {subcommands: stringSet("click", "usage-refresh"), changing: stringSet("click", "usage-refresh")},
 	"switch":         {alwaysChanging: true, subcommands: stringSet("toggle-tag", "toggle-pin", "kill", "open", "sidebar-open", "settings", "preview", "cycle-pane", "cycle-window", "sidebar-focus")},
 	"tag":            {subcommands: stringSet("list", "toggle", "clear"), changing: stringSet("toggle", "clear")},

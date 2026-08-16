@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseProjectConfigSupportedSections(t *testing.T) {
@@ -33,10 +34,9 @@ run = "echo send-noti"
 [env]
 FOO = "bar"
 QUOTED = "a \"quoted\" value"
-
-[kube]
-context = "dev-cluster"
-namespace = "tools"
+KUBE_CONTEXT = "manual-context"
+KUBE_NAMESPACE = "manual-namespace"
+PROJMUX_KUBE_CONTEXT = "manual-projmux-context"
 
 [theme]
 font_family = "Cascadia Mono"
@@ -62,14 +62,13 @@ resume_picker_limit = 50
 		t.Fatalf("Env = %#v", cfg.Env)
 	}
 	sessionEnv := cfg.SessionEnv()
-	for _, key := range []string{"PROJMUX_KUBE_CONTEXT", "KUBE_CONTEXT"} {
-		if sessionEnv[key] != "dev-cluster" {
-			t.Fatalf("SessionEnv[%s] = %q", key, sessionEnv[key])
-		}
-	}
-	for _, key := range []string{"PROJMUX_KUBE_NAMESPACE", "KUBE_NAMESPACE"} {
-		if sessionEnv[key] != "tools" {
-			t.Fatalf("SessionEnv[%s] = %q", key, sessionEnv[key])
+	for key, want := range map[string]string{
+		"KUBE_CONTEXT":         "manual-context",
+		"KUBE_NAMESPACE":       "manual-namespace",
+		"PROJMUX_KUBE_CONTEXT": "manual-projmux-context",
+	} {
+		if sessionEnv[key] != want {
+			t.Fatalf("SessionEnv[%s] = %q, want explicit generic env value %q", key, sessionEnv[key], want)
 		}
 	}
 	// Deprecated [theme] font keys are accepted for backward compatibility but
@@ -318,7 +317,7 @@ run = "echo nope"
 	}
 }
 
-func TestUpdateProjectConfigPreservesHooksAndWritesEditableSections(t *testing.T) {
+func TestUpdateProjectConfigPreservesHooksStartupAndGenericEnv(t *testing.T) {
 	t.Parallel()
 
 	cwd := t.TempDir()
@@ -333,8 +332,6 @@ ZED = "last"
 	_, err := UpdateProjectConfig(path, func(cfg *ProjectConfig) error {
 		cfg.StartupRun = "codex"
 		cfg.Env["ALPHA"] = "first"
-		cfg.Kube.Context = "dev"
-		cfg.Kube.Namespace = "tools"
 		return nil
 	})
 	if err != nil {
@@ -354,13 +351,52 @@ run = "codex"
 [env]
 ALPHA = "first"
 ZED = "last"
-
-[kube]
-context = "dev"
-namespace = "tools"
 `
 	if string(got) != want {
 		t.Fatalf("config.toml =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestUpdateProjectConfigLegacyKubePreservesOriginalBytesAndMtimeWithExactDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".projmux", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("# keep formatting and comments\n[kube]\ncontext = \"dev\"\nnamespace = \"tools\"\n\n[env]\nCUSTOM = \"kept\"\n")
+	if err := os.WriteFile(path, original, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	wantTime := time.Unix(1_700_000_000, 123_000_000)
+	if err := os.Chtimes(path, wantTime, wantTime); err != nil {
+		t.Fatal(err)
+	}
+	updateCalled := false
+	_, err := UpdateProjectConfig(path, func(cfg *ProjectConfig) error {
+		updateCalled = true
+		cfg.Env["SHOULD_NOT_APPEAR"] = "true"
+		return nil
+	})
+	if err == nil || err.Error() != LegacyKubeConfigDiagnostic {
+		t.Fatalf("UpdateProjectConfig() error = %v, want exact %q", err, LegacyKubeConfigDiagnostic)
+	}
+	if updateCalled {
+		t.Fatal("legacy [kube] reached update callback")
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("legacy config bytes changed\ngot:  %q\nwant: %q", got, original)
+	}
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if !info.ModTime().Equal(wantTime) {
+		t.Fatalf("legacy config mtime = %v, want unchanged %v", info.ModTime(), wantTime)
 	}
 }
 
@@ -774,7 +810,7 @@ run = "startup-direct-command"
 	}
 }
 
-func TestRunnerProjectConfigEnvAndKubeInjectedIntoConfigHook(t *testing.T) {
+func TestRunnerProjectConfigExplicitGenericEnvReachesHookWithoutKubeProjection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash fixtures require POSIX")
 	}
@@ -783,14 +819,12 @@ func TestRunnerProjectConfigEnvAndKubeInjectedIntoConfigHook(t *testing.T) {
 	cwd := t.TempDir()
 	writeProjectConfig(t, cwd, `
 [hooks.post-create]
-run = "echo env=$FOO ctx=$PROJMUX_KUBE_CONTEXT ns=$PROJMUX_KUBE_NAMESPACE"
+run = "echo env=$FOO ctx=$KUBE_CONTEXT ns=$KUBE_NAMESPACE"
 
 [env]
 FOO = "bar"
-
-[kube]
-context = "dev"
-namespace = "tools"
+KUBE_CONTEXT = "manual-dev"
+KUBE_NAMESPACE = "manual-tools"
 `)
 
 	var logger bytes.Buffer
@@ -806,8 +840,51 @@ namespace = "tools"
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := logger.String()
-	if !strings.Contains(got, "[post-create] env=bar ctx=dev ns=tools") {
+	if !strings.Contains(got, "[post-create] env=bar ctx=manual-dev ns=manual-tools") {
 		t.Fatalf("logger output missing config env:\n%s", got)
+	}
+}
+
+func TestRunnerHookEnvironmentDoesNotSynthesizeRetiredKubeVariables(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash fixtures require POSIX")
+	}
+	for _, key := range []string{"PROJMUX_KUBE_CONTEXT", "PROJMUX_KUBE_NAMESPACE", "KUBE_CONTEXT", "KUBE_NAMESPACE"} {
+		value, existed := os.LookupEnv(key)
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if existed {
+				_ = os.Setenv(key, value)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
+	}
+
+	cwd := t.TempDir()
+	writeProjectConfig(t, cwd, `
+[hooks.post-create]
+run = "echo ctx=${PROJMUX_KUBE_CONTEXT-unset} ns=${PROJMUX_KUBE_NAMESPACE-unset} legacy_ctx=${KUBE_CONTEXT-unset} legacy_ns=${KUBE_NAMESPACE-unset}"
+
+[env]
+FOO = "bar"
+`)
+	var logger bytes.Buffer
+	runner := &Runner{
+		DiscoverProjectHooks: true,
+		ProjectHooksFilePath: testProjectHooksFilePath(t),
+		TrustStorePath:       testTrustStorePath(t),
+		ProjectHookPrompt:    func(ProjectHookPromptRequest) ProjectHookDecision { return ProjectHookAllowOnce },
+		Logger:               &logger,
+	}
+	if _, err := runner.Run(context.Background(), EventPostCreate, Context{CWD: cwd}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := "ctx=unset ns=unset legacy_ctx=unset legacy_ns=unset"
+	if !strings.Contains(logger.String(), want) {
+		t.Fatalf("hook environment = %q, want %q", logger.String(), want)
 	}
 }
 
@@ -985,7 +1062,7 @@ run = "should-not-run"
 	}
 }
 
-func TestRunnerProjectSessionEnvUsesTrustedConfig(t *testing.T) {
+func TestRunnerProjectSessionEnvUsesTrustedGenericEnvWithoutKubeProjection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash fixtures require POSIX")
 	}
@@ -995,10 +1072,6 @@ func TestRunnerProjectSessionEnvUsesTrustedConfig(t *testing.T) {
 	writeProjectConfig(t, cwd, `
 [env]
 FOO = "bar"
-
-[kube]
-context = "dev"
-namespace = "tools"
 `)
 	runner := &Runner{
 		DiscoverProjectHooks: true,
@@ -1008,16 +1081,15 @@ namespace = "tools"
 	}
 
 	env := runner.ProjectSessionEnv(cwd)
-	want := map[string]string{
-		"FOO":                    "bar",
-		"PROJMUX_KUBE_CONTEXT":   "dev",
-		"KUBE_CONTEXT":           "dev",
-		"PROJMUX_KUBE_NAMESPACE": "tools",
-		"KUBE_NAMESPACE":         "tools",
-	}
+	want := map[string]string{"FOO": "bar"}
 	for key, value := range want {
 		if env[key] != value {
 			t.Fatalf("ProjectSessionEnv()[%s] = %q, want %q; env=%#v", key, env[key], value, env)
+		}
+	}
+	for _, removed := range []string{"PROJMUX_KUBE_CONTEXT", "KUBE_CONTEXT", "PROJMUX_KUBE_NAMESPACE", "KUBE_NAMESPACE"} {
+		if _, ok := env[removed]; ok {
+			t.Fatalf("ProjectSessionEnv() synthesized retired key %s: %#v", removed, env)
 		}
 	}
 }

@@ -68,7 +68,6 @@ func TestStatusbarRowOneDefaultAndIndependentSegmentOutput(t *testing.T) {
 	}
 	wantRight := statusbarCwdSegmentFormat(roles) +
 		"#[fg=" + roles.DividerFg + "]  " +
-		"#[range=user|kube]#(" + bin + " internal status kube)#[norange]" +
 		"#[range=user|git]#(" + bin + " internal status git)#[norange]" +
 		"#[fg=" + roles.StatusTextSecondary + "]   %Y-%m-%d %H:%M " +
 		statusbarSettingsButton(statusbarSettingsIcon, roles)
@@ -96,8 +95,8 @@ func TestStatusbarRowOneDefaultAndIndependentSegmentOutput(t *testing.T) {
 					t.Fatalf("hidden %s retained %q in %q", test.name, forbidden, got)
 				}
 			}
-			if !strings.Contains(got, "range=user|kube") {
-				t.Fatalf("hidden %s changed Phase 6-owned Kube segment: %q", test.name, got)
+			if strings.Contains(strings.ToLower(got), "kube") {
+				t.Fatalf("hidden %s generated retired Kube residue: %q", test.name, got)
 			}
 		})
 	}
@@ -148,7 +147,7 @@ func TestStatusbarRowOneIconOffKeepsWorkingDirectoryAndGitText(t *testing.T) {
 	}
 }
 
-func TestStatusbarRowOneMixedAppAndStandaloneGeneratorsConverge(t *testing.T) {
+func TestGeneratedAppAndStandaloneStatusbarHaveNoKubeSurface(t *testing.T) {
 	t.Parallel()
 
 	visibility := defaultStatusbarRowOneVisibilitySet()
@@ -165,12 +164,12 @@ func TestStatusbarRowOneMixedAppAndStandaloneGeneratorsConverge(t *testing.T) {
 			config.LiveResourcesOn, defaultStatusbarHUDVisibilitySet(), visibility, defaultKeyBindingCatalog(), false, effective),
 	}
 	for surface, generated := range configs {
-		for _, absent := range []string{"range=user|session", "range=user|git", "internal status git", " %Y-%m-%d %H:%M"} {
+		for _, absent := range []string{"range=user|session", "range=user|git", "internal status git", " %Y-%m-%d %H:%M", "range=user|kube", "status kube"} {
 			if strings.Contains(generated, absent) {
 				t.Fatalf("%s mixed config retains %q", surface, absent)
 			}
 		}
-		for _, present := range []string{"range=user|pwd", "range=user|kube", "range=user|resources", "range=user|settings"} {
+		for _, present := range []string{"range=user|pwd", "range=user|resources", "range=user|settings"} {
 			if !strings.Contains(generated, present) {
 				t.Fatalf("%s mixed config lacks %q", surface, present)
 			}
@@ -244,13 +243,10 @@ func TestStatusbarRowOneSettingsRowsAndLiveApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(generated)
-	for _, residue := range []string{"range=user|session", "range=user|pwd", "range=user|git", "range=user|settings", "pane_current_path", " %Y-%m-%d %H:%M"} {
+	for _, residue := range []string{"range=user|session", "range=user|pwd", "range=user|git", "range=user|settings", "pane_current_path", " %Y-%m-%d %H:%M", "range=user|kube", "status kube"} {
 		if strings.Contains(text, residue) {
 			t.Fatalf("all-hidden generated config retains %q", residue)
 		}
-	}
-	if !strings.Contains(text, "range=user|kube") {
-		t.Fatal("row-one visibility changed Phase 6-owned Kube")
 	}
 	// Hiding the mouse launcher must not touch the default Settings keybinding.
 	if !strings.Contains(text, "bind-key -n M-5") || !strings.Contains(text, "ai-split-settings") {

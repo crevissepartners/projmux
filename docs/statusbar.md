@@ -17,7 +17,7 @@ truecolor to tmux 256-color mapping policy and palette inventory.
 ```
 row 0  #[range=user|notify] <notify HUD pill> #[norange]
                                       #[range=user|usage] <usage HUD bar> #[norange]
-row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   %H:%M
+row 1  [#S]  #{pane_current_path}  <git>  CPU 12%  MEM 41%   %H:%M
        └────────── native tmux window list (one entry per window) ──────────┘
 ```
 
@@ -70,7 +70,7 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
   `⏳` for approval/input-required, `✅` for response-complete, and `🔄` for
   in-progress. `off` (also accepted as `minimal` when read from disk) preserves
   the same spacing without drawing a marker.
-  The session, pwd, kube, and git segments on this row are wrapped
+  The session, pwd, and git segments on this row are wrapped
   in `#[range=user|<id>]` ranges and dispatched through the projmux
   handler. The standalone config also wraps the right-side `projmux`
   badge as the `settings` range; the app config renders a compact
@@ -298,7 +298,6 @@ section to prove the two have not drifted.
 | `usage`   | `status-format[0]` | show a native-framed usage HUD popup from cached usage state | `prefix s u`  |
 | `session` | `status-format[1]` | `projmux internal tmux popup-toggle sessionizer-sidebar` | `prefix s s` |
 | `pwd`     | `status-format[1]` | show a native-framed current-path popup; no clipboard or tmux buffer copy | `prefix s p`  |
-| `kube`    | `status-format[1]` | `projmux internal tmux popup-toggle sessionizer` | `prefix s k`  |
 | `git`     | `status-format[1]` | `projmux internal tmux popup-toggle sessionizer` | `prefix s g`  |
 | `resources` | `status-format[1]` | `projmux internal tmux popup-toggle --client <tty> resource-inspector` | mouse or custom `Resources:Open`; no default key |
 | `settings` | `status-format[1]` | `projmux internal tmux popup-toggle --client <tty> ai-split-settings` | mouse only; `prefix s s` remains `session` |
@@ -395,7 +394,6 @@ bind-key -T projmux-status u run-shell '#{q:projmux} statusbar click usage'
 bind-key -T projmux-status r run-shell '#{q:projmux} statusbar usage-refresh'
 bind-key -T projmux-status n run-shell '#{q:projmux} statusbar click notify'
 bind-key -T projmux-status g run-shell '#{q:projmux} statusbar click git'
-bind-key -T projmux-status k run-shell '#{q:projmux} statusbar click kube'
 bind-key -T projmux-status p run-shell '#{q:projmux} statusbar click pwd'
 bind-key -T projmux-status s run-shell '#{q:projmux} statusbar click session'
 ```
@@ -422,7 +420,7 @@ them as `display-message` toasts:
   reply+agent state: focus and ack when the target is still routable.
 - Any other focus failure: keep the entry, toast `focus failed:
   <reason>`.
-- `session`, `kube`, or `git` popup launch failure: toast
+- `session` or `git` popup launch failure: toast
   `statusbar <range>: popup failed`.
 - `settings` popup launch failure: toast `statusbar settings: popup failed`.
 - `pwd` path popup failure: fall back to a short `display-message`

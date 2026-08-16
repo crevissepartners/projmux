@@ -7,11 +7,6 @@
       "rule": "multiple",
       "scope": "47 pre-existing findings from the 2026-07-29 audit",
       "reason": "reviewed per rule, path, message, source fingerprint, and maximum count"
-    },
-    {
-      "rule": "U1000",
-      "scope": "internal/app/effective_merge.go runEffectiveMergeSection",
-      "reason": "Settings IA re-cut Phase 0 removes the Effective merge view from navigation without a hidden redirect, so its section entry point has no caller. The handler and its in-package tests stay until the slice that retires the Project recipe concept deletes both; that slice removes this entry with the code."
     }
   ],
   "entries": [
@@ -48,13 +43,6 @@
       "path": "internal/app/doctor_test.go",
       "message": "should use stdout.String() instead of string(stdout.Bytes())",
       "source": "if !strings.Contains(string(stdout.Bytes()), `\"status\": \"stale\"`) {",
-      "max_count": 1
-    },
-    {
-      "rule": "U1000",
-      "path": "internal/app/effective_merge.go",
-      "message": "func (*settingsCommand).runEffectiveMergeSection is unused",
-      "source": "func (c *settingsCommand) runEffectiveMergeSection(stdout, stderr io.Writer) error {",
       "max_count": 1
     },
     {

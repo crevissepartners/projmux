@@ -1993,7 +1993,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 	lines = append(lines, tmuxAppKeyBindings(catalog, keymapPresent)...)
 	// Two-line status bar:
 	//   [0] notify HUD (left) + usage HUD (right)
-	//   [1] existing session/window/path/git/kube/clock row
+	//   [1] existing session/window/path/git/clock row
 	// We re-assert `status 2` here because `tmuxStandaloneConfig` already
 	// sets it, but a tmux server that previously ran an older projmux build
 	// may have stuck a leftover `status-format[1]` showing pane debug info —
@@ -2090,7 +2090,6 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 		"bind-key -T projmux-status r run-shell " + tmuxConfigQuote(bin+" internal statusbar usage-refresh"),
 		"bind-key -T projmux-status n run-shell " + tmuxConfigQuote(bin+" internal statusbar click notify"),
 		"bind-key -T projmux-status g run-shell " + tmuxConfigQuote(bin+" internal statusbar click git"),
-		"bind-key -T projmux-status k run-shell " + tmuxConfigQuote(bin+" internal statusbar click kube"),
 		"bind-key -T projmux-status p run-shell " + tmuxConfigQuote(bin+" internal statusbar click pwd"),
 		"bind-key -T projmux-status s run-shell " + tmuxConfigQuote(bin+" internal statusbar click session"),
 	}

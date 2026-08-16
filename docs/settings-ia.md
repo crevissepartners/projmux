@@ -197,8 +197,8 @@ normalized into one.
 `Labs`, the separate `Theme` root, `Project recipe`, `Effective merge view` and
 the flat Keybindings action wall are gone from navigation. They are not visible
 rows and not hidden redirects: their values carry no catalog metadata and
-`runSection` refuses them. The project recipe and effective-merge handlers still
-exist in the tree; their hard removal is a later slice.
+`runSection` refuses them. The project recipe and effective-merge handlers,
+catalog entries, and localization strings have also been removed.
 
 Removed guidance keeps canonical destinations elsewhere: key delivery discovery
 in `projmux setup`, supported terminal remediation in `projmux setup terminal`,

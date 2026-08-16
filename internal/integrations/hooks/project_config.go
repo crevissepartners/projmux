@@ -23,16 +23,12 @@ type ProjectConfig struct {
 	StartupRun string
 	Hooks      map[Event]string
 	Env        map[string]string
-	Kube       KubeConfig
 	Theme      theme.ThemeConfig
 	UI         UIConfig
 	AI         AIConfig
 }
 
-type KubeConfig struct {
-	Context   string
-	Namespace string
-}
+const LegacyKubeConfigDiagnostic = "legacy [kube] support was removed; manually move context to [env] KUBE_CONTEXT and namespace to [env] KUBE_NAMESPACE, then remove [kube]; original config was not changed"
 
 type UIConfig struct {
 	Locale     string
@@ -101,14 +97,6 @@ func ClampAIResumeScanDepth(depth int) int {
 func (c ProjectConfig) SessionEnv() map[string]string {
 	env := map[string]string{}
 	maps.Copy(env, c.Env)
-	if c.Kube.Context != "" {
-		env["PROJMUX_KUBE_CONTEXT"] = c.Kube.Context
-		env["KUBE_CONTEXT"] = c.Kube.Context
-	}
-	if c.Kube.Namespace != "" {
-		env["PROJMUX_KUBE_NAMESPACE"] = c.Kube.Namespace
-		env["KUBE_NAMESPACE"] = c.Kube.Namespace
-	}
 	if len(env) == 0 {
 		return nil
 	}
@@ -149,6 +137,9 @@ func ParseProjectConfig(content string) (ProjectConfig, error) {
 			next := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
 			if next == "" {
 				return ProjectConfig{}, fmt.Errorf("line %d: empty section", lineNo+1)
+			}
+			if next == "kube" {
+				return ProjectConfig{}, errors.New(LegacyKubeConfigDiagnostic)
 			}
 			if !isSupportedProjectConfigSection(next) {
 				return ProjectConfig{}, fmt.Errorf("line %d: unsupported section %q", lineNo+1, next)
@@ -241,7 +232,7 @@ func loadProjectConfig(path string) (ProjectConfig, error) {
 
 func isSupportedProjectConfigSection(section string) bool {
 	switch section {
-	case "startup", "env", "kube", "theme", "ui", "ai":
+	case "startup", "env", "theme", "ui", "ai":
 		return true
 	}
 	if eventName, ok := strings.CutPrefix(section, "hooks."); ok {
@@ -262,15 +253,6 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 			return fmt.Errorf("line %d: invalid env key %q", lineNo, key)
 		}
 		cfg.Env[key] = value
-	case "kube":
-		switch key {
-		case "context":
-			cfg.Kube.Context = value
-		case "namespace":
-			cfg.Kube.Namespace = value
-		default:
-			return fmt.Errorf("line %d: unsupported kube key %q", lineNo, key)
-		}
 	case "theme":
 		if err := applyProjectThemeConfigValue(&cfg.Theme, key, value, lineNo); err != nil {
 			return err
@@ -468,8 +450,6 @@ func normalizeProjectConfig(cfg *ProjectConfig) {
 	if len(cfg.Env) == 0 {
 		cfg.Env = nil
 	}
-	cfg.Kube.Context = strings.TrimSpace(cfg.Kube.Context)
-	cfg.Kube.Namespace = strings.TrimSpace(cfg.Kube.Namespace)
 	cfg.Theme.Normalize()
 	cfg.UI.Locale = strings.TrimSpace(cfg.UI.Locale)
 	cfg.AI.ResumePickerLimit = ClampAIResumePickerLimit(cfg.AI.ResumePickerLimit)
@@ -669,21 +649,6 @@ func renderProjectConfig(cfg ProjectConfig) string {
 			b.WriteString(key)
 			b.WriteString(" = ")
 			b.WriteString(strconv.Quote(cfg.Env[key]))
-			b.WriteString("\n")
-		}
-		sections = append(sections, b.String())
-	}
-	if cfg.Kube.Context != "" || cfg.Kube.Namespace != "" {
-		var b strings.Builder
-		b.WriteString("[kube]\n")
-		if cfg.Kube.Context != "" {
-			b.WriteString("context = ")
-			b.WriteString(strconv.Quote(cfg.Kube.Context))
-			b.WriteString("\n")
-		}
-		if cfg.Kube.Namespace != "" {
-			b.WriteString("namespace = ")
-			b.WriteString(strconv.Quote(cfg.Kube.Namespace))
 			b.WriteString("\n")
 		}
 		sections = append(sections, b.String())

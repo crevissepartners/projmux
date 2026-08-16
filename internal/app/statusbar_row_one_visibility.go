@@ -185,16 +185,14 @@ func statusbarRowOneProjectFormat(bin string, roles theme.RenderRoles, visibilit
 }
 
 // statusbarRowOneRightFormat assembles only enabled Projmux-owned segments.
-// Kube remains structural until Phase 6 retires it. Each optional segment owns
-// its range and padding, so removing it cannot leave an empty click range or a
-// separator that belonged to the hidden component.
+// Each optional segment owns its range and padding, so removing it cannot leave
+// an empty click range or a separator that belonged to the hidden component.
 func statusbarRowOneRightFormat(bin string, roles theme.RenderRoles, liveResourcesMode config.LiveResourcesMode, visibility statusbarRowOneVisibilitySet, settingsLabel string) string {
 	var b strings.Builder
 	if visibility.visible(statusbarRowOneWorkingDirectory) {
 		b.WriteString(statusbarCwdSegmentFormat(roles))
 		b.WriteString("#[fg=" + roles.DividerFg + "]  ")
 	}
-	b.WriteString("#[range=user|kube]#(" + bin + " internal status kube)#[norange]")
 	if visibility.visible(statusbarRowOneGit) {
 		b.WriteString("#[range=user|git]#(" + bin + " internal status git)#[norange]")
 	}

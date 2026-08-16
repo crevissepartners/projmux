@@ -66,7 +66,7 @@ func TestDoctorReadOnlyBaselineFixtures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cmd := newStubDoctorCommand("linux", map[string]bool{
-				"tmux": true, "git": true, "stty": true, "kubectl": true,
+				"tmux": true, "git": true, "stty": true,
 			})
 			var stdout, stderr bytes.Buffer
 			if err := cmd.Run(tc.args, &stdout, &stderr); err != nil {
@@ -137,7 +137,7 @@ func TestDoctorSectionJSONProjectsOneTypedInventory(t *testing.T) {
 func TestDoctorVerboseOwnsTextDetailButDoesNotChangeJSON(t *testing.T) {
 	t.Parallel()
 
-	cmd := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true})
+	cmd := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "git": true, "stty": true})
 	cmd.aiDiagnostics = func() []doctorAINotifyIntegration {
 		return []doctorAINotifyIntegration{{ID: "codex-hooks", Name: "Codex hooks", Status: doctorAINotifyStatusMissing, ConfigPath: "/private/config", InstallCommand: "projmux ai integrate codex"}}
 	}
@@ -331,34 +331,11 @@ func TestDoctorRunRejectsPositionalArguments(t *testing.T) {
 	}
 }
 
-func TestDoctorEvaluateOptionalMissingIsHintNotError(t *testing.T) {
-	t.Parallel()
-
-	cmd := newStubDoctorCommand("linux", map[string]bool{
-		"tmux": true, "git": true, "stty": true,
-	})
-
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"--verbose"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	out := stdout.String()
-	if !strings.Contains(out, "[hint]") || !strings.Contains(out, "kubectl") {
-		t.Fatalf("output missing kubectl hint line:\n%s", out)
-	}
-	if !strings.Contains(out, "optional; install if you use the kubectl switcher") {
-		t.Fatalf("hint note not rendered:\n%s", out)
-	}
-	if !strings.Contains(out, "3 ok, 0 missing, 0 stale, 0 skipped, 1 hint.") {
-		t.Fatalf("summary line wrong:\n%s", out)
-	}
-}
-
 func TestDoctorWindowsRequiresTmuxAndSkipsStty(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("windows", map[string]bool{
-		"tmux": true, "git": true, "kubectl": true,
+		"tmux": true, "git": true,
 	})
 
 	var stdout bytes.Buffer
@@ -382,7 +359,7 @@ func TestDoctorLinuxTmuxCoreDependencyAndStaleCheckRemainActive(t *testing.T) {
 
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
-		map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true},
+		map[string]bool{"tmux": true, "git": true, "stty": true},
 		map[string]string{"tmux": "tmux 3.2"},
 	)
 
@@ -433,8 +410,8 @@ func TestDoctorRunJSONOutputIsValid(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
 	}
-	if len(report.Dependencies) != 4 {
-		t.Fatalf("len(report.Dependencies) = %d, want 4", len(report.Dependencies))
+	if len(report.Dependencies) != 3 {
+		t.Fatalf("len(report.Dependencies) = %d, want 3", len(report.Dependencies))
 	}
 	byName := map[string]doctorResult{}
 	for _, r := range report.Dependencies {
@@ -443,14 +420,8 @@ func TestDoctorRunJSONOutputIsValid(t *testing.T) {
 	if byName["tmux"].Status != doctorStatusOK {
 		t.Fatalf("tmux status = %q, want ok", byName["tmux"].Status)
 	}
-	if byName["kubectl"].Status != doctorStatusHint {
-		t.Fatalf("kubectl status = %q, want hint", byName["kubectl"].Status)
-	}
 	if !byName["tmux"].Required {
 		t.Fatalf("tmux Required = false, want true")
-	}
-	if byName["kubectl"].Required {
-		t.Fatalf("kubectl Required = true, want false")
 	}
 	if report.SessionStatePrune != doctorSessionStatePruneGuidance {
 		t.Fatalf("session-state prune guidance = %q, want %q", report.SessionStatePrune, doctorSessionStatePruneGuidance)
@@ -547,8 +518,8 @@ func TestDoctorJSONIncludesAINotifyDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
 	}
-	if len(report.Dependencies) != 4 {
-		t.Fatalf("len(report.Dependencies) = %d, want 4", len(report.Dependencies))
+	if len(report.Dependencies) != 3 {
+		t.Fatalf("len(report.Dependencies) = %d, want 3", len(report.Dependencies))
 	}
 	if len(report.AINotifyIntegrations) != 1 {
 		t.Fatalf("len(report.AINotifyIntegrations) = %d, want 1", len(report.AINotifyIntegrations))
@@ -963,7 +934,7 @@ func TestDoctorRunWindowsMissingHintIncludesScoop(t *testing.T) {
 	t.Parallel()
 
 	cmd := newStubDoctorCommand("windows", map[string]bool{
-		"tmux": true, "kubectl": true,
+		"tmux": true,
 	})
 
 	var stdout bytes.Buffer
@@ -1106,7 +1077,7 @@ func TestDoctorStaleTmuxFailsRequired(t *testing.T) {
 
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
-		map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
+		map[string]bool{"tmux": true, "git": true, "stty": true, "apt-get": true},
 		map[string]string{"tmux": "tmux 3.2"},
 	)
 
@@ -1132,12 +1103,12 @@ func TestDoctorStaleTmuxFailsRequired(t *testing.T) {
 func TestDoctorNoMinVersionSkipsCheck(t *testing.T) {
 	t.Parallel()
 
-	// Confirms that when MinVersion == "" (e.g. git, stty, kubectl), no
+	// Confirms that when MinVersion == "" (e.g. git and stty), no
 	// version comparison happens even if the version output is empty.
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
-		map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true},
-		map[string]string{"git": "", "stty": "", "kubectl": ""},
+		map[string]bool{"tmux": true, "git": true, "stty": true},
+		map[string]string{"git": "", "stty": ""},
 	)
 
 	var stdout bytes.Buffer
@@ -1148,7 +1119,7 @@ func TestDoctorNoMinVersionSkipsCheck(t *testing.T) {
 	if strings.Contains(out, "[stale]") {
 		t.Fatalf("output should not flag any dep as stale:\n%s", out)
 	}
-	if !strings.Contains(out, "4 ok, 0 missing, 0 stale, 0 skipped, 0 hint.") {
+	if !strings.Contains(out, "3 ok, 0 missing, 0 stale, 0 skipped, 0 hint.") {
 		t.Fatalf("summary line wrong:\n%s", out)
 	}
 }
@@ -1158,7 +1129,7 @@ func TestDoctorVersionParseFailureDoesNotMarkStale(t *testing.T) {
 
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
-		map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true},
+		map[string]bool{"tmux": true, "git": true, "stty": true},
 		map[string]string{"tmux": ""},
 	)
 
@@ -1183,7 +1154,7 @@ func TestDoctorStaleTmuxSerializesToJSON(t *testing.T) {
 
 	cmd := newStubDoctorCommandWithVersions(
 		"linux",
-		map[string]bool{"tmux": true, "git": true, "stty": true, "kubectl": true, "apt-get": true},
+		map[string]bool{"tmux": true, "git": true, "stty": true, "apt-get": true},
 		map[string]string{"tmux": "tmux 3.2"},
 	)
 
