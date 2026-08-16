@@ -17,6 +17,20 @@ func TestStatusbarVisibilityDefaultSavedInvalidAndRoundTrip(t *testing.T) {
 	if got, want := paths.StatusbarAgentUsageHUDVisibilityFile(), filepath.Join(paths.ConfigDir, StatusbarAgentUsageHUDVisibilityFileName); got != want {
 		t.Fatalf("agent usage HUD path = %q, want %q", got, want)
 	}
+	for got, leaf := range map[string]string{
+		paths.StatusbarAgentUsageProviderVisibilityFile("claude"):              "statusbar-visibility-agent-usage-provider-claude",
+		paths.StatusbarAgentUsageProviderVisibilityFile("codex"):               "statusbar-visibility-agent-usage-provider-codex",
+		paths.StatusbarAgentUsageProviderVisibilityFile("antigravity"):         "statusbar-visibility-agent-usage-provider-antigravity",
+		paths.StatusbarAgentUsageWindowVisibilityFile("claude", "5h"):          "statusbar-visibility-agent-usage-window-claude-5h",
+		paths.StatusbarAgentUsageWindowVisibilityFile("claude", "weekly"):      "statusbar-visibility-agent-usage-window-claude-weekly",
+		paths.StatusbarAgentUsageWindowVisibilityFile("codex", "5h"):           "statusbar-visibility-agent-usage-window-codex-5h",
+		paths.StatusbarAgentUsageWindowVisibilityFile("codex", "weekly"):       "statusbar-visibility-agent-usage-window-codex-weekly",
+		paths.StatusbarAgentUsageWindowVisibilityFile("antigravity", "weekly"): "statusbar-visibility-agent-usage-window-antigravity-weekly",
+	} {
+		if want := filepath.Join(paths.ConfigDir, leaf); got != want {
+			t.Fatalf("visibility leaf path = %q, want %q", got, want)
+		}
+	}
 	for name, got := range map[string]string{
 		StatusbarProjectVisibilityFileName:          paths.StatusbarProjectVisibilityFile(),
 		StatusbarWorkingDirectoryVisibilityFileName: paths.StatusbarWorkingDirectoryVisibilityFile(),

@@ -47,6 +47,29 @@ type Command struct {
 	journal   *diagnostics.UsageRecorder
 }
 
+// HUDWindowCapability is one canonical account window the ambient usage HUD
+// can project for a provider. It is deliberately closed over the explicit HUD
+// projection below; opaque quota buckets never become Settings rows.
+type HUDWindowCapability struct {
+	Window usage.Window
+	Key    string
+	Label  string
+}
+
+// HUDProviderCapability is the Settings/render contract for one provider.
+// Providers are returned in aiprovider.UsageSupported declared order.
+type HUDProviderCapability struct {
+	ID          aiprovider.ID
+	Model       string
+	DisplayName string
+	Windows     []HUDWindowCapability
+}
+
+type hudVisibilityPreferences struct {
+	providers map[string]bool
+	windows   map[string]map[usage.Window]bool
+}
+
 // New builds the usage command. now is the wall clock injected into the
 // Manager and staleness rendering; nil falls back to time.Now.
 func New(now func() time.Time) *Command {
@@ -276,7 +299,7 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 	}
 	snaps = filterSnapshotsByModels(snaps, modelScope)
 
-	out := formatStatusUsage(snaps, *maxWidth, c.now())
+	out := formatStatusUsageWithVisibility(snaps, *maxWidth, c.now(), c.loadHUDVisibilityPreferences())
 	if out == "" {
 		return nil
 	}
@@ -780,7 +803,19 @@ type modelDisplay struct {
 // `now` is the wall-clock used for staleness detection. Pass time.Time{}
 // to disable the marker (e.g. in tests that don't care).
 func formatStatusUsage(snaps []usage.Snapshot, maxWidth int, now time.Time) string {
-	models := buildModelDisplays(projectStatusSnapshots(snaps))
+	return formatProjectedStatusUsage(projectStatusSnapshots(snaps), maxWidth, now)
+}
+
+func formatStatusUsageWithVisibility(snaps []usage.Snapshot, maxWidth int, now time.Time, prefs hudVisibilityPreferences) string {
+	if len(prefs.providers) == 0 && len(prefs.windows) == 0 {
+		return formatStatusUsage(snaps, maxWidth, now)
+	}
+	projected := filterStatusProjectionByVisibility(projectStatusSnapshots(snaps), prefs)
+	return formatProjectedStatusUsage(projected, maxWidth, now)
+}
+
+func formatProjectedStatusUsage(projected []usage.Snapshot, maxWidth int, now time.Time) string {
+	models := buildModelDisplays(projected)
 	if len(models) == 0 {
 		return ""
 	}
@@ -1255,11 +1290,99 @@ func ResetInText(seconds *int64) string {
 	return fmt.Sprintf("%ds", *seconds)
 }
 
+// HUDProviderCapabilities is the single explicit capability seam shared by
+// ambient projection and Settings. Provider inventory/order comes from the
+// usage-supported catalog; window inventory is intentionally enumerated here
+// because it cannot be inferred from opaque account snapshots.
+func HUDProviderCapabilities() []HUDProviderCapability {
+	providers := aiprovider.UsageSupported()
+	out := make([]HUDProviderCapability, 0, len(providers))
+	for _, provider := range providers {
+		capability := HUDProviderCapability{
+			ID:          provider.ID,
+			Model:       provider.UsageModel,
+			DisplayName: provider.DisplayName,
+		}
+		switch provider.ID {
+		case aiprovider.Claude, aiprovider.Codex:
+			capability.Windows = []HUDWindowCapability{
+				{Window: usage.Window5h, Key: "5h", Label: "5h"},
+				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly"},
+			}
+		case aiprovider.Antigravity:
+			capability.Windows = []HUDWindowCapability{
+				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly"},
+			}
+		}
+		out = append(out, capability)
+	}
+	return out
+}
+
+func (c *Command) loadHUDVisibilityPreferences() hudVisibilityPreferences {
+	prefs := hudVisibilityPreferences{
+		providers: make(map[string]bool),
+		windows:   make(map[string]map[usage.Window]bool),
+	}
+	paths, err := c.hudVisibilityConfigPaths()
+	if err != nil {
+		return prefs
+	}
+	for _, provider := range HUDProviderCapabilities() {
+		model := strings.ToLower(strings.TrimSpace(provider.Model))
+		providerState, err := config.LoadStatusbarVisibilityFile(paths.StatusbarAgentUsageProviderVisibilityFile(string(provider.ID)))
+		prefs.providers[model] = err != nil || providerState.Effective == config.StatusbarVisibilityOn
+		prefs.windows[model] = make(map[usage.Window]bool, len(provider.Windows))
+		for _, window := range provider.Windows {
+			state, err := config.LoadStatusbarVisibilityFile(paths.StatusbarAgentUsageWindowVisibilityFile(string(provider.ID), window.Key))
+			prefs.windows[model][window.Window] = err != nil || state.Effective == config.StatusbarVisibilityOn
+		}
+	}
+	return prefs
+}
+
+func (c *Command) hudVisibilityConfigPaths() (config.Paths, error) {
+	home := strings.TrimSpace(c.env("HOME"))
+	if home == "" {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil {
+			return config.Paths{}, err
+		}
+	}
+	return config.Homes{
+		HomeDir:    home,
+		ConfigHome: c.env("XDG_CONFIG_HOME"),
+		StateHome:  c.env("XDG_STATE_HOME"),
+	}.Paths()
+}
+
+func filterStatusProjectionByVisibility(projected []usage.Snapshot, prefs hudVisibilityPreferences) []usage.Snapshot {
+	if len(projected) == 0 {
+		return nil
+	}
+	out := make([]usage.Snapshot, 0, len(projected))
+	for _, snapshot := range projected {
+		model := strings.ToLower(strings.TrimSpace(snapshot.Model))
+		if enabled, known := prefs.providers[model]; known && !enabled {
+			continue
+		}
+		if windows, known := prefs.windows[model]; known {
+			if enabled, supported := windows[snapshot.Window]; !supported || !enabled {
+				continue
+			}
+		}
+		out = append(out, snapshot)
+	}
+	return out
+}
+
 // projectStatusSnapshots derives the ambient HUD input without mutating the
-// lossless snapshot/cache identity used by account-inspection surfaces. Fixed
-// 5h/weekly rows are canonical for every provider. Antigravity's exact
-// upstream gemini-weekly bucket is the sole named quota projected as weekly;
-// context, 3p-weekly, and unknown valid buckets remain outside the HUD.
+// lossless snapshot/cache identity used by account-inspection surfaces. The
+// explicit HUD capability seam admits Claude/Codex fixed 5h/weekly rows.
+// Antigravity's exact upstream gemini-weekly bucket is the sole named quota
+// projected as weekly; coincidental fixed windows, context, 3p-weekly, future
+// providers without a declared projection, and unknown buckets stay outside.
 func projectStatusSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
 	projected := make([]usage.Snapshot, 0, len(snaps))
 	seen := make(map[string]bool)
@@ -1267,7 +1390,7 @@ func projectStatusSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
 		return strings.ToLower(strings.TrimSpace(snapshot.Model)) + "\x00" + string(snapshot.Window)
 	}
 	for _, snapshot := range snaps {
-		if snapshot.Window != usage.Window5h && snapshot.Window != usage.WindowWeekly {
+		if !directHUDWindowSupported(snapshot.Model, snapshot.Window) {
 			continue
 		}
 		k := key(snapshot)
@@ -1293,6 +1416,24 @@ func projectStatusSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
 		projected = append(projected, weekly)
 	}
 	return usage.SortedSnapshots(projected)
+}
+
+// directHUDWindowSupported is the source half of the explicit projection
+// seam. Claude/Codex publish canonical fixed windows directly. Antigravity's
+// weekly capability is sourced only from its exact gemini-weekly quota below,
+// never from a coincidental fixed-window snapshot.
+func directHUDWindowSupported(model string, window usage.Window) bool {
+	for _, capability := range HUDProviderCapabilities() {
+		if !strings.EqualFold(capability.Model, strings.TrimSpace(model)) || capability.ID == aiprovider.Antigravity {
+			continue
+		}
+		for _, candidate := range capability.Windows {
+			if candidate.Window == window {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // buildModelDisplays converts snapshots into the canonical-ordered display

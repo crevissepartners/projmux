@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/usage"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -1777,5 +1781,262 @@ func TestResolveStateDirHonoursEnvOverride(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("resolveStateDir = %q, want %q (env override)", got, want)
+	}
+}
+
+func TestHUDProviderCapabilityMatrixFollowsUsageCatalogAndRejectsFabrication(t *testing.T) {
+	t.Parallel()
+
+	capabilities := HUDProviderCapabilities()
+	if got, want := len(capabilities), len(aiprovider.UsageSupported()); got != want {
+		t.Fatalf("capability providers = %d, want every usage-supported provider (%d)", got, want)
+	}
+	want := []struct {
+		id      aiprovider.ID
+		windows []string
+	}{
+		{aiprovider.Claude, []string{"5h", "weekly"}},
+		{aiprovider.Codex, []string{"5h", "weekly"}},
+		{aiprovider.Antigravity, []string{"weekly"}},
+	}
+	for i, expected := range want {
+		if capabilities[i].ID != expected.id {
+			t.Fatalf("capability[%d] provider = %q, want declared order %q", i, capabilities[i].ID, expected.id)
+		}
+		var keys []string
+		for _, window := range capabilities[i].Windows {
+			keys = append(keys, window.Key)
+		}
+		if !reflect.DeepEqual(keys, expected.windows) {
+			t.Fatalf("%s windows = %v, want %v", expected.id, keys, expected.windows)
+		}
+	}
+
+	projected := projectStatusSnapshots([]usage.Snapshot{
+		{Model: "future", Window: usage.Window5h, Pct: 99},
+		{Model: "antigravity", Window: usage.Window5h, Pct: 88},
+		{Model: "antigravity", Window: usage.WindowWeekly, Pct: 77},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "5h", Pct: 66},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 55},
+	})
+	if got, want := projected, []usage.Snapshot{{Model: "antigravity", Window: usage.WindowWeekly, Pct: 55}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("explicit projection = %#v, want only exact Antigravity gemini-weekly %#v", got, want)
+	}
+}
+
+func TestHUDVisibilityFilterRecomputesWeeklyAsOfficialAcrossWidthSweep(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	projected := projectStatusSnapshots([]usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, UpdatedAt: now},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, UpdatedAt: now},
+	})
+	prefs := hudVisibilityPreferences{
+		providers: map[string]bool{"claude": true},
+		windows:   map[string]map[usage.Window]bool{"claude": {usage.Window5h: false, usage.WindowWeekly: true}},
+	}
+	filtered := filterStatusProjectionByVisibility(projected, prefs)
+	models := buildModelDisplays(filtered)
+	if len(models) != 1 || models[0].hasFive || !models[0].hasWeek {
+		t.Fatalf("weekly-only model = %#v", models)
+	}
+	plan := newUsageSegmentPlan(models)
+	steps := usageShedSteps(models, now)
+	for _, step := range steps {
+		if usageShedOrder[step.rule].name == "secondary window bar" {
+			t.Fatalf("weekly-only official window became a secondary shed candidate: %#v", step)
+		}
+		step.apply(&plan)
+	}
+	minimum := intrender.VisualLen(renderUsageSegment(models, now, plan))
+	for width := minimum; width <= 200; width++ {
+		plain := intrender.StripTmuxEscapes(formatProjectedStatusUsage(filtered, width, now))
+		if !strings.Contains(plain, "weekly") || strings.Contains(plain, "5h") {
+			t.Fatalf("width %d weekly official drift: %q", width, plain)
+		}
+	}
+	prefs.windows["claude"][usage.Window5h] = true
+	prefs.windows["claude"][usage.WindowWeekly] = false
+	fiveOnly := filterStatusProjectionByVisibility(projected, prefs)
+	fiveModels := buildModelDisplays(fiveOnly)
+	if len(fiveModels) != 1 || !fiveModels[0].hasFive || fiveModels[0].hasWeek {
+		t.Fatalf("5h-only model = %#v", fiveModels)
+	}
+	plain := intrender.StripTmuxEscapes(formatProjectedStatusUsage(fiveOnly, 200, now))
+	if !strings.Contains(plain, "5h") || strings.Contains(plain, "weekly") {
+		t.Fatalf("weekly-off 5h-on projection drift: %q", plain)
+	}
+}
+
+func TestHUDVisibilityFilterLeavesNoProviderWindowSeparatorOrStalenessResidue(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	projected := projectStatusSnapshots([]usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, UpdatedAt: now.Add(-3 * time.Hour)},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, UpdatedAt: now.Add(-3 * time.Hour)},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, UpdatedAt: now},
+	})
+	prefs := hudVisibilityPreferences{
+		providers: map[string]bool{"claude": false, "codex": true, "antigravity": true},
+		windows: map[string]map[usage.Window]bool{
+			"claude":      {usage.Window5h: true, usage.WindowWeekly: true},
+			"codex":       {usage.Window5h: false, usage.WindowWeekly: false},
+			"antigravity": {usage.WindowWeekly: true},
+		},
+	}
+	plain := intrender.StripTmuxEscapes(formatProjectedStatusUsage(filterStatusProjectionByVisibility(projected, prefs), 0, now))
+	if !strings.HasPrefix(plain, "Antigravity") || strings.Contains(plain, "Claude") || strings.Contains(plain, "Codex") || strings.Contains(plain, "~~") || strings.Contains(plain, "   ") {
+		t.Fatalf("filtered output retained provider/window/separator/staleness residue: %q", plain)
+	}
+	prefs.windows["antigravity"][usage.WindowWeekly] = false
+	if got := formatProjectedStatusUsage(filterStatusProjectionByVisibility(projected, prefs), 0, now); got != "" {
+		t.Fatalf("all provider windows off = %q, want empty ambient text", got)
+	}
+}
+
+func TestHUDVisibilityProviderTogglePreservesOtherProviderBytesAndOrder(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	snaps := []usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, UpdatedAt: now},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, UpdatedAt: now},
+	}
+	projected := projectStatusSnapshots(snaps)
+	prefs := hudVisibilityPreferences{
+		providers: map[string]bool{"claude": true, "codex": true, "antigravity": true},
+		windows: map[string]map[usage.Window]bool{
+			"claude":      {usage.Window5h: true, usage.WindowWeekly: true},
+			"codex":       {usage.Window5h: true, usage.WindowWeekly: true},
+			"antigravity": {usage.WindowWeekly: true},
+		},
+	}
+	for _, hidden := range []string{"claude", "codex", "antigravity"} {
+		prefs.providers[hidden] = false
+		got := formatProjectedStatusUsage(filterStatusProjectionByVisibility(projected, prefs), 0, now)
+		var survivors []usage.Snapshot
+		for _, snapshot := range snaps {
+			if snapshot.Model != hidden {
+				survivors = append(survivors, snapshot)
+			}
+		}
+		want := formatProjectedStatusUsage(projectStatusSnapshots(survivors), 0, now)
+		if got != want {
+			t.Fatalf("%s-off changed surviving provider bytes/order:\n got %q\nwant %q", hidden, got, want)
+		}
+		prefs.providers[hidden] = true
+	}
+	if got, want := formatProjectedStatusUsage(filterStatusProjectionByVisibility(projected, prefs), 0, now), formatProjectedStatusUsage(projected, 0, now); got != want {
+		t.Fatalf("provider on restore drifted all-on bytes:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestHUDVisibilityWindowTogglesAreIndependentAcrossCapabilityMatrix(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	projected := projectStatusSnapshots([]usage.Snapshot{
+		{Model: "claude", Window: usage.Window5h, Pct: 42, UpdatedAt: now},
+		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, UpdatedAt: now},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, UpdatedAt: now},
+		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, UpdatedAt: now},
+	})
+	prefs := hudVisibilityPreferences{providers: map[string]bool{}, windows: map[string]map[usage.Window]bool{}}
+	for _, capability := range HUDProviderCapabilities() {
+		model := capability.Model
+		prefs.providers[model] = true
+		prefs.windows[model] = map[usage.Window]bool{}
+		for _, window := range capability.Windows {
+			prefs.windows[model][window.Window] = true
+		}
+	}
+	for _, capability := range HUDProviderCapabilities() {
+		for _, window := range capability.Windows {
+			prefs.windows[capability.Model][window.Window] = false
+			got := filterStatusProjectionByVisibility(projected, prefs)
+			if len(got) != len(projected)-1 {
+				t.Fatalf("%s/%s off kept %d rows, want %d: %#v", capability.ID, window.Key, len(got), len(projected)-1, got)
+			}
+			for _, snapshot := range got {
+				if snapshot.Model == capability.Model && snapshot.Window == window.Window {
+					t.Fatalf("%s/%s off retained its snapshot: %#v", capability.ID, window.Key, got)
+				}
+			}
+			prefs.windows[capability.Model][window.Window] = true
+		}
+	}
+	if got := filterStatusProjectionByVisibility(projected, prefs); !reflect.DeepEqual(got, projected) {
+		t.Fatalf("window on restore changed all-on projection:\n got %#v\nwant %#v", got, projected)
+	}
+}
+
+func TestUsageStatusVisibilityFiltersAfterCollectionAndLeavesExplicitCLIStateLossless(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	home := t.TempDir()
+	configHome := filepath.Join(home, "config")
+	paths, err := config.Homes{HomeDir: home, ConfigHome: configHome}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"claude", "codex", "antigravity"} {
+		if err := config.SaveStatusbarVisibilityFile(paths.StatusbarAgentUsageProviderVisibilityFile(provider), config.StatusbarVisibilityOff); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := usage.NewStore(filepath.Join(home, "usage"))
+	claude := &stubAdapter{name: "claude", snaps: []usage.Snapshot{{Model: "claude", Window: usage.Window5h, Pct: 42, UpdatedAt: now}}}
+	c := New(func() time.Time { return now })
+	c.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "XDG_CONFIG_HOME":
+			return configHome
+		}
+		return ""
+	}
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) { return []config.AIAgentProvider{config.AIAgentClaude}, nil }
+	c.managerFn = scopedUsageManagerFactory(t, store, now, map[string]*stubAdapter{"claude": claude})
+
+	statusOut := &bytes.Buffer{}
+	if err := c.RunStatus(nil, statusOut, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if statusOut.Len() != 0 {
+		t.Fatalf("all providers off status = %q, want empty", statusOut.String())
+	}
+	if claude.collectCalls != 1 {
+		t.Fatalf("hidden provider collect calls = %d, want 1", claude.collectCalls)
+	}
+	popupState, _, _, err := c.CachedState()
+	if err != nil || len(popupState.Snapshots) != 1 || popupState.Snapshots[0].Model != "claude" {
+		t.Fatalf("CachedState popup input lost hidden provider: %#v, %v", popupState, err)
+	}
+	explicitTable := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "claude"}, explicitTable, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(explicitTable.String(), "claude") || !strings.Contains(explicitTable.String(), "5h") || !strings.Contains(explicitTable.String(), "42%") {
+		t.Fatalf("explicit table lost hidden row: %s", explicitTable.String())
+	}
+
+	explicitOut := &bytes.Buffer{}
+	if err := c.Run([]string{"--model", "claude", "--json"}, explicitOut, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(explicitOut.String(), `"model": "claude"`) || !strings.Contains(explicitOut.String(), `"window": "5h"`) {
+		t.Fatalf("explicit JSON lost hidden row: %s", explicitOut.String())
+	}
+	state, err := store.LoadState()
+	if err != nil || len(state.Snapshots) != 1 {
+		t.Fatalf("cache after visibility = %#v, %v", state, err)
 	}
 }

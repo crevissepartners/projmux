@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/config"
 )
 
@@ -18,6 +19,16 @@ type statusbarHUDVisibilitySet struct {
 	Notifications config.StatusbarVisibility
 	AgentUsage    config.StatusbarVisibility
 }
+
+type agentUsageVisibilityLeaf struct {
+	provider string
+	window   string
+}
+
+const (
+	agentUsageProviderVisibilityAction = "agent-usage-provider"
+	agentUsageWindowVisibilityAction   = "agent-usage-window"
+)
 
 func defaultStatusbarHUDVisibilitySet() statusbarHUDVisibilitySet {
 	return statusbarHUDVisibilitySet{
@@ -119,6 +130,120 @@ func (c *settingsCommand) setStatusbarHUDVisibility(component statusbarHUDCompon
 	path, ok := statusbarHUDVisibilityPath(paths, component)
 	if !ok {
 		return fmt.Errorf("unknown status bar HUD component: %s", component)
+	}
+	if err := config.SaveStatusbarVisibilityFile(path, mode); err != nil {
+		return err
+	}
+	prepared, live, err := c.regenerateAndReloadTmuxConfig()
+	if err != nil {
+		if prepared.Status == keymapApplyFailed {
+			return fmt.Errorf("update status bar runtime config: %w", err)
+		}
+		if live.Status == keymapApplyFailed {
+			return fmt.Errorf("reload active status bar: %w", err)
+		}
+		return err
+	}
+	return nil
+}
+
+func agentUsageProviderCapability(provider string) (usagecmd.HUDProviderCapability, bool) {
+	for _, capability := range usagecmd.HUDProviderCapabilities() {
+		if strings.EqualFold(string(capability.ID), strings.TrimSpace(provider)) {
+			return capability, true
+		}
+	}
+	return usagecmd.HUDProviderCapability{}, false
+}
+
+func agentUsageWindowCapability(provider, window string) (usagecmd.HUDWindowCapability, bool) {
+	capability, ok := agentUsageProviderCapability(provider)
+	if !ok {
+		return usagecmd.HUDWindowCapability{}, false
+	}
+	for _, candidate := range capability.Windows {
+		if strings.EqualFold(candidate.Key, strings.TrimSpace(window)) {
+			return candidate, true
+		}
+	}
+	return usagecmd.HUDWindowCapability{}, false
+}
+
+func agentUsageVisibilityPath(paths config.Paths, leaf agentUsageVisibilityLeaf) (string, bool) {
+	provider, ok := agentUsageProviderCapability(leaf.provider)
+	if !ok {
+		return "", false
+	}
+	if strings.TrimSpace(leaf.window) == "" {
+		return paths.StatusbarAgentUsageProviderVisibilityFile(string(provider.ID)), true
+	}
+	window, ok := agentUsageWindowCapability(string(provider.ID), leaf.window)
+	if !ok {
+		return "", false
+	}
+	return paths.StatusbarAgentUsageWindowVisibilityFile(string(provider.ID), window.Key), true
+}
+
+func loadAgentUsageVisibilityState(homeDir func() (string, error), lookupEnv func(string) string, leaf agentUsageVisibilityLeaf) config.StatusbarVisibilityState {
+	paths, err := configPaths(homeDir, lookupEnv)
+	if err != nil {
+		return config.DefaultStatusbarVisibilityState()
+	}
+	path, ok := agentUsageVisibilityPath(paths, leaf)
+	if !ok {
+		return config.DefaultStatusbarVisibilityState()
+	}
+	state, err := config.LoadStatusbarVisibilityFile(path)
+	if err != nil {
+		return config.DefaultStatusbarVisibilityState()
+	}
+	return state
+}
+
+func gatedStatusbarVisibility(state config.StatusbarVisibilityState, parents ...config.StatusbarVisibilityState) config.StatusbarVisibilityState {
+	effective := state
+	for _, parent := range parents {
+		if parent.Effective == config.StatusbarVisibilityOff {
+			effective.Effective = config.StatusbarVisibilityOff
+			break
+		}
+	}
+	return effective
+}
+
+func parseAgentUsageVisibilityAction(value string) (agentUsageVisibilityLeaf, config.StatusbarVisibility, bool) {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) == 3 && parts[0] == agentUsageProviderVisibilityAction {
+		if _, ok := agentUsageProviderCapability(parts[1]); !ok {
+			return agentUsageVisibilityLeaf{}, "", false
+		}
+		mode := config.StatusbarVisibility(strings.ToLower(strings.TrimSpace(parts[2])))
+		if mode != config.StatusbarVisibilityOn && mode != config.StatusbarVisibilityOff {
+			return agentUsageVisibilityLeaf{}, "", false
+		}
+		return agentUsageVisibilityLeaf{provider: strings.ToLower(strings.TrimSpace(parts[1]))}, mode, true
+	}
+	if len(parts) == 4 && parts[0] == agentUsageWindowVisibilityAction {
+		if _, ok := agentUsageWindowCapability(parts[1], parts[2]); !ok {
+			return agentUsageVisibilityLeaf{}, "", false
+		}
+		mode := config.StatusbarVisibility(strings.ToLower(strings.TrimSpace(parts[3])))
+		if mode != config.StatusbarVisibilityOn && mode != config.StatusbarVisibilityOff {
+			return agentUsageVisibilityLeaf{}, "", false
+		}
+		return agentUsageVisibilityLeaf{provider: strings.ToLower(strings.TrimSpace(parts[1])), window: strings.ToLower(strings.TrimSpace(parts[2]))}, mode, true
+	}
+	return agentUsageVisibilityLeaf{}, "", false
+}
+
+func (c *settingsCommand) setAgentUsageVisibility(leaf agentUsageVisibilityLeaf, mode config.StatusbarVisibility) error {
+	paths, err := configPaths(c.homeDir, c.lookupEnv)
+	if err != nil {
+		return err
+	}
+	path, ok := agentUsageVisibilityPath(paths, leaf)
+	if !ok {
+		return fmt.Errorf("unknown Agent Usage HUD visibility leaf: %s/%s", leaf.provider, leaf.window)
 	}
 	if err := config.SaveStatusbarVisibilityFile(path, mode); err != nil {
 		return err

@@ -297,6 +297,46 @@ printf 'Back\r' >&9
 smoke_wait_for "Settings root after notification walk" sh -c \
   "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Keybindings'"
 
+# Agent Usage HUD is a three-depth Settings View. Walk root -> Appearance ->
+# Status Bar -> HUD -> Claude, save the Weekly leaf, and prove the Settings
+# mutation regenerated the config and source-applied it to this exact recorder
+# socket without collapsing the overall usage range. Toggle it back on so the
+# rest of the e2e suite retains compatibility defaults.
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Appearance\r' >&9
+smoke_wait_for "Appearance view for Agent Usage HUD" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Appearance > '"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'agent usage hud providers windows\r' >&9
+smoke_wait_for "Status Bar view for Agent Usage HUD" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Appearance > Status Bar > '"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'agent usage hud providers windows\r' >&9
+smoke_wait_for "Agent Usage HUD view" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Appearance > Status Bar > Agent Usage HUD > '"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'claude\r' >&9
+smoke_wait_for "Claude usage provider view" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Agent Usage HUD > Claude'"
+claude_weekly_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-agent-usage-window-claude-weekly"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'weekly\r' >&9
+smoke_wait_for "Claude Weekly visibility saved off" grep -Fxq 'off' "$claude_weekly_visibility"
+smoke_wait_for "Claude visibility mutation feedback" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Feedback'"
+smoke_assert_file_contains "$XDG_CONFIG_HOME/projmux/tmux.conf" 'internal status usage --max-width'
+recorder_row0="$(tmux -L "$recorder_socket" show-options -gqv 'status-format[0]')"
+[[ "$recorder_row0" == *'range=user|usage'* ]] || { echo "leaf Settings save collapsed live usage range: $recorder_row0" >&2; exit 1; }
+printf 'weekly\r' >&9
+smoke_wait_for "Claude Weekly visibility restored on" grep -Fxq 'on' "$claude_weekly_visibility"
+for destination in "Agent Usage HUD" "Status Bar" "Appearance" "Settings root"; do
+  settings_nav_offset="$(stat -c %s "$recorder_log")"
+  printf 'Back\r' >&9
+  smoke_wait_for "Back from $destination" sh -c \
+    "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings >'"
+done
+smoke_wait_for "Settings root after usage visibility walk" grep -aFq "Keybindings" "$recorder_log"
+
 printf 'Keybindings\r' >&9
 smoke_wait_for "Keybindings category list" grep -aFq "Settings > Keybindings >" "$recorder_log"
 # Phase 0 nests the actions under navigation categories: search reaches the
