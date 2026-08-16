@@ -293,6 +293,10 @@ func TestTheFirstLegacyMigrationSeedsStableNamesOnceAndMirrorsThemBack(t *testin
 	extra.panes = append(extra.panes, &fakeTmuxPane{id: fixture.tmux.mint("%"), opts: map[string]string{}})
 	session.windows = append(session.windows, extra)
 
+	// The observation reports the uid each live object currently carries, the
+	// same way ObserveLegacySessionTargets does. That is what makes the second
+	// pass below a rebind rather than a fresh import: the objects the first pass
+	// mirrored come back carrying their bindings.
 	observe := func(_ context.Context, name string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error) {
 		if name != "legacy" {
 			return coremetadata.LegacySession{}, intmetadata.LegacyTargets{}, nil
@@ -301,8 +305,14 @@ func TestTheFirstLegacyMigrationSeedsStableNamesOnceAndMirrorsThemBack(t *testin
 				Session: "legacy",
 				Root:    root,
 				Windows: []coremetadata.LegacyWindow{
-					{Name: "editor", AutomaticRename: false, Panes: []coremetadata.LegacyPane{{Command: "nvim"}}},
-					{Name: "zsh", AutomaticRename: true, Panes: []coremetadata.LegacyPane{{Label: "logs", Command: "tail"}}},
+					{
+						Name: "editor", AutomaticRename: false, UID: editor.opts[tmuxopts.WindowUID],
+						Panes: []coremetadata.LegacyPane{{Command: "nvim", UID: editor.panes[0].opts[tmuxopts.PaneUID]}},
+					},
+					{
+						Name: "zsh", AutomaticRename: true, UID: extra.opts[tmuxopts.WindowUID],
+						Panes: []coremetadata.LegacyPane{{Label: "logs", Command: "tail", UID: extra.panes[0].opts[tmuxopts.PaneUID]}},
+					},
 				},
 			}, intmetadata.LegacyTargets{
 				Windows: []string{editor.id, extra.id},

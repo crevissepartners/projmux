@@ -24,10 +24,15 @@ type fakeTmux struct {
 	calls    [][]string
 	nextID   int
 	// fail injects a failure for the first command whose argv contains every
-	// token of the trigger. It fires once.
+	// token of the trigger. It fires once unless failAlways is set.
 	fail        []string
 	failMessage string
 	failed      bool
+	// failAlways keeps the trigger armed. A one-shot trigger cannot model a
+	// query that is simply unavailable -- reconcile reads some inventories more
+	// than once per pass, and the second read would then succeed and hide the
+	// fail-closed behavior the test is checking.
+	failAlways bool
 }
 
 type fakeTmuxSession struct {
@@ -173,7 +178,7 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		return nil, fmt.Errorf("fake tmux: unexpected binary %q", name)
 	}
 	f.calls = append(f.calls, append([]string(nil), args...))
-	if !f.failed && len(f.fail) > 0 && containsAll(args, f.fail) {
+	if (!f.failed || f.failAlways) && len(f.fail) > 0 && containsAll(args, f.fail) {
 		f.failed = true
 		message := f.failMessage
 		if message == "" {

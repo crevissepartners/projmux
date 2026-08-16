@@ -29,16 +29,21 @@ import (
 //  1. Import live tmux sessions first. A session that predates the resource
 //     model carries the operator's real Windows and Panes, and importing it is
 //     what seeds their stable names once. Registering the same root from
-//     discovery first would create a default one-Window topology and the
-//     importer would then skip the session, because a Project that already owns
-//     Windows is never re-imported.
+//     discovery first would create a default one-Window topology, and the
+//     importer would then adopt *that* bootstrap Window instead of seeding a
+//     name from the tmux window the operator actually has.
 //  2. Register the remaining selectable workdirs with the bootstrap topology.
 //  3. Observe roots and refresh the live session projection.
-//  4. Observe live tmux and record why any Window or Pane lost its runtime,
+//  4. Reapply the tmux bindings of every live session the import step could not
+//     resolve to a Project root. This runs after step 3 on purpose: it resolves
+//     a session through the Project<->session name edge, and step 3 is what
+//     settles that edge.
+//  5. Observe live tmux and record why any Window or Pane lost its runtime,
 //     then release every Agent whose managed Pane no longer exists in tmux.
 //
 // Nothing here renumbers or merges an existing Project: first registration wins
-// and names stay stable.
+// and names stay stable. Nothing here re-identifies a Window or a Pane either;
+// steps 1 and 4 write tmux options, never uids.
 type registryReconciler struct {
 	// discoverRoots returns the selectable workdirs, already absolute.
 	discoverRoots func() ([]string, error)
@@ -138,7 +143,15 @@ func (r *registryReconciler) reconcile(ctx context.Context, working *coremetadat
 		return err
 	}
 
-	if err := r.importLiveSessions(ctx, working, mutator, operationID, live); err != nil {
+	// One pre-pass observation, shared by both binding steps. It answers exactly
+	// one question -- which registry uids are already the binding of some live
+	// tmux object -- so adoption can decline to steal one. It is read before
+	// anything in this pass writes, which is what makes "already bound" mean
+	// "bound before we got here".
+	binder := coremetadata.NewBindingMatcher(observeRuntime(ctx, r.mirror))
+
+	unresolved, err := r.importLiveSessions(ctx, working, mutator, operationID, live, binder)
+	if err != nil {
 		return err
 	}
 	if err := r.registerDiscoveredRoots(working, mutator, operationID); err != nil {
@@ -150,11 +163,14 @@ func (r *registryReconciler) reconcile(ctx context.Context, working *coremetadat
 	if err := r.refreshSessionProjections(working, mutator, live); err != nil {
 		return err
 	}
-	// Last on purpose. importLiveSessions is what mirrors a freshly imported
-	// Pane's uid onto its tmux pane, so observing before it ran would diff the
-	// registry against an inventory that does not yet carry the uids this same
-	// pass allocated: it would offline an Agent the instant it was imported and
-	// stamp a MissingRuntime condition on a Window that is plainly there.
+	r.reapplyUnresolvedBindings(ctx, working, unresolved, binder)
+	// Last on purpose. The two binding steps are what mirror a Window's and a
+	// Pane's uid onto their tmux objects, so observing before they ran would
+	// diff the registry against an inventory that does not yet carry the uids
+	// this same pass wrote: it would offline an Agent the instant it was
+	// imported and stamp a MissingRuntime condition on a Window that is plainly
+	// there -- and, now that binding reapply exists, on a Window this very pass
+	// just reattached.
 	r.observeRuntime(ctx, working, mutator)
 	return nil
 }
@@ -190,56 +206,220 @@ func (r *registryReconciler) observeRuntime(ctx context.Context, working *coreme
 	mutator.ObserveRuntimeBindings(working, coremetadata.RuntimeObservation{Windows: windows, Panes: panes})
 }
 
+// observedSession is one live tmux session the import step read but could not
+// turn into a Project source, kept so the binding-repair step can reuse the
+// observation instead of paying for it twice.
+type observedSession struct {
+	name    string
+	legacy  coremetadata.LegacySession
+	targets intmetadata.LegacyTargets
+}
+
 // importLiveSessions seeds resources from the tmux sessions that predate the
-// resource model, in a deterministic session-name order.
+// resource model, in a deterministic session-name order, and reattaches the
+// ones whose resources already exist.
+//
+// It returns the sessions it did not handle. Those are exactly the sessions
+// with no usable `@projmux_project_path`: the anchor is written only at session
+// creation, so every session that predates it -- which on a long-lived machine
+// is most of them -- lands here with nothing to import from. They are the input
+// to reapplyUnresolvedBindings, which resolves them by a different key. The two
+// sets are disjoint by construction, so no session is bound twice in one pass.
 func (r *registryReconciler) importLiveSessions(
 	ctx context.Context,
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
 	operationID string,
 	live map[string]bool,
-) error {
+	binder *coremetadata.BindingMatcher,
+) ([]observedSession, error) {
 	names := make([]string, 0, len(live))
 	for name := range live {
 		names = append(names, name)
 	}
 	slices.Sort(names)
 
+	var unresolved []observedSession
 	for _, name := range names {
 		legacy, targets, err := r.observeLegacy(ctx, name)
 		if err != nil {
 			// A session that cannot be observed is not a Project source. Failing
 			// the whole create because one unrelated session is in a strange
-			// state would be worse than skipping it.
+			// state would be worse than skipping it. There is nothing to repair
+			// with either, so it is not handed on.
 			continue
 		}
 		if strings.TrimSpace(legacy.Root) == "" {
+			unresolved = append(unresolved, observedSession{name: name, legacy: legacy, targets: targets})
 			continue
 		}
-		result, err := mutator.ImportLegacySession(working, legacy, r.shell, operationID)
+		result, err := mutator.ImportLegacySession(working, legacy, r.shell, operationID, binder)
 		if err != nil {
 			if coremetadata.IsUsageError(err) || errors.Is(err, coremetadata.ErrInvalidRoot) {
 				// The recorded project path no longer exists, so this session is
 				// not a registrable Project. MissingRoot tombstones belong to
 				// Projects that were registered before, not to sessions that
-				// never were.
+				// never were. Its bindings may still be repairable through the
+				// session-name edge, so it is handed on rather than dropped.
+				unresolved = append(unresolved, observedSession{name: name, legacy: legacy, targets: targets})
 				continue
 			}
-			return err
+			return nil, err
 		}
 		if err := r.mirrorImported(ctx, *working, result, targets); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return unresolved, nil
 }
 
-// mirrorImported writes the uids a legacy import allocated back onto exactly the
-// tmux objects it imported.
+// reapplyUnresolvedBindings rewrites the tmux uid options of every live session
+// that resolves to an existing Project through the Project<->session name edge.
+//
+// This step exists because the import path's anchor is not reachable on the
+// machine state this phase repairs. `@projmux_project_path` is written once, by
+// session creation; a session that predates it carries no anchor at all, so the
+// import step bails on it and its windows and panes keep no binding whatsoever.
+// The observable symptom is that `projmux delete pane` with no selector fails
+// with "the active tmux pane carries no @projmux_pane_uid" in almost every pane
+// on the machine.
+//
+// The edge it resolves through is the one the reconciler itself maintains and
+// the create routes already read as preflight: a Project's session name is
+// status.session.name when set, and otherwise the name sessionNameFor would
+// give its root. That is used forward only -- compute the expected name from
+// the Project and compare. A session name is never parsed back into a path;
+// that direction would be the heuristic the contract forbids.
+//
+// It creates nothing. A live window with no eligible registry Window left is
+// left exactly as it was found: creating registry topology for a session
+// projmux cannot even resolve to a root is the import path's job, and the
+// import path has the anchor it needs to do it safely.
+//
+// It is tolerant, per session and per object. This is maintenance riding along
+// inside somebody else's transaction, so one session whose tmux state changed
+// mid-pass must not fail the create that happened to trigger the reconcile.
+func (r *registryReconciler) reapplyUnresolvedBindings(
+	ctx context.Context,
+	working *coremetadata.Registry,
+	sessions []observedSession,
+	binder *coremetadata.BindingMatcher,
+) {
+	if len(sessions) == 0 {
+		return
+	}
+	scope := r.projectsBySessionName(*working)
+	for _, session := range sessions {
+		projectUID := scope[session.name]
+		if projectUID == "" {
+			continue
+		}
+		r.reapplySessionBindings(ctx, working, projectUID, session, binder)
+	}
+}
+
+// projectsBySessionName maps a live tmux session name onto the one Project that
+// claims it.
+//
+// A name two Projects claim is ambiguous and is dropped rather than resolved to
+// the first. Adoption's one unrecoverable mistake is pushing a live object into
+// the wrong Project, so an ambiguous scope adopts nothing at all.
+//
+// Liveness is deliberately not read here. status.session.live is a stored bool,
+// and a stored bool is exactly what the runtime-observation work replaced; the
+// caller only ever passes session names that came out of the live inventory, so
+// liveness is already established by construction.
+func (r *registryReconciler) projectsBySessionName(registry coremetadata.Registry) map[string]string {
+	byName := map[string]string{}
+	ambiguous := map[string]bool{}
+	for _, project := range registry.Projects {
+		name := strings.TrimSpace(r.sessionNameFor(project.Spec.Root))
+		if project.Status.Session != nil && strings.TrimSpace(project.Status.Session.Name) != "" {
+			name = strings.TrimSpace(project.Status.Session.Name)
+		}
+		if name == "" {
+			continue
+		}
+		if _, seen := byName[name]; seen {
+			ambiguous[name] = true
+			continue
+		}
+		byName[name] = project.Metadata.UID
+	}
+	for name := range ambiguous {
+		delete(byName, name)
+	}
+	return byName
+}
+
+// reapplySessionBindings walks one resolved session and writes the binding of
+// every window and pane it can pair, through the same mirror write path a
+// freshly imported object uses.
+//
+// There is one write convention, not two. A uid-only variant would drift from
+// what MirrorWindow and MirrorPane do -- automatic-rename off, the name mirror,
+// the tmux window_name -- and a reattached object would then be bound but
+// differently configured from an imported one.
+func (r *registryReconciler) reapplySessionBindings(
+	ctx context.Context,
+	registry *coremetadata.Registry,
+	projectUID string,
+	session observedSession,
+	binder *coremetadata.BindingMatcher,
+) {
+	for wi, legacyWindow := range session.legacy.Windows {
+		if wi >= len(session.targets.Windows) {
+			break
+		}
+		match := binder.MatchWindow(registry, projectUID, legacyWindow.UID)
+		if !match.Matched() {
+			// Refused or unmatched. Either way none of its panes are considered:
+			// a pane is only ever paired inside a Window that was itself paired.
+			continue
+		}
+		window, ok := registry.Window(match.UID)
+		if !ok {
+			continue
+		}
+		if err := r.mirror.MirrorWindow(ctx, session.targets.Windows[wi], *window); err != nil {
+			continue
+		}
+		if wi >= len(session.targets.Panes) {
+			continue
+		}
+		row := session.targets.Panes[wi]
+		for pi, legacyPane := range legacyWindow.Panes {
+			if pi >= len(row) {
+				break
+			}
+			paneMatch := binder.MatchPane(registry, match.UID, legacyPane.UID)
+			if !paneMatch.Matched() {
+				continue
+			}
+			pane, ok := registry.Pane(paneMatch.UID)
+			if !ok {
+				continue
+			}
+			// A write that fails is skipped, not retried and not escalated. The
+			// next pass observes the same drift and tries again.
+			_ = r.mirror.MirrorPane(ctx, row[pi], *pane)
+		}
+	}
+}
+
+// mirrorImported writes the uids a legacy import settled on back onto exactly
+// the tmux objects it bound.
 //
 // Without this the migrated Windows and Panes have registry identity but no
 // transport binding, so an anchor lookup would find nothing live and every
 // create against a pre-existing session would build a duplicate Window.
+//
+// Created, adopted, and rebound objects are all mirrored, and through the same
+// call. A created object has no binding yet; an adopted one has a binding the
+// registry lost; a rebound one has a binding that may still be there but costs
+// nothing to reassert. Making the write conditional on which of the three it is
+// would trade one tmux option write for a class of "bound on paper, blank on
+// the machine" states that no later pass would notice.
 func (r *registryReconciler) mirrorImported(
 	ctx context.Context,
 	registry coremetadata.Registry,

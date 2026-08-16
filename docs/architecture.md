@@ -389,13 +389,87 @@ Runtime observation and resource status:
   `MissingRoot` established for a Project whose root disappeared. There is no
   auto-prune.
 - The inventory is a pure **read**. It never writes, re-mirrors, or adopts a uid
-  onto a live tmux object; reattaching a lost binding is a separate concern.
-  A consequence: after a tmux server restart the objects survive but the options
-  do not, so everything reads offline until a mutation route re-mirrors.
+  onto a live tmux object; reattaching a lost binding belongs to the reconciler
+  (see *Binding reapply and adoption* below). After a tmux server restart the
+  objects survive but the options do not, so everything reads offline until the
+  next mutation route reconciles.
 - The observation shells out as bare `tmux`, like every other mirror read, so
   inside a client `$TMUX` selects the projmux socket. Introducing a second
   socket convention for this one query would let the observation disagree with
   the mirror writes it is diffed against.
+
+Binding reapply and adoption:
+
+- The `@projmux_*_uid` tmux options are the binding store, and they used to be
+  written **once**, at legacy-session import time. A tmux server restart, an
+  option reset, or a registry written before the mirror existed leaves live
+  windows and panes carrying no uid at all, and nothing ever put one back. The
+  measured symptom: `projmux delete pane` with no selector fails with *the
+  active tmux pane carries no `@projmux_pane_uid`* in almost every pane on the
+  machine, making the shipped "omit the selector, act on the active target"
+  behavior unreachable.
+- Reconcile now **reapplies** bindings. Every live window and pane that resolves
+  to a Project gets its uid options written again, through the same
+  `Mirror.MirrorWindow` / `Mirror.MirrorPane` path an imported object uses.
+  There is one write convention, not a uid-only variant: a reattached object
+  must end up configured exactly like an imported one.
+- The old import guard (*skip a Project that already owns Windows*) is gone. It
+  **avoided** duplicates instead of repairing drift, so once the registry and
+  the machine disagreed no later pass could bring them back together. Each
+  observed tmux window now resolves into one of four outcomes — **rebound**
+  (still carries a uid the Project owns), **adopted** (blank, pairs with the
+  next unbound registry Window), **created** (blank, no candidate left), or
+  **refused**. Panes cascade the same way inside a window that was itself
+  matched. A drifted registry converges in a single pass.
+- **The matching key is structural, never content.** Two layers: the Project
+  scope, then ordinal alignment inside it — the session's tmux windows in
+  `window_index` order against that Project's registry Windows in creation
+  order, and panes the same way inside an adopted Window. That is the alignment
+  the import path already created and `mirrorImported` already maps back
+  through; adoption restores it rather than inventing one. `window_name`,
+  `@projmux_window_name`, `@projmux_pane_label`, pane cwd, basename, git origin,
+  and inode are explicitly **not** matching keys. Names are worthless here: the
+  registry carries the Window name `zsh` across nine different Projects.
+- **Two ways a session resolves to a Project, and they are disjoint.**
+  `@projmux_project_path` is the *import* key — it is what turns an unknown
+  session into a Project, and it is written only at session creation, so a
+  session older than it has none. For those, reconcile uses the
+  Project↔session-name edge it already maintains: a Project's session name is
+  `status.session.name` when set, otherwise the name `sessionNameFor` gives its
+  root. That is used **forward only** — compute the expected name from the
+  Project and compare. Parsing a session name back into a path would be the
+  heuristic. The session-name path never creates registry topology; only the
+  anchored import path does.
+- **Nothing is ever re-identified.** Adoption changes no uid, merges no uid, and
+  reassigns no uid; it only decides which registry object a live tmux object is
+  the runtime of, and then writes that object's existing uid. Adopted objects
+  are reported to the reconciler so their bindings get written, but they are not
+  recorded as *created* in the transaction — rolling an operation back must not
+  delete an object that predates it.
+- **Everything ambiguous is refused, and a refusal writes nothing.** The session
+  resolves to no Project, or to more than one. The live object carries a uid
+  another Project — or a sibling Window — owns. A candidate is already the
+  binding of a different live tmux object, so the walk moves on rather than
+  stealing it. Two live objects claim one uid. The parent window was not
+  matched, so none of its panes are considered.
+- A uid the registry has **never heard of** is its own case. It is never
+  adopted: pointing an existing registry object at it would be re-identification
+  off a failed lookup. The anchored import path still *mints* a new object for
+  it, because projmux itself produces unknown uids — a reconcile rolled back by
+  a pre-create hook refusal has already written its allocated uids onto tmux,
+  and tmux options are not transactional — and refusing outright would leave
+  those windows permanently unmanageable. Minting changes no existing uid. The
+  session-name repair path, which has no anchor, only skips.
+- The "already bound elsewhere" set is one observation taken **before** the pass
+  writes anything, shared by both binding steps, so "already bound" means "bound
+  before we got here". The binding writes land before the runtime-observation
+  step, or that step would stamp `MissingRuntime` on a Window this same pass
+  just reattached.
+- Reapply stays a **mutation-route** concern, like the rest of reconcile. Read
+  verbs still `LoadReadOnly` and still never materialize the registry. A tmux
+  server that is absent or erroring still fails closed with no error, and a
+  binding write that fails is skipped rather than escalated — the next pass sees
+  the same drift and tries again.
 
 Selector and the implicit active target:
 

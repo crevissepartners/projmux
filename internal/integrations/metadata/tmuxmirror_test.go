@@ -167,11 +167,14 @@ func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.
 	sep := escapedFieldSep
 	runner := &fakeRunner{outputs: map[string]string{
 		"@projmux_project_path": "/src/projmux\n",
-		"list-windows":          "0" + sep + "editor" + sep + "off" + sep + "@4\n" + "1" + sep + "zsh" + sep + "on" + sep + "@5\n",
+		// The last window field and the last pane field are the uid each live
+		// object already carries: window 0 is still bound, window 1 is blank.
+		"list-windows": "0" + sep + "editor" + sep + "off" + sep + "@4" + sep + "win-editor\n" +
+			"1" + sep + "zsh" + sep + "on" + sep + "@5" + sep + "\n",
 		"list-panes": strings.Join([]string{
-			strings.Join([]string{"0", "nvim", "", "", "nvim", "src/main.go", "/src/projmux", "%1"}, sep),
-			strings.Join([]string{"0", "", "codex", "refactor naming", "codex", "codex", "/src/projmux", "%2"}, sep),
-			strings.Join([]string{"1", "", "", "", "zsh", "~/src/projmux", "/src/projmux", "%3"}, sep),
+			strings.Join([]string{"0", "nvim", "", "", "nvim", "src/main.go", "/src/projmux", "%1", "pan-nvim"}, sep),
+			strings.Join([]string{"0", "", "codex", "refactor naming", "codex", "codex", "/src/projmux", "%2", ""}, sep),
+			strings.Join([]string{"1", "", "", "", "zsh", "~/src/projmux", "/src/projmux", "%3", ""}, sep),
 		}, "\n") + "\n",
 	}}
 	legacy, targets, err := NewMirror(runner).ObserveLegacySessionTargets(context.Background(), "projmux")
@@ -206,6 +209,14 @@ func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.
 	}
 	if legacy.Windows[0].Panes[1].Provider != "codex" || legacy.Windows[0].Panes[1].Topic != "refactor naming" {
 		t.Fatalf("agent pane = %+v", legacy.Windows[0].Panes[1])
+	}
+	// The already-carried binding comes back with the observation, so adoption
+	// can tell "still ours" from "blank" without a second query.
+	if legacy.Windows[0].UID != "win-editor" || legacy.Windows[1].UID != "" {
+		t.Fatalf("observed window uids = %q/%q, want win-editor and blank", legacy.Windows[0].UID, legacy.Windows[1].UID)
+	}
+	if legacy.Windows[0].Panes[0].UID != "pan-nvim" || legacy.Windows[0].Panes[1].UID != "" {
+		t.Fatalf("observed pane uids = %q/%q, want pan-nvim and blank", legacy.Windows[0].Panes[0].UID, legacy.Windows[0].Panes[1].UID)
 	}
 
 	// The observed state drives the same seeds the pure core computes.

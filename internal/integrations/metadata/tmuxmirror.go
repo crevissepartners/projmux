@@ -301,6 +301,13 @@ func (m Mirror) ObserveLegacySession(ctx context.Context, sessionName string) (c
 // ObserveLegacySessionTargets reads one live session's pre-v2 naming state
 // together with the tmux ids of every observed window and pane. It performs no
 // writes.
+//
+// It also reads the `@projmux_window_uid` / `@projmux_pane_uid` each live
+// object already carries. That is what lets the caller tell three states apart
+// without a second query: a blank object, which adoption may pair with an
+// unbound registry object; an object still carrying a uid the registry knows,
+// whose binding is simply reapplied; and an object carrying a foreign uid,
+// which is evidence of "not ours" and is left untouched.
 func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName string) (coremetadata.LegacySession, LegacyTargets, error) {
 	rootOut, err := m.run(ctx, "display-message", "-p", "-t", sessionName, "-F", "#{"+tmuxopts.ProjectPathSession+"}")
 	if err != nil {
@@ -317,16 +324,20 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 		"#{window_name}",
 		"#{"+tmuxopts.AutomaticRenameWindow+"}",
 		"#{window_id}",
+		"#{"+tmuxopts.WindowUID+"}",
 	))
 	if err != nil {
 		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: list session windows: %w", err)
 	}
 	indexOrder := map[string]int{}
-	for _, fields := range parseRows(string(windowsOut), 4) {
+	// tmux lists windows in window_index ascending order, which is the ordinal
+	// the adoption rule pairs against.
+	for _, fields := range parseRows(string(windowsOut), 5) {
 		indexOrder[fields[0]] = len(legacy.Windows)
 		legacy.Windows = append(legacy.Windows, coremetadata.LegacyWindow{
 			Name:            fields[1],
 			AutomaticRename: tmuxTruthyOption(fields[2]),
+			UID:             strings.TrimSpace(fields[4]),
 		})
 		targets.Windows = append(targets.Windows, fields[3])
 		targets.Panes = append(targets.Panes, nil)
@@ -341,11 +352,12 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 		"#{pane_title}",
 		"#{pane_current_path}",
 		"#{pane_id}",
+		"#{"+tmuxopts.PaneUID+"}",
 	))
 	if err != nil {
 		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: list session panes: %w", err)
 	}
-	for _, fields := range parseRows(string(panesOut), 8) {
+	for _, fields := range parseRows(string(panesOut), 9) {
 		position, ok := indexOrder[fields[0]]
 		if !ok {
 			continue
@@ -357,6 +369,7 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 			Command:  fields[4],
 			Title:    fields[5],
 			CWD:      fields[6],
+			UID:      strings.TrimSpace(fields[8]),
 		})
 		targets.Panes[position] = append(targets.Panes[position], fields[7])
 	}
