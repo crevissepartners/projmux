@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -126,8 +127,11 @@ func TestUpdateApplyNpmUsesInstallLatest(t *testing.T) {
 	if err := cmd.Run([]string{"apply", "--no-apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{"npm install -g projmux@latest"}
-	if len(ran) != 1 || ran[0] != want[0] {
+	// --no-apply suppresses the live reload, not the post-update step itself.
+	// The new binary still has to run so the keymap schema migration happens;
+	// skipping it would leave a v0 keymap under a binary that writes v1.
+	want := []string{"npm install -g projmux@latest", "projmux tmux apply --no-reload"}
+	if !slices.Equal(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
 	}
 }

@@ -263,28 +263,36 @@ treated as popup close keys.
 
 Settings is the default apply path for key edits: it writes the key list,
 refreshes the generated config, and reloads the running tmux session when
-possible. Use `projmux tmux apply` as a CLI recovery/sync command after editing
-the keymap file by hand, after an outside-tmux Settings save, or after resolving
-a reported generated-config or live-reload failure. Generated config first
-unbinds the known retired `C-t` pane-label chord, then installs the current
-keymap; an explicit current `C-t` assignment therefore wins without retaining
-the retired command body. Apply does not rewrite `keymap.toml`.
+possible. Use `projmux config apply` (or the compatibility `projmux tmux apply`
+it forwards to) as a CLI recovery/sync command after editing the keymap file by
+hand, after an outside-tmux Settings save, or after resolving a reported
+generated-config or live-reload failure. Generated config first unbinds the
+known retired `C-t` pane-label chord, then installs the current keymap; an
+explicit current `C-t` assignment therefore wins without retaining the retired
+command body.
+
+Apply rewrites `keymap.toml` only to migrate it to the current schema version,
+and only before it writes any generated config. An already-current file is left
+byte-identical. See [Schema versions](#schema-versions).
 
 ## Keymap File
 
-Settings writes the action-centered multi-alias schema:
+Settings writes the action-centered multi-alias schema, versioned by a root
+`schema_version` marker:
 
 ```toml
-[bindings.ProjectSidebarToggle]
+schema_version = 1
+
+[bindings."project-sidebar.toggle"]
 keys = ["M-1", "M-a"]
 
-[bindings.new-window]
+[bindings."window.create"]
 keys = ["C-t"]
 
-[bindings.previous-window]
+[bindings."window.focus-previous"]
 keys = ["M-["] # additive alias; default M-S-Left is not stored here
 
-[bindings."Sidebar:PinProject"]
+[bindings."project-sidebar.project.pin-toggle"]
 keys = ["M-p", "p"]
 ```
 
@@ -294,13 +302,92 @@ aliases for that action. Legacy `prefix = ...` entries still parse during
 migration and are preserved when Settings rewrites the file, but Settings does
 not create new prefix entries.
 
-Legacy popup IDs such as `sessionizer-sidebar`, `notify-sidebar`,
-`session-popup`, `ai-split-picker-right`, `ai-split-settings`, and
-`sessionizer` still read. Settings and new docs show the canonical toggle
-names: `ProjectSidebarToggle`, `NotifySidebarToggle`, `SessionPopupToggle`,
-`AISplitPickerToggle`, `SettingsToggle`, and `ProjectSwitcherToggle`. Direct
-AI split actions keep their command IDs, `ai-split-right` and `ai-split-down`,
-so Settings can distinguish them from the `Alt-7` popup picker toggle.
+Direct AI split actions stay distinct from the `Alt-7` popup picker toggle:
+`agent-pane.launch-default.right` and `agent-pane.launch-default.down` create a
+pane, `agent-pane-launcher.toggle` opens the picker.
+
+### Schema versions
+
+| Version | Marker | Table ids |
+| --- | --- | --- |
+| v0 | none | the runtime ids projmux has always used — `ProjectSidebarToggle`, `new-window`, `ai-split-right`, `Sidebar:KillSession` |
+| v1 | `schema_version = 1` | canonical dotted ids — `project-sidebar.toggle`, `window.create`, `agent-pane.launch-default.right`, `project-sidebar.runtime.stop` |
+
+A file with no marker is v0. Both versions read: the v0 spelling of every action
+stays a permanent read alias, so a hand-written or hand-restored v0 file keeps
+working. Only writes are versioned — once a file is migrated, Settings writes
+canonical ids into it.
+
+A canonical id containing a dot must be quoted. `[bindings."window.create"]` is
+a binding named `window.create`; `[bindings.window.create]` would be a nested
+table and is rejected.
+
+### Upgrading a keymap
+
+The migration is not a separate command. It runs at the two moments a keymap is
+already being written or applied:
+
+- `projmux config apply` (and the compatibility `projmux tmux apply` it forwards
+  to), which every installer path calls with the newly installed binary.
+- The first Settings key save, which is what converges an install that never ran
+  an updater — a tarball unpacked over the old binary, for instance.
+
+`projmux config render standalone` and `projmux config render app` report a
+pending migration on **stderr** and write nothing. Their stdout stays the
+generated artifact, byte-identical to the `internal tmux print-config` and
+`internal tmux print-app-config` spellings a running server still invokes, so a
+sourced config is never corrupted by a diagnostic. `projmux config render app`
+is the read-only preview that pairs with `projmux config apply`, because
+`config apply` writes the app config and reloads the live server.
+
+The migration order is fixed:
+
+1. Read and validate the whole v0 file, including chord conflicts.
+2. Write `keymap.toml.pre-v1-<digest>.bak`. The digest is the original's, so a
+   retry reuses the same backup and a different original can never overwrite it.
+3. Render v1 to a temp file, re-parse it, re-merge it and prove the effective
+   key table is unchanged.
+4. Only then replace the original atomically.
+5. Only then write the generated tmux config and reload the live server.
+
+If any step fails, the keymap, the generated config and the running server are
+all left alone, and the report says which of the three did not move. Running the
+migration again on an already-migrated file writes no bytes at all.
+
+`projmux update apply --dry-run` and `projmux upgrade --dry-run` name the
+migration stage but do not print a rename table. The candidate binary is not
+installed yet, and only it knows its own canonical ids.
+
+`--no-apply` suppresses the live tmux reload, not the migration. Installer paths
+still invoke the new binary as `tmux apply --no-reload` so the schema does not
+fall behind the binary that writes it.
+
+### Downgrading
+
+Restore the v0 backup **before** installing an older projmux:
+
+```sh
+cp ~/.config/projmux/keymap.toml.pre-v1-<digest>.bak ~/.config/projmux/keymap.toml
+```
+
+A projmux that predates this schema reads `schema_version` as an unsupported
+root key and refuses the file. Restoring first avoids that. The backup is
+validated on restore, so a truncated or corrupted one fails loudly rather than
+becoming the live keymap.
+
+### Retired ids
+
+These table names were removed from the action catalog and resolve to nothing.
+A migration preserves the table and reports it rather than remapping it onto a
+surviving action:
+
+| Retired id | What to do |
+| --- | --- |
+| `rename-pane-topic` | replace with `[bindings."pane.rename"]`; this one fails the parse outright because the replacement has different semantics |
+| `sessionizer-sidebar`, `notify-sidebar`, `session-popup`, `ai-split-picker-right`, `ai-split-settings`, `sessionizer` | popup *mode* names, never action ids; use the canonical toggle id for the surface |
+
+A table this projmux does not recognise at all — from a newer release, or
+hand-written — is preserved verbatim and reported as unmapped.
 
 ## Diagnose: `projmux setup`
 

@@ -647,6 +647,7 @@ func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
+	c.reportKeymapMigrationPreflight(stderr)
 	keyBindings, keymapPresent, err := c.loadKeyBindingCatalog()
 	if err != nil {
 		return err
@@ -660,6 +661,7 @@ func (c *tmuxCommand) runPrintAppConfig(args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
+	c.reportKeymapMigrationPreflight(stderr)
 	keyBindings, keymapPresent, err := c.loadKeyBindingCatalog()
 	if err != nil {
 		return err
@@ -775,12 +777,62 @@ func (c *tmuxCommand) loadKeyBindingCatalog() ([]keyBindingAction, bool, error) 
 	})
 }
 
+// keymapStore is the migration seam for the tmux routes.
+//
+// readFile and writeFile are deliberately left unset even though the command
+// carries both. The migrator's own bounded-read and atomic-replace paths are
+// the safety contract here — a plain os.ReadFile would skip the
+// regular-file/symlink policy, and a plain os.WriteFile would turn the atomic
+// replacement into a truncate-in-place. Tests drive this through a temporary
+// HOME/XDG instead of through the hooks, which is also the only way to exercise
+// the backup and rename legs at all.
+func (c *tmuxCommand) keymapStore() keymapStore {
+	return keymapStore{
+		homeDir:   c.homeDir,
+		lookupEnv: c.lookupEnv,
+	}
+}
+
+// reportKeymapMigrationPreflight runs the read-only preflight for the render
+// routes.
+//
+// It writes to stderr on purpose. `config render standalone` and
+// `config render app` forward here and their stdout is the generated artifact
+// itself, byte-identical to the `internal tmux print-config` spelling a running
+// server still invokes. A preflight line on stdout would corrupt a sourced
+// config; on stderr it is a diagnostic the operator sees and tmux never reads.
+//
+// A preflight failure is not fatal to a render. Printing the current config is a
+// read, and refusing to print it because a *future* write would conflict would
+// take away the output the operator needs to diagnose that very conflict.
+func (c *tmuxCommand) reportKeymapMigrationPreflight(stderr io.Writer) {
+	plan, err := planKeymapMigration(c.keymapStore())
+	if err != nil {
+		if stderr != nil {
+			fmt.Fprintf(stderr, "keymap migration preflight unavailable: %v\n", err)
+		}
+		return
+	}
+	writeKeymapMigrationPreflight(stderr, plan)
+}
+
 func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("tmux apply", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	binaryOverride := fs.String("bin", "", "projmux binary path to write into the app config")
 	configPath := fs.String("config", "", "app tmux config path to write")
 	socket := fs.String("socket", "projmux", "tmux -L socket name to reload")
+	// --no-reload is installer plumbing for the updater's `--no-apply`, which
+	// means "do not touch my running tmux server" rather than "do not upgrade
+	// my configuration". The keymap migration and the generated config still
+	// have to happen — an updater that skipped them would leave a v0 keymap
+	// behind a binary that writes v1, and the next explicit apply would then be
+	// the first one to notice.
+	//
+	// It lives on the hidden `tmux apply` spelling alongside `tmux install` and
+	// `install-app`, not on the public `config apply`. `config apply` takes no
+	// arguments and forwards a fixed argv, so no new public flag appears.
+	noReload := fs.Bool("no-reload", false, "migrate and write config without reloading the live tmux server")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -792,11 +844,40 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		c.diagnostics.Mark(diagnostics.OperationTmuxApply)
 	}
 
+	// The keymap migration runs before a single byte of generated config is
+	// written, and the whole route aborts if it fails.
+	//
+	// This is the ordering the schema contract requires, and it is also the
+	// only ordering that leaves a failure recoverable: the generated config
+	// renders the *merged* key table, so applying it after a half-finished
+	// keymap rewrite would push a binding set that matches neither the file the
+	// user had nor the one they were promised. Refusing here leaves the keymap,
+	// the generated config and the live server all on their previous state, and
+	// says which of the three did not move.
+	//
+	// This route is the convergence point for every installer. `config apply`
+	// forwards here, `make install` calls it directly, and the npm, go, GitHub
+	// Release and source update paths all end in `<new binary> tmux apply`. So
+	// pinning the migration here is what makes it reachable without a new
+	// public route.
+	if _, err := migrateKeymapForWrite(c.keymapStore()); err != nil {
+		fmt.Fprintf(stderr, "keymap migration failed: %v\n", err)
+		fmt.Fprintln(stdout, "keymap unchanged")
+		fmt.Fprintln(stdout, "generated tmux config unchanged")
+		fmt.Fprintln(stdout, "skipped reload: keymap migration failed")
+		return fmt.Errorf("migrate keymap before apply: %w", err)
+	}
+
 	resolved, err := c.writeAppConfig(*binaryOverride, *configPath)
 	if err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "wrote %s\n", resolved); err != nil {
+		return err
+	}
+
+	if *noReload {
+		_, err = fmt.Fprintf(stdout, "skipped reload: --no-reload\n")
 		return err
 	}
 

@@ -2828,7 +2828,15 @@ func TestTmuxPrintAppConfigKeepsStandaloneAndAppKeymapScopesSeparated(t *testing
 	}
 }
 
-func TestTmuxApplyRetiresStalePaneLabelChordWithoutRewritingKeymap(t *testing.T) {
+// TestTmuxApplyRetiresStalePaneLabelChordAndMigratesKeymapOnce pins the write
+// half of the versioned-keymap contract at the apply boundary.
+//
+// `tmux apply` is the convergence point every installer reaches, so it is where
+// a v0 file becomes v1. The interesting property is not that it rewrites — it is
+// that it rewrites exactly once: the second apply finds a current file, writes
+// no bytes, and leaves the generated config identical. The retired-chord
+// cleanup this test already covered has to keep working across that rewrite.
+func TestTmuxApplyRetiresStalePaneLabelChordAndMigratesKeymapOnce(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -2859,7 +2867,7 @@ keys = ["M-a"] # unrelated current binding
 		runner:     runner,
 	}
 
-	var firstConfig []byte
+	var firstConfig, firstKeymap []byte
 	for attempt := 1; attempt <= 2; attempt++ {
 		var stdout, stderr bytes.Buffer
 		if err := cmd.Run([]string{"apply", "--config", configPath, "--socket", "projmux-test"}, &stdout, &stderr); err != nil {
@@ -2869,8 +2877,19 @@ keys = ["M-a"] # unrelated current binding
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(gotKeymap, keymap) {
-			t.Fatalf("apply attempt %d rewrote keymap bytes\ngot:  %q\nwant: %q", attempt, gotKeymap, keymap)
+		if attempt == 1 {
+			for _, want := range []string{
+				"schema_version = 1\n",
+				"[bindings.\"pane.rename\"]\nkeys = [\"M-p\"]\n",
+				"[bindings.\"project-sidebar.toggle\"]\nkeys = [\"M-a\"]\n",
+			} {
+				if !strings.Contains(string(gotKeymap), want) {
+					t.Fatalf("migrated keymap = %q, want %q", gotKeymap, want)
+				}
+			}
+			firstKeymap = append([]byte(nil), gotKeymap...)
+		} else if !bytes.Equal(gotKeymap, firstKeymap) {
+			t.Fatalf("repeated apply rewrote keymap bytes\ngot:  %q\nwant: %q", gotKeymap, firstKeymap)
 		}
 		gotConfig, err := os.ReadFile(configPath)
 		if err != nil {
@@ -2881,6 +2900,16 @@ keys = ["M-a"] # unrelated current binding
 		} else if !bytes.Equal(gotConfig, firstConfig) {
 			t.Fatalf("repeated apply changed generated config bytes")
 		}
+	}
+
+	// Exactly one backup, holding the untouched v0 file. Two backups would mean
+	// the second apply migrated again from a file it had already migrated.
+	backups := keymapBackupFiles(t, filepath.Dir(keymapPath))
+	if len(backups) != 1 {
+		t.Fatalf("keymap backups = %v, want exactly one pre-v1 backup", backups)
+	}
+	if got := readFile(t, backups[0]); got != string(keymap) {
+		t.Fatalf("backup = %q, want the original v0 bytes %q", got, keymap)
 	}
 
 	output := string(firstConfig)

@@ -32,6 +32,11 @@
       "rule": "G118",
       "scope": "internal/app/setup.go key reader",
       "reason": "reviewed in the completed resource-lifetime phase; no current finding"
+    },
+    {
+      "rule": "G304",
+      "scope": "internal/app/keymap_migration.go keymap schema migration",
+      "reason": "the keymap path is derived from the resolved XDG/HOME config paths, not from CLI input; reads go through the bounded regular-file/supported-symlink policy and the backup open is O_EXCL"
     }
   ],
   "entries": [
@@ -558,6 +563,27 @@
       "path": "internal/app/hookmaker.go",
       "message": "Potential file inclusion via variable",
       "source": "data, err := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/keymap_migration.go",
+      "message": "Potential file inclusion via variable",
+      "source": "existing, readErr := os.ReadFile(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/keymap_migration.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.Open(path)",
+      "max_count": 1
+    },
+    {
+      "rule": "G304",
+      "path": "internal/app/keymap_migration.go",
+      "message": "Potential file inclusion via variable",
+      "source": "file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, defaultKeymapFileMode)",
       "max_count": 1
     },
     {

@@ -103,8 +103,17 @@ func TestUpgradeRunDryRunWithFlags(t *testing.T) {
 	if !strings.Contains(out, "go install github.com/example/fork/cmd/projmux@v0.2.0") {
 		t.Fatalf("dry-run output missing custom module/ref:\n%s", out)
 	}
-	if strings.Contains(out, "tmux apply") {
-		t.Fatalf("dry-run output should not mention tmux apply when --no-apply set:\n%s", out)
+	// --no-apply is a reload suppression, so the dry run still shows the
+	// post-update call — with --no-reload attached — and names the migration
+	// stage without claiming to know the candidate binary's rename table.
+	if !strings.Contains(out, "would run: /home/user/.local/bin/projmux tmux apply --no-reload") {
+		t.Fatalf("dry-run output missing --no-reload post-update step:\n%s", out)
+	}
+	if !strings.Contains(out, "would migrate: keymap schema via /home/user/.local/bin/projmux") {
+		t.Fatalf("dry-run output missing keymap migration stage:\n%s", out)
+	}
+	if strings.Contains(out, "would rename:") {
+		t.Fatalf("dry-run output must not promise an exact action-id diff:\n%s", out)
 	}
 }
 
@@ -337,8 +346,14 @@ func TestUpgradeRunHappyPathSkipsApplyWhenNoApplySet(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if len(stub.commands) != 1 {
-		t.Fatalf("commands = %d, want 1 (go install only)\nrecorded=%v", len(stub.commands), stub.commands)
+	// go install, then the new binary's migrate-without-reload step.
+	if len(stub.commands) != 2 {
+		t.Fatalf("commands = %d, want 2 (go install + migrate without reload)\nrecorded=%v",
+			len(stub.commands), stub.commands)
+	}
+	applyArgs := stub.commands[1].args
+	if got := strings.Join(applyArgs, " "); got != target+" tmux apply --no-reload" {
+		t.Fatalf("post-update command = %q, want %q", got, target+" tmux apply --no-reload")
 	}
 }
 

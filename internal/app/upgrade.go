@@ -122,10 +122,12 @@ func (c *upgradeCommand) runDryRun(opts upgradeOptions, stdout io.Writer) error 
 	if _, err := fmt.Fprintf(stdout, "would replace: %s (atomic via temp file)\n", opts.target); err != nil {
 		return err
 	}
-	if !opts.noApply {
-		if _, err := fmt.Fprintf(stdout, "would run: %s tmux apply\n", opts.target); err != nil {
-			return err
-		}
+	if _, err := fmt.Fprintf(stdout, "would run: %s %s\n",
+		opts.target, strings.Join(postUpdateApplyArgs(opts.noApply), " ")); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(stdout, keymapMigrationStagePreviewLine(opts.target)); err != nil {
+		return err
 	}
 	return nil
 }
@@ -219,18 +221,19 @@ func (c *upgradeCommand) runUpgrade(opts upgradeOptions, stdout, stderr io.Write
 	}
 	cleanup = false
 
+	applyArgs := postUpdateApplyArgs(opts.noApply)
 	if opts.noApply {
-		return nil
-	}
-
-	if _, err := fmt.Fprintln(stdout, ">> applying live config..."); err != nil {
+		if _, err := fmt.Fprintln(stdout, ">> migrating config without reloading the live server..."); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintln(stdout, ">> applying live config..."); err != nil {
 		return err
 	}
-	applyCmd := c.newCmd(opts.target, "tmux", "apply")
+	applyCmd := c.newCmd(opts.target, applyArgs...)
 	applyCmd.Stdout = stdout
 	applyCmd.Stderr = stderr
 	if err := c.runCmd(applyCmd); err != nil {
-		return fmt.Errorf("apply live config via %s tmux apply: %w", opts.target, err)
+		return fmt.Errorf("apply live config via %s %s: %w", opts.target, strings.Join(applyArgs, " "), err)
 	}
 	return nil
 }
