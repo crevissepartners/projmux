@@ -11,6 +11,11 @@ import (
 const (
 	StatusbarNotificationsHUDVisibilityFileName = "statusbar-visibility-notifications-hud"
 	StatusbarAgentUsageHUDVisibilityFileName    = "statusbar-visibility-agent-usage-hud"
+	StatusbarProjectVisibilityFileName          = "statusbar-visibility-project"
+	StatusbarWorkingDirectoryVisibilityFileName = "statusbar-visibility-working-directory"
+	StatusbarGitVisibilityFileName              = "statusbar-visibility-git"
+	StatusbarClockVisibilityFileName            = "statusbar-visibility-clock"
+	StatusbarSettingsLauncherVisibilityFileName = "statusbar-visibility-settings-launcher"
 
 	StatusbarVisibilityOn  StatusbarVisibility = "on"
 	StatusbarVisibilityOff StatusbarVisibility = "off"
@@ -53,6 +58,26 @@ func (p Paths) StatusbarNotificationsHUDVisibilityFile() string {
 
 func (p Paths) StatusbarAgentUsageHUDVisibilityFile() string {
 	return filepath.Join(p.ConfigDir, StatusbarAgentUsageHUDVisibilityFileName)
+}
+
+func (p Paths) StatusbarProjectVisibilityFile() string {
+	return filepath.Join(p.ConfigDir, StatusbarProjectVisibilityFileName)
+}
+
+func (p Paths) StatusbarWorkingDirectoryVisibilityFile() string {
+	return filepath.Join(p.ConfigDir, StatusbarWorkingDirectoryVisibilityFileName)
+}
+
+func (p Paths) StatusbarGitVisibilityFile() string {
+	return filepath.Join(p.ConfigDir, StatusbarGitVisibilityFileName)
+}
+
+func (p Paths) StatusbarClockVisibilityFile() string {
+	return filepath.Join(p.ConfigDir, StatusbarClockVisibilityFileName)
+}
+
+func (p Paths) StatusbarSettingsLauncherVisibilityFile() string {
+	return filepath.Join(p.ConfigDir, StatusbarSettingsLauncherVisibilityFileName)
 }
 
 func LoadStatusbarVisibilityFile(path string) (StatusbarVisibilityState, error) {

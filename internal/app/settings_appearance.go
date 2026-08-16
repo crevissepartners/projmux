@@ -40,11 +40,9 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 	return entries
 }
 
-// statusBarComponentTargets are the Status Bar components whose control ships
-// in this slice: the three icon-bearing components and the Resources toggle
-// promoted out of Labs. Per-component visibility storage for the remaining
-// components is a later slice; drawing those rows now would be an empty
-// placeholder, so the container ships with the rows that can actually act.
+// statusBarComponentTargets are the icon-bearing Status Bar components. The
+// row-one slice adds visibility to cwd/Git in their existing detail Views;
+// simple row-one booleans remain direct toggles in the parent container.
 var statusBarComponentTargets = []statusbarDecorationTarget{
 	statusbarDecorationTargetNotify,
 	statusbarDecorationTargetCwd,
@@ -58,7 +56,7 @@ func (c *settingsCommand) statusBarEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	current := c.currentStatusbarDecorations()
 
-	entries := make([]intpickercompat.Entry, 0, len(statusBarComponentTargets)+3)
+	entries := make([]intpickercompat.Entry, 0, 9)
 	entries = append(entries, settingsBackEntryLocale(locale))
 	for _, target := range statusBarComponentTargets {
 		meta, ok := statusbarDecorationTargetMeta(target)
@@ -70,6 +68,13 @@ func (c *settingsCommand) statusBarEntries() []intpickercompat.Entry {
 		if target == statusbarDecorationTargetNotify {
 			visibility := loadStatusbarHUDVisibilityState(c.homeDir, c.lookupEnv, statusbarHUDNotifications)
 			state = string(visibility.Effective) + " - " + state + " - " + statusbarHUDVisibilitySourceLabel(visibility)
+		} else {
+			component := statusbarRowOneWorkingDirectory
+			if target == statusbarDecorationTargetGit {
+				component = statusbarRowOneGit
+			}
+			visibility := loadStatusbarRowOneVisibilityState(c.homeDir, c.lookupEnv, component)
+			state = string(visibility.Effective) + " - " + state + " - " + statusbarHUDVisibilitySourceLabel(visibility)
 		}
 		entries = append(entries, intpickercompat.Entry{
 			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, meta.Name, state),
@@ -78,9 +83,14 @@ func (c *settingsCommand) statusBarEntries() []intpickercompat.Entry {
 		})
 		if target == statusbarDecorationTargetNotify {
 			entries = append(entries, c.statusBarHUDVisibilityEntry(locale, statusbarHUDAgentUsage))
+			entries = append(entries, c.statusBarRowOneVisibilityEntry(locale, statusbarRowOneProject))
 		}
 	}
 	entries = append(entries, c.statusBarResourcesEntry(locale))
+	entries = append(entries,
+		c.statusBarRowOneVisibilityEntry(locale, statusbarRowOneClock),
+		c.statusBarRowOneVisibilityEntry(locale, statusbarRowOneSettingsLauncher),
+	)
 	return entries
 }
 
@@ -118,7 +128,7 @@ func (c *settingsCommand) statusBarSummary() string {
 	locale := c.locale()
 	current := c.currentStatusbarDecorations()
 	mode, _, supported := c.currentLiveResourcesMode()
-	parts := make([]string, 0, len(statusBarComponentTargets)+2)
+	parts := make([]string, 0, 8)
 	for _, target := range statusBarComponentTargets {
 		meta, ok := statusbarDecorationTargetMeta(target)
 		if !ok {
@@ -128,14 +138,57 @@ func (c *settingsCommand) statusBarSummary() string {
 			visibility := loadStatusbarHUDVisibilityState(c.homeDir, c.lookupEnv, statusbarHUDNotifications)
 			parts = append(parts, settingsCatalogTextLocale(locale, meta.Name)+" "+string(visibility.Effective))
 			parts = append(parts, settingsCatalogTextLocale(locale, "Agent Usage HUD")+" "+string(loadStatusbarHUDVisibilityState(c.homeDir, c.lookupEnv, statusbarHUDAgentUsage).Effective))
+			parts = append(parts, settingsCatalogTextLocale(locale, "Project")+" "+string(loadStatusbarRowOneVisibilityState(c.homeDir, c.lookupEnv, statusbarRowOneProject).Effective))
 			continue
 		}
-		parts = append(parts, settingsCatalogTextLocale(locale, meta.Name)+" "+string(current.modeForTarget(target)))
+		component := statusbarRowOneWorkingDirectory
+		if target == statusbarDecorationTargetGit {
+			component = statusbarRowOneGit
+		}
+		parts = append(parts, settingsCatalogTextLocale(locale, meta.Name)+" "+string(loadStatusbarRowOneVisibilityState(c.homeDir, c.lookupEnv, component).Effective)+"/"+string(current.modeForTarget(target)))
 	}
 	if supported {
 		parts = append(parts, settingsCatalogTextLocale(locale, "Resources")+" "+string(mode))
 	}
+	parts = append(parts,
+		settingsCatalogTextLocale(locale, "Clock")+" "+string(loadStatusbarRowOneVisibilityState(c.homeDir, c.lookupEnv, statusbarRowOneClock).Effective),
+		settingsCatalogTextLocale(locale, "Settings launcher")+" "+string(loadStatusbarRowOneVisibilityState(c.homeDir, c.lookupEnv, statusbarRowOneSettingsLauncher).Effective),
+	)
 	return strings.Join(parts, ", ")
+}
+
+func (c *settingsCommand) statusBarRowOneVisibilityEntry(locale i18n.Locale, component statusbarRowOneComponent) intpickercompat.Entry {
+	state := loadStatusbarRowOneVisibilityState(c.homeDir, c.lookupEnv, component)
+	next := config.StatusbarVisibilityOff
+	glyph := settingsGlyphToggle
+	color := settingsColorAdd
+	if state.Effective == config.StatusbarVisibilityOff {
+		next = config.StatusbarVisibilityOn
+		glyph = settingsGlyphInactive
+		color = settingsColorDim
+	}
+	return intpickercompat.Entry{
+		Label:     settingsLabelLocale(locale, glyph, color, statusbarRowOneComponentName(component), string(state.Effective)+" - "+statusbarRowOneComponentPreview(component)+" - "+statusbarHUDVisibilitySourceLabel(state)),
+		Value:     settingsActionPrefixHUDVisibility + string(component) + ":" + string(next),
+		SearchKey: "status bar row one " + string(component) + " visible on off source preview",
+	}
+}
+
+func statusbarRowOneComponentPreview(component statusbarRowOneComponent) string {
+	switch component {
+	case statusbarRowOneProject:
+		return "Project name / runtime fallback"
+	case statusbarRowOneWorkingDirectory:
+		return "focused Pane cwd"
+	case statusbarRowOneGit:
+		return "branch and working tree state"
+	case statusbarRowOneClock:
+		return "date and time"
+	case statusbarRowOneSettingsLauncher:
+		return "mouse Settings chip"
+	default:
+		return "status segment"
+	}
 }
 
 func (c *settingsCommand) statusBarHUDVisibilityEntry(locale i18n.Locale, component statusbarHUDComponent) intpickercompat.Entry {
@@ -291,13 +344,7 @@ func (c *settingsCommand) runStatusBarSection(stdout, stderr io.Writer) error {
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixHUDVisibility):
-			component, mode, ok := parseStatusbarHUDVisibilityAction(strings.TrimPrefix(action, settingsActionPrefixHUDVisibility))
-			if !ok {
-				return fmt.Errorf("unknown status bar visibility action: %s", action)
-			}
-			if err := c.runSettingsMutation(statusbarHUDComponentName(component), stdout, stderr, func(io.Writer, io.Writer) error {
-				return c.setStatusbarHUDVisibility(component, mode)
-			}); err != nil {
+			if err := c.runStatusbarVisibilityMutation(strings.TrimPrefix(action, settingsActionPrefixHUDVisibility), stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -443,13 +490,23 @@ func (c *settingsCommand) runAppearanceTargetSection(target statusbarDecorationT
 				return err
 			}
 		case strings.HasPrefix(action, settingsActionPrefixHUDVisibility):
-			component, mode, ok := parseStatusbarHUDVisibilityAction(strings.TrimPrefix(action, settingsActionPrefixHUDVisibility))
-			if !ok || component != statusbarHUDNotifications || target != statusbarDecorationTargetNotify {
+			raw := strings.TrimPrefix(action, settingsActionPrefixHUDVisibility)
+			if component, _, ok := parseStatusbarHUDVisibilityAction(raw); ok {
+				if component != statusbarHUDNotifications || target != statusbarDecorationTargetNotify {
+					return fmt.Errorf("unknown status bar component action: %s", action)
+				}
+			} else if component, _, ok := parseStatusbarRowOneVisibilityAction(raw); !ok {
 				return fmt.Errorf("unknown status bar component action: %s", action)
+			} else {
+				expected := statusbarRowOneWorkingDirectory
+				if target == statusbarDecorationTargetGit {
+					expected = statusbarRowOneGit
+				}
+				if component != expected {
+					return fmt.Errorf("unknown status bar component action: %s", action)
+				}
 			}
-			if err := c.runSettingsMutation(statusbarHUDComponentName(component), stdout, stderr, func(io.Writer, io.Writer) error {
-				return c.setStatusbarHUDVisibility(component, mode)
-			}); err != nil {
+			if err := c.runStatusbarVisibilityMutation(raw, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -499,6 +556,10 @@ func (c *settingsCommand) statusbarDecorationTargetEntries(target statusbarDecor
 	}
 	if target == statusbarDecorationTargetNotify {
 		entries = append(entries, c.statusBarHUDVisibilityEntry(locale, statusbarHUDNotifications))
+	} else if target == statusbarDecorationTargetCwd {
+		entries = append(entries, c.statusBarRowOneVisibilityEntry(locale, statusbarRowOneWorkingDirectory))
+	} else if target == statusbarDecorationTargetGit {
+		entries = append(entries, c.statusBarRowOneVisibilityEntry(locale, statusbarRowOneGit))
 	}
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, statusbarDecorationIconLabel(target), string(current)),
@@ -506,6 +567,21 @@ func (c *settingsCommand) statusbarDecorationTargetEntries(target statusbarDecor
 		SearchKey: "status bar " + string(target) + " icon off symbol emoji",
 	})
 	return entries
+}
+
+func (c *settingsCommand) runStatusbarVisibilityMutation(raw string, stdout, stderr io.Writer) error {
+	if component, mode, ok := parseStatusbarHUDVisibilityAction(raw); ok {
+		return c.runSettingsMutation(statusbarHUDComponentName(component), stdout, stderr, func(io.Writer, io.Writer) error {
+			return c.setStatusbarHUDVisibility(component, mode)
+		})
+	}
+	component, mode, ok := parseStatusbarRowOneVisibilityAction(raw)
+	if !ok {
+		return fmt.Errorf("unknown status bar visibility action: %s", raw)
+	}
+	return c.runSettingsMutation(statusbarRowOneComponentName(component), stdout, stderr, func(io.Writer, io.Writer) error {
+		return c.setStatusbarRowOneVisibility(component, mode)
+	})
 }
 
 // statusbarDecorationIconLabel keeps the Notifications HUD row worded as the

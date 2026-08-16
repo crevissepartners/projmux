@@ -79,6 +79,13 @@ func (s renderThemeSource) tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyMode
 	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent, s.effective)
 }
 
+func (s renderThemeSource) tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keyBindingAction, keymapPresent bool) string {
+	if rowOneVisibility.isDefault() {
+		return s.tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent)
+	}
+	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, rowOneVisibility, catalog, keymapPresent, s.effective)
+}
+
 func (s renderThemeSource) tmuxAppConfig(binaryPath, defaultShell string, decorations statusbarDecorationSet, catalog []keyBindingAction, keymapPresent bool) string {
 	return tmuxAppConfigWithKeymapTheme(binaryPath, defaultShell, decorations, catalog, keymapPresent, s.effective)
 }
@@ -96,4 +103,11 @@ func (s renderThemeSource) tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveRes
 		return s.tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, catalog, keymapPresent)
 	}
 	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent, s.effective)
+}
+
+func (s renderThemeSource) tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keyBindingAction, keymapPresent bool) string {
+	if rowOneVisibility.isDefault() {
+		return s.tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent)
+	}
+	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, rowOneVisibility, catalog, keymapPresent, s.effective)
 }

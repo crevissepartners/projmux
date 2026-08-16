@@ -22,14 +22,15 @@ func (c *settingsCommand) currentLiveResourcesMode() (config.LiveResourcesMode, 
 	if err != nil {
 		return config.LiveResourcesOff, "default", true
 	}
-	mode, err := config.LoadLiveResourcesFile(paths.LiveResourcesFile())
+	state, err := config.LoadLiveResourcesStateFile(paths.LiveResourcesFile())
 	if err != nil {
 		return config.LiveResourcesOff, "default", true
 	}
-	if _, err := c.statFile(paths.LiveResourcesFile()); err == nil {
-		return mode, "saved", true
+	source := string(state.Source)
+	if state.Invalid != "" {
+		source += " (invalid saved value ignored)"
 	}
-	return mode, "default", true
+	return state.Effective, source, true
 }
 
 func (c *settingsCommand) setLiveResourcesMode(value string) error {
@@ -44,10 +45,15 @@ func (c *settingsCommand) setLiveResourcesMode(value string) error {
 	if err := config.SaveLiveResourcesFile(paths.LiveResourcesFile(), mode); err != nil {
 		return err
 	}
-	if c.lookupEnv != nil && strings.TrimSpace(c.lookupEnv("TMUX")) != "" && c.runCommand != nil {
-		if err := c.runCommand("tmux", "set-option", "-g", liveResourcesTmuxOption, string(mode)); err != nil {
-			return fmt.Errorf("set live tmux resource status: %w", err)
+	prepared, live, err := c.regenerateAndReloadTmuxConfig()
+	if err != nil {
+		if prepared.Status == keymapApplyFailed {
+			return fmt.Errorf("update status bar runtime config: %w", err)
 		}
+		if live.Status == keymapApplyFailed {
+			return fmt.Errorf("reload active status bar: %w", err)
+		}
+		return err
 	}
 	return nil
 }

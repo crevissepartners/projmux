@@ -682,7 +682,7 @@ func (c *tmuxCommand) runPrintConfig(args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, c.appConfigThemeSource().tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), loadStatusbarHUDVisibilitySet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	_, err = io.WriteString(stdout, c.appConfigThemeSource().tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), loadStatusbarHUDVisibilitySet(c.homeDir, c.lookupEnv), loadStatusbarRowOneVisibilitySet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	return err
 }
 
@@ -696,7 +696,7 @@ func (c *tmuxCommand) runPrintAppConfig(args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), loadStatusbarHUDVisibilitySet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	_, err = io.WriteString(stdout, c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), loadStatusbarHUDVisibilitySet(c.homeDir, c.lookupEnv), loadStatusbarRowOneVisibilitySet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	return err
 }
 
@@ -737,7 +737,7 @@ func (c *tmuxCommand) runInstall(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	if err := c.writeFile(include, []byte(c.appConfigThemeSource().tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), loadStatusbarHUDVisibilitySet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
+	if err := c.writeFile(include, []byte(c.appConfigThemeSource().tmuxStandaloneConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), loadStatusbarHUDVisibilitySet(c.homeDir, c.lookupEnv), loadStatusbarRowOneVisibilitySet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent)), 0o644); err != nil {
 		return fmt.Errorf("write tmux standalone config: %w", err)
 	}
 
@@ -793,7 +793,7 @@ func (c *tmuxCommand) writeAppConfig(binaryOverride, configOverride string) (str
 	if err != nil {
 		return "", err
 	}
-	generated := []byte(c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), loadStatusbarHUDVisibilitySet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
+	generated := []byte(c.appConfigThemeSource().tmuxAppConfigWithAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, c.defaultShell(), loadStatusbarDecorationSet(c.homeDir, c.lookupEnv), loadAIBadgeStyle(c.homeDir, c.lookupEnv), loadDesktopNotifyModeForTmuxConfig(c.homeDir, c.lookupEnv), loadLiveResourcesMode(c.homeDir, c.lookupEnv), loadStatusbarHUDVisibilitySet(c.homeDir, c.lookupEnv), loadStatusbarRowOneVisibilitySet(c.homeDir, c.lookupEnv), keyBindings, keymapPresent))
 	// Apply is also a convergence boundary for the generated artifact. Avoid a
 	// truncate/write when the bytes are already exact so repeat apply preserves
 	// the file identity and mtime along with registry/tmux no-op behavior. A
@@ -1790,17 +1790,24 @@ func tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle(binaryPath string, decor
 }
 
 func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
-	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibilityImpl(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, defaultStatusbarHUDVisibilitySet(), catalog, keymapPresent, effective)
+	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, defaultStatusbarHUDVisibilitySet(), defaultStatusbarRowOneVisibilitySet(), catalog, keymapPresent, effective)
 }
 
 func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	if hudVisibility.isDefault() {
 		return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, catalog, keymapPresent, effective)
 	}
-	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibilityImpl(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent, effective)
+	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, defaultStatusbarRowOneVisibilitySet(), catalog, keymapPresent, effective)
 }
 
-func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibilityImpl(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	if rowOneVisibility.isDefault() {
+		return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent, effective)
+	}
+	return tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, rowOneVisibility, catalog, keymapPresent, effective)
+}
+
+func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	bin := tmuxShellQuote(binaryPath)
 	roles := theme.RenderRolesFromEffective(effective)
 	windowStatusFormat, windowStatusCurrentFormat := tmuxWindowStatusFormats(binaryPath, effective)
@@ -1811,6 +1818,11 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 	liveResourcesMode = config.NormalizeLiveResourcesMode(string(liveResourcesMode))
 	hudVisibility.Notifications = config.NormalizeStatusbarVisibility(string(hudVisibility.Notifications))
 	hudVisibility.AgentUsage = config.NormalizeStatusbarVisibility(string(hudVisibility.AgentUsage))
+	rowOneVisibility.Project = config.NormalizeStatusbarVisibility(string(rowOneVisibility.Project))
+	rowOneVisibility.WorkingDirectory = config.NormalizeStatusbarVisibility(string(rowOneVisibility.WorkingDirectory))
+	rowOneVisibility.Git = config.NormalizeStatusbarVisibility(string(rowOneVisibility.Git))
+	rowOneVisibility.Clock = config.NormalizeStatusbarVisibility(string(rowOneVisibility.Clock))
+	rowOneVisibility.SettingsLauncher = config.NormalizeStatusbarVisibility(string(rowOneVisibility.SettingsLauncher))
 	lines := []string{
 		"# Generated by projmux. Safe to source from ~/.tmux.conf.",
 		"set -as terminal-features \",xterm*:RGB\"",
@@ -1836,8 +1848,8 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 		"set -g status "+statusbarRowCountOption(hudVisibility),
 		"set -g status-left-length 20",
 		"set -g status-right-length 140",
-		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin, roles)),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat(roles)+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" internal status kube)#[norange]#[range=user|git]#("+bin+" internal status git)#[norange]"+statusbarLiveResourcesSegment(bin)+"#[fg="+roles.StatusTextSecondary+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon+" projmux", roles)),
+		"set -g status-left "+tmuxConfigQuote(statusbarRowOneProjectFormat(bin, roles, rowOneVisibility)),
+		"set -g status-right "+tmuxConfigQuote(statusbarRowOneRightFormat(bin, roles, liveResourcesMode, rowOneVisibility, statusbarSettingsIcon+" projmux")),
 	)
 	lines = append(lines, statusbarRowFormatLines(bin, false, hudVisibility)...)
 	if keymapPresent {
@@ -1896,17 +1908,24 @@ func tmuxAppConfigWithKeymapThemeAndAIBadgeStyle(binaryPath, defaultShell string
 }
 
 func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
-	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibilityImpl(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, defaultStatusbarHUDVisibilitySet(), catalog, keymapPresent, effective)
+	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, defaultStatusbarHUDVisibilitySet(), defaultStatusbarRowOneVisibilitySet(), catalog, keymapPresent, effective)
 }
 
 func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	if hudVisibility.isDefault() {
 		return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeAndLiveResources(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, catalog, keymapPresent, effective)
 	}
-	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibilityImpl(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent, effective)
+	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, defaultStatusbarRowOneVisibilitySet(), catalog, keymapPresent, effective)
 }
 
-func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibilityImpl(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
+	if rowOneVisibility.isDefault() {
+		return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent, effective)
+	}
+	return tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, rowOneVisibility, catalog, keymapPresent, effective)
+}
+
+func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibilityImpl(binaryPath, defaultShell string, decorations statusbarDecorationSet, badgeStyle config.AIBadgeStyle, desktopNotifyMode config.DesktopNotifyMode, liveResourcesMode config.LiveResourcesMode, hudVisibility statusbarHUDVisibilitySet, rowOneVisibility statusbarRowOneVisibilitySet, catalog []keyBindingAction, keymapPresent bool, effective theme.EffectiveTheme) string {
 	bin := tmuxShellQuote(binaryPath)
 	tokens := theme.TmuxRenderTokensFromEffective(effective)
 	roles := theme.RenderRolesFromEffective(effective)
@@ -1963,7 +1982,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHU
 		"set -g window-active-style \"bg=" + roles.FocusPaneActiveBg + "\"",
 		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
 	}
-	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHUDVisibility(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, catalog, keymapPresent, effective)), "\n")[1:]...)
+	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, rowOneVisibility, catalog, keymapPresent, effective)), "\n")[1:]...)
 	lines = append(lines,
 		"set-hook -g after-new-window "+tmuxConfigQuote(tmuxBindingConvergenceHookBody(bin)),
 		"set-hook -g after-split-window "+tmuxConfigQuote(tmuxBindingConvergenceHookBody(bin)),
@@ -1986,8 +2005,8 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndHU
 	// terminal's cap.
 	lines = append(lines,
 		"set -g status "+statusbarRowCountOption(hudVisibility),
-		"set -g status-left "+tmuxConfigQuote(statusbarSessionLeftFormat(bin, roles)),
-		"set -g status-right "+tmuxConfigQuote(statusbarCwdSegmentFormat(roles)+"#[fg="+roles.DividerFg+"]  #[range=user|kube]#("+bin+" internal status kube)#[norange]#[range=user|git]#("+bin+" internal status git)#[norange]"+statusbarLiveResourcesSegment(bin)+"#[fg="+roles.StatusTextSecondary+"]   %Y-%m-%d %H:%M "+statusbarSettingsButton(statusbarSettingsIcon, roles)),
+		"set -g status-left "+tmuxConfigQuote(statusbarRowOneProjectFormat(bin, roles, rowOneVisibility)),
+		"set -g status-right "+tmuxConfigQuote(statusbarRowOneRightFormat(bin, roles, liveResourcesMode, rowOneVisibility, statusbarSettingsIcon)),
 	)
 	lines = append(lines, statusbarRowFormatLines(bin, true, hudVisibility)...)
 	return withTmuxConfigDigest(strings.Join(lines, "\n") + "\n")
