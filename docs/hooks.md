@@ -354,7 +354,7 @@ Runtime action overrides are stored separately from the install catalog at:
 ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json
 ```
 
-`Settings > Notifications > Hook quiet policy` reads and writes that file. The
+`Settings > Notifications > Agent event behavior` reads and writes that file. The
 runtime file only changes ingest behavior (`notify`, `state`, or `quiet`);
 `projmux ai integrate codex` still uses the catalog `install` field to decide
 which hooks to write. Runtime overrides also apply to known specialized
@@ -612,7 +612,7 @@ that fallback; catalog `"notify"` and `"state"` entries still need built-in
 handler code for event-specific queue rows or state transitions. Runtime action
 overrides live in the same
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json` file used by
-Codex and are managed from `Settings > Notifications > Hook quiet policy`.
+Codex and are managed from `Settings > Notifications > Agent event behavior`.
 They only affect ingest delivery; `projmux ai integrate claude` still uses the
 catalog `install` field for installed hook events.
 

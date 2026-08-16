@@ -2881,7 +2881,9 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	if got, want := detailOptions.UI, "settings-notifications-delivery-detail"; got != want {
 		t.Fatalf("delivery source detail UI = %q, want %q", got, want)
 	}
-	if got, want := detailOptions.Footer, "Enter: copy command"; !strings.Contains(got, want) {
+	// The detail now owns both an observable re-check and the copyable setup
+	// commands, so the footer names both affordances.
+	if got, want := detailOptions.Footer, "Enter: check or copy"; !strings.Contains(got, want) {
 		t.Fatalf("delivery source detail footer = %q, want %q", got, want)
 	}
 	for _, want := range []string{
@@ -2911,9 +2913,14 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 	if hasEntryLabelContaining(detailOptions.Entries, "--mode hooks") {
 		t.Fatalf("AI notify detail entries = %#v, want no --mode hooks command", detailOptions.Entries)
 	}
+	// The detail is still read-only: the only actionable rows are the observable
+	// re-check and the copyable commands. Nothing here installs or removes the
+	// wiring.
 	for _, entry := range detailOptions.Entries {
-		if entry.Value != settingsBackValue && entry.Value != settingsNoopValue && !strings.HasPrefix(entry.Value, settingsActionPrefixAINotifyCommand) {
-			t.Fatalf("AI notify detail entry = %#v, want back/noop/command value", entry)
+		if entry.Value != settingsBackValue && entry.Value != settingsNoopValue &&
+			!strings.HasPrefix(entry.Value, settingsActionPrefixAINotifyCommand) &&
+			!strings.HasPrefix(entry.Value, settingsActionPrefixAINotifyCheck) {
+			t.Fatalf("AI notify detail entry = %#v, want back/noop/check/command value", entry)
 		}
 	}
 	if len(tmuxRunner.calls) != 0 {

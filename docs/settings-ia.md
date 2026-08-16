@@ -63,21 +63,36 @@ step, never a silent no-op.
     (`off`/`notify`), `Dedupe window`, and the `PROJMUX_NOTIFY_HOOK` external
     sender as read-only state. The external sender is never presented as an
     alternative to the `[hooks.send-noti]` fan-out, which is Automation.
-  - `Provider Integrations [View]` — Codex/Claude/Antigravity producer wiring,
-    status, conflict, config path, and copyable install/remove commands.
-    Settings copies command text; it never installs or removes wiring.
-  - `tmux event source [View]` — the tmux bell producer. It is an event source,
-    not a Provider, so it is not a member of the Provider inventory.
+  - `Provider Integrations [View]` — the Claude/Codex/Antigravity Provider
+    inventory and nothing else. Each Provider item shows wiring status,
+    conflict, config path and setup guidance, offers `Check integration` to
+    re-read the wiring and report what it observed, and offers copyable
+    install/remove commands. Settings copies command text; it never installs or
+    removes wiring.
+  - `tmux event source [View]` — the tmux bell producer, flat: bell wiring
+    status, source, conflict, setup guidance, and `Check`. It is an event
+    source, not a Provider, so it is not a member of the Provider inventory and
+    does not render as a Provider item.
   - `Agent event behavior [View]` — per Provider, per event: default / notify /
-    state only / quiet. It writes only
+    state only / quiet. It covers the same Claude/Codex/Antigravity enum the
+    Provider inventory uses, so a Provider can never be wireable here and
+    missing there. It writes only
     `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json`.
+  - Provider wiring and Provider event behavior are separate destinations:
+    install/remove/conflict/source rows exist only under Provider Integrations,
+    and the notify/state/quiet projection exists only under Agent event
+    behavior. Neither surface renders the other's controls.
 - **Automation** — Projmux-owned user scripts and the policy that gates the
   project-local ones. It does not own Provider wiring or desktop delivery.
   - `Projmux session lifecycle [View]` — `Before session create`,
     `After session create`, `After session attach`. Each event is a View showing
     the command, its effective state, and its source before any mutation row.
   - `After notification queued [View]` — `[hooks.send-noti]`, the user fan-out
-    that runs after the durable queue write.
+    that runs after the durable queue write. The row says so from its own side:
+    it runs after the queue write, not instead of the desktop sender. Setting
+    `PROJMUX_NOTIFY_HOOK` and `[hooks.send-noti]` at the same time is a
+    supported combination, not a conflict — one chooses which process delivers
+    the OS notification, the other is a script that runs on the queue write.
   - `Project automation policy [Toggle]` — the promoted execution gate for
     project-local automation.
   - Global `[hooks.*]` stays read-only in app: its edit and remove rows render

@@ -147,6 +147,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixAIEnabledAgent, settingsActionMeta("Enabled providers", settingsAxisGlobal, settingsOwnerAI)},
 	{settingsActionPrefixAINotifyDiagnostic, settingsNavigationMeta("Provider Integrations", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixAINotifyCommand, settingsActionMeta("AI notify diagnostic command", settingsAxisGlobal, settingsOwnerAINotifyDiagnostics)},
+	{settingsActionPrefixAINotifyCheck, settingsActionMeta("AI notify diagnostic check", settingsAxisGlobal, settingsOwnerAINotifyDiagnostics)},
 	{settingsActionPrefixAIBadgeStyle, settingsActionMeta("Agent attention badge style", settingsAxisGlobal, settingsOwnerAppearance)},
 	{settingsActionPrefixDesktopNotifyMode, settingsActionMeta("Delivery mode", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixAINotifyDedupe, settingsActionMeta("Dedupe window", settingsAxisGlobal, settingsOwnerNotifications)},
@@ -251,6 +252,7 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 			value == settingsNotificationsDelivery || value == settingsNotificationsHookActions ||
 			value == settingsNotificationsProviders || value == settingsNotificationsTmuxSource ||
 			strings.HasPrefix(value, settingsActionPrefixAINotifyDiagnostic) ||
+			strings.HasPrefix(value, settingsActionPrefixAINotifyCheck) ||
 			strings.HasPrefix(value, settingsActionPrefixDesktopNotifyMode) ||
 			strings.HasPrefix(value, settingsActionPrefixAINotifyDedupe) ||
 			strings.HasPrefix(value, settingsActionPrefixAIHookProvider) ||
@@ -296,7 +298,8 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 	case settingsOwnerTheme:
 		return strings.HasPrefix(value, settingsActionPrefixTheme)
 	case settingsOwnerAINotifyDiagnostics:
-		return strings.HasPrefix(value, settingsActionPrefixAINotifyCommand)
+		return strings.HasPrefix(value, settingsActionPrefixAINotifyCommand) ||
+			strings.HasPrefix(value, settingsActionPrefixAINotifyCheck)
 	}
 	return false
 }
@@ -328,6 +331,7 @@ const (
 	settingsActionPrefixAIBadgeStyle       = "ai-badge-style:"
 	settingsActionPrefixAINotifyDiagnostic = "ai-notify:"
 	settingsActionPrefixAINotifyCommand    = "ai-notify-command:"
+	settingsActionPrefixAINotifyCheck      = "ai-notify-check:"
 	settingsActionPrefixAINotifyDedupe     = "ai-notify-dedupe:"
 	settingsActionPrefixAIResumeLimit      = "ai-resume-limit:"
 	settingsActionPrefixAIResumeDepth      = "ai-resume-depth:"

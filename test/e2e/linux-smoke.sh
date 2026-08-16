@@ -265,6 +265,38 @@ printf 'Back\r' >&9
 smoke_wait_for "Settings root after deep search" sh -c \
   "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Keybindings'"
 
+# Notification ownership walk. The tmux bell is an event source rather than an
+# Agent Provider, so it has its own destination: a deep search from the root
+# lands on the owning Notifications View, and entering the row reaches the flat
+# bell wiring state. Reaching either destination is navigation, so it must not
+# write the Agent event behavior runtime file. Every wait is byte-offset
+# anchored so an earlier frame cannot satisfy it.
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Provider Integrations\r' >&9
+smoke_wait_for "Notifications view" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Notifications > '"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'tmux event source bell producer\r' >&9
+smoke_wait_for "tmux event source view" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Notifications > tmux event source > '"
+# The flat bell state renders here rather than behind a Provider item detail.
+# The full "not an Agent Provider" source text is asserted by the unit tests; a
+# 72-column popup truncates it, so the smoke checks the row itself.
+smoke_wait_for "bell wiring state" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Bell wiring status'"
+if [[ -e "$XDG_CONFIG_HOME/projmux/ai-hook-actions.json" ]]; then
+  echo "navigating to the tmux event source wrote an Agent event behavior override" >&2
+  exit 1
+fi
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Back\r' >&9
+smoke_wait_for "Notifications view after Back" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Provider Integrations'"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Back\r' >&9
+smoke_wait_for "Settings root after notification walk" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Keybindings'"
+
 printf 'Keybindings\r' >&9
 smoke_wait_for "Keybindings category list" grep -aFq "Settings > Keybindings >" "$recorder_log"
 # Phase 0 nests the actions under navigation categories: search reaches the

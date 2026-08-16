@@ -355,8 +355,14 @@ func (c *settingsCommand) hookEventDetailEntries(scope, event string) []intpicke
 	if strings.TrimSpace(command) != "" {
 		state = "run = " + command
 	}
+	source := configPath + " [hooks." + event + "]"
+	if event == string(hooks.EventSendNoti) {
+		// Say the boundary from this side too: the fan-out script and the
+		// desktop sender override are different jobs, not two ways to do one.
+		source += " - " + settingsSendNotiBoundary
+	}
 	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabelInfo("Command", state, configPath+" [hooks."+event+"]"),
+		Label:     c.rowLabelInfo("Command", state, source),
 		Value:     settingsNoopValue,
 		SearchKey: "command effective source hooks." + event + " " + configPath,
 	})
