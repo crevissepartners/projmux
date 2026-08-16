@@ -235,21 +235,17 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 			if c.keybindingPhysicalCaptureAvailable() {
 				err = c.runKeybindingAdd(actionID, stdout, stderr)
 			} else {
-				err = c.runKeybindingRecorder(actionID, stdout)
+				err = c.runKeybindingRecorder(actionID, stdout, stderr)
 			}
 			if err != nil {
 				return err
 			}
 		case "capture":
-			if err := c.runKeybindingCapture(actionID, stdout); err != nil {
+			if err := c.runKeybindingCapture(actionID, stdout, stderr); err != nil {
 				return err
 			}
 		case "type":
-			if err := c.runKeybindingTyped(actionID, false, stdout); err != nil {
-				return err
-			}
-		case "advanced":
-			if _, err := c.runKeybindingAddAdvanced(actionID, stdout, stderr); err != nil {
+			if err := c.runKeybindingTyped(actionID, false, stdout, stderr); err != nil {
 				return err
 			}
 		case "unbind":
@@ -284,7 +280,7 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 	}
 }
 
-func (c *settingsCommand) runKeybindingRecorder(actionID string, stdout io.Writer) error {
+func (c *settingsCommand) runKeybindingRecorder(actionID string, stdout, stderr io.Writer) error {
 	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
@@ -303,7 +299,7 @@ func (c *settingsCommand) runKeybindingRecorder(actionID string, stdout io.Write
 		UI:            "settings-keybinding-recorder",
 		Title:         "Record Key - " + keyBindingDisplayName(action),
 		Header:        "Action: " + keyBindingDisplayName(action),
-		Footer:        projmuxFooter("Enter confirms · Esc cancels · Advanced typed entry is available from Action detail."),
+		Footer:        projmuxFooter("Enter confirms · Esc cancels · Enter key name manually is available from Action detail."),
 		DisableSearch: true,
 		Bindings:      c.settingsCloseBindings(),
 		Recorder:      recorder,
@@ -312,6 +308,7 @@ func (c *settingsCommand) runKeybindingRecorder(actionID string, stdout io.Write
 		return err
 	}
 	if result.Key == "esc" {
+		c.setSettingsFeedback("Keybinding cancelled", "recorder closed without adding a key")
 		return nil
 	}
 	if result.Key != "enter" {
@@ -319,9 +316,22 @@ func (c *settingsCommand) runKeybindingRecorder(actionID string, stdout io.Write
 	}
 	chord := strings.TrimSpace(result.Value)
 	if chord == "" {
+		c.setSettingsFeedback("Keybinding cancelled", "no key was recorded")
 		return nil
 	}
-	return c.addKeymapAliasAndApply(action.ID, chord, stdout)
+	return c.runKeybindingWrite(stdout, stderr, func(out io.Writer) error {
+		return c.addKeymapAliasAndApply(action.ID, chord, out)
+	})
+}
+
+// runKeybindingWrite is the single feedback boundary for every keybinding
+// write. Recorder, typed entry, and physical capture all pass through it, so a
+// rejected chord shows the reason as an in-popup result instead of tearing the
+// Settings popup down with a returned error.
+func (c *settingsCommand) runKeybindingWrite(stdout, stderr io.Writer, write func(io.Writer) error) error {
+	return c.runObservedSettingsMutation("Keybinding", stdout, stderr, func(out, _ io.Writer) error {
+		return write(out)
+	})
 }
 
 func normalizeKeybindingRecorderKey(key intpicker.RecorderKey) (string, error) {
@@ -385,7 +395,7 @@ base:
 	}
 	if baseName == "Enter" || baseName == "Escape" {
 		if len(modifiers) == 0 {
-			return "", fmt.Errorf("plain %s is a recorder control; use Advanced typed entry", baseName)
+			return "", fmt.Errorf("plain %s is a recorder control; use Enter key name manually", baseName)
 		}
 	}
 	chord := baseName
@@ -453,7 +463,7 @@ func parseKeymapDetailAction(value, actionID string) (string, bool) {
 	}
 	op := strings.TrimPrefix(value, settingsActionPrefixKeymap+actionID+":")
 	switch {
-	case op == "add", op == "advanced", op == "capture", op == "type", op == "reset", op == "unbind":
+	case op == "add", op == "capture", op == "type", op == "reset", op == "unbind":
 		return op, true
 	case strings.HasPrefix(op, "key:"):
 		return op, true
@@ -503,60 +513,11 @@ func (c *settingsCommand) runKeybindingAdd(actionID string, stdout, stderr io.Wr
 		}
 		switch op {
 		case "capture":
-			return c.runKeybindingCapture(actionID, stdout)
+			return c.runKeybindingCapture(actionID, stdout, stderr)
 		case "type":
-			return c.runKeybindingTyped(actionID, false, stdout)
-		case "advanced":
-			done, err := c.runKeybindingAddAdvanced(actionID, stdout, stderr)
-			if err != nil {
-				return err
-			}
-			if done {
-				return nil
-			}
+			return c.runKeybindingTyped(actionID, false, stdout, stderr)
 		default:
 			return fmt.Errorf("unknown keybinding add operation: %s", op)
-		}
-	}
-}
-
-func (c *settingsCommand) runKeybindingAddAdvanced(actionID string, stdout, stderr io.Writer) (bool, error) {
-	for {
-		entries, title, err := c.keybindingAddAdvancedEntries(actionID)
-		if err != nil {
-			return false, err
-		}
-		result, err := c.runPicker(intpickercompat.Options{
-			UI:         "settings-keybinding-add-advanced",
-			Entries:    entries,
-			Title:      title,
-			Prompt:     "Settings > Keybindings > Action > Add key > Advanced > ",
-			Footer:     projmuxFooter("Typed key names and raw diagnostics stay advanced."),
-			ExpectKeys: []string{"enter"},
-			Bindings:   c.settingsCloseBindings(),
-		})
-		if err != nil {
-			return false, err
-		}
-		action := strings.TrimSpace(result.Value)
-		if result.Key != "enter" || action == "" {
-			return false, errSettingsClosed
-		}
-		if action == settingsBackValue {
-			return false, nil
-		}
-		if action == settingsNoopValue {
-			continue
-		}
-		op, ok := parseKeymapDetailAction(action, actionID)
-		if !ok {
-			return false, fmt.Errorf("unknown keybinding add advanced action: %s", action)
-		}
-		switch op {
-		case "type":
-			return true, c.runKeybindingTyped(actionID, false, stdout)
-		default:
-			return false, fmt.Errorf("unknown keybinding add advanced operation: %s", op)
 		}
 	}
 }
@@ -600,11 +561,262 @@ func (c *settingsCommand) runKeybindingKeyDetail(actionID, chord string, stdout,
 				return c.removeKeymapKeyAndApply(actionID, removeChord, out)
 			})
 		case strings.HasPrefix(op, "test:"):
+			if err := c.runKeybindingDeliveryTest(actionID, strings.TrimPrefix(op, "test:"), stdout, stderr); err != nil {
+				return err
+			}
 			continue
 		default:
 			return fmt.Errorf("unknown keybinding key operation: %s", op)
 		}
 	}
+}
+
+// keybindingDeliveryTestMode is the reader a delivery test can legitimately own
+// in this context. Exactly one reader is ever live: either the picker owns the
+// terminal (recorder) or the controlling-TTY probe does. They are never started
+// together, which is what keeps a tmux popup from fighting the probe for input
+// and then hanging until the probe timeout.
+type keybindingDeliveryTestMode string
+
+const (
+	keybindingDeliveryTestProbe       keybindingDeliveryTestMode = "controlling-tty probe"
+	keybindingDeliveryTestRecorder    keybindingDeliveryTestMode = "picker recorder"
+	keybindingDeliveryTestUnsupported keybindingDeliveryTestMode = "unavailable"
+)
+
+const keybindingDeliveryTestNextStep = "run `projmux setup` in a plain terminal to probe delivery, then `projmux setup terminal <terminal> --apply`"
+
+// keybindingDeliveryTestReader picks the one reader this context can own.
+func (c *settingsCommand) keybindingDeliveryTestReader() keybindingDeliveryTestMode {
+	if c.keybindingPhysicalCaptureAvailable() {
+		return keybindingDeliveryTestProbe
+	}
+	env := c.lookupEnv
+	if env == nil {
+		env = os.Getenv
+	}
+	if strings.TrimSpace(env("TMUX")) != "" {
+		// Inside a tmux popup the popup client owns the tty, so the probe
+		// cannot read. The picker's own input loop can, and it is already the
+		// single reader for this frame.
+		return keybindingDeliveryTestRecorder
+	}
+	return keybindingDeliveryTestUnsupported
+}
+
+// keybindingDeliveryTestUnavailable reports why a delivery test cannot produce
+// a trustworthy observation here, plus the canonical next step. A true result
+// is rendered as a disabled row rather than as an action that would no-op.
+func (c *settingsCommand) keybindingDeliveryTestUnavailable(chord string) (reason string, next string, unavailable bool) {
+	switch c.keybindingDeliveryTestReader() {
+	case keybindingDeliveryTestProbe:
+		return "", "", false
+	case keybindingDeliveryTestRecorder:
+		switch strings.TrimSpace(chord) {
+		case "Enter", "Escape":
+			return "the recorder consumes plain " + strings.TrimSpace(chord) + " as its own control, so it cannot observe this key",
+				keybindingDeliveryTestNextStep, true
+		}
+		return "", "", false
+	default:
+		return "no interactive key reader can be owned in this context", keybindingDeliveryTestNextStep, true
+	}
+}
+
+// keybindingDeliveryObservation is one observable Test delivery result. It is
+// a report, never a stored value: nothing here is written to keymap.toml, so a
+// raw observation can never become a saved logical key.
+type keybindingDeliveryObservation struct {
+	Source          keybindingDeliveryTestMode
+	LogicalKey      string
+	RawObservation  string
+	TmuxReceivedKey string
+	Status          keybindingDeliveryDiagnosticStatus
+	Summary         string
+}
+
+// classifyKeybindingDeliveryObservation maps one observation onto the four
+// delivery outcomes. Every input combination lands on exactly one of them, so a
+// delivery test cannot end without a result.
+func classifyKeybindingDeliveryObservation(expected, observed, raw string) keybindingDeliveryObservation {
+	obs := keybindingDeliveryObservation{
+		LogicalKey:      keybindingChordDisplay(expected),
+		RawObservation:  raw,
+		TmuxReceivedKey: observed,
+	}
+	if strings.TrimSpace(obs.RawObservation) == "" {
+		obs.RawObservation = "(none)"
+	}
+	switch {
+	case strings.TrimSpace(observed) == "":
+		obs.Status = keybindingDeliveryMissing
+		obs.TmuxReceivedKey = "(none)"
+		obs.Summary = "key did not arrive; the terminal or OS consumed it before Projmux"
+	case observed == expected:
+		obs.Status = keybindingDeliveryDelivered
+		obs.Summary = "the pressed key reached Projmux as " + expected
+	case keybindingChordsAreAmbiguousPair(expected, observed):
+		obs.Status = keybindingDeliveryAmbiguous
+		obs.TmuxReceivedKey = expected + " / " + observed
+		obs.Summary = "ambiguous key; " + expected + " and " + observed + " share one byte sequence"
+	default:
+		obs.Status = keybindingDeliveryAdapterNeeded
+		obs.Summary = "adapter-needed; the terminal delivered " + observed + " instead of " + expected
+	}
+	return obs
+}
+
+// keybindingChordsAreAmbiguousPair reports the chord pairs a terminal cannot
+// tell apart on the wire.
+func keybindingChordsAreAmbiguousPair(a, b string) bool {
+	pairs := [][2]string{{"Enter", "C-m"}, {"Tab", "C-i"}, {"Escape", "C-["}, {"BSpace", "C-h"}}
+	for _, pair := range pairs {
+		if (a == pair[0] && b == pair[1]) || (a == pair[1] && b == pair[0]) {
+			return true
+		}
+	}
+	return false
+}
+
+func renderKeybindingDeliveryObservation(obs keybindingDeliveryObservation) []string {
+	return []string{
+		"test delivery result:",
+		"  reader: " + string(obs.Source),
+		"  logical key: " + obs.LogicalKey,
+		"  raw observation: " + obs.RawObservation,
+		"  tmux received key: " + obs.TmuxReceivedKey,
+		"  delivery status: " + string(obs.Status) + " - " + obs.Summary,
+	}
+}
+
+// runKeybindingDeliveryTest is the Test delivery Action. It never writes
+// keymap.toml and never applies tmux config; its only product is the observed
+// result, which is reported through the shared Settings feedback boundary so it
+// is visible inside the popup.
+func (c *settingsCommand) runKeybindingDeliveryTest(actionID, chord string, stdout, stderr io.Writer) error {
+	if reason, next, unavailable := c.keybindingDeliveryTestUnavailable(chord); unavailable {
+		c.setSettingsFeedback("Test delivery unavailable", reason+"; next: "+next)
+		return nil
+	}
+	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
+	if err != nil {
+		return err
+	}
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		return fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	mode := c.keybindingDeliveryTestReader()
+	var obs keybindingDeliveryObservation
+	var cancelled bool
+	switch mode {
+	case keybindingDeliveryTestRecorder:
+		obs, cancelled, err = c.observeKeybindingDeliveryWithRecorder(action, chord)
+	default:
+		obs, err = c.observeKeybindingDeliveryWithProbe(action, chord)
+	}
+	if err != nil {
+		c.setSettingsFeedback("Test delivery failed", err.Error())
+		return nil
+	}
+	if cancelled {
+		c.setSettingsFeedback("Test delivery cancelled", "no key was pressed; nothing changed")
+		return nil
+	}
+	obs.Source = mode
+	return c.runObservedSettingsMutation("Test delivery", stdout, stderr, func(out, _ io.Writer) error {
+		for _, line := range renderKeybindingDeliveryObservation(obs) {
+			fmt.Fprintln(out, line)
+		}
+		return nil
+	})
+}
+
+// observeKeybindingDeliveryWithRecorder reads one chord through the picker's
+// own input loop. It reuses the Add recorder's Normalize so the test and the
+// Add path agree on what a key is called, and it deliberately passes no
+// Validate: a delivery test must not run keymap conflict policy against a chord
+// that is already bound to this very action.
+func (c *settingsCommand) observeKeybindingDeliveryWithRecorder(action keyBindingAction, chord string) (keybindingDeliveryObservation, bool, error) {
+	var raw string
+	recorder := &intpicker.RecorderOptions{
+		Normalize: func(key intpicker.RecorderKey) (string, error) {
+			raw = describeRecorderKeyObservation(key)
+			return normalizeKeybindingRecorderKey(key)
+		},
+	}
+	result, err := c.runPicker(intpickercompat.Options{
+		UI:            "settings-keybinding-delivery-test",
+		Title:         "Test delivery - " + keybindingChordDisplay(chord),
+		Header:        "Press " + keybindingChordDisplay(chord) + " once for " + keyBindingDisplayName(action),
+		Footer:        projmuxFooter("Press the key · Enter reports the result · Esc cancels."),
+		DisableSearch: true,
+		Bindings:      c.settingsCloseBindings(),
+		Recorder:      recorder,
+	})
+	if err != nil {
+		return keybindingDeliveryObservation{}, false, err
+	}
+	if result.Key == "esc" {
+		return keybindingDeliveryObservation{}, true, nil
+	}
+	if result.Key != "enter" {
+		return keybindingDeliveryObservation{}, false, errSettingsClosed
+	}
+	return classifyKeybindingDeliveryObservation(chord, strings.TrimSpace(result.Value), raw), false, nil
+}
+
+func describeRecorderKeyObservation(key intpicker.RecorderKey) string {
+	switch {
+	case strings.TrimSpace(key.Name) != "":
+		return "picker key name " + strings.TrimSpace(key.Name)
+	case key.Text != "":
+		return "printable text " + visibleEscape(key.Text)
+	default:
+		return "(no stable key name)"
+	}
+}
+
+// observeKeybindingDeliveryWithProbe reads one chord off the controlling tty.
+// The read is bounded by defaultProbeTimeout, and a timeout is a reported
+// key-did-not-arrive result rather than a hang.
+func (c *settingsCommand) observeKeybindingDeliveryWithProbe(action keyBindingAction, chord string) (keybindingDeliveryObservation, error) {
+	key := probeKey{
+		ActionID:   action.ID,
+		Label:      keybindingChordDisplay(chord),
+		Action:     "delivery test for " + keyBindingDisplayName(action),
+		PlainChord: chord,
+	}
+	if defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID); ok &&
+		strings.TrimSpace(defaultAction.PlainChord) == strings.TrimSpace(chord) {
+		key.Plain = defaultAction.ProbePlain
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultProbeTimeout)
+	defer cancel()
+	res, err := c.probeLabKeybindingContext(ctx, key, defaultProbeTimeout)
+	if err != nil {
+		return keybindingDeliveryObservation{}, err
+	}
+	raw := visibleEscape(string(res.Sequence))
+	observed := ""
+	switch {
+	case len(res.Sequence) == 0:
+		raw = ""
+	case isAmbiguousEnterSequence(res.Sequence):
+		observed = "C-m"
+		if chord == "C-m" {
+			observed = "Enter"
+		}
+	case res.Status == probeStatusPlain:
+		observed = chord
+	default:
+		if suggested, ok := suggestedPlainChordForSequence(res.Sequence); ok {
+			observed = suggested
+		} else {
+			observed = "an unnamed raw sequence"
+		}
+	}
+	return classifyKeybindingDeliveryObservation(chord, observed, raw), nil
 }
 
 // keybindingPhysicalCaptureAvailable reports whether the "Press a key"
@@ -630,6 +842,20 @@ func (c *settingsCommand) keybindingPhysicalCaptureAvailable() bool {
 	return strings.TrimSpace(env("TMUX")) == ""
 }
 
+// keybindingPhysicalCaptureUnavailableReason names why the "Press a key" row
+// cannot read here, so the disabled row states a cause instead of only an
+// absence.
+func (c *settingsCommand) keybindingPhysicalCaptureUnavailableReason() string {
+	env := c.lookupEnv
+	if env == nil {
+		env = os.Getenv
+	}
+	if strings.TrimSpace(env("TMUX")) != "" {
+		return "the tmux popup client owns the terminal input"
+	}
+	return "no physical key reader is available in this context"
+}
+
 func (c *settingsCommand) keybindingPrefersNativeCapture() bool {
 	if c.preferNativeKeyCapture != nil {
 		return c.preferNativeKeyCapture()
@@ -644,10 +870,10 @@ func (c *settingsCommand) keybindingNativeCaptureGrace() time.Duration {
 	return 100 * time.Millisecond
 }
 
-func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer) error {
+func (c *settingsCommand) runKeybindingCapture(actionID string, stdout, stderr io.Writer) error {
 	if !c.keybindingPhysicalCaptureAvailable() {
 		fmt.Fprintln(stdout, "physical key capture is unavailable in this context; enter a key name instead")
-		return c.runKeybindingTyped(actionID, false, stdout)
+		return c.runKeybindingTyped(actionID, false, stdout, stderr)
 	}
 	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
@@ -719,7 +945,7 @@ func (c *settingsCommand) runKeybindingCapture(actionID string, stdout io.Writer
 		fmt.Fprintln(stdout, "  raw bytes: (native physical event)")
 		fmt.Fprintln(stdout, "  tmux received key: "+chord)
 		fmt.Fprintln(stdout, "  delivery status: delivered - physical key captured before terminal encoding")
-		return true, c.addKeymapAliasAndApply(action.ID, chord, stdout)
+		return true, c.addCapturedKeybindingChord(action.ID, chord, stdout, stderr)
 	}
 
 captureLoop:
@@ -781,25 +1007,47 @@ captureLoop:
 		chord, ok := captureResultPlainChord(res)
 		if !ok {
 			fmt.Fprintf(stdout, "captured key is plain, but Settings could not normalize it to a key name\n")
+			c.setSettingsFeedback("Keybinding failed", "captured key has no stable tmux key name; use Enter key name manually")
 			return nil
 		}
-		return c.addKeymapAliasAndApply(action.ID, chord, stdout)
+		return c.addCapturedKeybindingChord(action.ID, chord, stdout, stderr)
 	case probeStatusUnknown:
 		chord, ok := suggestedPlainChordForSequence(res.Sequence)
 		if !ok {
 			fmt.Fprintf(stdout, "captured raw sequence %s is not safe to persist; type a custom key name instead\n", visibleEscape(string(res.Sequence)))
+			c.setSettingsFeedback("Keybinding failed", "captured raw sequence is never stored as a key; use Enter key name manually")
 			return nil
 		}
-		return c.addKeymapAliasAndApply(action.ID, chord, stdout)
+		return c.addCapturedKeybindingChord(action.ID, chord, stdout, stderr)
 	case probeStatusTimeout:
 		fmt.Fprintf(stdout, "no key was captured; nothing changed\n")
+		c.setSettingsFeedback("Keybinding cancelled", "no key was captured before the read timed out")
 		return nil
 	default:
 		return fmt.Errorf("unknown keybinding capture status: %s", res.Status)
 	}
 }
 
-func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdout io.Writer) error {
+// addCapturedKeybindingChord runs the captured chord through the same
+// validation and the same write boundary the recorder and typed entry use, so
+// the three Add paths cannot diverge on what they accept or on how a rejection
+// becomes visible.
+func (c *settingsCommand) addCapturedKeybindingChord(actionID, chord string, stdout, stderr io.Writer) error {
+	if err := c.validateKeymapAliasForAction(actionID, chord); err != nil {
+		c.setSettingsFeedback("Keybinding failed", err.Error())
+		return nil
+	}
+	return c.runKeybindingWrite(stdout, stderr, func(out io.Writer) error {
+		return c.addKeymapAliasAndApply(actionID, chord, out)
+	})
+}
+
+// runKeybindingTyped is the typed half of Add key. It shares the recorder's
+// normalization (normalizeKeymapTypedChord) and the recorder's pre-write
+// validation (validateKeymapAliasForAction), so a chord rejected in the
+// recorder is rejected identically here, with the same reason, and neither path
+// writes keymap.toml before validating.
+func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdout, stderr io.Writer) error {
 	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
@@ -826,19 +1074,30 @@ func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdo
 		return err
 	}
 	if result.Key != "enter" {
+		c.setSettingsFeedback("Keybinding cancelled", "typed entry closed without adding a key")
 		return nil
 	}
-	chord, err := normalizeKeymapTypedChord(result.Query)
-	if err != nil {
-		return err
+	chord, normalizeErr := normalizeKeymapTypedChord(result.Query)
+	if normalizeErr != nil {
+		c.setSettingsFeedback("Keybinding failed", normalizeErr.Error())
+		return nil
 	}
 	if chord == "" {
+		c.setSettingsFeedback("Keybinding cancelled", "no key name was entered")
 		return nil
 	}
-	if replace {
-		return c.saveKeymapKeysAndApply(action.ID, []string{chord}, stdout)
+	if !replace {
+		if validateErr := c.validateKeymapAliasForAction(action.ID, chord); validateErr != nil {
+			c.setSettingsFeedback("Keybinding failed", validateErr.Error())
+			return nil
+		}
 	}
-	return c.addKeymapAliasAndApply(action.ID, chord, stdout)
+	return c.runKeybindingWrite(stdout, stderr, func(out io.Writer) error {
+		if replace {
+			return c.saveKeymapKeysAndApply(action.ID, []string{chord}, out)
+		}
+		return c.addKeymapAliasAndApply(action.ID, chord, out)
+	})
 }
 
 func captureProbeKeyForAction(action keyBindingAction) probeKey {
@@ -1109,30 +1368,65 @@ func (c *settingsCommand) keybindingInputDeliveryEntries() []intpickercompat.Ent
 }
 
 // keybindingSemanticEntries renders the action's product semantics as
-// read-only rows: what it targets, what it produces, and — for the interactive
-// splits — where the result lands and which anchor it is placed against.
+// read-only rows: what it targets, what it produces, where the result lands,
+// which anchor it is placed against, and the exact shipped handler the key
+// dispatches to. The handler rows come from the shipped CLI command manifest
+// (internal/cli) so an action detail cannot advertise a route the binary does
+// not have, and so a compatibility route whose canonical projection is
+// narrower than its own behavior has to say so on the row.
 func (c *settingsCommand) keybindingSemanticEntries(action keyBindingAction) []intpickercompat.Entry {
-	semantics, ok := keyBindingActionSemanticsFor(action)
-	if !ok {
-		return nil
-	}
-	entries := make([]intpickercompat.Entry, 0, 4)
-	for _, row := range [][2]string{
-		{"Target kind", semantics.TargetKind},
-		{"Result kind", semantics.ResultKind},
-		{"Placement", semantics.Placement},
-		{"Anchor", semantics.Anchor},
-	} {
-		if strings.TrimSpace(row[1]) == "" {
-			continue
+	entries := make([]intpickercompat.Entry, 0, 6)
+	if semantics, ok := keyBindingActionSemanticsFor(action); ok {
+		for _, row := range [][2]string{
+			{"Target kind", semantics.TargetKind},
+			{"Result kind", semantics.ResultKind},
+			{"Placement", semantics.Placement},
+			{"Anchor", semantics.Anchor},
+		} {
+			if strings.TrimSpace(row[1]) == "" {
+				continue
+			}
+			entries = append(entries, intpickercompat.Entry{
+				Label:     c.rowLabelInfo(row[0], row[1], ""),
+				Value:     settingsNoopValue,
+				SearchKey: strings.ToLower(row[0] + " " + row[1]),
+			})
 		}
+	}
+	handler, ok := keyBindingActionHandlerFor(action)
+	if !ok {
+		return entries
+	}
+	entries = append(entries, intpickercompat.Entry{
+		Label:     c.rowLabelInfo("Handler", handler.Invocation, keybindingHandlerManifestSummary(handler)),
+		Value:     settingsNoopValue,
+		SearchKey: strings.ToLower("handler " + handler.Invocation + " " + handler.Manifest),
+	})
+	if note := strings.TrimSpace(handler.Note); note != "" {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabelInfo(row[0], row[1], ""),
+			Label:     c.rowLabelInfo("Handler boundary", note, ""),
 			Value:     settingsNoopValue,
-			SearchKey: strings.ToLower(row[0] + " " + row[1]),
+			SearchKey: strings.ToLower("handler boundary " + note),
 		})
 	}
 	return entries
+}
+
+// keybindingHandlerManifestSummary states how the shipped command manifest
+// classifies the handler route. "not a projmux route" is a real answer: direct
+// tmux commands and in-picker commands never enter the CLI surface.
+func keybindingHandlerManifestSummary(handler keyBindingActionHandler) string {
+	if strings.TrimSpace(handler.Manifest) == "" {
+		return "not a projmux route"
+	}
+	summary := "manifest " + handler.Manifest
+	if strings.TrimSpace(handler.Disposition) != "" {
+		summary += " (" + handler.Disposition + ")"
+	}
+	if len(handler.Canonical) != 0 {
+		summary += "; canonical " + strings.Join(handler.Canonical, ", ")
+	}
+	return summary
 }
 
 func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickercompat.Entry, string, error) {
@@ -1166,10 +1460,6 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 		})
 	}
 	if !keyBindingEditable(action) {
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Troubleshooting", "Test key delivery, Advanced..."),
-			Value: settingsNoopValue,
-		})
 		title := "Keybinding - " + keyBindingDisplayName(action)
 		return entries, title, nil
 	}
@@ -1181,12 +1471,13 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 		Label: c.rowLabel(settingsGlyphAdd, settingsColorAdd, "+ Add key", addKeyHint),
 		Value: prefix + "add",
 	})
-	if !c.keybindingPhysicalCaptureAvailable() {
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Advanced...", "type literal or nonstandard tmux key name"),
-			Value: prefix + "advanced",
-		})
-	}
+	// The typed row is always reachable and is named after what it does. It
+	// replaces the former `Advanced...` container, which promised a raw
+	// diagnostic viewer and an adapter apply that the handler never ran.
+	entries = append(entries, intpickercompat.Entry{
+		Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name manually", "type a tmux key name such as C-r or M-S-Left"),
+		Value: prefix + "type",
+	})
 	entries = append(entries, intpickercompat.Entry{
 		Label: c.rowLabelInfo("Options", keybindingActionsSummary(keymap, action, defaultAction), "choose a row below"),
 		Value: settingsNoopValue,
@@ -1203,10 +1494,6 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: prefix + "reset",
 		})
 	}
-	entries = append(entries, intpickercompat.Entry{
-		Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Troubleshooting", "Test key delivery, Advanced..."),
-		Value: settingsNoopValue,
-	})
 	title := "Keybinding - " + keyBindingDisplayName(action)
 	return entries, title, nil
 }
@@ -1221,78 +1508,43 @@ func (c *settingsCommand) keybindingAddEntries(actionID string) ([]intpickercomp
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
-	if !c.keybindingPhysicalCaptureAvailable() {
-		entries := []intpickercompat.Entry{
-			{
-				Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name", "type a tmux key name"),
-				Value: prefix + "type",
-			},
-			{
-				Label: c.rowLabelDim("Press a key", "physical capture unavailable on this platform - type a key name"),
-				Value: settingsNoopValue,
-			},
-			{
-				Label: c.rowLabel(settingsGlyphBack, settingsColorBack, "Cancel", "return to action"),
-				Value: settingsBackValue,
-			},
-			{
-				Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Advanced...", "advanced options"),
-				Value: prefix + "advanced",
-			},
-		}
-		return entries, "Add Key - " + keyBindingDisplayName(action), nil
-	}
-	entries := []intpickercompat.Entry{
-		{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Press a key", "capture desired key"),
+	entries := make([]intpickercompat.Entry, 0, 6)
+	if c.keybindingPhysicalCaptureAvailable() {
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Press a key to add", "capture the key you press"),
 			Value: prefix + "capture",
-		},
-		{
-			Label: c.rowLabel(settingsGlyphBack, settingsColorBack, "Cancel", "return to action"),
-			Value: settingsBackValue,
-		},
-		{
-			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Advanced...", "advanced options"),
-			Value: prefix + "advanced",
-		},
+		})
+	} else {
+		// A disabled row with a reason and the working alternative, never a
+		// selectable row that would block on a reader it cannot own.
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabelDim("Press a key to add", "unavailable here - "+c.keybindingPhysicalCaptureUnavailableReason()+"; use Enter key name manually"),
+			Value: settingsNoopValue,
+		})
 	}
-	return entries, "Add Key - " + keyBindingDisplayName(action), nil
-}
-
-func (c *settingsCommand) keybindingAddAdvancedEntries(actionID string) ([]intpickercompat.Entry, string, error) {
-	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
-	if err != nil {
-		return nil, "", err
-	}
-	action, ok := keyBindingActionByID(actions, actionID)
-	if !ok {
-		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
-	}
-	prefix := settingsActionPrefixKeymap + action.ID + ":"
-	entries := []intpickercompat.Entry{
-		c.backEntry(),
-		{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name", "type a tmux key name"),
+	entries = append(entries,
+		intpickercompat.Entry{
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name manually", "type a tmux key name such as C-r or M-S-Left"),
 			Value: prefix + "type",
 		},
-		{
+		intpickercompat.Entry{
 			Label: c.rowLabelInfo("Safe direct keys", keybindingSafeDirectKeyPoolCopy(), "saved as logical tmux key names"),
 			Value: settingsNoopValue,
 		},
-		{
-			Label: c.rowLabelInfo("Risky/reserved keys", keybindingRiskyReservedKeyCopy(), "diagnostic-only, not saved to keymap"),
+		intpickercompat.Entry{
+			Label: c.rowLabelInfo("Never saved as keys", keybindingRiskyReservedKeyCopy(), "observed only, never written to keymap.toml"),
 			Value: settingsNoopValue,
 		},
-		{
-			Label: c.rowLabelInfo("Advanced delivery", keybindingAdvancedDeliveryCopy(action), "Projmux action owned"),
+		intpickercompat.Entry{
+			Label: c.rowLabelInfo("Terminal adapter", keybindingTerminalAdapterCopy(action), "Projmux action owned"),
 			Value: settingsNoopValue,
 		},
-		{
-			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Raw diagnostic view", "advanced diagnostics"),
-			Value: settingsNoopValue,
+		intpickercompat.Entry{
+			Label: c.rowLabel(settingsGlyphBack, settingsColorBack, "Cancel", "return to action"),
+			Value: settingsBackValue,
 		},
-	}
-	return entries, "Advanced Add Key - " + keyBindingDisplayName(action), nil
+	)
+	return entries, "Add Key - " + keyBindingDisplayName(action), nil
 }
 
 func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]intpickercompat.Entry, string, error) {
@@ -1317,6 +1569,14 @@ func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]
 			Label: c.rowLabelInfo("Key", displayKey, "active key"),
 			Value: settingsNoopValue,
 		},
+		{
+			Label: c.rowLabelInfo("Canonical key", chord, "logical tmux key name stored in keymap.toml"),
+			Value: settingsNoopValue,
+		},
+		{
+			Label: c.rowLabelInfo("Delivery path", keybindingDeliveryPathFor(action, chord), ""),
+			Value: settingsNoopValue,
+		},
 	}
 	if containsString(removableKeybindingKeys(keymap, action, defaultAction), chord) {
 		entries = append(entries, intpickercompat.Entry{
@@ -1324,11 +1584,38 @@ func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]
 			Value: prefix + "remove:" + chord,
 		})
 	}
+	// Test delivery is an Action row with an observable result. When no reader
+	// can be owned here it renders as a disabled row carrying the reason and
+	// the canonical next step instead of a row that does nothing.
+	if reason, next, ok := c.keybindingDeliveryTestUnavailable(chord); ok {
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabelDim("Test delivery", "unavailable - "+reason+"; next: "+next),
+			Value: settingsNoopValue,
+		})
+		return entries, "Key - " + displayKey, nil
+	}
 	entries = append(entries, intpickercompat.Entry{
-		Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Test key", "diagnostic"),
+		Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Test delivery", "press this key once and read the observed result"),
 		Value: prefix + "test:" + chord,
 	})
 	return entries, "Key - " + displayKey, nil
+}
+
+// keybindingDeliveryPathFor states how the key reaches the action. It is
+// metadata, not a probe: an in-picker key never enters a tmux key table, a
+// transport-dependent default arrives as a terminal-emitted xterm sequence, and
+// everything else is an explicit no-prefix tmux root binding.
+func keybindingDeliveryPathFor(action keyBindingAction, chord string) string {
+	if action.Kind == keyBindingActionPickerInternal {
+		return "picker input loop; never entered into a tmux key table"
+	}
+	if action.Tier == keyBindingTierTransportDependent {
+		if defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID); ok &&
+			strings.TrimSpace(chord) == strings.TrimSpace(defaultAction.PlainChord) {
+			return "terminal-emitted xterm sequence to the tmux root key table"
+		}
+	}
+	return "terminal to the tmux root key table (bind-key -n)"
 }
 
 func keybindingAliasesSummary(action keyBindingAction) string {
@@ -1560,7 +1847,11 @@ func keybindingRiskyReservedKeyCopy() string {
 	return "raw escape, CSI-u, xterm modified-key bytes, tmux UserKey/UserSequence"
 }
 
-func keybindingAdvancedDeliveryCopy(action keyBindingAction) string {
+// keybindingTerminalAdapterCopy names only the shipped `projmux setup terminal`
+// adapters. Settings itself neither previews nor applies a terminal snippet, so
+// the copy points at the command that does instead of promising an in-Settings
+// adapter apply.
+func keybindingTerminalAdapterCopy(action keyBindingAction) string {
 	var adapters []string
 	if strings.TrimSpace(action.GhosttyTrigger) != "" || strings.TrimSpace(action.GhosttyAction) != "" {
 		adapters = append(adapters, "projmux setup terminal ghostty")
@@ -1569,9 +1860,9 @@ func keybindingAdvancedDeliveryCopy(action keyBindingAction) string {
 		adapters = append(adapters, "projmux setup terminal windows-terminal")
 	}
 	if len(adapters) == 0 {
-		return "no supported adapter snippet for this Projmux action; choose a safe direct key"
+		return "no shipped adapter snippet for this Projmux action; choose a safe direct key"
 	}
-	return strings.Join(adapters, " / ") + " previews and applies Projmux-owned snippets; UserSequence/UserKey stays diagnostic-only"
+	return "run " + strings.Join(adapters, " or ") + " --apply from a shell; Settings does not apply terminal snippets"
 }
 
 func removableKeybindingKeys(keymap keymapFile, action, defaultAction keyBindingAction) []string {

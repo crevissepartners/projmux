@@ -118,8 +118,33 @@ step, never a silent no-op.
   assignment is explicit metadata rather than an ID-prefix inference, and the
   category rows carry their members' search text so search crosses categories.
   An action detail shows the action, its target kind, result kind, placement and
-  anchor, its effective keys and source, then the Keys collection and the
-  unbind/reset confirmations.
+  anchor, the exact shipped handler the key dispatches to, its effective keys,
+  then the Keys collection and the unbind/reset confirmations. The two Add
+  affordances are named after what they do — `+ Add key` records a pressed key
+  and `Enter key name manually` takes a typed tmux key name. There is no
+  `Advanced` and no `Troubleshooting` container: both named an implementation
+  layer, and both fronted rows that did nothing.
+  A key detail shows the canonical key, the delivery path and `Test delivery`.
+  `Test delivery` reports the logical key, the raw observation, the key tmux
+  received, and one of `delivered` / `key-did-not-arrive` / `ambiguous-key` /
+  `adapter-needed`. It never writes `keymap.toml` and never reloads tmux, so a
+  raw observation can never become a stored logical key. Exactly one reader is
+  ever live: inside a tmux popup the picker's own recorder reads the key, and
+  outside tmux the controlling-TTY probe does. Where neither can be owned — or
+  where the chord is a plain `Enter`/`Escape` that the recorder consumes as its
+  own control — the row is disabled and carries the reason plus the canonical
+  next step (`projmux setup`, then `projmux setup terminal <terminal> --apply`).
+
+  The handler row is projected from the shipped CLI command manifest rather than
+  from a second hand-kept table, so an action detail cannot advertise a route
+  the binary does not have. `Open Project for Current Directory` is where that
+  matters: the manifest classifies `projmux current` as a compatibility route
+  whose canonical projection is the read-only `get pane` cwd field, while the
+  route itself also ensures and attaches the derived runtime. The detail names
+  both halves — the result kind is the ensure/attach outcome, the anchor says
+  the Pane cwd is a read-only input rather than the outcome, and the handler
+  boundary row states that the canonical cwd projection covers the input step
+  only. The read-only query can therefore never read as the action succeeding.
 - **About** — version/source state, `Updates [View]` (current/latest/installer/
   release notes, `Check for updates`, `Update now`), `Welcome`, and
   `Quit Projmux`, whose confirmation names the app-owned runtime and socket.
@@ -150,9 +175,18 @@ runtime compatibility routes keep their shipped spelling, so a saved
 before the rename.
 
 Interactive right/down keybindings pass the Pane the user pressed the key in as
-an explicit anchor. Automation that omits an anchor uses the Window's persisted
+an explicit anchor. The action detail names that anchor as what the handler
+actually carries — the Pane's raw `%N` transport id, resolved at press time from
+an explicit `TMUX_SPLIT_TARGET_PANE` or from `#{pane_id}` — and not as a
+`metadata.uid`, because no keybinding handler reads a uid mirror and a raw pane
+id is never a canonical uid. The two properties the row does assert are the ones
+that hold: the target is explicit and pinned at press time, and it is never the
+Window's persisted `spec.primaryPaneRef`. Automation that omits an anchor uses
 `spec.primaryPaneRef` and never silently recovers a stale reference from the
-focused Pane.
+focused Pane. `Create <Provider> Agent` always creates a new
+Agent and `Open Agent Resume Picker` only resumes an existing Offline or Failed
+Agent; the two are separate actions with separate result kinds and are never
+normalized into one.
 
 ## Retired destinations
 

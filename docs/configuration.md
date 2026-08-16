@@ -106,10 +106,11 @@ language.
 
 Settings > Keybindings is the normal in-app editor for action keys. It lists
 actions with the current active keys and one state: Default, Custom, Available,
-or Unbound. Open an action to see the action label, state, a flat Keys list,
-Options, and a collapsed Troubleshooting row. Create flows start from
-`+ Add key`, deletion lives under each key's detail, and action-level state
-changes such as Unbind or Reset live under Options. Successful saves report the
+or Unbound. Open an action to see the action label, state, the action's
+target/result/placement/anchor and shipped handler, a flat Keys list, and
+Options. Create flows start from `+ Add key` or `Enter key name manually`,
+deletion and `Test delivery` live under each key's detail, and action-level
+state changes such as Unbind or Reset live under Options. Successful saves report the
 keybinding as saved; failures identify the stage that failed.
 
 Raw sequences that cannot be safely represented as a direct keybinding are not

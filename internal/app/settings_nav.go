@@ -327,6 +327,12 @@ var settingsNavRemovedVisibleCopy = []string{
 	"Notify icon",
 	"Live system resources",
 	"Project Hooks",
+	// Retired keybinding containers. They named an implementation layer rather
+	// than an outcome, and both of them fronted rows that did nothing.
+	"Advanced...",
+	"Troubleshooting",
+	"Raw diagnostic view",
+	"Test key delivery, Advanced",
 }
 
 var (

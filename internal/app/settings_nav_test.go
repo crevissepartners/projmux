@@ -688,11 +688,11 @@ func TestSettingsActionDetailProjectsAgentAndAnchorSemantics(t *testing.T) {
 		id    string
 		wants []string
 	}{
-		{"ai-split-claude-right", []string{"Target kind", "Agent", "Result kind", "always a new Agent", "Placement", "right", "Anchor", "current Pane (explicit)"}},
-		{"ai-split-claude-down", []string{"Placement", "down", "Anchor", "current Pane (explicit)"}},
-		{"ai-split-shell-right", []string{"Target kind", "Pane", "Result kind", "Shell Pane", "Anchor", "current Pane (explicit)"}},
-		{"ai-split-right", []string{"Result kind", "default launch target", "Anchor", "current Pane (explicit)"}},
-		{"AIResumePickerToggle", []string{"Target kind", "Agent", "resume an existing Offline or Failed Agent"}},
+		{"ai-split-claude-right", []string{"Target kind", "Agent", "Result kind", "always a new Agent", "Placement", "right", "Anchor", "current Pane %N transport id (explicit split target"}},
+		{"ai-split-claude-down", []string{"Placement", "down", "Anchor", "current Pane %N transport id (explicit split target"}},
+		{"ai-split-shell-right", []string{"Target kind", "Pane", "Result kind", "Shell Pane", "Anchor", "current Pane %N transport id (explicit split target"}},
+		{"ai-split-right", []string{"Result kind", "default launch target", "Anchor", "current Pane %N transport id (explicit split target"}},
+		{"AIResumePickerToggle", []string{"Target kind", "Agent", "resume one existing Offline or Failed Agent", "never creates an Agent"}},
 		{"new-window", []string{"Target kind", "Window", "new Window with its initial Pane"}},
 		{"Sidebar:KillSession", []string{"Target kind", "Project", "Project metadata is kept"}},
 	} {
@@ -729,8 +729,8 @@ func TestSettingsActionDetailProjectsAgentAndAnchorSemantics(t *testing.T) {
 		if !ok {
 			t.Fatalf("interactive split %q has no declared semantics", id)
 		}
-		if semantics.Anchor != keyBindingAnchorCurrentPane {
-			t.Fatalf("interactive split %q anchor = %q, want the explicit current Pane anchor", id, semantics.Anchor)
+		if semantics.Anchor != keyBindingAnchorCurrentPaneSplitTarget {
+			t.Fatalf("interactive split %q anchor = %q, want the explicit current Pane split target", id, semantics.Anchor)
 		}
 		if semantics.Placement != keyBindingPlacementRight && semantics.Placement != keyBindingPlacementDown {
 			t.Fatalf("interactive split %q placement = %q, want right or down", id, semantics.Placement)
