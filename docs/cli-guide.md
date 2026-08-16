@@ -819,7 +819,7 @@ Runtime action overrides from
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json` take
 precedence over catalog `action` during ingest, including known events such as
 `Stop` and `PermissionRequest`. These overrides are managed by
-`Settings > Notifications > Hook quiet policy` and do not change the catalog
+`Settings > Notifications > Agent event behavior` and do not change the catalog
 `install` field used by `projmux ai integrate codex`. A runtime `notify`
 override for a known Codex event without a specialized handler, such as
 `PreToolUse` or `PostToolUse`, pushes a short generic in-app row like

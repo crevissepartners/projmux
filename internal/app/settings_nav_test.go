@@ -136,20 +136,24 @@ func TestSettingsRenderedRowsMapOntoNavigationCatalog(t *testing.T) {
 	cmd := settingsNavTestCommand(t, home)
 
 	surfaces := map[string][]intpickercompat.Entry{
-		"global root":       cmd.rootEntriesForAxisLocale(settingsAxisGlobal, i18n.FallbackLocale),
-		"projects":          cmd.projectPickerEntries(),
-		"project sidebar":   cmd.projectSidebarEntries(),
-		"ai":                cmd.aiRootEntries(),
-		"ai resume picker":  cmd.aiResumePickerEntries(),
-		"notifications":     cmd.notificationsEntries(),
-		"desktop delivery":  cmd.desktopNotifyEntries(),
-		"automation":        cmd.automationEntries(),
-		"automation events": cmd.hookLifecycleEntries(hookScopeGlobal),
-		"appearance":        cmd.statusbarEntries(),
-		"status bar":        cmd.statusBarEntries(),
-		"snapshots":         cmd.sessionStateEntries(),
-		"about":             cmd.aboutEntries(),
-		"about updates":     cmd.aboutUpdateEntries(),
+		"global root":           cmd.rootEntriesForAxisLocale(settingsAxisGlobal, i18n.FallbackLocale),
+		"projects":              cmd.projectPickerEntries(),
+		"project sidebar":       cmd.projectSidebarEntries(),
+		"ai":                    cmd.aiRootEntries(),
+		"ai resume picker":      cmd.aiResumePickerEntries(),
+		"notifications":         cmd.notificationsEntries(),
+		"desktop delivery":      cmd.desktopNotifyEntries(),
+		"provider integrations": cmd.notifyDiagnosticCollectionEntries(cmd.notifyProviderDiagnostics()),
+		"tmux event source":     cmd.tmuxEventSourceEntries(),
+		"agent event behavior":  cmd.aiHookProviderEntries(),
+		"agent event provider":  cmd.aiHookEventEntries(aiHookProviderClaude),
+		"automation":            cmd.automationEntries(),
+		"automation events":     cmd.hookLifecycleEntries(hookScopeGlobal),
+		"appearance":            cmd.statusbarEntries(),
+		"status bar":            cmd.statusBarEntries(),
+		"snapshots":             cmd.sessionStateEntries(),
+		"about":                 cmd.aboutEntries(),
+		"about updates":         cmd.aboutUpdateEntries(),
 	}
 	keybindingRoot, err := cmd.keybindingEntries()
 	if err != nil {
@@ -191,6 +195,11 @@ func settingsNavDynamicValueDeclared(value string) bool {
 		settingsActionPrefixDesktopNotifyMode,
 		settingsActionPrefixSessionStateSidebarStartup,
 		settingsActionPrefixAINotifyDiagnostic,
+		settingsActionPrefixAINotifyCheck,
+		settingsActionPrefixAINotifyCommand,
+		settingsActionPrefixAIHookProvider,
+		settingsActionPrefixAIHookEvent,
+		settingsActionPrefixAIHookSet,
 		settingsActionPrefixSessionState,
 		settingsActionPrefixStatusbar,
 		settingsActionPrefixTheme,
@@ -602,6 +611,10 @@ func settingsNavAllRenderedEntries(t *testing.T, cmd *settingsCommand) []intpick
 	all = append(all, cmd.notificationsEntries()...)
 	all = append(all, cmd.desktopNotifyEntries()...)
 	all = append(all, cmd.desktopNotifyModeEntries()...)
+	all = append(all, cmd.notifyDiagnosticCollectionEntries(cmd.notifyProviderDiagnostics())...)
+	all = append(all, cmd.tmuxEventSourceEntries()...)
+	all = append(all, cmd.aiHookProviderEntries()...)
+	all = append(all, cmd.aiHookEventEntries(aiHookProviderClaude)...)
 	all = append(all, cmd.automationEntries()...)
 	all = append(all, cmd.hookLifecycleEntries(hookScopeGlobal)...)
 	all = append(all, cmd.hookEventDetailEntries(hookScopeGlobal, "post-create")...)

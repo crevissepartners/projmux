@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -237,6 +238,17 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 	}
 }
 
+// settingsExternalSenderBoundary and settingsSendNotiBoundary are the two
+// halves of the same ownership sentence. `PROJMUX_NOTIFY_HOOK` chooses which
+// process delivers the OS notification; `[hooks.send-noti]` is a user script
+// that runs after the durable queue write. Neither one replaces the other, and
+// both rows say so from their own side so the pair can never read as an
+// either/or choice.
+const (
+	settingsExternalSenderBoundary = "overrides the desktop sender only, not the [hooks.send-noti] fan-out"
+	settingsSendNotiBoundary       = "runs after the queue write, not instead of the desktop sender"
+)
+
 // settingsTmuxBellDiagnosticID is the shipped diagnostic id of the tmux bell
 // producer. It is the one notify producer that is not an Agent Provider, which
 // is exactly why the target IA gives it its own destination.
@@ -296,13 +308,74 @@ func settingsNotificationsDesktopPrompt(locale i18n.Locale) string {
 	return localizeText(locale, i18n.Key("settings.prompt.settings_desktop_notifications"), "settings.prompt.settings_desktop_notifications")
 }
 
+func settingsNotificationsProvidersTitle(locale i18n.Locale) string {
+	return localizeText(locale, i18n.Key("settings.title.notifications_providers"), "Notifications - Provider Integrations")
+}
+
+func settingsNotificationsProvidersPrompt(locale i18n.Locale) string {
+	return localizeText(locale, i18n.Key("settings.prompt.settings_provider_integrations"), "Settings > Notifications > Provider Integrations > ")
+}
+
+func settingsNotificationsTmuxSourceTitle(locale i18n.Locale) string {
+	return localizeText(locale, i18n.Key("settings.title.notifications_tmux_source"), "Notifications - tmux event source")
+}
+
+func settingsNotificationsTmuxSourcePrompt(locale i18n.Locale) string {
+	return localizeText(locale, i18n.Key("settings.prompt.settings_tmux_event_source"), "Settings > Notifications > tmux event source > ")
+}
+
+func settingsNotificationsAgentEventsTitle(locale i18n.Locale) string {
+	return localizeText(locale, i18n.Key("settings.title.notifications_agent_events"), "Notifications - Agent event behavior")
+}
+
+func settingsNotificationsAgentEventsPrompt(locale i18n.Locale) string {
+	return localizeText(locale, i18n.Key("settings.prompt.settings_agent_event_behavior"), "Settings > Notifications > Agent event behavior > ")
+}
+
+// notifyDiagnosticCheckEntryLocale renders the observable re-check row. The
+// action re-reads the shipped doctor diagnostic and reports what it observed;
+// Settings never installs or removes the wiring itself.
+func notifyDiagnosticCheckEntryLocale(locale i18n.Locale, diag doctorAINotifyIntegration, label string) intpickercompat.Entry {
+	return intpickercompat.Entry{
+		Label:     settingsLabelLocale(locale, settingsGlyphInfo, settingsColorType, label, "re-read the wiring and report what it observes"),
+		Value:     settingsActionPrefixAINotifyCheck + diag.ID,
+		SearchKey: strings.Join([]string{label, diag.Name, "check re-read wiring status doctor"}, " "),
+	}
+}
+
+// runNotifyDiagnosticCheck re-runs one notify diagnostic and surfaces the
+// observed status as Settings feedback. It is a read-only observation: nothing
+// is written, so a check that reports `missing` is a result rather than a
+// failure.
+func (c *settingsCommand) runNotifyDiagnosticCheck(id string, stdout, stderr io.Writer) error {
+	diag, ok := c.aiNotifyDiagnosticByID(id)
+	if !ok {
+		return fmt.Errorf("unknown AI notify integration: %s", id)
+	}
+	return c.runObservedSettingsMutation("Check "+diag.Name, stdout, stderr, func(out, _ io.Writer) error {
+		_, err := fmt.Fprintln(out, notifyDiagnosticCheckReport(diag))
+		return err
+	})
+}
+
+func notifyDiagnosticCheckReport(diag doctorAINotifyIntegration) string {
+	parts := []string{string(diag.Status)}
+	if diag.ConfigPath != "" {
+		parts = append(parts, diag.ConfigPath)
+	}
+	if diag.ConflictReason != "" {
+		parts = append(parts, diag.ConflictReason)
+	}
+	return strings.Join(parts, " - ")
+}
+
 func (c *settingsCommand) runNotificationsHookActionsSection(stdout, stderr io.Writer) error {
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-notifications-hook-actions",
 			Entries:    c.aiHookProviderEntries(),
-			Title:      "Notifications - Agent event behavior",
-			Prompt:     "Settings > Notifications > Agent event behavior > ",
+			Title:      settingsNotificationsAgentEventsTitle(c.locale()),
+			Prompt:     settingsNotificationsAgentEventsPrompt(c.locale()),
 			Footer:     projmuxFooter("Enter: view hooks  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -336,7 +409,7 @@ func (c *settingsCommand) runAIHookProviderActionSection(provider string, stdout
 			UI:         "settings-notifications-hook-provider",
 			Entries:    c.aiHookEventEntries(provider),
 			Title:      "Agent event behavior - " + aiHookProviderLabel(provider),
-			Prompt:     "Settings > Notifications > Agent event behavior > " + aiHookProviderLabel(provider) + " > ",
+			Prompt:     settingsNotificationsAgentEventsPrompt(c.locale()) + aiHookProviderLabel(provider) + " > ",
 			Footer:     projmuxFooter("Enter: change action  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -373,7 +446,7 @@ func (c *settingsCommand) runAIHookEventActionSection(provider, event string, st
 			UI:         "settings-notifications-hook-event",
 			Entries:    c.aiHookActionChoiceEntries(provider, event),
 			Title:      "Agent event behavior - " + aiHookProviderLabel(provider) + " " + event,
-			Prompt:     "Settings > Notifications > Agent event behavior > " + aiHookProviderLabel(provider) + " > " + event + " > ",
+			Prompt:     settingsNotificationsAgentEventsPrompt(c.locale()) + aiHookProviderLabel(provider) + " > " + event + " > ",
 			Footer:     projmuxFooter("Enter: save  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -418,10 +491,11 @@ func (c *settingsCommand) runAIHookEventActionSection(provider, event string, st
 // read-only diagnostic collection plus copyable commands: Settings reports the
 // wiring and never installs or removes it.
 func (c *settingsCommand) runProviderIntegrationsSection(stdout, stderr io.Writer) error {
+	locale := c.locale()
 	return c.runNotifyDiagnosticsCollection(
 		"settings-notifications-providers",
-		"Notifications - Provider Integrations",
-		"Settings > Notifications > Provider Integrations > ",
+		settingsNotificationsProvidersTitle(locale),
+		settingsNotificationsProvidersPrompt(locale),
 		c.notifyProviderDiagnostics,
 		stdout, stderr,
 	)
@@ -429,19 +503,86 @@ func (c *settingsCommand) runProviderIntegrationsSection(stdout, stderr io.Write
 
 // runTmuxEventSourceSection is the tmux bell producer. It is deliberately not
 // a member of the Provider inventory: tmux is an event source, not an Agent
-// Provider.
+// Provider, so it is a single View with its own wiring state instead of a
+// collection of provider items.
 func (c *settingsCommand) runTmuxEventSourceSection(stdout, stderr io.Writer) error {
-	return c.runNotifyDiagnosticsCollection(
-		"settings-notifications-tmux-source",
-		"Notifications - tmux event source",
-		"Settings > Notifications > tmux event source > ",
-		c.notifyTmuxEventDiagnostics,
-		stdout, stderr,
-	)
+	locale := c.locale()
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-notifications-tmux-source",
+			Entries:    c.tmuxEventSourceEntries(),
+			Title:      settingsNotificationsTmuxSourceTitle(locale),
+			Prompt:     settingsNotificationsTmuxSourcePrompt(locale),
+			Footer:     projmuxFooter("Enter: check  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixAINotifyCheck):
+			if err := c.runNotifyDiagnosticCheck(strings.TrimPrefix(action, settingsActionPrefixAINotifyCheck), stdout, stderr); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown tmux event source action: %s", action)
+		}
+	}
+}
+
+// tmuxEventSourceEntries renders the bell producer wiring flat. The bell is the
+// one notify producer that is not an Agent Provider, so its state lives at the
+// event-source View rather than behind a per-item detail.
+func (c *settingsCommand) tmuxEventSourceEntries() []intpickercompat.Entry {
+	locale := c.locale()
+	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
+	sources := c.notifyTmuxEventDiagnostics()
+	if len(sources) == 0 {
+		return append(entries, intpickercompat.Entry{
+			Label:     settingsLabelDimLocale(locale, "Bell wiring status", "no wiring reported"),
+			Value:     settingsNoopValue,
+			SearchKey: "tmux bell wiring status event source",
+		})
+	}
+	for _, diag := range sources {
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabelInfoLocale(locale, "Bell wiring status", string(diag.Status), "doctor - tmux event source, not an Agent Provider"),
+			Value:     settingsNoopValue,
+			SearchKey: strings.Join([]string{"tmux bell wiring status source", diag.Name, string(diag.Status)}, " "),
+		})
+		if diag.ConfigPath != "" {
+			entries = append(entries, intpickercompat.Entry{
+				Label: settingsLabelInfoLocale(locale, "Config path", diag.ConfigPath, ""),
+				Value: settingsNoopValue,
+			})
+		}
+		if diag.ConflictReason != "" {
+			entries = append(entries, intpickercompat.Entry{
+				Label: settingsLabelInfoLocale(locale, "Conflict", diag.ConflictReason, ""),
+				Value: settingsNoopValue,
+			})
+		}
+		if diag.Guidance != "" {
+			entries = append(entries, intpickercompat.Entry{
+				Label: settingsLabelInfoLocale(locale, "Setup guidance", diag.Guidance, ""),
+				Value: settingsNoopValue,
+			})
+		}
+		entries = append(entries, notifyDiagnosticCheckEntryLocale(locale, diag, "Check"))
+	}
+	return entries
 }
 
 func (c *settingsCommand) runNotifyDiagnosticsCollection(ui, title, prompt string, load func() []doctorAINotifyIntegration, stdout, stderr io.Writer) error {
-	_ = stdout
 	for {
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         ui,
@@ -466,7 +607,7 @@ func (c *settingsCommand) runNotifyDiagnosticsCollection(ui, title, prompt strin
 			continue
 		case strings.HasPrefix(action, settingsActionPrefixAINotifyDiagnostic):
 			id := strings.TrimPrefix(action, settingsActionPrefixAINotifyDiagnostic)
-			if err := c.runAINotifyDiagnosticDetail(id, prompt, stderr); err != nil {
+			if err := c.runAINotifyDiagnosticDetail(id, prompt, stdout, stderr); err != nil {
 				return err
 			}
 		default:
@@ -491,7 +632,7 @@ func (c *settingsCommand) notifyDiagnosticCollectionEntries(diagnostics []doctor
 	return entries
 }
 
-func (c *settingsCommand) runAINotifyDiagnosticDetail(id, parentPrompt string, stderr io.Writer) error {
+func (c *settingsCommand) runAINotifyDiagnosticDetail(id, parentPrompt string, stdout, stderr io.Writer) error {
 	for {
 		diag, ok := c.aiNotifyDiagnosticByID(id)
 		if !ok {
@@ -502,7 +643,7 @@ func (c *settingsCommand) runAINotifyDiagnosticDetail(id, parentPrompt string, s
 			Entries:    aiNotifyDiagnosticDetailEntriesLocale(c.locale(), diag),
 			Title:      "Notifications - " + diag.Name,
 			Prompt:     parentPrompt + diag.Name + " > ",
-			Footer:     projmuxFooter("Enter: copy command  |  Back row: parent "),
+			Footer:     projmuxFooter("Enter: check or copy  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
 		})
@@ -517,6 +658,12 @@ func (c *settingsCommand) runAINotifyDiagnosticDetail(id, parentPrompt string, s
 			return nil
 		}
 		if action == settingsNoopValue {
+			continue
+		}
+		if after, ok0 := strings.CutPrefix(action, settingsActionPrefixAINotifyCheck); ok0 {
+			if err := c.runNotifyDiagnosticCheck(after, stdout, stderr); err != nil {
+				return err
+			}
 			continue
 		}
 		if strings.HasPrefix(action, settingsActionPrefixAINotifyCommand) {
@@ -623,9 +770,10 @@ func aiNotifyDiagnosticDetailEntriesLocale(locale i18n.Locale, diag doctorAINoti
 		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, "Tested version", diag.TestedVersion, "catalog"), Value: settingsNoopValue})
 	}
 	if diag.Guidance != "" {
-		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, "Notice", diag.Guidance, ""), Value: settingsNoopValue})
+		entries = append(entries, intpickercompat.Entry{Label: settingsLabelInfoLocale(locale, "Setup guidance", diag.Guidance, ""), Value: settingsNoopValue})
 	}
 	entries = append(entries,
+		notifyDiagnosticCheckEntryLocale(locale, diag, "Check integration"),
 		aiNotifyDiagnosticCommandEntryLocale(locale, diag, "install", "Install command", diag.InstallCommand),
 		aiNotifyDiagnosticCommandEntryLocale(locale, diag, "remove", "Remove command", diag.RemoveCommand),
 		aiNotifyDiagnosticCommandEntryLocale(locale, diag, "dry-run", "Dry-run command", diag.DryRunCommand),
@@ -722,6 +870,10 @@ func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
 			externalSource = "PROJMUX_NOTIFY_HOOK env"
 		}
 	}
+	// The override swaps out the OS sender and nothing else. It is not an
+	// alternative to the `[hooks.send-noti]` fan-out, which Automation owns and
+	// which runs after the queue write regardless of which sender delivers.
+	externalSource += " - " + settingsExternalSenderBoundary
 	return []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
@@ -839,22 +991,36 @@ func (c *settingsCommand) aiHookProviderEntries() []intpickercompat.Entry {
 			Value: settingsNoopValue,
 		},
 	}
-	providers := []string{aiHookProviderCodex, aiHookProviderClaude}
+	// The Provider inventory is the Claude/Codex/Antigravity enum, in the same
+	// order the shipped provider registry reports it. A runtime override file
+	// may still carry an event for a provider the current binary does not ship;
+	// those are appended after the known enum so the inventory itself never
+	// grows a non-Provider row.
+	providers := settingsAgentEventProviders()
+	known := len(providers)
 	file := c.currentAIHookActionsFile()
 	for provider := range file.Providers {
-		if provider != aiHookProviderCodex && provider != aiHookProviderClaude {
+		if !slices.Contains(providers, provider) {
 			providers = append(providers, provider)
 		}
 	}
-	sort.Strings(providers[2:])
+	sort.Strings(providers[known:])
 	for _, provider := range providers {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, aiHookProviderLabel(provider)+" hooks", c.aiHookProviderSummary(provider)),
+			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, aiHookProviderLabel(provider)+" events", c.aiHookProviderSummary(provider)),
 			Value:     settingsActionPrefixAIHookProvider + provider,
-			SearchKey: provider + " hooks quiet notify state runtime catalog",
+			SearchKey: provider + " agent event behavior default notify state quiet runtime catalog",
 		})
 	}
 	return entries
+}
+
+// settingsAgentEventProviders is the Provider enum the Agent event behavior
+// view renders. It is the same Claude/Codex/Antigravity inventory the Provider
+// Integrations view uses, so a Provider can never appear in one destination and
+// be missing from the other.
+func settingsAgentEventProviders() []string {
+	return []string{aiHookProviderClaude, aiHookProviderCodex, aiHookProviderAntigravity}
 }
 
 func (c *settingsCommand) aiHookProviderSummary(provider string) string {
@@ -970,6 +1136,8 @@ func aiHookProviderLabel(provider string) string {
 		return "Codex"
 	case aiHookProviderClaude:
 		return "Claude"
+	case aiHookProviderAntigravity:
+		return "Antigravity"
 	default:
 		return provider
 	}
