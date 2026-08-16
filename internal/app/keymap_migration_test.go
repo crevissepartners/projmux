@@ -285,6 +285,61 @@ prefix = "P"
 	}
 }
 
+// TestKeymapMigrationKeepsTheAIPickerDefaultSwapWorking is a regression test for
+// an alias-blind lookup found by migrating a real user keymap.
+//
+// `migrateLegacyAIPickerDefaultOverrides` resolves the M-4/M-7 collision
+// between the AI split picker and the AI resume picker by reading the file's
+// binding table for one action and moving the *other* action's default out of
+// the way. It used to index keymap.Bindings by the v0 action id directly. Once a
+// file is migrated the table is named `agent-resume-picker.toggle`, the direct
+// lookup misses, the swap does not run, and the merge fails with M-7 bound to
+// both actions — so a v0 file that worked would refuse to migrate.
+//
+// The failure is caught before any write, but "refuses to migrate" is not an
+// acceptable outcome for a file the user already has.
+func TestKeymapMigrationKeepsTheAIPickerDefaultSwapWorking(t *testing.T) {
+	t.Parallel()
+
+	store, path := newKeymapFixture(t, `[bindings.AIResumePickerToggle]
+keys = ["M-7", "C-r"]
+
+[bindings.ProjectSidebarToggle]
+keys = ["M-1"]
+`)
+	before, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: store.homeDir, lookupEnv: store.lookupEnv})
+	if err != nil {
+		t.Fatalf("load before migration: %v", err)
+	}
+
+	if _, err := migrateKeymapForWrite(store); err != nil {
+		t.Fatalf("migrateKeymapForWrite() error = %v", err)
+	}
+
+	after, _, err := loadMergedKeyBindingCatalog(keymapLoader{homeDir: store.homeDir, lookupEnv: store.lookupEnv})
+	if err != nil {
+		t.Fatalf("load after migration: %v", err)
+	}
+	for _, id := range []string{"AIResumePickerToggle", "AISplitPickerToggle"} {
+		wantAction, ok := keyBindingActionByID(before, id)
+		if !ok {
+			t.Fatalf("missing %s before migration", id)
+		}
+		gotAction, ok := keyBindingActionByID(after, id)
+		if !ok {
+			t.Fatalf("missing %s after migration", id)
+		}
+		want := keyBindingEffectivePlainChords(wantAction)
+		got := keyBindingEffectivePlainChords(gotAction)
+		if !slices.Equal(got, want) {
+			t.Fatalf("%s keys = %v, want %v", id, got, want)
+		}
+	}
+	if !strings.Contains(readFile(t, path), `[bindings."agent-resume-picker.toggle"]`) {
+		t.Fatal("expected the resume picker table to be migrated")
+	}
+}
+
 func TestKeymapV1FileParsesAndRoundTrips(t *testing.T) {
 	t.Parallel()
 

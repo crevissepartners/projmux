@@ -697,14 +697,14 @@ func migrateLegacyAIPickerDefaultOverrides(actions []keyBindingAction, keymap ke
 		{actionID: "AISplitPickerToggle", defaultOwnerID: "AIResumePickerToggle", oldChord: "M-4", newChord: "M-7"},
 		{actionID: "AIResumePickerToggle", defaultOwnerID: "AISplitPickerToggle", oldChord: "M-7", newChord: "M-4"},
 	} {
-		override, ok := keymap.Bindings[migration.actionID]
+		override, ok := keymapOverrideForActionID(actions, keymap, migration.actionID)
 		if !ok || !keymapOverrideBindsChord(override, migration.oldChord) {
 			continue
 		}
 
 		idx := keyBindingActionIndex(actions, migration.actionID)
 		defaultOwnerIdx := keyBindingActionIndex(actions, migration.defaultOwnerID)
-		if idx < 0 || defaultOwnerIdx < 0 || keymapActionHasPlainOverride(keymap, migration.defaultOwnerID) ||
+		if idx < 0 || defaultOwnerIdx < 0 || keymapActionHasPlainOverride(actions, keymap, migration.defaultOwnerID) ||
 			!slices.Contains(keyBindingEffectivePlainChords(actions[defaultOwnerIdx]), migration.oldChord) {
 			continue
 		}
@@ -724,9 +724,31 @@ func keymapOverrideBindsChord(override keymapOverride, chord string) bool {
 	return override.Plain != nil && *override.Plain == chord
 }
 
-func keymapActionHasPlainOverride(keymap keymapFile, actionID string) bool {
-	override, ok := keymap.Bindings[actionID]
+func keymapActionHasPlainOverride(actions []keyBindingAction, keymap keymapFile, actionID string) bool {
+	override, ok := keymapOverrideForActionID(actions, keymap, actionID)
 	return ok && (override.KeysSet || override.Plain != nil)
+}
+
+// keymapOverrideForActionID finds an action's override whatever spelling the
+// file used for its table.
+//
+// Looking the id up directly in keymap.Bindings only works while there is one
+// spelling per action. A v1 file names the same action by its canonical id, so a
+// direct lookup silently misses and the caller concludes the user set nothing —
+// which, for the AI picker default swap below, would resurrect a chord conflict
+// the swap exists to resolve.
+func keymapOverrideForActionID(actions []keyBindingAction, keymap keymapFile, actionID string) (keymapOverride, bool) {
+	action, ok := keyBindingActionByID(actions, actionID)
+	if !ok {
+		override, present := keymap.Bindings[actionID]
+		return override, present
+	}
+	for _, id := range keyBindingActionAliases(action) {
+		if override, present := keymap.Bindings[id]; present {
+			return override, true
+		}
+	}
+	return keymapOverride{}, false
 }
 
 func keyBindingActionIndex(actions []keyBindingAction, actionID string) int {
