@@ -158,6 +158,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixAIHookSet, settingsActionMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixHooks, settingsActionMeta("Project automation policy", settingsAxisGlobal, settingsOwnerAutomation)},
 	{settingsActionPrefixLiveResources, settingsActionMeta("Resources", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixHUDVisibility, settingsActionMeta("Status Bar visibility", settingsAxisGlobal, settingsOwnerAppearance)},
 	{settingsActionPrefixHookEvent + hookScopeGlobal + ":", settingsNavigationMeta("Automation event", settingsAxisGlobal, settingsOwnerAutomation)},
 	{settingsActionPrefixHookEvent + hookScopeProject + ":", settingsNavigationMeta("Project automation event", settingsAxisProject, settingsOwnerProjectAutomation)},
 	{settingsActionPrefixKeymapCategory, settingsNavigationMeta("Keybindings category", settingsAxisGlobal, settingsOwnerKeybindings)},
@@ -264,6 +265,7 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 			strings.HasPrefix(value, settingsActionPrefixAIBadgeStyle) ||
 			strings.HasPrefix(value, settingsActionPrefixLocale) ||
 			strings.HasPrefix(value, settingsActionPrefixStatusbar) ||
+			strings.HasPrefix(value, settingsActionPrefixHUDVisibility) ||
 			strings.HasPrefix(value, settingsActionPrefixLiveResources)
 	case settingsOwnerSessionState:
 		return value == settingsSessionStateDelete || strings.HasPrefix(value, settingsActionPrefixSessionState)
@@ -341,6 +343,7 @@ const (
 	settingsActionPrefixDesktopNotifyMode  = "desktop-notify-mode:"
 	settingsActionPrefixHooks              = "project-hooks:"
 	settingsActionPrefixLiveResources      = "live-resources:"
+	settingsActionPrefixHUDVisibility      = "statusbar-visibility:"
 	settingsActionPrefixKeymap             = "keymap:"
 	settingsActionPrefixKeymapCategory     = "keymap-category:"
 	settingsActionPrefixKeymapSurface      = "keymap-surface:"

@@ -102,12 +102,16 @@ step, never a silent no-op.
     <token>`, and `Reset theme`. Only the global `[theme]` block is edited;
     project-local `[theme]` remains deprecated migration data.
   - `Status Bar [View]` — the Projmux-owned status segments. `Notifications
-    HUD`, `Working directory` and `Git` are component Views with a current/
-    source/preview state row and an icon `Choice`; `Resources` is a plain
-    `Toggle` whose off state stops the segment and the host sampler together.
-    Per-component visibility storage for the remaining components is a later
-    slice; this container ships only the rows whose control exists, because a
-    row that cannot act is an empty placeholder.
+    HUD`, `Working directory` and `Git` are component Views. Notifications HUD
+    shows current/source/preview state, a `Visible` Toggle and an icon `Choice`.
+    `Agent Usage HUD` is an independent visibility-only Toggle in the Status
+    Bar View. Both HUD toggles are global, default on, and hide presentation
+    only: Notifications visibility never mutates the queue, desktop delivery or
+    sidebar, and Agent Usage visibility never disables `agent usage`, its
+    Provider cache or API collection. `Resources` is a plain `Toggle` whose off
+    state stops the segment and the host sampler together. Row-1 visibility for
+    the remaining components is a later slice; this container ships only rows
+    whose control exists, because a row that cannot act is an empty placeholder.
   - `Language / Locale [Choice]` and `Agent attention badge style [Choice]`.
 - **Snapshots** — the visible noun is the Snapshot resource. `session-state`
   remains the config/route spelling and appears only as source detail.

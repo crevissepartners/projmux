@@ -388,6 +388,12 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		return c.setProjectHooksMode(strings.TrimPrefix(value, settingsActionPrefixHooks))
 	case strings.HasPrefix(value, settingsActionPrefixLiveResources):
 		return c.setLiveResourcesMode(strings.TrimPrefix(value, settingsActionPrefixLiveResources))
+	case strings.HasPrefix(value, settingsActionPrefixHUDVisibility):
+		component, mode, ok := parseStatusbarHUDVisibilityAction(strings.TrimPrefix(value, settingsActionPrefixHUDVisibility))
+		if !ok {
+			return fmt.Errorf("unknown status bar visibility action: %s", value)
+		}
+		return c.setStatusbarHUDVisibility(component, mode)
 	case strings.HasPrefix(value, settingsActionPrefixProjdir):
 		action := strings.TrimPrefix(value, settingsActionPrefixProjdir)
 		if c.switcher == nil {
@@ -484,6 +490,7 @@ func settingsMutationLabel(value string) (string, bool) {
 		{settingsActionPrefixDesktopNotifyMode, "Desktop delivery"},
 		{settingsActionPrefixHooks, "Project automation policy"},
 		{settingsActionPrefixLiveResources, "Resources"},
+		{settingsActionPrefixHUDVisibility, "Status Bar visibility"},
 		{settingsActionPrefixProjdir, "Primary discovery root"},
 		{settingsActionPrefixSessionState, "Snapshots"},
 		{settingsActionPrefixStatusbar, "Status Bar"},

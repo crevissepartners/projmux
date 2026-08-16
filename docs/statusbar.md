@@ -21,13 +21,22 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
        └────────── native tmux window list (one entry per window) ──────────┘
 ```
 
-- Row 0 splits the line with `#[align=left]` (the pending AI notify
+- Row 0 normally splits the line with `#[align=left]` (the pending AI notify
   queue) and `#[align=right]` (usage). Both cell budgets are derived from
   the width of the client the row is being drawn for, and the row holds back
   notify's *minimum* rather than its design cap — see
   [Row 0 width budgets](#row-0-width-budgets). `notify` is the
   explicit-ack pending queue; live pane attention badges are a separate
   state surface.
+  Settings > Appearance > Status Bar controls `Notifications HUD` and `Agent
+  Usage HUD` independently. Each defaults on. When only one is visible, its
+  sole range receives the full `#{client_width}` budget and the absent range and
+  alignment are not emitted. When both are hidden, tmux collapses to one line
+  with `status on`,
+  moves the native Window row to `status-format[0]`, unsets stale higher rows,
+  and keeps the app's quiet Session State autosave job on that surviving row;
+  there is no empty HUD row. These toggles hide presentation only and do not
+  mutate the Notification queue or usage collection/cache/API state.
 - Row 1 keeps tmux's native `window-status-format` so clicking a tab
   selects the window. The bind uses `if-shell -F
   "#{==:#{mouse_status_range},window}"` to run `select-window -t =`
@@ -119,7 +128,7 @@ row 1  [#S]  #{pane_current_path}  ⎈ <ctx>/<ns>  <git>  CPU 12%  MEM 41%   
 
 Row 0 does not share space with the window list — that lives on
 `status-format[1]` — so the whole client width is row 0's budget, and the two
-segments split it exactly:
+segments split it exactly when both HUDs are visible:
 
 ```
 notify = min(client_width / 2, clamp(client_width - 140, 20, 80))
