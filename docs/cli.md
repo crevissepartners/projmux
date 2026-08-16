@@ -529,6 +529,8 @@ Delete Windows and every descendant Agent and Pane; no selector inside tmux mean
 projmux delete window [<ref>...] [--project <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]
 ```
 
+Aliases: `windows`
+
 ### `projmux delete pane`
 
 Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry
@@ -536,6 +538,8 @@ Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector 
 ```
 projmux delete pane [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]
 ```
+
+Aliases: `panes`
 
 ### `projmux delete agent`
 
@@ -545,6 +549,8 @@ Delete Agents and their managed Panes; no selector inside tmux means the active 
 projmux delete agent [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]
 ```
 
+Aliases: `agents`
+
 ### `projmux delete notification`
 
 Delete pending notification rows
@@ -553,6 +559,8 @@ Delete pending notification rows
 projmux delete notification
 ```
 
+Aliases: `notifications`
+
 ### `projmux delete snapshot`
 
 Delete saved session snapshots
@@ -560,6 +568,8 @@ Delete saved session snapshots
 ```
 projmux delete snapshot
 ```
+
+Aliases: `snapshots`
 
 ## `projmux describe`
 
@@ -591,6 +601,8 @@ Describe one Project resource; with no selector inside tmux, the active Project
 projmux describe project
 ```
 
+Aliases: `projects`
+
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux describe window`
@@ -600,6 +612,8 @@ Describe one Window resource; with no selector inside tmux, the active Window
 ```
 projmux describe window
 ```
+
+Aliases: `windows`
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
@@ -611,6 +625,8 @@ Describe one Pane resource; with no selector inside tmux, the active Pane
 projmux describe pane
 ```
 
+Aliases: `panes`
+
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux describe agent`
@@ -620,6 +636,8 @@ Describe one Agent resource; with no selector inside tmux, the Agent owning the 
 ```
 projmux describe agent
 ```
+
+Aliases: `agents`
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
@@ -743,6 +761,8 @@ List Project resources
 projmux get projects
 ```
 
+Aliases: `project`
+
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get windows`
@@ -752,6 +772,8 @@ List Window resources
 ```
 projmux get windows
 ```
+
+Aliases: `window`
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
@@ -773,6 +795,8 @@ List Agent resources
 projmux get agents
 ```
 
+Aliases: `agent`
+
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get notifications`
@@ -783,6 +807,8 @@ List pending notification rows
 projmux get notifications
 ```
 
+Aliases: `notification`
+
 ### `projmux get snapshots`
 
 List saved session snapshots
@@ -790,6 +816,8 @@ List saved session snapshots
 ```
 projmux get snapshots
 ```
+
+Aliases: `snapshot`
 
 ### `projmux get pane`
 
@@ -1144,6 +1172,8 @@ Rename a Projmux Project resource; with no selector inside tmux, the active Proj
 projmux rename project
 ```
 
+Aliases: `projects`
+
 ### `projmux rename window`
 
 Rename a Projmux Window resource; with no selector inside tmux, the active Window
@@ -1152,6 +1182,8 @@ Rename a Projmux Window resource; with no selector inside tmux, the active Windo
 projmux rename window
 ```
 
+Aliases: `windows`
+
 ### `projmux rename pane`
 
 Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title
@@ -1159,6 +1191,8 @@ Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; d
 ```
 projmux rename pane
 ```
+
+Aliases: `panes`
 
 ## `projmux resources`
 

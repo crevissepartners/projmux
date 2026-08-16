@@ -159,11 +159,20 @@ func RenderRouteHelp(w io.Writer, path []string, route Route) error {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
+	// Aliases sit directly under Usage because they are spellings of the very
+	// line above, not a separate capability. Every one of them reaches this same
+	// node, so nothing else in this rendering changes between them.
+	if len(route.Aliases) > 0 {
+		b.WriteString("\nAliases:\n")
+		for _, alias := range route.Aliases {
+			fmt.Fprintf(&b, "  %s\n", alias)
+		}
+	}
 	if len(route.Children) > 0 {
 		width := nameColumnWidth
 		for _, child := range route.Children {
-			if len(child.Name)+2 > width {
-				width = len(child.Name) + 2
+			if len(childListingName(child))+2 > width {
+				width = len(childListingName(child)) + 2
 			}
 		}
 		// Provider shortcuts are spellings of `create agent --provider <id>`, not
@@ -221,12 +230,28 @@ func writeChildGroup(b *strings.Builder, title string, children []Route, width i
 	b.WriteString(title)
 	b.WriteString(":\n")
 	for _, child := range group {
+		name := childListingName(child)
 		b.WriteString("  ")
-		b.WriteString(child.Name)
-		b.WriteString(strings.Repeat(" ", width-len(child.Name)))
+		b.WriteString(name)
+		b.WriteString(strings.Repeat(" ", width-len(name)))
 		b.WriteString(child.Summary)
 		b.WriteString("\n")
 	}
+}
+
+// childListingName renders one child's accepted spellings for the subcommand
+// listing: the canonical name, then its aliases, joined with `|`.
+//
+// The listing is where an operator finds out a spelling exists at all, so an
+// accepted one that only appears in an error message is effectively hidden. The
+// summary column stays a single line per node because an alias is the same
+// node -- `pane|panes` is one route described once, not two rows that would
+// imply two behaviors.
+func childListingName(child Route) string {
+	if len(child.Aliases) == 0 {
+		return child.Name
+	}
+	return strings.Join(append([]string{child.Name}, child.Aliases...), "|")
 }
 
 // padName pads a listing name to the shared help name column.

@@ -19,8 +19,14 @@ import (
 // the Pane-read `cwd` field projection.
 const canonicalGetPane = "get pane"
 
-// getKinds lists the resource kinds `get` implements, in help order.
-var getKinds = []string{"projects", "windows", "panes", "agents", "notifications", "snapshots", "pane"}
+// getKinds lists the kind spellings `get` implements, in help order, each
+// canonical token followed by its accepted aliases.
+//
+// It is derived from the command manifest rather than restated here, so a kind
+// the manifest accepts can never be missing from the refusal that lists them --
+// which was exactly the failure mode when the four resource verbs each kept
+// their own hand-written list and disagreed about singular and plural.
+var getKinds = cli.ChildSpellings("get")
 
 // getCommand implements the read-only `get` verb.
 //
@@ -72,11 +78,21 @@ func (c *getCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return usageError(fmt.Sprintf("get requires a resource kind: %s", strings.Join(getKinds, ", ")))
 	}
-	switch args[0] {
+	// The alias is normalized away before anything else looks at the token, so
+	// the switch below, the flag-set name, the `-o` catalog key, and every
+	// message built from the spelling all see the canonical kind. That is what
+	// makes `get project` byte-identical to `get projects` instead of a parallel
+	// route that has to be kept in step by hand.
+	kind, ok := cli.CanonicalChildToken("get", args[0])
+	if !ok {
+		return usageError(fmt.Sprintf("get %s is not available; this release implements: %s",
+			args[0], strings.Join(getKinds, ", ")))
+	}
+	switch kind {
 	case "pane":
 		return c.runPane(args[1:], stdout, stderr)
 	case "projects", "windows", "panes", "agents":
-		return c.runList(args[0], args[1:], stdout, stderr)
+		return c.runList(kind, args[1:], stdout, stderr)
 	case "notifications":
 		return forwardRawArgv(c.notify, "get notifications", "notify", []string{"list"}, args[1:], stdout, stderr)
 	case "snapshots":

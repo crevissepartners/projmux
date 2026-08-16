@@ -190,6 +190,21 @@ func writeReferenceRoute(b *strings.Builder, path []string, route Route) {
 	}
 	b.WriteString("```\n\n")
 
+	// Aliases are extra spellings of this same section, so they are stated here
+	// rather than given sections of their own: a second heading would put a
+	// second entry in the index for one route and imply two behaviors to
+	// document.
+	if len(route.Aliases) > 0 {
+		b.WriteString("Aliases:")
+		for i, alias := range route.Aliases {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(b, " `%s`", alias)
+		}
+		b.WriteString("\n\n")
+	}
+
 	if len(route.Children) > 0 {
 		writeReferenceChildGroup(b, path, "Subcommands", route.Children, false)
 		writeReferenceChildGroup(b, path, "Provider shortcuts", route.Children, true)

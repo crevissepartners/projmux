@@ -13,8 +13,9 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 )
 
-// describeKinds lists the resource kinds `describe` implements, in help order.
-var describeKinds = []string{"project", "window", "pane", "agent"}
+// describeKinds lists the kind spellings `describe` implements, in help order,
+// each canonical token followed by its accepted aliases. See getKinds.
+var describeKinds = cli.ChildSpellings("describe")
 
 // describeCommand implements the read-only `describe` verb.
 //
@@ -44,12 +45,17 @@ func (c *describeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return usageError(fmt.Sprintf("describe requires a resource kind: %s", strings.Join(describeKinds, ", ")))
 	}
-	kind, ok := resourceKindTokens[args[0]]
+	token, ok := cli.CanonicalChildToken("describe", args[0])
 	if !ok {
 		return usageError(fmt.Sprintf("describe %s is not available; this release implements: %s",
 			args[0], strings.Join(describeKinds, ", ")))
 	}
-	return c.runKind(args[0], kind, args[1:], stdout, stderr)
+	kind, ok := resourceKindTokens[token]
+	if !ok {
+		return usageError(fmt.Sprintf("describe %s is not available; this release implements: %s",
+			args[0], strings.Join(describeKinds, ", ")))
+	}
+	return c.runKind(token, kind, args[1:], stdout, stderr)
 }
 
 func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []string, stdout, stderr io.Writer) error {
