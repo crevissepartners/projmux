@@ -516,27 +516,30 @@ func TestGetAgentsSurfacesTheConversationPointer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get agents: %v (stderr=%s)", err, stderr)
 	}
-	const want = "agent/codex status=live owner=project/alpha window/main session=codex:codex-thread-1\n"
+	// The conversation pointer is the SESSION column of the columnar read.
+	const want = "NAME   STATUS  PROJECT  WINDOW  SESSION\n" +
+		"codex  live    alpha    main    codex:codex-thread-1\n"
 	if stdout != want {
 		t.Fatalf("get agents = %q, want %q", stdout, want)
 	}
 
-	// An Agent with no observed conversation keeps the pre-change line exactly.
+	// An Agent with no observed conversation leaves the cell empty, which ends
+	// the line at WINDOW rather than padding an empty trailing column.
 	beta, _, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "beta")
 	if err != nil {
 		t.Fatalf("get agents --project beta: %v", err)
 	}
-	if strings.Contains(beta, "session=") {
-		t.Fatalf("an Agent with no session ref grew a session field: %q", beta)
+	if beta != "NAME   STATUS   PROJECT  WINDOW  SESSION\ncodex  offline  beta     main\n" {
+		t.Fatalf("an Agent with no session ref rendered %q", beta)
 	}
 
-	// Other kinds are untouched.
+	// Other kinds carry no SESSION column at all.
 	windows, _, err := runRoute(t, newTestListGetCommand(t, store), "windows", "--project", "beta")
 	if err != nil {
 		t.Fatalf("get windows: %v", err)
 	}
-	if windows != "window/main status=offline owner=project/beta\n" {
-		t.Fatalf("get windows = %q, want the unchanged summary", windows)
+	if windows != "NAME  STATUS   PROJECT\nmain  offline  beta\n" {
+		t.Fatalf("get windows = %q, want the Window column contract", windows)
 	}
 
 	// The structured mode carries the whole per-provider union.
