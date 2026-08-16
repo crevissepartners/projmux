@@ -3,6 +3,7 @@ package metadata
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -462,4 +463,158 @@ func mustJSON(t *testing.T, value any) string {
 		t.Fatalf("marshal: %v", err)
 	}
 	return string(data)
+}
+
+// TestObserveRuntimeBindingsRecordsWhyAndNeverDeletes pins the reconciler's
+// half of the observation contract at the model level.
+//
+// The rule is a diff: a Window or Pane whose uid is mirrored on no live tmux
+// object is judged orphan and gets a MissingRuntime condition; a re-bound one
+// clears it. Nothing is deleted, nothing is re-identified, and no name
+// reservation is released -- the same preservation contract MissingRoot
+// established for a Project whose root disappeared.
+func TestObserveRuntimeBindingsRecordsWhyAndNeverDeletes(t *testing.T) {
+	t.Parallel()
+
+	roots := dirSet{"/srv/alpha": true}
+	m := testMutator(roots)
+	reg := NewRegistry()
+	result, err := registerFixture(m, &reg, "/srv/alpha")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	windowUID := result.Windows[0].Metadata.UID
+	paneUID := result.Panes[0].Metadata.UID
+	before := reg.Clone()
+
+	bound := func(windows, panes []string) RuntimeObservation {
+		set := func(uids []string) map[string]bool {
+			out := map[string]bool{}
+			for _, uid := range uids {
+				out[uid] = true
+			}
+			return out
+		}
+		return RuntimeObservation{Windows: set(windows), Panes: set(panes)}
+	}
+
+	// Everything is mirrored: no condition anywhere.
+	m.ObserveRuntimeBindings(&reg, bound([]string{windowUID}, []string{paneUID}))
+	assertNoRuntimeCondition(t, reg, windowUID, paneUID)
+
+	// The pane's tmux pane goes away. Only the Pane is conditioned.
+	m.ObserveRuntimeBindings(&reg, bound([]string{windowUID}, nil))
+	window, _ := reg.Window(windowUID)
+	if _, ok := window.HasCondition(ConditionMissingRuntime); ok {
+		t.Fatal("a still-bound Window was conditioned")
+	}
+	pane, _ := reg.Pane(paneUID)
+	condition, ok := pane.HasCondition(ConditionMissingRuntime)
+	if !ok {
+		t.Fatal("an unbound Pane carries no MissingRuntime condition")
+	}
+	if condition.Status != ConditionTrue || condition.Reason != ReasonRuntimeUnbound {
+		t.Fatalf("condition = %+v, want an active RuntimeUnbound record", condition)
+	}
+	if !strings.Contains(condition.Message, paneUID) {
+		t.Fatalf("condition message %q does not name the unbound uid", condition.Message)
+	}
+	if !condition.FirstObservedAt.Equal(fixedNow) {
+		t.Fatalf("firstObservedAt = %v, want the observation clock", condition.FirstObservedAt)
+	}
+
+	// Nothing was removed or renamed by the judgment.
+	if len(reg.Windows) != len(before.Windows) || len(reg.Panes) != len(before.Panes) {
+		t.Fatal("an unbound runtime deleted a resource")
+	}
+	if len(reg.NameReservations) != len(before.NameReservations) {
+		t.Fatal("an unbound runtime released a name reservation")
+	}
+	if pane.Metadata.UID != paneUID || pane.Metadata.Name != before.Panes[0].Metadata.Name {
+		t.Fatalf("an unbound runtime re-identified the Pane: %+v", pane.Metadata)
+	}
+
+	// A repeat observation preserves the first-observed timestamp.
+	m.ObserveRuntimeBindings(&reg, bound([]string{windowUID}, nil))
+	pane, _ = reg.Pane(paneUID)
+	repeat, _ := pane.HasCondition(ConditionMissingRuntime)
+	if len(pane.Status.Conditions) != 1 || !repeat.FirstObservedAt.Equal(condition.FirstObservedAt) {
+		t.Fatalf("a repeat observation churned the condition: %+v", pane.Status.Conditions)
+	}
+
+	// The whole runtime goes away, then comes back on the same uids.
+	m.ObserveRuntimeBindings(&reg, RuntimeObservation{})
+	window, _ = reg.Window(windowUID)
+	if _, ok := window.HasCondition(ConditionMissingRuntime); !ok {
+		t.Fatal("an unbound Window carries no MissingRuntime condition")
+	}
+	m.ObserveRuntimeBindings(&reg, bound([]string{windowUID}, []string{paneUID}))
+	assertNoRuntimeCondition(t, reg, windowUID, paneUID)
+
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("observation left an invalid registry: %v", err)
+	}
+}
+
+func assertNoRuntimeCondition(t *testing.T, reg Registry, windowUID, paneUID string) {
+	t.Helper()
+	window, ok := reg.Window(windowUID)
+	if !ok {
+		t.Fatalf("window %q disappeared", windowUID)
+	}
+	if _, ok := window.HasCondition(ConditionMissingRuntime); ok {
+		t.Fatalf("bound window %q carries MissingRuntime", windowUID)
+	}
+	pane, ok := reg.Pane(paneUID)
+	if !ok {
+		t.Fatalf("pane %q disappeared", paneUID)
+	}
+	if _, ok := pane.HasCondition(ConditionMissingRuntime); ok {
+		t.Fatalf("bound pane %q carries MissingRuntime", paneUID)
+	}
+}
+
+// TestWindowStatusRoundTripsWithoutChangingAPreObservationRegistry pins the
+// wire-compatibility decision behind `status,omitzero` on Window.
+//
+// A Window with no condition must serialize exactly as it did before the field
+// existed, so the addition stays inside schemaVersion 1 and an already-installed
+// build never sees a key it did not expect.
+func TestWindowStatusRoundTripsWithoutChangingAPreObservationRegistry(t *testing.T) {
+	t.Parallel()
+
+	window := Window{
+		APIVersion: APIVersion, Kind: KindWindow,
+		Metadata: ObjectMeta{UID: "window-01", Name: "zsh", CreatedAt: fixedNow},
+		Spec:     WindowSpec{PrimaryPaneRef: "pane-01"},
+	}
+	data, err := json.Marshal(window)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "status") {
+		t.Fatalf("a condition-free Window serialized a status key: %s", data)
+	}
+
+	window.Status.Conditions = []Condition{{
+		Type: ConditionMissingRuntime, Status: ConditionTrue, Reason: ReasonRuntimeUnbound,
+		FirstObservedAt: fixedNow, LastTransitionAt: fixedNow,
+	}}
+	data, err = json.Marshal(window)
+	if err != nil {
+		t.Fatalf("marshal conditioned: %v", err)
+	}
+	var decoded Window
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := decoded.HasCondition(ConditionMissingRuntime); !ok {
+		t.Fatalf("the condition did not survive a round trip: %s", data)
+	}
+	// A clone must not share the condition slice with its source.
+	clone := decoded.Clone()
+	clone.Status.Conditions[0].Reason = "mutated"
+	if decoded.Status.Conditions[0].Reason != ReasonRuntimeUnbound {
+		t.Fatal("Window.Clone shares its condition slice")
+	}
 }

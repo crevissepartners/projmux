@@ -57,11 +57,11 @@ func (r *activeTargetTmuxRunner) Run(_ context.Context, name string, args ...str
 
 func newTestDescribeCommandWithActiveTarget(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) *describeCommand {
 	t.Helper()
-	return &describeCommand{loadRegistry: store.store().load, activeTarget: active.lookup}
+	return &describeCommand{loadRegistry: store.store().load, activeTarget: active.lookup, runtime: liveAlphaRuntime()}
 }
 
 func newTestRenameCommandWithActiveTarget(store *fakeResourceStore, active *recordedActiveTarget) *renameCommand {
-	return &renameCommand{store: store.store(), activeTarget: active.lookup}
+	return &renameCommand{store: store.store(), activeTarget: active.lookup, runtime: liveAlphaRuntime()}
 }
 
 func newTestRebindCommandWithActiveTarget(store *fakeResourceStore, active *recordedActiveTarget) *rebindCommand {
@@ -70,7 +70,7 @@ func newTestRebindCommandWithActiveTarget(store *fakeResourceStore, active *reco
 
 func newTestPaneGetCommandWithActiveTarget(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget, current *stubCurrentPath) *getCommand {
 	t.Helper()
-	return &getCommand{loadRegistry: store.store().load, currentPath: current, activeTarget: active.lookup}
+	return &getCommand{loadRegistry: store.store().load, currentPath: current, activeTarget: active.lookup, runtime: liveAlphaRuntime()}
 }
 
 // TestActiveTargetIsDecidedByTheEnvironmentNotByWhetherTmuxAnswers pins the

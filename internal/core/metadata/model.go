@@ -92,9 +92,73 @@ const (
 	// The Project is never deleted or re-identified while it is set.
 	ConditionMissingRoot = "MissingRoot"
 
+	// ConditionMissingRuntime marks a Window or Pane whose uid is mirrored on
+	// no live tmux object. It is the recorded *reason* a runtime object went
+	// away, and it is deliberately not a deletion: the resource keeps its uid,
+	// its name reservation, and its place in the owner tree, exactly the way
+	// ConditionMissingRoot preserves a Project whose root vanished.
+	//
+	// It is never the source of a status read. Status is derived from a live
+	// observation taken by the reading invocation (see selector.ObservedStatus);
+	// this condition is the durable note the reconciler leaves behind so
+	// `describe` can say why an object is offline long after the observation
+	// that noticed it has been discarded.
+	ConditionMissingRuntime = "MissingRuntime"
+
 	ConditionTrue  = "True"
 	ConditionFalse = "False"
 )
+
+// ReasonRuntimeUnbound is the ConditionMissingRuntime reason. It records what
+// was observed -- no live tmux object mirrors this uid -- and nothing about
+// why, because nothing about why is observable: a window or pane that is gone
+// leaves no exit status behind for a later inventory read to recover.
+const ReasonRuntimeUnbound = "RuntimeUnbound"
+
+// RuntimeObservation is one live-tmux inventory of mirrored Projmux uids.
+//
+// It is the machine half of a registry-versus-machine diff: a uid the registry
+// holds but this observation does not is an object whose tmux window or pane is
+// gone. It is a value taken once per process invocation and thrown away, never
+// a cache and never persisted, which is what makes closing a pane visible to
+// the very next query without any hook firing.
+//
+// The empty observation means "nothing is bound", which is the fail-closed
+// reading: it can only ever downgrade a resource to offline, never invent a
+// live one.
+type RuntimeObservation struct {
+	// Windows is the set of Window uids a live tmux window still mirrors.
+	Windows map[string]bool
+	// Panes is the set of Pane uids a live tmux pane still mirrors.
+	Panes map[string]bool
+}
+
+// BoundWindow reports whether a live tmux window still mirrors uid.
+//
+// There is deliberately no generic Bound(kind, uid) accessor. Only Window and
+// Pane have a tmux object of their own: a Project's runtime is a tmux session
+// with no @projmux uid, and an Agent has no tmux object at all. A kind-dispatch
+// accessor would have to answer something for those two, and every available
+// answer is a lie waiting to be trusted.
+func (o RuntimeObservation) BoundWindow(uid string) bool { return o.Windows[uid] }
+
+// BoundPane reports whether a live tmux pane still mirrors uid.
+func (o RuntimeObservation) BoundPane(uid string) bool { return o.Panes[uid] }
+
+// Clone returns a deep copy so a resolver can never observe its snapshot
+// changing under it.
+func (o RuntimeObservation) Clone() RuntimeObservation {
+	return RuntimeObservation{Windows: cloneBoolSet(o.Windows), Panes: cloneBoolSet(o.Panes)}
+}
+
+func cloneBoolSet(in map[string]bool) map[string]bool {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]bool, len(in))
+	maps.Copy(out, in)
+	return out
+}
 
 // SessionProjection is the 1:1 runtime projection of a persistent tmux
 // session onto its Project. Auto-attach ephemeral sessions are never recorded
@@ -138,10 +202,11 @@ func (p Project) Clone() Project {
 
 // Window is owned by exactly one Project and always owns an initial Pane.
 type Window struct {
-	APIVersion string     `json:"apiVersion"`
-	Kind       Kind       `json:"kind"`
-	Metadata   ObjectMeta `json:"metadata"`
-	Spec       WindowSpec `json:"spec"`
+	APIVersion string       `json:"apiVersion"`
+	Kind       Kind         `json:"kind"`
+	Metadata   ObjectMeta   `json:"metadata"`
+	Spec       WindowSpec   `json:"spec"`
+	Status     WindowStatus `json:"status,omitzero"`
 }
 
 // WindowSpec records the uid of the Pane created together with the Window.
@@ -149,10 +214,27 @@ type WindowSpec struct {
 	PrimaryPaneRef string `json:"primaryPaneRef"`
 }
 
+// WindowStatus carries the observed conditions of one Window.
+//
+// There is deliberately no stored liveness field here, and there never will be
+// one: a stored bool is exactly the defect this block replaces. Liveness is
+// derived from a live observation at read time; what is stored is only the
+// preserved *reason* an object stopped being bound.
+//
+// The field is `omitzero` rather than `omitempty` so a Window that has never
+// carried a condition serializes byte-identically to a registry written before
+// this field existed. That keeps the addition inside schemaVersion 1: an older
+// build reading a newer file simply ignores a key it does not know, and a
+// newer build reading an older file decodes the absent key to the zero value.
+type WindowStatus struct {
+	Conditions []Condition `json:"conditions,omitempty"`
+}
+
 // Clone returns a deep copy of the Window.
 func (w Window) Clone() Window {
 	out := w
 	out.Metadata = w.Metadata.Clone()
+	out.Status.Conditions = slices.Clone(w.Status.Conditions)
 	return out
 }
 
@@ -181,16 +263,23 @@ type PaneSpec struct {
 	Command string   `json:"command,omitempty"`
 }
 
-// PaneStatus carries the derived secondary display title. DisplayTitle is
-// never a selector, an identity, or a Window name source.
+// PaneStatus carries the derived secondary display title and the observed
+// conditions of one Pane. DisplayTitle is never a selector, an identity, or a
+// Window name source.
+//
+// As with WindowStatus there is no stored liveness field: liveness is derived
+// from a live observation at read time, and Conditions only preserves the
+// reason a runtime object went away.
 type PaneStatus struct {
-	DisplayTitle string `json:"displayTitle,omitempty"`
+	DisplayTitle string      `json:"displayTitle,omitempty"`
+	Conditions   []Condition `json:"conditions,omitempty"`
 }
 
 // Clone returns a deep copy of the Pane.
 func (p Pane) Clone() Pane {
 	out := p
 	out.Metadata = p.Metadata.Clone()
+	out.Status.Conditions = slices.Clone(p.Status.Conditions)
 	return out
 }
 

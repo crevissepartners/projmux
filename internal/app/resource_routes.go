@@ -98,6 +98,18 @@ type resourceQueryFlags struct {
 	agents   []string
 	labels   repeatedFlag
 	output   string
+	// runtime observes live tmux once per invocation so Window and Pane status
+	// is derived rather than inherited from a stored bool; see
+	// runtime_observation.go.
+	//
+	// The three routes that render selector.Match.Status set it: `get`,
+	// `describe`, and `rename`. It is nil on the routes that resolve identity
+	// and print their own result -- delete, rebind, and the Agent routes -- and
+	// a nil lookup is the empty observation, so opting in is a per-route
+	// decision made where the flags are built. A route that starts rendering
+	// Status must set it; the alternative it replaced, inheriting the owning
+	// Project's stored liveness, no longer exists anywhere.
+	runtime runtimeLookup
 	// active observes the tmux target this invocation runs in, for the
 	// empty-selector fallback described in active_target.go.
 	//
@@ -286,7 +298,7 @@ func (f *resourceQueryFlags) unmatchedTargetRefs(registry coremetadata.Registry)
 // resolveQuery runs the kind's resolution pipeline without enforcing a
 // cardinality.
 func (f *resourceQueryFlags) resolveQuery(registry coremetadata.Registry, query selector.Query) (selector.Resolution, error) {
-	resolver := selector.New(registry)
+	resolver := selector.NewObserved(registry, f.runtime.observation())
 	switch f.kind {
 	case coremetadata.KindProject:
 		return resolver.ResolveProjects(query)

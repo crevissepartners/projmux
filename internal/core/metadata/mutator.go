@@ -508,15 +508,67 @@ func (m Mutator) ObserveProjectRoots(reg *Registry) error {
 	return nil
 }
 
+// ObserveRuntimeBindings refreshes the MissingRuntime condition of every Window
+// and Pane against one live-tmux observation.
+//
+// This is the reconciler's half of the observation contract. It records *why* a
+// runtime object is gone so the reason survives the invocation that noticed it;
+// the live/offline answer itself is derived per read from the observation and
+// never from what this writes. That split is deliberate: a stored liveness bool
+// is what made Windows and Panes report live against nothing at all.
+//
+// It is an inventory diff, not an event handler, which is what lets it converge
+// with no hook firing at all: an object whose uid is mirrored on no live tmux
+// object is judged orphan on the very next pass, and a re-bound object clears
+// the condition on the pass after that.
+//
+// Nothing here deletes, prunes, or re-identifies a resource, and nothing
+// releases a name reservation. A Window or Pane whose tmux object disappeared
+// stays queryable forever, exactly like a MissingRoot Project.
+func (m Mutator) ObserveRuntimeBindings(reg *Registry, observed RuntimeObservation) {
+	now := m.clock()().UTC()
+	changed := false
+	for i := range reg.Windows {
+		window := &reg.Windows[i]
+		if m.refreshRuntimeCondition(&window.Status.Conditions,
+			observed.BoundWindow(window.Metadata.UID),
+			"no live tmux window mirrors window uid "+window.Metadata.UID, now) {
+			changed = true
+		}
+	}
+	for i := range reg.Panes {
+		pane := &reg.Panes[i]
+		if m.refreshRuntimeCondition(&pane.Status.Conditions,
+			observed.BoundPane(pane.Metadata.UID),
+			"no live tmux pane mirrors pane uid "+pane.Metadata.UID, now) {
+			changed = true
+		}
+	}
+	if changed {
+		reg.UpdatedAt = now
+	}
+}
+
+// refreshRuntimeCondition sets or clears MissingRuntime for one resource and
+// reports whether anything changed.
+func (m Mutator) refreshRuntimeCondition(conditions *[]Condition, bound bool, message string, now time.Time) bool {
+	if bound {
+		return clearCondition(conditions, ConditionMissingRuntime)
+	}
+	return setCondition(conditions, Condition{
+		Type:             ConditionMissingRuntime,
+		Status:           ConditionTrue,
+		Reason:           ReasonRuntimeUnbound,
+		Message:          message,
+		FirstObservedAt:  now,
+		LastTransitionAt: now,
+	})
+}
+
 // setMissingRootCondition records MissingRoot, preserving the first-observed
 // timestamp across repeat observations.
 func setMissingRootCondition(conditions *[]Condition, root string, now time.Time) bool {
-	for i := range *conditions {
-		if (*conditions)[i].Type == ConditionMissingRoot {
-			return false
-		}
-	}
-	*conditions = append(*conditions, Condition{
+	return setCondition(conditions, Condition{
 		Type:             ConditionMissingRoot,
 		Status:           ConditionTrue,
 		Reason:           "RootDisappeared",
@@ -524,6 +576,21 @@ func setMissingRootCondition(conditions *[]Condition, root string, now time.Time
 		FirstObservedAt:  now,
 		LastTransitionAt: now,
 	})
+}
+
+// setCondition appends condition unless its type is already recorded.
+//
+// A repeat observation is a no-op on purpose: FirstObservedAt must keep naming
+// the first pass that saw the problem, and rewriting LastTransitionAt on every
+// pass would make an unchanged registry look freshly mutated and churn the file
+// on disk for nothing.
+func setCondition(conditions *[]Condition, condition Condition) bool {
+	for i := range *conditions {
+		if (*conditions)[i].Type == condition.Type {
+			return false
+		}
+	}
+	*conditions = append(*conditions, condition)
 	return true
 }
 
@@ -542,7 +609,21 @@ func clearCondition(conditions *[]Condition, conditionType string) bool {
 
 // HasCondition reports whether a Project carries conditionType.
 func (p Project) HasCondition(conditionType string) (Condition, bool) {
-	for _, condition := range p.Status.Conditions {
+	return findCondition(p.Status.Conditions, conditionType)
+}
+
+// HasCondition reports whether a Window carries conditionType.
+func (w Window) HasCondition(conditionType string) (Condition, bool) {
+	return findCondition(w.Status.Conditions, conditionType)
+}
+
+// HasCondition reports whether a Pane carries conditionType.
+func (p Pane) HasCondition(conditionType string) (Condition, bool) {
+	return findCondition(p.Status.Conditions, conditionType)
+}
+
+func findCondition(conditions []Condition, conditionType string) (Condition, bool) {
+	for _, condition := range conditions {
 		if condition.Type == conditionType {
 			return condition, true
 		}

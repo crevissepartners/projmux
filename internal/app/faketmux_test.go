@@ -272,6 +272,19 @@ func trailingCommand(args []string) []string {
 }
 
 func (f *fakeTmux) runListWindows(args []string) ([]byte, error) {
+	// `-a` is the server-wide window inventory the mirrored-uid Window lookup
+	// reads. It ignores `-t` entirely, exactly like tmux.
+	if slices.Contains(args, "-a") {
+		format := flagValue(args, "-F")
+		var b strings.Builder
+		for _, s := range f.sessions {
+			for _, w := range s.windows {
+				b.WriteString(renderFormat(format, s, w, nil))
+				b.WriteString("\n")
+			}
+		}
+		return []byte(b.String()), nil
+	}
 	session := f.session(flagValue(args, "-t"))
 	if session == nil {
 		return nil, fmt.Errorf("fake tmux: list-windows: no session %q", flagValue(args, "-t"))

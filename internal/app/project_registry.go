@@ -34,7 +34,8 @@ import (
 //     Windows is never re-imported.
 //  2. Register the remaining selectable workdirs with the bootstrap topology.
 //  3. Observe roots and refresh the live session projection.
-//  4. Release every Agent whose managed Pane no longer exists in tmux.
+//  4. Observe live tmux and record why any Window or Pane lost its runtime,
+//     then release every Agent whose managed Pane no longer exists in tmux.
 //
 // Nothing here renumbers or merges an existing Project: first registration wins
 // and names stay stable.
@@ -150,27 +151,43 @@ func (r *registryReconciler) reconcile(ctx context.Context, working *coremetadat
 		return err
 	}
 	// Last on purpose. importLiveSessions is what mirrors a freshly imported
-	// Pane's uid onto its tmux pane, so sweeping before it ran would diff the
+	// Pane's uid onto its tmux pane, so observing before it ran would diff the
 	// registry against an inventory that does not yet carry the uids this same
-	// pass allocated, and would offline an Agent the instant it was imported.
-	r.sweepDeadAgentPanes(ctx, working, mutator)
+	// pass allocated: it would offline an Agent the instant it was imported and
+	// stamp a MissingRuntime condition on a Window that is plainly there.
+	r.observeRuntime(ctx, working, mutator)
 	return nil
 }
 
-// sweepDeadAgentPanes runs the dead-pane sweep as the last step of one
-// reconciliation pass.
+// observeRuntime is the runtime-observation step of one reconciliation pass.
 //
-// It fails closed. A tmux query that errors -- no server running, a server that
-// refuses the command -- releases nothing and reports no error, which is the
-// same tolerance reconcile already extends to an absent server. Rewriting the
-// registry from an inventory we could not read would offline every managed
-// Agent on a machine whose tmux server simply is not up.
-func (r *registryReconciler) sweepDeadAgentPanes(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator) {
-	live, err := r.mirror.LivePaneUIDs(ctx)
-	if err != nil {
+// It reads the live tmux inventory once and puts it to two uses: recording why
+// a Window or Pane lost its runtime object, and releasing every Agent whose
+// managed Pane died. Both are inventory diffs against the same snapshot, so the
+// two can never disagree about which panes are still bound.
+//
+// This is what makes convergence hook-free. The pane-exit hooks are an
+// optimization for the read verbs, which never reconcile; with every hook
+// disabled the next mutation route still runs this pass and still reaches the
+// same answer, because nothing here needs to be told what died -- it compares
+// the registry to the machine.
+//
+// It fails closed, per inventory. A tmux query that errors -- no server
+// running, a server that refuses the command -- records nothing and releases
+// nothing and reports no error, which is the same tolerance reconcile already
+// extends to an absent server. Rewriting the registry from an inventory we
+// could not read would condition every Window and offline every managed Agent
+// on a machine whose tmux server simply is not up.
+func (r *registryReconciler) observeRuntime(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator) {
+	panes, paneErr := r.mirror.LivePaneUIDs(ctx)
+	if paneErr == nil {
+		releaseDeadAgentPanes(working, mutator, panes)
+	}
+	windows, windowErr := r.mirror.LiveWindowUIDs(ctx)
+	if paneErr != nil || windowErr != nil {
 		return
 	}
-	releaseDeadAgentPanes(working, mutator, live)
+	mutator.ObserveRuntimeBindings(working, coremetadata.RuntimeObservation{Windows: windows, Panes: panes})
 }
 
 // importLiveSessions seeds resources from the tmux sessions that predate the

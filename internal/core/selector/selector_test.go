@@ -3,6 +3,7 @@ package selector
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -299,48 +300,207 @@ func TestPaneScopeIsOwnerScopedAcrossProjectsWindowsAndAgents(t *testing.T) {
 	}
 }
 
-// TestStatusInterpretationCoversLiveOfflineAndMissingRoot pins the three-valued
-// status read, including the rule that Window and Pane status is inherited from
-// the owning Project because only a Project has a runtime projection.
-func TestStatusInterpretationCoversLiveOfflineAndMissingRoot(t *testing.T) {
+// TestObservedStatusIsTheOneDerivationRule pins the single rule every kind's
+// status goes through, as a truth table over its two inputs.
+//
+// There is deliberately nothing else in the codebase that decides live vs
+// offline vs missing-root. A second rule is how the two halves of a
+// three-valued status drift apart, and MissingRoot's precedence is exactly the
+// kind of thing that gets re-implemented slightly differently the second time.
+func TestObservedStatusIsTheOneDerivationRule(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		missingRoot bool
+		bound       bool
+		want        Status
+	}{
+		{name: "observed live", bound: true, want: StatusLive},
+		{name: "observed on nothing", want: StatusOffline},
+		{name: "missing root outranks an unobserved runtime", missingRoot: true, want: StatusMissingRoot},
+		{name: "missing root outranks a live runtime", missingRoot: true, bound: true, want: StatusMissingRoot},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ObservedStatus(test.missingRoot, test.bound); got != test.want {
+				t.Fatalf("ObservedStatus(%t, %t) = %q, want %q", test.missingRoot, test.bound, got, test.want)
+			}
+		})
+	}
+}
+
+// TestWindowAndPaneStatusIsObservedNotInherited is the status-derivation table
+// of the resolver: the same registry, read against three different machines.
+//
+// The registry never changes across the rows. Only the observation does, and
+// the reported status follows the observation every time. That is the contract
+// in one sentence: status is an observation, not a stored field.
+func TestWindowAndPaneStatusIsObservedNotInherited(t *testing.T) {
 	t.Parallel()
 
 	registry := standardRegistry(t)
-	resolver := New(registry)
 
 	for _, test := range []struct {
-		project string
-		want    Status
+		name       string
+		observed   metadata.RuntimeObservation
+		wantWindow map[string]Status
+		wantPane   map[string]Status
 	}{
-		{project: "alpha", want: StatusLive},
-		{project: "beta", want: StatusOffline},
-		{project: "gone", want: StatusMissingRoot},
+		{
+			name:     "the machine runs the alpha project",
+			observed: liveAlphaObservation(),
+			wantWindow: map[string]Status{
+				"win-alpha-main":   StatusLive,
+				"win-alpha-review": StatusLive,
+				"win-beta-main":    StatusOffline,
+				"win-gone-main":    StatusMissingRoot,
+			},
+			wantPane: map[string]Status{
+				"pan-alpha-zsh":        StatusLive,
+				"pan-alpha-log":        StatusLive,
+				"pan-alpha-codex":      StatusLive,
+				"pan-alpha-review-zsh": StatusLive,
+				"pan-beta-zsh":         StatusOffline,
+				"pan-gone-zsh":         StatusMissingRoot,
+			},
+		},
+		{
+			name: "one pane of a live window was closed",
+			observed: observing(
+				[]string{"win-alpha-main", "win-alpha-review"},
+				[]string{"pan-alpha-zsh", "pan-alpha-codex", "pan-alpha-review-zsh"},
+			),
+			wantWindow: map[string]Status{
+				"win-alpha-main":   StatusLive,
+				"win-alpha-review": StatusLive,
+			},
+			wantPane: map[string]Status{
+				// Judged on its own binding, not on its Window's: closing one
+				// pane offlines exactly that Pane.
+				"pan-alpha-log":   StatusOffline,
+				"pan-alpha-zsh":   StatusLive,
+				"pan-alpha-codex": StatusLive,
+			},
+		},
+		{
+			name: "nothing is running at all",
+			// The registry still says project alpha has a live session. It is
+			// not consulted: no live tmux object mirrors any uid, so every
+			// Window and Pane is offline. This row is the defect.
+			observed: metadata.RuntimeObservation{},
+			wantWindow: map[string]Status{
+				"win-alpha-main":   StatusOffline,
+				"win-alpha-review": StatusOffline,
+				"win-beta-main":    StatusOffline,
+				"win-gone-main":    StatusMissingRoot,
+			},
+			wantPane: map[string]Status{
+				"pan-alpha-zsh":        StatusOffline,
+				"pan-alpha-log":        StatusOffline,
+				"pan-alpha-codex":      StatusOffline,
+				"pan-alpha-review-zsh": StatusOffline,
+				"pan-beta-zsh":         StatusOffline,
+				"pan-gone-zsh":         StatusMissingRoot,
+			},
+		},
 	} {
-		match, err := resolver.ResolveProject(mustRef(t, metadata.KindProject, test.project))
-		if err != nil {
-			t.Fatalf("ResolveProject(%q) error = %v", test.project, err)
-		}
-		if match.Status != test.want {
-			t.Fatalf("project %q status = %q, want %q", test.project, match.Status, test.want)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			resolver := NewObserved(registry, test.observed)
 
-		panes, err := resolver.ResolvePanes(Query{Project: refPtr(mustRef(t, metadata.KindProject, test.project))})
+			windows, err := resolver.ResolveWindows(Query{})
+			if err != nil {
+				t.Fatalf("ResolveWindows error = %v", err)
+			}
+			assertStatusByUID(t, metadata.KindWindow, windows.Matches, test.wantWindow)
+
+			panes, err := resolver.ResolvePanes(Query{})
+			if err != nil {
+				t.Fatalf("ResolvePanes error = %v", err)
+			}
+			assertStatusByUID(t, metadata.KindPane, panes.Matches, test.wantPane)
+		})
+	}
+}
+
+// assertStatusByUID checks the wanted subset of a resolution's statuses.
+func assertStatusByUID(t *testing.T, kind metadata.Kind, matches []Match, want map[string]Status) {
+	t.Helper()
+	seen := map[string]Status{}
+	for _, match := range matches {
+		seen[match.UID] = match.Status
+	}
+	for uid, wanted := range want {
+		got, ok := seen[uid]
+		if !ok {
+			t.Fatalf("%s %q did not resolve at all", kind, uid)
+		}
+		if got != wanted {
+			t.Fatalf("%s %q status = %q, want %q", kind, uid, got, wanted)
+		}
+	}
+}
+
+// TestStoredSessionLivenessNeverDecidesWindowOrPaneStatus is the negative
+// guard: the stored bool must be unreachable from a Window or Pane status read.
+//
+// It flips `status.session.live` on the owning Project and nothing else, then
+// asserts every Window and Pane status is byte-identical. The old
+// implementation fails both halves of this -- with the observation empty it
+// reported live, and with the observation full it would still have tracked the
+// bool.
+func TestStoredSessionLivenessNeverDecidesWindowOrPaneStatus(t *testing.T) {
+	t.Parallel()
+
+	build := func(live bool) metadata.Registry {
+		b := newBuilder(t)
+		b.project("prj-alpha", "alpha", "", "/srv/alpha", &metadata.SessionProjection{Name: "alpha", Live: live}, false)
+		b.window("win-alpha-main", "main", "prj-alpha", nil)
+		b.shellPane("pan-alpha-zsh", "zsh", "", "win-alpha-main", "/srv/alpha", nil)
+		b.shellPane("pan-alpha-log", "log", "", "win-alpha-main", "/srv/alpha", nil)
+		b.agentWithPane("agt-alpha-codex", "codex", "win-alpha-main", "pan-alpha-codex", "codex-pane", nil)
+		return b.build()
+	}
+
+	// The machine runs the Window and one of its Panes, whatever the stored
+	// bool says.
+	observed := observing([]string{"win-alpha-main"}, []string{"pan-alpha-zsh"})
+	want := map[string]Status{
+		"win-alpha-main":  StatusLive,
+		"pan-alpha-zsh":   StatusLive,
+		"pan-alpha-log":   StatusOffline,
+		"pan-alpha-codex": StatusOffline,
+	}
+
+	for _, live := range []bool{true, false} {
+		resolver := NewObserved(build(live), observed)
+
+		windows, err := resolver.ResolveWindows(Query{})
 		if err != nil {
-			t.Fatalf("ResolvePanes(%q) error = %v", test.project, err)
+			t.Fatalf("ResolveWindows(session live=%t) error = %v", live, err)
 		}
-		if len(panes.Matches) == 0 {
-			t.Fatalf("project %q has no panes to inherit status", test.project)
+		panes, err := resolver.ResolvePanes(Query{})
+		if err != nil {
+			t.Fatalf("ResolvePanes(session live=%t) error = %v", live, err)
 		}
-		for _, pane := range panes.Matches {
-			if pane.Status != test.want {
-				t.Fatalf("pane %q under %q has status %q, want the owning project's %q",
-					pane.Name, test.project, pane.Status, test.want)
+		for _, match := range slices.Concat(windows.Matches, panes.Matches) {
+			if got := want[match.UID]; got != match.Status {
+				t.Fatalf("with status.session.live=%t, %s %q status = %q, want %q (the stored bool leaked into the answer)",
+					live, match.Kind, match.UID, match.Status, got)
 			}
 		}
 	}
+}
 
-	// An offline Project stays fully queryable: metadata does not disappear
-	// when tmux does.
+// TestOfflineResourcesStayQueryable pins the preservation half of the contract:
+// runtime disappearing never deletes, re-identifies, or hides a resource.
+func TestOfflineResourcesStayQueryable(t *testing.T) {
+	t.Parallel()
+
+	// Nothing at all is running.
+	resolver := NewObserved(standardRegistry(t), metadata.RuntimeObservation{})
+
 	offline, err := resolver.ResolvePanes(Query{
 		Project: refPtr(mustRef(t, metadata.KindProject, "beta")),
 		Panes:   []Ref{mustRef(t, metadata.KindPane, "zsh")},
@@ -362,21 +522,68 @@ func TestStatusInterpretationCoversLiveOfflineAndMissingRoot(t *testing.T) {
 	}
 }
 
-// TestMissingRootOutranksAStaleLiveSession pins the status precedence rule.
+// TestProjectStatusStillReadsItsSessionProjection pins the one kind whose
+// runtime object is a tmux session rather than a mirrored uid. Project status
+// is unchanged by this Phase.
+func TestProjectStatusStillReadsItsSessionProjection(t *testing.T) {
+	t.Parallel()
+
+	resolver := NewObserved(standardRegistry(t), liveAlphaObservation())
+	for _, test := range []struct {
+		project string
+		want    Status
+	}{
+		{project: "alpha", want: StatusLive},
+		{project: "beta", want: StatusOffline},
+		{project: "gone", want: StatusMissingRoot},
+	} {
+		match, err := resolver.ResolveProject(mustRef(t, metadata.KindProject, test.project))
+		if err != nil {
+			t.Fatalf("ResolveProject(%q) error = %v", test.project, err)
+		}
+		if match.Status != test.want {
+			t.Fatalf("project %q status = %q, want %q", test.project, match.Status, test.want)
+		}
+	}
+}
+
+// TestMissingRootOutranksAStaleLiveSession pins the status precedence rule on
+// every kind at once: the Project's own session projection, and a Window and a
+// Pane the machine is demonstrably still running.
+//
+// This is the preservation contract. A Project whose root disappeared needs an
+// explicit rebind or prune, and a tmux window that happens to still be up must
+// not hide that from any of the three reads.
 func TestMissingRootOutranksAStaleLiveSession(t *testing.T) {
 	t.Parallel()
 
 	b := newBuilder(t)
 	b.project("prj-stale", "stale", "", "/srv/stale", &metadata.SessionProjection{Name: "stale", Live: true}, true)
+	b.window("win-stale", "main", "prj-stale", nil)
+	b.shellPane("pan-stale", "zsh", "", "win-stale", "/srv/stale", nil)
 	registry := b.build()
 
-	match, err := New(registry).ResolveProject(mustRef(t, metadata.KindProject, "stale"))
+	resolver := NewObserved(registry, observing([]string{"win-stale"}, []string{"pan-stale"}))
+
+	match, err := resolver.ResolveProject(mustRef(t, metadata.KindProject, "stale"))
 	if err != nil {
 		t.Fatalf("ResolveProject error = %v", err)
 	}
 	if match.Status != StatusMissingRoot {
-		t.Fatalf("status = %q, want %q", match.Status, StatusMissingRoot)
+		t.Fatalf("project status = %q, want %q", match.Status, StatusMissingRoot)
 	}
+
+	windows, err := resolver.ResolveWindows(Query{})
+	if err != nil {
+		t.Fatalf("ResolveWindows error = %v", err)
+	}
+	assertStatusByUID(t, metadata.KindWindow, windows.Matches, map[string]Status{"win-stale": StatusMissingRoot})
+
+	panes, err := resolver.ResolvePanes(Query{})
+	if err != nil {
+		t.Fatalf("ResolvePanes error = %v", err)
+	}
+	assertStatusByUID(t, metadata.KindPane, panes.Matches, map[string]Status{"pan-stale": StatusMissingRoot})
 }
 
 // TestProjectSelectorIsExactOne covers the at-most-once exact-one --project

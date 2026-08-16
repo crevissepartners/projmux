@@ -131,6 +131,10 @@ Resources and ownership:
   projection of a Project recorded in `Project.status.session` with a `live`
   flag, and it owns no uid, name, or ownerRef. Auto-attach ephemeral sessions
   live only in runtime inventory, outside the Project hierarchy.
+- `Window` and `Pane` carry **no stored liveness field**, deliberately. Their
+  `status` block holds observed conditions only; live/offline is derived from a
+  live tmux observation at read time. See *Runtime observation and resource
+  status* below.
 - Every Window owns an initial Pane and stores its uid in
   `spec.primaryPaneRef`. Project registration creates this topology **offline**,
   with no tmux involvement, so Project and Window metadata stays queryable
@@ -341,6 +345,57 @@ tmux transport mirror:
 - `Pane.metadata.name` is the primary pane display source. The derived
   `Pane.status.displayTitle` (Agent topic → known shell → raw pane title) is
   secondary and is never a selector, an identity, or a Window name source.
+
+Runtime observation and resource status:
+
+- **Status is an observation; spec is stored and authoritative.** A read verb
+  never trusts a stored liveness value. `Window` and `Pane` status is derived
+  per invocation from a live tmux snapshot: a resource is `live` only while a
+  live tmux object still mirrors its `@projmux_window_uid` /
+  `@projmux_pane_uid`. A registry object bound to nothing live is an **orphan**,
+  and an orphan is not live.
+- `selector.ObservedStatus(missingRoot, bound)` is the **single** derivation
+  rule in the codebase, and every kind goes through it. `missing-root` outranks
+  everything, then `bound` decides `live` vs `offline`. The MissingRoot
+  precedence contract is unchanged, and it now applies to a Window or Pane whose
+  owning Project lost its root even while tmux is still running them.
+- A **Project** is the one kind whose runtime object is a tmux *session*, which
+  has no `@projmux` uid of its own, so Project status still reads
+  `status.session` as refreshed by the reconciler. An **Agent** owns no tmux
+  object at all — it outlives the managed Pane it is bound to — so it reports
+  its owning Window's observed status; its own lifecycle lives in
+  `status.phase`.
+- The observation is taken **at the command entrypoint, once per process
+  invocation**, and costs exactly two reads: `list-panes -a` and
+  `list-windows -a` (~3ms each). It is lazy, so a route that never renders
+  status never pays for it. It is **not** cached and **not** persisted: closing
+  a pane must make the *next* query report it offline, and a TTL would defeat
+  exactly that. It is also not a per-route reconcile, because the read verbs
+  load the registry read-only and must never materialize
+  `<state>/projmux/metadata/`.
+- A failed inventory query yields an **empty** observation, never a fallback to
+  a stored value. Empty can only downgrade a resource to offline; it can never
+  invent a live one, and "nothing is live" is the truthful answer for a machine
+  whose tmux server is not up.
+- The reconciler runs the same diff on the mutation routes and records **why** a
+  runtime object went away as a `MissingRuntime` condition
+  (`reason: RuntimeUnbound`) on the Window or Pane, with `firstObservedAt`
+  preserved across repeat observations and cleared when the object rebinds.
+  `describe` renders it. This is an inventory diff, not an event handler, so it
+  **converges with no hook firing**: the pane-exit hooks only accelerate the
+  read verbs, which never reconcile.
+- **A vanished runtime never deletes, prunes, or re-identifies a resource, and
+  never releases a name reservation** — the same preservation contract
+  `MissingRoot` established for a Project whose root disappeared. There is no
+  auto-prune.
+- The inventory is a pure **read**. It never writes, re-mirrors, or adopts a uid
+  onto a live tmux object; reattaching a lost binding is a separate concern.
+  A consequence: after a tmux server restart the objects survive but the options
+  do not, so everything reads offline until a mutation route re-mirrors.
+- The observation shells out as bare `tmux`, like every other mirror read, so
+  inside a client `$TMUX` selects the projmux socket. Introducing a second
+  socket convention for this one query would let the observation disagree with
+  the mirror writes it is diffed against.
 
 Selector and the implicit active target:
 

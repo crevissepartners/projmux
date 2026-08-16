@@ -173,6 +173,31 @@ func standardRegistry(t *testing.T) metadata.Registry {
 	return b.build()
 }
 
+// observing builds a live-tmux observation from literal uid lists. It is the
+// fake observer of the status-derivation tests: the machine is stated as the
+// set of uids a live tmux object still mirrors, never as a stored bool.
+func observing(windows, panes []string) metadata.RuntimeObservation {
+	set := func(uids []string) map[string]bool {
+		out := make(map[string]bool, len(uids))
+		for _, uid := range uids {
+			out[uid] = true
+		}
+		return out
+	}
+	return metadata.RuntimeObservation{Windows: set(windows), Panes: set(panes)}
+}
+
+// liveAlphaObservation is the observation that matches standardRegistry's
+// intent: the machine is running exactly the Windows and Panes of the Project
+// "alpha", whose session projection also says live. Nothing under the offline
+// "beta" or the MissingRoot "gone" is mirrored anywhere.
+func liveAlphaObservation() metadata.RuntimeObservation {
+	return observing(
+		[]string{"win-alpha-main", "win-alpha-review"},
+		[]string{"pan-alpha-zsh", "pan-alpha-log", "pan-alpha-review-zsh", "pan-alpha-codex"},
+	)
+}
+
 // mustRef parses a selector occurrence or fails the test.
 func mustRef(t *testing.T, kind metadata.Kind, raw string) Ref {
 	t.Helper()

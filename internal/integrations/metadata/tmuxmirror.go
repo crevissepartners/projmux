@@ -207,19 +207,59 @@ func (m Mirror) LivePaneUIDs(ctx context.Context) (map[string]bool, error) {
 	return uids, nil
 }
 
+// liveWindowRows reads the (mirrored Window uid, session name, window index)
+// row of every window on the server.
+//
+// It is the single query behind both the uid -> target lookup and the
+// mirrored-uid inventory, the same way livePaneRows is for panes, so the two
+// can never disagree about which Windows still have a transport binding.
+func (m Mirror) liveWindowRows(ctx context.Context) ([][]string, error) {
+	out, err := m.run(ctx, "list-windows", "-a", "-F", tmuxFormat("#{"+tmuxopts.WindowUID+"}", "#{session_name}", "#{window_index}"))
+	if err != nil {
+		return nil, fmt.Errorf("metadata: list windows: %w", err)
+	}
+	return parseRows(string(out), 3), nil
+}
+
 // WindowTargetForUID scans every live window for the mirrored uid and returns
 // its tmux `session:index` target.
 func (m Mirror) WindowTargetForUID(ctx context.Context, uid string) (string, error) {
-	out, err := m.run(ctx, "list-windows", "-a", "-F", tmuxFormat("#{"+tmuxopts.WindowUID+"}", "#{session_name}", "#{window_index}"))
+	rows, err := m.liveWindowRows(ctx)
 	if err != nil {
-		return "", fmt.Errorf("metadata: list windows: %w", err)
+		return "", err
 	}
-	for _, fields := range parseRows(string(out), 3) {
+	for _, fields := range rows {
 		if fields[0] == uid && fields[0] != "" {
 			return fields[1] + ":" + fields[2], nil
 		}
 	}
 	return "", fmt.Errorf("metadata: no live window mirrors uid %q", uid)
+}
+
+// LiveWindowUIDs returns the set of Projmux Window uids that a live tmux window
+// still mirrors.
+//
+// It is the Window half of the registry-versus-machine diff, exactly as
+// LivePaneUIDs is the Pane half: a window carrying no mirrored uid contributes
+// nothing, so a Window uid the registry holds but this set does not is a Window
+// whose tmux window is gone.
+//
+// This is a read. It never writes, re-mirrors, or adopts a uid onto a live tmux
+// window -- reattaching a lost binding is a separate concern with its own
+// failure modes, and doing it here would silently turn an observation into a
+// mutation on every read verb.
+func (m Mirror) LiveWindowUIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := m.liveWindowRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	uids := make(map[string]bool, len(rows))
+	for _, fields := range rows {
+		if fields[0] != "" {
+			uids[fields[0]] = true
+		}
+	}
+	return uids, nil
 }
 
 // SessionForProjectUID scans every live session for the mirrored Project uid.
