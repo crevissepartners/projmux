@@ -27,6 +27,7 @@ func TestRenameChangesOnlyTheMetadataNameOfOneResource(t *testing.T) {
 		wantName  string
 		wantKind  string
 		wantScope string
+		display   string
 	}{
 		{
 			name: "project", args: []string{"project", "alpha", "--name", "alpha-renamed"},
@@ -34,7 +35,7 @@ func TestRenameChangesOnlyTheMetadataNameOfOneResource(t *testing.T) {
 		},
 		{
 			name: "window inside its project scope", args: []string{"window", "review", "--project", "alpha", "--name", "audit"},
-			wantUID: "win-alpha-review", wantName: "audit", wantKind: "Window", wantScope: "prj-alpha",
+			wantUID: "win-alpha-review", wantName: "audit", wantKind: "Window", wantScope: "prj-alpha", display: "Runtime Review",
 		},
 		{
 			name: "pane inside its window scope", args: []string{"pane", "log", "--project", "alpha", "--window", "main", "--name", "tail"},
@@ -48,6 +49,11 @@ func TestRenameChangesOnlyTheMetadataNameOfOneResource(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			store := newFakeResourceStore(t)
+			if test.display != "" {
+				window, _ := store.registry.Window(test.wantUID)
+				window.Metadata.DisplayName = test.display
+			}
+			_, metadataBefore, _ := resourceFor(store.registry, resourceKindTokens[strings.ToLower(test.wantKind)], test.wantUID)
 			before := store.snapshot()
 			stdout, stderr, err := runRoute(t, newTestRenameCommand(store), test.args...)
 			if err != nil {
@@ -69,6 +75,9 @@ func TestRenameChangesOnlyTheMetadataNameOfOneResource(t *testing.T) {
 			}
 			if meta.UID != test.wantUID {
 				t.Fatalf("rename changed the uid: %q", meta.UID)
+			}
+			if meta.DisplayName != metadataBefore.DisplayName {
+				t.Fatalf("rename %v changed displayName to %q, want unchanged %q", test.args, meta.DisplayName, metadataBefore.DisplayName)
 			}
 
 			// The reservation table follows the rename inside the same scope, so

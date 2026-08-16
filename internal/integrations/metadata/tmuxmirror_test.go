@@ -52,17 +52,31 @@ func TestMirrorWritesResourceIdentityIntoScopedTmuxOptionsAndTurnsOffAutomaticRe
 			},
 		},
 		{
-			name: "window mirrors window-scoped options and pins the name",
+			name: "window mirrors stable identity and a separate runtime display name",
 			run: func(m Mirror) error {
 				return m.MirrorWindow(context.Background(), "projmux:0", coremetadata.Window{
-					Metadata: coremetadata.ObjectMeta{UID: "win-1", Name: "editor"},
+					Metadata: coremetadata.ObjectMeta{UID: "win-1", Name: "window", DisplayName: "editor"},
 				})
 			},
 			want: []string{
 				"tmux set-option -w -t projmux:0 automatic-rename off",
 				"tmux set-option -w -t projmux:0 -q @projmux_window_uid win-1",
-				"tmux set-option -w -t projmux:0 -q @projmux_window_name editor",
+				"tmux set-option -w -t projmux:0 -q @projmux_window_name window",
 				"tmux rename-window -t projmux:0 editor",
+			},
+		},
+		{
+			name: "window with no projected display name falls back to stable name",
+			run: func(m Mirror) error {
+				return m.MirrorWindow(context.Background(), "projmux:1", coremetadata.Window{
+					Metadata: coremetadata.ObjectMeta{UID: "win-2", Name: "review"},
+				})
+			},
+			want: []string{
+				"tmux set-option -w -t projmux:1 automatic-rename off",
+				"tmux set-option -w -t projmux:1 -q @projmux_window_uid win-2",
+				"tmux set-option -w -t projmux:1 -q @projmux_window_name review",
+				"tmux rename-window -t projmux:1 review",
 			},
 		},
 		{
@@ -85,18 +99,6 @@ func TestMirrorWritesResourceIdentityIntoScopedTmuxOptionsAndTurnsOffAutomaticRe
 			},
 			want:  []string{"tmux set-option -p -t %7 -q @projmux_pane_label review"},
 			never: []string{"pane_title", "select-pane -T", "rename-window", "@projmux_ai_topic"},
-		},
-		{
-			name: "rename window keeps automatic-rename off",
-			run: func(m Mirror) error {
-				return m.RenameWindow(context.Background(), "projmux:2", "server")
-			},
-			want: []string{
-				"tmux set-option -w -t projmux:2 automatic-rename off",
-				"tmux set-option -w -t projmux:2 -q @projmux_window_name server",
-				"tmux rename-window -t projmux:2 server",
-			},
-			never: []string{"@projmux_pane_label"},
 		},
 	}
 	for _, tt := range tests {
@@ -229,12 +231,13 @@ func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.
 		t.Fatalf("a non-agent pane must carry no conversation ids, got %q/%q", got.SessionID, got.ThreadID)
 	}
 
-	// The observed state drives the same seeds the pure core computes.
-	if got := coremetadata.LegacyWindowNameSeed(legacy.Windows[0]); got != "editor" {
-		t.Fatalf("window 0 seed = %q, want editor", got)
+	// Runtime attributes remain available for display projection, but neither
+	// automatic-rename mode can turn them into a stable Window name seed.
+	if got := coremetadata.LegacyWindowNameSeed(legacy.Windows[0]); got != coremetadata.FallbackWindowNameBase {
+		t.Fatalf("window 0 seed = %q, want %q", got, coremetadata.FallbackWindowNameBase)
 	}
-	if got := coremetadata.LegacyWindowNameSeed(legacy.Windows[1]); got != "zsh" {
-		t.Fatalf("window 1 seed = %q, want zsh", got)
+	if got := coremetadata.LegacyWindowNameSeed(legacy.Windows[1]); got != coremetadata.FallbackWindowNameBase {
+		t.Fatalf("window 1 seed = %q, want %q", got, coremetadata.FallbackWindowNameBase)
 	}
 }
 

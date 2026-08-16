@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -163,6 +164,11 @@ func TestASingleReconcileReattachesADriftedRegistryToItsLiveSession(t *testing.T
 	reconciler := newTestReconciler(tmux, []string{root})
 	reconciler.observeLegacy = unanchoredObservation(driftedSessionName, session)
 	registry := driftedRegistry(t, root)
+	windowIdentityBefore := make(map[string]coremetadata.ObjectMeta, len(registry.Windows))
+	for _, stored := range registry.Windows {
+		windowIdentityBefore[stored.Metadata.UID] = stored.Metadata.Clone()
+	}
+	reservationsBefore := slices.Clone(registry.NameReservations)
 
 	if err := reconciler.reconcile(context.Background(), &registry, fixtureMutator(), "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -184,15 +190,30 @@ func TestASingleReconcileReattachesADriftedRegistryToItsLiveSession(t *testing.T
 	if got := window.opts[tmuxopts.WindowName]; got != "lead-roadmap" {
 		t.Fatalf("mirrored window name = %q, want lead-roadmap", got)
 	}
+	if got := window.name; got != "zsh" {
+		t.Fatalf("runtime window_name = %q, want the observed display name zsh", got)
+	}
+	projected, _ := registry.Window("win-first")
+	if got := projected.Metadata.DisplayName; got != "zsh" {
+		t.Fatalf("Window displayName = %q, want observed window_name zsh", got)
+	}
 
 	// Nothing was created and nothing was re-identified.
 	if len(registry.Windows) != 2 || len(registry.Panes) != 2 {
 		t.Fatalf("reattachment changed the topology: %d windows, %d panes", len(registry.Windows), len(registry.Panes))
 	}
 	for _, uid := range []string{"win-first", "win-second"} {
-		if _, ok := registry.Window(uid); !ok {
+		after, ok := registry.Window(uid)
+		if !ok {
 			t.Fatalf("Window %s is gone", uid)
 		}
+		before := windowIdentityBefore[uid]
+		if after.Metadata.UID != before.UID || after.Metadata.Name != before.Name || !reflect.DeepEqual(after.Metadata.OwnerRef, before.OwnerRef) {
+			t.Fatalf("Window %s identity changed: before=%+v after=%+v", uid, before, after.Metadata)
+		}
+	}
+	if !reflect.DeepEqual(registry.NameReservations, reservationsBefore) {
+		t.Fatalf("display projection changed name reservations:\nbefore=%+v\nafter=%+v", reservationsBefore, registry.NameReservations)
 	}
 
 	// And the reattached objects are not conditioned by the observation step

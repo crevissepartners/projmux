@@ -1,52 +1,47 @@
 package metadata
 
 import (
+	"reflect"
+	"slices"
 	"testing"
 )
 
-func TestLegacyWindowNameSeedExcludesTopicsAndRawTitles(t *testing.T) {
+func TestLegacyWindowNameSeedExcludesEveryRuntimeAttribute(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
 		window LegacyWindow
-		want   string
 	}{
 		{
-			name:   "automatic-rename off keeps the current window name",
+			name:   "automatic-rename off does not use window_name or pane label",
 			window: LegacyWindow{Name: "build", AutomaticRename: false, Panes: []LegacyPane{{Label: "editor"}}},
-			want:   "build",
 		},
 		{
-			name:   "automatic-rename on prefers the user pane label",
+			name:   "automatic-rename on does not use pane label",
 			window: LegacyWindow{Name: "zsh", AutomaticRename: true, Panes: []LegacyPane{{Label: "editor", Provider: "codex", Command: "zsh"}}},
-			want:   "editor",
 		},
 		{
-			name:   "automatic-rename on falls back to the provider",
+			name:   "provider is not a Window name input",
 			window: LegacyWindow{Name: "codex", AutomaticRename: true, Panes: []LegacyPane{{Provider: "Codex", Topic: "refactor", Command: "node"}}},
-			want:   "codex",
 		},
 		{
-			name:   "automatic-rename on falls back to a known shell",
+			name:   "known shell is not a Window name input",
 			window: LegacyWindow{Name: "vim", AutomaticRename: true, Panes: []LegacyPane{{Command: "node"}, {Command: "fish"}}},
-			want:   "fish",
 		},
 		{
-			name:   "automatic-rename on ignores the topic and the raw title",
+			name:   "topic and raw title remain excluded",
 			window: LegacyWindow{Name: "x", AutomaticRename: true, Panes: []LegacyPane{{Topic: "refactor naming", Title: "~/src/projmux", Command: "node"}}},
-			want:   "window",
 		},
 		{
-			name:   "automatic-rename off with an empty name falls through",
+			name:   "empty observation uses the same literal base",
 			window: LegacyWindow{Name: "", AutomaticRename: false, Panes: []LegacyPane{{Command: "bash"}}},
-			want:   "bash",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := LegacyWindowNameSeed(tt.window); got != tt.want {
-				t.Fatalf("got %q, want %q", got, tt.want)
+			if got := LegacyWindowNameSeed(tt.window); got != FallbackWindowNameBase {
+				t.Fatalf("got %q, want the literal fallback %q", got, FallbackWindowNameBase)
 			}
 		})
 	}
@@ -123,8 +118,14 @@ func TestLegacyImportBuildsResourcesAndMarksManagedWindowsForAutomaticRenameOff(
 			t.Fatalf("managed window %q must be marked for automatic-rename off", window.Name)
 		}
 	}
-	if !equalStrings(windowNames, []string{"editor", "zsh"}) {
-		t.Fatalf("window names = %v, want editor/zsh", windowNames)
+	if !equalStrings(windowNames, []string{"window", "window-1"}) {
+		t.Fatalf("window names = %v, want window/window-1", windowNames)
+	}
+	for i, want := range []string{"editor", "zsh"} {
+		window, ok := reg.Window(result.Windows[i].UID)
+		if !ok || window.Metadata.DisplayName != want {
+			t.Fatalf("window %d displayName = %q, want observed window_name %q", i, window.Metadata.DisplayName, want)
+		}
 	}
 
 	var paneNames []string
@@ -154,6 +155,56 @@ func TestLegacyImportBuildsResourcesAndMarksManagedWindowsForAutomaticRenameOff(
 	shellPane, _ := reg.Pane(result.Panes[2].UID)
 	if shellPane.Status.DisplayTitle != "zsh" {
 		t.Fatalf("shell pane display title = %q, want zsh", shellPane.Status.DisplayTitle)
+	}
+}
+
+func TestLegacyImportProjectsDisplayNameWithoutRenamingAnExistingWindow(t *testing.T) {
+	t.Parallel()
+
+	roots := dirSet{"/src/projmux": true}
+	m := testMutator(roots)
+	reg := NewRegistry()
+	first, err := m.ImportLegacySession(&reg, LegacySession{
+		Session: "projmux", Root: "/src/projmux",
+		Windows: []LegacyWindow{{Name: "runtime-before", Panes: []LegacyPane{{Command: "zsh"}}}},
+	}, "/bin/zsh", "op-1", NewBindingMatcher(RuntimeObservation{}))
+	if err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+	windowUID := first.Windows[0].UID
+	if _, err := m.RenameWindow(&reg, windowUID, "operator-chosen"); err != nil {
+		t.Fatalf("explicit stable-name rename: %v", err)
+	}
+	before, _ := reg.Window(windowUID)
+	wantUID := before.Metadata.UID
+	wantName := before.Metadata.Name
+	wantOwner := *before.Metadata.OwnerRef
+	wantReservations := slices.Clone(reg.NameReservations)
+
+	second, err := m.ImportLegacySession(&reg, LegacySession{
+		Session: "projmux", Root: "/src/projmux",
+		Windows: []LegacyWindow{{
+			Name: "runtime-after", AutomaticRename: true,
+			Panes: []LegacyPane{{Label: "lead-roadmap", Command: "fish"}},
+		}}}, "/bin/zsh", "op-2", NewBindingMatcher(RuntimeObservation{}))
+	if err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	if len(second.Windows) != 1 || second.Windows[0].UID != wantUID || second.Windows[0].Origin != ImportAdopted {
+		t.Fatalf("second import windows = %+v, want the existing Window adopted", second.Windows)
+	}
+	after, ok := reg.Window(windowUID)
+	if !ok {
+		t.Fatalf("Window %q was deleted or re-identified", windowUID)
+	}
+	if after.Metadata.UID != wantUID || after.Metadata.Name != wantName || after.Metadata.OwnerRef == nil || *after.Metadata.OwnerRef != wantOwner {
+		t.Fatalf("existing Window identity changed: before=%+v after=%+v", before.Metadata, after.Metadata)
+	}
+	if after.Metadata.DisplayName != "runtime-after" {
+		t.Fatalf("displayName = %q, want the observed runtime name", after.Metadata.DisplayName)
+	}
+	if !reflect.DeepEqual(reg.NameReservations, wantReservations) {
+		t.Fatalf("display projection changed name reservations:\nbefore=%+v\nafter=%+v", wantReservations, reg.NameReservations)
 	}
 }
 

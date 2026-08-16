@@ -408,6 +408,24 @@ func (m Mutator) RenameProject(reg *Registry, projectUID, name string) (Project,
 	return project.Clone(), nil
 }
 
+// ObserveWindowDisplayName projects one live tmux window_name onto the
+// duplicate-allowed, non-identifying metadata.displayName field. It never
+// changes the Window uid, stable name, owner, or name reservation.
+func (m Mutator) ObserveWindowDisplayName(reg *Registry, windowUID, displayName string) (Window, error) {
+	const op = "observe window display name"
+
+	window, ok := reg.Window(windowUID)
+	if !ok {
+		return Window{}, stateErr(op, ErrNotFound, "window %q does not exist", windowUID)
+	}
+	if window.Metadata.DisplayName == displayName {
+		return window.Clone(), nil
+	}
+	window.Metadata.DisplayName = displayName
+	reg.UpdatedAt = m.clock()().UTC()
+	return window.Clone(), nil
+}
+
 // RenameWindow sets a Window metadata.name inside its owning Project scope.
 func (m Mutator) RenameWindow(reg *Registry, windowUID, name string) (Window, error) {
 	const op = "rename window"

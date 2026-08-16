@@ -63,9 +63,10 @@ func (m Mirror) MirrorProject(ctx context.Context, sessionName string, project c
 	return nil
 }
 
-// MirrorWindow writes the Window uid and name onto a live tmux window, turns
-// automatic-rename off for that window, and mirrors the name into the tmux
-// window_name.
+// MirrorWindow writes stable Window identity onto window-scoped tmux options,
+// turns automatic-rename off, and writes the duplicate-allowed displayName to
+// tmux window_name. A pre-projection Window with no displayName safely uses its
+// stable metadata.name as the runtime display fallback.
 func (m Mirror) MirrorWindow(ctx context.Context, target string, window coremetadata.Window) error {
 	if strings.TrimSpace(target) == "" {
 		return fmt.Errorf("metadata: window target is required to mirror window %s", window.Metadata.UID)
@@ -76,7 +77,10 @@ func (m Mirror) MirrorWindow(ctx context.Context, target string, window coremeta
 	if _, err := m.run(ctx, "set-option", "-w", "-t", target, "-q", tmuxopts.WindowUID, window.Metadata.UID); err != nil {
 		return fmt.Errorf("metadata: mirror window uid: %w", err)
 	}
-	return m.writeWindowName(ctx, target, window.Metadata.Name)
+	if err := m.writeWindowIdentityName(ctx, target, window.Metadata.Name); err != nil {
+		return err
+	}
+	return m.writeWindowDisplayName(ctx, target, window.DisplayName())
 }
 
 // DisableAutomaticRename turns automatic-rename off for one managed window.
@@ -93,24 +97,18 @@ func (m Mirror) disableAutomaticRename(ctx context.Context, target string) error
 	return nil
 }
 
-func (m Mirror) writeWindowName(ctx context.Context, target, name string) error {
+func (m Mirror) writeWindowIdentityName(ctx context.Context, target, name string) error {
 	if _, err := m.run(ctx, "set-option", "-w", "-t", target, "-q", tmuxopts.WindowName, name); err != nil {
 		return fmt.Errorf("metadata: mirror window name: %w", err)
-	}
-	if _, err := m.run(ctx, "rename-window", "-t", target, name); err != nil {
-		return fmt.Errorf("metadata: rename tmux window: %w", err)
 	}
 	return nil
 }
 
-// RenameWindow applies `rename window` semantics: it changes the Window
-// metadata.name mirror and the tmux window_name, and keeps automatic-rename
-// off so the new name survives a focus change.
-func (m Mirror) RenameWindow(ctx context.Context, target, name string) error {
-	if err := m.disableAutomaticRename(ctx, target); err != nil {
-		return err
+func (m Mirror) writeWindowDisplayName(ctx context.Context, target, displayName string) error {
+	if _, err := m.run(ctx, "rename-window", "-t", target, displayName); err != nil {
+		return fmt.Errorf("metadata: rename tmux window: %w", err)
 	}
-	return m.writeWindowName(ctx, target, name)
+	return nil
 }
 
 // MirrorPane writes the Pane uid and mirrors metadata.name into the legacy

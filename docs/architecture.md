@@ -151,11 +151,18 @@ Identity and naming:
   identity. `metadata.labels` is key/value classification;
   `metadata.annotations` is non-identifying metadata such as an AI topic.
 - Name bases are assigned once, at create or migration time, and are never
-  re-derived: Window uses explicit name → initial command basename → configured
-  shell basename → `window`; shell Pane uses command basename → shell basename
-  → `pane`; a Pane managed by an Agent uses `<agent-name>-pane`; Agent uses
-  explicit `--name` → normalized provider id → `agent`. Agent topics and raw
-  pane titles are excluded as name seeds everywhere.
+  re-derived. A declared Window create uses explicit name → initial command
+  basename → configured shell basename → `window`; a Window newly imported
+  from tmux always uses the literal `window` allocator base. Its observed
+  `window_name`, Pane label, provider, command, shell, topic, and title are all
+  excluded from stable identity. Shell Pane uses command basename → shell
+  basename → `pane`; a Pane managed by an Agent uses `<agent-name>-pane`; Agent
+  uses explicit `--name` → normalized provider id → `agent`.
+- For a Window, the observed tmux `window_name` is
+  `metadata.displayName`: duplicate-allowed, visible in `describe window`, and
+  never a selector, ownerRef, or identity input. Existing Window uids, names,
+  owners, and name reservations are preserved; there is no bulk naming
+  migration.
 - Automatic collisions take the lowest free suffix (`Projmux-1`, `codex-1`)
   from the persisted `nameReservations` table, scanning integer suffixes rather
   than resource or map iteration order. An **explicit** `--name` or rename
@@ -328,20 +335,26 @@ tmux transport mirror:
   earlier one was pane-, session-, or global-scoped.
 - `rename pane` changes `Pane.metadata.name` and its `@projmux_pane_label`
   mirror only. It never writes the raw tmux `pane_title`.
-- `rename window` changes `Window.metadata.name`, its option mirror, and the
-  tmux `window_name`.
+- `rename window` is the explicit stable-identity path: it changes only
+  `Window.metadata.name` and its scoped name reservation. A later binding pass
+  refreshes the stable `@projmux_window_name` transport mirror. It does not
+  change `metadata.displayName` or tmux `window_name`.
+- The configured `window.rename` action (`Ctrl-M` by default) is the runtime
+  display path and invokes tmux `rename-window` directly. Reconciliation
+  observes that `window_name` back into `metadata.displayName` without changing
+  stable identity.
 - Registry-managed Windows are set to `automatic-rename off` so a focused-Pane
   change cannot overwrite the Window name. The **global** `automatic-rename on`
   plus visible-pane-label `automatic-rename-format` default in the generated
   app config is unchanged, so unmanaged windows keep their existing behavior.
-- Legacy naming migration seeds a Window name once: an existing
-  `automatic-rename=off` window keeps its current `window_name`; an
-  `automatic-rename=on` window derives a stable base from user Pane label →
-  provider → known shell → `window`, and is then switched to
-  `automatic-rename off`. An existing `@projmux_pane_label` is the migration
-  seed and transport mirror for the Pane **name**; in the resource model that
-  value is a name, not a label, and `metadata.labels` stays reserved for
-  key/value classification.
+- Legacy import gives every newly discovered Window the literal `window` base,
+  uniquified in Project scope (`window`, `window-1`, ...), and projects its
+  current `window_name` into duplicate-allowed `metadata.displayName` before
+  switching it to `automatic-rename off`. Re-observing an existing Window may
+  refresh only that display field; it never changes the uid, stable name,
+  ownerRef, or name reservation. An existing `@projmux_pane_label` remains the
+  migration seed and transport mirror for the Pane **name**; Pane naming is a
+  separate contract and is unchanged here.
 - `Pane.metadata.name` is the primary pane display source. The derived
   `Pane.status.displayTitle` (Agent topic → known shell → raw pane title) is
   secondary and is never a selector, an identity, or a Window name source.
