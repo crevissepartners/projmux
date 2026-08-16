@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -127,5 +128,6 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 	}
 	match := resolution.Matches[0]
 	match.Name = *name
-	return writeResourceProjection(stdout, spelling, mode, kind, []selector.Match{match}, renamed, false)
+	// A singular result renders no elapsed time, so it passes no clock.
+	return writeResourceProjection(stdout, spelling, mode, kind, []selector.Match{match}, renamed, false, time.Time{})
 }

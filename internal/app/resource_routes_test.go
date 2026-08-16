@@ -14,6 +14,17 @@ import (
 
 var resourceFixtureClock = time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)
 
+// resourceFixtureReadClock is the clock every fixture-backed read is handed.
+//
+// It is deliberately a fixed offset from the fixture's own creation stamp
+// rather than time.Now: the AGE column of the columnar read is measured against
+// this value, so a golden that pins the column is only meaningful while the
+// reading clock is injected. Every fixture resource is created at
+// resourceFixtureClock, so this offset renders as one and the same `2d` for all
+// of them, and the tests that need a spread of ages restamp individual
+// resources instead of moving this clock.
+var resourceFixtureReadClock = resourceFixtureClock.Add(50*time.Hour + 30*time.Minute)
+
 // resourceFixtureRegistry is the shared fixture of the canonical verb-to-kind
 // routes.
 //
@@ -253,7 +264,12 @@ func newTestDescribeCommand(t *testing.T, store *fakeResourceStore) *describeCom
 
 func newTestListGetCommand(t *testing.T, store *fakeResourceStore) *getCommand {
 	t.Helper()
-	return &getCommand{loadRegistry: store.store().load, currentPath: &stubCurrentPath{}, runtime: liveAlphaRuntime()}
+	return &getCommand{
+		loadRegistry: store.store().load,
+		currentPath:  &stubCurrentPath{},
+		runtime:      liveAlphaRuntime(),
+		now:          func() time.Time { return resourceFixtureReadClock },
+	}
 }
 
 // TestGetReadFamilyResolvesEveryKindWithListCardinality is the read half of the
@@ -315,7 +331,7 @@ func TestGetReadFamilyResolvesEveryKindWithListCardinality(t *testing.T) {
 		{
 			name: "the default projection is a header plus space-aligned columns",
 			args: []string{"windows", "--project", "beta"},
-			want: "NAME  STATUS   PROJECT\nmain  offline  beta\n",
+			want: "NAME  STATUS   PROJECT  AGE\nmain  offline  beta     2d\n",
 		},
 		{
 			name: "ref projection carries the kind",
@@ -416,14 +432,16 @@ func TestDescribeResolvesExactlyOneResourcePerKind(t *testing.T) {
 			want: map[string]string{
 				"Kind": "Project", "Name": "alpha", "UID": "prj-alpha", "DisplayName": "projmux",
 				"Root": "/srv/alpha", "Session": "alpha live=true", "Status": "live",
+				"CreatedAt": "2026-08-15T09:00:00Z",
 			},
 		},
 		{
 			name: "project with a missing root reports the condition",
 			args: []string{"project", "gone"},
 			want: map[string]string{
-				"Status":    "missing-root",
-				"Condition": "MissingRoot=True reason=RootDisappeared firstObservedAt=2026-07-04T17:00:00Z",
+				"Status": "missing-root",
+				"Condition": "MissingRoot=True reason=RootDisappeared " +
+					"firstObservedAt=2026-07-04T17:00:00Z lastTransitionAt=2026-07-04T17:00:00Z",
 			},
 		},
 		{
@@ -449,7 +467,7 @@ func TestDescribeResolvesExactlyOneResourcePerKind(t *testing.T) {
 			want: map[string]string{
 				"Kind": "Agent", "Name": "codex", "UID": "agt-alpha-codex",
 				"Provider": "codex", "Phase": "Running", "PaneRef": "pan-alpha-codex",
-				"Owner": "project/alpha window/main",
+				"Owner": "project/alpha window/main", "PhaseSince": "2026-08-15T09:00:00Z",
 			},
 		},
 		{

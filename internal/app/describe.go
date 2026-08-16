@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -98,7 +99,8 @@ func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []s
 	}
 	match := resolution.Matches[0]
 	if mode != cli.OutputModeDefault {
-		return writeResourceProjection(stdout, spelling, mode, kind, resolution.Matches, registry, false)
+		// A singular read renders no elapsed time, so it passes no clock.
+		return writeResourceProjection(stdout, spelling, mode, kind, resolution.Matches, registry, false, time.Time{})
 	}
 	return writeResourceDescription(stdout, spelling, kind, match, registry)
 }
@@ -114,6 +116,16 @@ func writeResourceDescription(stdout io.Writer, spelling string, kind coremetada
 		{"Kind", string(kind)},
 		{"Name", meta.Name},
 		{"UID", meta.UID},
+	}
+	// CreatedAt sits with the identity rows because that is what it is: the
+	// instant this uid came into existence, immutable for as long as the uid is.
+	// It is absolute here rather than the plural read's relative `AGE`, because
+	// a description answers "when", not "how long ago", and an absolute instant
+	// is the only form two descriptions taken at different times can be compared
+	// across. A registry written before the field was stamped omits the row
+	// instead of dating the resource to year 1.
+	if !meta.CreatedAt.IsZero() {
+		rows = append(rows, [2]string{"CreatedAt", describeTimestamp(meta.CreatedAt)})
 	}
 	if meta.DisplayName != "" {
 		rows = append(rows, [2]string{"DisplayName", meta.DisplayName})
@@ -166,6 +178,13 @@ func describeSpecRows(resource any) [][2]string {
 		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Agent:
 		rows := [][2]string{{"Provider", typed.Spec.Provider}, {"Phase", string(typed.Status.Phase)}}
+		// The transition time is rendered directly under the phase it dates. An
+		// Agent's phase is the one status field on any kind that moves on its
+		// own -- Pending to Running to Offline -- and until now the instant it
+		// last moved was stored on every Agent and shown on none of them.
+		if !typed.Status.LastTransitionAt.IsZero() {
+			rows = append(rows, [2]string{"PhaseSince", describeTimestamp(typed.Status.LastTransitionAt)})
+		}
 		if typed.Status.PaneRef != "" {
 			rows = append(rows, [2]string{"PaneRef", typed.Status.PaneRef})
 		}
@@ -178,7 +197,7 @@ func describeSpecRows(resource any) [][2]string {
 		if ref := typed.Status.SessionRef; !ref.Empty() {
 			rows = append(rows, [2]string{"SessionProvider", ref.Provider})
 			rows = append(rows, ref.Fields()...)
-			rows = append(rows, [2]string{"SessionObservedAt", ref.ObservedAt.UTC().Format("2006-01-02T15:04:05Z")})
+			rows = append(rows, [2]string{"SessionObservedAt", describeTimestamp(ref.ObservedAt)})
 		}
 		return rows
 	default:
@@ -193,13 +212,31 @@ func describeSpecRows(resource any) [][2]string {
 // its MissingRuntime condition says since when and against what. The resource
 // itself is never deleted, so both rows keep answering for as long as the
 // operator cares to ask.
+// Both stored instants are rendered, and they answer different questions: a
+// condition that has been re-observed unchanged keeps its original
+// firstObservedAt while lastTransitionAt moves, so the pair is what separates
+// "offline since Tuesday" from "offline, last checked a minute ago". Storing
+// both and showing one made the second reading unavailable at every surface.
 func describeConditionRows(conditions []coremetadata.Condition) [][2]string {
 	rows := make([][2]string, 0, len(conditions))
 	for _, condition := range conditions {
-		rows = append(rows, [2]string{"Condition", fmt.Sprintf("%s=%s reason=%s firstObservedAt=%s",
-			condition.Type, condition.Status, condition.Reason, condition.FirstObservedAt.UTC().Format("2006-01-02T15:04:05Z"))})
+		rows = append(rows, [2]string{"Condition", fmt.Sprintf("%s=%s reason=%s firstObservedAt=%s lastTransitionAt=%s",
+			condition.Type, condition.Status, condition.Reason,
+			describeTimestamp(condition.FirstObservedAt), describeTimestamp(condition.LastTransitionAt))})
 	}
 	return rows
+}
+
+// describeTimestamp renders one stored instant in the absolute UTC form the
+// description block uses everywhere.
+//
+// It is a second-precision RFC 3339 instant in UTC, never the operator's local
+// zone: a description is routinely read next to a registry file and next to
+// `-o json`, both of which store UTC, and a locally-rendered row would silently
+// disagree with them. The format string lived on the Agent session row alone
+// before there was more than one timestamp to render.
+func describeTimestamp(at time.Time) string {
+	return at.UTC().Format("2006-01-02T15:04:05Z")
 }
 
 // describeMapRows renders a metadata map in deterministic key order.

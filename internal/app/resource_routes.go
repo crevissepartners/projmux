@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
@@ -473,11 +475,20 @@ func resourceSummary(match selector.Match, kind coremetadata.Kind, registry core
 // `metadata.Name` without the `kind/` prefix the one-line summary carries: the
 // spelling the operator typed already states the kind, exactly as it does for
 // `kubectl get pods`.
+//
+// AGE is last on every kind, which is where `kubectl get` puts it and the only
+// position that costs the columns before it nothing: it is the one column whose
+// width changes as time passes, so growing it can never walk an owner-chain
+// column sideways. Every kind carries it because every kind stores the field it
+// is derived from -- `metadata.createdAt` lives on ObjectMeta, not on any one
+// kind's spec -- and a column present on three kinds out of four would make
+// "this kind has no age" look like a property of the resource rather than of
+// the table.
 var resourceTableColumns = map[coremetadata.Kind][]string{
-	coremetadata.KindProject: {"NAME", "STATUS"},
-	coremetadata.KindWindow:  {"NAME", "STATUS", "PROJECT"},
-	coremetadata.KindPane:    {"NAME", "STATUS", "PROJECT", "WINDOW", "AGENT"},
-	coremetadata.KindAgent:   {"NAME", "STATUS", "PROJECT", "WINDOW", "SESSION"},
+	coremetadata.KindProject: {"NAME", "STATUS", "AGE"},
+	coremetadata.KindWindow:  {"NAME", "STATUS", "PROJECT", "AGE"},
+	coremetadata.KindPane:    {"NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "AGE"},
+	coremetadata.KindAgent:   {"NAME", "STATUS", "PROJECT", "WINDOW", "SESSION", "AGE"},
 }
 
 // resourceTableGap is the minimum run of spaces between two columns. It is the
@@ -496,18 +507,62 @@ const resourceTableGap = 2
 // registry is consulted for the one field no selector.Match holds, the Agent's
 // provider session ref, which is the same lookup and the same
 // `<provider>:<conversation-id>` rendering the summary appended as `session=`.
-func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry) []string {
+//
+// The AGE cell is the one column that is not carried by the pre-columnar
+// one-liner. It is still not new data: it is `metadata.createdAt`, which the
+// registry has always stored and `-o json` has always emitted, measured against
+// the clock this invocation was handed.
+func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry, now time.Time) []string {
 	row := []string{match.Name, string(match.Status)}
+	age := resourceAgeCell(registry, kind, match.UID, now)
 	switch kind {
 	case coremetadata.KindWindow:
-		return append(row, match.Owner.Project)
+		return append(row, match.Owner.Project, age)
 	case coremetadata.KindPane:
-		return append(row, match.Owner.Project, match.Owner.Window, match.Owner.Agent)
+		return append(row, match.Owner.Project, match.Owner.Window, match.Owner.Agent, age)
 	case coremetadata.KindAgent:
-		return append(row, match.Owner.Project, match.Owner.Window, resourceSessionCell(match, registry))
+		return append(row, match.Owner.Project, match.Owner.Window, resourceSessionCell(match, registry), age)
 	default:
-		return row
+		return append(row, age)
 	}
+}
+
+// resourceAgeCell renders the AGE column of one row: how long ago the resource
+// was created, measured from its stored `metadata.createdAt`.
+//
+// Nothing here collects a timestamp. The value is read out of the registry the
+// route already loaded -- no tmux query, no new field, no write -- so the column
+// costs the invocation nothing beyond the map lookup resourceFor already does
+// for the structured output modes.
+//
+// The arithmetic is i18n.FormatDuration's compact form (`3d`, `5h`, `12m`,
+// `36s`), which is the same single implementation `notify list` renders its own
+// AGE column through, so relative time is computed in exactly one place in the
+// binary. It is deliberately measured against a passed-in clock rather than
+// time.Now: a renderer that reads the wall clock cannot be pinned by a golden.
+//
+// Three cases render an empty cell rather than a number:
+//
+//   - a match whose uid has left the registry, which is the same tolerance the
+//     other registry-derived cell (SESSION) already has;
+//   - a resource stored before `createdAt` was stamped, whose zero Time would
+//     otherwise render as an age counted from year 1;
+//   - a caller that passed no clock at all, which is what the singular
+//     projections do -- they render no age, so their zero Time can never be
+//     mistaken for "created exactly now".
+//
+// It is deliberately not localized. The headers beside it are fixed English
+// tokens, and a cell whose width depended on the operator's locale would make
+// the measured column width -- and therefore every golden -- environmental.
+func resourceAgeCell(registry coremetadata.Registry, kind coremetadata.Kind, uid string, now time.Time) string {
+	if now.IsZero() {
+		return ""
+	}
+	_, meta, ok := resourceFor(registry, kind, uid)
+	if !ok || meta.CreatedAt.IsZero() {
+		return ""
+	}
+	return i18n.FormatDuration(now.Sub(meta.CreatedAt), i18n.FallbackLocale, i18n.FormatCompact)
 }
 
 // resourceSessionCell renders the SESSION column of one Agent. An Agent that has
@@ -541,7 +596,10 @@ func resourceCellWidth(cell string) int {
 // style `No resources found` note to, and a header row over no rows would
 // announce a table that has nothing in it. Keeping the empty case byte-identical
 // to the pre-columnar behavior also keeps its exit code trivially unchanged.
-func writeResourceTable(stdout io.Writer, spelling string, kind coremetadata.Kind, matches []selector.Match, registry coremetadata.Registry) error {
+//
+// now is the invocation's clock, and it is the only thing the AGE column is
+// measured against; see resourceAgeCell for what a zero value renders.
+func writeResourceTable(stdout io.Writer, spelling string, kind coremetadata.Kind, matches []selector.Match, registry coremetadata.Registry, now time.Time) error {
 	headers, ok := resourceTableColumns[kind]
 	if !ok {
 		return fmt.Errorf("%s: no column contract is declared for kind %q", spelling, kind)
@@ -553,7 +611,7 @@ func writeResourceTable(stdout io.Writer, spelling string, kind coremetadata.Kin
 	rows := make([][]string, 0, len(matches)+1)
 	rows = append(rows, headers)
 	for _, match := range matches {
-		rows = append(rows, resourceTableRow(match, kind, registry))
+		rows = append(rows, resourceTableRow(match, kind, registry, now))
 	}
 
 	widths := make([]int, len(headers))
@@ -602,6 +660,11 @@ func resourceTableLine(row []string, widths []int) string {
 // one-line `kind/name status=... owner=...` summary. The existing `list` flag is
 // the whole discriminator, so nothing about describe, rename, or `get pane`
 // moves.
+//
+// now is the invocation's clock and reaches only the columnar table, which is
+// the only projection that renders an elapsed time. Every other projection is
+// derived from stored bytes alone, so the call sites that cannot reach the
+// table pass the zero Time rather than a clock they would never read.
 func writeResourceProjection(
 	stdout io.Writer,
 	spelling string,
@@ -610,13 +673,14 @@ func writeResourceProjection(
 	matches []selector.Match,
 	registry coremetadata.Registry,
 	list bool,
+	now time.Time,
 ) error {
 	switch mode {
 	case cli.OutputModeNone:
 		return nil
 	case cli.OutputModeUID, cli.OutputModeName, cli.OutputModeRef, cli.OutputModeDefault:
 		if mode == cli.OutputModeDefault && list {
-			return writeResourceTable(stdout, spelling, kind, matches, registry)
+			return writeResourceTable(stdout, spelling, kind, matches, registry, now)
 		}
 		for _, match := range matches {
 			var line string

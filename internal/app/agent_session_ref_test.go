@@ -517,19 +517,21 @@ func TestGetAgentsSurfacesTheConversationPointer(t *testing.T) {
 		t.Fatalf("get agents: %v (stderr=%s)", err, stderr)
 	}
 	// The conversation pointer is the SESSION column of the columnar read.
-	const want = "NAME   STATUS  PROJECT  WINDOW  SESSION\n" +
-		"codex  live    alpha    main    codex:codex-thread-1\n"
+	const want = "NAME   STATUS  PROJECT  WINDOW  SESSION               AGE\n" +
+		"codex  live    alpha    main    codex:codex-thread-1  2d\n"
 	if stdout != want {
 		t.Fatalf("get agents = %q, want %q", stdout, want)
 	}
 
-	// An Agent with no observed conversation leaves the cell empty, which ends
-	// the line at WINDOW rather than padding an empty trailing column.
+	// An Agent with no observed conversation leaves the cell empty without
+	// disturbing the columns around it -- SESSION is an interior column now that
+	// AGE follows it, so an empty cell has to hold its width rather than end the
+	// line.
 	beta, _, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "beta")
 	if err != nil {
 		t.Fatalf("get agents --project beta: %v", err)
 	}
-	if beta != "NAME   STATUS   PROJECT  WINDOW  SESSION\ncodex  offline  beta     main\n" {
+	if beta != "NAME   STATUS   PROJECT  WINDOW  SESSION  AGE\ncodex  offline  beta     main             2d\n" {
 		t.Fatalf("an Agent with no session ref rendered %q", beta)
 	}
 
@@ -538,7 +540,7 @@ func TestGetAgentsSurfacesTheConversationPointer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get windows: %v", err)
 	}
-	if windows != "NAME  STATUS   PROJECT\nmain  offline  beta\n" {
+	if windows != "NAME  STATUS   PROJECT  AGE\nmain  offline  beta     2d\n" {
 		t.Fatalf("get windows = %q, want the Window column contract", windows)
 	}
 

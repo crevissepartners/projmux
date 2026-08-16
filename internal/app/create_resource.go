@@ -9,6 +9,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -940,5 +941,8 @@ func (c *createCommand) writeResults(stdout io.Writer, spelling string, mode cli
 	}
 	// A create result is a fan-out even when it produced exactly one resource,
 	// so the structured modes keep the List envelope.
-	return writeResourceProjection(stdout, spelling, mode, kind, matches, registry, true)
+	// The default projection of a create is the `<kind>/<name> created` line
+	// handled above, so the columnar table -- and with it the only consumer of a
+	// clock -- is unreachable from here.
+	return writeResourceProjection(stdout, spelling, mode, kind, matches, registry, true, time.Time{})
 }

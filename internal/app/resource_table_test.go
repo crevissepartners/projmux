@@ -101,32 +101,32 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 	}{
 		{
 			kind: "projects",
-			want: "NAME   STATUS\n" +
-				"alpha  live\n" +
-				"beta   offline\n" +
-				"gone   missing-root\n",
+			want: "NAME   STATUS        AGE\n" +
+				"alpha  live          2d\n" +
+				"beta   offline       2d\n" +
+				"gone   missing-root  2d\n",
 		},
 		{
 			kind: "windows",
-			want: "NAME    STATUS   PROJECT\n" +
-				"main    live     alpha\n" +
-				"review  live     alpha\n" +
-				"main    offline  beta\n",
+			want: "NAME    STATUS   PROJECT  AGE\n" +
+				"main    live     alpha    2d\n" +
+				"review  live     alpha    2d\n" +
+				"main    offline  beta     2d\n",
 		},
 		{
 			kind: "panes",
-			want: "NAME        STATUS   PROJECT  WINDOW  AGENT\n" +
-				"zsh         live     alpha    main\n" +
-				"log         live     alpha    main\n" +
-				"codex-pane  live     alpha    main    codex\n" +
-				"zsh         live     alpha    review\n" +
-				"zsh         offline  beta     main\n",
+			want: "NAME        STATUS   PROJECT  WINDOW  AGENT  AGE\n" +
+				"zsh         live     alpha    main           2d\n" +
+				"log         live     alpha    main           2d\n" +
+				"codex-pane  live     alpha    main    codex  2d\n" +
+				"zsh         live     alpha    review         2d\n" +
+				"zsh         offline  beta     main           2d\n",
 		},
 		{
 			kind: "agents",
-			want: "NAME   STATUS   PROJECT  WINDOW  SESSION\n" +
-				"codex  live     alpha    main    codex:codex-thread-1\n" +
-				"codex  offline  beta     main\n",
+			want: "NAME   STATUS   PROJECT  WINDOW  SESSION               AGE\n" +
+				"codex  live     alpha    main    codex:codex-thread-1  2d\n" +
+				"codex  offline  beta     main                          2d\n",
 		},
 	} {
 		t.Run(test.kind, func(t *testing.T) {
@@ -172,10 +172,10 @@ func TestResourceTableColumnsAreTheCanonicalContract(t *testing.T) {
 		kind coremetadata.Kind
 		want []string
 	}{
-		{coremetadata.KindProject, []string{"NAME", "STATUS"}},
-		{coremetadata.KindWindow, []string{"NAME", "STATUS", "PROJECT"}},
-		{coremetadata.KindPane, []string{"NAME", "STATUS", "PROJECT", "WINDOW", "AGENT"}},
-		{coremetadata.KindAgent, []string{"NAME", "STATUS", "PROJECT", "WINDOW", "SESSION"}},
+		{coremetadata.KindProject, []string{"NAME", "STATUS", "AGE"}},
+		{coremetadata.KindWindow, []string{"NAME", "STATUS", "PROJECT", "AGE"}},
+		{coremetadata.KindPane, []string{"NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "AGE"}},
+		{coremetadata.KindAgent, []string{"NAME", "STATUS", "PROJECT", "WINDOW", "SESSION", "AGE"}},
 	} {
 		got := resourceTableColumns[test.kind]
 		if strings.Join(got, ",") != strings.Join(test.want, ",") {
@@ -215,7 +215,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p3", Name: "빌드로그", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "알파", Window: "review"}},
 			},
-			want: "NAME      STATUS   PROJECT  WINDOW  AGENT\n" +
+			want: "NAME      STATUS   PROJECT  WINDOW  AGENT  AGE\n" +
 				"쉘        live     알파     메인\n" +
 				"log       offline  alpha    main\n" +
 				"빌드로그  live     알파     review\n",
@@ -229,7 +229,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindWindow, UID: "w2", Name: "m", Status: selector.StatusMissingRoot,
 					Owner: selector.OwnerContext{Project: "beta"}},
 			},
-			want: "NAME                            STATUS        PROJECT\n" +
+			want: "NAME                            STATUS        PROJECT  AGE\n" +
 				"a-very-long-window-name-indeed  live          alpha\n" +
 				"m                               missing-root  beta\n",
 		},
@@ -241,7 +241,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p2", Name: "zsh", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "NAME    STATUS   PROJECT  WINDOW  AGENT\n" +
+			want: "NAME    STATUS   PROJECT  WINDOW  AGENT  AGE\n" +
 				"orphan  offline\n" +
 				"zsh     live     alpha    main\n",
 		},
@@ -258,7 +258,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p2", Name: "zsh", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "NAME        STATUS  PROJECT  WINDOW  AGENT\n" +
+			want: "NAME        STATUS  PROJECT  WINDOW  AGENT  AGE\n" +
 				"codex-pane  live    alpha    main    codex\n" +
 				"zsh         live    alpha    main\n",
 		},
@@ -269,7 +269,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindAgent, UID: "a1", Name: "codex", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "NAME   STATUS  PROJECT  WINDOW  SESSION\n" +
+			want: "NAME   STATUS  PROJECT  WINDOW  SESSION  AGE\n" +
 				"codex  live    alpha    main\n",
 		},
 		{
@@ -282,7 +282,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			if err := writeResourceTable(&out, "get "+strings.ToLower(string(test.kind))+"s", test.kind, test.matches, registry); err != nil {
+			if err := writeResourceTable(&out, "get "+strings.ToLower(string(test.kind))+"s", test.kind, test.matches, registry, resourceFixtureReadClock); err != nil {
 				t.Fatalf("writeResourceTable error = %v", err)
 			}
 			if out.String() != test.want {
@@ -322,7 +322,7 @@ func TestResourceTableHangulAlignmentIsNotRuneCount(t *testing.T) {
 			Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 	}
 	var out bytes.Buffer
-	if err := writeResourceTable(&out, "get panes", coremetadata.KindPane, matches, coremetadata.NewRegistry()); err != nil {
+	if err := writeResourceTable(&out, "get panes", coremetadata.KindPane, matches, coremetadata.NewRegistry(), resourceFixtureReadClock); err != nil {
 		t.Fatalf("writeResourceTable error = %v", err)
 	}
 
@@ -362,7 +362,7 @@ func runeCountTable(kind coremetadata.Kind, matches []selector.Match) string {
 	headers := resourceTableColumns[kind]
 	rows := [][]string{headers}
 	for _, match := range matches {
-		rows = append(rows, resourceTableRow(match, kind, coremetadata.NewRegistry()))
+		rows = append(rows, resourceTableRow(match, kind, coremetadata.NewRegistry(), resourceFixtureReadClock))
 	}
 	widths := make([]int, len(headers))
 	for _, row := range rows {
@@ -402,11 +402,11 @@ func TestGetListWithHangulNamesStaysAligned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get panes error = %v (stderr %q)", err, stderr)
 	}
-	const want = "NAME        STATUS  PROJECT  WINDOW  AGENT\n" +
-		"쉘          live    알파     메인\n" +
-		"log         live    알파     메인\n" +
-		"codex-pane  live    알파     메인    codex\n" +
-		"zsh         live    알파     review\n"
+	const want = "NAME        STATUS  PROJECT  WINDOW  AGENT  AGE\n" +
+		"쉘          live    알파     메인           2d\n" +
+		"log         live    알파     메인           2d\n" +
+		"codex-pane  live    알파     메인    codex  2d\n" +
+		"zsh         live    알파     review         2d\n"
 	if stdout != want {
 		t.Fatalf("get panes stdout =\n%q\nwant\n%q", stdout, want)
 	}
@@ -528,9 +528,17 @@ func TestSingularDefaultProjectionIsUnchangedByTheColumnarList(t *testing.T) {
 		}
 		// describe renders its own key/value block, never the summary or the
 		// table, and it is frozen here byte for byte.
+		//
+		// The CreatedAt row is the one deliberate movement since this golden was
+		// written, and it is not the table leaking into a singular route: it is a
+		// key/value row of describe's own block, added by the timestamp-surfacing
+		// track. What this test guards -- that the columnar projection is
+		// reachable only with `list` true -- is unchanged and still falsifiable
+		// here, because a header line or a padded column would redden it.
 		const want = "Kind:        Pane\n" +
 			"Name:        zsh\n" +
 			"UID:         pan-alpha-zsh\n" +
+			"CreatedAt:   2026-08-15T09:00:00Z\n" +
 			"DisplayName: zsh\n" +
 			"Owner:       project/alpha window/main\n" +
 			"Status:      live\n" +
