@@ -81,10 +81,16 @@ func flagNameFor(kind metadata.Kind) string {
 // from the positional resource ref of an Agent route.
 type Query struct {
 	Project *Ref
-	Windows []Ref
-	Panes   []Ref
-	Agents  []Ref
-	Labels  []Label
+	// DefaultProject is an invocation-derived Project scope used only when the
+	// operator did not pass --project. It is kept separate from Project so
+	// explicit selector rendering and compatibility stay truthful. The shared
+	// windowScope seam is the only place that chooses explicit Project,
+	// invocation default, or the whole registry.
+	DefaultProject *Ref
+	Windows        []Ref
+	Panes          []Ref
+	Agents         []Ref
+	Labels         []Label
 }
 
 // Stage names one recorded resolution step.
@@ -390,13 +396,18 @@ func (r *Resolver) selectedWindows(q Query) ([]metadata.Window, error) {
 	return dedupe(windows, func(window metadata.Window) string { return window.Metadata.UID }), nil
 }
 
-// windowScope returns the Windows visible to q: one Project's Windows when
-// --project is given, the whole registry otherwise.
+// windowScope is the single Project-scope decision for Window, Pane, and Agent
+// queries. An explicit --project wins; otherwise an invocation-derived default
+// narrows the read; with neither, the whole registry remains visible.
 func (r *Resolver) windowScope(q Query) ([]metadata.Window, error) {
-	if q.Project == nil {
+	projectRef := q.Project
+	if projectRef == nil {
+		projectRef = q.DefaultProject
+	}
+	if projectRef == nil {
 		return r.registry.Windows, nil
 	}
-	project, err := r.ResolveProject(*q.Project)
+	project, err := r.ResolveProject(*projectRef)
 	if err != nil {
 		return nil, err
 	}

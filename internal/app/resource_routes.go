@@ -172,6 +172,14 @@ type resourceQueryFlags struct {
 	// spelling restore the pre-containment code path exactly rather than
 	// approximate it.
 	wholeSetFlag string
+	// defaultProjectScope opts a plural registry read into the active-derived
+	// Project default. The active resolver supplies only the Project uid; the
+	// selector package's windowScope remains the single place that chooses
+	// explicit Project, derived default, or whole-registry scope.
+	defaultProjectScope bool
+	// allProjects is the explicit escape hatch from defaultProjectScope. It is
+	// registered only by get windows|panes|agents.
+	allProjects bool
 	// scopes records the scope-flag spellings register actually installed, which
 	// differ per kind: a Window route has no --pane, an Agent route has neither
 	// --pane nor an --agent. Refusal text is built from this rather than from a
@@ -358,9 +366,9 @@ func (f *resourceQueryFlags) resolveQuery(registry coremetadata.Registry, query 
 // A completely empty selector on a singular route resolves the active tmux
 // target first. The declared cardinality is untouched by that: the fallback
 // contributes exactly one uid occurrence and the same Enforce call still decides
-// whether the cell is satisfied. The list routes are excluded because a plural
-// read is a 0..N inventory; narrowing `get panes` to the focused pane would
-// answer a different question.
+// whether the cell is satisfied. A plural read never receives an implicit
+// target occurrence; its optional defaultProjectScope narrows only the enclosing
+// Project universe and keeps the 0..N inventory meaning inside that scope.
 //
 // A route that also set wholeSetFlag refuses the empty selector outright when
 // the fallback resolved nothing. On a 1..N cell that is the only thing standing
@@ -372,6 +380,17 @@ func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry cor
 	query, err := f.query()
 	if err != nil {
 		return selector.Resolution{}, err
+	}
+	if f.defaultProjectScope {
+		if !f.allProjects && query.Project == nil {
+			ref, resolved, err := activeTargetRef(f.active, coremetadata.KindProject, registry)
+			if err != nil {
+				return selector.Resolution{}, err
+			}
+			if resolved {
+				query.DefaultProject = &ref
+			}
+		}
 	}
 	if !list && f.selectorIsEmpty() {
 		ref, resolved, err := activeTargetRef(f.active, f.kind, registry)

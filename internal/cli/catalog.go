@@ -567,16 +567,31 @@ var routes = []Route{
 		Summary:     "Read Projmux resources by selector",
 		Disposition: DispositionCanonical,
 		Usage: []string{
-			"projmux get projects|windows|panes|agents [--project <ref>] [--selector key=value]... [-o <mode>]",
+			"projmux get projects [--project <ref>] [--selector key=value]... [-o <mode>]",
+			"projmux get windows [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]",
+			"projmux get panes [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]",
+			"projmux get agents [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]",
 			"projmux get pane --current -o cwd",
 			"projmux get pane [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]",
 		},
 		Canonical: []string{"get projects", "get windows", "get panes", "get agents", "get notifications", "get snapshots", "get pane"},
 		Children: []Route{
 			{Name: "projects", Summary: "List Project resources", Aliases: []string{"project"}, Canonical: []string{"get projects"}, Outputs: readProjectionCatalog},
-			{Name: "windows", Summary: "List Window resources", Aliases: []string{"window"}, Canonical: []string{"get windows"}, Outputs: readProjectionCatalog},
-			{Name: "panes", Summary: "List Pane resources", Canonical: []string{"get panes"}, Outputs: readProjectionCatalog},
-			{Name: "agents", Summary: "List Agent resources", Aliases: []string{"agent"}, Canonical: []string{"get agents"}, Outputs: readProjectionCatalog},
+			{
+				Name: "windows", Summary: "List Window resources; inside tmux defaults to the active Project, and --all-projects lists every Project",
+				Aliases: []string{"window"}, Usage: []string{"projmux get windows [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]"},
+				Canonical: []string{"get windows"}, Outputs: readProjectionCatalog,
+			},
+			{
+				Name: "panes", Summary: "List Pane resources; inside tmux defaults to the active Project, and --all-projects lists every Project",
+				Usage:     []string{"projmux get panes [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]"},
+				Canonical: []string{"get panes"}, Outputs: readProjectionCatalog,
+			},
+			{
+				Name: "agents", Summary: "List Agent resources; inside tmux defaults to the active Project, and --all-projects lists every Project",
+				Aliases: []string{"agent"}, Usage: []string{"projmux get agents [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]"},
+				Canonical: []string{"get agents"}, Outputs: readProjectionCatalog,
+			},
 			{Name: "notifications", Summary: "List pending notification rows", Aliases: []string{"notification"}, Canonical: []string{"get notifications"}},
 			{Name: "snapshots", Summary: "List saved session snapshots", Aliases: []string{"snapshot"}, Canonical: []string{"get snapshots"}},
 			{

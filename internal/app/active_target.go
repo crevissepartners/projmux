@@ -13,12 +13,14 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
-// The implicit active target of the empty-selector read and rename verbs.
+// The invocation-derived active identity of read and rename verbs.
 //
-// Inside a tmux client, an invocation that carries no selector at all resolves
+// Inside a tmux client, a singular invocation that carries no selector resolves
 // the resource the operator is looking at instead of the whole registry. The
-// contract has four deliberate edges, each of which is a decision rather than an
-// implementation detail:
+// plural Window/Pane/Agent reads consume only its Project ancestor as a default
+// enclosing scope, never as an individual target. The contract has four
+// deliberate edges, each of which is a decision rather than an implementation
+// detail:
 //
 //  1. There is no sentinel value token. `--pane current` is not added, and
 //     neither is `active`: selector.ParseRef treats any non-`uid:` token as a

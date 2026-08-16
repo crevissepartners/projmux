@@ -47,9 +47,10 @@ type getCommand struct {
 	currentPath currentPathResolver
 	notify      rawArgvCommand
 	snapshots   rawArgvCommand
-	// activeTarget is the empty-selector fallback seam of the singular Pane
-	// read; see active_target.go. It is deliberately unrelated to `--current`:
-	// see runPane.
+	// activeTarget is the active-derived seam shared by the singular Pane
+	// fallback and the plural Window/Pane/Agent Project default; see
+	// active_target.go. It is deliberately unrelated to `--current`: see
+	// runPane.
 	activeTarget activeTargetLookup
 	// now is the clock the plural read's AGE column is measured against.
 	//
@@ -130,6 +131,12 @@ func (c *getCommand) runList(token string, args []string, stdout, stderr io.Writ
 	fs.SetOutput(stderr)
 	flags := resourceQueryFlags{kind: kind, runtime: c.runtime}
 	flags.register(fs)
+	if kind == coremetadata.KindWindow || kind == coremetadata.KindPane || kind == coremetadata.KindAgent {
+		flags.active = c.activeTarget
+		flags.defaultProjectScope = true
+		fs.BoolVar(&flags.allProjects, "all-projects", false,
+			"list resources across every Project instead of the active Project")
+	}
 	flags.registerOutput(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -139,6 +146,9 @@ func (c *getCommand) runList(token string, args []string, stdout, stderr io.Writ
 	}
 	if fs.NArg() != 0 {
 		return usageError(fmt.Sprintf("%s does not accept positional arguments; got %q", spelling, fs.Arg(0)))
+	}
+	if flags.allProjects && len(flags.projects) > 0 {
+		return usageError(fmt.Sprintf("%s: --all-projects cannot be combined with --project", spelling))
 	}
 
 	mode, field, err := resolveOutputMode(spelling, flags.output)

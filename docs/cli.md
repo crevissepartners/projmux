@@ -734,7 +734,10 @@ projmux focus pane <ref> --project <ref> --window <ref> [--socket <path>] [--jso
 Read Projmux resources by selector
 
 ```
-projmux get projects|windows|panes|agents [--project <ref>] [--selector key=value]... [-o <mode>]
+projmux get projects [--project <ref>] [--selector key=value]... [-o <mode>]
+projmux get windows [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
+projmux get panes [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
+projmux get agents [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
 projmux get pane --current -o cwd
 projmux get pane [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
 ```
@@ -744,9 +747,9 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux get projects`](#projmux-get-projects) | List Project resources |
-| [`projmux get windows`](#projmux-get-windows) | List Window resources |
-| [`projmux get panes`](#projmux-get-panes) | List Pane resources |
-| [`projmux get agents`](#projmux-get-agents) | List Agent resources |
+| [`projmux get windows`](#projmux-get-windows) | List Window resources; inside tmux defaults to the active Project, and --all-projects lists every Project |
+| [`projmux get panes`](#projmux-get-panes) | List Pane resources; inside tmux defaults to the active Project, and --all-projects lists every Project |
+| [`projmux get agents`](#projmux-get-agents) | List Agent resources; inside tmux defaults to the active Project, and --all-projects lists every Project |
 | [`projmux get notifications`](#projmux-get-notifications) | List pending notification rows |
 | [`projmux get snapshots`](#projmux-get-snapshots) | List saved session snapshots |
 | [`projmux get pane`](#projmux-get-pane) | Read one Pane resource; with no selector inside tmux, the active Pane |
@@ -767,10 +770,10 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get windows`
 
-List Window resources
+List Window resources; inside tmux defaults to the active Project, and --all-projects lists every Project
 
 ```
-projmux get windows
+projmux get windows [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
 ```
 
 Aliases: `window`
@@ -779,20 +782,20 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get panes`
 
-List Pane resources
+List Pane resources; inside tmux defaults to the active Project, and --all-projects lists every Project
 
 ```
-projmux get panes
+projmux get panes [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get agents`
 
-List Agent resources
+List Agent resources; inside tmux defaults to the active Project, and --all-projects lists every Project
 
 ```
-projmux get agents
+projmux get agents [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
 ```
 
 Aliases: `agent`

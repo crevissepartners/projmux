@@ -57,6 +57,46 @@ func TestResolveProjectsIsAListReadOverTheWholeRegistry(t *testing.T) {
 	}
 }
 
+// TestWindowScopeChoosesExplicitThenDefaultThenGlobal pins the one seam that
+// decides Project scope for every Window, Pane, and Agent query. The derived
+// default never scopes Project listings themselves.
+func TestWindowScopeChoosesExplicitThenDefaultThenGlobal(t *testing.T) {
+	t.Parallel()
+
+	resolver := New(standardRegistry(t))
+	alpha := refFor(t, metadata.KindProject, "alpha")
+	beta := refFor(t, metadata.KindProject, "beta")
+
+	for _, test := range []struct {
+		name  string
+		query Query
+		want  []string
+	}{
+		{name: "no Project input keeps the global Window scope", want: []string{"win-alpha-main", "win-alpha-review", "win-beta-main", "win-gone-main"}},
+		{name: "an invocation default narrows to its Project", query: Query{DefaultProject: alpha}, want: []string{"win-alpha-main", "win-alpha-review"}},
+		{name: "an explicit Project wins over the invocation default", query: Query{Project: beta, DefaultProject: alpha}, want: []string{"win-beta-main"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			resolution, err := resolver.ResolveWindows(test.query)
+			if err != nil {
+				t.Fatalf("ResolveWindows: %v", err)
+			}
+			if got := resolution.UIDs(); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("uids = %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	projects, err := resolver.ResolveProjects(Query{DefaultProject: alpha})
+	if err != nil {
+		t.Fatalf("ResolveProjects: %v", err)
+	}
+	if got, want := projects.UIDs(), fixtureProjectUIDs(t); !reflect.DeepEqual(got, want) {
+		t.Fatalf("the Window default leaked into Project scope: got %v, want %v", got, want)
+	}
+}
+
 // TestResolveAgentsIsWindowScoped pins the Agent pipeline: Agent names are unique
 // inside a Window, so the same name legitimately appears under several Windows
 // and only the scope disambiguates it.
