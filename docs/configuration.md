@@ -776,6 +776,32 @@ The per-surface saved values live at:
 The legacy `~/.config/projmux/statusbar-decoration` value is still read as the
 fallback default when a per-surface file is absent.
 
+## Row 0 HUD Visibility
+
+`Settings > Appearance > Status Bar` controls the two upper HUD components as
+independent global presentation preferences:
+
+- `Notifications HUD > Visible`
+- `Agent Usage HUD`
+
+The saved values are `on` or `off` in these files:
+
+```text
+~/.config/projmux/statusbar-visibility-notifications-hud
+~/.config/projmux/statusbar-visibility-agent-usage-hud
+```
+
+Missing, empty, and invalid values resolve to the compatibility default `on`;
+Settings shows whether the effective value came from `saved` or `default` and
+marks an invalid saved value as ignored. Saving a toggle regenerates the app
+and standalone tmux output, and Settings source-reloads the generated app config
+when it is running inside tmux.
+
+Visibility does not enable or disable either producer. Hiding Notifications HUD
+does not change the persistent queue, desktop delivery, or Notification
+Sidebar. Hiding Agent Usage HUD does not change the `agent usage` command,
+Provider snapshot cache, upstream API collection, quota, or refresh policy.
+
 ## Live System Resources Lab
 
 `Settings > Labs > Live system resources` controls the experimental compact

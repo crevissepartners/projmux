@@ -188,6 +188,7 @@ func settingsNavDynamicValueDeclared(value string) bool {
 		settingsActionPrefixHooks,
 		settingsActionPrefixHookEvent,
 		settingsActionPrefixLiveResources,
+		settingsActionPrefixHUDVisibility,
 		settingsActionPrefixKeymapCategory,
 		settingsActionPrefixKeymapSurface,
 		settingsActionPrefixWorkdirItem,
@@ -747,10 +748,13 @@ func TestSettingsAgentUsageOwnershipStaysWithAgentUsage(t *testing.T) {
 	cmd := settingsNavTestCommand(t, t.TempDir())
 	for _, entry := range settingsNavAllRenderedEntries(t, cmd) {
 		text := stripANSI(entry.Label) + " " + entry.SearchKey
-		for _, forbidden := range []string{"get usage", "Usage resource", "Usage HUD"} {
+		for _, forbidden := range []string{"get usage", "Usage resource"} {
 			if strings.Contains(text, forbidden) {
 				t.Fatalf("settings row %q must not carry %q", text, forbidden)
 			}
+		}
+		if strings.TrimSpace(stripANSI(entry.Label)) == "Usage HUD" {
+			t.Fatalf("settings row %q must use the canonical Agent Usage HUD label", text)
 		}
 	}
 

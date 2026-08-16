@@ -555,6 +555,71 @@ if [[ "$resources_flag" != "on" ]]; then
   exit 1
 fi
 
+# Row-0 HUD visibility is global presentation only. Drive all four persisted
+# combinations through the production exact-socket apply path and inspect the
+# live server after each source. One-off rows must own the whole client budget;
+# all-off must collapse to one structural row while retaining quiet autosave.
+notifications_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-notifications-hud"
+usage_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-agent-usage-hud"
+assert_live_hud_row() {
+  local want_status="$1"
+  local want_notify="$2"
+  local want_usage="$3"
+  local row0
+  local status_count
+  status_count="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv status)"
+  row0="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv 'status-format[0]')"
+  if [[ "$status_count" != "$want_status" ]]; then
+    echo "HUD visibility live status count = $status_count, want $want_status" >&2
+    exit 1
+  fi
+  if [[ "$want_notify" == "on" ]]; then
+    [[ "$row0" == *"range=user|notify"* ]] || { echo "live row 0 lost notify range: $row0" >&2; exit 1; }
+  elif [[ "$row0" == *"range=user|notify"* ]]; then
+    echo "live row 0 retained notify range while hidden: $row0" >&2
+    exit 1
+  fi
+  if [[ "$want_usage" == "on" ]]; then
+    [[ "$row0" == *"range=user|usage"* ]] || { echo "live row 0 lost usage range: $row0" >&2; exit 1; }
+  elif [[ "$row0" == *"range=user|usage"* ]]; then
+    echo "live row 0 retained usage range while hidden: $row0" >&2
+    exit 1
+  fi
+  if [[ "$want_notify" == "off" && "$want_usage" == "off" ]]; then
+    [[ "$row0" == *"autosave-session-state --quiet"* ]] || { echo "all-off live row lost autosave: $row0" >&2; exit 1; }
+    if [[ -n "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv 'status-format[1]')" ]]; then
+      echo "all-off live status retained row 1 residue" >&2
+      exit 1
+    fi
+  fi
+}
+
+printf 'on\n' >"$notifications_visibility"
+printf 'on\n' >"$usage_visibility"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+assert_live_hud_row 2 on on
+
+printf 'off\n' >"$usage_visibility"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+assert_live_hud_row 2 on off
+smoke_assert_file_contains "$XDG_CONFIG_HOME/projmux/tmux.conf" 'internal status notify --max-width #{client_width}'
+
+printf 'off\n' >"$notifications_visibility"
+printf 'on\n' >"$usage_visibility"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+assert_live_hud_row 2 off on
+smoke_assert_file_contains "$XDG_CONFIG_HOME/projmux/tmux.conf" 'internal status usage --max-width #{client_width}'
+
+printf 'off\n' >"$usage_visibility"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+assert_live_hud_row on off off
+
+# Restore compatibility defaults for the remaining integration assertions.
+printf 'on\n' >"$notifications_visibility"
+printf 'on\n' >"$usage_visibility"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+assert_live_hud_row 2 on on
+
 # Doctor probes a fixed closed `tmux -L projmux show-options` argv. This test
 # wrapper routes only that fixed name to the run-unique real socket so the
 # binary boundary still exercises the actual server without accepting a raw
@@ -860,12 +925,14 @@ exec 9>&-
 wait "$control_pid" || true
 
 # Each explicit apply owns one correlated lifecycle pair and suppresses the
-# older generic top-level outcome. Six apply invocations ran above.
+# older generic top-level outcome. Eleven apply invocations ran above: the
+# existing six plus five row-0 visibility convergence applies.
 operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
+expected_apply_count=11
 apply_starts="$(grep -c '"event":"lifecycle.start".*"operation":"tmux.apply"' "$operations_log")"
 apply_outcomes="$(grep -c '"event":"lifecycle.outcome".*"operation":"tmux.apply"' "$operations_log")"
-if [[ "$apply_starts" != "6" || "$apply_outcomes" != "6" ]]; then
-  echo "expected six correlated tmux apply lifecycle pairs, got starts=$apply_starts outcomes=$apply_outcomes" >&2
+if [[ "$apply_starts" != "$expected_apply_count" || "$apply_outcomes" != "$expected_apply_count" ]]; then
+  echo "expected $expected_apply_count correlated tmux apply lifecycle pairs, got starts=$apply_starts outcomes=$apply_outcomes" >&2
   exit 1
 fi
 if grep -q '"event":"command.outcome".*"command":"tmux","subcommand":"apply"' "$operations_log"; then
@@ -876,7 +943,7 @@ apply_run_counts="$PROJMUX_SMOKE_WORKDIR/apply-run-counts.txt"
 grep '"operation":"tmux.apply"' "$operations_log" |
   sed -n 's/.*"run_id":"\([^"]*\)".*/\1/p' |
   sort | uniq -c >"$apply_run_counts"
-if [[ "$(wc -l <"$apply_run_counts")" != "6" ]] || ! awk '$1 != 2 { bad=1 } END { exit bad }' "$apply_run_counts"; then
+if [[ "$(wc -l <"$apply_run_counts")" != "$expected_apply_count" ]] || ! awk '$1 != 2 { bad=1 } END { exit bad }' "$apply_run_counts"; then
   echo "tmux apply start/outcome run_id correlation failed" >&2
   cat "$apply_run_counts" >&2
   exit 1
