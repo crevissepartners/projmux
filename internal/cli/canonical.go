@@ -246,6 +246,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "internal statusbar", Summary: "tmux status bar click and key dispatcher", Sources: []string{"internal"}},
 	{Spelling: "internal preview", Summary: "Persisted preview cursor plumbing", Sources: []string{"internal"}},
 	{Spelling: "internal session-popup", Summary: "Generated session popup payload", Sources: []string{"internal"}},
+	{Spelling: "internal agent-pane", Summary: "Generated Agent and Pane launch plumbing", Sources: []string{"internal"}},
 	{Spelling: "internal agent-hook", Summary: "Provider hook ingest and title watcher plumbing", Sources: []string{"internal"}},
 	{Spelling: "internal focus", Summary: "Machine focus ingress", Sources: []string{"internal"}},
 	{Spelling: "internal key-broker", Summary: "Darwin physical key transport", Sources: []string{"internal"}},

@@ -1863,7 +1863,7 @@ func TestBuildPopupSessionsCommandQuotesBinaryPath(t *testing.T) {
 		t.Fatalf("BuildPopupSessionsCommand returned error: %v", err)
 	}
 
-	const want = "exec '/tmp/projmux'\\''s bin' 'sessions' '--ui=popup'"
+	const want = "exec '/tmp/projmux'\\''s bin' 'runtime' 'sessions' '--ui=popup'"
 	if command != want {
 		t.Fatalf("command = %q, want %q", command, want)
 	}

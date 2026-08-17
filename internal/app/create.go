@@ -68,8 +68,9 @@ type agentLauncher interface {
 //   - A plain shell split is a Pane, not an Agent, so it reaches `create pane`
 //     and `shell` is not a member of the provider enum.
 //   - `--provider` is required on the canonical route. A saved default split
-//     mode is legacy behavior that stays reachable through `ai split`; promoting
-//     it here would make the canonical route's result depend on hidden state.
+//     mode is legacy behavior that stays reachable through the generated-config
+//     `internal agent-pane launch-default` bridge; promoting it here would make
+//     the canonical route's result depend on hidden state.
 //   - The provider shortcuts carry the provider in the command name, so passing
 //     `--provider` as well is a usage error rather than a silent winner.
 type createCommand struct {
