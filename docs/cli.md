@@ -513,7 +513,7 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux delete window`](#projmux-delete-window) | Delete Windows and every descendant Agent and Pane; no selector inside tmux means the active Window, and --all means every Window in the registry |
+| [`projmux delete window`](#projmux-delete-window) | Delete exact live tmux Windows and every descendant Agent and Pane; no selector inside tmux means the active Window, and --all means every Window in the registry |
 | [`projmux delete pane`](#projmux-delete-pane) | Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry |
 | [`projmux delete agent`](#projmux-delete-agent) | Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry |
 | [`projmux delete notification`](#projmux-delete-notification) | Delete pending notification rows |
@@ -523,7 +523,7 @@ Canonical spelling: `projmux delete window`, `projmux delete pane`, `projmux del
 
 ### `projmux delete window`
 
-Delete Windows and every descendant Agent and Pane; no selector inside tmux means the active Window, and --all means every Window in the registry
+Delete exact live tmux Windows and every descendant Agent and Pane; no selector inside tmux means the active Window, and --all means every Window in the registry
 
 ```
 projmux delete window [<ref>...] [--project <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]
