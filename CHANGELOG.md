@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.1](https://github.com/crevissepartners/projmux/compare/v0.12.0...v0.12.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* **cli:** eliminate compiled legacy ingest literal ([#673](https://github.com/crevissepartners/projmux/issues/673)) ([99413fe](https://github.com/crevissepartners/projmux/commit/99413fecefac338e178dd5067576c3619d62a194))
+* **tmux:** restore generated popup routes ([#675](https://github.com/crevissepartners/projmux/issues/675)) ([035bf67](https://github.com/crevissepartners/projmux/commit/035bf67c60cd14986a47725df1cca1163e7cf695))
+
 ## [0.12.0](https://github.com/crevissepartners/projmux/compare/v0.11.1...v0.12.0) (2026-08-17)
 
 
