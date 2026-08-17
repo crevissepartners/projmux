@@ -7,6 +7,7 @@ import (
 	"flag"
 	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -120,10 +121,9 @@ func (w testWarnWriter) Write(p []byte) (int, error) {
 func seedLiveWindow(t *testing.T, tmux *fakeTmux, session *fakeTmuxSession, windowUID, paneUID string) *fakeTmuxWindow {
 	t.Helper()
 	window := &fakeTmuxWindow{id: tmux.mint("@"), name: "seeded", opts: map[string]string{tmuxopts.WindowUID: windowUID}}
-	window.panes = append(window.panes, &fakeTmuxPane{
-		id:   tmux.mint("%"),
-		opts: map[string]string{tmuxopts.PaneUID: paneUID},
-	})
+	pane := newFakeTmuxPane(tmux.mint("%"))
+	pane.opts[tmuxopts.PaneUID] = paneUID
+	window.panes = append(window.panes, pane)
 	session.windows = append(session.windows, window)
 	return window
 }
@@ -620,6 +620,174 @@ func TestCreatePlacementMapsOntoTheClosedSplitAxis(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCanonicalCreatePaneSplitIsImmediatelyEqualized(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		placement string
+		extra     []string
+		wantAxis  string
+	}{
+		{name: "default primary anchor right", placement: "right", wantAxis: "-x"},
+		{name: "default primary anchor down", placement: "down", wantAxis: "-y"},
+		{name: "explicit anchor right", placement: "right", extra: []string{"--pane", "zsh"}, wantAxis: "-x"},
+		{name: "explicit anchor down", placement: "down", extra: []string{"--pane", "zsh"}, wantAxis: "-y"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			create, _ := newTestResourceCreateCommand(t, store, tmux)
+			args := []string{"pane", "--project", "beta", "--window", "main", "--placement", test.placement, "-o", "pane-id"}
+			args = append(args, test.extra...)
+			stdout, _, err := runRoute(t, create, args...)
+			if err != nil {
+				t.Fatalf("create %v error = %v", args, err)
+			}
+			if !strings.HasPrefix(strings.TrimSpace(stdout), "%") {
+				t.Fatalf("pane-id output = %q", stdout)
+			}
+
+			splitIndex := firstTmuxCall(tmux.calls, 0, "split-window", "")
+			if splitIndex < 0 {
+				t.Fatal("split-window was not called")
+			}
+			anchor := flagValue(tmux.calls[splitIndex], "-t")
+			geometryIndex := firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitPaneGeometryFormat)
+			resizeIndex := firstTmuxCall(tmux.calls, geometryIndex+1, "resize-pane", test.wantAxis)
+			if geometryIndex < 0 || resizeIndex < 0 {
+				t.Fatalf("calls after split lack geometry/read resize ordering: %v", tmux.calls[splitIndex:])
+			}
+			if got := flagValue(tmux.calls[geometryIndex], "-t"); got != anchor {
+				t.Fatalf("geometry target = %q, want split anchor %q", got, anchor)
+			}
+			wrongAxis := "-y"
+			if test.wantAxis == "-y" {
+				wrongAxis = "-x"
+			}
+			for _, call := range tmux.calls[geometryIndex+1:] {
+				if len(call) > 0 && call[0] == "resize-pane" && slices.Contains(call, wrongAxis) {
+					t.Fatalf("%s create resized the cross axis: %v", test.placement, call)
+				}
+			}
+		})
+	}
+}
+
+func TestCanonicalCreatePaneEqualizationIsWindowLocalInFanOut(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	if _, _, err := runRoute(t, create, "pane", "--project", "alpha", "--placement", "right"); err != nil {
+		t.Fatalf("fan-out create error = %v", err)
+	}
+
+	var splitIndexes []int
+	for i, call := range tmux.calls {
+		if len(call) > 0 && call[0] == "split-window" {
+			splitIndexes = append(splitIndexes, i)
+		}
+	}
+	if len(splitIndexes) != 2 {
+		t.Fatalf("split indexes = %v, want two Window-local splits", splitIndexes)
+	}
+	for n, splitIndex := range splitIndexes {
+		end := len(tmux.calls)
+		if n+1 < len(splitIndexes) {
+			end = splitIndexes[n+1]
+		}
+		anchor := flagValue(tmux.calls[splitIndex], "-t")
+		_, anchorWindow, _ := tmux.pane(anchor)
+		geometryIndex := firstTmuxCall(tmux.calls[:end], splitIndex+1, "list-panes", splitPaneGeometryFormat)
+		if geometryIndex < 0 || flagValue(tmux.calls[geometryIndex], "-t") != anchor {
+			t.Fatalf("split %d did not observe its own anchor before the next split: %v", n, tmux.calls[splitIndex:end])
+		}
+		for _, call := range tmux.calls[geometryIndex+1 : end] {
+			if len(call) == 0 || call[0] != "resize-pane" {
+				continue
+			}
+			_, resizedWindow, _ := tmux.pane(flagValue(call, "-t"))
+			if resizedWindow != anchorWindow {
+				t.Fatalf("fan-out resized across Windows: anchor %s call %v", anchor, call)
+			}
+		}
+	}
+}
+
+func TestCanonicalCreateLayoutFailuresNeverRollbackSuccessfulSplit(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		fail []string
+	}{
+		{name: "geometry observation", fail: []string{"list-panes", splitPaneGeometryFormat}},
+		{name: "individual resize", fail: []string{"resize-pane"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			tmux.fail, tmux.failAlways = test.fail, true
+			create, _ := newTestResourceCreateCommand(t, store, tmux)
+			stdout, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id")
+			if err != nil {
+				t.Fatalf("layout failure escaped create: %v", err)
+			}
+			if store.writes != 1 || !strings.HasPrefix(strings.TrimSpace(stdout), "%") {
+				t.Fatalf("successful create was not committed: writes=%d stdout=%q", store.writes, stdout)
+			}
+			if tmux.argvContains("kill-pane") || tmux.argvContains("kill-window") || tmux.argvContains("kill-session") {
+				t.Fatalf("layout failure triggered rollback: %v", tmux.calls)
+			}
+		})
+	}
+}
+
+func TestCreateWindowIsOnePaneLayoutNoOpAndEnsuredWindowSplitEqualizes(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	if _, _, err := runRoute(t, create, "window", "--project", "beta"); err != nil {
+		t.Fatalf("create window error = %v", err)
+	}
+	if firstTmuxCall(tmux.calls, 0, "list-panes", splitPaneGeometryFormat) >= 0 || tmux.argvContains("resize-pane") {
+		t.Fatalf("one-pane create window attempted equalization: %v", tmux.calls)
+	}
+
+	store = newFakeResourceStore(t)
+	tmux = newFakeTmux()
+	create, _ = newTestResourceCreateCommand(t, store, tmux)
+	if _, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "fresh", "--create-window"); err != nil {
+		t.Fatalf("ensured Window split error = %v", err)
+	}
+	splitIndex := firstTmuxCall(tmux.calls, 0, "split-window", "")
+	if splitIndex < 0 || firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitPaneGeometryFormat) < 0 || firstTmuxCall(tmux.calls, splitIndex+1, "resize-pane", "-x") < 0 {
+		t.Fatalf("ensured Window split was not equalized: %v", tmux.calls)
+	}
+}
+
+func firstTmuxCall(calls [][]string, start int, command, token string) int {
+	if start < 0 {
+		return -1
+	}
+	for i := start; i < len(calls); i++ {
+		if len(calls[i]) == 0 || calls[i][0] != command {
+			continue
+		}
+		if token == "" || slices.Contains(calls[i], token) {
+			return i
+		}
+	}
+	return -1
 }
 
 // TestOperationRollbackRemovesOnlyWhatThisOperationCreated is the ledger

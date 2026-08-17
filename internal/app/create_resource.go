@@ -363,6 +363,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 			if err != nil {
 				return err
 			}
+			c.runtime.equalizeSplitLayout(ctx, anchorPaneID, flags.placement)
 			results = append(results, createResult{
 				kind:        coremetadata.KindPane,
 				uid:         work.pane.Metadata.UID,

@@ -169,6 +169,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			if err != nil {
 				return err
 			}
+			c.runtime.equalizeSplitLayout(ctx, anchorPaneID, flags.placement)
 			// The managed-pane options are what make this pane an agent pane to
 			// the statusbar, the attention tracker, and the notification
 			// pipeline. They are applied after the pane exists and before the

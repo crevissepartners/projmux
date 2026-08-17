@@ -58,6 +58,14 @@ type fakeTmuxPane struct {
 	id      string
 	opts    map[string]string
 	command string
+	left    int
+	top     int
+	width   int
+	height  int
+}
+
+func newFakeTmuxPane(id string) *fakeTmuxPane {
+	return &fakeTmuxPane{id: id, opts: map[string]string{}, width: 80, height: 24}
 }
 
 func newFakeTmux() *fakeTmux { return &fakeTmux{} }
@@ -91,7 +99,7 @@ func (f *fakeTmux) sessionNames() map[string]bool {
 func (f *fakeTmux) addSession(name string) *fakeTmuxSession {
 	session := &fakeTmuxSession{id: f.mint("$"), name: name, opts: map[string]string{}, env: map[string]string{}}
 	window := &fakeTmuxWindow{id: f.mint("@"), name: "tmux", opts: map[string]string{}}
-	window.panes = append(window.panes, &fakeTmuxPane{id: f.mint("%"), opts: map[string]string{}})
+	window.panes = append(window.panes, newFakeTmuxPane(f.mint("%")))
 	session.windows = append(session.windows, window)
 	f.sessions = append(f.sessions, session)
 	return session
@@ -210,6 +218,8 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		return f.runListPanes(args)
 	case "display-message":
 		return f.runDisplayMessage(args)
+	case "resize-pane":
+		return f.runResizePane(args)
 	case "set-option":
 		return f.runSetOption(args)
 	case "set-environment":
@@ -259,11 +269,9 @@ func (f *fakeTmux) runNewWindow(args []string) ([]byte, error) {
 		return nil, fmt.Errorf("fake tmux: new-window: no session %q", flagValue(args, "-t"))
 	}
 	window := &fakeTmuxWindow{id: f.mint("@"), name: flagValue(args, "-n"), opts: map[string]string{}}
-	window.panes = append(window.panes, &fakeTmuxPane{
-		id:      f.mint("%"),
-		opts:    map[string]string{},
-		command: strings.Join(trailingCommand(args), " "),
-	})
+	pane := newFakeTmuxPane(f.mint("%"))
+	pane.command = strings.Join(trailingCommand(args), " ")
+	window.panes = append(window.panes, pane)
 	session.windows = append(session.windows, window)
 	return []byte(window.id + "\n"), nil
 }
@@ -273,13 +281,43 @@ func (f *fakeTmux) runSplitWindow(args []string) ([]byte, error) {
 	if window == nil {
 		return nil, fmt.Errorf("fake tmux: split-window: no pane %q", flagValue(args, "-t"))
 	}
-	pane := &fakeTmuxPane{
-		id:      f.mint("%"),
-		opts:    map[string]string{},
-		command: strings.Join(trailingCommand(args), " "),
+	_, _, anchor := f.pane(flagValue(args, "-t"))
+	if anchor == nil {
+		return nil, fmt.Errorf("fake tmux: split-window: no anchor pane %q", flagValue(args, "-t"))
+	}
+	pane := newFakeTmuxPane(f.mint("%"))
+	pane.command = strings.Join(trailingCommand(args), " ")
+	if slices.Contains(args, "-v") {
+		pane.left, pane.width = anchor.left, anchor.width
+		pane.height = max(1, (anchor.height-1)/2)
+		anchor.height = max(1, anchor.height-pane.height-1)
+		pane.top = anchor.top + anchor.height + 1
+	} else {
+		pane.top, pane.height = anchor.top, anchor.height
+		pane.width = max(1, (anchor.width-1)/2)
+		anchor.width = max(1, anchor.width-pane.width-1)
+		pane.left = anchor.left + anchor.width + 1
 	}
 	window.panes = append(window.panes, pane)
 	return []byte(pane.id + "\n"), nil
+}
+
+func (f *fakeTmux) runResizePane(args []string) ([]byte, error) {
+	_, _, pane := f.pane(flagValue(args, "-t"))
+	if pane == nil {
+		return nil, fmt.Errorf("fake tmux: resize-pane: no pane %q", flagValue(args, "-t"))
+	}
+	if raw := flagValue(args, "-x"); raw != "" {
+		if _, err := fmt.Sscanf(raw, "%d", &pane.width); err != nil {
+			return nil, fmt.Errorf("fake tmux: resize-pane: invalid width %q", raw)
+		}
+	}
+	if raw := flagValue(args, "-y"); raw != "" {
+		if _, err := fmt.Sscanf(raw, "%d", &pane.height); err != nil {
+			return nil, fmt.Errorf("fake tmux: resize-pane: invalid height %q", raw)
+		}
+	}
+	return nil, nil
 }
 
 // trailingCommand returns the shell-command tail of a new-window/split-window
@@ -519,7 +557,11 @@ func (f *fakeTmux) runKill(args []string) ([]byte, error) {
 // and 3.6 do. A fake that echoed a raw 0x1F would hide the parsing bug that
 // spelling exists to avoid.
 func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindow, pane *fakeTmuxPane) string {
-	fields := strings.Split(format, tmuxRowSepFormat)
+	separator := tmuxRowSepFormat
+	if strings.Contains(format, "\t") {
+		separator = "\t"
+	}
+	fields := strings.Split(format, separator)
 	out := make([]string, 0, len(fields))
 	for _, field := range fields {
 		token := strings.TrimSuffix(strings.TrimPrefix(field, "#{"), "}")
@@ -538,13 +580,21 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, pane.id)
 		case token == "pane_index" && window != nil && pane != nil:
 			out = append(out, fmt.Sprintf("%d", slices.Index(window.panes, pane)))
+		case token == "pane_left" && pane != nil:
+			out = append(out, fmt.Sprintf("%d", pane.left))
+		case token == "pane_top" && pane != nil:
+			out = append(out, fmt.Sprintf("%d", pane.top))
+		case token == "pane_width" && pane != nil:
+			out = append(out, fmt.Sprintf("%d", pane.width))
+		case token == "pane_height" && pane != nil:
+			out = append(out, fmt.Sprintf("%d", pane.height))
 		case strings.HasPrefix(token, "@"):
 			out = append(out, scopedOption(token, session, window, pane))
 		default:
 			out = append(out, "")
 		}
 	}
-	return strings.Join(out, tmuxRowSepFormat)
+	return strings.Join(out, separator)
 }
 
 // scopedOption reads a projmux option from the narrowest scope the caller

@@ -669,6 +669,87 @@ func TestCreateAgentFansOutOverEveryWindowAnchorExactlyOnce(t *testing.T) {
 	assertNoClientMovement(t, tmux)
 }
 
+func TestCreateAgentAndProviderShortcutsShareScopedEqualization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		args     []string
+		wantAxis string
+	}{
+		{name: "canonical right", args: []string{"agent", "--provider", "codex", "--project", "beta", "--window", "main", "--placement", "right"}, wantAxis: "-x"},
+		{name: "canonical down", args: []string{"agent", "--provider", "codex", "--project", "beta", "--window", "main", "--placement", "down"}, wantAxis: "-y"},
+		{name: "codex shortcut", args: []string{"codex", "--project", "beta", "--window", "main"}, wantAxis: "-x"},
+		{name: "claude shortcut", args: []string{"claude", "--project", "beta", "--window", "main", "--placement", "down"}, wantAxis: "-y"},
+		{name: "antigravity shortcut", args: []string{"antigravity", "--project", "beta", "--window", "main"}, wantAxis: "-x"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			create, launcher := newTestAgentCreateCommand(t, store, tmux)
+			if _, _, err := runRoute(t, create, test.args...); err != nil {
+				t.Fatalf("create %v error = %v", test.args, err)
+			}
+			splitIndex := firstTmuxCall(tmux.calls, 0, "split-window", "")
+			geometryIndex := firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitPaneGeometryFormat)
+			resizeIndex := firstTmuxCall(tmux.calls, geometryIndex+1, "resize-pane", test.wantAxis)
+			if splitIndex < 0 || geometryIndex < 0 || resizeIndex < 0 {
+				t.Fatalf("agent route lacks split -> geometry -> resize ordering: %v", tmux.calls)
+			}
+			if got, want := flagValue(tmux.calls[geometryIndex], "-t"), flagValue(tmux.calls[splitIndex], "-t"); got != want {
+				t.Fatalf("geometry target = %q, want split anchor %q", got, want)
+			}
+			if len(launcher.bound) != 1 {
+				t.Fatalf("managed bindings = %d, want 1", len(launcher.bound))
+			}
+		})
+	}
+}
+
+func TestCreateAgentFanOutEqualizesBeforeCrossingWindowBoundary(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, _ := newTestAgentCreateCommand(t, store, tmux)
+	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha"); err != nil {
+		t.Fatalf("fan-out create agent error = %v", err)
+	}
+
+	var splitIndexes []int
+	for i, call := range tmux.calls {
+		if len(call) > 0 && call[0] == "split-window" {
+			splitIndexes = append(splitIndexes, i)
+		}
+	}
+	if len(splitIndexes) != 2 {
+		t.Fatalf("split indexes = %v, want two", splitIndexes)
+	}
+	for n, splitIndex := range splitIndexes {
+		end := len(tmux.calls)
+		if n+1 < len(splitIndexes) {
+			end = splitIndexes[n+1]
+		}
+		anchor := flagValue(tmux.calls[splitIndex], "-t")
+		_, wantWindow, _ := tmux.pane(anchor)
+		geometryIndex := firstTmuxCall(tmux.calls[:end], splitIndex+1, "list-panes", splitPaneGeometryFormat)
+		if geometryIndex < 0 {
+			t.Fatalf("Agent split crossed the Window boundary before equalization: %v", tmux.calls[splitIndex:end])
+		}
+		for _, call := range tmux.calls[geometryIndex+1 : end] {
+			if len(call) == 0 || call[0] != "resize-pane" {
+				continue
+			}
+			_, gotWindow, _ := tmux.pane(flagValue(call, "-t"))
+			if gotWindow != wantWindow {
+				t.Fatalf("Agent fan-out resized across Windows: %v", call)
+			}
+		}
+	}
+}
+
 // TestAFailureAnywhereInAnAgentFanOutLeavesZeroMutations is the atomicity half
 // of acceptance criterion 7.
 //
