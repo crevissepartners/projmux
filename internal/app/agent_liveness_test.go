@@ -48,8 +48,8 @@ func seedLiveAgentPane(t *testing.T, tmux *fakeTmux, sessionName, windowUID stri
 }
 
 // stubPaneInventory is the mirrored-uid inventory seam with a scripted answer.
-// It counts its calls, because "one tmux query per invocation" is part of the
-// contract: the hook fires on every pane exit in every session.
+// It counts its calls because the common no-death path must stop after one
+// query even though a candidate death requires a locked refresh.
 type stubPaneInventory struct {
 	uids  map[string]bool
 	err   error
@@ -62,6 +62,24 @@ func (s *stubPaneInventory) LivePaneUIDs(context.Context) (map[string]bool, erro
 		return nil, s.err
 	}
 	return s.uids, nil
+}
+
+type sequencedPaneInventory struct {
+	uids  []map[string]bool
+	errs  []error
+	calls int
+}
+
+func (s *sequencedPaneInventory) LivePaneUIDs(context.Context) (map[string]bool, error) {
+	index := s.calls
+	s.calls++
+	if index < len(s.errs) && s.errs[index] != nil {
+		return nil, s.errs[index]
+	}
+	if index >= len(s.uids) {
+		return nil, nil
+	}
+	return s.uids[index], nil
 }
 
 // livenessTestMutator is the fixture clock's mutator. Nothing here mints uids,
@@ -306,6 +324,119 @@ func TestASweptDeathOpensExactlyOneWriteTransaction(t *testing.T) {
 	}
 	if _, ok := store.registry.Pane("pan-alpha-codex"); ok {
 		t.Fatal("the managed Pane survived the sweep")
+	}
+}
+
+// TestAWaitingPaneExitSweepCannotReleaseANewerCreate is the create/reconcile
+// race regression. A pane-exit hook first observes the old managed Pane as
+// gone. While that hook waits to enter the Registry transaction, canonical
+// create commits a second Running Agent and its exact managed Pane. The hook
+// must judge the Registry it actually locks against a fresh live inventory;
+// applying its pre-lock snapshot would release both Agents, delete the new Pane
+// resource, and leave its still-live tmux pane as an orphan to be rebound on
+// the next reconciliation pass.
+func TestAWaitingPaneExitSweepCannotReleaseANewerCreate(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	resourceStore := store.store()
+	originalLoad := resourceStore.load
+	advanced := false
+	newAgentUID := ""
+	newPaneUID := ""
+	refreshed := map[string]bool{"pan-alpha-zsh": true}
+	resourceStore.load = func() (coremetadata.Registry, error) {
+		before, err := originalLoad()
+		if err != nil || advanced {
+			return before, err
+		}
+		advanced = true
+		mutator := store.mutator()
+		agent, err := mutator.CreateAgent(&store.registry, "win-alpha-main", coremetadata.CreateAgentOptions{
+			Name: "codex-new", Provider: "codex", OperationID: "op-new-create",
+		})
+		if err != nil {
+			t.Fatalf("seed newer Agent: %v", err)
+		}
+		pane, err := mutator.AttachAgentPane(&store.registry, agent.Metadata.UID, coremetadata.BootstrapPane{
+			CWD: "/srv/alpha",
+		}, "op-new-create")
+		if err != nil {
+			t.Fatalf("seed newer managed Pane: %v", err)
+		}
+		newAgentUID = agent.Metadata.UID
+		newPaneUID = pane.Metadata.UID
+		if newAgentUID == "" || newPaneUID == "" {
+			t.Fatal("new create fixture minted an empty Pane uid")
+		}
+		// The refreshed inventory is the tmux UID mirror of the exact Pane
+		// canonical create just committed.
+		refreshed[newPaneUID] = true
+		return before, nil
+	}
+
+	inventory := &sequencedPaneInventory{uids: []map[string]bool{
+		// The hook's pre-lock observation predates the new create.
+		{"pan-alpha-zsh": true},
+		// Once the hook owns the Registry lock, the newly created managed Pane
+		// is live and must not be judged against the older snapshot.
+		refreshed,
+	}}
+
+	if err := runDeadAgentPaneSweep(context.Background(), inventory, resourceStore); err != nil {
+		t.Fatalf("runDeadAgentPaneSweep: %v", err)
+	}
+	if inventory.calls != 2 {
+		t.Fatalf("tmux inventory calls = %d, want preflight plus in-transaction refresh", inventory.calls)
+	}
+
+	oldAgent, ok := store.registry.Agent("agt-alpha-codex")
+	if !ok {
+		t.Fatal("old Agent disappeared instead of being released")
+	}
+	if oldAgent.Status.Phase != coremetadata.PhaseOffline || oldAgent.Status.PaneRef != "" {
+		t.Fatalf("old Agent status = %+v, want released Offline Agent", oldAgent.Status)
+	}
+	if !refreshed[newPaneUID] {
+		t.Fatalf("refreshed tmux inventory is missing exact Pane uid %q", newPaneUID)
+	}
+	newAgent, ok := store.registry.Agent(newAgentUID)
+	if !ok {
+		t.Fatal("new Agent disappeared while the older pane-exit sweep waited")
+	}
+	if newAgent.Status.Phase != coremetadata.PhaseRunning || newAgent.Status.PaneRef != newPaneUID {
+		t.Fatalf("new Agent status = %+v, want Running on %s", newAgent.Status, newPaneUID)
+	}
+	newPane, ok := store.registry.Pane(newPaneUID)
+	if !ok || newPane.Metadata.OwnerUID() != newAgent.Metadata.UID {
+		t.Fatalf("new managed Pane = %+v, want exact Agent-owned Pane resource", newPane)
+	}
+	if store.transactions != 1 || store.writes != 1 {
+		t.Fatalf("transactions = %d writes = %d, want one committed sweep", store.transactions, store.writes)
+	}
+}
+
+func TestASecondInventoryFailureKeepsEveryAgentAndPane(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	before := store.snapshot()
+	inventory := &sequencedPaneInventory{
+		uids: []map[string]bool{{"pan-alpha-zsh": true}},
+		errs: []error{nil, errors.New("tmux server disappeared before locked refresh")},
+	}
+
+	if err := runDeadAgentPaneSweep(context.Background(), inventory, store.store()); err != nil {
+		t.Fatalf("runDeadAgentPaneSweep = %v, want fail-closed no-op", err)
+	}
+	if inventory.calls != 2 {
+		t.Fatalf("tmux inventory calls = %d, want preflight plus failed locked refresh", inventory.calls)
+	}
+	if store.transactions != 1 || store.writes != 0 {
+		t.Fatalf("transactions = %d writes = %d, want one aborted transaction and zero writes", store.transactions, store.writes)
+	}
+	if got := store.snapshot(); got != before {
+		t.Fatalf("failed locked refresh mutated registry:\n--- got ---\n%s\n--- want ---\n%s", got, before)
 	}
 }
 
