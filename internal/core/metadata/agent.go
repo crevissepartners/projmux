@@ -66,6 +66,8 @@ type CreateAgentOptions struct {
 	DisplayName string
 	Labels      map[string]string
 	Annotations map[string]string
+	Workspace   AgentWorkspace
+	Activation  AgentActivationState
 	OperationID string
 }
 
@@ -112,8 +114,19 @@ func (m Mutator) CreateAgent(reg *Registry, windowUID string, opts CreateAgentOp
 			OwnerRef:    &OwnerRef{Kind: KindWindow, UID: windowUID},
 			CreatedAt:   now,
 		},
-		Spec:   AgentSpec{Provider: NormalizeProvider(opts.Provider)},
-		Status: AgentStatus{Phase: PhasePending, LastTransitionAt: now},
+		Spec: AgentSpec{Provider: NormalizeProvider(opts.Provider), Workspace: AgentWorkspace{
+			CWD:                     strings.TrimSpace(opts.Workspace.CWD),
+			AdditionalWritableRoots: slices.Clone(opts.Workspace.AdditionalWritableRoots),
+		}},
+		Status: AgentStatus{
+			Phase:            PhasePending,
+			Interaction:      AgentInteraction{Kind: InteractionUnknown},
+			Activation:       AgentActivation{State: opts.Activation},
+			LastTransitionAt: now,
+		},
+	}
+	if agent.Status.Activation.State == "" {
+		agent.Status.Activation.State = ActivationNotRequested
 	}
 	reg.Agents = append(reg.Agents, agent)
 	txn.record(KindAgent, agentUID)
@@ -197,6 +210,7 @@ func (m Mutator) ReleaseAgentPane(reg *Registry, agentUID string, exit AgentExit
 	agent = mustAgent(reg, agentUID)
 	agent.Status.Phase = phase
 	agent.Status.PaneRef = ""
+	agent.Status.Interaction = AgentInteraction{Kind: InteractionUnknown, ObservedAt: now, Source: "lifecycle"}
 	agent.Status.Reason = strings.TrimSpace(reason)
 	agent.Status.LastTransitionAt = now
 	reg.UpdatedAt = now
@@ -223,6 +237,7 @@ func (m Mutator) TransitionAgent(reg *Registry, agentUID string, phase AgentPhas
 	agent.Status.LastTransitionAt = now
 	if phase != PhaseRunning {
 		agent.Status.PaneRef = ""
+		agent.Status.Interaction = AgentInteraction{Kind: InteractionUnknown, ObservedAt: now, Source: "lifecycle"}
 	}
 	reg.UpdatedAt = now
 	return agent.Clone(), nil

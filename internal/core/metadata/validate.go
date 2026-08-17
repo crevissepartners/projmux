@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"path/filepath"
+	"strings"
 )
 
 // Validate checks every structural invariant of the registry: envelope
@@ -107,6 +108,38 @@ func (r Registry) Validate() error {
 		}
 		if !ValidAgentPhase(agent.Status.Phase) {
 			return stateErr(op, ErrInvalidPhase, "agent %q has unsupported phase %q", agent.Metadata.Name, agent.Status.Phase)
+		}
+		if agent.Status.Interaction.Kind != "" && !ValidAgentInteractionKind(agent.Status.Interaction.Kind) {
+			return stateErr(op, ErrInvalidRegistry, "agent %q has unsupported interaction kind %q", agent.Metadata.Name, agent.Status.Interaction.Kind)
+		}
+		if source := strings.TrimSpace(agent.Status.Interaction.Source); source != "" && !ValidAgentInteractionSource(source) {
+			return stateErr(op, ErrInvalidRegistry, "agent %q has unsupported interaction source %q", agent.Metadata.Name, source)
+		}
+		switch agent.Status.Activation.State {
+		case "", ActivationNotRequested, ActivationPending, ActivationAcknowledged, ActivationUnconfirmed:
+		default:
+			return stateErr(op, ErrInvalidRegistry, "agent %q has unsupported activation state %q", agent.Metadata.Name, agent.Status.Activation.State)
+		}
+		if source := strings.TrimSpace(agent.Status.Activation.Source); source != "" && source != string(InteractionSourceProviderHook) {
+			return stateErr(op, ErrInvalidRegistry, "agent %q has unsupported activation source %q", agent.Metadata.Name, source)
+		}
+		if !ValidAgentActivationReason(agent.Status.Activation.Reason) {
+			return stateErr(op, ErrInvalidRegistry, "agent %q has unsupported activation reason %q", agent.Metadata.Name, agent.Status.Activation.Reason)
+		}
+		if workspace := agent.Spec.Workspace; !workspace.IsZero() {
+			if workspace.CWD == "" || !filepath.IsAbs(workspace.CWD) || filepath.Clean(workspace.CWD) != workspace.CWD {
+				return stateErr(op, ErrInvalidRegistry, "agent %q workspace cwd %q must be absolute", agent.Metadata.Name, workspace.CWD)
+			}
+			seenRoots := map[string]bool{workspace.CWD: true}
+			for _, root := range workspace.AdditionalWritableRoots {
+				if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
+					return stateErr(op, ErrInvalidRegistry, "agent %q additional writable root %q must be absolute", agent.Metadata.Name, root)
+				}
+				if seenRoots[root] {
+					return stateErr(op, ErrInvalidRegistry, "agent %q repeats workspace root %q", agent.Metadata.Name, root)
+				}
+				seenRoots[root] = true
+			}
 		}
 		if agent.Status.PaneRef != "" {
 			pane, ok := r.Pane(agent.Status.PaneRef)

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -38,6 +39,78 @@ type resourceReconcileItem struct {
 	tmuxArgs []string
 	refused  bool
 	registry bool
+}
+
+// planResourceAgentProjections compares Registry Agent authority with the exact
+// live managed Pane. It only emits writes; tmux values are never imported into
+// Agent status or annotations. Offline/stale state projects unknown, which
+// clears response-complete and attention options instead of preserving them.
+func planResourceAgentProjections(ctx context.Context, recorder *resourcePlanTmuxRunner, registry coremetadata.Registry, now time.Time) error {
+	lookup := intmetadata.NewMirror(recorder)
+	for _, agent := range registry.Agents {
+		paneUIDs := []string{}
+		if agent.Status.PaneRef != "" {
+			paneUIDs = append(paneUIDs, agent.Status.PaneRef)
+		} else {
+			for _, pane := range registry.PanesOf(agent.Metadata.UID) {
+				paneUIDs = append(paneUIDs, pane.Metadata.UID)
+			}
+		}
+		for _, paneUID := range paneUIDs {
+			target, found, err := lookup.FindPaneTargetForUID(ctx, paneUID)
+			if err != nil {
+				return err
+			}
+			if !found {
+				continue
+			}
+			topic := ""
+			interaction := coremetadata.AgentInteraction{Kind: coremetadata.InteractionUnknown}
+			if agent.Status.Phase == coremetadata.PhaseRunning && paneUID == agent.Status.PaneRef {
+				topic = strings.TrimSpace(agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic])
+				interaction = agent.EffectiveInteraction(now)
+			}
+			state, badge, attention := agentTmuxProjection(interaction.Kind)
+			manual := ""
+			if topic != "" {
+				manual = "on"
+			}
+			for _, desired := range []struct {
+				field, value string
+			}{
+				{aiPaneTopicOption, topic},
+				{aiPaneTopicManualOption, manual},
+				{aiPaneStateOption, state},
+				{aiPaneBadgeKindOption, badge},
+				{attentionStateOption, attention},
+			} {
+				if err := planExactPaneOption(ctx, recorder, target, desired.field, desired.value); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func planExactPaneOption(ctx context.Context, recorder *resourcePlanTmuxRunner, target, field, desired string) error {
+	out, err := recorder.Run(ctx, "tmux", "display-message", "-p", "-t", target, "-F", "#{"+field+"}")
+	if err != nil {
+		return fmt.Errorf("inspect Agent projection %s on %s: %w", field, target, err)
+	}
+	before := strings.TrimSpace(string(out))
+	if before == desired {
+		return nil
+	}
+	args := []string{"set-option", "-p", "-t", target, field, desired}
+	if desired == "" {
+		args = []string{"set-option", "-p", "-u", "-t", target, field}
+	}
+	if _, err := recorder.Run(ctx, "tmux", args...); err != nil {
+		return err
+	}
+	recorder.setLastWriteBefore(before)
+	return nil
 }
 
 type resourceReconcilePlan struct {
@@ -107,6 +180,9 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 	}
 	after := mergeScopedResourceRegistry(before, scopedBefore, scopedAfter, projectSessions, reconciler)
 	if err := planResourceBoundMirrorDrift(ctx, recorder, after, reconciler); err != nil {
+		return resourceReconcilePlan{}, err
+	}
+	if err := planResourceAgentProjections(ctx, recorder, after, time.Now()); err != nil {
 		return resourceReconcilePlan{}, err
 	}
 	if err := planResourceProjectMirrors(ctx, recorder, after, projectSessions, reconciler); err != nil {
@@ -676,8 +752,13 @@ func (r *resourcePlanTmuxRunner) recordWrite(args []string) ([]byte, error) {
 		}
 		write.guardField, write.guardBefore = tmuxopts.WindowUID, r.initialWindowUID[target]
 	} else if len(args) >= 3 {
-		write.field = args[len(args)-2]
-		write.after = args[len(args)-1]
+		if slices.Contains(args, "-u") {
+			write.field = args[len(args)-1]
+			write.after = ""
+		} else {
+			write.field = args[len(args)-2]
+			write.after = args[len(args)-1]
+		}
 		switch write.field {
 		case tmuxopts.WindowUID:
 			write.before = r.windowUID[target]

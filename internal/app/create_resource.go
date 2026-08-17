@@ -49,6 +49,8 @@ type resourceCreateFlags struct {
 	name         string
 	provider     string
 	providerSet  bool
+	cwd          string
+	addDirs      repeatedFlag
 	placement    string
 	createWindow bool
 	output       string
@@ -129,6 +131,8 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	fs.Var(&out.projects, "project", "exact-one Project selector: <name> or uid:<uid>")
 	if shape.provider {
 		fs.StringVar(&out.provider, "provider", "", "Agent provider: "+strings.Join(cli.AgentProviders(), "|"))
+		fs.StringVar(&out.cwd, "cwd", "", "effective Agent working directory (defaults to Project root)")
+		fs.Var(&out.addDirs, "add-dir", "repeatable additional writable root")
 	}
 	if pane {
 		fs.Var(&out.windows, "window", "repeatable Window selector: <name> or uid:<uid>")

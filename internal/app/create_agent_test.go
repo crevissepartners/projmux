@@ -1,11 +1,14 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -27,12 +30,101 @@ type fakeAgentLauncher struct {
 	plans []fakeLaunchRequest
 	// bound records one entry per managed-pane binding.
 	bound []fakeBoundPane
+	// activation controls the bounded initial-task acknowledgement.
+	activationAcknowledged bool
+	activationErr          error
+	activationPanes        []string
+}
+
+func TestInitialTaskUnconfirmedIsDiagnosticAndNeverPersistsPrompt(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, launcher := newTestAgentCreateCommand(t, store, tmux)
+	launcher.activationAcknowledged = false
+	prompt := "secret-task-token-that-must-not-persist"
+
+	stdout, _, err := runRoute(t, create,
+		"agent", "--provider", "codex", "--project", "alpha", "--window", "review", "--", prompt)
+	if err == nil {
+		t.Fatal("unconfirmed initial task returned ordinary success")
+	}
+	if stdout != "" {
+		t.Fatalf("unconfirmed create wrote success output %q", stdout)
+	}
+	agent := agentNamed(t, store, "win-alpha-review", "codex")
+	if agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef == "" || agent.Status.Activation.State != coremetadata.ActivationUnconfirmed {
+		t.Fatalf("unconfirmed Agent status = %+v", agent.Status)
+	}
+	if len(launcher.activationPanes) != 1 {
+		t.Fatalf("activation probes = %q", launcher.activationPanes)
+	}
+	paneID := launcher.activationPanes[0]
+	for _, required := range []string{"agent/" + agent.Metadata.Name, "uid:" + agent.Metadata.UID, paneID, "retry", "delete agent uid:" + agent.Metadata.UID} {
+		if !strings.Contains(err.Error(), required) {
+			t.Fatalf("diagnostic = %q, missing %q", err, required)
+		}
+	}
+	raw, marshalErr := json.Marshal(store.registry)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	if strings.Contains(string(raw), prompt) {
+		t.Fatalf("prompt persisted in Registry: %s", raw)
+	}
+	if tmux.argvContains("capture-pane") {
+		t.Fatal("activation acknowledgement read pane content")
+	}
+}
+
+func TestInitialTaskAcknowledgementIsDistinctFromRunningLifecycle(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	create, _ := newTestAgentCreateCommand(t, store, newFakeTmux())
+	if _, _, err := runRoute(t, create,
+		"agent", "--provider", "claude", "--project", "alpha", "--window", "review", "--", "review this"); err != nil {
+		t.Fatal(err)
+	}
+	agent := agentNamed(t, store, "win-alpha-review", "claude")
+	if agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.Activation.State != coremetadata.ActivationAcknowledged {
+		t.Fatalf("Agent status = %+v", agent.Status)
+	}
+	if agent.Status.Activation.Source != string(coremetadata.InteractionSourceProviderHook) || agent.Status.Activation.ObservedAt.IsZero() {
+		t.Fatalf("activation = %+v", agent.Status.Activation)
+	}
+}
+
+func TestInitialTaskActivationErrorPersistsOnlyBoundedDiagnostic(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	create, launcher := newTestAgentCreateCommand(t, store, newFakeTmux())
+	launcher.activationAcknowledged = false
+	launcher.activationErr = errors.New("provider leaked secret-token-from-stderr")
+
+	_, _, err := runRoute(t, create,
+		"agent", "--provider", "codex", "--project", "alpha", "--window", "review", "--", "secret prompt")
+	if err == nil {
+		t.Fatal("failed activation returned ordinary success")
+	}
+	agent := agentNamed(t, store, "win-alpha-review", "codex")
+	if agent.Status.Activation.Source != string(coremetadata.InteractionSourceProviderHook) || agent.Status.Activation.Reason != coremetadata.ActivationReasonFailed {
+		t.Fatalf("activation = %+v", agent.Status.Activation)
+	}
+	raw, marshalErr := json.Marshal(store.registry)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	for _, secret := range []string{"secret-token-from-stderr", "secret prompt", "fake-provider-hook"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("free-form activation data persisted: %s", raw)
+		}
+	}
 }
 
 type fakeLaunchRequest struct {
-	provider   string
-	contextDir string
-	payload    []string
+	provider  string
+	workspace coremetadata.AgentWorkspace
+	payload   []string
 }
 
 type fakeBoundPane struct {
@@ -42,7 +134,7 @@ type fakeBoundPane struct {
 }
 
 func newFakeAgentLauncher() *fakeAgentLauncher {
-	return &fakeAgentLauncher{disabled: map[string]bool{}}
+	return &fakeAgentLauncher{disabled: map[string]bool{}, activationAcknowledged: true}
 }
 
 func (f *fakeAgentLauncher) RequireAgentEnabled(provider string) error {
@@ -57,22 +149,29 @@ func (f *fakeAgentLauncher) RequireAgentEnabled(provider string) error {
 	return nil
 }
 
-func (f *fakeAgentLauncher) PlanAgentLaunch(provider, contextDir string, payload []string) (string, []string, error) {
+func (f *fakeAgentLauncher) PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (string, []string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.planErr != nil {
 		return "", nil, f.planErr
 	}
 	f.plans = append(f.plans, fakeLaunchRequest{
-		provider:   provider,
-		contextDir: contextDir,
-		payload:    append([]string(nil), payload...),
+		provider:  provider,
+		workspace: workspace,
+		payload:   append([]string(nil), payload...),
 	})
 	argv := []string{"sh", "-lc", "exec " + provider}
 	if len(payload) > 0 {
 		argv[2] += " " + strings.Join(payload, " ")
 	}
 	return provider + ":launch", argv, nil
+}
+
+func (f *fakeAgentLauncher) AwaitAgentActivation(_ context.Context, _ tmuxCommandRunner, paneID string, _ time.Duration) (bool, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.activationPanes = append(f.activationPanes, paneID)
+	return f.activationAcknowledged, "fake-provider-hook", f.activationErr
 }
 
 func (f *fakeAgentLauncher) BindManagedAgentPane(paneID, provider, _, title string) {
@@ -88,6 +187,15 @@ func newTestAgentCreateCommand(t *testing.T, store *fakeResourceStore, tmux *fak
 	create, _ := newTestResourceCreateCommand(t, store, tmux)
 	launcher := newFakeAgentLauncher()
 	create.agents = launcher
+	create.resolveWorkspace = func(registry coremetadata.Registry, owner coremetadata.Project, provider, cwd string, additional []string) (coremetadata.AgentWorkspace, error) {
+		// The shared metadata fixture deliberately uses portable fictitious
+		// /srv roots. Preserve that seam only for its default workspace; every
+		// explicit path still exercises production filesystem validation.
+		if strings.TrimSpace(cwd) == "" && strings.HasPrefix(owner.Spec.Root, "/srv/") && len(additional) == 0 {
+			return coremetadata.AgentWorkspace{CWD: owner.Spec.Root}, nil
+		}
+		return resolveAgentWorkspace(registry, owner, provider, cwd, additional)
+	}
 	return create, launcher
 }
 
@@ -1038,6 +1146,8 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			fs.Var(&out.selectors, "selector", "")
 			fs.Bool("create-window", false, "")
 			fs.String("placement", "", "")
+			fs.String("cwd", "", "")
+			fs.Var(&out.addDirs, "add-dir", "")
 			fs.String("name", "", "")
 			fs.Var(&out.labels, "label", "")
 			fs.String("output", "", "")

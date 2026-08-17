@@ -71,6 +71,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) err
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, ThreadID: payload.ConversationID})
 		return nil
 	}
+	defer c.flushPendingAgentSessionRef(paneID)
 
 	c.markAIHookPane(paneID, aiModeAntigravity, payload.CWD, payload.ConversationID, payload.ConversationID, payload.TranscriptPath)
 	c.persistAntigravityContextUsage(payload)

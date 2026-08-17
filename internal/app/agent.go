@@ -7,6 +7,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -28,18 +29,22 @@ var resumableAgentPhases = []coremetadata.AgentPhase{
 // `describe`, and `delete`, while the state, topic, resume, integration, and
 // account-usage workflows are Agent-domain verbs that no CRUD shape describes.
 //
-// `status`, `topic`, and `integrate` forward raw argv to the handler that owns
-// them today, and `usage` forwards to the existing usage command untouched, so
-// each is a parity alias rather than a second implementation. Provider account
+// `status` and `topic` are Registry-owned exact-Agent workflows. `integrate`
+// and `usage` forward to their existing handlers untouched; provider account
 // quota is deliberately not an addressable `usage` resource: there is no
 // `get usage`, only this read-only Agent-domain workflow.
 //
 // `resume` is the one route with logic of its own, because it is the only way
 // an existing Agent is ever reused: `create agent` always mints a new uid.
 type agentCommand struct {
-	ai           rawArgvCommand
-	usage        rawArgvCommand
-	loadRegistry func() (coremetadata.Registry, error)
+	ai               rawArgvCommand
+	usage            rawArgvCommand
+	loadRegistry     func() (coremetadata.Registry, error)
+	store            *resourceStore
+	activeTarget     activeTargetLookup
+	mirror           agentMutationMirror
+	now              func() time.Time
+	resolveWorkspace func(string, coremetadata.Registry, coremetadata.Project, string, string, []string) (coremetadata.AgentWorkspace, error)
 	// rebind materializes the new managed Pane of a resumed Agent. It is the
 	// only part of this namespace that mutates the registry, and it is held as
 	// its own seam so the read-only resolution and phase gate above it stay
@@ -48,7 +53,21 @@ type agentCommand struct {
 }
 
 func newAgentCommand() *agentCommand {
-	return &agentCommand{loadRegistry: loadResourceRegistry}
+	return &agentCommand{
+		loadRegistry:     loadResourceRegistry,
+		store:            newResourceStore(),
+		activeTarget:     defaultActiveTargetLookup(),
+		mirror:           defaultAgentMutationMirror(),
+		now:              time.Now,
+		resolveWorkspace: resolveAgentWorkspaceFor,
+	}
+}
+
+func (c *agentCommand) clock() time.Time {
+	if c == nil || c.now == nil {
+		return time.Now()
+	}
+	return c.now()
 }
 
 // Run dispatches one `agent <subcommand>` invocation.
@@ -59,9 +78,9 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 	rest := args[1:]
 	switch args[0] {
 	case "status":
-		return forwardRawArgv(c.ai, "agent status", "ai", []string{"status"}, rest, stdout, stderr)
+		return c.runStatus(rest, stdout, stderr)
 	case "topic":
-		return forwardRawArgv(c.ai, "agent topic", "ai", []string{"topic"}, rest, stdout, stderr)
+		return c.runTopic(rest, stdout, stderr)
 	case "integrate":
 		return forwardRawArgv(c.ai, "agent integrate", "ai", []string{"integrate"}, rest, stdout, stderr)
 	case "usage":
@@ -140,6 +159,18 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 		return err
 	}
 	plan, err := planAgentResume(spelling, registry, agent)
+	if err != nil {
+		return err
+	}
+	project, ok := registry.Project(plan.projectUID)
+	if !ok {
+		return fmt.Errorf("%s: owning Project %q disappeared", spelling, plan.projectUID)
+	}
+	resolver := c.resolveWorkspace
+	if resolver == nil {
+		resolver = resolveAgentWorkspaceFor
+	}
+	plan.workspace, err = resolver(spelling, registry, *project, plan.provider, plan.workspace.CWD, plan.workspace.AdditionalWritableRoots)
 	if err != nil {
 		return err
 	}

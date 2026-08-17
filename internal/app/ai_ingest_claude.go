@@ -48,6 +48,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, SessionID: payload.SessionID})
 		return nil
 	}
+	defer c.flushPendingAgentSessionRef(paneID)
 
 	c.markAIHookPane(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
 	metadata := payload.claudeMetadata()

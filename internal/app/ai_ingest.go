@@ -522,7 +522,7 @@ func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, tran
 	// they were. This is the second, additive home: the durable conversation
 	// pointer on the Agent resource, which survives the Pane the options die
 	// with.
-	c.recordAgentSessionRef(paneID, coremetadata.AgentSessionObservation{
+	c.stageAgentSessionRef(paneID, coremetadata.AgentSessionObservation{
 		Provider:       agent,
 		SessionID:      sessionID,
 		ThreadID:       threadID,

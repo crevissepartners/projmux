@@ -134,9 +134,9 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 		},
 		{
 			kind: "agents",
-			want: "DISPLAY NAME  NAME   STATUS   PROJECT  WINDOW  SESSION               AGE\n" +
-				"codex         codex  live     alpha    main    codex:codex-thread-1  2d\n" +
-				"codex         codex  offline  beta     main                          2d\n",
+			want: "DISPLAY NAME  NAME   STATUS   INTERACTION  PROJECT  WINDOW  SESSION               AGE\n" +
+				"codex         codex  live     unknown      alpha    main    codex:codex-thread-1  2d\n" +
+				"codex         codex  offline  unknown      beta     main                          2d\n",
 		},
 	} {
 		t.Run(test.kind, func(t *testing.T) {
@@ -232,7 +232,7 @@ func TestResourceTableColumnsAreTheCanonicalContract(t *testing.T) {
 		{coremetadata.KindProject, []string{"DISPLAY NAME", "NAME", "STATUS", "AGE"}},
 		{coremetadata.KindWindow, []string{"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "AGE"}},
 		{coremetadata.KindPane, []string{"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "AGE"}},
-		{coremetadata.KindAgent, []string{"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "SESSION", "AGE"}},
+		{coremetadata.KindAgent, []string{"DISPLAY NAME", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "AGE"}},
 	} {
 		got := resourceTableColumns[test.kind]
 		if strings.Join(got, ",") != strings.Join(test.want, ",") {
@@ -369,8 +369,8 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindAgent, UID: "a1", Name: "codex", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "DISPLAY NAME  NAME   STATUS  PROJECT  WINDOW  SESSION  AGE\n" +
-				"codex         codex  live    alpha    main\n",
+			want: "DISPLAY NAME  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION  AGE\n" +
+				"codex         codex  live    unknown      alpha    main\n",
 		},
 		{
 			name:    "zero matches emit zero bytes",

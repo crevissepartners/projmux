@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -10,8 +11,10 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -41,10 +44,14 @@ type agentLauncher interface {
 	RequireAgentEnabled(provider string) error
 	// PlanAgentLaunch builds the launch argv and the pane title for one
 	// provider. It creates nothing, so a failure here costs zero mutations.
-	PlanAgentLaunch(provider, contextDir string, payload []string) (title string, argv []string, err error)
-	// BindManagedAgentPane applies the managed-agent pane options and starts
-	// the title watcher on an already-created pane.
+	PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (title string, argv []string, err error)
+	// BindManagedAgentPane applies the managed-agent pane options without the
+	// legacy title/content watcher.
 	BindManagedAgentPane(paneID, provider, contextDir, title string)
+	// AwaitAgentActivation observes bounded provider/hook metadata only. It
+	// never reads pane content and runs after the create transaction releases
+	// the Registry lock.
+	AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration) (bool, string, error)
 }
 
 // createCommand implements the canonical `create` verb.
@@ -86,9 +93,10 @@ type createCommand struct {
 	runtime *materializer
 	// shell is the configured shell whose basename seeds default names and
 	// whose process a payload-free Pane runs.
-	shell          string
-	sessionNameFor func(root string) string
-	newOperationID func() (string, error)
+	shell            string
+	sessionNameFor   func(root string) string
+	newOperationID   func() (string, error)
+	resolveWorkspace func(coremetadata.Registry, coremetadata.Project, string, string, []string) (coremetadata.AgentWorkspace, error)
 }
 
 func newCreateCommand() *createCommand {
@@ -105,9 +113,10 @@ func newCreateCommand() *createCommand {
 			sessions: client,
 			warn:     os.Stderr,
 		},
-		shell:          configuredShell(os.Getenv),
-		sessionNameFor: namer.SessionName,
-		newOperationID: newCreateOperationID,
+		shell:            configuredShell(os.Getenv),
+		sessionNameFor:   namer.SessionName,
+		newOperationID:   newCreateOperationID,
+		resolveWorkspace: resolveAgentWorkspace,
 	}
 }
 

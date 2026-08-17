@@ -61,8 +61,9 @@ projmux <command> [args...]
 Manage Agent state, topic, integrations, and account usage
 
 ```
-projmux agent status [set <state> [pane]]
-projmux agent topic [set|clear] ...
+projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
+projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
+projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref>] [--window <ref>]...
 projmux agent integrate <provider> [--dry-run]
 projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
@@ -72,8 +73,8 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux agent status`](#projmux-agent-status) | Read or set the Agent status state |
-| [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear the Agent topic annotation |
+| [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
+| [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent to a new managed Pane |
 | [`projmux agent integrate`](#projmux-agent-integrate) | Install or remove provider hook integrations |
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
@@ -82,18 +83,19 @@ Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agen
 
 ### `projmux agent status`
 
-Read or set the Agent status state
+Read or set semantic Agent interaction independently of lifecycle
 
 ```
-projmux agent status [set <state> [pane]]
+projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
 ```
 
 ### `projmux agent topic`
 
-Read, set, or clear the Agent topic annotation
+Read, set, or clear one exact Agent topic annotation
 
 ```
-projmux agent topic [set|clear] ...
+projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
+projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 ```
 
 ### `projmux agent resume`
@@ -283,8 +285,8 @@ Create Projmux resources
 ```
 projmux create window --project <ref> [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 projmux create pane --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create agent --provider <provider> --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create codex|claude|antigravity --project <ref> [--window <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create agent --provider <provider> --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create codex|claude|antigravity --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
 projmux create snapshot
 ```
@@ -335,7 +337,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Create an Agent and its managed Pane; --provider is required, and --project splits the resolved Windows detached
 
 ```
-projmux create agent --provider <provider> --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create agent --provider <provider> --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create agent --provider <provider> [--placement right|down] [-o pane-id|none] [-- <payload>]
 ```
 
@@ -362,7 +364,7 @@ projmux create snapshot
 Provider shortcut for create agent --provider codex
 
 ```
-projmux create codex --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create codex --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create codex [--placement right|down] [-o pane-id|none] [-- <payload>]
 ```
 
@@ -373,7 +375,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Provider shortcut for create agent --provider claude
 
 ```
-projmux create claude --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create claude --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create claude [--placement right|down] [-o pane-id|none] [-- <payload>]
 ```
 
@@ -384,7 +386,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Provider shortcut for create agent --provider antigravity
 
 ```
-projmux create antigravity --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create antigravity --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create antigravity [--placement right|down] [-o pane-id|none] [-- <payload>]
 ```
 

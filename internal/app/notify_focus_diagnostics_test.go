@@ -14,6 +14,7 @@ import (
 	"time"
 
 	corefocus "github.com/crevissepartners/projmux/internal/core/focus"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
@@ -379,9 +380,9 @@ func TestNotifyDeliveryDiagnosticsCoalescesActualSuppressionHotPaths(t *testing.
 		if err := cmd.notifyAI("%3"); err != nil {
 			t.Fatal(err)
 		}
-		if err := cmd.applyAIStatusInternal("waiting", "%15", attentionNotifyInput{
+		if err := cmd.applyAIStatusInternalWithSource("waiting", "%15", attentionNotifyInput{
 			Metadata: map[string]string{"agent": "codex", "category": "response_complete"},
-		}, true, false); err != nil {
+		}, true, false, string(coremetadata.InteractionSourceProviderHook), true); err != nil {
 			t.Fatal(err)
 		}
 	}

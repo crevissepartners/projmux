@@ -142,6 +142,56 @@ func sequentialTestUID() func(coremetadata.Kind) (string, error) {
 	}
 }
 
+func TestCompatibilityAITopicAndStatusForwardThroughAgentAuthority(t *testing.T) {
+	t.Parallel()
+	h := newSessionRefHarness(t, aiModeCodex)
+
+	var stdout, stderr bytes.Buffer
+	if err := h.cmd.Run([]string{"topic", "set", "--pane", "%7", "review"}, &stdout, &stderr); err != nil {
+		t.Fatalf("ai topic set: %v (stderr=%q)", err, stderr.String())
+	}
+	if stdout.String() != "" || stderr.String() != "" {
+		t.Fatalf("ai topic set bytes stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	if got := h.agent(t).Metadata.Annotations[coremetadata.AnnotationAgentTopic]; got != "review" {
+		t.Fatalf("compatibility topic bypassed Registry: %q", got)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := h.cmd.Run([]string{"topic", "get", "--pane", "%7"}, &stdout, &stderr); err != nil {
+		t.Fatalf("ai topic get: %v", err)
+	}
+	if stdout.String() != "review\n" || stderr.String() != "" {
+		t.Fatalf("ai topic get bytes stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := h.cmd.Run([]string{"status", "set", "waiting", "%7"}, &stdout, &stderr); err != nil {
+		t.Fatalf("ai status set: %v (stderr=%q)", err, stderr.String())
+	}
+	interaction := h.agent(t).Status.Interaction
+	if interaction.Kind != coremetadata.InteractionResponseComplete || interaction.Source != "compatibility-ai" {
+		t.Fatalf("compatibility status bypassed Registry: %+v", interaction)
+	}
+	if stdout.String() != "" || stderr.String() != "" {
+		t.Fatalf("ai status set bytes stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := h.cmd.Run([]string{"topic", "clear", "--pane", "%7"}, &stdout, &stderr); err != nil {
+		t.Fatalf("ai topic clear: %v", err)
+	}
+	if _, ok := h.agent(t).Metadata.Annotations[coremetadata.AnnotationAgentTopic]; ok {
+		t.Fatal("compatibility topic clear did not clear Registry authority")
+	}
+	if stdout.String() != "" || stderr.String() != "" {
+		t.Fatalf("ai topic clear bytes stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
 // TestOneProviderHookRecordsItsOwnConversationShapeOnTheAgent is the
 // per-provider ingest table. Each provider goes through its real `ai ingest`
 // entry point with a real hook payload, and each one is judged on the union
@@ -290,14 +340,16 @@ func TestAnUnwiredRegistrySeamLeavesIngestExactlyAsItWas(t *testing.T) {
 	}
 }
 
-// TestIngestNegativesOpenNoRegistryTransaction covers every reason the write is
-// skipped. Each one must cost zero write transactions, because a hook that
-// cannot be attributed to an Agent has nothing to record.
+// TestIngestNegativesDoNotInventAConversation covers every reason the session
+// ref write is skipped. An attributable hook without a conversation id still
+// records its semantic interaction, in one transaction, but never invents a
+// provider conversation pointer.
 func TestIngestNegativesOpenNoRegistryTransaction(t *testing.T) {
 	tests := []struct {
-		name    string
-		arrange func(t *testing.T, h *sessionRefHarness)
-		payload string
+		name        string
+		arrange     func(t *testing.T, h *sessionRefHarness)
+		payload     string
+		wantUpdates int
 	}{
 		{
 			name: "the registry holds no Agent at all",
@@ -326,9 +378,10 @@ func TestIngestNegativesOpenNoRegistryTransaction(t *testing.T) {
 			payload: `{"hook_event_name":"UserPromptSubmit","thread_id":"codex-thread-1","cwd":"/src/app"}`,
 		},
 		{
-			name:    "the hook carries no conversation id yet",
-			arrange: func(*testing.T, *sessionRefHarness) {},
-			payload: `{"hook_event_name":"UserPromptSubmit","cwd":"/src/app"}`,
+			name:        "the hook carries no conversation id yet",
+			arrange:     func(*testing.T, *sessionRefHarness) {},
+			payload:     `{"hook_event_name":"UserPromptSubmit","cwd":"/src/app"}`,
+			wantUpdates: 1,
 		},
 	}
 
@@ -338,8 +391,8 @@ func TestIngestNegativesOpenNoRegistryTransaction(t *testing.T) {
 			tc.arrange(t, h)
 			h.ingest(t, []string{"codex-hook"}, tc.payload)
 
-			if h.updates != 0 {
-				t.Fatalf("opened %d registry write transactions, want 0", h.updates)
+			if h.updates != tc.wantUpdates {
+				t.Fatalf("opened %d registry write transactions, want %d", h.updates, tc.wantUpdates)
 			}
 			if agent, ok := h.registry.Agent(h.agentUID); ok && agent.Status.SessionRef != nil {
 				t.Fatalf("recorded %#v, want nothing", agent.Status.SessionRef)
@@ -517,8 +570,8 @@ func TestGetAgentsSurfacesTheConversationPointer(t *testing.T) {
 		t.Fatalf("get agents: %v (stderr=%s)", err, stderr)
 	}
 	// The conversation pointer is the SESSION column of the columnar read.
-	const want = "DISPLAY NAME  NAME   STATUS  PROJECT  WINDOW  SESSION               AGE\n" +
-		"codex         codex  live    alpha    main    codex:codex-thread-1  2d\n"
+	const want = "DISPLAY NAME  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION               AGE\n" +
+		"codex         codex  live    unknown      alpha    main    codex:codex-thread-1  2d\n"
 	if stdout != want {
 		t.Fatalf("get agents = %q, want %q", stdout, want)
 	}
@@ -531,7 +584,7 @@ func TestGetAgentsSurfacesTheConversationPointer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get agents --project beta: %v", err)
 	}
-	if beta != "DISPLAY NAME  NAME   STATUS   PROJECT  WINDOW  SESSION  AGE\ncodex         codex  offline  beta     main             2d\n" {
+	if beta != "DISPLAY NAME  NAME   STATUS   INTERACTION  PROJECT  WINDOW  SESSION  AGE\ncodex         codex  offline  unknown      beta     main             2d\n" {
 		t.Fatalf("an Agent with no session ref rendered %q", beta)
 	}
 

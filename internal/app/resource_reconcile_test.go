@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -9,12 +10,149 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
+
+func TestResourceReconcileProjectsAllAgentFieldsFromRegistryAuthority(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	registry := resourceFixtureRegistry(t)
+	agent, _ := registry.Agent("agt-alpha-codex")
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic] = "registry topic"
+	agent.Status.Interaction = coremetadata.AgentInteraction{
+		Kind: coremetadata.InteractionResponseComplete, ObservedAt: now.Add(-time.Minute), Source: "provider-hook",
+	}
+	server := newFakeTmux()
+	pane := server.addSession("alpha").windows[0].panes[0]
+	pane.opts[tmuxopts.PaneUID] = "pan-alpha-codex"
+	pane.opts[aiPaneTopicOption] = "foreign live topic"
+	pane.opts[aiPaneStateOption] = "thinking"
+	pane.opts[aiPaneBadgeKindOption] = aiBadgeKindInProgress
+	pane.opts[attentionStateOption] = attentionStateBusy
+
+	plan := func(reg coremetadata.Registry) *resourcePlanTmuxRunner {
+		recorder := newResourcePlanTmuxRunner(server)
+		if err := planResourceAgentProjections(context.Background(), recorder, reg, now); err != nil {
+			t.Fatalf("plan Agent projection: %v", err)
+		}
+		return recorder
+	}
+	recorder := plan(registry)
+	want := map[string]string{
+		aiPaneTopicOption:       "registry topic",
+		aiPaneTopicManualOption: "on",
+		aiPaneStateOption:       "waiting",
+		aiPaneBadgeKindOption:   aiBadgeKindResponseComplete,
+		attentionStateOption:    attentionStateReply,
+	}
+	if len(recorder.writes) != len(want) {
+		t.Fatalf("writes = %#v, want one for every Agent projection", recorder.writes)
+	}
+	for _, write := range recorder.writes {
+		if want[write.field] != write.after {
+			t.Fatalf("write %s = %q, want %q", write.field, write.after, want[write.field])
+		}
+		if _, err := server.Run(context.Background(), "tmux", write.args...); err != nil {
+			t.Fatalf("execute %v: %v", write.args, err)
+		}
+	}
+	if repeat := plan(registry); len(repeat.writes) != 0 {
+		t.Fatalf("repeat projection imported or rewrote live values: %#v", repeat.writes)
+	}
+
+	// An Offline Agent may retain durable history, but a surviving stale Pane
+	// projects current unknown and cannot keep the completed badge live.
+	agent.Status.Phase = coremetadata.PhaseOffline
+	agent.Status.PaneRef = ""
+	recorder = plan(registry)
+	for _, write := range recorder.writes {
+		if _, err := server.Run(context.Background(), "tmux", write.args...); err != nil {
+			t.Fatalf("execute offline clear %v: %v", write.args, err)
+		}
+	}
+	if pane.opts[aiPaneStateOption] != "" {
+		t.Fatalf("offline state = %q", pane.opts[aiPaneStateOption])
+	}
+	for _, field := range []string{aiPaneTopicOption, aiPaneTopicManualOption, aiPaneBadgeKindOption, attentionStateOption} {
+		if got := pane.opts[field]; got != "" {
+			t.Fatalf("offline field %s retained %q", field, got)
+		}
+	}
+	if agent.Status.Interaction.Kind != coremetadata.InteractionResponseComplete {
+		t.Fatalf("reconcile imported/erased durable history: %+v", agent.Status.Interaction)
+	}
+}
+
+func TestPublicResourceReconcileRetriesExactAgentProjection(t *testing.T) {
+	t.Parallel()
+	command, store, server, _, _ := newReconcileFixture(t, "-L", "primary")
+	if _, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json"); err != nil {
+		t.Fatalf("bootstrap reconciliation: %v", err)
+	}
+	store.now = time.Now().UTC()
+	mutator := store.mutator()
+	window := store.registry.Windows[0]
+	agent, err := mutator.CreateAgent(&store.registry, window.Metadata.UID, coremetadata.CreateAgentOptions{
+		Provider: "codex", OperationID: "op-agent-reconcile",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed, err := mutator.AttachAgentPane(&store.registry, agent.Metadata.UID, coremetadata.BootstrapPane{
+		CWD: store.registry.Projects[0].Spec.Root,
+	}, "op-agent-reconcile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mutator.SetAgentTopic(&store.registry, agent.Metadata.UID, "public topic"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mutator.SetAgentInteraction(&store.registry, agent.Metadata.UID, coremetadata.InteractionApprovalRequired, string(coremetadata.InteractionSourceProviderHook)); err != nil {
+		t.Fatal(err)
+	}
+	liveWindow := server.sessions[0].windows[0]
+	livePane := newFakeTmuxPane("%agent")
+	livePane.opts[tmuxopts.PaneUID] = managed.Metadata.UID
+	livePane.opts[aiPaneTopicOption] = "stale"
+	livePane.opts[aiPaneStateOption] = "idle"
+	liveWindow.panes = append(liveWindow.panes, livePane)
+
+	preview, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("Agent projection preview: %v\n%s", err, preview)
+	}
+	for _, field := range []string{aiPaneTopicOption, aiPaneTopicManualOption, aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption} {
+		if !strings.Contains(preview, `"field": "`+field+`"`) {
+			t.Fatalf("public preview missing %s:\n%s", field, preview)
+		}
+	}
+
+	server.fail = []string{"set-option", aiPaneStateOption}
+	failed, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil || !strings.Contains(failed, `"retry": "projmux reconcile resources --socket 'primary'"`) {
+		t.Fatalf("projection failure did not expose public exact retry: err=%v\n%s", err, failed)
+	}
+	if _, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json"); err != nil {
+		t.Fatalf("Agent projection retry: %v", err)
+	}
+	if livePane.opts[aiPaneTopicOption] != "public topic" || livePane.opts[aiPaneTopicManualOption] != "on" ||
+		livePane.opts[aiPaneStateOption] != "waiting" || livePane.opts[aiPaneBadgeKindOption] != aiBadgeKindApprovalRequired ||
+		livePane.opts[attentionStateOption] != attentionStateReply {
+		t.Fatalf("Agent projection did not converge: %+v", livePane.opts)
+	}
+	repeat, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || !strings.Contains(repeat, `"outcome": "no-op"`) {
+		t.Fatalf("Agent projection repeat not no-op: err=%v\n%s", err, repeat)
+	}
+}
 
 func reconcileFixtureReconciler(root, sessionName string) func(tmuxCommandRunner, sessionLister) *registryReconciler {
 	return func(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {

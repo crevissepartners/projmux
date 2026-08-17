@@ -31,7 +31,7 @@ type agentResumeLauncher interface {
 	// conversation id. It creates nothing, so every failure it can report --
 	// a malformed conversation id, an unknown provider, a missing provider
 	// binary -- costs zero mutations and zero tmux objects.
-	PlanAgentResume(provider, contextDir, conversationID string) (title string, argv []string, err error)
+	PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (title string, argv []string, err error)
 	// BindResumedAgentPane applies the managed-agent pane options to a pane the
 	// caller already created and seeds the live routing index with the resumed
 	// conversation id.
@@ -53,7 +53,7 @@ var _ agentResumeLauncher = (*aiCommand)(nil)
 // picker does (ai.go's runSelectedResumeSession), and it is precisely what this
 // route must not do, because a resume that silently starts a new conversation
 // loses the operator's context without telling them.
-func (c *aiCommand) PlanAgentResume(provider, contextDir, conversationID string) (string, []string, error) {
+func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (string, []string, error) {
 	mode := normalizeAIMode(provider)
 	resumeArgv, err := resumeArgsForAgent(mode, conversationID)
 	if err != nil {
@@ -67,7 +67,15 @@ func (c *aiCommand) PlanAgentResume(provider, contextDir, conversationID string)
 		return "", nil, errors.New(c.missingAgentRunnerMessage(mode))
 	}
 	resumeArgv[0] = agentBin
-	plan, err := c.planAgentLaunch(mode, contextDir, nil, resumeArgv, filepath.Dir(agentBin))
+	workspaceArgs := make([]string, 0, 2+2*len(workspace.AdditionalWritableRoots))
+	if mode == aiModeCodex && strings.TrimSpace(workspace.CWD) != "" {
+		workspaceArgs = append(workspaceArgs, "-C", workspace.CWD)
+	}
+	for _, root := range workspace.AdditionalWritableRoots {
+		workspaceArgs = append(workspaceArgs, "--add-dir", root)
+	}
+	resumeArgv = append(resumeArgv[:1], append(workspaceArgs, resumeArgv[1:]...)...)
+	plan, err := c.planAgentLaunch(mode, workspace.CWD, nil, resumeArgv, filepath.Dir(agentBin))
 	if err != nil {
 		return "", nil, err
 	}
@@ -88,7 +96,6 @@ func (c *aiCommand) BindResumedAgentPane(paneID, provider, contextDir, title, co
 		sessionID: conversationID,
 		resumeID:  conversationID,
 	})
-	c.startAIWatchTitle(paneID)
 }
 
 // agentResumePlan is one preflighted rebind: everything `agent resume` fixed
@@ -107,6 +114,8 @@ type agentResumePlan struct {
 	// The owner chain the new managed Pane is materialized into.
 	projectUID  string
 	projectRoot string
+	workspace   coremetadata.AgentWorkspace
+	topic       string
 	windowUID   string
 	anchorUID   string
 	// shared names the other Agents that record the same conversation, in uid
@@ -225,7 +234,6 @@ func planAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 			"%s: project/%s carries a MissingRoot condition for %q; rebind it before resuming an Agent under it",
 			spelling, project.Metadata.Name, project.Spec.Root))
 	}
-
 	// The split anchor is the Window's persisted primary Pane, exactly as on the
 	// create routes. There is no fallback to the active or last-used Pane.
 	anchorUID := strings.TrimSpace(window.Spec.PrimaryPaneRef)
@@ -248,6 +256,8 @@ func planAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 		ref:            ref.Clone(),
 		projectUID:     project.Metadata.UID,
 		projectRoot:    project.Spec.Root,
+		workspace:      agent.Spec.Workspace,
+		topic:          agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic],
 		windowUID:      window.Metadata.UID,
 		anchorUID:      anchorUID,
 		shared:         sharedConversationAgents(registry, agent.Metadata.UID, ref),
@@ -288,12 +298,13 @@ func sharedConversationAgents(registry coremetadata.Registry, selfUID string, re
 // calls CreateAgent at all, so the uid and metadata.name of the resumed Agent
 // cannot change no matter what happens on the runtime side.
 type agentRebinder struct {
-	create   *createCommand
-	launcher agentResumeLauncher
+	create           *createCommand
+	launcher         agentResumeLauncher
+	resolveWorkspace func(string, coremetadata.Registry, coremetadata.Project, string, string, []string) (coremetadata.AgentWorkspace, error)
 }
 
 func newAgentRebinder(create *createCommand, launcher agentResumeLauncher) *agentRebinder {
-	return &agentRebinder{create: create, launcher: launcher}
+	return &agentRebinder{create: create, launcher: launcher, resolveWorkspace: resolveAgentWorkspaceFor}
 }
 
 // rebind attaches a new managed Pane, launched with the provider's resume argv,
@@ -317,7 +328,13 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	// stored conversation id cannot be rendered into one -- malformed, wrong
 	// shape for the provider, provider binary absent -- the route stops here,
 	// with the store still unopened.
-	title, launchArgv, err := r.launcher.PlanAgentResume(plan.provider, plan.projectRoot, plan.conversationID)
+	contextDir := plan.workspace.CWD
+	if contextDir == "" {
+		contextDir = plan.projectRoot
+	}
+	workspace := plan.workspace
+	workspace.CWD = contextDir
+	title, launchArgv, err := r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID)
 	if err != nil {
 		return fmt.Errorf("%s: agent/%s cannot resume %s conversation %s: %w",
 			spelling, plan.agentName, plan.provider, plan.conversationID, err)
@@ -359,6 +376,20 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if !ok {
 			return fmt.Errorf("%s: project %q disappeared before the rebind ran", spelling, plan.projectUID)
 		}
+		resolver := r.resolveWorkspace
+		if resolver == nil {
+			resolver = resolveAgentWorkspaceFor
+		}
+		workspace, err := resolver(spelling, *working, *project, plan.provider, agent.Spec.Workspace.CWD, agent.Spec.Workspace.AdditionalWritableRoots)
+		if err != nil {
+			return err
+		}
+		if workspace.CWD != plan.workspace.CWD || !slices.Equal(workspace.AdditionalWritableRoots, plan.workspace.AdditionalWritableRoots) {
+			return fmt.Errorf("%s: agent/%s workspace changed after preflight; re-run it", spelling, plan.agentName)
+		}
+		// Persist the normalized effective workspace for legacy Agents whose
+		// pre-Phase6 spec was empty, before any runtime object is created.
+		agent.Spec.Workspace = workspace
 
 		// Metadata phase. AttachAgentPane creates the managed Pane owned by this
 		// existing Agent and moves it Offline/Failed -> Running through the
@@ -366,7 +397,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		// for one, so the uid and metadata.name are structurally untouchable
 		// here.
 		pane, err := mutator.AttachAgentPane(working, plan.agentUID, coremetadata.BootstrapPane{
-			CWD: project.Spec.Root,
+			CWD: contextDir,
 		}, operationID)
 		if err != nil {
 			return MapMetadataError(err)
@@ -384,7 +415,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if err != nil {
 			return err
 		}
-		paneID, err := r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, project.Spec.Root, launchArgv)
+		paneID, err := r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, contextDir, launchArgv)
 		if paneID != "" {
 			ledger.record(runtimePane, paneID, pane.Metadata.UID)
 			if mirrorErr := r.create.runtime.mirror.MirrorPane(ctx, paneID, pane); mirrorErr != nil {
@@ -394,7 +425,21 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if err != nil {
 			return err
 		}
-		r.launcher.BindResumedAgentPane(paneID, plan.provider, project.Spec.Root, title, plan.conversationID)
+		r.launcher.BindResumedAgentPane(paneID, plan.provider, contextDir, title, plan.conversationID)
+		if topic := strings.TrimSpace(plan.topic); topic != "" {
+			if _, err := r.create.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic); err != nil {
+				return tmuxError("%s: mirror stored Agent topic to resumed Pane %s: %v", spelling, paneID, err)
+			}
+			if _, err := r.create.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicManualOption, "on"); err != nil {
+				return tmuxError("%s: mark stored Agent topic manual on resumed Pane %s: %v", spelling, paneID, err)
+			}
+		} else {
+			for _, option := range []string{aiPaneTopicOption, aiPaneTopicManualOption} {
+				if _, err := r.create.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-u", "-t", paneID, option); err != nil {
+					return tmuxError("%s: clear empty Agent topic projection %s on resumed Pane %s: %v", spelling, option, paneID, err)
+				}
+			}
+		}
 		return nil
 	}); err != nil {
 		return err

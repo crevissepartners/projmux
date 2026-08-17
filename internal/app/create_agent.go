@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -80,6 +81,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	}
 
 	var results []createResult
+	var activationTargets []agentActivationTarget
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, flags)
 		if err != nil {
@@ -89,10 +91,19 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			return err
 		}
 
+		resolver := c.resolveWorkspace
+		if resolver == nil {
+			resolver = resolveAgentWorkspace
+		}
+		workspace, err := resolver(*working, project, provider, flags.cwd, flags.addDirs)
+		if err != nil {
+			return err
+		}
+
 		// The launch is constructed before anything is allocated. A missing
 		// provider binary is the most likely failure on this route, and it has
 		// to land while the operation still owns nothing.
-		title, launchArgv, err := c.agents.PlanAgentLaunch(provider, project.Spec.Root, flags.payload)
+		title, launchArgv, err := c.agents.PlanAgentLaunch(provider, workspace, flags.payload)
 		if err != nil {
 			return err
 		}
@@ -124,13 +135,15 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 				Name:        flags.name,
 				Provider:    provider,
 				Labels:      labels,
+				Workspace:   workspace,
+				Activation:  activationStateForPayload(flags.payload),
 				OperationID: operationID,
 			})
 			if err != nil {
 				return MapMetadataError(err)
 			}
 			pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{
-				CWD:    project.Spec.Root,
+				CWD:    workspace.CWD,
 				Labels: labels,
 			}, operationID)
 			if err != nil {
@@ -159,7 +172,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			if err != nil {
 				return err
 			}
-			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, project.Spec.Root, launchArgv)
+			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workspace.CWD, launchArgv)
 			if paneID != "" {
 				ledger.record(runtimePane, paneID, work.pane.Metadata.UID)
 				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
@@ -174,7 +187,19 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			// the statusbar, the attention tracker, and the notification
 			// pipeline. They are applied after the pane exists and before the
 			// result is reported.
-			c.agents.BindManagedAgentPane(paneID, provider, project.Spec.Root, title)
+			c.agents.BindManagedAgentPane(paneID, provider, workspace.CWD, title)
+			// Canonical Agent topic authority starts empty. The shared legacy
+			// binder seeds its display title as a compatibility topic, so remove
+			// that seed through the transaction's exact routed runner before the
+			// create can commit.
+			for _, option := range []string{aiPaneTopicOption, aiPaneTopicManualOption} {
+				if _, err := c.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-u", "-t", paneID, option); err != nil {
+					return tmuxError("%s: clear compatibility topic projection %s on Pane %s: %v", spelling, option, paneID, err)
+				}
+			}
+			if len(flags.payload) > 0 {
+				activationTargets = append(activationTargets, agentActivationTarget{agentUID: work.agent.Metadata.UID, agentName: work.agent.Metadata.Name, paneID: paneID})
+			}
 			results = append(results, createResult{
 				kind: coremetadata.KindAgent,
 				uid:  work.agent.Metadata.UID,
@@ -191,7 +216,52 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	}); err != nil {
 		return err
 	}
+	if err := c.confirmAgentActivations(activationTargets); err != nil {
+		return err
+	}
 	return c.writeResults(stdout, spelling, mode, coremetadata.KindAgent, results)
+}
+
+type agentActivationTarget struct {
+	agentUID  string
+	agentName string
+	paneID    string
+}
+
+func activationStateForPayload(payload []string) coremetadata.AgentActivationState {
+	if len(payload) == 0 {
+		return coremetadata.ActivationNotRequested
+	}
+	return coremetadata.ActivationPending
+}
+
+func (c *createCommand) confirmAgentActivations(targets []agentActivationTarget) error {
+	var diagnostics []error
+	for _, target := range targets {
+		acknowledged, _, err := c.agents.AwaitAgentActivation(context.Background(), c.runtime.runner, target.paneID, 2*time.Second)
+		source := string(coremetadata.InteractionSourceProviderHook)
+		state := coremetadata.ActivationAcknowledged
+		reason := ""
+		if err != nil || !acknowledged {
+			state = coremetadata.ActivationUnconfirmed
+			if err != nil {
+				reason = coremetadata.ActivationReasonFailed
+			} else {
+				reason = coremetadata.ActivationReasonTimedOut
+			}
+		}
+		if _, updateErr := c.store.update(func(registry *coremetadata.Registry) error {
+			_, setErr := c.store.mutator().SetAgentActivation(registry, target.agentUID, state, source, reason)
+			return setErr
+		}); updateErr != nil {
+			diagnostics = append(diagnostics, MapMetadataError(updateErr))
+			continue
+		}
+		if state == coremetadata.ActivationUnconfirmed {
+			diagnostics = append(diagnostics, fmt.Errorf("create agent: agent/%s uid:%s has live managed Pane %s but initial task activation was not confirmed: %s; retry the task through the provider or clean up with `projmux delete agent uid:%s --yes`", target.agentName, target.agentUID, target.paneID, reason, target.agentUID))
+		}
+	}
+	return errors.Join(diagnostics...)
 }
 
 // resolveCreateProvider fixes the provider of one canonical Agent create.

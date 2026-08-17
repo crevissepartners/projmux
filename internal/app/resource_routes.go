@@ -489,7 +489,19 @@ func resourceFor(registry coremetadata.Registry, kind coremetadata.Kind, uid str
 		}
 	case coremetadata.KindAgent:
 		if agent, ok := registry.Agent(uid); ok {
-			return *agent, agent.Metadata, true
+			projected := agent.Clone()
+			if projected.Spec.Workspace.IsZero() {
+				if window, ok := registry.Window(projected.Metadata.OwnerUID()); ok {
+					if project, ok := registry.Project(window.Metadata.OwnerUID()); ok {
+						projected.Spec.Workspace.CWD = project.Spec.Root
+					}
+				}
+			}
+			projected.Status.Interaction = projected.EffectiveInteraction(time.Now())
+			if projected.Status.Activation.State == "" {
+				projected.Status.Activation.State = coremetadata.ActivationNotRequested
+			}
+			return projected, projected.Metadata, true
 		}
 	}
 	return nil, coremetadata.ObjectMeta{}, false
@@ -517,10 +529,14 @@ func resourceSummary(match selector.Match, kind coremetadata.Kind, registry core
 		return summary
 	}
 	agent, ok := registry.Agent(match.UID)
-	if !ok || agent.Status.SessionRef.Empty() {
+	if !ok {
 		return summary
 	}
-	return summary + " session=" + agent.Status.SessionRef.Summary()
+	interaction := agent.EffectiveInteraction(time.Now()).Kind
+	if agent.Status.SessionRef.Empty() {
+		return summary + " interaction=" + string(interaction)
+	}
+	return summary + " interaction=" + string(interaction) + " session=" + agent.Status.SessionRef.Summary()
 }
 
 // resourceTableColumns is the canonical column contract of the columnar plural
@@ -545,7 +561,7 @@ var resourceTableColumns = map[coremetadata.Kind][]string{
 	coremetadata.KindProject: {"DISPLAY NAME", "NAME", "STATUS", "AGE"},
 	coremetadata.KindWindow:  {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "AGE"},
 	coremetadata.KindPane:    {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "AGE"},
-	coremetadata.KindAgent:   {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "SESSION", "AGE"},
+	coremetadata.KindAgent:   {"DISPLAY NAME", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "AGE"},
 }
 
 // resourceTableGap is the minimum run of spaces between two columns. It is the
@@ -579,7 +595,12 @@ func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry cor
 	case coremetadata.KindPane:
 		return append(row, match.Owner.Project, match.Owner.Window, match.Owner.Agent, age)
 	case coremetadata.KindAgent:
-		return append(row, match.Owner.Project, match.Owner.Window, resourceSessionCell(match, registry), age)
+		agent, _ := registry.Agent(match.UID)
+		interaction := coremetadata.InteractionUnknown
+		if agent != nil {
+			interaction = agent.EffectiveInteraction(now).Kind
+		}
+		return append(row, string(interaction), match.Owner.Project, match.Owner.Window, resourceSessionCell(match, registry), age)
 	default:
 		return append(row, age)
 	}

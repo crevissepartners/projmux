@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -31,6 +32,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -97,6 +99,11 @@ type aiCommand struct {
 	// reach the real state directory just because a hook was ingested.
 	loadRegistry   func() (coremetadata.Registry, error)
 	updateRegistry func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
+	// A hook's session ref and semantic interaction are staged until the event
+	// has been classified, then committed in one Registry transaction. Quiet
+	// events flush only the session ref at the top-level ingest return.
+	agentObservationMu      sync.Mutex
+	pendingAgentSessionRefs map[string]coremetadata.AgentSessionObservation
 }
 
 func newAICommand() *aiCommand {
@@ -224,27 +231,30 @@ func (c *aiCommand) runStatus(args []string, stderr io.Writer) error {
 }
 
 func (c *aiCommand) applyAIStatus(state, paneID string) error {
-	return c.applyAIStatusWithNotify(state, paneID, attentionNotifyInput{})
+	return c.applyAIStatusInternalWithSource(state, paneID, attentionNotifyInput{}, true, true, string(coremetadata.InteractionSourceCompatibilityAI), true)
 }
 
 func (c *aiCommand) applyAIStatusWithNotify(state, paneID string, notifyIn attentionNotifyInput) error {
-	return c.applyAIStatusInternal(state, paneID, notifyIn, true, true)
+	return c.applyAIStatusInternalWithSource(state, paneID, notifyIn, true, true, string(coremetadata.InteractionSourceProviderHook), true)
 }
 
 func (c *aiCommand) applyAIStatusWithBadgeKind(state, paneID, badgeKind string) error {
-	return c.applyAIStatusWithNotify(state, paneID, attentionNotifyInput{BadgeKind: badgeKind})
+	if c.resourceOwnedPane(paneID) {
+		return nil
+	}
+	return c.applyAIStatusInternalWithSource(state, paneID, attentionNotifyInput{BadgeKind: badgeKind}, true, true, "", false)
 }
 
 func (c *aiCommand) applyAIStatusStateOnly(state, paneID string, notifyIn attentionNotifyInput) error {
-	return c.applyAIStatusInternal(state, paneID, notifyIn, false, false)
+	return c.applyAIStatusInternalWithSource(state, paneID, notifyIn, false, false, string(coremetadata.InteractionSourceProviderHook), true)
 }
 
 func (c *aiCommand) applyAIStatusQueueOnly(state, paneID string, notifyIn attentionNotifyInput) error {
 	notifyIn.SuppressHooks = true
-	return c.applyAIStatusInternal(state, paneID, notifyIn, true, false)
+	return c.applyAIStatusInternalWithSource(state, paneID, notifyIn, true, false, string(coremetadata.InteractionSourceProviderHook), true)
 }
 
-func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attentionNotifyInput, dispatchQueue, dispatchDesktop bool) error {
+func (c *aiCommand) applyAIStatusInternalWithSource(state, paneID string, notifyIn attentionNotifyInput, dispatchQueue, dispatchDesktop bool, source string, persist bool) error {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
 		return nil
@@ -256,17 +266,38 @@ func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attenti
 
 	state = strings.TrimSpace(state)
 	badgeKind := aiBadgeKindForStatus(state, notifyIn.BadgeKind)
+	kind := semanticInteractionForAIStatus(state, badgeKind)
+	managed := false
+	if persist {
+		committed, isManaged, err := c.persistManagedAgentInteraction(paneID, kind, source)
+		if err != nil {
+			if errors.Is(err, errManagedAgentObservationIgnored) {
+				return nil
+			}
+			return err
+		}
+		managed = isManaged
+		if managed {
+			if err := c.projectManagedAgentInteraction(paneID, kind); err != nil {
+				return committedMirrorError("ai status", coremetadata.KindAgent, committed.Metadata.UID, err)
+			}
+		}
+	}
 	switch state {
 	case "thinking":
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "thinking")
-		c.setAIPaneBadgeKind(paneID, badgeKind)
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateBusy)
+		if !managed {
+			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "thinking")
+			c.setAIPaneBadgeKind(paneID, badgeKind)
+			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateBusy)
+		}
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
 		c.notifyProducer().AckReplyReady(notifyIn)
 	case "waiting":
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "waiting")
-		c.setAIPaneBadgeKind(paneID, badgeKind)
+		if !managed {
+			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "waiting")
+			c.setAIPaneBadgeKind(paneID, badgeKind)
+		}
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
 		visible := c.paneVisibleToClient(paneID)
 		if visible {
@@ -293,15 +324,56 @@ func (c *aiCommand) applyAIStatusInternal(state, paneID string, notifyIn attenti
 			c.notifyProducer().AckReplyReady(notifyIn)
 		}
 	case "idle", "":
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")
-		c.setAIPaneBadgeKind(paneID, badgeKind)
-		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
+		if !managed {
+			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")
+			c.setAIPaneBadgeKind(paneID, badgeKind)
+			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
+		}
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
 		c.notifyProducer().AckReplyReady(notifyIn)
 	default:
 		return fmt.Errorf("unknown ai status state: %s", state)
 	}
 	return nil
+}
+
+func (c *aiCommand) projectManagedAgentInteraction(paneID string, kind coremetadata.AgentInteractionKind) error {
+	state, badge, attention := agentTmuxProjection(kind)
+	for _, field := range []struct{ option, value string }{
+		{aiPaneStateOption, state},
+		{aiPaneBadgeKindOption, badge},
+		{attentionStateOption, attention},
+	} {
+		args := []string{"set-option", "-p", "-t", paneID, field.option, field.value}
+		if field.value == "" {
+			args = []string{"set-option", "-p", "-u", "-t", paneID, field.option}
+		}
+		if err := c.run("tmux", args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func semanticInteractionForAIStatus(state, badge string) coremetadata.AgentInteractionKind {
+	switch normalizeAIBadgeKind(badge) {
+	case aiBadgeKindInProgress:
+		return coremetadata.InteractionInProgress
+	case aiBadgeKindApprovalRequired:
+		return coremetadata.InteractionApprovalRequired
+	case aiBadgeKindInputRequired:
+		return coremetadata.InteractionInputRequired
+	case aiBadgeKindResponseComplete:
+		return coremetadata.InteractionResponseComplete
+	}
+	switch strings.TrimSpace(state) {
+	case "thinking":
+		return coremetadata.InteractionInProgress
+	case "idle", "":
+		return coremetadata.InteractionIdle
+	default:
+		return coremetadata.InteractionUnknown
+	}
 }
 
 func (c *aiCommand) setAIPaneBadgeKind(paneID, kind string) {
@@ -480,6 +552,12 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	if paneID == "" {
 		return nil
 	}
+	// Resource-owned Agents are hook/Registry driven. A title watcher would
+	// read pane content and could manufacture semantic state or activation from
+	// presentation text, so fail closed before the first title/capture read.
+	if c.resourceOwnedPane(paneID) {
+		return nil
+	}
 	started := c.now()
 	c.recordAIWatcher(diagnostics.AIResultStarted, "", started, false)
 
@@ -490,6 +568,13 @@ func (c *aiCommand) runWatchTitle(args []string, stderr io.Writer) error {
 	settleCount := 0
 	lastBusySignal := ""
 	for {
+		// A legacy watcher may already be running when a Pane is adopted into
+		// resource identity. Re-check before every sample so it cannot read title
+		// or capture content, write semantic options, or satisfy activation after
+		// that boundary changes.
+		if c.resourceOwnedPane(paneID) {
+			return nil
+		}
 		alive, hookActive := c.readAIWatchTitleGate(paneID)
 		if !alive {
 			c.recordAIWatcher(diagnostics.AIResultPaneGone, "", started, true)
@@ -602,6 +687,15 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintln(stderr, err.Error())
 			return err
 		}
+		if committed, managed, err := c.persistManagedAgentTopic(paneID, text); managed || err != nil {
+			if err != nil {
+				return err
+			}
+			if err := c.projectManagedAgentTopic(paneID, text); err != nil {
+				return committedMirrorError("ai topic", coremetadata.KindAgent, committed.Metadata.UID, err)
+			}
+			return nil
+		}
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, text)
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicManualOption, "on")
 		return nil
@@ -619,6 +713,15 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return err
+		}
+		if committed, managed, err := c.persistManagedAgentTopic(paneID, ""); managed || err != nil {
+			if err != nil {
+				return err
+			}
+			if err := c.projectManagedAgentTopic(paneID, ""); err != nil {
+				return committedMirrorError("ai topic", coremetadata.KindAgent, committed.Metadata.UID, err)
+			}
+			return nil
 		}
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, aiPaneTopicOption)
 		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, aiPaneTopicManualOption)
@@ -638,6 +741,12 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintln(stderr, err.Error())
 			return err
 		}
+		if agent, managed, err := c.managedAgentForPane(paneID); err != nil {
+			return err
+		} else if managed {
+			fmt.Fprintln(stdout, strings.TrimSpace(agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic]))
+			return nil
+		}
 		fmt.Fprintln(stdout, c.readTmuxPaneOption(paneID, aiPaneTopicOption))
 		return nil
 	case "help", "--help", "-h":
@@ -647,6 +756,22 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 		printAIUsage(stderr)
 		return fmt.Errorf("unknown ai topic subcommand: %s", args[0])
 	}
+}
+
+func (c *aiCommand) projectManagedAgentTopic(paneID, topic string) error {
+	for _, field := range []struct{ option, value string }{
+		{aiPaneTopicOption, strings.TrimSpace(topic)},
+		{aiPaneTopicManualOption, map[bool]string{true: "on"}[strings.TrimSpace(topic) != ""]},
+	} {
+		args := []string{"set-option", "-p", "-t", paneID, field.option, field.value}
+		if field.value == "" {
+			args = []string{"set-option", "-p", "-u", "-t", paneID, field.option}
+		}
+		if err := c.run("tmux", args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func parseAITopicArgs(args []string) ([]string, string, error) {
@@ -1612,12 +1737,69 @@ func (c *aiCommand) planAgentLaunch(mode, contextDir string, extraArgs, execArgv
 // stays the only thing that creates the pane and the client never moves.
 
 // PlanAgentLaunch builds the provider launch for one detached Agent create.
-func (c *aiCommand) PlanAgentLaunch(provider, contextDir string, payload []string) (title string, argv []string, err error) {
-	plan, err := c.planAgentLaunch(provider, contextDir, payload, nil, "")
+func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (title string, argv []string, err error) {
+	extra := make([]string, 0, len(payload)+2+2*len(workspace.AdditionalWritableRoots))
+	if provider == aiModeCodex && workspace.CWD != "" {
+		extra = append(extra, "-C", workspace.CWD)
+	}
+	for _, root := range workspace.AdditionalWritableRoots {
+		extra = append(extra, "--add-dir", root)
+	}
+	extra = append(extra, payload...)
+	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
 	if err != nil {
 		return "", nil, err
 	}
 	return plan.title, plan.commandArgs, nil
+}
+
+// AwaitAgentActivation waits only for the provider-hook acknowledgement already
+// committed to Agent authority. It does not inspect pane_title, capture-pane,
+// semantic tmux presentation, or provider conversation content.
+func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommandRunner, paneID string, timeout time.Duration) (bool, string, error) {
+	if runner == nil {
+		return false, "provider-hook", errors.New("agent activation observer is not configured")
+	}
+	if c.loadRegistry == nil {
+		return false, "provider-hook", errors.New("agent activation Registry observer is not configured")
+	}
+	out, err := runner.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", "#{"+tmuxopts.PaneUID+"}")
+	if err != nil {
+		return false, "provider-hook", fmt.Errorf("read managed Pane identity: %w", err)
+	}
+	paneUID := strings.TrimSpace(string(out))
+	if paneUID == "" {
+		return false, "provider-hook", errors.New("managed Pane carries no resource identity")
+	}
+	deadline := c.nowTime().Add(timeout)
+	for {
+		registry, loadErr := c.loadRegistry()
+		if loadErr != nil {
+			return false, "provider-hook", fmt.Errorf("read Agent activation authority: %w", loadErr)
+		}
+		if agentUID, ok := agentUIDForPaneUID(registry, paneUID); ok {
+			agent, present := registry.Agent(agentUID)
+			if present && agent.Status.Phase == coremetadata.PhaseRunning && agent.Status.PaneRef == paneUID &&
+				agent.Status.Activation.State == coremetadata.ActivationAcknowledged &&
+				agent.Status.Activation.Source == string(coremetadata.InteractionSourceProviderHook) {
+				return true, "provider-hook", nil
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return false, "provider-hook", err
+		}
+		if !c.nowTime().Before(deadline) {
+			return false, "provider-hook", nil
+		}
+		c.sleepFor(50 * time.Millisecond)
+	}
+}
+
+func (c *aiCommand) nowTime() time.Time {
+	if c.now == nil {
+		return time.Now()
+	}
+	return c.now()
 }
 
 // RequireAgentEnabled applies the Settings enabled-agents gate to the canonical
@@ -1634,15 +1816,15 @@ func (c *aiCommand) RequireAgentEnabled(provider string) error {
 	return c.requireAIAgentEnabled(provider, aiSplitLaunchCanonical)
 }
 
-// BindManagedAgentPane applies the managed-agent pane options and starts the
-// title watcher on a pane the caller already created.
+// BindManagedAgentPane applies managed-agent pane options without starting the
+// legacy title/content watcher. Resource Agents are driven only by explicit
+// provider-hook metadata and canonical/manual status mutations.
 //
 // This is what makes a resource-backed Agent pane indistinguishable from a
 // legacy one to the statusbar, the attention tracker, and the notification
 // pipeline. None of these calls moves a client.
 func (c *aiCommand) BindManagedAgentPane(paneID, provider, contextDir, title string) {
 	c.configureAIPane(paneID, provider, contextDir, title, aiPaneResumeMetadata{})
-	c.startAIWatchTitle(paneID)
 }
 
 func (c *aiCommand) runAgentSplitResolvedWithOptionsResult(mode, direction string, extraArgs []string, targetPane, contextDir string, options aiSplitLaunchOptions) (string, error) {

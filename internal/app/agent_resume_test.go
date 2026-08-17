@@ -58,6 +58,7 @@ type fakeResumeLauncher struct {
 type fakeResumeRequest struct {
 	provider       string
 	contextDir     string
+	additionalDirs []string
 	conversationID string
 }
 
@@ -82,7 +83,8 @@ func (f *fakeResumeLauncher) RequireAgentEnabled(provider string) error {
 	return nil
 }
 
-func (f *fakeResumeLauncher) PlanAgentResume(provider, contextDir, conversationID string) (string, []string, error) {
+func (f *fakeResumeLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (string, []string, error) {
+	contextDir := workspace.CWD
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.planErr != nil {
@@ -91,6 +93,7 @@ func (f *fakeResumeLauncher) PlanAgentResume(provider, contextDir, conversationI
 	f.plans = append(f.plans, fakeResumeRequest{
 		provider:       provider,
 		contextDir:     contextDir,
+		additionalDirs: append([]string(nil), workspace.AdditionalWritableRoots...),
 		conversationID: conversationID,
 	})
 	// The shape mirrors the real seam: a shell wrapper whose exec tail is the
@@ -117,12 +120,28 @@ func newTestAgentResumeCommand(t *testing.T, store *fakeResourceStore, tmux *fak
 	launcher := newFakeResumeLauncher()
 	ai := &recordingArgv{}
 	usage := &recordingArgv{}
+	rebinder := newAgentRebinder(create, launcher)
+	rebinder.resolveWorkspace = testAgentWorkspaceResolver
 	return &agentCommand{
-		ai:           ai,
-		usage:        usage,
-		loadRegistry: store.store().load,
-		rebind:       newAgentRebinder(create, launcher),
+		ai:               ai,
+		usage:            usage,
+		loadRegistry:     store.store().load,
+		store:            store.store(),
+		now:              func() time.Time { return resourceFixtureClock.Add(time.Minute) },
+		resolveWorkspace: testAgentWorkspaceResolver,
+		rebind:           rebinder,
 	}, launcher, ai, usage
+}
+
+func testAgentWorkspaceResolver(spelling string, registry coremetadata.Registry, owner coremetadata.Project, provider, cwd string, additional []string) (coremetadata.AgentWorkspace, error) {
+	effective := strings.TrimSpace(cwd)
+	if effective == "" {
+		effective = owner.Spec.Root
+	}
+	if strings.HasPrefix(effective, "/srv/") {
+		return coremetadata.AgentWorkspace{CWD: effective, AdditionalWritableRoots: slices.Clone(additional)}, nil
+	}
+	return resolveAgentWorkspaceFor(spelling, registry, owner, provider, cwd, additional)
 }
 
 // splitWindowCalls returns every tmux split-window argv a run issued.
@@ -232,6 +251,8 @@ func TestAgentResumeRebindsTheExistingAgentToANewManagedPane(t *testing.T) {
 	store := newFakeResourceStore(t)
 	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
 	before, _ := store.registry.Agent("agt-beta-codex")
+	before.Metadata.Annotations = map[string]string{coremetadata.AnnotationAgentTopic: "resume topic"}
+	before.Spec.Workspace = coremetadata.AgentWorkspace{CWD: "/srv/beta", AdditionalWritableRoots: []string{"/srv/alpha"}}
 	beforeUID, beforeName := before.Metadata.UID, before.Metadata.Name
 	beforeAgentCount := len(store.registry.Agents)
 
@@ -290,7 +311,7 @@ func TestAgentResumeRebindsTheExistingAgentToANewManagedPane(t *testing.T) {
 	if len(launcher.plans) != 1 {
 		t.Fatalf("the resume launch was constructed %d times, want 1", len(launcher.plans))
 	}
-	if got := (launcher.plans[0]); got.provider != "codex" || got.conversationID != resumeFixtureConversation || got.contextDir != "/srv/beta" {
+	if got := (launcher.plans[0]); got.provider != "codex" || got.conversationID != resumeFixtureConversation || got.contextDir != "/srv/beta" || !reflect.DeepEqual(got.additionalDirs, []string{"/srv/alpha"}) {
 		t.Fatalf("resume launch request = %+v, want the stored codex conversation rooted at /srv/beta", got)
 	}
 	if len(launcher.bound) != 1 || launcher.bound[0].conversationID != resumeFixtureConversation {
@@ -298,6 +319,10 @@ func TestAgentResumeRebindsTheExistingAgentToANewManagedPane(t *testing.T) {
 	}
 	if launcher.bound[0].paneID == "" || launcher.bound[0].title != "codex:resume" {
 		t.Fatalf("managed-pane binding = %+v, want the resumed pane id and the resume title", launcher.bound[0])
+	}
+	_, _, livePane := tmux.pane(launcher.bound[0].paneID)
+	if livePane == nil || livePane.opts[aiPaneTopicOption] != "resume topic" || livePane.opts[aiPaneTopicManualOption] != "on" {
+		t.Fatalf("resumed Pane topic = %+v, want stored topic/manual projection", livePane)
 	}
 	// The Settings enabled-agents gate is the same one `create agent` runs, and
 	// it runs exactly once, before the launch is constructed.
@@ -881,7 +906,7 @@ func TestTheRealResumeSeamRefusesAnUnusableConversationBeforeTouchingTheProvider
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			title, argv, err := c.PlanAgentResume(test.provider, "/srv/beta", test.conversationID)
+			title, argv, err := c.PlanAgentResume(test.provider, coremetadata.AgentWorkspace{CWD: "/srv/beta"}, test.conversationID)
 			if err == nil {
 				t.Fatalf("PlanAgentResume returned title=%q argv=%v, want an error", title, argv)
 			}

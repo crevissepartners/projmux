@@ -178,6 +178,24 @@ func describeSpecRows(resource any) [][2]string {
 		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Agent:
 		rows := [][2]string{{"Provider", typed.Spec.Provider}, {"Phase", string(typed.Status.Phase)}}
+		interaction := typed.Status.Interaction
+		rows = append(rows, [2]string{"Interaction", string(interaction.Kind)})
+		if !interaction.ObservedAt.IsZero() {
+			rows = append(rows, [2]string{"InteractionObservedAt", describeTimestamp(interaction.ObservedAt)})
+		}
+		if interaction.Source != "" {
+			rows = append(rows, [2]string{"InteractionSource", interaction.Source})
+		}
+		rows = append(rows, [2]string{"Activation", string(typed.Status.Activation.State)})
+		if typed.Status.Activation.Reason != "" {
+			rows = append(rows, [2]string{"ActivationReason", typed.Status.Activation.Reason})
+		}
+		if typed.Spec.Workspace.CWD != "" {
+			rows = append(rows, [2]string{"WorkspaceCWD", typed.Spec.Workspace.CWD})
+		}
+		for _, root := range typed.Spec.Workspace.AdditionalWritableRoots {
+			rows = append(rows, [2]string{"AdditionalWritableRoot", root})
+		}
 		// The transition time is rendered directly under the phase it dates. An
 		// Agent's phase is the one status field on any kind that moves on its
 		// own -- Pending to Running to Offline -- and until now the instant it

@@ -18,15 +18,14 @@ func newTestAgentCommand(t *testing.T, store *fakeResourceStore) (*agentCommand,
 	return cmd, ai, usage
 }
 
-// TestAgentDomainForwardsRawArgvToTheHandlersThatAlreadyOwnTheBehavior is the
-// parity half of the Agent namespace: every subcommand except `resume` hands
-// the current handler the exact argv tail it would have received under the
-// current spelling.
+// TestAgentDomainForwardsOnlyCompatibilityHandlersRawArgv is the parity half
+// of the remaining compatibility namespace. Canonical status/topic are
+// Registry-owned and therefore must not reach the legacy AI handler.
 //
 // `agent usage` is the row acceptance criterion 1 rests on: it forwards to the
 // existing usage command with no prefix at all, so the canonical spelling
 // cannot diverge from `usage` without changing that one handler.
-func TestAgentDomainForwardsRawArgvToTheHandlersThatAlreadyOwnTheBehavior(t *testing.T) {
+func TestAgentDomainForwardsOnlyCompatibilityHandlersRawArgv(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
@@ -35,11 +34,6 @@ func TestAgentDomainForwardsRawArgvToTheHandlersThatAlreadyOwnTheBehavior(t *tes
 		wantAI  []string
 		wantUse []string
 	}{
-		{name: "status read", args: []string{"status"}, wantAI: []string{"status"}},
-		{name: "status set", args: []string{"status", "set", "thinking", "%3"}, wantAI: []string{"status", "set", "thinking", "%3"}},
-		{name: "topic read", args: []string{"topic"}, wantAI: []string{"topic"}},
-		{name: "topic set", args: []string{"topic", "set", "--pane", "%3", "review"}, wantAI: []string{"topic", "set", "--pane", "%3", "review"}},
-		{name: "topic clear", args: []string{"topic", "clear"}, wantAI: []string{"topic", "clear"}},
 		{name: "integrate", args: []string{"integrate", "codex", "--dry-run"}, wantAI: []string{"integrate", "codex", "--dry-run"}},
 		{name: "usage bare", args: []string{"usage"}, wantUse: []string{}},
 		{name: "usage json", args: []string{"usage", "--json"}, wantUse: []string{"--json"}},
