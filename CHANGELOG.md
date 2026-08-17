@@ -1,5 +1,79 @@
 # Changelog
 
+## [0.11.0](https://github.com/crevissepartners/projmux/compare/v0.10.1...v0.11.0) (2026-08-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** retire legacy compatibility routes ([#667](https://github.com/crevissepartners/projmux/issues/667))
+* **cli:** `delete window|pane|agent` with no selector no longer addresses the whole registry. Inside tmux it addresses the active target; outside tmux it exits 2. Pass `--all` for the previous behavior.
+
+### Features
+
+* **agent:** persist the provider session ref on the Agent ([#625](https://github.com/crevissepartners/projmux/issues/625)) ([47d8cf5](https://github.com/crevissepartners/projmux/commit/47d8cf54a33609fb75d1be440756b8585da70b00))
+* **agent:** rebind a resumed Agent to a new managed Pane ([#628](https://github.com/crevissepartners/projmux/issues/628)) ([6dfed76](https://github.com/crevissepartners/projmux/commit/6dfed762eed7e5941c289b43ca60d30ee1df7b50))
+* **agent:** release the Agent when its managed Pane dies ([#631](https://github.com/crevissepartners/projmux/issues/631)) ([0256fc6](https://github.com/crevissepartners/projmux/commit/0256fc6ee2dfcb5be39849652bb5fd34f3e9fdee))
+* **cli:** accept singular and plural kind spellings ([#640](https://github.com/crevissepartners/projmux/issues/640)) ([d8ed217](https://github.com/crevissepartners/projmux/commit/d8ed217a002f951ee1d43db9b69700b325f11b36))
+* **cli:** add agent create composition ([#621](https://github.com/crevissepartners/projmux/issues/621)) ([b92947f](https://github.com/crevissepartners/projmux/commit/b92947f8b4836ce2a14d950aa44715a58ed61d88))
+* **cli:** add agent namespace and lifecycle parity ([#616](https://github.com/crevissepartners/projmux/issues/616)) ([b600609](https://github.com/crevissepartners/projmux/commit/b60060933d225d5d565fd64e7afcba84fe5b552b))
+* **cli:** add canonical compatibility replacements ([#664](https://github.com/crevissepartners/projmux/issues/664)) ([a54a21f](https://github.com/crevissepartners/projmux/commit/a54a21f9d21f871efde7d943ae040b7a6ede7147))
+* **cli:** add detached materialization and window pane create ([#619](https://github.com/crevissepartners/projmux/issues/619)) ([edf6f75](https://github.com/crevissepartners/projmux/commit/edf6f75948ade683e33cd6c1b64ad89dbaeac4e4))
+* **cli:** add detached runtime materialization and window/pane create ([edf6f75](https://github.com/crevissepartners/projmux/commit/edf6f75948ade683e33cd6c1b64ad89dbaeac4e4))
+* **cli:** add public config render and apply spellings ([5a1cd8d](https://github.com/crevissepartners/projmux/commit/5a1cd8d72088fc3007695e88af1502b06825e22d))
+* **cli:** add public verb-to-kind and runtime domain parity ([#615](https://github.com/crevissepartners/projmux/issues/615)) ([c33a1a5](https://github.com/crevissepartners/projmux/commit/c33a1a5caa0285bf82e58a7c01726c96887386c9))
+* **cli:** contain destructive verbs to the active target ([#629](https://github.com/crevissepartners/projmux/issues/629)) ([cacd898](https://github.com/crevissepartners/projmux/commit/cacd8989960938a3b159758cb4c6bdb19cb307b7))
+* **cli:** render list reads as aligned columns ([#637](https://github.com/crevissepartners/projmux/issues/637)) ([15599e3](https://github.com/crevissepartners/projmux/commit/15599e3f6b6ea9c32a68051a4b364e0f970c9d8d))
+* **cli:** resolve the active target when no selector is given ([#626](https://github.com/crevissepartners/projmux/issues/626)) ([2b28c05](https://github.com/crevissepartners/projmux/commit/2b28c05a36e82d76aed6f4a4fcac336b33014bb4))
+* **cli:** restore public config spelling and honest manifest ([#623](https://github.com/crevissepartners/projmux/issues/623)) ([5a1cd8d](https://github.com/crevissepartners/projmux/commit/5a1cd8d72088fc3007695e88af1502b06825e22d))
+* **cli:** retire legacy compatibility routes ([#667](https://github.com/crevissepartners/projmux/issues/667)) ([a7147e7](https://github.com/crevissepartners/projmux/commit/a7147e7db9f7f2da60e87c680af585d239ec735f))
+* **cli:** surface resource timestamps in read output ([#641](https://github.com/crevissepartners/projmux/issues/641)) ([8e009ba](https://github.com/crevissepartners/projmux/commit/8e009ba9492ac8ff3c789c99420b59d0f97a3575))
+* **create:** rebalance panes after resource splits ([#654](https://github.com/crevissepartners/projmux/issues/654)) ([b6652b2](https://github.com/crevissepartners/projmux/commit/b6652b2ce280d7a2915470b9624ce15f4aebd349))
+* **delete:** converge pane and agent live bindings ([#656](https://github.com/crevissepartners/projmux/issues/656)) ([85bf0ed](https://github.com/crevissepartners/projmux/commit/85bf0ed3b8ef23320d87871f722c05ebb8e19c65))
+* **docs:** generate the cli reference from the command manifest ([#622](https://github.com/crevissepartners/projmux/issues/622)) ([199421f](https://github.com/crevissepartners/projmux/commit/199421f8220ea957468d0b9a7d195c337693518a))
+* **get:** render plural reads as kubectl-style columns ([15599e3](https://github.com/crevissepartners/projmux/commit/15599e3f6b6ea9c32a68051a4b364e0f970c9d8d))
+* **get:** show display names first in resource tables ([#660](https://github.com/crevissepartners/projmux/issues/660)) ([d9f97b9](https://github.com/crevissepartners/projmux/commit/d9f97b9b4d940ed3e7c4189495eabb7ce8d9d167))
+* **hooks:** migrate managed ingest producers ([#658](https://github.com/crevissepartners/projmux/issues/658)) ([929a6bc](https://github.com/crevissepartners/projmux/commit/929a6bce8f22e5bb31c87e3c575e7eb68a675411))
+* **keybindings:** support multi-stroke sequences ([#653](https://github.com/crevissepartners/projmux/issues/653)) ([e57d053](https://github.com/crevissepartners/projmux/commit/e57d0531363f7d702f9ea3a6754948d15cb146ee))
+* **keybindings:** unify single and sequence recording ([#659](https://github.com/crevissepartners/projmux/issues/659)) ([39e57c6](https://github.com/crevissepartners/projmux/commit/39e57c6dc3b306bc3c48c8b5ea02a76e990145d2))
+* **metadata:** add projmux resource metadata foundation ([#613](https://github.com/crevissepartners/projmux/issues/613)) ([4e94943](https://github.com/crevissepartners/projmux/commit/4e9494328cca2c6f09aa77008bd2ea4c58a50870))
+* **notify:** remove desktop raise mode ([#610](https://github.com/crevissepartners/projmux/issues/610)) ([536803c](https://github.com/crevissepartners/projmux/commit/536803cee38e5eb7d8e4e93c6378aa378fa66505))
+* **resources:** add explicit resource reconciliation ([#661](https://github.com/crevissepartners/projmux/issues/661)) ([2ea36fe](https://github.com/crevissepartners/projmux/commit/2ea36fe46571391fe157ffbd4c10dea3c6ff6f0c))
+* **resources:** converge rename and rebind mirrors ([#665](https://github.com/crevissepartners/projmux/issues/665)) ([35f90b6](https://github.com/crevissepartners/projmux/commit/35f90b69915dec694560ff52f07749e54b5876e6))
+* **selector:** add selector and read-only resolution ([#614](https://github.com/crevissepartners/projmux/issues/614)) ([6a44966](https://github.com/crevissepartners/projmux/commit/6a44966d0d279c96db9ed49906cc156235cf9c61))
+* **selector:** scope reads to the active project ([#646](https://github.com/crevissepartners/projmux/issues/646)) ([db05225](https://github.com/crevissepartners/projmux/commit/db052250f2915a58941f063ea8508abff2879cb2))
+* **settings:** add keybinding sequence authoring ([#655](https://github.com/crevissepartners/projmux/issues/655)) ([6a9fa53](https://github.com/crevissepartners/projmux/commit/6a9fa53308c9757f6cdbf63b01165e714734f910))
+* **settings:** control row one statusbar segments ([#648](https://github.com/crevissepartners/projmux/issues/648)) ([7eda721](https://github.com/crevissepartners/projmux/commit/7eda721a98bb8ed55f980cc64fb8401919ba4b57))
+* **settings:** control row zero HUD visibility ([#647](https://github.com/crevissepartners/projmux/issues/647)) ([23c7a80](https://github.com/crevissepartners/projmux/commit/23c7a808e5472ad1ea976c67c694a8e7f56e3343))
+* **settings:** cut over to the target Settings navigation ([#632](https://github.com/crevissepartners/projmux/issues/632)) ([30faf7d](https://github.com/crevissepartners/projmux/commit/30faf7d9d35ae301acf281887a9fb866b30e3491))
+* **settings:** make keybinding action results observable ([#636](https://github.com/crevissepartners/projmux/issues/636)) ([a2a8eca](https://github.com/crevissepartners/projmux/commit/a2a8ecadcb344e9acd4de48361580d4f3674ebcd))
+* **settings:** retire project recipe and kube surfaces ([#649](https://github.com/crevissepartners/projmux/issues/649)) ([07e4dd7](https://github.com/crevissepartners/projmux/commit/07e4dd7a2799b0d11e48f90eb4a7fb1bf3d3bbac))
+* **settings:** separate automation and notification ownership ([#633](https://github.com/crevissepartners/projmux/issues/633)) ([29ca1b4](https://github.com/crevissepartners/projmux/commit/29ca1b4515afdfdff574f5c991ab9ce9e19960c8))
+* **settings:** version the keymap action-ID schema ([#643](https://github.com/crevissepartners/projmux/issues/643)) ([dd43a41](https://github.com/crevissepartners/projmux/commit/dd43a41a2b2c90ee374c9270181c3b358924222d))
+* **usage:** control provider and window HUD visibility ([#650](https://github.com/crevissepartners/projmux/issues/650)) ([ae4ae3b](https://github.com/crevissepartners/projmux/commit/ae4ae3b3a3afab727e2c3446377f684003b86846))
+
+
+### Bug Fixes
+
+* **cli:** keep the agent owner leg in the pane table ([#638](https://github.com/crevissepartners/projmux/issues/638)) ([ceff307](https://github.com/crevissepartners/projmux/commit/ceff307787c9a1d098f5e495618c0dd07cc44463))
+* **cli:** restore the AGENT leg to the panes table ([ceff307](https://github.com/crevissepartners/projmux/commit/ceff307787c9a1d098f5e495618c0dd07cc44463))
+* **create:** avoid lifecycle hook reentrancy ([#651](https://github.com/crevissepartners/projmux/issues/651)) ([e0a84b2](https://github.com/crevissepartners/projmux/commit/e0a84b27c0b0338d2161e242547768812feeb466))
+* **delete:** remove exact live window with resource ([#652](https://github.com/crevissepartners/projmux/issues/652)) ([a48168c](https://github.com/crevissepartners/projmux/commit/a48168c7cc17683376d51325f2f1450435b6aa21))
+* **keybindings:** enforce reserved-key editor safety ([#657](https://github.com/crevissepartners/projmux/issues/657)) ([8ca5923](https://github.com/crevissepartners/projmux/commit/8ca5923bc0126a47575dce5848cd8a9b86a483f5))
+* **registry:** converge managed runtime bindings ([#645](https://github.com/crevissepartners/projmux/issues/645)) ([8a9a860](https://github.com/crevissepartners/projmux/commit/8a9a860a11dbc5e0bf360f23f98417409735b01d))
+* **registry:** derive Window and Pane status from live tmux ([#634](https://github.com/crevissepartners/projmux/issues/634)) ([7ff7ab1](https://github.com/crevissepartners/projmux/commit/7ff7ab1b8a40755c1498056409d1f4dffd67ce33))
+* **registry:** import orphan live panes on reconcile ([#639](https://github.com/crevissepartners/projmux/issues/639)) ([600347d](https://github.com/crevissepartners/projmux/commit/600347dc2eb19f5ac92c1b1f7e39f28a2eb8f856))
+* **registry:** link live agent panes to Agents and observe Agent status ([#642](https://github.com/crevissepartners/projmux/issues/642)) ([496ee9a](https://github.com/crevissepartners/projmux/commit/496ee9a502cda8e67bc8cf631143841c12fe0ee0))
+* **registry:** reapply and adopt tmux bindings on reconcile ([46faf9c](https://github.com/crevissepartners/projmux/commit/46faf9c19383b31bc62d41a68e8c79363a03a113))
+* **registry:** reapply pane and window bindings on reconcile ([#635](https://github.com/crevissepartners/projmux/issues/635)) ([46faf9c](https://github.com/crevissepartners/projmux/commit/46faf9c19383b31bc62d41a68e8c79363a03a113))
+* **registry:** stop deriving Window names from runtime attributes ([#644](https://github.com/crevissepartners/projmux/issues/644)) ([bc1f9cc](https://github.com/crevissepartners/projmux/commit/bc1f9cce7d73a27ea6c50eae0e097fca82cbf001))
+* **resources:** refresh pane liveness under registry lock ([#663](https://github.com/crevissepartners/projmux/issues/663)) ([4928b99](https://github.com/crevissepartners/projmux/commit/4928b99d8f7dad357195e954f2f3da60970ba357))
+* **statusbar:** derive the usage width budget from the client ([#624](https://github.com/crevissepartners/projmux/issues/624)) ([cb4acd7](https://github.com/crevissepartners/projmux/commit/cb4acd741adc4315d3c4de9b924ff6d974987b76))
+* **statusbar:** drop optional usage elements before official windows ([#630](https://github.com/crevissepartners/projmux/issues/630)) ([475f3ee](https://github.com/crevissepartners/projmux/commit/475f3eeb200657248d9479f59c314aaa4ce35c8c))
+* **statusbar:** shed usage elements by priority instead of by tier ([475f3ee](https://github.com/crevissepartners/projmux/commit/475f3eeb200657248d9479f59c314aaa4ce35c8c))
+* **statusbar:** stop reserving the notify budget from the usage width ([#627](https://github.com/crevissepartners/projmux/issues/627)) ([7e84583](https://github.com/crevissepartners/projmux/commit/7e845832b5fa41f2928c9bd161acb20e895f32ea))
+* **usage:** make collection failures visible ([#618](https://github.com/crevissepartners/projmux/issues/618)) ([98ec3b1](https://github.com/crevissepartners/projmux/commit/98ec3b1df1177a5b0c83691ca00bcb1cf097c2c9))
+* **usage:** show staleness at the statusbar width ([#620](https://github.com/crevissepartners/projmux/issues/620)) ([c43f7f1](https://github.com/crevissepartners/projmux/commit/c43f7f12232e94f902a9286c1b4cfd950864b729))
+
 ## [0.10.1](https://github.com/crevissepartners/projmux/compare/v0.10.0...v0.10.1) (2026-08-14)
 
 
