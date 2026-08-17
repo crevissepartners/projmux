@@ -122,6 +122,25 @@ func (m Mutator) CreateAgent(reg *Registry, windowUID string, opts CreateAgentOp
 	return agent, nil
 }
 
+// RenameAgent sets only an Agent's stable metadata.name inside its owning
+// Window scope. Provider, topic annotations, lifecycle state, and managed Pane
+// metadata are independent and remain unchanged.
+func (m Mutator) RenameAgent(reg *Registry, agentUID, name string) (Agent, error) {
+	const op = "rename agent"
+
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	name = strings.TrimSpace(name)
+	if err := reg.reserveExplicitName(op, agent.Metadata.OwnerUID(), KindAgent, name, agentUID); err != nil {
+		return Agent{}, err
+	}
+	agent.Metadata.Name = name
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), nil
+}
+
 // AttachAgentPane creates the managed Pane owned by an Agent and moves the
 // Agent to Running. The Pane name uses the "<agent-name>-pane" base inside the
 // Agent's owner scope.

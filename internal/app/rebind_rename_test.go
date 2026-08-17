@@ -45,6 +45,10 @@ func TestRenameChangesOnlyTheMetadataNameOfOneResource(t *testing.T) {
 			name: "managed pane inside its agent scope", args: []string{"pane", "codex-pane", "--project", "alpha", "--window", "main", "--name", "worker"},
 			wantUID: "pan-alpha-codex", wantName: "worker", wantKind: "Pane", wantScope: "agt-alpha-codex",
 		},
+		{
+			name: "agent inside its window scope", args: []string{"agent", "codex", "--project", "alpha", "--window", "main", "--name", "reviewer"},
+			wantUID: "agt-alpha-codex", wantName: "reviewer", wantKind: "Agent", wantScope: "win-alpha-main",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -114,7 +118,7 @@ func TestRenameFailuresLeaveZeroMutations(t *testing.T) {
 		{name: "no match", args: []string{"project", "nosuch", "--name", "renamed"}, want: "matched no projects"},
 		{name: "missing --name", args: []string{"project", "alpha"}, want: "requires --name"},
 		{name: "empty --name", args: []string{"project", "alpha", "--name", "   "}, want: "requires --name"},
-		{name: "unsupported kind", args: []string{"agent", "codex", "--project", "alpha", "--name", "x"}, want: "not available"},
+		{name: "unsupported kind", args: []string{"notification", "notice", "--name", "x"}, want: "not available"},
 		{name: "no kind", args: nil, want: "rename requires a resource kind"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

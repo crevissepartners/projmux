@@ -125,6 +125,34 @@ and `@projmux_window_uid` on its window — and derives every ancestor from
 registry `ownerRef`. The session-scoped `@projmux_project_uid` is deliberately
 not consulted.
 
+### Rename and rebind live convergence
+
+`rename project|window|pane` commits the selected Registry `metadata.name` and
+then updates only its exact UID-bound live transport field:
+
+- Project: `@projmux_project_name` (never the tmux session name)
+- Window: `@projmux_window_name` (never `metadata.displayName` or tmux
+  `window_name`)
+- Pane: `@projmux_pane_label` (never raw `pane_title`)
+
+`rename agent` changes only the Agent's stable Window-scoped `metadata.name`.
+It does not change the Agent topic, provider, lifecycle state, or managed Pane
+name/title. `rebind project` preserves uid and session name, moves no files,
+and updates only `spec.root` plus the exact session's
+`@projmux_project_path` anchor.
+
+The Registry commit is authoritative. Inside tmux, immediate convergence uses
+only the inherited absolute socket path (`tmux -S`) and stable `$N`/`@N`/`%N`
+handles. Outside tmux the command probes no default server and remains
+Registry-only. If the exact UID is not present on that transport, or its
+inventory cannot establish that it is live, the command succeeds with offline
+drift that a later explicit-socket `projmux reconcile resources` can converge.
+If an exact live target is found but its option write fails, or more than one
+live object claims the UID, the command exits nonzero, states that Registry data
+already committed, and names the same public reconcile route as the retry. A
+valid unique Project UID wins over the old path after rebind; unknown and
+duplicate UID claims remain fail-closed.
+
 ### When the active target is not a Projmux resource
 
 A pane created outside the registry-backed routes carries no

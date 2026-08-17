@@ -21,6 +21,7 @@ func TestCardinalityMatrixPinsTheContractCells(t *testing.T) {
 		// The three cells the contract states verbatim.
 		{target: Target{Verb: VerbGet, Kind: metadata.KindWindow, List: true}, want: CardinalityAny},
 		{target: Target{Verb: VerbRename, Kind: metadata.KindWindow}, want: CardinalityExactOne},
+		{target: Target{Verb: VerbRename, Kind: metadata.KindAgent}, want: CardinalityExactOne},
 		{target: Target{Verb: VerbCreate, Kind: metadata.KindWindow}, want: CardinalityAtLeastOne},
 
 		// The read family this Phase implements.

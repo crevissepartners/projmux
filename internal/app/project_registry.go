@@ -71,6 +71,11 @@ type registryReconciler struct {
 	// leaves it nil and retains its existing behavior.
 	refusedSessions map[string]bool
 	refusedRoots    map[string]bool
+	// exactProjects is populated only by the public repair planner. It carries
+	// a known Registry Project UID already mirrored on a live session so a
+	// stale project-path anchor after rebind can be repaired without treating
+	// the old path as a new Project identity candidate.
+	exactProjects map[string]string
 	// targetLiveOnly keeps the public exact-socket repair scoped to resources
 	// observed on that server. Lifecycle mutation retains configured-root
 	// bootstrap registration.
@@ -231,9 +236,10 @@ func (r *registryReconciler) observeRuntime(ctx context.Context, working *coreme
 // turn into a Project source, kept so the binding-repair step can reuse the
 // observation instead of paying for it twice.
 type observedSession struct {
-	name    string
-	legacy  coremetadata.LegacySession
-	targets intmetadata.LegacyTargets
+	name       string
+	projectUID string
+	legacy     coremetadata.LegacySession
+	targets    intmetadata.LegacyTargets
 }
 
 // importLiveSessions seeds resources from the tmux sessions that predate the
@@ -274,6 +280,14 @@ func (r *registryReconciler) importLiveSessions(
 			if strings.TrimSpace(legacy.Root) != "" {
 				r.refusedRoots[candidates.CanonicalPath(legacy.Root)] = true
 			}
+			continue
+		}
+		if projectUID := r.exactProjects[name]; projectUID != "" {
+			if resourceSessionHasUnsafeBinding(*working, projectUID, legacy) {
+				r.refusedSessions[name] = true
+				continue
+			}
+			unresolved = append(unresolved, observedSession{name: name, projectUID: projectUID, legacy: legacy, targets: targets})
 			continue
 		}
 		if r.refuseForeign && strings.TrimSpace(legacy.Root) != "" {
@@ -358,7 +372,10 @@ func (r *registryReconciler) reapplyUnresolvedBindings(
 		if r.refusedSessions[session.name] {
 			continue
 		}
-		projectUID := scope[session.name]
+		projectUID := session.projectUID
+		if projectUID == "" {
+			projectUID = scope[session.name]
+		}
 		if projectUID == "" {
 			continue
 		}

@@ -334,9 +334,28 @@ tmux transport mirror:
 - `rename pane` changes `Pane.metadata.name` and its `@projmux_pane_label`
   mirror only. It never writes the raw tmux `pane_title`.
 - `rename window` is the explicit stable-identity path: it changes only
-  `Window.metadata.name` and its scoped name reservation. A later binding pass
-  refreshes the stable `@projmux_window_name` transport mirror. It does not
+  `Window.metadata.name`, its scoped name reservation, and the exact live
+  `@projmux_window_name` transport mirror. It does not
   change `metadata.displayName` or tmux `window_name`.
+- `rename project` likewise writes only `Project.metadata.name` and the exact
+  live session's `@projmux_project_name`; it never renames the tmux session.
+  `rebind project` preserves the Project uid and session name while updating
+  `spec.root` and the exact live session's `@projmux_project_path`. Neither
+  operation moves files.
+- `rename agent` changes only the Window-scoped Agent `metadata.name` and its
+  reservation. Agent topic annotations, provider, lifecycle status, and the
+  managed Pane's name and raw title are independent and receive no tmux write.
+- Rename/rebind commits the authoritative Registry transaction before its
+  field-specific live projection. Immediate projection is enabled only inside
+  tmux from an inherited absolute socket path; every inventory and write is
+  routed through that exact `-S` socket, and Project/Window writes target stable
+  `$N`/`@N` handles rather than mutable names or indices. Outside tmux no server
+  is probed and the operation is Registry-only. If no exact UID target is
+  observed, including when the exact inventory is unavailable, the resource is
+  treated as offline and the durable drift is left for a later explicit-socket
+  reconciliation. Once an exact target is found, a write failure or duplicate
+  UID claim is nonzero and reports that Registry state committed plus
+  `projmux reconcile resources` as the retry boundary.
 - The configured `window.rename` action (`Ctrl-M` by default) is the runtime
   display path and invokes tmux `rename-window` directly. Reconciliation
   observes that `window_name` back into `metadata.displayName` without changing
@@ -600,6 +619,11 @@ Public resource reconciliation:
   session diagnostic-only so later ordinal rows cannot slide onto a different
   Registry object. Safe drift elsewhere may converge; the refused item remains
   explicit and nonzero. `get`, `describe`, and `doctor` never enter this path.
+- A known, unique `@projmux_project_uid` is the authority for Project rebind
+  drift: the old non-empty `@projmux_project_path` does not turn that session
+  foreign. The planner emits only the path-option repair, guards it with the
+  unchanged Project UID, and becomes a no-op after convergence. Unknown or
+  duplicate Project UID claims remain refused.
 
 Agent runtime linkage:
 

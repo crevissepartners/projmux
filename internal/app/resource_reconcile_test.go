@@ -178,6 +178,63 @@ func TestResourceReconcileRepairsStaleMirrorsForExactBindings(t *testing.T) {
 	}
 }
 
+func TestResourceReconcileRepairsRebindPathFromAuthoritativeProjectUID(t *testing.T) {
+	t.Parallel()
+
+	oldRoot, newRoot := t.TempDir(), t.TempDir()
+	registry := bindingFixture(t, newRoot)
+	server := bindingFixtureServer()
+	session := server.session(driftedSessionName)
+	project := registry.Projects[0]
+	session.opts[tmuxopts.ProjectUIDSession] = project.Metadata.UID
+	session.opts[tmuxopts.ProjectNameSession] = project.Metadata.Name
+	session.opts[tmuxopts.ProjectPathSession] = oldRoot
+	for index := range session.windows {
+		session.windows[index].opts[tmuxopts.WindowUID] = registry.Windows[index].Metadata.UID
+		session.windows[index].opts[tmuxopts.WindowName] = registry.Windows[index].Metadata.Name
+		session.windows[index].opts[tmuxopts.AutomaticRenameWindow] = "off"
+		session.windows[index].panes[0].opts[tmuxopts.PaneUID] = registry.Panes[index].Metadata.UID
+		session.windows[index].panes[0].opts[tmuxopts.PaneName] = registry.Panes[index].Metadata.Name
+	}
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
+	store := &fakeResourceStore{registry: registry, dirs: map[string]bool{newRoot: true}, now: resourceFixtureClock}
+	command := &resourceReconcileCommand{
+		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
+		newReconciler: bindingFixtureReconciler(newRoot),
+	}
+
+	preview, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("rebind drift preview: %v\n%s", err, preview)
+	}
+	for _, want := range []string{
+		`"field": "` + tmuxopts.ProjectPathSession + `"`,
+		`"before": "` + oldRoot + `"`,
+		`"after": "` + newRoot + `"`,
+	} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("rebind preview missing %q:\n%s", want, preview)
+		}
+	}
+	if strings.Contains(preview, `"action": "refuse"`) {
+		t.Fatalf("valid exact Project UID was refused because its path was stale:\n%s", preview)
+	}
+	if _, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json"); err != nil {
+		t.Fatalf("repair rebind drift: %v", err)
+	}
+	if got := session.opts[tmuxopts.ProjectPathSession]; got != newRoot {
+		t.Fatalf("project path mirror = %q, want %q", got, newRoot)
+	}
+	if session.name != driftedSessionName || session.opts[tmuxopts.ProjectUIDSession] != project.Metadata.UID {
+		t.Fatalf("rebind retry changed session identity: name=%q opts=%v", session.name, session.opts)
+	}
+	server.calls = nil
+	repeat, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || !strings.Contains(repeat, `"outcome": "no-op"`) || tmuxMutationCallCount(server) != 0 {
+		t.Fatalf("repeat reconcile was not a tmux-write-free no-op: err=%v mutations=%d\n%s", err, tmuxMutationCallCount(server), repeat)
+	}
+}
+
 func TestResourceReconcileExecuteConvergesOneSocketAndRepeatsNoop(t *testing.T) {
 	t.Parallel()
 

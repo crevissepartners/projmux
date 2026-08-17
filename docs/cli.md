@@ -1267,6 +1267,7 @@ Rename a Projmux resource metadata.name
 projmux rename project [<ref>] --name <name>
 projmux rename window [<ref>] --name <name> [--project <ref>]
 projmux rename pane [<ref>] --name <name> [--project <ref>] [--window <ref>]...
+projmux rename agent [<ref>] --name <name> [--project <ref>] [--window <ref>]...
 ```
 
 Subcommands:
@@ -1276,8 +1277,9 @@ Subcommands:
 | [`projmux rename project`](#projmux-rename-project) | Rename a Projmux Project resource; with no selector inside tmux, the active Project |
 | [`projmux rename window`](#projmux-rename-window) | Rename a Projmux Window resource; with no selector inside tmux, the active Window |
 | [`projmux rename pane`](#projmux-rename-pane) | Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title |
+| [`projmux rename agent`](#projmux-rename-agent) | Rename an Agent stable resource name without changing its topic, provider, or managed Pane |
 
-Canonical spelling: `projmux rename project`, `projmux rename window`, `projmux rename pane`
+Canonical spelling: `projmux rename project`, `projmux rename window`, `projmux rename pane`, `projmux rename agent`
 
 ### `projmux rename project`
 
@@ -1308,6 +1310,16 @@ projmux rename pane
 ```
 
 Aliases: `panes`
+
+### `projmux rename agent`
+
+Rename an Agent stable resource name without changing its topic, provider, or managed Pane
+
+```
+projmux rename agent
+```
+
+Aliases: `agents`
 
 ## `projmux resources`
 

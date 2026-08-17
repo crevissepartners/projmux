@@ -23,7 +23,7 @@ var canonicalKindSpellings = map[string][]string{
 	"get":      {"projects", "windows", "panes", "agents", "notifications", "snapshots", "pane"},
 	"describe": {"project", "window", "pane", "agent"},
 	"delete":   {"window", "pane", "agent", "notification", "snapshot"},
-	"rename":   {"project", "window", "pane"},
+	"rename":   {"project", "window", "pane", "agent"},
 }
 
 // splitKindSpellingPair is the one place a kind's two forms are related. Every
@@ -251,16 +251,14 @@ func TestUnknownChildTokensStayUnknown(t *testing.T) {
 	}
 }
 
-// TestRenameStillRefusesAgentUnderBothForms guards the one kind a resource verb
-// deliberately does not implement. The route used to special-case the token by
-// hand; now it falls out of the manifest, and this keeps the outcome fixed
-// either way.
-func TestRenameStillRefusesAgentUnderBothForms(t *testing.T) {
+// TestRenameAcceptsAgentUnderBothForms pins the public stable-name parity added
+// to the rename family.
+func TestRenameAcceptsAgentUnderBothForms(t *testing.T) {
 	t.Parallel()
 
 	for _, token := range []string{"agent", "agents"} {
-		if got, ok := CanonicalChildToken("rename", token); ok {
-			t.Fatalf("rename %s resolved to %q, want a refusal", token, got)
+		if got, ok := CanonicalChildToken("rename", token); !ok || got != "agent" {
+			t.Fatalf("rename %s resolved to %q,%v, want agent,true", token, got, ok)
 		}
 	}
 }

@@ -125,6 +125,7 @@ func kindSpellingCases(t *testing.T) []kindSpellingCase {
 		{verb: "rename", canonical: "project", alias: "projects", tail: []string{"alpha", "--name", "renamed"}, run: runRenameRoute},
 		{verb: "rename", canonical: "window", alias: "windows", tail: []string{"review", "--project", "alpha", "--name", "renamed"}, run: runRenameRoute},
 		{verb: "rename", canonical: "pane", alias: "panes", tail: []string{"log", "--project", "alpha", "--name", "renamed"}, run: runRenameRoute},
+		{verb: "rename", canonical: "agent", alias: "agents", tail: []string{"codex", "--project", "alpha", "--window", "main", "--name", "reviewer"}, run: runRenameRoute},
 	}
 }
 
@@ -243,7 +244,7 @@ func TestUnknownKindRefusalsListBothForms(t *testing.T) {
 			run: func(t *testing.T) (string, string, error) {
 				return runRoute(t, newTestRenameCommand(newFakeResourceStore(t)), "zzz")
 			},
-			want: []string{"project|projects", "window|windows", "pane|panes"},
+			want: []string{"project|projects", "window|windows", "pane|panes", "agent|agents"},
 		},
 	} {
 		stdout, _, err := test.run(t)

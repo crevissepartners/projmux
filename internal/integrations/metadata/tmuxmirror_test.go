@@ -93,6 +93,30 @@ func TestMirrorWritesResourceIdentityIntoScopedTmuxOptionsAndTurnsOffAutomaticRe
 			never: []string{"pane_title", "select-pane -T", "rename-window"},
 		},
 		{
+			name: "rename project touches only the stable project name mirror",
+			run: func(m Mirror) error {
+				return m.RenameProject(context.Background(), "projmux", "workspace")
+			},
+			want:  []string{"tmux set-option -t projmux -q @projmux_project_name workspace"},
+			never: []string{"rename-session", "@projmux_project_uid", "@projmux_project_path"},
+		},
+		{
+			name: "rebind project touches only the project path anchor",
+			run: func(m Mirror) error {
+				return m.RebindProject(context.Background(), "projmux", "/src/moved")
+			},
+			want:  []string{"tmux set-option -t projmux -q @projmux_project_path /src/moved"},
+			never: []string{"rename-session", "@projmux_project_uid", "@projmux_project_name"},
+		},
+		{
+			name: "rename window touches only the stable window name mirror",
+			run: func(m Mirror) error {
+				return m.RenameWindow(context.Background(), "@4", "review")
+			},
+			want:  []string{"tmux set-option -w -t @4 -q @projmux_window_name review"},
+			never: []string{"rename-window", "@projmux_window_uid", "automatic-rename"},
+		},
+		{
 			name: "rename pane touches only the pane name mirror",
 			run: func(m Mirror) error {
 				return m.RenamePane(context.Background(), "%7", "review")
@@ -134,8 +158,8 @@ func TestMirrorResolvesUIDsAndTmuxTargetsInBothDirections(t *testing.T) {
 	sep := escapedFieldSep
 	runner := &fakeRunner{outputs: map[string]string{
 		"list-panes":    "pane-1" + sep + "%7\n" + "pane-2" + sep + "%8\n",
-		"list-windows":  "win-1" + sep + "projmux" + sep + "0\n" + "win-2" + sep + "projmux" + sep + "1\n",
-		"list-sessions": "proj-1" + sep + "projmux\n",
+		"list-windows":  "win-1" + sep + "@1" + sep + "projmux" + sep + "0\n" + "win-2" + sep + "@2" + sep + "projmux" + sep + "1\n",
+		"list-sessions": "proj-1" + sep + "$1" + sep + "projmux\n",
 		"%8":            "pane-2\n",
 		"projmux:1":     "win-2\n",
 	}}
@@ -151,6 +175,12 @@ func TestMirrorResolvesUIDsAndTmuxTargetsInBothDirections(t *testing.T) {
 	if got, err := m.SessionForProjectUID(ctx, "proj-1"); err != nil || got != "projmux" {
 		t.Fatalf("SessionForProjectUID = %q, %v", got, err)
 	}
+	if got, found, err := m.FindWindowTargetForUID(ctx, "win-2"); err != nil || !found || got != "@2" {
+		t.Fatalf("FindWindowTargetForUID = %q, %v, %v", got, found, err)
+	}
+	if got, found, err := m.FindSessionForProjectUID(ctx, "proj-1"); err != nil || !found || got != "$1" {
+		t.Fatalf("FindSessionForProjectUID = %q, %v, %v", got, found, err)
+	}
 	if got, err := m.ResolvePaneUID(ctx, "%8"); err != nil || got != "pane-2" {
 		t.Fatalf("ResolvePaneUID = %q, %v", got, err)
 	}
@@ -159,6 +189,34 @@ func TestMirrorResolvesUIDsAndTmuxTargetsInBothDirections(t *testing.T) {
 	}
 	if _, err := m.PaneTargetForUID(ctx, "pane-missing"); err == nil {
 		t.Fatal("an unmirrored uid must not resolve")
+	}
+}
+
+func TestExactUIDTargetLookupDistinguishesOfflineAndDuplicateClaims(t *testing.T) {
+	t.Parallel()
+
+	sep := escapedFieldSep
+	runner := &fakeRunner{outputs: map[string]string{
+		"list-panes":    "pane-1" + sep + "%7\n" + "pane-1" + sep + "%8\n",
+		"list-windows":  "win-1" + sep + "@1" + sep + "projmux" + sep + "0\n" + "win-1" + sep + "@2" + sep + "other" + sep + "1\n",
+		"list-sessions": "proj-1" + sep + "$1" + sep + "projmux\n" + "proj-1" + sep + "$2" + sep + "other\n",
+	}}
+	m := NewMirror(runner)
+	ctx := context.Background()
+	for name, lookup := range map[string]func() (string, bool, error){
+		"pane":    func() (string, bool, error) { return m.FindPaneTargetForUID(ctx, "pane-1") },
+		"window":  func() (string, bool, error) { return m.FindWindowTargetForUID(ctx, "win-1") },
+		"project": func() (string, bool, error) { return m.FindSessionForProjectUID(ctx, "proj-1") },
+	} {
+		t.Run(name+" duplicate", func(t *testing.T) {
+			_, _, err := lookup()
+			if !errors.Is(err, ErrAmbiguousMirror) {
+				t.Fatalf("error = %v, want ErrAmbiguousMirror", err)
+			}
+		})
+	}
+	if target, found, err := m.FindPaneTargetForUID(ctx, "offline"); err != nil || found || target != "" {
+		t.Fatalf("offline lookup = %q,%v,%v", target, found, err)
 	}
 }
 
@@ -271,9 +329,9 @@ func TestLiveUIDInventoriesAreTheMachineHalfOfTheRegistryDiff(t *testing.T) {
 		// The middle row of each inventory is an unclaimed tmux object: real,
 		// live, and carrying no projmux identity.
 		"list-panes": "pane-1" + sep + "%7\n" + sep + "%8\n" + "pane-2" + sep + "%9\n",
-		"list-windows": "win-1" + sep + "projmux" + sep + "0\n" +
-			sep + "projmux" + sep + "1\n" +
-			"win-2" + sep + "projmux" + sep + "2\n",
+		"list-windows": "win-1" + sep + "@1" + sep + "projmux" + sep + "0\n" +
+			sep + "@2" + sep + "projmux" + sep + "1\n" +
+			"win-2" + sep + "@3" + sep + "projmux" + sep + "2\n",
 	}}
 	m := NewMirror(runner)
 	ctx := context.Background()

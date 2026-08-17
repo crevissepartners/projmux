@@ -126,6 +126,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "rename project", Summary: "Rename a Projmux Project resource", Sources: []string{"rename"}},
 	{Spelling: "rename window", Summary: "Rename a Projmux Window resource", Sources: []string{"window", "rename"}},
 	{Spelling: "rename pane", Summary: "Rename a Projmux Pane resource; does not change tmux pane_title", Sources: []string{"tmux", "internal", "rename"}},
+	{Spelling: "rename agent", Summary: "Rename an Agent stable resource name only", Sources: []string{"rename"}},
 	{Spelling: "rebind project", Summary: "Rebind one Project spec.root to a new absolute directory", Sources: []string{"rebind"}},
 	{Spelling: "reconcile resources", Summary: "Preview or repair Registry and exact tmux resource drift", Sources: []string{"reconcile"}},
 
