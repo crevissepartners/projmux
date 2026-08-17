@@ -486,6 +486,12 @@ func (r *registryReconciler) paneBindingFor(
 	legacyPane coremetadata.LegacyPane,
 	binder *coremetadata.BindingMatcher,
 ) (string, bool, bool) {
+	// A self-target delete commits the Registry result before queueing the exact
+	// live kill. If that queue fails, the live Pane carries this transport
+	// tombstone so the next reconciliation cannot mint it back as an orphan.
+	if strings.HasPrefix(strings.TrimSpace(legacyPane.UID), coremetadata.DeletedPaneMirrorPrefix) {
+		return "", false, false
+	}
 	match := binder.MatchPane(registry, windowUID, legacyPane.UID)
 	if match.Matched() {
 		return match.UID, match.Kind != coremetadata.AdoptionRebind, true

@@ -2,6 +2,15 @@ package metadata
 
 import "testing"
 
+func TestPaneAdoptionRefusesDeletedTransportTombstone(t *testing.T) {
+	registry := adoptionFixture()
+	match := NewBindingMatcher(RuntimeObservation{}).MatchPane(
+		registry, "win-a1", DeletedPaneMirrorPrefix+"pan-deleted")
+	if match.Kind != AdoptionRefused || match.UID != "" {
+		t.Fatalf("deleted Pane transport tombstone match = %#v, want refused", match)
+	}
+}
+
 // adoptionFixture is a two-Project registry with a deliberate shape:
 //
 //   - Project alpha owns Windows win-a1 then win-a2, in that creation order.
