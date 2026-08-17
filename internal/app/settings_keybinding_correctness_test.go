@@ -116,7 +116,7 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 				t.Fatalf("action detail %q row %q does not parse to a keybinding operation", action.ID, value)
 			}
 			switch {
-			case op == "add", op == "type", op == "unbind", op == "reset", op == "sequence-add", op == "sequence-type":
+			case op == "add", op == "type", op == "unbind", op == "reset":
 			case strings.HasPrefix(op, "key:"):
 			case strings.HasPrefix(op, "sequence:"):
 			default:
@@ -219,7 +219,8 @@ func TestSettingsKeybindingKeyDetailRowsAreAllHandled(t *testing.T) {
 				if !ok {
 					t.Fatalf("key detail %q row %q does not parse to a keybinding operation", action.ID, value)
 				}
-				if !strings.HasPrefix(op, "remove:") && !strings.HasPrefix(op, "test:") {
+				if !strings.HasPrefix(op, "remove:") && !strings.HasPrefix(op, "replace:") &&
+					!strings.HasPrefix(op, "type-replace:") && !strings.HasPrefix(op, "test:") {
 					t.Fatalf("key detail %q row %q resolves to unhandled operation %q", action.ID, value, op)
 				}
 			}
@@ -281,11 +282,6 @@ func keybindingRenderedSurfaceLabels(t *testing.T, locale string) []string {
 			t.Fatalf("keybindingDetailEntries(%q) error = %v", action.ID, err)
 		}
 		collect(cmd.localizeSettingsOptions(intpickercompat.Options{UI: "settings-keybinding-detail", Entries: detail}).Entries)
-		add, _, err := cmd.keybindingAddEntries(action.ID)
-		if err != nil {
-			t.Fatalf("keybindingAddEntries(%q) error = %v", action.ID, err)
-		}
-		collect(cmd.localizeSettingsOptions(intpickercompat.Options{UI: "settings-keybinding-add", Entries: add}).Entries)
 		for _, chord := range keybindingVisibleChords(action) {
 			keyDetail, _, err := cmd.keybindingKeyDetailEntries(action.ID, chord)
 			if err != nil {
@@ -311,7 +307,7 @@ func TestSettingsKeybindingRetiredContainerCopyIsGone(t *testing.T) {
 		{
 			locale:   "en-US",
 			retired:  []string{"Advanced...", "Advanced typed entry", "Troubleshooting", "Raw diagnostic view", "advanced options", "advanced diagnostics", "Test key delivery, Advanced", "Advanced delivery"},
-			required: []string{"Enter key name manually", "Test delivery"},
+			required: []string{"Enter binding manually", "Test delivery"},
 		},
 		{
 			locale:   "ko-KR",

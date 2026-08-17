@@ -1463,11 +1463,6 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 		t.Fatalf("keybindingDetailEntries() error = %v", err)
 	}
 	assertCataloguedEntries("keybinding detail", keybindingDetail)
-	keybindingAdd, _, err := cmd.keybindingAddEntries("ProjectSidebarToggle")
-	if err != nil {
-		t.Fatalf("keybindingAddEntries() error = %v", err)
-	}
-	assertCataloguedEntries("keybinding add", keybindingAdd)
 	keybindingKeyDetail, _, err := cmd.keybindingKeyDetailEntries("ProjectSidebarToggle", "M-1")
 	if err != nil {
 		t.Fatalf("keybindingKeyDetailEntries() error = %v", err)
@@ -4923,12 +4918,8 @@ func TestSettingsKeybindingsMutationLivesInDetailNotList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keybindingKeyDetailEntries() error = %v", err)
 	}
-	addEntries, _, err := cmd.keybindingAddEntries(actionID)
-	if err != nil {
-		t.Fatalf("keybindingAddEntries() error = %v", err)
-	}
 	// Action-level mutations live in detail.
-	for _, value := range []string{prefix + "add", prefix + "unbind", prefix + "key:M-a"} {
+	for _, value := range []string{prefix + "add", prefix + "type", prefix + "unbind", prefix + "key:M-a"} {
 		if !hasEntryValue(detailEntries, value) {
 			t.Fatalf("detail entries = %#v, want mutation/navigation value %q", detailEntries, value)
 		}
@@ -4943,19 +4934,6 @@ func TestSettingsKeybindingsMutationLivesInDetailNotList(t *testing.T) {
 	if hasEntryValue(listEntries, prefix+"remove:M-a") {
 		t.Fatalf("list entries must not contain key-remove value")
 	}
-	// Capture/type live in the add-key flow.
-	if !hasEntryValue(addEntries, prefix+"capture") {
-		t.Fatalf("add entries = %#v, want capture value %q", addEntries, prefix+"capture")
-	}
-	if !hasEntryValue(addEntries, prefix+"type") {
-		t.Fatalf("add entries = %#v, want type value %q", addEntries, prefix+"type")
-	}
-	for _, value := range []string{prefix + "capture"} {
-		if hasEntryValue(listEntries, value) {
-			t.Fatalf("list entries must not contain add-flow value %q", value)
-		}
-	}
-
 	// (d) Phase 0.6 invariants preserved in detail: no role words, flat key
 	// list (a per-key navigable row exists, no nested grouping copy).
 	for _, role := range []string{"Primary", "Alias", "Additional"} {
@@ -4965,43 +4943,6 @@ func TestSettingsKeybindingsMutationLivesInDetailNotList(t *testing.T) {
 	}
 	if !hasEntryValue(detailEntries, prefix+"key:M-a") || !hasEntryValue(detailEntries, prefix+"key:M-b") {
 		t.Fatalf("detail entries = %#v, want a flat per-key row for each active chord", detailEntries)
-	}
-}
-
-func TestSettingsKeybindingTerminalAdapterCopyIsProjmuxOwned(t *testing.T) {
-	t.Parallel()
-
-	cmd := &settingsCommand{}
-	entries, _, err := cmd.keybindingAddEntries("ProjectSidebarToggle")
-	if err != nil {
-		t.Fatalf("keybindingAddEntries(ProjectSidebarToggle) error = %v", err)
-	}
-	for _, want := range []string{
-		"Safe direct keys",
-		"M-letter/M-number",
-		"Never saved as keys",
-		"raw escape",
-		"CSI-u",
-		"xterm modified-key",
-		"UserKey/UserSequence",
-		"Terminal adapter",
-		"projmux setup terminal ghostty",
-		"Settings does not apply terminal snippets",
-	} {
-		if !hasEntryLabelContaining(entries, want) {
-			t.Fatalf("add entries = %#v, want %q", entries, want)
-		}
-	}
-	if hasEntryValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:"+`User4`) {
-		t.Fatalf("add entries = %#v, did not want UserKey/UserSequence as keymap action value", entries)
-	}
-
-	noAdapter, _, err := cmd.keybindingAddEntries("last-pane")
-	if err != nil {
-		t.Fatalf("keybindingAddEntries(last-pane) error = %v", err)
-	}
-	if !hasEntryLabelContaining(noAdapter, "no shipped adapter snippet for this Projmux action") {
-		t.Fatalf("last-pane add entries = %#v, want explicit no-adapter copy", noAdapter)
 	}
 }
 
@@ -5139,7 +5080,7 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndReservedTransportIsL
 	if !hasEntryLabelContainingAll(popupDetail.Entries, "Keys", "Alt-P", "M-p") {
 		t.Fatalf("popup detail entries = %#v, want readable picker-local keys", popupDetail.Entries)
 	}
-	for _, want := range []string{"+ Add key", "Enter key name manually", "Options", "Unbind"} {
+	for _, want := range []string{"+ Add binding", "Enter binding manually", "Options", "Unbind"} {
 		if !hasEntryLabelContaining(popupDetail.Entries, want) {
 			t.Fatalf("popup detail entries = %#v, want edit action %q", popupDetail.Entries, want)
 		}
@@ -5244,17 +5185,15 @@ func TestSettingsHubKeybindingsTypedPopupLocalKeyWritesQuotedKeymap(t *testing.T
 		case 1:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject"}, nil
 		case 2:
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:add"}, nil
-		case 3:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:type"}, nil
-		case 4:
+		case 3:
 			if got, want := options.UI, "settings-keybinding-type"; got != want {
 				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
 			}
-			return intpickercompat.Result{Key: "enter", Query: "p"}, nil
-		case 5:
+			return intpickercompat.Result{Key: "enter", Query: "C-p"}, nil
+		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
+		case 5:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -5266,12 +5205,12 @@ func TestSettingsHubKeybindingsTypedPopupLocalKeyWritesQuotedKeymap(t *testing.T
 		t.Fatalf("runKeybindingSurfaceSection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.\"Sidebar:PinProject\"]\nkeys = [\"M-p\", \"p\"]\n") {
+	if !strings.Contains(keymap, "[bindings.\"Sidebar:PinProject\"]\nkeys = [\"M-p\", \"C-p\"]\n") {
 		t.Fatalf("keymap = %q, want quoted picker-local keys array", keymap)
 	}
 }
 
-func TestSettingsHubKeybindingsCapturePrintableKeyWritesQuotedKeymap(t *testing.T) {
+func TestSettingsHubKeybindingsUnifiedRecorderWritesQuotedKeymap(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -5284,13 +5223,13 @@ func TestSettingsHubKeybindingsCapturePrintableKeyWritesQuotedKeymap(t *testing.
 		case 2:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:add"}, nil
 		case 3:
-			if got, want := options.UI, "settings-keybinding-add"; got != want {
-				t.Fatalf("add key UI = %q, want %q", got, want)
+			if got, want := options.UI, "settings-keybinding-recorder"; got != want {
+				t.Fatalf("add binding UI = %q, want %q", got, want)
 			}
-			if !hasEntryLabelContaining(options.Entries, "Press a key") {
-				t.Fatalf("add key entries = %#v, want default press-key flow", options.Entries)
+			if options.Recorder == nil || options.Recorder.NormalizeStroke == nil {
+				t.Fatalf("recorder options = %#v", options)
 			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "Sidebar:PinProject:capture"}, nil
+			return intpickercompat.Result{Key: "enter", Value: "C-r"}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 5:
@@ -5300,20 +5239,16 @@ func TestSettingsHubKeybindingsCapturePrintableKeyWritesQuotedKeymap(t *testing.
 			return intpickercompat.Result{}, nil
 		}
 	})
-	cmd.probeKeybinding = func(key probeKey, timeout time.Duration) (probeResult, error) {
-		return classifyProbeInput(key, []byte("p")), nil
-	}
-
 	var stdout bytes.Buffer
 	if err := cmd.runKeybindingSurfaceSection(keyBindingCategorySurfacesLabel, "Sidebar", &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingSurfaceSection() error = %v", err)
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.\"Sidebar:PinProject\"]\nkeys = [\"M-p\", \"p\"]\n") {
+	if !strings.Contains(keymap, "[bindings.\"Sidebar:PinProject\"]\nkeys = [\"M-p\", \"C-r\"]\n") {
 		t.Fatalf("keymap = %q, want captured printable key", keymap)
 	}
-	if !strings.Contains(stdout.String(), "capturing custom key") {
-		t.Fatalf("stdout = %q, want custom-key capture copy", stdout.String())
+	if !strings.Contains(stdout.String(), "Saved: ok") || !strings.Contains(stdout.String(), "Prepared: ok") {
+		t.Fatalf("stdout = %q, want unified recorder stage report", stdout.String())
 	}
 }
 
@@ -5471,7 +5406,7 @@ func TestSettingsKeybindingCaptureNonDarwinKeepsImmediateTerminalResult(t *testi
 			}
 		},
 		probeKeybinding: func(key probeKey, timeout time.Duration) (probeResult, error) {
-			return classifyProbeInput(key, []byte("p")), nil
+			return classifyProbeInput(key, []byte{0x12}), nil
 		},
 	}
 
@@ -5495,8 +5430,8 @@ func TestSettingsKeybindingCaptureNonDarwinKeepsImmediateTerminalResult(t *testi
 		t.Fatal("terminal result did not cancel the unused native capture")
 	}
 	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"p\"]\n") {
-		t.Fatalf("keymap = %q, want immediate terminal p alias", keymap)
+	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-1\", \"C-r\"]\n") {
+		t.Fatalf("keymap = %q, want immediate terminal C-r alias", keymap)
 	}
 	if strings.Contains(keymap, "M-6") {
 		t.Fatalf("keymap = %q, must not use native result on the non-Darwin path", keymap)
@@ -6254,8 +6189,8 @@ func TestSettingsHubKeybindingsDirectActionsHideTypedFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries() error = %v", err)
 	}
-	if !hasEntryLabelContaining(entries, "Add key") {
-		t.Fatalf("detail entries = %#v, want Add key", entries)
+	if !hasEntryLabelContaining(entries, "Add binding") {
+		t.Fatalf("detail entries = %#v, want Add binding", entries)
 	}
 	for _, absent := range []string{"Add alias", "Type key chord", "Replace primary", "Disable default", "Capture custom key"} {
 		if hasEntryLabelContaining(entries, absent) {
@@ -8372,43 +8307,14 @@ func TestSettingsKeybindingDetailRoutesRecorderAndKeepsTypedEntryWhenCaptureUnav
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries() error = %v", err)
 	}
-	if !hasEntryLabelContainingAll(detailEntries, "+ Add key", "record and confirm") {
-		t.Fatalf("detail entries = %#v, want recorder add-key hint", detailEntries)
+	if !hasEntryLabelContainingAll(detailEntries, "+ Add binding", "1 to 4 strokes") {
+		t.Fatalf("detail entries = %#v, want unified recorder hint", detailEntries)
 	}
-	if !hasEntryValue(detailEntries, prefix+"type") || !hasEntryLabelContaining(detailEntries, "Enter key name manually") {
+	if !hasEntryValue(detailEntries, prefix+"type") || !hasEntryLabelContaining(detailEntries, "Enter binding manually") {
 		t.Fatalf("detail entries = %#v, want the typed escape hatch named after what it does", detailEntries)
 	}
 	if hasEntryValue(detailEntries, prefix+"advanced") || hasEntryLabelContaining(detailEntries, "Advanced...") {
 		t.Fatalf("detail entries = %#v, did not want the retired Advanced container", detailEntries)
-	}
-}
-
-func TestSettingsKeybindingAddEntriesKeepCaptureWhenAvailable(t *testing.T) {
-	t.Parallel()
-
-	cmd := &settingsCommand{
-		lookupEnv:                func(string) string { return "" },
-		physicalCaptureAvailable: func() bool { return true },
-	}
-	prefix := settingsActionPrefixKeymap + "ProjectSidebarToggle:"
-
-	entries, _, err := cmd.keybindingAddEntries("ProjectSidebarToggle")
-	if err != nil {
-		t.Fatalf("keybindingAddEntries() error = %v", err)
-	}
-	if got, want := entries[0].Value, prefix+"capture"; got != want {
-		t.Fatalf("first add entry value = %q, want capture default %q", got, want)
-	}
-	if !hasEntryValue(entries, prefix+"type") {
-		t.Fatalf("add entries = %#v, want the typed row named after what it does", entries)
-	}
-
-	detailEntries, _, err := cmd.keybindingDetailEntries("ProjectSidebarToggle")
-	if err != nil {
-		t.Fatalf("keybindingDetailEntries() error = %v", err)
-	}
-	if !hasEntryLabelContainingAll(detailEntries, "+ Add key", "press desired key") {
-		t.Fatalf("detail entries = %#v, want capture add-key hint", detailEntries)
 	}
 }
 
@@ -8434,7 +8340,7 @@ func TestSettingsHubKeybindingsAddRoutesRecorderWhenCaptureUnavailable(t *testin
 			if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
 				t.Fatalf("staged recorder keymap stat error = %v, want no pre-confirm write", err)
 			}
-			if got, err := options.Recorder.Normalize(intpicker.RecorderKey{Name: "ctrl-r"}); err != nil || got != "C-r" {
+			if got, err := options.Recorder.NormalizeStroke(intpicker.RecorderKey{Name: "ctrl-r"}, 0); err != nil || got != "C-r" {
 				t.Fatalf("recorder normalize ctrl-r = %q, %v; want C-r", got, err)
 			}
 			return intpickercompat.Result{Key: "enter", Value: "C-r"}, nil

@@ -191,7 +191,7 @@ keys = ["Left"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasEntryLabelContaining(entries, "Editing locked") || !hasEntryLabelContaining(entries, "+ Add key") {
+	if hasEntryLabelContaining(entries, "Editing locked") || !hasEntryLabelContaining(entries, "+ Add binding") {
 		t.Fatalf("legacy reserved custom trigger locked safe shipped default: %#v", entries)
 	}
 }
@@ -230,7 +230,7 @@ func TestReservedCaptureTypedAndFinalSaveRejectBeforeMutation(t *testing.T) {
 					return intpickercompat.Result{Key: "enter", Query: "C-o PgDn"}, nil
 				})
 				cmd.nativePicker = nativePickerFromCompatRunner(cmd.runner)
-				return cmd.runKeybindingSequenceTyped("ProjectSidebarToggle", "", out, errOut)
+				return cmd.runKeybindingTyped("ProjectSidebarToggle", false, out, errOut)
 			},
 		},
 	}
@@ -349,7 +349,11 @@ func TestProtectedActionForgedDispatchAndHelpersNeverWrite(t *testing.T) {
 			return c.addKeymapSequenceAndApply("previous-window", "C-k C-p", &bytes.Buffer{})
 		}},
 		{"replace sequence", func(c *settingsCommand) error {
-			return c.replaceKeymapSequenceAndApply("previous-window", "C-k C-p", "C-k C-s", &bytes.Buffer{})
+			candidate, err := normalizeKeybindingAuthoringCandidate("C-k C-s")
+			if err != nil {
+				return err
+			}
+			return c.saveKeybindingCandidateAndApply("previous-window", candidate, "C-k C-p", &bytes.Buffer{})
 		}},
 		{"remove sequence", func(c *settingsCommand) error {
 			return c.removeKeymapSequenceAndApply("previous-window", "C-k C-p", &bytes.Buffer{})

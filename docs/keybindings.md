@@ -112,16 +112,10 @@ and function keys. Command/Super is intentionally not part of this portable
 tier. Picker-local unmodified commands continue through the picker input path;
 the native adapter owns action-level no-prefix bindings only.
 
-On Darwin, Settings > Keybindings > Add key keeps racing native modified-key
-capture against the existing controlling-TTY capture. This lets Press a key
-store a new physical Option, Control, Control-Option, or Shift-modified chord
-before the terminal turns it into text; ordinary keys still use the portable
-TTY path. The activation Enter is ignored as a recorder control, and a short
-Darwin-only preference window lets the native physical chord win when the
-terminal's translated bytes arrive at the same time. Linux, WSL, and Windows
-keep their existing immediate terminal-capture ordering. The Darwin transport
-lifecycle, Accessibility policy, and event mapping are unchanged by the
-Linux/WSL recorder described below.
+On Darwin, Linux, and WSL, Settings > Keybindings > Action > `+ Add binding`
+uses the same native-picker logical recorder. Native macOS transport state and
+terminal adapter differences remain visible in Delivery diagnostics, but they
+do not change the authoring routes or the logical strokes the recorder accepts.
 
 ## Discoverable Actions
 
@@ -135,58 +129,35 @@ state. The key summary uses the first key plus `+N`, or `Not bound` when no key
 is active. State vocabulary is limited to Default, Custom, Available, and
 Unbound. Each action detail shows the action label, state, the action's target
 kind, result kind, placement and anchor, the exact shipped handler it dispatches
-to, separate **Single Keys** and **Sequences** collections, and Options. Single
-Keys owns `+ Add key` and `Enter key name manually`; Sequences owns
-`+ Add sequence` and `Enter sequence manually` for action-level tmux triggers.
-Picker-local actions show why sequences are unavailable instead of exposing an
-inert authoring row. There is no `Advanced` and no `Troubleshooting` container:
+to, separate **Single Keys** and **Sequences** collections, and Options. The
+Action detail owns one `+ Add binding` flow plus `Enter binding manually`;
+picker-local actions still reject multi-stroke bindings with an explicit
+reason. There is no `Advanced` and no `Troubleshooting` container:
 both named an implementation layer instead of an outcome, and both fronted rows
 that did nothing. Key rows open key detail for the canonical key, the delivery
-path, Remove key, and Test delivery. In a Linux/WSL tmux popup, `+ Add key`
-enters a purpose-built recorder immediately: Recording waits for one chord,
-Staged previews its normalized tmux key name without writing, Enter saves and
-applies, and Esc discards it. Another chord replaces the staged candidate.
-There is no Back row, search prompt, or result count in recorder mode. Plain
-Enter and plain Escape are recorder controls, not candidates. Enter, Escape,
-Tab, Backspace, Delete, arrows, Home, End, PageUp, and PageDown are reserved
-from new Settings authoring in every modifier and alias spelling. Conflict and
-invalid-key feedback remains in the recorder so the user can choose another
-chord before any write.
+path, Remove key, Replace binding, and Test delivery. `+ Add binding` enters a
+purpose-built recorder immediately and continuously accumulates one to four
+logical strokes without closing. Enter saves and applies once, Esc cancels with
+no write, and Backspace removes only the last stroke (or does nothing when the
+draft is empty). Plain Enter and Escape are recorder controls, not candidates;
+reserved control/navigation keys and their modifier or alias spellings are
+never added to the draft. A first plain printable stroke is rejected, while a
+safe plain printable is allowed after a safe modified first stroke. One recorded
+stroke saves as a single key and two to four save as a sequence.
 
-`Enter key name manually` is reachable from both Action detail and the Add key
-view. It runs the same reserved-key classification, normalization, and pre-write
-conflict validation as capture, so a chord rejected in one path is rejected in
-the others with the same reason and neither writes `keymap.toml` first. The
-final Settings writers repeat that validation before schema migration, config
-generation, or live tmux apply. The Add key view also states the safe direct key
-pool and the keys or payloads that are never newly saved (the reserved logical
-keys, raw escape, CSI-u, xterm modified-key bytes, and tmux
-UserKey/UserSequence). The native macOS app-socket adapter reads the same safe
-chords directly; supported Ghostty and Windows Terminal mappings for other paths
-are previewed and applied by `projmux setup terminal ... --apply` from a shell —
-Settings reports which adapter owns the action and never applies a terminal
-snippet itself, and it never stores a raw sequence in the primary keymap.
-Options covers unbinding the action and reset/use-default flows.
-Diagnostic/probe/init workflows are not first-class Settings tabs; use
-`projmux setup` and, where the native adapter does not apply,
-`projmux setup terminal` from the terminal when key delivery needs remediation.
-
-`+ Add sequence` opens a stroke editor. `Record next stroke` records exactly
-one logical key and returns to the editor with the accumulated sequence visible;
-reserved control/navigation keys are rejected with the same reason used by
-single-key capture and typed entry, while Escape still cancels that capture and
-returns without replaying input. Save becomes available after two strokes and
-capture stops at four. `Enter sequence manually`
-accepts the same `C-k C-p` grammar and runs the same normalizer and conflict
-preflight, so typed and captured authoring produce the same canonical v2 bytes.
-Each saved sequence has detail actions to replace, remove, or test its logical
-delivery. The detail states the partial Escape/unknown-stroke cancellation
-contract and keeps platform transport differences in a Delivery diagnostic;
-the authoring model is otherwise the same with native macOS keys on or off and
-on Linux/WSL. Navigation, cancellation, and delivery tests do not write the
-keymap or generated config and do not reload tmux. Rejected conflicts remain in
-Settings with the reason, and successful mutations report saved, prepared, and
-running-session stages.
+The recorder, `Enter binding manually`, and the retained physical-capture
+adapter all use the same classifier, pre-write conflict validation, and final
+save boundary. Typed entry accepts comma display form such as `C-o,o` or legacy
+space form `C-o o`; visible sequence boundaries use commas, while
+`keymap.toml`, generated configuration, routes, and runtime values retain the
+schema's space separator. Conflicts remain in the recorder for retry without a
+write. Replace binding uses the same pipeline with the old binding as explicit
+context, so single-to-sequence and sequence-to-single replacement is one atomic
+save. Navigation, cancellation, Backspace editing, and delivery tests do not
+write the keymap or generated config and do not reload tmux; successful
+mutations still report saved, prepared, and running-session stages. Options
+covers unbinding and reset/use-default flows. Delivery remediation remains in
+`projmux setup` and `projmux setup terminal`, not a separate authoring view.
 
 `Test delivery` in key detail is an observable action, not a diagnostic dump. It
 reports the logical key, the raw observation, the key tmux received, and one of

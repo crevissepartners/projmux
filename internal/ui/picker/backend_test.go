@@ -610,7 +610,7 @@ func TestNativeInteractiveSupportsArrowSelection(t *testing.T) {
 func TestRecorderStateTransitions(t *testing.T) {
 	t.Parallel()
 
-	normalize := func(key RecorderKey) (string, error) {
+	normalize := func(key RecorderKey, _ int) (string, error) {
 		if key.Name == "alt-r" {
 			return "M-r", nil
 		}
@@ -624,24 +624,34 @@ func TestRecorderStateTransitions(t *testing.T) {
 		t.Fatalf("initial state = %#v, want empty recording", state)
 	}
 
-	state, outcome := reduceRecorderState(state, recorderEvent{kind: recorderEnter}, normalize, nil)
+	state, outcome := reduceRecorderStateAt(state, recorderEvent{kind: recorderEnter}, normalize, nil)
 	if outcome != recorderContinue || state.Phase != RecorderRecording {
 		t.Fatalf("empty Enter = (%#v, %v), want recording no-op", state, outcome)
 	}
-	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "alt-r"}}, normalize, nil)
+	state, outcome = reduceRecorderStateAt(state, recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "alt-r"}}, normalize, nil)
 	if outcome != recorderContinue || state.Phase != RecorderStaged || state.Candidate != "M-r" {
 		t.Fatalf("first candidate = (%#v, %v), want staged M-r", state, outcome)
 	}
-	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "alt-s"}}, normalize, nil)
-	if outcome != recorderContinue || state.Phase != RecorderStaged || state.Candidate != "M-s" {
-		t.Fatalf("replacement = (%#v, %v), want staged M-s", state, outcome)
+	state, outcome = reduceRecorderStateAt(state, recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "alt-s"}}, normalize, nil)
+	if outcome != recorderContinue || state.Phase != RecorderStaged || state.Candidate != "M-r M-s" {
+		t.Fatalf("second stroke = (%#v, %v), want staged M-r M-s", state, outcome)
 	}
-	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEnter}, normalize, nil)
+	state, outcome = reduceRecorderStateAt(state, recorderEvent{kind: recorderBackspace}, normalize, nil)
+	if outcome != recorderContinue || state.Candidate != "M-r" || len(state.Strokes) != 1 {
+		t.Fatalf("Backspace = (%#v, %v), want last-pop to M-r", state, outcome)
+	}
+	state, _ = reduceRecorderStateAt(state, recorderEvent{kind: recorderBackspace}, normalize, nil)
+	state, outcome = reduceRecorderStateAt(state, recorderEvent{kind: recorderBackspace}, normalize, nil)
+	if outcome != recorderContinue || state.Phase != RecorderRecording || state.Candidate != "" || len(state.Strokes) != 0 {
+		t.Fatalf("empty Backspace = (%#v, %v), want recording no-op", state, outcome)
+	}
+	state, _ = reduceRecorderStateAt(state, recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "alt-s"}}, normalize, nil)
+	state, outcome = reduceRecorderStateAt(state, recorderEvent{kind: recorderEnter}, normalize, nil)
 	if outcome != recorderConfirm || state.Phase != RecorderConfirmed || state.Candidate != "M-s" {
 		t.Fatalf("confirm = (%#v, %v), want confirmed M-s", state, outcome)
 	}
 
-	state, outcome = reduceRecorderState(newRecorderState(), recorderEvent{kind: recorderEscape}, normalize, nil)
+	state, outcome = reduceRecorderStateAt(newRecorderState(), recorderEvent{kind: recorderEscape}, normalize, nil)
 	if outcome != recorderCancel || state.Candidate != "" {
 		t.Fatalf("recording Esc = (%#v, %v), want unchanged cancel", state, outcome)
 	}
@@ -650,24 +660,45 @@ func TestRecorderStateTransitions(t *testing.T) {
 func TestRecorderStateKeepsActionableValidationAndNormalizationErrors(t *testing.T) {
 	t.Parallel()
 
-	state, outcome := reduceRecorderState(newRecorderState(), recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "mouse"}}, func(RecorderKey) (string, error) {
+	state, outcome := reduceRecorderStateAt(newRecorderState(), recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: "mouse"}}, func(RecorderKey, int) (string, error) {
 		return "", errors.New("no stable tmux key name")
 	}, nil)
-	if outcome != recorderContinue || state.Candidate != "" || !strings.Contains(state.Message, "Enter key name manually") {
+	if outcome != recorderContinue || state.Candidate != "" || !strings.Contains(state.Message, "Enter binding manually") {
 		t.Fatalf("invalid candidate = (%#v, %v), want actionable recording error", state, outcome)
 	}
 
 	state = RecorderState{Phase: RecorderStaged, Candidate: "C-x"}
-	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEnter}, nil, func(string) error {
+	state, outcome = reduceRecorderStateAt(state, recorderEvent{kind: recorderEnter}, nil, func(string) error {
 		return errors.New(`key "C-x" is already bound to Kill Session`)
 	})
 	if outcome != recorderContinue || state.Phase != RecorderStaged || state.Candidate != "C-x" ||
 		!strings.Contains(state.Message, "Cannot save") || !strings.Contains(state.Message, "Choose another key") {
 		t.Fatalf("conflict Enter = (%#v, %v), want actionable staged error", state, outcome)
 	}
-	state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEscape}, nil, nil)
+	state, outcome = reduceRecorderStateAt(state, recorderEvent{kind: recorderEscape}, nil, nil)
 	if outcome != recorderCancel || state.Candidate != "C-x" {
 		t.Fatalf("staged Esc = (%#v, %v), want discard outcome without mutation", state, outcome)
+	}
+}
+
+func TestRecorderControlsNeverBecomeCandidates(t *testing.T) {
+	t.Parallel()
+
+	state := newRecorderState()
+	var normalizeCalls int
+	normalize := func(RecorderKey, int) (string, error) {
+		normalizeCalls++
+		return "unexpected", nil
+	}
+	for _, kind := range []recorderEventKind{recorderEnter, recorderBackspace, recorderEscape} {
+		var outcome recorderOutcome
+		state, outcome = reduceRecorderStateAt(state, recorderEvent{kind: kind}, normalize, nil)
+		if kind == recorderEscape && outcome != recorderCancel {
+			t.Fatalf("Escape outcome = %v, want cancel", outcome)
+		}
+	}
+	if normalizeCalls != 0 || state.Candidate != "" || len(state.Strokes) != 0 {
+		t.Fatalf("controls state=%#v normalizeCalls=%d, want zero candidates", state, normalizeCalls)
 	}
 }
 
@@ -703,14 +734,78 @@ func TestNativeRecorderConsumesCandidateThenEnterInOneByteStream(t *testing.T) {
 		t.Fatalf("result = %#v, normalize/validate = %d/%d, want one staged candidate confirmed once", result, normalizeCalls, validateCalls)
 	}
 	rendered := out.String()
-	for _, want := range []string{"Recording", "Press a key combination", "Not saved yet", "Staged: M-r"} {
+	for _, want := range []string{"Recording", "Press 1 to 4 strokes", "Not saved yet", "Recorded: M-r", "Backspace removes"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("native recorder output = %q, want %q", rendered, want)
 		}
 	}
-	for _, absent := range []string{"no matches", "Search", "Back"} {
+	for _, absent := range []string{"no matches", "Search", "Back row"} {
 		if strings.Contains(rendered, absent) {
 			t.Fatalf("native recorder output = %q, did not want %q", rendered, absent)
+		}
+	}
+}
+
+func TestNativeRecorderAccumulatesCommaDisplayBackspaceAndMaximumInOneByteStream(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	result, err := runNativeInteractive(strings.NewReader("\x0fo\x7fo\r"), &out, Options{
+		UI:            "settings-keybinding-recorder",
+		DisableSearch: true,
+		Recorder: &RecorderOptions{
+			NormalizeStroke: func(key RecorderKey, index int) (string, error) {
+				if index == 0 && key.Name == "ctrl-o" {
+					return "C-o", nil
+				}
+				if index == 1 && key.Text == "o" {
+					return "o", nil
+				}
+				return "", fmt.Errorf("unexpected key %#v at %d", key, index)
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("runNativeInteractive() error = %v", err)
+	}
+	if result.Key != "enter" || result.Value != "C-o o" {
+		t.Fatalf("result = %#v, want canonical space-form C-o o", result)
+	}
+	if rendered := out.String(); !strings.Contains(rendered, "Recorded: C-o,o") || !strings.Contains(rendered, "2 of 4 strokes") {
+		t.Fatalf("output = %q, want comma-form two-stroke draft", rendered)
+	}
+
+	state := newRecorderState()
+	normalize := func(key RecorderKey, _ int) (string, error) { return key.Text, nil }
+	for _, stroke := range []string{"a", "b", "c", "d", "e"} {
+		state, _ = reduceRecorderStateAt(state, recorderEvent{kind: recorderCandidate, key: RecorderKey{Text: stroke}}, normalize, nil)
+	}
+	if state.Candidate != "a b c d" || len(state.Strokes) != 4 || !strings.Contains(state.Message, "Maximum 4") {
+		t.Fatalf("five-stroke state = %#v, want four retained and actionable maximum", state)
+	}
+}
+
+func TestNativeRecorderLocalizesContinuousDraftChrome(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	result, err := runNativeInteractive(strings.NewReader("\x0fo\r"), &out, Options{
+		UI:            "settings-keybinding-recorder",
+		Locale:        i18n.Locale("ko-KR"),
+		DisableSearch: true,
+		Recorder: &RecorderOptions{NormalizeStroke: func(key RecorderKey, index int) (string, error) {
+			if index == 0 {
+				return "C-o", nil
+			}
+			return key.Text, nil
+		}},
+	})
+	if err != nil || result.Value != "C-o o" {
+		t.Fatalf("result = %#v, err=%v", result, err)
+	}
+	for _, want := range []string{"기록 중", "1~4개 스트로크", "기록됨: C-o,o", "4개 중 2개 스트로크", "Backspace는 마지막 스트로크"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("Korean recorder output = %q, want %q", out.String(), want)
 		}
 	}
 }
@@ -748,8 +843,8 @@ func TestNativeRecorderAutoConfirmsOneStrokeAndCapturesEnter(t *testing.T) {
 			if result.Key != "enter" || result.Value != tc.want {
 				t.Fatalf("result = %#v, want auto-confirmed %q", result, tc.want)
 			}
-			if rendered := out.String(); !strings.Contains(rendered, "returns to the sequence editor immediately") {
-				t.Fatalf("output = %q, want one-stroke sequence copy", rendered)
+			if rendered := out.String(); !strings.Contains(rendered, "this observation completes immediately") {
+				t.Fatalf("output = %q, want one-stroke delivery-observation copy", rendered)
 			}
 		})
 	}
@@ -762,7 +857,7 @@ func TestNativeRecorderCandidateReplaceConflictRecoveryAndEsc(t *testing.T) {
 		return "M-" + strings.TrimPrefix(key.Name, "alt-"), nil
 	}
 	var out bytes.Buffer
-	result, err := runNativeInteractive(strings.NewReader("\x1br\r\x1bs\r"), &out, Options{
+	result, err := runNativeInteractive(strings.NewReader("\x1br\r\x7f\x1bs\r"), &out, Options{
 		UI:            "settings-keybinding-recorder",
 		DisableSearch: true,
 		Recorder: &RecorderOptions{
@@ -781,7 +876,7 @@ func TestNativeRecorderCandidateReplaceConflictRecoveryAndEsc(t *testing.T) {
 	if result.Key != "enter" || result.Value != "M-s" {
 		t.Fatalf("confirm result = %#v, want replacement M-s", result)
 	}
-	if rendered := out.String(); !strings.Contains(rendered, "Cannot save") || !strings.Contains(rendered, "Staged: M-s") {
+	if rendered := out.String(); !strings.Contains(rendered, "Cannot save") || !strings.Contains(rendered, "Recorded: M-s") {
 		t.Fatalf("native recorder output = %q, want conflict then replacement preview", rendered)
 	}
 
@@ -803,7 +898,7 @@ func TestNativeRecorderUsesOneReaderWithoutEventLeakage(t *testing.T) {
 	t.Parallel()
 
 	tracker := &nativeKeyReaderTracker{}
-	input := &trackedRecorderInput{tracker: tracker, data: []byte("a\r")}
+	input := &trackedRecorderInput{tracker: tracker, data: []byte("\x0fo\r")}
 	var normalizeCalls, validateCalls atomic.Int64
 	result, err := runNativeInteractive(input, io.Discard, Options{
 		UI:            "settings-keybinding-recorder",
@@ -812,9 +907,15 @@ func TestNativeRecorderUsesOneReaderWithoutEventLeakage(t *testing.T) {
 			return DeferredUpdate{}, nil
 		},
 		Recorder: &RecorderOptions{
-			Normalize: func(key RecorderKey) (string, error) {
+			NormalizeStroke: func(key RecorderKey, index int) (string, error) {
 				normalizeCalls.Add(1)
-				return key.Text, nil
+				if index == 0 && key.Name == "ctrl-o" {
+					return "C-o", nil
+				}
+				if index == 1 && key.Text == "o" {
+					return "o", nil
+				}
+				return "", fmt.Errorf("unexpected key %#v at %d", key, index)
 			},
 			Validate: func(string) error {
 				validateCalls.Add(1)
@@ -825,8 +926,8 @@ func TestNativeRecorderUsesOneReaderWithoutEventLeakage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runNativeInteractive() error = %v", err)
 	}
-	if result.Value != "a" || normalizeCalls.Load() != 1 || validateCalls.Load() != 1 {
-		t.Fatalf("result = %#v, normalize/validate = %d/%d, want candidate and later Enter handled once", result, normalizeCalls.Load(), validateCalls.Load())
+	if result.Value != "C-o o" || normalizeCalls.Load() != 2 || validateCalls.Load() != 1 {
+		t.Fatalf("result = %#v, normalize/validate = %d/%d, want two strokes and later Enter handled once", result, normalizeCalls.Load(), validateCalls.Load())
 	}
 	waitForNativeReaderActiveCount(t, tracker, 0)
 	if tracker.maxActive.Load() != 1 || tracker.started.Load() != 1 || tracker.stopped.Load() != 1 {
