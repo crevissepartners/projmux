@@ -703,10 +703,9 @@ func settingsNavConfigSnapshot(t *testing.T, root string) string {
 }
 
 // TestSettingsActionDetailProjectsAgentAndAnchorSemantics covers the Agent
-// create/resume distinction and the current-Pane anchor contract as the action
-// detail renders them. The interactive right/down actions must name an explicit
-// current-Pane anchor, `Create <Provider> Agent` must say it always creates,
-// and the resume action must name the existing-Agent phases it accepts.
+// create/resume distinction and the current-Pane anchor contract in the
+// internal semantic model while proving that model is no longer projected as
+// passive action-detail rows.
 func TestSettingsActionDetailProjectsAgentAndAnchorSemantics(t *testing.T) {
 	t.Parallel()
 
@@ -716,28 +715,41 @@ func TestSettingsActionDetailProjectsAgentAndAnchorSemantics(t *testing.T) {
 		id    string
 		wants []string
 	}{
-		{"ai-split-claude-right", []string{"Target kind", "Agent", "Result kind", "always a new Agent", "Placement", "right", "Anchor", "current Pane %N transport id (explicit split target"}},
-		{"ai-split-claude-down", []string{"Placement", "down", "Anchor", "current Pane %N transport id (explicit split target"}},
-		{"ai-split-shell-right", []string{"Target kind", "Pane", "Result kind", "Shell Pane", "Anchor", "current Pane %N transport id (explicit split target"}},
-		{"ai-split-right", []string{"Result kind", "default launch target", "Anchor", "current Pane %N transport id (explicit split target"}},
-		{"AIResumePickerToggle", []string{"Target kind", "Agent", "resume one existing Offline or Failed Agent", "never creates an Agent"}},
-		{"new-window", []string{"Target kind", "Window", "new Window with its initial Pane"}},
-		{"Sidebar:KillSession", []string{"Target kind", "Project", "Project metadata is kept"}},
+		{"ai-split-claude-right", []string{"Agent", "always a new Agent", "right", "current Pane %N transport id (explicit split target"}},
+		{"ai-split-claude-down", []string{"down", "current Pane %N transport id (explicit split target"}},
+		{"ai-split-shell-right", []string{"Pane", "Shell Pane", "current Pane %N transport id (explicit split target"}},
+		{"ai-split-right", []string{"default launch target", "current Pane %N transport id (explicit split target"}},
+		{"AIResumePickerToggle", []string{"Agent", "resume one existing Offline or Failed Agent", "never creates an Agent"}},
+		{"new-window", []string{"Window", "new Window with its initial Pane"}},
+		{"Sidebar:KillSession", []string{"Project", "Project metadata is kept"}},
 	} {
+		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), tc.id)
+		if !ok {
+			t.Fatalf("catalog missing %q", tc.id)
+		}
+		semantics, ok := keyBindingActionSemanticsFor(action)
+		if !ok {
+			t.Fatalf("action %q has no declared semantics", tc.id)
+		}
+		internal := strings.Join([]string{semantics.TargetKind, semantics.ResultKind, semantics.Placement, semantics.Anchor}, "\n")
+		for _, want := range tc.wants {
+			if !strings.Contains(internal, want) {
+				t.Fatalf("action semantics %q = %#v, want %q", tc.id, semantics, want)
+			}
+		}
+
 		entries, _, err := cmd.keybindingDetailEntries(tc.id)
 		if err != nil {
 			t.Fatalf("keybindingDetailEntries(%q) error = %v", tc.id, err)
 		}
-		for _, want := range tc.wants {
+		for _, want := range []string{"Single Keys", "Sequences"} {
 			if !hasEntryLabelContaining(entries, want) {
-				t.Fatalf("action detail %q = %#v, want %q", tc.id, entries, want)
+				t.Fatalf("action detail %q = %#v, want binding state %q", tc.id, entries, want)
 			}
 		}
-		// Semantic rows are read-only state, never a mutation row.
-		for _, entry := range entries {
-			label := stripANSI(entry.Label)
-			if strings.Contains(label, "Anchor") && entry.Value != settingsNoopValue {
-				t.Fatalf("action detail %q anchor row = %#v, want a passive state row", tc.id, entry)
+		for _, forbidden := range []string{"Target kind", "Result kind", "Placement", "Anchor", "Handler", "manifest", "boundary"} {
+			if hasEntryLabelContaining(entries, forbidden) {
+				t.Fatalf("action detail %q = %#v, internal semantic copy %q became visible", tc.id, entries, forbidden)
 			}
 		}
 	}

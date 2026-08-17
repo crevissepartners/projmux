@@ -36,10 +36,11 @@ func keybindingCorrectnessCommand(t *testing.T, home string, run func(intpickerc
 	}
 }
 
-// TestSettingsKeybindingActionDetailMatrix is the verification-1 matrix:
-// rendered action -> target/result/placement/anchor -> handler -> observable
-// result. It walks every catalog action, so a new action cannot ship without
-// semantics or without a handler that resolves against the shipped manifest.
+// TestSettingsKeybindingActionDetailMatrix keeps the internal semantic and
+// handler contracts independent from the interaction-first detail. It walks
+// every catalog action, so removing their visible rows cannot weaken manifest
+// parity, while every selectable row must still resolve to an operation the
+// detail loop handles.
 func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 	t.Parallel()
 
@@ -87,20 +88,28 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatalf("keybindingDetailEntries(%q) error = %v", action.ID, err)
 		}
-		for _, want := range []string{
-			"Target kind", semantics.TargetKind,
-			"Result kind", semantics.ResultKind,
-			"Handler", handler.Invocation,
-		} {
+		defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+		if !hasEntryLabelContainingAll(entries, keyBindingDisplayName(action), keybindingState(keymapFile{}, action, defaultAction)) {
+			t.Fatalf("action detail %q = %#v, want the action name and concise state", action.ID, entries)
+		}
+		for _, want := range []string{"Single Keys", "Sequences"} {
 			if !hasEntryLabelContaining(entries, want) {
-				t.Fatalf("action detail %q = %#v, want %q", action.ID, entries, want)
+				t.Fatalf("action detail %q = %#v, want current binding section %q", action.ID, entries, want)
 			}
 		}
-		if semantics.Placement != "" && !hasEntryLabelContainingAll(entries, "Placement", semantics.Placement) {
-			t.Fatalf("action detail %q = %#v, want placement %q", action.ID, entries, semantics.Placement)
+		if keyBindingEditable(action) {
+			if _, protected := keyBindingProtectedActionReason(defaultAction); !protected {
+				for _, want := range []string{"+ Add binding", "Enter binding manually"} {
+					if !hasEntryLabelContaining(entries, want) {
+						t.Fatalf("action detail %q = %#v, want interaction %q", action.ID, entries, want)
+					}
+				}
+			}
 		}
-		if semantics.Anchor != "" && !hasEntryLabelContainingAll(entries, "Anchor", semantics.Anchor) {
-			t.Fatalf("action detail %q = %#v, want anchor %q", action.ID, entries, semantics.Anchor)
+		for _, forbidden := range []string{"Target kind", "Result kind", "Placement", "Anchor", "Handler", "manifest", "boundary", "Options"} {
+			if hasEntryLabelContaining(entries, forbidden) {
+				t.Fatalf("action detail %q = %#v, forbidden visible internal copy %q", action.ID, entries, forbidden)
+			}
 		}
 
 		// Observable result: every selectable row resolves to an operation the
@@ -123,6 +132,65 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 				t.Fatalf("action detail %q row %q resolves to unhandled operation %q", action.ID, value, op)
 			}
 		}
+	}
+}
+
+func TestSettingsKeybindingActionDetailPrioritizesStateBindingsAndActions(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		configure  func(*settingsCommand) error
+		wantState  string
+		wantReset  bool
+		wantUnbind bool
+	}{
+		{name: "default", wantState: "Default", wantUnbind: true},
+		{
+			name: "custom",
+			configure: func(cmd *settingsCommand) error {
+				return cmd.addKeymapAliasAndApply("ProjectSidebarToggle", "C-r", &bytes.Buffer{})
+			},
+			wantState: "Custom", wantReset: true, wantUnbind: true,
+		},
+		{
+			name: "unbound",
+			configure: func(cmd *settingsCommand) error {
+				return cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", nil, &bytes.Buffer{})
+			},
+			wantState: "Unbound", wantReset: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			cmd := keybindingCorrectnessCommand(t, home, nil)
+			if tc.configure != nil {
+				if err := tc.configure(cmd); err != nil {
+					t.Fatalf("configure detail: %v", err)
+				}
+			}
+			entries, _, err := cmd.keybindingDetailEntries("ProjectSidebarToggle")
+			if err != nil {
+				t.Fatalf("keybindingDetailEntries() error = %v", err)
+			}
+			state := entryIndexLabelContaining(entries, tc.wantState)
+			single := entryIndexLabelContaining(entries, "Single Keys")
+			sequences := entryIndexLabelContaining(entries, "Sequences")
+			add := entryIndexValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:add")
+			typed := entryIndexValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:type")
+			if state < 0 || single <= state || sequences <= single || add <= sequences || typed <= add {
+				t.Fatalf("interaction-first order state=%d single=%d sequences=%d add=%d typed=%d entries=%#v", state, single, sequences, add, typed, entries)
+			}
+			if got := hasEntryValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:unbind"); got != tc.wantUnbind {
+				t.Fatalf("unbind visible=%v, want %v: %#v", got, tc.wantUnbind, entries)
+			}
+			if got := hasEntryValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:reset"); got != tc.wantReset {
+				t.Fatalf("reset visible=%v, want %v: %#v", got, tc.wantReset, entries)
+			}
+			if hasEntryLabelContaining(entries, "Options") {
+				t.Fatalf("detail retains redundant Options divider: %#v", entries)
+			}
+		})
 	}
 }
 
@@ -194,11 +262,13 @@ func TestSettingsKeybindingKeyDetailRowsAreAllHandled(t *testing.T) {
 			if err != nil {
 				t.Fatalf("keybindingKeyDetailEntries(%q, %q) error = %v", action.ID, chord, err)
 			}
-			if !hasEntryLabelContainingAll(entries, "Canonical key", chord) {
-				t.Fatalf("key detail %q/%q = %#v, want the canonical key row", action.ID, chord, entries)
+			if !hasEntryLabelContainingAll(entries, "Key", keybindingChordDisplay(chord)) {
+				t.Fatalf("key detail %q/%q = %#v, want the current key", action.ID, chord, entries)
 			}
-			if !hasEntryLabelContaining(entries, "Delivery path") {
-				t.Fatalf("key detail %q/%q = %#v, want the delivery path row", action.ID, chord, entries)
+			for _, forbidden := range []string{"Canonical key", "Delivery path"} {
+				if hasEntryLabelContaining(entries, forbidden) {
+					t.Fatalf("key detail %q/%q = %#v, forbidden visible copy %q", action.ID, chord, entries, forbidden)
+				}
 			}
 			if !hasEntryLabelContaining(entries, "Test delivery") {
 				t.Fatalf("key detail %q/%q = %#v, want a Test delivery row", action.ID, chord, entries)
@@ -206,8 +276,10 @@ func TestSettingsKeybindingKeyDetailRowsAreAllHandled(t *testing.T) {
 			testRow := entryWithLabelContaining(entries, "Test delivery")
 			if strings.TrimSpace(testRow.Value) == settingsNoopValue {
 				label := stripANSI(testRow.Label)
-				if !strings.Contains(label, "unavailable") || !strings.Contains(label, "next:") {
-					t.Fatalf("disabled Test delivery row %q must carry a reason and a next step", label)
+				alternative := entryWithLabelContaining(entries, "Try instead")
+				if !strings.Contains(label, "unavailable") || alternative == nil ||
+					!strings.Contains(stripANSI(alternative.Label), "projmux setup") {
+					t.Fatalf("disabled Test delivery row %q and entries %#v must carry a reason and a usable alternative", label, entries)
 				}
 			}
 			for _, entry := range entries {
@@ -254,7 +326,7 @@ func keybindingRenderedSurfaceLabels(t *testing.T, locale string) []string {
 	var labels []string
 	collect := func(entries []intpickercompat.Entry) {
 		for _, entry := range entries {
-			labels = append(labels, stripANSI(entry.Label), entry.SearchKey)
+			labels = append(labels, stripANSI(entry.Label))
 		}
 	}
 	root, err := cmd.keybindingEntries()
@@ -290,12 +362,20 @@ func keybindingRenderedSurfaceLabels(t *testing.T, locale string) []string {
 			collect(cmd.localizeSettingsOptions(intpickercompat.Options{UI: "settings-keybinding-key-detail", Entries: keyDetail}).Entries)
 		}
 	}
+	if err := cmd.addKeymapSequenceAndApply("ProjectSidebarToggle", "C-k C-p", &bytes.Buffer{}); err != nil {
+		t.Fatalf("seed sequence detail: %v", err)
+	}
+	sequenceDetail, _, err := cmd.keybindingSequenceDetailEntries("ProjectSidebarToggle", "C-k C-p")
+	if err != nil {
+		t.Fatalf("keybindingSequenceDetailEntries() error = %v", err)
+	}
+	collect(cmd.localizeSettingsOptions(intpickercompat.Options{UI: "settings-keybinding-sequence-detail", Entries: sequenceDetail}).Entries)
 	return labels
 }
 
-// TestSettingsKeybindingRetiredContainerCopyIsGone is the verification-2
-// negative guard: no keybinding surface may name a catch-all container, and no
-// copy may promise a raw diagnostic viewer or an in-Settings adapter apply.
+// TestSettingsKeybindingRetiredContainerCopyIsGone is the visible-copy
+// negative guard: normal details contain neither a catch-all teaching
+// container nor the internal/storage/delivery rows removed by Phase 2.
 func TestSettingsKeybindingRetiredContainerCopyIsGone(t *testing.T) {
 	t.Parallel()
 
@@ -305,13 +385,18 @@ func TestSettingsKeybindingRetiredContainerCopyIsGone(t *testing.T) {
 		required []string
 	}{
 		{
-			locale:   "en-US",
-			retired:  []string{"Advanced...", "Advanced typed entry", "Troubleshooting", "Raw diagnostic view", "advanced options", "advanced diagnostics", "Test key delivery, Advanced", "Advanced delivery"},
+			locale: "en-US",
+			retired: []string{
+				"Advanced...", "Advanced typed entry", "Troubleshooting", "Raw diagnostic view", "advanced options", "advanced diagnostics", "Test key delivery, Advanced", "Advanced delivery",
+				"Target kind", "Result kind", "Placement", "Anchor", "Handler", "manifest", "boundary", "Safe direct keys", "Never saved as keys", "Terminal adapter", "Canonical key", "Canonical storage", "Delivery path", "Cancellation", "authoring and saved bytes", "saved logical strokes",
+			},
 			required: []string{"Enter binding manually", "Test delivery"},
 		},
 		{
-			locale:   "ko-KR",
-			retired:  []string{"고급...", "문제 해결", "원시 진단 보기"},
+			locale: "ko-KR",
+			retired: []string{
+				"고급...", "문제 해결", "원시 진단 보기", "대상 종류", "결과 종류", "배치", "앵커", "핸들러", "매니페스트", "경계", "안전한 직접 키", "키로 저장하지 않음", "터미널 어댑터", "정규 키", "정규 저장", "전달 경로", "취소 동작",
+			},
 			required: nil,
 		},
 	} {
@@ -550,10 +635,13 @@ func TestSettingsKeybindingDeliveryTestUnavailableNamesReasonAndNextStep(t *test
 			t.Fatalf("entries = %#v, want a disabled Test delivery row", entries)
 		}
 		label := stripANSI(row.Label)
-		for _, want := range []string{"unavailable", "no interactive key reader", "projmux setup"} {
+		for _, want := range []string{"unavailable", "no interactive key reader"} {
 			if !strings.Contains(label, want) {
 				t.Fatalf("disabled row %q, want %q", label, want)
 			}
+		}
+		if !hasEntryLabelContainingAll(entries, "Try instead", "projmux setup", "plain terminal") {
+			t.Fatalf("entries = %#v, want an immediately usable alternative", entries)
 		}
 		if err := cmd.runKeybindingDeliveryTest("ProjectSidebarToggle", "M-1", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 			t.Fatalf("runKeybindingDeliveryTest() error = %v", err)
@@ -584,10 +672,13 @@ func TestSettingsKeybindingDeliveryTestUnavailableNamesReasonAndNextStep(t *test
 			t.Fatalf("entries = %#v, want a disabled Test delivery row for a recorder control key", entries)
 		}
 		label := stripANSI(row.Label)
-		for _, want := range []string{"unavailable", "recorder consumes plain Enter", "projmux setup"} {
+		for _, want := range []string{"unavailable", "recorder uses Enter"} {
 			if !strings.Contains(label, want) {
 				t.Fatalf("disabled row %q, want %q", label, want)
 			}
+		}
+		if !hasEntryLabelContainingAll(entries, "Try instead", "projmux setup", "plain terminal") {
+			t.Fatalf("entries = %#v, want an immediately usable alternative", entries)
 		}
 	})
 }
@@ -729,12 +820,12 @@ func TestSettingsKeybindingTypedNormalizationRejectionIsObservable(t *testing.T)
 	}
 }
 
-// TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler is the
+// TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler is the internal
 // current-directory navigation contract. The action keeps its legacy `current`
-// route, so the detail has to name both halves: the manifest classifies the
-// route's canonical projection as the read-only `get pane` cwd field, while the
-// action's own outcome is ensure-and-attach. The cwd query may never read as
-// the action's result.
+// route: the manifest classifies the route's canonical projection as the
+// read-only `get pane` cwd field, while the action's own outcome remains
+// ensure-and-attach. None of that internal boundary becomes a passive detail
+// row.
 func TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler(t *testing.T) {
 	t.Parallel()
 
@@ -782,25 +873,14 @@ func TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries() error = %v", err)
 	}
-	for _, want := range []string{
-		"ensure and attach the Project runtime",
-		"read-only input, not the outcome",
-		"projmux current",
-		"compatibility",
-		"get pane",
-		"read-only input step only",
-	} {
-		if !hasEntryLabelContaining(entries, want) {
-			t.Fatalf("current-directory detail = %#v, want %q", entries, want)
+	if !hasEntryLabelContainingAll(entries, "Open Project for Current Directory", "Available") ||
+		!hasEntryLabelContaining(entries, "+ Add binding") {
+		t.Fatalf("current-directory detail = %#v, want state and binding actions", entries)
+	}
+	for _, forbidden := range []string{"Result kind", "ensure and attach the Project runtime", "read-only input, not the outcome", "projmux current", "compatibility", "get pane", "read-only input step only"} {
+		if hasEntryLabelContaining(entries, forbidden) {
+			t.Fatalf("current-directory detail = %#v, internal contract %q became visible", entries, forbidden)
 		}
-	}
-	// The action must not present the read-only projection as its result.
-	resultRow := entryWithLabelContaining(entries, "Result kind")
-	if resultRow == nil {
-		t.Fatalf("current-directory detail = %#v, want a result kind row", entries)
-	}
-	if strings.Contains(stripANSI(resultRow.Label), "get pane") {
-		t.Fatalf("result kind row %q must not present the read-only cwd query as the outcome", stripANSI(resultRow.Label))
 	}
 }
 

@@ -5080,7 +5080,7 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndReservedTransportIsL
 	if !hasEntryLabelContainingAll(popupDetail.Entries, "Keys", "Alt-P", "M-p") {
 		t.Fatalf("popup detail entries = %#v, want readable picker-local keys", popupDetail.Entries)
 	}
-	for _, want := range []string{"+ Add binding", "Enter binding manually", "Options", "Unbind"} {
+	for _, want := range []string{"+ Add binding", "Enter binding manually", "Unbind"} {
 		if !hasEntryLabelContaining(popupDetail.Entries, want) {
 			t.Fatalf("popup detail entries = %#v, want edit action %q", popupDetail.Entries, want)
 		}
@@ -5090,7 +5090,7 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndReservedTransportIsL
 			t.Fatalf("popup detail entries = %#v, did not want retired container %q", popupDetail.Entries, absent)
 		}
 	}
-	for _, absent := range []string{"Add alias", "Type key chord", "Replace primary", "Primary key", "Additional keys", "Disable default", "Reset to default", "Tier", "Delivery path", "Summary", "Surface", "Source", "Default fallback keys", "Apply State", "Advanced Delivery"} {
+	for _, absent := range []string{"Add alias", "Type key chord", "Replace primary", "Primary key", "Additional keys", "Disable default", "Reset to default", "Tier", "Delivery path", "Canonical key", "Options", "Target kind", "Result kind", "Placement", "Anchor", "Handler", "Summary", "Surface", "Source", "Default fallback keys", "Apply State", "Advanced Delivery"} {
 		if hasEntryLabelContaining(popupDetail.Entries, absent) {
 			t.Fatalf("popup detail entries = %#v, did not want %q", popupDetail.Entries, absent)
 		}
@@ -5099,7 +5099,7 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndReservedTransportIsL
 	if err != nil {
 		t.Fatalf("keybindingKeyDetailEntries(Sidebar:PinProject, M-p) error = %v", err)
 	}
-	for _, want := range []string{"Key", "Alt-P", "M-p", "Remove key", "Test delivery", "Canonical key", "Delivery path"} {
+	for _, want := range []string{"Key", "Alt-P", "M-p", "Remove key", "Test delivery"} {
 		if !hasEntryLabelContaining(keyDetail, want) {
 			t.Fatalf("key detail entries = %#v, want %q", keyDetail, want)
 		}

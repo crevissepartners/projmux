@@ -79,6 +79,14 @@ func TestSettingsKeybindingSequenceActionDetailGoldenAndKoreanLocale(t *testing.
 			routes = append(routes, "sequences-state\t"+entry.Value)
 		case strings.Contains(entry.Value, ":sequence:"):
 			routes = append(routes, "sequence-detail\t"+entry.Value+"\tdisplay="+keybindingSequenceDisplay("C-k C-p"))
+		case strings.HasSuffix(entry.Value, ":add"):
+			routes = append(routes, "add-binding\t"+entry.Value)
+		case strings.HasSuffix(entry.Value, ":type"):
+			routes = append(routes, "type-binding\t"+entry.Value)
+		case strings.HasSuffix(entry.Value, ":unbind"):
+			routes = append(routes, "unbind-single-keys\t"+entry.Value)
+		case strings.HasSuffix(entry.Value, ":reset"):
+			routes = append(routes, "reset-binding\t"+entry.Value)
 		}
 	}
 	got := strings.Join(routes, "\n") + "\n"
@@ -432,7 +440,7 @@ func TestSettingsSequenceNavigationCancelAndTestAreNoWrite(t *testing.T) {
 	}
 }
 
-func TestSettingsSequencePlatformModelDiffersOnlyInDeliveryDiagnostic(t *testing.T) {
+func TestSettingsSequencePlatformDeliveryModelStaysInternal(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -472,12 +480,25 @@ func TestSettingsSequencePlatformModelDiffersOnlyInDeliveryDiagnostic(t *testing
 	if err != nil {
 		t.Fatalf("off sequence detail error = %v", err)
 	}
-	if !hasEntryLabelContainingAll(onSequence, "Delivery", "Native macOS") || !hasEntryLabelContainingAll(offSequence, "Delivery", "Native macOS keybindings are off") {
-		t.Fatalf("delivery diagnostics on=%#v off=%#v", onSequence, offSequence)
+	for _, entries := range [][]intpickercompat.Entry{onSequence, offSequence} {
+		for _, entry := range entries {
+			label := stripANSI(entry.Label)
+			for _, forbidden := range []string{"Cancellation", "saved logical strokes", "authoring and saved bytes"} {
+				if strings.Contains(label, forbidden) {
+					t.Fatalf("sequence detail=%#v, forbidden passive copy %q", entries, forbidden)
+				}
+			}
+			if strings.Contains(label, "Delivery") && !strings.Contains(label, "Test sequence delivery") {
+				t.Fatalf("sequence detail=%#v, forbidden passive Delivery row", entries)
+			}
+		}
 	}
 	for i := range onSequence {
-		if onSequence[i].Value != offSequence[i].Value {
-			t.Fatalf("sequence action route %d on=%q off=%q", i, onSequence[i].Value, offSequence[i].Value)
+		if onSequence[i].Value != offSequence[i].Value || onSequence[i].Label != offSequence[i].Label {
+			t.Fatalf("sequence surface %d differs by platform: on=%#v off=%#v", i, onSequence[i], offSequence[i])
 		}
+	}
+	if on.keybindingSequenceDeliveryDiagnostic("C-k C-p") == off.keybindingSequenceDeliveryDiagnostic("C-k C-p") {
+		t.Fatal("internal delivery diagnostic lost its platform distinction")
 	}
 }

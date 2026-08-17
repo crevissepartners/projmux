@@ -114,8 +114,9 @@ the native adapter owns action-level no-prefix bindings only.
 
 On Darwin, Linux, and WSL, Settings > Keybindings > Action > `+ Add binding`
 uses the same native-picker logical recorder. Native macOS transport state and
-terminal adapter differences remain visible in Delivery diagnostics, but they
-do not change the authoring routes or the logical strokes the recorder accepts.
+terminal adapter differences remain available through an explicit `Test
+delivery` result and `projmux setup`; they do not occupy normal binding detail
+rows or change the logical strokes the recorder accepts.
 
 ## Discoverable Actions
 
@@ -127,15 +128,18 @@ The Settings flow is intentionally simple: the root has one native macOS
 transport policy toggle followed by the action list with a key summary and
 state. The key summary uses the first key plus `+N`, or `Not bound` when no key
 is active. State vocabulary is limited to Default, Custom, Available, and
-Unbound. Each action detail shows the action label, state, the action's target
-kind, result kind, placement and anchor, the exact shipped handler it dispatches
-to, separate **Single Keys** and **Sequences** collections, and Options. The
-Action detail owns one `+ Add binding` flow plus `Enter binding manually`;
-picker-local actions still reject multi-stroke bindings with an explicit
-reason. There is no `Advanced` and no `Troubleshooting` container:
-both named an implementation layer instead of an outcome, and both fronted rows
-that did nothing. Key rows open key detail for the canonical key, the delivery
-path, Remove key, Replace binding, and Test delivery. `+ Add binding` enters a
+Unbound. Each action detail leads with the action label and state, then the
+current **Single Keys** and **Sequences** collections. Their key and sequence
+rows open the existing manage flows; `+ Add binding`, `Enter binding manually`,
+unbind, and reset/use-default actions follow the current bindings. Picker-local
+actions keep their sequence limitation beside the unavailable sequence state
+and point back to the usable single-key actions. There is no `Advanced`,
+`Details`, `Delivery`, or `Troubleshooting` teaching container. Internal action
+semantics, handler-manifest metadata, canonical storage, and transport paths are
+not rendered as passive rows. Key detail instead shows the current action and
+key, then Replace binding, manual replacement, Remove key, and Test delivery;
+sequence detail likewise shows the sequence and its test/replace/remove actions.
+`+ Add binding` enters a
 purpose-built recorder immediately and continuously accumulates one to four
 logical strokes without closing. Enter saves and applies once, Esc cancels with
 no write, and Backspace removes only the last stroke (or does nothing when the
@@ -155,8 +159,7 @@ write. Replace binding uses the same pipeline with the old binding as explicit
 context, so single-to-sequence and sequence-to-single replacement is one atomic
 save. Navigation, cancellation, Backspace editing, and delivery tests do not
 write the keymap or generated config and do not reload tmux; successful
-mutations still report saved, prepared, and running-session stages. Options
-covers unbinding and reset/use-default flows. Delivery remediation remains in
+mutations still report saved, prepared, and running-session stages. Delivery remediation remains in
 `projmux setup` and `projmux setup terminal`, not a separate authoring view.
 
 `Test delivery` in key detail is an observable action, not a diagnostic dump. It
@@ -174,8 +177,8 @@ own control, the row is disabled and states the reason plus the next step:
 
 An action whose shipped/default plain alias, prefix trigger, or sequence
 contains a reserved logical base key is protected as a whole. Its Action detail
-shows the shipped trigger that caused the read-only lock and keeps navigation,
-metadata, and delivery tests, but renders no add, replace, remove, unbind, or
+shows the shipped trigger that caused the read-only lock and keeps navigation
+and delivery tests, but renders no add, replace, remove, unbind, or
 reset action. Protection is derived from the shipped catalog rather than the
 effective/custom binding, so an override cannot unlock a protected action or
 lock an otherwise safe default. Existing protected defaults continue to parse,

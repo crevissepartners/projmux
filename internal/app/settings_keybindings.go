@@ -17,6 +17,8 @@ import (
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
+const keybindingProtectedActionVisibleReason = "shipped/default trigger uses a reserved key"
+
 func (c *settingsCommand) keybindingsOptions(active string) intpickercompat.Options {
 	entries, err := c.keybindingEntries()
 	if err != nil {
@@ -697,7 +699,7 @@ func (c *settingsCommand) keybindingDeliveryTestUnavailable(chord string) (reaso
 	case keybindingDeliveryTestRecorder:
 		switch strings.TrimSpace(chord) {
 		case "Enter", "Escape":
-			return "the recorder consumes plain " + strings.TrimSpace(chord) + " as its own control, so it cannot observe this key",
+			return "recorder uses " + strings.TrimSpace(chord),
 				keybindingDeliveryTestNextStep, true
 		}
 		return "", "", false
@@ -1445,7 +1447,7 @@ func (c *settingsCommand) runKeybindingSequenceDetail(actionID, sequence string,
 			Entries:    entries,
 			Title:      title,
 			Prompt:     "Settings > Keybindings > Action > Sequence > ",
-			Footer:     projmuxFooter("Manage this sequence trigger and inspect its delivery contract."),
+			Footer:     projmuxFooter("Manage or test this sequence binding."),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
 		})
@@ -1761,10 +1763,24 @@ func (c *settingsCommand) keybindingActionEntries(keymap keymapFile, members []k
 		entries = append(entries, intpickercompat.Entry{
 			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, displayName, keybindingListSummary(action, state)),
 			Value:     settingsActionPrefixKeymap + action.ID,
-			SearchKey: strings.Join([]string{action.ID, displayName, action.Surface, action.Description, strings.Join(keybindingVisibleChords(action), " "), strings.Join(keyBindingEffectiveSequences(action), " "), keybindingLocalizedSearchText(locale, action)}, " "),
+			SearchKey: strings.Join([]string{action.ID, displayName, action.Surface, action.Description, strings.Join(keybindingVisibleChords(action), " "), strings.Join(keyBindingEffectiveSequences(action), " "), keybindingLocalizedSearchText(locale, action), keybindingInternalSearchText(action)}, " "),
 		})
 	}
 	return entries
+}
+
+// keybindingInternalSearchText keeps semantic and shipped-handler discovery
+// available without turning those maintenance contracts back into visible
+// detail rows.
+func keybindingInternalSearchText(action keyBindingAction) string {
+	var parts []string
+	if semantics, ok := keyBindingActionSemanticsFor(action); ok {
+		parts = append(parts, semantics.TargetKind, semantics.ResultKind, semantics.Placement, semantics.Anchor)
+	}
+	if handler, ok := keyBindingActionHandlerFor(action); ok {
+		parts = append(parts, handler.Invocation, handler.Manifest, handler.Disposition, strings.Join(handler.Canonical, " "), handler.Note)
+	}
+	return strings.Join(parts, " ")
 }
 
 // keybindingInputDeliveryEntries is the Input delivery category: the native
@@ -1802,68 +1818,6 @@ func (c *settingsCommand) keybindingInputDeliveryEntries() []intpickercompat.Ent
 	return entries
 }
 
-// keybindingSemanticEntries renders the action's product semantics as
-// read-only rows: what it targets, what it produces, where the result lands,
-// which anchor it is placed against, and the exact shipped handler the key
-// dispatches to. The handler rows come from the shipped CLI command manifest
-// (internal/cli) so an action detail cannot advertise a route the binary does
-// not have, and so a compatibility route whose canonical projection is
-// narrower than its own behavior has to say so on the row.
-func (c *settingsCommand) keybindingSemanticEntries(action keyBindingAction) []intpickercompat.Entry {
-	entries := make([]intpickercompat.Entry, 0, 6)
-	if semantics, ok := keyBindingActionSemanticsFor(action); ok {
-		for _, row := range [][2]string{
-			{"Target kind", semantics.TargetKind},
-			{"Result kind", semantics.ResultKind},
-			{"Placement", semantics.Placement},
-			{"Anchor", semantics.Anchor},
-		} {
-			if strings.TrimSpace(row[1]) == "" {
-				continue
-			}
-			entries = append(entries, intpickercompat.Entry{
-				Label:     c.rowLabelInfo(row[0], row[1], ""),
-				Value:     settingsNoopValue,
-				SearchKey: strings.ToLower(row[0] + " " + row[1]),
-			})
-		}
-	}
-	handler, ok := keyBindingActionHandlerFor(action)
-	if !ok {
-		return entries
-	}
-	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabelInfo("Handler", handler.Invocation, keybindingHandlerManifestSummary(handler)),
-		Value:     settingsNoopValue,
-		SearchKey: strings.ToLower("handler " + handler.Invocation + " " + handler.Manifest),
-	})
-	if note := strings.TrimSpace(handler.Note); note != "" {
-		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabelInfo("Handler boundary", note, ""),
-			Value:     settingsNoopValue,
-			SearchKey: strings.ToLower("handler boundary " + note),
-		})
-	}
-	return entries
-}
-
-// keybindingHandlerManifestSummary states how the shipped command manifest
-// classifies the handler route. "not a projmux route" is a real answer: direct
-// tmux commands and in-picker commands never enter the CLI surface.
-func keybindingHandlerManifestSummary(handler keyBindingActionHandler) string {
-	if strings.TrimSpace(handler.Manifest) == "" {
-		return "not a projmux route"
-	}
-	summary := "manifest " + handler.Manifest
-	if strings.TrimSpace(handler.Disposition) != "" {
-		summary += " (" + handler.Disposition + ")"
-	}
-	if len(handler.Canonical) != 0 {
-		summary += "; canonical " + strings.Join(handler.Canonical, ", ")
-	}
-	return summary
-}
-
 func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickercompat.Entry, string, error) {
 	keymap, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
@@ -1880,19 +1834,19 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.rowLabelInfo(keyBindingDisplayName(action), state, action.Description),
+			Label: c.rowLabelInfo(keyBindingDisplayName(action), state, ""),
 			Value: settingsNoopValue,
 		},
 	}
-	entries = append(entries, c.keybindingSemanticEntries(action)...)
 	if protected {
 		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabelDim("Editing locked", protectedReason),
-			Value: settingsNoopValue,
+			Label:     c.rowLabelDim("Editing locked", keybindingProtectedActionVisibleReason),
+			Value:     settingsNoopValue,
+			SearchKey: protectedReason,
 		})
 	}
 	entries = append(entries, intpickercompat.Entry{
-		Label: c.rowLabelInfo("Single Keys", keybindingAliasesSummary(action), keybindingKeysDetail(action)),
+		Label: c.rowLabelInfo("Single Keys", keybindingAliasesSummary(action), ""),
 		Value: settingsNoopValue,
 	})
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
@@ -1902,22 +1856,12 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: prefix + "key:" + key,
 		})
 	}
-	if mutable {
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphAdd, settingsColorAdd, "+ Add binding", "record 1 to 4 strokes and confirm once"),
-			Value: prefix + "add",
-		})
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter binding manually", "type 1 to 4 strokes such as C-r or C-o,o"),
-			Value: prefix + "type",
-		})
-	}
 	sequences := keyBindingEffectiveSequences(action)
 	sequenceSummary := keybindingSequencesSummary(sequences)
-	sequenceDetail := "ordered 2 to 4 stroke triggers"
+	sequenceDetail := ""
 	if action.Kind == keyBindingActionPickerInternal {
 		sequenceSummary = "(not available)"
-		sequenceDetail = "picker-local actions do not use tmux root-table sequences"
+		sequenceDetail = "picker-local actions use single keys; add or manage a single key above"
 	}
 	entries = append(entries, intpickercompat.Entry{
 		Label: c.rowLabelInfo("Sequences", sequenceSummary, sequenceDetail),
@@ -1933,10 +1877,16 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 		title := "Keybinding - " + keyBindingDisplayName(action)
 		return entries, title, nil
 	}
-	entries = append(entries, intpickercompat.Entry{
-		Label: c.rowLabelInfo("Options", keybindingActionsSummary(keymap, action, defaultAction), "choose a row below"),
-		Value: settingsNoopValue,
-	})
+	entries = append(entries,
+		intpickercompat.Entry{
+			Label: c.rowLabel(settingsGlyphAdd, settingsColorAdd, "+ Add binding", "record 1 to 4 strokes and confirm once"),
+			Value: prefix + "add",
+		},
+		intpickercompat.Entry{
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter binding manually", "type 1 to 4 strokes such as C-r or C-o,o"),
+			Value: prefix + "type",
+		},
+	)
 	if len(keybindingVisibleChords(action)) != 0 {
 		entries = append(entries, intpickercompat.Entry{
 			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Unbind single keys", "remove all active keys from the Single Keys list; sequences remain"),
@@ -1992,13 +1942,11 @@ func (c *settingsCommand) keybindingSequenceDetailEntries(actionID, sequence str
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
-		{Label: c.rowLabelInfo("Sequence", keybindingSequenceDisplay(sequence), fmt.Sprintf("%d logical strokes", len(strings.Split(sequence, " ")))), Value: settingsNoopValue},
-		{Label: c.rowLabelInfo("Cancellation", "Escape or unknown stroke returns to root", "the cancelling stroke is consumed and never replayed"), Value: settingsNoopValue},
-		{Label: c.rowLabelInfo("Delivery", c.keybindingSequenceDeliveryDiagnostic(sequence), "authoring and saved bytes are platform-independent"), Value: settingsNoopValue},
-		{Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Test sequence delivery", "show partial/cancel and platform transport diagnostics without writing"), Value: prefix + "sequence-test:" + sequence},
+		{Label: c.rowLabelInfo("Sequence", keybindingSequenceDisplay(sequence), ""), Value: settingsNoopValue},
+		{Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Test sequence delivery", "observe this sequence without changing bindings"), Value: prefix + "sequence-test:" + sequence},
 	}
 	if protected {
-		entries = append(entries, intpickercompat.Entry{Label: c.rowLabelDim("Editing locked", protectedReason), Value: settingsNoopValue})
+		entries = append(entries, intpickercompat.Entry{Label: c.rowLabelDim("Editing locked", keybindingProtectedActionVisibleReason), Value: settingsNoopValue, SearchKey: protectedReason})
 	} else {
 		entries = append(entries,
 			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphType, settingsColorType, "Replace binding", "record 1 to 4 strokes"), Value: prefix + "sequence-replace:" + sequence},
@@ -2039,23 +1987,16 @@ func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]
 			Value: settingsNoopValue,
 		},
 		{
-			Label: c.rowLabelInfo("Key", displayKey, "active key"),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: c.rowLabelInfo("Canonical key", chord, "logical tmux key name stored in keymap.toml"),
-			Value: settingsNoopValue,
-		},
-		{
-			Label: c.rowLabelInfo("Delivery path", keybindingDeliveryPathFor(action, chord), ""),
+			Label: c.rowLabelInfo("Key", displayKey, ""),
 			Value: settingsNoopValue,
 		},
 	}
 	protectedReason, protected := keyBindingProtectedActionReason(defaultAction)
 	if protected {
 		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabelDim("Editing locked", protectedReason),
-			Value: settingsNoopValue,
+			Label:     c.rowLabelDim("Editing locked", keybindingProtectedActionVisibleReason),
+			Value:     settingsNoopValue,
+			SearchKey: protectedReason,
 		})
 	}
 	if !protected && containsString(removableKeybindingKeys(keymap, action, defaultAction), chord) {
@@ -2069,10 +2010,18 @@ func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]
 	// can be owned here it renders as a disabled row carrying the reason and
 	// the canonical next step instead of a row that does nothing.
 	if reason, next, ok := c.keybindingDeliveryTestUnavailable(chord); ok {
-		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabelDim("Test delivery", "unavailable - "+reason+"; next: "+next),
-			Value: settingsNoopValue,
-		})
+		entries = append(entries,
+			intpickercompat.Entry{
+				Label:     c.rowLabelDim("Test delivery", "unavailable - "+reason),
+				Value:     settingsNoopValue,
+				SearchKey: next,
+			},
+			intpickercompat.Entry{
+				Label:     c.rowLabelDim("Try instead", "run projmux setup in a plain terminal"),
+				Value:     settingsNoopValue,
+				SearchKey: next,
+			},
+		)
 		return entries, "Key - " + displayKey, nil
 	}
 	entries = append(entries, intpickercompat.Entry{
@@ -2080,23 +2029,6 @@ func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]
 		Value: prefix + "test:" + chord,
 	})
 	return entries, "Key - " + displayKey, nil
-}
-
-// keybindingDeliveryPathFor states how the key reaches the action. It is
-// metadata, not a probe: an in-picker key never enters a tmux key table, a
-// transport-dependent default arrives as a terminal-emitted xterm sequence, and
-// everything else is an explicit no-prefix tmux root binding.
-func keybindingDeliveryPathFor(action keyBindingAction, chord string) string {
-	if action.Kind == keyBindingActionPickerInternal {
-		return "picker input loop; never entered into a tmux key table"
-	}
-	if action.Tier == keyBindingTierTransportDependent {
-		if defaultAction, ok := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID); ok &&
-			strings.TrimSpace(chord) == strings.TrimSpace(defaultAction.PlainChord) {
-			return "terminal-emitted xterm sequence to the tmux root key table"
-		}
-	}
-	return "terminal to the tmux root key table (bind-key -n)"
 }
 
 func keybindingAliasesSummary(action keyBindingAction) string {
@@ -2266,31 +2198,6 @@ func keybindingListKeysSummary(action keyBindingAction) string {
 		summary += fmt.Sprintf(", +%d", len(keys)-1)
 	}
 	return summary
-}
-
-func keybindingKeysDetail(action keyBindingAction) string {
-	if len(keybindingVisibleChords(action)) == 0 {
-		return "no active keys"
-	}
-	return "active keys"
-}
-
-func keybindingActionsSummary(keymap keymapFile, action, defaultAction keyBindingAction) string {
-	if _, protected := keyBindingProtectedActionReason(defaultAction); !keyBindingEditable(action) || protected {
-		return "view only"
-	}
-	var actions []string
-	if len(keybindingVisibleChords(action)) != 0 {
-		actions = append(actions, "Unbind")
-	}
-	state := keybindingState(keymap, action, defaultAction)
-	if keybindingShowResetAction(state) {
-		actions = append(actions, keybindingResetActionLabel(state, defaultAction))
-	}
-	if len(actions) == 0 {
-		return "no action-level options"
-	}
-	return strings.Join(actions, ", ")
 }
 
 func keybindingDefaultKeysSummary(action keyBindingAction) string {
