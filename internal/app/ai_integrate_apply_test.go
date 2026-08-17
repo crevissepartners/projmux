@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,161 @@ import (
 	"strings"
 	"testing"
 )
+
+const (
+	pinnedV0101Tag    = "v0.10.1"
+	pinnedV0101Commit = "47a7c57dfca6ff31c67833cc87025485711a502d"
+)
+
+// v0101GitHubReleasePostReplaceFixture pins the immutable updater branch at
+// internal/app/update.go:319-325 in v0.10.1. Replacement happens first; normal
+// apply then executes the candidate with exact `tmux apply`, while --no-apply
+// returns without executing the candidate at all.
+type v0101GitHubReleasePostReplaceFixture struct {
+	replaced    bool
+	candidate   func([]string, io.Writer, io.Writer) error
+	candidateIO [][]string
+}
+
+func (f *v0101GitHubReleasePostReplaceFixture) apply(noApply bool, stdout, stderr io.Writer) error {
+	f.replaced = true
+	if noApply {
+		return nil
+	}
+	args := []string{"tmux", "apply"}
+	f.candidateIO = append(f.candidateIO, append([]string(nil), args...))
+	return f.candidate(args, stdout, stderr)
+}
+
+func TestV0101NormalUpdaterHandoffConvergesThroughCandidateApply(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PROJMUX_CWD", "")
+	paths := writeV0101ManagedFileFixture(t, home)
+	socket := "projmux"
+	runner := &recordingTmuxRunner{outputs: map[string]string{
+		recordedTmuxCallKey("tmux", "-L", socket, "list-sessions", "-F", "#{session_id}"):           "$1\n",
+		recordedTmuxCallKey("tmux", "-L", socket, "show-hooks", "-g", tmuxBellHookName):             "alert-bell[0] " + legacyTmuxBellHookCommand + "\n",
+		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", "allow-passthrough"):      "off\n",
+		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", "monitor-bell"):           "off\n",
+		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", "bell-action"):            "none\n",
+		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", tmuxSequenceRootsOption):  "",
+		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", tmuxSequenceTablesOption): "",
+	}}
+	cmd := managedIngestApplyFixture(home, runner)
+	cmd.bindingConverger = func(context.Context, explicitTmuxTarget) error { return nil }
+	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
+		return os.WriteFile(path, data, mode)
+	}
+	app := &App{tmux: cmd, config: &configCommand{tmux: cmd}}
+	fixture := &v0101GitHubReleasePostReplaceFixture{candidate: app.Run}
+	var stdout, stderr bytes.Buffer
+	if err := fixture.apply(false, &stdout, &stderr); err != nil {
+		t.Fatalf("%s (%s) normal post-replace handoff error = %v; stderr=%q", pinnedV0101Tag, pinnedV0101Commit, err, stderr.String())
+	}
+	if !fixture.replaced || !reflect.DeepEqual(fixture.candidateIO, [][]string{{"tmux", "apply"}}) {
+		t.Fatalf("v0.10.1 replacement=%t candidate argv=%#v, want replacement then exact [tmux apply]", fixture.replaced, fixture.candidateIO)
+	}
+	for _, path := range paths {
+		got := readCodexTestFile(t, path)
+		if strings.Contains(got, " ai ingest ") || !strings.Contains(got, "internal agent-hook ingest") {
+			t.Fatalf("normal handoff did not canonicalize %s:\n%s", path, got)
+		}
+	}
+	if !strings.Contains(stdout.String(), "migrated 4 managed agent hook files to canonical ingest") ||
+		!strings.Contains(stdout.String(), "migrated managed tmux bell hook on -L projmux") ||
+		!strings.Contains(stdout.String(), "reloaded tmux server -L projmux: 1 sessions") {
+		t.Fatalf("normal handoff stdout=%q, want file, bell, and reload convergence", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("normal handoff stderr=%q, want empty", stderr.String())
+	}
+	var bellMutations []recordedTmuxCall
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "set-hook") {
+			bellMutations = append(bellMutations, call)
+		}
+	}
+	if len(bellMutations) != 2 || !slices.Contains(bellMutations[1].args, tmuxBellHookCommand) {
+		t.Fatalf("normal handoff bell mutations=%#v, want legacy removal then canonical append", bellMutations)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("normal handoff did not write generated config: %v", err)
+	}
+}
+
+func TestV0101NoApplyIsReplaceOnlyThenExplicitCandidateNoReloadConverges(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PROJMUX_CWD", "")
+	paths := writeV0101ManagedFileFixture(t, home)
+	original := make(map[string]string, len(paths))
+	for _, path := range paths {
+		original[path] = readCodexTestFile(t, path)
+	}
+	runner := &recordingTmuxRunner{}
+	cmd := managedIngestApplyFixture(home, runner)
+	app := &App{tmux: cmd, config: &configCommand{tmux: cmd}}
+	fixture := &v0101GitHubReleasePostReplaceFixture{candidate: app.Run}
+
+	var stdout, stderr bytes.Buffer
+	if err := fixture.apply(true, &stdout, &stderr); err != nil {
+		t.Fatalf("%s --no-apply post-replace error = %v", pinnedV0101Tag, err)
+	}
+	if !fixture.replaced || len(fixture.candidateIO) != 0 {
+		t.Fatalf("v0.10.1 --no-apply replacement=%t candidate argv=%#v, want replace-only", fixture.replaced, fixture.candidateIO)
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 || len(runner.calls) != 0 {
+		t.Fatalf("v0.10.1 --no-apply streams=(%q,%q) live calls=%#v, want zero", stdout.String(), stderr.String(), runner.calls)
+	}
+	for _, path := range paths {
+		if got := readCodexTestFile(t, path); got != original[path] {
+			t.Fatalf("v0.10.1 --no-apply changed %s before candidate ran", path)
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := app.Run([]string{"config", "apply", "--no-reload", "--config", filepath.Join(home, "tmux.conf")}, &stdout, &stderr); err != nil {
+		t.Fatalf("explicit candidate config apply --no-reload error = %v; stderr=%q", err, stderr.String())
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("explicit candidate --no-reload live calls=%#v, want zero", runner.calls)
+	}
+	for _, path := range paths {
+		got := readCodexTestFile(t, path)
+		if strings.Contains(got, " ai ingest ") || !strings.Contains(got, "internal agent-hook ingest") {
+			t.Fatalf("explicit candidate --no-reload did not canonicalize %s:\n%s", path, got)
+		}
+	}
+	if !strings.Contains(stdout.String(), "migrated 4 managed agent hook files to canonical ingest") ||
+		!strings.Contains(stdout.String(), "skipped reload: --no-reload") || stderr.Len() != 0 {
+		t.Fatalf("explicit candidate no-reload streams=(%q,%q), want deterministic migration/skip output", stdout.String(), stderr.String())
+	}
+}
+
+func writeV0101ManagedFileFixture(t *testing.T, home string) []string {
+	t.Helper()
+	codexPath := filepath.Join(home, codexConfigRelativePath)
+	writeCodexTestFile(t, codexPath, strings.ReplaceAll(codexHooksBlock(true), codexHookCommand, legacyCodexHookCommand))
+	claudePath := filepath.Join(home, claudeSettingsRelativePath)
+	legacyClaude := strings.ReplaceAll(claudeHookCommand, canonicalClaudeHookRoute, legacyClaudeHookRoute)
+	writeCodexTestFile(t, claudePath, "{\n  \"hooks\": {\n    \"Notification\": [{\"hooks\": [{\"type\": \"command\", \"command\": "+string(mustJSONMarshal(legacyClaude))+"}]}]\n  }\n}\n")
+	hooksPath := filepath.Join(home, antigravityHooksRelativePath)
+	hooks, err := encodeAntigravityManagedHook("/opt/projmux/bin/projmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCodexTestFile(t, hooksPath, "{\n  \"projmux\": "+strings.ReplaceAll(hooks, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
+	statusPath := filepath.Join(home, antigravitySettingsRelativePath)
+	status, err := encodeAntigravityManagedStatusLine("/opt/projmux/bin/projmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCodexTestFile(t, statusPath, "{\n  \"statusLine\": "+strings.ReplaceAll(status, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
+	return []string{codexPath, claudePath, hooksPath, statusPath}
+}
 
 func TestTmuxApplyNoReloadMigratesManagedFilesWithoutLiveCalls(t *testing.T) {
 	home := t.TempDir()

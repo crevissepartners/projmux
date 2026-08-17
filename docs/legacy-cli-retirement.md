@@ -37,8 +37,24 @@ routes `doctor`, `quit`, `resources`, `settings`, `shell`, `switch`, and
 
 The removed pre-namespace internal aliases are `key-broker`, `popup-wait-key`,
 `preview`, `session-popup`, `status`, `statusbar`, and `tmux`. Their only
-remaining entrypoints are the corresponding `internal ...` routes. Public
-configuration work uses `config render` and `config apply`.
+remaining entrypoints are the corresponding `internal ...` routes, subject to
+the exact updater handoff exception below. Public configuration work uses
+`config render` and `config apply`.
+
+## Updater handoff exception
+
+The immutable v0.10.1 GitHub Release updater replaces its own executable and
+then invokes the replacement with exact argv `tmux apply`. The replacement
+accepts only those two tokens as a hidden handoff and routes them through the
+current `config apply` convergence path. Exit status, stdout, stderr, managed
+producer migration, generated-config writes, rollback, and live tmux mutation
+are therefore the current apply contract rather than a second implementation.
+
+This exception does not restore a `tmux` catalog node or top-level handler and
+is absent from root help and generated CLI documentation. Bare `tmux`, every
+other old tmux subcommand, and `tmux apply` with any extra argv still use the
+removed-root contract: exit 1, no stdout or side effect, and root help plus
+`unknown command: tmux` on stderr.
 
 ## Internal migration exception
 

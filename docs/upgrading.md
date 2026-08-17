@@ -104,6 +104,31 @@ files, but they neither inspect nor modify a live tmux server. A later normal
 `projmux config apply --socket <name>` converges a marker-owned bell hook only on
 that exact `-L <name>` socket.
 
+**Upgrading directly from v0.10.1:** its GitHub Release updater predates the
+current post-update argv. A normal
+`PROJMUX_INSTALLER=github-release projmux update apply` replaces the executable
+and then calls exact legacy `tmux apply`; the replacement accepts that hidden
+handoff and performs the same managed-producer migration, generated-config
+write, and live reload as current `config apply`. The old route is not restored
+in help or the command catalog, and no other `tmux` argv is accepted.
+
+The v0.10.1 updater's own `--no-apply` behavior is historically different: it
+returns immediately after binary replacement and never executes the new
+binary. Treat that invocation as replace-only, verify that the executable is
+the intended new version, and then run the replacement explicitly:
+
+```sh
+PROJMUX_INSTALLER=github-release projmux update apply --no-apply
+projmux version
+projmux config apply --no-reload
+```
+
+The explicit last step migrates marker-owned provider files and writes the
+generated config without inspecting or mutating live tmux. This split-stage
+recovery applies only when the command that started the update was v0.10.1;
+current `update apply --no-apply` already executes the new binary's
+`config apply --no-reload` automatically.
+
 If a conflict is reported, keep the unmanaged entry unchanged while deciding
 which tool owns it; remove or rewrite it manually only after that decision,
 then rerun the dry-run and installer. A failed transaction is safe to retry
