@@ -160,11 +160,13 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 				return err
 			}
 			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, project.Spec.Root, launchArgv)
-			if err != nil {
-				return err
+			if paneID != "" {
+				ledger.record(runtimePane, paneID, work.pane.Metadata.UID)
+				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
+					return errors.Join(err, mirrorErr)
+				}
 			}
-			ledger.record(runtimePane, paneID, work.pane.Metadata.UID)
-			if err := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); err != nil {
+			if err != nil {
 				return err
 			}
 			// The managed-pane options are what make this pane an agent pane to

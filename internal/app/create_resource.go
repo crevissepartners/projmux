@@ -354,11 +354,13 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 				return err
 			}
 			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, project.Spec.Root, flags.payload)
-			if err != nil {
-				return err
+			if paneID != "" {
+				ledger.record(runtimePane, paneID, work.pane.Metadata.UID)
+				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
+					return errors.Join(err, mirrorErr)
+				}
 			}
-			ledger.record(runtimePane, paneID, work.pane.Metadata.UID)
-			if err := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); err != nil {
+			if err != nil {
 				return err
 			}
 			results = append(results, createResult{
@@ -674,11 +676,13 @@ func (c *createCommand) materializeWindow(
 	work *windowWork,
 ) error {
 	windowID, err := c.runtime.newWindow(ctx, sessionName, work.window.Metadata.Name, project.Spec.Root, work.payload)
-	if err != nil {
-		return err
+	if windowID != "" {
+		ledger.record(runtimeWindow, windowID, work.window.Metadata.UID)
+		if mirrorErr := c.runtime.mirror.MirrorWindow(ctx, windowID, work.window); mirrorErr != nil {
+			return errors.Join(err, mirrorErr)
+		}
 	}
-	ledger.record(runtimeWindow, windowID, work.window.Metadata.UID)
-	if err := c.runtime.mirror.MirrorWindow(ctx, windowID, work.window); err != nil {
+	if err != nil {
 		return err
 	}
 	livePanes, err := c.runtime.panesOf(ctx, windowID)
@@ -720,11 +724,13 @@ func (c *createCommand) ensureAnchorPane(
 		// The Window exists in metadata but not in the runtime. Materialize it
 		// detached and adopt its initial pane as the anchor.
 		windowID, err = c.runtime.newWindow(ctx, sessionName, window.Metadata.Name, project.Spec.Root, nil)
-		if err != nil {
-			return "", err
+		if windowID != "" {
+			ledger.record(runtimeWindow, windowID, window.Metadata.UID)
+			if mirrorErr := c.runtime.mirror.MirrorWindow(ctx, windowID, *window); mirrorErr != nil {
+				return "", errors.Join(err, mirrorErr)
+			}
 		}
-		ledger.record(runtimeWindow, windowID, window.Metadata.UID)
-		if err := c.runtime.mirror.MirrorWindow(ctx, windowID, *window); err != nil {
+		if err != nil {
 			return "", err
 		}
 	}
@@ -863,18 +869,27 @@ func (c *createCommand) transact(op createOperation) error {
 	if err != nil {
 		return err
 	}
-	ledger := &runtimeLedger{}
+	ledger := newRuntimeLedger(operationID)
 
 	_, err = c.store.update(func(working *coremetadata.Registry) error {
 		if err := c.reconciler.reconcile(ctx, working, c.store.mutator(), operationID); err != nil {
 			return err
 		}
-		return op(ctx, working, c.store.mutator(), operationID, ledger)
+		if err := op(ctx, working, c.store.mutator(), operationID, ledger); err != nil {
+			return err
+		}
+		// The lifecycle hook caused by our own tmux mutation deliberately
+		// defers while this transaction owns the registry lock. Re-run the same
+		// reconciler after all explicit mirrors are in place so the committed
+		// status and the live tmux projection agree before create returns.
+		return c.reconciler.reconcile(ctx, working, c.store.mutator(), operationID)
 	})
 	if err != nil {
 		c.runtime.rollback(ctx, ledger)
+		c.runtime.clearCreateOperations(ctx, ledger)
 		return MapMetadataError(err)
 	}
+	c.runtime.clearCreateOperations(ctx, ledger)
 	return nil
 }
 

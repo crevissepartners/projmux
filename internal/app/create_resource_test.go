@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
+	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,6 +25,7 @@ import (
 type fakeSessionMaterializer struct {
 	tmux         *fakeTmux
 	preCreateErr error
+	createErr    error
 	postCreate   func()
 	created      []string
 }
@@ -42,6 +45,28 @@ func (f *fakeSessionMaterializer) EnsureSession(_ context.Context, name, _ strin
 	f.created = append(f.created, name)
 	if f.postCreate != nil {
 		f.postCreate()
+	}
+	if f.createErr != nil {
+		return f.createErr
+	}
+	return nil
+}
+
+func (f *fakeSessionMaterializer) EnsureSessionWithEnvironment(ctx context.Context, name, cwd string, env map[string]string) error {
+	if f.tmux.session(name) != nil {
+		return nil
+	}
+	if f.preCreateErr != nil {
+		return f.preCreateErr
+	}
+	session := f.tmux.addSession(name)
+	maps.Copy(session.env, env)
+	f.created = append(f.created, name)
+	if f.postCreate != nil {
+		f.postCreate()
+	}
+	if f.createErr != nil {
+		return f.createErr
 	}
 	return nil
 }
@@ -642,7 +667,8 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 		tmux := newFakeTmux()
 		session := tmux.addSession("alpha")
 		window := seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
-		runtime := &materializer{runner: tmux, mirror: intmetadata.NewMirror(tmux), warn: testWarnWriter{t}}
+		var warnings bytes.Buffer
+		runtime := &materializer{runner: tmux, mirror: intmetadata.NewMirror(tmux), warn: &warnings}
 
 		ledger := &runtimeLedger{}
 		ledger.record(runtimeWindow, window.id, "win-alpha-main")
@@ -653,6 +679,9 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 		if _, got := tmux.window(window.id); got == nil {
 			t.Fatal("rollback removed a window that no longer carried this operation's uid")
 		}
+		if !strings.Contains(warnings.String(), "rollback preserved window "+window.id) {
+			t.Fatalf("ownership drift warning = %q", warnings.String())
+		}
 
 		// With the uid restored it is this operation's object again.
 		window.opts[tmuxopts.WindowUID] = "win-alpha-main"
@@ -661,6 +690,112 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 			t.Fatal("rollback kept an object this operation created")
 		}
 	})
+}
+
+func TestObjectCreatedHookFailureRollsBackExactPaneAndRegistry(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	session := tmux.addSession("alpha")
+	seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+	before := tmux.state()
+	registryBefore := store.snapshot()
+
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	tmux.fail = []string{"split-window"}
+	tmux.failAfterCreate = true
+	tmux.failMessage = "synchronous lifecycle hook refused"
+
+	stdout, _, err := runRoute(t, create, "pane", "--project", "alpha", "--window", "main")
+	if err == nil || !strings.Contains(err.Error(), "synchronous lifecycle hook refused") {
+		t.Fatalf("error = %v, want lifecycle failure", err)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want 0 bytes", stdout)
+	}
+	if got := tmux.state(); got != before {
+		t.Fatalf("rollback did not remove the exact error-created pane:\n--- got ---\n%s\n--- want ---\n%s", got, before)
+	}
+	if store.snapshot() != registryBefore || store.writes != 0 {
+		t.Fatal("object-created failure committed registry state")
+	}
+}
+
+func TestObjectCreatedHookFailureRollsBackExactWindowAndRegistry(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	session := tmux.addSession("alpha")
+	seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+	before := tmux.state()
+	registryBefore := store.snapshot()
+
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	tmux.fail = []string{"new-window"}
+	tmux.failAfterCreate = true
+	tmux.failMessage = "synchronous lifecycle hook refused"
+
+	stdout, _, err := runRoute(t, create, "window", "--project", "alpha", "--name", "phase0-hook")
+	if err == nil || !strings.Contains(err.Error(), "synchronous lifecycle hook refused") {
+		t.Fatalf("error = %v, want lifecycle failure", err)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want 0 bytes", stdout)
+	}
+	if got := tmux.state(); got != before {
+		t.Fatalf("rollback did not remove the exact error-created window:\n--- got ---\n%s\n--- want ---\n%s", got, before)
+	}
+	if store.snapshot() != registryBefore || store.writes != 0 {
+		t.Fatal("object-created failure committed registry state")
+	}
+}
+
+func TestObjectCreatedHookFailureRollsBackExactSessionAndRegistry(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	before := tmux.state()
+	registryBefore := store.snapshot()
+	create, sessions := newTestResourceCreateCommand(t, store, tmux)
+	sessions.createErr = errors.New("after-new-window hook refused")
+
+	stdout, _, err := runRoute(t, create, "window", "--project", "beta", "--name", "phase0-session")
+	if err == nil || !strings.Contains(err.Error(), "after-new-window hook refused") {
+		t.Fatalf("error = %v, want object-created session failure", err)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want 0 bytes", stdout)
+	}
+	if got := tmux.state(); got != before {
+		t.Fatalf("rollback did not remove the exact error-created session:\n--- got ---\n%s\n--- want ---\n%s", got, before)
+	}
+	if store.snapshot() != registryBefore || store.writes != 0 {
+		t.Fatal("object-created session failure committed registry state")
+	}
+}
+
+func TestErrorCreatedHandleRejectsAmbiguousOrPreexistingIDs(t *testing.T) {
+	t.Parallel()
+
+	before := map[string]bool{"%7": true}
+	after := map[string]bool{"%7": true, "%8": true, "%9": true}
+	for name, output := range map[string]string{
+		"two handles":        "%8\n%9\nhook failed",
+		"preexisting handle": "%7\nhook failed",
+		"diagnostic only":    "hook failed after split",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := errorCreatedHandle(output, "%", before, after); got != "" {
+				t.Fatalf("errorCreatedHandle(%q) = %q, want fail-closed empty handle", output, got)
+			}
+		})
+	}
+	if got := errorCreatedHandle("%8\n'exit 7' returned 7", "%", before, after); got != "%8" {
+		t.Fatalf("single exact created handle = %q, want %%8", got)
+	}
 }
 
 // TestResourceCreateNegativesNeverMutate is the negative table.

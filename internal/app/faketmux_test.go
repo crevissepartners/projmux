@@ -28,6 +28,10 @@ type fakeTmux struct {
 	fail        []string
 	failMessage string
 	failed      bool
+	// failAfterCreate models tmux lifecycle-hook failures: tmux has already
+	// created the requested Window/Pane and printed its stable id, then returns
+	// the hook's non-zero status and diagnostic in the same combined output.
+	failAfterCreate bool
 	// failAlways keeps the trigger armed. A one-shot trigger cannot model a
 	// query that is simply unavailable -- reconcile reads some inventories more
 	// than once per pass, and the second read would then succeed and hide the
@@ -39,6 +43,7 @@ type fakeTmuxSession struct {
 	id      string
 	name    string
 	opts    map[string]string
+	env     map[string]string
 	windows []*fakeTmuxWindow
 }
 
@@ -84,7 +89,7 @@ func (f *fakeTmux) sessionNames() map[string]bool {
 // addSession creates a session with one window holding one pane, the way tmux
 // `new-session` does.
 func (f *fakeTmux) addSession(name string) *fakeTmuxSession {
-	session := &fakeTmuxSession{id: f.mint("$"), name: name, opts: map[string]string{}}
+	session := &fakeTmuxSession{id: f.mint("$"), name: name, opts: map[string]string{}, env: map[string]string{}}
 	window := &fakeTmuxWindow{id: f.mint("@"), name: "tmux", opts: map[string]string{}}
 	window.panes = append(window.panes, &fakeTmuxPane{id: f.mint("%"), opts: map[string]string{}})
 	session.windows = append(session.windows, window)
@@ -178,7 +183,8 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		return nil, fmt.Errorf("fake tmux: unexpected binary %q", name)
 	}
 	f.calls = append(f.calls, append([]string(nil), args...))
-	if (!f.failed || f.failAlways) && len(f.fail) > 0 && containsAll(args, f.fail) {
+	shouldFail := (!f.failed || f.failAlways) && len(f.fail) > 0 && containsAll(args, f.fail)
+	if shouldFail && !f.failAfterCreate {
 		f.failed = true
 		message := f.failMessage
 		if message == "" {
@@ -191,11 +197,13 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	if len(args) == 0 {
 		return nil, fmt.Errorf("fake tmux: empty argv")
 	}
+	var out []byte
+	var err error
 	switch args[0] {
 	case "new-window":
-		return f.runNewWindow(args)
+		out, err = f.runNewWindow(args)
 	case "split-window":
-		return f.runSplitWindow(args)
+		out, err = f.runSplitWindow(args)
 	case "list-windows":
 		return f.runListWindows(args)
 	case "list-panes":
@@ -204,6 +212,10 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		return f.runDisplayMessage(args)
 	case "set-option":
 		return f.runSetOption(args)
+	case "set-environment":
+		return f.runSetEnvironment(args)
+	case "show-environment":
+		return f.runShowEnvironment(args)
 	case "rename-window":
 		return f.runRenameWindow(args)
 	case "kill-session", "kill-window", "kill-pane":
@@ -217,6 +229,19 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	default:
 		return nil, fmt.Errorf("fake tmux: unsupported command %q", args[0])
 	}
+	if err != nil {
+		return out, err
+	}
+	if shouldFail {
+		f.failed = true
+		message := f.failMessage
+		if message == "" {
+			message = "injected tmux failure"
+		}
+		return append(out, []byte("'exit 7' returned 7: "+message+"\n")...),
+			fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), &exec.ExitError{}, message)
+	}
+	return out, nil
 }
 
 func containsAll(args, want []string) bool {
@@ -336,6 +361,9 @@ func (f *fakeTmux) runListPanes(args []string) ([]byte, error) {
 		return []byte(b.String()), nil
 	}
 	session, window := f.window(target)
+	if paneSession, paneWindow, pane := f.pane(target); pane != nil {
+		session, window = paneSession, paneWindow
+	}
 	if window == nil {
 		if s := f.session(target); s != nil && len(s.windows) > 0 {
 			session, window = s, s.windows[0]
@@ -392,6 +420,33 @@ func (f *fakeTmux) runSetOption(args []string) ([]byte, error) {
 		}
 	}
 	return nil, fmt.Errorf("fake tmux: set-option: no target %q", target)
+}
+
+func (f *fakeTmux) runSetEnvironment(args []string) ([]byte, error) {
+	session := f.session(flagValue(args, "-t"))
+	if session == nil {
+		return nil, fmt.Errorf("fake tmux: set-environment: no session %q", flagValue(args, "-t"))
+	}
+	name := args[len(args)-2]
+	if slices.Contains(args, "-u") {
+		name = args[len(args)-1]
+		delete(session.env, name)
+		return nil, nil
+	}
+	session.env[name] = args[len(args)-1]
+	return nil, nil
+}
+
+func (f *fakeTmux) runShowEnvironment(args []string) ([]byte, error) {
+	session := f.session(flagValue(args, "-t"))
+	if session == nil {
+		return nil, fmt.Errorf("fake tmux: show-environment: no session %q", flagValue(args, "-t"))
+	}
+	var b strings.Builder
+	for name, value := range session.env {
+		fmt.Fprintf(&b, "%s=%s\n", name, value)
+	}
+	return []byte(b.String()), nil
 }
 
 // optionAssignment returns the trailing "<option> <value>" pair of a set-option

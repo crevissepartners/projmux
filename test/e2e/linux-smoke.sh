@@ -1255,6 +1255,51 @@ binding_inside_pmx() {
     "$bin" "$@"
 }
 
+# Canonical create holds the metadata transaction while tmux runs synchronous
+# creation hooks. The session-scoped lease must prevent self-deadlock without
+# weakening standalone hooks, and the second in-transaction reconcile must
+# leave registry status aligned with the exact returned pane.
+create_reentrant_pane="$(
+  binding_inside_pmx create pane --project alpha --window roadmap --create-window \
+    -o pane-id -- sleep 600
+)"
+if [[ ! "$create_reentrant_pane" =~ ^%[0-9]+$ ]]; then
+  echo "reentrant --create-window returned invalid pane id: $create_reentrant_pane" >&2
+  exit 1
+fi
+create_reentrant_uid="$(binding_tmux show-options -pqv -t "$create_reentrant_pane" @projmux_pane_uid)"
+if [[ -z "$create_reentrant_uid" ]]; then
+  echo "reentrant --create-window returned before pane uid mirror" >&2
+  exit 1
+fi
+binding_inside_pmx get panes --project alpha --window roadmap -o json >"$binding_root/create-reentrant.json"
+smoke_assert_file_contains "$binding_root/create-reentrant.json" "$create_reentrant_uid"
+if grep -Fq '"type": "MissingRuntime"' "$binding_root/create-reentrant.json"; then
+  echo "reentrant create committed stale MissingRuntime status" >&2
+  exit 1
+fi
+
+# tmux may create and print %N before a later synchronous hook fails. The CLI
+# must emit no success stdout, restore byte-identical registry content, and
+# remove only that newly created pane.
+cp "$binding_registry" "$binding_root/registry.before-hook-failure"
+binding_tmux list-panes -a -F '#{pane_id}|#{@projmux_pane_uid}' >"$binding_root/panes.before-hook-failure"
+binding_tmux set-hook -ag after-split-window 'run-shell "exit 7"'
+set +e
+binding_inside_pmx create pane --project alpha --window roadmap -o pane-id -- sleep 600 \
+  >"$binding_root/create-hook-failure.out" 2>"$binding_root/create-hook-failure.err"
+create_hook_failure_status=$?
+set -e
+if [[ "$create_hook_failure_status" == "0" ]] || [[ -s "$binding_root/create-hook-failure.out" ]]; then
+  echo "object-created hook failure reported success or wrote stdout" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$binding_root/create-hook-failure.err" "returned 7"
+cmp "$binding_root/registry.before-hook-failure" "$binding_registry"
+binding_tmux list-panes -a -F '#{pane_id}|#{@projmux_pane_uid}' >"$binding_root/panes.after-hook-failure"
+cmp "$binding_root/panes.before-hook-failure" "$binding_root/panes.after-hook-failure"
+binding_tmux source-file "$binding_config"
+
 binding_inside_pmx get panes -o uid >"$binding_root/project-panes.out"
 smoke_assert_file_contains "$binding_root/project-panes.out" "$lifecycle_split_uid"
 if grep -Fqx "$binding_beta_pane_uid" "$binding_root/project-panes.out"; then
@@ -1317,7 +1362,7 @@ binding_tmux set-option -wq -t "$lifecycle_window" @projmux_window_uid "$lifecyc
 # fake tmux call log for zero set-option/rename calls.
 cp "$binding_registry" "$binding_root/registry.before-repeat-hook"
 binding_registry_stat="$(stat -c '%i:%s:%y' "$binding_registry")"
-binding_pmx internal tmux reconcile-bindings --socket-path "$binding_socket_path"
+binding_pmx internal tmux reconcile-bindings --socket-path "$binding_socket_path" --session "$binding_session"
 cmp "$binding_root/registry.before-repeat-hook" "$binding_registry"
 if [[ "$(stat -c '%i:%s:%y' "$binding_registry")" != "$binding_registry_stat" ]]; then
   echo "repeat lifecycle convergence rewrote byte-identical registry content" >&2

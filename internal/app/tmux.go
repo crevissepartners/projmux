@@ -384,6 +384,7 @@ func (c *tmuxCommand) runReconcileBindings(args []string, stderr io.Writer) erro
 	fs := flag.NewFlagSet("internal tmux reconcile-bindings", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	socketPath := fs.String("socket-path", "", "absolute tmux socket path")
+	session := fs.String("session", "", "tmux hook session")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -393,6 +394,13 @@ func (c *tmuxCommand) runReconcileBindings(args []string, stderr io.Writer) erro
 	target, err := tmuxSocketPathTarget(*socketPath)
 	if err != nil {
 		return usageError(err.Error())
+	}
+	deferCreate, err := deferBindingConvergence(context.Background(), c.runner, target, *session)
+	if err != nil {
+		return err
+	}
+	if deferCreate {
+		return nil
 	}
 	return c.convergeBindings(context.Background(), target)
 }
@@ -2019,7 +2027,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 // cannot recursively trigger itself.
 func tmuxBindingConvergenceHookBody(bin string) string {
 	return "run-shell " + tmuxConfigQuote(
-		bin+" internal tmux reconcile-bindings --socket-path '#{socket_path}' >/dev/null 2>&1")
+		bin+" internal tmux reconcile-bindings --socket-path '#{socket_path}' --session '#{session_id}' >/dev/null 2>&1")
 }
 
 func withTmuxConfigDigest(body string) string {
