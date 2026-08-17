@@ -58,7 +58,7 @@ func TestClassifyAllowlistAndStatePolicy(t *testing.T) {
 		{name: "status success read only", args: []string{"status", "usage", "/secret/path"}, want: CommandClass{Command: "status", Subcommand: "usage"}},
 		{name: "notify list read only", args: []string{"notify", "list", "--json"}, want: CommandClass{Command: "notify", Subcommand: "list"}},
 		{name: "notify push changes state", args: []string{"notify", "push", "--text", "private"}, want: CommandClass{Command: "notify", Subcommand: "push", StateChanging: true}},
-		{name: "ai ingest automatic success read only", args: []string{"ai", "ingest", "secret-provider"}, want: CommandClass{Command: "ai", Subcommand: "ingest"}},
+		{name: "agent hook ingest automatic success read only", args: []string{"internal", "agent-hook", "ingest", "secret-provider"}, want: CommandClass{Command: "ai", Subcommand: "ingest"}},
 		{name: "topic get read only", args: []string{"ai", "topic", "get", "--pane", "%1"}, want: CommandClass{Command: "ai", Subcommand: "topic"}},
 		{name: "topic set changes state", args: []string{"ai", "topic", "set", "private topic"}, want: CommandClass{Command: "ai", Subcommand: "topic", StateChanging: true}},
 		{name: "update check writes cache", args: []string{"update", "check"}, want: CommandClass{Command: "update", Subcommand: "check", StateChanging: true}},
@@ -83,7 +83,7 @@ func TestClassifyAutomaticHookAndPollSuccessesAreReadOnly(t *testing.T) {
 		args []string
 		want CommandClass
 	}{
-		{name: "ai ingest", args: []string{"ai", "ingest", "codex-hook"}, want: CommandClass{Command: "ai", Subcommand: "ingest"}},
+		{name: "agent hook ingest", args: []string{"internal", "agent-hook", "ingest", "codex-hook"}, want: CommandClass{Command: "ai", Subcommand: "ingest"}},
 		{name: "attention arm", args: []string{"attention", "arm", "%1"}, want: CommandClass{Command: "attention", Subcommand: "arm"}},
 		{name: "attention clear", args: []string{"attention", "clear", "%1"}, want: CommandClass{Command: "attention", Subcommand: "clear"}},
 		{name: "attention window", args: []string{"attention", "window", "@1"}, want: CommandClass{Command: "attention", Subcommand: "window"}},
@@ -425,10 +425,6 @@ func TestClassifyInternalNamespaceMatchesThePreNamespaceSpelling(t *testing.T) {
 		{relocated: []string{"internal", "session-popup", "open"}, current: []string{"session-popup", "open"}},
 		{relocated: []string{"internal", "key-broker"}, current: []string{"key-broker"}},
 		{relocated: []string{"internal", "popup-wait-key"}, current: []string{"popup-wait-key"}},
-		// `agent-hook` is the one sub-namespace renamed rather than relocated
-		// verbatim; it still has to land on the rule that owns provider ingest.
-		{relocated: []string{"internal", "agent-hook", "ingest", "codex-hook"}, current: []string{"ai", "ingest", "codex-hook"}},
-		{relocated: []string{"internal", "agent-hook", "watch-title", "%9"}, current: []string{"ai", "watch-title", "%9"}},
 		// Direct help stays read-only through the namespace too.
 		{relocated: []string{"internal", "statusbar", "--help"}, current: []string{"statusbar", "--help"}},
 	} {
@@ -439,6 +435,17 @@ func TestClassifyInternalNamespaceMatchesThePreNamespaceSpelling(t *testing.T) {
 		}
 		if want.Command == "" {
 			t.Errorf("Classify(%q) is unclassified; the audit row proves nothing", tt.current)
+		}
+	}
+	for _, tt := range []struct {
+		argv []string
+		want CommandClass
+	}{
+		{argv: []string{"internal", "agent-hook", "ingest", "codex-hook"}, want: CommandClass{Command: "ai", Subcommand: "ingest"}},
+		{argv: []string{"internal", "agent-hook", "watch-title", "%9"}, want: CommandClass{Command: "ai", Subcommand: "watch-title", StateChanging: true}},
+	} {
+		if got := Classify(tt.argv); got != tt.want {
+			t.Errorf("Classify(%q) = %#v, want %#v", tt.argv, got, tt.want)
 		}
 	}
 

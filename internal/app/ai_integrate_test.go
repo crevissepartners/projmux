@@ -875,6 +875,7 @@ func TestAIIntegrateClaudeRefusesUnmanagedProjmuxHook(t *testing.T) {
   }
 }
 `)
+	before := readCodexTestFile(t, path)
 
 	err := cmd.Run([]string{"integrate", "claude"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
@@ -883,8 +884,8 @@ func TestAIIntegrateClaudeRefusesUnmanagedProjmuxHook(t *testing.T) {
 	if !strings.Contains(err.Error(), "unmanaged projmux ingest command") || !strings.Contains(err.Error(), "--dry-run") {
 		t.Fatalf("error = %v, want conflict with dry-run guidance", err)
 	}
-	if got := readCodexTestFile(t, path); strings.Contains(got, claudeHookManagedMarker) {
-		t.Fatalf("settings was modified unexpectedly:\n%s", got)
+	if got := readCodexTestFile(t, path); got != before {
+		t.Fatalf("stale unmanaged settings were modified automatically:\nbefore:\n%s\nafter:\n%s", before, got)
 	}
 
 	var stdout bytes.Buffer

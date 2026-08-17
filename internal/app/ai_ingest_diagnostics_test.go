@@ -159,7 +159,7 @@ func TestAIIngestActualCodexNotifyLeavesAIQuietAndPhase4OwnsTransition(t *testin
 	if lifecycle.RecordedOutcome() {
 		t.Fatal("secondary Phase 4 notify transition claimed the ingest top level")
 	}
-	if err := diagnostics.RecordOutcome(store, []string{"ai", "ingest", "codex-hook"}, "ai-app-run", "0.10.0", "tmux", started, err, false, lifecycle.RecordedOutcome()); err != nil {
+	if err := diagnostics.RecordOutcome(store, []string{"internal", "agent-hook", "ingest", "codex-hook"}, "ai-app-run", "0.10.0", "tmux", started, err, false, lifecycle.RecordedOutcome()); err != nil {
 		t.Fatal(err)
 	}
 	events = readAIOperationalEvents(t, store)
@@ -254,7 +254,7 @@ func TestAIIngestActualAntigravityKnownQuietAndRouteFailure(t *testing.T) {
 		if len(events) != 1 || events[0].Provider != "antigravity" || events[0].AIKind != "tool" || events[0].AIResult != "failed" || events[0].Failure != "route-failed" {
 			t.Fatalf("Antigravity route events = %#v", events)
 		}
-		assertNoGenericAIOutcome(t, store, lifecycle, []string{"ai", "ingest", "antigravity-hook", "--event", "PreToolUse"}, started, err)
+		assertNoGenericAIOutcome(t, store, lifecycle, []string{"internal", "agent-hook", "ingest", "antigravity-hook", "--event", "PreToolUse"}, started, err)
 	})
 }
 
@@ -311,7 +311,7 @@ func TestAIIngestActualBellValidInvalidUnmatchedAndRouteFailure(t *testing.T) {
 			t.Fatalf("blank bell error = %v", err)
 		}
 		assertSingleAIBellOutcome(t, store, "ignored", "target-invalid")
-		assertNoGenericAIOutcome(t, store, lifecycle, []string{"ai", "ingest", "bell"}, started, err)
+		assertNoGenericAIOutcome(t, store, lifecycle, []string{"internal", "agent-hook", "ingest", "bell"}, started, err)
 	})
 
 	t.Run("pane not found", func(t *testing.T) {
@@ -335,7 +335,7 @@ func TestAIIngestActualBellValidInvalidUnmatchedAndRouteFailure(t *testing.T) {
 			t.Fatalf("bell route error = %v", err)
 		}
 		assertSingleAIBellOutcome(t, store, "failed", "route-failed")
-		assertNoGenericAIOutcome(t, store, lifecycle, []string{"ai", "ingest", "bell", "--pane", "%9"}, started, err)
+		assertNoGenericAIOutcome(t, store, lifecycle, []string{"internal", "agent-hook", "ingest", "bell", "--pane", "%9"}, started, err)
 	})
 }
 
@@ -421,7 +421,7 @@ func TestAIWatcherLifecycleIsBoundedAndSuppressesGenericOutcome(t *testing.T) {
 			if !lifecycle.RecordedOutcome() {
 				t.Fatal("watcher terminal did not own the top-level outcome")
 			}
-			assertNoGenericAIOutcome(t, store, lifecycle, []string{"ai", "watch-title", "%44"}, started, err)
+			assertNoGenericAIOutcome(t, store, lifecycle, []string{"internal", "agent-hook", "watch-title", "%44"}, started, err)
 		})
 	}
 }
@@ -467,7 +467,7 @@ func TestAIOperationalAppendFailureDoesNotChangeIngestError(t *testing.T) {
 		t.Fatal("append failure lost logical top-level ownership")
 	}
 	fallback := diagnostics.NewStore(filepath.Join(t.TempDir(), "operations.jsonl"))
-	if err := diagnostics.RecordOutcome(fallback, []string{"ai", "ingest", "codex-hook"}, "append-fails", "0.10.0", "tmux", time.Now(), err, false, lifecycle.RecordedOutcome()); err != nil {
+	if err := diagnostics.RecordOutcome(fallback, []string{"internal", "agent-hook", "ingest", "codex-hook"}, "append-fails", "0.10.0", "tmux", time.Now(), err, false, lifecycle.RecordedOutcome()); err != nil {
 		t.Fatal(err)
 	}
 	if events := readAIOperationalEvents(t, fallback); len(events) != 0 {

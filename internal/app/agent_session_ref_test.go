@@ -193,8 +193,8 @@ func TestCompatibilityAITopicAndStatusForwardThroughAgentAuthority(t *testing.T)
 }
 
 // TestOneProviderHookRecordsItsOwnConversationShapeOnTheAgent is the
-// per-provider ingest table. Each provider goes through its real `ai ingest`
-// entry point with a real hook payload, and each one is judged on the union
+// per-provider ingest table. Each provider goes through the canonical hook
+// ingest handler with a real payload, and each one is judged on the union
 // member it populated -- Claude's session id plus transcript path, Codex's
 // thread and session ids, Antigravity's single conversation id.
 func TestOneProviderHookRecordsItsOwnConversationShapeOnTheAgent(t *testing.T) {

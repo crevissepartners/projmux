@@ -362,7 +362,6 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 	}
 	commands := map[string]rawArgvCommand{
 		"agent":     a.agent,
-		"ai":        legacyAIIngestGate{target: a.ai},
 		"create":    a.create,
 		"attention": a.attention,
 		"attach": legacyRouteGate{
@@ -486,12 +485,12 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	// Retired public routes are side-effect-free tombstones. The exact legacy
-	// ingest producer allowlist is the sole exception and must retain its old
-	// pre-dispatch migration ordering until Phase 3.
+	// Retired public routes and removed roots are side-effect-free. The old AI
+	// root is gone entirely; stale unmanaged producer argv must fail before any
+	// automatic migration or other mutation.
 	switch args[0] {
 	case "ai":
-		return cli.IsLegacyAIProducerArgv(args[1:])
+		return false
 	case "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",
 		"key-broker", "popup-wait-key", "preview", "session-popup", "status", "statusbar", "tmux":
 		return false

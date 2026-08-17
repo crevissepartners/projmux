@@ -371,7 +371,7 @@ func TestInternalNamespaceRejectsUnknownSubcommandsAsUsageErrors(t *testing.T) {
 	}
 }
 
-func TestLegacyAndCanonicalAgentHookProducerArgvReachSameHandler(t *testing.T) {
+func TestCanonicalAgentHookProducerArgvReachTheExistingHandler(t *testing.T) {
 	t.Parallel()
 	producerArgv := [][]string{
 		{"codex-hook"},
@@ -385,15 +385,15 @@ func TestLegacyAndCanonicalAgentHookProducerArgvReachSameHandler(t *testing.T) {
 	}
 	for _, producer := range producerArgv {
 		t.Run(strings.Join(producer, "_"), func(t *testing.T) {
-			legacy := append([]string{"ingest"}, producer...)
+			want := append([]string{"ingest"}, producer...)
 			canonicalTarget := &recordingArgv{}
 			internal := newInternalCommand()
 			internal.ai = canonicalTarget
 			if _, _, err := runRoute(t, internal, append([]string{"agent-hook", "ingest"}, producer...)...); err != nil {
 				t.Fatal(err)
 			}
-			if len(canonicalTarget.calls) != 1 || !reflect.DeepEqual(canonicalTarget.calls[0], legacy) {
-				t.Fatalf("canonical forwarded %q, legacy dispatcher argv is %q", canonicalTarget.calls, legacy)
+			if len(canonicalTarget.calls) != 1 || !reflect.DeepEqual(canonicalTarget.calls[0], want) {
+				t.Fatalf("canonical forwarded %q, want handler argv %q", canonicalTarget.calls, want)
 			}
 		})
 	}

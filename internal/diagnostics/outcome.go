@@ -3,8 +3,6 @@ package diagnostics
 import (
 	"errors"
 	"time"
-
-	"github.com/crevissepartners/projmux/internal/cli"
 )
 
 type exitCoder interface {
@@ -73,7 +71,7 @@ func retiredCLINoWrite(args []string) bool {
 	}
 	switch args[0] {
 	case "ai":
-		return !cli.IsLegacyAIProducerArgv(args[1:])
+		return true
 	case "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",
 		"key-broker", "popup-wait-key", "preview", "session-popup", "status", "statusbar", "tmux":
 		return true

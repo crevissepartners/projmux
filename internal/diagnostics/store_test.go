@@ -457,7 +457,7 @@ func TestRecordOutcomeAutomaticHookAndPollSuccessZeroErrorOne(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "ai ingest", args: []string{"ai", "ingest", "codex-hook"}},
+		{name: "agent hook ingest", args: []string{"internal", "agent-hook", "ingest", "codex-hook"}},
 		{name: "attention arm", args: []string{"attention", "arm", "%1"}},
 		{name: "attention clear", args: []string{"attention", "clear", "%1"}},
 		{name: "attention window", args: []string{"attention", "window", "@1"}},

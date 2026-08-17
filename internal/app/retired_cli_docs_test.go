@@ -1,6 +1,7 @@
 package app
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,7 +40,7 @@ func TestMaintainedDocsDoNotAdvertiseRetiredCLI(t *testing.T) {
 			t.Fatalf("read %s: %v", entry.Name(), err)
 		}
 		text := string(raw)
-		if entry.Name() != "legacy-cli-retirement.md" {
+		if entry.Name() != "legacy-cli-retirement.md" && entry.Name() != "upgrading.md" {
 			if match := legacyProducer.FindString(text); match != "" {
 				t.Errorf("%s repeats the exact legacy producer spelling %q outside the retirement ledger", entry.Name(), strings.TrimSpace(match))
 			}
@@ -55,6 +56,74 @@ func TestMaintainedDocsDoNotAdvertiseRetiredCLI(t *testing.T) {
 		}
 		if match := retiredTemplate.FindString(text); match != "" {
 			t.Errorf("%s advertises retired generated argv %q", entry.Name(), strings.TrimSpace(match))
+		}
+	}
+}
+
+// TestLegacyIngestCommandLiteralExistsOnlyInFixturesAndHistory makes the final
+// removal a repository-wide assertion. Runtime migration readers intentionally
+// still recognize marker-owned old bytes, but they construct that historical
+// spelling from tokens; no executable producer, catalog, golden, or maintained
+// documentation may carry the retired command literal.
+func TestLegacyIngestCommandLiteralExistsOnlyInFixturesAndHistory(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..")
+	legacy := "projmux ai " + "ingest"
+	allowedHistory := map[string]bool{
+		"CHANGELOG.md":                  true,
+		"docs/legacy-cli-retirement.md": true,
+		"docs/upgrading.md":             true,
+	}
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if entry.IsDir() {
+			if rel == ".git" || rel == ".wt" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if allowedHistory[rel] || strings.HasSuffix(rel, "_test.go") || strings.Contains(rel, "/testdata/") {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(raw), legacy) {
+			t.Errorf("%s contains the retired producer command outside a fixture/history file", rel)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStaleUnmanagedLegacyHookRemediationIsExplicit(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "upgrading.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		"Stale unmanaged legacy hooks after the final removal",
+		"does not rewrite them automatically",
+		"unknown command: ai",
+		"manually replace",
+		"projmux internal agent-hook ingest",
+		"projmux agent integrate <provider> --dry-run",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("upgrading guide is missing stale-unmanaged remediation %q", want)
 		}
 	}
 }

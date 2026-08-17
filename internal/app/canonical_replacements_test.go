@@ -131,7 +131,6 @@ func TestAgentHookReadersStayReadOnlyBeforeDispatch(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{
 		{"diagnostics", "agent-hook", "--tail", "5"},
-		{"ai", "ingest", "log", "--tail", "5"},
 	} {
 		if shouldRunLegacyHookMigrations(args) {
 			t.Errorf("%v would run a filesystem migration before its read-only handler", args)

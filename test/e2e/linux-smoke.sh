@@ -1215,7 +1215,7 @@ if [[ " \$* " == *" --topic release triage "* ]]; then
     XDG_STATE_HOME=$(printf %q "$create_root/state") \
     XDG_CONFIG_HOME=$(printf %q "$create_root/config") \
     PROJMUX_MANAGED_ROOTS=$(printf %q "$create_root/work") \
-    $(printf %q "$bin") ai ingest codex-hook
+    $(printf %q "$bin") internal agent-hook ingest codex-hook
 fi
 # Stay alive so the pane survives long enough to be inspected.
 exec sleep 600
@@ -1239,6 +1239,21 @@ pmx_agent_live() {
     HOME="$agent_home" \
     TMUX="$create_socket_path,1,0" \
     TMUX_PANE="$agent_pane" \
+    TMUX_TMPDIR="$create_root/tt" \
+    XDG_STATE_HOME="$create_root/state" \
+    XDG_CONFIG_HOME="$create_root/config" \
+    PROJMUX_MANAGED_ROOTS="$create_root/work" \
+    SHELL=/bin/bash \
+    "$bin" "$@"
+}
+
+pmx_agent_hook_at() {
+  local hook_pane="$1"
+  shift
+  PATH="$agent_home/.local/bin:$PATH" \
+    HOME="$agent_home" \
+    TMUX="$create_socket_path,1,0" \
+    TMUX_PANE="$hook_pane" \
     TMUX_TMPDIR="$create_root/tt" \
     XDG_STATE_HOME="$create_root/state" \
     XDG_CONFIG_HOME="$create_root/config" \
@@ -1416,10 +1431,33 @@ if [[ "$(ctx show-options -pqv -t "$agent_pane" @projmux_ai_topic)" != "canonica
   exit 1
 fi
 
-# Seed the durable provider conversation through an exact provider hook, then
+# Drive each provider through the sole canonical ingress on the exact inherited
+# pane. The live projections prove the provider-specific event paths still
+# share their pre-retirement payload/state behavior.
+claude_hook_pane="$(ctx split-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/work/alpha" sleep 600)"
+printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"phase6-claude","cwd":"'"$create_root"'/work/alpha"}' |
+  pmx_agent_hook_at "$claude_hook_pane" internal agent-hook ingest claude-hook >"$create_root/agent-claude-ingest.out"
+if [[ -s "$create_root/agent-claude-ingest.out" ]] ||
+  [[ "$(ctx show-options -pqv -t "$claude_hook_pane" @projmux_ai_agent)" != claude ]] ||
+  [[ "$(ctx show-options -pqv -t "$claude_hook_pane" @projmux_ai_state)" != thinking ]]; then
+  echo "canonical Claude hook ingest lost its state projection parity" >&2
+  exit 1
+fi
+antigravity_hook_pane="$(ctx split-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/work/alpha" sleep 600)"
+printf '%s' '{"conversationId":"phase6-antigravity","workspacePaths":["'"$create_root"'/work/alpha"]}' |
+  pmx_agent_hook_at "$antigravity_hook_pane" internal agent-hook ingest antigravity-hook --event PreInvocation \
+    >"$create_root/agent-antigravity-ingest.out"
+smoke_assert_file_contains "$create_root/agent-antigravity-ingest.out" '{}'
+if [[ "$(ctx show-options -pqv -t "$antigravity_hook_pane" @projmux_ai_agent)" != antigravity ]] ||
+  [[ "$(ctx show-options -pqv -t "$antigravity_hook_pane" @projmux_ai_state)" != thinking ]]; then
+  echo "canonical Antigravity hook ingest lost its state projection parity" >&2
+  exit 1
+fi
+
+# Seed the durable Codex conversation through the same canonical ingress, then
 # take the Agent offline, change its Registry-only topic, and resume it.
 printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"phase6-thread","session_id":"phase6-session","turn_id":"phase6-turn","cwd":"'"$create_root"'/work/alpha"}' |
-  pmx_agent_live ai ingest codex-hook
+  pmx_agent_live internal agent-hook ingest codex-hook
 pmx_agent_live delete pane "uid:$agent_pane_uid" --yes
 pmx_agent_live agent topic set "offline resume topic" "uid:$agent_uid"
 pmx_agent_live agent resume "uid:$agent_uid" >"$create_root/agent-resume.out"

@@ -1,11 +1,12 @@
 # Legacy CLI Retirement Ledger
 
-Phase 2 is a breaking CLI release. Removed human-facing compatibility argv
-returns exit 2, writes no stdout, performs no command or pre-dispatch migration
-side effect, and prints the replacement below on stderr. The seven removed old
-internal top-level aliases instead follow the root unknown-command contract:
-exit 1, no stdout or side effect, and root help plus `unknown command: <token>`
-on stderr.
+Phase 2 removed the human-facing compatibility argv below. Those non-AI
+tombstones return exit 2, write no stdout, perform no command or pre-dispatch
+migration side effect, and print their replacement on stderr. Phase 3 removes
+the final hidden `ai` producer dispatcher and catalog node: every `projmux ai
+...` invocation now follows the root unknown-command contract (exit 1, no
+stdout or side effect, and root help plus `unknown command: ai` on stderr).
+The seven removed old internal top-level aliases use the same root contract.
 
 | Removed argv | Replacement |
 | --- | --- |
@@ -56,22 +57,27 @@ other old tmux subcommand, and `tmux apply` with any extra argv still use the
 removed-root contract: exit 1, no stdout or side effect, and root help plus
 `unknown command: tmux` on stderr.
 
-## Internal migration exception
+## Final ingest compatibility removal
 
-Phase 2 intentionally retains one hidden compatibility dispatcher until the
-next release gate: exact old managed-producer argv only. The accepted bytes are
+Phase 2 temporarily retained one hidden compatibility dispatcher for exact old
+managed-producer argv. The accepted historical bytes were
 `ai ingest codex-hook`, `ai ingest claude-hook`, `ai ingest antigravity-hook
 --event <event>` where `<event>` is exactly `PreInvocation`, `PostInvocation`,
 `PostToolUse`, `Stop`, or `Statusline`, and `ai ingest bell --pane <pane-id>`.
-The flag order is fixed and no extra argv is accepted. Human and machine callers
-with identical argv cannot be distinguished.
+The v0.11.1 `R_migrate` release migrated marker-owned Codex, Claude,
+Antigravity/Statusline, and tmux-bell producers to `internal agent-hook ingest`
+before this dispatcher was removed. The old bytes are now history, not an
+executable alias; every `ai` argv is rejected at the root before stdin, tmux,
+diagnostics, or automatic migration is touched.
 
-Every other `ai` argv, including `ai ingest log`, a missing/future/custom
-Antigravity event, reordered flags, or extra argv, returns the public retirement
-usage error before stdin, tmux, diagnostics, or stdout is touched. Managed
-producers already emit `internal agent-hook ingest`; this exception exists only
-for the binary-replacement-before-migration window. Do not remove it until the
-post-release `R_migrate` evidence gate is closed.
+A markerless or otherwise unmanaged hook is intentionally never rewritten.
+If one still invokes the old spelling, decide that the hook is yours, preserve
+its provider arguments, redirection, and fallback, and manually replace only
+the command prefix with `projmux internal agent-hook ingest`. For example, the
+historical `projmux ai ingest claude-hook` prefix becomes `projmux internal
+agent-hook ingest claude-hook`. Run `projmux agent integrate <provider>
+--dry-run` afterward; a remaining conflict must be resolved by the owner, not
+by projmux taking ownership of the entry.
 
 The `ai notify` split is intentional parity guidance, not an alias mapping.
 The old notify action drove an immediate desktop-notification path from pane

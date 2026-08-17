@@ -106,11 +106,11 @@ func executableCanonicalSpellings(path []string, route Route) []string {
 // the command tree and lands inside the public surface, so `projmux <spelling>`
 // reaches a real node a user is meant to type.
 //
-// The hidden half of the test matters as much as the resolvable half: `ai
-// ingest` maps onto `internal agent-hook`, which resolves perfectly well but is
-// plumbing. Publishing it as this route's canonical spelling would put an
-// internal route back into the public reference through the side door the
-// internal isolation Phase closed in the primary listing.
+// The hidden half of the test matters as much as the resolvable half: an
+// internal route can resolve perfectly well while remaining plumbing.
+// Publishing it as a canonical spelling would put an internal route back into
+// the public reference through the side door the internal isolation Phase
+// closed in the primary listing.
 func isExecutableSpelling(spelling string) bool {
 	tokens := strings.Fields(spelling)
 	if len(tokens) == 0 {
