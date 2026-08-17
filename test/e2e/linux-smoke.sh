@@ -819,6 +819,30 @@ if [[ -z "$(ctx display-message -p -t "$legacy_pane" '#{@projmux_pane_uid}')" ]]
 fi
 pmx get windows --project alpha -o name >"$create_root/alpha-windows.out"
 smoke_assert_file_contains "$create_root/alpha-windows.out" "window"
+if [[ "$legacy_window_name_before" == "window" ]]; then
+  echo "legacy Window display fixture did not differ from its stable name" >&2
+  exit 1
+fi
+pmx get windows --project alpha >"$create_root/alpha-windows-table.out"
+smoke_assert_file_contains "$create_root/alpha-windows-table.out" "DISPLAY NAME  NAME"
+if ! awk -v display="$legacy_window_name_before" '
+  NR == 1 {
+    name_column = index($0, "  NAME  ") + 2
+    next
+  }
+  NR == 2 {
+    display_cell = substr($0, 1, name_column - 3)
+    sub(/[[:space:]]+$/, "", display_cell)
+    name_cell = substr($0, name_column)
+    sub(/[[:space:]].*$/, "", name_cell)
+    found = display_cell == display && name_cell == "window"
+  }
+  END { exit !found }
+' "$create_root/alpha-windows-table.out"; then
+  echo "legacy Window table did not show displayName first and stable name second:" >&2
+  cat "$create_root/alpha-windows-table.out" >&2
+  exit 1
+fi
 pmx describe window window --project alpha >"$create_root/alpha-window.describe"
 smoke_assert_file_contains "$create_root/alpha-window.describe" "DisplayName:"
 smoke_assert_file_contains "$create_root/alpha-window.describe" "$legacy_window_name_before"

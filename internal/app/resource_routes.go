@@ -525,10 +525,11 @@ func resourceSummary(match selector.Match, kind coremetadata.Kind, registry core
 // read, keyed by kind and ordered exactly as the columns are printed.
 //
 // The header set is fixed per kind rather than derived from the rows, so a
-// column never disappears because every row happened to leave it empty. NAME is
-// `metadata.Name` without the `kind/` prefix the one-line summary carries: the
-// spelling the operator typed already states the kind, exactly as it does for
-// `kubectl get pods`.
+// column never disappears because every row happened to leave it empty.
+// DISPLAY NAME is the stored, duplicate-allowed `metadata.DisplayName` with a
+// read-only fallback to `metadata.Name`; NAME is always that stable name without
+// the `kind/` prefix the one-line summary carries. The spelling the operator
+// typed already states the kind, exactly as it does for `kubectl get pods`.
 //
 // AGE is last on every kind, which is where `kubectl get` puts it and the only
 // position that costs the columns before it nothing: it is the one column whose
@@ -539,10 +540,10 @@ func resourceSummary(match selector.Match, kind coremetadata.Kind, registry core
 // "this kind has no age" look like a property of the resource rather than of
 // the table.
 var resourceTableColumns = map[coremetadata.Kind][]string{
-	coremetadata.KindProject: {"NAME", "STATUS", "AGE"},
-	coremetadata.KindWindow:  {"NAME", "STATUS", "PROJECT", "AGE"},
-	coremetadata.KindPane:    {"NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "AGE"},
-	coremetadata.KindAgent:   {"NAME", "STATUS", "PROJECT", "WINDOW", "SESSION", "AGE"},
+	coremetadata.KindProject: {"DISPLAY NAME", "NAME", "STATUS", "AGE"},
+	coremetadata.KindWindow:  {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "AGE"},
+	coremetadata.KindPane:    {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "AGE"},
+	coremetadata.KindAgent:   {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "SESSION", "AGE"},
 }
 
 // resourceTableGap is the minimum run of spaces between two columns. It is the
@@ -567,7 +568,8 @@ const resourceTableGap = 2
 // registry has always stored and `-o json` has always emitted, measured against
 // the clock this invocation was handed.
 func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry, now time.Time) []string {
-	row := []string{match.Name, string(match.Status)}
+	displayName, stableName := resourceTableNames(match, kind, registry)
+	row := []string{displayName, stableName, string(match.Status)}
 	age := resourceAgeCell(registry, kind, match.UID, now)
 	switch kind {
 	case coremetadata.KindWindow:
@@ -579,6 +581,22 @@ func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry cor
 	default:
 		return append(row, age)
 	}
+}
+
+// resourceTableNames selects the first two human table cells without changing
+// any stored metadata or identity semantics. Whitespace-only display names are
+// absent; a non-empty value is returned byte-for-byte, including its original
+// surrounding whitespace. A missing registry row is tolerated with the same
+// resolved stable name the pre-display table used.
+func resourceTableNames(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry) (string, string) {
+	_, meta, ok := resourceFor(registry, kind, match.UID)
+	if !ok {
+		return match.Name, match.Name
+	}
+	if strings.TrimSpace(meta.DisplayName) == "" {
+		return meta.Name, meta.Name
+	}
+	return meta.DisplayName, meta.Name
 }
 
 // resourceAgeCell renders the AGE column of one row: how long ago the resource
