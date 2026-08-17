@@ -211,6 +211,111 @@ func saveKeymapKeys(store keymapStore, actionID string, keys []string) (string, 
 	return saveKeymapOverride(store, actionID, "keys", &joined)
 }
 
+// saveKeymapSequences is the Settings writer seam for schema-v2 sequence
+// authoring. It deliberately reuses normalizeKeymapSequence and the merged
+// catalog conflict validator rather than defining a second Settings grammar.
+func saveKeymapSequences(store keymapStore, actionID string, sequences []string) (string, error) {
+	current, _, _, path, err := loadKeymapForEdit(store)
+	if err != nil {
+		return path, err
+	}
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if !ok {
+		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	actionID = keymapBindingKeyForAction(current, action)
+	if current.Bindings == nil {
+		current.Bindings = map[string]keymapOverride{}
+	}
+	current.SchemaVersion = keymapSchemaVersion
+	override := current.Bindings[actionID]
+	normalized := make([]string, 0, len(sequences))
+	for _, sequence := range sequences {
+		value, normalizeErr := normalizeKeymapSequence(sequence)
+		if normalizeErr != nil {
+			return path, normalizeErr
+		}
+		normalized = append(normalized, value)
+	}
+	override.SequencesSet = true
+	override.Sequences = normalized
+	current.Bindings[actionID] = override
+	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
+		return path, err
+	}
+	if path == "" {
+		path, err = keymapPath(store.homeDir, store.lookupEnv)
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := writeKeymapFile(path, current, store.writeFile); err != nil {
+		return path, err
+	}
+	return path, nil
+}
+
+func resetKeymapSequences(store keymapStore, actionID string) (string, error) {
+	current, _, _, path, err := loadKeymapForEdit(store)
+	if err != nil {
+		return path, err
+	}
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if !ok {
+		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	actionID = keymapBindingKeyForAction(current, action)
+	if current.Bindings == nil {
+		current.Bindings = map[string]keymapOverride{}
+	}
+	override := current.Bindings[actionID]
+	override.Sequences = nil
+	override.SequencesSet = false
+	if override.Plain == nil && !override.KeysSet && override.Prefix == nil {
+		delete(current.Bindings, actionID)
+	} else {
+		current.Bindings[actionID] = override
+	}
+	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
+		return path, err
+	}
+	if path == "" {
+		path, err = keymapPath(store.homeDir, store.lookupEnv)
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := writeKeymapFile(path, current, store.writeFile); err != nil {
+		return path, err
+	}
+	return path, nil
+}
+
+func resetKeymapBinding(store keymapStore, actionID string) (string, error) {
+	current, _, _, path, err := loadKeymapForEdit(store)
+	if err != nil {
+		return path, err
+	}
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if !ok {
+		return path, fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	delete(current.Bindings, keymapBindingKeyForAction(current, action))
+	if _, err := mergeKeymapOverrides(defaultKeyBindingCatalog(), current); err != nil {
+		return path, err
+	}
+	if path == "" {
+		path, err = keymapPath(store.homeDir, store.lookupEnv)
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := writeKeymapFile(path, current, store.writeFile); err != nil {
+		return path, err
+	}
+	return path, nil
+}
+
 func resetKeymapKeys(store keymapStore, actionID string) (string, error) {
 	current, _, _, path, err := loadKeymapForEdit(store)
 	if err != nil {

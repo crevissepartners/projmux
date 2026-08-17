@@ -426,6 +426,83 @@ if [[ "$keymap_before_test" != "$(cat "$XDG_CONFIG_HOME/projmux/keymap.toml")" ]
   exit 1
 fi
 
+# Phase 1 sequence authoring uses the same attached Settings popup. Return to
+# Action detail, record one logical stroke per editor frame, save at two, prove
+# the generated/live trie exists, then remove it and prove stale state is gone.
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Back\r' >&9
+smoke_wait_for "Action detail after key delivery test" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Keybindings > Action > '"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf '+ Add sequence\r' >&9
+smoke_wait_for "sequence editor" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Save sequence'"
+if grep -Fq 'sequences = ' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
+  echo "sequence editor wrote keymap before capture" >&2
+  exit 1
+fi
+
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Record next stroke\r' >&9
+smoke_wait_for "first sequence stroke recorder" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Recording next stroke'"
+printf '\013' >&9
+smoke_wait_for "first sequence stroke accumulated" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'C-k'"
+if grep -Fq 'sequences = ' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
+  echo "first sequence stroke mutated keymap" >&2
+  exit 1
+fi
+
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Record next stroke\r' >&9
+smoke_wait_for "second sequence stroke recorder" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Recording next stroke'"
+printf '\020' >&9
+smoke_wait_for "two-stroke sequence draft" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'C-k C-p'"
+if grep -Fq 'sequences = ' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
+  echo "sequence draft mutated keymap before Save" >&2
+  exit 1
+fi
+
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Save sequence\r' >&9
+smoke_wait_for "saved sequence keymap" grep -Fq 'sequences = ["C-k C-p"]' "$XDG_CONFIG_HOME/projmux/keymap.toml"
+smoke_wait_for "sequence save feedback" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Keybinding complete'"
+sequence_table="$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_tables)"
+if [[ "$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots)" != "C-k" ]] ||
+  [[ -z "$sequence_table" ]] ||
+  [[ "$(tmux -L "$recorder_socket" list-keys -T root C-k)" != *"switch-client -T $sequence_table"* ]] ||
+  [[ "$(tmux -L "$recorder_socket" list-keys -T "$sequence_table" C-p)" != *"run-shell"* ]]; then
+  echo "Settings sequence save did not install the expected live trie" >&2
+  tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots >&2 || true
+  tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_tables >&2 || true
+  exit 1
+fi
+
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'sequence:C-k C-p\r' >&9
+smoke_wait_for "saved sequence detail" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Test sequence delivery'"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Remove sequence\r' >&9
+smoke_wait_for "removed sequence keymap" sh -c \
+  "! grep -Fq 'sequences = ' '$XDG_CONFIG_HOME/projmux/keymap.toml'"
+smoke_wait_for "sequence remove feedback" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Keybinding complete'"
+if [[ -n "$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots)" ]] ||
+  [[ -n "$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_tables)" ]] ||
+  tmux -L "$recorder_socket" list-keys -T "$sequence_table" >/dev/null 2>&1; then
+  echo "Settings sequence removal left stale live trie state" >&2
+  echo "roots=$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots)" >&2
+  echo "tables=$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_tables)" >&2
+  tmux -L "$recorder_socket" list-keys -T root C-k >&2 || true
+  tmux -L "$recorder_socket" list-keys -T "$sequence_table" >&2 || true
+  exit 1
+fi
+
 printf '\003' >&9
 smoke_wait_for "Settings popup exit" sh -c "! kill -0 '$recorder_popup_pid' 2>/dev/null"
 wait "$recorder_popup_pid"

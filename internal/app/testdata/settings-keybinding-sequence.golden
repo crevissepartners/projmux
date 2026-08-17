@@ -1,0 +1,5 @@
+single-keys-state	__settings_noop__
+sequences-state	__settings_noop__
+keymap:ProjectSidebarToggle:sequence:C-k C-p
+keymap:ProjectSidebarToggle:sequence-add
+keymap:ProjectSidebarToggle:sequence-type

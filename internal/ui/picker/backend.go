@@ -651,6 +651,20 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			}
 			continue
 		}
+		if options.Recorder != nil && key.Name == "enter" && options.Recorder.AutoConfirm && options.Recorder.CaptureEnter {
+			state, outcome := reduceRecorderState(options.Recorder.State, recorderEvent{
+				kind: recorderCandidate,
+				key:  RecorderKey{Name: key.Name, Text: key.Text},
+			}, options.Recorder.Normalize, nil)
+			if outcome == recorderContinue && state.Phase == RecorderStaged {
+				state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEnter}, options.Recorder.Normalize, options.Recorder.Validate)
+			}
+			options.Recorder.State = state
+			if outcome == recorderConfirm {
+				return Result{Key: "enter", Value: state.Candidate}, nil
+			}
+			continue
+		}
 		if options.Recorder != nil && (key.Name == "enter" || key.Name == "esc") {
 			kind := recorderEnter
 			if key.Name == "esc" {
@@ -708,6 +722,9 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		if options.Recorder != nil {
 			event := recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: key.Name, Text: key.Text}}
 			state, outcome := reduceRecorderState(options.Recorder.State, event, options.Recorder.Normalize, options.Recorder.Validate)
+			if options.Recorder.AutoConfirm && outcome == recorderContinue && state.Phase == RecorderStaged {
+				state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEnter}, options.Recorder.Normalize, options.Recorder.Validate)
+			}
 			options.Recorder.State = state
 			switch outcome {
 			case recorderConfirm:
@@ -1899,6 +1916,17 @@ func renderNativeRecorderContent(w io.Writer, pickerTheme projmuxpicker.Theme, t
 		state = newRecorderState()
 	}
 	var main strings.Builder
+	if options.Recorder.AutoConfirm {
+		fmt.Fprintln(&main, "  Recording next stroke")
+		fmt.Fprintln(&main, "  Press one key; it returns to the sequence editor immediately")
+		fmt.Fprintln(&main, "  Enter is a stroke. Esc cancels without changes.")
+		if strings.TrimSpace(state.Message) != "" {
+			fmt.Fprintln(&main)
+			fmt.Fprintln(&main, "  "+state.Message)
+		}
+		writeNativeContentWithFooterWithTheme(w, pickerTheme, top, main.String(), options.Footer, layout)
+		return
+	}
 	switch state.Phase {
 	case RecorderStaged, RecorderConfirmed:
 		fmt.Fprintln(&main, "  Staged: "+state.Candidate)

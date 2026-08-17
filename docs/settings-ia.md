@@ -128,12 +128,23 @@ step, never a silent no-op.
   assignment is explicit metadata rather than an ID-prefix inference, and the
   category rows carry their members' search text so search crosses categories.
   An action detail shows the action, its target kind, result kind, placement and
-  anchor, the exact shipped handler the key dispatches to, its effective keys,
-  then the Keys collection and the unbind/reset confirmations. The two Add
-  affordances are named after what they do — `+ Add key` records a pressed key
-  and `Enter key name manually` takes a typed tmux key name. There is no
-  `Advanced` and no `Troubleshooting` container: both named an implementation
-  layer, and both fronted rows that did nothing.
+  anchor, the exact shipped handler the key dispatches to, then separate
+  **Single Keys** and **Sequences** collections followed by unbind/reset
+  confirmations. Single Keys owns `+ Add key` and `Enter key name manually`.
+  Sequences owns `+ Add sequence` and `Enter sequence manually` for editable
+  action-level tmux triggers; picker-local actions render an explicit
+  unavailable reason. The sequence editor captures one logical stroke per
+  recorder frame, returns to the accumulated draft after each stroke, enables
+  Save at two strokes, and stops capture at four. Enter is authorable as a
+  stroke, Escape cancels without replay, and there is no reserved finish key.
+  Typed `C-k C-p` entry and capture share the v2 normalizer and conflict
+  preflight. Saved sequence detail owns replace, remove, delivery test, and the
+  partial-cancel plus platform-delivery diagnostics. Native macOS on/off and
+  Linux/WSL expose identical authoring routes; only the Delivery diagnostic
+  names the transport. Navigation, cancellation, and delivery tests write no
+  keymap/generated config and issue no live reload. There is no `Advanced` and
+  no `Troubleshooting` container: both named an implementation layer, and both
+  fronted rows that did nothing.
   A key detail shows the canonical key, the delivery path and `Test delivery`.
   `Test delivery` reports the logical key, the raw observation, the key tmux
   received, and one of `delivered` / `key-did-not-arrive` / `ambiguous-key` /
