@@ -1231,6 +1231,30 @@ func TestManagedIngestProducerMigrationUpgradesV0101AndRepeatsWithoutWrites(t *t
 	}
 }
 
+func TestLegacyMigrationReadersRetainExactV0101Bytes(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "codex route", got: legacyCodexHookRoute, want: "projmux ai ingest codex-hook"},
+		{name: "codex command", got: legacyCodexHookCommand, want: "projmux ai ingest codex-hook >/dev/null 2>&1 || true"},
+		{name: "claude route", got: legacyClaudeHookRoute, want: "projmux ai ingest claude-hook"},
+		{name: "claude command", got: legacyClaudeHookCommand, want: "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"},
+		{name: "antigravity path", got: antigravityLegacyIngestPath, want: " ai ingest antigravity-hook"},
+		{name: "tmux bell command", got: legacyTmuxBellHookCommand, want: `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # projmux-managed:tmux-bell:v1'`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if test.got != test.want {
+				t.Fatalf("legacy migration reader bytes = %q, want exact v0.10.1 bytes %q", test.got, test.want)
+			}
+		})
+	}
+}
+
 func TestManagedIngestProducerMigrationPlansAllConflictsBeforeWrites(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)

@@ -20,22 +20,37 @@ const (
 	codexHooksMarkerEnd     = "# <<< projmux managed codex hooks"
 	codexHooksFeatureMarker = "# projmux-managed:codex-hooks-feature:v1"
 	codexHookCommand        = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
-	legacyCodexHookCommand  = "projmux ai " + "ingest codex-hook >/dev/null 2>&1 || true"
 	canonicalCodexHookRoute = "projmux internal agent-hook ingest codex-hook"
-	legacyCodexHookRoute    = "projmux ai " + "ingest codex-hook"
 
 	claudeSettingsRelativePath = ".claude/settings.json"
 	claudeHookManagedMarker    = "projmux-managed:claude-hook:v1"
 	claudeHookCommand          = "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # " + claudeHookManagedMarker
-	legacyClaudeHookCommand    = "projmux ai " + "ingest claude-hook >/dev/null 2>&1 || true # " + claudeHookManagedMarker
 	canonicalClaudeHookRoute   = "projmux internal agent-hook ingest claude-hook"
-	legacyClaudeHookRoute      = "projmux ai " + "ingest claude-hook"
 
-	tmuxBellManagedMarker     = "projmux-managed:tmux-bell:v1"
-	tmuxBellHookName          = "alert-bell"
-	tmuxBellHookCommand       = `run-shell -b 'projmux internal agent-hook ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
-	legacyTmuxBellHookCommand = `run-shell -b 'projmux ai ` + `ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
+	tmuxBellManagedMarker = "projmux-managed:tmux-bell:v1"
+	tmuxBellHookName      = "alert-bell"
+	tmuxBellHookCommand   = `run-shell -b 'projmux internal agent-hook ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
 )
+
+var (
+	legacyCodexHookRoute      = legacyAIIngestCommand("codex-hook")
+	legacyCodexHookCommand    = legacyCodexHookRoute + " >/dev/null 2>&1 || true"
+	legacyClaudeHookRoute     = legacyAIIngestCommand("claude-hook")
+	legacyClaudeHookCommand   = legacyClaudeHookRoute + " >/dev/null 2>&1 || true # " + claudeHookManagedMarker
+	legacyTmuxBellHookCommand = `run-shell -b '` + legacyAIIngestCommand(`bell --pane "#{pane_id}"`) +
+		` >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
+)
+
+// legacyAIIngestCommand assembles the removed producer prefix at runtime. The
+// full spelling must remain recognizable in marker-owned v0.10.1 files, but it
+// must not survive as contiguous read-only data in a current production binary.
+func legacyAIIngestCommand(suffix string) string {
+	return strings.Join([]string{"projmux", "ai", "ingest", suffix}, " ")
+}
+
+func legacyAIIngestArgs(suffix string) string {
+	return strings.Join([]string{"", "ai", "ingest", suffix}, " ")
+}
 
 type codexIntegrationPlan struct {
 	path     string
