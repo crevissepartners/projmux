@@ -429,6 +429,21 @@ func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, c
 	return id, nil
 }
 
+// equalizeSplitLayout applies the same scoped, best-effort sizing used by the
+// legacy AI split. It intentionally returns no error: layout observation is
+// outside the create transaction's failure and rollback contract.
+func (m *materializer) equalizeSplitLayout(ctx context.Context, anchorPaneID, placement string) {
+	if m == nil || m.runner == nil {
+		return
+	}
+	applyEvenSplitLayout(anchorPaneID, placement,
+		func(args ...string) ([]byte, error) { return m.runner.Run(ctx, "tmux", args...) },
+		func(args ...string) error {
+			_, err := m.runner.Run(ctx, "tmux", args...)
+			return err
+		})
+}
+
 func (m *materializer) warnUnclaimedRuntime(kind string, before, after map[string]bool) {
 	if m.warn == nil {
 		return

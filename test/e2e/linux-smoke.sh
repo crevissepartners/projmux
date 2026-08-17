@@ -769,6 +769,76 @@ for pane in "$right_pane" "$down_pane"; do
   fi
 done
 
+# Repeated same-axis canonical creates converge within one cell and do not
+# disturb a different Window. Each ensured Window starts from its own primary
+# Pane, so the measurement is isolated from the mixed topology above.
+ctx list-panes -t "$legacy_window_id" \
+  -F '#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}' \
+  >"$create_root/unrelated-before.geometry"
+
+pmx create pane --project alpha --window even-right --create-window --placement right -o pane-id \
+  >"$create_root/even-right-1.out"
+pmx create pane --project alpha --window even-right --placement right -o pane-id \
+  >"$create_root/even-right-2.out"
+pmx create pane --project alpha --window even-right --placement right -o pane-id \
+  >"$create_root/even-right-3.out"
+
+pmx create pane --project alpha --window even-down --create-window --placement down -o pane-id \
+  >"$create_root/even-down-1.out"
+pmx create pane --project alpha --window even-down --placement down -o pane-id \
+  >"$create_root/even-down-2.out"
+pmx create pane --project alpha --window even-down --placement down -o pane-id \
+  >"$create_root/even-down-3.out"
+
+ctx list-panes -t legacy-alpha:even-right -F '#{pane_width}' >"$create_root/even-right.widths"
+if ! awk '
+  NR == 1 { min=$1; max=$1 }
+  { if ($1 < min) min=$1; if ($1 > max) max=$1 }
+  END { exit !(NR == 4 && max-min <= 1) }
+' "$create_root/even-right.widths"; then
+  echo "repeated right creates did not converge within one cell:" >&2
+  cat "$create_root/even-right.widths" >&2
+  exit 1
+fi
+
+ctx list-panes -t legacy-alpha:even-down -F '#{pane_height}' >"$create_root/even-down.heights"
+if ! awk '
+  NR == 1 { min=$1; max=$1 }
+  { if ($1 < min) min=$1; if ($1 > max) max=$1 }
+  END { exit !(NR == 4 && max-min <= 1) }
+' "$create_root/even-down.heights"; then
+  echo "repeated down creates did not converge within one cell:" >&2
+  cat "$create_root/even-down.heights" >&2
+  exit 1
+fi
+
+for output in "$create_root"/even-{right,down}-{1,2,3}.out; do
+  pane="$(tr -d '[:space:]' <"$output")"
+  if [[ ! "$pane" =~ ^%[0-9]+$ ]] ||
+    [[ -z "$(ctx display-message -p -t "$pane" '#{@projmux_pane_uid}')" ]]; then
+    echo "same-axis create lost pane identity: output=$output pane=$pane" >&2
+    exit 1
+  fi
+  if [[ "$(ctx display-message -p -t "$pane" '#{?pane_active,1,0}')" != "0" ]]; then
+    echo "same-axis create left $pane active" >&2
+    exit 1
+  fi
+done
+
+if [[ "$(ctx display-message -p -t legacy-alpha '#{window_id}')" != "$create_active_window_before" ]] ||
+  [[ "$(ctx display-message -p -t legacy-alpha '#{pane_id}')" != "$create_active_pane_before" ]]; then
+  echo "same-axis creates moved the active window or pane" >&2
+  exit 1
+fi
+
+ctx list-panes -t "$legacy_window_id" \
+  -F '#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}' \
+  >"$create_root/unrelated-after.geometry"
+if ! cmp "$create_root/unrelated-before.geometry" "$create_root/unrelated-after.geometry"; then
+  echo "same-axis create changed unrelated Window topology" >&2
+  exit 1
+fi
+
 # 5. --create-window is the opt-in Window ensure, and the result is still a Pane.
 pmx create pane --project alpha --window review --create-window -o ref >"$create_root/ensure.out"
 if [[ "$(head -c 5 "$create_root/ensure.out")" != "pane/" ]]; then
