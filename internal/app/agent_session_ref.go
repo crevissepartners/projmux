@@ -1,6 +1,9 @@
 package app
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -35,7 +38,40 @@ import (
 //  3. The store transaction only opens once a matching Agent is found AND the
 //     observed conversation differs from what is already stored, so a hook that
 //     fires every turn rewrites nothing.
-func (c *aiCommand) recordAgentSessionRef(paneID string, obs coremetadata.AgentSessionObservation) {
+func (c *aiCommand) stageAgentSessionRef(paneID string, obs coremetadata.AgentSessionObservation) {
+	if c == nil || strings.TrimSpace(paneID) == "" {
+		return
+	}
+	if _, ok := coremetadata.NewAgentSessionRef(obs, c.sessionRefClock()()); !ok {
+		return
+	}
+	c.agentObservationMu.Lock()
+	defer c.agentObservationMu.Unlock()
+	if c.pendingAgentSessionRefs == nil {
+		c.pendingAgentSessionRefs = map[string]coremetadata.AgentSessionObservation{}
+	}
+	c.pendingAgentSessionRefs[paneID] = obs
+}
+
+func (c *aiCommand) takeAgentSessionRef(paneID string) (coremetadata.AgentSessionObservation, bool) {
+	if c == nil {
+		return coremetadata.AgentSessionObservation{}, false
+	}
+	c.agentObservationMu.Lock()
+	defer c.agentObservationMu.Unlock()
+	obs, ok := c.pendingAgentSessionRefs[paneID]
+	delete(c.pendingAgentSessionRefs, paneID)
+	return obs, ok
+}
+
+func (c *aiCommand) flushPendingAgentSessionRef(paneID string) {
+	obs, ok := c.takeAgentSessionRef(paneID)
+	if ok {
+		c.persistAgentSessionRef(paneID, obs)
+	}
+}
+
+func (c *aiCommand) persistAgentSessionRef(paneID string, obs coremetadata.AgentSessionObservation) {
 	if c == nil || c.loadRegistry == nil || c.updateRegistry == nil {
 		return
 	}
@@ -87,6 +123,124 @@ func (c *aiCommand) recordAgentSessionRef(paneID string, obs coremetadata.AgentS
 	})
 	_ = err
 }
+
+// managedAgentForPane resolves only the current live Pane binding of a
+// Registry Agent. Compatibility commands use this to forward through the
+// canonical authority without treating a shell pane or stale binding as an
+// Agent.
+func (c *aiCommand) managedAgentForPane(paneID string) (coremetadata.Agent, bool, error) {
+	if c == nil || c.loadRegistry == nil || strings.TrimSpace(paneID) == "" {
+		return coremetadata.Agent{}, false, nil
+	}
+	registry, err := c.loadRegistry()
+	if err != nil {
+		return coremetadata.Agent{}, false, err
+	}
+	if len(registry.Agents) == 0 {
+		return coremetadata.Agent{}, false, nil
+	}
+	paneUID := c.readTmuxPaneOption(paneID, tmuxopts.PaneUID)
+	agentUID, ok := agentUIDForPaneUID(registry, paneUID)
+	if !ok {
+		return coremetadata.Agent{}, false, nil
+	}
+	agent, ok := registry.Agent(agentUID)
+	if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != paneUID {
+		return coremetadata.Agent{}, false, nil
+	}
+	return agent.Clone(), true, nil
+}
+
+// resourceOwnedPane is the fail-closed watcher gate. Any Pane carrying resource
+// identity is withheld from title/content inference. The title watcher belongs
+// only to legacy panes and must not depend on a Registry read to recognize that
+// boundary.
+func (c *aiCommand) resourceOwnedPane(paneID string) bool {
+	if c == nil || strings.TrimSpace(paneID) == "" {
+		return false
+	}
+	return c.readTmuxPaneOption(paneID, tmuxopts.PaneUID) != ""
+}
+
+func (c *aiCommand) persistManagedAgentTopic(paneID, topic string) (coremetadata.Agent, bool, error) {
+	agent, ok, err := c.managedAgentForPane(paneID)
+	if err != nil || !ok {
+		return agent, ok, err
+	}
+	if c.updateRegistry == nil {
+		return coremetadata.Agent{}, true, fmt.Errorf("agent registry mutation is not configured")
+	}
+	mutator := intmetadata.DefaultMutator()
+	mutator.Now = c.sessionRefClock()
+	var committed coremetadata.Agent
+	_, err = c.updateRegistry(func(working *coremetadata.Registry) error {
+		current, ok := working.Agent(agent.Metadata.UID)
+		if !ok || current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != agent.Status.PaneRef {
+			return fmt.Errorf("managed Agent binding changed before topic commit")
+		}
+		updated, err := mutator.SetAgentTopic(working, agent.Metadata.UID, topic)
+		committed = updated.Clone()
+		return err
+	})
+	return committed, true, err
+}
+
+func (c *aiCommand) persistManagedAgentInteraction(paneID string, kind coremetadata.AgentInteractionKind, source string) (coremetadata.Agent, bool, error) {
+	agent, ok, err := c.managedAgentForPane(paneID)
+	if err != nil || !ok {
+		return agent, ok, err
+	}
+	if c.updateRegistry == nil {
+		return coremetadata.Agent{}, true, fmt.Errorf("agent registry mutation is not configured")
+	}
+	mutator := intmetadata.DefaultMutator()
+	clock := c.sessionRefClock()
+	mutator.Now = clock
+	obs, hasObservation := c.takeAgentSessionRef(paneID)
+	if hasObservation {
+		if candidate, built := coremetadata.NewAgentSessionRef(obs, clock()); built && agent.Spec.Provider != "" && candidate.Provider != agent.Spec.Provider {
+			return agent, true, errManagedAgentObservationIgnored
+		}
+	}
+	current := agent.Status.Interaction
+	sessionUnchanged := !hasObservation
+	if hasObservation {
+		if candidate, built := coremetadata.NewAgentSessionRef(obs, clock()); built {
+			sessionUnchanged = agent.Status.SessionRef.SameConversation(candidate)
+		}
+	}
+	activationNeedsAck := agent.Status.Activation.State == coremetadata.ActivationPending && kind != coremetadata.InteractionUnknown && kind != coremetadata.InteractionIdle
+	if sessionUnchanged && !activationNeedsAck && current.Kind == kind && current.Source == source && clock().Sub(current.ObservedAt) < time.Second {
+		return agent, true, nil
+	}
+	var committed coremetadata.Agent
+	_, err = c.updateRegistry(func(working *coremetadata.Registry) error {
+		current, ok := working.Agent(agent.Metadata.UID)
+		if !ok || current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != agent.Status.PaneRef {
+			return fmt.Errorf("managed Agent binding changed before interaction commit")
+		}
+		if hasObservation {
+			if _, _, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, obs); err != nil {
+				return err
+			}
+		}
+		updated, err := mutator.SetAgentInteraction(working, agent.Metadata.UID, kind, source)
+		if err != nil {
+			return err
+		}
+		if current.Status.Activation.State == coremetadata.ActivationPending && kind != coremetadata.InteractionUnknown && kind != coremetadata.InteractionIdle {
+			updated, err = mutator.SetAgentActivation(working, agent.Metadata.UID, coremetadata.ActivationAcknowledged, source, "")
+			if err != nil {
+				return err
+			}
+		}
+		committed = updated.Clone()
+		return nil
+	})
+	return committed, true, err
+}
+
+var errManagedAgentObservationIgnored = errors.New("managed Agent observation provider does not match")
 
 // sessionRefClock is the observation clock of the session ref write. It falls
 // back to wall time so a partially constructed aiCommand cannot panic inside a

@@ -745,11 +745,15 @@ PROJMUX_REAL_TMUX_TEST=1 go test ./internal/integrations/tmux \
 # the smoke root, and only that exact socket is killed.
 # ---------------------------------------------------------------------------
 create_root="$PROJMUX_SMOKE_WORKDIR/create-e2e"
-create_socket="projmux-create-e2e-$$-$RANDOM"
+# Canonical resource deletion intentionally inventories the app-owned `projmux`
+# socket. TMUX_TMPDIR keeps this exact name isolated below the smoke root.
+create_socket="projmux"
+create_foreign_socket="projmux-create-foreign-$$-$RANDOM"
 mkdir -p "$create_root/tt" "$create_root/state" "$create_root/config" "$create_root/work/alpha" "$create_root/work/beta"
 create_real_tmux="$(command -v tmux)"
 
 ctx() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$create_root/tt" "$create_real_tmux" -L "$create_socket" "$@"; }
+cfx() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$create_root/tt" "$create_real_tmux" -L "$create_foreign_socket" "$@"; }
 
 # projmux shells out to a bare `tmux`, so route it onto this exact socket.
 create_shim="$create_root/shim"
@@ -792,6 +796,12 @@ legacy_window_id="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
 ctx set-option -p -t "$legacy_pane" @projmux_pane_label "buildlog"
 ctx select-pane -T "raw title must not win" -t "$legacy_pane"
 legacy_window_name_before="$(ctx display-message -p -t "$legacy_window_id" '#{window_name}')"
+cfx new-session -d -s foreign-agent -c "$create_root/work/beta" sleep 600
+foreign_agent_pane="$(cfx display-message -p -t foreign-agent '#{pane_id}')"
+cfx select-pane -T codex -t "$foreign_agent_pane"
+cfx set-option -p -t "$foreign_agent_pane" @projmux_ai_topic foreign-sentinel
+cfx set-option -p -t "$foreign_agent_pane" @projmux_ai_state foreign-state
+foreign_agent_before="$(cfx display-message -p -t "$foreign_agent_pane" '#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}')"
 
 create_socket_path="$(ctx display-message -p -t legacy-alpha '#{socket_path}')"
 case "$create_socket_path" in
@@ -802,6 +812,14 @@ case "$create_socket_path" in
     ;;
 esac
 echo ">> create e2e socket=$create_socket path=$create_socket_path"
+create_foreign_socket_path="$(cfx display-message -p -t foreign-agent '#{socket_path}')"
+case "$create_foreign_socket_path" in
+  "$create_root"/*) ;;
+  *)
+    echo "foreign create e2e socket escaped the smoke root: $create_foreign_socket_path" >&2
+    exit 1
+    ;;
+esac
 
 create_cleanup() {
   local actual
@@ -816,6 +834,18 @@ create_cleanup() {
         ;;
     esac
   fi
+
+	actual="$(cfx display-message -p '#{socket_path}' 2>/dev/null || true)"
+	if [[ -n "$actual" ]]; then
+		case "$actual" in
+			"$create_root"/*)
+				env -u TMUX -u TMUX_PANE "$create_real_tmux" -S "$actual" kill-server >/dev/null 2>&1 || true
+				;;
+			*)
+				echo "refusing foreign create e2e cleanup outside the smoke root: $actual" >&2
+				;;
+		esac
+	fi
 }
 trap 'create_cleanup; smoke_cleanup_env' EXIT
 
@@ -1173,6 +1203,20 @@ cat >"$agent_home/.local/bin/codex" <<AGENT_STUB
   printf 'cwd=%s\n' "\$PWD"
   printf 'args=%s\n' "\$*"
 } >>$(printf %q "$create_root/agent-launch.log")
+# A payload-bearing create now requires bounded provider/hook acknowledgement.
+# Model the public hook path itself so acknowledgement is committed through the
+# Agent Registry authority, without reading or synthesizing pane content.
+if [[ " \$* " == *" --topic release triage "* ]]; then
+  # The create route binds its initial idle projection immediately after the
+  # process starts; emit the provider acknowledgement after that binding.
+  sleep 0.2
+  printf '{"hook_event_name":"UserPromptSubmit","thread_id":"phase6-activation-thread","session_id":"phase6-activation-session","cwd":"%s"}' "\$PWD" |
+    HOME=$(printf %q "$agent_home") \
+    XDG_STATE_HOME=$(printf %q "$create_root/state") \
+    XDG_CONFIG_HOME=$(printf %q "$create_root/config") \
+    PROJMUX_MANAGED_ROOTS=$(printf %q "$create_root/work") \
+    $(printf %q "$bin") ai ingest codex-hook
+fi
 # Stay alive so the pane survives long enough to be inspected.
 exec sleep 600
 AGENT_STUB
@@ -1182,6 +1226,19 @@ pmx_agent() {
   env -u TMUX -u TMUX_PANE \
     PATH="$create_shim:$agent_home/.local/bin:$PATH" \
     HOME="$agent_home" \
+    TMUX_TMPDIR="$create_root/tt" \
+    XDG_STATE_HOME="$create_root/state" \
+    XDG_CONFIG_HOME="$create_root/config" \
+    PROJMUX_MANAGED_ROOTS="$create_root/work" \
+    SHELL=/bin/bash \
+    "$bin" "$@"
+}
+
+pmx_agent_live() {
+  PATH="$agent_home/.local/bin:$PATH" \
+    HOME="$agent_home" \
+    TMUX="$create_socket_path,1,0" \
+    TMUX_PANE="$agent_pane" \
     TMUX_TMPDIR="$create_root/tt" \
     XDG_STATE_HOME="$create_root/state" \
     XDG_CONFIG_HOME="$create_root/config" \
@@ -1267,7 +1324,7 @@ for _ in {1..200}; do
   [[ -s "$create_root/agent-launch.log" ]] && break
   sleep 0.05
 done
-if ! grep -Fq -- "args=--topic release triage" "$create_root/agent-launch.log"; then
+if ! grep -Fq -- "args=-C $create_root/work/alpha --topic release triage" "$create_root/agent-launch.log"; then
   echo "the payload did not reach the provider:" >&2
   cat "$create_root/agent-launch.log" >&2 || true
   exit 1
@@ -1340,6 +1397,103 @@ fi
 # The needle deliberately starts with a word: the helper passes it to grep as a
 # pattern, so a leading `--` would be read as an option.
 smoke_assert_file_contains "$create_root/agent-bridge.err" "add --project <ref>"
+
+# 14. Phase 6 Agent authority runs on the inherited absolute socket only. The
+#     foreign socket deliberately carries matching title-like text and semantic
+#     options; no selector or mirror may infer identity from them or touch it.
+agent_uid="$(pmx_agent get agents --project alpha -o uid | head -n 1)"
+agent_pane_uid="$(ctx display-message -p -t "$agent_pane" '#{@projmux_pane_uid}')"
+if [[ -z "$agent_uid" || -z "$agent_pane_uid" ]]; then
+  echo "Phase 6 e2e could not resolve Agent/Pane uid" >&2
+  exit 1
+fi
+ctx select-pane -T foreign-sentinel -t "$agent_pane"
+pmx_agent_live agent topic set "canonical topic" "uid:$agent_uid"
+pmx_agent_live agent status set approval_required "uid:$agent_uid"
+if [[ "$(ctx show-options -pqv -t "$agent_pane" @projmux_ai_topic)" != "canonical topic" ]] ||
+  [[ "$(ctx show-options -pqv -t "$agent_pane" @projmux_ai_badge_kind)" != approval_required ]]; then
+  echo "canonical Agent topic/status did not project immediately" >&2
+  exit 1
+fi
+
+# Seed the durable provider conversation through an exact provider hook, then
+# take the Agent offline, change its Registry-only topic, and resume it.
+printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"phase6-thread","session_id":"phase6-session","turn_id":"phase6-turn","cwd":"'"$create_root"'/work/alpha"}' |
+  pmx_agent_live ai ingest codex-hook
+pmx_agent_live delete pane "uid:$agent_pane_uid" --yes
+pmx_agent_live agent topic set "offline resume topic" "uid:$agent_uid"
+pmx_agent_live agent resume "uid:$agent_uid" >"$create_root/agent-resume.out"
+smoke_assert_file_contains "$create_root/agent-resume.out" "resumed"
+resumed_pane_uid="$(pmx_agent_live describe agent "uid:$agent_uid" -o json | sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
+resumed_pane="$(ctx list-panes -a -F '#{@projmux_pane_uid} #{pane_id}' | awk -v uid="$resumed_pane_uid" '$1 == uid { print $2; exit }')"
+if [[ -z "$resumed_pane" ]] ||
+  [[ "$(ctx show-options -pqv -t "$resumed_pane" @projmux_ai_topic)" != "offline resume topic" ]]; then
+  echo "Offline Agent topic did not mirror to resumed Pane" >&2
+  exit 1
+fi
+agent_pane="$resumed_pane"
+
+# Inject one exact live projection failure. Registry remains committed, the
+# public reconcile repairs the live option, and the next pass is a no-op.
+agent_failure_shim="$create_root/agent-mutation-shim"
+mkdir -p "$agent_failure_shim"
+cat >"$agent_failure_shim/tmux" <<AGENT_MUTATION_SHIM
+#!/usr/bin/env bash
+phase6_args=("\$@")
+if [[ "\${phase6_args[0]:-}" == "-S" && \${#phase6_args[@]} -ge 2 ]]; then
+  phase6_args=("\${phase6_args[@]:2}")
+fi
+if [[ "\${phase6_args[0]:-}" == "set-option" ]]; then
+  for phase6_arg in "\${phase6_args[@]:1}"; do
+    if [[ "\$phase6_arg" == "@projmux_ai_topic" ]]; then
+      exit 77
+    fi
+  done
+fi
+exec $(printf %q "$create_real_tmux") "\$@"
+AGENT_MUTATION_SHIM
+chmod 0755 "$agent_failure_shim/tmux"
+set +e
+PATH="$agent_failure_shim:$PATH" pmx_agent_live agent topic set "retry topic" "uid:$agent_uid" \
+  >"$create_root/agent-mirror-failure.out" 2>"$create_root/agent-mirror-failure.err"
+agent_mirror_failure_status=$?
+set -e
+if [[ "$agent_mirror_failure_status" == 0 ]] ||
+  ! grep -Fq "committed Registry state" "$create_root/agent-mirror-failure.err" ||
+  ! grep -Fq "projmux reconcile resources" "$create_root/agent-mirror-failure.err"; then
+  echo "Agent projection failure did not expose committed/retry contract" >&2
+  cat "$create_root/agent-mirror-failure.err" >&2 || true
+  exit 1
+fi
+if [[ "$(pmx_agent_live agent topic get "uid:$agent_uid")" != "retry topic" ]]; then
+  echo "Agent projection failure lost committed Registry topic" >&2
+  exit 1
+fi
+pmx_agent_live reconcile resources --socket-path "$create_socket_path" >"$create_root/agent-reconcile.out"
+if [[ "$(ctx show-options -pqv -t "$resumed_pane" @projmux_ai_topic)" != "retry topic" ]]; then
+  echo "public reconcile did not repair Agent topic projection" >&2
+  exit 1
+fi
+pmx_agent_live reconcile resources --socket-path "$create_socket_path" -o json >"$create_root/agent-reconcile-repeat.json"
+smoke_assert_file_contains "$create_root/agent-reconcile-repeat.json" '"outcome": "no-op"'
+
+# Cross-Project workspace changes the worker launch only; ownership stays in the
+# explicitly selected alpha Window and only caller-provided roots reach argv.
+: >"$create_root/agent-launch.log"
+cross_agent_name="$(pmx_agent create agent --provider codex --project alpha --window window \
+  --cwd "$create_root/work/beta" --add-dir "$create_root/work/alpha" -o name)"
+smoke_assert_file_contains "$create_root/agent-launch.log" "args=-C $create_root/work/beta --add-dir $create_root/work/alpha"
+if ! pmx_agent get agents --project alpha -o name | grep -qx "$cross_agent_name" ||
+  pmx_agent get agents --project beta -o name | grep -qx "$cross_agent_name"; then
+  echo "cross-Project workspace changed Agent ownership" >&2
+  exit 1
+fi
+
+foreign_agent_after="$(cfx display-message -p -t "$foreign_agent_pane" '#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}')"
+if [[ "$foreign_agent_after" != "$foreign_agent_before" ]]; then
+  echo "Phase 6 Agent mutations touched foreign/title-matching Pane: before=$foreign_agent_before after=$foreign_agent_after" >&2
+  exit 1
+fi
 
 create_cleanup
 trap smoke_cleanup_env EXIT

@@ -142,10 +142,10 @@ var routes = []Route{
 		// surface stays with the shared verbs (`create`, `get`, `describe`,
 		// `delete agent`).
 		//
-		// Every subcommand except `resume` is a parity alias that forwards raw
-		// argv to the handler that already owns the behavior, so stdout, stderr,
-		// the exit code, and the side effects are identical to the current
-		// spelling. `agent usage` in particular forwards to the existing usage
+		// `integrate` and `usage` remain compatibility aliases. Semantic status
+		// and topic are Registry-owned Agent workflows with exact-one resolution;
+		// the compatibility `ai` routes forward their managed-Pane mutations into
+		// the same authority. `agent usage` forwards to the existing usage
 		// handler unchanged: provider account quota is a read-only Agent-domain
 		// workflow, not an addressable `usage` resource.
 		//
@@ -160,16 +160,17 @@ var routes = []Route{
 		Summary:     "Manage Agent state, topic, integrations, and account usage",
 		Disposition: DispositionCanonical,
 		Usage: []string{
-			"projmux agent status [set <state> [pane]]",
-			"projmux agent topic [set|clear] ...",
+			"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]",
+			"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]",
+			"projmux agent topic set <text> [<agent-ref>] [--agent <ref>]",
 			"projmux agent resume <ref> [--project <ref>] [--window <ref>]...",
 			"projmux agent integrate <provider> [--dry-run]",
 			"projmux agent usage [--model <name>] [--window <name>] [--json] [--force]",
 		},
 		Canonical: []string{"agent status", "agent topic", "agent resume", "agent integrate", "agent usage"},
 		Children: []Route{
-			{Name: "status", Summary: "Read or set the Agent status state", Usage: []string{"projmux agent status [set <state> [pane]]"}, Canonical: []string{"agent status"}},
-			{Name: "topic", Summary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic [set|clear] ..."}, Canonical: []string{"agent topic"}},
+			{Name: "status", Summary: "Read or set semantic Agent interaction independently of lifecycle", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
+			{Name: "topic", Summary: "Read, set, or clear one exact Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
 			{
 				// This route resolves exactly one existing Agent, refuses a
 				// Running one, and rebinds an Offline or Failed one to a new
@@ -316,8 +317,8 @@ var routes = []Route{
 		Usage: []string{
 			"projmux create window --project <ref> [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 			"projmux create pane --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
-			"projmux create agent --provider <provider> --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
-			"projmux create codex|claude|antigravity --project <ref> [--window <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
+			"projmux create agent --provider <provider> --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
+			"projmux create codex|claude|antigravity --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
 			"projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]",
 			"projmux create snapshot",
 		},
@@ -363,7 +364,7 @@ var routes = []Route{
 				Name:    "agent",
 				Summary: "Create an Agent and its managed Pane; --provider is required, and --project splits the resolved Windows detached",
 				Usage: []string{
-					"projmux create agent --provider <provider> --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
+					"projmux create agent --provider <provider> --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 					"projmux create agent --provider <provider> [--placement right|down] [-o pane-id|none] [-- <payload>]",
 				},
 				Outputs:   sharedOutputModes,
@@ -385,7 +386,7 @@ var routes = []Route{
 				Name:    "codex",
 				Summary: "Provider shortcut for create agent --provider codex",
 				Usage: []string{
-					"projmux create codex --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
+					"projmux create codex --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 					"projmux create codex [--placement right|down] [-o pane-id|none] [-- <payload>]",
 				},
 				ProviderShortcut: true,
@@ -396,7 +397,7 @@ var routes = []Route{
 				Name:    "claude",
 				Summary: "Provider shortcut for create agent --provider claude",
 				Usage: []string{
-					"projmux create claude --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
+					"projmux create claude --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 					"projmux create claude [--placement right|down] [-o pane-id|none] [-- <payload>]",
 				},
 				ProviderShortcut: true,
@@ -407,7 +408,7 @@ var routes = []Route{
 				Name:    "antigravity",
 				Summary: "Provider shortcut for create agent --provider antigravity",
 				Usage: []string{
-					"projmux create antigravity --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
+					"projmux create antigravity --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 					"projmux create antigravity [--placement right|down] [-o pane-id|none] [-- <payload>]",
 				},
 				ProviderShortcut: true,

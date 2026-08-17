@@ -190,6 +190,8 @@ func (r Registry) normalized() Registry {
 		r.Agents[i].Kind = KindAgent
 		r.Agents[i].Metadata.CreatedAt = r.Agents[i].Metadata.CreatedAt.UTC()
 		r.Agents[i].Status.LastTransitionAt = r.Agents[i].Status.LastTransitionAt.UTC()
+		r.Agents[i].Status.Interaction.ObservedAt = r.Agents[i].Status.Interaction.ObservedAt.UTC()
+		r.Agents[i].Status.Activation.ObservedAt = r.Agents[i].Status.Activation.ObservedAt.UTC()
 	}
 	return r
 }

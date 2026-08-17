@@ -153,6 +153,66 @@ already committed, and names the same public reconcile route as the retry. A
 valid unique Project UID wins over the old path after rebind; unknown and
 duplicate UID claims remain fail-closed.
 
+### Agent topic, interaction, activation, and workspace
+
+`agent topic get|set|clear` and `agent status get|set` resolve exactly one
+Agent, either from an explicit Agent reference or from the Agent-owned active
+managed Pane. Topic is a non-identifying Registry annotation. Interaction is a
+separate semantic field with the closed values `unknown`, `idle`,
+`in_progress`, `approval_required`, `input_required`, and
+`response_complete`; it never changes the Agent lifecycle
+`Pending`/`Running`/`Offline`/`Failed`. Offline, Failed, unbound, and stale
+observations read as current `unknown`, so a completed badge cannot survive as
+current state after its Pane is gone.
+
+`agent status set` always records the closed `manual` source; there is no public
+free-form source flag. Compatibility `ai status` and provider hooks forward to
+the same Agent authority with the closed `compatibility-ai` and `provider-hook`
+sources. Registries written before this field existed may still be read with an
+empty source, but new mutations cannot persist arbitrary prompt, credential, or
+operator text as provenance.
+
+For a Running Agent, the exact pane's topic and
+`@projmux_ai_state`/`@projmux_ai_badge_kind`/`@projmux_attention_state` are live
+projections of Registry authority. A failed exact write exits nonzero after the
+Registry commit and names `projmux reconcile resources` as the retry. An
+Offline topic stays stored and is projected when `agent resume` creates the new
+managed Pane. Window badges remain derived presentation: Agent semantic badges
+and shell Pane manual attention share the existing priority reducer, while
+`dot`/`emoji`/`off`, glyphs, colors, and the Window aggregate are never stored
+in resource metadata.
+
+Resource-backed Agent create accepts provider-neutral `--cwd <absolute>` and
+repeatable `--add-dir <absolute>`. Explicit paths must exist, resolve without a
+symlink escape, and remain inside a registered Project tree; only Codex and
+Claude accept additional writable roots. These flags change the Agent's
+effective launch workspace, not the Window's owning Project. The Agent stores
+the effective cwd and exact caller-provided additional roots, while its managed
+Pane stores the effective cwd. Provider argv translation (`-C`/`--add-dir`) is
+an implementation detail rather than roadmap prompt knowledge.
+
+The default owner Project root is subject to the same existing-directory and
+canonical-path validation before create performs any Registry or tmux mutation.
+Resume revalidates the persisted workspace against the current registered-root
+and provider rules before creating a Pane. A pre-workspace Agent projects its
+owner Project root from `get`/`describe`, and a successful resume persists that
+normalized effective workspace without changing Window Project ownership.
+
+When `create agent -- <initial-prompt>` is used, normal resource creation and
+provider activation are distinct. Projmux waits for bounded hook/lifecycle
+metadata only; it never captures pane content or stores the prompt. If
+activation cannot be confirmed, the command exits nonzero while naming the
+exact Agent UID and Pane plus safe provider retry and `delete agent ... --yes`
+cleanup options. The live resources remain explicit and retryable rather than
+being reported as an ordinary success.
+
+Activation metadata is bounded to provider-hook provenance and fixed
+acknowledged/timed-out/failed diagnostics. Provider error strings and initial
+prompt text are never stored. Resource-backed Agent create and resume do not
+start the legacy title/content watcher; that watcher remains only for legacy
+non-resource panes and exits before reading title or capture content if resource
+identity appears.
+
 ### When the active target is not a Projmux resource
 
 A pane created outside the registry-backed routes carries no
@@ -244,7 +304,7 @@ hook payload, or a `make install` log.
 | `internal statusbar` | Status bar click and shortcut dispatch (`click`, `usage-refresh`). |
 | `internal preview` | Persisted preview cursor (`cycle-pane`, `cycle-window`, `select`). |
 | `internal session-popup` | Session popup preview/open and popup cursor movement. |
-| `internal agent-hook` | Provider hook ingest (`ingest`) and the Agent pane title watcher (`watch-title`). |
+| `internal agent-hook` | Provider hook ingest (`ingest`) and the legacy non-resource pane title watcher (`watch-title`). |
 | `internal focus` | Machine focus ingress used by statusbar and notification-sidebar actions. |
 | `internal key-broker` | Darwin physical key transport. |
 | `internal popup-wait-key` | Single-key reader that closes a display-only popup. |

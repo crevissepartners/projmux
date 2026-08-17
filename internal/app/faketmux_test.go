@@ -441,23 +441,40 @@ func (f *fakeTmux) runDisplayMessage(args []string) ([]byte, error) {
 func (f *fakeTmux) runSetOption(args []string) ([]byte, error) {
 	target := flagValue(args, "-t")
 	rest := optionAssignment(args)
-	if len(rest) != 2 {
+	unset := slices.Contains(args, "-u")
+	if (!unset && len(rest) != 2) || (unset && len(rest) != 1) {
 		return nil, fmt.Errorf("fake tmux: set-option: cannot parse %v", args)
+	}
+	value := ""
+	if !unset {
+		value = rest[1]
 	}
 	switch {
 	case slices.Contains(args, "-p"):
 		if _, _, pane := f.pane(target); pane != nil {
-			pane.opts[rest[0]] = rest[1]
+			if unset {
+				delete(pane.opts, rest[0])
+			} else {
+				pane.opts[rest[0]] = value
+			}
 			return nil, nil
 		}
 	case slices.Contains(args, "-w"):
 		if _, window := f.window(target); window != nil {
-			window.opts[rest[0]] = rest[1]
+			if unset {
+				delete(window.opts, rest[0])
+			} else {
+				window.opts[rest[0]] = value
+			}
 			return nil, nil
 		}
 	default:
 		if session := f.session(target); session != nil {
-			session.opts[rest[0]] = rest[1]
+			if unset {
+				delete(session.opts, rest[0])
+			} else {
+				session.opts[rest[0]] = value
+			}
 			return nil, nil
 		}
 	}

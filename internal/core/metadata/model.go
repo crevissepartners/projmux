@@ -326,7 +326,117 @@ type Agent struct {
 
 // AgentSpec records the normalized provider id the Agent was created for.
 type AgentSpec struct {
-	Provider string `json:"provider,omitempty"`
+	Provider  string         `json:"provider,omitempty"`
+	Workspace AgentWorkspace `json:"workspace,omitzero"`
+}
+
+// AgentWorkspace is the provider-neutral effective filesystem contract of one
+// Agent launch. Project ownership remains on the owning Window; these paths
+// only describe where the provider process is allowed to work.
+type AgentWorkspace struct {
+	CWD                     string   `json:"cwd"`
+	AdditionalWritableRoots []string `json:"additionalWritableRoots,omitempty"`
+}
+
+// IsZero lets old registry documents omit the additive workspace block.
+func (w AgentWorkspace) IsZero() bool {
+	return w.CWD == "" && len(w.AdditionalWritableRoots) == 0
+}
+
+// AgentInteractionKind is the provider-neutral closed interaction vocabulary.
+// It is intentionally separate from AgentPhase: interaction describes what a
+// live provider is waiting on, while phase describes whether the Agent has a
+// live managed Pane at all.
+type AgentInteractionKind string
+
+// AgentInteractionSource is the closed provenance vocabulary for durable
+// semantic observations. It is intentionally not caller supplied: arbitrary
+// strings here would turn status metadata into a prompt/credential sink.
+type AgentInteractionSource string
+
+const (
+	InteractionUnknown          AgentInteractionKind = "unknown"
+	InteractionIdle             AgentInteractionKind = "idle"
+	InteractionInProgress       AgentInteractionKind = "in_progress"
+	InteractionApprovalRequired AgentInteractionKind = "approval_required"
+	InteractionInputRequired    AgentInteractionKind = "input_required"
+	InteractionResponseComplete AgentInteractionKind = "response_complete"
+)
+
+const (
+	InteractionSourceManual          AgentInteractionSource = "manual"
+	InteractionSourceCompatibilityAI AgentInteractionSource = "compatibility-ai"
+	InteractionSourceProviderHook    AgentInteractionSource = "provider-hook"
+	InteractionSourceLifecycle       AgentInteractionSource = "lifecycle"
+)
+
+func AgentInteractionSources() []AgentInteractionSource {
+	return []AgentInteractionSource{
+		InteractionSourceManual,
+		InteractionSourceCompatibilityAI,
+		InteractionSourceProviderHook,
+		InteractionSourceLifecycle,
+	}
+}
+
+// AgentInteractionKinds returns the closed semantic set in neutral order.
+func AgentInteractionKinds() []AgentInteractionKind {
+	return []AgentInteractionKind{
+		InteractionUnknown,
+		InteractionIdle,
+		InteractionInProgress,
+		InteractionApprovalRequired,
+		InteractionInputRequired,
+		InteractionResponseComplete,
+	}
+}
+
+// AgentInteraction is the last durable semantic observation. Readers use
+// Agent.EffectiveInteraction to invalidate it for an Offline/Failed Agent or
+// after the bounded freshness window; history may remain durable without being
+// presented as current state.
+type AgentInteraction struct {
+	Kind       AgentInteractionKind `json:"kind"`
+	ObservedAt time.Time            `json:"observedAt,omitzero"`
+	Source     string               `json:"source,omitempty"`
+}
+
+func (i AgentInteraction) IsZero() bool {
+	return (i.Kind == "" || i.Kind == InteractionUnknown) && i.ObservedAt.IsZero() && i.Source == ""
+}
+
+// AgentActivationState separates Pane creation from initial-task activation.
+type AgentActivationState string
+
+const (
+	ActivationNotRequested   AgentActivationState = "not_requested"
+	ActivationPending        AgentActivationState = "pending"
+	ActivationAcknowledged   AgentActivationState = "acknowledged"
+	ActivationUnconfirmed    AgentActivationState = "unconfirmed"
+	ActivationReasonTimedOut                      = "provider activation acknowledgement timed out"
+	ActivationReasonFailed                        = "provider activation acknowledgement failed"
+)
+
+func ValidAgentActivationReason(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case "", ActivationReasonTimedOut, ActivationReasonFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// AgentActivation is bounded launch metadata. It never contains prompt text,
+// provider credentials, or pane content.
+type AgentActivation struct {
+	State      AgentActivationState `json:"state"`
+	ObservedAt time.Time            `json:"observedAt,omitzero"`
+	Source     string               `json:"source,omitempty"`
+	Reason     string               `json:"reason,omitempty"`
+}
+
+func (a AgentActivation) IsZero() bool {
+	return (a.State == "" || a.State == ActivationNotRequested) && a.ObservedAt.IsZero() && a.Source == "" && a.Reason == ""
 }
 
 // AgentStatus tracks the lifecycle phase, the current managed Pane uid, and the
@@ -354,6 +464,8 @@ type AgentStatus struct {
 	Phase            AgentPhase       `json:"phase"`
 	PaneRef          string           `json:"paneRef,omitempty"`
 	SessionRef       *AgentSessionRef `json:"sessionRef,omitempty"`
+	Interaction      AgentInteraction `json:"interaction,omitzero"`
+	Activation       AgentActivation  `json:"activation,omitzero"`
 	Reason           string           `json:"reason,omitempty"`
 	LastTransitionAt time.Time        `json:"lastTransitionAt"`
 }
@@ -362,6 +474,7 @@ type AgentStatus struct {
 func (a Agent) Clone() Agent {
 	out := a
 	out.Metadata = a.Metadata.Clone()
+	out.Spec.Workspace.AdditionalWritableRoots = slices.Clone(a.Spec.Workspace.AdditionalWritableRoots)
 	out.Status.SessionRef = a.Status.SessionRef.Clone()
 	return out
 }

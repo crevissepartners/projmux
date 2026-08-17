@@ -36,6 +36,7 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	}
+	defer c.flushPendingAgentSessionRef(paneID)
 
 	metadata := payload.codexHookMetadata()
 	action := c.aiHookEffectiveAction(aiHookProviderCodex, payload.EventName)

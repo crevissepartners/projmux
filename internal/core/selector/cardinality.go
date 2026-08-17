@@ -41,6 +41,8 @@ const (
 	// target set exactly like the shared verbs, so it belongs in this matrix
 	// instead of re-deciding its own cardinality inside the handler.
 	VerbResume Verb = "resume"
+	VerbStatus Verb = "status"
+	VerbTopic  Verb = "topic"
 )
 
 // Target is one cell of the <verb, kind> cardinality matrix.
@@ -96,6 +98,8 @@ var matrix = map[Target]Cardinality{
 	{Verb: VerbDescribe, Kind: metadata.KindWindow}:         CardinalityExactOne,
 	{Verb: VerbDescribe, Kind: metadata.KindPane}:           CardinalityExactOne,
 	{Verb: VerbDescribe, Kind: metadata.KindAgent}:          CardinalityExactOne,
+	{Verb: VerbStatus, Kind: metadata.KindAgent}:            CardinalityExactOne,
+	{Verb: VerbTopic, Kind: metadata.KindAgent}:             CardinalityExactOne,
 
 	// Navigation and rebinding address one resource.
 	{Verb: VerbAttach, Kind: metadata.KindProject}: CardinalityExactOne,
