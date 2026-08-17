@@ -1,0 +1,527 @@
+package app
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
+)
+
+func reconcileFixtureReconciler(root, sessionName string) func(tmuxCommandRunner, sessionLister) *registryReconciler {
+	return func(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
+		mirror := intmetadata.NewMirror(runner)
+		return &registryReconciler{
+			discoverRoots: func() ([]string, error) { return []string{root}, nil },
+			liveSessions:  sessions.ExistingSessions,
+			observeLegacy: mirror.ObserveLegacySessionTargets,
+			mirror:        mirror,
+			shell:         "/bin/zsh",
+			sessionNameFor: func(string) string {
+				return sessionName
+			},
+		}
+	}
+}
+
+func newReconcileFixture(t *testing.T, socketFlag, socketValue string) (*resourceReconcileCommand, *fakeResourceStore, *fakeTmux, *routedTmuxRunner, string) {
+	t.Helper()
+	root := t.TempDir()
+	server := newFakeTmux()
+	session := server.addSession("alpha")
+	session.opts[inttmux.ProjectPathSessionOption] = root
+	store := &fakeResourceStore{registry: coremetadata.NewRegistry(), dirs: map[string]bool{root: true}, now: resourceFixtureClock}
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{socketFlag + "\x00" + socketValue: server}}
+	command := &resourceReconcileCommand{
+		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
+		newReconciler: reconcileFixtureReconciler(root, "alpha"),
+	}
+	return command, store, server, runner, root
+}
+
+func runReconcile(t *testing.T, command *resourceReconcileCommand, args ...string) (string, string, error) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	err := command.Run(args, &stdout, &stderr)
+	return stdout.String(), stderr.String(), err
+}
+
+func tmuxMutationCallCount(server *fakeTmux) int {
+	count := 0
+	for _, call := range server.calls {
+		if len(call) > 0 && slices.Contains([]string{"set-option", "rename-window"}, call[0]) {
+			count++
+		}
+	}
+	return count
+}
+
+func TestResourceReconcileDryRunIsDeterministicAndByteStable(t *testing.T) {
+	t.Parallel()
+
+	command, store, server, _, _ := newReconcileFixture(t, "-L", "primary")
+	registryBefore, tmuxBefore := store.snapshot(), server.state()
+	first, stderr, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "primary", "-o", "json")
+	if err != nil || stderr != "" {
+		t.Fatalf("first dry-run error=%v stderr=%q", err, stderr)
+	}
+	second, stderr, err := runReconcile(t, command, "resources", "--socket", "primary", "--dry-run", "-o", "json")
+	if err != nil || stderr != "" {
+		t.Fatalf("second dry-run error=%v stderr=%q", err, stderr)
+	}
+	if first != second {
+		t.Fatalf("dry-run output changed across identical plans:\n--- first ---\n%s\n--- second ---\n%s", first, second)
+	}
+	for _, want := range []string{`"drift": "missing"`, `"surface": "registry"`, `"surface": "tmux"`, `"after": "uid:<allocated-project-1>"`, `"tmuxFlag": "-L"`} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("dry-run JSON missing %q:\n%s", want, first)
+		}
+	}
+	if got := store.snapshot(); got != registryBefore || store.writes != 0 || store.transactions != 0 {
+		t.Fatalf("dry-run mutated Registry: transactions=%d writes=%d\n%s", store.transactions, store.writes, got)
+	}
+	if got := server.state(); got != tmuxBefore || tmuxMutationCallCount(server) != 0 {
+		t.Fatalf("dry-run mutated tmux:\n--- got ---\n%s\n--- want ---\n%s", got, tmuxBefore)
+	}
+}
+
+func TestResourceReconcileHumanPlanShowsTargetCountsAndWrites(t *testing.T) {
+	t.Parallel()
+
+	command, _, _, _, _ := newReconcileFixture(t, "-L", "primary")
+	stdout, stderr, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "primary")
+	if err != nil || stderr != "" {
+		t.Fatalf("human dry-run error=%v stderr=%q", err, stderr)
+	}
+	for _, want := range []string{
+		"target: tmux -L primary",
+		"outcome: planned",
+		"counts: changed=",
+		"tmux set-option",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("human plan missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestResourceReconcileRegistryItemsClassifyStaleAndOrphan(t *testing.T) {
+	t.Parallel()
+
+	before := bindingFixture(t, t.TempDir())
+	after := before.Clone()
+	after.Windows[0].Metadata.DisplayName = "renamed-runtime"
+	after.Windows[1].Status.Conditions = append(after.Windows[1].Status.Conditions, coremetadata.Condition{
+		Type: coremetadata.ConditionMissingRuntime, Status: coremetadata.ConditionTrue, Reason: coremetadata.ReasonRuntimeUnbound,
+	})
+	items := registryReconcileItems(before, after, resourcePlanUIDNormalizer{created: map[string]string{}})
+	found := map[resourceDriftKind]bool{}
+	for _, item := range items {
+		found[item.Drift] = true
+	}
+	if !found[resourceDriftStale] || !found[resourceDriftOrphan] {
+		t.Fatalf("registry drift classifications = %#v, want stale and orphan", items)
+	}
+}
+
+func TestResourceReconcileRepairsStaleMirrorsForExactBindings(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	registry := bindingFixture(t, root)
+	server := bindingFixtureServer()
+	session := server.session(driftedSessionName)
+	session.opts[tmuxopts.ProjectUIDSession] = registry.Projects[0].Metadata.UID
+	session.opts[tmuxopts.ProjectNameSession] = "stale-project"
+	for index := range session.windows {
+		session.windows[index].opts[tmuxopts.WindowUID] = registry.Windows[index].Metadata.UID
+		session.windows[index].opts[tmuxopts.WindowName] = "stale-window"
+		session.windows[index].opts[tmuxopts.AutomaticRenameWindow] = "on"
+		session.windows[index].panes[0].opts[tmuxopts.PaneUID] = registry.Panes[index].Metadata.UID
+		session.windows[index].panes[0].opts[tmuxopts.PaneName] = "stale-pane"
+	}
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
+	store := &fakeResourceStore{registry: registry, dirs: map[string]bool{root: true}, now: resourceFixtureClock}
+	command := &resourceReconcileCommand{
+		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
+		newReconciler: bindingFixtureReconciler(root),
+	}
+	preview, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("stale mirror preview: %v", err)
+	}
+	for _, field := range []string{tmuxopts.ProjectNameSession, tmuxopts.WindowName, tmuxopts.PaneName, tmuxopts.AutomaticRenameWindow} {
+		if !strings.Contains(preview, `"field": "`+field+`"`) || !strings.Contains(preview, `"drift": "stale"`) {
+			t.Fatalf("stale mirror preview missing %s:\n%s", field, preview)
+		}
+	}
+	if _, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json"); err != nil {
+		t.Fatalf("repair stale mirrors: %v", err)
+	}
+	if session.opts[tmuxopts.ProjectNameSession] != registry.Projects[0].Metadata.Name {
+		t.Fatal("Project name mirror did not converge")
+	}
+	for index := range session.windows {
+		if session.windows[index].opts[tmuxopts.WindowName] != registry.Windows[index].Metadata.Name ||
+			session.windows[index].opts[tmuxopts.AutomaticRenameWindow] != "off" ||
+			session.windows[index].panes[0].opts[tmuxopts.PaneName] != registry.Panes[index].Metadata.Name {
+			t.Fatalf("Window/Pane mirror %d did not converge: %+v %+v", index, session.windows[index].opts, session.windows[index].panes[0].opts)
+		}
+	}
+}
+
+func TestResourceReconcileExecuteConvergesOneSocketAndRepeatsNoop(t *testing.T) {
+	t.Parallel()
+
+	command, store, primary, runner, _ := newReconcileFixture(t, "-L", "primary")
+	secondary := newFakeTmux()
+	secondary.addSession("other")
+	secondaryBefore := secondary.state()
+	runner.servers["-L\x00secondary"] = secondary
+
+	first, stderr, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || stderr != "" {
+		t.Fatalf("execute error=%v stderr=%q\n%s", err, stderr, first)
+	}
+	if !strings.Contains(first, `"outcome": "changed"`) || store.writes != 1 {
+		t.Fatalf("execute result/writes mismatch: writes=%d\n%s", store.writes, first)
+	}
+	session := primary.session("alpha")
+	if got := session.opts[tmuxopts.ProjectUIDSession]; got == "" {
+		t.Fatal("execute did not mirror Project uid")
+	}
+	if got := session.windows[0].opts[tmuxopts.WindowUID]; got == "" {
+		t.Fatal("execute did not mirror Window uid")
+	}
+	if got := session.windows[0].panes[0].opts[tmuxopts.PaneUID]; got == "" {
+		t.Fatal("execute did not mirror Pane uid")
+	}
+	if got := secondary.state(); got != secondaryBefore {
+		t.Fatalf("unrelated socket changed:\n%s", got)
+	}
+
+	primary.calls = nil
+	second, stderr, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || stderr != "" {
+		t.Fatalf("repeat error=%v stderr=%q\n%s", err, stderr, second)
+	}
+	if !strings.Contains(second, `"outcome": "no-op"`) || !strings.Contains(second, `"noOp": 1`) {
+		t.Fatalf("repeat was not a no-op:\n%s", second)
+	}
+	if store.writes != 1 || tmuxMutationCallCount(primary) != 0 {
+		t.Fatalf("repeat mutated state: Registry writes=%d tmux mutations=%d", store.writes, tmuxMutationCallCount(primary))
+	}
+}
+
+func TestResourceReconcilePreservesRegistryGraphOwnedByAnotherSocket(t *testing.T) {
+	t.Parallel()
+
+	command, store, _, runner, _ := newReconcileFixture(t, "-L", "primary")
+	otherRoot := t.TempDir()
+	store.dirs[otherRoot] = true
+	project, err := store.mutator().RegisterProject(&store.registry, coremetadata.RegisterProjectOptions{
+		Root: otherRoot, DefaultShell: "/bin/zsh", OperationID: "op-unrelated-secondary",
+	})
+	if err != nil {
+		t.Fatalf("seed unrelated Registry graph: %v", err)
+	}
+	window := store.registry.Windows[len(store.registry.Windows)-1]
+	pane := store.registry.Panes[len(store.registry.Panes)-1]
+	secondary := newFakeTmux()
+	secondarySession := secondary.addSession("secondary")
+	secondarySession.opts[inttmux.ProjectPathSessionOption] = otherRoot
+	secondarySession.opts[tmuxopts.ProjectUIDSession] = project.Project.Metadata.UID
+	secondarySession.opts[tmuxopts.ProjectNameSession] = project.Project.Metadata.Name
+	secondarySession.windows[0].opts[tmuxopts.WindowUID] = window.Metadata.UID
+	secondarySession.windows[0].opts[tmuxopts.WindowName] = window.Metadata.Name
+	secondarySession.windows[0].panes[0].opts[tmuxopts.PaneUID] = pane.Metadata.UID
+	secondarySession.windows[0].panes[0].opts[tmuxopts.PaneName] = pane.Metadata.Name
+	runner.servers["-L\x00secondary"] = secondary
+
+	beforeGraph := resourceRegistryProjectGraph(store.registry, map[string]bool{project.Project.Metadata.UID: true})
+	secondaryBefore := secondary.state()
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("primary reconcile: %v\n%s", err, stdout)
+	}
+	afterGraph := resourceRegistryProjectGraph(store.registry, map[string]bool{project.Project.Metadata.UID: true})
+	if !reflect.DeepEqual(beforeGraph, afterGraph) {
+		t.Fatalf("unrelated Registry graph changed:\n--- before ---\n%#v\n--- after ---\n%#v", beforeGraph, afterGraph)
+	}
+	if got := secondary.state(); got != secondaryBefore {
+		t.Fatalf("secondary socket changed:\n--- before ---\n%s\n--- after ---\n%s", secondaryBefore, got)
+	}
+}
+
+func TestResourceReconcileTargetRulesArePreMutationAndExact(t *testing.T) {
+	t.Parallel()
+
+	command, store, server, runner, _ := newReconcileFixture(t, "-S", filepath.Join(t.TempDir(), "inside.sock"))
+	path := ""
+	for key := range runner.servers {
+		path = strings.TrimPrefix(key, "-S\x00")
+	}
+	command.lookupEnv = func(name string) string {
+		if name == "TMUX" {
+			return path + ",1234,7"
+		}
+		return ""
+	}
+	if _, _, err := runReconcile(t, command, "resources", "--dry-run"); err != nil {
+		t.Fatalf("inherited target: %v", err)
+	}
+	for _, call := range runner.calls {
+		if call.flag != "-S" || call.value != path {
+			t.Fatalf("inherited target escaped exact socket: %+v", call)
+		}
+	}
+	runner.calls = nil
+	command.lookupEnv = func(string) string { return "" }
+	for _, args := range [][]string{
+		{"resources"},
+		{"resources", "--socket-path", "relative"},
+		{"resources", "--socket", "one", "--socket-path", path},
+	} {
+		if _, _, err := runReconcile(t, command, args...); !IsUsageError(err) {
+			t.Fatalf("args %v error=%v, want usage error", args, err)
+		}
+	}
+	if store.transactions != 0 || store.writes != 0 || tmuxMutationCallCount(server) != 0 || len(runner.calls) != 0 {
+		t.Fatalf("invalid target reached mutation/read: transactions=%d writes=%d tmux=%d routed=%d", store.transactions, store.writes, tmuxMutationCallCount(server), len(runner.calls))
+	}
+}
+
+func TestResourceReconcileRefusesForeignAndAmbiguousBindings(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	registry := bindingFixture(t, root)
+	server := bindingFixtureServer()
+	session := server.session(driftedSessionName)
+	session.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+	session.windows[0].opts[tmuxopts.WindowUID] = "win-foreign"
+	session.windows[1].opts[tmuxopts.WindowUID] = "win-foreign"
+	before := server.state()
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
+	store := &fakeResourceStore{registry: registry, dirs: map[string]bool{root: true}, now: resourceFixtureClock}
+	command := &resourceReconcileCommand{
+		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
+		newReconciler: bindingFixtureReconciler(root),
+	}
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil {
+		t.Fatal("foreign/ambiguous execute unexpectedly succeeded")
+	}
+	for _, want := range []string{`"drift": "foreign"`, `"action": "refuse"`, `"outcome": "refused"`, `"retry": "projmux reconcile resources --socket 'primary'"`} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("negative report missing %q:\n%s", want, stdout)
+		}
+	}
+	if got := server.state(); got != before || tmuxMutationCallCount(server) != 0 {
+		t.Fatalf("foreign session was mutated:\n--- got ---\n%s\n--- want ---\n%s", got, before)
+	}
+}
+
+func TestResourceReconcileRefusesDuplicateUIDLessProjectClaims(t *testing.T) {
+	t.Parallel()
+
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	if _, err := store.mutator().RegisterProject(&store.registry, coremetadata.RegisterProjectOptions{
+		Root: root, DefaultShell: "/bin/zsh", OperationID: "op-duplicate-project-claim",
+	}); err != nil {
+		t.Fatalf("seed authoritative Project: %v", err)
+	}
+	second := server.addSession("beta")
+	second.opts[inttmux.ProjectPathSessionOption] = root
+	registryBefore, tmuxBefore := store.snapshot(), server.state()
+
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil {
+		t.Fatal("duplicate UID-less Project claims unexpectedly succeeded")
+	}
+	for _, want := range []string{
+		`"failed": 2`,
+		`"reason": "multiple live sessions resolve to the same exact Registry Project"`,
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("duplicate Project claim report missing %q:\n%s", want, stdout)
+		}
+	}
+	if store.writes != 0 || store.snapshot() != registryBefore {
+		t.Fatalf("duplicate Project claims mutated Registry: writes=%d snapshot=%s", store.writes, store.snapshot())
+	}
+	if got := server.state(); got != tmuxBefore || tmuxMutationCallCount(server) != 0 {
+		t.Fatalf("duplicate Project claims mutated tmux:\n--- got ---\n%s\n--- want ---\n%s", got, tmuxBefore)
+	}
+}
+
+func TestResourceReconcileForeignProjectDoesNotRecoverMissingRegistryState(t *testing.T) {
+	t.Parallel()
+
+	command, store, server, _, _ := newReconcileFixture(t, "-L", "primary")
+	session := server.session("alpha")
+	session.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+	before := server.state()
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil {
+		t.Fatal("foreign Project execute unexpectedly succeeded")
+	}
+	if !strings.Contains(stdout, `"kind": "Project"`) || !strings.Contains(stdout, `"outcome": "refused"`) {
+		t.Fatalf("foreign Project refusal missing:\n%s", stdout)
+	}
+	if len(store.registry.Projects) != 0 || store.writes != 0 {
+		t.Fatalf("foreign Project triggered Registry state-loss recovery: writes=%d snapshot=%s", store.writes, store.snapshot())
+	}
+	if got := server.state(); got != before || tmuxMutationCallCount(server) != 0 {
+		t.Fatalf("foreign Project session was mutated:\n--- got ---\n%s\n--- want ---\n%s", got, before)
+	}
+}
+
+func TestResourceReconcileRefusesAmbiguousRootlessProjectScope(t *testing.T) {
+	t.Parallel()
+
+	firstRoot, secondRoot := t.TempDir(), t.TempDir()
+	store := &fakeResourceStore{registry: coremetadata.NewRegistry(), dirs: map[string]bool{firstRoot: true, secondRoot: true}, now: resourceFixtureClock}
+	mutator := store.mutator()
+	for index, root := range []string{firstRoot, secondRoot} {
+		result, err := mutator.RegisterProject(&store.registry, coremetadata.RegisterProjectOptions{
+			Root: root, DefaultShell: "/bin/zsh", OperationID: fmt.Sprintf("op-ambiguous-%d", index),
+		})
+		if err != nil {
+			t.Fatalf("seed ambiguous Project %d: %v", index, err)
+		}
+		project, _ := store.registry.Project(result.Project.Metadata.UID)
+		project.Status.Session = &coremetadata.SessionProjection{Name: "shared", Live: true}
+	}
+	server := newFakeTmux()
+	server.addSession("shared")
+	before := server.state()
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
+	command := &resourceReconcileCommand{
+		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
+		newReconciler: func(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
+			mirror := intmetadata.NewMirror(runner)
+			return &registryReconciler{
+				discoverRoots: func() ([]string, error) { return nil, nil }, liveSessions: sessions.ExistingSessions,
+				observeLegacy: mirror.ObserveLegacySessionTargets, mirror: mirror, shell: "/bin/zsh",
+				sessionNameFor: func(string) string { return "shared" },
+			}
+		},
+	}
+	registryBefore := store.snapshot()
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil || !strings.Contains(stdout, "multiple Registry Projects claim the live session-name edge") || !strings.Contains(stdout, `"outcome": "refused"`) {
+		t.Fatalf("ambiguous rootless scope was not explicitly refused: err=%v\n%s", err, stdout)
+	}
+	if store.writes != 0 || store.snapshot() != registryBefore || server.state() != before || tmuxMutationCallCount(server) != 0 {
+		t.Fatal("ambiguous rootless scope mutated Registry or tmux")
+	}
+}
+
+func TestResourceReconcileCommitFailureDoesNotPublishAllocatedUIDs(t *testing.T) {
+	t.Parallel()
+
+	command, store, server, _, _ := newReconcileFixture(t, "-L", "primary")
+	registryBefore, tmuxBefore := store.snapshot(), server.state()
+	base := command.resources
+	command.resources = &resourceStore{
+		load:    base.load,
+		mutator: base.mutator,
+		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+			working := store.registry.Clone()
+			if err := fn(&working); err != nil {
+				return coremetadata.Registry{}, false, err
+			}
+			return coremetadata.Registry{}, false, errors.New("injected registry commit failure")
+		},
+	}
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil || !strings.Contains(stdout, `"outcome": "failed"`) || !strings.Contains(stdout, "registry commit") {
+		t.Fatalf("commit failure was not reported: err=%v\n%s", err, stdout)
+	}
+	if got := store.snapshot(); got != registryBefore {
+		t.Fatalf("failed commit changed Registry:\n%s", got)
+	}
+	if got := server.state(); got != tmuxBefore || tmuxMutationCallCount(server) != 0 {
+		t.Fatalf("failed commit published a planned uid:\n--- got ---\n%s\n--- want ---\n%s", got, tmuxBefore)
+	}
+}
+
+func TestResourceReconcileTmuxFailureLeavesRetryableRegistryAuthority(t *testing.T) {
+	t.Parallel()
+
+	command, store, server, _, _ := newReconcileFixture(t, "-L", "primary")
+	server.fail = []string{"set-option", tmuxopts.WindowUID}
+	first, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil {
+		t.Fatal("injected tmux failure unexpectedly succeeded")
+	}
+	if store.writes != 1 || len(store.registry.Projects) != 1 || len(store.registry.Windows) != 1 || len(store.registry.Panes) != 1 {
+		t.Fatalf("Registry authority was not committed before tmux failure: writes=%d snapshot=%s", store.writes, store.snapshot())
+	}
+	for _, want := range []string{`"outcome": "failed"`, `"completedStages"`, `"remainingDrift"`, `"retry": "projmux reconcile resources --socket 'primary'"`} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("partial report missing %q:\n%s", want, first)
+		}
+	}
+
+	second, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("exact retry failed: %v\n%s", err, second)
+	}
+	if !strings.Contains(second, `"outcome": "changed"`) {
+		t.Fatalf("retry did not converge:\n%s", second)
+	}
+	if len(store.registry.Projects) != 1 || len(store.registry.Windows) != 1 || len(store.registry.Panes) != 1 {
+		t.Fatalf("retry duplicated Registry identity: %s", store.snapshot())
+	}
+	third, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || !strings.Contains(third, `"outcome": "no-op"`) {
+		t.Fatalf("post-retry repeat is not no-op: err=%v\n%s", err, third)
+	}
+}
+
+func TestResourceReconcileHumanFailureListsRemainingDriftItems(t *testing.T) {
+	t.Parallel()
+
+	command, _, server, _, _ := newReconcileFixture(t, "-L", "primary")
+	server.fail = []string{"set-option", tmuxopts.WindowUID}
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary")
+	if err == nil {
+		t.Fatal("injected human-output failure unexpectedly succeeded")
+	}
+	for _, want := range []string{"remaining drift:", "tmux:set-option:", "[missing] tmux set-option", "retry: projmux reconcile resources --socket 'primary'"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("human partial report missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestResourceReconcileKeepsReadAndDiagnosticRoutesOutsideMutationMigration(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{{"doctor"}, {"get", "projects"}, {"describe", "project", "alpha"}, {"reconcile", "resources", "--dry-run"}} {
+		if shouldRunLegacyHookMigrations(args) {
+			t.Fatalf("read/repair boundary %v triggered unrelated legacy migration", args)
+		}
+	}
+}
+
+func TestResourceRepairMatcherRefusesForeignWithoutChangingLifecycleMatcher(t *testing.T) {
+	t.Parallel()
+
+	registry := bindingFixture(t, t.TempDir())
+	lifecycle := coremetadata.NewBindingMatcher(coremetadata.RuntimeObservation{}).MatchWindow(&registry, registry.Projects[0].Metadata.UID, "win-foreign")
+	repair := coremetadata.NewRepairBindingMatcher(coremetadata.RuntimeObservation{}).MatchWindow(&registry, registry.Projects[0].Metadata.UID, "win-foreign")
+	if lifecycle.Kind != coremetadata.AdoptionForeign || repair.Kind != coremetadata.AdoptionRefused {
+		t.Fatalf("matcher modes lifecycle=%+v repair=%+v", lifecycle, repair)
+	}
+}

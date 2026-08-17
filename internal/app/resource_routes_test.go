@@ -221,8 +221,9 @@ func (s *fakeResourceStore) store() *resourceStore {
 		return working, nil
 	}
 	return &resourceStore{
-		load:   func() (coremetadata.Registry, error) { return s.registry.Clone(), nil },
-		update: update,
+		load:     func() (coremetadata.Registry, error) { return s.registry.Clone(), nil },
+		snapshot: func() (coremetadata.Registry, error) { return s.registry.Clone(), nil },
+		update:   update,
 		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
 			s.transactions++
 			before := s.registry.Clone().Normalize()

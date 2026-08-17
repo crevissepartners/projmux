@@ -168,9 +168,8 @@ func (s *Store) Load() (coremetadata.Registry, error) {
 // empty registry before any directory is touched.
 //
 // When the file does exist the normal locked read runs, whose directory already
-// exists. Skipping the lock entirely would also be safe for readers, because
-// every write lands through an atomic rename, but taking it keeps the read
-// consistent with a concurrent migration.
+// exists. Call LoadSnapshot when even transient lock and permission-repair side
+// effects are forbidden.
 func (s *Store) LoadReadOnly() (coremetadata.Registry, error) {
 	if s == nil {
 		return coremetadata.NewRegistry(), nil
@@ -182,6 +181,17 @@ func (s *Store) LoadReadOnly() (coremetadata.Registry, error) {
 		return coremetadata.Registry{}, fmt.Errorf("metadata: stat registry %s: %w", s.path, err)
 	}
 	return s.Load()
+}
+
+// LoadSnapshot reads an atomic Registry snapshot without taking the lock or
+// repairing permissions. Writers use atomic replace, so the result is either
+// the complete prior or next envelope and the read performs zero writes.
+func (s *Store) LoadSnapshot() (coremetadata.Registry, error) {
+	if s == nil {
+		return coremetadata.NewRegistry(), nil
+	}
+	registry, _, _, err := s.readWithoutRepair()
+	return registry, err
 }
 
 // Update runs fn against a private copy of the registry under the store lock
@@ -321,6 +331,10 @@ func (s *Store) Migrate() (MigrationResult, error) {
 // existed with content.
 func (s *Store) read() (coremetadata.Registry, int, bool, error) {
 	localstate.RepairPrivateFile(s.path)
+	return s.readWithoutRepair()
+}
+
+func (s *Store) readWithoutRepair() (coremetadata.Registry, int, bool, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

@@ -130,6 +130,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "rename window", Summary: "Rename a Projmux Window resource", Sources: []string{"window", "rename"}},
 	{Spelling: "rename pane", Summary: "Rename a Projmux Pane resource; does not change tmux pane_title", Sources: []string{"tmux", "rename"}},
 	{Spelling: "rebind project", Summary: "Rebind one Project spec.root to a new absolute directory", Sources: []string{"rebind"}},
+	{Spelling: "reconcile resources", Summary: "Preview or repair Registry and exact tmux resource drift", Sources: []string{"reconcile"}},
 
 	// delete / restore
 	{Spelling: "delete window", Summary: "Delete a Window and its descendants", Sources: []string{"delete"}},

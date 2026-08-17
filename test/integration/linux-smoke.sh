@@ -10,7 +10,34 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/test/lib/smoke.sh"
 smoke_setup_env
 PROJMUX_SMOKE_TMUX_ACTUAL=""
 PROJMUX_SMOKE_TMUX_STARTED=0
+PROJMUX_RECONCILE_PRIMARY_STARTED=0
+PROJMUX_RECONCILE_SECONDARY_STARTED=0
+cleanup_reconcile_socket() {
+  local started="$1"
+  local socket="$2"
+  local actual="$3"
+  local session="$4"
+  if [[ "$started" != "1" ]]; then
+    return 0
+  fi
+  case "$actual" in
+    "$PROJMUX_SMOKE_WORKDIR"/tmux/*) ;;
+    *)
+      echo "refusing reconcile cleanup outside smoke root: $actual" >&2
+      return 1
+      ;;
+  esac
+  local current
+  current="$(env -u TMUX -u TMUX_PANE tmux -L "$socket" display-message -p -t "=$session" '#{socket_path}' 2>/dev/null || true)"
+  if [[ -z "$current" || "$current" != "$actual" ]]; then
+    echo "refusing reconcile cleanup after socket identity changed: expected=$actual current=$current" >&2
+    return 1
+  fi
+  env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+}
 integration_cleanup() {
+	cleanup_reconcile_socket "${PROJMUX_RECONCILE_PRIMARY_STARTED:-0}" "${PROJMUX_RECONCILE_PRIMARY_SOCKET:-}" "${PROJMUX_RECONCILE_PRIMARY_ACTUAL:-}" "${PROJMUX_RECONCILE_SESSION:-}"
+	cleanup_reconcile_socket "${PROJMUX_RECONCILE_SECONDARY_STARTED:-0}" "${PROJMUX_RECONCILE_SECONDARY_SOCKET:-}" "${PROJMUX_RECONCILE_SECONDARY_ACTUAL:-}" "${PROJMUX_RECONCILE_SESSION:-}"
 	if [[ "${PROJMUX_SMOKE_TMUX_STARTED:-0}" == "1" ]]; then
 		if [[ -z "${PROJMUX_SMOKE_TMUX_ACTUAL:-}" || -z "${PROJMUX_SMOKE_TMUX_SOCKET:-}" ]]; then
 			echo "refusing integration cleanup without expected socket identity" >&2
@@ -1290,5 +1317,112 @@ if [[ "$(cat "$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.out")" != "pinned: $smo
   echo "best-effort operational writer failure changed command stdout" >&2
   exit 1
 fi
+
+# Public resource reconciliation uses one explicit server and a fresh Registry.
+# The second real server has the same live shape and proves the first plan never
+# escapes its exact -L/-S target.
+reconcile_root="$PROJMUX_SMOKE_WORKDIR/reconcile-root"
+reconcile_state="$PROJMUX_SMOKE_WORKDIR/reconcile-state"
+mkdir -p "$reconcile_root"
+PROJMUX_RECONCILE_SESSION="$(basename "$reconcile_root")"
+PROJMUX_RECONCILE_PRIMARY_SOCKET="projmux-reconcile-primary-$$-$RANDOM"
+PROJMUX_RECONCILE_SECONDARY_SOCKET="projmux-reconcile-secondary-$$-$RANDOM"
+export PROJMUX_RECONCILE_SESSION PROJMUX_RECONCILE_PRIMARY_SOCKET PROJMUX_RECONCILE_SECONDARY_SOCKET
+for reconcile_socket in "$PROJMUX_RECONCILE_PRIMARY_SOCKET" "$PROJMUX_RECONCILE_SECONDARY_SOCKET"; do
+  env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" new-session -d -s "$PROJMUX_RECONCILE_SESSION" -c "$reconcile_root" sleep 300
+  env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" set-option -t "$PROJMUX_RECONCILE_SESSION" -q @projmux_project_path "$reconcile_root"
+  if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" show-options -t "$PROJMUX_RECONCILE_SESSION" -qv @projmux_project_path)" != "$reconcile_root" ]]; then
+    echo "failed to seed reconcile session project path" >&2
+    exit 1
+  fi
+done
+PROJMUX_RECONCILE_PRIMARY_STARTED=1
+PROJMUX_RECONCILE_SECONDARY_STARTED=1
+PROJMUX_RECONCILE_PRIMARY_ACTUAL="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" display-message -p -t "=$PROJMUX_RECONCILE_SESSION" '#{socket_path}')"
+PROJMUX_RECONCILE_SECONDARY_ACTUAL="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_SECONDARY_SOCKET" display-message -p -t "=$PROJMUX_RECONCILE_SESSION" '#{socket_path}')"
+export PROJMUX_RECONCILE_PRIMARY_ACTUAL PROJMUX_RECONCILE_SECONDARY_ACTUAL
+
+resource_tmux_snapshot() {
+  local socket="$1"
+  env -u TMUX -u TMUX_PANE tmux -L "$socket" list-sessions -F '#{session_id}\037#{session_name}\037#{@projmux_project_uid}\037#{@projmux_project_name}\037#{@projmux_project_path}'
+  env -u TMUX -u TMUX_PANE tmux -L "$socket" list-windows -a -F '#{window_id}\037#{window_name}\037#{@projmux_window_uid}\037#{@projmux_window_name}'
+  env -u TMUX -u TMUX_PANE tmux -L "$socket" list-panes -a -F '#{pane_id}\037#{@projmux_pane_uid}\037#{@projmux_pane_label}'
+}
+
+resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-primary.before"
+resource_tmux_snapshot "$PROJMUX_RECONCILE_SECONDARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-secondary.before"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile resources --dry-run --socket "$PROJMUX_RECONCILE_PRIMARY_SOCKET" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run.json"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile resources --dry-run --socket "$PROJMUX_RECONCILE_PRIMARY_SOCKET" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run-repeat.json"
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run.json" "$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run-repeat.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run.json" '"drift": "missing"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run.json" '"tmuxFlag": "-L"'
+if [[ -e "$reconcile_state/projmux/metadata/registry.json" ]]; then
+  echo "resource reconcile dry-run created a Registry" >&2
+  exit 1
+fi
+resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-dry-run"
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.before" "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-dry-run"
+
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile resources --socket "$PROJMUX_RECONCILE_PRIMARY_SOCKET" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/reconcile-execute.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-execute.json" '"outcome": "changed"'
+registry_path="$reconcile_state/projmux/metadata/registry.json"
+if [[ ! -s "$registry_path" ]]; then
+  echo "resource reconcile execute did not commit the Registry" >&2
+  exit 1
+fi
+primary_project_uid="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -t "$PROJMUX_RECONCILE_SESSION" -qv @projmux_project_uid)"
+primary_window_uid="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -w -t "=$PROJMUX_RECONCILE_SESSION:0" -qv @projmux_window_uid)"
+primary_pane_uid="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -p -t "=$PROJMUX_RECONCILE_SESSION:0.0" -qv @projmux_pane_uid)"
+if [[ -z "$primary_project_uid" || -z "$primary_window_uid" || -z "$primary_pane_uid" ]]; then
+  echo "resource reconcile did not mirror Project/Window/Pane identity: project=$primary_project_uid window=$primary_window_uid pane=$primary_pane_uid" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/reconcile-execute.json" >&2
+  resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >&2
+  exit 1
+fi
+resource_tmux_snapshot "$PROJMUX_RECONCILE_SECONDARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-secondary.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-secondary.before" "$PROJMUX_SMOKE_WORKDIR/reconcile-secondary.after"
+
+cp "$registry_path" "$PROJMUX_SMOKE_WORKDIR/reconcile-registry.before-repeat"
+resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-primary.before-repeat"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile resources --socket "$PROJMUX_RECONCILE_PRIMARY_SOCKET" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/reconcile-repeat.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-repeat.json" '"outcome": "no-op"'
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-registry.before-repeat" "$registry_path"
+resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-repeat"
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.before-repeat" "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-repeat"
+
+primary_pid="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" display-message -p -t "=$PROJMUX_RECONCILE_SESSION" '#{pid}')"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  TMUX="$PROJMUX_RECONCILE_PRIMARY_ACTUAL,$primary_pid,0" \
+  "$bin" reconcile resources --dry-run -o json >"$PROJMUX_SMOKE_WORKDIR/reconcile-inherited.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-inherited.json" '"tmuxFlag": "-S"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-inherited.json" "$PROJMUX_RECONCILE_PRIMARY_ACTUAL"
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-registry.before-repeat" "$registry_path"
+
+outside_state="$PROJMUX_SMOKE_WORKDIR/reconcile-outside-state"
+set +e
+env -u TMUX -u TMUX_PANE PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$outside_state" \
+  "$bin" reconcile resources >"$PROJMUX_SMOKE_WORKDIR/reconcile-outside.out" 2>"$PROJMUX_SMOKE_WORKDIR/reconcile-outside.err"
+outside_status=$?
+set -e
+if [[ "$outside_status" == "0" ]] || [[ -e "$outside_state/projmux/metadata/registry.json" ]]; then
+  echo "resource reconcile without an explicit outside-tmux socket did not fail before Registry mutation" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-outside.err" 'requires --socket <name> or --socket-path <absolute> outside tmux'
+
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" "$bin" doctor --json >"$PROJMUX_SMOKE_WORKDIR/reconcile-doctor.json"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" "$bin" get projects -o json >"$PROJMUX_SMOKE_WORKDIR/reconcile-get.json"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" "$bin" describe project "$PROJMUX_RECONCILE_SESSION" -o json >"$PROJMUX_SMOKE_WORKDIR/reconcile-describe.json"
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-registry.before-repeat" "$registry_path"
+resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-reads"
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.before-repeat" "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-reads"
 
 echo ">> lifecycle smoke root=$PROJMUX_SMOKE_WORKDIR actual_socket=$PROJMUX_SMOKE_TMUX_ACTUAL guard=passed"

@@ -564,6 +564,43 @@ Managed runtime binding convergence:
   cwd, or a new ordinal heuristic, uid merge/reassignment, pruning, or forced
   adoption. The Project scope remains derived from the active binding on read.
 
+Public resource reconciliation:
+
+- `projmux reconcile resources` exposes the same Registry matcher, mutator,
+  reconciler, and tmux Mirror as a deliberate operator repair boundary. A
+  shadow tmux runner delegates reads to one exact server, records mirror writes,
+  and overlays only those recorded UID values for the reconciler's final
+  observation. Planning therefore executes production convergence on a cloned
+  Registry while writing zero Registry, tmux, or filesystem bytes.
+- Plan item identity is stable by resource kind, live target or Registry scope,
+  and action. Opaque UIDs allocated while planning are display details
+  normalized to deterministic placeholders; they are not matching keys and do
+  not obscure owner or target identity. Human and JSON output share the same
+  sorted items and missing/stale/foreign/orphan vocabulary.
+- Execute rebuilds the plan from the locked current Registry. Runtime
+  observation is limited to the Registry Project graphs safely attributable to
+  sessions on the selected socket; absence there never marks another socket's
+  graph missing or releases its Agents. The desired
+  Registry is validated and committed before any non-transactional tmux mirror
+  write, keeping Registry identity authoritative and retryable if a later live
+  step fails. After commit, every planned live write is guarded by re-reading
+  its target's Project, Window, or Pane UID binding from the exact socket; all
+  guards and planned before-values must still match before the first write. A
+  recycled or raced handle therefore causes zero live writes.
+- A Registry commit failure performs no tmux mutation. A partial tmux failure
+  leaves the durable Registry identity in place, replans current drift, and
+  reports completed stages, remaining items, and the exact retry command.
+  Repeating after success plans no writes and does not replace `registry.json`.
+- `--socket` is exact `-L`; absolute `--socket-path` and inherited `$TMUX` are
+  exact `-S`. No-flag use outside tmux is rejected before planning. No default
+  socket, fallback server, config reload, state-loss recovery, or heuristic UID
+  merge exists on this route.
+- Public repair is stricter than lifecycle compatibility convergence for
+  foreign state. An unknown, duplicate, or wrong-owner live UID makes its
+  session diagnostic-only so later ordinal rows cannot slide onto a different
+  Registry object. Safe drift elsewhere may converge; the refused item remains
+  explicit and nonzero. `get`, `describe`, and `doctor` never enter this path.
+
 Agent runtime linkage:
 
 - Once a live tmux pane has settled on a registry Pane, reconcile decides which

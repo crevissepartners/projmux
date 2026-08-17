@@ -232,8 +232,12 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		return f.runKill(args)
 	case "list-sessions":
 		var b strings.Builder
+		format := flagValue(args, "-F")
+		if format == "" {
+			format = "#{session_name}"
+		}
 		for _, s := range f.sessions {
-			fmt.Fprintf(&b, "%s\n", s.name)
+			fmt.Fprintf(&b, "%s\n", renderFormat(format, s, nil, nil))
 		}
 		return []byte(b.String()), nil
 	default:
@@ -572,6 +576,8 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, fmt.Sprintf("%d", slices.Index(session.windows, window)))
 		case token == "window_name" && window != nil:
 			out = append(out, window.name)
+		case token == "automatic-rename" && window != nil:
+			out = append(out, window.opts[token])
 		case token == "pane_id" && pane != nil:
 			out = append(out, pane.id)
 		case token == "pane_index" && window != nil && pane != nil:

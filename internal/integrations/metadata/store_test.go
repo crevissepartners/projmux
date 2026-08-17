@@ -779,3 +779,38 @@ func TestLoadReadOnlyReadsAnExistingRegistryAndStillFailsClosed(t *testing.T) {
 		t.Fatal("a refused LoadReadOnly rewrote the registry file")
 	}
 }
+
+func TestLoadSnapshotReadsExistingRegistryWithoutLockOrPermissionRepair(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	mutator := testMutator(map[string]bool{"/src/projmux": true})
+	if _, err := store.Update(func(registry *coremetadata.Registry) error {
+		_, err := mutator.RegisterProject(registry, coremetadata.RegisterProjectOptions{
+			Root: "/src/projmux", DefaultShell: "/bin/zsh", OperationID: "op-snapshot-seed",
+		})
+		return err
+	}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+	if err := os.Chmod(store.Path(), 0o644); err != nil {
+		t.Fatalf("chmod registry fixture: %v", err)
+	}
+	beforeInfo, err := os.Stat(store.Path())
+	if err != nil {
+		t.Fatalf("stat registry before strict read: %v", err)
+	}
+	if _, err := store.LoadSnapshot(); err != nil {
+		t.Fatalf("LoadSnapshot: %v", err)
+	}
+	afterInfo, err := os.Stat(store.Path())
+	if err != nil {
+		t.Fatalf("stat registry after strict read: %v", err)
+	}
+	if afterInfo.Mode().Perm() != beforeInfo.Mode().Perm() {
+		t.Fatalf("LoadSnapshot repaired permissions from %o to %o", beforeInfo.Mode().Perm(), afterInfo.Mode().Perm())
+	}
+	if _, err := os.Stat(store.Path() + ".lock"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("LoadSnapshot created a lock: %v", err)
+	}
+}
