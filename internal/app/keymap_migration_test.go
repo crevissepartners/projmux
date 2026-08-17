@@ -1031,12 +1031,12 @@ func TestUpdateDryRunPreviewsTheMigrationStageWithoutPromisingADiff(t *testing.T
 func TestPostUpdateApplyArgsAlwaysReachTheNewBinary(t *testing.T) {
 	t.Parallel()
 
-	if got := postUpdateApplyArgs(false); !slices.Equal(got, []string{"tmux", "apply"}) {
-		t.Fatalf("apply args = %v, want [tmux apply]", got)
+	if got := postUpdateApplyArgs(false); !slices.Equal(got, []string{"config", "apply"}) {
+		t.Fatalf("apply args = %v, want [config apply]", got)
 	}
 	// --no-apply must still reach the binary; it only suppresses the reload.
-	if got := postUpdateApplyArgs(true); !slices.Equal(got, []string{"tmux", "apply", "--no-reload"}) {
-		t.Fatalf("no-apply args = %v, want [tmux apply --no-reload]", got)
+	if got := postUpdateApplyArgs(true); !slices.Equal(got, []string{"config", "apply", "--no-reload"}) {
+		t.Fatalf("no-apply args = %v, want [config apply --no-reload]", got)
 	}
 }
 

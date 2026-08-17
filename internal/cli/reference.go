@@ -13,12 +13,12 @@ import (
 // actually renders is `routes` -- the Cobra command tree in catalog.go -- so
 // this renderer walks that tree and nothing else.
 //
-// It deliberately does not read `canonicalRoutes`. That manifest is a
-// target-state contract record: it holds spellings that are not executable
-// today and summaries that describe capability a later Phase will build. Wiring
-// it into a user-visible surface would publish promises the binary cannot keep,
-// so the boundary is enforced by tests rather than left to convention. See the
-// header comment in canonical.go.
+// It deliberately does not read `canonicalRoutes`. That manifest audits
+// executable canonical spellings and their source namespaces, while `routes`
+// owns user-visible summaries, usage, disposition, and help structure. Keeping
+// the renderer on `routes` prevents internal spellings and audit-only metadata
+// from leaking into public help; tests enforce the boundary. See the header
+// comment in canonical.go.
 //
 // Every byte this renderer emits is a pure function of the manifest: no
 // timestamp, no version string, no host path, no map iteration. Regenerating on

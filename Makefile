@@ -36,9 +36,9 @@ install: build
 	  mv "$$tmpfile" $(INSTALL_BIN)
 	@echo ">> atomically replaced $(INSTALL_BIN)"
 	@echo ">> applying live config..."
-	@$(INSTALL_BIN) tmux apply
+	@$(INSTALL_BIN) config apply
 	@echo ">> reconciling notify queue..."
-	@$(INSTALL_BIN) notify reconcile || true
+	@$(INSTALL_BIN) notification reconcile || true
 
 npm-pack:
 	scripts/package-npm.sh --pack

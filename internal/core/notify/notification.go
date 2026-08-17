@@ -3,7 +3,7 @@
 // reconcile policy evicts expired-gone or hard-cap overflow rows.
 //
 // Note: the click handler in the status bar will call
-// `projmux focus --target=... --source=os-notification` — but this package
+// `projmux internal focus --target=... --source=os-notification` — but this package
 // does NOT call focus itself. It is pure storage.
 package notify
 

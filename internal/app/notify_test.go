@@ -495,7 +495,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if len(focusCalls) != 1 || focusCalls[0].name != "/usr/local/bin/projmux" {
 		t.Fatalf("focus calls = %#v", focusCalls)
 	}
-	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux", "--client", "/dev/pts/7"}
+	wantArgs := []string{"internal", "focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux", "--client", "/dev/pts/7"}
 	if !equalStringSlices(focusCalls[0].args, wantArgs) {
 		t.Fatalf("focus args = %#v, want %#v", focusCalls[0].args, wantArgs)
 	}
@@ -1054,7 +1054,7 @@ func TestNotifySidebarUsesNativePicker(t *testing.T) {
 	if len(focusCalls) != 1 || focusCalls[0].name != "/usr/local/bin/projmux" {
 		t.Fatalf("focus calls = %#v, want one focus call", focusCalls)
 	}
-	wantArgs := []string{"focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux", "--client", "/dev/pts/9"}
+	wantArgs := []string{"internal", "focus", "--target", "main:1.0", "--source", "notify-sidebar", "--kind", "row-select", "--socket", "projmux", "--client", "/dev/pts/9"}
 	if !equalStringSlices(focusCalls[0].args, wantArgs) {
 		t.Fatalf("focus args = %#v, want %#v", focusCalls[0].args, wantArgs)
 	}

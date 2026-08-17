@@ -566,9 +566,9 @@ func (c *settingsCommand) updateTheme(stdout io.Writer, update func(*theme.Theme
 // durable config.toml save it regenerates the generated tmux app config and
 // `tmux source-file`-reloads it via the shared regenerateAndReloadTmuxConfig
 // core, then emits a staged Saved/Prepared/Running session report with the same
-// graceful no-server tone ("Next: run `projmux tmux apply` ...") as the keymap
+// graceful no-server tone ("Next: run `projmux config apply` ...") as the keymap
 // path. This is what makes a Settings color set/reset live-apply without a
-// manual `projmux tmux apply`.
+// manual `projmux config apply`.
 func (c *settingsCommand) finishThemeApply(path string, saveErr error, stdout io.Writer) error {
 	report := keymapApplyReport{
 		Saved:    keymapApplyStage{Status: keymapApplyOK},
@@ -638,13 +638,13 @@ func writeThemeApplyReport(w io.Writer, report keymapApplyReport) error {
 		_, err := fmt.Fprintln(w, "Recovery: fix the config.toml problem, then try the Settings change again.")
 		return err
 	case report.Prepared.Status == keymapApplyFailed:
-		_, err := fmt.Fprintln(w, "Recovery: resolve the generated tmux config error, then run `projmux tmux apply`.")
+		_, err := fmt.Fprintln(w, "Recovery: resolve the generated tmux config error, then run `projmux config apply`.")
 		return err
 	case report.Live.Status == keymapApplyFailed:
-		_, err := fmt.Fprintln(w, "Recovery: fix the live tmux reload issue, then run `projmux tmux apply`.")
+		_, err := fmt.Fprintln(w, "Recovery: fix the live tmux reload issue, then run `projmux config apply`.")
 		return err
 	case report.Live.Status == keymapApplySkipped:
-		_, err := fmt.Fprintln(w, "Next: run `projmux tmux apply` to sync a running projmux tmux server.")
+		_, err := fmt.Fprintln(w, "Next: run `projmux config apply` to sync a running projmux tmux server.")
 		return err
 	default:
 		return nil

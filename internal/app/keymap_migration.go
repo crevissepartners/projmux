@@ -702,7 +702,7 @@ func keymapMigrationConflictError(plan keymapMigrationPlan) error {
 // apply boundary calls.
 //
 // Settings key save, `projmux config apply`, the compatibility
-// `projmux tmux apply` and every post-update install path converge here. That is
+// `projmux tmux apply`, and every post-update install path converge here. That is
 // what makes the migration lazy but inevitable: whichever of them the user
 // reaches first performs it, and the rest then find nothing to do.
 func migrateKeymapForWrite(store keymapStore) (keymapMigrationResult, error) {

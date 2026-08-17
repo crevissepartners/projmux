@@ -256,7 +256,7 @@ func TestSettingsSequenceAddReplaceRemoveConflictAndNoLiveRecovery(t *testing.T)
 	if err := cmd.addKeymapSequenceAndApply("ProjectSidebarToggle", "C-k C-p", &out); err != nil {
 		t.Fatalf("add error = %v", err)
 	}
-	for _, want := range []string{"Saved: ok", "Prepared: ok", "Running session: skipped", "projmux tmux apply"} {
+	for _, want := range []string{"Saved: ok", "Prepared: ok", "Running session: skipped", "projmux config apply"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("apply report = %q, want %q", out.String(), want)
 		}

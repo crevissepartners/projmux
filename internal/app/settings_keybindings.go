@@ -2610,7 +2610,7 @@ func (c *settingsCommand) finishKeymapApply(schema keymapApplyStage, path string
 // `tmux source-file`-reloads it. It returns the Prepared and Live stages plus a
 // fatal error when either stage fails. The no-server / not-inside-tmux cases are
 // graceful (Live becomes skipped, err is nil) so the durable save still
-// succeeds and callers can surface the "run `projmux tmux apply`" follow-up.
+// succeeds and callers can surface the "run `projmux config apply`" follow-up.
 func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyStage, live keymapApplyStage, err error) {
 	configPath, genErr := c.writeTmuxAppConfig()
 	if genErr != nil {
@@ -2746,13 +2746,13 @@ func writeKeymapApplyReport(w io.Writer, report keymapApplyReport) error {
 		_, err := fmt.Fprintln(w, "Recovery: fix the keymap.toml problem, then try the Settings change again.")
 		return err
 	case report.Prepared.Status == keymapApplyFailed:
-		_, err := fmt.Fprintln(w, "Recovery: resolve the generated tmux config error, then run `projmux tmux apply`.")
+		_, err := fmt.Fprintln(w, "Recovery: resolve the generated tmux config error, then run `projmux config apply`.")
 		return err
 	case report.Live.Status == keymapApplyFailed:
-		_, err := fmt.Fprintln(w, "Recovery: fix the live tmux reload issue, then run `projmux tmux apply`.")
+		_, err := fmt.Fprintln(w, "Recovery: fix the live tmux reload issue, then run `projmux config apply`.")
 		return err
 	case report.Live.Status == keymapApplySkipped:
-		_, err := fmt.Fprintln(w, "Next: run `projmux tmux apply` to sync a running projmux tmux server.")
+		_, err := fmt.Fprintln(w, "Next: run `projmux config apply` to sync a running projmux tmux server.")
 		return err
 	default:
 		return nil

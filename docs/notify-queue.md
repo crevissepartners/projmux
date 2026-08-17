@@ -173,7 +173,7 @@ output becomes `{queue, live, rows, errors}`. Typical states:
 - `live-ai-reply-queued` — a live AI reply pane has the matching actionable
   queue entry.
 - `live-ai-reply-missing-queue` — a live AI reply pane lacks the derived
-  queue entry; run `projmux notify reconcile` to back-fill it.
+  queue entry; run `projmux notification reconcile` to back-fill it.
 - `queue-stale` — preserved machine-readable state for an inactive target:
   an `ai:` queue entry whose pane still EXISTS in the live tmux pane inventory,
   but no longer matches reply+agent state. It is not TTL/time age. Surfaced in
@@ -197,8 +197,8 @@ To inspect live pane attention without queue context, use
 ### ack
 
 ```
-projmux notify ack <id>
-projmux notify ack --all
+projmux notification ack <id>
+projmux notification ack --all
 ```
 
 Removes one entry by id, or flushes the queue. `--all` returns the
@@ -207,7 +207,7 @@ removed count.
 ### reconcile
 
 ```
-projmux notify reconcile [--json]
+projmux notification reconcile [--json]
 ```
 
 Walks `tmux list-panes -a -F` with the producer-key format (session,
@@ -283,12 +283,12 @@ refresh event as other pending queue additions.
 or the `prefix s n` chord reads the newest queue entry and dispatches:
 
 ```
-projmux focus --target <target> --source status-bar --kind segment-click [--socket <s>] [--client <tty>]
+projmux internal focus --target <target> --source status-bar --kind segment-click [--socket <s>] [--client <tty>]
 ```
 
 The status bar passes the clicked tmux client as `--client` when tmux provides
 it. The notify sidebar does the same for row selection. If that origin client
-is no longer attached, `projmux focus` falls back to the existing target-session
+is no longer attached, `projmux internal focus` falls back to the existing target-session
 client selection policy.
 
 Outcomes:

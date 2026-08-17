@@ -940,7 +940,7 @@ func TestSettingsKeybindingApplyRecoveryContractIsPreserved(t *testing.T) {
 				Prepared: keymapApplyStage{Status: keymapApplyOK},
 				Live:     keymapApplyStage{Status: keymapApplySkipped},
 			},
-			wants: []string{"Saved: ok", "Prepared: ok", "Running session: skipped", "Next: run `projmux tmux apply`"},
+			wants: []string{"Saved: ok", "Prepared: ok", "Running session: skipped", "Next: run `projmux config apply`"},
 		},
 		{
 			name: "prepared failed",
@@ -949,7 +949,7 @@ func TestSettingsKeybindingApplyRecoveryContractIsPreserved(t *testing.T) {
 				Prepared: keymapApplyStage{Status: keymapApplyFailed},
 				Live:     keymapApplyStage{Status: keymapApplySkipped},
 			},
-			wants: []string{"Recovery: resolve the generated tmux config error, then run `projmux tmux apply`."},
+			wants: []string{"Recovery: resolve the generated tmux config error, then run `projmux config apply`."},
 		},
 		{
 			name: "saved failed",

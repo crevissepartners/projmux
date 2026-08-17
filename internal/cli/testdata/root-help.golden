@@ -5,7 +5,7 @@ Commands:
   ai        Manage tmux AI split launch and settings
   attention View and manage live tmux pane attention state
   attach    Open tmux lifecycle entry helpers
-  config    Render or apply the generated tmux configuration
+  config    Edit AI split-mode settings; render or apply generated tmux configuration
   create    Create Projmux resources
   current   Resolve the active tmux pane path
   delete    Delete Projmux resources with an explicit cascade plan
@@ -17,6 +17,7 @@ Commands:
   hook      List, edit, validate, and trust lifecycle hook config
   kill      Terminate tagged tmux sessions
   notify    Manage the pending AI notify queue (push/list/ack/reconcile)
+  notification  Manage pending notification workflow state
   pin       Manage pinned project directories
   prune     Trim stale lifecycle state and inspect preserved snapshots
   quit      Quit the app-owned projmux tmux runtime

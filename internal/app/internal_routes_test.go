@@ -257,6 +257,7 @@ func TestInternalNamespaceSharesTheHandlerInstanceOfEveryRelocatedRoute(t *testi
 		"preview":        {app.internal.preview, app.preview},
 		"session-popup":  {app.internal.sessionPopup, app.sessionPopup},
 		"agent-hook":     {app.internal.ai, app.ai},
+		"focus":          {app.internal.focus, app.focus},
 		"key-broker":     {app.internal.keyBroker, app.keyBroker},
 		"popup-wait-key": {app.internal.popupWaitKey, app.popupWaitKey},
 	} {
@@ -303,6 +304,7 @@ func TestInternalNamespaceForwardsRawArgvUnchanged(t *testing.T) {
 		{name: "popup wait key", args: []string{"popup-wait-key"}, target: "popup-wait-key", want: []string{}},
 		{name: "agent hook ingest", args: []string{"agent-hook", "ingest", "codex-hook"}, target: "ai", want: []string{"ingest", "codex-hook"}},
 		{name: "agent hook watch title", args: []string{"agent-hook", "watch-title", "%9"}, target: "ai", want: []string{"watch-title", "%9"}},
+		{name: "machine focus", args: []string{"focus", "--target", "alpha:1.0", "--source", "status-bar"}, target: "focus", want: []string{"--target", "alpha:1.0", "--source", "status-bar"}},
 		{name: "terminator payload survives", args: []string{"tmux", "rename-pane", "%1", "--", "--help"}, target: "tmux", want: []string{"rename-pane", "%1", "--", "--help"}},
 		{name: "unknown flag is relayed rather than pre-judged", args: []string{"status", "--bogus"}, target: "status", want: []string{"--bogus"}},
 	} {
@@ -310,7 +312,7 @@ func TestInternalNamespaceForwardsRawArgvUnchanged(t *testing.T) {
 			t.Parallel()
 			targets := map[string]*recordingArgv{}
 			cmd := newInternalCommand()
-			for _, name := range []string{"tmux", "status", "statusbar", "preview", "session-popup", "ai", "key-broker", "popup-wait-key"} {
+			for _, name := range []string{"tmux", "status", "statusbar", "preview", "session-popup", "ai", "focus", "key-broker", "popup-wait-key"} {
 				targets[name] = &recordingArgv{}
 			}
 			cmd.tmux = targets["tmux"]
@@ -319,6 +321,7 @@ func TestInternalNamespaceForwardsRawArgvUnchanged(t *testing.T) {
 			cmd.preview = targets["preview"]
 			cmd.sessionPopup = targets["session-popup"]
 			cmd.ai = targets["ai"]
+			cmd.focus = targets["focus"]
 			cmd.keyBroker = targets["key-broker"]
 			cmd.popupWaitKey = targets["popup-wait-key"]
 
@@ -353,7 +356,7 @@ func TestInternalNamespaceRejectsUnknownSubcommandsAsUsageErrors(t *testing.T) {
 		target := &recordingArgv{}
 		cmd := newInternalCommand()
 		cmd.tmux, cmd.status, cmd.statusbar, cmd.preview = target, target, target, target
-		cmd.sessionPopup, cmd.ai, cmd.keyBroker, cmd.popupWaitKey = target, target, target, target
+		cmd.sessionPopup, cmd.ai, cmd.focus, cmd.keyBroker, cmd.popupWaitKey = target, target, target, target, target
 		_, _, err := runRoute(t, cmd, args...)
 		if err == nil {
 			t.Fatalf("internal %v returned no error", args)

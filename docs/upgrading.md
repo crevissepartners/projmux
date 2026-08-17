@@ -79,7 +79,7 @@ projmux agent integrate tmux-bell --dry-run
 
 `update apply --no-apply` and `upgrade --no-apply` still migrate marker-owned
 files, but they neither inspect nor modify a live tmux server. A later normal
-`projmux tmux apply --socket <name>` converges a marker-owned bell hook only on
+`projmux config apply --socket <name>` converges a marker-owned bell hook only on
 that exact `-L <name>` socket.
 
 If a conflict is reported, keep the unmanaged entry unchanged while deciding
@@ -111,7 +111,7 @@ those ids and adds two-to-four-stroke `sequences`. All versions read — the v0
 spelling of every action stays a permanent read alias.
 
 The migration needs no command of its own. Every installer path ends by running
-the newly installed binary's `projmux tmux apply`, which migrates first and only
+the newly installed binary's `projmux config apply`, which migrates first and only
 then writes generated config and reloads the live server. An install that never
 went through an updater converges on the first Settings key save or the next
 `projmux config apply`.
@@ -147,7 +147,7 @@ The deprecated `rename-pane-topic` keybinding action ID has been removed. If
 `~/.config/projmux/keymap.toml` still contains
 `[bindings.rename-pane-topic]`, rename that table to
 `[bindings.rename-pane-label]` before running Settings or
-`projmux tmux apply`. Projmux now rejects the stale table with that exact
+`projmux config apply`. Projmux now rejects the stale table with that exact
 replacement instead of silently applying its keys to the user-label action.
 
 This removal does not change `projmux ai topic set/clear`: those advanced CLI
@@ -244,7 +244,7 @@ For npm-managed installs, `projmux update apply` runs:
 
 ```sh
 npm install -g projmux@latest
-projmux tmux apply
+projmux config apply
 ```
 
 `npm install -g projmux@latest` is used instead of `npm update -g projmux`
@@ -294,7 +294,7 @@ PROJMUX_PROJDIR="/main/repos:/secondary/repos" projmux upgrade
 When `PROJMUX_INSTALLER=github-release`, `projmux update apply` downloads the
 latest matching `projmux_<version>_<goos>_<goarch>.tar.gz` asset from GitHub
 Releases, extracts the binary, atomically replaces the current executable, and
-then runs the new binary's `projmux tmux apply` — or `tmux apply --no-reload`
+then runs the new binary's `projmux config apply` — or `config apply --no-reload`
 when `--no-apply` is set, so the keymap schema migration still happens.
 
 Set the installer explicitly if you manage a release binary outside npm or Go:

@@ -101,8 +101,9 @@ make install
 ```
 
 `make install` builds the binary, atomically replaces
-`$(go env GOPATH)/bin/projmux`, runs `projmux tmux apply`, and reconciles the
-notify queue. Override the destination with `INSTALL_DIR=/usr/local/bin`.
+`$(go env GOPATH)/bin/projmux`, runs `projmux config apply`, and reconciles the
+notify queue through `projmux notification reconcile`. Override the destination
+with `INSTALL_DIR=/usr/local/bin`.
 
 Update source checkouts with the repository workflow:
 

@@ -17,6 +17,7 @@ hook hidden=false disableFlagParsing=true args=true children=0
 internal hidden=true disableFlagParsing=true args=true children=0
 key-broker hidden=true disableFlagParsing=true args=true children=0
 kill hidden=false disableFlagParsing=true args=true children=0
+notification hidden=false disableFlagParsing=true args=true children=0
 notify hidden=false disableFlagParsing=true args=true children=0
 pin hidden=false disableFlagParsing=true args=true children=0
 popup-wait-key hidden=true disableFlagParsing=true args=true children=0

@@ -73,7 +73,7 @@ func TestUpgradeRunDryRunPrintsExpectedCommands(t *testing.T) {
 	wantSubstrings := []string{
 		"would run: GOBIN=/home/user/.local/bin/.projmux-upgrade-XXXXXX go install github.com/crevissepartners/projmux/cmd/projmux@latest",
 		"would replace: /home/user/.local/bin/projmux (atomic via temp file)",
-		"would run: /home/user/.local/bin/projmux tmux apply",
+		"would run: /home/user/.local/bin/projmux config apply",
 	}
 	for _, want := range wantSubstrings {
 		if !strings.Contains(out, want) {
@@ -106,7 +106,7 @@ func TestUpgradeRunDryRunWithFlags(t *testing.T) {
 	// --no-apply is a reload suppression, so the dry run still shows the
 	// post-update call — with --no-reload attached — and names the migration
 	// stage without claiming to know the candidate binary's rename table.
-	if !strings.Contains(out, "would run: /home/user/.local/bin/projmux tmux apply --no-reload") {
+	if !strings.Contains(out, "would run: /home/user/.local/bin/projmux config apply --no-reload") {
 		t.Fatalf("dry-run output missing --no-reload post-update step:\n%s", out)
 	}
 	if !strings.Contains(out, "would migrate: keymap schema via /home/user/.local/bin/projmux") {
@@ -292,7 +292,7 @@ func TestUpgradeRunHappyPathInvokesGoInstallAndApply(t *testing.T) {
 		t.Fatalf("install env still contains stale GOBIN:\n%v", stub.commands[0].env)
 	}
 
-	wantApply := []string{target, "tmux", "apply"}
+	wantApply := []string{target, "config", "apply"}
 	if !equalSlices(stub.commands[1].args, wantApply) {
 		t.Fatalf("apply command = %v, want %v", stub.commands[1].args, wantApply)
 	}
@@ -352,8 +352,8 @@ func TestUpgradeRunHappyPathSkipsApplyWhenNoApplySet(t *testing.T) {
 			len(stub.commands), stub.commands)
 	}
 	applyArgs := stub.commands[1].args
-	if got := strings.Join(applyArgs, " "); got != target+" tmux apply --no-reload" {
-		t.Fatalf("post-update command = %q, want %q", got, target+" tmux apply --no-reload")
+	if got := strings.Join(applyArgs, " "); got != target+" config apply --no-reload" {
+		t.Fatalf("post-update command = %q, want %q", got, target+" config apply --no-reload")
 	}
 }
 

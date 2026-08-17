@@ -253,11 +253,12 @@ viewer read is excluded from success logging, so inspection does not create a
 recursion loop.
 
 The older bounded `ai-ingest.log` and subsystem-specific `PROJMUX_*_DEBUG`
-surfaces retain their current paths, formats, and behavior. Phase 6 deliberately
-keeps the legacy producer and both existing consumers: `projmux ai ingest log`
-still reads the legacy JSONL bytes, and `diagnostics report` still emits its
-allowlisted source/result count summary. Legacy append failure remains
-best-effort and independent of common-journal append failure.
+surfaces retain their current paths, formats, and behavior. Canonical
+`internal agent-hook ingest` writes the same JSONL bytes, `diagnostics
+agent-hook` reads them, and the exact legacy `ai ingest log` reader remains
+available during the compatibility window. `diagnostics report` still emits
+its allowlisted source/result count summary. Append failure remains best-effort
+and independent of common-journal append failure.
 
 The measured migration parity is:
 

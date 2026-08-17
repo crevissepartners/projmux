@@ -28,7 +28,7 @@ projmux <command> [args...]
 | [`projmux ai`](#projmux-ai) | compatibility | Manage tmux AI split launch and settings |
 | [`projmux attention`](#projmux-attention) | canonical | View and manage live tmux pane attention state |
 | [`projmux attach`](#projmux-attach) | compatibility | Open tmux lifecycle entry helpers |
-| [`projmux config`](#projmux-config) | canonical | Render or apply the generated tmux configuration |
+| [`projmux config`](#projmux-config) | canonical | Edit AI split-mode settings; render or apply generated tmux configuration |
 | [`projmux create`](#projmux-create) | canonical | Create Projmux resources |
 | [`projmux current`](#projmux-current) | compatibility | Resolve the active tmux pane path |
 | [`projmux delete`](#projmux-delete) | canonical | Delete Projmux resources with an explicit cascade plan |
@@ -40,6 +40,7 @@ projmux <command> [args...]
 | [`projmux hook`](#projmux-hook) | canonical | List, edit, validate, and trust lifecycle hook config |
 | [`projmux kill`](#projmux-kill) | compatibility | Terminate tagged tmux sessions |
 | [`projmux notify`](#projmux-notify) | compatibility | Manage the pending AI notify queue (push/list/ack/reconcile) |
+| [`projmux notification`](#projmux-notification) | canonical | Manage pending notification workflow state |
 | [`projmux pin`](#projmux-pin) | compatibility | Manage pinned project directories |
 | [`projmux prune`](#projmux-prune) | compatibility | Trim stale lifecycle state and inspect preserved snapshots |
 | [`projmux quit`](#projmux-quit) | shortcut | Quit the app-owned projmux tmux runtime |
@@ -150,7 +151,7 @@ Subcommands:
 | [`projmux ai integrate`](#projmux-ai-integrate) | Install or remove provider hook integrations |
 | [`projmux ai topic`](#projmux-ai-topic) | Read, set, or clear the AI pane topic |
 
-Canonical spelling: `projmux create agent`, `projmux create pane`, `projmux get agents`, `projmux describe agent`, `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent integrate`
+Canonical spelling: `projmux create agent`, `projmux create pane`, `projmux get agents`, `projmux describe agent`, `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent integrate`, `projmux config edit`, `projmux create notification`, `projmux diagnostics agent-hook`
 
 ### `projmux ai split`
 
@@ -182,6 +183,8 @@ Open the AI settings surface
 projmux ai settings
 ```
 
+Canonical spelling: `projmux config edit`
+
 ### `projmux ai status`
 
 Read or set the AI pane status state
@@ -200,6 +203,8 @@ Dispatch an AI pane notification
 projmux ai notify ...
 ```
 
+Canonical spelling: `projmux create notification`
+
 ### `projmux ai watch-title`
 
 Run the AI pane title watcher
@@ -215,6 +220,8 @@ Ingest provider hook and log events
 ```
 projmux ai ingest <source>
 ```
+
+Canonical spelling: `projmux diagnostics agent-hook`
 
 ### `projmux ai integrate`
 
@@ -334,9 +341,10 @@ projmux attach project <ref>
 
 ## `projmux config`
 
-Render or apply the generated tmux configuration
+Edit AI split-mode settings; render or apply generated tmux configuration
 
 ```
+projmux config edit [--get|--set <mode>]
 projmux config render standalone|app [--bin <path>]
 projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
 ```
@@ -345,10 +353,19 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
+| [`projmux config edit`](#projmux-config-edit) | Edit the AI split-mode configuration |
 | [`projmux config render`](#projmux-config-render) | Print a generated tmux config to stdout; writes nothing |
 | [`projmux config apply`](#projmux-config-apply) | Write the generated app tmux config and reload the live projmux server |
 
-Canonical spelling: `projmux config render`, `projmux config apply`
+Canonical spelling: `projmux config edit`, `projmux config render`, `projmux config apply`
+
+### `projmux config edit`
+
+Edit the AI split-mode configuration
+
+```
+projmux config edit [--get|--set <mode>]
+```
 
 ### `projmux config render`
 
@@ -403,6 +420,8 @@ projmux create window --project <ref> [--name <name>] [--label key=value]... [-o
 projmux create pane --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create agent --provider <provider> --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create codex|claude|antigravity --project <ref> [--window <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
+projmux create snapshot
 ```
 
 Subcommands:
@@ -412,6 +431,8 @@ Subcommands:
 | [`projmux create window`](#projmux-create-window) | Create a Window and its initial Pane below one Project; the runtime is materialized detached |
 | [`projmux create pane`](#projmux-create-pane) | Create a shell Pane; --project splits the resolved Windows detached, without it the current Window |
 | [`projmux create agent`](#projmux-create-agent) | Create an Agent and its managed Pane; --provider is required, and --project splits the resolved Windows detached |
+| [`projmux create notification`](#projmux-create-notification) | Create a pending notification row |
+| [`projmux create snapshot`](#projmux-create-snapshot) | Create a session snapshot |
 
 Provider shortcuts:
 
@@ -421,7 +442,7 @@ Provider shortcuts:
 | [`projmux create claude`](#projmux-create-claude) | Provider shortcut for create agent --provider claude |
 | [`projmux create antigravity`](#projmux-create-antigravity) | Provider shortcut for create agent --provider antigravity |
 
-Canonical spelling: `projmux create window`, `projmux create pane`, `projmux create agent`, `projmux create codex`, `projmux create claude`, `projmux create antigravity`
+Canonical spelling: `projmux create window`, `projmux create pane`, `projmux create agent`, `projmux create notification`, `projmux create snapshot`, `projmux create codex`, `projmux create claude`, `projmux create antigravity`
 
 ### `projmux create window`
 
@@ -454,6 +475,22 @@ projmux create agent --provider <provider> [--placement right|down] [-o pane-id|
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
+
+### `projmux create notification`
+
+Create a pending notification row
+
+```
+projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
+```
+
+### `projmux create snapshot`
+
+Create a session snapshot
+
+```
+projmux create snapshot
+```
 
 ### `projmux create codex`
 
@@ -656,6 +693,7 @@ Read operational events or create an explicit local support report
 
 ```
 projmux diagnostics log [--json] [--tail <n>]
+projmux diagnostics agent-hook [--tail <n>] [--json] [--path]
 projmux diagnostics report [--output <path>]
 ```
 
@@ -664,9 +702,10 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux diagnostics log`](#projmux-diagnostics-log) | Read the bounded local operations journal |
+| [`projmux diagnostics agent-hook`](#projmux-diagnostics-agent-hook) | Read the bounded Agent hook ingest journal |
 | [`projmux diagnostics report`](#projmux-diagnostics-report) | Create an explicit redacted local support report |
 
-Canonical spelling: `projmux diagnostics log`, `projmux diagnostics report`
+Canonical spelling: `projmux diagnostics log`, `projmux diagnostics agent-hook`, `projmux diagnostics report`
 
 ### `projmux diagnostics log`
 
@@ -674,6 +713,14 @@ Read the bounded local operations journal
 
 ```
 projmux diagnostics log
+```
+
+### `projmux diagnostics agent-hook`
+
+Read the bounded Agent hook ingest journal
+
+```
+projmux diagnostics agent-hook [--tail <n>] [--json] [--path]
 ```
 
 ### `projmux diagnostics report`
@@ -938,7 +985,7 @@ Subcommands:
 | [`projmux notify ack`](#projmux-notify-ack) | Acknowledge notification rows |
 | [`projmux notify reconcile`](#projmux-notify-reconcile) | Reconcile the notification queue against live targets |
 
-Canonical spelling: `projmux get notifications`, `projmux delete notification`
+Canonical spelling: `projmux create notification`, `projmux get notifications`, `projmux delete notification`, `projmux notification ack`, `projmux notification reconcile`
 
 ### `projmux notify push`
 
@@ -947,6 +994,8 @@ Push a pending notification row
 ```
 projmux notify push
 ```
+
+Canonical spelling: `projmux create notification`
 
 ### `projmux notify list`
 
@@ -966,12 +1015,50 @@ Acknowledge notification rows
 projmux notify ack
 ```
 
+Canonical spelling: `projmux notification ack`
+
 ### `projmux notify reconcile`
 
 Reconcile the notification queue against live targets
 
 ```
 projmux notify reconcile
+```
+
+Canonical spelling: `projmux notification reconcile`
+
+## `projmux notification`
+
+Manage pending notification workflow state
+
+```
+projmux notification ack <id> | --all
+projmux notification reconcile [--json]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux notification ack`](#projmux-notification-ack) | Acknowledge notification rows |
+| [`projmux notification reconcile`](#projmux-notification-reconcile) | Reconcile the notification queue against live targets |
+
+Canonical spelling: `projmux notification ack`, `projmux notification reconcile`
+
+### `projmux notification ack`
+
+Acknowledge notification rows
+
+```
+projmux notification ack <id> | --all
+```
+
+### `projmux notification reconcile`
+
+Reconcile the notification queue against live targets
+
+```
+projmux notification reconcile [--json]
 ```
 
 ## `projmux pin`
@@ -1347,7 +1434,7 @@ Subcommands:
 | [`projmux session-state preview`](#projmux-session-state-preview) | Review a restore plan |
 | [`projmux session-state popup`](#projmux-session-state-popup) | Open the snapshot review popup |
 
-Canonical spelling: `projmux get snapshots`, `projmux delete snapshot`, `projmux restore snapshot`
+Canonical spelling: `projmux get snapshots`, `projmux create snapshot`, `projmux delete snapshot`, `projmux restore snapshot`
 
 ### `projmux session-state status`
 
@@ -1366,6 +1453,8 @@ Save a session snapshot
 ```
 projmux session-state save
 ```
+
+Canonical spelling: `projmux create snapshot`
 
 ### `projmux session-state delete`
 
@@ -1471,20 +1560,22 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux tag project`](#projmux-tag-project) | Manage the tagged session selection (canonical spelling) |
+| [`projmux tag project`](#projmux-tag-project) | Manage the tagged session selection (project-qualified compatibility spelling) |
 | [`projmux tag list`](#projmux-tag-list) | List the tagged session selection |
 | [`projmux tag toggle`](#projmux-tag-toggle) | Toggle a session tag |
 | [`projmux tag clear`](#projmux-tag-clear) | Clear the tagged session selection |
 
-Canonical spelling: `projmux tag project`, `projmux runtime tag`
+Canonical spelling: `projmux runtime tag`
 
 ### `projmux tag project`
 
-Manage the tagged session selection (canonical spelling)
+Manage the tagged session selection (project-qualified compatibility spelling)
 
 ```
 projmux tag project list|toggle|clear
 ```
+
+Canonical spelling: `projmux runtime tag`
 
 ### `projmux tag list`
 

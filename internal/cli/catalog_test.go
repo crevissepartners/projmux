@@ -12,12 +12,13 @@ import (
 // hidden, to hold exactly one primary disposition, with zero orphan routes,
 // before any later Phase may move a namespace.
 //
-// The public count is 39: the 33 routes inventoried by the compatibility
-// contract plus 11 canonical nodes added by later Phases -- `get` from the
+// The public count is 40: the 33 routes inventoried by the compatibility
+// contract plus 12 canonical nodes added by later Phases -- `get` from the
 // selector Phase, `delete`, `describe`, `rebind`, `rename`, `restore`, and
 // `runtime` from the public verb-to-kind Phase, `agent` and `create` from the
-// Agent namespace Phase, `config` from the public-spelling Phase, and
-// `reconcile` from explicit resource repair -- minus
+// Agent namespace Phase, `config` from the public-spelling Phase, `reconcile`
+// from explicit resource repair, and `notification` from compatibility
+// replacement closure -- minus
 // the 5 internal plumbing routes the internal isolation Phase moved out of the
 // primary listing. Every one of the 33 inventoried routes is still present,
 // still dispatchable, and still holds exactly one disposition; hiding is not
@@ -58,8 +59,8 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 39 {
-		t.Fatalf("public route count = %d, want 39", public)
+	if public != 40 {
+		t.Fatalf("public route count = %d, want 40", public)
 	}
 	// The 2 original hidden helpers, the 5 plumbing routes the internal
 	// isolation Phase hid, and the `internal` namespace itself.
@@ -67,8 +68,8 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		t.Fatalf("hidden route count = %d, want 8", hidden)
 	}
 	// The classification tally from the compatibility contract, counted over
-	// the 39 public top-level routes. Canonical is 19 rather than the
-	// contract's 8 because the 11 canonical verb/domain nodes are new surface,
+	// the 40 public top-level routes. Canonical is 20 rather than the
+	// contract's 8 because the 12 canonical verb/domain nodes are new surface,
 	// not members of the 33 inventoried current routes.
 	//
 	// The public internal count is 0: that is the whole point of the internal
@@ -78,7 +79,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	// route was removed or reclassified along the way -- in particular `ai` and
 	// `usage` are still public compatibility routes.
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical:     19,
+		DispositionCanonical:     20,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 	}
@@ -87,7 +88,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	}
 	// Every hidden route is internal plumbing.
 	wantTally := map[Disposition]int{
-		DispositionCanonical:     19,
+		DispositionCanonical:     20,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 		DispositionInternal:      8,
@@ -150,34 +151,32 @@ func TestNoInternalRouteIsPubliclyListed(t *testing.T) {
 	}
 }
 
-// routesWithoutACanonicalSpelling is the exact set of routes the public-spelling
-// Phase left without a canonical v2 mapping, each with the canonical namespace
-// that was deleted from the manifest rather than built.
+// compatibilityRoutesWithoutACanonicalSpelling is deliberately empty. Phase 1
+// closes every gap owned by a route classified as compatibility while leaving
+// every old spelling executable for the separate removal Phase.
+var compatibilityRoutesWithoutACanonicalSpelling = map[string]string{}
+
+// shortcutRoutesWithoutACanonicalSpelling is the separate, explicit set of
+// high-frequency shortcuts whose proposed long-form destinations are outside
+// the legacy compatibility track. The general Settings shortcut is also here:
+// Phase 1's executable `config edit` is intentionally AI-scoped and is not a
+// replacement for the complete Settings UI.
 //
-// Every one of these routes works today and is unchanged. What was deleted is
-// the *renaming plan*: each of these canonical namespaces would need its own
-// leaf parser, its own cardinality-matrix rows, and its own tests, and two of
-// them (`config show`, `config edit`) belong to a separately tracked Settings
-// information-architecture effort. The roadmap owner's rule is that a plan
-// needing its own slice does not get parked in this manifest, so the spellings
-// were removed and handed back to the roadmap hub as Backlog candidates.
+// Every one of these routes works today and is unchanged. Their proposed
+// long-form destinations are not Phase 1 compatibility work, so this record
+// prevents an unrelated shortcut decision from being mistaken for a remaining
+// compatibility gap.
 //
 // The set is written out rather than derived. Its whole job is to fail when some
 // later change drops a canonical mapping that nobody adjudicated, so a route
 // silently losing its v2 spelling is a test failure and never an omission.
-var routesWithoutACanonicalSpelling = map[string]string{
-	"ai settings":        "config edit",
-	"ai notify":          "notification ack",
-	"doctor":             "diagnostics doctor",
-	"notify push":        "create notification",
-	"notify ack":         "notification ack",
-	"notify reconcile":   "notification reconcile",
-	"quit":               "runtime quit",
-	"resources":          "diagnostics resources",
-	"session-state save": "create snapshot",
-	"settings":           "config edit",
-	"shell":              "runtime open",
-	"welcome":            "setup welcome",
+var shortcutRoutesWithoutACanonicalSpelling = map[string]string{
+	"doctor":    "diagnostics doctor",
+	"quit":      "runtime quit",
+	"resources": "diagnostics resources",
+	"settings":  "",
+	"shell":     "runtime open",
+	"welcome":   "setup welcome",
 }
 
 // TestEveryRouteCanonicalSpellingResolves proves there is no dangling canonical
@@ -195,8 +194,8 @@ func TestEveryRouteCanonicalSpellingResolves(t *testing.T) {
 	})
 }
 
-// TestOnlyTheDeletedCanonicalNamespacesLeaveARouteUnmapped is the other half of
-// the coverage claim, and it is stated as a two-way diff so it cannot rot into a
+// TestOnlyTheExplicitShortcutSetLeavesARouteUnmapped is the other half of the
+// coverage claim, and it is stated as a two-way diff so it cannot rot into a
 // permission slip.
 //
 // Left to right: every route the record names must really have no canonical
@@ -204,8 +203,11 @@ func TestEveryRouteCanonicalSpellingResolves(t *testing.T) {
 // record fails here. Right to left: every unmapped route must be in the record,
 // so a future change that drops a canonical mapping without adjudicating it
 // fails here too. Coverage stays total for everything else.
-func TestOnlyTheDeletedCanonicalNamespacesLeaveARouteUnmapped(t *testing.T) {
+func TestOnlyTheExplicitShortcutSetLeavesARouteUnmapped(t *testing.T) {
 	t.Parallel()
+	if len(compatibilityRoutesWithoutACanonicalSpelling) != 0 {
+		t.Fatalf("compatibility gaps = %v, want zero", compatibilityRoutesWithoutACanonicalSpelling)
+	}
 
 	unmapped := map[string]bool{}
 	walkRoutes(Routes(), func(path []string, route Route) {
@@ -214,7 +216,7 @@ func TestOnlyTheDeletedCanonicalNamespacesLeaveARouteUnmapped(t *testing.T) {
 		}
 	})
 
-	for spelling := range routesWithoutACanonicalSpelling {
+	for spelling := range shortcutRoutesWithoutACanonicalSpelling {
 		tokens := strings.Fields(spelling)
 		if path, _, ok := Resolve(tokens); !ok || len(path) != len(tokens) {
 			t.Errorf("record names %q, which is not a route", spelling)
@@ -225,14 +227,23 @@ func TestOnlyTheDeletedCanonicalNamespacesLeaveARouteUnmapped(t *testing.T) {
 		}
 	}
 	for spelling := range unmapped {
-		if _, ok := routesWithoutACanonicalSpelling[spelling]; !ok {
+		if _, ok := shortcutRoutesWithoutACanonicalSpelling[spelling]; !ok {
 			t.Errorf("route %q has no canonical spelling and is not in the adjudicated record", spelling)
 		}
 	}
+	for spelling := range shortcutRoutesWithoutACanonicalSpelling {
+		top, ok := LookupRoute(strings.Fields(spelling)[0])
+		if !ok || top.Disposition != DispositionShortcut {
+			t.Errorf("unmapped shortcut %q belongs to disposition %q, want shortcut", spelling, top.Disposition)
+		}
+	}
 
-	// The deleted namespaces must really be gone, or the record above would be
-	// describing a state the manifest does not hold.
-	for spelling, deleted := range routesWithoutACanonicalSpelling {
+	// The deferred shortcut destinations must really be absent, or their routes
+	// should map to them instead of remaining in this record.
+	for spelling, deleted := range shortcutRoutesWithoutACanonicalSpelling {
+		if deleted == "" {
+			continue
+		}
 		if _, ok := LookupCanonicalRoute(deleted); ok {
 			t.Errorf("canonical route %q still exists, so route %q should name it", deleted, spelling)
 		}
@@ -241,6 +252,20 @@ func TestOnlyTheDeletedCanonicalNamespacesLeaveARouteUnmapped(t *testing.T) {
 	// Non-vacuity: the diff proves nothing if every route happens to be mapped.
 	if len(unmapped) == 0 {
 		t.Fatal("no route is unmapped, so this assertion is vacuous; delete it with the reason recorded")
+	}
+}
+
+func TestTagProjectIsCompatibilityMappedOnlyToRuntimeTag(t *testing.T) {
+	t.Parallel()
+	if _, ok := LookupCanonicalRoute("tag project"); ok {
+		t.Fatal("tag project remains a false canonical target")
+	}
+	path, route, ok := Resolve([]string{"tag", "project"})
+	if !ok || !reflect.DeepEqual(path, []string{"tag", "project"}) {
+		t.Fatalf("tag project resolved to %v (ok=%v), want the executable compatibility route", path, ok)
+	}
+	if !reflect.DeepEqual(route.Canonical, []string{"runtime tag"}) {
+		t.Fatalf("tag project canonical replacements = %v, want [runtime tag]", route.Canonical)
 	}
 }
 
@@ -271,6 +296,24 @@ func TestEveryCanonicalSourceRouteBackReferences(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestEveryRouteCanonicalReferenceIsClaimedByItsSource closes the reverse edge
+// of TestEveryCanonicalSourceRouteBackReferences. A route may not point at a
+// canonical spelling whose source list omits that handler namespace.
+func TestEveryRouteCanonicalReferenceIsClaimedByItsSource(t *testing.T) {
+	t.Parallel()
+	walkRoutes(Routes(), func(path []string, route Route) {
+		for _, spelling := range route.Canonical {
+			canonical, ok := LookupCanonicalRoute(spelling)
+			if !ok {
+				continue
+			}
+			if !slices.Contains(canonical.Sources, path[0]) {
+				t.Errorf("route %q maps to %q, whose sources omit %q", strings.Join(path, " "), spelling, path[0])
+			}
+		}
+	})
 }
 
 // TestCanonicalManifestPinsRequiredPhaseZeroSpellings pins the exact canonical
@@ -525,7 +568,7 @@ func TestEveryInventoriedRouteSurvivesUnchanged(t *testing.T) {
 
 	// The routes this Phase adds are new surface, not inventory members, and all
 	// of them are canonical.
-	for _, token := range []string{"get", "describe", "delete", "rebind", "rename", "restore", "runtime", "agent", "create", "config"} {
+	for _, token := range []string{"get", "describe", "delete", "rebind", "rename", "restore", "runtime", "agent", "create", "config", "notification"} {
 		if _, ok := inventoriedRoutes[token]; ok {
 			t.Fatalf("%q is listed as an inventoried route; it is new canonical surface", token)
 		}

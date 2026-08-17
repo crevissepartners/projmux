@@ -16,6 +16,7 @@ type diagnosticsCommand struct {
 	lookupEnv func(string) string
 	homeDir   func() (string, error)
 	doctor    *doctorCommand
+	ai        rawArgvCommand
 }
 
 func newDiagnosticsCommand() *diagnosticsCommand {
@@ -28,6 +29,8 @@ func (c *diagnosticsCommand) Run(args []string, stdout, stderr io.Writer) error 
 		return usageError("diagnostics requires a subcommand")
 	}
 	switch args[0] {
+	case "agent-hook":
+		return forwardRawArgv(c.ai, "diagnostics agent-hook", "ai", []string{"ingest", "log"}, args[1:], stdout, stderr)
 	case "log":
 		return c.runLog(args[1:], stdout, stderr)
 	case "report":

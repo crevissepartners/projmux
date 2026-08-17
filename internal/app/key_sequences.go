@@ -111,7 +111,7 @@ func keySequenceRetireCommands(socketName, roots, tables string) [][]string {
 }
 
 // keySequenceRetireCommandsWithPrefix lets every live apply seam consume the
-// same ordered retirement contract. The canonical tmux apply path supplies an
+// same ordered retirement contract. The canonical config apply path supplies an
 // explicit -L socket; Settings supplies the inherited current-client routing
 // used by its existing source-file reload.
 func keySequenceRetireCommandsWithPrefix(prefix []string, roots, tables string) [][]string {

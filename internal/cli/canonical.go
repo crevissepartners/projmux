@@ -46,28 +46,23 @@ var projectionCatalog = sharedOutputModes
 // kept that boundary and closed the manifest itself, so the two are now honest
 // for different reasons rather than for the same one.
 //
-// The rule this manifest now holds to: a spelling stays only when argv can
-// reach it today, or when the behavior it names is a feature another track is
-// actually building. A spelling that would need its own slice -- its own leaf
-// parser, its own cardinality-matrix rows, its own tests -- is not a plan this
-// file gets to keep on someone else's behalf. Twelve such spellings were
-// deleted rather than aliased or left standing:
+// The rule this manifest now holds to: every spelling is executable today.
+// Canonical replacement routes are parity forwarders over an existing handler
+// and leaf parser; they do not duplicate parsing or behavior.
 //
 //   - `config show` named a non-interactive effective-config printer that
 //     exists nowhere, under no spelling. Settings also has no standalone
 //     effective-config dump.
-//   - `config edit`, `runtime open`, `runtime quit`, `diagnostics doctor`,
-//     `diagnostics resources`, `setup probe`, `setup welcome`, `create
-//     notification`, `create snapshot`, `notification ack`, and `notification
-//     reconcile` each named behavior that ships today under its legacy spelling
-//     (`settings`, `shell`, `quit`, `doctor`, `resources`, `setup`, `welcome`,
-//     `notify push`, `session-state save`, `notify ack`, `notify reconcile`).
-//     Nothing was removed from the binary; only the renaming plan was, because
-//     each rename is a slice of its own and two of them belong to a separately
-//     tracked Settings information-architecture effort.
+//   - Phase 1 restored `config edit`, `create notification`, `create snapshot`,
+//     `notification ack`, and `notification reconcile` as handler-parity doors.
+//   - `runtime open`, `runtime quit`, `diagnostics doctor`, `diagnostics
+//     resources`, `setup probe`, and `setup welcome` remain absent because the
+//     six routes that would use them are shortcuts owned outside this
+//     compatibility track; the sixth is the general `settings` shortcut, which
+//     is intentionally broader than the AI-scoped `config edit` route.
 //
 // The routes those deletions leave without a canonical mapping are enumerated
-// and enforced in TestOnlyTheDeletedCanonicalNamespacesLeaveARouteUnmapped, so
+// and enforced in TestOnlyTheExplicitShortcutSetLeavesARouteUnmapped, so
 // "this route has no canonical v2 spelling" is a checked statement rather than
 // an omission nobody notices.
 //
@@ -112,9 +107,11 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "describe agent", Summary: "Describe one Agent resource", Sources: []string{"ai", "describe"}, Outputs: projectionCatalog},
 
 	// create
-	{Spelling: "create window", Summary: "Create a Window with its initial Pane", Sources: []string{"window"}, Outputs: projectionCatalog},
+	{Spelling: "create window", Summary: "Create a Window with its initial Pane", Sources: []string{"window", "create"}, Outputs: projectionCatalog},
 	{Spelling: "create pane", Summary: "Create a shell Pane in an existing Window", Sources: []string{"ai", "create"}, Outputs: projectionCatalog},
 	{Spelling: "create agent", Summary: "Create an Agent and its managed Pane", Sources: []string{"ai", "create"}, Outputs: projectionCatalog},
+	{Spelling: "create notification", Summary: "Create a pending notification row", Sources: []string{"notify", "ai", "create"}},
+	{Spelling: "create snapshot", Summary: "Create a session snapshot", Sources: []string{"session-state", "create"}},
 	{Spelling: "create codex", Summary: "Provider shortcut for create agent --provider codex", Sources: []string{"create"}, Outputs: projectionCatalog},
 	{Spelling: "create claude", Summary: "Provider shortcut for create agent --provider claude", Sources: []string{"create"}, Outputs: projectionCatalog},
 	{Spelling: "create antigravity", Summary: "Provider shortcut for create agent --provider antigravity", Sources: []string{"create"}, Outputs: projectionCatalog},
@@ -122,13 +119,13 @@ var canonicalRoutes = []CanonicalRoute{
 	// navigation and binding
 	{Spelling: "attach project", Summary: "Enter a Project runtime from outside tmux", Sources: []string{"attach"}},
 	{Spelling: "focus project", Summary: "Move the current client to a live Project", Sources: []string{"focus", "switch"}},
-	{Spelling: "focus window", Summary: "Move the current client to a live Window", Sources: []string{"focus"}},
+	{Spelling: "focus window", Summary: "Move the current client to a live Window", Sources: []string{"focus", "window"}},
 	{Spelling: "focus pane", Summary: "Move the current client to a live Pane", Sources: []string{"focus"}},
 
 	// rename / rebind
 	{Spelling: "rename project", Summary: "Rename a Projmux Project resource", Sources: []string{"rename"}},
 	{Spelling: "rename window", Summary: "Rename a Projmux Window resource", Sources: []string{"window", "rename"}},
-	{Spelling: "rename pane", Summary: "Rename a Projmux Pane resource; does not change tmux pane_title", Sources: []string{"tmux", "rename"}},
+	{Spelling: "rename pane", Summary: "Rename a Projmux Pane resource; does not change tmux pane_title", Sources: []string{"tmux", "internal", "rename"}},
 	{Spelling: "rebind project", Summary: "Rebind one Project spec.root to a new absolute directory", Sources: []string{"rebind"}},
 	{Spelling: "reconcile resources", Summary: "Preview or repair Registry and exact tmux resource drift", Sources: []string{"reconcile"}},
 
@@ -152,8 +149,10 @@ var canonicalRoutes = []CanonicalRoute{
 	// and neither is a Projmux resource. The pin store is a lines file of
 	// directory paths; the tag store is a lines file of live session names. There
 	// is no uid, no ownerRef, and no registry document behind either, and
-	// `pin project` / `tag project` are self-recursive spellings of the same flat
-	// actions rather than a second, resource-aware implementation.
+	// `pin project` is a self-recursive spelling over the same flat action rather
+	// than a second, resource-aware implementation. The equivalent `tag project`
+	// target was removed from this manifest; the executable compatibility argv
+	// survives, but its canonical replacement is `runtime tag`.
 	//
 	// The persistent Project-metadata tag the earlier draft of this manifest
 	// promised is not a deferred feature. The product decision of 2026-08-15
@@ -161,7 +160,6 @@ var canonicalRoutes = []CanonicalRoute{
 	// persistent half will never be built, so the summary states what the route
 	// manages instead of a capability with no owner.
 	{Spelling: "pin project", Summary: "Manage pinned project directories", Sources: []string{"pin"}},
-	{Spelling: "tag project", Summary: "Manage the ephemeral tagged session selection", Sources: []string{"tag"}},
 
 	// prune
 	{Spelling: "prune project", Summary: "Prune Projects whose spec.root has been missing for a bounded age", Sources: []string{"prune"}},
@@ -172,7 +170,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "agent topic", Summary: "Read, set, or clear the Agent topic annotation", Sources: []string{"ai", "agent"}},
 	{Spelling: "agent resume", Summary: "Rebind an Offline or Failed Agent to a new managed Pane", Sources: []string{"ai", "agent"}},
 	{Spelling: "agent integrate", Summary: "Install or remove provider hook integrations", Sources: []string{"ai", "agent"}},
-	{Spelling: "agent usage", Summary: "Read provider account usage quota snapshots", Sources: []string{"usage", "status", "agent"}},
+	{Spelling: "agent usage", Summary: "Read provider account usage quota snapshots", Sources: []string{"usage", "status", "internal", "agent"}},
 
 	// attention domain
 	{Spelling: "attention list", Summary: "List live Pane attention state", Sources: []string{"attention"}},
@@ -180,6 +178,10 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "attention clear", Summary: "Clear live Pane attention state", Sources: []string{"attention"}},
 	{Spelling: "attention arm", Summary: "Arm focus-only attention consumption", Sources: []string{"attention"}},
 	{Spelling: "attention window", Summary: "Render window-scoped attention badges", Sources: []string{"attention"}},
+
+	// notification domain
+	{Spelling: "notification ack", Summary: "Acknowledge notification rows", Sources: []string{"notify", "notification"}},
+	{Spelling: "notification reconcile", Summary: "Reconcile the notification queue against live targets", Sources: []string{"notify", "notification"}},
 
 	// hook domain
 	{Spelling: "hook list", Summary: "List lifecycle hook config", Sources: []string{"hook"}},
@@ -204,8 +206,9 @@ var canonicalRoutes = []CanonicalRoute{
 	// `install-app` -- have no canonical entry and no public spelling. They are
 	// installer plumbing whose canonical home is `internal tmux`, which is where
 	// they already resolve.
-	{Spelling: "config render", Summary: "Print a generated tmux config to stdout", Sources: []string{"tmux", "config"}},
-	{Spelling: "config apply", Summary: "Write the generated app tmux config and reload the live server", Sources: []string{"tmux", "config"}},
+	{Spelling: "config edit", Summary: "Edit the AI split-mode configuration", Sources: []string{"ai", "config"}},
+	{Spelling: "config render", Summary: "Print a generated tmux config to stdout", Sources: []string{"tmux", "internal", "config"}},
+	{Spelling: "config apply", Summary: "Write the generated app tmux config and reload the live server", Sources: []string{"tmux", "internal", "config"}},
 
 	// runtime domain
 	{Spelling: "runtime sessions", Summary: "Pick a live or ephemeral tmux session", Sources: []string{"sessions", "runtime"}},
@@ -216,6 +219,7 @@ var canonicalRoutes = []CanonicalRoute{
 
 	// diagnostics domain
 	{Spelling: "diagnostics log", Summary: "Read the bounded local operations journal", Sources: []string{"diagnostics"}},
+	{Spelling: "diagnostics agent-hook", Summary: "Read the bounded Agent hook ingest journal", Sources: []string{"ai", "diagnostics"}},
 	{Spelling: "diagnostics report", Summary: "Create an explicit redacted local support report", Sources: []string{"diagnostics"}},
 
 	// setup domain
@@ -242,6 +246,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "internal preview", Summary: "Persisted preview cursor plumbing", Sources: []string{"preview", "internal"}},
 	{Spelling: "internal session-popup", Summary: "Generated session popup payload", Sources: []string{"session-popup", "internal"}},
 	{Spelling: "internal agent-hook", Summary: "Provider hook ingest and title watcher plumbing", Sources: []string{"ai", "internal"}},
+	{Spelling: "internal focus", Summary: "Machine focus ingress", Sources: []string{"focus", "internal"}},
 	{Spelling: "internal key-broker", Summary: "Darwin physical key transport", Sources: []string{"key-broker", "internal"}},
 	{Spelling: "internal popup-wait-key", Summary: "Display-only popup single-key reader", Sources: []string{"popup-wait-key", "internal"}},
 }

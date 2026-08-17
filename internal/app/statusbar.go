@@ -608,7 +608,7 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 		socket = strings.TrimSpace(head.Socket)
 	}
 
-	args := []string{"focus", "--target", target, "--source", "status-bar", "--kind", "segment-click"}
+	args := []string{"internal", "focus", "--target", target, "--source", "status-bar", "--kind", "segment-click"}
 	if socket != "" {
 		args = append(args, "--socket", socket)
 	}
