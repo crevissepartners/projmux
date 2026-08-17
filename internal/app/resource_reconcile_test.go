@@ -330,6 +330,39 @@ func TestResourceReconcileRefusesForeignAndAmbiguousBindings(t *testing.T) {
 	}
 }
 
+func TestResourceReconcileRefusesDuplicateUIDLessProjectClaims(t *testing.T) {
+	t.Parallel()
+
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	if _, err := store.mutator().RegisterProject(&store.registry, coremetadata.RegisterProjectOptions{
+		Root: root, DefaultShell: "/bin/zsh", OperationID: "op-duplicate-project-claim",
+	}); err != nil {
+		t.Fatalf("seed authoritative Project: %v", err)
+	}
+	second := server.addSession("beta")
+	second.opts[inttmux.ProjectPathSessionOption] = root
+	registryBefore, tmuxBefore := store.snapshot(), server.state()
+
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil {
+		t.Fatal("duplicate UID-less Project claims unexpectedly succeeded")
+	}
+	for _, want := range []string{
+		`"failed": 2`,
+		`"reason": "multiple live sessions resolve to the same exact Registry Project"`,
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("duplicate Project claim report missing %q:\n%s", want, stdout)
+		}
+	}
+	if store.writes != 0 || store.snapshot() != registryBefore {
+		t.Fatalf("duplicate Project claims mutated Registry: writes=%d snapshot=%s", store.writes, store.snapshot())
+	}
+	if got := server.state(); got != tmuxBefore || tmuxMutationCallCount(server) != 0 {
+		t.Fatalf("duplicate Project claims mutated tmux:\n--- got ---\n%s\n--- want ---\n%s", got, tmuxBefore)
+	}
+}
+
 func TestResourceReconcileForeignProjectDoesNotRecoverMissingRegistryState(t *testing.T) {
 	t.Parallel()
 

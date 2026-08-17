@@ -278,13 +278,21 @@ func resourceProjectForSession(registry coremetadata.Registry, session observedR
 
 func refusedResourceProjectSessions(registry coremetadata.Registry, sessions []observedResourceProjectSession, reconciler *registryReconciler) map[string]bool {
 	counts := map[string]int{}
+	claims := map[string]int{}
 	for _, session := range sessions {
 		if session.uid != "" {
 			counts[session.uid]++
 		}
+		if claim := resourceProjectSessionClaim(registry, session, reconciler); claim != "" {
+			claims[claim]++
+		}
 	}
 	refused := map[string]bool{}
 	for _, session := range sessions {
+		if claim := resourceProjectSessionClaim(registry, session, reconciler); claim != "" && claims[claim] > 1 {
+			refused[session.name] = true
+			continue
+		}
 		if session.uid == "" {
 			if session.root == "" && len(resourceSessionProjectClaims(registry, session.name, reconciler)) > 1 {
 				refused[session.name] = true
@@ -297,6 +305,20 @@ func refusedResourceProjectSessions(registry coremetadata.Registry, sessions []o
 		}
 	}
 	return refused
+}
+
+// resourceProjectSessionClaim is the exact Project identity a live session
+// would acquire. Counting the claim independently from the current uid catches
+// two UID-less sessions anchored to the same root before either one can mirror
+// the same authoritative Project uid.
+func resourceProjectSessionClaim(registry coremetadata.Registry, session observedResourceProjectSession, reconciler *registryReconciler) string {
+	if project, ok := resourceProjectForSession(registry, session, reconciler); ok {
+		return "uid:" + project.Metadata.UID
+	}
+	if root := strings.TrimSpace(session.root); root != "" {
+		return "root:" + root
+	}
+	return ""
 }
 
 func resourceSessionProjectClaims(registry coremetadata.Registry, sessionName string, reconciler *registryReconciler) []string {
@@ -392,9 +414,13 @@ func resourceTmuxTruthy(value string) bool {
 
 func resourceProjectForeignItems(registry coremetadata.Registry, sessions []observedResourceProjectSession, reconciler *registryReconciler) []resourceReconcileItem {
 	counts := map[string]int{}
+	claims := map[string]int{}
 	for _, session := range sessions {
 		if session.uid != "" {
 			counts[session.uid]++
+		}
+		if claim := resourceProjectSessionClaim(registry, session, reconciler); claim != "" {
+			claims[claim]++
 		}
 	}
 	var items []resourceReconcileItem
@@ -405,6 +431,8 @@ func resourceProjectForeignItems(registry coremetadata.Registry, sessions []obse
 		reason := "live session carries a Project uid outside its exact Registry identity"
 		if session.uid == "" && session.root == "" && len(resourceSessionProjectClaims(registry, session.name, reconciler)) > 1 {
 			reason = "multiple Registry Projects claim the live session-name edge"
+		} else if claim := resourceProjectSessionClaim(registry, session, reconciler); claim != "" && claims[claim] > 1 {
+			reason = "multiple live sessions resolve to the same exact Registry Project"
 		} else if counts[session.uid] > 1 {
 			reason = "multiple live sessions claim the same Registry Project uid"
 		} else if _, ok := registry.Project(session.uid); !ok {
