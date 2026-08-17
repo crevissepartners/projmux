@@ -350,7 +350,7 @@ func TestGetReadFamilyResolvesEveryKindWithListCardinality(t *testing.T) {
 		{
 			name: "the default projection is a header plus space-aligned columns",
 			args: []string{"windows", "--project", "beta"},
-			want: "NAME  STATUS   PROJECT  AGE\nmain  offline  beta     2d\n",
+			want: "DISPLAY NAME  NAME  STATUS   PROJECT  AGE\nmain          main  offline  beta     2d\n",
 		},
 		{
 			name: "ref projection carries the kind",
