@@ -217,6 +217,7 @@ hook payload, or a `make install` log.
 | `internal preview` | Persisted preview cursor (`cycle-pane`, `cycle-window`, `select`). |
 | `internal session-popup` | Session popup preview/open and popup cursor movement. |
 | `internal agent-hook` | Provider hook ingest (`ingest`) and the Agent pane title watcher (`watch-title`). |
+| `internal focus` | Machine focus ingress used by statusbar and notification-sidebar actions. |
 | `internal key-broker` | Darwin physical key transport. |
 | `internal popup-wait-key` | Single-key reader that closes a display-only popup. |
 
@@ -230,7 +231,7 @@ The pre-namespace spellings — `projmux status ...`, `projmux statusbar ...`,
 `projmux ai watch-title ...` — all still work and are **not** deprecated in
 this release. They must keep working: a tmux server that is already running was
 configured by a previously installed binary and keeps invoking them until the
-next `projmux tmux apply`. They are simply no longer listed in `projmux help`.
+next `projmux config apply`. They are simply no longer listed in `projmux help`.
 Removing them is a separate breaking change.
 
 `projmux tmux print-config`, `print-app-config`, `install`, `install-app`, and
@@ -247,9 +248,12 @@ Three of the five now also have a public spelling under [`config`](#config):
 
 The public spellings are parity aliases: same stdout, same stderr, same exit
 code, same side effects. Neither half is deprecated and neither prints a
-migration warning. `make install` still calls `projmux tmux apply` directly, and
+migration warning. `make install` calls `projmux config apply`, and
 a tmux server that is already running keeps invoking the hidden spellings until
 the next apply, so both must keep working.
+
+The complete compatibility-to-canonical removal record, including intentional
+error differences, is maintained in the [Legacy CLI Retirement Ledger](legacy-cli-retirement.md).
 
 `install` and `install-app` deliberately have no public spelling. They write and
 wire up config files as part of the install pipeline rather than answering an
@@ -481,6 +485,11 @@ client is attached on that socket, it emits the configured desktop
 notification instead. `--socket` is explicit; when omitted, the socket is
 derived from `$TMUX`.
 
+Generated statusbar and notification-sidebar payloads use the hidden
+`projmux internal focus` spelling. It is a raw-argv parity forwarder to this
+same handler; the public `projmux focus` spelling remains executable for
+compatibility.
+
 `projmux focus` stops at the tmux layer. It never asks the host terminal
 window to come forward, in any Desktop notification mode.
 
@@ -521,6 +530,12 @@ Pending AI notify queue. `attention` is live tmux pane state; `notify` is
 the explicit-ack pending notification source of truth used by the status-bar
 notify segment and notify sidebar. It is not the source of truth for all live pane attention. See
 [notify-queue.md](notify-queue.md) for the full data model.
+
+The canonical queue mutation spellings are `projmux create notification`,
+`projmux notification ack`, and `projmux notification reconcile`. They forward
+to the same `notify push|ack|reconcile` handler and preserve argv, streams, exit
+status, and side effects. `notify list` remains available through canonical
+`projmux get notifications`.
 
 ```
 projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]>
@@ -752,12 +767,12 @@ projmux ai picker   [--inside] [--shell] [--resume] [right|down]
 projmux ai settings [--get|--set <mode>]
 projmux ai status   set <thinking|waiting|idle> [pane]
 projmux ai notify   [notify|reset] [pane]
-projmux ai watch-title [pane]
-projmux ai ingest   codex-hook < payload.json
-projmux ai ingest   claude-hook < payload.json
-projmux ai ingest   antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop|Statusline>] < payload.json
-projmux ai ingest   bell --pane <pane_id>
-projmux ai ingest   log [--tail N] [--json] [--path]
+projmux internal agent-hook watch-title [pane]
+projmux internal agent-hook ingest codex-hook < payload.json
+projmux internal agent-hook ingest claude-hook < payload.json
+projmux internal agent-hook ingest antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop|Statusline>] < payload.json
+projmux internal agent-hook ingest bell --pane <pane_id>
+projmux diagnostics agent-hook [--tail N] [--json] [--path]
 projmux agent integrate codex [--dry-run] [--remove]
 projmux agent integrate claude [--dry-run] [--remove]
 projmux agent integrate antigravity [--dry-run] [--remove]
@@ -770,6 +785,8 @@ the `attention` badge, the `notify` queue producer, and the desktop
 notifier. `status set waiting` is the trigger that flips a pane to the
 reply-ready state — that transition pushes an `ai:<session>:<pane>`
 entry into the notify queue.
+The exact legacy `projmux ai ingest log` reader remains executable for
+compatibility; new reader guidance uses `projmux diagnostics agent-hook`.
 The durable semantic status badge is stored separately in
 `@projmux_ai_badge_kind` as `approval_required`, `input_required`,
 `response_complete`, `in_progress`, or unset. The live status surfaces color
@@ -1184,15 +1201,18 @@ owner.
 ## config
 
 ```
+projmux config edit [--get|--set <mode>]
 projmux config render standalone [--bin <path>]
 projmux config render app        [--bin <path>]
 projmux config apply             [--bin <path>] [--config <path>] [--socket <name>]
 ```
 
-The public door onto generated tmux config. Every route here is a parity alias
-over the `tmux` handler that already owned the behavior — identical stdout,
-stderr, exit code, and side effects — so this section describes *which* artifact
-each one touches rather than restating the behavior.
+The public configuration domain. Every route here is a parity alias over the
+handler that already owned the behavior — identical stdout, stderr, exit code,
+and side effects. `edit` forwards to the existing AI split-mode settings
+picker and preserves its `--get`/`--set` forms; `render` and `apply` forward to
+the existing `tmux` handler. The general `settings` UI remains a separate
+shortcut and is not renamed by this route.
 
 `render` takes the artifact as a positional token because projmux generates two
 different tmux configs, not two views of one:
@@ -1260,7 +1280,7 @@ reported as `unknown` with guidance.
 For npm installs, it runs `npm install -g projmux@latest` (which reliably
 crosses minor/major versions where `npm update -g` does not, and re-resolves
 the per-platform optional dependency) and then runs the new binary's
-`projmux tmux apply`. With `--no-apply`, that convergence step uses
+`projmux config apply`. With `--no-apply`, that convergence step uses
 `--no-reload`: it still migrates marker-owned files and writes generated
 configuration without accessing live tmux. For Go installs, it delegates to the existing atomic
 `projmux upgrade` flow. For `github-release` installs, it downloads the latest
@@ -1277,7 +1297,7 @@ projmux upgrade [--ref @latest|@<tag>|@<branch>]
 ```
 
 `go install`s the binary, atomically replaces the on-disk file, then
-runs `projmux tmux apply`; `--no-apply` selects `tmux apply --no-reload` so
+runs `projmux config apply`; `--no-apply` selects `config apply --no-reload` so
 file migration and generated config still converge without live tmux access. Reads
 `PROJMUX_PROJDIR` from the calling shell and memoizes the primary entry
 to `~/.config/projmux/projdir`. npm-installed binaries reject this
@@ -1351,7 +1371,7 @@ flags with the top-level `switch` UX:
   `Settings > Keybindings` action list with simplified action details for
   aliases and reset. Key save/reset automatically writes the key list,
   regenerates the app config, and reloads the running tmux session when
-  possible; skipped or failed stages show `projmux tmux apply` as the recovery
+  possible; skipped or failed stages show `projmux config apply` as the recovery
   or sync command. Terminal diagnostics and terminal mapping application stay
   in the `projmux shell` -> `projmux setup` -> `projmux setup terminal`
   remediation path.

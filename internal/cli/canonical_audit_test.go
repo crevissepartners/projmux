@@ -110,7 +110,6 @@ var retiredCanonicalSummaries = []string{
 	// Deleted: no non-interactive effective-config printer exists under any
 	// spelling, and the namespace belongs to the Settings IA track.
 	"Show effective projmux configuration",
-	"Open the interactive configuration UI",
 	// Deleted: each is a rename of a shipping route and needs its own slice.
 	"Start or attach the app-owned tmux runtime",
 	"Quit the app-owned tmux runtime",
@@ -118,10 +117,6 @@ var retiredCanonicalSummaries = []string{
 	"Inspect live Project/Window/Pane CPU and RSS attribution",
 	"Probe terminal key delivery",
 	"Reopen the onboarding guide",
-	"Create a pending notification row",
-	"Create a session snapshot",
-	"Acknowledge notification rows",
-	"Reconcile the notification queue against live targets",
 }
 
 // promiseMarkers is the maintained vocabulary of forward-looking words. A
@@ -233,7 +228,7 @@ func TestNoCanonicalSummaryPromisesUnownedWork(t *testing.T) {
 // spelling `config render`, so a public `render` with one child would have left
 // one generated artifact with no public spelling -- the gap this Phase closes,
 // reopened one route over.
-func TestPublicConfigRouteReachesBothRenderTargetsAndApply(t *testing.T) {
+func TestPublicConfigRouteReachesEditBothRenderTargetsAndApply(t *testing.T) {
 	t.Parallel()
 
 	config, ok := LookupRoute("config")
@@ -243,12 +238,16 @@ func TestPublicConfigRouteReachesBothRenderTargetsAndApply(t *testing.T) {
 	if config.Hidden || config.Disposition != DispositionCanonical {
 		t.Fatalf("config hidden=%v disposition=%q, want a public canonical node", config.Hidden, config.Disposition)
 	}
+	const wantSummary = "Edit AI split-mode settings; render or apply generated tmux configuration"
+	if config.Summary != wantSummary {
+		t.Fatalf("config summary = %q, want %q", config.Summary, wantSummary)
+	}
 	var children []string
 	for _, child := range config.Children {
 		children = append(children, child.Name)
 	}
-	if !reflect.DeepEqual(children, []string{"render", "apply"}) {
-		t.Fatalf("config children = %v, want [render apply]", children)
+	if !reflect.DeepEqual(children, []string{"edit", "render", "apply"}) {
+		t.Fatalf("config children = %v, want [edit render apply]", children)
 	}
 
 	render, ok := findChild(config, "render")
@@ -267,6 +266,7 @@ func TestPublicConfigRouteReachesBothRenderTargetsAndApply(t *testing.T) {
 	// generated reference, and argv all agree it exists.
 	for _, spelling := range [][]string{
 		{"config"},
+		{"config", "edit"},
 		{"config", "render"},
 		{"config", "render", "standalone"},
 		{"config", "render", "app"},

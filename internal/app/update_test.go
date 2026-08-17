@@ -130,7 +130,7 @@ func TestUpdateApplyNpmUsesInstallLatest(t *testing.T) {
 	// --no-apply suppresses the live reload, not the post-update step itself.
 	// The new binary still has to run so the keymap schema migration happens;
 	// skipping it would leave a v0 keymap under a binary that writes v1.
-	want := []string{"npm install -g projmux@latest", "projmux tmux apply --no-reload"}
+	want := []string{"npm install -g projmux@latest", "projmux config apply --no-reload"}
 	if !slices.Equal(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
 	}
@@ -315,7 +315,7 @@ func TestUpdateApplyDryRunForNPM(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"would run: npm install -g projmux@latest",
-		"would run: projmux tmux apply",
+		"would run: projmux config apply",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
@@ -342,7 +342,7 @@ func TestUpdateApplyRunsNPMCommands(t *testing.T) {
 	if err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{"npm install -g projmux@latest", "projmux tmux apply"}
+	want := []string{"npm install -g projmux@latest", "projmux config apply"}
 	if !equalStrings(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
 	}
@@ -399,7 +399,7 @@ func TestUpdateApplyDryRunForGitHubRelease(t *testing.T) {
 		"would fetch: https://example.invalid/latest",
 		"would download: projmux_latest_linux_amd64.tar.gz",
 		"would replace: /home/me/bin/projmux (atomic via temp file)",
-		"would run: /home/me/bin/projmux tmux apply",
+		"would run: /home/me/bin/projmux config apply",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
@@ -461,7 +461,7 @@ func TestUpdateApplyRunsGitHubReleaseReplacement(t *testing.T) {
 	if string(got) != "new\n" {
 		t.Fatalf("target content = %q, want new binary", got)
 	}
-	want := []string{target + " tmux apply"}
+	want := []string{target + " config apply"}
 	if !equalStrings(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
 	}

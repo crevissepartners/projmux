@@ -1504,7 +1504,7 @@ func (c *notifyCommand) focusNotification(entry notify.Notification, source, kin
 	if strings.TrimSpace(target) == "" {
 		return errors.New("notification has no routable target")
 	}
-	args := []string{"focus", "--target", target, "--source", source, "--kind", kind}
+	args := []string{"internal", "focus", "--target", target, "--source", source, "--kind", kind}
 	if socket := strings.TrimSpace(entry.Socket); socket != "" {
 		args = append(args, "--socket", socket)
 	}
@@ -1795,7 +1795,7 @@ func notifyLiveExplanationKey(state string) (i18n.Key, string) {
 	case "live-ai-reply-queued":
 		return i18n.KeyNotifyLiveAIReplyQueued, "live AI reply pane has a matching actionable notify queue entry"
 	case "live-ai-reply-missing-queue":
-		return i18n.KeyNotifyLiveAIReplyMissingQueue, "live AI reply pane has no matching queue entry; run `projmux notify reconcile` to back-fill it"
+		return i18n.KeyNotifyLiveAIReplyMissingQueue, "live AI reply pane has no matching queue entry; run `projmux notification reconcile` to back-fill it"
 	case "queue-stale":
 		return i18n.KeyNotifyLiveQueueStale, "queue entry target is inactive: the live pane no longer matches reply+agent state; it may still be focusable if the target is routable"
 	case "queue-gone":

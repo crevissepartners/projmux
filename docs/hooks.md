@@ -701,7 +701,7 @@ reinterpreting context. Raw payloads or transcript contents are not stored.
 
 ## Ingest Debug Log
 
-Every `projmux ai ingest ...` path appends compact JSONL diagnostics to
+Every `projmux internal agent-hook ingest ...` path appends compact JSONL diagnostics to
 `$XDG_STATE_HOME/projmux/ai-ingest.log`, or
 `~/.local/state/projmux/ai-ingest.log` when `XDG_STATE_HOME` is unset. The log
 records source, event, result, pane, match identifiers, and a short reason for
@@ -709,13 +709,16 @@ parse errors, unsupported events, missing pane matches, deduped bells,
 state-only transitions, quiet high-volume events, and notify pushes. Raw hook
 payloads are not stored.
 
-Use `projmux ai ingest log` to inspect recent entries:
+Use `projmux diagnostics agent-hook` to inspect recent entries:
 
 ```text
-projmux ai ingest log --tail 20
-projmux ai ingest log --json --tail 20
-projmux ai ingest log --path
+projmux diagnostics agent-hook --tail 20
+projmux diagnostics agent-hook --json --tail 20
+projmux diagnostics agent-hook --path
 ```
+
+The exact legacy `projmux ai ingest log` reader remains executable during the
+compatibility window and reads the same bytes.
 
 The file is capped at 1 MiB. When an append grows it past the cap, projmux
 keeps the most recent roughly 512 KiB and trims from the next JSONL boundary so

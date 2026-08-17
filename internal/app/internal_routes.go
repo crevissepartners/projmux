@@ -15,6 +15,7 @@ var internalSubcommands = []string{
 	"preview",
 	"session-popup",
 	"agent-hook",
+	"focus",
 	"key-broker",
 	"popup-wait-key",
 }
@@ -48,6 +49,7 @@ type internalCommand struct {
 	// ai owns both provider hook ingest and the pane title watcher today, so
 	// `internal agent-hook` forwards into it with the current leading token.
 	ai           rawArgvCommand
+	focus        rawArgvCommand
 	keyBroker    rawArgvCommand
 	popupWaitKey rawArgvCommand
 }
@@ -75,6 +77,8 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.sessionPopup, "internal session-popup", "session-popup", nil, rest, stdout, stderr)
 	case "agent-hook":
 		return c.runAgentHook(rest, stdout, stderr)
+	case "focus":
+		return forwardRawArgv(c.focus, "internal focus", "focus", nil, rest, stdout, stderr)
 	case "key-broker":
 		return forwardRawArgv(c.keyBroker, "internal key-broker", "key-broker", nil, rest, stdout, stderr)
 	case "popup-wait-key":

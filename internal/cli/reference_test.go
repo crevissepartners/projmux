@@ -239,9 +239,10 @@ func TestGeneratedReferenceExcludesEveryHiddenRoute(t *testing.T) {
 // built. That is the intended way out of it.
 //
 // The public-spelling Phase shrank this set on purpose. `tag project`'s "Manage
-// persistent Project tags" used to be the headline entry; it was corrected
-// rather than deferred, because the persistent Project-metadata tag is a
-// permanently abandoned plan and not a feature waiting on a Phase.
+// persistent Project tags" used to be the headline entry; the false canonical
+// target was retired rather than deferred, because the persistent
+// Project-metadata tag is a permanently abandoned plan and not a feature
+// waiting on a Phase.
 func canonicalManifestOnlySummaries() []string {
 	treeSummaries := map[string]bool{}
 	walkRoutes(Routes(), func(_ []string, route Route) {

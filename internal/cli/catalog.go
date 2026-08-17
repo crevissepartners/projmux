@@ -192,7 +192,7 @@ var routes = []Route{
 		Summary:     "Manage tmux AI split launch and settings",
 		Disposition: DispositionCompatibility,
 		Usage:       []string{"projmux ai split|picker|settings|status|notify|watch-title|ingest|integrate|topic"},
-		Canonical:   []string{"create agent", "create pane", "get agents", "describe agent", "agent status", "agent topic", "agent resume", "agent integrate", "internal agent-hook"},
+		Canonical:   []string{"create agent", "create pane", "get agents", "describe agent", "agent status", "agent topic", "agent resume", "agent integrate", "config edit", "create notification", "diagnostics agent-hook", "internal agent-hook"},
 		Children: []Route{
 			{
 				Name:      "split",
@@ -202,11 +202,11 @@ var routes = []Route{
 				Outputs:   []OutputMode{OutputModePaneID},
 			},
 			{Name: "picker", Summary: "Open the interactive AI agent picker", Usage: []string{"projmux ai picker"}, Canonical: []string{"create agent"}},
-			{Name: "settings", Summary: "Open the AI settings surface", Usage: []string{"projmux ai settings"}},
+			{Name: "settings", Summary: "Open the AI settings surface", Usage: []string{"projmux ai settings"}, Canonical: []string{"config edit"}},
 			{Name: "status", Summary: "Read or set the AI pane status state", Usage: []string{"projmux ai status [set ...]"}, Canonical: []string{"agent status"}},
-			{Name: "notify", Summary: "Dispatch an AI pane notification", Usage: []string{"projmux ai notify ..."}},
+			{Name: "notify", Summary: "Dispatch an AI pane notification", Usage: []string{"projmux ai notify ..."}, Canonical: []string{"create notification"}},
 			{Name: "watch-title", Summary: "Run the AI pane title watcher", Usage: []string{"projmux ai watch-title ..."}, Canonical: []string{"internal agent-hook"}},
-			{Name: "ingest", Summary: "Ingest provider hook and log events", Usage: []string{"projmux ai ingest <source>"}, Canonical: []string{"internal agent-hook"}},
+			{Name: "ingest", Summary: "Ingest provider hook and log events", Usage: []string{"projmux ai ingest <source>"}, Canonical: []string{"diagnostics agent-hook", "internal agent-hook"}},
 			{Name: "integrate", Summary: "Install or remove provider hook integrations", Usage: []string{"projmux ai integrate <provider> [--dry-run]"}, Canonical: []string{"agent integrate"}},
 			{Name: "topic", Summary: "Read, set, or clear the AI pane topic", Usage: []string{"projmux ai topic [set|clear] ..."}, Canonical: []string{"agent topic"}},
 		},
@@ -272,14 +272,21 @@ var routes = []Route{
 		// undeprecated. The summaries below name the exact artifact each route
 		// touches so the public surface cannot be read as covering them.
 		Name:        "config",
-		Summary:     "Render or apply the generated tmux configuration",
+		Summary:     "Edit AI split-mode settings; render or apply generated tmux configuration",
 		Disposition: DispositionCanonical,
 		Usage: []string{
+			"projmux config edit [--get|--set <mode>]",
 			"projmux config render standalone|app [--bin <path>]",
 			"projmux config apply [--bin <path>] [--config <path>] [--socket <name>]",
 		},
-		Canonical: []string{"config render", "config apply"},
+		Canonical: []string{"config edit", "config render", "config apply"},
 		Children: []Route{
+			{
+				Name:      "edit",
+				Summary:   "Edit the AI split-mode configuration",
+				Usage:     []string{"projmux config edit [--get|--set <mode>]"},
+				Canonical: []string{"config edit"},
+			},
 			{
 				Name:    "render",
 				Summary: "Print a generated tmux config to stdout; writes nothing",
@@ -328,8 +335,10 @@ var routes = []Route{
 			"projmux create pane --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
 			"projmux create agent --provider <provider> --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
 			"projmux create codex|claude|antigravity --project <ref> [--window <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
+			"projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]",
+			"projmux create snapshot",
 		},
-		Canonical: []string{"create window", "create pane", "create agent", "create codex", "create claude", "create antigravity"},
+		Canonical: []string{"create window", "create pane", "create agent", "create notification", "create snapshot", "create codex", "create claude", "create antigravity"},
 		Children: []Route{
 			{
 				// A Window is always created together with the initial Pane it
@@ -376,6 +385,18 @@ var routes = []Route{
 				},
 				Outputs:   sharedOutputModes,
 				Canonical: []string{"create agent"},
+			},
+			{
+				Name:      "notification",
+				Summary:   "Create a pending notification row",
+				Usage:     []string{"projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]"},
+				Canonical: []string{"create notification"},
+			},
+			{
+				Name:      "snapshot",
+				Summary:   "Create a session snapshot",
+				Usage:     []string{"projmux create snapshot"},
+				Canonical: []string{"create snapshot"},
 			},
 			{
 				Name:    "codex",
@@ -509,11 +530,13 @@ var routes = []Route{
 		Disposition: DispositionCanonical,
 		Usage: []string{
 			"projmux diagnostics log [--json] [--tail <n>]",
+			"projmux diagnostics agent-hook [--tail <n>] [--json] [--path]",
 			"projmux diagnostics report [--output <path>]",
 		},
-		Canonical: []string{"diagnostics log", "diagnostics report"},
+		Canonical: []string{"diagnostics log", "diagnostics agent-hook", "diagnostics report"},
 		Children: []Route{
 			{Name: "log", Summary: "Read the bounded local operations journal", Canonical: []string{"diagnostics log"}},
+			{Name: "agent-hook", Summary: "Read the bounded Agent hook ingest journal", Usage: []string{"projmux diagnostics agent-hook [--tail <n>] [--json] [--path]"}, Canonical: []string{"diagnostics agent-hook"}},
 			{Name: "report", Summary: "Create an explicit redacted local support report", Canonical: []string{"diagnostics report"}},
 		},
 	},
@@ -528,7 +551,7 @@ var routes = []Route{
 			"projmux focus window <ref> --project <ref>",
 			"projmux focus pane <ref> --project <ref> --window <ref>",
 		},
-		Canonical: []string{"focus project", "focus window", "focus pane"},
+		Canonical: []string{"focus project", "focus window", "focus pane", "internal focus"},
 		Children: []Route{
 			{
 				Name:      "project",
@@ -633,12 +656,26 @@ var routes = []Route{
 		Summary:     "Manage the pending AI notify queue (push/list/ack/reconcile)",
 		Disposition: DispositionCompatibility,
 		Usage:       []string{"projmux notify push|list|ack|reconcile"},
-		Canonical:   []string{"get notifications", "delete notification"},
+		Canonical:   []string{"create notification", "get notifications", "delete notification", "notification ack", "notification reconcile"},
 		Children: []Route{
-			{Name: "push", Summary: "Push a pending notification row"},
+			{Name: "push", Summary: "Push a pending notification row", Canonical: []string{"create notification"}},
 			{Name: "list", Summary: "List pending notification rows", Canonical: []string{"get notifications"}},
-			{Name: "ack", Summary: "Acknowledge notification rows"},
-			{Name: "reconcile", Summary: "Reconcile the notification queue against live targets"},
+			{Name: "ack", Summary: "Acknowledge notification rows", Canonical: []string{"notification ack"}},
+			{Name: "reconcile", Summary: "Reconcile the notification queue against live targets", Canonical: []string{"notification reconcile"}},
+		},
+	},
+	{
+		Name:        "notification",
+		Summary:     "Manage pending notification workflow state",
+		Disposition: DispositionCanonical,
+		Usage: []string{
+			"projmux notification ack <id> | --all",
+			"projmux notification reconcile [--json]",
+		},
+		Canonical: []string{"notification ack", "notification reconcile"},
+		Children: []Route{
+			{Name: "ack", Summary: "Acknowledge notification rows", Usage: []string{"projmux notification ack <id> | --all"}, Canonical: []string{"notification ack"}},
+			{Name: "reconcile", Summary: "Reconcile the notification queue against live targets", Usage: []string{"projmux notification reconcile [--json]"}, Canonical: []string{"notification reconcile"}},
 		},
 	},
 	{
@@ -826,10 +863,10 @@ var routes = []Route{
 		Summary:     "Inspect and manage saved tmux session snapshots",
 		Disposition: DispositionCompatibility,
 		Usage:       []string{"projmux session-state status|save|delete|restore|preview|popup"},
-		Canonical:   []string{"get snapshots", "delete snapshot", "restore snapshot"},
+		Canonical:   []string{"get snapshots", "create snapshot", "delete snapshot", "restore snapshot"},
 		Children: []Route{
 			{Name: "status", Summary: "Show saved snapshot status", Canonical: []string{"get snapshots"}},
-			{Name: "save", Summary: "Save a session snapshot"},
+			{Name: "save", Summary: "Save a session snapshot", Canonical: []string{"create snapshot"}},
 			{Name: "delete", Summary: "Delete saved snapshots", Canonical: []string{"delete snapshot"}},
 			{Name: "restore", Summary: "Restore a snapshot (CLI allows --dry-run only)", Canonical: []string{"restore snapshot"}},
 			{Name: "preview", Summary: "Review a restore plan", Canonical: []string{"restore snapshot"}},
@@ -927,15 +964,12 @@ var routes = []Route{
 			"projmux tag list|toggle|clear",
 			"projmux tag project list|toggle|clear",
 		},
-		Canonical: []string{"tag project", "runtime tag"},
+		Canonical: []string{"runtime tag"},
 		Children: []Route{
-			// The contract splits `tag` into persistent Project-metadata tags and
-			// the ephemeral live-only selection. Only the second half exists
-			// today: the persistent half needs a Project registry writer, which
-			// arrives with a later Phase. So this canonical spelling is a pure
-			// parity alias over the tagged session selection, and its summary
-			// describes that rather than the capability it will eventually gain.
-			{Name: "project", Summary: "Manage the tagged session selection (canonical spelling)", Usage: []string{"projmux tag project list|toggle|clear"}, Canonical: []string{"tag project"}},
+			// A tag is an ephemeral session-scoped marker, not persistent Project
+			// metadata. The project-qualified argv remains executable compatibility,
+			// but its surviving canonical replacement is runtime tag.
+			{Name: "project", Summary: "Manage the tagged session selection (project-qualified compatibility spelling)", Usage: []string{"projmux tag project list|toggle|clear"}, Canonical: []string{"runtime tag"}},
 			{Name: "list", Summary: "List the tagged session selection", Canonical: []string{"runtime tag"}},
 			{Name: "toggle", Summary: "Toggle a session tag", Canonical: []string{"runtime tag"}},
 			{Name: "clear", Summary: "Clear the tagged session selection", Canonical: []string{"runtime tag"}},
@@ -948,7 +982,7 @@ var routes = []Route{
 		// The two operator-facing halves now also answer to the public `config`
 		// domain: `print-config` is `config render` and `apply` is `config
 		// apply`. Both spellings here stay dispatchable and undeprecated --
-		// `make install` invokes `projmux tmux apply` directly, and a running
+		// `make install` invokes `projmux config apply`, and a running
 		// tmux server holds config generated by a previously installed binary.
 		// `print-app-config`, `install`, and `install-app` have no public
 		// spelling and are reachable only here and under `internal tmux`.
@@ -1067,6 +1101,7 @@ var routes = []Route{
 			"projmux internal preview cycle-pane|cycle-window|select ...",
 			"projmux internal session-popup preview|open|cycle-pane|cycle-window ...",
 			"projmux internal agent-hook ingest|watch-title ...",
+			"projmux internal focus --target <target> ...",
 			"projmux internal key-broker [--once]",
 			"projmux internal popup-wait-key",
 		},
@@ -1077,6 +1112,7 @@ var routes = []Route{
 			"internal preview",
 			"internal session-popup",
 			"internal agent-hook",
+			"internal focus",
 			"internal key-broker",
 			"internal popup-wait-key",
 		},
@@ -1161,6 +1197,12 @@ var routes = []Route{
 					{Name: "ingest", Summary: "Ingest provider hook and log events", Canonical: []string{"internal agent-hook"}},
 					{Name: "watch-title", Summary: "Run the Agent pane title watcher", Canonical: []string{"internal agent-hook"}},
 				},
+			},
+			{
+				Name:      "focus",
+				Summary:   "Machine focus ingress",
+				Usage:     []string{"projmux internal focus --target <target> [--socket <path>] [--client <tty>] [--source <source>] [--kind <kind>]", "projmux internal focus --uri <uri>"},
+				Canonical: []string{"internal focus"},
 			},
 			{
 				Name:      "key-broker",

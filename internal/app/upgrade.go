@@ -71,7 +71,7 @@ func (c *upgradeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	target := fs.String("target", "", "target binary path to replace (default: current executable)")
 	module := fs.String("module", defaultUpgradeModule, "go module path to install")
 	dryRun := fs.Bool("dry-run", false, "print the commands that would run without executing them")
-	noApply := fs.Bool("no-apply", false, "skip running 'projmux tmux apply' after the upgrade")
+	noApply := fs.Bool("no-apply", false, "skip reloading tmux after 'projmux config apply'")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

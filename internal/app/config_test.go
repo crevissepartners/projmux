@@ -119,7 +119,7 @@ func TestConfigRejectsUnknownArgvWithoutReachingAHandler(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "bare config", args: nil, want: "config requires a subcommand: render, apply"},
+		{name: "bare config", args: nil, want: "config requires a subcommand: edit, render, apply"},
 		{name: "unknown subcommand", args: []string{"show"}, want: "config show is not available"},
 		{name: "bare render", args: []string{"render"}, want: "config render requires an artifact: standalone, app"},
 		{name: "unknown artifact", args: []string{"render", "bogus"}, want: "config render bogus is not available"},

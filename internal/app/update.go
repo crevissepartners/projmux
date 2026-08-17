@@ -162,7 +162,7 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 	fs := flag.NewFlagSet("update apply", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "print installer-specific update command without running it")
-	noApply := fs.Bool("no-apply", false, "skip running 'projmux tmux apply' after update")
+	noApply := fs.Bool("no-apply", false, "skip reloading tmux after 'projmux config apply'")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ type updateApplyCommand struct {
 // new canonical ids are, so only the freshly installed binary can compute the
 // real rename table.
 func postUpdateApplyArgs(noApply bool) []string {
-	args := []string{"tmux", "apply"}
+	args := []string{"config", "apply"}
 	if noApply {
 		args = append(args, "--no-reload")
 	}

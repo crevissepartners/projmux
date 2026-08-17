@@ -49,12 +49,11 @@ func (c *tagCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch fs.Arg(0) {
-	// `tag project <action>` is the canonical spelling of the tagged selection
-	// this route has always managed, and `runtime tag <action>` reaches the same
-	// actions from the runtime domain. Both forward the remaining argv here, so
-	// the three spellings share one implementation and one output. Splitting the
-	// persistent Project classification away from the live-only selection is a
-	// later Phase; this Phase only relocates the spelling.
+	// `tag project <action>` is the project-qualified compatibility spelling of
+	// the tagged selection this route has always managed. `runtime tag <action>`
+	// is its surviving canonical replacement. Both forward the remaining argv
+	// here, so the three executable spellings share one implementation and one
+	// output; none represents persistent Project metadata.
 	case "project":
 		rest := fs.Args()[1:]
 		if len(rest) > 0 && rest[0] == "project" {

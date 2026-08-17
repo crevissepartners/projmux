@@ -1238,7 +1238,7 @@ func TestStatusbarClickNotifyExecsFocusForNewestEntry(t *testing.T) {
 		t.Fatalf("expected projmux focus invocation; calls = %#v", runner.calls)
 	}
 	wantArgs := []string{
-		"focus", "--target", "main:1.0", "--source", "status-bar", "--kind", "segment-click",
+		"internal", "focus", "--target", "main:1.0", "--source", "status-bar", "--kind", "segment-click",
 		"--socket", "projmux", "--client", "/dev/pts/7",
 	}
 	if !equalStringSlices(focusCall.args, wantArgs) {

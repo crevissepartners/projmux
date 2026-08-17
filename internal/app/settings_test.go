@@ -5750,7 +5750,7 @@ func TestSettingsHubKeybindingsApplyOutsideTmuxShowsSkippedLiveState(t *testing.
 		"  Saved: ok (keymap.toml: ",
 		"  Prepared: ok (generated tmux config: ",
 		"  Running session: skipped (Settings is not running inside tmux)\n",
-		"Next: run `projmux tmux apply` to sync a running projmux tmux server.\n",
+		"Next: run `projmux config apply` to sync a running projmux tmux server.\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
@@ -5825,7 +5825,7 @@ func TestSettingsHubKeybindingsApplyReportsConfigGenerationFailure(t *testing.T)
 		"  Saved: ok (keymap.toml: ",
 		"  Prepared: failed (generated tmux config: resolve home directory: home unavailable)\n",
 		"  Running session: skipped (generated tmux config failed)\n",
-		"Recovery: resolve the generated tmux config error, then run `projmux tmux apply`.\n",
+		"Recovery: resolve the generated tmux config error, then run `projmux config apply`.\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
@@ -5867,7 +5867,7 @@ func TestSettingsHubKeybindingsApplyReportsLiveReloadFailure(t *testing.T) {
 		"  Saved: ok (keymap.toml: ",
 		"  Prepared: ok (generated tmux config: ",
 		"  Running session: failed (live tmux reload: source-file failed)\n",
-		"Recovery: fix the live tmux reload issue, then run `projmux tmux apply`.\n",
+		"Recovery: fix the live tmux reload issue, then run `projmux config apply`.\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
@@ -5956,7 +5956,7 @@ func TestSettingsThemeColorSetOutsideTmuxShowsFollowUp(t *testing.T) {
 		"  Saved: ok (config.toml: ",
 		"  Prepared: ok (generated tmux config: ",
 		"  Running session: skipped (Settings is not running inside tmux)\n",
-		"Next: run `projmux tmux apply` to sync a running projmux tmux server.\n",
+		"Next: run `projmux config apply` to sync a running projmux tmux server.\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
@@ -6034,7 +6034,7 @@ func TestSettingsThemeColorSetReportsLiveReloadFailure(t *testing.T) {
 		"  Saved: ok (config.toml: ",
 		"  Prepared: ok (generated tmux config: ",
 		"  Running session: failed (live tmux reload: source-file failed)\n",
-		"Recovery: fix the live tmux reload issue, then run `projmux tmux apply`.\n",
+		"Recovery: fix the live tmux reload issue, then run `projmux config apply`.\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
@@ -6402,7 +6402,7 @@ func TestSettingsHubKeybindingsResetRemovesOverride(t *testing.T) {
 		"  Saved: ok (keymap.toml: ",
 		"  Prepared: ok (generated tmux config: ",
 		"  Running session: skipped (Settings is not running inside tmux)\n",
-		"Next: run `projmux tmux apply` to sync a running projmux tmux server.\n",
+		"Next: run `projmux config apply` to sync a running projmux tmux server.\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
@@ -6834,7 +6834,7 @@ func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{"npm install -g projmux@latest", "projmux tmux apply"}
+	want := []string{"npm install -g projmux@latest", "projmux config apply"}
 	if !equalStrings(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
 	}

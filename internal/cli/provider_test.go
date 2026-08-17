@@ -131,8 +131,8 @@ func TestProviderCreateShortcutsAreOptInAndCollideWithNoKindOrVerb(t *testing.T)
 	if !reflect.DeepEqual(marked, shortcuts) {
 		t.Fatalf("create shortcut children = %v, want %v", marked, shortcuts)
 	}
-	if !reflect.DeepEqual(kinds, []string{"window", "pane", "agent"}) {
-		t.Fatalf("create kind children = %v, want [window pane agent]", kinds)
+	if !reflect.DeepEqual(kinds, []string{"window", "pane", "agent", "notification", "snapshot"}) {
+		t.Fatalf("create kind children = %v, want [window pane agent notification snapshot]", kinds)
 	}
 	// Every shortcut resolves to its own canonical spelling, and that spelling
 	// is the normalized `create agent --provider <id>` description rather than a

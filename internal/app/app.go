@@ -115,6 +115,7 @@ type App struct {
 	keyBroker    *keyBrokerCommand
 	kill         *killCommand
 	notify       *notifyCommand
+	notification *notificationCommand
 	pin          *pinCommand
 	popupWaitKey *popupWaitKeyCommand
 	preview      *previewCommand
@@ -164,6 +165,8 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	quit := newQuitCommand()
 	notifyCmd := newNotifyCommand(newDefaultLivePaneLister())
 	notifyCmd.diagnostics = notifyFocusDiagnostics
+	notificationCmd := newNotificationCommand()
+	notificationCmd.notify = notifyCmd
 	pruneCmd := newPruneCommand(recorder)
 	pruneCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	previewCleaner := newKilledSessionPreviewCleaner()
@@ -184,12 +187,12 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	tmuxCmd := newTmuxCommand(recorder)
 	tmuxCmd.sessionStateDiagnostics = sessionStateDiagnostics
 	tmuxCmd.ai = ai
-	// The public config domain. Both routes are parity aliases over the tmux
-	// handler that already owns generated-config rendering and application, so
-	// the public spelling is a second door onto one implementation rather than a
-	// second implementation.
+	// The public config domain. Each route is a parity alias over the AI or
+	// tmux handler that already owns the behavior, so the public spelling is a
+	// second door onto one implementation rather than a second implementation.
 	configCmd := newConfigCommand()
 	configCmd.tmux = tmuxCmd
+	configCmd.ai = ai
 	attentionCmd := newAttentionCommand()
 	attentionCmd.producer = newAttentionNotifyProducer(notifyFocusDiagnostics)
 	focusCmd := newFocusCommand(recorder)
@@ -219,6 +222,8 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	usageCmd := usagecmd.New(nil)
 	createCmd := newCreateCommand()
 	createCmd.ai = ai
+	createCmd.notify = notifyCmd
+	createCmd.snapshots = sessionStateCmd
 	// The same object serves both halves of `create agent`: raw argv for the
 	// compatibility bridge, and the narrow launch seam for the canonical
 	// resource-backed route.
@@ -256,8 +261,11 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	internalCmd.preview = previewCmd
 	internalCmd.sessionPopup = sessionPopupCmd
 	internalCmd.ai = ai
+	internalCmd.focus = focusCmd
 	internalCmd.keyBroker = keyBrokerCmd
 	internalCmd.popupWaitKey = popupWaitKeyCmd
+	diagnosticsCmd := newDiagnosticsCommand()
+	diagnosticsCmd.ai = ai
 	return &App{
 		lifecycle:    recorder,
 		agent:        agentCmd,
@@ -270,7 +278,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		delete:       deleteCmd,
 		describe:     newDescribeCommand(),
 		doctor:       newDoctorCommand(),
-		diagnostics:  newDiagnosticsCommand(),
+		diagnostics:  diagnosticsCmd,
 		focus:        focusCmd,
 		get:          getCmd,
 		hook:         newHookCommand(),
@@ -283,6 +291,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		keyBroker:    keyBrokerCmd,
 		kill:         kill,
 		notify:       notifyCmd,
+		notification: notificationCmd,
 		pin:          newPinCommand(),
 		popupWaitKey: popupWaitKeyCmd,
 		preview:      previewCmd,
@@ -355,10 +364,11 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"internal": a.internal,
 		// Hidden Darwin helper: captures physical portable key chords while a
 		// projmux tmux client is focused and feeds them through its root table.
-		"key-broker": a.keyBroker,
-		"kill":       a.kill,
-		"notify":     a.notify,
-		"pin":        a.pin,
+		"key-broker":   a.keyBroker,
+		"kill":         a.kill,
+		"notify":       a.notify,
+		"notification": a.notification,
+		"pin":          a.pin,
 		// Hidden helper: invoked from statusbar display-only popup payloads to
 		// read a single key from /dev/tty and exit. Intentionally absent from
 		// the primary help listing so `projmux help` stays focused on
@@ -441,5 +451,12 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	case "doctor", "get", "describe", "reconcile":
 		return false
 	}
-	return !(len(args) >= 2 && args[0] == "diagnostics" && args[1] == "report")
+	if len(args) >= 2 && args[0] == "diagnostics" && (args[1] == "report" || args[1] == "agent-hook") {
+		return false
+	}
+	// The exact legacy reader stays available until the removal Phase, but it
+	// is the same read-only boundary as diagnostics agent-hook and must not
+	// perform the otherwise automatic hook migration before reaching the shared
+	// handler.
+	return !(len(args) >= 3 && args[0] == "ai" && args[1] == "ingest" && args[2] == "log")
 }

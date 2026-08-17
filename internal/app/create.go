@@ -18,7 +18,7 @@ import (
 )
 
 // createKinds lists the resource kinds `create` implements, in help order.
-var createKinds = []string{"window", "pane", "agent"}
+var createKinds = []string{"window", "pane", "agent", "notification", "snapshot"}
 
 // placementDirections is the closed placement enum shared by the Pane and Agent
 // create routes. `left`/`up` are outside current parity and stay out of v2's
@@ -67,6 +67,11 @@ type agentLauncher interface {
 //     `--provider` as well is a usage error rather than a silent winner.
 type createCommand struct {
 	ai rawArgvCommand
+	// notify and snapshots are parity-forwarder seams. They keep the canonical
+	// resource spellings on the exact handlers and leaf parsers that own the
+	// legacy routes.
+	notify    rawArgvCommand
+	snapshots rawArgvCommand
 	// agents builds the provider launch of the canonical `create agent` route.
 	// The legacy `--project`-less bridge never touches it.
 	agents agentLauncher
@@ -144,6 +149,10 @@ func (c *createCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return c.runResourcePane(rest, stdout, stderr)
 		}
 		return c.runPane(rest, stdout, stderr)
+	case "notification":
+		return forwardRawArgv(c.notify, "create notification", "notify", []string{"push"}, rest, stdout, stderr)
+	case "snapshot":
+		return forwardRawArgv(c.snapshots, "create snapshot", "session-state", []string{"save"}, rest, stdout, stderr)
 	}
 	// A provider shortcut normalizes to `create agent --provider <id>`; the
 	// provider is already specified, so repeating it is an error.

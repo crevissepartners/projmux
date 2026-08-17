@@ -909,7 +909,7 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	//
 	// This route is the convergence point for every installer. `config apply`
 	// forwards here, `make install` calls it directly, and the npm, go, GitHub
-	// Release and source update paths all end in `<new binary> tmux apply`. So
+	// Release and source update paths all end in `<new binary> config apply`. So
 	// pinning the migration here is what makes it reachable without a new
 	// public route.
 	if _, err := migrateKeymapForWrite(c.keymapStore()); err != nil {

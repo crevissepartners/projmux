@@ -600,7 +600,7 @@ func TestStatusbarClickNotifyEmptyLiveResultFallsBackToFocus(t *testing.T) {
 
 	var sawFocus bool
 	for _, call := range runner.calls {
-		if call.name == "/usr/local/bin/projmux" && len(call.args) >= 1 && call.args[0] == "focus" {
+		if call.name == "/usr/local/bin/projmux" && len(call.args) >= 2 && call.args[0] == "internal" && call.args[1] == "focus" {
 			sawFocus = true
 			break
 		}

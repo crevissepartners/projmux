@@ -40,7 +40,7 @@
   9. `gh pr merge <num> --squash --delete-branch`.
 - Promote the build only after merge:
   10. `git -C <repo> pull --ff-only`
-  11. `make install` — atomic replace of `$(go env GOPATH)/bin/projmux` plus `projmux tmux apply`. **Never run it before step 10**; pre-merge state has not cleared CI yet and may not match what `main` will hold.
+  11. `make install` — atomic replace of `$(go env GOPATH)/bin/projmux` plus `projmux config apply`. **Never run it before step 10**; pre-merge state has not cleared CI yet and may not match what `main` will hold.
   12. Retire the merged checkout/worktree with your local tooling if you used one.
 - If a target is missing for the area you are changing, add it or leave the repository in a state where the gap is explicit in docs and review notes.
 - If behavior changes, update the maintained test list in [docs/agent-workflow.md](docs/agent-workflow.md) in the same branch.

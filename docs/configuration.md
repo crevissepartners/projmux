@@ -232,7 +232,7 @@ field with source labels: `global` or `fallback`. Saving or resetting a theme
 value live-applies it: projmux regenerates the generated tmux config and, when
 Settings runs inside tmux, `tmux source-file`-reloads it so a running server
 repaints immediately. Outside tmux the save still succeeds and the report
-prints `Next: run \`projmux tmux apply\`` to sync a running server.
+prints `Next: run \`projmux config apply\`` to sync a running server.
 
 The `background`, `surface`, `status_background`, `surface_active`, and
 `pane_active_bg` tokens additionally accept the value `default` ("Terminal
@@ -633,7 +633,7 @@ source**, so an old value keeps pinning the resolution instead of falling
 through to a lower-precedence rung. The alias never re-enables host-window
 focus, a clickable Toast, or URI handler registration; it is not offered in
 Settings and is never written back — the first Settings press or
-`projmux tmux apply` replaces it with `notify`.
+`projmux config apply` replaces it with `notify`.
 
 Migration is intentionally read-time. Users with the previous legacy
 toggle set keep their behavior — `@projmux_desktop_notify=0` resolves to
@@ -645,7 +645,7 @@ legacy key unused. No eager rewrite of tmux state.
 Toggle from Settings > Notifications > `Desktop notifications`. The
 Settings info row labels the effective source as `env`, `env (legacy)`,
 `setting`, `setting (legacy)`, or `default` so users see which rung of
-the cascade pinned the value. `projmux tmux apply` regenerates the live tmux
+the cascade pinned the value. `projmux config apply` regenerates the live tmux
 option from the saved Settings file; when that file is missing, apply writes
 only the default for the current host.
 

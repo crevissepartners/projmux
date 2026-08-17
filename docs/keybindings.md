@@ -30,7 +30,7 @@ session. Successful in-tmux saves keep those labels user-facing; failure and
 skipped states include diagnostic terms such as `keymap.toml`, generated tmux
 config, or live tmux reload so the broken stage is clear. If Settings is run
 outside tmux, the running-session stage is skipped and the recovery/sync action
-is `projmux tmux apply`. Raw escape payloads, Windows Terminal `sendInput`
+is `projmux config apply`. Raw escape payloads, Windows Terminal `sendInput`
 strings, and tmux User keys are rejected as action keys or sequence strokes.
 Settings capture diagnostics split the observed result into logical key, raw
 bytes, and the tmux key name that can be saved. Diagnostic states distinguish
