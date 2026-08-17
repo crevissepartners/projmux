@@ -233,9 +233,9 @@ severity, and permission/input status badges do not use red.
 
 `projmux doctor` reports Codex hooks-engine wiring separately from legacy
 notify, including unmanaged hooks/conflict details and the relevant
-`projmux ai integrate codex` commands.
+`projmux agent integrate codex` commands.
 
-`projmux ai ingest codex-hook` is the conservative core ingest path for Codex
+`projmux internal agent-hook ingest codex-hook` is the conservative core ingest path for Codex
 hooks-engine events. It reads a single JSON payload from stdin. The embedded
 default install catalog is based on Codex CLI 0.130.0:
 
@@ -257,7 +257,7 @@ Codex hook payload parsing accepts the common fields
 and falls back to treating `session_id` as the thread identity so existing
 `matchAIPane` matching can reuse cached pane metadata.
 
-`projmux ai integrate codex` manages a separate
+`projmux agent integrate codex` manages a separate
 `~/.codex/config.toml` marker block for the hooks engine. If a `[features]`
 table already exists, projmux merges `hooks = true` into that table instead of
 creating a duplicate table. Older projmux-managed `codex_hooks = true` entries
@@ -271,54 +271,54 @@ hooks = true
 matcher = "*"
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.PermissionRequest]]
 matcher = "*"
 [[hooks.PermissionRequest.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.PostToolUse]]
 matcher = "*"
 [[hooks.PostToolUse.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.PreCompact]]
 matcher = "*"
 [[hooks.PreCompact.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.PostCompact]]
 matcher = "*"
 [[hooks.PostCompact.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.SessionStart]]
 matcher = "*"
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.UserPromptSubmit]]
 matcher = "*"
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.Stop]]
 matcher = "*"
 [[hooks.Stop.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 ```
 
 Repeated installs are idempotent and preserve unrelated Codex config, including
 unmanaged hook entries for the same events. If projmux sees an unmanaged
-`projmux ai ingest codex-hook` command, it refuses to install over it rather
+`projmux internal agent-hook ingest codex-hook` command, it refuses to install over it rather
 than guessing ownership. `--dry-run` previews the TOML update. `--remove`
 removes projmux-managed Codex hooks wiring.
 
@@ -363,7 +363,7 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json
 
 `Settings > Notifications > Agent event behavior` reads and writes that file. The
 runtime file only changes ingest behavior (`notify`, `state`, or `quiet`);
-`projmux ai integrate codex` still uses the catalog `install` field to decide
+`projmux agent integrate codex` still uses the catalog `install` field to decide
 which hooks to write. Runtime overrides also apply to known specialized
 events, so `Stop` or `PermissionRequest` can be made state-only or quiet
 without changing which hook commands are installed. When a known Codex event
@@ -386,7 +386,7 @@ to auto-trust hooks.
 projmux-managed bell hook installed. The diagnostic is read-only; it only
 inspects current `alert-bell` hooks and prints the matching integrate commands.
 
-`projmux ai integrate tmux-bell` is the opt-in fallback for AI CLIs that do
+`projmux agent integrate tmux-bell` is the opt-in fallback for AI CLIs that do
 not expose structured hooks but do emit BEL or OSC 9. It mutates the current
 tmux server only; it does not edit tmux config files. Install applies these
 server settings and appends a marked `alert-bell` hook:
@@ -395,10 +395,10 @@ server settings and appends a marked `alert-bell` hook:
 tmux set-option -g allow-passthrough on
 tmux set-option -g monitor-bell on
 tmux set-option -g bell-action other
-tmux set-hook -ag alert-bell run-shell -b 'projmux ai ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # projmux-managed:tmux-bell:v1'
+tmux set-hook -ag alert-bell run-shell -b 'projmux internal agent-hook ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # projmux-managed:tmux-bell:v1'
 ```
 
-The hook calls `projmux ai ingest bell --pane <pane_id>`. Bell ingest resolves
+The hook calls `projmux internal agent-hook ingest bell --pane <pane_id>`. Bell ingest resolves
 the target pane through tmux and pushes an info notify queue row such as
 `bell · Claude CLI`, with metadata including `agent=bell`, `event=bell`,
 session/window/pane, pane title, command, and socket path when available. The
@@ -420,9 +420,9 @@ the current `alert-bell` hooks and unsets only entries carrying
 
 `projmux doctor` reports Claude Code hook wiring in `~/.claude/settings.json`,
 including unmanaged projmux ingest command conflicts and the relevant
-`projmux ai integrate claude` commands.
+`projmux agent integrate claude` commands.
 
-`projmux ai ingest claude-hook` is the conservative core ingest path for
+`projmux internal agent-hook ingest claude-hook` is the conservative core ingest path for
 Claude Code hooks. It reads a single JSON payload from stdin. The embedded
 default install catalog is based on Claude Code 2.1.140 and represents the
 29 hook events visible in that version:
@@ -488,7 +488,7 @@ upstream schemas settle:
 | `SubagentStop` | `subagent_type`, `subagentType`, `agent_type`, `agentType`; `subagent_id`, `subagentId`, `agent_id`, `agentId`; nested `subagent.type`, `subagent.name`, `subagent.kind`, `subagent.id`, `subagent.subagent_id`, `subagent.agent_id` |
 | `TeammateIdle` | `teammate_name`, `teammateName`, `teammate`; `teammate_id`, `teammateId`; `teammate_context`, `teammateContext`, `context`, `reason`, `message`; nested `teammate.name`, `teammate.type`, `teammate.kind`, `teammate.id`, `teammate.teammate_id`, `teammate.context`, `teammate.status`, `teammate.reason`, `teammate.message` |
 
-`projmux ai integrate claude` manages user-level Claude Code hook settings in
+`projmux agent integrate claude` manages user-level Claude Code hook settings in
 `~/.claude/settings.json`. Claude Code hooks are configured under the top-level
 `hooks` object, with each event containing matcher entries and each matcher
 entry containing a `hooks` array. Projmux omits `matcher`, which Claude Code
@@ -504,7 +504,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -514,7 +514,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -524,7 +524,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -534,7 +534,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -544,7 +544,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -554,7 +554,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -564,7 +564,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux ai ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -579,7 +579,7 @@ and re-adds the current managed command while preserving unrelated settings and
 hooks. `--remove` deletes only marked commands, and `--dry-run` previews the
 JSON without writing. Removal and unmanaged conflict detection scan every event
 under the settings `hooks` object, not just the current catalog. If any event
-already has an unmanaged command that invokes `projmux ai ingest claude-hook`,
+already has an unmanaged command that invokes `projmux internal agent-hook ingest claude-hook`,
 projmux refuses to install over it because it cannot tell whether the command
 is user-owned or stale projmux wiring.
 
@@ -620,16 +620,16 @@ handler code for event-specific queue rows or state transitions. Runtime action
 overrides live in the same
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json` file used by
 Codex and are managed from `Settings > Notifications > Agent event behavior`.
-They only affect ingest delivery; `projmux ai integrate claude` still uses the
+They only affect ingest delivery; `projmux agent integrate claude` still uses the
 catalog `install` field for installed hook events.
 
 ## Antigravity Hook Ingest
 
-`projmux ai ingest antigravity-hook --event <event> < payload.json` accepts
+`projmux internal agent-hook ingest antigravity-hook --event <event> < payload.json` accepts
 Antigravity CLI `agy` hook payloads. Antigravity v1.1.12 stdin does
 not include the event name, so the command's `--event` value is authoritative.
 Payload event aliases remain a compatibility fallback when `--event` is
-omitted. `projmux ai integrate antigravity [--dry-run|--remove]` owns exactly
+omitted. `projmux agent integrate antigravity [--dry-run|--remove]` owns exactly
 the named `projmux` entry in `~/.gemini/config/hooks.json` and separately owns
 only `statusLine` in `~/.gemini/antigravity-cli/settings.json`. Other named hooks,
 their fields, and unknown JSON values remain untouched. The generated commands

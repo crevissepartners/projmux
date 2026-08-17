@@ -21,6 +21,19 @@ projmux doctor
 `doctor` performs read-only diagnostics for runtime tools such as `tmux`,
 `git`, and `stty`.
 
+Provider integrations are opt-in and use the canonical installer spelling:
+
+```sh
+projmux agent integrate codex
+projmux agent integrate claude
+projmux agent integrate antigravity
+projmux agent integrate tmux-bell
+```
+
+These installers write managed producers that call
+`projmux internal agent-hook ingest ...`. Existing markerless hooks remain
+user-owned and are never rewritten.
+
 Start the tmux app with:
 
 ```sh
@@ -109,9 +122,10 @@ export PROJMUX_INSTALLER=github-release
 
 With that set, `projmux update apply` downloads the latest matching release
 asset, replaces the current executable, and reapplies the live tmux config.
-`--no-apply` skips the live reload only — the new binary still runs to migrate
-the keymap schema and write the generated config. See
-[Upgrading](upgrading.md#keymap-schema-migration).
+`--no-apply` skips the live reload only — the new binary still migrates the
+keymap schema and marker-owned provider files, then writes the generated
+config. It does not touch a live tmux bell hook. See
+[Upgrading](upgrading.md#managed-agent-hook-producer-migration).
 
 ## npm Packaging Details
 

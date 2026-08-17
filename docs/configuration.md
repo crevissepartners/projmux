@@ -586,7 +586,7 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-hook-actions.json
 Settings exposes this at `Settings > Notifications > Agent event behavior`.
 The file maps provider/event names to `notify`, `state`, or `quiet` and
 overrides catalog `action` values during ingest, including known Codex and
-Claude events. It does not change hook installation; `projmux ai integrate`
+Claude events. It does not change hook installation; `projmux agent integrate`
 continues to use the embedded/local catalog `install` fields.
 
 Delivery depends on the event handler. Specialized notify handlers, such as

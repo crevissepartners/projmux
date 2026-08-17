@@ -139,7 +139,7 @@ func TestDoctorVerboseOwnsTextDetailButDoesNotChangeJSON(t *testing.T) {
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "git": true, "stty": true})
 	cmd.aiDiagnostics = func() []doctorAINotifyIntegration {
-		return []doctorAINotifyIntegration{{ID: "codex-hooks", Name: "Codex hooks", Status: doctorAINotifyStatusMissing, ConfigPath: "/private/config", InstallCommand: "projmux ai integrate codex"}}
+		return []doctorAINotifyIntegration{{ID: "codex-hooks", Name: "Codex hooks", Status: doctorAINotifyStatusMissing, ConfigPath: "/private/config", InstallCommand: "projmux agent integrate codex"}}
 	}
 	var plain, verbose bytes.Buffer
 	if err := cmd.Run(nil, &plain, io.Discard); err != nil {
@@ -148,7 +148,7 @@ func TestDoctorVerboseOwnsTextDetailButDoesNotChangeJSON(t *testing.T) {
 	if err := cmd.Run([]string{"--verbose"}, &verbose, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	for _, detail := range []string{"tmux 3.6", "/private/config", "install: projmux ai integrate codex"} {
+	for _, detail := range []string{"tmux 3.6", "/private/config", "install: projmux agent integrate codex"} {
 		if strings.Contains(plain.String(), detail) || !strings.Contains(verbose.String(), detail) {
 			t.Fatalf("detail %q boundary wrong\nplain:\n%s\nverbose:\n%s", detail, plain.String(), verbose.String())
 		}
@@ -463,9 +463,9 @@ func TestDoctorRunIncludesAINotifyDiagnostics(t *testing.T) {
 				Status:         doctorAINotifyStatusConflict,
 				ConfigPath:     "/home/tester/.codex/config.toml",
 				ConflictReason: "Codex hooks are already configured outside a projmux-managed block",
-				InstallCommand: "projmux ai integrate codex",
-				RemoveCommand:  "projmux ai integrate codex --remove",
-				DryRunCommand:  "projmux ai integrate codex --dry-run",
+				InstallCommand: "projmux agent integrate codex",
+				RemoveCommand:  "projmux agent integrate codex --remove",
+				DryRunCommand:  "projmux agent integrate codex --dry-run",
 			},
 		}
 	}
@@ -480,9 +480,9 @@ func TestDoctorRunIncludesAINotifyDiagnostics(t *testing.T) {
 		"[conflict]",
 		"Codex hooks",
 		"/home/tester/.codex/config.toml",
-		"install: projmux ai integrate codex",
-		"remove: projmux ai integrate codex --remove",
-		"dry-run: projmux ai integrate codex --dry-run",
+		"install: projmux agent integrate codex",
+		"remove: projmux agent integrate codex --remove",
+		"dry-run: projmux agent integrate codex --dry-run",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
@@ -502,9 +502,9 @@ func TestDoctorJSONIncludesAINotifyDiagnostics(t *testing.T) {
 				ID:             "tmux-bell",
 				Name:           "tmux bell fallback",
 				Status:         doctorAINotifyStatusMissing,
-				InstallCommand: "projmux ai integrate tmux-bell",
-				RemoveCommand:  "projmux ai integrate tmux-bell --remove",
-				DryRunCommand:  "projmux ai integrate tmux-bell --dry-run",
+				InstallCommand: "projmux agent integrate tmux-bell",
+				RemoveCommand:  "projmux agent integrate tmux-bell --remove",
+				DryRunCommand:  "projmux agent integrate tmux-bell --dry-run",
 			},
 		}
 	}
@@ -528,7 +528,7 @@ func TestDoctorJSONIncludesAINotifyDiagnostics(t *testing.T) {
 	if got.ID != "tmux-bell" || got.Status != doctorAINotifyStatusMissing {
 		t.Fatalf("AI diagnostic = %#v, want tmux-bell missing", got)
 	}
-	if got.DryRunCommand != "projmux ai integrate tmux-bell --dry-run" {
+	if got.DryRunCommand != "projmux agent integrate tmux-bell --dry-run" {
 		t.Fatalf("DryRunCommand = %q", got.DryRunCommand)
 	}
 }
@@ -545,9 +545,9 @@ func TestDoctorLinuxTmuxBellFallbackRemainsMissingWhenNotInstalled(t *testing.T)
 				ID:             "tmux-bell",
 				Name:           "tmux bell fallback",
 				Status:         doctorAINotifyStatusMissing,
-				InstallCommand: "projmux ai integrate tmux-bell",
-				RemoveCommand:  "projmux ai integrate tmux-bell --remove",
-				DryRunCommand:  "projmux ai integrate tmux-bell --dry-run",
+				InstallCommand: "projmux agent integrate tmux-bell",
+				RemoveCommand:  "projmux agent integrate tmux-bell --remove",
+				DryRunCommand:  "projmux agent integrate tmux-bell --dry-run",
 			},
 		}
 	}
@@ -559,7 +559,7 @@ func TestDoctorLinuxTmuxBellFallbackRemainsMissingWhenNotInstalled(t *testing.T)
 	out := stdout.String()
 	for _, want := range []string{
 		"[missing]  tmux bell fallback",
-		"install: projmux ai integrate tmux-bell",
+		"install: projmux agent integrate tmux-bell",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
@@ -714,10 +714,10 @@ command = "projmux ai ingest codex-hook"
 	if byID["antigravity-hooks"].Status != doctorAINotifyStatusMissing {
 		t.Fatalf("antigravity hooks status = %#v, want missing managed diagnostic", byID["antigravity-hooks"])
 	}
-	if byID["codex-hooks"].InstallCommand != "projmux ai integrate codex" {
+	if byID["codex-hooks"].InstallCommand != "projmux agent integrate codex" {
 		t.Fatalf("codex hooks InstallCommand = %q", byID["codex-hooks"].InstallCommand)
 	}
-	if byID["codex-hooks"].DryRunCommand != "projmux ai integrate codex --dry-run" {
+	if byID["codex-hooks"].DryRunCommand != "projmux agent integrate codex --dry-run" {
 		t.Fatalf("codex hooks DryRunCommand = %q", byID["codex-hooks"].DryRunCommand)
 	}
 	if !strings.Contains(byID["codex-hooks"].Guidance, "/hooks") {
@@ -729,7 +729,7 @@ command = "projmux ai ingest codex-hook"
 	if byID["claude-hooks"].TestedVersion != "Claude Code 2.1.140" {
 		t.Fatalf("claude hooks TestedVersion = %q", byID["claude-hooks"].TestedVersion)
 	}
-	if byID["antigravity-hooks"].ProviderID != "antigravity" || byID["antigravity-hooks"].InstallCommand != "projmux ai integrate antigravity" || byID["antigravity-hooks"].RemoveCommand != "projmux ai integrate antigravity --remove" || byID["antigravity-hooks"].DryRunCommand != "projmux ai integrate antigravity --dry-run" {
+	if byID["antigravity-hooks"].ProviderID != "antigravity" || byID["antigravity-hooks"].InstallCommand != "projmux agent integrate antigravity" || byID["antigravity-hooks"].RemoveCommand != "projmux agent integrate antigravity --remove" || byID["antigravity-hooks"].DryRunCommand != "projmux agent integrate antigravity --dry-run" {
 		t.Fatalf("antigravity hooks diagnostic = %#v", byID["antigravity-hooks"])
 	}
 	if !strings.Contains(byID["antigravity-hooks"].Guidance, "install source of truth") || !strings.Contains(byID["antigravity-hooks"].Guidance, "/hooks") || !strings.Contains(byID["antigravity-hooks"].Guidance, "PreToolUse") {
@@ -790,7 +790,7 @@ func TestDoctorAntigravityIntegrationDiagnosticManagedStates(t *testing.T) {
 	if missing.Status != doctorAINotifyStatusMissing || missing.ConfigPath != filepath.Join(home, antigravityHooksRelativePath) || missing.StatusLinePath != filepath.Join(home, antigravitySettingsRelativePath) {
 		t.Fatalf("missing diagnostic = %#v", missing)
 	}
-	for _, want := range []string{"projmux ai integrate antigravity", "projmux ai integrate antigravity --remove", "projmux ai integrate antigravity --dry-run"} {
+	for _, want := range []string{"projmux agent integrate antigravity", "projmux agent integrate antigravity --remove", "projmux agent integrate antigravity --dry-run"} {
 		if missing.InstallCommand != want && missing.RemoveCommand != want && missing.DryRunCommand != want {
 			t.Fatalf("missing diagnostic = %#v, want command %q", missing, want)
 		}

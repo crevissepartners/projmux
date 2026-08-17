@@ -261,7 +261,7 @@ the same contract.
 
 ## Producer (tmux bell fallback)
 
-`projmux ai ingest bell --pane <pane_id>` is the opt-in fallback producer
+`projmux internal agent-hook ingest bell --pane <pane_id>` is the opt-in fallback producer
 installed by `projmux ai integrate tmux-bell`. It reads the target pane from
 tmux and writes an info/source-ai row with:
 

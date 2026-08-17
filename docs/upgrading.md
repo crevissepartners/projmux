@@ -23,9 +23,11 @@ projmux update apply
 ```
 
 Use `--dry-run` to see the planned action and `--no-apply` to skip reloading
-the live tmux config after the binary changes. `--no-apply` suppresses the
-reload only; the new binary still runs to migrate the keymap schema and write
-the generated config. See [Keymap schema migration](#keymap-schema-migration).
+the live tmux config after the binary changes. `--no-apply` suppresses live
+tmux access only; the new binary still migrates the keymap schema and
+marker-owned provider files, then writes the generated config. See
+[Keymap schema migration](#keymap-schema-migration) and
+[Managed Agent hook producer migration](#managed-agent-hook-producer-migration).
 
 Shell Upgrade invokes only `projmux update apply`, then reports success or the
 specific failure inline and continues into the shell either way (a failed
@@ -41,6 +43,56 @@ local `go build`/`make install` `(devel)` binary → `source`). `github-release`
 still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
+
+### Managed Agent hook producer migration
+
+The installer now writes Codex, Claude, Antigravity named hooks, Antigravity
+Statusline, and the tmux bell fallback with the canonical
+`projmux internal agent-hook ingest ...` entrypoint. Copyable integration
+commands use `projmux agent integrate <provider>`.
+
+Update ordering is hook-first and lossless: the new binary is atomically
+installed while the exact legacy `projmux ai ingest` producer argv still
+dispatches to the same handler; the new binary then migrates every
+marker-owned producer; only after that does it generate and apply tmux config.
+An old managed hook that fires between binary replacement and migration is
+therefore handled before its command is rewritten.
+
+Migration is ownership- and transaction-aware. Codex managed blocks and the
+Claude, Antigravity, Statusline, and tmux-bell markers are the only ownership
+evidence. Missing integrations and markerless commands are not installed or
+rewritten. Provider file plans and conflicts are collected before the first
+file write. Live bell state is then inventoried on the exact target socket
+before its first command; a later bell failure rolls back both that live state
+and the provider-file ledger. Repeating the migration on current state performs
+no file or tmux mutations.
+
+Use each provider's dry-run to see every target, conflict, and old→canonical
+command before changing anything:
+
+```sh
+projmux agent integrate codex --dry-run
+projmux agent integrate claude --dry-run
+projmux agent integrate antigravity --dry-run
+projmux agent integrate tmux-bell --dry-run
+```
+
+`update apply --no-apply` and `upgrade --no-apply` still migrate marker-owned
+files, but they neither inspect nor modify a live tmux server. A later normal
+`projmux tmux apply --socket <name>` converges a marker-owned bell hook only on
+that exact `-L <name>` socket.
+
+If a conflict is reported, keep the unmanaged entry unchanged while deciding
+which tool owns it; remove or rewrite it manually only after that decision,
+then rerun the dry-run and installer. A failed transaction is safe to retry
+because it restores its starting state.
+
+**Downgrading to 0.10.1 or older:** those binaries do not expose the canonical
+internal ingress. Before replacing the current binary, remove each managed
+integration with `projmux agent integrate <provider> --remove`. After the old
+binary is installed, use that version's `projmux ai integrate <provider>` to
+write its legacy managed producer again. Never rewrite markerless user hooks as
+part of downgrade remediation.
 
 ### Terminal init command removed
 

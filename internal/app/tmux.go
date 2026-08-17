@@ -88,6 +88,10 @@ type tmuxCommand struct {
 	// only tmux helper route that touches the registry, and it is a field so a
 	// test can point the sweep at a temporary store.
 	resources *resourceStore
+	// ai owns marker-aware managed hook migration. It is shared with the
+	// public agent/compatibility routes so installer convergence uses exactly
+	// the same provider encoders without installing missing integrations.
+	ai *aiCommand
 	// bindingConverger is the test seam for the apply/lifecycle mutation
 	// boundary. Production leaves it nil and uses convergeRuntimeBindings.
 	bindingConverger func(context.Context, explicitTmuxTarget) error
@@ -916,15 +920,40 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("migrate keymap before apply: %w", err)
 	}
 
-	resolved, err := c.writeAppConfig(*binaryOverride, *configPath)
-	if err != nil {
-		return err
+	var managedIngestFileRollback func() error
+	if c.ai != nil {
+		migrationAI := c.managedIngestMigrationAI()
+		count, rollback, err := migrationAI.beginManagedIngestProducerFileMigration()
+		if err != nil {
+			fmt.Fprintf(stderr, "managed agent hook migration failed: %v\n", err)
+			fmt.Fprintln(stdout, "managed agent hooks unchanged")
+			fmt.Fprintln(stdout, "generated tmux config unchanged")
+			fmt.Fprintln(stdout, "skipped reload: managed agent hook migration failed")
+			return fmt.Errorf("migrate managed agent hooks before apply: %w", err)
+		}
+		if count > 0 {
+			fmt.Fprintf(stdout, "migrated %d managed agent hook files to canonical ingest\n", count)
+		} else {
+			fmt.Fprintln(stdout, "managed agent hook files already converged")
+		}
+		managedIngestFileRollback = rollback
 	}
-	if _, err := fmt.Fprintf(stdout, "wrote %s\n", resolved); err != nil {
+
+	resolved := ""
+	var err error
+	writeGenerated := func() error {
+		resolved, err = c.writeAppConfig(*binaryOverride, *configPath)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "wrote %s\n", resolved)
 		return err
 	}
 
 	if *noReload {
+		if err := writeGenerated(); err != nil {
+			return err
+		}
 		_, err = fmt.Fprintf(stdout, "skipped reload: --no-reload\n")
 		return err
 	}
@@ -934,6 +963,9 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		socketName = "projmux"
 	}
 	if c.runner == nil {
+		if err := writeGenerated(); err != nil {
+			return err
+		}
 		if c.diagnostics != nil {
 			c.diagnostics.Hint(diagnostics.LifecycleSuccess, diagnostics.CodeTmuxApplyReloadSkipped)
 		}
@@ -946,6 +978,9 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	// to stderr) when the socket is dead — treat that as a non-fatal skip.
 	sessionsOut, listErr := c.runner.Run(ctx, "tmux", "-L", socketName, "list-sessions", "-F", "#{session_id}")
 	if listErr != nil {
+		if err := writeGenerated(); err != nil {
+			return err
+		}
 		if c.diagnostics != nil {
 			code := diagnostics.CodeTmuxApplyFailed
 			if inttmux.IsNoServerFailure(listErr) {
@@ -954,6 +989,25 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 			c.diagnostics.Hint(diagnostics.LifecycleError, code)
 		}
 		_, err = fmt.Fprintf(stdout, "skipped reload: no live tmux server -L %s\n", socketName)
+		return err
+	}
+
+	if c.ai != nil {
+		migrationAI := c.managedIngestMigrationAIForSocket(socketName)
+		migrated, err := migrationAI.migrateManagedTmuxBellProducer()
+		if err != nil {
+			if managedIngestFileRollback != nil {
+				if rollbackErr := managedIngestFileRollback(); rollbackErr != nil {
+					return fmt.Errorf("migrate managed tmux bell hook on -L %s: %w (file rollback failed: %v)", socketName, err, rollbackErr)
+				}
+			}
+			return fmt.Errorf("migrate managed tmux bell hook on -L %s: %w", socketName, err)
+		}
+		if migrated {
+			fmt.Fprintf(stdout, "migrated managed tmux bell hook on -L %s\n", socketName)
+		}
+	}
+	if err := writeGenerated(); err != nil {
 		return err
 	}
 
@@ -997,6 +1051,35 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	}
 	_, err = fmt.Fprintf(stdout, "reloaded tmux server -L %s: %d sessions\n", socketName, count)
 	return err
+}
+
+func (c *tmuxCommand) managedIngestMigrationAI() *aiCommand {
+	clone := *c.ai
+	clone.homeDir = c.homeDir
+	clone.lookupEnv = c.lookupEnv
+	clone.executable = c.executable
+	clone.readFile = c.readFile
+	clone.writeFile = c.writeFile
+	clone.mkdirAll = os.MkdirAll
+	return &clone
+}
+
+func (c *tmuxCommand) managedIngestMigrationAIForSocket(socketName string) *aiCommand {
+	clone := c.managedIngestMigrationAI()
+	clone.runCommand = func(ctx context.Context, name string, args ...string) error {
+		if name != "tmux" {
+			return fmt.Errorf("managed ingest migration refuses non-tmux command %q", name)
+		}
+		_, err := c.runner.Run(ctx, name, append([]string{"-L", socketName}, args...)...)
+		return err
+	}
+	clone.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" {
+			return nil, fmt.Errorf("managed ingest migration refuses non-tmux command %q", name)
+		}
+		return c.runner.Run(ctx, name, append([]string{"-L", socketName}, args...)...)
+	}
+	return clone
 }
 
 // retireGeneratedKeySequenceState removes exactly the sequence roots and

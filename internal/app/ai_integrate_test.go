@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -232,7 +233,7 @@ func TestAntigravityManagedStatusLineGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "{\n  \"type\": \"command\",\n  \"command\": \"'/opt/projmux/bin/projmux' ai ingest antigravity-hook --event Statusline # projmux-managed:antigravity-statusline:v1\",\n  \"enabled\": true,\n  \"stack_with_default\": true\n}"
+	want := "{\n  \"type\": \"command\",\n  \"command\": \"'/opt/projmux/bin/projmux' internal agent-hook ingest antigravity-hook --event Statusline # projmux-managed:antigravity-statusline:v1\",\n  \"enabled\": true,\n  \"stack_with_default\": true\n}"
 	if got != want || !isManagedAntigravityStatusLine(got) {
 		t.Fatalf("managed statusLine mismatch:\ngot:\n%s\nwant:\n%s", got, want)
 	}
@@ -1095,12 +1096,7 @@ func TestAIIntegrateClaudeConflictScansUnmanagedCommandsOutsideCatalog(t *testin
 
 func TestAIIntegrateTmuxBellDryRunPlansInstallCommands(t *testing.T) {
 	cmd := testAICommand(t.TempDir())
-	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
-			return nil, os.ErrNotExist
-		}
-		return nil, os.ErrNotExist
-	}
+	cmd.readCommand = tmuxBellReadFixture("")
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"integrate", "tmux-bell", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1126,12 +1122,7 @@ func TestAIIntegrateTmuxBellDryRunPlansInstallCommands(t *testing.T) {
 
 func TestAIIntegrateTmuxBellInstallAppendsManagedHookAndPreservesExisting(t *testing.T) {
 	cmd := testAICommand(t.TempDir())
-	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
-			return []byte("alert-bell[0] run-shell -b 'echo user-hook'\n"), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	cmd.readCommand = tmuxBellReadFixture("alert-bell[0] run-shell -b 'echo user-hook'\n")
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"integrate", "tmux-bell"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1154,12 +1145,7 @@ func TestAIIntegrateTmuxBellInstallAppendsManagedHookAndPreservesExisting(t *tes
 
 func TestAIIntegrateTmuxBellInstallSkipsDuplicateManagedHook(t *testing.T) {
 	cmd := testAICommand(t.TempDir())
-	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
-			return []byte("alert-bell[1] " + tmuxBellHookCommand + "\n"), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	cmd.readCommand = tmuxBellReadFixture("alert-bell[1] " + tmuxBellHookCommand + "\n")
 
 	if err := cmd.Run([]string{"integrate", "tmux-bell"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run integrate tmux-bell error = %v", err)
@@ -1173,15 +1159,10 @@ func TestAIIntegrateTmuxBellInstallSkipsDuplicateManagedHook(t *testing.T) {
 
 func TestAIIntegrateTmuxBellRemoveOnlyManagedHook(t *testing.T) {
 	cmd := testAICommand(t.TempDir())
-	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "tmux" && reflect.DeepEqual(args, []string{"show-hooks", "-g", tmuxBellHookName}) {
-			return []byte(strings.Join([]string{
-				"alert-bell[0] run-shell -b 'echo user-hook'",
-				"alert-bell[2] " + tmuxBellHookCommand,
-			}, "\n") + "\n"), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	cmd.readCommand = tmuxBellReadFixture(strings.Join([]string{
+		"alert-bell[0] run-shell -b 'echo user-hook'",
+		"alert-bell[2] " + tmuxBellHookCommand,
+	}, "\n") + "\n")
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"integrate", "tmux-bell", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1195,6 +1176,290 @@ func TestAIIntegrateTmuxBellRemoveOnlyManagedHook(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "removed projmux-managed tmux bell hook") {
 		t.Fatalf("stdout = %q, want removed message", stdout.String())
+	}
+}
+
+func TestManagedIngestProducerMigrationUpgradesV0101AndRepeatsWithoutWrites(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.executable = func() (string, error) { return "/opt/projmux/bin/projmux", nil }
+
+	codexPath := filepath.Join(home, codexConfigRelativePath)
+	writeCodexTestFile(t, codexPath, strings.ReplaceAll(codexHooksBlock(true), codexHookCommand, legacyCodexHookCommand))
+	claudePath := filepath.Join(home, claudeSettingsRelativePath)
+	legacyClaude := strings.ReplaceAll(claudeHookCommand, canonicalClaudeHookRoute, legacyClaudeHookRoute)
+	writeCodexTestFile(t, claudePath, "{\n  \"hooks\": {\n    \"Notification\": [{\"hooks\": [{\"type\": \"command\", \"command\": "+string(mustJSONMarshal(legacyClaude))+"}]}]\n  }\n}\n")
+	hooksPath := filepath.Join(home, antigravityHooksRelativePath)
+	hooks, err := encodeAntigravityManagedHook("/opt/projmux/bin/projmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCodexTestFile(t, hooksPath, "{\n  \"projmux\": "+strings.ReplaceAll(hooks, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
+	statusPath := filepath.Join(home, antigravitySettingsRelativePath)
+	status, err := encodeAntigravityManagedStatusLine("/opt/projmux/bin/projmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCodexTestFile(t, statusPath, "{\n  \"statusLine\": "+strings.ReplaceAll(status, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
+
+	writes := 0
+	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
+		writes++
+		return os.WriteFile(path, data, mode)
+	}
+	count, _, err := cmd.beginManagedIngestProducerFileMigration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 4 || writes != 4 {
+		t.Fatalf("first migration count=%d writes=%d, want 4/4", count, writes)
+	}
+	for _, path := range []string{codexPath, claudePath, hooksPath, statusPath} {
+		got := readCodexTestFile(t, path)
+		if strings.Contains(got, " ai ingest ") || !strings.Contains(got, "internal agent-hook ingest") {
+			t.Fatalf("%s did not converge to canonical ingest:\n%s", path, got)
+		}
+	}
+	count, _, err = cmd.beginManagedIngestProducerFileMigration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || writes != 4 {
+		t.Fatalf("repeat migration count=%d total writes=%d, want 0/4", count, writes)
+	}
+}
+
+func TestManagedIngestProducerMigrationPlansAllConflictsBeforeWrites(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	codexPath := filepath.Join(home, codexConfigRelativePath)
+	original := strings.ReplaceAll(codexHooksBlock(true), codexHookCommand, legacyCodexHookCommand)
+	writeCodexTestFile(t, codexPath, original)
+	writeCodexTestFile(t, filepath.Join(home, claudeSettingsRelativePath), `{"hooks":{"Notification":[{"hooks":[{"type":"command","command":"projmux ai ingest claude-hook --custom"}]}]}}`)
+	writes := 0
+	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
+		writes++
+		return os.WriteFile(path, data, mode)
+	}
+	if _, _, err := cmd.beginManagedIngestProducerFileMigration(); err == nil || !strings.Contains(err.Error(), "unmanaged projmux ingest command") {
+		t.Fatalf("migration error = %v, want later-provider conflict", err)
+	}
+	if writes != 0 {
+		t.Fatalf("writes = %d, want zero", writes)
+	}
+	if got := readCodexTestFile(t, codexPath); got != original {
+		t.Fatalf("earlier managed provider changed before later conflict:\n%s", got)
+	}
+}
+
+func TestManagedIngestProducerMigrationRollsBackAntigravitySecondWrite(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.executable = func() (string, error) { return "/opt/projmux/bin/projmux", nil }
+	hooksPath := filepath.Join(home, antigravityHooksRelativePath)
+	statusPath := filepath.Join(home, antigravitySettingsRelativePath)
+	hooks, _ := encodeAntigravityManagedHook("/old/projmux")
+	status, _ := encodeAntigravityManagedStatusLine("/old/projmux")
+	originalHooks := "{\n  \"projmux\": " + strings.ReplaceAll(hooks, antigravityCanonicalIngestPath, antigravityLegacyIngestPath) + "\n}\n"
+	originalStatus := "{\n  \"statusLine\": " + strings.ReplaceAll(status, antigravityCanonicalIngestPath, antigravityLegacyIngestPath) + "\n}\n"
+	writeCodexTestFile(t, hooksPath, originalHooks)
+	writeCodexTestFile(t, statusPath, originalStatus)
+	writes := 0
+	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
+		writes++
+		if writes == 2 {
+			if err := os.WriteFile(path, []byte("partial"), mode); err != nil {
+				return err
+			}
+			return errors.New("injected second write failure")
+		}
+		return os.WriteFile(path, data, mode)
+	}
+	if _, _, err := cmd.beginManagedIngestProducerFileMigration(); err == nil || !strings.Contains(err.Error(), "injected second write failure") {
+		t.Fatalf("migration error = %v", err)
+	}
+	if got := readCodexTestFile(t, hooksPath); got != originalHooks {
+		t.Fatalf("hooks rollback mismatch:\n%s", got)
+	}
+	if got := readCodexTestFile(t, statusPath); got != originalStatus {
+		t.Fatalf("statusline rollback mismatch:\n%s", got)
+	}
+}
+
+func TestAIIntegrateAntigravityFreshSecondWriteFailureRemovesCreatedLedger(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	writes := 0
+	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
+		writes++
+		if writes == 2 {
+			if err := os.WriteFile(path, []byte("partial"), mode); err != nil {
+				return err
+			}
+			return errors.New("injected fresh second write failure")
+		}
+		return os.WriteFile(path, data, mode)
+	}
+	if err := cmd.Run([]string{"integrate", "antigravity"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "fresh second write failure") {
+		t.Fatalf("error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".gemini")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("created Antigravity ledger remains after rollback: %v", err)
+	}
+}
+
+func TestV0101ManagedProducerDryRunsShowEveryTargetAndOldToCanonical(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	cmd.executable = func() (string, error) { return "/opt/projmux/bin/projmux", nil }
+	codexPath := filepath.Join(home, codexConfigRelativePath)
+	claudePath := filepath.Join(home, claudeSettingsRelativePath)
+	hooksPath := filepath.Join(home, antigravityHooksRelativePath)
+	statusPath := filepath.Join(home, antigravitySettingsRelativePath)
+	writeCodexTestFile(t, codexPath, strings.ReplaceAll(codexHooksBlock(true), codexHookCommand, legacyCodexHookCommand))
+	writeCodexTestFile(t, claudePath, `{"hooks":{"Notification":[{"hooks":[{"type":"command","command":"`+legacyClaudeHookCommand+`"}]}]}}`)
+	hooks, _ := encodeAntigravityManagedHook("/opt/projmux/bin/projmux")
+	status, _ := encodeAntigravityManagedStatusLine("/opt/projmux/bin/projmux")
+	writeCodexTestFile(t, hooksPath, "{\n  \"projmux\": "+strings.ReplaceAll(hooks, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
+	writeCodexTestFile(t, statusPath, "{\n  \"statusLine\": "+strings.ReplaceAll(status, antigravityCanonicalIngestPath, antigravityLegacyIngestPath)+"\n}\n")
+	writes := 0
+	cmd.writeFile = func(string, []byte, os.FileMode) error {
+		writes++
+		return nil
+	}
+
+	for _, test := range []struct {
+		provider string
+		targets  []string
+		old      string
+		new      string
+	}{
+		{provider: "codex", targets: []string{codexPath}, old: legacyCodexHookRoute, new: canonicalCodexHookRoute},
+		{provider: "claude", targets: []string{claudePath}, old: legacyClaudeHookRoute, new: canonicalClaudeHookRoute},
+		{provider: "antigravity", targets: []string{hooksPath, statusPath}, old: strings.TrimSpace(antigravityLegacyIngestPath), new: strings.TrimSpace(antigravityCanonicalIngestPath)},
+	} {
+		var stdout bytes.Buffer
+		if err := cmd.Run([]string{"integrate", test.provider, "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+			t.Fatalf("%s dry-run: %v", test.provider, err)
+		}
+		out := stdout.String()
+		for _, target := range test.targets {
+			if !strings.Contains(out, target) {
+				t.Errorf("%s dry-run missing target %s:\n%s", test.provider, target, out)
+			}
+		}
+		if !strings.Contains(out, test.old) || !strings.Contains(out, test.new) {
+			t.Errorf("%s dry-run missing old→new command:\n%s", test.provider, out)
+		}
+	}
+
+	cmd.readCommand = tmuxBellReadFixture("alert-bell[1] " + legacyTmuxBellHookCommand + "\n")
+	var tmuxOut bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "tmux-bell", "--dry-run"}, &tmuxOut, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{tmuxBellHookName, legacyTmuxBellHookCommand, tmuxBellHookCommand} {
+		if !strings.Contains(tmuxOut.String(), want) {
+			t.Errorf("tmux dry-run missing %q:\n%s", want, tmuxOut.String())
+		}
+	}
+	if writes != 0 {
+		t.Fatalf("dry-run writes = %d, want zero", writes)
+	}
+}
+
+func TestAIIntegrateTmuxBellReadFailureIsZeroMutation(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	cmd.readCommand = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("injected inventory failure")
+	}
+	if err := cmd.Run([]string{"integrate", "tmux-bell"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "inventory failure") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(cmdRecorder(cmd).commands) != 0 {
+		t.Fatalf("commands = %#v, want zero", cmdRecorder(cmd).commands)
+	}
+}
+
+func TestAIIntegrateTmuxBellNthFailureRollsBackExactOptionsAndUnmanagedHook(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	options := map[string]string{
+		"allow-passthrough": "off",
+		"monitor-bell":      "off",
+		"bell-action":       "none",
+	}
+	hookCommands := []string{
+		"run-shell -b 'echo unmanaged'",
+		legacyTmuxBellHookCommand,
+	}
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" || len(args) == 0 {
+			return nil, errors.New("unexpected read")
+		}
+		switch args[0] {
+		case "show-options":
+			return []byte(options[args[len(args)-1]] + "\n"), nil
+		case "show-hooks":
+			var lines []string
+			for i, command := range hookCommands {
+				lines = append(lines, fmt.Sprintf("alert-bell[%d] %s", i, command))
+			}
+			return []byte(strings.Join(lines, "\n") + "\n"), nil
+		default:
+			return nil, errors.New("unexpected read")
+		}
+	}
+	mutation := 0
+	cmd.runCommand = func(_ context.Context, name string, args ...string) error {
+		if name != "tmux" {
+			return errors.New("unexpected command")
+		}
+		mutation++
+		if mutation == 5 {
+			return errors.New("injected fifth tmux command failure")
+		}
+		if args[0] == "set-option" {
+			if args[1] == "-gu" {
+				delete(options, args[2])
+			} else {
+				options[args[2]] = args[3]
+			}
+			return nil
+		}
+		if args[0] == "set-hook" && args[1] == "-gu" {
+			if args[2] == tmuxBellHookName {
+				hookCommands = nil
+				return nil
+			}
+			var index int
+			if _, err := fmt.Sscanf(args[2], "alert-bell[%d]", &index); err == nil && index >= 0 && index < len(hookCommands) {
+				hookCommands = append(hookCommands[:index], hookCommands[index+1:]...)
+			}
+			return nil
+		}
+		if args[0] == "set-hook" && args[1] == "-ag" {
+			hookCommands = append(hookCommands, args[3])
+			return nil
+		}
+		return errors.New("unexpected command shape")
+	}
+
+	err := cmd.Run([]string{"integrate", "tmux-bell"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "fifth tmux command failure") {
+		t.Fatalf("error = %v", err)
+	}
+	wantOptions := map[string]string{"allow-passthrough": "off", "monitor-bell": "off", "bell-action": "none"}
+	if !reflect.DeepEqual(options, wantOptions) {
+		t.Fatalf("options after rollback = %#v, want %#v", options, wantOptions)
+	}
+	wantHooks := []string{"run-shell -b 'echo unmanaged'", legacyTmuxBellHookCommand}
+	if !reflect.DeepEqual(hookCommands, wantHooks) {
+		t.Fatalf("hooks after rollback = %#v, want %#v", hookCommands, wantHooks)
 	}
 }
 
@@ -1214,6 +1479,22 @@ func writeCodexTestFile(t *testing.T, path, body string) {
 	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func tmuxBellReadFixture(hooks string) func(context.Context, string, ...string) ([]byte, error) {
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" || len(args) == 0 {
+			return nil, os.ErrNotExist
+		}
+		switch args[0] {
+		case "show-hooks":
+			return []byte(hooks), nil
+		case "show-options":
+			return nil, nil
+		default:
+			return nil, os.ErrNotExist
+		}
 	}
 }
 
