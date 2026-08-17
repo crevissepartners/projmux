@@ -1,8 +1,9 @@
 package app
 
 import (
-	"io/fs"
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -75,34 +76,70 @@ func TestLegacyIngestCommandLiteralExistsOnlyInFixturesAndHistory(t *testing.T) 
 		"docs/legacy-cli-retirement.md": true,
 		"docs/upgrading.md":             true,
 	}
-	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if entry.IsDir() {
-			if rel == ".git" || rel == ".wt" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	for _, rel := range trackedRepositoryFiles(t, root) {
 		if allowedHistory[rel] || strings.HasSuffix(rel, "_test.go") || strings.Contains(rel, "/testdata/") {
-			return nil
+			continue
 		}
-		raw, err := os.ReadFile(path)
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		info, err := os.Lstat(path)
 		if err != nil {
-			return err
+			t.Fatal(err)
+		}
+		var raw []byte
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw = []byte(target)
+		} else {
+			raw, err = os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 		if strings.Contains(string(raw), legacy) {
 			t.Errorf("%s contains the retired producer command outside a fixture/history file", rel)
 		}
-		return nil
-	}); err != nil {
+	}
+}
+
+// trackedRepositoryFiles keeps the literal boundary on committed source and
+// generated artifacts. Build caches, worktree products, and local overlays are
+// untracked by definition and are neither opened nor followed.
+func trackedRepositoryFiles(t *testing.T, root string) []string {
+	t.Helper()
+	cmd := exec.Command("git", "ls-files", "-z")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("list tracked repository files: %v", err)
+	}
+	fields := bytes.Split(out, []byte{0})
+	paths := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if len(field) > 0 {
+			paths = append(paths, filepath.ToSlash(string(field)))
+		}
+	}
+	return paths
+}
+
+func TestProductionBinaryExcludesLegacyIngestCommandLiteral(t *testing.T) {
+	root := filepath.Join("..", "..")
+	binary := filepath.Join(t.TempDir(), "projmux")
+	cmd := exec.Command("go", "build", "-o", binary, "./cmd/projmux")
+	cmd.Dir = root
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build production binary: %v\n%s", err, output)
+	}
+	raw, err := os.ReadFile(binary)
+	if err != nil {
 		t.Fatal(err)
+	}
+	legacy := []byte(strings.Join([]string{"projmux", "ai", "ingest"}, " "))
+	if bytes.Contains(raw, legacy) {
+		t.Fatalf("production binary contains retired producer bytes %q", legacy)
 	}
 }
 
