@@ -5095,7 +5095,7 @@ func TestSettingsHubKeybindingsLastPaneHasKoreanSearchText(t *testing.T) {
 	}
 }
 
-func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllowsCustomKeys(t *testing.T) {
+func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndReservedTransportIsLocked(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -5173,8 +5173,8 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 	if !hasEntryLabelContainingAll(transportDetail.Entries, "Keys", "Alt-Shift-Left", "M-S-Left") {
 		t.Fatalf("transport detail entries = %#v, want readable transport keys", transportDetail.Entries)
 	}
-	if !hasEntryLabelContaining(transportDetail.Entries, "Add key") {
-		t.Fatalf("transport detail entries = %#v, want custom key action", transportDetail.Entries)
+	if !hasEntryLabelContainingAll(transportDetail.Entries, "Editing locked", "shipped/default trigger") || hasEntryLabelContaining(transportDetail.Entries, "Add key") {
+		t.Fatalf("transport detail entries = %#v, want reasoned read-only action", transportDetail.Entries)
 	}
 	for _, absent := range []string{"Add alias", "Add plain alias", "Replace primary", "Primary key", "Additional keys", "Disable default", "Reset to default", "Default transport key", "Transport default", "Tier", "Delivery path", "Apply State", "Advanced Delivery", "Troubleshooting", "Advanced..."} {
 		if hasEntryLabelContaining(transportDetail.Entries, absent) {
@@ -5189,15 +5189,15 @@ func TestSettingsHubKeybindingsPopupLocalDetailIsEditableAndTransportDetailAllow
 	if !hasEntryLabelContainingAll(paneDetailEntries, "Keys", "Alt-Left", "M-Left") {
 		t.Fatalf("pane detail entries = %#v, want readable transport key", paneDetailEntries)
 	}
-	if !hasEntryLabelContaining(paneDetailEntries, "Add key") {
-		t.Fatalf("pane detail entries = %#v, want custom key capture entry", paneDetailEntries)
+	if !hasEntryLabelContainingAll(paneDetailEntries, "Editing locked", "shipped/default trigger") || hasEntryLabelContaining(paneDetailEntries, "Add key") {
+		t.Fatalf("pane detail entries = %#v, want reasoned read-only action", paneDetailEntries)
 	}
 	if hasEntryLabelContaining(paneDetailEntries, "(unbound)") {
 		t.Fatalf("pane detail entries = %#v, did not want unbound restored default", paneDetailEntries)
 	}
 }
 
-func TestSettingsHubKeybindingsTypedTransportKeyWritesOnlyCustomKey(t *testing.T) {
+func TestSettingsHubKeybindingsReservedTransportRejectsForgedTypedRoute(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -5208,44 +5208,16 @@ func TestSettingsHubKeybindingsTypedTransportKeyWritesOnlyCustomKey(t *testing.T
 		case 1:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window"}, nil
 		case 2:
-			for _, want := range []string{"Add key", "Enter key name manually"} {
-				if !hasEntryLabelContaining(options.Entries, want) {
-					t.Fatalf("transport detail entries = %#v, want %q", options.Entries, want)
-				}
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:add"}, nil
-		case 3:
-			if got, want := options.UI, "settings-keybinding-add"; got != want {
-				t.Fatalf("add key UI = %q, want %q", got, want)
-			}
-			for _, want := range []string{"Press a key to add", "Enter key name manually", "Cancel"} {
-				if !hasEntryLabelContaining(options.Entries, want) {
-					t.Fatalf("add key entries = %#v, want %q", options.Entries, want)
-				}
-			}
-			for _, absent := range []string{"Advanced...", "Raw diagnostic view"} {
-				if hasEntryLabelContaining(options.Entries, absent) {
-					t.Fatalf("add key entries = %#v, did not want retired copy %q", options.Entries, absent)
-				}
+			if !hasEntryLabelContainingAll(options.Entries, "Editing locked", "shipped/default trigger") || hasEntryLabelContaining(options.Entries, "Add key") {
+				t.Fatalf("transport detail entries = %#v, want reasoned read-only action", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:type"}, nil
-		case 4:
-			if got, want := options.UI, "settings-keybinding-type"; got != want {
-				t.Fatalf("typed keybinding UI = %q, want %q", got, want)
+		case 3:
+			if !hasEntryLabelContainingAll(options.Entries, "Feedback", "read only", "shipped/default trigger") {
+				t.Fatalf("post-forgery detail entries = %#v, want visible rejection", options.Entries)
 			}
-			if got, want := options.Prompt, "Enter key > "; got != want {
-				t.Fatalf("typed keybinding prompt = %q, want %q", got, want)
-			}
-			if options.DisableSearch {
-				t.Fatalf("typed keybinding DisableSearch = true, want false so typed input is accepted")
-			}
-			if !options.AcceptQuery {
-				t.Fatalf("typed keybinding AcceptQuery = false, want true")
-			}
-			return intpickercompat.Result{Key: "enter", Query: "M-["}, nil
-		case 5:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		case 6:
+		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		default:
 			t.Fatalf("unexpected settings picker call %d", calls)
@@ -5256,12 +5228,8 @@ func TestSettingsHubKeybindingsTypedTransportKeyWritesOnlyCustomKey(t *testing.T
 	if err := cmd.runKeybindingCategorySection(keyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
-	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.previous-window]\nkeys = [\"M-[\"]\n") {
-		t.Fatalf("keymap = %q, want transport custom key only", keymap)
-	}
-	if strings.Contains(keymap, "M-S-Left") {
-		t.Fatalf("keymap = %q, did not want transport default stored as custom key", keymap)
+	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
+		t.Fatalf("forged protected route keymap stat error = %v, want no write", err)
 	}
 }
 
@@ -5535,7 +5503,7 @@ func TestSettingsKeybindingCaptureNonDarwinKeepsImmediateTerminalResult(t *testi
 	}
 }
 
-func TestSettingsHubKeybindingsUnbindWritesEmptyKeys(t *testing.T) {
+func TestSettingsHubKeybindingsProtectedUnbindRouteIsReadOnly(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -5546,11 +5514,14 @@ func TestSettingsHubKeybindingsUnbindWritesEmptyKeys(t *testing.T) {
 		case 1:
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window"}, nil
 		case 2:
-			if !hasEntryLabelContainingAll(options.Entries, "Unbind", "remove all active keys") {
-				t.Fatalf("detail entries = %#v, want unbind row", options.Entries)
+			if !hasEntryLabelContainingAll(options.Entries, "Editing locked", "shipped/default trigger") || hasEntryLabelContaining(options.Entries, "Unbind") {
+				t.Fatalf("detail entries = %#v, want no unbind row and visible lock", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixKeymap + "previous-window:unbind"}, nil
 		case 3:
+			if !hasEntryLabelContainingAll(options.Entries, "Feedback", "read only") {
+				t.Fatalf("post-forgery entries = %#v, want visible read-only rejection", options.Entries)
+			}
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
 		case 4:
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
@@ -5563,16 +5534,8 @@ func TestSettingsHubKeybindingsUnbindWritesEmptyKeys(t *testing.T) {
 	if err := cmd.runKeybindingCategorySection(keyBindingCategoryNavigation, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runKeybindingCategorySection() error = %v", err)
 	}
-	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
-	if !strings.Contains(keymap, "[bindings.previous-window]\nkeys = []\n") {
-		t.Fatalf("keymap = %q, want explicit no-bind override", keymap)
-	}
-	entries, _, err := cmd.keybindingDetailEntries("previous-window")
-	if err != nil {
-		t.Fatalf("keybindingDetailEntries(previous-window) error = %v", err)
-	}
-	if !hasEntryLabelContainingAll(entries, "Focus previous Window", "Unbound") {
-		t.Fatalf("detail entries = %#v, want unbound state after keys = []", entries)
+	if _, err := os.Stat(filepath.Join(home, ".config", "projmux", "keymap.toml")); !os.IsNotExist(err) {
+		t.Fatalf("forged protected unbind keymap stat error = %v, want no write", err)
 	}
 }
 
@@ -8546,13 +8509,13 @@ func TestNormalizeKeybindingRecorderKeyUsesTmuxChordNames(t *testing.T) {
 		wantErr string
 	}{
 		{name: "control letter", key: intpicker.RecorderKey{Name: "ctrl-r"}, want: "C-r"},
-		{name: "alt shifted arrow", key: intpicker.RecorderKey{Name: "alt-shift-left"}, want: "M-S-Left"},
-		{name: "modified enter", key: intpicker.RecorderKey{Name: "ctrl-enter"}, want: "C-Enter"},
-		{name: "modified escape", key: intpicker.RecorderKey{Name: "alt-esc"}, want: "M-Escape"},
+		{name: "alt shifted arrow", key: intpicker.RecorderKey{Name: "alt-shift-left"}, wantErr: keymapReservedAuthoringReason},
+		{name: "modified enter", key: intpicker.RecorderKey{Name: "ctrl-enter"}, wantErr: keymapReservedAuthoringReason},
+		{name: "modified escape", key: intpicker.RecorderKey{Name: "alt-esc"}, wantErr: keymapReservedAuthoringReason},
 		{name: "space", key: intpicker.RecorderKey{Text: " "}, want: "Space"},
 		{name: "printable", key: intpicker.RecorderKey{Text: "x"}, want: "x"},
-		{name: "plain enter", key: intpicker.RecorderKey{Name: "enter"}, wantErr: "recorder control"},
-		{name: "plain escape", key: intpicker.RecorderKey{Name: "esc"}, wantErr: "recorder control"},
+		{name: "plain enter", key: intpicker.RecorderKey{Name: "enter"}, wantErr: keymapReservedAuthoringReason},
+		{name: "plain escape", key: intpicker.RecorderKey{Name: "esc"}, wantErr: keymapReservedAuthoringReason},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

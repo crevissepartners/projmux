@@ -229,6 +229,12 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 		if !ok {
 			return fmt.Errorf("unknown keybinding detail action: %s", action)
 		}
+		if keybindingMutationOperation(op) {
+			if protectErr := protectKeybindingActionMutation(actionID); protectErr != nil {
+				c.setSettingsFeedback("Keybinding read only", protectErr.Error())
+				continue
+			}
+		}
 		switch op {
 		case "add":
 			var err error
@@ -295,6 +301,9 @@ func (c *settingsCommand) runKeybindingDetail(actionID string, stdout, stderr io
 }
 
 func (c *settingsCommand) runKeybindingRecorder(actionID string, stdout, stderr io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
@@ -384,14 +393,22 @@ func keybindingApplyFeedbackDetail(output string) string {
 }
 
 func normalizeKeybindingRecorderKey(key intpicker.RecorderKey) (string, error) {
+	return normalizeKeybindingRecorderKeyWithPolicy(key, true)
+}
+
+func normalizeKeybindingRecorderKeyWithPolicy(key intpicker.RecorderKey, authoring bool) (string, error) {
+	normalize := normalizeKeymapTypedChord
+	if authoring {
+		normalize = normalizeKeymapAuthoringChord
+	}
 	if key.Text != "" {
 		if key.Text == " " {
-			return normalizeKeymapTypedChord("Space")
+			return normalize("Space")
 		}
 		if len([]rune(key.Text)) != 1 {
 			return "", fmt.Errorf("input is not a single key")
 		}
-		return normalizeKeymapTypedChord(key.Text)
+		return normalize(key.Text)
 	}
 	name := strings.TrimSpace(key.Name)
 	if name == "" {
@@ -442,20 +459,18 @@ base:
 	case "esc":
 		baseName = "Escape"
 	}
-	if baseName == "Enter" || baseName == "Escape" {
-		if len(modifiers) == 0 {
-			return "", fmt.Errorf("plain %s is a recorder control; use Enter key name manually", baseName)
-		}
-	}
 	chord := baseName
 	if len(modifiers) != 0 {
 		chord = strings.Join(modifiers, "-") + "-" + baseName
 	}
-	return normalizeKeymapTypedChord(chord)
+	return normalize(chord)
 }
 
 func (c *settingsCommand) validateKeymapAliasForAction(actionID, chord string) error {
-	chord, err := normalizeKeymapTypedChord(chord)
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
+	chord, err := normalizeKeymapAuthoringChord(chord)
 	if err != nil {
 		return err
 	}
@@ -537,7 +552,39 @@ func parseKeymapDetailAction(value, actionID string) (string, bool) {
 	return "", false
 }
 
+func keybindingMutationOperation(op string) bool {
+	switch op {
+	case "add", "capture", "type", "reset", "unbind", "sequence-add", "sequence-type", "sequence-capture", "sequence-save":
+		return true
+	}
+	for _, prefix := range []string{"remove:", "sequence-replace:", "sequence-type-replace:", "sequence-remove:", "sequence-stroke-remove:"} {
+		if strings.HasPrefix(op, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func protectedKeybindingActionReason(actionID string) (string, bool) {
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	if !ok {
+		return "", false
+	}
+	return keyBindingProtectedActionReason(action)
+}
+
+func protectKeybindingActionMutation(actionID string) error {
+	reason, protected := protectedKeybindingActionReason(actionID)
+	if !protected {
+		return nil
+	}
+	return fmt.Errorf("keybinding action %s is read only: %s", actionID, reason)
+}
+
 func (c *settingsCommand) runKeybindingAdd(actionID string, stdout, stderr io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	for {
 		entries, title, err := c.keybindingAddEntries(actionID)
 		if err != nil {
@@ -615,6 +662,12 @@ func (c *settingsCommand) runKeybindingKeyDetail(actionID, chord string, stdout,
 		op, ok := parseKeymapDetailAction(action, actionID)
 		if !ok {
 			return fmt.Errorf("unknown keybinding key action: %s", action)
+		}
+		if keybindingMutationOperation(op) {
+			if protectErr := protectKeybindingActionMutation(actionID); protectErr != nil {
+				c.setSettingsFeedback("Keybinding read only", protectErr.Error())
+				continue
+			}
 		}
 		switch {
 		case strings.HasPrefix(op, "remove:"):
@@ -933,6 +986,9 @@ func (c *settingsCommand) keybindingNativeCaptureGrace() time.Duration {
 }
 
 func (c *settingsCommand) runKeybindingCapture(actionID string, stdout, stderr io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	if !c.keybindingPhysicalCaptureAvailable() {
 		fmt.Fprintln(stdout, "physical key capture is unavailable in this context; enter a key name instead")
 		return c.runKeybindingTyped(actionID, false, stdout, stderr)
@@ -1110,6 +1166,9 @@ func (c *settingsCommand) addCapturedKeybindingChord(actionID, chord string, std
 // recorder is rejected identically here, with the same reason, and neither path
 // writes keymap.toml before validating.
 func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdout, stderr io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
@@ -1127,7 +1186,7 @@ func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdo
 		Entries:     []intpickercompat.Entry{c.backEntry(), {Label: c.rowLabelInfo("Action", keyBindingDisplayName(action), keybindingAliasesSummary(action)), Value: settingsNoopValue}},
 		Title:       mode + " - " + keyBindingDisplayName(action),
 		Prompt:      "Enter key > ",
-		Footer:      projmuxFooter("Enter a key such as C-r, M-a, M-S-Left, or C-Space."),
+		Footer:      projmuxFooter("Enter a key such as C-r, M-a, F12, or C-Space."),
 		ExpectKeys:  []string{"enter"},
 		Bindings:    c.settingsCloseBindings(),
 		AcceptQuery: true,
@@ -1139,7 +1198,7 @@ func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdo
 		c.setSettingsFeedback("Keybinding cancelled", "typed entry closed without adding a key")
 		return nil
 	}
-	chord, normalizeErr := normalizeKeymapTypedChord(result.Query)
+	chord, normalizeErr := normalizeKeymapAuthoringChord(result.Query)
 	if normalizeErr != nil {
 		c.setSettingsFeedback("Keybinding failed", normalizeErr.Error())
 		return nil
@@ -1165,9 +1224,12 @@ func (c *settingsCommand) runKeybindingTyped(actionID string, replace bool, stdo
 // runKeybindingSequenceEditor captures exactly one logical stroke per recorder
 // frame and then returns to this editor. Save is exposed once the shared v2
 // grammar can accept the accumulated sequence; four strokes is the hard stop.
-// No key is reserved as a sequence-finish key, so Enter remains authorable as
-// a logical stroke.
+// Reserved control/navigation keys are rejected by the shared authoring policy
+// while the existing one-stroke-at-a-time editor remains otherwise unchanged.
 func (c *settingsCommand) runKeybindingSequenceEditor(actionID, replace string, stdout, stderr io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	var strokes []string
 	for {
 		entries, title, err := c.keybindingSequenceEditorEntries(actionID, replace, strokes)
@@ -1240,6 +1302,13 @@ func (c *settingsCommand) runKeybindingSequenceEditor(actionID, replace string, 
 }
 
 func (c *settingsCommand) captureKeybindingSequenceStroke(actionID string, strokes []string) (string, bool, error) {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return "", false, err
+	}
+	return c.captureKeybindingSequenceStrokeWithPolicy(actionID, strokes, true)
+}
+
+func (c *settingsCommand) captureKeybindingSequenceStrokeWithPolicy(actionID string, strokes []string, authoring bool) (string, bool, error) {
 	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return "", false, err
@@ -1251,17 +1320,23 @@ func (c *settingsCommand) captureKeybindingSequenceStroke(actionID string, strok
 	recorder := &intpicker.RecorderOptions{
 		AutoConfirm:  true,
 		CaptureEnter: true,
-		Normalize:    normalizeKeybindingSequenceRecorderKey,
+		Normalize: func(key intpicker.RecorderKey) (string, error) {
+			return normalizeKeybindingSequenceRecorderKey(key, authoring)
+		},
 		Validate: func(stroke string) error {
-			_, err := normalizeKeybindingSequenceStroke(stroke, len(strokes))
+			_, err := normalizeKeybindingSequenceStroke(stroke, len(strokes), authoring)
 			return err
 		},
+	}
+	footer := "Press one stroke · Esc returns to the editor."
+	if authoring {
+		footer = "Press one non-reserved stroke · Esc returns to the editor."
 	}
 	result, err := c.runPicker(intpickercompat.Options{
 		UI:            "settings-keybinding-sequence-stroke",
 		Title:         "Record Sequence Stroke - " + keyBindingDisplayName(action),
 		Header:        fmt.Sprintf("Accumulated: %s", keybindingSequenceDraftSummary(strokes)),
-		Footer:        projmuxFooter("Press one stroke · Enter is a stroke · Esc returns to the editor."),
+		Footer:        projmuxFooter(footer),
 		DisableSearch: true,
 		Bindings:      c.settingsCloseBindings(),
 		Recorder:      recorder,
@@ -1275,7 +1350,7 @@ func (c *settingsCommand) captureKeybindingSequenceStroke(actionID string, strok
 	if result.Key != "enter" {
 		return "", false, errSettingsClosed
 	}
-	stroke, err := normalizeKeybindingSequenceStroke(strings.TrimSpace(result.Value), len(strokes))
+	stroke, err := normalizeKeybindingSequenceStroke(strings.TrimSpace(result.Value), len(strokes), authoring)
 	if err != nil {
 		c.setSettingsFeedback("Sequence stroke failed", err.Error())
 		return "", true, nil
@@ -1283,20 +1358,28 @@ func (c *settingsCommand) captureKeybindingSequenceStroke(actionID string, strok
 	return stroke, false, nil
 }
 
-func normalizeKeybindingSequenceRecorderKey(key intpicker.RecorderKey) (string, error) {
+func normalizeKeybindingSequenceRecorderKey(key intpicker.RecorderKey, authoring bool) (string, error) {
 	if strings.TrimSpace(key.Name) == "enter" && key.Text == "" {
+		if authoring {
+			return normalizeKeymapAuthoringChord("Enter")
+		}
 		return normalizeKeymapTypedChord("Enter")
 	}
-	return normalizeKeybindingRecorderKey(key)
+	return normalizeKeybindingRecorderKeyWithPolicy(key, authoring)
 }
 
 // normalizeKeybindingSequenceStroke delegates the actual stroke policy to the
 // Phase 0 sequence normalizer by placing the candidate in a valid two-stroke
 // sequence. Settings therefore cannot drift from the installed grammar.
-func normalizeKeybindingSequenceStroke(stroke string, index int) (string, error) {
+func normalizeKeybindingSequenceStroke(stroke string, index int, authoring bool) (string, error) {
 	stroke = strings.TrimSpace(stroke)
 	if stroke == "" {
 		return "", fmt.Errorf("stroke is empty")
+	}
+	if authoring {
+		if err := validateKeymapAuthoringChord(stroke); err != nil {
+			return "", err
+		}
 	}
 	value := "C-x " + stroke
 	candidateIndex := 1
@@ -1312,6 +1395,9 @@ func normalizeKeybindingSequenceStroke(stroke string, index int) (string, error)
 }
 
 func (c *settingsCommand) runKeybindingSequenceTyped(actionID, replace string, stdout, stderr io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	_, actions, _, _, err := loadKeymapForEdit(c.keymapStore())
 	if err != nil {
 		return err
@@ -1335,6 +1421,10 @@ func (c *settingsCommand) runKeybindingSequenceTyped(actionID, replace string, s
 	}
 	if result.Key != "enter" {
 		c.setSettingsFeedback("Sequence cancelled", "typed entry closed without changing keymap.toml or tmux")
+		return nil
+	}
+	if reservedErr := validateKeymapAuthoringSequence(result.Query); reservedErr != nil {
+		c.setSettingsFeedback("Sequence failed", reservedErr.Error())
 		return nil
 	}
 	sequence, normalizeErr := normalizeKeymapSequence(result.Query)
@@ -1386,6 +1476,12 @@ func (c *settingsCommand) runKeybindingSequenceDetail(actionID, sequence string,
 		if !ok {
 			return fmt.Errorf("unknown sequence detail action: %s", action)
 		}
+		if keybindingMutationOperation(op) {
+			if protectErr := protectKeybindingActionMutation(actionID); protectErr != nil {
+				c.setSettingsFeedback("Keybinding read only", protectErr.Error())
+				continue
+			}
+		}
 		switch {
 		case strings.HasPrefix(op, "sequence-replace:"):
 			return c.runKeybindingSequenceEditor(actionID, strings.TrimPrefix(op, "sequence-replace:"), stdout, stderr)
@@ -1421,7 +1517,7 @@ func (c *settingsCommand) runKeybindingSequenceDeliveryTest(actionID, sequence s
 	expected := strings.Split(sequence, " ")
 	observed := make([]string, 0, len(expected))
 	for i, want := range expected {
-		stroke, cancelled, captureErr := c.captureKeybindingSequenceStroke(actionID, observed)
+		stroke, cancelled, captureErr := c.captureKeybindingSequenceStrokeWithPolicy(actionID, observed, false)
 		if captureErr != nil {
 			return captureErr
 		}
@@ -1787,8 +1883,10 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 	if !ok {
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
 	state := keybindingState(keymap, action, defaultAction)
+	protectedReason, protected := keyBindingProtectedActionReason(defaultAction)
+	mutable := keyBindingEditable(action) && !protected
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
@@ -1797,6 +1895,12 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 		},
 	}
 	entries = append(entries, c.keybindingSemanticEntries(action)...)
+	if protected {
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabelDim("Editing locked", protectedReason),
+			Value: settingsNoopValue,
+		})
+	}
 	entries = append(entries, intpickercompat.Entry{
 		Label: c.rowLabelInfo("Single Keys", keybindingAliasesSummary(action), keybindingKeysDetail(action)),
 		Value: settingsNoopValue,
@@ -1808,7 +1912,7 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: prefix + "key:" + key,
 		})
 	}
-	if keyBindingEditable(action) {
+	if mutable {
 		addKeyHint := "press desired key"
 		if !c.keybindingPhysicalCaptureAvailable() {
 			addKeyHint = "record and confirm a key combination"
@@ -1818,7 +1922,7 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: prefix + "add",
 		})
 		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name manually", "type a tmux key name such as C-r or M-S-Left"),
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name manually", "type a tmux key name such as C-r or F12"),
 			Value: prefix + "type",
 		})
 	}
@@ -1839,7 +1943,7 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			Value: prefix + "sequence:" + sequence,
 		})
 	}
-	if keyBindingEditable(action) && action.Kind != keyBindingActionPickerInternal {
+	if mutable && action.Kind != keyBindingActionPickerInternal {
 		entries = append(entries,
 			intpickercompat.Entry{
 				Label: c.rowLabel(settingsGlyphAdd, settingsColorAdd, "+ Add sequence", "capture 2 to 4 logical strokes"),
@@ -1851,7 +1955,7 @@ func (c *settingsCommand) keybindingDetailEntries(actionID string) ([]intpickerc
 			},
 		)
 	}
-	if !keyBindingEditable(action) {
+	if !mutable {
 		title := "Keybinding - " + keyBindingDisplayName(action)
 		return entries, title, nil
 	}
@@ -1897,6 +2001,14 @@ func (c *settingsCommand) keybindingSequenceEditorEntries(actionID, replace stri
 	action, ok := keyBindingActionByID(actions, actionID)
 	if !ok {
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
+	}
+	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+	if reason, protected := keyBindingProtectedActionReason(defaultAction); protected {
+		return []intpickercompat.Entry{
+			c.backEntry(),
+			{Label: c.rowLabelInfo("Action", keyBindingDisplayName(action), "existing catalog action"), Value: settingsNoopValue},
+			{Label: c.rowLabelDim("Editing locked", reason), Value: settingsNoopValue},
+		}, "Sequence Editor - " + keyBindingDisplayName(action), nil
 	}
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	entries := []intpickercompat.Entry{
@@ -1948,6 +2060,8 @@ func (c *settingsCommand) keybindingSequenceDetailEntries(actionID, sequence str
 	if !containsString(keyBindingEffectiveSequences(action), sequence) {
 		return nil, "", fmt.Errorf("sequence %q is not configured for %s", sequence, action.ID)
 	}
+	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+	protectedReason, protected := keyBindingProtectedActionReason(defaultAction)
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
@@ -1955,9 +2069,15 @@ func (c *settingsCommand) keybindingSequenceDetailEntries(actionID, sequence str
 		{Label: c.rowLabelInfo("Cancellation", "Escape or unknown stroke returns to root", "the cancelling stroke is consumed and never replayed"), Value: settingsNoopValue},
 		{Label: c.rowLabelInfo("Delivery", c.keybindingSequenceDeliveryDiagnostic(sequence), "authoring and saved bytes are platform-independent"), Value: settingsNoopValue},
 		{Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Test sequence delivery", "show partial/cancel and platform transport diagnostics without writing"), Value: prefix + "sequence-test:" + sequence},
-		{Label: c.rowLabel(settingsGlyphType, settingsColorType, "Replace sequence", "capture a new 2 to 4 stroke sequence"), Value: prefix + "sequence-replace:" + sequence},
-		{Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter replacement manually", "type a sequence such as C-k C-p"), Value: prefix + "sequence-type-replace:" + sequence},
-		{Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Remove sequence", sequence), Value: prefix + "sequence-remove:" + sequence},
+	}
+	if protected {
+		entries = append(entries, intpickercompat.Entry{Label: c.rowLabelDim("Editing locked", protectedReason), Value: settingsNoopValue})
+	} else {
+		entries = append(entries,
+			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphType, settingsColorType, "Replace sequence", "capture a new 2 to 4 stroke sequence"), Value: prefix + "sequence-replace:" + sequence},
+			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter replacement manually", "type a sequence such as C-k C-p"), Value: prefix + "sequence-type-replace:" + sequence},
+			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Remove sequence", sequence), Value: prefix + "sequence-remove:" + sequence},
+		)
 	}
 	return entries, "Sequence - " + sequence, nil
 }
@@ -1982,6 +2102,14 @@ func (c *settingsCommand) keybindingAddEntries(actionID string) ([]intpickercomp
 	if !ok {
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
+	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
+	if reason, protected := keyBindingProtectedActionReason(defaultAction); protected {
+		return []intpickercompat.Entry{
+			c.backEntry(),
+			{Label: c.rowLabelInfo("Action", keyBindingDisplayName(action), "existing catalog action"), Value: settingsNoopValue},
+			{Label: c.rowLabelDim("Editing locked", reason), Value: settingsNoopValue},
+		}, "Add Key - " + keyBindingDisplayName(action), nil
+	}
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	entries := make([]intpickercompat.Entry, 0, 6)
 	if c.keybindingPhysicalCaptureAvailable() {
@@ -1999,7 +2127,7 @@ func (c *settingsCommand) keybindingAddEntries(actionID string) ([]intpickercomp
 	}
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name manually", "type a tmux key name such as C-r or M-S-Left"),
+			Label: c.rowLabel(settingsGlyphType, settingsColorType, "Enter key name manually", "type a tmux key name such as C-r or F12"),
 			Value: prefix + "type",
 		},
 		intpickercompat.Entry{
@@ -2031,7 +2159,7 @@ func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]
 	if !ok {
 		return nil, "", fmt.Errorf("unknown keybinding action: %s", actionID)
 	}
-	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), actionID)
+	defaultAction, _ := keyBindingActionByID(defaultKeyBindingCatalog(), action.ID)
 	prefix := settingsActionPrefixKeymap + action.ID + ":"
 	displayKey := keybindingChordDisplay(chord)
 	entries := []intpickercompat.Entry{
@@ -2053,7 +2181,14 @@ func (c *settingsCommand) keybindingKeyDetailEntries(actionID, chord string) ([]
 			Value: settingsNoopValue,
 		},
 	}
-	if containsString(removableKeybindingKeys(keymap, action, defaultAction), chord) {
+	protectedReason, protected := keyBindingProtectedActionReason(defaultAction)
+	if protected {
+		entries = append(entries, intpickercompat.Entry{
+			Label: c.rowLabelDim("Editing locked", protectedReason),
+			Value: settingsNoopValue,
+		})
+	}
+	if !protected && containsString(removableKeybindingKeys(keymap, action, defaultAction), chord) {
 		entries = append(entries, intpickercompat.Entry{
 			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, "Remove key", displayKey),
 			Value: prefix + "remove:" + chord,
@@ -2270,7 +2405,7 @@ func keybindingKeysDetail(action keyBindingAction) string {
 }
 
 func keybindingActionsSummary(keymap keymapFile, action, defaultAction keyBindingAction) string {
-	if !keyBindingEditable(action) {
+	if _, protected := keyBindingProtectedActionReason(defaultAction); !keyBindingEditable(action) || protected {
 		return "view only"
 	}
 	var actions []string
@@ -2322,11 +2457,11 @@ func keybindingShowResetAction(state string) bool {
 }
 
 func keybindingSafeDirectKeyPoolCopy() string {
-	return "M-letter/M-number, C-letter, C-Space, function/navigation names, and printable keys"
+	return "M-letter/M-number, C-letter, C-Space, function keys, and printable keys"
 }
 
 func keybindingRiskyReservedKeyCopy() string {
-	return "raw escape, CSI-u, xterm modified-key bytes, tmux UserKey/UserSequence"
+	return "reserved control/navigation keys, raw escape, CSI-u, xterm modified-key bytes, tmux UserKey/UserSequence"
 }
 
 // keybindingTerminalAdapterCopy names only the shipped `projmux setup terminal`
@@ -2381,6 +2516,14 @@ func (c *settingsCommand) keymapStore() keymapStore {
 }
 
 func (c *settingsCommand) saveKeymapKeysAndApply(actionID string, keys []string, stdout io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := validateKeymapAuthoringChord(key); err != nil {
+			return err
+		}
+	}
 	schema, err := c.migrateKeymapBeforeSave(stdout)
 	if err != nil {
 		return err
@@ -2390,6 +2533,14 @@ func (c *settingsCommand) saveKeymapKeysAndApply(actionID string, keys []string,
 }
 
 func (c *settingsCommand) saveKeymapSequencesAndApply(actionID string, sequences []string, stdout io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
+	for _, sequence := range sequences {
+		if err := validateKeymapAuthoringSequence(sequence); err != nil {
+			return err
+		}
+	}
 	schema, err := c.migrateKeymapBeforeSave(stdout)
 	if err != nil {
 		return err
@@ -2399,6 +2550,9 @@ func (c *settingsCommand) saveKeymapSequencesAndApply(actionID string, sequences
 }
 
 func (c *settingsCommand) resetKeymapSequencesAndApply(actionID string, stdout io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	schema, err := c.migrateKeymapBeforeSave(stdout)
 	if err != nil {
 		return err
@@ -2408,6 +2562,9 @@ func (c *settingsCommand) resetKeymapSequencesAndApply(actionID string, stdout i
 }
 
 func (c *settingsCommand) resetKeymapBindingAndApply(actionID string, stdout io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	schema, err := c.migrateKeymapBeforeSave(stdout)
 	if err != nil {
 		return err
@@ -2417,6 +2574,12 @@ func (c *settingsCommand) resetKeymapBindingAndApply(actionID string, stdout io.
 }
 
 func (c *settingsCommand) validateKeymapSequenceForAction(actionID, sequence, replace string) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
+	if err := validateKeymapAuthoringSequence(sequence); err != nil {
+		return err
+	}
 	sequence, err := normalizeKeymapSequence(sequence)
 	if err != nil {
 		return err
@@ -2455,6 +2618,9 @@ func (c *settingsCommand) validateKeymapSequenceForAction(actionID, sequence, re
 }
 
 func (c *settingsCommand) addKeymapSequenceAndApply(actionID, sequence string, stdout io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	if err := c.validateKeymapSequenceForAction(actionID, sequence, ""); err != nil {
 		return err
 	}
@@ -2472,6 +2638,9 @@ func (c *settingsCommand) addKeymapSequenceAndApply(actionID, sequence string, s
 }
 
 func (c *settingsCommand) replaceKeymapSequenceAndApply(actionID, oldSequence, newSequence string, stdout io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	if err := c.validateKeymapSequenceForAction(actionID, newSequence, oldSequence); err != nil {
 		return err
 	}
@@ -2503,6 +2672,9 @@ func (c *settingsCommand) replaceKeymapSequenceAndApply(actionID, oldSequence, n
 }
 
 func (c *settingsCommand) removeKeymapSequenceAndApply(actionID, sequence string, stdout io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	sequence, err := normalizeKeymapSequence(sequence)
 	if err != nil {
 		return err
@@ -2527,6 +2699,9 @@ func (c *settingsCommand) removeKeymapSequenceAndApply(actionID, sequence string
 }
 
 func (c *settingsCommand) resetKeymapKeysAndApply(actionID string, stdout io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	schema, err := c.migrateKeymapBeforeSave(stdout)
 	if err != nil {
 		return err
@@ -2587,6 +2762,9 @@ func keymapSchemaStage(result keymapMigrationResult) keymapApplyStage {
 }
 
 func (c *settingsCommand) removeKeymapKeyAndApply(actionID, chord string, stdout io.Writer) error {
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
 	chord, err := normalizeKeymapTypedChord(chord)
 	if err != nil {
 		return err
@@ -2612,7 +2790,10 @@ func (c *settingsCommand) removeKeymapKeyAndApply(actionID, chord string, stdout
 }
 
 func (c *settingsCommand) addKeymapAliasAndApply(actionID, chord string, stdout io.Writer) error {
-	chord, err := normalizeKeymapTypedChord(chord)
+	if err := protectKeybindingActionMutation(actionID); err != nil {
+		return err
+	}
+	chord, err := normalizeKeymapAuthoringChord(chord)
 	if err != nil {
 		return err
 	}
