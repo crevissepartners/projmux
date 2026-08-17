@@ -330,7 +330,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:        keyBindingTierUserConfigurableDirect,
 			Scope:       keyBindingScopeStandalone,
 			TmuxKind:    tmuxBindingRunProjmux,
-			TmuxBody:    "ai split right",
+			TmuxBody:    "internal agent-pane launch-default right",
 			WTID:        "User.projmuxAISplitRight",
 			WTKeys:      "ctrl+shift+r",
 			WTInput:     "\x02r",
@@ -347,7 +347,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:        keyBindingTierUserConfigurableDirect,
 			Scope:       keyBindingScopeStandalone,
 			TmuxKind:    tmuxBindingRunProjmux,
-			TmuxBody:    "ai split down",
+			TmuxBody:    "internal agent-pane launch-default down",
 			WTID:        "User.projmuxAISplitDown",
 			WTKeys:      "ctrl+shift+l",
 			WTInput:     "\x02l",
@@ -364,7 +364,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "ai split --agent codex right",
+			TmuxBody:       "create codex --placement right",
 			PlainBindOrder: 82,
 		},
 		{
@@ -375,7 +375,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "ai split --agent codex down",
+			TmuxBody:       "create codex --placement down",
 			PlainBindOrder: 83,
 		},
 		{
@@ -386,7 +386,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "ai split --agent claude right",
+			TmuxBody:       "create claude --placement right",
 			PlainBindOrder: 84,
 		},
 		{
@@ -397,7 +397,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "ai split --agent claude down",
+			TmuxBody:       "create claude --placement down",
 			PlainBindOrder: 85,
 		},
 		{
@@ -408,7 +408,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "ai split --agent shell right",
+			TmuxBody:       "create pane --placement right",
 			PlainBindOrder: 86,
 		},
 		{
@@ -419,7 +419,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "ai split --agent shell down",
+			TmuxBody:       "create pane --placement down",
 			PlainBindOrder: 87,
 		},
 		{

@@ -102,6 +102,21 @@ if [[ "$fake_tmux_output" != "%81" ]]; then
 fi
 smoke_assert_file_contains "$fake_tmux_log" "split-window -P -F #{pane_id} -h -t %7"
 
+# Generated keybindings enter the saved-default split handler through the
+# hidden post-`ai` retirement bridge. Exercise that built-binary boundary so a
+# route/catalog refactor cannot leave the popup functional while launch is a
+# no-op. Shell mode keeps the fixture independent of provider binaries.
+printf 'shell\n' >"$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
+PROJMUX_FAKE_MUX_LOG="$fake_tmux_log" \
+  PATH="$fake_mux_dir:$PATH" \
+  TMUX="fake" \
+  TMUX_SPLIT_TARGET_PANE="%7" \
+  TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
+  SHELL="/bin/sh" \
+  "$bin" internal agent-pane launch-default down
+smoke_assert_file_contains "$fake_tmux_log" "split-window -P -F #{pane_id} -v -t %7"
+printf 'selective\n' >"$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
+
 "$bin" doctor --json >"$PROJMUX_SMOKE_WORKDIR/doctor.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"schema_version": 2'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor.json" '"name": "tmux"'

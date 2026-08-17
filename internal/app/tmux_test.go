@@ -244,7 +244,7 @@ func TestAppRunTmuxPopupSessionsUsesDefaultOptions(t *testing.T) {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
 
-	const wantCommand = "exec '/tmp/proj mux/bin/projmux' 'sessions' '--ui=popup'"
+	const wantCommand = "exec '/tmp/proj mux/bin/projmux' 'runtime' 'sessions' '--ui=popup'"
 	if popup.command != wantCommand {
 		t.Fatalf("popup command = %q, want %q", popup.command, wantCommand)
 	}
@@ -777,8 +777,11 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 				t.Fatalf("display call = %#v, want no title option", got)
 			}
 			command := got.args[len(got.args)-1]
-			if !strings.Contains(command, "'/tmp/proj mux/bin/projmux' 'notify' 'list' '--ui=sidebar' '--client' '"+clientKey+"'") {
+			if !strings.Contains(command, "'/tmp/proj mux/bin/projmux' 'get' 'notifications' '--ui=sidebar' '--client' '"+clientKey+"'") {
 				t.Fatalf("popup command = %q, want notify sidebar command", command)
+			}
+			if strings.Contains(command, "'/tmp/proj mux/bin/projmux' 'notify'") {
+				t.Fatalf("popup command = %q, retired notify route leaked", command)
 			}
 		})
 	}
@@ -1032,8 +1035,28 @@ func TestAppRunTmuxPopupToggleOpensWideAIPicker(t *testing.T) {
 		t.Fatalf("display call = %#v, want prefix %#v", got, wantPrefix)
 	}
 	command := got.args[len(got.args)-1]
-	if !strings.Contains(command, "'/tmp/projmux' 'ai' 'picker' '--inside' 'right'") {
-		t.Fatalf("popup command = %q, want ai picker command", command)
+	if !strings.Contains(command, "'/tmp/projmux' 'internal' 'agent-pane' 'picker' '--inside' 'right'") {
+		t.Fatalf("popup command = %q, want internal agent-pane picker command", command)
+	}
+}
+
+func TestResumePopupUsesInternalAgentPanePicker(t *testing.T) {
+	t.Parallel()
+
+	command, _, err := buildPopupToggle(
+		tmuxPopupToggleMode{Raw: "ai-split-resume-down", Canonical: "ai-split-resume", Direction: "down"},
+		"/tmp/projmux",
+		"/tmp/marker",
+		tmuxPopupContext{OriginPane: "%1", ContextDir: "/tmp/work"},
+	)
+	if err != nil {
+		t.Fatalf("buildPopupToggle() error = %v", err)
+	}
+	if !strings.Contains(command, "'/tmp/projmux' 'internal' 'agent-pane' 'picker' '--resume' '--inside' 'down'") {
+		t.Fatalf("popup command = %q, want internal resume picker command", command)
+	}
+	if strings.Contains(command, "'/tmp/projmux' 'ai'") {
+		t.Fatalf("popup command = %q, retired ai route leaked", command)
 	}
 }
 

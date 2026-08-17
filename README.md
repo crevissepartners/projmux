@@ -131,7 +131,7 @@ AI tools can invoke the same projmux CLI to open a managed pane and deliver a
 prompt:
 
 ```sh
-projmux ai split --agent codex right -- "Review the retry logic."
+projmux create codex --placement right -- "Review the retry logic."
 ```
 
 Templates and naming conventions for Claude, Codex, and other agents are in

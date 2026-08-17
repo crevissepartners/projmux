@@ -927,6 +927,7 @@ var routes = []Route{
 			"projmux internal statusbar click|usage-refresh ...",
 			"projmux internal preview cycle-pane|cycle-window|select ...",
 			"projmux internal session-popup preview|open|cycle-pane|cycle-window ...",
+			"projmux internal agent-pane launch-default|picker ...",
 			"projmux internal agent-hook ingest|watch-title ...",
 			"projmux internal focus --target <target> ...",
 			"projmux internal key-broker [--once]",
@@ -938,6 +939,7 @@ var routes = []Route{
 			"internal statusbar",
 			"internal preview",
 			"internal session-popup",
+			"internal agent-pane",
 			"internal agent-hook",
 			"internal focus",
 			"internal key-broker",
@@ -1009,6 +1011,16 @@ var routes = []Route{
 					{Name: "open", Summary: "Open the previewed session", Canonical: []string{"internal session-popup"}},
 					{Name: "cycle-pane", Summary: "Advance the popup pane cursor", Canonical: []string{"internal session-popup"}},
 					{Name: "cycle-window", Summary: "Advance the popup window cursor", Canonical: []string{"internal session-popup"}},
+				},
+			},
+			{
+				Name:      "agent-pane",
+				Summary:   "Generated Agent and Pane launch plumbing",
+				Usage:     []string{"projmux internal agent-pane launch-default <right|down>", "projmux internal agent-pane picker [--resume] --inside <right|down>"},
+				Canonical: []string{"internal agent-pane"},
+				Children: []Route{
+					{Name: "launch-default", Summary: "Launch the saved default target in a new Pane", Canonical: []string{"internal agent-pane"}},
+					{Name: "picker", Summary: "Run the Agent launch or resume picker inside its popup", Canonical: []string{"internal agent-pane"}},
 				},
 			},
 			{

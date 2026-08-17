@@ -1344,7 +1344,7 @@ func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker stri
 		options.Width = popupSize(ctx.ClientWidth, 80, 120)
 		options.Height = popupSize(ctx.ClientHeight, 70, 28)
 		addSwitchTargetClientEnv(env, ctx)
-		commandArgs = []string{"sessions", "--ui=popup"}
+		commandArgs = []string{"runtime", "sessions", "--ui=popup"}
 	case "sessionizer":
 		options.Width = popupSize(ctx.ClientWidth, 80, 120)
 		options.Height = popupSize(ctx.ClientHeight, 70, 28)
@@ -1375,7 +1375,7 @@ func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker stri
 		options.Height = sidebarPopupHeight(ctx.ClientHeight)
 		options.X = popupRightX(ctx.ClientWidth, options.Width)
 		options.Y = "0"
-		commandArgs = []string{"notify", "list", "--ui=sidebar"}
+		commandArgs = []string{"get", "notifications", "--ui=sidebar"}
 		if client := strings.TrimSpace(ctx.TargetClient); client != "" {
 			commandArgs = append(commandArgs, "--client", client)
 		}
@@ -1395,14 +1395,14 @@ func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker stri
 		cwd = ctx.ContextDir
 		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
 		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
-		commandArgs = []string{"ai", "picker", "--inside", mode.Direction}
+		commandArgs = []string{"internal", "agent-pane", "picker", "--inside", mode.Direction}
 	case "ai-split-resume-right", "ai-split-resume-down":
 		options.Width = popupSize(ctx.ClientWidth, 55, 110)
 		options.Height = popupSize(ctx.ClientHeight, 55, 24)
 		cwd = ctx.ContextDir
 		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
 		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
-		commandArgs = []string{"ai", "picker", "--resume", "--inside", mode.Direction}
+		commandArgs = []string{"internal", "agent-pane", "picker", "--resume", "--inside", mode.Direction}
 	case "ai-split-settings":
 		options.Width = popupSize(ctx.ClientWidth, 55, 80)
 		options.Height = popupSize(ctx.ClientHeight, 40, 14)

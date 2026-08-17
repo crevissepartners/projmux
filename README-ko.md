@@ -130,7 +130,7 @@ AI 도구에서도 같은 projmux 명령줄 도구(CLI)를 호출해 projmux가 
 pane을 열고 작업 지시를 전달할 수 있습니다.
 
 ```sh
-projmux ai split --agent codex right -- "Review the retry logic."
+projmux create codex --placement right -- "Review the retry logic."
 ```
 
 Claude, Codex를 비롯한 여러 에이전트용 템플릿과 이름 규칙은

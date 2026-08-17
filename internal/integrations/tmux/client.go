@@ -1102,14 +1102,14 @@ func BuildPopupSwitchCommand(binaryPath, cwd string) (string, error) {
 }
 
 // BuildPopupSessionsCommand builds the shell command used inside a tmux popup
-// for the existing `projmux sessions --ui=popup` flow.
+// for the canonical `projmux runtime sessions --ui=popup` flow.
 func BuildPopupSessionsCommand(binaryPath string) (string, error) {
 	binaryPath = strings.TrimSpace(binaryPath)
 	if binaryPath == "" {
 		return "", errors.New("popup sessions binary path is required")
 	}
 
-	return buildExecCommand(binaryPath, "sessions", "--ui=popup"), nil
+	return buildExecCommand(binaryPath, "runtime", "sessions", "--ui=popup"), nil
 }
 
 // BuildSessionPopupPreviewCommand builds the shell command used by picker preview

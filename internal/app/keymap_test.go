@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/cli"
 )
 
 func TestKeyBindingCatalogGuaranteedLaunchDefaultsAreOnlyAltOneThroughFive(t *testing.T) {
@@ -522,12 +524,14 @@ func TestKeyBindingCatalogPhase0UserBindableCoverage(t *testing.T) {
 	catalog := defaultKeyBindingCatalog()
 	cases := map[string]string{
 		"last-pane":             "last-pane",
-		"ai-split-codex-right":  "ai split --agent codex right",
-		"ai-split-codex-down":   "ai split --agent codex down",
-		"ai-split-claude-right": "ai split --agent claude right",
-		"ai-split-claude-down":  "ai split --agent claude down",
-		"ai-split-shell-right":  "ai split --agent shell right",
-		"ai-split-shell-down":   "ai split --agent shell down",
+		"ai-split-right":        "internal agent-pane launch-default right",
+		"ai-split-down":         "internal agent-pane launch-default down",
+		"ai-split-codex-right":  "create codex --placement right",
+		"ai-split-codex-down":   "create codex --placement down",
+		"ai-split-claude-right": "create claude --placement right",
+		"ai-split-claude-down":  "create claude --placement down",
+		"ai-split-shell-right":  "create pane --placement right",
+		"ai-split-shell-down":   "create pane --placement down",
 	}
 	for id, body := range cases {
 		action, ok := keyBindingActionByID(catalog, id)
@@ -542,6 +546,22 @@ func TestKeyBindingCatalogPhase0UserBindableCoverage(t *testing.T) {
 		}
 		if action.TmuxBody != body {
 			t.Fatalf("%s TmuxBody = %q, want %q", id, action.TmuxBody, body)
+		}
+	}
+}
+
+func TestGeneratedSplitBindingsNeverInvokeRetiredAIRoot(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range defaultKeyBindingCatalog() {
+		if !strings.HasPrefix(action.ID, "ai-split-") || action.Kind != keyBindingActionCommand {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(action.TmuxBody), "ai ") {
+			t.Errorf("split action %q invokes retired route: %q", action.ID, action.TmuxBody)
+		}
+		if _, _, ok := cli.Resolve(strings.Fields(action.TmuxBody)); !ok {
+			t.Errorf("split action %q does not resolve through the command manifest: %q", action.ID, action.TmuxBody)
 		}
 	}
 }

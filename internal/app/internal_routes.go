@@ -14,6 +14,7 @@ var internalSubcommands = []string{
 	"statusbar",
 	"preview",
 	"session-popup",
+	"agent-pane",
 	"agent-hook",
 	"focus",
 	"key-broker",
@@ -22,6 +23,11 @@ var internalSubcommands = []string{
 
 // internalAgentHookSubcommands lists the provider hook plumbing routes.
 var internalAgentHookSubcommands = []string{"ingest", "watch-title"}
+
+// internalAgentPaneSubcommands are generated-config launch bridges. They keep
+// the saved default and interactive picker behavior available to tmux without
+// restoring the retired public `ai` namespace.
+var internalAgentPaneSubcommands = []string{"launch-default", "picker"}
 
 // internalCommand owns the hidden `internal` namespace: the plumbing invoked by
 // generated tmux config, tmux hooks, popup payloads, and provider hook commands
@@ -73,6 +79,8 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.preview, "internal preview", "preview", nil, rest, stdout, stderr)
 	case "session-popup":
 		return forwardRawArgv(c.sessionPopup, "internal session-popup", "session-popup", nil, rest, stdout, stderr)
+	case "agent-pane":
+		return c.runAgentPane(rest, stdout, stderr)
 	case "agent-hook":
 		return c.runAgentHook(rest, stdout, stderr)
 	case "focus":
@@ -84,6 +92,22 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 	default:
 		return usageError(fmt.Sprintf("internal %s is not available; this release implements: %s",
 			args[0], strings.Join(internalSubcommands, ", ")))
+	}
+}
+
+func (c *internalCommand) runAgentPane(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return usageError(fmt.Sprintf("internal agent-pane requires a subcommand: %s",
+			strings.Join(internalAgentPaneSubcommands, ", ")))
+	}
+	switch args[0] {
+	case "launch-default":
+		return forwardRawArgv(c.ai, "internal agent-pane launch-default", "ai", []string{"split"}, args[1:], stdout, stderr)
+	case "picker":
+		return forwardRawArgv(c.ai, "internal agent-pane picker", "ai", []string{"picker"}, args[1:], stdout, stderr)
+	default:
+		return usageError(fmt.Sprintf("internal agent-pane %s is not available; this release implements: %s",
+			args[0], strings.Join(internalAgentPaneSubcommands, ", ")))
 	}
 }
 

@@ -305,6 +305,8 @@ func TestInternalNamespaceForwardsRawArgvUnchanged(t *testing.T) {
 		{name: "popup wait key", args: []string{"popup-wait-key"}, target: "popup-wait-key", want: []string{}},
 		{name: "agent hook ingest", args: []string{"agent-hook", "ingest", "codex-hook"}, target: "ai", want: []string{"ingest", "codex-hook"}},
 		{name: "agent hook watch title", args: []string{"agent-hook", "watch-title", "%9"}, target: "ai", want: []string{"watch-title", "%9"}},
+		{name: "agent pane default", args: []string{"agent-pane", "launch-default", "down"}, target: "ai", want: []string{"split", "down"}},
+		{name: "agent pane picker", args: []string{"agent-pane", "picker", "--resume", "--inside", "right"}, target: "ai", want: []string{"picker", "--resume", "--inside", "right"}},
 		{name: "machine focus", args: []string{"focus", "--target", "alpha:1.0", "--source", "status-bar"}, target: "focus", want: []string{"--target", "alpha:1.0", "--source", "status-bar"}},
 		{name: "terminator payload survives", args: []string{"tmux", "rename-pane", "%1", "--", "--help"}, target: "tmux", want: []string{"rename-pane", "%1", "--", "--help"}},
 		{name: "unknown flag is relayed rather than pre-judged", args: []string{"status", "--bogus"}, target: "status", want: []string{"--bogus"}},
@@ -353,7 +355,7 @@ func TestInternalNamespaceForwardsRawArgvUnchanged(t *testing.T) {
 func TestInternalNamespaceRejectsUnknownSubcommandsAsUsageErrors(t *testing.T) {
 	t.Parallel()
 
-	for _, args := range [][]string{nil, {"nosuchthing"}, {"agent-hook"}, {"agent-hook", "nosuchthing"}} {
+	for _, args := range [][]string{nil, {"nosuchthing"}, {"agent-hook"}, {"agent-hook", "nosuchthing"}, {"agent-pane"}, {"agent-pane", "nosuchthing"}} {
 		target := &recordingArgv{}
 		cmd := newInternalCommand()
 		cmd.tmux, cmd.status, cmd.statusbar, cmd.preview = target, target, target, target
