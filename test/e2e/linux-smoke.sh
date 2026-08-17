@@ -1602,6 +1602,7 @@ echo ">> managed binding e2e passed: socket=$binding_socket path=$binding_socket
 # ---------------------------------------------------------------------------
 delete_root="$PROJMUX_SMOKE_WORKDIR/delete-window-e2e"
 delete_socket="projmux-delete-$RANDOM-$$"
+delete_other_socket="projmux-delete-other-$RANDOM-$$"
 delete_product_socket="projmux"
 mkdir -p \
   "$delete_root/home" \
@@ -1610,7 +1611,8 @@ mkdir -p \
   "$delete_root/runtime" \
   "$delete_root/tmux" \
   "$delete_root/work/alpha" \
-  "$delete_root/work/beta"
+  "$delete_root/work/beta" \
+  "$delete_root/work/gamma"
 chmod 0700 "$delete_root/runtime" "$delete_root/tmux"
 
 delete_real_tmux="$(command -v tmux)"
@@ -1644,6 +1646,17 @@ delete_tmux() {
     "$delete_real_tmux" -L "$delete_socket" "$@"
 }
 
+delete_other_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$delete_root/home" \
+    XDG_CONFIG_HOME="$delete_root/config" \
+    XDG_STATE_HOME="$delete_root/state" \
+    XDG_RUNTIME_DIR="$delete_root/runtime" \
+    TMUX_TMPDIR="$delete_root/tmux" \
+    SHELL=/bin/sh \
+    "$delete_real_tmux" -L "$delete_other_socket" "$@"
+}
+
 delete_pmx() {
   env -u TMUX -u TMUX_PANE \
     HOME="$delete_root/home" \
@@ -1662,8 +1675,11 @@ delete_tmux set-option -t delete-alpha -q @projmux_project_path "$delete_root/wo
 delete_tmux new-window -d -t delete-alpha: -n sibling -c "$delete_root/work/alpha" sleep 600
 delete_tmux new-session -d -s delete-beta -n only -c "$delete_root/work/beta" sleep 600
 delete_tmux set-option -t delete-beta -q @projmux_project_path "$delete_root/work/beta"
+delete_other_tmux new-session -d -s foreign-delete -n untouched sleep 600
+delete_other_tmux set-option -gq @projmux_delete_sentinel untouched
 
 delete_socket_path="$(delete_tmux display-message -p -t delete-alpha '#{socket_path}')"
+delete_other_socket_path="$(delete_other_tmux display-message -p -t foreign-delete '#{socket_path}')"
 case "$delete_socket_path" in
   "$delete_root"/*) ;;
   *)
@@ -1671,22 +1687,40 @@ case "$delete_socket_path" in
     exit 1
     ;;
 esac
-echo ">> delete Window e2e socket=$delete_socket path=$delete_socket_path"
+case "$delete_other_socket_path" in
+  "$delete_root"/*) ;;
+  *)
+    echo "delete Pane/Agent e2e second socket escaped the smoke root: $delete_other_socket_path" >&2
+    exit 1
+    ;;
+esac
+delete_other_before="$(delete_other_tmux show-options -gqv @projmux_delete_sentinel):$(delete_other_tmux list-windows -a -F '#{session_name}:#{window_id}')"
+echo ">> delete resource e2e socket=$delete_socket path=$delete_socket_path other-socket=$delete_other_socket other-path=$delete_other_socket_path"
 
 delete_cleanup() {
-  local actual
+  local actual other_actual
   actual="$(delete_tmux display-message -p '#{socket_path}' 2>/dev/null || true)"
-  if [[ -z "$actual" ]]; then
-    return
+  if [[ -n "$actual" ]]; then
+    case "$actual" in
+      "$delete_root"/*)
+        env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+        ;;
+      *)
+        echo "refusing delete Window e2e cleanup outside the smoke root: $actual" >&2
+        ;;
+    esac
   fi
-  case "$actual" in
-    "$delete_root"/*)
-      env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
-      ;;
-    *)
-      echo "refusing delete Window e2e cleanup outside the smoke root: $actual" >&2
-      ;;
-  esac
+  other_actual="$(delete_other_tmux display-message -p '#{socket_path}' 2>/dev/null || true)"
+  if [[ -n "$other_actual" ]]; then
+    case "$other_actual" in
+      "$delete_root"/*)
+        env -u TMUX -u TMUX_PANE tmux -S "$other_actual" kill-server >/dev/null 2>&1 || true
+        ;;
+      *)
+        echo "refusing delete Pane/Agent e2e second cleanup outside the smoke root: $other_actual" >&2
+        ;;
+    esac
+  fi
 }
 trap 'delete_cleanup; smoke_cleanup_env' EXIT
 
@@ -1803,10 +1837,133 @@ if ! grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-self"; then
   exit 1
 fi
 smoke_assert_file_contains "$delete_root/self.out" "will queue after this result is flushed to kill tmux window $self_window"
+
+# Pane deletion removes one exact live split and Registry resource while the
+# sibling Pane, owning Window, Project, and foreign socket remain unchanged.
+delete_sibling_shell="$(delete_tmux display-message -p -t "$delete_sibling" '#{pane_id}')"
+delete_sibling_shell_uid="$(delete_tmux show-options -pqv -t "$delete_sibling_shell" @projmux_pane_uid)"
+delete_split="$(delete_pmx create pane --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id -- sleep 600)"
+delete_split_uid="$(delete_tmux show-options -pqv -t "$delete_split" @projmux_pane_uid)"
+echo ">> delete Pane sibling target pane=$delete_split uid=$delete_split_uid"
+delete_pmx delete pane "uid:$delete_split_uid" --dry-run >"$delete_root/pane-sibling-dry-run.out"
+smoke_assert_file_contains "$delete_root/pane-sibling-dry-run.out" "live would kill tmux pane $delete_split pane-uid=$delete_split_uid"
+if grep -Fq "last live Pane" "$delete_root/pane-sibling-dry-run.out"; then
+  echo "sibling Pane dry-run incorrectly predicted Window termination" >&2
+  exit 1
+fi
+delete_pmx delete pane "uid:$delete_split_uid" --yes >"$delete_root/pane-sibling.out"
+if [[ "$(delete_tmux display-message -p -t "$delete_split" '#{pane_id}' 2>/dev/null || true)" == "$delete_split" ]] || \
+  [[ "$(delete_tmux display-message -p -t "$delete_sibling_shell" '#{pane_id}')" != "$delete_sibling_shell" ]]; then
+  echo "exact Pane delete removed the wrong sibling or left its target live" >&2
+  exit 1
+fi
+# The generated after-kill-pane liveness sweep is intentionally backgrounded.
+# Let that already-triggered inventory transaction settle before introducing a
+# new Agent resource, so this test does not ask a pre-Agent snapshot to judge a
+# Pane created after the snapshot was taken.
+sleep 0.5
+
+# A real provider-shaped managed Pane exercises both ownership outcomes: Pane
+# delete keeps its Agent Offline, while Agent delete cascades through its exact
+# managed Pane and preserves the shell sibling.
+cat >"$delete_shim/codex" <<'DELETE_CODEX_STUB'
+#!/usr/bin/env bash
+exec sleep 600
+DELETE_CODEX_STUB
+chmod 0755 "$delete_shim/codex"
+delete_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
+delete_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
+delete_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_agent_pane" @projmux_pane_uid)"
+echo ">> delete managed Pane target agent=$delete_agent_uid pane=$delete_agent_pane uid=$delete_agent_pane_uid"
+delete_pmx delete pane "uid:$delete_agent_pane_uid" --yes >"$delete_root/managed-pane.out"
+delete_pmx describe agent "uid:$delete_agent_uid" -o json >"$delete_root/managed-agent-offline.json"
+smoke_assert_file_contains "$delete_root/managed-agent-offline.json" '"phase": "Offline"'
+if grep -Fq '"paneRef"' "$delete_root/managed-agent-offline.json"; then
+  echo "managed Pane delete left Agent paneRef behind" >&2
+  exit 1
+fi
+sleep 0.5
+
+delete_agent_two_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
+delete_agent_two_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
+delete_agent_two_pane_uid="$(delete_tmux show-options -pqv -t "$delete_agent_two_pane" @projmux_pane_uid)"
+echo ">> delete Agent target agent=$delete_agent_two_uid pane=$delete_agent_two_pane uid=$delete_agent_two_pane_uid"
+delete_pmx delete agent "uid:$delete_agent_two_uid" --dry-run >"$delete_root/agent-dry-run.out"
+smoke_assert_file_contains "$delete_root/agent-dry-run.out" "cascade pane/"
+smoke_assert_file_contains "$delete_root/agent-dry-run.out" "live would kill tmux pane $delete_agent_two_pane pane-uid=$delete_agent_two_pane_uid"
+delete_pmx delete agent "uid:$delete_agent_two_uid" --yes >"$delete_root/agent.out"
+if [[ "$(delete_tmux display-message -p -t "$delete_agent_two_pane" '#{pane_id}' 2>/dev/null || true)" == "$delete_agent_two_pane" ]]; then
+  echo "Agent delete left managed Pane $delete_agent_two_pane live" >&2
+  exit 1
+fi
+delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid >"$delete_root/agents.after-delete"
+if grep -Fqx "$delete_agent_two_uid" "$delete_root/agents.after-delete"; then
+  echo "Agent delete left Registry uid $delete_agent_two_uid" >&2
+  exit 1
+fi
+if [[ "$(delete_tmux display-message -p -t "$delete_sibling_shell" '#{pane_id}')" != "$delete_sibling_shell" ]]; then
+  echo "Agent delete changed shell sibling $delete_sibling_shell" >&2
+  exit 1
+fi
+
+# Deleting the sole Pane predicts and causes both implicit Window and session
+# teardown. A following reconciliation must not mint the deleted Pane back.
+delete_last_window="$(delete_tmux new-window -d -t delete-alpha: -n pane-last -c "$delete_root/work/alpha" -P -F '#{window_id}' sleep 600)"
+delete_last_pane="$(delete_tmux display-message -p -t "$delete_last_window" '#{pane_id}')"
+delete_last_pane_uid="$(delete_tmux show-options -pqv -t "$delete_last_pane" @projmux_pane_uid)"
+echo ">> delete last Pane Window target pane=$delete_last_pane uid=$delete_last_pane_uid window=$delete_last_window"
+delete_pmx delete pane "uid:$delete_last_pane_uid" --dry-run >"$delete_root/pane-last-dry-run.out"
+smoke_assert_file_contains "$delete_root/pane-last-dry-run.out" "live cascade would end Window $delete_last_window because its last live Pane is deleted"
+delete_pmx delete pane "uid:$delete_last_pane_uid" --yes >"$delete_root/pane-last.out"
+if [[ "$(delete_tmux display-message -p -t "$delete_last_window" '#{window_id}' 2>/dev/null || true)" == "$delete_last_window" ]]; then
+  echo "last-Pane delete left Window $delete_last_window live" >&2
+  exit 1
+fi
+
+# A fresh one-Window Project makes the same last-Pane cascade end the complete
+# session, which must be visible before mutation and in the durable result.
+delete_tmux new-session -d -s delete-gamma -n only -c "$delete_root/work/gamma" sleep 600
+delete_tmux set-option -t delete-gamma -q @projmux_project_path "$delete_root/work/gamma"
+delete_pmx tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-gamma.out"
+delete_gamma_pane="$(delete_tmux display-message -p -t delete-gamma:only '#{pane_id}')"
+delete_gamma_pane_uid="$(delete_tmux show-options -pqv -t "$delete_gamma_pane" @projmux_pane_uid)"
+delete_gamma_window="$(delete_tmux display-message -p -t "$delete_gamma_pane" '#{window_id}')"
+echo ">> delete last Pane session target pane=$delete_gamma_pane uid=$delete_gamma_pane_uid window=$delete_gamma_window session=delete-gamma"
+delete_pmx delete pane "uid:$delete_gamma_pane_uid" --dry-run >"$delete_root/pane-session-last-dry-run.out"
+smoke_assert_file_contains "$delete_root/pane-session-last-dry-run.out" "live cascade would end Window $delete_gamma_window because its last live Pane is deleted"
+smoke_assert_file_contains "$delete_root/pane-session-last-dry-run.out" "live cascade would end Project session delete-gamma because its last live Window is deleted"
+delete_pmx delete pane "uid:$delete_gamma_pane_uid" --yes >"$delete_root/pane-session-last.out"
+if delete_tmux has-session -t delete-gamma 2>/dev/null; then
+  echo "last-Pane delete left delete-gamma session live" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$delete_root/pane-session-last.out" "live cascade ended Project session delete-gamma"
+
+delete_pmx tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-after-pane-delete.out"
+delete_pmx get panes --all-projects -o uid >"$delete_root/panes.after-reconcile"
+for deleted_uid in "$delete_split_uid" "$delete_agent_pane_uid" "$delete_agent_two_pane_uid" "$delete_last_pane_uid" "$delete_gamma_pane_uid"; do
+  if grep -Fqx "$deleted_uid" "$delete_root/panes.after-reconcile"; then
+    echo "deleted Pane $deleted_uid was re-imported after reconciliation" >&2
+    exit 1
+  fi
+done
+if ! grep -Fqx "$delete_sibling_shell_uid" "$delete_root/panes.after-reconcile"; then
+  echo "Pane/Agent delete lost shell sibling Registry uid $delete_sibling_shell_uid" >&2
+  exit 1
+fi
+delete_other_after="$(delete_other_tmux show-options -gqv @projmux_delete_sentinel):$(delete_other_tmux list-windows -a -F '#{session_name}:#{window_id}')"
+if [[ "$delete_other_after" != "$delete_other_before" ]]; then
+  echo "Pane/Agent delete touched the foreign socket" >&2
+  exit 1
+fi
+
 for canonical_call in \
   "-L $delete_product_socket list-windows -a" \
   "-L $delete_product_socket kill-window -t $delete_primary" \
-  "-L $delete_product_socket run-shell -b"; do
+  "-L $delete_product_socket run-shell -b" \
+  "-L $delete_product_socket list-panes -a" \
+  "-L $delete_product_socket kill-pane -t $delete_split" \
+  "-L $delete_product_socket kill-pane -t $delete_agent_two_pane"; do
   if ! grep -Fq -- "$canonical_call" "$delete_shim_log"; then
     echo "delete Window e2e did not observe canonical exact routing: $canonical_call" >&2
     cat "$delete_shim_log" >&2
@@ -1816,4 +1973,4 @@ done
 
 delete_cleanup
 trap smoke_cleanup_env EXIT
-echo ">> delete Window e2e passed: socket=$delete_socket path=$delete_socket_path"
+echo ">> delete Window/Pane/Agent e2e passed: socket=$delete_socket path=$delete_socket_path other-socket=$delete_other_socket other-path=$delete_other_socket_path cleanup=validated-exact-sockets"

@@ -117,6 +117,12 @@ type BindingMatcher struct {
 	claimed map[string]bool
 }
 
+// DeletedPaneMirrorPrefix marks a live Pane whose Registry resource was
+// durably deleted before its self-target kill could be queued. It is transport
+// state, not a resource uid: every binding/import path must refuse it so the
+// deleted Pane cannot be minted back under a new identity.
+const DeletedPaneMirrorPrefix = "deleted:"
+
 // NewBindingMatcher builds a matcher over one pre-pass live-tmux observation.
 //
 // An empty observation is the fail-closed reading: nothing is known to be bound
@@ -195,6 +201,9 @@ func (b *BindingMatcher) MatchWindow(reg *Registry, projectUID, observedUID stri
 // live tmux window nobody adopted contributes none of its panes.
 func (b *BindingMatcher) MatchPane(reg *Registry, windowUID, observedUID string) AdoptionMatch {
 	if b == nil || reg == nil || strings.TrimSpace(windowUID) == "" {
+		return AdoptionMatch{Kind: AdoptionRefused}
+	}
+	if strings.HasPrefix(strings.TrimSpace(observedUID), DeletedPaneMirrorPrefix) {
 		return AdoptionMatch{Kind: AdoptionRefused}
 	}
 	owned := reg.paneUIDsInWindowOrder(windowUID)

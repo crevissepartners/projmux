@@ -28,7 +28,154 @@ func newTestDeleteCommand(store *fakeResourceStore, interactive bool, answer boo
 		},
 		resolveKinds: deleteRegistryKinds,
 		windows:      newFixtureWindowDeleteRuntime(),
+		panes:        newFixturePaneDeleteRuntime(),
 	}
+}
+
+type fakePaneDeleteRuntime struct {
+	preflights   int
+	killed       []paneLiveDeleteTarget
+	tombstoned   []paneLiveDeleteTarget
+	restored     []paneLiveDeleteTarget
+	queued       []paneLiveDeleteTarget
+	selfUID      string
+	preflightErr error
+	killErr      error
+	killErrs     map[string]error
+	tombstoneErr error
+	restoreErr   error
+	queueErr     error
+	killHook     func(paneLiveDeleteTarget)
+	queueHook    func([]paneLiveDeleteTarget)
+}
+
+func newFixturePaneDeleteRuntime() *fakePaneDeleteRuntime { return &fakePaneDeleteRuntime{} }
+
+func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetadata.Registry, plan deletePlan) (paneLiveDeletePlan, error) {
+	r.preflights++
+	if r.preflightErr != nil {
+		return paneLiveDeletePlan{}, r.preflightErr
+	}
+	planned := plannedPaneDeletes(plan)
+	selectedByWindow := map[string]int{}
+	lastByWindow := map[string]string{}
+	windowByPane := map[string]string{}
+	projectByWindow := map[string]string{}
+	for _, item := range planned {
+		_, window, project, err := paneRegistryAncestry(registry, item.paneUID)
+		if err != nil {
+			return paneLiveDeletePlan{}, err
+		}
+		windowByPane[item.paneUID] = window.Metadata.UID
+		projectByWindow[window.Metadata.UID] = project.Metadata.UID
+		selectedByWindow[window.Metadata.UID]++
+		lastByWindow[window.Metadata.UID] = item.paneUID
+	}
+	paneCount := map[string]int{}
+	for _, pane := range registry.Panes {
+		_, window, _, err := paneRegistryAncestry(registry, pane.Metadata.UID)
+		if err == nil {
+			paneCount[window.Metadata.UID]++
+		}
+	}
+	windowCount := map[string]int{}
+	for _, window := range registry.Windows {
+		windowCount[window.Metadata.OwnerUID()]++
+	}
+	endingWindows := map[string]int{}
+	for windowUID, selected := range selectedByWindow {
+		if selected == paneCount[windowUID] {
+			endingWindows[projectByWindow[windowUID]]++
+		}
+	}
+	lastEndingWindow := map[string]string{}
+	for _, item := range planned {
+		windowUID := windowByPane[item.paneUID]
+		if selectedByWindow[windowUID] == paneCount[windowUID] && lastByWindow[windowUID] == item.paneUID {
+			lastEndingWindow[projectByWindow[windowUID]] = windowUID
+		}
+	}
+	out := paneLiveDeletePlan{}
+	for _, item := range planned {
+		_, window, project, _ := paneRegistryAncestry(registry, item.paneUID)
+		paneIndex := 0
+		for i := range registry.Panes {
+			if registry.Panes[i].Metadata.UID == item.paneUID {
+				paneIndex = i
+				break
+			}
+		}
+		windowIndex := 0
+		for i := range registry.Windows {
+			if registry.Windows[i].Metadata.UID == window.Metadata.UID {
+				windowIndex = i
+				break
+			}
+		}
+		projectIndex := 0
+		for i := range registry.Projects {
+			if registry.Projects[i].Metadata.UID == project.Metadata.UID {
+				projectIndex = i
+				break
+			}
+		}
+		sessionName := project.Metadata.Name
+		if project.Status.Session != nil {
+			sessionName = project.Status.Session.Name
+		}
+		endsWindow := selectedByWindow[window.Metadata.UID] == paneCount[window.Metadata.UID] && lastByWindow[window.Metadata.UID] == item.paneUID
+		out.Targets = append(out.Targets, paneLiveDeleteTarget{
+			ResourceUID: item.resourceUID, PaneUID: item.paneUID, PaneID: fmt.Sprintf("%%%d", paneIndex+30),
+			WindowUID: window.Metadata.UID, WindowID: fmt.Sprintf("@%d", windowIndex+10),
+			SessionID: fmt.Sprintf("$%d", projectIndex+20), SessionName: sessionName, ProjectUID: project.Metadata.UID,
+			EndsWindow: endsWindow,
+			EndsSession: endsWindow && endingWindows[project.Metadata.UID] == windowCount[project.Metadata.UID] &&
+				lastEndingWindow[project.Metadata.UID] == window.Metadata.UID,
+			Self: item.paneUID == r.selfUID,
+		})
+	}
+	return out, nil
+}
+
+func (r *fakePaneDeleteRuntime) kill(_ context.Context, target paneLiveDeleteTarget) error {
+	if r.killHook != nil {
+		r.killHook(target)
+	}
+	if err := r.killErrs[target.PaneID]; err != nil {
+		return err
+	}
+	if r.killErr != nil {
+		return r.killErr
+	}
+	r.killed = append(r.killed, target)
+	return nil
+}
+
+func (r *fakePaneDeleteRuntime) tombstoneSelfKill(_ context.Context, targets []paneLiveDeleteTarget) error {
+	if r.tombstoneErr != nil {
+		return r.tombstoneErr
+	}
+	r.tombstoned = append(r.tombstoned, targets...)
+	return nil
+}
+
+func (r *fakePaneDeleteRuntime) restoreSelfKill(_ context.Context, targets []paneLiveDeleteTarget) error {
+	if r.restoreErr != nil {
+		return r.restoreErr
+	}
+	r.restored = append(r.restored, targets...)
+	return nil
+}
+
+func (r *fakePaneDeleteRuntime) queueSelfKill(_ context.Context, targets []paneLiveDeleteTarget) error {
+	if r.queueHook != nil {
+		r.queueHook(targets)
+	}
+	if r.queueErr != nil {
+		return r.queueErr
+	}
+	r.queued = append(r.queued, targets...)
+	return nil
 }
 
 type fakeWindowDeleteRuntime struct {
