@@ -1025,8 +1025,8 @@ func TestAISplitDirectAlwaysCreatesNewPaneWithoutReuseProbe(t *testing.T) {
 			return []byte(work + "\n"), nil
 		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
 			return []byte("%9\n"), nil
-		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%1", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
-			return []byte("%1\t0\t0\t40\t10\n%2\t41\t0\t40\t10\n%9\t82\t0\t40\t10\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%1", "-F", splitPaneGeometryFormat}):
+			return []byte("%1\x1f0\x1f0\x1f40\x1f10\n%2\x1f41\x1f0\x1f40\x1f10\n%9\x1f82\x1f0\x1f40\x1f10\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -1087,8 +1087,8 @@ func TestAISplitDefaultAlwaysCreatesNewPaneWithoutReuseProbe(t *testing.T) {
 			return []byte(work + "\n"), nil
 		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
 			return []byte("%9\n"), nil
-		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%1", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
-			return []byte("%1\t0\t0\t40\t10\n%2\t0\t11\t40\t10\n%9\t0\t22\t40\t10\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%1", "-F", splitPaneGeometryFormat}):
+			return []byte("%1\x1f0\x1f0\x1f40\x1f10\n%2\x1f0\x1f11\x1f40\x1f10\n%9\x1f0\x1f22\x1f40\x1f10\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -1142,8 +1142,8 @@ func TestAISplitDirectFromCurrentAIPaneStillCreatesNewPane(t *testing.T) {
 			return []byte(work + "\n"), nil
 		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
 			return []byte("%10\n"), nil
-		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%2", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
-			return []byte("%1\t0\t0\t40\t10\n%2\t41\t0\t40\t10\n%10\t82\t0\t40\t10\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%2", "-F", splitPaneGeometryFormat}):
+			return []byte("%1\x1f0\x1f0\x1f40\x1f10\n%2\x1f41\x1f0\x1f40\x1f10\n%10\x1f82\x1f0\x1f40\x1f10\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -1205,8 +1205,8 @@ func TestAISplitPickerSelectionPreservesLaunchPathWithExistingManagedPane(t *tes
 			return []byte(work + "\n"), nil
 		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
 			return []byte("%9\n"), nil
-		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%1", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
-			return []byte("%1\t0\t0\t40\t10\n%9\t41\t0\t40\t10\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", "%1", "-F", splitPaneGeometryFormat}):
+			return []byte("%1\x1f0\x1f0\x1f40\x1f10\n%9\x1f41\x1f0\x1f40\x1f10\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -1262,8 +1262,8 @@ func TestAISplitCodexRunsNativeTmuxSplitAndStartsWatcher(t *testing.T) {
 		if name == "tmux" && len(args) >= 6 && reflect.DeepEqual(args[:6], []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t"}) {
 			return []byte("%9\n"), nil
 		}
-		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-t", "%7", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}) {
-			return []byte("%2\t0\t0\t20\t10\n%7\t21\t0\t10\t10\n%9\t32\t0\t10\t10\n%8\t0\t11\t42\t10\n"), nil
+		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-t", "%7", "-F", splitPaneGeometryFormat}) {
+			return []byte("%2\x1f0\x1f0\x1f20\x1f10\n%7\x1f21\x1f0\x1f10\x1f10\n%9\x1f32\x1f0\x1f10\x1f10\n%8\x1f0\x1f11\x1f42\x1f10\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -1849,8 +1849,8 @@ func TestAISplitAgentShellUsesPlainShellSplit(t *testing.T) {
 		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_id}"}) {
 			return []byte("%7\n"), nil
 		}
-		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-t", "%7", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}) {
-			return []byte("%7\t0\t0\t40\t10\n%9\t0\t11\t40\t10\n"), nil
+		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-t", "%7", "-F", splitPaneGeometryFormat}) {
+			return []byte("%7\x1f0\x1f0\x1f40\x1f10\n%9\x1f0\x1f11\x1f40\x1f10\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -2126,8 +2126,8 @@ func TestAISplitShellUsesTmuxSplitWindow(t *testing.T) {
 		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%9", "-F", "#{pane_id}"}) {
 			return []byte("%9\n"), nil
 		}
-		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-t", "%9", "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}) {
-			return []byte("%1\t0\t0\t80\t10\n%9\t0\t11\t80\t5\n%10\t0\t17\t80\t5\n%11\t81\t0\t20\t22\n"), nil
+		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-t", "%9", "-F", splitPaneGeometryFormat}) {
+			return []byte("%1\x1f0\x1f0\x1f80\x1f10\n%9\x1f0\x1f11\x1f80\x1f5\n%10\x1f0\x1f17\x1f80\x1f5\n%11\x1f81\x1f0\x1f20\x1f22\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -3407,8 +3407,8 @@ func stubAISplitReadCommand(cmd *aiCommand, home, work string, bins map[string]s
 			return []byte(work + "\n"), nil
 		case len(args) >= 6 && reflect.DeepEqual(args[:4], []string{"split-window", "-P", "-F", "#{pane_id}"}):
 			return []byte(newPane + "\n"), nil
-		case reflect.DeepEqual(args, []string{"list-panes", "-t", targetPane, "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"}):
-			return []byte(targetPane + "\t0\t0\t40\t10\n" + newPane + "\t41\t0\t40\t10\n"), nil
+		case reflect.DeepEqual(args, []string{"list-panes", "-t", targetPane, "-F", splitPaneGeometryFormat}):
+			return []byte(targetPane + "\x1f0\x1f0\x1f40\x1f10\n" + newPane + "\x1f41\x1f0\x1f40\x1f10\n"), nil
 		}
 		return nil, os.ErrNotExist
 	}

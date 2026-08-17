@@ -4,24 +4,55 @@ import (
 	"errors"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
+
+// geometryRows renders fixture rows with the given field separator so the two
+// spellings tmux actually emits are both exercised.
+func geometryRows(separator string, rows ...[]string) string {
+	var out strings.Builder
+	for _, row := range rows {
+		out.WriteString(strings.Join(row, separator))
+		out.WriteString("\n")
+	}
+	return out.String()
+}
 
 func TestParseSplitPaneGeometrySkipsMalformedRows(t *testing.T) {
 	t.Parallel()
 
-	got := parseSplitPaneGeometry("\n" +
-		"%1\t0\t0\t41\t20\n" +
-		"missing-fields\t0\n" +
-		"%bad-width\t0\t0\tnope\t20\n" +
-		"%zero-height\t0\t0\t20\t0\n" +
-		"%2\t42\t0\t40\t20\n")
-	want := []aiPaneGeometry{
-		{id: "%1", left: 0, top: 0, width: 41, height: 20},
-		{id: "%2", left: 42, top: 0, width: 40, height: 20},
+	// tmux 3.5a returns the literal four characters `\037`; tmux 3.6 returns
+	// the raw 0x1F byte. Both must parse identically, which is the whole
+	// reason this format does not use a raw tab.
+	for _, separator := range []string{tmuxRowSepFormat, tmuxRowSep} {
+		got := parseSplitPaneGeometry("\n" + geometryRows(separator,
+			[]string{"%1", "0", "0", "41", "20"},
+			[]string{"missing-fields", "0"},
+			[]string{"%bad-width", "0", "0", "nope", "20"},
+			[]string{"%zero-height", "0", "0", "20", "0"},
+			[]string{"%2", "42", "0", "40", "20"},
+		))
+		want := []aiPaneGeometry{
+			{id: "%1", left: 0, top: 0, width: 41, height: 20},
+			{id: "%2", left: 42, top: 0, width: 40, height: 20},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("geometry(%q) = %#v, want %#v", separator, got, want)
+		}
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("geometry = %#v, want %#v", got, want)
+}
+
+// A raw tab is what tmux 3.5a sanitizes to `_`, which parsed as one field and
+// made equalization a silent no-op on that version.
+func TestSplitPaneGeometryFormatCarriesNoRawTab(t *testing.T) {
+	t.Parallel()
+
+	if strings.Contains(splitPaneGeometryFormat, "\t") {
+		t.Fatalf("geometry format carries a raw tab: %q", splitPaneGeometryFormat)
+	}
+	if got := parseSplitPaneGeometry("%1_0_0_41_20\n%2_42_0_40_20\n"); len(got) != 0 {
+		t.Fatalf("sanitized tmux 3.5a output parsed as geometry: %#v", got)
 	}
 }
 
@@ -72,9 +103,10 @@ func TestApplyEvenSplitLayoutNoOpsOnUnreadableOrInvalidGeometry(t *testing.T) {
 		err  error
 	}{
 		{name: "unreadable", err: errors.New("no server")},
-		{name: "one pane", out: "%1\t0\t0\t80\t24\n"},
-		{name: "malformed", out: "%1\t0\t0\tbad\t24\n"},
-		{name: "target absent", out: "%2\t0\t0\t80\t24\n"},
+		{name: "one pane", out: geometryRows(tmuxRowSepFormat, []string{"%1", "0", "0", "80", "24"})},
+		{name: "malformed", out: geometryRows(tmuxRowSepFormat, []string{"%1", "0", "0", "bad", "24"})},
+		{name: "target absent", out: geometryRows(tmuxRowSepFormat, []string{"%2", "0", "0", "80", "24"})},
+		{name: "tab sanitized by tmux 3.5a", out: "%1_0_0_40_24\n%3_41_0_39_24\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -98,7 +130,12 @@ func TestApplyEvenSplitLayoutIgnoresResizeFailuresAndUnrelatedTopology(t *testin
 	applyEvenSplitLayout("%2", "right",
 		func(args ...string) ([]byte, error) {
 			readArgs = append([]string(nil), args...)
-			return []byte("%1\t0\t0\t20\t10\n%2\t21\t0\t10\t10\n%3\t32\t0\t10\t10\n%4\t0\t11\t42\t10\n"), nil
+			return []byte(geometryRows(tmuxRowSepFormat,
+				[]string{"%1", "0", "0", "20", "10"},
+				[]string{"%2", "21", "0", "10", "10"},
+				[]string{"%3", "32", "0", "10", "10"},
+				[]string{"%4", "0", "11", "42", "10"},
+			)), nil
 		},
 		func(args ...string) error {
 			resizeArgs = append(resizeArgs, append([]string(nil), args...))

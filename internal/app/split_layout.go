@@ -6,7 +6,15 @@ import (
 	"strings"
 )
 
-const splitPaneGeometryFormat = "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}"
+// splitPaneGeometryFormat joins its fields with the materializer's row
+// separator rather than a raw tab. A raw tab is not a usable separator here:
+// tmux 3.5a sanitizes it to `_` in list output while 3.6 emits it verbatim, so
+// a tab-separated format parses as a single field on 3.5a and silently
+// equalizes nothing. The escaped `\037` spelling comes back identically on both
+// and splitTmuxRows folds it to the raw byte.
+var splitPaneGeometryFormat = tmuxRowFormat(
+	"#{pane_id}", "#{pane_left}", "#{pane_top}", "#{pane_width}", "#{pane_height}",
+)
 
 // aiPaneGeometry is the shared geometry record used by legacy AI splits and
 // canonical resource creates. Keeping the established name avoids changing the
@@ -66,11 +74,10 @@ func applyEvenSplitLayout(
 }
 
 func parseSplitPaneGeometry(value string) []aiPaneGeometry {
-	lines := strings.Split(strings.TrimSpace(value), "\n")
-	panes := make([]aiPaneGeometry, 0, len(lines))
-	for _, line := range lines {
-		fields := strings.Split(line, "\t")
-		if len(fields) != 5 || strings.TrimSpace(fields[0]) == "" {
+	rows := splitTmuxRows(value, 5)
+	panes := make([]aiPaneGeometry, 0, len(rows))
+	for _, fields := range rows {
+		if strings.TrimSpace(fields[0]) == "" {
 			continue
 		}
 		pane := aiPaneGeometry{

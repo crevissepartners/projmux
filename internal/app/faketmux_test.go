@@ -557,11 +557,7 @@ func (f *fakeTmux) runKill(args []string) ([]byte, error) {
 // and 3.6 do. A fake that echoed a raw 0x1F would hide the parsing bug that
 // spelling exists to avoid.
 func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindow, pane *fakeTmuxPane) string {
-	separator := tmuxRowSepFormat
-	if strings.Contains(format, "\t") {
-		separator = "\t"
-	}
-	fields := strings.Split(format, separator)
+	fields := strings.Split(format, tmuxRowSepFormat)
 	out := make([]string, 0, len(fields))
 	for _, field := range fields {
 		token := strings.TrimSuffix(strings.TrimPrefix(field, "#{"), "}")
@@ -594,7 +590,7 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, "")
 		}
 	}
-	return strings.Join(out, separator)
+	return strings.Join(out, tmuxRowSepFormat)
 }
 
 // scopedOption reads a projmux option from the narrowest scope the caller
