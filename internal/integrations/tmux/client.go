@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"sort"
@@ -109,7 +110,7 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, newCommandError(name, args, output, err)
+		return output, newCommandError(name, args, output, err)
 	}
 	return output, nil
 }
@@ -529,6 +530,14 @@ func (c *Client) ListWindowPanes(ctx context.Context, sessionName string, window
 
 // EnsureSession creates the target session when it is missing.
 func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) error {
+	return c.EnsureSessionWithEnvironment(ctx, sessionName, cwd, nil)
+}
+
+// EnsureSessionWithEnvironment is EnsureSession with additional session
+// environment installed atomically by new-session -e. Canonical create uses
+// this narrow extension so a synchronous after-new-window hook can recognize
+// the transaction that is already holding the metadata lock.
+func (c *Client) EnsureSessionWithEnvironment(ctx context.Context, sessionName, cwd string, additionalEnv map[string]string) error {
 	if strings.TrimSpace(sessionName) == "" {
 		return errSessionNameRequired
 	}
@@ -551,6 +560,12 @@ func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) err
 	}
 
 	sessionEnv := c.projectSessionEnv(cwd)
+	if len(additionalEnv) > 0 {
+		merged := make(map[string]string, len(sessionEnv)+len(additionalEnv))
+		maps.Copy(merged, sessionEnv)
+		maps.Copy(merged, additionalEnv)
+		sessionEnv = merged
+	}
 	paneID, err := c.createDetachedSession(ctx, sessionName, cwd, sessionEnv)
 	if err != nil {
 		c.failLifecycle(diagnostics.OperationSessionCreate)

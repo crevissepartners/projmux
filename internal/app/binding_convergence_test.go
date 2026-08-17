@@ -161,7 +161,7 @@ func TestGeneratedLifecycleUsesSynchronousExactSocketPathBoundary(t *testing.T) 
 			t.Fatalf("generated app config missing %s", line)
 		}
 	}
-	for _, want := range []string{"internal tmux reconcile-bindings", "--socket-path", "#{socket_path}"} {
+	for _, want := range []string{"internal tmux reconcile-bindings", "--socket-path", "#{socket_path}", "--session", "#{session_id}"} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("generated app config missing %q", want)
 		}
@@ -176,22 +176,86 @@ func TestGeneratedLifecycleUsesSynchronousExactSocketPathBoundary(t *testing.T) 
 	}
 
 	var got explicitTmuxTarget
-	cmd := &tmuxCommand{bindingConverger: func(_ context.Context, target explicitTmuxTarget) error {
+	path := filepath.Join(t.TempDir(), "managed.sock")
+	server := newFakeTmux()
+	server.addSession("alpha")
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-S\x00" + path: server}}
+	cmd := &tmuxCommand{runner: runner, bindingConverger: func(_ context.Context, target explicitTmuxTarget) error {
 		got = target
 		return nil
 	}}
 	var stderr bytes.Buffer
-	path := filepath.Join(t.TempDir(), "managed.sock")
-	if err := cmd.runReconcileBindings([]string{"--socket-path", path}, &stderr); err != nil {
+	if err := cmd.runReconcileBindings([]string{"--socket-path", path, "--session", "alpha"}, &stderr); err != nil {
 		t.Fatalf("hidden lifecycle command: %v; stderr=%q", err, stderr.String())
 	}
 	if got.flag != "-S" || got.value != path {
 		t.Fatalf("lifecycle target = %+v, want exact -S %s", got, path)
 	}
-	for _, args := range [][]string{{}, {"--socket-path", "relative"}, {"--socket-path", path, "extra"}} {
+	for _, args := range [][]string{{}, {"--socket-path", "relative", "--session", "alpha"}, {"--socket-path", path}, {"--socket-path", path, "--session", "alpha", "extra"}} {
 		if err := cmd.runReconcileBindings(args, &bytes.Buffer{}); err == nil {
 			t.Fatalf("hidden lifecycle accepted implicit/malformed target: %v", args)
 		}
+	}
+}
+
+func TestLifecycleDefersOnlyALiveCreateOperationOnTheExactSession(t *testing.T) {
+	t.Parallel()
+
+	server := newFakeTmux()
+	session := server.addSession("alpha")
+	session.env[createOperationEnvironment] = newCreateOperationMarker("op-test")
+	path := filepath.Join(t.TempDir(), "managed.sock")
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-S\x00" + path: server}}
+	converged := 0
+	cmd := &tmuxCommand{
+		runner: runner,
+		bindingConverger: func(_ context.Context, _ explicitTmuxTarget) error {
+			converged++
+			return nil
+		},
+	}
+
+	if err := cmd.runReconcileBindings([]string{"--socket-path", path, "--session", "alpha"}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("active create hook: %v", err)
+	}
+	if converged != 0 {
+		t.Fatalf("active create hook entered registry convergence %d times", converged)
+	}
+
+	delete(session.env, createOperationEnvironment)
+	if err := cmd.runReconcileBindings([]string{"--socket-path", path, "--session", "alpha"}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("standalone lifecycle hook: %v", err)
+	}
+	if converged != 1 {
+		t.Fatalf("standalone lifecycle convergence calls = %d, want 1", converged)
+	}
+}
+
+func TestLifecycleClearsStaleCreateLeaseBeforeSynchronousConvergence(t *testing.T) {
+	t.Parallel()
+
+	server := newFakeTmux()
+	session := server.addSession("alpha")
+	session.env[createOperationEnvironment] = "v1:999999999:1:op-stale"
+	path := filepath.Join(t.TempDir(), "managed.sock")
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-S\x00" + path: server}}
+	converged := 0
+	cmd := &tmuxCommand{
+		runner: runner,
+		bindingConverger: func(_ context.Context, _ explicitTmuxTarget) error {
+			converged++
+			return nil
+		},
+	}
+
+	if err := cmd.runReconcileBindings([]string{"--socket-path", path, "--session", "alpha"}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("stale create hook: %v", err)
+	}
+	if converged != 1 {
+		t.Fatalf("stale create convergence calls = %d, want 1", converged)
+	}
+	if got := session.env[createOperationEnvironment]; got != "" {
+		t.Fatalf("stale create lease survived: %q", got)
 	}
 }
 

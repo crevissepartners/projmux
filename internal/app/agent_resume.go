@@ -385,11 +385,13 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			return err
 		}
 		paneID, err := r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, project.Spec.Root, launchArgv)
-		if err != nil {
-			return err
+		if paneID != "" {
+			ledger.record(runtimePane, paneID, pane.Metadata.UID)
+			if mirrorErr := r.create.runtime.mirror.MirrorPane(ctx, paneID, pane); mirrorErr != nil {
+				return errors.Join(err, mirrorErr)
+			}
 		}
-		ledger.record(runtimePane, paneID, pane.Metadata.UID)
-		if err := r.create.runtime.mirror.MirrorPane(ctx, paneID, pane); err != nil {
+		if err != nil {
 			return err
 		}
 		r.launcher.BindResumedAgentPane(paneID, plan.provider, project.Spec.Root, title, plan.conversationID)

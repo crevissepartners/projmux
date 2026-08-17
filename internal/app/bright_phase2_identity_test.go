@@ -47,35 +47,35 @@ func appLightThemeConfig() theme.ThemeConfig {
 var brightPhase2ConfigGoldens = map[string]map[string]string{
 	"fallback": {
 		"standalone": "f7a51ab5fc17c362003033006817c9c0b5d5564922cfbba8a0a6fac72b7e01ca",
-		"app":        "7a43436a0abc2bbcc6318685f4960c4b53e6f6b531fc44c57d288a5a1b78ef62",
+		"app":        "5dc9971185f6ac6e9d6f0e52434c1d325e5d15cc6f6c6cd1e0f146009a580a0c",
 	},
 	"projmux": {
 		"standalone": "d68ebece77073e2d5ee9662805b672b730fab95a7a781153ea2203dc9235168a",
-		"app":        "38b5fad6df03a113ad6973c69b0cfcf682f95f0f42f41a9951426d5af4e2dc42",
+		"app":        "c896871e86ab86ee0e37582410545f026c555f94fa68030519d54e5872ac6638",
 	},
 	"blue-hour": {
 		"standalone": "361095f98401cff136889cb917b353546819607282b8cac50abf2f5160633a81",
-		"app":        "5da4b2812529bd7c128b6d656678e3ca29a9a726458f9605c16ecc7400cd7cc1",
+		"app":        "6da0463260ca53c5df185c8fbe38829665a1b58f14a56362f73254286c309b6b",
 	},
 	"carbon-violet": {
 		"standalone": "22252a0ce20895c42fd7b8052ac44e3df88bb5b9531e5e8c431d3d696aa10b59",
-		"app":        "28a6eb6c950cf4881b2c45963c1341f4fd1fc1234afa7495e487d7d658049069",
+		"app":        "d83f2e8b61b21ff03c12a4f37101082dc3d4a47d9e9d6133a9649234b0903e87",
 	},
 	"ember": {
 		"standalone": "bbd6c1035451fcfa292c45143e9cfd6b0dd57dff5b35213cc6b0ce47ed856734",
-		"app":        "07248afbaa7ef77af4c5af5770d025c52a03f64c6b49896d302cad4b5e9b8e61",
+		"app":        "bf99cfaca9a07fe55b76b33b1918667040ddb16e6c0c7bd814f2a69e75488695",
 	},
 	"forest": {
 		"standalone": "8937d096d575c588de16b24794f3aa083d9dad4ef852d645da4b10f8b5458b4a",
-		"app":        "b6dc13bd73f96650f2f5f1b2408bc41100fccc8d845db95d95cfbae6cc9eede4",
+		"app":        "51cfc96bad165a7eb0c3d656031f09b229229285ae1defa86aec8b4189745aae",
 	},
 	"rose": {
 		"standalone": "aff9d98051db85ade20bc1139de4f6e7017a386270e654cb46227bfc73c9ef87",
-		"app":        "b46f692c167f390bc54e7092257418272959563c83f3f6655a3b43b2f736afd7",
+		"app":        "d9cb3e89a44829b3ea8cf8ab93ef550a6d1ffbdd97929734102cb371bd7fb85a",
 	},
 	"high-contrast": {
 		"standalone": "1c204d39891ab738973e8cf528132a260171912173ae35155834a5eaf793c0e2",
-		"app":        "00a06be08f6b84f2905af9005dd0db7f62093f15d403105b04f226de0b22d14e",
+		"app":        "b670322a3935525450abc08cdecadb99abb92b456e881e45d4c1d1ad344b1527",
 	},
 }
 

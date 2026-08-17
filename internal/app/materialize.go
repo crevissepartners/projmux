@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -44,6 +46,10 @@ type sessionMaterializer interface {
 	EnsureSession(ctx context.Context, sessionName, cwd string) error
 }
 
+type operationSessionMaterializer interface {
+	EnsureSessionWithEnvironment(ctx context.Context, sessionName, cwd string, env map[string]string) error
+}
+
 // runtimeObjectKind names one class of tmux object an operation can create.
 type runtimeObjectKind string
 
@@ -72,7 +78,13 @@ type runtimeObject struct {
 // onto it. A pre-existing session, a window another operation created, and an
 // id that tmux has since recycled are all left alone.
 type runtimeLedger struct {
-	created []runtimeObject
+	created          []runtimeObject
+	operationMarker  string
+	markedSessionIDs []string
+}
+
+func newRuntimeLedger(operationID string) *runtimeLedger {
+	return &runtimeLedger{operationMarker: newCreateOperationMarker(operationID)}
 }
 
 func (l *runtimeLedger) record(kind runtimeObjectKind, id, uid string) {
@@ -88,6 +100,16 @@ func (l *runtimeLedger) entries() []runtimeObject {
 		return nil
 	}
 	return l.created
+}
+
+func (l *runtimeLedger) markSession(session string) {
+	if l == nil || strings.TrimSpace(session) == "" {
+		return
+	}
+	if slices.Contains(l.markedSessionIDs, session) {
+		return
+	}
+	l.markedSessionIDs = append(l.markedSessionIDs, session)
 }
 
 // ownershipOption is the mirrored option that proves this operation owns a
@@ -132,10 +154,7 @@ type materializer struct {
 
 func (m *materializer) read(ctx context.Context, args ...string) (string, error) {
 	out, err := m.runner.Run(ctx, "tmux", args...)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(string(out)), err
 }
 
 // option reads one tmux format value for a target, treating an unreadable
@@ -155,9 +174,18 @@ func (m *materializer) rollback(ctx context.Context, ledger *runtimeLedger) {
 	entries := ledger.entries()
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
-		if got := m.option(ctx, entry.ID, "#{"+entry.ownershipOption()+"}"); got != entry.UID {
-			// Either the object is gone or it no longer belongs to this
-			// operation. Both mean "not ours to remove".
+		got, err := m.read(ctx, "display-message", "-p", "-t", entry.ID, "-F", "#{"+entry.ownershipOption()+"}")
+		if err != nil {
+			// The object is already gone, so the desired rollback state holds.
+			continue
+		}
+		if got != entry.UID {
+			// The object still exists but no longer belongs to this operation.
+			// Preserve it and make the residual drift explicit.
+			if m.warn != nil {
+				fmt.Fprintf(m.warn, "projmux: rollback preserved %s %s because its ownership uid is %q, want %q\n",
+					entry.Kind, entry.ID, got, entry.UID)
+			}
 			continue
 		}
 		if _, err := m.runner.Run(ctx, "tmux", entry.killCommand(), "-t", entry.ID); err != nil && m.warn != nil {
@@ -182,13 +210,31 @@ func (m *materializer) ensureSession(
 		return false, tmuxError("check tmux session %q: %v", sessionName, err)
 	}
 	if exists {
+		if err := m.markCreateOperation(ctx, sessionName, ledger); err != nil {
+			return false, err
+		}
 		return false, nil
 	}
-	if err := m.sessions.EnsureSession(ctx, sessionName, project.Spec.Root); err != nil {
-		// A pre-create hook refusal lands here with nothing created, so the
-		// ledger stays empty and the caller's transaction is discarded whole.
-		return false, tmuxError("materialize tmux session %q: %v", sessionName, err)
+	var ensureErr error
+	if sessions, ok := m.sessions.(operationSessionMaterializer); ok {
+		ensureErr = sessions.EnsureSessionWithEnvironment(ctx, sessionName, project.Spec.Root, map[string]string{
+			createOperationEnvironment: ledger.operationMarker,
+		})
+	} else {
+		ensureErr = m.sessions.EnsureSession(ctx, sessionName, project.Spec.Root)
+		if ensureErr == nil {
+			ensureErr = m.markCreateOperation(ctx, sessionName, ledger)
+		}
 	}
+	if ensureErr != nil {
+		// A pre-create hook refusal lands here with nothing created. A later
+		// synchronous tmux hook can instead fail after new-session created the
+		// session. The -e lease is then exact ownership evidence, so establish
+		// the Project uid and ledger entry before surfacing the original error.
+		m.recordErrorCreatedSession(ctx, project, sessionName, ledger)
+		return false, tmuxError("materialize tmux session %q: %v", sessionName, ensureErr)
+	}
+	ledger.markSession(sessionName)
 	sessionID := m.option(ctx, sessionName, "#{session_id}")
 	if err := m.mirror.MirrorProject(ctx, sessionName, project); err != nil {
 		// The session exists but is unidentifiable, so record it under the uid
@@ -199,6 +245,68 @@ func (m *materializer) ensureSession(
 	}
 	ledger.record(runtimeSession, sessionID, project.Metadata.UID)
 	return true, nil
+}
+
+func (m *materializer) recordErrorCreatedSession(
+	ctx context.Context,
+	project coremetadata.Project,
+	sessionName string,
+	ledger *runtimeLedger,
+) {
+	if ledger == nil || strings.TrimSpace(ledger.operationMarker) == "" {
+		return
+	}
+	exists, err := m.sessions.SessionExists(ctx, sessionName)
+	if err != nil || !exists {
+		return
+	}
+	out, err := m.runner.Run(ctx, "tmux", "show-environment", "-t", sessionName)
+	if err != nil || sessionEnvironmentValue(string(out), createOperationEnvironment) != ledger.operationMarker {
+		return
+	}
+	ledger.markSession(sessionName)
+	sessionID := m.option(ctx, sessionName, "#{session_id}")
+	if sessionID == "" {
+		if m.warn != nil {
+			fmt.Fprintf(m.warn, "projmux: create failed with an owned but unidentifiable tmux session %s; preserved it\n", sessionName)
+		}
+		return
+	}
+	if err := m.mirror.MirrorProject(ctx, sessionName, project); err != nil {
+		m.recordSessionForRollback(ctx, ledger, sessionID, project.Metadata.UID)
+		return
+	}
+	ledger.record(runtimeSession, sessionID, project.Metadata.UID)
+}
+
+func (m *materializer) markCreateOperation(ctx context.Context, sessionName string, ledger *runtimeLedger) error {
+	if ledger == nil || strings.TrimSpace(ledger.operationMarker) == "" {
+		return errors.New("materialize tmux session: create-operation lease is missing")
+	}
+	if _, err := m.runner.Run(ctx, "tmux", "set-environment", "-t", sessionName, createOperationEnvironment, ledger.operationMarker); err != nil {
+		return tmuxError("mark tmux session %q for create operation: %v", sessionName, err)
+	}
+	ledger.markSession(sessionName)
+	return nil
+}
+
+func (m *materializer) clearCreateOperations(ctx context.Context, ledger *runtimeLedger) {
+	if ledger == nil {
+		return
+	}
+	for _, sessionName := range ledger.markedSessionIDs {
+		exists, err := m.sessions.SessionExists(ctx, sessionName)
+		if err != nil || !exists {
+			continue
+		}
+		out, err := m.runner.Run(ctx, "tmux", "show-environment", "-t", sessionName)
+		if err != nil || sessionEnvironmentValue(string(out), createOperationEnvironment) != ledger.operationMarker {
+			continue
+		}
+		if _, err := m.runner.Run(ctx, "tmux", "set-environment", "-u", "-t", sessionName, createOperationEnvironment); err != nil && m.warn != nil {
+			fmt.Fprintf(m.warn, "projmux: could not clear create-operation lease for session %s: %v\n", sessionName, err)
+		}
+	}
 }
 
 // recordSessionForRollback mirrors the Project uid onto a session whose normal
@@ -247,6 +355,10 @@ func (m *materializer) panesOf(ctx context.Context, windowID string) ([][2]strin
 
 // newWindow creates one detached tmux window and returns its stable window id.
 func (m *materializer) newWindow(ctx context.Context, sessionName, name, cwd string, command []string) (string, error) {
+	before, beforeErr := m.runtimeIDs(ctx, "list-windows", sessionName, "#{window_id}", "@")
+	if beforeErr != nil {
+		return "", tmuxError("list tmux windows of session %q before create: %v", sessionName, beforeErr)
+	}
 	args := []string{"new-window", "-d", "-P", "-F", "#{window_id}", "-t", sessionName + ":"}
 	if strings.TrimSpace(name) != "" {
 		args = append(args, "-n", name)
@@ -257,8 +369,18 @@ func (m *materializer) newWindow(ctx context.Context, sessionName, name, cwd str
 	args = append(args, command...)
 	id, err := m.read(ctx, args...)
 	if err != nil {
-		return "", tmuxError("create tmux window in session %q: %v", sessionName, err)
+		after, listErr := m.runtimeIDs(ctx, "list-windows", sessionName, "#{window_id}", "@")
+		if listErr == nil {
+			id = errorCreatedHandle(id, "@", before, after)
+			if id == "" {
+				m.warnUnclaimedRuntime("window", before, after)
+			}
+		} else {
+			id = ""
+		}
+		return id, tmuxError("create tmux window in session %q: %v", sessionName, err)
 	}
+	id = exactTmuxHandle(id, "@")
 	if id == "" {
 		return "", fmt.Errorf("create tmux window in session %q: tmux returned no window id", sessionName)
 	}
@@ -278,6 +400,10 @@ func splitPlacementFlag(placement string) string {
 // `-d` is the whole point: tmux leaves the previously active pane active, so
 // the split is a pure structural mutation with no focus side effect.
 func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, cwd string, command []string) (string, error) {
+	before, beforeErr := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
+	if beforeErr != nil {
+		return "", tmuxError("list tmux panes around %q before split: %v", anchorPaneID, beforeErr)
+	}
 	args := []string{"split-window", "-d", "-P", "-F", "#{pane_id}", splitPlacementFlag(placement), "-t", anchorPaneID}
 	if strings.TrimSpace(cwd) != "" {
 		args = append(args, "-c", cwd)
@@ -285,12 +411,83 @@ func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, c
 	args = append(args, command...)
 	id, err := m.read(ctx, args...)
 	if err != nil {
-		return "", tmuxError("split tmux pane %q: %v", anchorPaneID, err)
+		after, listErr := m.runtimeIDs(ctx, "list-panes", anchorPaneID, "#{pane_id}", "%")
+		if listErr == nil {
+			id = errorCreatedHandle(id, "%", before, after)
+			if id == "" {
+				m.warnUnclaimedRuntime("pane", before, after)
+			}
+		} else {
+			id = ""
+		}
+		return id, tmuxError("split tmux pane %q: %v", anchorPaneID, err)
 	}
+	id = exactTmuxHandle(id, "%")
 	if id == "" {
 		return "", fmt.Errorf("split tmux pane %q: tmux returned no pane id", anchorPaneID)
 	}
 	return id, nil
+}
+
+func (m *materializer) warnUnclaimedRuntime(kind string, before, after map[string]bool) {
+	if m.warn == nil {
+		return
+	}
+	var residual []string
+	for id := range after {
+		if !before[id] {
+			residual = append(residual, id)
+		}
+	}
+	slices.Sort(residual)
+	if len(residual) > 0 {
+		fmt.Fprintf(m.warn, "projmux: create failed with unclaimed tmux %s drift; preserved %s\n", kind, strings.Join(residual, ", "))
+	}
+}
+
+func (m *materializer) runtimeIDs(ctx context.Context, command, target, format, prefix string) (map[string]bool, error) {
+	out, err := m.read(ctx, command, "-t", target, "-F", format)
+	if err != nil {
+		return nil, err
+	}
+	ids := map[string]bool{}
+	for line := range strings.SplitSeq(out, "\n") {
+		if id := exactTmuxHandle(line, prefix); id != "" {
+			ids[id] = true
+		}
+	}
+	return ids, nil
+}
+
+func exactTmuxHandle(output, prefix string) string {
+	output = strings.TrimSpace(output)
+	if len(output) < 2 || !strings.HasPrefix(output, prefix) {
+		return ""
+	}
+	for _, r := range strings.TrimPrefix(output, prefix) {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return output
+}
+
+func errorCreatedHandle(output, prefix string, before, after map[string]bool) string {
+	var candidate string
+	for line := range strings.SplitSeq(output, "\n") {
+		id := exactTmuxHandle(line, prefix)
+		if id == "" {
+			continue
+		}
+		if candidate != "" && candidate != id {
+			return ""
+		}
+		candidate = id
+	}
+	if candidate == "" || before[candidate] || !after[candidate] {
+		return ""
+	}
+	return candidate
 }
 
 // The field separator of the materializer's own list queries, in the two

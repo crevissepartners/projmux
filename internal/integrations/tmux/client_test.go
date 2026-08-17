@@ -2273,6 +2273,36 @@ func TestClientEnsureSessionAppliesProjectSessionEnvOnCreateAndAfterCreate(t *te
 	}
 }
 
+func TestClientEnsureSessionWithEnvironmentIncludesLeaseInNewSession(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{err: exitError(t, 1)},
+			{},
+			{},
+			{},
+		},
+	}
+	client := NewClient(runner)
+	if err := client.EnsureSessionWithEnvironment(context.Background(), "workspace", "/tmp/projmux", map[string]string{
+		"__projmux_create_operation": "v1:7:8:op-test",
+	}); err != nil {
+		t.Fatalf("EnsureSessionWithEnvironment returned error: %v", err)
+	}
+
+	wantCalls := []commandCall{
+		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
+		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-e", "__projmux_create_operation=v1:7:8:op-test"}},
+		{name: "tmux", args: []string{"set-environment", "-t", "workspace", "__projmux_create_operation", "v1:7:8:op-test"}},
+		{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_project_path", "/tmp/projmux"}},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("unexpected tmux calls %#v", runner.calls)
+	}
+}
+
 func TestClientEnsureSessionSkipsPostCreateWhenSessionExists(t *testing.T) {
 	t.Parallel()
 

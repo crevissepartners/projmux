@@ -530,6 +530,22 @@ Managed runtime binding convergence:
   registry binding before the creating tmux command returns and before the next
   implicit read can run. Mirror writes use `set-option` and `rename-window`, not
   creation commands, so they cannot recursively fire either creation hook.
+- A canonical resource create already owns the registry transaction while it
+  issues `new-window` or `split-window`. It therefore installs a private,
+  session-scoped create lease before the mutation (`new-session -e` on first
+  materialization), and the exact-socket hook inspects that lease using the
+  expanded `#{session_id}`. Only a live lease defers the hook's registry entry;
+  stale or malformed leases are cleared and normal synchronous convergence
+  continues. The create path explicitly mirrors its objects, reconciles the
+  resulting runtime again inside the same transaction, then ownership-checks
+  and clears its lease after commit or rollback. This avoids lock reentry
+  without weakening standalone lifecycle ordering.
+- A tmux creation may return non-zero after the object exists when a later
+  synchronous hook fails. Materialization retains the combined output, accepts
+  a reported `@N` or `%N` only when it was absent from the before-inventory and
+  present in the same target's after-inventory, mirrors its operation uid, and
+  rolls it back in reverse order. Ambiguous handles and changed ownership fail
+  closed: unrelated objects are preserved and residual drift is reported.
 - `tmux apply --no-reload` stops before any live-server query, and config or
   keymap preflight failure does the same. A server on a second socket is never
   inventoried or mutated. `get`, `describe`, and implicit active-target

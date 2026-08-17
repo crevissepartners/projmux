@@ -168,9 +168,9 @@ func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	if err != nil {
 		trimmed := strings.TrimSpace(string(output))
 		if trimmed != "" {
-			return nil, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, trimmed)
+			return output, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, trimmed)
 		}
-		return nil, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+		return output, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return output, nil
 }
