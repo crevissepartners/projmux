@@ -235,6 +235,58 @@ func TestRemovedOldInternalArgvUsesUnknownCommandContract(t *testing.T) {
 	}
 }
 
+func TestLegacyUpdaterHandoffAcceptsOnlyExactTmuxApply(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PROJMUX_CWD", "")
+
+	sentinel := errors.New("candidate apply reached")
+	probe := &retirementProbe{stdout: "apply stdout\n", stderr: "apply stderr\n", err: sentinel}
+	app := &App{config: &configCommand{tmux: probe}}
+	var stdout, stderr bytes.Buffer
+	err := app.Run([]string{"tmux", "apply"}, &stdout, &stderr)
+	if err != sentinel {
+		t.Fatalf("exact updater handoff error = %v, want handler error %v", err, sentinel)
+	}
+	if !reflect.DeepEqual(probe.calls, [][]string{{"apply"}}) {
+		t.Fatalf("exact updater handoff calls = %#v, want canonical apply once", probe.calls)
+	}
+	if stdout.String() != probe.stdout || stderr.String() != probe.stderr {
+		t.Fatalf("exact updater handoff streams = (%q,%q), want unchanged (%q,%q)",
+			stdout.String(), stderr.String(), probe.stdout, probe.stderr)
+	}
+	if got := normalizeLegacyUpdaterHandoff([]string{"tmux", "apply"}); !reflect.DeepEqual(got, []string{"config", "apply"}) {
+		t.Fatalf("normalized argv = %#v, want [config apply]", got)
+	}
+	if !shouldRunLegacyHookMigrations(normalizeLegacyUpdaterHandoff([]string{"tmux", "apply"})) {
+		t.Fatal("exact updater handoff skipped canonical pre-dispatch migration ordering")
+	}
+
+	for _, args := range [][]string{
+		{"tmux"},
+		{"tmux", "apply", "--no-reload"},
+		{"tmux", "apply", "extra"},
+		{"tmux", "print-config"},
+		{"tmux", "--help"},
+	} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			probe.calls = nil
+			stdout.Reset()
+			stderr.Reset()
+			err := app.Run(args, &stdout, &stderr)
+			if err == nil || IsUsageError(err) || !strings.Contains(err.Error(), "unknown command: tmux") {
+				t.Fatalf("Run(%q) error=%v, want root unknown-command error", args, err)
+			}
+			if len(probe.calls) != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "Commands:") {
+				t.Fatalf("Run(%q) calls=%v streams=(%q,%q), want no handler/stdout and root help on stderr",
+					args, probe.calls, stdout.String(), stderr.String())
+			}
+			if got := normalizeLegacyUpdaterHandoff(args); !reflect.DeepEqual(got, args) {
+				t.Fatalf("Run(%q) normalized to %#v, want unchanged", args, got)
+			}
+		})
+	}
+}
+
 func TestRemovedPublicArgvMatrixReturnsReplacementUsageWithoutHandlerReach(t *testing.T) {
 	t.Parallel()
 

@@ -441,6 +441,7 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) (err error) {
 		finish := a.lifecycle.BeginCommand()
 		defer func() { finish(err) }()
 	}
+	args = normalizeLegacyUpdaterHandoff(args)
 	// Doctor, explicit support-report collection, and every help invocation are
 	// strict source-read-only boundaries. In particular, they must not trigger
 	// the otherwise automatic legacy-hook filesystem migration before dispatch.
@@ -457,6 +458,23 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) (err error) {
 		return buildErr
 	}
 	return root.Execute(args)
+}
+
+// normalizeLegacyUpdaterHandoff preserves the post-replacement command emitted
+// by the immutable v0.10.1 GitHub Release updater. That updater installs the new
+// binary and then invokes it with the exact argv `tmux apply`; routing those two
+// tokens through the current public convergence path lets the replacement
+// migrate managed producers before it reloads the live server.
+//
+// This is intentionally a pre-Cobra argv seam rather than a route or handler:
+// `tmux` stays absent from the catalog, help, generated reference, and top-level
+// handler map. Any other old tmux argv (including extra flags or positional
+// arguments) therefore retains the retired root unknown-command contract.
+func normalizeLegacyUpdaterHandoff(args []string) []string {
+	if slices.Equal(args, []string{"tmux", "apply"}) {
+		return []string{"config", "apply"}
+	}
+	return args
 }
 
 func shouldRunLegacyHookMigrations(args []string) bool {
