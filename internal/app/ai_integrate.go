@@ -141,7 +141,7 @@ func (c *aiCommand) runTmuxBellCommand(args []string) error {
 		return c.muxRunner().SetOption(context.Background(), intmux.SetOptionOptions{
 			Global: true,
 			Option: args[2],
-			Value:  args[3],
+			Value:  args[3], // #nosec G602 -- the enclosing len(args) == 4 guard proves this command slot exists.
 		})
 	}
 	if len(args) == 3 && args[0] == "set-option" && args[1] == "-gu" {
@@ -156,7 +156,7 @@ func (c *aiCommand) runTmuxBellCommand(args []string) error {
 			Global:  true,
 			Append:  true,
 			Hook:    args[2],
-			Command: args[3],
+			Command: args[3], // #nosec G602 -- the enclosing len(args) == 4 guard proves this command slot exists.
 		})
 	}
 	if len(args) == 3 && args[0] == "set-hook" && args[1] == "-gu" {
