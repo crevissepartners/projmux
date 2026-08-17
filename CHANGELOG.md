@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.1](https://github.com/crevissepartners/projmux/compare/v0.11.0...v0.11.1) (2026-08-17)
+
+
+### Features
+
+* **agents:** own interaction and launch readiness ([#668](https://github.com/crevissepartners/projmux/issues/668)) ([341f2c0](https://github.com/crevissepartners/projmux/commit/341f2c07b782adf6c54806abcad377d7eae5800b))
+
+
+### Bug Fixes
+
+* **update:** preserve legacy updater handoff ([#670](https://github.com/crevissepartners/projmux/issues/670)) ([0e3ee6d](https://github.com/crevissepartners/projmux/commit/0e3ee6d403bccca2ce344055db0468a2d0a75bb0))
+
 ## [0.11.0](https://github.com/crevissepartners/projmux/compare/v0.10.1...v0.11.0) (2026-08-17)
 
 
