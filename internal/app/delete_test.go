@@ -1,6 +1,9 @@
 package app
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -24,7 +27,100 @@ func newTestDeleteCommand(store *fakeResourceStore, interactive bool, answer boo
 			},
 		},
 		resolveKinds: deleteRegistryKinds,
+		windows:      newFixtureWindowDeleteRuntime(),
 	}
+}
+
+type fakeWindowDeleteRuntime struct {
+	preflights   int
+	killed       []windowLiveDeleteTarget
+	queued       []windowLiveDeleteTarget
+	selfUID      string
+	preflightErr error
+	killErr      error
+	killErrs     map[string]error
+	queueErr     error
+	killHook     func(windowLiveDeleteTarget)
+	queueHook    func([]windowLiveDeleteTarget)
+}
+
+func newFixtureWindowDeleteRuntime() *fakeWindowDeleteRuntime {
+	return &fakeWindowDeleteRuntime{}
+}
+
+func (r *fakeWindowDeleteRuntime) preflight(_ context.Context, registry coremetadata.Registry, plan deletePlan) (windowLiveDeletePlan, error) {
+	r.preflights++
+	if r.preflightErr != nil {
+		return windowLiveDeletePlan{}, r.preflightErr
+	}
+	sessionCounts := map[string]int{}
+	for _, window := range registry.Windows {
+		sessionCounts[window.Metadata.OwnerUID()]++
+	}
+	selectedCounts := map[string]int{}
+	lastSelected := map[string]string{}
+	for _, target := range plan.Targets {
+		window, _ := registry.Window(target.Match.UID)
+		selectedCounts[window.Metadata.OwnerUID()]++
+		lastSelected[window.Metadata.OwnerUID()] = target.Match.UID
+	}
+	out := windowLiveDeletePlan{}
+	for _, target := range plan.Targets {
+		window, _ := registry.Window(target.Match.UID)
+		project, _ := registry.Project(window.Metadata.OwnerUID())
+		sessionName := project.Metadata.Name
+		if project.Status.Session != nil {
+			sessionName = project.Status.Session.Name
+		}
+		windowIndex := 0
+		for i := range registry.Windows {
+			if registry.Windows[i].Metadata.UID == target.Match.UID {
+				windowIndex = i
+				break
+			}
+		}
+		projectIndex := 0
+		for i := range registry.Projects {
+			if registry.Projects[i].Metadata.UID == window.Metadata.OwnerUID() {
+				projectIndex = i
+				break
+			}
+		}
+		out.Targets = append(out.Targets, windowLiveDeleteTarget{
+			UID: target.Match.UID, WindowID: fmt.Sprintf("@%d", windowIndex+10),
+			SessionID: fmt.Sprintf("$%d", projectIndex+20), SessionName: sessionName,
+			ProjectUID: window.Metadata.OwnerUID(),
+			EndsSession: selectedCounts[window.Metadata.OwnerUID()] == sessionCounts[window.Metadata.OwnerUID()] &&
+				target.Match.UID == lastSelected[window.Metadata.OwnerUID()],
+			Self: target.Match.UID == r.selfUID,
+		})
+	}
+	return out, nil
+}
+
+func (r *fakeWindowDeleteRuntime) kill(_ context.Context, target windowLiveDeleteTarget) error {
+	if r.killHook != nil {
+		r.killHook(target)
+	}
+	if err := r.killErrs[target.WindowID]; err != nil {
+		return err
+	}
+	if r.killErr != nil {
+		return r.killErr
+	}
+	r.killed = append(r.killed, target)
+	return nil
+}
+
+func (r *fakeWindowDeleteRuntime) queueSelfKill(_ context.Context, targets []windowLiveDeleteTarget) error {
+	if r.queueHook != nil {
+		r.queueHook(targets)
+	}
+	if r.queueErr != nil {
+		return r.queueErr
+	}
+	r.queued = append(r.queued, targets...)
+	return nil
 }
 
 // newTestDeleteCommandWithActiveTarget is the same route wired to a scripted
@@ -818,5 +914,223 @@ func TestDeleteRefusesAnUnmappedActiveTargetWithTheSeamsOwnMessage(t *testing.T)
 		if stdout != "" || store.transactions != 0 || store.snapshot() != before {
 			t.Fatalf("delete %s unmapped refusal wrote %q or mutated the registry", kind, stdout)
 		}
+	}
+}
+
+func TestDeleteWindowDryRunShowsLiveAndLastSessionCascadeWithoutWrites(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixtureWindowDeleteRuntime()
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows = runtime
+	before := store.snapshot()
+
+	stdout, _, err := runRoute(t, cmd, "window", "uid:win-beta-main", "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run error = %v", err)
+	}
+	for _, want := range []string{
+		"live would kill tmux window @12 session=beta session-id=$21 socket=-L/projmux",
+		"live cascade would end Project session beta because its last live Window is deleted",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, stdout)
+		}
+	}
+	if store.transactions != 0 || store.snapshot() != before || len(runtime.killed) != 0 || len(runtime.queued) != 0 {
+		t.Fatalf("dry-run mutated state: tx=%d killed=%v queued=%v", store.transactions, runtime.killed, runtime.queued)
+	}
+}
+
+func TestDeleteWindowKillsExactLiveTargetBeforeStoreCommitAndPreservesSibling(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixtureWindowDeleteRuntime()
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows = runtime
+	var events []string
+	runtime.killHook = func(target windowLiveDeleteTarget) {
+		events = append(events, "kill "+target.WindowID)
+		if _, ok := store.registry.Window(target.UID); !ok {
+			t.Fatal("registry target disappeared before exact live kill")
+		}
+	}
+	originalUpdate := cmd.store.update
+	cmd.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		result, err := originalUpdate(fn)
+		if err == nil {
+			events = append(events, "store committed")
+		}
+		return result, err
+	}
+
+	stdout, _, err := runRoute(t, cmd, "window", "uid:win-alpha-main", "--yes")
+	if err != nil {
+		t.Fatalf("delete error = %v", err)
+	}
+	if got := strings.Join(events, ","); got != "kill @10,store committed" {
+		t.Fatalf("ordering = %q", got)
+	}
+	if _, ok := store.registry.Window("win-alpha-main"); ok {
+		t.Fatal("target Window survived")
+	}
+	if _, ok := store.registry.Window("win-alpha-review"); !ok {
+		t.Fatal("sibling Window was removed")
+	}
+	if _, ok := store.registry.Project("prj-alpha"); !ok {
+		t.Fatal("owning Project was removed")
+	}
+	if !strings.Contains(stdout, "live killed tmux window @10 session=alpha") || strings.Contains(stdout, "last live Window") {
+		t.Fatalf("two-Window result = %q", stdout)
+	}
+}
+
+func TestDeleteWindowTmuxFailureCommitsZeroRegistryWrites(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixtureWindowDeleteRuntime()
+	runtime.killErr = errors.New("injected tmux failure")
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows = runtime
+	before := store.snapshot()
+
+	stdout, _, err := runRoute(t, cmd, "window", "uid:win-alpha-main", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "injected tmux failure") {
+		t.Fatalf("tmux failure = %v", err)
+	}
+	if stdout != "" || store.writes != 0 || store.snapshot() != before || len(runtime.queued) != 0 {
+		t.Fatalf("tmux failure changed state: stdout=%q writes=%d queued=%v", stdout, store.writes, runtime.queued)
+	}
+}
+
+func TestDeleteWindowSecondTmuxFailureReportsFirstExactDriftWithoutUnplannedKill(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixtureWindowDeleteRuntime()
+	runtime.killErrs = map[string]error{"@12": errors.New("injected second tmux failure")}
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows = runtime
+	before := store.snapshot()
+	var attempts []string
+	runtime.killHook = func(target windowLiveDeleteTarget) { attempts = append(attempts, target.WindowID) }
+
+	stdout, _, err := runRoute(t, cmd,
+		"window", "uid:win-alpha-main", "uid:win-beta-main", "--yes")
+	if err == nil {
+		t.Fatal("second tmux failure succeeded")
+	}
+	for _, want := range []string{
+		"injected second tmux failure",
+		"@10/session=alpha($20)",
+		"win-alpha-main,win-beta-main",
+		"retryable drift",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("partial tmux failure error = %q, want %q", err, want)
+		}
+	}
+	if got := strings.Join(attempts, ","); got != "@10,@12" {
+		t.Fatalf("exact kill attempts = %q, want first target then failing second", got)
+	}
+	if len(runtime.killed) != 1 || runtime.killed[0].WindowID != "@10" {
+		t.Fatalf("successful exact kills = %#v", runtime.killed)
+	}
+	if strings.Contains(err.Error(), "@11") {
+		t.Fatalf("partial failure named unplanned sibling @11: %v", err)
+	}
+	if stdout != "" || store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("partial tmux failure committed Registry/output: stdout=%q writes=%d", stdout, store.writes)
+	}
+}
+
+func TestDeleteWindowStoreFailureReportsExactRetainedDrift(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixtureWindowDeleteRuntime()
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows = runtime
+	before := store.snapshot()
+	var events []string
+	runtime.killHook = func(target windowLiveDeleteTarget) { events = append(events, "kill "+target.WindowID) }
+	cmd.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		working := store.registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, err
+		}
+		events = append(events, "store failed")
+		return coremetadata.Registry{}, errors.New("injected store commit failure")
+	}
+
+	stdout, _, err := runRoute(t, cmd, "window", "uid:win-alpha-main", "--yes")
+	if err == nil {
+		t.Fatal("store failure succeeded")
+	}
+	for _, want := range []string{"injected store commit failure", "@10/session=alpha($20)", "win-alpha-main", "retryable drift"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("store failure error = %q, want %q", err, want)
+		}
+	}
+	if got := strings.Join(events, ","); got != "kill @10,store failed" {
+		t.Fatalf("failure ordering = %q", got)
+	}
+	if stdout != "" || store.snapshot() != before {
+		t.Fatalf("store failure committed registry/output: stdout=%q", stdout)
+	}
+}
+
+type deleteFlushBuffer struct {
+	bytes.Buffer
+	flushed bool
+}
+
+func (b *deleteFlushBuffer) Flush() error {
+	b.flushed = true
+	return nil
+}
+
+func TestDeleteWindowSelfTargetCommitsAndFlushesBeforeQueue(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixtureWindowDeleteRuntime()
+	runtime.selfUID = "win-alpha-main"
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows = runtime
+	stdout := &deleteFlushBuffer{}
+	runtime.queueHook = func(targets []windowLiveDeleteTarget) {
+		if !stdout.flushed {
+			t.Fatal("self kill queued before result flush")
+		}
+		if _, ok := store.registry.Window("win-alpha-main"); ok {
+			t.Fatal("self kill queued before registry commit")
+		}
+		if len(targets) != 1 || targets[0].WindowID != "@10" {
+			t.Fatalf("queued targets = %#v", targets)
+		}
+	}
+	if err := cmd.Run([]string{"window", "uid:win-alpha-main", "--yes"}, stdout, io.Discard); err != nil {
+		t.Fatalf("self delete error = %v", err)
+	}
+	if len(runtime.killed) != 0 || len(runtime.queued) != 1 {
+		t.Fatalf("self mutation used sync kill=%v queued=%v", runtime.killed, runtime.queued)
+	}
+	if !strings.Contains(stdout.String(), "will queue after this result is flushed to kill tmux window @10") {
+		t.Fatalf("self result = %q", stdout.String())
+	}
+}
+
+func TestDeleteWindowSelfQueueFailureLeavesDurableRegistryResultAndExactDrift(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixtureWindowDeleteRuntime()
+	runtime.selfUID = "win-alpha-main"
+	runtime.queueErr = errors.New("injected queue failure")
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows = runtime
+	stdout := &deleteFlushBuffer{}
+
+	err := cmd.Run([]string{"window", "uid:win-alpha-main", "--yes"}, stdout, io.Discard)
+	if err == nil {
+		t.Fatal("queue failure succeeded")
+	}
+	for _, want := range []string{"registry cascade committed", "complete result was written", "injected queue failure", "retryable orphan drift"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("queue failure error = %q, want %q", err, want)
+		}
+	}
+	if _, ok := store.registry.Window("win-alpha-main"); ok || !stdout.flushed || stdout.Len() == 0 {
+		t.Fatalf("queue failure lost durable result: flushed=%t stdout=%q", stdout.flushed, stdout.String())
 	}
 }

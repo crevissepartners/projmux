@@ -1378,3 +1378,231 @@ fi
 binding_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> managed binding e2e passed: socket=$binding_socket path=$binding_socket_path"
+
+# ---------------------------------------------------------------------------
+# Window resource + exact live-binding deletion.
+#
+# This block owns a fresh smoke root. The public command routes every live read
+# and mutation through `-L projmux`; TMUX_TMPDIR makes that named socket unique
+# to this run, and cleanup verifies the actual socket path before using -S.
+# External calls strip inherited TMUX/TMUX_PANE. The self-target call runs in
+# its own exact managed Window and proves its stdout/Registry result survives
+# the Window disappearing.
+# ---------------------------------------------------------------------------
+delete_root="$PROJMUX_SMOKE_WORKDIR/delete-window-e2e"
+delete_socket="projmux-delete-$RANDOM-$$"
+delete_product_socket="projmux"
+mkdir -p \
+  "$delete_root/home" \
+  "$delete_root/config" \
+  "$delete_root/state" \
+  "$delete_root/runtime" \
+  "$delete_root/tmux" \
+  "$delete_root/work/alpha" \
+  "$delete_root/work/beta"
+chmod 0700 "$delete_root/runtime" "$delete_root/tmux"
+
+delete_real_tmux="$(command -v tmux)"
+delete_shim="$delete_root/shim"
+delete_shim_log="$delete_root/tmux-shim.calls"
+mkdir -p "$delete_shim"
+cat >"$delete_shim/tmux" <<DELETE_SHIM
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>$(printf %q "$delete_shim_log")
+if [[ "\${1:-}" == "-L" && "\${2:-}" == $(printf %q "$delete_product_socket") ]]; then
+  shift 2
+  exec $(printf %q "$delete_real_tmux") -L $(printf %q "$delete_socket") "\$@"
+fi
+if [[ "\${1:-}" == "-L" || "\${1:-}" == "-S" ]]; then
+  exec $(printf %q "$delete_real_tmux") "\$@"
+fi
+exec $(printf %q "$delete_real_tmux") -L $(printf %q "$delete_socket") "\$@"
+DELETE_SHIM
+chmod 0755 "$delete_shim/tmux"
+
+delete_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$delete_root/home" \
+    XDG_CONFIG_HOME="$delete_root/config" \
+    XDG_STATE_HOME="$delete_root/state" \
+    XDG_RUNTIME_DIR="$delete_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$delete_root/work" \
+    TMUX_TMPDIR="$delete_root/tmux" \
+    PATH="$delete_shim:$PATH" \
+    SHELL=/bin/sh \
+    "$delete_real_tmux" -L "$delete_socket" "$@"
+}
+
+delete_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$delete_root/home" \
+    XDG_CONFIG_HOME="$delete_root/config" \
+    XDG_STATE_HOME="$delete_root/state" \
+    XDG_RUNTIME_DIR="$delete_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$delete_root/work" \
+    TMUX_TMPDIR="$delete_root/tmux" \
+    PATH="$delete_shim:$PATH" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+delete_tmux new-session -d -s delete-alpha -n primary -c "$delete_root/work/alpha" sleep 600
+delete_tmux set-option -t delete-alpha -q @projmux_project_path "$delete_root/work/alpha"
+delete_tmux new-window -d -t delete-alpha: -n sibling -c "$delete_root/work/alpha" sleep 600
+delete_tmux new-session -d -s delete-beta -n only -c "$delete_root/work/beta" sleep 600
+delete_tmux set-option -t delete-beta -q @projmux_project_path "$delete_root/work/beta"
+
+delete_socket_path="$(delete_tmux display-message -p -t delete-alpha '#{socket_path}')"
+case "$delete_socket_path" in
+  "$delete_root"/*) ;;
+  *)
+    echo "delete Window e2e socket escaped the smoke root: $delete_socket_path" >&2
+    exit 1
+    ;;
+esac
+echo ">> delete Window e2e socket=$delete_socket path=$delete_socket_path"
+
+delete_cleanup() {
+  local actual
+  actual="$(delete_tmux display-message -p '#{socket_path}' 2>/dev/null || true)"
+  if [[ -z "$actual" ]]; then
+    return
+  fi
+  case "$actual" in
+    "$delete_root"/*)
+      env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+      ;;
+    *)
+      echo "refusing delete Window e2e cleanup outside the smoke root: $actual" >&2
+      ;;
+  esac
+}
+trap 'delete_cleanup; smoke_cleanup_env' EXIT
+
+delete_config="$delete_root/config/projmux/tmux.conf"
+delete_pmx tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" \
+  >"$delete_root/apply.out"
+smoke_assert_file_contains "$delete_root/apply.out" "reloaded tmux server -L $delete_socket"
+
+delete_primary="$(delete_tmux display-message -p -t delete-alpha:primary '#{window_id}')"
+delete_sibling="$(delete_tmux display-message -p -t delete-alpha:sibling '#{window_id}')"
+delete_beta="$(delete_tmux display-message -p -t delete-beta:only '#{window_id}')"
+delete_primary_uid="$(delete_tmux show-options -wqv -t "$delete_primary" @projmux_window_uid)"
+delete_sibling_uid="$(delete_tmux show-options -wqv -t "$delete_sibling" @projmux_window_uid)"
+delete_beta_uid="$(delete_tmux show-options -wqv -t "$delete_beta" @projmux_window_uid)"
+delete_alpha_project_uid="$(delete_pmx describe project alpha -o uid)"
+if [[ -z "$delete_primary_uid" || -z "$delete_sibling_uid" || -z "$delete_beta_uid" || -z "$delete_alpha_project_uid" ]]; then
+  echo "delete Window e2e apply left an identity mirror empty" >&2
+  exit 1
+fi
+
+delete_registry="$delete_root/state/projmux/metadata/registry.json"
+cp "$delete_registry" "$delete_root/registry.before-dry-run"
+delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' \
+  >"$delete_root/windows.before-dry-run"
+delete_pmx delete window "uid:$delete_primary_uid" --dry-run >"$delete_root/external-dry-run.out"
+cmp "$delete_root/registry.before-dry-run" "$delete_registry"
+delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' \
+  >"$delete_root/windows.after-dry-run"
+cmp "$delete_root/windows.before-dry-run" "$delete_root/windows.after-dry-run"
+smoke_assert_file_contains "$delete_root/external-dry-run.out" "live would kill tmux window $delete_primary"
+if grep -Fq "last live Window" "$delete_root/external-dry-run.out"; then
+  echo "two-Window dry-run incorrectly predicted session termination" >&2
+  exit 1
+fi
+
+delete_pmx delete window "uid:$delete_primary_uid" --yes >"$delete_root/external.out"
+if [[ "$(delete_tmux display-message -p -t "$delete_primary" '#{window_id}' 2>/dev/null || true)" == "$delete_primary" ]]; then
+  echo "external Window delete left $delete_primary live" >&2
+  exit 1
+fi
+if [[ "$(delete_tmux display-message -p -t "$delete_sibling" '#{window_id}')" != "$delete_sibling" ]]; then
+  echo "external Window delete changed sibling $delete_sibling" >&2
+  exit 1
+fi
+delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-external"
+if grep -Fqx "$delete_primary_uid" "$delete_root/windows.after-external" || \
+  ! grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-external"; then
+  echo "external Window delete did not preserve exact registry sibling" >&2
+  exit 1
+fi
+delete_pmx get projects -o uid >"$delete_root/projects.after-external"
+smoke_assert_file_contains "$delete_root/projects.after-external" "$delete_alpha_project_uid"
+smoke_assert_file_contains "$delete_root/external.out" "live killed tmux window $delete_primary"
+
+# The only beta Window explicitly predicts and then causes the Project session
+# to end; alpha remains live and untouched.
+delete_pmx delete window "uid:$delete_beta_uid" --dry-run >"$delete_root/last-dry-run.out"
+smoke_assert_file_contains "$delete_root/last-dry-run.out" "live cascade would end Project session delete-beta"
+delete_pmx delete window "uid:$delete_beta_uid" --yes >"$delete_root/last.out"
+if delete_tmux has-session -t delete-beta 2>/dev/null; then
+  echo "last-Window delete left delete-beta session live" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$delete_root/last.out" "live cascade ended Project session delete-beta"
+
+# A managed runner Window invokes implicit delete from inside itself. There is
+# intentionally no post-command marker: a correct implementation flushes the
+# CLI result first and then the queued exact kill removes the shell that would
+# have written such a marker.
+self_script="$delete_root/self-delete.sh"
+cat >"$self_script" <<SELF_DELETE
+#!/usr/bin/env bash
+sleep 0.25
+HOME=$(printf %q "$delete_root/home") \
+XDG_CONFIG_HOME=$(printf %q "$delete_root/config") \
+XDG_STATE_HOME=$(printf %q "$delete_root/state") \
+    XDG_RUNTIME_DIR=$(printf %q "$delete_root/runtime") \
+    PROJMUX_MANAGED_ROOTS=$(printf %q "$delete_root/work") \
+    TMUX_TMPDIR=$(printf %q "$delete_root/tmux") \
+    PATH=$(printf %q "$delete_shim"):\$PATH \
+SHELL=/bin/sh \
+$(printf %q "$bin") delete window --yes >$(printf %q "$delete_root/self.out") 2>$(printf %q "$delete_root/self.err")
+SELF_DELETE
+chmod 0755 "$self_script"
+self_window="$(delete_tmux new-window -d -t delete-alpha: -n self-delete -c "$delete_root/work/alpha" -P -F '#{window_id}' "$self_script")"
+self_uid="$(delete_tmux show-options -wqv -t "$self_window" @projmux_window_uid)"
+if [[ -z "$self_uid" ]]; then
+  echo "self-target Window was not synchronously bound" >&2
+  exit 1
+fi
+for _ in {1..200}; do
+  if [[ -s "$delete_root/self.out" ]] && \
+    [[ "$(delete_tmux display-message -p -t "$self_window" '#{window_id}' 2>/dev/null || true)" != "$self_window" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+if [[ ! -s "$delete_root/self.out" ]]; then
+  echo "self-target delete left no durable stdout" >&2
+  cat "$delete_root/self.err" >&2 || true
+  exit 1
+fi
+if [[ "$(delete_tmux display-message -p -t "$self_window" '#{window_id}' 2>/dev/null || true)" == "$self_window" ]]; then
+  echo "self-target delete left $self_window live" >&2
+  exit 1
+fi
+delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-self"
+if grep -Fqx "$self_uid" "$delete_root/windows.after-self"; then
+  echo "self-target delete left Registry uid $self_uid" >&2
+  exit 1
+fi
+if ! grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-self"; then
+  echo "self-target delete changed sibling uid $delete_sibling_uid" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$delete_root/self.out" "will queue after this result is flushed to kill tmux window $self_window"
+for canonical_call in \
+  "-L $delete_product_socket list-windows -a" \
+  "-L $delete_product_socket kill-window -t $delete_primary" \
+  "-L $delete_product_socket run-shell -b"; do
+  if ! grep -Fq -- "$canonical_call" "$delete_shim_log"; then
+    echo "delete Window e2e did not observe canonical exact routing: $canonical_call" >&2
+    cat "$delete_shim_log" >&2
+    exit 1
+  fi
+done
+
+delete_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> delete Window e2e passed: socket=$delete_socket path=$delete_socket_path"

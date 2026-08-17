@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -48,6 +49,9 @@ type deleteCommand struct {
 	resolveKinds map[string]coremetadata.Kind
 	// activeTarget is the empty-selector fallback seam; see active_target.go.
 	activeTarget activeTargetLookup
+	// windows owns the exact live tmux half of Window deletion. Pane and Agent
+	// deletion deliberately remain registry-only until Phase 3.
+	windows windowDeleteRuntime
 }
 
 func newDeleteCommand() *deleteCommand {
@@ -56,6 +60,7 @@ func newDeleteCommand() *deleteCommand {
 		confirm:      newConfirmer(),
 		resolveKinds: deleteRegistryKinds,
 		activeTarget: defaultActiveTargetLookup(),
+		windows:      newTmuxWindowDeleteRuntime(),
 	}
 }
 
@@ -134,6 +139,10 @@ type deletePlan struct {
 	// something the operator typed. It is not part of signature(): it describes
 	// how the plan was asked for, not what the plan removes.
 	Unnamed bool
+	// Implicit distinguishes the active Window fallback from --all. Both are
+	// unnamed for confirmation, but only the fallback must prove the caller is
+	// attached to the same exact socket and Window.
+	Implicit bool
 }
 
 // Cascades reports how many descendants the plan removes.
@@ -248,13 +257,29 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	}
 	plan := buildDeletePlan(registry, kind, resolution)
 	plan.Unnamed = implicit
+	plan.Implicit = implicit && !*all
+
+	var livePlan windowLiveDeletePlan
+	if kind == coremetadata.KindWindow {
+		if c.windows == nil {
+			return errors.New("delete window: live tmux deletion is not configured")
+		}
+		livePlan, err = c.windows.preflight(context.Background(), registry, plan)
+		if err != nil {
+			return err
+		}
+	}
 
 	if *dryRun {
-		return writeDeletePlan(stdout, spelling, plan, true)
+		return writeDeletePlan(stdout, spelling, plan, livePlan, true, false)
 	}
 	if plan.needsConfirmation() {
 		prompt := fmt.Sprintf("%s will remove %d %s and %d descendant resources",
 			spelling, len(plan.Targets), strings.ToLower(string(kind))+plural(len(plan.Targets)), plan.Cascades())
+		if kind == coremetadata.KindWindow {
+			prompt += fmt.Sprintf(", kill %d exact live tmux Window%s, and end %d Project session%s",
+				len(livePlan.Targets), plural(len(livePlan.Targets)), livePlan.endsSessions(), plural(livePlan.endsSessions()))
+		}
 		refusal := fmt.Sprintf("%s needs confirmation: %d targets and %d descendant resources. Re-run with --yes, or with --dry-run to review the plan first.",
 			spelling, len(plan.Targets), plan.Cascades())
 		if err := c.confirm.confirm(*yes, prompt, refusal, stdout); err != nil {
@@ -263,9 +288,33 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	}
 
 	approved := plan.signature()
+	approvedLive := livePlan.signature()
+	selfTarget := kind == coremetadata.KindWindow && livePlan.hasSelfTarget()
+	var killedLive []windowLiveDeleteTarget
 	if err := c.store.mutate(kind, resolution.UIDs(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
 		if current := buildDeletePlan(*working, kind, resolution).signature(); current != approved {
 			return fmt.Errorf("%s: the cascade plan changed between preflight and execution; nothing was deleted", spelling)
+		}
+		if kind == coremetadata.KindWindow {
+			currentLive, err := c.windows.preflight(context.Background(), *working, plan)
+			if err != nil {
+				return err
+			}
+			if currentLive.signature() != approvedLive {
+				return fmt.Errorf("%s: the exact live cascade changed between preflight and execution; nothing was deleted", spelling)
+			}
+			// A self-target cannot synchronously kill its own Window: tmux tears
+			// down the caller's pty before the registry transaction can commit or
+			// the result can be written. Its exact kill is queued only after the
+			// durable commit and flushed result below.
+			if !selfTarget {
+				for _, target := range currentLive.Targets {
+					if err := c.windows.kill(context.Background(), target); err != nil {
+						return err
+					}
+					killedLive = append(killedLive, target)
+				}
+			}
 		}
 		for _, uid := range resolution.UIDs() {
 			if err := deleteResource(working, mutator, kind, uid); err != nil {
@@ -274,9 +323,36 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 		}
 		return nil
 	}); err != nil {
+		if len(killedLive) > 0 {
+			var removed []string
+			for _, target := range killedLive {
+				removed = append(removed, fmt.Sprintf("%s/session=%s(%s)", target.WindowID, target.SessionName, target.SessionID))
+			}
+			return fmt.Errorf("%w; exact live target(s) %s were removed before the store failure, while registry uid(s) %s remain as retryable drift; no unplanned Window was targeted",
+				err, strings.Join(removed, ","), strings.Join(resolution.UIDs(), ","))
+		}
 		return err
 	}
-	return writeDeletePlan(stdout, spelling, plan, false)
+	if err := writeDeletePlan(stdout, spelling, plan, livePlan, false, selfTarget); err != nil {
+		if selfTarget {
+			// The registry result is already durable. Still queue the exact live
+			// half so an unavailable output sink cannot leave a live orphan.
+			_ = c.windows.queueSelfKill(context.Background(), livePlan.Targets)
+		}
+		return err
+	}
+	if err := flushDeleteResult(stdout); err != nil {
+		if selfTarget {
+			_ = c.windows.queueSelfKill(context.Background(), livePlan.Targets)
+		}
+		return err
+	}
+	if selfTarget {
+		if err := c.windows.queueSelfKill(context.Background(), livePlan.Targets); err != nil {
+			return fmt.Errorf("delete window: registry cascade committed and the complete result was written, but %w; exact live target remains as retryable orphan drift", err)
+		}
+	}
+	return nil
 }
 
 func plural(n int) string {
@@ -341,7 +417,7 @@ func cascadeOf(registry coremetadata.Registry, kind coremetadata.Kind, uid strin
 }
 
 // writeDeletePlan renders the plan for both the dry run and the executed run.
-func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, dryRun bool) error {
+func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live windowLiveDeletePlan, dryRun, selfQueued bool) error {
 	var b strings.Builder
 	verb := "deleting"
 	if dryRun {
@@ -360,10 +436,42 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, dryRun 
 			fmt.Fprintf(&b, "  cascade %s/%s uid=%s\n",
 				strings.ToLower(string(descendant.Kind)), descendant.Name, descendant.UID)
 		}
+		for _, liveTarget := range live.Targets {
+			if liveTarget.UID != target.Match.UID {
+				continue
+			}
+			action := "killed"
+			if dryRun {
+				action = "would kill"
+			} else if selfQueued {
+				action = "will queue after this result is flushed to kill"
+			}
+			fmt.Fprintf(&b, "  live %s tmux window %s session=%s session-id=%s socket=-L/%s\n",
+				action, liveTarget.WindowID, liveTarget.SessionName, liveTarget.SessionID, defaultAppSocket)
+			if liveTarget.EndsSession {
+				impact := "ended"
+				if dryRun {
+					impact = "would end"
+				} else if selfQueued {
+					impact = "will end after this result is flushed"
+				}
+				fmt.Fprintf(&b, "  live cascade %s Project session %s because its last live Window is deleted\n",
+					impact, liveTarget.SessionName)
+			}
+		}
 	}
 	if dryRun {
 		b.WriteString("dry-run: nothing was deleted\n")
 	}
 	_, err := io.WriteString(stdout, b.String())
 	return err
+}
+
+func flushDeleteResult(stdout io.Writer) error {
+	if flusher, ok := stdout.(interface{ Flush() error }); ok {
+		if err := flusher.Flush(); err != nil {
+			return fmt.Errorf("flush delete result: %w", err)
+		}
+	}
+	return nil
 }
