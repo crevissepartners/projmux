@@ -2065,12 +2065,12 @@ func printNotifyUsage(w io.Writer) {
 	fmt.Fprintln(w, "Use `notify list --live` to explain queue/live drift and `notify reconcile` to repair AI reply entries.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]")
+	fmt.Fprintln(w, "  projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]")
 	fmt.Fprintln(w, "                        [--severity info|warn|critical] [--source ai|k8s|git|external]")
 	fmt.Fprintln(w, "                        [--ttl <seconds>] [--id <s>] [--json]")
-	fmt.Fprintln(w, "  projmux notify list  [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>] [--severity ...] [--source ...]")
-	fmt.Fprintln(w, "  projmux notify ack   <id> | --all")
-	fmt.Fprintln(w, "  projmux notify reconcile [--json]")
+	fmt.Fprintln(w, "  projmux get notifications [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>] [--severity ...] [--source ...]")
+	fmt.Fprintln(w, "  projmux notification ack <id> | --all")
+	fmt.Fprintln(w, "  projmux notification reconcile [--json]")
 }
 
 func printNotifyListUsage(w io.Writer) {
@@ -2080,12 +2080,12 @@ func printNotifyListUsage(w io.Writer) {
 	fmt.Fprintln(w, "Use `projmux attention list` for live pane attention state only.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux notify list [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>] [--severity ...] [--source ...]")
+	fmt.Fprintln(w, "  projmux get notifications [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>] [--severity ...] [--source ...]")
 }
 
 func printNotifyReconcileUsage(w io.Writer) {
 	fmt.Fprintln(w, "Repair the pending AI notify queue from live tmux pane attention state.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux notify reconcile [--json]")
+	fmt.Fprintln(w, "  projmux notification reconcile [--json]")
 }

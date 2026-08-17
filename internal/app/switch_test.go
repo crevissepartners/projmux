@@ -1136,8 +1136,8 @@ func TestUsageOmitsLayoutPrimaryCommand(t *testing.T) {
 	if strings.Contains(usage.String(), "\n  layout") {
 		t.Fatalf("usage = %q, want no primary layout command", usage.String())
 	}
-	if !strings.Contains(usage.String(), "  session-state") {
-		t.Fatalf("usage = %q, want session-state snapshot surface", usage.String())
+	if !strings.Contains(usage.String(), "  restore") {
+		t.Fatalf("usage = %q, want canonical snapshot restore surface", usage.String())
 	}
 }
 

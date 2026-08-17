@@ -356,7 +356,7 @@ func sessionStatePruneCandidates(
 
 func printPruneUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux prune ephemeral [--keep=N]")
-	fmt.Fprintln(w, "  projmux prune session-state [--older-than=720h]")
-	fmt.Fprintln(w, "  projmux prune session-state delete <session>...")
+	fmt.Fprintln(w, "  projmux runtime prune [--keep=N]")
+	fmt.Fprintln(w, "  projmux prune snapshot [--older-than=720h]")
+	fmt.Fprintln(w, "  projmux delete snapshot [--session <name>]")
 }

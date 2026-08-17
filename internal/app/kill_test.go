@@ -30,7 +30,7 @@ func TestAppRunKillTaggedExecutesOrchestrator(t *testing.T) {
 		},
 	}
 
-	if err := app.Run([]string{"kill", "tagged", " work-a ", "work-b", "work-a"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"runtime", "stop", " work-a ", "work-b", "work-a"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestAppRunKillTaggedLoadsTargetsFromTagStore(t *testing.T) {
 		},
 	}
 
-	if err := app.Run([]string{"kill", "tagged"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"runtime", "stop"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 

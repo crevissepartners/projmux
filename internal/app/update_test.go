@@ -214,7 +214,7 @@ func TestUpdateStatusReadsFreshCacheAndInstaller(t *testing.T) {
 	for _, want := range []string{
 		"latest:    " + testVersionTag(t, 1) + " (fresh)",
 		"state:     update_available",
-		"installer: go - Installed with Go tooling; update apply delegates to projmux upgrade.",
+		"installer: go - Installed with Go tooling; update apply runs `go install ...@latest` and applies canonical config.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
@@ -368,7 +368,10 @@ func TestUpdateApplyRunsGoUpgradeNoApply(t *testing.T) {
 	if err := cmd.Run([]string{"apply", "--no-apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{"/home/me/bin/projmux upgrade --no-apply"}
+	want := []string{
+		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
+		"/home/me/bin/projmux config apply --no-reload",
+	}
 	if !equalStrings(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
 	}

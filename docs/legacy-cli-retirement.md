@@ -1,40 +1,64 @@
 # Legacy CLI Retirement Ledger
 
-This ledger records the executable replacement for every top-level route still
-classified as `compatibility`. Phase 1 adds missing doors and moves machine
-writers; it does not remove any old route. Phase 2 must preserve the differences
-called out here rather than assuming that every replacement is a spelling-only
-rename.
+Phase 2 is a breaking CLI release. Removed human-facing compatibility argv
+returns exit 2, writes no stdout, performs no command or pre-dispatch migration
+side effect, and prints the replacement below on stderr. The seven removed old
+internal top-level aliases instead follow the root unknown-command contract:
+exit 1, no stdout or side effect, and root help plus `unknown command: <token>`
+on stderr.
 
-| Compatibility route | Executable canonical replacement | Parity and error differences |
-| --- | --- | --- |
-| `ai` | `create agent`, `create pane`, `config edit`, `agent status`, `agent topic`, `agent integrate`, `create notification`, `diagnostics agent-hook`, `internal agent-hook` | `config edit [--get|--set <mode>]` forwards exactly to AI-scoped `ai settings`; status/topic/integrate and hook routes likewise reuse existing handlers. Create routes normalize their public flags before reaching the split handler. `ai picker` remains a UI shortcut. `ai notify` has no byte-identical queue command: `create notification` writes a queue row, while the legacy route dispatches or resets desktop-notification state; removal must keep that distinction explicit. |
-| `attach` | `attach project`, `runtime attach` | `runtime attach` prefixes `auto` and preserves raw argv. `attach project` is the resource-aware outside-tmux route and intentionally refuses inside a client. |
-| `current` | `get pane --current -o cwd` | Same live cwd scalar; the replacement spells the exact-one read and field projection explicitly, so malformed flags use the canonical usage vocabulary. |
-| `focus` | `focus project`, `focus window`, `focus pane`; machine callers use `internal focus` | `internal focus` is an exact raw-argv forwarder for `--target`/`--uri` and preserves fallback behavior. Resource focus is exact-only and rejects legacy prefix/index fallback with exit 2. |
-| `kill` | `runtime stop` | Exact handler, streams, exit, and side effects; the canonical route prefixes `tagged`. |
-| `notify` | `create notification`, `get notifications`, `delete notification`, `notification ack`, `notification reconcile` | Each Phase 1 queue route forwards raw argv to the same notify handler. `delete notification` is the older delete bridge and currently prefixes `ack`; use `notification ack` when the intent is acknowledgement. |
-| `pin` | `pin project` | Exact handler and action argv; `project` is a routing token for the same directory-lines store, not persistent Project metadata. |
-| `prune` | `runtime prune`, `prune project`, `prune snapshot`, `delete snapshot` | Runtime and snapshot paths reuse the existing prune/session-state handlers. Project pruning is registry-aware and has its own required safety flags. |
-| `sessions` | `runtime sessions` | Exact handler, streams, exit, and side effects with unchanged raw argv. |
-| `session-state` | `get snapshots`, `create snapshot`, `delete snapshot`, `restore snapshot` | `create snapshot` is an exact `session-state save` forwarder. Read/delete/restore already forward to the same session-state handler; restore remains dry-run-only. Preview/popup remain UI shortcuts until their removal decision. |
-| `tag` | `runtime tag` | Direct `tag list|toggle|clear` and the still-executable project-qualified `tag project ...` compatibility argv share the same ephemeral tagged-session handler. `tag project` is not a canonical target and no persistent Project-tag target state exists. |
-| `upgrade` | `update apply` | The canonical updater is installer-aware and may reject or guide unsupported sources differently; Go/source installs delegate to the existing upgrade implementation. |
-| `usage` | `agent usage` | Exact handler instance and raw argv; stdout, stderr, exit, cache refresh, and API side effects are identical. |
+| Removed argv | Replacement |
+| --- | --- |
+| `ai split`, `ai picker` | `create agent`, `create pane`, or a provider shortcut |
+| `ai settings` | `config edit` |
+| `ai status`, `ai topic`, `ai integrate` | `agent status`, `agent topic`, `agent integrate` |
+| `ai notify [notify] [pane]` | `create notification --text ... --target ...`; translate the old pane/payload because the input and semantics changed |
+| `ai notify reset [pane]` | No direct replacement for desktop-notification dedupe-state reset; queue maintenance uses `notification ack` or `notification reconcile` |
+| `ai watch-title` | `internal agent-hook watch-title` |
+| `ai ingest log` | `diagnostics agent-hook` |
+| `attach auto` | `runtime attach` |
+| bare `current` | `get pane --current -o cwd` |
+| `focus --target`, `focus --uri` | `focus project|window|pane`; machine ingress uses `internal focus` |
+| `kill tagged` | `runtime stop` |
+| `sessions` | `runtime sessions` |
+| `upgrade` | `update apply` |
+| `usage` | `agent usage` |
+| `notify push`, `notify list`, `notify ack`, `notify reconcile` | `create notification`, `get notifications`, `notification ack`, `notification reconcile` |
+| direct `pin list|add|remove|toggle|clear` | `pin project ...` |
+| `prune ephemeral` | `runtime prune` |
+| `prune session-state ...` | `prune snapshot ...` or `delete snapshot ...` |
+| `session-state status|save|delete|restore|preview|popup` | `get snapshots`, `create snapshot`, `delete snapshot`, `restore snapshot` |
+| direct `tag list|toggle|clear`, `tag project ...` | `runtime tag ...` |
 
-The remaining routes without a canonical mapping are shortcuts, not
-compatibility gaps: `doctor`, `quit`, `resources`, `settings`, `shell`, and
-`welcome`. Phase 1's `config edit` is AI-scoped, so it does not rename the
-general Settings UI. They stay a separate audited set in
-`internal/cli/catalog_test.go`.
+The surviving mixed-root commands are exactly `attach project`, `focus
+project|window|pane`, `pin project`, and `prune project|snapshot`. The Shortcut
+routes `doctor`, `quit`, `resources`, `settings`, `shell`, `switch`, and
+`welcome` remain. Singular/plural resource-kind aliases remain.
 
-Machine producers in a newly built binary emit only these canonical paths:
+The removed pre-namespace internal aliases are `key-broker`, `popup-wait-key`,
+`preview`, `session-popup`, `status`, `statusbar`, and `tmux`. Their only
+remaining entrypoints are the corresponding `internal ...` routes. Public
+configuration work uses `config render` and `config apply`.
 
-- provider hooks and title watching: `internal agent-hook`;
-- statusbar and notification-sidebar target dispatch: `internal focus`;
-- installer/update convergence: `config apply`;
-- post-install queue convergence: `notification reconcile`.
+## Internal migration exception
 
-The exact legacy `ai ingest log` reader remains executable for compatibility;
-the public replacement is `diagnostics agent-hook`. Both are read-only and
-share the same AI ingest-log handler.
+Phase 2 intentionally retains one hidden compatibility dispatcher until the
+next release gate: exact old managed-producer argv only. The accepted bytes are
+`ai ingest codex-hook`, `ai ingest claude-hook`, `ai ingest antigravity-hook
+--event <event>` where `<event>` is exactly `PreInvocation`, `PostInvocation`,
+`PostToolUse`, `Stop`, or `Statusline`, and `ai ingest bell --pane <pane-id>`.
+The flag order is fixed and no extra argv is accepted. Human and machine callers
+with identical argv cannot be distinguished.
+
+Every other `ai` argv, including `ai ingest log`, a missing/future/custom
+Antigravity event, reordered flags, or extra argv, returns the public retirement
+usage error before stdin, tmux, diagnostics, or stdout is touched. Managed
+producers already emit `internal agent-hook ingest`; this exception exists only
+for the binary-replacement-before-migration window. Do not remove it until the
+post-release `R_migrate` evidence gate is closed.
+
+The `ai notify` split is intentional parity guidance, not an alias mapping.
+The old notify action drove an immediate desktop-notification path from pane
+state; `create notification` creates a queue row and therefore requires an
+explicit `--text` and `--target`. The old reset action cleared transient
+desktop dedupe state, which the public queue commands do not reproduce.

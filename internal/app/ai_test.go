@@ -3662,9 +3662,9 @@ func TestAITopicHelpListedInUsage(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	printAIUsage(stdout)
 	for _, want := range []string{
-		"projmux ai topic set <text> [--pane <id>]",
-		"projmux ai topic clear [--pane <id>]",
-		"projmux ai topic get [--pane <id>]",
+		"projmux agent topic set <text> [--pane <id>]",
+		"projmux agent topic clear [--pane <id>]",
+		"projmux agent topic get [--pane <id>]",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("usage = %q, want contains %q", stdout.String(), want)

@@ -56,7 +56,7 @@ func (m *Manager) SetDebug(debug func(format string, args ...any)) {
 // observed on one process survives a CLI restart.
 func (m *Manager) Collect(ctx context.Context) ([]Snapshot, error) {
 	// Throttle of 0 → unconditional: every adapter runs (subject to
-	// adapter-internal backoff). Used by `projmux usage` where the user
+	// adapter-internal backoff). Used by `projmux agent usage` where the user
 	// explicitly asked for fresh data.
 	return m.collect(ctx, 0, false)
 }
@@ -68,8 +68,8 @@ func (m *Manager) Collect(ctx context.Context) ([]Snapshot, error) {
 // 429 reinstates backoff with consecutive=1 (the streak does NOT
 // preserve across `--force`).
 //
-// Useful as a manual override (`projmux usage --force` /
-// `projmux status usage --force`) when the user wants the latest
+// Useful as a manual override (`projmux agent usage --force` /
+// `projmux internal status usage --force`) when the user wants the latest
 // numbers right now and accepts that they may re-trigger 429.
 func (m *Manager) ForceCollect(ctx context.Context) ([]Snapshot, error) {
 	return m.collect(ctx, 0, true)
@@ -299,7 +299,7 @@ func (m *Manager) LoadAll() ([]Snapshot, error) {
 }
 
 // LoadState exposes per-adapter backoff/last_collect for callers that
-// want to render diagnostics (e.g. `projmux usage --json`).
+// want to render diagnostics (e.g. `projmux agent usage --json`).
 func (m *Manager) LoadState() (State, error) {
 	if m == nil {
 		return State{}, errors.New("usage: nil manager")

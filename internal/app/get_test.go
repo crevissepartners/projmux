@@ -507,11 +507,11 @@ func TestGetSkipsTheLegacyHookFilesystemMigration(t *testing.T) {
 			t.Fatalf("shouldRunLegacyHookMigrations(%q) = true, want false", argv)
 		}
 	}
-	// The exclusion is scoped to the `get` route, not to any token containing
-	// it.
+	// The exclusion is scoped to read-only and retired routes, not to any token
+	// containing it inside an active command payload.
 	for _, argv := range [][]string{
-		{"ai", "split", "--", "get"},
-		{"notify", "get"},
+		{"create", "agent", "--", "get"},
+		{"create", "notification", "--text", "get"},
 	} {
 		if !shouldRunLegacyHookMigrations(argv) {
 			t.Fatalf("shouldRunLegacyHookMigrations(%q) = false, want true", argv)

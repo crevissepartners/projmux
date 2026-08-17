@@ -88,7 +88,7 @@ func TestAppRunSessionsDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 	}
 
 	opener := app.sessions.opener.(*recordingSessionsOpener)
-	if err := app.Run([]string{"sessions"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"runtime", "sessions"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -524,10 +524,10 @@ func TestSessionsCommandRejectsInvalidUsage(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !contains(err.Error(), tt.want) {
+			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want substring %q", err, tt.want)
 			}
-			if !contains(stderr.String(), "Usage:") {
+			if !strings.Contains(stderr.String(), "Usage:") {
 				t.Fatalf("stderr = %q, want usage text", stderr.String())
 			}
 		})
@@ -656,7 +656,7 @@ func TestSessionsCommandPropagatesSetupErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !contains(err.Error(), tt.want) {
+			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want substring %q", err, tt.want)
 			}
 		})

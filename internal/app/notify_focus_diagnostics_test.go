@@ -45,7 +45,7 @@ func TestNotifyPushDiagnosticsOwnsTopLevelAndDropsRawInput(t *testing.T) {
 		pushResult: notify.PushResult{ID: "seed-uuid-123", QueueLen: 1},
 	}
 	app.notify.store, app.notify.storeErr, app.notify.hooks, app.notify.events = queue, nil, nil, nil
-	args := []string{"notify", "push", "--text", "seed summary/body tag/group title /seed/private/path 123e4567-e89b-12d3-a456-426614174000", "--target", "secret-session:1.0", "--id", "raw-uuid", "--source", "ai"}
+	args := []string{"create", "notification", "--text", "seed summary/body tag/group title /seed/private/path 123e4567-e89b-12d3-a456-426614174000", "--target", "secret-session:1.0", "--id", "raw-uuid", "--source", "ai"}
 	started := time.Now()
 	err := app.Run(args, &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {
@@ -451,7 +451,7 @@ func TestFocusDiagnosticsCoexistsWithSessionSwitchAndSuppressesGeneric(t *testin
 			return nil, nil
 		}
 	}}
-	args := []string{"focus", "--target", seededSession + ":1.0", "--socket", "/seed/private/socket", "--source", "status-bar", "--kind", "segment-click"}
+	args := []string{"internal", "focus", "--target", seededSession + ":1.0", "--socket", "/seed/private/socket", "--source", "status-bar", "--kind", "segment-click"}
 	started := time.Now()
 	err := app.Run(args, &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {

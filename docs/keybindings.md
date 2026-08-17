@@ -269,8 +269,7 @@ treated as popup close keys.
 
 Settings is the default apply path for key edits: it writes the key list,
 refreshes the generated config, and reloads the running tmux session when
-possible. Use `projmux config apply` (or the compatibility `projmux tmux apply`
-it forwards to) as a CLI recovery/sync command after editing the keymap file by
+possible. Use `projmux config apply` as a CLI recovery/sync command after editing the keymap file by
 hand, after an outside-tmux Settings save, or after resolving a reported
 generated-config or live-reload failure. Generated config first unbinds the
 known retired `C-t` pane-label chord, then installs the current keymap; an
@@ -372,8 +371,8 @@ table and is rejected.
 The migration is not a separate command. It runs at the two moments a keymap is
 already being written or applied:
 
-- `projmux config apply` (and the compatibility `projmux tmux apply` it forwards
-  to), which every installer path calls with the newly installed binary.
+- `projmux config apply`, which every installer path calls with the newly
+  installed binary.
 - The first Settings key save, which is what converges an install that never ran
   an updater — a tarball unpacked over the old binary, for instance.
 
@@ -401,12 +400,12 @@ If any step fails, the keymap, the generated config and the running server are
 all left alone, and the report says which of the three did not move. Running the
 migration again on an already-migrated file writes no bytes at all.
 
-`projmux update apply --dry-run` and `projmux upgrade --dry-run` name the
+`projmux update apply --dry-run` names the
 migration stage but do not print a rename table. The candidate binary is not
 installed yet, and only it knows its own canonical ids.
 
 `--no-apply` suppresses the live tmux reload, not the migration. Installer paths
-still invoke the new binary as `tmux apply --no-reload` so the schema does not
+still invoke the new binary as `config apply --no-reload` so the schema does not
 fall behind the binary that writes it.
 
 ### Downgrading or rolling back

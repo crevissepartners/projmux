@@ -96,6 +96,7 @@ func Classify(args []string) CommandClass {
 	if len(args) == 0 {
 		return CommandClass{}
 	}
+	args = normalizeCanonicalCompatibility(args)
 	if strings.TrimSpace(args[0]) == internalNamespaceToken {
 		return Classify(stripInternalNamespace(args[1:]))
 	}
@@ -152,6 +153,58 @@ func Classify(args []string) CommandClass {
 		out.StateChanging = boolFlagEnabled(args[1:], "popup") || boolFlagEnabled(args[1:], "force")
 	}
 	return out
+}
+
+// normalizeCanonicalCompatibility maps canonical namespace wrappers onto the
+// established privacy-safe class that owns their leaf handler. It never copies
+// caller-supplied values into the result.
+func normalizeCanonicalCompatibility(args []string) []string {
+	if len(args) < 2 {
+		return args
+	}
+	switch args[0] {
+	case "pin":
+		if args[1] == "project" {
+			return append([]string{"pin"}, args[2:]...)
+		}
+	case "runtime":
+		switch args[1] {
+		case "sessions":
+			return append([]string{"sessions"}, args[2:]...)
+		case "attach":
+			return append([]string{"attach", "auto"}, args[2:]...)
+		case "stop":
+			return append([]string{"kill", "tagged"}, args[2:]...)
+		case "tag":
+			return append([]string{"tag"}, args[2:]...)
+		case "prune":
+			return append([]string{"prune", "ephemeral"}, args[2:]...)
+		}
+	case "notification":
+		if args[1] == "ack" || args[1] == "reconcile" {
+			return append([]string{"notify", args[1]}, args[2:]...)
+		}
+	case "create":
+		switch args[1] {
+		case "notification":
+			return append([]string{"notify", "push"}, args[2:]...)
+		case "snapshot":
+			return append([]string{"session-state", "save"}, args[2:]...)
+		}
+	case "delete":
+		if args[1] == "snapshot" {
+			return append([]string{"session-state", "delete"}, args[2:]...)
+		}
+	case "restore":
+		if args[1] == "snapshot" {
+			return append([]string{"session-state", "restore"}, args[2:]...)
+		}
+	case "prune":
+		if args[1] == "snapshot" {
+			return append([]string{"prune", "session-state"}, args[2:]...)
+		}
+	}
+	return args
 }
 
 // directHelpIntent reports whether the arguments after the top-level command

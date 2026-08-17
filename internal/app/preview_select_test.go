@@ -17,7 +17,7 @@ func TestAppRunPreviewSelect(t *testing.T) {
 		},
 	}
 
-	if err := app.Run([]string{"preview", "select", "dev", "2", "1"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"internal", "preview", "select", "dev", "2", "1"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 

@@ -1,12 +1,12 @@
 # Usage tracking
 
-`projmux usage` and `projmux status usage` report authoritative fixed-window
+`projmux agent usage` and `projmux internal status usage` report authoritative fixed-window
 utilisation for Claude/Codex and official named quota buckets for Antigravity.
 `--model all`, the tmux
 HUD, and the statusbar usage popup use Settings > AI Settings > Enabled
 agents as the source of truth, so disabled Claude/Codex/Antigravity providers are
 not refreshed or rendered on ambient/all surfaces. Explicit read-only
-requests such as `projmux usage --model claude`, `--model codex`, or
+requests such as `projmux agent usage --model claude`, `--model codex`, or
 `--model antigravity`
 still collect and render that provider even when it is disabled.
 
@@ -151,10 +151,10 @@ across machines (Dropbox, iCloud Drive).
 
 ## CLI
 
-### `projmux usage`
+### `projmux agent usage`
 
 ```
-projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all]
+projmux agent usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all]
               [--json] [--force|-f]
 ```
 
@@ -189,10 +189,10 @@ account buckets; `--window weekly` never matches an opaque quota bucket named
 `weekly`. `--window context` remains an accepted compatibility filter and
 returns no Usage rows.
 
-### `projmux status usage`
+### `projmux internal status usage`
 
 ```
-projmux status usage [--max-width N] [--force|-f]
+projmux internal status usage [--max-width N] [--force|-f]
 ```
 
 The HUD bar wired to the tmux status interval. It scopes the registry to
@@ -265,7 +265,7 @@ When a collection fails, the failure is visible in three places:
    substituted — no synthesized `0%`, zero time, or invented reset. The healthy
    rows still refresh, so a single broken row can no longer freeze a provider's
    whole slice while `last_collect` keeps advancing.
-2. **A bounded warning.** `projmux usage` prints one line to stderr:
+2. **A bounded warning.** `projmux agent usage` prints one line to stderr:
 
    ```
    usage: warning: claude: skipped 2 usage rows: row 0: missing kind; row 2: missing resets_at
@@ -292,16 +292,16 @@ When a collection fails, the failure is visible in three places:
    repeating failure cannot flood the bounded journal. Journal writes are
    best-effort and never change what the usage command returns.
 
-   Because `projmux status usage` runs as a short-lived process per refresh,
+   Because `projmux internal status usage` runs as a short-lived process per refresh,
    the once-per-run suppression bounds repeats within a single invocation; the
    cross-invocation rate is bounded by the adapter throttle instead.
 
 ### Statusbar usage popup
 
-`projmux statusbar click usage` renders a native-framed popup from the same
-cache instead of shelling out to `projmux usage`. The popup filters rows and
+`projmux internal statusbar click usage` renders a native-framed popup from the same
+cache instead of shelling out to `projmux agent usage`. The popup filters rows and
 sync metadata to the same enabled-agent scope as the ambient HUD. This keeps
-`projmux usage --json` backwards-compatible for CLI consumers while giving the
+`projmux agent usage --json` stable for CLI consumers while giving the
 tmux click path a structured table with aligned rows, right-aligned numeric
 values, dim unavailable cells, amber usage at 80%, and red usage at 95%.
 
@@ -341,5 +341,5 @@ to attempt now). Bind it to a tmux key (e.g. `prefix U`) for a manual
 | Variable | Effect |
 | --- | --- |
 | `PROJMUX_USAGE_STATE_DIR` | Override snapshot directory. Resolved verbatim, no `~` expansion. |
-| `PROJMUX_USAGE_DEBUG` | Surface adapter errors from `status usage` to stderr. |
+| `PROJMUX_USAGE_DEBUG` | Surface adapter errors from `internal status usage` to stderr. |
 | `PROJMUX_USAGE_LIMITS_PATH` | Deprecated; read but ignored (limits come from upstream APIs). |

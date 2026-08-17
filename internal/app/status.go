@@ -289,11 +289,11 @@ func (c *statusCommand) statusCommandLimit() time.Duration {
 
 func printStatusUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux status git [path]")
-	fmt.Fprintln(w, "  projmux status project")
-	fmt.Fprintln(w, "  projmux status usage [--max-width N]")
-	fmt.Fprintln(w, "  projmux status notify [--max-width N]")
-	fmt.Fprintln(w, "  projmux status resources")
+	fmt.Fprintln(w, "  projmux internal status git [path]")
+	fmt.Fprintln(w, "  projmux internal status project")
+	fmt.Fprintln(w, "  projmux internal status usage [--max-width N]")
+	fmt.Fprintln(w, "  projmux internal status notify [--max-width N]")
+	fmt.Fprintln(w, "  projmux internal status resources")
 }
 
 func (c *statusCommand) runResources(args []string, stdout, stderr io.Writer) error {
@@ -878,7 +878,7 @@ func resolveProjectDisplayName(in projectidentity.Inputs, f projectidentity.FS) 
 }
 
 // runProject prints the unified project display name for the current session,
-// consumed by the status-left session segment (`#(projmux status project)`). It
+// consumed by the status-left session segment (`#(projmux internal status project)`). It
 // reads the session name, session anchor (@projmux_project_path), and active
 // pane cwd from tmux and resolves them through the shared project-identity
 // resolver, so the statusbar shows the same name as recent windows, notify, and

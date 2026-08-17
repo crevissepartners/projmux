@@ -3,6 +3,8 @@ package diagnostics
 import (
 	"errors"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/cli"
 )
 
 type exitCoder interface {
@@ -14,6 +16,13 @@ type exitCoder interface {
 // Storage is deliberately best-effort: callers must ignore its return value.
 func RecordOutcome(store *Store, args []string, runID, version, muxBackend string, started time.Time, commandErr error, usageError, lifecycleRecorded bool) error {
 	if lifecycleRecorded {
+		return nil
+	}
+	// Phase 2 retirement tombstones and removed pre-namespace aliases are a
+	// strict zero-side-effect boundary. In particular, reporting their expected
+	// exit-2/exit-1 result must not create the diagnostics journal they were
+	// forbidden to touch during dispatch.
+	if retiredCLINoWrite(args) {
 		return nil
 	}
 	class := Classify(args)
@@ -56,4 +65,27 @@ func RecordOutcome(store *Store, args []string, runID, version, muxBackend strin
 		}
 	}
 	return store.Append(event)
+}
+
+func retiredCLINoWrite(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "ai":
+		return !cli.IsLegacyAIProducerArgv(args[1:])
+	case "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",
+		"key-broker", "popup-wait-key", "preview", "session-popup", "status", "statusbar", "tmux":
+		return true
+	case "attach":
+		return len(args) < 2 || args[1] != "project"
+	case "focus":
+		return len(args) < 2 || (args[1] != "project" && args[1] != "window" && args[1] != "pane")
+	case "pin":
+		return len(args) < 2 || args[1] != "project"
+	case "prune":
+		return len(args) < 2 || (args[1] != "project" && args[1] != "snapshot")
+	default:
+		return false
+	}
 }

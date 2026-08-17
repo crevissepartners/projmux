@@ -220,7 +220,7 @@ func TestAgentDomainNamespaceOwnsTheAgentWorkflowSpellings(t *testing.T) {
 	if !ok {
 		t.Fatal("canonical manifest is missing `agent usage`")
 	}
-	for _, source := range []string{"usage", "status", "agent"} {
+	for _, source := range []string{"internal", "agent"} {
 		if !slices.Contains(usage.Sources, source) {
 			t.Fatalf("agent usage sources = %v, want it to name %q", usage.Sources, source)
 		}
@@ -233,19 +233,17 @@ func TestAgentDomainNamespaceOwnsTheAgentWorkflowSpellings(t *testing.T) {
 		t.Fatal("the get node grew a usage kind")
 	}
 
-	// The two compatibility spellings this route aliases keep their own
-	// disposition and their own node.
+	// The two old public spellings remain only as hidden error tombstones.
 	for _, token := range []string{"ai", "usage"} {
 		compat, ok := LookupRoute(token)
 		if !ok {
 			t.Fatalf("compatibility route %q was removed", token)
 		}
-		if compat.Disposition != DispositionCompatibility {
-			t.Fatalf("route %q disposition = %q, want compatibility", token, compat.Disposition)
+		if compat.Disposition != DispositionCompatibility || !compat.Hidden || !compat.Retired {
+			t.Fatalf("route %q = %#v, want a retired compatibility tombstone", token, compat)
 		}
 	}
-	status, _ := LookupRoute("status")
-	if _, ok := findChild(status, "usage"); !ok {
-		t.Fatal("`status usage` was removed")
+	if _, ok := LookupRoute("status"); ok {
+		t.Fatal("old top-level `status usage` alias remains")
 	}
 }

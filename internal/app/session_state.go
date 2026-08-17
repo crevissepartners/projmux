@@ -588,10 +588,8 @@ func sessionStateCount(count int, singular string) string {
 
 func printSessionStateUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux session-state status [--session <name>]")
-	fmt.Fprintln(w, "  projmux session-state save")
-	fmt.Fprintln(w, "  projmux session-state delete [--session <name>]")
-	fmt.Fprintln(w, "  projmux session-state restore --dry-run [--session <name>]")
-	fmt.Fprintln(w, "  projmux session-state preview [--session <name>]")
-	fmt.Fprintln(w, "  projmux session-state popup [--session <name>]")
+	fmt.Fprintln(w, "  projmux get snapshots [--session <name>]")
+	fmt.Fprintln(w, "  projmux create snapshot")
+	fmt.Fprintln(w, "  projmux delete snapshot [--session <name>]")
+	fmt.Fprintln(w, "  projmux restore snapshot --dry-run [--session <name>]")
 }

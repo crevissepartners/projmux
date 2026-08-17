@@ -353,7 +353,7 @@ func parseCanonicalFocusArgs(kind string, args []string, stderr io.Writer) (focu
 	// a kind that promises something narrower.
 	if strings.ContainsAny(ref, ":.") {
 		return focusOptions{}, usageError(fmt.Sprintf(
-			"%s takes one %s reference, not a session:window.pane coordinate; use `projmux focus --target` for raw coordinates", spelling, kind))
+			"%s takes one %s reference, not a session:window.pane coordinate; machine-owned raw coordinates use `projmux internal focus --target`", spelling, kind))
 	}
 
 	opts.NavKind = kind

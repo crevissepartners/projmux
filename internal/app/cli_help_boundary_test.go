@@ -38,6 +38,9 @@ func helpBoundaryArgv() [][]string {
 	var walk func(prefix []string, routes []cli.Route)
 	walk = func(prefix []string, routes []cli.Route) {
 		for _, route := range routes {
+			if route.Retired {
+				continue
+			}
 			path := append(append([]string{}, prefix...), route.Name)
 			for _, flag := range helpFlagSpellings() {
 				argv = append(argv, append(append([]string{}, path...), flag))
@@ -47,10 +50,7 @@ func helpBoundaryArgv() [][]string {
 	}
 	walk(nil, cli.Routes())
 	for _, flag := range helpFlagSpellings() {
-		argv = append(argv,
-			[]string{"ai", "bogus", flag},
-			[]string{"setup", "terminal", "--apply", flag},
-		)
+		argv = append(argv, []string{"setup", "terminal", "--apply", flag})
 	}
 	return argv
 }
@@ -194,11 +194,8 @@ func TestPopupWaitKeyHelpDoesNotBlockOnTheTTY(t *testing.T) {
 	var argvs [][]string
 	for _, flag := range helpFlagSpellings() {
 		argvs = append(argvs,
-			[]string{"popup-wait-key", flag},
-			[]string{"key-broker", flag},
-			// The relocated spellings inherit the same hazard: both leaf handlers
-			// still read a key, so the boundary has to answer the namespaced
-			// spelling before argv reaches them.
+			// Both leaf handlers read a key, so the boundary has to answer the
+			// namespaced spelling before argv reaches them.
 			[]string{"internal", "popup-wait-key", flag},
 			[]string{"internal", "key-broker", flag},
 		)
@@ -242,8 +239,8 @@ func TestShouldRunLegacyHookMigrationsSkipsEveryHelpInvocation(t *testing.T) {
 	// Payload after `--` is not help, so the migration boundary is unchanged
 	// for real invocations.
 	for _, argv := range [][]string{
-		{"ai", "split", "--", "--help"},
-		{"notify", "push", "--summary", "x"},
+		{"create", "agent", "--", "--help"},
+		{"create", "notification", "--summary", "x"},
 		{"nosuchcmd", "--help"},
 	} {
 		if !shouldRunLegacyHookMigrations(argv) {

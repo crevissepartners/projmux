@@ -1035,7 +1035,7 @@ type keyBindingActionHandler struct {
 
 // keyBindingActionHandlerNotes pins the handler boundaries that the invocation
 // string alone leaves implicit. The `current` entry is the reason this map
-// exists: the shipped manifest classifies `projmux current` as a compatibility
+// existed: the historical manifest classified `projmux current` as a compatibility
 // route whose canonical projection is the read-only `get pane` cwd field, while
 // the shipped handler also ensures and attaches the derived runtime. Naming
 // both halves in the internal model is what stops the read-only query from

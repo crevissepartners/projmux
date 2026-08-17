@@ -1,6 +1,6 @@
 package render
 
-// HUD bar rendering primitives shared by the `projmux status usage` HUD
+// HUD bar rendering primitives shared by the `projmux internal status usage` HUD
 // segment. Lives in the ui render layer (rather than internal/core/usage) so
 // core stays theme-free while unit tests can still exercise the math without
 // importing the CLI plumbing.

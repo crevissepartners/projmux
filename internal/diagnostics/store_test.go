@@ -384,7 +384,7 @@ func TestPlatformLockOldOwnerCannotUnlockSuccessor(t *testing.T) {
 func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
 	start := time.Now().Add(-time.Millisecond)
-	if err := RecordOutcome(store, []string{"status", "usage"}, "read-ok", "0.8.4", "tmux", start, nil, false, false); err != nil {
+	if err := RecordOutcome(store, []string{"internal", "status", "usage"}, "read-ok", "0.8.4", "tmux", start, nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := RecordOutcome(store, []string{"diagnostics", "log"}, "viewer-ok", "0.8.4", "tmux", start, nil, false, false); err != nil {
@@ -395,23 +395,22 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 		runID string
 	}{
 		{args: []string{"attach", "--help"}, runID: "help-ok"},
-		{args: []string{"upgrade", "--dry-run"}, runID: "upgrade-preview-ok"},
 		{args: []string{"update", "apply", "--dry-run"}, runID: "update-preview-ok"},
 		{args: []string{"doctor", "--json", "--section", "deps"}, runID: "doctor-read-ok"},
 		{args: []string{"diagnostics", "report", "--output", "/private/report"}, runID: "report-read-ok"},
-		{args: []string{"ai", "integrate", "codex", "--dry-run"}, runID: "integration-preview-ok"},
-		{args: []string{"session-state", "restore", "--dry-run"}, runID: "restore-preview-ok"},
+		{args: []string{"agent", "integrate", "codex", "--dry-run"}, runID: "integration-preview-ok"},
+		{args: []string{"restore", "snapshot", "--dry-run"}, runID: "restore-preview-ok"},
 	}
 	for _, success := range readOnlySuccesses {
 		if err := RecordOutcome(store, success.args, success.runID, "0.8.4", "tmux", start, nil, false, false); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := RecordOutcome(store, []string{"pin", "add", "/secret"}, "write-ok", "0.8.4", "tmux", start, nil, false, false); err != nil {
+	if err := RecordOutcome(store, []string{"pin", "project", "add", "/secret"}, "write-ok", "0.8.4", "tmux", start, nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 	forbidden := "pane=%42 title=private-topic body=notification-secret transcript=raw-conversation config_secret=hunter2"
-	if err := RecordOutcome(store, []string{"status", "usage"}, "read-error", "0.8.4", "tmux", start, fmt.Errorf("failed: %s", forbidden), false, false); err != nil {
+	if err := RecordOutcome(store, []string{"internal", "status", "usage"}, "read-error", "0.8.4", "tmux", start, fmt.Errorf("failed: %s", forbidden), false, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := RecordOutcome(store, []string{"doctor", "--install-missing"}, "doctor-usage-error", "0.8.4", "tmux", start, errors.New("removed flag"), true, false); err != nil {
@@ -447,7 +446,7 @@ func TestRecordOutcomePolicyAndBestEffort(t *testing.T) {
 	if err := os.WriteFile(filepath.Dir(filepath.Dir(blockedPath)), []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordOutcome(blocked, []string{"pin", "add"}, "ignored-failure", "0.8.4", "tmux", start, nil, false, false); err == nil {
+	if err := RecordOutcome(blocked, []string{"pin", "project", "add"}, "ignored-failure", "0.8.4", "tmux", start, nil, false, false); err == nil {
 		t.Fatal("expected injected writer failure")
 	}
 }
@@ -462,7 +461,7 @@ func TestRecordOutcomeAutomaticHookAndPollSuccessZeroErrorOne(t *testing.T) {
 		{name: "attention arm", args: []string{"attention", "arm", "%1"}},
 		{name: "attention clear", args: []string{"attention", "clear", "%1"}},
 		{name: "attention window", args: []string{"attention", "window", "@1"}},
-		{name: "session state autosave", args: []string{"tmux", "autosave-session-state", "--quiet"}},
+		{name: "session state autosave", args: []string{"internal", "tmux", "autosave-session-state", "--quiet"}},
 		{name: "recent window record", args: []string{"window", "record"}},
 	}
 	for _, tt := range tests {
@@ -522,10 +521,10 @@ func (e outcomeExitError) ExitCode() int { return e.code }
 func TestRecordOutcomeClassifiesUsageAndExitErrorsOnce(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
 	start := time.Now()
-	if err := RecordOutcome(store, []string{"status", "usage"}, "usage-run", "0.8.4", "tmux", start, errors.New("bad flag"), true, false); err != nil {
+	if err := RecordOutcome(store, []string{"internal", "status", "usage"}, "usage-run", "0.8.4", "tmux", start, errors.New("bad flag"), true, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordOutcome(store, []string{"focus", "--target", "secret"}, "exit-run", "0.8.4", "tmux", start, outcomeExitError{code: 2}, false, false); err != nil {
+	if err := RecordOutcome(store, []string{"focus", "project", "secret"}, "exit-run", "0.8.4", "tmux", start, outcomeExitError{code: 2}, false, false); err != nil {
 		t.Fatal(err)
 	}
 	events, err := store.Read()
@@ -534,5 +533,28 @@ func TestRecordOutcomeClassifiesUsageAndExitErrorsOnce(t *testing.T) {
 	}
 	if events[0].Kind != "usage" || events[1].Kind != "exit" {
 		t.Fatalf("error kinds = %q, %q", events[0].Kind, events[1].Kind)
+	}
+}
+
+func TestRecordOutcomeRetiredCLIIsStrictlyNoWrite(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "logs", LogFileName))
+	for _, args := range [][]string{
+		{"ai", "ingest", "log"},
+		{"ai", "ingest", "antigravity-hook", "--event", "FutureEvent"},
+		{"attach", "auto"},
+		{"current"},
+		{"focus", "--target", "secret"},
+		{"notify", "push"},
+		{"pin", "add", "/secret"},
+		{"prune", "ephemeral"},
+		{"session-state", "save"},
+		{"tmux", "apply"},
+	} {
+		if err := RecordOutcome(store, args, "retired", "0.8.4", "tmux", time.Now(), errors.New("removed"), true, false); err != nil {
+			t.Fatalf("RecordOutcome(%q): %v", args, err)
+		}
+	}
+	if _, err := os.Stat(store.path); !os.IsNotExist(err) {
+		t.Fatalf("retired argv created diagnostics state: %v", err)
 	}
 }

@@ -26,7 +26,7 @@ pane_id_output="$(
     TMUX_SPLIT_TARGET_PANE="$pane_id_target" \
     TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
     SHELL="/bin/sh" \
-    "$bin" ai split --agent shell --print-pane-id right
+    "$bin" create pane -o pane-id --placement right
 )"
 if [[ ! "$pane_id_output" =~ ^%[0-9]+$ ]]; then
   echo "expected exactly one %N pane id line, got: $pane_id_output" >&2
@@ -47,7 +47,7 @@ tmux new-session -d -s e2e-alpha -c "$project_a" sleep 300
 tmux new-session -d -s e2e-beta -c "$project_b" sleep 300
 tmux split-window -d -t e2e-alpha:0 -c "$project_a" sleep 300
 
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket projmux >"$PROJMUX_SMOKE_WORKDIR/apply-empty.out"
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket projmux >"$PROJMUX_SMOKE_WORKDIR/apply-empty.out"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/apply-empty.out" "skipped reload: no live tmux server -L projmux"
 
 tmux source-file "$XDG_CONFIG_HOME/projmux/tmux.conf"
@@ -65,7 +65,7 @@ tmux set-option -p -t "$pane_id" @projmux_attention_state reply
 # A user rename owns only the persistent pane label. It must not mutate the
 # independent AI topic or raw runtime title, and empty confirmation clears it.
 raw_title_before="$(tmux display-message -p -t "$pane_id" '#{pane_title}')"
-"$bin" tmux rename-pane "$pane_id" "docker user label"
+"$bin" internal tmux rename-pane "$pane_id" "docker user label"
 if [[ "$(tmux show-options -pqv -t "$pane_id" @projmux_pane_label)" != "docker user label" ]]; then
   echo "expected real tmux pane label write" >&2
   exit 1
@@ -81,15 +81,15 @@ if [[ "$(tmux show-options -pqv -t "$pane_id" @projmux_pane_label)" != "docker u
   echo "native raw-title change mutated pane label or AI topic" >&2
   exit 1
 fi
-"$bin" tmux rename-pane "$pane_id" ""
+"$bin" internal tmux rename-pane "$pane_id" ""
 if [[ -n "$(tmux show-options -pqv -t "$pane_id" @projmux_pane_label)" ]]; then
   echo "expected empty pane label rename to clear the option" >&2
   exit 1
 fi
 
-"$bin" notify reconcile --json >"$PROJMUX_SMOKE_WORKDIR/reconcile.json"
+"$bin" notification reconcile --json >"$PROJMUX_SMOKE_WORKDIR/reconcile.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile.json" '"pushed": 1'
-"$bin" notify list --json >"$PROJMUX_SMOKE_WORKDIR/reconcile-list.json"
+"$bin" get notifications --json >"$PROJMUX_SMOKE_WORKDIR/reconcile-list.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-list.json" "docker e2e"
 
 notify_hook="$PROJMUX_SMOKE_WORKDIR/notify-hook.sh"
@@ -101,26 +101,16 @@ HOOK
 chmod 0755 "$notify_hook"
 export PROJMUX_NOTIFY_HOOK="$notify_hook"
 
-"$bin" focus --target e2e-beta --json >"$PROJMUX_SMOKE_WORKDIR/focus.json"
+"$bin" internal focus --target e2e-beta --json >"$PROJMUX_SMOKE_WORKDIR/focus.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/focus.json" '"ok":true'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/focus.json" 'notify-only'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/focus-hook.log" "session ready: e2e-beta"
 
-# The pre-namespace spelling is what a tmux server configured by a previously
-# installed binary still invokes, so it is exercised here verbatim; the
-# relocated spelling must render the same segment against the same live state.
-status_notify="$("$bin" status notify --max-width 80)"
+status_notify="$("$bin" internal status notify --max-width 80)"
 smoke_assert_output_contains "$status_notify" "docker e2e"
-internal_status_notify="$("$bin" internal status notify --max-width 80)"
-if [[ "$internal_status_notify" != "$status_notify" ]]; then
-  echo "internal status notify diverged from the compatibility spelling status notify" >&2
-  echo "compatibility: $status_notify" >&2
-  echo "internal:      $internal_status_notify" >&2
-  exit 1
-fi
 
-"$bin" statusbar click notify >"$PROJMUX_SMOKE_WORKDIR/statusbar-notify-click.out"
-"$bin" notify list --json >"$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json"
+"$bin" internal statusbar click notify >"$PROJMUX_SMOKE_WORKDIR/statusbar-notify-click.out"
+"$bin" get notifications --json >"$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json"
 if grep -Fq "docker e2e" "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json"; then
   echo "expected statusbar notify focus to ack docker e2e" >&2
   cat "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json" >&2
@@ -602,7 +592,7 @@ fi
 # queue JSON and a client-scoped command marker are completion signals; screen
 # text is used only to know when the confirmation picker is ready for input.
 for severity in info warn critical; do
-  "$bin" notify push \
+  "$bin" create notification \
     --id "polish-$severity" \
     --text "polish $severity" \
     --target "$recorder_session:0.0" \
@@ -611,7 +601,7 @@ for severity in info warn critical; do
     --source external >/dev/null
 done
 notify_before="$PROJMUX_SMOKE_WORKDIR/notify-polish-before.json"
-"$bin" notify list --json >"$notify_before"
+"$bin" get notifications --json >"$notify_before"
 for severity in info warn critical; do
   smoke_assert_file_contains "$notify_before" "polish-$severity"
 done
@@ -621,7 +611,7 @@ notify_cancel_marker="$PROJMUX_SMOKE_WORKDIR/notify-clear-cancel.done"
 notify_cancel_offset="$(stat -c %s "$recorder_log")"
 tmux -L "$recorder_socket" display-popup -c "$recorder_client" \
   -T "Notify E2E" -w 80 -h 24 -E \
-  "'$bin' notify list --ui=sidebar --client '$recorder_client'; printf done >'$notify_cancel_marker'" &
+  "'$bin' get notifications --ui=sidebar --client '$recorder_client'; printf done >'$notify_cancel_marker'" &
 notify_cancel_pid=$!
 smoke_wait_for "Notify sidebar before cancel" sh -c \
   "tail -c +$((notify_cancel_offset + 1)) '$recorder_log' | grep -aFq 'Pending Notifications'"
@@ -632,7 +622,7 @@ printf '\033' >&9
 smoke_wait_for "Notify cancel command marker" test -f "$notify_cancel_marker"
 wait "$notify_cancel_pid"
 notify_after_cancel="$PROJMUX_SMOKE_WORKDIR/notify-polish-after-cancel.json"
-"$bin" notify list --json >"$notify_after_cancel"
+"$bin" get notifications --json >"$notify_after_cancel"
 for severity in info warn critical; do
   smoke_assert_file_contains "$notify_after_cancel" "polish-$severity"
 done
@@ -645,7 +635,7 @@ notify_confirm_marker="$PROJMUX_SMOKE_WORKDIR/notify-clear-confirm.done"
 notify_confirm_offset="$(stat -c %s "$recorder_log")"
 tmux -L "$recorder_socket" display-popup -c "$recorder_client" \
   -T "Notify E2E" -w 80 -h 24 -E \
-  "'$bin' notify list --ui=sidebar --client '$recorder_client'; printf done >'$notify_confirm_marker'" &
+  "'$bin' get notifications --ui=sidebar --client '$recorder_client'; printf done >'$notify_confirm_marker'" &
 notify_confirm_pid=$!
 smoke_wait_for "Notify sidebar before confirm" sh -c \
   "tail -c +$((notify_confirm_offset + 1)) '$recorder_log' | grep -aFq 'Pending Notifications'"
@@ -656,7 +646,7 @@ printf '\033[B\r' >&9
 smoke_wait_for "Notify confirm command marker" test -f "$notify_confirm_marker"
 wait "$notify_confirm_pid"
 notify_after_confirm="$PROJMUX_SMOKE_WORKDIR/notify-polish-after-confirm.json"
-"$bin" notify list --json >"$notify_after_confirm"
+"$bin" get notifications --json >"$notify_after_confirm"
 for severity in info warn critical; do
   if grep -Fq "polish-$severity" "$notify_after_confirm"; then
     echo "Notify Clear All confirm left $severity fixture queued" >&2
@@ -678,7 +668,7 @@ sequence_window="$(tmux -L "$recorder_socket" new-window -d -t "$recorder_sessio
 tmux -L "$recorder_socket" select-window -t "$sequence_window"
 smoke_wait_for "sequence capture pane" test -e "$sequence_capture"
 install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2.toml" "$XDG_CONFIG_HOME/projmux/keymap.toml"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$recorder_socket" \
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$recorder_socket" \
   >"$PROJMUX_SMOKE_WORKDIR/sequence-e2e-apply.out"
 
 sequence_client_is_root() {
@@ -1332,7 +1322,7 @@ if [[ "$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)" != "$agent_
 fi
 
 # 13. The compatibility bridge is untouched: with no --project the invocation is
-#     still the legacy `ai split`, and its identity projections name the flag
+#     still the compatibility-free split bridge, and its identity projections name the flag
 #     that would make them work.
 set +e
 pmx_agent create agent --provider codex -o uid \
@@ -1460,7 +1450,7 @@ trap 'binding_cleanup; smoke_cleanup_env' EXIT
 
 binding_second_before="$(binding_second_tmux show-options -gqv @projmux_phase3_sentinel):$(binding_second_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}')"
 binding_config="$binding_root/config/projmux/tmux.conf"
-binding_pmx tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
+binding_pmx internal tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
   >"$binding_root/first-apply.out"
 smoke_assert_file_contains "$binding_root/first-apply.out" "reloaded tmux server -L $binding_socket"
 
@@ -1482,7 +1472,7 @@ fi
 # next normal apply restores the exact same Window and Pane uids.
 binding_tmux set-option -wu -t "$binding_window" @projmux_window_uid
 binding_tmux set-option -pu -t "$binding_pane" @projmux_pane_uid
-binding_pmx tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
+binding_pmx internal tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
   >"$binding_root/repair-apply.out"
 if [[ "$(binding_tmux show-options -wqv -t "$binding_window" @projmux_window_uid)" != "$binding_window_uid" ]]; then
   echo "apply did not restore the original Window uid $binding_window_uid" >&2
@@ -1498,7 +1488,7 @@ cp "$binding_registry" "$binding_root/registry.before-repeat"
 binding_registry_stat="$(stat -c '%i:%s:%y' "$binding_registry")"
 cp "$binding_config" "$binding_root/config.before-repeat"
 binding_config_stat="$(stat -c '%i:%s:%y' "$binding_config")"
-binding_pmx tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
+binding_pmx internal tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
   >"$binding_root/repeat-apply.out"
 cmp "$binding_root/registry.before-repeat" "$binding_registry"
 if [[ "$(stat -c '%i:%s:%y' "$binding_registry")" != "$binding_registry_stat" ]]; then
@@ -1831,7 +1821,7 @@ delete_cleanup() {
 trap 'delete_cleanup; smoke_cleanup_env' EXIT
 
 delete_config="$delete_root/config/projmux/tmux.conf"
-delete_pmx tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" \
+delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" \
   >"$delete_root/apply.out"
 smoke_assert_file_contains "$delete_root/apply.out" "reloaded tmux server -L $delete_socket"
 
@@ -2030,7 +2020,7 @@ fi
 # session, which must be visible before mutation and in the durable result.
 delete_tmux new-session -d -s delete-gamma -n only -c "$delete_root/work/gamma" sleep 600
 delete_tmux set-option -t delete-gamma -q @projmux_project_path "$delete_root/work/gamma"
-delete_pmx tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-gamma.out"
+delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-gamma.out"
 delete_gamma_pane="$(delete_tmux display-message -p -t delete-gamma:only '#{pane_id}')"
 delete_gamma_pane_uid="$(delete_tmux show-options -pqv -t "$delete_gamma_pane" @projmux_pane_uid)"
 delete_gamma_window="$(delete_tmux display-message -p -t "$delete_gamma_pane" '#{window_id}')"
@@ -2045,7 +2035,7 @@ if delete_tmux has-session -t delete-gamma 2>/dev/null; then
 fi
 smoke_assert_file_contains "$delete_root/pane-session-last.out" "live cascade ended Project session delete-gamma"
 
-delete_pmx tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-after-pane-delete.out"
+delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-after-pane-delete.out"
 delete_pmx get panes --all-projects -o uid >"$delete_root/panes.after-reconcile"
 for deleted_uid in "$delete_split_uid" "$delete_agent_pane_uid" "$delete_agent_two_pane_uid" "$delete_last_pane_uid" "$delete_gamma_pane_uid"; do
   if grep -Fqx "$deleted_uid" "$delete_root/panes.after-reconcile"; then
@@ -2175,7 +2165,7 @@ rename_cleanup() {
 trap 'rename_cleanup; smoke_cleanup_env' EXIT
 
 rename_config="$rename_root/config/projmux/tmux.conf"
-rename_base_pmx tmux apply --bin "$bin" --config "$rename_config" --socket "$rename_socket" >"$rename_root/apply.out"
+rename_base_pmx internal tmux apply --bin "$bin" --config "$rename_config" --socket "$rename_socket" >"$rename_root/apply.out"
 rename_base_pmx reconcile resources --socket "$rename_socket" >"$rename_root/initial-reconcile.out"
 rename_project_uid="$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_uid)"
 rename_window="$(rename_tmux display-message -p -t "$rename_session:0" '#{window_id}')"

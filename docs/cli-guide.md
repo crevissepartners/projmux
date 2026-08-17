@@ -35,7 +35,7 @@ with it keeps one notion of help; the boundary never interprets a flag value:
 
 - Every help invocation exits `0`, writes to **stdout** only, records no
   operational error, and performs no tmux, runtime, or lifecycle-migration
-  access. This includes nested routes (`projmux ai settings --help`) and the
+  access. This includes nested routes (`projmux config edit --help`) and the
   hidden internal namespace (`projmux internal popup-wait-key --help`).
 - Help resolves to the deepest documented route and shows its summary, usage
   synopsis, sub-routes, route-local output projections, and the canonical route
@@ -44,14 +44,14 @@ with it keeps one notion of help; the boundary never interprets a flag value:
   [--allow-symlink]`); the per-flag prose descriptions come from the command's
   own parser and are not reproduced here.
 - A help flag after the first bare `--` is payload, not help:
-  `projmux ai split -- --help` forwards `--help` to the launched process
+  `projmux create agent -- --help` forwards `--help` to the launched process
   unchanged.
 - An unknown command keeps its `unknown command: <token>` error and exit `1`
   even with `--help`, and `projmux help` / bare `projmux` keep printing the
   top-level list. A bare `help` word nested under a command
   (`projmux pin help`) still reaches that command's own handler.
 - Because a help invocation runs no handler, it is never recorded as a state
-  change in the operations journal, at any depth — `projmux ai topic set --help`
+  change in the operations journal, at any depth — `projmux agent topic set --help`
   logs neither an error nor a state-changing success.
 
 ## Command inventory
@@ -249,44 +249,30 @@ hook payload, or a `make install` log.
 | `internal key-broker` | Darwin physical key transport. |
 | `internal popup-wait-key` | Single-key reader that closes a display-only popup. |
 
-Every one of these routes is an alias over the handler that already owned the
-behavior, so stdout, stderr, the exit code, and the side effects are identical
-to the pre-namespace spelling.
+The old pre-namespace top-level aliases have been removed. Invoking `status`,
+`statusbar`, `preview`, `session-popup`, `tmux`, `key-broker`, or
+`popup-wait-key` as the first token is an unknown command (exit 1). Generated
+payloads use the `internal` routes above.
 
-The pre-namespace spellings — `projmux status ...`, `projmux statusbar ...`,
-`projmux preview ...`, `projmux session-popup ...`, `projmux tmux ...`,
-`projmux key-broker`, `projmux popup-wait-key`, `projmux ai ingest ...`, and
-`projmux ai watch-title ...` — all still work and are **not** deprecated in
-this release. They must keep working: a tmux server that is already running was
-configured by a previously installed binary and keeps invoking them until the
-next `projmux config apply`. They are simply no longer listed in `projmux help`.
-Removing them is a separate breaking change.
+The tmux plumbing has public equivalents where an operator needs them:
 
-`projmux tmux print-config`, `print-app-config`, `install`, `install-app`, and
-`apply` sit here because the whole `tmux` route was classified as plumbing.
-Three of the five now also have a public spelling under [`config`](#config):
-
-| hidden spelling | public spelling |
+| internal spelling | public spelling |
 | --- | --- |
-| `projmux tmux print-config` | `projmux config render standalone` |
-| `projmux tmux print-app-config` | `projmux config render app` |
-| `projmux tmux apply` | `projmux config apply` |
-| `projmux tmux install` | *(none — installer plumbing)* |
-| `projmux tmux install-app` | *(none — installer plumbing)* |
+| `projmux internal tmux print-config` | `projmux config render standalone` |
+| `projmux internal tmux print-app-config` | `projmux config render app` |
+| `projmux internal tmux apply` | `projmux config apply` |
+| `projmux internal tmux install` | *(none — installer plumbing)* |
+| `projmux internal tmux install-app` | *(none — installer plumbing)* |
 
-The public spellings are parity aliases: same stdout, same stderr, same exit
-code, same side effects. Neither half is deprecated and neither prints a
-migration warning. `make install` calls `projmux config apply`, and
-a tmux server that is already running keeps invoking the hidden spellings until
-the next apply, so both must keep working.
+The public spellings forward to the same internal handlers. `make install`
+calls `projmux config apply`.
 
 The complete compatibility-to-canonical removal record, including intentional
 error differences, is maintained in the [Legacy CLI Retirement Ledger](legacy-cli-retirement.md).
 
 `install` and `install-app` deliberately have no public spelling. They write and
 wire up config files as part of the install pipeline rather than answering an
-operator's question, so they stay reachable only as `projmux tmux ...` /
-`projmux internal tmux ...`.
+operator's question, so they stay reachable only as `projmux internal tmux ...`.
 
 ## switch
 
@@ -438,8 +424,9 @@ prints the resolved path without creating or reading the log.
 
 Successful state-changing top-level commands produce one `info` outcome, and
 every top-level command error produces one `error` outcome. Successful
-high-frequency/read-only commands such as `status`, `ai ingest`, `attention
-arm`/`clear`/`window`, `tmux autosave-session-state`, `window record`, and
+high-frequency/read-only commands such as `internal status`, `internal
+agent-hook ingest`, `attention arm`/`clear`/`window`, `internal tmux
+autosave-session-state`, `window record`, and
 successful `diagnostics log` views do not produce an event. Errors from those
 automatic hook/poll paths still produce one safe `error` outcome. Successful
 direct command help and explicit `--dry-run` preview modes also remain
@@ -448,7 +435,7 @@ channel and never change command output or exit status. See
 [operational-diagnostics.md](operational-diagnostics.md) for the file,
 retention, concurrency, and privacy contracts.
 
-`ai watch-title` emits a bounded common lifecycle: one start, one terminal
+`internal agent-hook watch-title` emits a bounded common lifecycle: one start, one terminal
 pane-gone/hook-active stop, and at most one copy of each closed watcher failure
 tuple per process. Normal polling iterations emit nothing. AI hook ingest emits
 common events only for malformed/read/oversized payloads, unmatched or invalid
@@ -459,7 +446,7 @@ state/notify/quiet/dedupe hook results stay zero-volume in the common AI family;
 the existing notify transition remains the owner when notification behavior
 occurs.
 
-Session create/attach/switch/kill and `tmux apply` use correlated
+Session create/attach/switch/kill and `config apply` use correlated
 `lifecycle.start`/`lifecycle.outcome` records instead of a duplicate generic
 top-level outcome. The text and JSONL views expose only the closed safe
 `operation` and optional `code` enums; session names, socket paths, tmux
@@ -497,26 +484,18 @@ back into the unredacted Doctor Go types.
 ## focus
 
 ```
-projmux focus --target SESSION[:WINDOW[.PANE]] [--socket <path>]
-              [--client <tty>]
-              [--source ai|status-bar|external|os-notification|toast]
-              [--kind reply-ready|busy-cleared|segment-click|toast-click|custom]
-              [--json]
-projmux focus --uri "projmux://focus?pane_id=%N&socket=<path>&source=toast"
-              [--json]
+projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]
+projmux focus window <ref> --project <ref> [--socket <path>] [--client <tty>] [--json]
+projmux focus pane <ref> --project <ref> --window <ref> [--socket <path>] [--json]
 ```
 
-Unified switch-client dispatch. Resolves the session against the live tmux
-inventory (with prefix/fuzzy fallback), then redirects one suitable attached
-client on the selected socket. It never force-detaches other clients. If no
-client is attached on that socket, it emits the configured desktop
-notification instead. `--socket` is explicit; when omitted, the socket is
-derived from `$TMUX`.
+Moves one attached client to an exact live Project, Window, or Pane. It never
+materializes an offline resource or force-detaches another client. `--socket`
+is explicit; when omitted, it is derived from `$TMUX`.
 
 Generated statusbar and notification-sidebar payloads use the hidden
-`projmux internal focus` spelling. It is a raw-argv parity forwarder to this
-same handler; the public `projmux focus` spelling remains executable for
-compatibility.
+`projmux internal focus` spelling. The old public `focus --target|--uri`
+machine argv has been removed.
 
 `projmux focus` stops at the tmux layer. It never asks the host terminal
 window to come forward, in any Desktop notification mode.
@@ -527,14 +506,9 @@ display first. If that client is gone, focus falls back to an attached client
 already viewing the target session, then the stable first attached client.
 Toast clicks do not pass `--client`.
 
-`--uri` is a compatibility input. projmux no longer emits clickable Toasts and
-no longer registers a `projmux://` protocol handler (see
-[configuration.md](configuration.md#toast-click-handler-wsl--windows-terminal--retired-in-0110)),
-so nothing in the product produces such a URI; the flag stays so a handler
-wired before 0.11.0, or one you wired yourself, keeps working. The pane id
-from the URI is resolved to a `SESSION:WINDOW.%paneID` target via
-`tmux display-message`, and the URI's `socket` overrides any `--socket` flag.
-`--uri` and `--target` are mutually exclusive.
+The removed public `--uri`/`--target` ingress is not accepted here. Generated
+machine payloads use `projmux internal focus`; human callers select an exact
+Project, Window, or Pane with the public kind routes above.
 
 Exit codes:
 
@@ -552,33 +526,25 @@ fallback (`window_state=index-fallback-session`), pane index fallback
 (`pane_state=index-fallback-window`), and explicit id failures
 (`window-id-unresolved` / `pane-id-unresolved`, exit 2).
 
-## notify
+## notification queue
 
-Pending AI notify queue. `attention` is live tmux pane state; `notify` is
+Pending AI notification queue. `attention` is live tmux pane state; the queue is
 the explicit-ack pending notification source of truth used by the status-bar
 notify segment and notify sidebar. It is not the source of truth for all live pane attention. See
 [notify-queue.md](notify-queue.md) for the full data model.
 
-The canonical queue mutation spellings are `projmux create notification`,
-`projmux notification ack`, and `projmux notification reconcile`. They forward
-to the same `notify push|ack|reconcile` handler and preserve argv, streams, exit
-status, and side effects. `notify list` remains available through canonical
-`projmux get notifications`.
+Use only the canonical queue spellings:
 
 ```
-projmux notify push  --text <s> --target <SESSION[:WINDOW[.PANE]]>
-                     [--socket <s>] [--severity info|warn|critical]
-                     [--source ai|k8s|git|external] [--ttl <seconds>]
-                     [--id <s>] [--json]
-projmux notify list  [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>]
-                     [--severity ...] [--source ...]
-projmux notify ack   <id> | --all
-projmux notify reconcile [--json]
+projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> ...
+projmux get notifications [--live] [--json] [--limit N] ...
+projmux notification ack <id> | --all
+projmux notification reconcile [--json]
 ```
 
-- `push` — append (or refresh, with `--id`) one entry. `--ttl` defaults to
+- `create notification` — append (or refresh, with `--id`) one entry. `--ttl` defaults to
   `600` seconds as freshness metadata; expiration does not remove rows from
-  `notify list` and is considered only by reconcile together with a gone
+  `get notifications` and is considered only by reconcile together with a gone
   target. Reconcile also retains only the newest 256 rows. `--text` is hard-capped to 80 runes (longer text is
   truncated server-side). After a successful queue write, projmux sends a
   best-effort refresh event to open native notify sidebars and fires
@@ -587,7 +553,7 @@ projmux notify reconcile [--json]
   latest queue. The hook gets a JSON payload on stdin plus
   `PROJMUX_NOTIFY_*` env vars, and it does not replace the normal desktop
   notification path.
-- `list` — newest-first pending queue table `ID AGE SEV SRC TARGET TEXT`
+- `get notifications` — newest-first pending queue table `ID AGE SEV SRC TARGET TEXT`
   (or JSON). `--severity` and `--source` are repeatable filters.
   `--live` adds a non-mutating explanation table (or JSON report) that
   compares queued entries with live pane attention. It calls out manual
@@ -618,14 +584,14 @@ projmux notify reconcile [--json]
   tmux is not running. Use this as the recovery path when the queue and
   live pane state drift.
 
-## usage
+## agent usage
 
 Authoritative AI account usage. See [usage-tracking.md](usage-tracking.md)
 for adapter detail.
 
 ```
-projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all]
-              [--json] [--force|-f]
+projmux agent usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all]
+                    [--json] [--force|-f]
 ```
 
 Renders a tab-aligned `MODEL WINDOW PCT RESETS_AT RESET_IN STALE` table; appends a
@@ -692,19 +658,19 @@ no CPU/RSS values, PID/process detail, project/tmux identity, path/title/command
 or arbitrary error/status text. `diagnostics report` includes only error-level
 closed resource outcomes; local-only partial/stale info rows are omitted.
 
-This is distinct from `projmux status resources`, which remains the short
+This is distinct from `projmux internal status resources`, which remains the short
 host-only statusbar renderer.
 
-## status
+## internal status
 
 Per-segment status-bar renderers. All are silent on failure — the
 tmux status interval polls them and must never produce a stack trace.
 
 ```
-projmux status git    [path]
-projmux status usage  [--max-width N] [--force|-f]
-projmux status notify [--max-width N]
-projmux status resources
+projmux internal status git    [path]
+projmux internal status usage  [--max-width N] [--force|-f]
+projmux internal status notify [--max-width N]
+projmux internal status resources
 ```
 
 - `git` — `#[bold,fg=colour16,bg=colour45] <branch> <state> #[default]` for
@@ -735,12 +701,12 @@ projmux status resources
   attribution. WSL reports the Linux guest/VM view. Unsupported platforms and
   unreadable system metrics produce no error output.
 
-## statusbar
+## internal statusbar
 
 ```
-projmux statusbar click <range-id> [--socket <s>] [--mouse-window <id>]
-                                   [--client <tty>] [--mouse-x N] [--mouse-y N]
-projmux statusbar usage-refresh
+projmux internal statusbar click <range-id> [--socket <s>] [--mouse-window <id>]
+                                            [--client <tty>] [--mouse-x N] [--mouse-y N]
+projmux internal statusbar usage-refresh
 ```
 
 Click/keyboard dispatcher for the two-line status bar. Implemented range ids:
@@ -760,7 +726,7 @@ and `LEFT` appear together only when at least one displayed row has real
 absolute counts; percent-only datasets omit those columns rather than
 synthesizing counts.
 `notify` focuses and acks the newest actionable queue target. The internal `usage-refresh` shortcut entry point
-runs the same throttled, per-adapter collection policy as `status usage` and
+runs the same throttled, per-adapter collection policy as `internal status usage` and
 then reopens the display-only usage popup from cache.
 `MouseDown1Status` errors are
 swallowed and surfaced as `display-message` toasts so a transient
@@ -787,14 +753,14 @@ it shows panes with an attention option or title marker, and `--all`
 includes every pane. `window` renders the status-bar window badge for the
 supplied window.
 
-## ai
+## Agent creation and hook ingress
 
 ```
-projmux ai split    [--agent <claude|codex|antigravity|shell|selective|resume>] [--force-agent] [--print-pane-id] [right|down] [-- <extra-arg>...]
-projmux ai picker   [--inside] [--shell] [--resume] [right|down]
-projmux ai settings [--get|--set <mode>]
-projmux ai status   set <thinking|waiting|idle> [pane]
-projmux ai notify   [notify|reset] [pane]
+projmux create agent --provider <claude|codex|antigravity> [--placement right|down] ...
+projmux create pane [--placement right|down] ...
+projmux config edit [--get|--set <mode>]
+projmux agent status set <thinking|waiting|idle> [pane]
+projmux agent topic ...
 projmux internal agent-hook watch-title [pane]
 projmux internal agent-hook ingest codex-hook < payload.json
 projmux internal agent-hook ingest claude-hook < payload.json
@@ -805,16 +771,14 @@ projmux agent integrate codex [--dry-run] [--remove]
 projmux agent integrate claude [--dry-run] [--remove]
 projmux agent integrate antigravity [--dry-run] [--remove]
 projmux agent integrate tmux-bell [--dry-run] [--remove]
-projmux ai topic     ...
 ```
 
-Manages the AI split lifecycle and the per-pane state machine that drives
+These routes manage the Agent lifecycle and the per-pane state machine that drives
 the `attention` badge, the `notify` queue producer, and the desktop
 notifier. `status set waiting` is the trigger that flips a pane to the
 reply-ready state — that transition pushes an `ai:<session>:<pane>`
 entry into the notify queue.
-The exact legacy `projmux ai ingest log` reader remains executable for
-compatibility; new reader guidance uses `projmux diagnostics agent-hook`.
+Use `projmux diagnostics agent-hook` for the bounded ingest journal.
 The durable semantic status badge is stored separately in
 `@projmux_ai_badge_kind` as `approval_required`, `input_required`,
 `response_complete`, `in_progress`, or unset. The live status surfaces color
@@ -823,15 +787,12 @@ yellow respectively. That palette is independent from notify queue
 `--severity` and from OS desktop notification urgency; a critical approval row
 can still render a non-red action-required status badge.
 
-`ai split right|down` uses the configured default split mode. Add
-`--agent claude`, `--agent codex`, `--agent antigravity`, `--agent shell`, or
-`--agent selective` for a one-shot launch without changing that default. Add
-`--agent resume` to open the current project's AI resume-session picker.
-Concrete `--agent claude|codex|antigravity` invocations create a new managed
+`create agent --provider ...` selects a provider without changing the saved
+default. Concrete provider invocations create a new managed
 agent pane every time; existing managed AI panes in the same project/session are
 not selected or reused.
-`--agent selective` opens the existing picker flow; `--agent shell` opens the
-existing plain shell split. Arguments after `--` are extra arguments appended to
+The provider picker and plain Pane creation remain available through the
+canonical create workflow. Arguments after `--` are extra arguments appended to
 the resolved `claude`, `codex`, or `agy` executable inside the managed wrapper;
 projmux still sets the context directory, tmux title, AI pane metadata, title
 watcher, and split layout.
@@ -1009,13 +970,14 @@ is never inferred from the conversation-local gauge.
 The earlier string percentage form remains a compatibility fallback.
 Transcript contents are not read.
 
-`ingest bell --pane <pane_id>` is the narrow tmux-bell fallback ingest path.
+The canonical `internal agent-hook ingest bell --pane <pane_id>` route is the
+narrow tmux-bell fallback ingest path.
 It does not require the pane to be AI-managed. Projmux resolves session,
 window, pane, title, command, and socket metadata from tmux, pushes an info
 queue row such as `bell · <pane title>`, and suppresses repeat bell rows from
 the same pane for 5 seconds.
 
-`ingest log` prints recent ingest diagnostics from
+`diagnostics agent-hook` prints recent ingest diagnostics from
 `$XDG_STATE_HOME/projmux/ai-ingest.log`, or `~/.local/state/projmux/ai-ingest.log`
 when `XDG_STATE_HOME` is unset. Ingest paths append compact JSONL records for
 parse errors, unsupported events, missing pane matches, deduped bells,
@@ -1024,14 +986,11 @@ payloads are not stored. The log is capped at 1 MiB and trimmed to the most
 recent roughly 512 KiB when it grows past the cap. Use `--json` for raw JSONL
 and `--path` to print the resolved file path.
 
-This legacy log is retained for compatibility. Its producer, `ingest log`
-consumer, 1 MiB/roughly 512 KiB retention, and support-report count summary are
-unchanged. The common operations journal now carries only the safe anomalous
-classification and watcher lifecycle described above. Both surfaces run in
-parallel during the migration. It is now documented as a deprecation candidate,
-but this release does not deprecate, remove, rename, or change it; a separate
-breaking roadmap must first migrate its detailed local consumer. See
-[legacy-diagnostics-inventory.md](legacy-diagnostics-inventory.md).
+The bounded log and its 1 MiB/roughly 512 KiB retention remain available to the
+canonical diagnostics consumer and support-report count summary. The common
+operations journal carries only the safe anomalous classification and watcher
+lifecycle described above; both diagnostic stores continue to run in parallel.
+See [legacy-diagnostics-inventory.md](legacy-diagnostics-inventory.md).
 
 For `Stop`, projmux reads `transcript_path` when present and extracts the last
 assistant text from the transcript tail; if that is unavailable, it falls back
@@ -1041,7 +1000,7 @@ URLs when those fields exist.
 
 Hook row text is intentionally compact: agent label, event category, then the
 best available summary. Structured details remain in queue metadata and are
-available from `notify list --json`; the sidebar does not add a separate
+available from `get notifications --json`; the sidebar does not add a separate
 metadata detail view.
 
 The extra Claude events accept conservative field aliases while Claude's event
@@ -1184,20 +1143,20 @@ commands. tmux `alert-bell` is a window alert and does not expose
 `--remove` unsets only hook entries carrying the projmux marker and leaves
 user-owned `alert-bell` hooks alone.
 
-## tmux
+## internal tmux
 
 ```
-projmux tmux popup-toggle [--client <key>] <mode>
-projmux tmux popup-switch
-projmux tmux popup-sessions
-projmux tmux popup-preview <session>
-projmux tmux rebalance-panes
-projmux tmux rename-pane <pane> <label>
-projmux tmux print-config     [--bin <path>]
-projmux tmux print-app-config [--bin <path>]
-projmux tmux install     [--bin <path>] [--config <path>] [--include <path>]
-projmux tmux install-app [--bin <path>] [--config <path>]
-projmux tmux apply
+projmux internal tmux popup-toggle [--client <key>] <mode>
+projmux internal tmux popup-switch
+projmux internal tmux popup-sessions
+projmux internal tmux popup-preview <session>
+projmux internal tmux rebalance-panes
+projmux internal tmux rename-pane <pane> <label>
+projmux internal tmux print-config     [--bin <path>]
+projmux internal tmux print-app-config [--bin <path>]
+projmux internal tmux install     [--bin <path>] [--config <path>] [--include <path>]
+projmux internal tmux install-app [--bin <path>] [--config <path>]
+projmux internal tmux apply
 ```
 
 Helpers tmux's keybindings and the install pipeline call into. Modes
@@ -1212,13 +1171,13 @@ raw tmux pane title, AI topic, or AI topic manual-ownership flag. The canonical
 keybinding action id is `rename-pane-label`. The retired `rename-pane-topic`
 keymap action is no longer accepted: replace a stale
 `[bindings.rename-pane-topic]` table with `[bindings.rename-pane-label]`.
-The advanced `projmux ai topic set/clear` commands remain available and keep
+The `projmux agent topic set/clear` commands keep
 AI topic ownership separate from the user pane label and raw pane title.
 `apply` regenerates the app tmux config and reloads the live `-L projmux`
-server without restarting it. `make install` and `projmux upgrade` invoke it
+server without restarting it. `make install` and `projmux update apply` invoke it
 after replacing the binary. Settings > Keybindings normally runs the same
 save/config/reload flow automatically; use `projmux config apply` (or its
-hidden equivalent `projmux tmux apply`) as the CLI recovery or sync path after
+hidden equivalent `projmux internal tmux apply`) as the CLI recovery or sync path after
 hand-editing `keymap.toml`, after saving Settings outside tmux, or after
 resolving a reported config-generation or live-reload failure. Reload also
 removes the known retired no-prefix `C-t` pane-label binding from older live
@@ -1246,10 +1205,10 @@ shortcut and is not renamed by this route.
 different tmux configs, not two views of one:
 
 - `standalone` is the snippet you source from your own `~/.tmux.conf`. It prints
-  to stdout and writes nothing. Equivalent to `projmux tmux print-config`.
+  to stdout and writes nothing. Equivalent to `projmux internal tmux print-config`.
 - `app` is the config the app-owned `-L projmux` server runs from. It carries the
   default shell and the app-only bindings on top of the standalone content, and
-  it also only prints. Equivalent to `projmux tmux print-app-config`.
+  it also only prints. Equivalent to `projmux internal tmux print-app-config`.
 
 A bare `projmux config render` is a usage error (exit 2) listing the two
 artifacts. There is deliberately no default: silently choosing one would leave
@@ -1258,11 +1217,11 @@ close.
 
 `apply` takes no artifact. It writes the app tmux config and reloads the live
 `-L projmux` server, which is one operation over one file. Equivalent to
-`projmux tmux apply`.
+`projmux internal tmux apply`.
 
 Writing the standalone snippet and wiring the `source-file` line into your
-`~/.tmux.conf` is `projmux tmux install`, and writing the app config without
-reloading is `projmux tmux install-app`. Both are install-pipeline plumbing and
+`~/.tmux.conf` is `projmux internal tmux install`, and writing the app config without
+reloading is `projmux internal tmux install-app`. Both are install-pipeline plumbing and
 have no public spelling; see
 [Internal plumbing](#internal-plumbing-projmux-internal-).
 
@@ -1310,27 +1269,12 @@ crosses minor/major versions where `npm update -g` does not, and re-resolves
 the per-platform optional dependency) and then runs the new binary's
 `projmux config apply`. With `--no-apply`, that convergence step uses
 `--no-reload`: it still migrates marker-owned files and writes generated
-configuration without accessing live tmux. For Go installs, it delegates to the existing atomic
-`projmux upgrade` flow. For `github-release` installs, it downloads the latest
+configuration without accessing live tmux. For Go installs, it uses the existing atomic
+replacement implementation. For `github-release` installs, it downloads the latest
 matching `projmux_<version>_<goos>_<goarch>.tar.gz` release asset, extracts the
 binary, atomically replaces the current executable, then performs the same
 apply/`--no-reload` convergence. `source` installs report an
 actionable error to update the checkout with `git pull --ff-only && make install`.
-
-## upgrade
-
-```
-projmux upgrade [--ref @latest|@<tag>|@<branch>]
-                [--target <path>] [--no-apply] [--dry-run]
-```
-
-`go install`s the binary, atomically replaces the on-disk file, then
-runs `projmux config apply`; `--no-apply` selects `config apply --no-reload` so
-file migration and generated config still converge without live tmux access. Reads
-`PROJMUX_PROJDIR` from the calling shell and memoizes the primary entry
-to `~/.config/projmux/projdir`. npm-installed binaries reject this
-command; use `projmux update apply` or `npm install -g projmux@latest` for npm
-installs.
 
 ## welcome
 
@@ -1346,35 +1290,20 @@ pending attach welcome marker exists. `--popup --force` opens the popup without
 consulting pending or skip state. Passing positional arguments prints usage and
 returns a usage error.
 
-## sessions / session-popup / preview / pin / kill / prune / tag
+## runtime / pin / prune / internal helpers
 
-The lifecycle helpers retained from earlier releases. They share their
-flags with the top-level `switch` UX:
+The live tmux inventory is under `runtime`: `runtime sessions`, `runtime
+attach`, `runtime stop`, `runtime tag`, and `runtime prune`. Project pins use
+`pin project list|add|remove|toggle|clear`. Resource retention uses `prune
+project|snapshot`, while explicit snapshot deletion uses `delete snapshot`.
 
-- `sessions` — list/pick existing tmux sessions, supports `--ui=popup`.
-- `session-popup` — read/write the popup-marker state used during
-  preview cycling.
-- `preview` — manage the persisted window/pane preview selection.
-- `pin add|remove|toggle|list|clear` — pin set CRUD, persisted under
-  `~/.config/projmux/pins`.
-- `kill <session>` / `kill tagged` — terminate sessions; `tagged`
-  consumes the active tagged-selection set.
-- `prune ephemeral` — drop ephemeral sessions older than the configured
-  retention window. Successful session kills also remove the session's
-  persisted preview cursor; saved Session State snapshots are preserved.
-- `prune session-state [--older-than=720h]` — list snapshots whose tmux
-  session is no longer live or whose save time is older than the threshold.
-  Listing is read-only and never deletes snapshots.
-- `prune session-state delete <session>...` — explicitly delete only the
-  named snapshots. Session State snapshots are never automatically pruned,
-  because closed-session restore depends on them. `projmux doctor` repeats
-  this retention policy and points to the read-only listing command.
-- `tag` — manage the tagged-selection set.
+Popup-marker, preview, status, and tmux configuration plumbing is hidden under
+`internal session-popup`, `internal preview`, `internal status`, `internal
+statusbar`, and `internal tmux`. Generated configuration is their producer;
+human configuration work should prefer `config render` and `config apply`.
 
-## current / shell / attach / settings / quit
+## shell / attach / settings / quit
 
-- `current` — print `pane_current_path` for the active tmux pane (used
-  by the shell jump binding).
 - `shell` — boot the isolated `-L projmux` tmux server with the
   generated config. The generated app config uses absolute `$SHELL` as the
   tmux default shell when set, otherwise `/bin/sh`. `shell` starts or attaches
@@ -1390,8 +1319,8 @@ flags with the top-level `switch` UX:
   default tmux servers, embedded tmux servers, and other tmux runtimes without
   that marker are no-ops. Non-interactive callers must pass `--yes` or
   `--force`; the default command always goes through the action picker.
-- `attach auto [--keep=N] [--fallback=home|ephemeral]` — auto-attach to
-  the most recent session, with bounded retention and a fallback policy.
+- `attach project <ref>` — enter a Project runtime from outside tmux.
+  Automatic live-runtime attachment is `runtime attach`.
 - `settings` — interactive configuration UI for the project picker, AI
   splits, Notifications, Appearance mode, Project Root management, the
   switcher's saved workdirs list, Labs (experimental), Settings > Keybindings,

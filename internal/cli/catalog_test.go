@@ -7,22 +7,10 @@ import (
 	"testing"
 )
 
-// TestRouteCoverageHasExactlyOneDispositionAndNoOrphans is the route coverage
-// audit. The compatibility contract requires every current route, public or
-// hidden, to hold exactly one primary disposition, with zero orphan routes,
-// before any later Phase may move a namespace.
-//
-// The public count is 40: the 33 routes inventoried by the compatibility
-// contract plus 12 canonical nodes added by later Phases -- `get` from the
-// selector Phase, `delete`, `describe`, `rebind`, `rename`, `restore`, and
-// `runtime` from the public verb-to-kind Phase, `agent` and `create` from the
-// Agent namespace Phase, `config` from the public-spelling Phase, `reconcile`
-// from explicit resource repair, and `notification` from compatibility
-// replacement closure -- minus
-// the 5 internal plumbing routes the internal isolation Phase moved out of the
-// primary listing. Every one of the 33 inventoried routes is still present,
-// still dispatchable, and still holds exactly one disposition; hiding is not
-// removal.
+// TestRouteCoverageHasExactlyOneDispositionAndNoOrphans audits the Phase 2
+// tree: 31 public canonical/shortcut roots, nine hidden compatibility
+// tombstones that only return migration errors (with the exact AI producer
+// exception), and the hidden internal namespace.
 func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	t.Parallel()
 
@@ -57,41 +45,29 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		if route.Summary == "" {
 			t.Fatalf("route %q has no summary", route.Name)
 		}
+		if route.Retired && (!route.Hidden || route.Disposition != DispositionCompatibility || len(route.Children) != 0 || len(route.Canonical) != 0 || len(route.Usage) != 0) {
+			t.Fatalf("retired route %q leaks catalog metadata: %#v", route.Name, route)
+		}
 	}
 
-	if public != 40 {
-		t.Fatalf("public route count = %d, want 40", public)
+	if public != 31 {
+		t.Fatalf("public route count = %d, want 31", public)
 	}
-	// The 2 original hidden helpers, the 5 plumbing routes the internal
-	// isolation Phase hid, and the `internal` namespace itself.
-	if hidden != 8 {
-		t.Fatalf("hidden route count = %d, want 8", hidden)
+	if hidden != 10 {
+		t.Fatalf("hidden route count = %d, want 10", hidden)
 	}
-	// The classification tally from the compatibility contract, counted over
-	// the 40 public top-level routes. Canonical is 20 rather than the
-	// contract's 8 because the 12 canonical verb/domain nodes are new surface,
-	// not members of the 33 inventoried current routes.
-	//
-	// The public internal count is 0: that is the whole point of the internal
-	// isolation Phase, and it is the assertion that fails the moment a plumbing
-	// route leaks back into the primary listing. The shortcut and compatibility
-	// counts are unchanged, which is the invariant that proves no user-facing
-	// route was removed or reclassified along the way -- in particular `ai` and
-	// `usage` are still public compatibility routes.
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical:     20,
-		DispositionShortcut:      7,
-		DispositionCompatibility: 13,
+		DispositionCanonical: 24,
+		DispositionShortcut:  7,
 	}
 	if !reflect.DeepEqual(publicTally, wantPublicTally) {
 		t.Fatalf("public disposition tally = %v, want %v", publicTally, wantPublicTally)
 	}
-	// Every hidden route is internal plumbing.
 	wantTally := map[Disposition]int{
-		DispositionCanonical:     20,
+		DispositionCanonical:     24,
 		DispositionShortcut:      7,
-		DispositionCompatibility: 13,
-		DispositionInternal:      8,
+		DispositionCompatibility: 9,
+		DispositionInternal:      1,
 	}
 	if !reflect.DeepEqual(tally, wantTally) {
 		t.Fatalf("disposition tally = %v, want %v", tally, wantTally)
@@ -211,7 +187,7 @@ func TestOnlyTheExplicitShortcutSetLeavesARouteUnmapped(t *testing.T) {
 
 	unmapped := map[string]bool{}
 	walkRoutes(Routes(), func(path []string, route Route) {
-		if len(route.Canonical) == 0 {
+		if len(route.Canonical) == 0 && !route.Retired {
 			unmapped[strings.Join(path, " ")] = true
 		}
 	})
@@ -255,17 +231,14 @@ func TestOnlyTheExplicitShortcutSetLeavesARouteUnmapped(t *testing.T) {
 	}
 }
 
-func TestTagProjectIsCompatibilityMappedOnlyToRuntimeTag(t *testing.T) {
+func TestTagProjectIsRetiredWithTheTagCompatibilityRoot(t *testing.T) {
 	t.Parallel()
 	if _, ok := LookupCanonicalRoute("tag project"); ok {
 		t.Fatal("tag project remains a false canonical target")
 	}
 	path, route, ok := Resolve([]string{"tag", "project"})
-	if !ok || !reflect.DeepEqual(path, []string{"tag", "project"}) {
-		t.Fatalf("tag project resolved to %v (ok=%v), want the executable compatibility route", path, ok)
-	}
-	if !reflect.DeepEqual(route.Canonical, []string{"runtime tag"}) {
-		t.Fatalf("tag project canonical replacements = %v, want [runtime tag]", route.Canonical)
+	if !ok || !reflect.DeepEqual(path, []string{"tag"}) || !route.Retired {
+		t.Fatalf("tag project resolved to %v (%#v, ok=%v), want the retired tag tombstone", path, route, ok)
 	}
 }
 
@@ -347,8 +320,8 @@ func TestCanonicalManifestPinsRequiredPhaseZeroSpellings(t *testing.T) {
 	}
 
 	usage, _ := LookupCanonicalRoute("agent usage")
-	if !slices.Contains(usage.Sources, "usage") || !slices.Contains(usage.Sources, "status") {
-		t.Fatalf("agent usage sources = %v, want the legacy usage and status usage spellings", usage.Sources)
+	if !reflect.DeepEqual(usage.Sources, []string{"internal", "agent"}) {
+		t.Fatalf("agent usage sources = %v, want only internal and agent", usage.Sources)
 	}
 
 	pane, _ := LookupCanonicalRoute("get pane")
@@ -392,29 +365,18 @@ func TestSharedOutputCatalogIsClosedAndExcludesCWD(t *testing.T) {
 	}
 }
 
-// TestRouteLocalOutputCatalogIsPinnedWhereContractFixesIt asserts the two
-// route-local projections Phase 0 pins on current routes.
+// TestRouteLocalOutputCatalogIsPinnedWhereContractFixesIt asserts the
+// projections on the surviving canonical routes after retirement.
 func TestRouteLocalOutputCatalogIsPinnedWhereContractFixesIt(t *testing.T) {
 	t.Parallel()
 
-	current, ok := LookupRoute("current")
+	get, _ := LookupRoute("get")
+	pane, ok := findChild(get, "pane")
 	if !ok {
-		t.Fatal("current route missing")
+		t.Fatal("get pane route missing")
 	}
-	if !reflect.DeepEqual(current.Fields, []FieldProjection{FieldProjectionCWD}) {
-		t.Fatalf("current fields = %v, want [cwd]", current.Fields)
-	}
-	if len(current.Outputs) != 0 {
-		t.Fatalf("current outputs = %v, want none: cwd is a field projection, not a shared mode", current.Outputs)
-	}
-
-	ai, _ := LookupRoute("ai")
-	split, ok := findChild(ai, "split")
-	if !ok {
-		t.Fatal("ai split route missing")
-	}
-	if !reflect.DeepEqual(split.Outputs, []OutputMode{OutputModePaneID}) {
-		t.Fatalf("ai split outputs = %v, want [pane-id] for the --print-pane-id bridge", split.Outputs)
+	if !reflect.DeepEqual(pane.Fields, []FieldProjection{FieldProjectionCWD}) {
+		t.Fatalf("get pane fields = %v, want [cwd]", pane.Fields)
 	}
 
 	// Every route-local output mode must belong to the shared catalog.
@@ -445,10 +407,10 @@ func TestResolveReturnsDeepestMatchedRoute(t *testing.T) {
 		ok     bool
 	}{
 		{name: "top level", tokens: []string{"ai"}, want: []string{"ai"}, ok: true},
-		{name: "nested", tokens: []string{"ai", "settings"}, want: []string{"ai", "settings"}, ok: true},
+		{name: "retired child stops at tombstone", tokens: []string{"ai", "settings"}, want: []string{"ai"}, ok: true},
 		{name: "unknown child", tokens: []string{"ai", "bogus"}, want: []string{"ai"}, ok: true},
 		{name: "flag after child", tokens: []string{"setup", "terminal", "--apply"}, want: []string{"setup", "terminal"}, ok: true},
-		{name: "hidden helper", tokens: []string{"popup-wait-key"}, want: []string{"popup-wait-key"}, ok: true},
+		{name: "removed internal alias", tokens: []string{"popup-wait-key"}, ok: false},
 		{name: "unknown top level", tokens: []string{"nosuchcmd"}, ok: false},
 		{name: "empty", tokens: nil, ok: false},
 	} {
@@ -484,97 +446,31 @@ func walkRoutes(nodes []Route, visit func(path []string, route Route)) {
 	walk(nil, nodes)
 }
 
-// inventoriedRoutes is the compatibility contract's original inventory: the 33
-// public top-level routes plus the 2 hidden internal helpers, each with the
-// primary disposition Phase 0 assigned it and the listing visibility it holds
-// after the internal isolation Phase.
-//
-// It is written out in full rather than derived, because its whole job is to
-// fail when a later Phase removes or reclassifies one of them.
-//
-// The `hidden` column changed for the 5 plumbing routes (`preview`,
-// `session-popup`, `status`, `statusbar`, `tmux`) when the internal isolation
-// Phase moved them under the hidden `internal` namespace. Hiding is a listing
-// decision, not a removal: TestEveryInventoriedRouteSurvivesUnchanged still
-// requires every one of them to resolve and dispatch, because a tmux server
-// that is already running holds config generated by a previously installed
-// binary and keeps invoking the current spellings. Their disposition is
-// unchanged, and no route ever moved between dispositions.
-var inventoriedRoutes = map[string]struct {
-	disposition Disposition
-	hidden      bool
-}{
-	"ai":             {DispositionCompatibility, false},
-	"attention":      {DispositionCanonical, false},
-	"attach":         {DispositionCompatibility, false},
-	"current":        {DispositionCompatibility, false},
-	"doctor":         {DispositionShortcut, false},
-	"diagnostics":    {DispositionCanonical, false},
-	"focus":          {DispositionCompatibility, false},
-	"hook":           {DispositionCanonical, false},
-	"kill":           {DispositionCompatibility, false},
-	"notify":         {DispositionCompatibility, false},
-	"pin":            {DispositionCompatibility, false},
-	"preview":        {DispositionInternal, true},
-	"prune":          {DispositionCompatibility, false},
-	"quit":           {DispositionShortcut, false},
-	"resources":      {DispositionShortcut, false},
-	"sessions":       {DispositionCompatibility, false},
-	"session-state":  {DispositionCompatibility, false},
-	"session-popup":  {DispositionInternal, true},
-	"settings":       {DispositionShortcut, false},
-	"setup":          {DispositionCanonical, false},
-	"shell":          {DispositionShortcut, false},
-	"status":         {DispositionInternal, true},
-	"statusbar":      {DispositionInternal, true},
-	"switch":         {DispositionShortcut, false},
-	"tag":            {DispositionCompatibility, false},
-	"tmux":           {DispositionInternal, true},
-	"update":         {DispositionCanonical, false},
-	"upgrade":        {DispositionCompatibility, false},
-	"usage":          {DispositionCompatibility, false},
-	"welcome":        {DispositionShortcut, false},
-	"window":         {DispositionCanonical, false},
-	"help":           {DispositionCanonical, false},
-	"version":        {DispositionCanonical, false},
-	"key-broker":     {DispositionInternal, true},
-	"popup-wait-key": {DispositionInternal, true},
-}
-
-// TestEveryInventoriedRouteSurvivesUnchanged is the compatibility half of the
-// coverage invariant: adding canonical surface must never remove, hide, or
-// reclassify one of the routes the contract inventoried.
-//
-// Removal is a separate breaking-change Phase, so until then this test is the
-// guard that no relocation Phase quietly drops a public spelling.
-func TestEveryInventoriedRouteSurvivesUnchanged(t *testing.T) {
+// TestPhase2RetiresOnlyTheLedgerRoutes pins both halves of the breaking tree:
+// public routes retain an error tombstone, while producer-zero internal aliases
+// disappear completely and therefore take the root unknown-command path.
+func TestPhase2RetiresOnlyTheLedgerRoutes(t *testing.T) {
 	t.Parallel()
 
-	if len(inventoriedRoutes) != 35 {
-		t.Fatalf("inventory size = %d, want the 33 public routes plus 2 hidden helpers", len(inventoriedRoutes))
-	}
-	for token, want := range inventoriedRoutes {
+	retired := []string{"ai", "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage"}
+	for _, token := range retired {
 		route, ok := LookupRoute(token)
 		if !ok {
-			t.Fatalf("inventoried route %q was removed", token)
+			t.Fatalf("retired public route %q has no error tombstone", token)
 		}
-		if route.Disposition != want.disposition {
-			t.Fatalf("route %q disposition = %q, want %q", token, route.Disposition, want.disposition)
-		}
-		if route.Hidden != want.hidden {
-			t.Fatalf("route %q hidden = %v, want %v", token, route.Hidden, want.hidden)
+		if !route.Retired || !route.Hidden || route.Disposition != DispositionCompatibility {
+			t.Fatalf("route %q = %#v, want a hidden compatibility tombstone", token, route)
 		}
 	}
-
-	// The routes this Phase adds are new surface, not inventory members, and all
-	// of them are canonical.
-	for _, token := range []string{"get", "describe", "delete", "rebind", "rename", "restore", "runtime", "agent", "create", "config", "notification"} {
-		if _, ok := inventoriedRoutes[token]; ok {
-			t.Fatalf("%q is listed as an inventoried route; it is new canonical surface", token)
+	for _, token := range []string{"tmux", "status", "statusbar", "preview", "session-popup", "key-broker", "popup-wait-key"} {
+		if _, ok := LookupRoute(token); ok {
+			t.Errorf("retired internal top-level alias %q remains in the command catalog", token)
 		}
+	}
+	for _, token := range []string{"attach", "focus", "pin", "prune"} {
 		route, ok := LookupRoute(token)
 		if !ok {
-			t.Fatalf("canonical route %q is missing", token)
+			t.Fatalf("surviving canonical root %q is missing", token)
 		}
 		if route.Disposition != DispositionCanonical || route.Hidden {
 			t.Fatalf("route %q disposition=%q hidden=%v, want a public canonical node", token, route.Disposition, route.Hidden)
@@ -582,19 +478,19 @@ func TestEveryInventoriedRouteSurvivesUnchanged(t *testing.T) {
 	}
 }
 
-// TestCanonicalSubRoutesDoNotShadowAnExistingSubcommand keeps the compatibility
-// spellings intact where a canonical kind token was added next to them.
-func TestCanonicalSubRoutesDoNotShadowAnExistingSubcommand(t *testing.T) {
+// TestOnlyCanonicalChildrenSurviveOnMixedLegacyRoots keeps the Phase 2 leaf
+// boundary exact without migrating any leaf parser into Cobra.
+func TestOnlyCanonicalChildrenSurviveOnMixedLegacyRoots(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
 		parent string
 		want   []string
 	}{
-		{parent: "pin", want: []string{"project", "list", "add", "remove", "toggle", "clear"}},
-		{parent: "tag", want: []string{"project", "list", "toggle", "clear"}},
-		{parent: "prune", want: []string{"ephemeral", "session-state", "project", "snapshot"}},
-		{parent: "attach", want: []string{"auto", "project"}},
+		{parent: "pin", want: []string{"project"}},
+		{parent: "prune", want: []string{"project", "snapshot"}},
+		{parent: "attach", want: []string{"project"}},
+		{parent: "focus", want: []string{"project", "window", "pane"}},
 	} {
 		route, ok := LookupRoute(test.parent)
 		if !ok {

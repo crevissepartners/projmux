@@ -51,7 +51,7 @@ func TestNewRootRequiresEveryManifestHandler(t *testing.T) {
 	if err == nil {
 		t.Fatal("NewRoot with no handlers returned no error")
 	}
-	for _, want := range []string{"ai", "popup-wait-key", "key-broker", "window"} {
+	for _, want := range []string{"ai", "internal", "window"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("missing-handler error does not name %q: %v", want, err)
 		}
@@ -125,11 +125,7 @@ func TestBridgeForwardsRawArgv(t *testing.T) {
 		{name: "unknown flag", argv: []string{"notify", "list", "--bogus-flag"}, token: "notify", args: []string{"list", "--bogus-flag"}},
 		{name: "flag with value", argv: []string{"focus", "--target", "%3"}, token: "focus", args: []string{"--target", "%3"}},
 		{name: "terminator with payload", argv: []string{"ai", "split", "--agent", "shell", "--", "--help", "-h", "--"}, token: "ai", args: []string{"split", "--agent", "shell", "--", "--help", "-h", "--"}},
-		{name: "bare terminator", argv: []string{"tmux", "print-config", "--"}, token: "tmux", args: []string{"print-config", "--"}},
-		{name: "route token as payload", argv: []string{"statusbar", "click", "status"}, token: "statusbar", args: []string{"click", "status"}},
 		{name: "double dash equals flag", argv: []string{"prune", "ephemeral", "--keep=3"}, token: "prune", args: []string{"ephemeral", "--keep=3"}},
-		{name: "hidden helper", argv: []string{"popup-wait-key"}, token: "popup-wait-key", args: []string{}},
-		{name: "hidden broker with flag", argv: []string{"key-broker", "--once"}, token: "key-broker", args: []string{"--once"}},
 		{name: "session state delete", argv: []string{"prune", "session-state", "delete", "alpha", "beta"}, token: "prune", args: []string{"session-state", "delete", "alpha", "beta"}},
 		{name: "negative number payload", argv: []string{"diagnostics", "log", "--tail", "-5"}, token: "diagnostics", args: []string{"log", "--tail", "-5"}},
 	} {
@@ -191,18 +187,16 @@ func TestHelpInvocationsInvokeNoHandler(t *testing.T) {
 	for _, flag := range helpFlagSpellings() {
 		argvs = append(argvs, []string{flag})
 	}
-	walkRoutes(Routes(), func(path []string, _ Route) {
+	walkRoutes(Routes(), func(path []string, route Route) {
+		if route.Retired {
+			return
+		}
 		for _, flag := range helpFlagSpellings() {
 			argvs = append(argvs, append(append([]string{}, path...), flag))
 		}
 	})
 	for _, flag := range helpFlagSpellings() {
-		argvs = append(argvs,
-			[]string{"ai", "bogus", flag},
-			[]string{"setup", "terminal", "--apply", flag},
-			[]string{"popup-wait-key", flag},
-			[]string{"key-broker", flag},
-		)
+		argvs = append(argvs, []string{"setup", "terminal", "--apply", flag})
 	}
 
 	for _, argv := range argvs {
@@ -241,6 +235,10 @@ func TestUnknownCommandKeepsHistoricalContract(t *testing.T) {
 		{argv: []string{"__complete", "ai"}, token: "__complete"},
 		{argv: []string{"__completeNoDesc", "ai"}, token: "__completeNoDesc"},
 		{argv: []string{"completion", "bash"}, token: "completion"},
+		{argv: []string{"tmux", "print-config"}, token: "tmux"},
+		{argv: []string{"statusbar", "click"}, token: "statusbar"},
+		{argv: []string{"key-broker"}, token: "key-broker"},
+		{argv: []string{"popup-wait-key"}, token: "popup-wait-key"},
 	} {
 		var stdout, stderr bytes.Buffer
 		root, recorded := newTestRoot(t, &stdout, &stderr)

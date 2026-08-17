@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -25,16 +26,15 @@ var legacyHookMigrationOnce sync.Once
 // recorder-backed session/apply mutation; automatic hooks and read-only probes
 // are intentionally absent.
 var lifecycleMutationSurfaceInventory = []string{
-	"attach auto",
-	"current",
-	"kill tagged",
-	"sessions open/kill",
+	"runtime attach",
+	"runtime stop",
+	"runtime sessions open/kill",
 	"switch create/restore/open/kill",
-	"tmux apply",
-	"session-popup open",
+	"internal tmux apply",
+	"internal session-popup open",
 	"window recent",
-	"prune ephemeral",
-	"focus switch-client",
+	"runtime prune",
+	"internal focus switch-client",
 	"shell open-app",
 	"snapshot replay create",
 	"popup-toggle cancel restore",
@@ -98,7 +98,6 @@ type App struct {
 	create       *createCommand
 	attach       *attachCommand
 	config       *configCommand
-	current      *currentCommand
 	delete       *deleteCommand
 	describe     *describeCommand
 	doctor       *doctorCommand
@@ -134,7 +133,6 @@ type App struct {
 	tag          *tagCommand
 	tmux         *tmuxCommand
 	update       *updateCommand
-	upgrade      *upgradeCommand
 	usage        *usagecmd.Command
 	welcome      *welcomeCommand
 	window       *windowCommand
@@ -274,7 +272,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		create:       createCmd,
 		attach:       attach,
 		config:       configCmd,
-		current:      newCurrentCommand(recorder),
 		delete:       deleteCmd,
 		describe:     newDescribeCommand(),
 		doctor:       newDoctorCommand(),
@@ -310,7 +307,6 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		tag:          tagCmd,
 		tmux:         tmuxCmd,
 		update:       update,
-		upgrade:      newUpgradeCommand(),
 		usage:        usageCmd,
 		welcome:      newWelcomeCommand(update),
 		window:       newWindowCommand(recorder),
@@ -343,62 +339,94 @@ type rawArgvCommand interface {
 // map is the single wiring point between the Cobra route catalog and the
 // current command graph; `help` and `version` are owned by the root policy.
 func (a *App) routeHandlers() map[string]cli.Handler {
+	internal := a.internal
+	if internal == nil {
+		// Small focused tests construct partial App values. Keep the canonical
+		// internal namespace usable in those fixtures without restoring any
+		// retired top-level handler.
+		internal = &internalCommand{
+			tmux: a.tmux, status: a.status, statusbar: a.statusbar,
+			preview: a.preview, sessionPopup: a.sessionPopup, ai: a.ai,
+			focus: a.focus, keyBroker: a.keyBroker, popupWaitKey: a.popupWaitKey,
+		}
+	}
+	runtime := a.runtime
+	if runtime == nil {
+		// Focused handler tests predate the runtime namespace and wire only the
+		// leaf under test. Preserve those narrow fixtures through the canonical
+		// namespace without reviving a retired top-level spelling.
+		runtime = &runtimeCommand{
+			sessions: a.sessions, attach: a.attach, kill: a.kill,
+			tag: a.tag, prune: a.prune,
+		}
+	}
 	commands := map[string]rawArgvCommand{
-		"agent":       a.agent,
-		"ai":          a.ai,
-		"create":      a.create,
-		"attention":   a.attention,
-		"attach":      a.attach,
-		"config":      a.config,
-		"current":     a.current,
+		"agent":     a.agent,
+		"ai":        legacyAIIngestGate{target: a.ai},
+		"create":    a.create,
+		"attention": a.attention,
+		"attach": legacyRouteGate{
+			name: "attach", target: a.attach, allowedFirst: []string{"project"},
+			replacement: func([]string) string { return "`projmux runtime attach ...`" },
+		},
+		"config": a.config,
+		"current": retiredRoute{
+			name: "current", replacement: func([]string) string { return "`projmux get pane --current -o cwd`" },
+		},
 		"delete":      a.delete,
 		"describe":    a.describe,
 		"doctor":      a.doctor,
 		"diagnostics": a.diagnostics,
-		"focus":       a.focus,
-		"get":         a.get,
-		"hook":        a.hook,
+		"focus": legacyRouteGate{
+			name: "focus", target: a.focus, allowedFirst: focusKinds,
+			replacement: func([]string) string { return "`projmux focus project|window|pane ...`" },
+		},
+		"get":  a.get,
+		"hook": a.hook,
 		// The hidden internal plumbing namespace. It aliases the machine-invoked
 		// routes below so generated tmux config, tmux hooks, and popup payloads
 		// can emit one namespace instead of eight top-level tokens.
-		"internal": a.internal,
-		// Hidden Darwin helper: captures physical portable key chords while a
-		// projmux tmux client is focused and feeds them through its root table.
-		"key-broker":   a.keyBroker,
-		"kill":         a.kill,
-		"notify":       a.notify,
+		"internal": internal,
+		"kill": retiredRoute{
+			name: "kill", replacement: func([]string) string { return "`projmux runtime stop ...`" },
+		},
+		"notify":       retiredRoute{name: "notify", replacement: notifyReplacement},
 		"notification": a.notification,
-		"pin":          a.pin,
-		// Hidden helper: invoked from statusbar display-only popup payloads to
-		// read a single key from /dev/tty and exit. Intentionally absent from
-		// the primary help listing so `projmux help` stays focused on
-		// user-facing commands.
-		"popup-wait-key": a.popupWaitKey,
-		"preview":        a.preview,
-		"prune":          a.prune,
-		"quit":           a.quit,
-		"rebind":         a.rebind,
-		"reconcile":      a.reconcile,
-		"rename":         a.rename,
-		"resources":      a.resources,
-		"restore":        a.restore,
-		"runtime":        a.runtime,
-		"sessions":       a.sessions,
-		"session-state":  a.sessionState,
-		"session-popup":  a.sessionPopup,
-		"settings":       a.settings,
-		"setup":          a.setup,
-		"shell":          a.shell,
-		"status":         a.status,
-		"statusbar":      a.statusbar,
-		"switch":         a.switcher,
-		"tag":            a.tag,
-		"tmux":           a.tmux,
-		"update":         a.update,
-		"upgrade":        a.upgrade,
-		"usage":          a.usage,
-		"welcome":        a.welcome,
-		"window":         a.window,
+		"pin": legacyRouteGate{
+			name: "pin", target: a.pin, allowedFirst: []string{"project"},
+			replacement: func([]string) string { return "`projmux pin project ...`" },
+		},
+		"prune": legacyRouteGate{
+			name: "prune", target: a.prune, allowedFirst: []string{"project", "snapshot"},
+			replacement: pruneReplacement,
+		},
+		"quit":      a.quit,
+		"rebind":    a.rebind,
+		"reconcile": a.reconcile,
+		"rename":    a.rename,
+		"resources": a.resources,
+		"restore":   a.restore,
+		"runtime":   runtime,
+		"sessions": retiredRoute{
+			name: "sessions", replacement: func([]string) string { return "`projmux runtime sessions ...`" },
+		},
+		"session-state": retiredRoute{name: "session-state", replacement: sessionStateReplacement},
+		"settings":      a.settings,
+		"setup":         a.setup,
+		"shell":         a.shell,
+		"switch":        a.switcher,
+		"tag": retiredRoute{
+			name: "tag", replacement: func([]string) string { return "`projmux runtime tag ...`" },
+		},
+		"update": a.update,
+		"upgrade": retiredRoute{
+			name: "upgrade", replacement: func([]string) string { return "`projmux update apply ...`" },
+		},
+		"usage": retiredRoute{
+			name: "usage", replacement: func([]string) string { return "`projmux agent usage ...`" },
+		},
+		"welcome": a.welcome,
+		"window":  a.window,
 	}
 	handlers := make(map[string]cli.Handler, len(commands))
 	for token, command := range commands {
@@ -440,6 +468,32 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	// Retired public routes are side-effect-free tombstones. The exact legacy
+	// ingest producer allowlist is the sole exception and must retain its old
+	// pre-dispatch migration ordering until Phase 3.
+	switch args[0] {
+	case "ai":
+		return cli.IsLegacyAIProducerArgv(args[1:])
+	case "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",
+		"key-broker", "popup-wait-key", "preview", "session-popup", "status", "statusbar", "tmux":
+		return false
+	case "attach":
+		if len(args) < 2 || args[1] != "project" {
+			return false
+		}
+	case "focus":
+		if len(args) < 2 || !slices.Contains(focusKinds, args[1]) {
+			return false
+		}
+	case "pin":
+		if len(args) < 2 || args[1] != "project" {
+			return false
+		}
+	case "prune":
+		if len(args) < 2 || (args[1] != "project" && args[1] != "snapshot") {
+			return false
+		}
+	}
 	switch args[0] {
 	// Doctor is a read-only diagnostic, and `get`/`describe` are read-only
 	// resource resolutions. None of them may trigger the otherwise automatic
@@ -454,9 +508,5 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	if len(args) >= 2 && args[0] == "diagnostics" && (args[1] == "report" || args[1] == "agent-hook") {
 		return false
 	}
-	// The exact legacy reader stays available until the removal Phase, but it
-	// is the same read-only boundary as diagnostics agent-hook and must not
-	// perform the otherwise automatic hook migration before reaching the shared
-	// handler.
-	return !(len(args) >= 3 && args[0] == "ai" && args[1] == "ingest" && args[2] == "log")
+	return true
 }

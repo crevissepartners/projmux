@@ -86,13 +86,13 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "get projects", Summary: "List Project resources", Sources: []string{"get"}, Outputs: projectionCatalog},
 	{Spelling: "get windows", Summary: "List Window resources", Sources: []string{"window", "get"}, Outputs: projectionCatalog},
 	{Spelling: "get panes", Summary: "List Pane resources", Sources: []string{"get"}, Outputs: projectionCatalog},
-	{Spelling: "get agents", Summary: "List Agent resources", Sources: []string{"ai", "get"}, Outputs: projectionCatalog},
-	{Spelling: "get notifications", Summary: "List pending notification rows", Sources: []string{"notify", "get"}, Outputs: projectionCatalog},
-	{Spelling: "get snapshots", Summary: "List saved session snapshots", Sources: []string{"session-state", "get"}, Outputs: projectionCatalog},
+	{Spelling: "get agents", Summary: "List Agent resources", Sources: []string{"get"}, Outputs: projectionCatalog},
+	{Spelling: "get notifications", Summary: "List pending notification rows", Sources: []string{"get"}, Outputs: projectionCatalog},
+	{Spelling: "get snapshots", Summary: "List saved session snapshots", Sources: []string{"get"}, Outputs: projectionCatalog},
 	{
 		Spelling: "get pane",
 		Summary:  "Read one Pane resource",
-		Sources:  []string{"current", "get"},
+		Sources:  []string{"get"},
 		Outputs:  projectionCatalog,
 		// `cwd` is a Pane-read route-local field projection. It is not a
 		// member of the shared create output enum, and using it on another
@@ -104,14 +104,14 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "describe project", Summary: "Describe one Project resource", Sources: []string{"describe"}, Outputs: projectionCatalog},
 	{Spelling: "describe window", Summary: "Describe one Window resource", Sources: []string{"window", "describe"}, Outputs: projectionCatalog},
 	{Spelling: "describe pane", Summary: "Describe one Pane resource", Sources: []string{"describe"}, Outputs: projectionCatalog},
-	{Spelling: "describe agent", Summary: "Describe one Agent resource", Sources: []string{"ai", "describe"}, Outputs: projectionCatalog},
+	{Spelling: "describe agent", Summary: "Describe one Agent resource", Sources: []string{"describe"}, Outputs: projectionCatalog},
 
 	// create
 	{Spelling: "create window", Summary: "Create a Window with its initial Pane", Sources: []string{"window", "create"}, Outputs: projectionCatalog},
-	{Spelling: "create pane", Summary: "Create a shell Pane in an existing Window", Sources: []string{"ai", "create"}, Outputs: projectionCatalog},
-	{Spelling: "create agent", Summary: "Create an Agent and its managed Pane", Sources: []string{"ai", "create"}, Outputs: projectionCatalog},
-	{Spelling: "create notification", Summary: "Create a pending notification row", Sources: []string{"notify", "ai", "create"}},
-	{Spelling: "create snapshot", Summary: "Create a session snapshot", Sources: []string{"session-state", "create"}},
+	{Spelling: "create pane", Summary: "Create a shell Pane in an existing Window", Sources: []string{"create"}, Outputs: projectionCatalog},
+	{Spelling: "create agent", Summary: "Create an Agent and its managed Pane", Sources: []string{"create"}, Outputs: projectionCatalog},
+	{Spelling: "create notification", Summary: "Create a pending notification row", Sources: []string{"create"}},
+	{Spelling: "create snapshot", Summary: "Create a session snapshot", Sources: []string{"create"}},
 	{Spelling: "create codex", Summary: "Provider shortcut for create agent --provider codex", Sources: []string{"create"}, Outputs: projectionCatalog},
 	{Spelling: "create claude", Summary: "Provider shortcut for create agent --provider claude", Sources: []string{"create"}, Outputs: projectionCatalog},
 	{Spelling: "create antigravity", Summary: "Provider shortcut for create agent --provider antigravity", Sources: []string{"create"}, Outputs: projectionCatalog},
@@ -125,7 +125,7 @@ var canonicalRoutes = []CanonicalRoute{
 	// rename / rebind
 	{Spelling: "rename project", Summary: "Rename a Projmux Project resource", Sources: []string{"rename"}},
 	{Spelling: "rename window", Summary: "Rename a Projmux Window resource", Sources: []string{"window", "rename"}},
-	{Spelling: "rename pane", Summary: "Rename a Projmux Pane resource; does not change tmux pane_title", Sources: []string{"tmux", "internal", "rename"}},
+	{Spelling: "rename pane", Summary: "Rename a Projmux Pane resource; does not change tmux pane_title", Sources: []string{"internal", "rename"}},
 	{Spelling: "rename agent", Summary: "Rename an Agent stable resource name only", Sources: []string{"rename"}},
 	{Spelling: "rebind project", Summary: "Rebind one Project spec.root to a new absolute directory", Sources: []string{"rebind"}},
 	{Spelling: "reconcile resources", Summary: "Preview or repair Registry and exact tmux resource drift", Sources: []string{"reconcile"}},
@@ -138,11 +138,11 @@ var canonicalRoutes = []CanonicalRoute{
 	// summary in catalog.go both describe the registry half that ships.
 	{Spelling: "delete pane", Summary: "Delete a Pane resource and its live binding", Sources: []string{"delete"}},
 	{Spelling: "delete agent", Summary: "Delete an Agent and its managed Panes", Sources: []string{"delete"}},
-	{Spelling: "delete notification", Summary: "Delete pending notification rows", Sources: []string{"notify", "delete"}},
-	{Spelling: "delete snapshot", Summary: "Delete saved session snapshots", Sources: []string{"session-state", "prune", "delete"}},
+	{Spelling: "delete notification", Summary: "Delete pending notification rows", Sources: []string{"delete"}},
+	{Spelling: "delete snapshot", Summary: "Delete saved session snapshots", Sources: []string{"prune", "delete"}},
 	// Only the preview half ships: the handler rejects an invocation without
 	// `--dry-run`. The actual replay is a feature the session-state track owns.
-	{Spelling: "restore snapshot", Summary: "Restore a saved session snapshot", Sources: []string{"session-state", "restore"}},
+	{Spelling: "restore snapshot", Summary: "Restore a saved session snapshot", Sources: []string{"restore"}},
 
 	// classification
 	//
@@ -167,11 +167,11 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "prune snapshot", Summary: "Prune preserved session snapshots", Sources: []string{"prune"}},
 
 	// agent domain
-	{Spelling: "agent status", Summary: "Read or set Agent status state", Sources: []string{"ai", "agent"}},
-	{Spelling: "agent topic", Summary: "Read, set, or clear the Agent topic annotation", Sources: []string{"ai", "agent"}},
-	{Spelling: "agent resume", Summary: "Rebind an Offline or Failed Agent to a new managed Pane", Sources: []string{"ai", "agent"}},
-	{Spelling: "agent integrate", Summary: "Install or remove provider hook integrations", Sources: []string{"ai", "agent"}},
-	{Spelling: "agent usage", Summary: "Read provider account usage quota snapshots", Sources: []string{"usage", "status", "internal", "agent"}},
+	{Spelling: "agent status", Summary: "Read or set Agent status state", Sources: []string{"agent"}},
+	{Spelling: "agent topic", Summary: "Read, set, or clear the Agent topic annotation", Sources: []string{"agent"}},
+	{Spelling: "agent resume", Summary: "Rebind an Offline or Failed Agent to a new managed Pane", Sources: []string{"agent"}},
+	{Spelling: "agent integrate", Summary: "Install or remove provider hook integrations", Sources: []string{"agent"}},
+	{Spelling: "agent usage", Summary: "Read provider account usage quota snapshots", Sources: []string{"internal", "agent"}},
 
 	// attention domain
 	{Spelling: "attention list", Summary: "List live Pane attention state", Sources: []string{"attention"}},
@@ -181,8 +181,8 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "attention window", Summary: "Render window-scoped attention badges", Sources: []string{"attention"}},
 
 	// notification domain
-	{Spelling: "notification ack", Summary: "Acknowledge notification rows", Sources: []string{"notify", "notification"}},
-	{Spelling: "notification reconcile", Summary: "Reconcile the notification queue against live targets", Sources: []string{"notify", "notification"}},
+	{Spelling: "notification ack", Summary: "Acknowledge notification rows", Sources: []string{"notification"}},
+	{Spelling: "notification reconcile", Summary: "Reconcile the notification queue against live targets", Sources: []string{"notification"}},
 
 	// hook domain
 	{Spelling: "hook list", Summary: "List lifecycle hook config", Sources: []string{"hook"}},
@@ -207,29 +207,29 @@ var canonicalRoutes = []CanonicalRoute{
 	// `install-app` -- have no canonical entry and no public spelling. They are
 	// installer plumbing whose canonical home is `internal tmux`, which is where
 	// they already resolve.
-	{Spelling: "config edit", Summary: "Edit the AI split-mode configuration", Sources: []string{"ai", "config"}},
-	{Spelling: "config render", Summary: "Print a generated tmux config to stdout", Sources: []string{"tmux", "internal", "config"}},
-	{Spelling: "config apply", Summary: "Write the generated app tmux config and reload the live server", Sources: []string{"tmux", "internal", "config"}},
+	{Spelling: "config edit", Summary: "Edit the AI split-mode configuration", Sources: []string{"config"}},
+	{Spelling: "config render", Summary: "Print a generated tmux config to stdout", Sources: []string{"internal", "config"}},
+	{Spelling: "config apply", Summary: "Write the generated app tmux config and reload the live server", Sources: []string{"internal", "config"}},
 
 	// runtime domain
-	{Spelling: "runtime sessions", Summary: "Pick a live or ephemeral tmux session", Sources: []string{"sessions", "runtime"}},
-	{Spelling: "runtime attach", Summary: "Attach a live or ephemeral runtime without Project identity", Sources: []string{"attach", "runtime"}},
-	{Spelling: "runtime stop", Summary: "Terminate live tmux sessions by tagged selection", Sources: []string{"kill", "runtime"}},
-	{Spelling: "runtime tag", Summary: "Manage the ephemeral tagged session selection", Sources: []string{"tag", "runtime"}},
-	{Spelling: "runtime prune", Summary: "Trim old ephemeral tmux sessions", Sources: []string{"prune", "runtime"}},
+	{Spelling: "runtime sessions", Summary: "Pick a live or ephemeral tmux session", Sources: []string{"runtime"}},
+	{Spelling: "runtime attach", Summary: "Attach a live or ephemeral runtime without Project identity", Sources: []string{"runtime"}},
+	{Spelling: "runtime stop", Summary: "Terminate live tmux sessions by tagged selection", Sources: []string{"runtime"}},
+	{Spelling: "runtime tag", Summary: "Manage the ephemeral tagged session selection", Sources: []string{"runtime"}},
+	{Spelling: "runtime prune", Summary: "Trim old ephemeral tmux sessions", Sources: []string{"runtime"}},
 
 	// diagnostics domain
 	{Spelling: "diagnostics log", Summary: "Read the bounded local operations journal", Sources: []string{"diagnostics"}},
-	{Spelling: "diagnostics agent-hook", Summary: "Read the bounded Agent hook ingest journal", Sources: []string{"ai", "diagnostics"}},
+	{Spelling: "diagnostics agent-hook", Summary: "Read the bounded Agent hook ingest journal", Sources: []string{"diagnostics"}},
 	{Spelling: "diagnostics report", Summary: "Create an explicit redacted local support report", Sources: []string{"diagnostics"}},
 
 	// setup domain
-	{Spelling: "setup terminal", Summary: "Show or apply terminal key remediation", Sources: []string{"setup", "tmux"}},
+	{Spelling: "setup terminal", Summary: "Show or apply terminal key remediation", Sources: []string{"setup"}},
 
 	// update domain
 	{Spelling: "update status", Summary: "Show read-only update status", Sources: []string{"update"}},
 	{Spelling: "update check", Summary: "Check for a newer release and refresh the cache", Sources: []string{"update"}},
-	{Spelling: "update apply", Summary: "Apply an available update", Sources: []string{"update", "upgrade"}},
+	{Spelling: "update apply", Summary: "Apply an available update", Sources: []string{"update"}},
 
 	// global information
 	{Spelling: "help", Summary: "Show help for projmux or one route", Sources: []string{"help"}},
@@ -241,15 +241,15 @@ var canonicalRoutes = []CanonicalRoute{
 	// the hidden `internal` route as a source alongside the current spelling it
 	// aliases, and both remain dispatchable until the separate breaking-change
 	// Phase removes the compatibility half.
-	{Spelling: "internal tmux", Summary: "Generated tmux config and popup plumbing", Sources: []string{"tmux", "internal"}},
-	{Spelling: "internal status", Summary: "tmux status segment renderer", Sources: []string{"status", "internal"}},
-	{Spelling: "internal statusbar", Summary: "tmux status bar click and key dispatcher", Sources: []string{"statusbar", "internal"}},
-	{Spelling: "internal preview", Summary: "Persisted preview cursor plumbing", Sources: []string{"preview", "internal"}},
-	{Spelling: "internal session-popup", Summary: "Generated session popup payload", Sources: []string{"session-popup", "internal"}},
-	{Spelling: "internal agent-hook", Summary: "Provider hook ingest and title watcher plumbing", Sources: []string{"ai", "internal"}},
-	{Spelling: "internal focus", Summary: "Machine focus ingress", Sources: []string{"focus", "internal"}},
-	{Spelling: "internal key-broker", Summary: "Darwin physical key transport", Sources: []string{"key-broker", "internal"}},
-	{Spelling: "internal popup-wait-key", Summary: "Display-only popup single-key reader", Sources: []string{"popup-wait-key", "internal"}},
+	{Spelling: "internal tmux", Summary: "Generated tmux config and popup plumbing", Sources: []string{"internal"}},
+	{Spelling: "internal status", Summary: "tmux status segment renderer", Sources: []string{"internal"}},
+	{Spelling: "internal statusbar", Summary: "tmux status bar click and key dispatcher", Sources: []string{"internal"}},
+	{Spelling: "internal preview", Summary: "Persisted preview cursor plumbing", Sources: []string{"internal"}},
+	{Spelling: "internal session-popup", Summary: "Generated session popup payload", Sources: []string{"internal"}},
+	{Spelling: "internal agent-hook", Summary: "Provider hook ingest and title watcher plumbing", Sources: []string{"internal"}},
+	{Spelling: "internal focus", Summary: "Machine focus ingress", Sources: []string{"internal"}},
+	{Spelling: "internal key-broker", Summary: "Darwin physical key transport", Sources: []string{"internal"}},
+	{Spelling: "internal popup-wait-key", Summary: "Display-only popup single-key reader", Sources: []string{"internal"}},
 }
 
 // CanonicalRoutes returns the canonical route manifest in contract order.

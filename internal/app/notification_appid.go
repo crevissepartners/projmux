@@ -30,7 +30,7 @@ const (
 	// sessions on the same tmux server.
 	legacyAppIDCleanedTmuxOption = "@projmux_legacy_appid_cleaned"
 
-	// desktopURIScheme is the scheme accepted by the `projmux focus --uri`
+	// desktopURIScheme is the scheme accepted by `projmux internal focus --uri`
 	// compatibility entrypoint. projmux no longer registers a Windows
 	// protocol handler for it and no longer emits clickable Toasts, so
 	// nothing in the product produces such a URI; the scheme is retained

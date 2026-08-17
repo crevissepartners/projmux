@@ -30,7 +30,7 @@ func TestAppRunAttachAutoReusesEphemeralSession(t *testing.T) {
 		},
 	}
 
-	if err := app.Run([]string{"attach", "auto"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"runtime", "attach"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -65,7 +65,7 @@ func TestAppRunAttachAutoPrunesAndEnsuresHome(t *testing.T) {
 		},
 	}
 
-	if err := app.Run([]string{"attach", "auto", "--keep=1"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"runtime", "attach", "--keep=1"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestAppRunAttachAutoCreatesEphemeralFallback(t *testing.T) {
 		},
 	}
 
-	if err := app.Run([]string{"attach", "auto", "--fallback=ephemeral"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"runtime", "attach", "--fallback=ephemeral"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 

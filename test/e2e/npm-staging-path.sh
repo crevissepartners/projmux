@@ -51,8 +51,8 @@ chmod +x "$canonical_bin" "$retire_bin"
 # Step 1+2: run the binary FROM the retired path (no --bin, so it must resolve
 # its own os.Executable and canonicalize) and capture the generated config.
 cfg="$PROJMUX_SMOKE_WORKDIR/tmux-from-retire.conf"
-"$retire_bin" tmux print-config >"$cfg" 2>"$PROJMUX_SMOKE_WORKDIR/print-config.err" \
-  || { echo "tmux print-config from retired path failed:" >&2; cat "$PROJMUX_SMOKE_WORKDIR/print-config.err" >&2; exit 1; }
+"$retire_bin" internal tmux print-config >"$cfg" 2>"$PROJMUX_SMOKE_WORKDIR/print-config.err" \
+  || { echo "internal tmux print-config from retired path failed:" >&2; cat "$PROJMUX_SMOKE_WORKDIR/print-config.err" >&2; exit 1; }
 
 if grep -Fq "$retire_seg" "$cfg"; then
   echo "FAIL: generated config still references the npm retire/staging segment '$retire_seg'" >&2

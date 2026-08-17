@@ -13,7 +13,7 @@ Each JSONL record has a closed schema: `at`, `level`, `component`, `event`,
 allowlisted `command`, `subcommand`, `kind`, and sanitized `message`. There is
 no generic metadata map. Runtime lifecycle records add only closed
 `operation` and `code` enums. The allowed operations are session create,
-attach, switch, kill, and tmux apply; codes are stable failure/health
+attach, switch, kill, and config apply; codes are stable failure/health
 classifications and never carry routing identity or subprocess details.
 
 Command and subcommand names come from static allowlists. Unknown argv values,
@@ -144,7 +144,7 @@ the retained last-complete sample crosses the stale boundary, the refresh
 owner records the single coalesced `stale` transition instead.
 
 Normal warming/ready samples, periodic samples, successful automatic/manual
-refreshes, and the separate host-only `projmux status resources` sampler emit
+refreshes, and the separate host-only `projmux internal status resources` sampler emit
 zero common resource events. The two-second Resource Inspector lifecycle budget
 measures inventory, discovery, and procfs collection together. Tmux inventory
 and procfs observe its context directly. Project discovery does not currently
@@ -219,15 +219,15 @@ records.
 
 Classification is intentionally conservative for mutation-capable interactive
 commands: opening session/project/settings/popup flows is treated as changing
-even when a user cancels. Explicit read variants (`status`, `list`, `get`,
-`preview`, config printing, plain welcome, and the diagnostics viewer) remain
-read-only. The successful automatic hook/poll paths `ai ingest`, `attention
-arm`, `attention clear`, `attention window`, `tmux autosave-session-state`, and
+even when a user cancels. Explicit read variants (`internal status`, `list`,
+`get`, read-only restore preview, config rendering, plain welcome, and the diagnostics viewer) remain
+read-only. The successful automatic hook/poll paths `internal agent-hook ingest`, `attention
+arm`, `attention clear`, `attention window`, `internal tmux autosave-session-state`, and
 `window record` are also read-only so high-frequency operation does not append
 to the journal; an error from any of them still records exactly one safe error
 outcome. Explicit user mutations such as `attention toggle` retain their
-state-changing success record. Direct top-level help and explicit preview-only intents (`upgrade
---dry-run`, `update apply --dry-run`, AI integration dry-runs, and the
+state-changing success record. Direct top-level help and explicit preview-only intents (`update
+apply --dry-run`, AI integration dry-runs, and the
 currently preview-only session restore) are also read-only. Doctor is a stricter
 boundary: successes and errors never append to this journal, so diagnostics do
 not make its filesystem contract self-defeating. Support report success and
@@ -254,9 +254,8 @@ recursion loop.
 
 The older bounded `ai-ingest.log` and subsystem-specific `PROJMUX_*_DEBUG`
 surfaces retain their current paths, formats, and behavior. Canonical
-`internal agent-hook ingest` writes the same JSONL bytes, `diagnostics
-agent-hook` reads them, and the exact legacy `ai ingest log` reader remains
-available during the compatibility window. `diagnostics report` still emits
+`internal agent-hook ingest` writes the same JSONL bytes and `diagnostics
+agent-hook` reads them. `diagnostics report` still emits
 its allowlisted source/result count summary. Append failure remains best-effort
 and independent of common-journal append failure.
 
@@ -271,16 +270,12 @@ The measured migration parity is:
 | unknown event recorded as quiet | `unknown / ignored / unsupported-event` |
 | normal `state`, `notify`, known `quiet`, or `deduped` | zero common AI events; existing state/notify owner remains authoritative |
 | stdin read or payload-size rejection before the legacy append seam | common-only `payload-read` or `payload-oversized`; no legacy row existed |
-| blank `ai ingest bell` CLI target rejected before the legacy append seam | common-only `bell / ignored / target-invalid`; exit semantics unchanged |
+| blank `internal agent-hook ingest bell` CLI target rejected before the append seam | common-only `bell / ignored / target-invalid`; exit semantics unchanged |
 
-This is a dual-run migration seam, not a deprecation. Operators who need the
-legacy detailed local view can keep using `ai ingest log`; support archives
-remain count-only for that file. The common journal is the safe correlated
-source for watcher lifecycle and anomalous ingest classification. The file is
-a documented **Deprecate candidate**, not deprecated behavior in this release:
-common diagnostics cover anomalies but not the legacy detailed normal-state
-consumer. Any deprecation/removal requires a separate breaking roadmap with
-consumer migration.
+Operators who need the detailed local view use `diagnostics agent-hook`;
+support archives remain count-only for that file. The common journal is the
+safe correlated source for watcher lifecycle and anomalous ingest
+classification, while the bounded file retains detailed normal-state rows.
 
 `PROJMUX_FOCUS_DEBUG` remains available with its existing one-line byte
 contract. Focus diagnostics share its request classification seam, but do not

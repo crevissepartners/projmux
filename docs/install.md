@@ -83,7 +83,7 @@ directory is on `PATH`.
 Go-managed installs can update through:
 
 ```sh
-projmux upgrade
+projmux update apply
 ```
 
 See [Upgrading](upgrading.md) for version pinning and installer-specific

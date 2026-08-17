@@ -321,7 +321,7 @@ func requireCanonicalProvider(spelling, raw string) (string, error) {
 			spelling, strings.Join(cli.AgentProviders(), ", ")))
 	}
 	if cli.IsPickerAdapter(provider) {
-		return "", usageError(fmt.Sprintf("%s: %q is an interactive picker, not a provider; pick one of %s or run `projmux ai picker`",
+		return "", usageError(fmt.Sprintf("%s: %q is an interactive picker, not a provider; choose one of %s for `projmux create agent --provider`",
 			spelling, provider, strings.Join(cli.AgentProviders(), ", ")))
 	}
 	if provider == aiModeShell {

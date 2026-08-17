@@ -102,7 +102,7 @@ func TestTmuxApplyLifecycleOutcomeTable(t *testing.T) {
 				tt.runner.errors = map[string]error{key: errors.New("private reload argv")}
 			}
 			application := &App{lifecycle: recorder, tmux: cmd}
-			err := application.Run([]string{"tmux", "apply", "--config", filepath.Join(home, "tmux.conf")}, &bytes.Buffer{}, &bytes.Buffer{})
+			err := application.Run([]string{"internal", "tmux", "apply", "--config", filepath.Join(home, "tmux.conf")}, &bytes.Buffer{}, &bytes.Buffer{})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Run() error = %v, wantErr=%v", err, tt.wantErr)
 			}
@@ -139,7 +139,7 @@ func TestTmuxApplySkippedHintNormalizesWhenLaterOutputFails(t *testing.T) {
 		runner:      nil,
 	}
 	stdout := &failAfterWrite{failAt: 2}
-	err := (&App{lifecycle: recorder, tmux: cmd}).Run([]string{"tmux", "apply", "--config", filepath.Join(home, "tmux.conf")}, stdout, &bytes.Buffer{})
+	err := (&App{lifecycle: recorder, tmux: cmd}).Run([]string{"internal", "tmux", "apply", "--config", filepath.Join(home, "tmux.conf")}, stdout, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("Run() = nil, want second stdout failure")
 	}
@@ -163,7 +163,7 @@ func TestAppRunTmuxPopupPreviewUsesDefaultOptions(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := app.Run([]string{"tmux", "popup-preview", "dev"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"internal", "tmux", "popup-preview", "dev"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if stdout.Len() != 0 {
@@ -198,7 +198,7 @@ func TestAppRunTmuxPopupSwitchUsesCurrentPanePathAndDefaultOptions(t *testing.T)
 	}
 
 	var stdout bytes.Buffer
-	if err := app.Run([]string{"tmux", "popup-switch"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"internal", "tmux", "popup-switch"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if stdout.Len() != 0 {
@@ -237,7 +237,7 @@ func TestAppRunTmuxPopupSessionsUsesDefaultOptions(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := app.Run([]string{"tmux", "popup-sessions"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"internal", "tmux", "popup-sessions"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if stdout.Len() != 0 {
@@ -271,7 +271,7 @@ func TestAppRunTmuxPopupCommandsUseMinimumReadableSizes(t *testing.T) {
 	}{
 		{
 			name:  "preview",
-			args:  []string{"tmux", "popup-preview", "dev"},
+			args:  []string{"internal", "tmux", "popup-preview", "dev"},
 			popup: &stubTmuxPopupClient{},
 			wantOptions: inttmux.PopupOptions{
 				Width:         "120",
@@ -281,7 +281,7 @@ func TestAppRunTmuxPopupCommandsUseMinimumReadableSizes(t *testing.T) {
 		},
 		{
 			name:  "switch",
-			args:  []string{"tmux", "popup-switch"},
+			args:  []string{"internal", "tmux", "popup-switch"},
 			popup: &stubTmuxPopupClient{currentPanePath: "/tmp/work tree"},
 			wantOptions: inttmux.PopupOptions{
 				Width:  "120",
@@ -295,7 +295,7 @@ func TestAppRunTmuxPopupCommandsUseMinimumReadableSizes(t *testing.T) {
 		},
 		{
 			name:  "sessions",
-			args:  []string{"tmux", "popup-sessions"},
+			args:  []string{"internal", "tmux", "popup-sessions"},
 			popup: &stubTmuxPopupClient{},
 			wantOptions: inttmux.PopupOptions{
 				Width:         "120",
@@ -3264,10 +3264,10 @@ func TestTmuxCommandRejectsInvalidUsage(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !contains(err.Error(), tt.want) {
+			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want substring %q", err, tt.want)
 			}
-			if !contains(stderr.String(), "Usage:") {
+			if !strings.Contains(stderr.String(), "Usage:") {
 				t.Fatalf("stderr = %q, want usage text", stderr.String())
 			}
 		})
@@ -3306,7 +3306,7 @@ func TestTmuxCommandReportsConfigurationAndRuntimeErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !contains(err.Error(), tt.want) {
+			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want substring %q", err, tt.want)
 			}
 		})
@@ -3492,7 +3492,7 @@ func TestAppRunTmuxPopupToggleCloseRestoresSidebarOriginSession(t *testing.T) {
 		executable:  func() (string, error) { return "/tmp/projmux", nil },
 	}
 
-	if err := (&App{lifecycle: recorder, tmux: cmd}).Run([]string{"tmux", "popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := (&App{lifecycle: recorder, tmux: cmd}).Run([]string{"internal", "tmux", "popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
@@ -3533,7 +3533,7 @@ func TestAppRunTmuxPopupToggleRestoreFailureIsOwnedAndSwallowed(t *testing.T) {
 	writer := &appLifecycleWriter{}
 	recorder := diagnostics.NewLifecycleRecorder(writer, "popup-failure", "0.10.0", "tmux")
 	cmd := &tmuxCommand{diagnostics: recorder, runner: runner, executable: func() (string, error) { return "/tmp/projmux", nil }}
-	if err := (&App{lifecycle: recorder, tmux: cmd}).Run([]string{"tmux", "popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := (&App{lifecycle: recorder, tmux: cmd}).Run([]string{"internal", "tmux", "popup-toggle", "--client", clientKey, "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("swallowed restore Run() error = %v", err)
 	}
 	if len(writer.events) != 2 || writer.events[1].Result != "error" || writer.events[1].Code != string(diagnostics.CodeSessionSwitchFailed) || !recorder.RecordedOutcome() {
@@ -3624,7 +3624,7 @@ func TestTmuxPopupPreviewUsesRawUncanonicalizedExecutable(t *testing.T) {
 			}},
 		},
 	}
-	if err := app.Run([]string{"tmux", "popup-preview", "dev"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"internal", "tmux", "popup-preview", "dev"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	// Immediate in-process re-exec must use the running (raw) path, which is

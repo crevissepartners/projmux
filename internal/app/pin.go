@@ -204,9 +204,9 @@ func requireSingleDirArg(command string, args []string, stderr io.Writer) (strin
 
 func printPinUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux pin list")
-	fmt.Fprintln(w, "  projmux pin add <dir>")
-	fmt.Fprintln(w, "  projmux pin remove <dir>")
-	fmt.Fprintln(w, "  projmux pin toggle <dir>")
-	fmt.Fprintln(w, "  projmux pin clear")
+	fmt.Fprintln(w, "  projmux pin project list")
+	fmt.Fprintln(w, "  projmux pin project add <dir>")
+	fmt.Fprintln(w, "  projmux pin project remove <dir>")
+	fmt.Fprintln(w, "  projmux pin project toggle <dir>")
+	fmt.Fprintln(w, "  projmux pin project clear")
 }

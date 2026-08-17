@@ -273,11 +273,10 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 		if err != nil {
 			return nil, err
 		}
-		args := []string{"upgrade"}
-		if noApply {
-			args = append(args, "--no-apply")
-		}
-		return []updateApplyCommand{{Name: exe, Args: args}}, nil
+		return []updateApplyCommand{
+			{Name: "go", Args: []string{"install", "github.com/crevissepartners/projmux/cmd/projmux@latest"}},
+			{Name: exe, Args: postUpdateApplyArgs(noApply)},
+		}, nil
 	case "github-release":
 		return nil, errors.New("update apply for github-release installs is handled by direct release binary replacement")
 	case "source":
@@ -544,14 +543,14 @@ func verifyReleaseAssetDigest(archive []byte, digest string) error {
 }
 
 func (c *updateCommand) atomicReplaceRelease(src, target string) error {
-	upgrade := upgradeCommand{
+	replacer := atomicBinaryReplacer{
 		rename:        c.rename,
 		chmod:         c.chmod,
 		remove:        c.remove,
 		copyFile:      c.copyFile,
 		tempSuffixGen: defaultTempSuffix,
 	}
-	return upgrade.atomicReplace(src, target)
+	return replacer.replace(src, target)
 }
 
 func (c *updateCommand) targetPlatform() (string, string) {
@@ -942,9 +941,9 @@ func (c *updateCommand) detectInstaller() updateInstaller {
 		}
 		return updateInstaller{Source: source, Note: note}
 	case "go":
-		note := "Installed with Go tooling; update apply delegates to projmux upgrade."
+		note := "Installed with Go tooling; update apply runs `go install ...@latest` and applies canonical config."
 		if autodetected {
-			note = "Detected `go install` binary; update apply delegates to projmux upgrade."
+			note = "Detected `go install` binary; update apply runs `go install ...@latest` and applies canonical config."
 		}
 		return updateInstaller{Source: source, Note: note}
 	case "github-release":

@@ -8,7 +8,7 @@ the oldest rows beyond the 256-entry hard cap; reconcile can also collect an
 expired entry after its tmux target disappears. Each entry can route
 the status-bar notify segment or notify sidebar to the originating tmux pane
 via `projmux focus`, and feeds the HUD pill rendered by
-`projmux status notify`.
+`projmux internal status notify`.
 
 ## File layout
 
@@ -79,7 +79,7 @@ account quota remains outside notify attention semantics: `context_window` is a
 separate conversation-local gauge and is never treated as quota data.
 Tmux bell fallback rows carry `agent=bell`, `event=bell`, and tmux target
 context such as pane title, command, session, window, pane, and socket.
-`notify list --json` includes this metadata as the structured data channel
+`get notifications --json` includes this metadata as the structured data channel
 while human table/sidebar output keeps the compact text body. Existing entries
 without metadata remain valid.
 
@@ -88,7 +88,7 @@ without metadata remain valid.
 ### push
 
 ```
-projmux notify push --text <s> --target <SESSION[:WINDOW[.PANE]]>
+projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]>
                     [--socket <s>] [--severity info|warn|critical]
                     [--source ai|k8s|git|external]
                     [--ttl <seconds>] [--id <s>] [--json]
@@ -102,7 +102,7 @@ number of seconds. `--json` prints `{id, queued}` for scripting.
 ### list
 
 ```
-projmux notify list [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>]
+projmux get notifications [--live] [--json] [--limit N] [--ui table|sidebar] [--client <tty>]
                     [--severity ...] [--source ...]
 ```
 
@@ -155,7 +155,7 @@ remain action values but the sidebar has no search input and intentionally does
 not expose a separate metadata detail view.
 
 When a new pending notification is successfully pushed by any app producer
-(`notify push`, reply-ready, reconcile backfill, or bell fallback), open native
+(`create notification`, reply-ready, reconcile backfill, or bell fallback), open native
 notify sidebars receive a best-effort queue-write event and rerun the same
 `DeferredUpdate` row/live-state refresh path used by `a` ack and `x`
 non-critical clear. Event delivery errors are ignored after the queue write:
@@ -253,7 +253,7 @@ remove the entry. The user consumes it through explicit ack. Store errors are
 swallowed so the live tmux UI never blocks on disk IO. After a successful
 queue write and same-pane non-critical compaction, the producer publishes the
 same best-effort notify-sidebar queue-write refresh event used by
-`projmux notify push`.
+`projmux create notification`.
 
 Manual `projmux attention toggle` on a pane without an agent option
 does NOT push — the queue is intentionally AI-driven; reconcile honours
@@ -304,10 +304,10 @@ Outcomes:
   so the user can retry without losing the row.
 
 The same consume policy is shared by notify-sidebar Enter and any
-`projmux focus --uri` invocation, after a real tmux focus dispatch succeeds.
+`projmux internal focus` invocation, after a real tmux focus dispatch succeeds.
 Desktop notifications are passive as of 0.11.0 — projmux emits no clickable
-Toast and registers no `projmux://` handler — so the URI ack path is a
-compatibility surface only. The in-app sidebar/statusbar consume path works in
+Toast and registers no `projmux://` handler — so the former URI ack path is
+retired and no longer executable. The in-app sidebar/statusbar consume path works in
 every desktop notification mode.
 Pane focus hooks and attention clear paths remain live-attention-only and do
 not ack the notify queue; their response-complete badge consume is limited to
@@ -322,7 +322,7 @@ trigger a tmux error popup.
 
 ## Render (status segment)
 
-`projmux status notify` is the HUD-style renderer wired to the tmux
+`projmux internal status notify` is the HUD-style renderer wired to the tmux
 status interval. See [statusbar.md](statusbar.md) for the layout and
 degradation tiers. It shows the newest pending item as a single notification
 block with project, state, optional agent, text, age, and an extra-count

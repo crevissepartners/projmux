@@ -170,7 +170,7 @@ func requireSingleTagArg(command string, args []string, stderr io.Writer) (strin
 
 func printTagUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux tag list")
-	fmt.Fprintln(w, "  projmux tag toggle <name>")
-	fmt.Fprintln(w, "  projmux tag clear")
+	fmt.Fprintln(w, "  projmux runtime tag list")
+	fmt.Fprintln(w, "  projmux runtime tag toggle <name>")
+	fmt.Fprintln(w, "  projmux runtime tag clear")
 }

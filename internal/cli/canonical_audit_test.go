@@ -278,14 +278,8 @@ func TestPublicConfigRouteReachesEditBothRenderTargetsAndApply(t *testing.T) {
 		}
 	}
 
-	// The hidden routes `make install` and every already-running tmux server
-	// invoke are untouched: still present, still dispatchable, still hidden.
+	// Installer and generated tmux plumbing survives only under `internal`.
 	for _, spelling := range [][]string{
-		{"tmux", "print-config"},
-		{"tmux", "print-app-config"},
-		{"tmux", "install"},
-		{"tmux", "install-app"},
-		{"tmux", "apply"},
 		{"internal", "tmux", "print-config"},
 		{"internal", "tmux", "print-app-config"},
 		{"internal", "tmux", "install"},
@@ -294,24 +288,21 @@ func TestPublicConfigRouteReachesEditBothRenderTargetsAndApply(t *testing.T) {
 	} {
 		path, _, resolved := Resolve(spelling)
 		if !resolved || !reflect.DeepEqual(path, spelling) {
-			t.Errorf("%v resolved to %v (ok=%v), want the untouched hidden route", spelling, path, resolved)
+			t.Errorf("%v resolved to %v (ok=%v), want the canonical hidden route", spelling, path, resolved)
 		}
 	}
-	for _, token := range []string{"tmux", "internal"} {
-		route, found := LookupRoute(token)
-		if !found {
-			t.Fatalf("hidden route %q was removed", token)
-		}
-		if !route.Hidden || route.Disposition != DispositionInternal {
-			t.Fatalf("route %q hidden=%v disposition=%q, want an unchanged hidden internal node",
-				token, route.Hidden, route.Disposition)
-		}
+	if _, found := LookupRoute("tmux"); found {
+		t.Fatal("old pre-namespace tmux alias remains in the catalog")
+	}
+	internal, found := LookupRoute("internal")
+	if !found || !internal.Hidden || internal.Disposition != DispositionInternal {
+		t.Fatalf("internal route = %#v (found=%v), want the hidden canonical namespace", internal, found)
 	}
 
 	// `install` and `install-app` deliberately have no public spelling. They are
 	// installer plumbing, so their canonical home is the hidden namespace.
 	for _, token := range []string{"install", "install-app"} {
-		tmux, _ := LookupRoute("tmux")
+		tmux, _ := findChild(internal, "tmux")
 		child, found := findChild(tmux, token)
 		if !found {
 			t.Fatalf("hidden route `tmux %s` was removed", token)

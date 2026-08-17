@@ -119,7 +119,7 @@ type doctorReport struct {
 
 const doctorSchemaVersion = 2
 
-const doctorSessionStatePruneGuidance = "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name."
+const doctorSessionStatePruneGuidance = "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune snapshot` and delete only by explicit name."
 
 type doctorSection string
 

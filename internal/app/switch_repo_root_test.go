@@ -261,24 +261,3 @@ func TestExtraProjdirRootsEmptyWhenUnset(t *testing.T) {
 		t.Fatalf("extraProjdirRoots() = %#v, want empty when env unset", got)
 	}
 }
-
-func TestFirstProjdirPathReturnsFirstNonEmpty(t *testing.T) {
-	t.Parallel()
-
-	multi := strings.Join([]string{"", "/first", "/second"}, string(os.PathListSeparator))
-	if got := firstProjdirPath(multi); got != "/first" {
-		t.Fatalf("firstProjdirPath() = %q, want %q", got, "/first")
-	}
-}
-
-func TestFirstProjdirPathEmptyForBlankInput(t *testing.T) {
-	t.Parallel()
-
-	if got := firstProjdirPath(""); got != "" {
-		t.Fatalf("firstProjdirPath(\"\") = %q, want empty", got)
-	}
-	blank := strings.Repeat(string(os.PathListSeparator), 3)
-	if got := firstProjdirPath(blank); got != "" {
-		t.Fatalf("firstProjdirPath(only-separators) = %q, want empty", got)
-	}
-}
