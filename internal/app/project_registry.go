@@ -803,8 +803,11 @@ func releaseDeadAgentPanes(working *coremetadata.Registry, mutator coremetadata.
 // -- nothing died that the registry owns -- must cost nothing. The inventory is
 // read first, the release set is computed against a read-only snapshot, and the
 // locked write transaction is opened only when there is something to release.
-// The sweep then reruns inside the lock, so an Agent that changed between the
-// two reads is judged against the state that is actually being written.
+// The sweep then re-reads the live inventory inside the lock before it reruns
+// the release decision. Both halves matter: the Registry may gain a freshly
+// created Agent while this pane-exit hook is waiting for the transaction, and
+// applying the pre-lock inventory to that newer Registry would immediately
+// release the new Agent and delete its still-live managed Pane resource.
 func runDeadAgentPaneSweep(ctx context.Context, inventory livePaneInventory, store *resourceStore) error {
 	if inventory == nil {
 		return errors.New("release dead agent panes: the tmux pane inventory is not configured")
@@ -824,9 +827,20 @@ func runDeadAgentPaneSweep(ctx context.Context, inventory livePaneInventory, sto
 	if len(deadAgentPaneUIDs(registry, live)) == 0 {
 		return nil
 	}
+	var inventoryFailed bool
 	_, err = store.update(func(working *coremetadata.Registry) error {
-		releaseDeadAgentPanes(working, store.mutator(), live)
+		fresh, inventoryErr := inventory.LivePaneUIDs(ctx)
+		if inventoryErr != nil {
+			// Abort the write transaction and preserve every Agent. The caller
+			// treats this exactly like the preflight inventory failure below.
+			inventoryFailed = true
+			return inventoryErr
+		}
+		releaseDeadAgentPanes(working, store.mutator(), fresh)
 		return nil
 	})
+	if inventoryFailed {
+		return nil
+	}
 	return MapMetadataError(err)
 }
