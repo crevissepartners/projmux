@@ -462,7 +462,7 @@ if [[ "$ma_binding" != *"sessionizer-sidebar"* ]]; then
 fi
 
 # The first apply against an unversioned (v0) keymap migrates it to
-# schema_version = 1 and leaves one digest-named backup holding the untouched
+# schema_version = 2 and leaves one digest-named backup holding the untouched
 # original. The rewrite happens before any generated config is written, and the
 # effective bindings asserted above are what prove it preserved behaviour.
 smoke_assert_keymap_backup_count() {
@@ -475,7 +475,7 @@ smoke_assert_keymap_backup_count() {
     exit 1
   fi
 }
-smoke_assert_file_contains "$keymap_path" "schema_version = 1"
+smoke_assert_file_contains "$keymap_path" "schema_version = 2"
 smoke_assert_file_contains "$keymap_path" '[bindings."pane.rename"]'
 smoke_assert_file_contains "$keymap_path" '[bindings."project-sidebar.toggle"]'
 smoke_assert_keymap_backup_count 1
@@ -528,7 +528,7 @@ if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-F12)" != *"unr
   echo "expected unrelated live binding to survive C-t reassignment apply" >&2
   exit 1
 fi
-smoke_assert_file_contains "$keymap_path" "schema_version = 1"
+smoke_assert_file_contains "$keymap_path" "schema_version = 2"
 smoke_assert_file_contains "$keymap_path" '[bindings."window.create"]'
 smoke_assert_keymap_backup_count 2
 cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.migrated"
@@ -547,6 +547,77 @@ fi
 app_flag="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_app)"
 if [[ "$app_flag" != "1" ]]; then
   echo "expected tmux apply to set @projmux_app=1, got: $app_flag" >&2
+  exit 1
+fi
+
+# Schema v2 sequences compile shared prefixes into one generated trie. Apply
+# records the exact generated roots/tables so a repeat source is idempotent and
+# a later removal can retire stale state without touching unrelated bindings.
+install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2.toml" "$keymap_path"
+sequence_apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
+smoke_assert_output_contains "$sequence_apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
+sequence_roots="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_sequence_roots)"
+sequence_tables="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_sequence_tables)"
+if [[ "$sequence_roots" != "C-k" || -z "$sequence_tables" || "$sequence_tables" == *" "* ]]; then
+  echo "expected one C-k sequence root/table, got roots=$sequence_roots tables=$sequence_tables" >&2
+  exit 1
+fi
+for contract in \
+  "root C-k switch-client -T $sequence_tables" \
+  "$sequence_tables C-w new-window" \
+  "$sequence_tables Enter set -g mouse" \
+  "$sequence_tables Escape switch-client -T root" \
+  "$sequence_tables Any switch-client -T root"; do
+  read -r table key fragment <<<"$contract"
+  binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T "$table" "$key")"
+  if [[ "$binding" != *"$fragment"* ]]; then
+    echo "sequence binding $table/$key missing $fragment: $binding" >&2
+    exit 1
+  fi
+done
+if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-S-Right)" != *"next-window"* ]]; then
+  echo "sequence apply changed existing single-chord behavior" >&2
+  exit 1
+fi
+cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-sequences.first"
+cp "$XDG_CONFIG_HOME/projmux/tmux.conf" "$PROJMUX_SMOKE_WORKDIR/tmux-sequences.first"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
+  >"$PROJMUX_SMOKE_WORKDIR/sequences-repeat-apply.out"
+cmp "$PROJMUX_SMOKE_WORKDIR/keymap-sequences.first" "$keymap_path"
+cmp "$PROJMUX_SMOKE_WORKDIR/tmux-sequences.first" "$XDG_CONFIG_HOME/projmux/tmux.conf"
+
+# A duplicate sequence is rejected before keymap/config/live writes. Compare
+# all three surfaces byte-for-byte, then install a valid no-sequence file to
+# prove the previous generated root and table are removed.
+install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2-conflict.toml" "$keymap_path"
+cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-sequences-conflict.before"
+cp "$XDG_CONFIG_HOME/projmux/tmux.conf" "$PROJMUX_SMOKE_WORKDIR/tmux-sequences-conflict.before"
+tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -a >"$PROJMUX_SMOKE_WORKDIR/live-sequences-conflict.before"
+if "$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
+  >"$PROJMUX_SMOKE_WORKDIR/sequences-conflict.out" 2>"$PROJMUX_SMOKE_WORKDIR/sequences-conflict.err"; then
+  echo "duplicate sequence apply unexpectedly succeeded" >&2
+  exit 1
+fi
+cmp "$PROJMUX_SMOKE_WORKDIR/keymap-sequences-conflict.before" "$keymap_path"
+cmp "$PROJMUX_SMOKE_WORKDIR/tmux-sequences-conflict.before" "$XDG_CONFIG_HOME/projmux/tmux.conf"
+tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -a >"$PROJMUX_SMOKE_WORKDIR/live-sequences-conflict.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/live-sequences-conflict.before" "$PROJMUX_SMOKE_WORKDIR/live-sequences-conflict.after"
+
+install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2-removed.toml" "$keymap_path"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
+  >"$PROJMUX_SMOKE_WORKDIR/sequences-remove-apply.out"
+stale_sequence_root="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-k 2>/dev/null || true)"
+if [[ -n "$stale_sequence_root" ]]; then
+  echo "removed sequence left stale C-k root binding: $stale_sequence_root" >&2
+  exit 1
+fi
+if tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T "$sequence_tables" >/dev/null 2>&1; then
+  echo "removed sequence left stale generated table $sequence_tables" >&2
+  exit 1
+fi
+if [[ -n "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_sequence_roots)" ]] ||
+  [[ -n "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_sequence_tables)" ]]; then
+  echo "removed sequence left generated state options" >&2
   exit 1
 fi
 resources_flag="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_live_resources)"
@@ -1038,11 +1109,13 @@ exec 9>&-
 wait "$control_pid" || true
 
 # Each explicit apply owns one correlated lifecycle pair and suppresses the
-# older generic top-level outcome. Fourteen apply invocations ran above: the
-# existing six, five row-0 visibility convergence applies, and three row-1
-# mixed/minimal/default convergence applies.
+# older generic top-level outcome. Eighteen apply invocations ran above: the
+# existing six, five row-0 visibility convergence applies, three row-1
+# mixed/minimal/default convergence applies, and four sequence applies
+# (install, repeat, rejected duplicate, removal). The rejected duplicate still
+# owns a correlated pair because it fails inside the apply operation.
 operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
-expected_apply_count=14
+expected_apply_count=18
 apply_starts="$(grep -c '"event":"lifecycle.start".*"operation":"tmux.apply"' "$operations_log")"
 apply_outcomes="$(grep -c '"event":"lifecycle.outcome".*"operation":"tmux.apply"' "$operations_log")"
 if [[ "$apply_starts" != "$expected_apply_count" || "$apply_outcomes" != "$expected_apply_count" ]]; then

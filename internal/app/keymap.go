@@ -11,14 +11,17 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/platformkeys"
 )
 
 type keymapOverride struct {
-	Plain     *string
-	Keys      []string
-	KeysSet   bool
-	Prefix    *string
-	lineByKey map[string]int
+	Plain        *string
+	Keys         []string
+	KeysSet      bool
+	Sequences    []string
+	SequencesSet bool
+	Prefix       *string
+	lineByKey    map[string]int
 }
 
 type keymapFile struct {
@@ -40,7 +43,8 @@ type keymapFile struct {
 const (
 	keymapSchemaVersionV0 = 0
 	keymapSchemaVersionV1 = 1
-	keymapSchemaVersion   = keymapSchemaVersionV1
+	keymapSchemaVersionV2 = 2
+	keymapSchemaVersion   = keymapSchemaVersionV2
 )
 
 const keymapSchemaVersionKey = "schema_version"
@@ -181,7 +185,7 @@ func saveKeymapOverride(store keymapStore, actionID, field string, value *string
 		}
 	}
 
-	if override.Plain == nil && !override.KeysSet && override.Prefix == nil {
+	if override.Plain == nil && !override.KeysSet && !override.SequencesSet && override.Prefix == nil {
 		delete(current.Bindings, actionID)
 	} else {
 		current.Bindings[actionID] = override
@@ -225,7 +229,7 @@ func resetKeymapKeys(store keymapStore, actionID string) (string, error) {
 	override.Plain = nil
 	override.Keys = nil
 	override.KeysSet = false
-	if override.Prefix == nil {
+	if override.Prefix == nil && !override.SequencesSet {
 		delete(current.Bindings, actionID)
 	} else {
 		current.Bindings[actionID] = override
@@ -345,7 +349,7 @@ func resolveKeymapWriteTarget(path string) (string, os.FileMode, error) {
 func renderKeymapFile(keymap keymapFile) string {
 	var ids []string
 	for id, override := range keymap.Bindings {
-		if !override.KeysSet && override.Plain == nil && override.Prefix == nil {
+		if !override.KeysSet && !override.SequencesSet && override.Plain == nil && override.Prefix == nil {
 			continue
 		}
 		ids = append(ids, id)
@@ -375,6 +379,11 @@ func renderKeymapFile(keymap keymapFile) string {
 		} else if override.Plain != nil {
 			b.WriteString("plain = ")
 			b.WriteString(formatKeymapString(*override.Plain))
+			b.WriteString("\n")
+		}
+		if override.SequencesSet {
+			b.WriteString("sequences = ")
+			b.WriteString(formatKeymapStringArray(override.Sequences))
 			b.WriteString("\n")
 		}
 		if override.Prefix != nil {
@@ -536,6 +545,23 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 			}
 			override.Keys = values
 			override.KeysSet = true
+		case "sequences":
+			if out.SchemaVersion < keymapSchemaVersionV2 {
+				return out, keymapParseError(path, lineNo+1, "%s requires schema_version = %d", key, keymapSchemaVersionV2)
+			}
+			values, err := parseKeymapStringArray(strings.TrimSpace(valueText))
+			if err != nil {
+				return out, keymapParseError(path, lineNo+1, "%v", err)
+			}
+			for i, value := range values {
+				sequence, err := normalizeKeymapSequence(value)
+				if err != nil {
+					return out, keymapParseError(path, lineNo+1, "%s: %v", key, err)
+				}
+				values[i] = sequence
+			}
+			override.Sequences = values
+			override.SequencesSet = true
 		case "prefix":
 			value, err := parseKeymapString(strings.TrimSpace(valueText))
 			if err != nil {
@@ -546,7 +572,7 @@ func parseKeymapFile(path, raw string) (keymapFile, error) {
 			}
 			override.Prefix = &value
 		default:
-			return out, keymapParseError(path, lineNo+1, "unsupported key %q; supported keys are keys, plain, and prefix", key)
+			return out, keymapParseError(path, lineNo+1, "unsupported key %q; supported keys are keys, sequences, plain, and prefix", key)
 		}
 		override.lineByKey[key] = lineNo + 1
 		out.Bindings[currentID] = override
@@ -677,6 +703,12 @@ func mergeKeymapOverrides(actions []keyBindingAction, keymap keymapFile) ([]keyB
 		}
 		if override.Prefix != nil {
 			actions[idx].PrefixChord = *override.Prefix
+		}
+		if override.SequencesSet {
+			if actions[idx].Kind == keyBindingActionPickerInternal {
+				return nil, fmt.Errorf("keymap binding %q: sequences are not supported for picker-local actions", id)
+			}
+			actions[idx].Sequences = append([]string(nil), override.Sequences...)
 		}
 	}
 	migrateLegacyAIPickerDefaultOverrides(actions, keymap)
@@ -830,6 +862,88 @@ func normalizeKeymapAliasChord(value string) (string, error) {
 	return value, nil
 }
 
+// normalizeKeymapSequence owns the only whitespace grammar in keymap chords.
+// Each stroke is otherwise parsed by the existing safe chord normalizer. Only
+// the first stroke must be modified/navigation/function; later plain printable
+// strokes remain terminal-delivered. The native broker separately allowlists
+// the subset it can represent as safe physical modified chords.
+func normalizeKeymapSequence(value string) (string, error) {
+	if strings.TrimSpace(value) != value {
+		return "", fmt.Errorf("sequence must not have leading or trailing whitespace")
+	}
+	strokes := strings.Fields(value)
+	if len(strokes) < 2 || len(strokes) > 4 {
+		return "", fmt.Errorf("sequence must contain 2 to 4 strokes")
+	}
+	if strings.Join(strokes, " ") != value {
+		return "", fmt.Errorf("sequence strokes must be separated by one space")
+	}
+	for i, stroke := range strokes {
+		normalized, err := normalizeKeymapAliasChord(stroke)
+		if err != nil {
+			return "", fmt.Errorf("stroke %d: %w", i+1, err)
+		}
+		if named, ok := keymapUndeliverableStrokeAliases[strings.ToLower(normalized)]; ok {
+			if named == "Escape" {
+				return "", fmt.Errorf("stroke %d %q is Escape, which is reserved for cancelling a sequence", i+1, stroke)
+			}
+			return "", fmt.Errorf("stroke %d %q is not delivered under that name; write %q instead", i+1, stroke, named)
+		}
+		if !safeKeymapSequenceStroke(normalized) {
+			return "", fmt.Errorf("stroke %d %q is not a safe logical tmux chord", i+1, stroke)
+		}
+		strokes[i] = normalized
+	}
+	if _, modified := platformkeys.ParseBinding(strokes[0]); !modified && !keymapNavigationOrFunctionStroke(strokes[0]) {
+		return "", fmt.Errorf("first stroke %q must be modified, navigation, or a function key", strokes[0])
+	}
+	return strings.Join(strokes, " "), nil
+}
+
+// keymapUndeliverableStrokeAliases are control chords a terminal never reports
+// under that spelling. tmux resolves the incoming byte to the named key
+// instead, so a sequence written with the control form binds a key the user
+// cannot press: the real keystroke misses the leaf and hits the table's cancel
+// fallback, silently doing nothing. Rejecting at parse time is what keeps
+// "a configured sequence runs its action" true. Measured against tmux 3.5a
+// driven by a real client: CR -> Enter, TAB -> Tab, ESC -> Escape.
+var keymapUndeliverableStrokeAliases = map[string]string{
+	"c-m": "Enter",
+	"c-i": "Tab",
+	"c-[": "Escape",
+}
+
+func safeKeymapSequenceStroke(stroke string) bool {
+	lower := strings.ToLower(stroke)
+	if lower == "escape" || lower == "esc" {
+		return false
+	}
+	if _, ok := platformkeys.ParseBinding(stroke); ok {
+		return true
+	}
+	if keymapNavigationOrFunctionStroke(stroke) {
+		return true
+	}
+	switch lower {
+	case "enter", "return", "tab", "space", "backspace", "bs", "delete":
+		return true
+	}
+	return len(stroke) == 1 && stroke[0] >= 0x21 && stroke[0] <= 0x7e
+}
+
+func keymapNavigationOrFunctionStroke(stroke string) bool {
+	switch strings.ToLower(stroke) {
+	case "up", "down", "left", "right", "home", "end", "pageup", "pgup", "pagedown", "pgdn":
+		return true
+	}
+	lower := strings.ToLower(stroke)
+	if !strings.HasPrefix(lower, "f") {
+		return false
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(lower, "f"))
+	return err == nil && n >= 1 && n <= 20
+}
+
 func validateKeymapConflicts(actions []keyBindingAction) error {
 	global := map[string]string{}
 	internal := map[string]map[string]string{}
@@ -853,6 +967,33 @@ func validateKeymapConflicts(actions []keyBindingAction) error {
 				return fmt.Errorf("key %q is bound to both %s and %s", chord, prev, action.ID)
 			}
 			global[chord] = action.ID
+		}
+	}
+	type sequenceOwner struct {
+		action  string
+		value   string
+		strokes []string
+	}
+	var sequences []sequenceOwner
+	for _, action := range actions {
+		for _, sequence := range keyBindingEffectiveSequences(action) {
+			strokes := strings.Split(sequence, " ")
+			if owner := global[strokes[0]]; owner != "" {
+				return fmt.Errorf("sequence %q for %s starts with key %q already bound to %s", sequence, action.ID, strokes[0], owner)
+			}
+			for _, existing := range sequences {
+				common := 0
+				for common < len(strokes) && common < len(existing.strokes) && strokes[common] == existing.strokes[common] {
+					common++
+				}
+				if common == len(strokes) && common == len(existing.strokes) {
+					return fmt.Errorf("sequence %q is bound to both %s and %s", sequence, existing.action, action.ID)
+				}
+				if common == len(strokes) || common == len(existing.strokes) {
+					return fmt.Errorf("sequence %q for %s has a strict-prefix conflict with %q for %s", sequence, action.ID, existing.value, existing.action)
+				}
+			}
+			sequences = append(sequences, sequenceOwner{action: action.ID, value: sequence, strokes: strokes})
 		}
 	}
 	return nil

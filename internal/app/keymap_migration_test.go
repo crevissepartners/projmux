@@ -263,7 +263,7 @@ prefix = "P"
 
 	migrated := readFile(t, path)
 	for _, want := range []string{
-		"schema_version = 1\n",
+		"schema_version = 2\n",
 		`[bindings."project-sidebar.toggle"]`,
 		`[bindings."session-picker.toggle"]`,
 		"keys = []\n",
@@ -552,7 +552,7 @@ func TestKeymapMigrationBackupIsDigestNamedExclusiveAndReused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrateKeymapForWrite() error = %v", err)
 	}
-	wantPath := keymapMigrationBackupPath(path, []byte(original))
+	wantPath := keymapMigrationBackupPathForVersion(path, []byte(original), keymapSchemaVersionV1)
 	if result.BackupPath != wantPath {
 		t.Fatalf("backup path = %q, want %q", result.BackupPath, wantPath)
 	}
@@ -578,7 +578,7 @@ func TestKeymapMigrationRefusesToClobberAForeignBackup(t *testing.T) {
 
 	original := "[bindings.new-window]\nkeys = [\"C-t\"]\n"
 	store, path := newKeymapFixture(t, original)
-	backupPath := keymapMigrationBackupPath(path, []byte(original))
+	backupPath := keymapMigrationBackupPathForVersion(path, []byte(original), keymapSchemaVersionV1)
 	if err := os.WriteFile(backupPath, []byte("# someone else's file\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +667,7 @@ func TestKeymapRollbackRestoresV0(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrateKeymapForWrite() error = %v", err)
 	}
-	if !strings.Contains(readFile(t, path), "schema_version = 1") {
+	if !strings.Contains(readFile(t, path), "schema_version = 2") {
 		t.Fatal("expected a migrated file before rollback")
 	}
 
@@ -731,7 +731,7 @@ func TestKeymapPreflightWritesNothing(t *testing.T) {
 	writeKeymapMigrationPreflight(&report, plan)
 	for _, want := range []string{
 		"keymap migration pending",
-		"schema_version 0 -> 1",
+		"schema_version 0 -> 2",
 		"rename: new-window -> window.create",
 		"projmux config apply",
 	} {
@@ -802,7 +802,7 @@ func TestConfigRenderReportsMigrationOnStderrAndWritesNoKeymap(t *testing.T) {
 	}
 }
 
-func TestSettingsKeySaveConvergesAV0KeymapToV1(t *testing.T) {
+func TestSettingsKeySaveConvergesAV0KeymapToV2(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -820,7 +820,7 @@ func TestSettingsKeySaveConvergesAV0KeymapToV1(t *testing.T) {
 
 	got := readFile(t, keymap)
 	for _, want := range []string{
-		"schema_version = 1\n",
+		"schema_version = 2\n",
 		`[bindings."window.create"]`,
 		`[bindings."project-sidebar.toggle"]`,
 	} {
@@ -943,7 +943,7 @@ func TestTmuxApplyNoReloadMigratesWithoutTouchingTheServer(t *testing.T) {
 	if err := cmd.Run([]string{"apply", "--config", configPath, "--no-reload"}, &stdout, &stderr); err != nil {
 		t.Fatalf("apply --no-reload error = %v; stderr = %q", err, stderr.String())
 	}
-	if !strings.Contains(readFile(t, keymap), "schema_version = 1") {
+	if !strings.Contains(readFile(t, keymap), "schema_version = 2") {
 		t.Fatal("--no-reload skipped the keymap migration")
 	}
 	if len(runner.calls) != 0 {

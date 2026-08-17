@@ -75,6 +75,9 @@ type keyBindingAction struct {
 	PlainChord  string
 	PlainChords []string
 	PrefixChord string
+	// Sequences are additional, ordered 2-4 stroke triggers for this action.
+	// They never replace PlainChord/PlainChords and have no built-in defaults.
+	Sequences []string
 
 	TmuxKind        tmuxBindingKind
 	TmuxBody        string
@@ -1251,6 +1254,16 @@ func keyBindingEffectivePlainChords(action keyBindingAction) []string {
 		return nil
 	}
 	return []string{strings.TrimSpace(action.PlainChord)}
+}
+
+func keyBindingEffectiveSequences(action keyBindingAction) []string {
+	out := make([]string, 0, len(action.Sequences))
+	for _, sequence := range action.Sequences {
+		if sequence = strings.TrimSpace(sequence); sequence != "" {
+			out = append(out, sequence)
+		}
+	}
+	return out
 }
 
 func uniqueNonEmptyStrings(values []string) []string {

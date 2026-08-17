@@ -299,7 +299,10 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 		t.Fatalf("convergence targets = %+v, want %+v", targets, want)
 	}
 	calls := runner.calls
-	if len(calls) < 2 || !reflect.DeepEqual(calls[0].args[:2], []string{"-L", "isolated"}) || !slices.Contains(calls[1].args, "source-file") {
+	sourceIdx := slices.IndexFunc(calls, func(call recordedTmuxCall) bool {
+		return slices.Contains(call.args, "source-file")
+	})
+	if len(calls) < 2 || !reflect.DeepEqual(calls[0].args[:2], []string{"-L", "isolated"}) || sourceIdx != len(calls)-1 {
 		t.Fatalf("reload did not precede same-socket convergence: %+v", calls)
 	}
 	if configWrites != 1 {

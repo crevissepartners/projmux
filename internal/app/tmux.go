@@ -957,6 +957,16 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	// Retire the previously recorded sequence roots/tables before the new
+	// config binds the current trie. This is ordered against source-file on
+	// purpose — the generated config only records state, it never removes it.
+	if err := c.retireGeneratedKeySequenceState(ctx, socketName); err != nil {
+		if c.diagnostics != nil {
+			c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeTmuxApplyReloadFailed)
+		}
+		return fmt.Errorf("retire generated key sequence state on -L %s: %w", socketName, err)
+	}
+
 	if _, err := c.runner.Run(ctx, "tmux", "-L", socketName, "source-file", resolved); err != nil {
 		if c.diagnostics != nil {
 			c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeTmuxApplyReloadFailed)
@@ -987,6 +997,36 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	}
 	_, err = fmt.Fprintf(stdout, "reloaded tmux server -L %s: %d sessions\n", socketName, count)
 	return err
+}
+
+// retireGeneratedKeySequenceState removes exactly the sequence roots and
+// generated key tables the last successful source recorded on this socket.
+//
+// Reading the recorded state and unbinding it are separate tmux commands on
+// the apply path precisely so both are ordered before source-file installs the
+// current trie. An unset option reads as empty and retires nothing.
+func (c *tmuxCommand) retireGeneratedKeySequenceState(ctx context.Context, socketName string) error {
+	read := func(option string) (string, error) {
+		out, err := c.runner.Run(ctx, "tmux", "-L", socketName, "show-options", "-gqv", option)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", option, err)
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	roots, err := read(tmuxSequenceRootsOption)
+	if err != nil {
+		return err
+	}
+	tables, err := read(tmuxSequenceTablesOption)
+	if err != nil {
+		return err
+	}
+	for _, command := range keySequenceRetireCommands(socketName, roots, tables) {
+		if _, err := c.runner.Run(ctx, command[0], command[1:]...); err != nil {
+			return fmt.Errorf("%s: %w", strings.Join(command[1:], " "), err)
+		}
+	}
+	return nil
 }
 
 func defaultPopupPreviewOptions(_ string, ctx tmuxPopupContext) inttmux.PopupOptions {
@@ -1860,6 +1900,10 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 		"set -g status-right "+tmuxConfigQuote(statusbarRowOneRightFormat(bin, roles, liveResourcesMode, rowOneVisibility, statusbarSettingsIcon+" projmux")),
 	)
 	lines = append(lines, statusbarRowFormatLines(bin, false, hudVisibility)...)
+	// Always record generated sequence state. If keymap.toml was removed
+	// entirely, the empty current trie must still overwrite the roots/tables
+	// recorded by the last successful source.
+	lines = append(lines, tmuxSequenceStateLines(standaloneKeyBindings)...)
 	if keymapPresent {
 		lines = append(lines, tmuxMergedUnbindLines(defaultStandaloneKeyBindings, standaloneKeyBindings)...)
 	} else {
@@ -1867,6 +1911,7 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 	}
 	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
 	lines = append(lines, tmuxBindLines(binaryPath, standaloneKeyBindings)...)
+	lines = append(lines, tmuxSequenceBindLines(binaryPath, standaloneKeyBindings)...)
 	lines = append(lines, tmuxStatusbarKeyBindings(binaryPath)...)
 	lines = append(lines, tmuxPaneContextMenuBindings(binaryPath)...)
 	return strings.Join(lines, "\n") + "\n"
@@ -1998,7 +2043,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 	lines = append(lines,
 		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
 	)
-	lines = append(lines, tmuxAppKeyBindings(catalog, keymapPresent)...)
+	lines = append(lines, tmuxAppKeyBindings(binaryPath, catalog, keymapPresent)...)
 	// Two-line status bar:
 	//   [0] notify HUD (left) + usage HUD (right)
 	//   [1] existing session/window/path/git/clock row
@@ -2036,10 +2081,19 @@ func withTmuxConfigDigest(body string) string {
 	return body + "set -g " + tmuxConfigDigestOption + " " + digest + "\n"
 }
 
-func tmuxAppKeyBindings(catalog []keyBindingAction, keymapPresent bool) []string {
+func tmuxAppKeyBindings(binaryPath string, catalog []keyBindingAction, keymapPresent bool) []string {
 	defaultAppKeyBindings := keyBindingCatalogForScope(keyBindingScopeApp)
 	appKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeApp)
+	allKeyBindings := filterKeyBindingActions(catalog, func(action keyBindingAction) bool {
+		return action.Kind != keyBindingActionPickerInternal
+	})
 	var lines []string
+	// The app config embeds the standalone config first. Record sequence state
+	// once more with the combined scope so shared prefixes spanning a
+	// standalone and app action compile into one trie rather than whichever
+	// scope happened to render last. This is unconditional so deleting the
+	// keymap also overwrites the previously recorded generated state.
+	lines = append(lines, tmuxSequenceStateLines(allKeyBindings)...)
 	if keymapPresent {
 		lines = append(lines, tmuxMergedUnbindLines(defaultAppKeyBindings, appKeyBindings)...)
 	} else {
@@ -2047,6 +2101,7 @@ func tmuxAppKeyBindings(catalog []keyBindingAction, keymapPresent bool) []string
 	}
 	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
 	lines = append(lines, tmuxBindLines("", appKeyBindings)...)
+	lines = append(lines, tmuxSequenceBindLines(binaryPath, allKeyBindings)...)
 	return lines
 }
 

@@ -509,6 +509,70 @@ if [[ "$(tmux -L "$recorder_socket" display-message -p -c "$recorder_client" '#{
   exit 1
 fi
 
+# Multi-stroke Phase 0 uses the same logical key stream through the terminal
+# client and the Darwin broker's `send-keys -K -c` transport. A raw capture
+# pane proves Escape and unknown continuation are consumed (zero pane input),
+# while two shared-prefix actions prove one dispatch per completed sequence.
+sequence_capture="$PROJMUX_SMOKE_WORKDIR/sequence-pane-input.bin"
+sequence_window="$(tmux -L "$recorder_socket" new-window -d -t "$recorder_session:" -n sequence-input \
+  -P -F '#{window_id}' "/bin/sh -c 'stty raw -echo; cat >\"$sequence_capture\"'")"
+tmux -L "$recorder_socket" select-window -t "$sequence_window"
+smoke_wait_for "sequence capture pane" test -e "$sequence_capture"
+install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2.toml" "$XDG_CONFIG_HOME/projmux/keymap.toml"
+"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$recorder_socket" \
+  >"$PROJMUX_SMOKE_WORKDIR/sequence-e2e-apply.out"
+
+sequence_client_is_root() {
+  [[ "$(tmux -L "$recorder_socket" display-message -p -c "$recorder_client" '#{client_key_table}')" == "root" ]]
+}
+sequence_capture_is_empty() {
+  [[ ! -s "$sequence_capture" ]]
+}
+
+# Terminal delivery: both cancel paths return to root and write no byte to the
+# raw application pane. Unknown C-x is caught by the generated `Any` binding.
+printf '\013\033' >&9
+smoke_wait_for "Escape sequence cancel to root" sequence_client_is_root
+sequence_capture_is_empty || {
+  echo "Escape sequence cancel leaked pane input" >&2
+  od -An -tx1 "$sequence_capture" >&2
+  exit 1
+}
+printf '\013\030' >&9
+smoke_wait_for "unknown sequence cancel to root" sequence_client_is_root
+sequence_capture_is_empty || {
+  echo "unknown sequence cancel leaked pane input" >&2
+  od -An -tx1 "$sequence_capture" >&2
+  exit 1
+}
+
+# The terminal stream toggles mouse exactly once. The native broker-equivalent
+# logical stream toggles the same action exactly once back to its prior value.
+mouse_before="$(tmux -L "$recorder_socket" show-options -gqv mouse)"
+printf '\013\015' >&9
+mouse_after_terminal=""
+smoke_wait_for "terminal sequence action" sh -c \
+  "test \"\$(tmux -L '$recorder_socket' show-options -gqv mouse)\" != '$mouse_before'"
+mouse_after_terminal="$(tmux -L "$recorder_socket" show-options -gqv mouse)"
+tmux -L "$recorder_socket" send-keys -K -c "$recorder_client" C-k Enter
+smoke_wait_for "native logical sequence action" sh -c \
+  "test \"\$(tmux -L '$recorder_socket' show-options -gqv mouse)\" = '$mouse_before'"
+if [[ "$mouse_after_terminal" == "$mouse_before" ]]; then
+  echo "terminal sequence did not dispatch mouse.toggle exactly once" >&2
+  exit 1
+fi
+
+windows_before="$(tmux -L "$recorder_socket" list-windows -t "$recorder_session" -F '#{window_id}' | wc -l)"
+printf '\013\027' >&9
+smoke_wait_for "shared-prefix window.create action" sh -c \
+  "test \"\$(tmux -L '$recorder_socket' list-windows -t '$recorder_session' -F '#{window_id}' | wc -l)\" -eq $((windows_before + 1))"
+windows_after="$(tmux -L "$recorder_socket" list-windows -t "$recorder_session" -F '#{window_id}' | wc -l)"
+if [[ "$windows_after" -ne $((windows_before + 1)) ]]; then
+  echo "window.create sequence dispatched more or less than once: before=$windows_before after=$windows_after" >&2
+  exit 1
+fi
+smoke_wait_for "completed sequence return to root" sequence_client_is_root
+
 tmux -L "$recorder_socket" kill-server
 wait "$recorder_client_pid" || true
 exec 9>&-
