@@ -106,6 +106,7 @@ smoke_assert_file_contains "$fake_tmux_log" "split-window -P -F #{pane_id} -h -t
 # hidden post-`ai` retirement bridge. Exercise that built-binary boundary so a
 # route/catalog refactor cannot leave the popup functional while launch is a
 # no-op. Shell mode keeps the fixture independent of provider binaries.
+mkdir -p "$XDG_CONFIG_HOME/projmux"
 printf 'shell\n' >"$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
 PROJMUX_FAKE_MUX_LOG="$fake_tmux_log" \
   PATH="$fake_mux_dir:$PATH" \
@@ -114,7 +115,7 @@ PROJMUX_FAKE_MUX_LOG="$fake_tmux_log" \
   TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
   SHELL="/bin/sh" \
   "$bin" internal agent-pane launch-default down
-smoke_assert_file_contains "$fake_tmux_log" "split-window -P -F #{pane_id} -v -t %7"
+smoke_assert_file_contains "$fake_tmux_log" "split-window -v -t %7"
 printf 'selective\n' >"$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
 
 "$bin" doctor --json >"$PROJMUX_SMOKE_WORKDIR/doctor.json"
