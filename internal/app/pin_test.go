@@ -25,7 +25,7 @@ func TestAppRunPinList(t *testing.T) {
 		},
 	}
 
-	if err := app.Run([]string{"pin", "list"}, &stdout, &stderr); err != nil {
+	if err := app.Run([]string{"pin", "project", "list"}, &stdout, &stderr); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if got, want := stdout.String(), "/tmp/app\n/tmp/lib\n"; got != want {

@@ -1,7 +1,7 @@
 package app
 
 // notification_uri.go encodes and decodes the `projmux://` URI understood by
-// the `projmux focus --uri` entrypoint.
+// the `projmux internal focus --uri` entrypoint.
 //
 // COMPATIBILITY ONLY as of 0.11.0. Desktop notification delivery is now a
 // two-state model (`off` / `notify`): Toasts carry no click URI and projmux
@@ -46,7 +46,7 @@ const (
 
 // buildFocusURI assembles a `projmux://focus?...` URI from a tmux pane id
 // and a tmux socket path. `paneID` is required; an empty pane id returns an
-// empty string. `socket` is optional — the receiving `projmux focus --uri`
+// empty string. `socket` is optional — the receiving `projmux internal focus --uri`
 // falls back to $TMUX when the query param is absent.
 //
 // No production call site remains: this is the round-trip counterpart of the

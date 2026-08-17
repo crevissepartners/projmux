@@ -229,16 +229,16 @@ func TestRequestedHelpDetection(t *testing.T) {
 		{name: "single dash long on route", args: []string{"switch", "-help"}, ok: true, path: []string{"switch"}},
 		{name: "double dash short on route", args: []string{"doctor", "--h"}, ok: true, path: []string{"doctor"}},
 		{name: "single dash long nested", args: []string{"setup", "terminal", "-help"}, ok: true, path: []string{"setup", "terminal"}},
-		{name: "double dash short hidden helper", args: []string{"popup-wait-key", "--h"}, ok: true, path: []string{"popup-wait-key"}},
+		{name: "removed hidden helper", args: []string{"popup-wait-key", "--h"}, ok: false},
 		{name: "single dash long after terminator is payload", args: []string{"ai", "split", "--", "-help"}, ok: false},
 		{name: "double dash short after terminator is payload", args: []string{"ai", "split", "--", "--h"}, ok: false},
 		{name: "root flag with trailing tokens", args: []string{"--help", "ai"}, ok: true, root: true},
-		{name: "top level route", args: []string{"ai", "--help"}, ok: true, path: []string{"ai"}},
-		{name: "short flag on route", args: []string{"ai", "-h"}, ok: true, path: []string{"ai"}},
-		{name: "nested route", args: []string{"ai", "settings", "--help"}, ok: true, path: []string{"ai", "settings"}},
-		{name: "deep unknown token falls back", args: []string{"ai", "bogus", "--help"}, ok: true, path: []string{"ai"}},
-		{name: "hidden helper", args: []string{"popup-wait-key", "--help"}, ok: true, path: []string{"popup-wait-key"}},
-		{name: "hidden broker", args: []string{"key-broker", "--help"}, ok: true, path: []string{"key-broker"}},
+		{name: "retired top level route", args: []string{"ai", "--help"}, ok: false},
+		{name: "retired short flag", args: []string{"ai", "-h"}, ok: false},
+		{name: "retired nested route", args: []string{"ai", "settings", "--help"}, ok: false},
+		{name: "retired unknown token", args: []string{"ai", "bogus", "--help"}, ok: false},
+		{name: "removed hidden helper long", args: []string{"popup-wait-key", "--help"}, ok: false},
+		{name: "removed hidden broker", args: []string{"key-broker", "--help"}, ok: false},
 		{name: "flag between route and help", args: []string{"setup", "terminal", "--apply", "--help"}, ok: true, path: []string{"setup", "terminal"}},
 		{name: "help after terminator is payload", args: []string{"notify", "push", "--", "--help"}, ok: false},
 		{name: "short help after terminator is payload", args: []string{"ai", "split", "--", "-h"}, ok: false},
@@ -251,7 +251,7 @@ func TestRequestedHelpDetection(t *testing.T) {
 		{name: "long flag with false value", args: []string{"doctor", "--help=false"}, ok: true, path: []string{"doctor"}},
 		{name: "long flag with true value", args: []string{"doctor", "--help=true"}, ok: true, path: []string{"doctor"}},
 		{name: "single dash name with value", args: []string{"switch", "-help=true"}, ok: true, path: []string{"switch"}},
-		{name: "short name with value", args: []string{"current", "--h=false"}, ok: true, path: []string{"current"}},
+		{name: "retired short name with value", args: []string{"current", "--h=false"}, ok: false},
 		{name: "value spelling after terminator is payload", args: []string{"ai", "split", "--", "--help=true"}, ok: false},
 		{name: "near miss flag is not help", args: []string{"doctor", "--helper"}, ok: false},
 		{name: "other flag whose value looks like help", args: []string{"doctor", "--section=help"}, ok: false},
@@ -291,20 +291,15 @@ func TestRenderRouteHelpProjectsManifestMetadata(t *testing.T) {
 		nots  []string
 	}{
 		{
-			name:  "compatibility route lists subcommands and canonical spelling",
-			args:  []string{"ai", "--help"},
-			wants: []string{"projmux ai\n", "Manage tmux AI split launch and settings", "Usage:", "Subcommands:", "  split", "Canonical route:", "  projmux create agent"},
-		},
-		{
 			name:  "pane read route pins the cwd field projection",
-			args:  []string{"current", "--help"},
-			wants: []string{"projmux current\n", "Field projections:\n  cwd\n", "Canonical route:\n  projmux get pane\n"},
-			nots:  []string{"Output modes:"},
+			args:  []string{"get", "pane", "--help"},
+			wants: []string{"projmux get pane\n", "Field projections:\n  cwd\n"},
 		},
 		{
-			name:  "ai split pins the pane-id bridge output",
-			args:  []string{"ai", "split", "--help"},
-			wants: []string{"projmux ai split\n", "Output modes:\n  pane-id\n"},
+			name:  "attach exposes only the canonical project child",
+			args:  []string{"attach", "--help"},
+			wants: []string{"projmux attach\n", "Subcommands:", "  project"},
+			nots:  []string{"  auto"},
 		},
 		{
 			name:  "canonical route omits a redundant canonical block",
@@ -312,11 +307,7 @@ func TestRenderRouteHelpProjectsManifestMetadata(t *testing.T) {
 			wants: []string{"projmux version\n", "Print the current version"},
 			nots:  []string{"Canonical route:"},
 		},
-		{
-			name:  "hidden helper renders help instead of reading a tty",
-			args:  []string{"popup-wait-key", "--help"},
-			wants: []string{"projmux popup-wait-key\n", "Read a single key for a display-only tmux popup", "projmux internal popup-wait-key"},
-		},
+		{name: "hidden internal helper remains documented internally", args: []string{"internal", "popup-wait-key", "--help"}, wants: []string{"projmux internal popup-wait-key\n", "Read a single key"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -351,7 +342,10 @@ func TestRenderRouteHelpProjectsManifestMetadata(t *testing.T) {
 func TestRenderHelpForEveryManifestRouteIsNonEmpty(t *testing.T) {
 	t.Parallel()
 
-	walkRoutes(Routes(), func(path []string, _ Route) {
+	walkRoutes(Routes(), func(path []string, route Route) {
+		if route.Retired {
+			return
+		}
 		for _, flag := range helpFlagSpellings() {
 			args := append(append([]string{}, path...), flag)
 			target, ok := RequestedHelp(args)

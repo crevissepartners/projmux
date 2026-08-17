@@ -25,24 +25,20 @@ projmux <command> [args...]
 | Command | Kind | Summary |
 | --- | --- | --- |
 | [`projmux agent`](#projmux-agent) | canonical | Manage Agent state, topic, integrations, and account usage |
-| [`projmux ai`](#projmux-ai) | compatibility | Manage tmux AI split launch and settings |
 | [`projmux attention`](#projmux-attention) | canonical | View and manage live tmux pane attention state |
-| [`projmux attach`](#projmux-attach) | compatibility | Open tmux lifecycle entry helpers |
+| [`projmux attach`](#projmux-attach) | canonical | Enter a Project runtime from outside tmux |
 | [`projmux config`](#projmux-config) | canonical | Edit AI split-mode settings; render or apply generated tmux configuration |
 | [`projmux create`](#projmux-create) | canonical | Create Projmux resources |
-| [`projmux current`](#projmux-current) | compatibility | Resolve the active tmux pane path |
 | [`projmux delete`](#projmux-delete) | canonical | Delete Projmux resources with an explicit cascade plan |
 | [`projmux describe`](#projmux-describe) | canonical | Describe one Projmux resource |
 | [`projmux doctor`](#projmux-doctor) | shortcut | Run read-only runtime and integration diagnostics |
 | [`projmux diagnostics`](#projmux-diagnostics) | canonical | Read operational events or create an explicit local support report |
-| [`projmux focus`](#projmux-focus) | compatibility | Switch the active client to a session/window/pane target |
+| [`projmux focus`](#projmux-focus) | canonical | Move the current client to a live resource |
 | [`projmux get`](#projmux-get) | canonical | Read Projmux resources by selector |
 | [`projmux hook`](#projmux-hook) | canonical | List, edit, validate, and trust lifecycle hook config |
-| [`projmux kill`](#projmux-kill) | compatibility | Terminate tagged tmux sessions |
-| [`projmux notify`](#projmux-notify) | compatibility | Manage the pending AI notify queue (push/list/ack/reconcile) |
 | [`projmux notification`](#projmux-notification) | canonical | Manage pending notification workflow state |
-| [`projmux pin`](#projmux-pin) | compatibility | Manage pinned project directories |
-| [`projmux prune`](#projmux-prune) | compatibility | Trim stale lifecycle state and inspect preserved snapshots |
+| [`projmux pin`](#projmux-pin) | canonical | Manage pinned project directories |
+| [`projmux prune`](#projmux-prune) | canonical | Prune stale Projects and snapshots |
 | [`projmux quit`](#projmux-quit) | shortcut | Quit the app-owned projmux tmux runtime |
 | [`projmux reconcile`](#projmux-reconcile) | canonical | Preview or repair Registry and exact tmux resource drift |
 | [`projmux rebind`](#projmux-rebind) | canonical | Rebind a Project to a new absolute root without moving files |
@@ -50,16 +46,11 @@ projmux <command> [args...]
 | [`projmux resources`](#projmux-resources) | shortcut | Inspect live Project, Window, and Pane CPU/RSS attribution |
 | [`projmux restore`](#projmux-restore) | canonical | Preview a saved session snapshot restore (--dry-run only in this release) |
 | [`projmux runtime`](#projmux-runtime) | canonical | Manage the live and ephemeral tmux runtime inventory |
-| [`projmux sessions`](#projmux-sessions) | compatibility | Pick and open an existing tmux session |
-| [`projmux session-state`](#projmux-session-state) | compatibility | Inspect and manage saved tmux session snapshots |
 | [`projmux settings`](#projmux-settings) | shortcut | Configure projmux |
 | [`projmux setup`](#projmux-setup) | canonical | Probe terminal keys or remediate them with setup terminal |
 | [`projmux shell`](#projmux-shell) | shortcut | Open the isolated projmux tmux app |
 | [`projmux switch`](#projmux-switch) | shortcut | Pick and open a project tmux session |
-| [`projmux tag`](#projmux-tag) | compatibility | Manage tagged tmux sessions |
 | [`projmux update`](#projmux-update) | canonical | Check installer-aware release update status |
-| [`projmux upgrade`](#projmux-upgrade) | compatibility | Self-update projmux via go install |
-| [`projmux usage`](#projmux-usage) | compatibility | Report AI token usage across 5h and weekly windows |
 | [`projmux welcome`](#projmux-welcome) | shortcut | Reprint the shell welcome guide |
 | [`projmux window`](#projmux-window) | canonical | Open recent window navigation surfaces |
 | [`projmux help`](#projmux-help) | canonical | Show bootstrap help |
@@ -129,120 +120,6 @@ Read provider account usage quota snapshots
 projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
 ```
 
-## `projmux ai`
-
-Manage tmux AI split launch and settings
-
-```
-projmux ai split|picker|settings|status|notify|watch-title|ingest|integrate|topic
-```
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux ai split`](#projmux-ai-split) | Launch an AI agent or shell pane split |
-| [`projmux ai picker`](#projmux-ai-picker) | Open the interactive AI agent picker |
-| [`projmux ai settings`](#projmux-ai-settings) | Open the AI settings surface |
-| [`projmux ai status`](#projmux-ai-status) | Read or set the AI pane status state |
-| [`projmux ai notify`](#projmux-ai-notify) | Dispatch an AI pane notification |
-| [`projmux ai watch-title`](#projmux-ai-watch-title) | Run the AI pane title watcher |
-| [`projmux ai ingest`](#projmux-ai-ingest) | Ingest provider hook and log events |
-| [`projmux ai integrate`](#projmux-ai-integrate) | Install or remove provider hook integrations |
-| [`projmux ai topic`](#projmux-ai-topic) | Read, set, or clear the AI pane topic |
-
-Canonical spelling: `projmux create agent`, `projmux create pane`, `projmux get agents`, `projmux describe agent`, `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent integrate`, `projmux config edit`, `projmux create notification`, `projmux diagnostics agent-hook`
-
-### `projmux ai split`
-
-Launch an AI agent or shell pane split
-
-```
-projmux ai split [--agent <provider>] [right|down] [--print-pane-id] [-- <prompt>]
-```
-
-Output modes (`-o`): `pane-id`
-
-Canonical spelling: `projmux create agent`, `projmux create pane`
-
-### `projmux ai picker`
-
-Open the interactive AI agent picker
-
-```
-projmux ai picker
-```
-
-Canonical spelling: `projmux create agent`
-
-### `projmux ai settings`
-
-Open the AI settings surface
-
-```
-projmux ai settings
-```
-
-Canonical spelling: `projmux config edit`
-
-### `projmux ai status`
-
-Read or set the AI pane status state
-
-```
-projmux ai status [set ...]
-```
-
-Canonical spelling: `projmux agent status`
-
-### `projmux ai notify`
-
-Dispatch an AI pane notification
-
-```
-projmux ai notify ...
-```
-
-Canonical spelling: `projmux create notification`
-
-### `projmux ai watch-title`
-
-Run the AI pane title watcher
-
-```
-projmux ai watch-title ...
-```
-
-### `projmux ai ingest`
-
-Ingest provider hook and log events
-
-```
-projmux ai ingest <source>
-```
-
-Canonical spelling: `projmux diagnostics agent-hook`
-
-### `projmux ai integrate`
-
-Install or remove provider hook integrations
-
-```
-projmux ai integrate <provider> [--dry-run]
-```
-
-Canonical spelling: `projmux agent integrate`
-
-### `projmux ai topic`
-
-Read, set, or clear the AI pane topic
-
-```
-projmux ai topic [set|clear] ...
-```
-
-Canonical spelling: `projmux agent topic`
-
 ## `projmux attention`
 
 View and manage live tmux pane attention state
@@ -305,10 +182,9 @@ projmux attention window
 
 ## `projmux attach`
 
-Open tmux lifecycle entry helpers
+Enter a Project runtime from outside tmux
 
 ```
-projmux attach auto [--keep=N] [--fallback=home|ephemeral]
 projmux attach project <ref>
 ```
 
@@ -316,20 +192,9 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux attach auto`](#projmux-attach-auto) | Auto-attach with keep and fallback policy |
 | [`projmux attach project`](#projmux-attach-project) | Enter a Project runtime from outside tmux, materializing it when offline |
 
-Canonical spelling: `projmux attach project`, `projmux runtime attach`
-
-### `projmux attach auto`
-
-Auto-attach with keep and fallback policy
-
-```
-projmux attach auto [--keep=N] [--fallback=home|ephemeral]
-```
-
-Canonical spelling: `projmux runtime attach`
+Canonical spelling: `projmux attach project`
 
 ### `projmux attach project`
 
@@ -524,18 +389,6 @@ projmux create antigravity [--placement right|down] [-o pane-id|none] [-- <paylo
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
-
-## `projmux current`
-
-Resolve the active tmux pane path
-
-```
-projmux current
-```
-
-Field projections (`-o`): `cwd`
-
-Canonical spelling: `projmux get pane`
 
 ## `projmux delete`
 
@@ -733,11 +586,9 @@ projmux diagnostics report
 
 ## `projmux focus`
 
-Switch the active client to a session/window/pane target
+Move the current client to a live resource
 
 ```
-projmux focus --target <target>
-projmux focus --uri <uri>
 projmux focus project <ref>
 projmux focus window <ref> --project <ref>
 projmux focus pane <ref> --project <ref> --window <ref>
@@ -942,91 +793,6 @@ Revoke project hook config trust
 projmux hook untrust
 ```
 
-## `projmux kill`
-
-Terminate tagged tmux sessions
-
-```
-projmux kill tagged [<session>...]
-```
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux kill tagged`](#projmux-kill-tagged) | Terminate the tagged session selection |
-
-Canonical spelling: `projmux runtime stop`
-
-### `projmux kill tagged`
-
-Terminate the tagged session selection
-
-```
-projmux kill tagged
-```
-
-Canonical spelling: `projmux runtime stop`
-
-## `projmux notify`
-
-Manage the pending AI notify queue (push/list/ack/reconcile)
-
-```
-projmux notify push|list|ack|reconcile
-```
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux notify push`](#projmux-notify-push) | Push a pending notification row |
-| [`projmux notify list`](#projmux-notify-list) | List pending notification rows |
-| [`projmux notify ack`](#projmux-notify-ack) | Acknowledge notification rows |
-| [`projmux notify reconcile`](#projmux-notify-reconcile) | Reconcile the notification queue against live targets |
-
-Canonical spelling: `projmux create notification`, `projmux get notifications`, `projmux delete notification`, `projmux notification ack`, `projmux notification reconcile`
-
-### `projmux notify push`
-
-Push a pending notification row
-
-```
-projmux notify push
-```
-
-Canonical spelling: `projmux create notification`
-
-### `projmux notify list`
-
-List pending notification rows
-
-```
-projmux notify list
-```
-
-Canonical spelling: `projmux get notifications`
-
-### `projmux notify ack`
-
-Acknowledge notification rows
-
-```
-projmux notify ack
-```
-
-Canonical spelling: `projmux notification ack`
-
-### `projmux notify reconcile`
-
-Reconcile the notification queue against live targets
-
-```
-projmux notify reconcile
-```
-
-Canonical spelling: `projmux notification reconcile`
-
 ## `projmux notification`
 
 Manage pending notification workflow state
@@ -1066,7 +832,6 @@ projmux notification reconcile [--json]
 Manage pinned project directories
 
 ```
-projmux pin list|add|remove|toggle|clear
 projmux pin project list|add|remove|toggle|clear
 ```
 
@@ -1075,11 +840,6 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux pin project`](#projmux-pin-project) | Manage pinned project directories (canonical spelling) |
-| [`projmux pin list`](#projmux-pin-list) | List pinned project directories |
-| [`projmux pin add`](#projmux-pin-add) | Pin a project directory |
-| [`projmux pin remove`](#projmux-pin-remove) | Unpin a project directory |
-| [`projmux pin toggle`](#projmux-pin-toggle) | Toggle a project directory pin |
-| [`projmux pin clear`](#projmux-pin-clear) | Clear all project directory pins |
 
 Canonical spelling: `projmux pin project`
 
@@ -1091,64 +851,11 @@ Manage pinned project directories (canonical spelling)
 projmux pin project list|add|remove|toggle|clear
 ```
 
-### `projmux pin list`
-
-List pinned project directories
-
-```
-projmux pin list
-```
-
-Canonical spelling: `projmux pin project`
-
-### `projmux pin add`
-
-Pin a project directory
-
-```
-projmux pin add
-```
-
-Canonical spelling: `projmux pin project`
-
-### `projmux pin remove`
-
-Unpin a project directory
-
-```
-projmux pin remove
-```
-
-Canonical spelling: `projmux pin project`
-
-### `projmux pin toggle`
-
-Toggle a project directory pin
-
-```
-projmux pin toggle
-```
-
-Canonical spelling: `projmux pin project`
-
-### `projmux pin clear`
-
-Clear all project directory pins
-
-```
-projmux pin clear
-```
-
-Canonical spelling: `projmux pin project`
-
 ## `projmux prune`
 
-Trim stale lifecycle state and inspect preserved snapshots
+Prune stale Projects and snapshots
 
 ```
-projmux prune ephemeral [--keep=N]
-projmux prune session-state [--older-than <duration>]
-projmux prune session-state delete <session>...
 projmux prune snapshot [--older-than <duration>]
 projmux prune project --missing --older-than <duration> [--yes]
 ```
@@ -1157,32 +864,10 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux prune ephemeral`](#projmux-prune-ephemeral) | Trim old ephemeral tmux sessions |
-| [`projmux prune session-state`](#projmux-prune-session-state) | Inspect or delete preserved session snapshots |
 | [`projmux prune project`](#projmux-prune-project) | Delete Projects whose spec.root has been missing for a bounded age |
 | [`projmux prune snapshot`](#projmux-prune-snapshot) | Inspect or delete preserved session snapshots (canonical spelling) |
 
-Canonical spelling: `projmux runtime prune`, `projmux prune project`, `projmux prune snapshot`
-
-### `projmux prune ephemeral`
-
-Trim old ephemeral tmux sessions
-
-```
-projmux prune ephemeral
-```
-
-Canonical spelling: `projmux runtime prune`
-
-### `projmux prune session-state`
-
-Inspect or delete preserved session snapshots
-
-```
-projmux prune session-state
-```
-
-Canonical spelling: `projmux prune snapshot`, `projmux delete snapshot`
+Canonical spelling: `projmux prune project`, `projmux prune snapshot`
 
 ### `projmux prune project`
 
@@ -1417,97 +1102,6 @@ Trim old ephemeral tmux sessions
 projmux runtime prune
 ```
 
-## `projmux sessions`
-
-Pick and open an existing tmux session
-
-```
-projmux sessions [--ui=popup|sidebar]
-```
-
-Canonical spelling: `projmux runtime sessions`
-
-## `projmux session-state`
-
-Inspect and manage saved tmux session snapshots
-
-```
-projmux session-state status|save|delete|restore|preview|popup
-```
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux session-state status`](#projmux-session-state-status) | Show saved snapshot status |
-| [`projmux session-state save`](#projmux-session-state-save) | Save a session snapshot |
-| [`projmux session-state delete`](#projmux-session-state-delete) | Delete saved snapshots |
-| [`projmux session-state restore`](#projmux-session-state-restore) | Restore a snapshot (CLI allows --dry-run only) |
-| [`projmux session-state preview`](#projmux-session-state-preview) | Review a restore plan |
-| [`projmux session-state popup`](#projmux-session-state-popup) | Open the snapshot review popup |
-
-Canonical spelling: `projmux get snapshots`, `projmux create snapshot`, `projmux delete snapshot`, `projmux restore snapshot`
-
-### `projmux session-state status`
-
-Show saved snapshot status
-
-```
-projmux session-state status
-```
-
-Canonical spelling: `projmux get snapshots`
-
-### `projmux session-state save`
-
-Save a session snapshot
-
-```
-projmux session-state save
-```
-
-Canonical spelling: `projmux create snapshot`
-
-### `projmux session-state delete`
-
-Delete saved snapshots
-
-```
-projmux session-state delete
-```
-
-Canonical spelling: `projmux delete snapshot`
-
-### `projmux session-state restore`
-
-Restore a snapshot (CLI allows --dry-run only)
-
-```
-projmux session-state restore
-```
-
-Canonical spelling: `projmux restore snapshot`
-
-### `projmux session-state preview`
-
-Review a restore plan
-
-```
-projmux session-state preview
-```
-
-Canonical spelling: `projmux restore snapshot`
-
-### `projmux session-state popup`
-
-Open the snapshot review popup
-
-```
-projmux session-state popup
-```
-
-Canonical spelling: `projmux restore snapshot`
-
 ## `projmux settings`
 
 Configure projmux
@@ -1559,66 +1153,6 @@ projmux switch [<project>]
 
 Canonical spelling: `projmux focus project`
 
-## `projmux tag`
-
-Manage tagged tmux sessions
-
-```
-projmux tag list|toggle|clear
-projmux tag project list|toggle|clear
-```
-
-Subcommands:
-
-| Route | Summary |
-| --- | --- |
-| [`projmux tag project`](#projmux-tag-project) | Manage the tagged session selection (project-qualified compatibility spelling) |
-| [`projmux tag list`](#projmux-tag-list) | List the tagged session selection |
-| [`projmux tag toggle`](#projmux-tag-toggle) | Toggle a session tag |
-| [`projmux tag clear`](#projmux-tag-clear) | Clear the tagged session selection |
-
-Canonical spelling: `projmux runtime tag`
-
-### `projmux tag project`
-
-Manage the tagged session selection (project-qualified compatibility spelling)
-
-```
-projmux tag project list|toggle|clear
-```
-
-Canonical spelling: `projmux runtime tag`
-
-### `projmux tag list`
-
-List the tagged session selection
-
-```
-projmux tag list
-```
-
-Canonical spelling: `projmux runtime tag`
-
-### `projmux tag toggle`
-
-Toggle a session tag
-
-```
-projmux tag toggle
-```
-
-Canonical spelling: `projmux runtime tag`
-
-### `projmux tag clear`
-
-Clear the tagged session selection
-
-```
-projmux tag clear
-```
-
-Canonical spelling: `projmux runtime tag`
-
 ## `projmux update`
 
 Check installer-aware release update status
@@ -1660,26 +1194,6 @@ Apply an available update
 ```
 projmux update apply
 ```
-
-## `projmux upgrade`
-
-Self-update projmux via go install
-
-```
-projmux upgrade [--ref <ref>] [--target <path>] [--no-apply] [--dry-run]
-```
-
-Canonical spelling: `projmux update apply`
-
-## `projmux usage`
-
-Report AI token usage across 5h and weekly windows
-
-```
-projmux usage [--model <name>] [--window <name>] [--json] [--force]
-```
-
-Canonical spelling: `projmux agent usage`
 
 ## `projmux welcome`
 

@@ -256,5 +256,6 @@ func (c *attachCommand) resolveWorkingDir() (string, error) {
 
 func printAttachUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux attach auto [--keep=N] [--fallback=home|ephemeral]")
+	fmt.Fprintln(w, "  projmux attach project <ref>")
+	fmt.Fprintln(w, "  projmux runtime attach [--keep=N] [--fallback=home|ephemeral]")
 }

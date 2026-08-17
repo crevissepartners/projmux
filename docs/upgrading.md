@@ -44,6 +44,28 @@ still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
 
+### Legacy compatibility routes removed
+
+This release removes the human-facing compatibility argv and old
+pre-namespace internal aliases listed in the [retirement ledger](legacy-cli-retirement.md).
+Removed public argv exits 2 with its exact canonical replacement, no stdout,
+and no side effect. Removed internal aliases (`tmux`, `status`, `statusbar`,
+`preview`, `session-popup`, `key-broker`, and `popup-wait-key`) are unknown
+top-level commands and exit 1. Use `internal ...` for generated plumbing and
+`config render|apply` for public configuration work.
+
+The mixed roots retain only `attach project`, `focus project|window|pane`, `pin
+project`, and `prune project|snapshot`. Shortcuts and singular/plural resource
+kind aliases are unchanged. The ledger contains the complete removed
+argv/replacement/error matrix.
+
+`ai notify` requires action-aware migration. The old notify action can move to
+`create notification --text ... --target ...`, but its pane/payload input and
+queue semantics differ. The old `ai notify reset` action cleared desktop
+notification dedupe state and has no direct public replacement; use
+`notification ack` or `notification reconcile` only when the intended work is
+queue maintenance.
+
 ### Managed Agent hook producer migration
 
 The installer now writes Codex, Claude, Antigravity named hooks, Antigravity
@@ -52,8 +74,8 @@ Statusline, and the tmux bell fallback with the canonical
 commands use `projmux agent integrate <provider>`.
 
 Update ordering is hook-first and lossless: the new binary is atomically
-installed while the exact legacy `projmux ai ingest` producer argv still
-dispatches to the same handler; the new binary then migrates every
+installed while the exact old managed-producer argv described in the ledger's
+internal migration note still dispatches to the same handler; the new binary then migrates every
 marker-owned producer; only after that does it generate and apply tmux config.
 An old managed hook that fires between binary replacement and migration is
 therefore handled before its command is rewritten.
@@ -77,7 +99,7 @@ projmux agent integrate antigravity --dry-run
 projmux agent integrate tmux-bell --dry-run
 ```
 
-`update apply --no-apply` and `upgrade --no-apply` still migrate marker-owned
+`update apply --no-apply` still migrates marker-owned
 files, but they neither inspect nor modify a live tmux server. A later normal
 `projmux config apply --socket <name>` converges a marker-owned bell hook only on
 that exact `-L <name>` socket.
@@ -90,7 +112,7 @@ because it restores its starting state.
 **Downgrading to 0.10.1 or older:** those binaries do not expose the canonical
 internal ingress. Before replacing the current binary, remove each managed
 integration with `projmux agent integrate <provider> --remove`. After the old
-binary is installed, use that version's `projmux ai integrate <provider>` to
+binary is installed, use that version's integration command to
 write its legacy managed producer again. Never rewrite markerless user hooks as
 part of downgrade remediation.
 
@@ -150,7 +172,7 @@ The deprecated `rename-pane-topic` keybinding action ID has been removed. If
 `projmux config apply`. Projmux now rejects the stale table with that exact
 replacement instead of silently applying its keys to the user-label action.
 
-This removal does not change `projmux ai topic set/clear`: those advanced CLI
+This removal does not change `projmux agent topic set/clear`: those advanced CLI
 commands continue to write only AI topic and manual-ownership state. User pane
 rename continues to write only the pane label, and raw pane title remains an
 independent fallback.
@@ -260,19 +282,16 @@ with `npm install -g projmux@latest`.
 
 ## Go Installs
 
-If you installed with `go install`, `projmux update apply` delegates to the
-same atomic replacement flow as `projmux upgrade`:
+If you installed with `go install`, `projmux update apply` uses the atomic
+replacement flow:
 
 ```sh
-projmux upgrade                                  # @latest, replace + apply
-projmux upgrade --ref @v0.4.0                    # pin a specific tag
-projmux upgrade --ref @main                      # track a branch
-projmux upgrade --target /usr/local/bin/projmux  # replace another path
-projmux upgrade --no-apply                       # migrate + write config, skip the live reload
-projmux upgrade --dry-run                        # print the steps only
+projmux update apply             # replace + apply
+projmux update apply --no-apply  # migrate + write config, skip the live reload
+projmux update apply --dry-run   # print the steps only
 ```
 
-`projmux upgrade` reinstalls via `go install`, atomically replaces the active
+`projmux update apply` reinstalls via `go install`, atomically replaces the active
 file, and reapplies the live tmux config so a running `-L projmux` server picks
 up new bindings without a restart.
 
@@ -283,10 +302,10 @@ project root context as the one it replaces.
 To switch the saved project root during the upgrade:
 
 ```sh
-PROJMUX_PROJDIR=/new/path projmux upgrade
+PROJMUX_PROJDIR=/new/path projmux update apply
 
 # Multi-path also works; only the primary entry is persisted.
-PROJMUX_PROJDIR="/main/repos:/secondary/repos" projmux upgrade
+PROJMUX_PROJDIR="/main/repos:/secondary/repos" projmux update apply
 ```
 
 ## GitHub Release Installs

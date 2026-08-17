@@ -162,13 +162,11 @@ step, never a silent no-op.
   The handler row is projected from the shipped CLI command manifest rather than
   from a second hand-kept table, so an action detail cannot advertise a route
   the binary does not have. `Open Project for Current Directory` is where that
-  matters: the manifest classifies `projmux current` as a compatibility route
-  whose canonical projection is the read-only `get pane` cwd field, while the
-  route itself also ensures and attaches the derived runtime. The detail names
-  both halves — the result kind is the ensure/attach outcome, the anchor says
-  the Pane cwd is a read-only input rather than the outcome, and the handler
-  boundary row states that the canonical cwd projection covers the input step
-  only. The read-only query can therefore never read as the action succeeding.
+  matters: `projmux get pane --current -o cwd` is the canonical read used to
+  resolve the input, while `projmux switch open <path>` owns ensuring and
+  attaching the derived runtime. The detail names both steps and makes clear
+  that reading the Pane cwd is an input, not evidence that the open action
+  succeeded.
 - **About** — version/source state, `Updates [View]` (current/latest/installer/
   release notes, `Check for updates`, `Update now`), `Welcome`, and
   `Quit Projmux`, whose confirmation names the app-owned runtime and socket.

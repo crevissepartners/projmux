@@ -90,7 +90,7 @@ func defaultStatusbarNotifyStore() (notifyStore, error) {
 	return notify.NewDefaultStore(paths), nil
 }
 
-// Run is the CLI entry: `projmux statusbar <subcommand> ...`.
+// Run is the CLI entry: `projmux internal statusbar <subcommand> ...`.
 func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printStatusbarUsage(stderr)
@@ -128,7 +128,7 @@ type statusbarClickOptions struct {
 	MouseY      int
 }
 
-// parseStatusbarClickArgs parses the argv handed to `projmux statusbar click`
+// parseStatusbarClickArgs parses the argv handed to `projmux internal statusbar click`
 // in an order-flexible way. The standard `flag` package stops at the first
 // non-flag token, which means that when tmux emits args in the natural
 // "<range-id> --mouse-window <id>" order the trailing flag pair is misread as
@@ -1447,8 +1447,8 @@ func (c *statusbarCommand) displayPopupNoFallback(command string, options intmux
 
 func printStatusbarUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-window <id>] [--mouse-x N] [--mouse-y N]")
-	fmt.Fprintln(w, "  projmux statusbar usage-refresh")
+	fmt.Fprintln(w, "  projmux internal statusbar click <range-id> [--socket <s>] [--client <tty>] [--mouse-window <id>] [--mouse-x N] [--mouse-y N]")
+	fmt.Fprintln(w, "  projmux internal statusbar usage-refresh")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Range ids: session pwd git usage notify resources settings")
 }

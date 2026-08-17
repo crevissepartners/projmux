@@ -4,11 +4,11 @@ Session snapshots store tmux layout metadata and replay recipes for shell,
 startup, and supported agent panes. Manual CLI actions remain available through:
 
 ```sh
-projmux session-state status [--session <name>]
-projmux session-state save
-projmux session-state preview [--session <name>]
-projmux session-state restore --dry-run [--session <name>]
-projmux session-state delete [--session <name>]
+projmux get snapshots [--session <name>]
+projmux create snapshot
+projmux restore snapshot --dry-run [--session <name>]
+projmux restore snapshot [--session <name>]
+projmux delete snapshot --session <name>
 ```
 
 Snapshots preserve source metadata, not a resolved display label. Window records
@@ -46,8 +46,8 @@ cannot safely resume that agent pane from the snapshot. Confidence is derived
 from the metadata source: direct session ids and hook ingest are high
 confidence, transcript/log fallbacks are medium confidence, and missing or
 unknown sources are low or none. The old statusbar Session State shortcut has
-been removed; use `Projects > Sessions > State` or the `projmux session-state`
-CLI for inspection/actions.
+been removed; use `Projects > Sessions > State` or the canonical snapshot CLI
+for inspection/actions.
 
 Session snapshots capture each pane's user-owned `label` separately from its
 raw `title` and agent recipe `topic`. Older snapshots decode with an empty
@@ -58,7 +58,7 @@ returned by tmux creation. It does not derive a target or identity from pane
 order, a visible title, or equality between saved fields.
 
 Agent restore direct-starts supported resume commands when creating fresh tmux
-panes, matching the `projmux ai split` wrapper shape: the wrapper prepends the
+panes, matching the `projmux create agent` launch shape: the wrapper prepends the
 agent binary directory to `PATH`, changes to the saved cwd, then execs
 `codex resume <id>`, `claude --resume <id>`, or
 `agy --conversation <uuid>`. It does not copy the saved topic into OSC or raw
@@ -133,7 +133,7 @@ may fall back to a closed popup plus tmux message. Existing sessions switch
 directly without a startup picker or trust gate.
 
 Default `projmux shell` no longer opens a compatibility startup picker and no
-longer accepts startup selector flags for session-state restore. It always
+longer accepts startup selector flags for snapshot restore. It always
 follows the normal empty attach path after resolving the target app session name
 and startup directory. Use `Settings > Session State > Sidebar startup picker` for
 interactive Latest snapshot / Named snapshot / Empty session selection.

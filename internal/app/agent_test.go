@@ -79,12 +79,10 @@ func assertForward(t *testing.T, name string, target *recordingArgv, want []stri
 	}
 }
 
-// TestAgentUsageAndTheLegacyUsageSpellingShareOneHandlerAndOneArgv is
-// acceptance criterion 1 stated as an identity rather than a comparison of two
-// outputs: the canonical route holds the same handler instance the top-level
-// `usage` route holds, and forwards argv with no prefix, so parity is
-// structural and cannot drift.
-func TestAgentUsageAndTheLegacyUsageSpellingShareOneHandlerAndOneArgv(t *testing.T) {
+// TestAgentUsageOwnsTheFormerUsageHandlerAndForwardsArgv pins the Phase 2
+// retirement boundary: the implementation survives under the canonical route,
+// while the top-level spelling is a tombstone rather than a public alias.
+func TestAgentUsageOwnsTheFormerUsageHandlerAndForwardsArgv(t *testing.T) {
 	t.Parallel()
 
 	app := New()
@@ -95,12 +93,11 @@ func TestAgentUsageAndTheLegacyUsageSpellingShareOneHandlerAndOneArgv(t *testing
 		t.Fatal("agent usage does not share the top-level usage handler instance")
 	}
 	handlers := app.routeHandlers()
-	for _, token := range []string{"usage", "status", "agent", "ai", "create"} {
+	for _, token := range []string{"usage", "agent", "ai", "create"} {
 		if _, ok := handlers[token]; !ok {
 			t.Fatalf("route %q has no handler", token)
 		}
 	}
-
 	// The argv the canonical spelling hands over is byte-identical to what the
 	// legacy spelling receives.
 	usage := &recordingArgv{}

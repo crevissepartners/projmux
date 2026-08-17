@@ -225,11 +225,10 @@ func TestConfigRouteIsWiredIntoTheApplicationGraph(t *testing.T) {
 	if app.config.tmux != rawArgvCommand(app.tmux) {
 		t.Fatal("config does not forward to the same tmux handler the hidden routes use")
 	}
-	// The hidden spellings `make install` and every already-running tmux server
-	// depend on are untouched.
-	for _, token := range []string{"tmux", "internal"} {
-		if _, ok := app.routeHandlers()[token]; !ok {
-			t.Fatalf("the %q route lost its handler", token)
-		}
+	if _, ok := app.routeHandlers()["internal"]; !ok {
+		t.Fatal("the internal route lost its handler")
+	}
+	if _, ok := app.routeHandlers()["tmux"]; ok {
+		t.Fatal("the retired pre-namespace tmux route still has a handler")
 	}
 }

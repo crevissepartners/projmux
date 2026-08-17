@@ -280,7 +280,7 @@ func parsePreviewDirection(raw string) (corepreview.Direction, error) {
 
 func printPreviewUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux preview cycle-pane <session> <next|prev>")
-	fmt.Fprintln(w, "  projmux preview cycle-window <session> <next|prev>")
-	fmt.Fprintln(w, "  projmux preview select <session> <window> [pane]")
+	fmt.Fprintln(w, "  projmux internal preview cycle-pane <session> <next|prev>")
+	fmt.Fprintln(w, "  projmux internal preview cycle-window <session> <next|prev>")
+	fmt.Fprintln(w, "  projmux internal preview select <session> <window> [pane]")
 }

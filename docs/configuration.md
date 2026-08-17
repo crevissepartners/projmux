@@ -203,7 +203,7 @@ shows the keymap error row and refuses to overwrite it until the file is fixed.
 
 The file currently affects generated tmux config from `projmux config render
 standalone`, `projmux config render app`, `projmux config apply`, the hidden
-`projmux tmux install` / `install-app` installer plumbing, and `projmux shell`.
+`projmux internal tmux install` / `install-app` installer plumbing, and `projmux shell`.
 The render routes never write the keymap; `projmux config apply` migrates it
 first and only applies once that succeeds. Terminal remediation adapters such as
 Ghostty and Windows Terminal install built-in plain-byte mappings where needed;
@@ -382,7 +382,7 @@ user/global preference in this release.
 
 ## AI Resume Picker
 
-The AI resume picker (`projmux ai split --agent resume`) lists the most recent
+The Agent resume picker lists the most recent
 deduplicated Claude/Codex/Antigravity resume sessions. The number of rows it
 shows and how far below the current directory it scans are both configurable;
 the defaults are 30 rows and depth 0 (the current directory only).
@@ -456,7 +456,7 @@ confidence for DB-validated cache sources or low confidence for legacy history.
 | `PROJMUX_DESKTOP_NOTIFY` | Legacy on/off override kept for backward compatibility. `on` maps to `notify`, `off` maps to `none`. Honored only when `PROJMUX_DESKTOP_NOTIFY_MODE` is unset. |
 | `PROJMUX_WSL_TOAST_ICON_DIR` | Directory used when copying the WSL toast icon into a Windows-readable path. |
 | `PROJMUX_USAGE_STATE_DIR` | Override directory for AI usage snapshots. Defaults to `<state>/projmux/usage`. Point this at a synced directory to share authoritative usage across machines. |
-| `PROJMUX_USAGE_DEBUG` | When non-empty, prints adapter errors from `projmux status usage` to stderr. |
+| `PROJMUX_USAGE_DEBUG` | When non-empty, prints adapter errors from the `projmux internal status usage` renderer to stderr. |
 | `PROJMUX_USAGE_LIMITS_PATH` | Deprecated. Read but ignored; limits now come from upstream APIs and local Codex rollout state. |
 | `PROJMUX_SESSIONSTATE_AUTOSAVE` | Session snapshot autosave override for the global fallback. Values such as `off`, `false`, or `0` disable autosave for projects that inherit the global setting; explicit project auto-save `on`/`off` still takes precedence. |
 | `PROJMUX_SESSIONSTATE_DEBUG` | When non-empty, quiet autosave surfaces suppressed session-state errors to stderr. |
@@ -556,7 +556,7 @@ host setup.
 - `[hooks.send-noti]` fires after the queue write and does not replace desktop
   notifications.
 - `PROJMUX_NOTIFY_HOOK_DEPTH` prevents a `send-noti` hook that calls
-  `projmux notify push` from recursively re-triggering itself.
+  `projmux create notification` from recursively re-triggering itself.
 
 The app-name argument is `com.crevisse.projmux` (reverse-domain id used as
 the Linux `--app-name`, the macOS sender label, and the Windows
@@ -658,7 +658,7 @@ inputs and are not Settings authoring destinations.
 ### Toast click handler (WSL + Windows Terminal) — retired in 0.11.0
 
 projmux used to register a `projmux://` URL scheme on the Windows side and
-emit clickable Toasts whose click routed back into `projmux focus --uri`.
+emit clickable Toasts whose click routed through the hidden `projmux internal focus` ingress.
 That path is **removed**: desktop notifications are passive, carry no
 `launch` payload, and projmux registers no protocol handler. Clicking a
 projmux Toast does nothing.
@@ -668,8 +668,8 @@ Consequences for existing installs:
 - A `HKCU\Software\Classes\projmux` key written by an earlier version is
   **not** removed automatically. Delete it manually if you want the scheme
   gone; leaving it in place is harmless because nothing produces the URI.
-- `projmux focus --uri` still parses `projmux://focus?...` as a
-  compatibility input, so a handler you wired yourself keeps working. No
+- The old public `focus --uri` compatibility input is removed. Machine-owned
+  focus payloads use `projmux internal focus --uri`. No
   projmux code path produces such a URI any more.
 - The `@projmux_uri_protocol_registered*` tmux markers are no longer read or
   written. Stale markers are inert.
@@ -679,7 +679,7 @@ The measurement trail for the retired design is kept for history in
 
 ## Usage Tracking
 
-`projmux usage` and the status-bar usage segment store snapshots under:
+`projmux agent usage` and the status-bar usage segment store snapshots under:
 
 ```text
 ${PROJMUX_USAGE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/projmux/usage}/snapshots.json
@@ -744,10 +744,10 @@ The environment variables above override the global files.
 Manual snapshot actions are available from the CLI:
 
 ```sh
-projmux session-state status [--session <name>]
-projmux session-state save
-projmux session-state delete [--session <name>]
-projmux session-state restore --dry-run [--session <name>]
+projmux get snapshots
+projmux create snapshot
+projmux delete snapshot [--session <name>]
+projmux restore snapshot --dry-run [--session <name>]
 ```
 
 `status` prints the source label (`autosave`, `layout(<name>)`, or `fresh`), the
@@ -822,7 +822,7 @@ Visibility does not enable or disable either producer. Hiding Notifications HUD
 does not change the persistent queue, desktop delivery, or Notification
 Sidebar. Hiding Agent Usage HUD does not change the `agent usage` command,
 Provider snapshot cache, upstream API collection, quota, or refresh policy.
-Provider/window leaves likewise filter only `projmux status usage`; explicit
+Provider/window leaves likewise filter only `projmux internal status usage`; explicit
 `agent usage` table/JSON and the cached statusbar popup remain lossless.
 
 ## Row 1 Segment Visibility

@@ -39,7 +39,7 @@ func TestAppRunPreviewCyclePane(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := app.Run([]string{"preview", "cycle-pane", "dev", "next"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"internal", "preview", "cycle-pane", "dev", "next"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 

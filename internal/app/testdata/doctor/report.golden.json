@@ -21,7 +21,7 @@
     }
   ],
   "ai_notify_integrations": null,
-  "session_state_prune": "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune session-state` and delete only by explicit name.",
+  "session_state_prune": "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune snapshot` and delete only by explicit name.",
   "runtime": [
     {
       "severity": "info",

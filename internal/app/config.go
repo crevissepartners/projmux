@@ -31,7 +31,7 @@ var configRenderArtifacts = []string{"standalone", "app"}
 //	projmux config render standalone  ==  projmux internal tmux print-config
 //	projmux config render app         ==  projmux internal tmux print-app-config
 //	projmux config apply              ==  projmux internal tmux apply
-//	projmux config edit               ==  projmux ai settings
+//	projmux config edit               ->  AI settings handler
 //
 // The artifact is a positional token, not a flag. That is what keeps this node
 // the same dumb forwarder every other namespace in the tree is: dispatch reads

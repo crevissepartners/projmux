@@ -35,7 +35,7 @@ func TestAppRunPruneEphemeralKillsTargetsBeyondKeep(t *testing.T) {
 		},
 	}
 
-	if err := app.Run([]string{"prune", "ephemeral", "--keep=2"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"runtime", "prune", "--keep=2"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 

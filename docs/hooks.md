@@ -15,7 +15,7 @@ projmux-owned internal tmux hooks such as `pane-focus-in`, `pane-focus-out`,
 | `pre-create` | Before projmux creates a missing persistent or ephemeral session | Non-zero exit, exec error, or timeout aborts creation | Logged with `[pre-create] ` |
 | `post-create` | After projmux creates a brand-new persistent or ephemeral session | Logged and ignored; creation continues | Logged with `[post-create] ` |
 | `post-attach` | After projmux switches the current tmux client to an existing session/target from inside tmux | Logged and ignored | Logged with `[post-attach] ` |
-| `send-noti` | After `projmux notify push` (or the in-process AI notify producer) successfully writes a queue entry | Fired asynchronously and best-effort; queue write and desktop notifications continue even if the hook fails or times out | Receives JSON on stdin; stdout/stderr are logged with `[send-noti] ` |
+| `send-noti` | After `projmux create notification` (or the in-process AI notify producer) successfully writes a queue entry | Fired asynchronously and best-effort; queue write and desktop notifications continue even if the hook fails or times out | Receives JSON on stdin; stdout/stderr are logged with `[send-noti] ` |
 
 Deferred Phase A candidates remain future work until their behavior can be
 specified without exposing projmux's internal tmux hook machinery: pane exit,
@@ -172,7 +172,7 @@ the notification or block the normal desktop notification flow.
 
 The hook runs asynchronously with the same default timeout (`5s`) as other
 hooks. projmux does not wait for completion before returning from
-`projmux notify push`.
+`projmux create notification`.
 
 stdin receives one JSON object:
 
@@ -208,7 +208,7 @@ The hook environment also includes:
 | `PROJMUX_NOTIFY_MESSAGE` | Human-readable message text |
 | `PROJMUX_NOTIFY_HOOK_DEPTH` | Recursion guard; values `>= 1` suppress nested `send-noti` dispatch |
 
-If a `send-noti` hook itself calls `projmux notify push`, projmux sees
+If a `send-noti` hook itself calls `projmux create notification`, projmux sees
 `PROJMUX_NOTIFY_HOOK_DEPTH=1` in the child environment and skips another
 `send-noti` hook fire. The queue write itself still succeeds.
 
@@ -463,14 +463,14 @@ Hook-generated queue rows use the same compact body catalog: agent label,
 event category, then the best available summary (Codex assistant text, Claude
 tool/action summary, transcript summary, error, or teammate labels). Structured
 payload details remain in `metadata`, which is passed through the `send-noti`
-JSON payload and `notify list --json`; the sidebar stays compact and does not
+JSON payload and `get notifications --json`; the sidebar stays compact and does not
 expand a separate metadata detail view. `SubagentStop` remains parsed for
 diagnostics but is intentionally excluded from hook notifications because it can
 fire at high volume.
 
 Pane matching follows the shared AI ingest order: inherited `$TMUX_PANE`, then
 payload `cwd`, then cached session id pane options. A matched pane is marked
-with `@projmux_ai_hook_active=1`, so `projmux ai watch-title` skips the pane
+with `@projmux_ai_hook_active=1`, so `projmux internal agent-hook watch-title` skips the pane
 after a minimal hook-active gate instead of polling pane title/capture output;
 hook payloads become the primary signal. The tmux bell fallback does not mark
 panes hook-active, so title/capture fallback remains available for panes that
@@ -717,8 +717,8 @@ projmux diagnostics agent-hook --json --tail 20
 projmux diagnostics agent-hook --path
 ```
 
-The exact legacy `projmux ai ingest log` reader remains executable during the
-compatibility window and reads the same bytes.
+The human legacy ingest-log reader has been removed. Use
+`projmux diagnostics agent-hook`; it reads the same bytes.
 
 The file is capped at 1 MiB. When an append grows it past the cap, projmux
 keeps the most recent roughly 512 KiB and trims from the next JSONL boundary so

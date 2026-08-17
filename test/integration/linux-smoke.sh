@@ -94,7 +94,7 @@ fake_tmux_output="$(
     TMUX_SPLIT_TARGET_PANE="%7" \
     TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
     SHELL="/bin/sh" \
-    "$bin" ai split --agent shell --print-pane-id right
+    "$bin" create pane -o pane-id --placement right
 )"
 if [[ "$fake_tmux_output" != "%81" ]]; then
   echo "expected fake tmux pane id %81, got: $fake_tmux_output" >&2
@@ -200,7 +200,7 @@ assert_report_manifest_entry() {
 }
 
 assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-manifest.json" \
-  "operational-errors.json" "omitted" "source-clean-no-errors"
+  "operational-errors.json" "omitted" "source-missing"
 assert_report_manifest_entry "$PROJMUX_SMOKE_WORKDIR/report-manifest.json" \
   "ai-ingest-summary.json" "omitted" "source-missing"
 
@@ -382,7 +382,7 @@ skipped-root-no-adapter) ;;
   ;;
 esac
 
-"$bin" tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux.conf"
+"$bin" internal tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux.conf"
 # Both row-0 HUD budgets are tmux formats derived from the attached client,
 # not literal cell counts; the generated config is where that derivation has
 # to survive quoting end to end.
@@ -401,38 +401,26 @@ for relocated in status statusbar preview session-popup tmux key-broker popup-wa
   smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "'$bin' $relocated"
 done
 
-# Compatibility aliases: a tmux server that is already running holds config a
-# previously installed binary generated, so the pre-namespace spellings must
-# keep producing byte-identical output. `tmux print-config` is the deterministic
-# probe -- it renders the whole generated surface with no live state in it.
-"$bin" internal tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux-internal.conf"
-if ! diff -u "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "$PROJMUX_SMOKE_WORKDIR/projmux-internal.conf" \
-  >"$PROJMUX_SMOKE_WORKDIR/projmux-internal.diff"; then
-  echo "internal tmux print-config diverged from the compatibility spelling tmux print-config" >&2
-  cat "$PROJMUX_SMOKE_WORKDIR/projmux-internal.diff" >&2
-  exit 1
-fi
-
 mkdir -p "$XDG_CONFIG_HOME/projmux"
 printf 'on\n' >"$XDG_CONFIG_HOME/projmux/live-resources"
-"$bin" tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux-resources.conf"
+"$bin" internal tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux-resources.conf"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux-resources.conf" "set -g @projmux_live_resources on"
 
-resources_first="$("$bin" status resources)"
+resources_first="$("$bin" internal status resources)"
 if [[ ! "$resources_first" =~ CPU[[:space:]]{2}--%.*MEM[[:space:]]{1,3}[0-9]{1,3}% ]] ||
   [[ "$resources_first" =~ (normal|warning|critical|unknown) ]]; then
   echo "expected first resource sample to show unavailable CPU and numeric memory, got: $resources_first" >&2
   exit 1
 fi
 sleep 0.1
-resources_second="$("$bin" status resources)"
+resources_second="$("$bin" internal status resources)"
 if [[ ! "$resources_second" =~ CPU[[:space:]]{1,3}[0-9]{1,3}%.*MEM[[:space:]]{1,3}[0-9]{1,3}% ]] ||
   [[ "$resources_second" =~ (normal|warning|critical|unknown) ]]; then
   echo "expected second resource sample to show numeric CPU and memory, got: $resources_second" >&2
   exit 1
 fi
 
-"$bin" tmux install \
+"$bin" internal tmux install \
   --bin "$bin" \
   --config "$HOME/.tmux.conf" \
   --include "$XDG_CONFIG_HOME/tmux/projmux.conf" \
@@ -465,7 +453,7 @@ cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-mp.before"
 tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" bind-key -n C-t command-prompt -p "pane label:" "set-option -p @projmux_pane_label '%%'"
 tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" bind-key -n M-F12 display-message "unrelated-live-binding"
 
-apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
+apply_out="$("$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
 smoke_assert_output_contains "$apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
 
 if stale_ct="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t 2>/dev/null)"; then
@@ -522,7 +510,7 @@ if [[ -s "$render_err" ]] && ! grep -q "keymap migration" "$render_err"; then
   exit 1
 fi
 
-repeat_apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
+repeat_apply_out="$("$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
 smoke_assert_output_contains "$repeat_apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
 cmp "$PROJMUX_SMOKE_WORKDIR/tmux-mp.first" "$XDG_CONFIG_HOME/projmux/tmux.conf"
 # Repeat apply on an already-current keymap writes no bytes and adds no backup.
@@ -540,7 +528,7 @@ install -m 0644 "$smoke_root/test/fixtures/keymaps/stale-pane-label-ct-reassigne
 cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before"
 # Re-seeding a v0 file means the next apply migrates again, against a different
 # original, so this one earns its own backup.
-reassign_apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
+reassign_apply_out="$("$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
 smoke_assert_output_contains "$reassign_apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
 ct_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t)"
 if [[ "$ct_binding" != *"new-window"* || "$ct_binding" == *"pane label:"* || "$ct_binding" == *"@projmux_pane_label"* ]]; then
@@ -560,7 +548,7 @@ smoke_assert_file_contains "$keymap_path" '[bindings."window.create"]'
 smoke_assert_keymap_backup_count 2
 cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.migrated"
 cp "$XDG_CONFIG_HOME/projmux/tmux.conf" "$PROJMUX_SMOKE_WORKDIR/tmux-ct-reassigned.first"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
   >"$PROJMUX_SMOKE_WORKDIR/reassign-repeat-apply.out"
 cmp "$PROJMUX_SMOKE_WORKDIR/tmux-ct-reassigned.first" "$XDG_CONFIG_HOME/projmux/tmux.conf"
 cmp "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.migrated" "$keymap_path"
@@ -581,7 +569,7 @@ fi
 # records the exact generated roots/tables so a repeat source is idempotent and
 # a later removal can retire stale state without touching unrelated bindings.
 install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2.toml" "$keymap_path"
-sequence_apply_out="$("$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
+sequence_apply_out="$("$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
 smoke_assert_output_contains "$sequence_apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
 sequence_roots="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_sequence_roots)"
 sequence_tables="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_sequence_tables)"
@@ -608,7 +596,7 @@ if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-S-Right)" != *
 fi
 cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-sequences.first"
 cp "$XDG_CONFIG_HOME/projmux/tmux.conf" "$PROJMUX_SMOKE_WORKDIR/tmux-sequences.first"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
   >"$PROJMUX_SMOKE_WORKDIR/sequences-repeat-apply.out"
 cmp "$PROJMUX_SMOKE_WORKDIR/keymap-sequences.first" "$keymap_path"
 cmp "$PROJMUX_SMOKE_WORKDIR/tmux-sequences.first" "$XDG_CONFIG_HOME/projmux/tmux.conf"
@@ -620,7 +608,7 @@ install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2-conflict.toml" "
 cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-sequences-conflict.before"
 cp "$XDG_CONFIG_HOME/projmux/tmux.conf" "$PROJMUX_SMOKE_WORKDIR/tmux-sequences-conflict.before"
 tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -a >"$PROJMUX_SMOKE_WORKDIR/live-sequences-conflict.before"
-if "$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
+if "$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
   >"$PROJMUX_SMOKE_WORKDIR/sequences-conflict.out" 2>"$PROJMUX_SMOKE_WORKDIR/sequences-conflict.err"; then
   echo "duplicate sequence apply unexpectedly succeeded" >&2
   exit 1
@@ -631,7 +619,7 @@ tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -a >"$PROJMUX_SMOKE_WORKDIR/live-
 cmp "$PROJMUX_SMOKE_WORKDIR/live-sequences-conflict.before" "$PROJMUX_SMOKE_WORKDIR/live-sequences-conflict.after"
 
 install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2-removed.toml" "$keymap_path"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" \
   >"$PROJMUX_SMOKE_WORKDIR/sequences-remove-apply.out"
 stale_sequence_root="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-k 2>/dev/null || true)"
 if [[ -n "$stale_sequence_root" ]]; then
@@ -694,28 +682,28 @@ assert_live_hud_row() {
 
 printf 'on\n' >"$notifications_visibility"
 printf 'on\n' >"$usage_visibility"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 assert_live_hud_row 2 on on
 
 printf 'off\n' >"$usage_visibility"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 assert_live_hud_row 2 on off
 smoke_assert_file_contains "$XDG_CONFIG_HOME/projmux/tmux.conf" 'internal status notify --max-width #{client_width}'
 
 printf 'off\n' >"$notifications_visibility"
 printf 'on\n' >"$usage_visibility"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 assert_live_hud_row 2 off on
 smoke_assert_file_contains "$XDG_CONFIG_HOME/projmux/tmux.conf" 'internal status usage --max-width #{client_width}'
 
 printf 'off\n' >"$usage_visibility"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 assert_live_hud_row on off off
 
 # Restore compatibility defaults for the remaining integration assertions.
 printf 'on\n' >"$notifications_visibility"
 printf 'on\n' >"$usage_visibility"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 assert_live_hud_row 2 on on
 
 # Agent Usage HUD provider/window leaves are consumed by the status command at
@@ -788,7 +776,7 @@ printf 'off\n' >"$git_visibility"
 printf 'off\n' >"$clock_visibility"
 printf 'on\n' >"$settings_visibility"
 printf 'on\n' >"$live_resources"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 row1_left="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv status-left)"
 row1_right="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv status-right)"
 if [[ -n "$row1_left" || "$row1_right" != *"range=user|pwd"* || "$row1_right" != *"range=user|resources"* || "$row1_right" != *"range=user|settings"* ]]; then
@@ -803,7 +791,7 @@ fi
 printf 'off\n' >"$cwd_visibility"
 printf 'off\n' >"$settings_visibility"
 printf 'off\n' >"$live_resources"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 row1_right="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv status-right)"
 if [[ -n "$row1_right" ]]; then
   echo "empty row-1 live layout retained product residue: $row1_right" >&2
@@ -829,7 +817,7 @@ for visibility_path in "$project_visibility" "$cwd_visibility" "$git_visibility"
   printf 'on\n' >"$visibility_path"
 done
 printf 'on\n' >"$live_resources"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET" >/dev/null
 
 # Doctor probes a fixed closed `tmux -L projmux show-options` argv. This test
 # wrapper routes only that fixed name to the run-unique real socket so the
@@ -949,7 +937,7 @@ run_inside_lifecycle() {
 # Session State diagnostics uses the same run-unique socket and isolated XDG
 # root. Capture a real snapshot containing seeded private cwd/command/session
 # metadata, prove successful autosave stays silent, inject one quiet autosave
-# failure, replay the actual latest snapshot, then delete a deduplicated batch.
+# failure, replay the actual latest snapshot, then delete it canonically.
 session_state_root="$PROJMUX_SMOKE_WORKDIR/raw-session-state-project-$$"
 session_state_name="raw-session-state-$$"
 mkdir -p "$session_state_root"
@@ -959,13 +947,13 @@ session_state_tmux_env="$PROJMUX_SMOKE_TMUX_ACTUAL,$server_pid,0"
 
 env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
   TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
-  "$bin" session-state save >"$PROJMUX_SMOKE_WORKDIR/session-state-save.out"
+  "$bin" create snapshot >"$PROJMUX_SMOKE_WORKDIR/session-state-save.out"
 
 session_state_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
 session_state_before_autosave="$(wc -l <"$session_state_log")"
 env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
   PROJMUX_SESSIONSTATE_AUTOSAVE=on TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
-  "$bin" tmux autosave-session-state --force >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave.out"
+  "$bin" internal tmux autosave-session-state --force >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave.out"
 session_state_after_autosave="$(wc -l <"$session_state_log")"
 if [[ "$session_state_before_autosave" != "$session_state_after_autosave" ]]; then
   echo "successful autosave appended an operational event" >&2
@@ -982,7 +970,7 @@ SESSION_STATE_FAIL_TMUX
 chmod 0755 "$session_state_fail_mux/tmux"
 env PATH="$session_state_fail_mux:$PATH" \
   PROJMUX_SESSIONSTATE_AUTOSAVE=on TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
-  "$bin" tmux autosave-session-state --quiet >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave-fail.out"
+  "$bin" internal tmux autosave-session-state --quiet >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave-fail.out"
 
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$session_state_name"
 run_inside_lifecycle switch sidebar-open --path "$session_state_root" --session "$session_state_name" --mode latest \
@@ -993,10 +981,10 @@ if ! env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" has-session -
 fi
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
 
-"$bin" prune session-state delete "$session_state_name" "$session_state_name" raw-session-state-missing \
+"$bin" delete snapshot --session "$session_state_name" \
   >"$PROJMUX_SMOKE_WORKDIR/session-state-delete.out"
 if find "$XDG_STATE_HOME/projmux/sessions" -maxdepth 1 -type f -name '*raw-session-state*' -print -quit | grep -q .; then
-  echo "aggregate session-state delete left a targeted snapshot" >&2
+  echo "canonical snapshot delete left its target" >&2
   exit 1
 fi
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$session_state_name"
@@ -1013,8 +1001,8 @@ if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.re
   echo "actual latest restore did not emit exactly one closed outcome" >&2
   exit 1
 fi
-if ! grep -q '"event":"session-state.outcome".*"operation":"session-state.delete".*"source":"prune".*"item_count":2' "$session_state_log"; then
-  echo "aggregate delete did not project the exact deduplicated count" >&2
+if ! grep -q '"event":"session-state.outcome".*"operation":"session-state.delete".*"source":"manual".*"item_count":1' "$session_state_log"; then
+  echo "canonical delete did not project its exact item count" >&2
   exit 1
 fi
 if grep -q '"event":"command.outcome".*"command":"session-state"' "$session_state_log" ||
@@ -1031,11 +1019,11 @@ for raw in "$session_state_root" "$session_state_name" 'sleep 300' 'raw session-
 done
 
 # Create: change the real origin pane cwd to a run-unique project, then let
-# `current` ensure it and switch the attached control client to it.
+# `switch open` ensures it and switches the attached control client to it.
 create_root="$PROJMUX_SMOKE_WORKDIR/raw-create-project-$$"
 mkdir -p "$create_root"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" respawn-pane -k -t integration-smoke -c "$create_root" sleep 300
-run_inside_lifecycle current >"$PROJMUX_SMOKE_WORKDIR/lifecycle-create.out"
+run_inside_lifecycle switch open "$create_root" >"$PROJMUX_SMOKE_WORKDIR/lifecycle-create.out"
 
 # Deterministic real create failure: the production global pre-create hook
 # aborts before tmux new-session and the target remains absent.
@@ -1047,7 +1035,7 @@ CREATE_FAILURE_HOOK
 create_fail_root="$PROJMUX_SMOKE_WORKDIR/raw-create-failure-$$"
 mkdir -p "$create_fail_root"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" respawn-pane -k -t integration-smoke -c "$create_fail_root" sleep 300
-if run_inside_lifecycle current >"$PROJMUX_SMOKE_WORKDIR/lifecycle-create-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-create-fail.err"; then
+if run_inside_lifecycle switch open "$create_fail_root" >"$PROJMUX_SMOKE_WORKDIR/lifecycle-create-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-create-fail.err"; then
   echo "real pre-create failure unexpectedly succeeded" >&2
   exit 1
 fi
@@ -1055,8 +1043,8 @@ rm -f "$XDG_CONFIG_HOME/projmux/config.toml"
 
 # Switch success and failure through the formerly bypassing session-popup
 # surface. The missing target exercises a real tmux switch-client failure.
-run_inside_lifecycle session-popup open integration-smoke >"$PROJMUX_SMOKE_WORKDIR/lifecycle-switch.out"
-if run_inside_lifecycle session-popup open raw-missing-session >"$PROJMUX_SMOKE_WORKDIR/lifecycle-switch-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-switch-fail.err"; then
+run_inside_lifecycle internal session-popup open integration-smoke >"$PROJMUX_SMOKE_WORKDIR/lifecycle-switch.out"
+if run_inside_lifecycle internal session-popup open raw-missing-session >"$PROJMUX_SMOKE_WORKDIR/lifecycle-switch-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-switch-fail.err"; then
   echo "real missing-session switch unexpectedly succeeded" >&2
   exit 1
 fi
@@ -1068,7 +1056,7 @@ for session in raw-ephemeral-one raw-ephemeral-two; do
   env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t "=$session"
   env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
 done
-run_inside_lifecycle prune ephemeral --keep=0 >"$PROJMUX_SMOKE_WORKDIR/lifecycle-kill.out"
+run_inside_lifecycle runtime prune --keep=0 >"$PROJMUX_SMOKE_WORKDIR/lifecycle-kill.out"
 for session in raw-ephemeral-one raw-ephemeral-two; do
   if env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" has-session -t "=$session" 2>/dev/null; then
     echo "real prune did not kill $session" >&2
@@ -1084,7 +1072,7 @@ env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s 
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -t "$kill_race_target" -q @projmux_ephemeral 1
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t "=$kill_race_target"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
-if PROJMUX_KILL_RACE_TARGET="$kill_race_target" run_inside_lifecycle prune ephemeral --keep=0 >"$PROJMUX_SMOKE_WORKDIR/lifecycle-kill-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-kill-fail.err"; then
+if PROJMUX_KILL_RACE_TARGET="$kill_race_target" run_inside_lifecycle runtime prune --keep=0 >"$PROJMUX_SMOKE_WORKDIR/lifecycle-kill-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-kill-fail.err"; then
   echo "real kill race failure unexpectedly succeeded" >&2
   exit 1
 fi
@@ -1093,7 +1081,7 @@ fi
 # routing wrapper. The successful client is detached by a server query, not by
 # pane keystrokes or screen scraping.
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s raw-attach-success sleep 300
-attach_command="env -u TMUX -u TMUX_PANE TERM=xterm PATH=$lifecycle_path PROJMUX_REAL_TMUX=$real_tmux PROJMUX_SMOKE_TMUX_SOCKET=$PROJMUX_SMOKE_TMUX_SOCKET $bin session-popup open raw-attach-success"
+attach_command="env -u TMUX -u TMUX_PANE TERM=xterm PATH=$lifecycle_path PROJMUX_REAL_TMUX=$real_tmux PROJMUX_SMOKE_TMUX_SOCKET=$PROJMUX_SMOKE_TMUX_SOCKET $bin internal session-popup open raw-attach-success"
 timeout 10 script -qec "$attach_command" /dev/null >"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach.err" &
 attach_pid=$!
 attach_seen=0
@@ -1111,7 +1099,7 @@ if [[ "$attach_seen" != "1" ]]; then
 fi
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" detach-client -s raw-attach-success
 wait "$attach_pid"
-if timeout 10 script -qec "env -u TMUX -u TMUX_PANE TERM=xterm PATH=$lifecycle_path PROJMUX_REAL_TMUX=$real_tmux PROJMUX_SMOKE_TMUX_SOCKET=$PROJMUX_SMOKE_TMUX_SOCKET $bin session-popup open raw-attach-missing" /dev/null >"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach-fail.err"; then
+if timeout 10 script -qec "env -u TMUX -u TMUX_PANE TERM=xterm PATH=$lifecycle_path PROJMUX_REAL_TMUX=$real_tmux PROJMUX_SMOKE_TMUX_SOCKET=$PROJMUX_SMOKE_TMUX_SOCKET $bin internal session-popup open raw-attach-missing" /dev/null >"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach-fail.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach-fail.err"; then
   echo "real missing-session attach unexpectedly succeeded" >&2
   exit 1
 fi
@@ -1119,7 +1107,7 @@ fi
 # Apply classification: a real absent unique socket is unreachable, while an
 # executable/runner-style list failure remains the generic closed apply code.
 missing_apply_socket="missing-$PROJMUX_SMOKE_TMUX_SOCKET"
-"$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$missing_apply_socket" >"$PROJMUX_SMOKE_WORKDIR/apply-unreachable.out"
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$missing_apply_socket" >"$PROJMUX_SMOKE_WORKDIR/apply-unreachable.out"
 generic_mux_dir="$PROJMUX_SMOKE_WORKDIR/generic-apply-mux"
 mkdir -p "$generic_mux_dir"
 cat >"$generic_mux_dir/tmux" <<'GENERIC_TMUX'
@@ -1128,7 +1116,7 @@ echo "permission denied by deterministic integration runner" >&2
 exit 13
 GENERIC_TMUX
 chmod 0755 "$generic_mux_dir/tmux"
-PATH="$generic_mux_dir:$PATH" "$bin" tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket raw-generic-socket >"$PROJMUX_SMOKE_WORKDIR/apply-generic.out"
+PATH="$generic_mux_dir:$PATH" "$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket raw-generic-socket >"$PROJMUX_SMOKE_WORKDIR/apply-generic.out"
 
 # Stop only the control client process; the guarded trap owns the exact server.
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" detach-client -s integration-smoke >/dev/null 2>&1 || true
@@ -1205,10 +1193,10 @@ for raw in "$PROJMUX_SMOKE_TMUX_ACTUAL" "$PROJMUX_SMOKE_WORKDIR" raw-create-proj
   fi
 done
 
-"$bin" notify push --id integration-smoke --text "integration smoke" --target "integration-smoke" >"$PROJMUX_SMOKE_WORKDIR/notify-push.out"
-"$bin" notify list --json >"$PROJMUX_SMOKE_WORKDIR/notify-list.json"
+"$bin" create notification --id integration-smoke --text "integration smoke" --target "integration-smoke" >"$PROJMUX_SMOKE_WORKDIR/notify-push.out"
+"$bin" get notifications --json >"$PROJMUX_SMOKE_WORKDIR/notify-list.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/notify-list.json" "integration smoke"
-"$bin" notify ack integration-smoke >"$PROJMUX_SMOKE_WORKDIR/notify-ack.out"
+"$bin" notification ack integration-smoke >"$PROJMUX_SMOKE_WORKDIR/notify-ack.out"
 
 # Operational outcomes persist in the isolated XDG state tree. Read-only hot
 # paths and the viewer itself must not append, while an injected journal path
@@ -1225,7 +1213,7 @@ if [[ "$(stat -c '%a' "$XDG_STATE_HOME/projmux")" != "700" ]] ||
 fi
 
 before_read_only="$(wc -l <"$operations_log")"
-"$bin" status resources >"$PROJMUX_SMOKE_WORKDIR/resources-read-only.out"
+"$bin" internal status resources >"$PROJMUX_SMOKE_WORKDIR/resources-read-only.out"
 "$bin" diagnostics log --tail 1 --json --level info --component cli \
   >"$PROJMUX_SMOKE_WORKDIR/operations-tail.jsonl"
 after_read_only="$(wc -l <"$operations_log")"
@@ -1267,7 +1255,7 @@ assert_automatic_success_no_record attention-clear \
 assert_automatic_success_no_record attention-window \
   env TMUX="$automatic_tmux_env" "$bin" attention window "$automatic_window"
 assert_automatic_success_no_record session-state-autosave \
-  env TMUX="$automatic_tmux_env" "$bin" tmux autosave-session-state --quiet
+  env TMUX="$automatic_tmux_env" "$bin" internal tmux autosave-session-state --quiet
 assert_automatic_success_no_record recent-window-record \
   env TMUX="$automatic_tmux_env" "$bin" window record
 
@@ -1289,7 +1277,7 @@ fi
 
 chmod 0755 "$XDG_STATE_HOME/projmux" "$XDG_STATE_HOME/projmux/logs"
 chmod 0644 "$operations_log"
-"$bin" pin add "$smoke_root" >"$PROJMUX_SMOKE_WORKDIR/pin-add.out"
+"$bin" pin project add "$smoke_root" >"$PROJMUX_SMOKE_WORKDIR/pin-add.out"
 if [[ "$(stat -c '%a' "$XDG_STATE_HOME/projmux")" != "700" ]] ||
   [[ "$(stat -c '%a' "$XDG_STATE_HOME/projmux/logs")" != "700" ]] ||
   [[ "$(stat -c '%a' "$operations_log")" != "600" ]]; then
@@ -1300,7 +1288,7 @@ fi
 blocked_state="$PROJMUX_SMOKE_WORKDIR/blocked-state"
 printf 'not-a-directory\n' >"$blocked_state"
 set +e
-XDG_STATE_HOME="$blocked_state" "$bin" pin add "$smoke_root" \
+XDG_STATE_HOME="$blocked_state" "$bin" pin project add "$smoke_root" \
   >"$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.out" \
   2>"$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.err"
 blocked_status=$?

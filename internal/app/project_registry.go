@@ -559,7 +559,8 @@ func (r *registryReconciler) reapplySessionBindings(
 //
 // Minting is here because pairing cannot close the measured gap. Phase 1 taught
 // this path to adopt, and adoption needs an existing registry Pane to adopt
-// *into*; the panes `projmux ai split` produces have none, because that route
+// *into*; panes from the non-resource `projmux create agent` bridge have none,
+// because that route
 // registers nothing. On the measured machine one live pane out of seven had a
 // binding, and the operator's own active pane was not it -- which is what made
 // the shipped "omit the selector, act on the active target" behavior

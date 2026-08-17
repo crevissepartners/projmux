@@ -1156,32 +1156,6 @@ func (c *switchCommand) executeProjdirSettingsAction(action string, stdout, stde
 	}
 }
 
-// preferredProjdirEnv returns the effective env value for the repo root and
-// the variable name that supplied it. The value may be a PATH-style
-// multi-value; callers that persist a single canonical path should pass it
-// through firstProjdirPath first. An empty source string means the variable
-// was not set.
-func preferredProjdirEnv(lookup func(string) string) (string, string) {
-	raw := envValue(lookup, projdirEnvVar)
-	if strings.TrimSpace(raw) == "" {
-		return "", ""
-	}
-	return raw, projdirEnvVar
-}
-
-// firstProjdirPath returns the first non-empty entry of a PATH-style
-// PROJMUX_PROJDIR value. It returns an empty string when raw contains no
-// usable path. The entry is not cleaned; callers that want the canonical
-// path should run cleanOptionalPath afterwards.
-func firstProjdirPath(raw string) string {
-	for _, entry := range filepath.SplitList(raw) {
-		if strings.TrimSpace(entry) != "" {
-			return entry
-		}
-	}
-	return ""
-}
-
 // extraProjdirRoots returns the additional roots that follow the primary
 // entry in a PATH-style PROJMUX_PROJDIR value. The primary (first
 // non-empty) entry is excluded because it is already surfaced via

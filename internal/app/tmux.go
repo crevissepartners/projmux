@@ -1155,17 +1155,17 @@ func defaultPopupSessionsOptions(ctx tmuxPopupContext) inttmux.PopupOptions {
 
 func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux tmux popup-preview <session>")
-	fmt.Fprintln(w, "  projmux tmux popup-switch")
-	fmt.Fprintln(w, "  projmux tmux popup-sessions")
-	fmt.Fprintln(w, "  projmux tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|resource-inspector|ai-split-picker-right|ai-split-picker-down|ai-split-resume-right|ai-split-resume-down|ai-split-settings>")
-	fmt.Fprintln(w, "  projmux tmux rebalance-panes")
-	fmt.Fprintln(w, "  projmux tmux rename-pane <pane> <label>")
-	fmt.Fprintln(w, "  projmux tmux print-config [--bin <path>]")
-	fmt.Fprintln(w, "  projmux tmux print-app-config [--bin <path>]")
-	fmt.Fprintln(w, "  projmux tmux install [--bin <path>] [--config <path>] [--include <path>]")
-	fmt.Fprintln(w, "  projmux tmux install-app [--bin <path>] [--config <path>]")
-	fmt.Fprintln(w, "  projmux tmux apply [--bin <path>] [--config <path>] [--socket <name>]")
+	fmt.Fprintln(w, "  projmux internal tmux popup-preview <session>")
+	fmt.Fprintln(w, "  projmux internal tmux popup-switch")
+	fmt.Fprintln(w, "  projmux internal tmux popup-sessions")
+	fmt.Fprintln(w, "  projmux internal tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|resource-inspector|ai-split-picker-right|ai-split-picker-down|ai-split-resume-right|ai-split-resume-down|ai-split-settings>")
+	fmt.Fprintln(w, "  projmux internal tmux rebalance-panes")
+	fmt.Fprintln(w, "  projmux internal tmux rename-pane <pane> <label>")
+	fmt.Fprintln(w, "  projmux internal tmux print-config [--bin <path>]")
+	fmt.Fprintln(w, "  projmux internal tmux print-app-config [--bin <path>]")
+	fmt.Fprintln(w, "  projmux internal tmux install [--bin <path>] [--config <path>] [--include <path>]")
+	fmt.Fprintln(w, "  projmux internal tmux install-app [--bin <path>] [--config <path>]")
+	fmt.Fprintln(w, "  projmux internal tmux apply [--bin <path>] [--config <path>] [--socket <name>]")
 }
 
 type tmuxPopupToggleMode struct {

@@ -18,8 +18,8 @@ import (
 // suite with the one shape adoption cannot repair: a live tmux pane that has no
 // registry Pane to be adopted into at all.
 //
-// It is the measured state, not an invented one. `projmux ai split` issues no
-// registry call, so every pane it produced is an orphan; on the measured socket
+// It is the measured state, not an invented one. Panes created outside the
+// Registry have no resource counterpart; on the measured socket
 // one live pane out of seven carried a binding, and the operator's own active
 // pane was not it. `projmux delete pane` with no selector therefore refused with
 // "carries no @projmux_pane_uid" in exactly the pane the operator was sitting

@@ -1,337 +1,122 @@
 # AI Agent Shortcut Registration
 
-`projmux ai split` is intentionally tool-general: user-level shortcuts,
-skills, slash commands, terminal actions, and editor commands can all map to
-the same split contract.
+Use the canonical resource-create routes for user-level shortcuts, skills,
+slash commands, terminal actions, and editor commands:
 
 ```sh
-projmux ai split --agent <agent> <right|down>
-projmux ai split --agent <agent> [--force-agent] <right|down> -- <extra args...>
-projmux ai split --agent <agent> --print-pane-id <right|down> [-- <extra args...>]
+projmux create agent --provider <codex|claude|antigravity> [--placement right|down]
+projmux create agent --provider <provider> [--placement right|down] -- <extra args...>
+projmux create agent --provider <provider> [--placement right|down] -o pane-id [-- <extra args...>]
+projmux create pane [--placement right|down] [-o pane-id]
 ```
 
-Use this page for shareable registration patterns. Keep machine-local policy,
-private prompt text, and personal workflow recipes in your own dotfiles or
-local tool configuration, not in tracked repo docs.
+Provider shortcuts (`projmux create codex|claude|antigravity`) normalize to the
+same Agent route. Keep machine-local policy, private prompt text, and personal
+workflow recipes in user config or dotfiles rather than tracked project docs.
 
-## Command Contract
+## Command contract
 
-Choose a direct agent when a shortcut should always open that agent:
+Choose a direct provider when a shortcut must always open that provider:
 
 ```sh
-projmux ai split --agent codex right
-projmux ai split --agent claude down
+projmux create codex --placement right
+projmux create claude --placement down
 ```
 
-Every direct AI split invocation creates a new managed AI pane for the selected
-agent. Existing Codex, Claude, or Antigravity panes in the same project/session
-are left in place and are not selected by the shortcut. `right` and `down`
-choose where the new pane is created.
-
-Add the separator only when you have extra arguments for the selected agent:
+Each invocation creates a new managed Agent and Pane. Existing Agent panes are
+left in place. `--placement right|down` selects the tmux split axis; right is
+the default. Use `--` only when forwarding extra provider arguments:
 
 ```sh
-projmux ai split --agent codex right -- --model <model>
-projmux ai split --agent claude down -- <agent flags>
+projmux create codex --placement right -- --model <model>
+projmux create claude --placement down -- <agent flags>
 ```
 
-The `--` separates projmux arguments from agent arguments. Everything after
-that separator is passed to the resolved selected agent executable. It is not
-an executable override. In the examples above, projmux still chooses the
-configured `codex` or `claude` executable, creates the tmux split, sets pane
-metadata, applies the title watcher, and appends the tail arguments to the
-agent command.
+Everything after `--` reaches the configured provider executable. Placeholder
+model, permission, and agent flags are private customization examples, not
+project defaults. Omit the separator when there is no payload.
 
-Model, permission, and other agent flags are examples to customize privately in
-your user-level config. Avoid treating placeholder flags in this guide as
-project defaults or current recommendations. If there are no private extra
-arguments, omit the separator entirely; do not leave a trailing bare `--`.
+Settings > AI Settings > Enabled providers controls whether Claude, Codex, and
+Antigravity may launch. Canonical create routes respect that setting. There is
+no shared command-line override for a disabled provider; change Settings when
+the provider should become available. For a plain shell split use `projmux
+create pane`, not an Agent provider.
 
-Settings > AI Settings > Enabled agents is the source of truth for whether
-Claude, Codex, and Antigravity may be launched. Disabled agents do not appear in the
-selective picker, and direct shortcut commands such as
-`projmux ai split --agent codex right` fail clearly instead of launching. This
-is intentional: shortcuts are thin direct CLI wrappers and must respect the
-same disabled state as hand-written commands.
+Interactive provider and resume selection belong to the app's picker surfaces.
+CLI automation should choose an explicit provider or use `projmux agent resume
+<ref>` for an exact existing Agent.
 
-`--force-agent` is the only override, and it is explicit CLI policy for direct
-`--agent claude|codex|antigravity` launches. Do not put it in shared picker,
-default-mode, or general shortcut registrations. Use it only in a private
-one-shot command when you deliberately want to launch a disabled agent without
-changing Settings. If every AI agent is disabled, `--agent selective` still
-offers a plain `shell` split and guidance to re-enable Claude/Codex/Antigravity.
+### Automation pane handle
 
-`shell` and `selective` are not targets for extra agent arguments. Use them
-without a tail:
+Use `-o pane-id` only when an automation wrapper needs the newly created Pane
+as a stable follow-up handle:
 
 ```sh
-projmux ai split --agent shell right
-projmux ai split --agent selective down
-projmux ai split --agent resume right
+pane_id="$(projmux create codex --placement right -o pane-id -- "prompt")"
 ```
 
-`shell` opens a plain shell split. `selective` opens the existing picker, where
-the user chooses the launch mode interactively. `resume` opens the current
-project's resume-session picker; when no sessions exist it delegates to the
-same selective picker.
+Success prints exactly one `%N` Pane id. Without `-o pane-id`, the direct
+current-Window form defaults to no output. Failure to obtain a valid tmux Pane
+id is nonzero rather than a false success.
 
-### Automation Pane Handle
+## Naming pattern
 
-Use `--print-pane-id` only when an automation wrapper needs the new pane as a
-handle for later orchestration:
-
-```sh
-pane_id="$(projmux ai split --agent codex --print-pane-id right -- "prompt")"
-```
-
-Successful explicit `claude`, `codex`, `antigravity`, and `shell` launches
-print exactly one `%N` pane id line. The flag does not change how arguments
-after `--` reach the selected agent. Without the flag, stdout remains empty so
-existing manual shortcuts and Settings actions retain their behavior.
-
-The pane id is the existing tmux `split-window` return value. If tmux does not
-return a valid id, the command produces a non-zero, actionable error instead of
-a false success. Do not combine the flag with the saved default,
-`--agent selective`, or `--agent resume`; picker-backed paths are rejected
-before a picker or pane is opened. This is a one-line handle contract, not a
-JSON launch-result schema or a pane status/wait API.
-
-## Naming Pattern
-
-Pick names that encode the target agent and split direction, then keep the
-body as a small command wrapper.
-
-For Codex-style skill surfaces, names can follow:
+Encode the provider and placement in the registered name. A bare provider name
+may be a thin alias of its right-placement variant:
 
 ```text
-$projmux-<agent>-right
-$projmux-<agent>-down
+$projmux-codex       -> projmux create codex --placement right
+$projmux-codex-down  -> projmux create codex --placement down
+/projmux:claude      -> projmux create claude --placement right
+/projmux:claude-down -> projmux create claude --placement down
 ```
 
-Concrete examples:
+The same pattern works for editor commands, launchers, shell aliases, and
+terminal custom actions.
 
-```text
-$projmux-codex-right
-$projmux-claude-down
-$projmux-resume-right
-$projmux-resume-down
-```
+## Skill template
 
-For Claude-style slash-command surfaces, names can follow:
-
-```text
-/projmux:<agent>-right
-/projmux:<agent>-down
-```
-
-Concrete examples:
-
-```text
-/projmux:codex-right
-/projmux:claude-down
-/projmux:resume-right
-/projmux:resume-down
-```
-
-The same pattern also works for editor commands, launcher actions, shell
-aliases, or terminal custom actions. The important part is that the registered
-surface calls `projmux ai split --agent <agent> <direction>` and passes only
-agent flags after `--`.
-
-### Bare-Name Default
-
-When a surface registers a bare agent name without an explicit direction
-suffix, treat it as the `right` variant. `right` is the convention for the
-unqualified shortcut; `down` is always spelled out.
-
-For Codex-style skill surfaces:
-
-```text
-$projmux-codex      → projmux ai split --agent codex right
-$projmux-claude     → projmux ai split --agent claude right
-$projmux-resume     → projmux ai split --agent resume right
-```
-
-For Claude-style slash-command surfaces:
-
-```text
-/projmux:codex      → projmux ai split --agent codex right
-/projmux:claude     → projmux ai split --agent claude right
-/projmux:resume     → projmux ai split --agent resume right
-```
-
-Register the bare name as a thin alias of the `*-right` shortcut so that the
-two surfaces stay in lockstep. The `*-down` variant must be invoked by its
-full name; do not introduce a separate bare default for `down`.
-
-## Skill Template
-
-Use this shape when a tool lets you define a user-level skill that tells an
-agent to run a shell command. Actual loader paths vary by installation; the
-intended home is user-level config or dotfiles, not this repository.
-
-Example Codex-style skill file:
-
-```text
-~/.codex/skills/projmux-codex-right/SKILL.md
-```
+Example user-level Codex-style skill body:
 
 ````markdown
 ---
 name: projmux-codex-right
-description: Open a projmux-managed Codex split to the right.
+description: Open a projmux-managed Codex Pane to the right.
 ---
 
 Run this command:
 
 ```sh
-projmux ai split --agent codex right
-```
-
-If you have private Codex flags, use the explicit extra-args form instead:
-
-```sh
-projmux ai split --agent codex right -- --model <model>
+projmux create codex --placement right
 ```
 ````
 
-Non-Codex target example:
-
-```text
-~/.codex/skills/projmux-claude-down/SKILL.md
-```
-
-````markdown
----
-name: projmux-claude-down
-description: Open a projmux-managed Claude split below.
----
-
-Run this command:
+For a Claude-down variant, change only the description and command:
 
 ```sh
-projmux ai split --agent claude down
+projmux create claude --placement down
 ```
 
-If you have private Claude flags, use the explicit extra-args form instead:
+## Slash-command template
 
-```sh
-projmux ai split --agent claude down -- <agent flags>
-```
-````
-
-Resume picker examples:
-
-```text
-~/.codex/skills/projmux-resume-right/SKILL.md
-~/.codex/skills/projmux-resume-down/SKILL.md
-```
-
-````markdown
----
-name: projmux-resume-right
-description: Open a projmux-managed AI resume-session picker to the right.
----
-
-Run this command:
-
-```sh
-projmux ai split --agent resume right
-```
-````
-
-If your tool stores skills as JSON, TOML, or another format, keep the same
-fields conceptually:
-
-- Name: the user-facing shortcut, such as `$projmux-codex-right`.
-- Description: one sentence saying which agent and direction it opens.
-- Command: the `projmux ai split` invocation.
-- Arguments: optional agent arguments placed after `--`.
-
-## Slash Command Template
-
-Use this shape when a tool lets you define user-level slash commands. Actual
-loader paths and interpolation variables can vary by installation; user-level
-config or dotfiles is the intended home.
-
-```text
-~/.claude/commands/projmux/codex-right.md
-```
-
-This maps to a slash command named `/projmux:codex-right`:
-
-````markdown
-Open a Codex split to the right in the current projmux session.
-
-Run this command:
-
-```sh
-projmux ai split --agent codex right
-```
-````
-
-For an argument-aware wrapper, include the separator only when arguments are
-non-empty. Adapt this shell shape to the tool's command-file format:
+A user-level `/projmux:codex-right` command can carry this executable body:
 
 ```sh
 if [ -n "$ARGUMENTS" ]; then
-  projmux ai split --agent codex right -- $ARGUMENTS
+  projmux create codex --placement right -- $ARGUMENTS
 else
-  projmux ai split --agent codex right
+  projmux create codex --placement right
 fi
 ```
 
-Then invoke it with private agent flags only when needed, such as
-`/projmux:codex-right --model <model>`.
-
-For a Claude target, use a sibling file such as:
-
-```text
-~/.claude/commands/projmux/claude-down.md
-```
-
-This maps to `/projmux:claude-down`:
-
-````markdown
-Open a Claude split below in the current projmux session.
-
-Run this command:
-
-```sh
-projmux ai split --agent claude down
-```
-````
-
-For an argument-aware wrapper, use the same non-empty check:
-
-```sh
-if [ -n "$ARGUMENTS" ]; then
-  projmux ai split --agent claude down -- $ARGUMENTS
-else
-  projmux ai split --agent claude down
-fi
-```
-
-Then pass private Claude flags at invocation time only when needed, such as
-`/projmux:claude-down <agent flags>`.
-
-If the tool separates command metadata from the shell body, put only the
-`projmux ai split ...` line in the executable body. Avoid embedding
-machine-specific project roots, permission policies, or personal model choices
-in shared docs; put those in your private user-level command files.
+Adapt argument interpolation to the owning tool. Do not embed machine-specific
+project roots, permission policies, or model choices in shared docs.
 
 ## Checklist
 
-- Register shortcuts at user level in the AI tool, editor, launcher, or
-  terminal that owns the surface.
-- Use `--agent codex` or `--agent claude` when passing extra agent arguments.
-- Put agent flags after the separator, for example `-- --model <model>`.
-- Omit the separator entirely when there are no extra agent arguments.
-- Use `--agent shell` with no tail for a plain shell split.
-- Use `--agent selective` with no tail for the picker.
-- Use `--print-pane-id` only with an explicit direct
-  `claude|codex|antigravity|shell` target when an automation caller needs the
-  returned `%N` handle.
-- Treat a bare agent name (`/projmux:codex`, `$projmux-claude`) as the
-  `right` variant; spell out `*-down` shortcuts in full.
-- Keep tracked project docs and `AGENTS.md` free of private shortcut policy.
+- Register the shortcut in the user-level surface that owns it.
+- Use a canonical provider shortcut or `create agent --provider ...`.
+- Put provider arguments after `--`; omit it when the payload is empty.
+- Use `create pane` for a shell Pane.
+- Use `-o pane-id` only when automation consumes the returned `%N` handle.
+- Keep private workflow policy outside tracked project docs.

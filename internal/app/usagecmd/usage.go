@@ -1,4 +1,5 @@
-// Package usagecmd implements the `projmux usage` and `projmux status usage`
+// Package usagecmd implements `projmux agent usage` and the hidden
+// `projmux internal status usage`
 // command surfaces on top of internal/core/usage. It owns the CLI flag
 // parsing, adapter registry wiring, and the HUD/table/JSON rendering tiers.
 package usagecmd
@@ -29,7 +30,7 @@ import (
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
-// Command exposes the `projmux usage` and `projmux status usage`
+// Command exposes `projmux agent usage` and `projmux internal status usage`
 // surfaces. Both share a single Manager so collect-once-render-twice stays
 // cheap.
 type Command struct {
@@ -113,7 +114,7 @@ const staleAfter = 10 * time.Minute
 // 5-hour window than the one currently active.
 const veryStaleAfter = 1 * time.Hour
 
-// Run implements `projmux usage [...]`.
+// Run implements `projmux agent usage [...]`.
 func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -205,7 +206,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 // statusRefreshThrottle is the minimum interval between adapter walks
-// triggered by `projmux status usage` or the manual HUD refresh key. tmux
+// triggered by `projmux internal status usage` or the manual HUD refresh key. tmux
 // refreshes the status line every 5s by default; 30s gives the cache enough
 // breathing room while keeping the displayed numbers fresh on a human
 // timescale. Adapters that implement ThrottleHinter (e.g. Claude → 60s)
@@ -233,7 +234,7 @@ func (c *Command) MaybeCollect(ctx context.Context) (bool, error) {
 	return mgr.MaybeCollect(ctx, statusRefreshThrottle)
 }
 
-// RunStatus implements the `projmux status usage` subcommand. It triggers
+// RunStatus implements the `projmux internal status usage` subcommand. It triggers
 // an opportunistic, throttled cache refresh (so a fresh install or a stale
 // cache self-heals on the next tmux redraw) and then reads the persisted
 // cache to render the HUD segment. Adapter failures during this hot path
@@ -242,7 +243,7 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("status usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	maxWidth := fs.Int("max-width", 0, "truncate output to N runes (0 = no truncation)")
-	// --force / -f mirrors the `projmux usage` flag: bypass throttle
+	// --force / -f mirrors the `projmux agent usage` flag: bypass throttle
 	// and clear active backoff. Suitable for tmux key bindings that
 	// trigger an explicit "refresh now" gesture.
 	force := fs.Bool("force", false, "bypass per-adapter throttle and clear active backoff before refreshing")
@@ -624,7 +625,7 @@ func normalizeUsageModelScope(models []string) []string {
 	return out
 }
 
-// jsonSnapshot is the wire shape emitted by `projmux usage --json`. It
+// jsonSnapshot is the wire shape emitted by `projmux agent usage --json`. It
 // extends the core Snapshot with a per-row `stale` boolean so callers
 // (e.g. dashboards, tmux modules) can flag stale data without
 // re-implementing the staleness rule.
@@ -1570,8 +1571,8 @@ func runeLen(s string) int {
 
 func printUsageHelp(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all] [--json] [--force|-f]")
-	fmt.Fprintln(w, "  projmux status usage [--max-width N] [--force|-f]")
+	fmt.Fprintln(w, "  projmux agent usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all] [--json] [--force|-f]")
+	fmt.Fprintln(w, "  projmux internal status usage [--max-width N] [--force|-f]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")
 	fmt.Fprintln(w, "  --force, -f   bypass per-adapter throttle and clear active backoff before refreshing.")

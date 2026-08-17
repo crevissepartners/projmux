@@ -86,6 +86,12 @@ func RequestedHelp(args []string) (HelpTarget, bool) {
 	if !ok {
 		return HelpTarget{}, false
 	}
+	// Retired compatibility bridges are error tombstones, not help surfaces.
+	// Let their handlers return exit 2 and the migration replacement even when
+	// the removed argv contains a help flag.
+	if route.Retired {
+		return HelpTarget{}, false
+	}
 	return HelpTarget{Path: path, Route: route}, true
 }
 

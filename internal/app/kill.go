@@ -262,6 +262,6 @@ func normalizeTaggedItems(command string, args []string, stderr io.Writer) ([]st
 
 func printKillUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux kill tagged")
-	fmt.Fprintln(w, "  projmux kill tagged <session>...")
+	fmt.Fprintln(w, "  projmux runtime stop")
+	fmt.Fprintln(w, "  projmux runtime stop <session>...")
 }

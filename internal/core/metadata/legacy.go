@@ -473,7 +473,8 @@ func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID
 //
 // Adoption alone cannot reach this state. Adoption pairs a live tmux object
 // with a registry object that already exists, and a pane produced by a route
-// that registers nothing -- `projmux ai split` is the measured one -- has no
+// that registers nothing -- the non-resource `projmux create agent` bridge is
+// the measured one -- has no
 // registry counterpart to pair with. Those panes stayed permanently unbound, so
 // `projmux delete pane` with no selector kept refusing with "carries no
 // @projmux_pane_uid" in the operator's own active pane. Something has to be

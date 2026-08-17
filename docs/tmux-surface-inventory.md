@@ -12,8 +12,8 @@ Primary production sources:
 - `internal/integrations/tmux/`
 - `internal/integrations/sessionstate/`
 - `internal/app/`
-- generated config from `projmux tmux print-config`,
-  `projmux tmux print-app-config`, and `projmux shell`
+- generated config from `projmux config render standalone`,
+  `projmux config render app`, and `projmux shell`
 
 Support and fixture sources:
 

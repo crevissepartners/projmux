@@ -56,7 +56,7 @@ Classification:
 
 | Family | Examples | Class | Phase 0 policy |
 | --- | --- | --- | --- |
-| CLI flag help and usage | `--text`, `--target`, `notify push`, usage errors | `translate` | Inventory only; convert in catalog phases. |
+| CLI flag help and usage | `--text`, `--target`, `create notification`, usage errors | `translate` | Inventory only; convert in catalog phases. |
 | Queue row labels and action hints | ack, clear, focus, open, reconcile labels | `translate` | Inventory only; convert in catalog phases. |
 | Statusbar compact text | notify count, age, stale/gone hints | `translate` | Inventory only; needs compact locale formatter later. |
 | Source/severity enum values | `ai`, `k8s`, `git`, `external`, `critical` | `literal` | Preserve exactly. |
@@ -302,7 +302,7 @@ Runtime surfaces migrated:
 - AI desktop notification summaries for Codex, Claude, and Antigravity hook
   payloads.
 - In-app notify queue table/sidebar/statusbar display text for AI entries.
-- Notify live explanation text for `projmux notify list --live`.
+- Notify live explanation text for `projmux get notifications --live`.
 - Sidebar/table/statusbar age formatting and sidebar stale/gone/target labels.
 
 Storage and dispatch policy:
@@ -313,7 +313,7 @@ Storage and dispatch policy:
 - OS notification click/focus routing is unchanged. Locale formatting only
   changes the summary/body strings sent to the configured notifier.
 - JSON queue payloads keep raw queue entries. Localized live-row explanation
-  and row display text may appear in `notify list --live` row fields because
+  and row display text may appear in `get notifications --live` row fields because
   those fields are render/report output, not stored queue schema.
 
 Literal preservation and parity rules:

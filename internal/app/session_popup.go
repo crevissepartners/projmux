@@ -375,8 +375,8 @@ func parseSessionPopupCycleArgs(command string, args []string, stderr io.Writer)
 
 func printSessionPopupUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux session-popup preview <session>")
-	fmt.Fprintln(w, "  projmux session-popup open <session>")
-	fmt.Fprintln(w, "  projmux session-popup cycle-pane <session> <next|prev>")
-	fmt.Fprintln(w, "  projmux session-popup cycle-window <session> <next|prev>")
+	fmt.Fprintln(w, "  projmux internal session-popup preview <session>")
+	fmt.Fprintln(w, "  projmux internal session-popup open <session>")
+	fmt.Fprintln(w, "  projmux internal session-popup cycle-pane <session> <next|prev>")
+	fmt.Fprintln(w, "  projmux internal session-popup cycle-window <session> <next|prev>")
 }

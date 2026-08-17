@@ -1,5 +1,9 @@
 # Standalone Plan
 
+> Historical migration record. Command spellings below describe the original
+> shell-to-Go plan and are not current executable guidance; use the generated
+> CLI reference for supported commands.
+
 ## Goal
 
 Keep session-management product logic inside `projmux`.

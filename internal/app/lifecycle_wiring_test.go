@@ -45,9 +45,9 @@ func TestLifecycleMutationSurfaceInventoryUsesSharedRecorder(t *testing.T) {
 	application := NewWithLifecycleDiagnostics(recorder)
 
 	wantInventory := []string{
-		"attach auto", "current", "kill tagged", "sessions open/kill",
-		"switch create/restore/open/kill", "tmux apply", "session-popup open",
-		"window recent", "prune ephemeral", "focus switch-client", "shell open-app",
+		"runtime attach", "runtime stop", "runtime sessions open/kill",
+		"switch create/restore/open/kill", "internal tmux apply", "internal session-popup open",
+		"window recent", "runtime prune", "internal focus switch-client", "shell open-app",
 		"snapshot replay create", "popup-toggle cancel restore",
 	}
 	if !reflect.DeepEqual(lifecycleMutationSurfaceInventory, wantInventory) {
@@ -57,10 +57,9 @@ func TestLifecycleMutationSurfaceInventoryUsesSharedRecorder(t *testing.T) {
 	// tmux/client_test.go (baseline + replay), and tmux_test.go (apply + popup
 	// restore), so fields alone cannot satisfy the maintained contract.
 	surfaces := map[string]*diagnostics.LifecycleRecorder{
-		"attach auto":        application.attach.diagnostics,
-		"current":            application.current.diagnostics,
-		"kill tagged":        application.kill.diagnostics,
-		"sessions open/kill": application.sessions.diagnostics,
+		"runtime attach":     application.attach.diagnostics,
+		"runtime stop":       application.kill.diagnostics,
+		"runtime sessions":   application.sessions.diagnostics,
 		"switch mutations":   application.switcher.diagnostics,
 		"tmux apply/restore": application.tmux.diagnostics,
 		"session-popup open": application.sessionPopup.diagnostics,

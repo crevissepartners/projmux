@@ -42,7 +42,7 @@ func TestAppRunSessionPopupPreview(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := app.Run([]string{"session-popup", "preview", "dev"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"internal", "session-popup", "preview", "dev"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestAppRunSessionPopupCyclePane(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := app.Run([]string{"session-popup", "cycle-pane", "dev", "next"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"internal", "session-popup", "cycle-pane", "dev", "next"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -245,7 +245,7 @@ func TestAppRunSessionPopupOpen(t *testing.T) {
 		},
 	}
 
-	if err := app.Run([]string{"session-popup", "open", "dev"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := app.Run([]string{"internal", "session-popup", "open", "dev"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 

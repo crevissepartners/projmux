@@ -534,7 +534,7 @@ func TestFocus_AppDispatcherRoutesFocus(t *testing.T) {
 	stderr := &bytes.Buffer{}
 	// Use a benign argument set that should fail target parsing fast (so the
 	// command is reachable through the dispatcher without shelling out).
-	err := app.Run([]string{"focus", "--target", ""}, stdout, stderr)
+	err := app.Run([]string{"internal", "focus", "--target", ""}, stdout, stderr)
 	if err == nil {
 		t.Fatalf("expected dispatcher to surface focus parse error, got nil")
 	}

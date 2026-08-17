@@ -440,7 +440,7 @@ func TestDoctorRunIncludesManualSessionStatePruneGuidance(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Session State retention",
-		"projmux prune session-state",
+		"projmux prune snapshot",
 		"delete only by explicit name",
 	} {
 		if !strings.Contains(stdout.String(), want) {

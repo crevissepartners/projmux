@@ -24,7 +24,7 @@ func TestAppRunTagList(t *testing.T) {
 		},
 	}
 
-	if err := app.Run([]string{"tag", "list"}, &stdout, &stderr); err != nil {
+	if err := app.Run([]string{"runtime", "tag", "list"}, &stdout, &stderr); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if got, want := stdout.String(), "session-a\nsession-b\n"; got != want {
