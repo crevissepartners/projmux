@@ -91,6 +91,17 @@ func loadResourceRegistry() (coremetadata.Registry, error) {
 	return intmetadata.NewDefaultStore(paths).LoadReadOnly()
 }
 
+// snapshotResourceRegistry is the stricter read required by a reconciliation
+// preview: even an existing Registry is read without a lock file or permission
+// repair, relying on the store's atomic-replace writer boundary.
+func snapshotResourceRegistry() (coremetadata.Registry, error) {
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return coremetadata.Registry{}, fmt.Errorf("resolve projmux state paths: %w", err)
+	}
+	return intmetadata.NewDefaultStore(paths).LoadSnapshot()
+}
+
 // Run dispatches one `get <kind>` invocation.
 func (c *getCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {

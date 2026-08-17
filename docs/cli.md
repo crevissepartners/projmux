@@ -43,6 +43,7 @@ projmux <command> [args...]
 | [`projmux pin`](#projmux-pin) | compatibility | Manage pinned project directories |
 | [`projmux prune`](#projmux-prune) | compatibility | Trim stale lifecycle state and inspect preserved snapshots |
 | [`projmux quit`](#projmux-quit) | shortcut | Quit the app-owned projmux tmux runtime |
+| [`projmux reconcile`](#projmux-reconcile) | canonical | Preview or repair Registry and exact tmux resource drift |
 | [`projmux rebind`](#projmux-rebind) | canonical | Rebind a Project to a new absolute root without moving files |
 | [`projmux rename`](#projmux-rename) | canonical | Rename a Projmux resource metadata.name |
 | [`projmux resources`](#projmux-resources) | shortcut | Inspect live Project, Window, and Pane CPU/RSS attribution |
@@ -1121,6 +1122,30 @@ Quit the app-owned projmux tmux runtime
 
 ```
 projmux quit [--yes|--force]
+```
+
+## `projmux reconcile`
+
+Preview or repair Registry and exact tmux resource drift
+
+```
+projmux reconcile resources [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux reconcile resources`](#projmux-reconcile-resources) | Preview or repair safe Registry and tmux UID, owner, and runtime drift on one exact socket |
+
+Canonical spelling: `projmux reconcile resources`
+
+### `projmux reconcile resources`
+
+Preview or repair safe Registry and tmux UID, owner, and runtime drift on one exact socket
+
+```
+projmux reconcile resources [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 ## `projmux rebind`

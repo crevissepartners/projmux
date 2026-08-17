@@ -24,6 +24,7 @@ preview hidden=true disableFlagParsing=true args=true children=0
 prune hidden=false disableFlagParsing=true args=true children=0
 quit hidden=false disableFlagParsing=true args=true children=0
 rebind hidden=false disableFlagParsing=true args=true children=0
+reconcile hidden=false disableFlagParsing=true args=true children=0
 rename hidden=false disableFlagParsing=true args=true children=0
 resources hidden=false disableFlagParsing=true args=true children=0
 restore hidden=false disableFlagParsing=true args=true children=0

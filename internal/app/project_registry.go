@@ -62,6 +62,19 @@ type registryReconciler struct {
 	shell string
 	// sessionNameFor maps a Project root onto its persistent tmux session name.
 	sessionNameFor func(root string) string
+	// refuseForeign is enabled only by the public repair planner. It keeps an
+	// unknown live uid observable and untouched; lifecycle convergence retains
+	// the historical mint-and-rebind behavior.
+	refuseForeign bool
+	// refusedSessions is populated only by the public repair planner after it
+	// observes a foreign or ambiguous Project binding. Lifecycle reconciliation
+	// leaves it nil and retains its existing behavior.
+	refusedSessions map[string]bool
+	refusedRoots    map[string]bool
+	// targetLiveOnly keeps the public exact-socket repair scoped to resources
+	// observed on that server. Lifecycle mutation retains configured-root
+	// bootstrap registration.
+	targetLiveOnly bool
 }
 
 func newRegistryReconciler(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
@@ -150,14 +163,20 @@ func (r *registryReconciler) reconcile(ctx context.Context, working *coremetadat
 	// tmux object -- so adoption can decline to steal one. It is read before
 	// anything in this pass writes, which is what makes "already bound" mean
 	// "bound before we got here".
-	binder := coremetadata.NewBindingMatcher(observeRuntime(ctx, r.mirror))
+	runtime := observeRuntime(ctx, r.mirror)
+	binder := coremetadata.NewBindingMatcher(runtime)
+	if r.refuseForeign {
+		binder = coremetadata.NewRepairBindingMatcher(runtime)
+	}
 
 	unresolved, err := r.importLiveSessions(ctx, working, mutator, operationID, live, binder)
 	if err != nil {
 		return err
 	}
-	if err := r.registerDiscoveredRoots(working, mutator, operationID); err != nil {
-		return err
+	if !r.targetLiveOnly {
+		if err := r.registerDiscoveredRoots(working, mutator, operationID); err != nil {
+			return err
+		}
 	}
 	if err := mutator.ObserveProjectRoots(working); err != nil {
 		return err
@@ -251,6 +270,25 @@ func (r *registryReconciler) importLiveSessions(
 			// with either, so it is not handed on.
 			continue
 		}
+		if r.refusedSessions[name] {
+			if strings.TrimSpace(legacy.Root) != "" {
+				r.refusedRoots[candidates.CanonicalPath(legacy.Root)] = true
+			}
+			continue
+		}
+		if r.refuseForeign && strings.TrimSpace(legacy.Root) != "" {
+			projectUID := ""
+			if project, ok := working.ProjectByRoot(legacy.Root); ok {
+				projectUID = project.Metadata.UID
+			}
+			if resourceSessionHasUnsafeBinding(*working, projectUID, legacy) {
+				r.refusedSessions[name] = true
+				if strings.TrimSpace(legacy.Root) != "" {
+					r.refusedRoots[candidates.CanonicalPath(legacy.Root)] = true
+				}
+				continue
+			}
+		}
 		if strings.TrimSpace(legacy.Root) == "" {
 			unresolved = append(unresolved, observedSession{name: name, legacy: legacy, targets: targets})
 			continue
@@ -317,12 +355,63 @@ func (r *registryReconciler) reapplyUnresolvedBindings(
 	}
 	scope := r.projectsBySessionName(*working)
 	for _, session := range sessions {
+		if r.refusedSessions[session.name] {
+			continue
+		}
 		projectUID := scope[session.name]
 		if projectUID == "" {
 			continue
 		}
+		if r.refuseForeign && resourceSessionHasUnsafeBinding(*working, projectUID, session.legacy) {
+			r.refusedSessions[session.name] = true
+			continue
+		}
 		r.reapplySessionBindings(ctx, working, mutator, operationID, projectUID, session, binder)
 	}
+}
+
+// resourceSessionHasUnsafeBinding is the public repair containment gate. One
+// foreign or ambiguous uid makes the whole live session diagnostic-only so an
+// ordinal adoption later in the same session cannot slide onto the wrong
+// Registry object after the refused row.
+func resourceSessionHasUnsafeBinding(registry coremetadata.Registry, projectUID string, legacy coremetadata.LegacySession) bool {
+	seen := map[string]bool{}
+	for _, liveWindow := range legacy.Windows {
+		windowUID := strings.TrimSpace(liveWindow.UID)
+		if windowUID != "" {
+			if seen[windowUID] {
+				return true
+			}
+			seen[windowUID] = true
+			window, ok := registry.Window(windowUID)
+			if !ok || projectUID == "" || window.Metadata.OwnerUID() != projectUID {
+				return true
+			}
+		}
+		for _, livePane := range liveWindow.Panes {
+			paneUID := strings.TrimSpace(livePane.UID)
+			if paneUID == "" {
+				continue
+			}
+			if strings.HasPrefix(paneUID, coremetadata.DeletedPaneMirrorPrefix) || seen[paneUID] {
+				return true
+			}
+			seen[paneUID] = true
+			pane, ok := registry.Pane(paneUID)
+			if !ok {
+				return true
+			}
+			ownerUID := pane.Metadata.OwnerUID()
+			if ownerUID == windowUID && windowUID != "" {
+				continue
+			}
+			agent, ok := registry.Agent(ownerUID)
+			if windowUID == "" || !ok || agent.Metadata.OwnerUID() != windowUID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // projectsBySessionName maps a live tmux session name onto the one Project that
@@ -594,6 +683,9 @@ func (r *registryReconciler) registerDiscoveredRoots(working *coremetadata.Regis
 		registered[candidates.CanonicalPath(project.Spec.Root)] = true
 	}
 	for _, root := range roots {
+		if r.refusedRoots[candidates.CanonicalPath(root)] {
+			continue
+		}
 		key := candidates.CanonicalPath(root)
 		if key == "" || registered[key] {
 			continue

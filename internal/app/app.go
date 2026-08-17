@@ -108,6 +108,7 @@ type App struct {
 	hook         *hookCommand
 	internal     *internalCommand
 	rebind       *rebindCommand
+	reconcile    *resourceReconcileCommand
 	rename       *renameCommand
 	restore      *restoreCommand
 	runtime      *runtimeCommand
@@ -195,6 +196,9 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	focusCmd.notifyDiagnostics = notifyFocusDiagnostics
 	resourcesCmd := newResourceCommand()
 	resourcesCmd.diagnostics = resourceOperationalDiagnostics
+	// Public resource repair is wired beside the resource command graph rather
+	// than lifecycle/AI tmux wiring so those independent seams can rebase cleanly.
+	reconcileCmd := newResourceReconcileCommand(tmuxCmd)
 	// Canonical verb-to-kind routes. The registry-backed kinds own their own
 	// handler; the kinds whose behavior already exists forward raw argv to the
 	// current handler, so the canonical spelling is a parity alias rather than a
@@ -272,6 +276,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		hook:         newHookCommand(),
 		internal:     internalCmd,
 		rebind:       newRebindCommand(),
+		reconcile:    reconcileCmd,
 		rename:       newRenameCommand(),
 		restore:      restoreCmd,
 		runtime:      runtimeCmd,
@@ -363,6 +368,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"prune":          a.prune,
 		"quit":           a.quit,
 		"rebind":         a.rebind,
+		"reconcile":      a.reconcile,
 		"rename":         a.rename,
 		"resources":      a.resources,
 		"restore":        a.restore,
@@ -432,7 +438,7 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	// (`get notifications`, `get snapshots`) therefore skip a pre-dispatch write
 	// their current spellings still perform; their stdout, stderr, and exit code
 	// are unchanged.
-	case "doctor", "get", "describe":
+	case "doctor", "get", "describe", "reconcile":
 		return false
 	}
 	return !(len(args) >= 2 && args[0] == "diagnostics" && args[1] == "report")

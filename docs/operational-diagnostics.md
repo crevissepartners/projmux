@@ -166,6 +166,23 @@ include their closed enums after hashing run/version correlation. The report's
 existing error-only projection omits partial/stale and never exports metrics or
 identity.
 
+### Resource drift diagnosis and repair
+
+`projmux doctor` remains a read-only health report. Registry/tmux identity drift
+is diagnosed and, only when explicitly requested, repaired with
+`projmux reconcile resources`. Its human and `-o json` result are the operation
+record: exact socket target, deterministic missing/stale/foreign/orphan items,
+changed/no-op/failed counts, completed stages, remaining drift, and an exact
+retry command after partial failure.
+
+`--dry-run` performs no Registry, tmux, or filesystem write. Execute commits
+Registry authority before live mirror writes, prevalidates exact targets, and
+never guesses or falls back to another socket. A failed Registry commit exposes
+no allocated UID to tmux; a live-write failure keeps the durable identity
+retryable and reports what completed. The report omits Registry source bytes,
+prompt/credential data, and private hook payloads. No `config apply` or
+unrelated configuration reload is part of diagnosis or repair.
+
 The diagnostics package exposes a typed `ReadRuntimeHealth` projection for
 read-only Doctor consumers. It reports the fixed `tmux` backend, latest
 socket/apply state, and a bounded tail/count of safe failures using only

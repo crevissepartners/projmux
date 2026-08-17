@@ -27,6 +27,7 @@ import (
 // fails validation leaves the file byte-identical.
 type resourceStore struct {
 	load             func() (coremetadata.Registry, error)
+	snapshot         func() (coremetadata.Registry, error)
 	update           func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
 	updateConvergent func(func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error)
 	mutator          func() coremetadata.Mutator
@@ -34,9 +35,10 @@ type resourceStore struct {
 
 func newResourceStore() *resourceStore {
 	return &resourceStore{
-		load:    loadResourceRegistry,
-		update:  updateResourceRegistry,
-		mutator: intmetadata.DefaultMutator,
+		load:     loadResourceRegistry,
+		snapshot: snapshotResourceRegistry,
+		update:   updateResourceRegistry,
+		mutator:  intmetadata.DefaultMutator,
 		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
 			paths, err := config.DefaultPathsFromEnv()
 			if err != nil {

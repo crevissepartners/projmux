@@ -155,6 +155,51 @@ the only projection it accepts. `projmux get pane` with no selector resolves a
 registry **Pane resource** and renders the shared resource projection. Different
 source, different output, different failure surface — both stay.
 
+## reconcile resources
+
+```text
+projmux reconcile resources [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+```
+
+`reconcile resources` is the explicit repair boundary for drift between the
+authoritative resource Registry and one exact tmux server. `--dry-run` and the
+default execute mode use the same deterministic plan. The plan classifies
+missing, stale, foreign, and orphan state; separates Registry changes from tmux
+mirror writes; and reports the target plus changed, no-op, and failed counts.
+`-o json` emits the same item keys, order, outcomes, remaining drift, completed
+stages, and retry command as structured data.
+
+Socket selection is fail closed:
+
+- `--socket <name>` means exactly `tmux -L <name>`.
+- `--socket-path <absolute>` means exactly `tmux -S <absolute>`.
+- The two flags are mutually exclusive.
+- With neither flag, an invocation inside tmux inherits only the absolute
+  socket path from `$TMUX` and uses `-S`.
+- With neither flag outside tmux, the command is a usage error before the
+  Registry, filesystem, or tmux is mutated. There is no default-socket guess or
+  fallback to another server.
+
+Dry-run performs only reads: Registry bytes, tmux options/window names, and
+other filesystem state stay unchanged. Execute rebuilds the plan from current
+state while holding the Registry lock, commits Registry authority first, then
+prevalidates every exact live UID target before replaying the planned mirror
+writes. A repeat against converged state is a no-op. Foreign or ambiguous live
+UIDs are reported and refused rather than merged or replaced; unrelated
+resources and sockets are not touched.
+
+If Registry commit or a live mirror write fails, the result identifies the
+completed stages, replans the remaining drift, and prints an exact
+`projmux reconcile resources ...` retry. Registry commit failure publishes no
+planned UID into tmux; a later tmux failure leaves the already durable Registry
+identity authoritative and retryable.
+
+`doctor`, `get`, and `describe` remain read-only. `doctor` reports general
+runtime/integration health; `reconcile resources` is the opt-in repair command.
+It does not run `config apply`, reload unrelated configuration, reconstruct a
+missing Registry, heuristically merge identities, or turn a read verb into a
+write transaction.
+
 ## Internal plumbing (`projmux internal ...`)
 
 `internal` is a hidden namespace for the routes generated tmux config, tmux

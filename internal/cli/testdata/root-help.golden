@@ -20,6 +20,7 @@ Commands:
   pin       Manage pinned project directories
   prune     Trim stale lifecycle state and inspect preserved snapshots
   quit      Quit the app-owned projmux tmux runtime
+  reconcile Preview or repair Registry and exact tmux resource drift
   rebind    Rebind a Project to a new absolute root without moving files
   rename    Rename a Projmux resource metadata.name
   resources Inspect live Project, Window, and Pane CPU/RSS attribution

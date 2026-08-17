@@ -115,6 +115,11 @@ type BindingMatcher struct {
 	runtime RuntimeObservation
 	// claimed is every registry uid this pass has already paired.
 	claimed map[string]bool
+	// refuseForeign keeps public repair from replacing a live uid that the
+	// authoritative Registry does not know. Lifecycle convergence preserves its
+	// historical mint-and-rebind behavior; explicit reconciliation reports the
+	// drift and leaves the object untouched instead.
+	refuseForeign bool
 }
 
 // DeletedPaneMirrorPrefix marks a live Pane whose Registry resource was
@@ -132,6 +137,13 @@ const DeletedPaneMirrorPrefix = "deleted:"
 // decline to protect one that no longer exists.
 func NewBindingMatcher(runtime RuntimeObservation) *BindingMatcher {
 	return &BindingMatcher{runtime: runtime, claimed: map[string]bool{}}
+}
+
+// NewRepairBindingMatcher builds the fail-closed matcher used by explicit
+// resource reconciliation. Unknown live uids are diagnostic evidence, not an
+// invitation to mint a replacement identity.
+func NewRepairBindingMatcher(runtime RuntimeObservation) *BindingMatcher {
+	return &BindingMatcher{runtime: runtime, claimed: map[string]bool{}, refuseForeign: true}
 }
 
 // Claim marks a registry uid as paired for the rest of the pass.
@@ -252,6 +264,9 @@ func (b *BindingMatcher) match(
 	if observedUID != "" {
 		switch {
 		case !known(observedUID):
+			if b.refuseForeign {
+				return AdoptionMatch{Kind: AdoptionRefused}
+			}
 			return AdoptionMatch{Kind: AdoptionForeign}
 		case !ownedByScope(observedUID) || b.claimed[observedUID]:
 			return AdoptionMatch{Kind: AdoptionRefused}

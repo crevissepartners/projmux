@@ -12,11 +12,12 @@ import (
 // hidden, to hold exactly one primary disposition, with zero orphan routes,
 // before any later Phase may move a namespace.
 //
-// The public count is 38: the 33 routes inventoried by the compatibility
-// contract plus 10 canonical nodes added by later Phases -- `get` from the
+// The public count is 39: the 33 routes inventoried by the compatibility
+// contract plus 11 canonical nodes added by later Phases -- `get` from the
 // selector Phase, `delete`, `describe`, `rebind`, `rename`, `restore`, and
 // `runtime` from the public verb-to-kind Phase, `agent` and `create` from the
-// Agent namespace Phase, and `config` from the public-spelling Phase -- minus
+// Agent namespace Phase, `config` from the public-spelling Phase, and
+// `reconcile` from explicit resource repair -- minus
 // the 5 internal plumbing routes the internal isolation Phase moved out of the
 // primary listing. Every one of the 33 inventoried routes is still present,
 // still dispatchable, and still holds exactly one disposition; hiding is not
@@ -57,8 +58,8 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 38 {
-		t.Fatalf("public route count = %d, want 38", public)
+	if public != 39 {
+		t.Fatalf("public route count = %d, want 39", public)
 	}
 	// The 2 original hidden helpers, the 5 plumbing routes the internal
 	// isolation Phase hid, and the `internal` namespace itself.
@@ -66,8 +67,8 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		t.Fatalf("hidden route count = %d, want 8", hidden)
 	}
 	// The classification tally from the compatibility contract, counted over
-	// the 38 public top-level routes. Canonical is 18 rather than the
-	// contract's 8 because the 10 canonical verb/domain nodes are new surface,
+	// the 39 public top-level routes. Canonical is 19 rather than the
+	// contract's 8 because the 11 canonical verb/domain nodes are new surface,
 	// not members of the 33 inventoried current routes.
 	//
 	// The public internal count is 0: that is the whole point of the internal
@@ -77,7 +78,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	// route was removed or reclassified along the way -- in particular `ai` and
 	// `usage` are still public compatibility routes.
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical:     18,
+		DispositionCanonical:     19,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 	}
@@ -86,7 +87,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	}
 	// Every hidden route is internal plumbing.
 	wantTally := map[Disposition]int{
-		DispositionCanonical:     18,
+		DispositionCanonical:     19,
 		DispositionShortcut:      7,
 		DispositionCompatibility: 13,
 		DispositionInternal:      8,
@@ -96,18 +97,19 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	}
 }
 
-// Binding convergence is lifecycle plumbing inside the existing raw tmux
-// handler. It must not become a public option or a catalogued route: doing so
-// would widen the CLI surface for an apply/lifecycle-only mutation boundary.
-func TestManagedBindingConvergenceIsAbsentFromTheCommandCatalog(t *testing.T) {
+// The hidden reconcile-bindings spelling stays lifecycle plumbing. The public
+// resource repair route may expose --socket-path, but no other route may borrow
+// that exact-server mutation contract by accident.
+func TestManagedBindingConvergenceStaysHiddenBehindPublicResourceRepair(t *testing.T) {
 	t.Parallel()
 
 	walkRoutes(Routes(), func(path []string, route Route) {
-		if route.Name == "reconcile-bindings" || slices.Contains(route.Usage, "--socket-path") {
+		publicRepair := len(path) > 0 && path[0] == "reconcile"
+		if route.Name == "reconcile-bindings" || slices.Contains(route.Usage, "--socket-path") && !publicRepair {
 			t.Fatalf("binding convergence leaked into command catalog at %q: %#v", strings.Join(path, " "), route)
 		}
 		for _, usage := range route.Usage {
-			if strings.Contains(usage, "reconcile-bindings") || strings.Contains(usage, "--socket-path") {
+			if strings.Contains(usage, "reconcile-bindings") || strings.Contains(usage, "--socket-path") && !publicRepair {
 				t.Fatalf("binding convergence leaked into command catalog usage at %q: %q", strings.Join(path, " "), usage)
 			}
 		}
