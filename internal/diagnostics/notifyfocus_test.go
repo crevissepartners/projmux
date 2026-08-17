@@ -86,7 +86,7 @@ func TestNotifyFocusSecondaryEventDoesNotOwnUnrelatedTopLevelOutcome(t *testing.
 		t.Fatal("secondary automatic notify event claimed the outer command")
 	}
 	store := NewStore(t.TempDir() + "/operations.jsonl")
-	if err := RecordOutcome(store, []string{"ai", "ingest", "codex-hook"}, "secondary-run", "0.10.0", "tmux", time.Now(), errors.New("unrelated ingest failure"), false, lifecycle.RecordedOutcome()); err != nil {
+	if err := RecordOutcome(store, []string{"internal", "agent-hook", "ingest", "codex-hook"}, "secondary-run", "0.10.0", "tmux", time.Now(), errors.New("unrelated ingest failure"), false, lifecycle.RecordedOutcome()); err != nil {
 		t.Fatal(err)
 	}
 	events, err := store.Read()

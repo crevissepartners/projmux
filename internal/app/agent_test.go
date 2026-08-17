@@ -87,10 +87,13 @@ func TestAgentUsageOwnsTheFormerUsageHandlerAndForwardsArgv(t *testing.T) {
 		t.Fatal("agent usage does not share the top-level usage handler instance")
 	}
 	handlers := app.routeHandlers()
-	for _, token := range []string{"usage", "agent", "ai", "create"} {
+	for _, token := range []string{"usage", "agent", "create"} {
 		if _, ok := handlers[token]; !ok {
 			t.Fatalf("route %q has no handler", token)
 		}
+	}
+	if _, ok := handlers["ai"]; ok {
+		t.Fatal("the removed AI root still has a handler")
 	}
 	// The argv the canonical spelling hands over is byte-identical to what the
 	// legacy spelling receives.

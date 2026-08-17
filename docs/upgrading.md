@@ -73,12 +73,14 @@ Statusline, and the tmux bell fallback with the canonical
 `projmux internal agent-hook ingest ...` entrypoint. Copyable integration
 commands use `projmux agent integrate <provider>`.
 
-Update ordering is hook-first and lossless: the new binary is atomically
-installed while the exact old managed-producer argv described in the ledger's
-internal migration note still dispatches to the same handler; the new binary then migrates every
-marker-owned producer; only after that does it generate and apply tmux config.
-An old managed hook that fires between binary replacement and migration is
-therefore handled before its command is rewritten.
+The v0.11.1 migration release used hook-first ordering: the new binary was
+atomically installed while the exact old managed-producer argv described in the
+ledger still dispatched to the same handler; it then migrated every
+marker-owned producer before generating and applying tmux config. Phase 3's
+next breaking release removes that temporary dispatcher after the public
+fresh/upgrade/`--no-apply` migration evidence gate. Upgrade an old installation
+through v0.11.1 before the next release when you need the migration-window
+event guarantee.
 
 Migration is ownership- and transaction-aware. Codex managed blocks and the
 Claude, Antigravity, Statusline, and tmux-bell markers are the only ownership
@@ -133,6 +135,14 @@ If a conflict is reported, keep the unmanaged entry unchanged while deciding
 which tool owns it; remove or rewrite it manually only after that decision,
 then rerun the dry-run and installer. A failed transaction is safe to retry
 because it restores its starting state.
+
+**Stale unmanaged legacy hooks after the final removal:** projmux does not take
+ownership of markerless hooks and does not rewrite them automatically. Such a
+hook now fails with `unknown command: ai`. After confirming that you own the
+entry, preserve its provider/event arguments, redirection, and fallback and
+manually replace the old `projmux ai ingest` prefix with `projmux internal
+agent-hook ingest`. Then run `projmux agent integrate <provider> --dry-run` and
+resolve any reported ownership conflict before installing a managed entry.
 
 **Downgrading to 0.10.1 or older:** those binaries do not expose the canonical
 internal ingress. Before replacing the current binary, remove each managed

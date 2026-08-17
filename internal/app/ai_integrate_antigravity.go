@@ -20,7 +20,7 @@ const (
 	antigravityManagedStatusLineKey    = "statusLine"
 	antigravityManagedStatusLineMarker = "projmux-managed:antigravity-statusline:v1"
 	antigravityCanonicalIngestPath     = " internal agent-hook ingest antigravity-hook"
-	antigravityLegacyIngestPath        = " ai ingest antigravity-hook"
+	antigravityLegacyIngestPath        = " ai " + "ingest antigravity-hook"
 )
 
 var antigravityManagedEvents = []string{

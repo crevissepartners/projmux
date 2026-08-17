@@ -23,90 +23,6 @@ func (p *retirementProbe) Run(args []string, stdout, stderr io.Writer) error {
 	return p.err
 }
 
-func TestLegacyAIIngestProducerAllowlistIsExact(t *testing.T) {
-	t.Parallel()
-
-	allowed := [][]string{
-		{"ingest", "codex-hook"},
-		{"ingest", "claude-hook"},
-		{"ingest", "antigravity-hook", "--event", "PreInvocation"},
-		{"ingest", "antigravity-hook", "--event", "PostInvocation"},
-		{"ingest", "antigravity-hook", "--event", "PostToolUse"},
-		{"ingest", "antigravity-hook", "--event", "Stop"},
-		{"ingest", "antigravity-hook", "--event", "Statusline"},
-		{"ingest", "bell", "--pane", "%7"},
-	}
-	for _, args := range allowed {
-		t.Run(strings.Join(args[1:], "_"), func(t *testing.T) {
-			t.Parallel()
-			sentinel := errors.New("handler reached")
-			probe := &retirementProbe{stdout: "handler stdout", stderr: "handler stderr", err: sentinel}
-			var stdout, stderr bytes.Buffer
-			err := (legacyAIIngestGate{target: probe}).Run(args, &stdout, &stderr)
-			if err != sentinel || !reflect.DeepEqual(probe.calls, [][]string{args}) {
-				t.Fatalf("args=%v error=%v calls=%v, want exact handler reach", args, err, probe.calls)
-			}
-			if stdout.String() != probe.stdout || stderr.String() != probe.stderr {
-				t.Fatalf("args=%v streams=(%q,%q), want handler streams", args, stdout.String(), stderr.String())
-			}
-			if !shouldRunLegacyHookMigrations(append([]string{"ai"}, args...)) {
-				t.Fatalf("args=%v skipped the pre-dispatch migration ordering", args)
-			}
-		})
-	}
-}
-
-func TestLegacyAIIngestDenylistHasNoHandlerStreamsOrPredispatchMutation(t *testing.T) {
-	t.Parallel()
-
-	denied := [][]string{
-		nil,
-		{"split"},
-		{"settings", "--get"},
-		{"status", "set", "waiting"},
-		{"topic", "set", "hello"},
-		{"integrate", "codex"},
-		{"notify", "notify", "%7"},
-		{"watch-title", "%7"},
-		{"ingest"},
-		{"ingest", "log"},
-		{"ingest", "log", "--path"},
-		{"ingest", "codex-hook", "--event", "Stop"},
-		{"ingest", "codex-hook", "extra"},
-		{"ingest", "claude-hook", "extra"},
-		{"ingest", "antigravity-hook"},
-		{"ingest", "antigravity-hook", "--event", "FutureEvent"},
-		{"ingest", "antigravity-hook", "Stop", "--event"},
-		{"ingest", "antigravity-hook", "--event", "Stop", "extra"},
-		{"ingest", "antigravity-hook", "--other", "Stop"},
-		{"ingest", "bell"},
-		{"ingest", "bell", "--pane", ""},
-		{"ingest", "bell", "--pane", "pane-7"},
-		{"ingest", "bell", "--pane", "%x"},
-		{"ingest", "bell", "%7", "--pane"},
-		{"ingest", "bell", "--pane", "%7", "extra"},
-		{"ingest", "custom-hook"},
-		{"--help"},
-	}
-	for _, args := range denied {
-		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			t.Parallel()
-			probe := &retirementProbe{stdout: "forbidden", stderr: "forbidden", err: errors.New("forbidden")}
-			var stdout, stderr bytes.Buffer
-			err := (legacyAIIngestGate{target: probe}).Run(args, &stdout, &stderr)
-			if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "was removed; use") {
-				t.Fatalf("args=%v error=%v, want deterministic replacement UsageError", args, err)
-			}
-			if len(probe.calls) != 0 || stdout.Len() != 0 || stderr.Len() != 0 {
-				t.Fatalf("args=%v calls=%v stdout=%q stderr=%q, want no side effects/streams", args, probe.calls, stdout.String(), stderr.String())
-			}
-			if shouldRunLegacyHookMigrations(append([]string{"ai"}, args...)) {
-				t.Fatalf("args=%v would mutate before the deny gate", args)
-			}
-		})
-	}
-}
-
 func TestRemovedPublicArgvProcessMatrixIsUsageOnly(t *testing.T) {
 	t.Parallel()
 
@@ -114,15 +30,6 @@ func TestRemovedPublicArgvProcessMatrixIsUsageOnly(t *testing.T) {
 		args        []string
 		replacement string
 	}{
-		{[]string{"ai", "split"}, "create agent"},
-		{[]string{"ai", "picker"}, "create agent"},
-		{[]string{"ai", "settings"}, "config edit"},
-		{[]string{"ai", "status"}, "agent status"},
-		{[]string{"ai", "topic"}, "agent topic"},
-		{[]string{"ai", "integrate"}, "agent integrate"},
-		{[]string{"ai", "notify", "reset", "%7"}, "dedupe reset has no direct replacement"},
-		{[]string{"ai", "watch-title"}, "internal agent-hook watch-title"},
-		{[]string{"ai", "ingest", "log"}, "diagnostics agent-hook"},
 		{[]string{"attach", "auto"}, "runtime attach"},
 		{[]string{"current"}, "get pane --current -o cwd"},
 		{[]string{"focus", "--target", "alpha"}, "focus project|window|pane"},
@@ -170,57 +77,10 @@ func TestRemovedPublicArgvProcessMatrixIsUsageOnly(t *testing.T) {
 	}
 }
 
-func TestLegacyAINotifyRetirementGuidanceIsActionAware(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name      string
-		args      []string
-		want      []string
-		forbidden string
-	}{
-		{
-			name: "notify",
-			args: []string{"ai", "notify", "notify", "%7"},
-			want: []string{"create notification", "--target", "--text", "input and semantics changed"},
-		},
-		{
-			name: "implicit notify",
-			args: []string{"ai", "notify", "%7"},
-			want: []string{"create notification", "--target", "--text", "input and semantics changed"},
-		},
-		{
-			name:      "reset",
-			args:      []string{"ai", "notify", "reset", "%7"},
-			want:      []string{"notification ack", "notification reconcile", "dedupe reset has no direct replacement"},
-			forbidden: "create notification",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			err := (&App{}).Run(test.args, &stdout, &stderr)
-			if err == nil || !IsUsageError(err) {
-				t.Fatalf("Run(%q) error=%v, want UsageError", test.args, err)
-			}
-			for _, want := range test.want {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("Run(%q) error=%q, want %q", test.args, err, want)
-				}
-			}
-			if test.forbidden != "" && strings.Contains(err.Error(), test.forbidden) {
-				t.Errorf("Run(%q) error=%q misleadingly contains %q", test.args, err, test.forbidden)
-			}
-			if stdout.Len() != 0 || stderr.Len() != 0 || shouldRunLegacyHookMigrations(test.args) {
-				t.Fatalf("Run(%q) streams=(%q,%q) migration=%t, want no output/side effect", test.args, stdout.String(), stderr.String(), shouldRunLegacyHookMigrations(test.args))
-			}
-		})
-	}
-}
-
 func TestRemovedOldInternalArgvUsesUnknownCommandContract(t *testing.T) {
 	t.Parallel()
 
-	for _, token := range []string{"key-broker", "popup-wait-key", "preview", "session-popup", "status", "statusbar", "tmux"} {
+	for _, token := range []string{"ai", "key-broker", "popup-wait-key", "preview", "session-popup", "status", "statusbar", "tmux"} {
 		var stdout, stderr bytes.Buffer
 		err := (&App{}).Run([]string{token}, &stdout, &stderr)
 		if err == nil || IsUsageError(err) || !strings.Contains(err.Error(), "unknown command: "+token) {
@@ -231,6 +91,33 @@ func TestRemovedOldInternalArgvUsesUnknownCommandContract(t *testing.T) {
 		}
 		if shouldRunLegacyHookMigrations([]string{token}) {
 			t.Fatalf("Run(%q) would perform a pre-dispatch migration", token)
+		}
+	}
+}
+
+func TestRemovedAIRootRejectsEveryArgvBeforeMigration(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"ai"},
+		{"ai", "--help"},
+		{"ai", "split"},
+		{"ai", "notify", "reset", "%7"},
+		{"ai", "ingest", "codex-hook"},
+		{"ai", "ingest", "claude-hook"},
+		{"ai", "ingest", "antigravity-hook", "--event", "Stop"},
+		{"ai", "ingest", "bell", "--pane", "%7"},
+	} {
+		var stdout, stderr bytes.Buffer
+		err := (&App{}).Run(args, &stdout, &stderr)
+		if err == nil || IsUsageError(err) || err.Error() != "unknown command: ai" {
+			t.Fatalf("Run(%q) error=%v, want root unknown-command error", args, err)
+		}
+		if stdout.Len() != 0 || !strings.Contains(stderr.String(), "Commands:") {
+			t.Fatalf("Run(%q) streams=(%q,%q), want stdout empty and root help on stderr", args, stdout.String(), stderr.String())
+		}
+		if shouldRunLegacyHookMigrations(args) {
+			t.Fatalf("Run(%q) would mutate before root rejection", args)
 		}
 	}
 }

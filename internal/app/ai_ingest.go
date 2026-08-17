@@ -80,13 +80,13 @@ type aiIngestLogEntry struct {
 func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 	if len(args) < 1 {
 		printAIUsage(stderr)
-		return errors.New("ai ingest requires <agent-kind>")
+		return errors.New("internal agent-hook ingest requires <agent-kind>")
 	}
 	switch args[0] {
 	case "codex-hook":
 		if len(args) != 1 {
 			printAIUsage(stderr)
-			return errors.New("ai ingest codex-hook reads JSON from stdin and accepts no payload arguments")
+			return errors.New("internal agent-hook ingest codex-hook reads JSON from stdin and accepts no payload arguments")
 		}
 		reader := c.stdin
 		if reader == nil {
@@ -105,7 +105,7 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 	case "claude-hook":
 		if len(args) != 1 {
 			printAIUsage(stderr)
-			return errors.New("ai ingest claude-hook reads JSON from stdin and accepts no payload arguments")
+			return errors.New("internal agent-hook ingest claude-hook reads JSON from stdin and accepts no payload arguments")
 		}
 		reader := c.stdin
 		if reader == nil {
@@ -122,7 +122,7 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		}
 		return c.ingestClaudeHook(data)
 	case "antigravity-hook":
-		fs := flag.NewFlagSet("ai ingest antigravity-hook", flag.ContinueOnError)
+		fs := flag.NewFlagSet("internal agent-hook ingest antigravity-hook", flag.ContinueOnError)
 		fs.SetOutput(stderr)
 		eventName := fs.String("event", "", "authoritative Antigravity hook event name")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -130,7 +130,7 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		}
 		if fs.NArg() != 0 {
 			printAIUsage(stderr)
-			return errors.New("ai ingest antigravity-hook does not accept positional payload arguments")
+			return errors.New("internal agent-hook ingest antigravity-hook does not accept positional payload arguments")
 		}
 		reader := c.stdin
 		if reader == nil {
@@ -174,12 +174,12 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		return nil
 	default:
 		printAIUsage(stderr)
-		return fmt.Errorf("unknown ai ingest agent-kind: %s", args[0])
+		return fmt.Errorf("unknown internal agent-hook ingest source: %s", args[0])
 	}
 }
 
 func (c *aiCommand) runIngestBell(args []string, stderr io.Writer) error {
-	fs := flag.NewFlagSet("ai ingest bell", flag.ContinueOnError)
+	fs := flag.NewFlagSet("internal agent-hook ingest bell", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	paneID := fs.String("pane", "", "target tmux pane id")
 	if err := fs.Parse(args); err != nil {
@@ -187,18 +187,18 @@ func (c *aiCommand) runIngestBell(args []string, stderr io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
-		return errors.New("ai ingest bell does not accept positional arguments")
+		return errors.New("internal agent-hook ingest bell does not accept positional arguments")
 	}
 	if strings.TrimSpace(*paneID) == "" {
 		c.recordAIIngestIgnored(diagnostics.ProviderTmuxBell, diagnostics.AIKindBell, diagnostics.AIFailureTargetInvalid, true)
 		printAIUsage(stderr)
-		return errors.New("ai ingest bell requires --pane <pane_id>")
+		return errors.New("internal agent-hook ingest bell requires --pane <pane_id>")
 	}
 	return c.ingestBell(*paneID)
 }
 
 func (c *aiCommand) runIngestLog(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("ai ingest log", flag.ContinueOnError)
+	fs := flag.NewFlagSet("diagnostics agent-hook", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	tail := fs.Int("tail", 50, "number of recent log entries to print")
 	jsonOut := fs.Bool("json", false, "print raw JSONL entries")
@@ -208,7 +208,7 @@ func (c *aiCommand) runIngestLog(args []string, stdout, stderr io.Writer) error 
 	}
 	if fs.NArg() != 0 {
 		printAIUsage(stderr)
-		return errors.New("ai ingest log does not accept positional arguments")
+		return errors.New("diagnostics agent-hook does not accept positional arguments")
 	}
 
 	path, err := c.aiIngestLogPath()
@@ -230,7 +230,7 @@ func (c *aiCommand) runIngestLog(args []string, stdout, stderr io.Writer) error 
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("read ai ingest log: %w", err)
+		return fmt.Errorf("read agent-hook diagnostics log: %w", err)
 	}
 	lines := nonEmptyLines(string(data))
 	if *tail >= 0 && len(lines) > *tail {

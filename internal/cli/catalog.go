@@ -77,8 +77,7 @@ type Route struct {
 	Hidden bool
 	// Retired marks a hidden compatibility tombstone. It remains dispatchable
 	// only so a removed public argv can return exit 2 with its exact replacement;
-	// it has no documented children or canonical behavior edge. The `ai`
-	// tombstone additionally admits the Phase 2 exact producer allowlist.
+	// it has no documented children or canonical behavior edge.
 	Retired bool
 	// ProviderShortcut marks a `create <provider>` node. The contract keeps
 	// provider shortcuts out of the resource-kind listing, so the shared help
@@ -191,13 +190,6 @@ var routes = []Route{
 				Canonical: []string{"agent usage"},
 			},
 		},
-	},
-	{
-		Name:        "ai",
-		Summary:     "Retired AI compatibility route",
-		Disposition: DispositionCompatibility,
-		Hidden:      true,
-		Retired:     true,
 	},
 	{
 		Name:        "attention",
@@ -1020,10 +1012,10 @@ var routes = []Route{
 				},
 			},
 			{
-				// Provider hook plumbing. `ai ingest` and `ai watch-title` are
-				// invoked by provider hook commands and by the pane title
-				// watcher, never by a user, so the Agent decomposition parks
-				// them here rather than in the public `agent` namespace.
+				// Provider hook plumbing is invoked by provider hook commands
+				// and by the pane title watcher, never by a user, so the Agent
+				// decomposition parks it here rather than in the public `agent`
+				// namespace.
 				Name:      "agent-hook",
 				Summary:   "Provider hook ingest and Agent pane title watcher plumbing",
 				Usage:     []string{"projmux internal agent-hook ingest <source> ...", "projmux internal agent-hook watch-title [pane]"},

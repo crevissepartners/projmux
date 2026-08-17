@@ -1246,8 +1246,8 @@ assert_automatic_success_no_record() {
   fi
 }
 
-assert_automatic_success_no_record ai-ingest \
-  env TMUX="$automatic_tmux_env" "$bin" ai ingest bell --pane "$automatic_pane"
+assert_automatic_success_no_record agent-hook-ingest \
+  env TMUX="$automatic_tmux_env" "$bin" internal agent-hook ingest bell --pane "$automatic_pane"
 assert_automatic_success_no_record attention-arm \
   env TMUX="$automatic_tmux_env" "$bin" attention arm "$automatic_pane"
 assert_automatic_success_no_record attention-clear \

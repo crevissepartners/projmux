@@ -51,7 +51,7 @@ func TestNewRootRequiresEveryManifestHandler(t *testing.T) {
 	if err == nil {
 		t.Fatal("NewRoot with no handlers returned no error")
 	}
-	for _, want := range []string{"ai", "internal", "window"} {
+	for _, want := range []string{"internal", "window"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("missing-handler error does not name %q: %v", want, err)
 		}
@@ -124,7 +124,7 @@ func TestBridgeForwardsRawArgv(t *testing.T) {
 		{name: "positional", argv: []string{"current", "extra"}, token: "current", args: []string{"extra"}},
 		{name: "unknown flag", argv: []string{"notify", "list", "--bogus-flag"}, token: "notify", args: []string{"list", "--bogus-flag"}},
 		{name: "flag with value", argv: []string{"focus", "--target", "%3"}, token: "focus", args: []string{"--target", "%3"}},
-		{name: "terminator with payload", argv: []string{"ai", "split", "--agent", "shell", "--", "--help", "-h", "--"}, token: "ai", args: []string{"split", "--agent", "shell", "--", "--help", "-h", "--"}},
+		{name: "terminator with payload", argv: []string{"config", "edit", "--", "--help", "-h", "--"}, token: "config", args: []string{"edit", "--", "--help", "-h", "--"}},
 		{name: "double dash equals flag", argv: []string{"prune", "ephemeral", "--keep=3"}, token: "prune", args: []string{"ephemeral", "--keep=3"}},
 		{name: "session state delete", argv: []string{"prune", "session-state", "delete", "alpha", "beta"}, token: "prune", args: []string{"session-state", "delete", "alpha", "beta"}},
 		{name: "negative number payload", argv: []string{"diagnostics", "log", "--tail", "-5"}, token: "diagnostics", args: []string{"log", "--tail", "-5"}},
@@ -236,6 +236,7 @@ func TestUnknownCommandKeepsHistoricalContract(t *testing.T) {
 		{argv: []string{"__completeNoDesc", "ai"}, token: "__completeNoDesc"},
 		{argv: []string{"completion", "bash"}, token: "completion"},
 		{argv: []string{"tmux", "print-config"}, token: "tmux"},
+		{argv: []string{"ai", "ingest", "codex-hook"}, token: "ai"},
 		{argv: []string{"statusbar", "click"}, token: "statusbar"},
 		{argv: []string{"key-broker"}, token: "key-broker"},
 		{argv: []string{"popup-wait-key"}, token: "popup-wait-key"},

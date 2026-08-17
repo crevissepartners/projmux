@@ -587,12 +587,12 @@ func TestRunnerSetHookBuildsAppendAndUnsetArgs(t *testing.T) {
 		Global:  true,
 		Append:  true,
 		Hook:    " alert-bell ",
-		Command: `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}"'`,
+		Command: `run-shell -b 'projmux internal agent-hook ingest bell --pane "#{pane_id}"'`,
 	}); err != nil {
 		t.Fatalf("SetHook append returned error: %v", err)
 	}
 
-	wantArgs := []string{"set-hook", "-ag", "alert-bell", `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}"'`}
+	wantArgs := []string{"set-hook", "-ag", "alert-bell", `run-shell -b 'projmux internal agent-hook ingest bell --pane "#{pane_id}"'`}
 	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
 		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
 	}

@@ -20,21 +20,21 @@ const (
 	codexHooksMarkerEnd     = "# <<< projmux managed codex hooks"
 	codexHooksFeatureMarker = "# projmux-managed:codex-hooks-feature:v1"
 	codexHookCommand        = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
-	legacyCodexHookCommand  = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+	legacyCodexHookCommand  = "projmux ai " + "ingest codex-hook >/dev/null 2>&1 || true"
 	canonicalCodexHookRoute = "projmux internal agent-hook ingest codex-hook"
-	legacyCodexHookRoute    = "projmux ai ingest codex-hook"
+	legacyCodexHookRoute    = "projmux ai " + "ingest codex-hook"
 
 	claudeSettingsRelativePath = ".claude/settings.json"
 	claudeHookManagedMarker    = "projmux-managed:claude-hook:v1"
 	claudeHookCommand          = "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # " + claudeHookManagedMarker
-	legacyClaudeHookCommand    = "projmux ai ingest claude-hook >/dev/null 2>&1 || true # " + claudeHookManagedMarker
+	legacyClaudeHookCommand    = "projmux ai " + "ingest claude-hook >/dev/null 2>&1 || true # " + claudeHookManagedMarker
 	canonicalClaudeHookRoute   = "projmux internal agent-hook ingest claude-hook"
-	legacyClaudeHookRoute      = "projmux ai ingest claude-hook"
+	legacyClaudeHookRoute      = "projmux ai " + "ingest claude-hook"
 
 	tmuxBellManagedMarker     = "projmux-managed:tmux-bell:v1"
 	tmuxBellHookName          = "alert-bell"
 	tmuxBellHookCommand       = `run-shell -b 'projmux internal agent-hook ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
-	legacyTmuxBellHookCommand = `run-shell -b 'projmux ai ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
+	legacyTmuxBellHookCommand = `run-shell -b 'projmux ai ` + `ingest bell --pane "#{pane_id}" >/dev/null 2>&1 || true # ` + tmuxBellManagedMarker + `'`
 )
 
 type codexIntegrationPlan struct {

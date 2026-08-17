@@ -53,8 +53,8 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	if public != 31 {
 		t.Fatalf("public route count = %d, want 31", public)
 	}
-	if hidden != 10 {
-		t.Fatalf("hidden route count = %d, want 10", hidden)
+	if hidden != 9 {
+		t.Fatalf("hidden route count = %d, want 9", hidden)
 	}
 	wantPublicTally := map[Disposition]int{
 		DispositionCanonical: 24,
@@ -66,7 +66,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	wantTally := map[Disposition]int{
 		DispositionCanonical:     24,
 		DispositionShortcut:      7,
-		DispositionCompatibility: 9,
+		DispositionCompatibility: 8,
 		DispositionInternal:      1,
 	}
 	if !reflect.DeepEqual(tally, wantTally) {
@@ -406,10 +406,10 @@ func TestResolveReturnsDeepestMatchedRoute(t *testing.T) {
 		want   []string
 		ok     bool
 	}{
-		{name: "top level", tokens: []string{"ai"}, want: []string{"ai"}, ok: true},
-		{name: "retired child stops at tombstone", tokens: []string{"ai", "settings"}, want: []string{"ai"}, ok: true},
-		{name: "unknown child", tokens: []string{"ai", "bogus"}, want: []string{"ai"}, ok: true},
+		{name: "top level", tokens: []string{"agent"}, want: []string{"agent"}, ok: true},
+		{name: "unknown child stops at ancestor", tokens: []string{"agent", "bogus"}, want: []string{"agent"}, ok: true},
 		{name: "flag after child", tokens: []string{"setup", "terminal", "--apply"}, want: []string{"setup", "terminal"}, ok: true},
+		{name: "removed ai root", tokens: []string{"ai", "ingest", "codex-hook"}, ok: false},
 		{name: "removed internal alias", tokens: []string{"popup-wait-key"}, ok: false},
 		{name: "unknown top level", tokens: []string{"nosuchcmd"}, ok: false},
 		{name: "empty", tokens: nil, ok: false},
@@ -446,13 +446,14 @@ func walkRoutes(nodes []Route, visit func(path []string, route Route)) {
 	walk(nil, nodes)
 }
 
-// TestPhase2RetiresOnlyTheLedgerRoutes pins both halves of the breaking tree:
+// TestRetirementCatalogMatchesTheRemainingLedger pins both halves of the
+// breaking tree:
 // public routes retain an error tombstone, while producer-zero internal aliases
 // disappear completely and therefore take the root unknown-command path.
-func TestPhase2RetiresOnlyTheLedgerRoutes(t *testing.T) {
+func TestRetirementCatalogMatchesTheRemainingLedger(t *testing.T) {
 	t.Parallel()
 
-	retired := []string{"ai", "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage"}
+	retired := []string{"current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage"}
 	for _, token := range retired {
 		route, ok := LookupRoute(token)
 		if !ok {
@@ -462,7 +463,7 @@ func TestPhase2RetiresOnlyTheLedgerRoutes(t *testing.T) {
 			t.Fatalf("route %q = %#v, want a hidden compatibility tombstone", token, route)
 		}
 	}
-	for _, token := range []string{"tmux", "status", "statusbar", "preview", "session-popup", "key-broker", "popup-wait-key"} {
+	for _, token := range []string{"ai", "tmux", "status", "statusbar", "preview", "session-popup", "key-broker", "popup-wait-key"} {
 		if _, ok := LookupRoute(token); ok {
 			t.Errorf("retired internal top-level alias %q remains in the command catalog", token)
 		}
