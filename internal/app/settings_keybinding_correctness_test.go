@@ -641,7 +641,7 @@ func TestSettingsKeybindingAddPathsShareNormalizationAndValidation(t *testing.T)
 		key   intpicker.RecorderKey
 		typed string
 	}{
-		{intpicker.RecorderKey{Name: "alt-shift-left"}, "M-S-Left"},
+		{intpicker.RecorderKey{Name: "f12"}, "f12"},
 		{intpicker.RecorderKey{Name: "ctrl-r"}, "C-r"},
 		{intpicker.RecorderKey{Text: "a"}, "a"},
 	} {

@@ -122,11 +122,14 @@ func TestSettingsSequenceEditorLengthAndOneStrokeCaptureContract(t *testing.T) {
 		return intpickercompat.Result{Key: "enter", Value: "Enter"}, nil
 	})
 	stroke, cancelled, err := cmd.captureKeybindingSequenceStroke("ProjectSidebarToggle", []string{"C-k"})
-	if err != nil || cancelled || stroke != "Enter" {
-		t.Fatalf("capture Enter = %q, cancelled=%v, err=%v", stroke, cancelled, err)
+	if err != nil || !cancelled || stroke != "" {
+		t.Fatalf("capture reserved Enter = %q, cancelled=%v, err=%v", stroke, cancelled, err)
 	}
 	if seen.Recorder == nil || !seen.Recorder.AutoConfirm || !seen.Recorder.CaptureEnter {
 		t.Fatalf("recorder = %#v, want one-stroke auto-confirm with Enter capture", seen.Recorder)
+	}
+	if cmd.feedback == nil || cmd.feedback.Detail != keymapReservedAuthoringReason {
+		t.Fatalf("feedback = %#v, want shared reserved-key reason", cmd.feedback)
 	}
 }
 
@@ -228,7 +231,7 @@ func TestSettingsSequenceAddReplaceRemoveConflictAndNoLiveRecovery(t *testing.T)
 		t.Fatalf("replace error = %v", err)
 	}
 	beforeConflict := settingsNavConfigSnapshot(t, home)
-	if err := cmd.validateKeymapSequenceForAction("NotifySidebarToggle", "C-k C-s Enter", ""); err == nil || !strings.Contains(err.Error(), "strict-prefix") {
+	if err := cmd.validateKeymapSequenceForAction("NotifySidebarToggle", "C-k C-s F12", ""); err == nil || !strings.Contains(err.Error(), "strict-prefix") {
 		t.Fatalf("strict-prefix validation error = %v", err)
 	}
 	if after := settingsNavConfigSnapshot(t, home); after != beforeConflict {

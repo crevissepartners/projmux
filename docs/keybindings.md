@@ -36,7 +36,7 @@ Settings capture diagnostics split the observed result into logical key, raw
 bytes, and the tmux key name that can be saved. Diagnostic states distinguish
 keys that did not arrive, ambiguous bytes such as Enter/Ctrl-M, and keys that
 need a supported terminal adapter. Safe direct keys are logical tmux names such
-as `M-a`, `M-1`, `C-r`, `C-Space`, function/navigation names, or printable
+as `M-a`, `M-1`, `C-r`, `C-Space`, function-key names, or printable
 keys. Raw escape bytes, CSI-u, xterm modified-key payloads, and tmux
 UserKey/UserSequence names stay diagnostic-only and are not promoted into
 `keymap.toml`.
@@ -147,18 +147,20 @@ enters a purpose-built recorder immediately: Recording waits for one chord,
 Staged previews its normalized tmux key name without writing, Enter saves and
 applies, and Esc discards it. Another chord replaces the staged candidate.
 There is no Back row, search prompt, or result count in recorder mode. Plain
-Enter and plain Escape are recorder controls, not candidates; modified Enter or
-Escape are accepted only when the native picker can decode them to a stable
-modified key name. Conflict and invalid-key feedback remains in the recorder so
-the user can choose another chord before any write.
+Enter and plain Escape are recorder controls, not candidates. Enter, Escape,
+Tab, Backspace, Delete, arrows, Home, End, PageUp, and PageDown are reserved
+from new Settings authoring in every modifier and alias spelling. Conflict and
+invalid-key feedback remains in the recorder so the user can choose another
+chord before any write.
 
 `Enter key name manually` is reachable from both Action detail and the Add key
-view. It is the path for literal `Enter`/`Escape` and for nonstandard tmux key
-names, and it runs the same normalization and the same pre-write conflict
-validation the recorder runs, so a chord rejected in one path is rejected in the
-other with the same reason and neither writes `keymap.toml` first. The Add key
-view also states the safe direct key pool and the sequences that are observed
-but never saved (raw escape, CSI-u, xterm modified-key bytes, tmux
+view. It runs the same reserved-key classification, normalization, and pre-write
+conflict validation as capture, so a chord rejected in one path is rejected in
+the others with the same reason and neither writes `keymap.toml` first. The
+final Settings writers repeat that validation before schema migration, config
+generation, or live tmux apply. The Add key view also states the safe direct key
+pool and the keys or payloads that are never newly saved (the reserved logical
+keys, raw escape, CSI-u, xterm modified-key bytes, and tmux
 UserKey/UserSequence). The native macOS app-socket adapter reads the same safe
 chords directly; supported Ghostty and Windows Terminal mappings for other paths
 are previewed and applied by `projmux setup terminal ... --apply` from a shell —
@@ -171,9 +173,10 @@ Diagnostic/probe/init workflows are not first-class Settings tabs; use
 
 `+ Add sequence` opens a stroke editor. `Record next stroke` records exactly
 one logical key and returns to the editor with the accumulated sequence visible;
-plain Enter is a sequence stroke, while Escape cancels that capture and returns
-without replaying input. Save becomes available after two strokes, capture stops
-at four, and no separate finish key is reserved. `Enter sequence manually`
+reserved control/navigation keys are rejected with the same reason used by
+single-key capture and typed entry, while Escape still cancels that capture and
+returns without replaying input. Save becomes available after two strokes and
+capture stops at four. `Enter sequence manually`
 accepts the same `C-k C-p` grammar and runs the same normalizer and conflict
 preflight, so typed and captured authoring produce the same canonical v2 bytes.
 Each saved sequence has detail actions to replace, remove, or test its logical
@@ -197,6 +200,15 @@ reports `key-did-not-arrive` rather than blocking. Where no reader can be owned,
 or where the chord is a plain `Enter`/`Escape` that the recorder consumes as its
 own control, the row is disabled and states the reason plus the next step:
 `projmux setup`, then `projmux setup terminal <terminal> --apply`.
+
+An action whose shipped/default plain alias, prefix trigger, or sequence
+contains a reserved logical base key is protected as a whole. Its Action detail
+shows the shipped trigger that caused the read-only lock and keeps navigation,
+metadata, and delivery tests, but renders no add, replace, remove, unbind, or
+reset action. Protection is derived from the shipped catalog rather than the
+effective/custom binding, so an override cannot unlock a protected action or
+lock an otherwise safe default. Existing protected defaults continue to parse,
+render, and execute unchanged.
 
 Optional direct keys can be added for actions such as:
 
@@ -332,7 +344,11 @@ supported through the same grammar and preflight.
 
 The first stroke must be a modified chord (`C-k`, `M-x`, `C-M-k`), navigation
 key, or function key. Later strokes may also be safe named keys or one printable
-ASCII key. Escape is reserved for cancellation, and raw escape/sendInput,
+ASCII key in existing files. Settings refuses to newly author Enter, Escape,
+Tab, Backspace, Delete, arrows, Home, End, PageUp, or PageDown at any stroke,
+including modifier and alias spellings. The loader and runtime continue to
+accept previously saved values and shipped defaults; the authoring policy is
+not a parser-level rejection. Escape is also reserved for cancellation, and raw escape/sendInput,
 CSI-u/xterm payloads, `User*` fallbacks, unsafe tmux config characters, and
 undeliverable names are rejected. `C-m`, `C-i`, and `C-[` are rejected with the
 spelling to use instead: a terminal reports those bytes as `Enter`, `Tab`, and

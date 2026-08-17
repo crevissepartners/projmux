@@ -268,6 +268,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"Theme - Preset selector":                                       "settings.title.theme_preset_selector",
 	"Keybinding":                                                    "settings.text.keybinding",
 	"Edit Keys":                                                     "settings.text.edit_keys",
+	"Editing locked":                                                "settings.text.editing_locked",
 	"Replace aliases":                                               "settings.text.replace_aliases",
 	"Keybinding Lab - Diagnose delivery":                            "settings.title.keybinding_lab_diagnose_delivery",
 	"Session State - Sidebar startup picker":                        "settings.title.session_state_sidebar_startup_picker",
@@ -640,7 +641,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"Session state overview is read-only here.":                                               "settings.footer.session_state_read_only",
 	"Editable rows write keymap aliases. View-only rows explain transport-dependent keys.":    "settings.footer.keymap_editable_rows",
 	"Use a tmux plain chord such as C-r, M-a, M-S-Left, or C-Space.":                          "settings.footer.tmux_plain_chord_examples",
-	"Enter a key such as C-r, M-a, M-S-Left, or C-Space.":                                     "settings.footer.enter_custom_key_examples",
+	"Enter a key such as C-r, M-a, F12, or C-Space.":                                          "settings.footer.enter_custom_key_examples",
 	"Enter confirms · Esc cancels · Enter key name manually is available from Action detail.": "settings.footer.keybindings_recorder",
 	"Use the Back row or picker close action to close":                                        "settings.footer.back_row_or_close",
 
@@ -690,7 +691,8 @@ var uiTextKeys = map[string]i18n.Key{
 	"Press the key · Enter reports the result · Esc cancels.":                    "settings.footer.keybindings_delivery_test",
 	"Manage this active key.":                                                    "settings.footer.keybindings_key_detail",
 	"Capture one stroke at a time · Save is available at 2 strokes · maximum 4.": "settings.footer.keybindings_sequence_editor",
-	"Press one stroke · Enter is a stroke · Esc returns to the editor.":          "settings.footer.keybindings_sequence_stroke",
+	"Press one non-reserved stroke · Esc returns to the editor.":                 "settings.footer.keybindings_sequence_stroke",
+	"Press one stroke · Esc returns to the editor.":                              "settings.footer.keybindings_sequence_test_stroke",
 	"Enter a sequence such as C-k C-p (2 to 4 strokes).":                         "settings.footer.keybindings_sequence_typed",
 	"Manage this sequence trigger and inspect its delivery contract.":            "settings.footer.keybindings_sequence_detail",
 

@@ -940,6 +940,106 @@ func normalizeKeymapTypedChord(value string) (string, error) {
 	return normalizeKeymapAliasChord(value)
 }
 
+const keymapReservedAuthoringReason = "reserved control/navigation keys cannot be authored in Settings; choose a printable, function, or non-reserved modified key"
+
+// reservedKeymapAuthoringBase classifies the logical base key used by the
+// Settings authoring policy. It intentionally does not participate in parsing
+// or runtime compilation: existing keymap files and shipped defaults may keep
+// using these keys, while every new Settings write is rejected separately.
+//
+// tmux and the picker expose several names for the same logical key (for
+// example Return/Enter, BSpace/Backspace, DC/Delete and PPage/PageUp). Strip
+// portable modifier prefixes first so a modified spelling cannot bypass the
+// same base-key policy. C-m/C-i/C-[ are terminal aliases for
+// Enter/Tab/Escape, including when another modifier wraps them.
+func reservedKeymapAuthoringBase(chord string) (string, bool) {
+	parts := strings.Split(strings.TrimSpace(chord), "-")
+	if len(parts) == 0 {
+		return "", false
+	}
+	control := false
+	for len(parts) > 1 {
+		switch strings.ToLower(parts[0]) {
+		case "c", "ctrl", "control":
+			control = true
+		case "m", "alt", "meta", "option", "s", "shift":
+		default:
+			goto base
+		}
+		parts = parts[1:]
+	}
+
+base:
+	base := strings.ToLower(strings.Join(parts, "-"))
+	if control {
+		switch base {
+		case "m":
+			return "Enter", true
+		case "i":
+			return "Tab", true
+		case "[":
+			return "Escape", true
+		}
+	}
+	switch base {
+	case "enter", "return", "cr":
+		return "Enter", true
+	case "escape", "esc":
+		return "Escape", true
+	case "tab", "btab":
+		return "Tab", true
+	case "backspace", "bspace", "bs":
+		return "Backspace", true
+	case "delete", "del", "dc":
+		return "Delete", true
+	case "up":
+		return "Up", true
+	case "down":
+		return "Down", true
+	case "left":
+		return "Left", true
+	case "right":
+		return "Right", true
+	case "home":
+		return "Home", true
+	case "end":
+		return "End", true
+	case "pageup", "page-up", "pgup", "ppage":
+		return "PageUp", true
+	case "pagedown", "page-down", "pgdn", "npage":
+		return "PageDown", true
+	default:
+		return "", false
+	}
+}
+
+func validateKeymapAuthoringChord(chord string) error {
+	if _, reserved := reservedKeymapAuthoringBase(chord); reserved {
+		return fmt.Errorf("%s", keymapReservedAuthoringReason)
+	}
+	return nil
+}
+
+func normalizeKeymapAuthoringChord(chord string) (string, error) {
+	normalized, err := normalizeKeymapTypedChord(chord)
+	if err != nil {
+		return "", err
+	}
+	if err := validateKeymapAuthoringChord(normalized); err != nil {
+		return "", err
+	}
+	return normalized, nil
+}
+
+func validateKeymapAuthoringSequence(sequence string) error {
+	for stroke := range strings.FieldsSeq(sequence) {
+		if err := validateKeymapAuthoringChord(stroke); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func normalizeKeymapAliasChord(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

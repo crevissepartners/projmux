@@ -1246,6 +1246,28 @@ func keyBindingEditable(action keyBindingAction) bool {
 	}
 }
 
+// keyBindingProtectedActionReason locks Settings editing from the shipped
+// catalog, never from an effective/custom action. A user override therefore
+// cannot unlock a protected action, and a legacy reserved override cannot lock
+// an otherwise safe shipped action. Keep every default trigger field in this
+// inventory, including Sequences even though the current shipped catalog has
+// none, so a future default cannot silently bypass the policy.
+func keyBindingProtectedActionReason(action keyBindingAction) (string, bool) {
+	triggers := make([]string, 0, 2+len(action.PlainChords)+len(action.Sequences)*4)
+	triggers = append(triggers, action.PlainChord)
+	triggers = append(triggers, action.PlainChords...)
+	triggers = append(triggers, action.PrefixChord)
+	for _, sequence := range action.Sequences {
+		triggers = append(triggers, strings.Fields(sequence)...)
+	}
+	for _, trigger := range triggers {
+		if base, reserved := reservedKeymapAuthoringBase(trigger); reserved {
+			return fmt.Sprintf("read only because shipped/default trigger %q uses reserved key %s", strings.TrimSpace(trigger), base), true
+		}
+	}
+	return "", false
+}
+
 func keyBindingEffectivePlainChords(action keyBindingAction) []string {
 	if action.PlainChords != nil {
 		return uniqueNonEmptyStrings(action.PlainChords)
