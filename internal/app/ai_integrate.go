@@ -446,34 +446,34 @@ func (c *aiCommand) planTmuxBellIntegration(remove bool) (tmuxBellPlan, error) {
 	return tmuxBellPlan{installCommands: install, migrations: migrations, action: action, changed: len(install) > 0}, nil
 }
 
-func (c *aiCommand) migrateManagedTmuxBellProducer() (bool, error) {
+func (c *aiCommand) beginManagedTmuxBellProducerMigration() (bool, func() error, error) {
 	hooks, err := c.readTmuxBellHooks()
 	if err != nil {
-		return false, fmt.Errorf("read tmux bell hooks: %w", err)
+		return false, nil, fmt.Errorf("read tmux bell hooks: %w", err)
 	}
 	if len(tmuxBellManagedHookTargets(hooks)) == 0 {
-		return false, nil
+		return false, nil, nil
 	}
 	plan, err := c.planTmuxBellIntegration(false)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if !plan.changed {
-		return false, nil
+		return false, nil, nil
 	}
 	snapshot, err := c.snapshotTmuxBellState()
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	for _, args := range plan.installCommands {
 		if err := c.runTmuxBellCommand(args); err != nil {
 			if rollbackErr := c.restoreTmuxBellState(snapshot); rollbackErr != nil {
-				return false, fmt.Errorf("tmux %s: %w (rollback failed: %v)", strings.Join(args, " "), err, rollbackErr)
+				return false, nil, fmt.Errorf("tmux %s: %w (rollback failed: %v)", strings.Join(args, " "), err, rollbackErr)
 			}
-			return false, fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
+			return false, nil, fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
 		}
 	}
-	return true, nil
+	return true, func() error { return c.restoreTmuxBellState(snapshot) }, nil
 }
 
 func (c *aiCommand) readTmuxBellHooks() ([]string, error) {

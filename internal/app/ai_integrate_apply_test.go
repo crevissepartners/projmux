@@ -74,6 +74,7 @@ func TestTmuxApplyBellFailureRollsBackEarlierProviderFilesAndLiveState(t *testin
 		socket:  "phase0-rollback",
 		options: map[string]string{"allow-passthrough": "off", "monitor-bell": "off", "bell-action": "none"},
 		hooks:   []string{"run-shell -b 'echo unmanaged'", legacyTmuxBellHookCommand},
+		failAt:  5,
 	}
 	cmd := managedIngestApplyFixture(home, runner)
 	err := cmd.runApply([]string{"--config", filepath.Join(home, "tmux.conf"), "--socket", runner.socket}, &bytes.Buffer{}, &bytes.Buffer{})
@@ -93,11 +94,48 @@ func TestTmuxApplyBellFailureRollsBackEarlierProviderFilesAndLiveState(t *testin
 	}
 }
 
+func TestTmuxApplyGeneratedConfigFailureRollsBackManagedFilesAndLiveState(t *testing.T) {
+	home := t.TempDir()
+	codexPath := filepath.Join(home, codexConfigRelativePath)
+	originalCodex := strings.ReplaceAll(codexHooksBlock(true), codexHookCommand, legacyCodexHookCommand)
+	writeCodexTestFile(t, codexPath, originalCodex)
+	runner := &failingBellApplyRunner{
+		socket:  "phase0-generated-config-rollback",
+		options: map[string]string{"allow-passthrough": "off", "monitor-bell": "off", "bell-action": "none"},
+		hooks:   []string{"run-shell -b 'echo unmanaged'", legacyTmuxBellHookCommand},
+	}
+	cmd := managedIngestApplyFixture(home, runner)
+	configPath := filepath.Join(home, "tmux.conf")
+	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
+		if path == configPath {
+			return errors.New("injected generated config write failure")
+		}
+		return os.WriteFile(path, data, mode)
+	}
+
+	err := cmd.runApply([]string{"--config", configPath, "--socket", runner.socket}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "injected generated config write failure") {
+		t.Fatalf("apply error = %v", err)
+	}
+	if got := readCodexTestFile(t, codexPath); got != originalCodex {
+		t.Fatalf("provider file was not rolled back after generated config failure:\n%s", got)
+	}
+	wantOptions := map[string]string{"allow-passthrough": "off", "monitor-bell": "off", "bell-action": "none"}
+	if !reflect.DeepEqual(runner.options, wantOptions) {
+		t.Fatalf("options after apply rollback = %#v, want %#v", runner.options, wantOptions)
+	}
+	wantHooks := []string{"run-shell -b 'echo unmanaged'", legacyTmuxBellHookCommand}
+	if !reflect.DeepEqual(runner.hooks, wantHooks) {
+		t.Fatalf("hooks after apply rollback = %#v, want %#v", runner.hooks, wantHooks)
+	}
+}
+
 type failingBellApplyRunner struct {
 	socket    string
 	options   map[string]string
 	hooks     []string
 	mutations int
+	failAt    int
 }
 
 func (r *failingBellApplyRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -118,7 +156,7 @@ func (r *failingBellApplyRunner) Run(_ context.Context, name string, args ...str
 		return []byte(strings.Join(lines, "\n") + "\n"), nil
 	case "set-option", "set-hook":
 		r.mutations++
-		if r.mutations == 5 {
+		if r.failAt > 0 && r.mutations == r.failAt {
 			return nil, errors.New("injected fifth bell mutation")
 		}
 		if args[0] == "set-option" {

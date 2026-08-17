@@ -921,6 +921,22 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	}
 
 	var managedIngestFileRollback func() error
+	var managedIngestBellRollback func() error
+	rollbackManagedIngest := func(cause error) error {
+		var rollbackErr error
+		if managedIngestBellRollback != nil {
+			rollbackErr = managedIngestBellRollback()
+		}
+		if managedIngestFileRollback != nil {
+			if err := managedIngestFileRollback(); err != nil && rollbackErr == nil {
+				rollbackErr = err
+			}
+		}
+		if rollbackErr != nil {
+			return fmt.Errorf("%w (managed agent hook rollback failed: %v)", cause, rollbackErr)
+		}
+		return cause
+	}
 	if c.ai != nil {
 		migrationAI := c.managedIngestMigrationAI()
 		count, rollback, err := migrationAI.beginManagedIngestProducerFileMigration()
@@ -952,7 +968,7 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 
 	if *noReload {
 		if err := writeGenerated(); err != nil {
-			return err
+			return rollbackManagedIngest(err)
 		}
 		_, err = fmt.Fprintf(stdout, "skipped reload: --no-reload\n")
 		return err
@@ -964,7 +980,7 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	}
 	if c.runner == nil {
 		if err := writeGenerated(); err != nil {
-			return err
+			return rollbackManagedIngest(err)
 		}
 		if c.diagnostics != nil {
 			c.diagnostics.Hint(diagnostics.LifecycleSuccess, diagnostics.CodeTmuxApplyReloadSkipped)
@@ -979,7 +995,7 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	sessionsOut, listErr := c.runner.Run(ctx, "tmux", "-L", socketName, "list-sessions", "-F", "#{session_id}")
 	if listErr != nil {
 		if err := writeGenerated(); err != nil {
-			return err
+			return rollbackManagedIngest(err)
 		}
 		if c.diagnostics != nil {
 			code := diagnostics.CodeTmuxApplyFailed
@@ -994,21 +1010,17 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 
 	if c.ai != nil {
 		migrationAI := c.managedIngestMigrationAIForSocket(socketName)
-		migrated, err := migrationAI.migrateManagedTmuxBellProducer()
+		migrated, rollback, err := migrationAI.beginManagedTmuxBellProducerMigration()
 		if err != nil {
-			if managedIngestFileRollback != nil {
-				if rollbackErr := managedIngestFileRollback(); rollbackErr != nil {
-					return fmt.Errorf("migrate managed tmux bell hook on -L %s: %w (file rollback failed: %v)", socketName, err, rollbackErr)
-				}
-			}
-			return fmt.Errorf("migrate managed tmux bell hook on -L %s: %w", socketName, err)
+			return rollbackManagedIngest(fmt.Errorf("migrate managed tmux bell hook on -L %s: %w", socketName, err))
 		}
+		managedIngestBellRollback = rollback
 		if migrated {
 			fmt.Fprintf(stdout, "migrated managed tmux bell hook on -L %s\n", socketName)
 		}
 	}
 	if err := writeGenerated(); err != nil {
-		return err
+		return rollbackManagedIngest(err)
 	}
 
 	// Retire the previously recorded sequence roots/tables before the new
@@ -1018,7 +1030,7 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		if c.diagnostics != nil {
 			c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeTmuxApplyReloadFailed)
 		}
-		return fmt.Errorf("retire generated key sequence state on -L %s: %w", socketName, err)
+		return rollbackManagedIngest(fmt.Errorf("retire generated key sequence state on -L %s: %w", socketName, err))
 	}
 
 	if _, err := c.runner.Run(ctx, "tmux", "-L", socketName, "source-file", resolved); err != nil {
@@ -1026,8 +1038,13 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 			c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeTmuxApplyReloadFailed)
 		}
 		fmt.Fprintf(stderr, "tmux source-file failed on -L %s: %v\n", socketName, err)
-		_, err2 := fmt.Fprintf(stdout, "skipped reload: source-file failed on -L %s\n", socketName)
-		return err2
+		if _, writeErr := fmt.Fprintf(stdout, "skipped reload: source-file failed on -L %s\n", socketName); writeErr != nil {
+			return rollbackManagedIngest(writeErr)
+		}
+		if rollbackErr := rollbackManagedIngest(nil); rollbackErr != nil {
+			return rollbackErr
+		}
+		return nil
 	}
 
 	// Reload is the live mutation preflight for convergence. Nothing above the
@@ -1037,10 +1054,10 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	// convergence never falls back to a default socket or inherited $TMUX.
 	target, targetErr := tmuxSocketNameTarget(socketName)
 	if targetErr != nil {
-		return targetErr
+		return rollbackManagedIngest(targetErr)
 	}
 	if err := c.convergeBindings(ctx, target); err != nil {
-		return fmt.Errorf("converge managed runtime bindings on -L %s: %w", socketName, err)
+		return rollbackManagedIngest(fmt.Errorf("converge managed runtime bindings on -L %s: %w", socketName, err))
 	}
 
 	count := 0

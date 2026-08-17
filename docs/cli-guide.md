@@ -1214,12 +1214,14 @@ reported as `unknown` with guidance.
 `apply` is installer-aware and only runs after explicit user selection.
 For npm installs, it runs `npm install -g projmux@latest` (which reliably
 crosses minor/major versions where `npm update -g` does not, and re-resolves
-the per-platform optional dependency) and then `projmux tmux apply` unless
-`--no-apply` is set. For Go installs, it delegates to the existing atomic
+the per-platform optional dependency) and then runs the new binary's
+`projmux tmux apply`. With `--no-apply`, that convergence step uses
+`--no-reload`: it still migrates marker-owned files and writes generated
+configuration without accessing live tmux. For Go installs, it delegates to the existing atomic
 `projmux upgrade` flow. For `github-release` installs, it downloads the latest
 matching `projmux_<version>_<goos>_<goarch>.tar.gz` release asset, extracts the
-binary, atomically replaces the current executable, then applies tmux
-configuration unless `--no-apply` is set. `source` installs report an
+binary, atomically replaces the current executable, then performs the same
+apply/`--no-reload` convergence. `source` installs report an
 actionable error to update the checkout with `git pull --ff-only && make install`.
 
 ## upgrade
@@ -1230,7 +1232,8 @@ projmux upgrade [--ref @latest|@<tag>|@<branch>]
 ```
 
 `go install`s the binary, atomically replaces the on-disk file, then
-runs `projmux tmux apply` (skipped with `--no-apply`). Reads
+runs `projmux tmux apply`; `--no-apply` selects `tmux apply --no-reload` so
+file migration and generated config still converge without live tmux access. Reads
 `PROJMUX_PROJDIR` from the calling shell and memoizes the primary entry
 to `~/.config/projmux/projdir`. npm-installed binaries reject this
 command; use `projmux update apply` or `npm install -g projmux@latest` for npm
