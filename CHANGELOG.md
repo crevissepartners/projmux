@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.12.0](https://github.com/crevissepartners/projmux/compare/v0.11.1...v0.12.0) (2026-08-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** remove legacy AI ingest compatibility ([#671](https://github.com/crevissepartners/projmux/issues/671))
+
+### Features
+
+* **cli:** remove legacy AI ingest compatibility ([#671](https://github.com/crevissepartners/projmux/issues/671)) ([8985159](https://github.com/crevissepartners/projmux/commit/8985159975ed6ae270c14d2bf4f0d1d9165b069b))
+
 ## [0.11.1](https://github.com/crevissepartners/projmux/compare/v0.11.0...v0.11.1) (2026-08-17)
 
 
