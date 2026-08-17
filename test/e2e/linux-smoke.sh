@@ -347,14 +347,14 @@ printf 'Open / close Project Sidebar\r' >&9
 smoke_wait_for "Launch & popups category" grep -aFq "Settings > Keybindings > Launch & popups >" "$recorder_log"
 printf 'Open / close Project Sidebar\r' >&9
 smoke_wait_for "keybinding Action detail" grep -aFq "Settings > Keybindings > Action >" "$recorder_log"
-printf '+ Add key\r' >&9
-smoke_wait_for "Recording state" grep -aFq "Press a key combination" "$recorder_log"
+printf '+ Add binding\r' >&9
+smoke_wait_for "Recording state" grep -aFq "Press 1 to 4 strokes" "$recorder_log"
 if [[ -e "$XDG_CONFIG_HOME/projmux/keymap.toml" ]]; then
   echo "recorder wrote keymap before candidate confirmation" >&2
   exit 1
 fi
 printf '\022' >&9
-smoke_wait_for "staged C-r preview" grep -aFq "Staged: C-r" "$recorder_log"
+smoke_wait_for "staged C-r preview" grep -aFq "Recorded: C-r" "$recorder_log"
 if [[ -e "$XDG_CONFIG_HOME/projmux/keymap.toml" ]]; then
   echo "recorder wrote keymap while C-r was only staged" >&2
   exit 1
@@ -363,9 +363,9 @@ printf '\r' >&9
 smoke_wait_for "confirmed C-r keymap write" grep -Fq '"C-r"' "$XDG_CONFIG_HOME/projmux/keymap.toml"
 
 # Re-enter from the returned Action detail, stage a replacement, and cancel.
-printf '+ Add key\r' >&9
+printf '+ Add binding\r' >&9
 printf '\033s' >&9
-smoke_wait_for "staged M-s replacement" grep -aFq "Staged: M-s" "$recorder_log"
+smoke_wait_for "staged M-s replacement" grep -aFq "Recorded: M-s" "$recorder_log"
 if grep -Fq '"M-s"' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
   echo "recorder persisted M-s before confirmation" >&2
   exit 1
@@ -377,7 +377,7 @@ printf '\033' >&9
 # byte before this boundary would correctly turn the pair into a modified key.
 # The returned Action detail carries the cancellation as an observable
 # feedback row, which is also the Phase 2 zero-silent-no-op contract. The row
-# is asserted rather than "+ Add key" because the detail is taller than the
+# is asserted rather than "+ Add binding" because the detail is taller than the
 # 20-row popup and the Add row can sit below the visible window.
 smoke_wait_for "Action detail after Esc cancellation" sh -c \
   "tail -c +$((recorder_cancel_log_offset + 1)) '$recorder_log' | grep -aFq 'Keybinding cancelled'"
@@ -412,11 +412,11 @@ keymap_before_test="$(cat "$XDG_CONFIG_HOME/projmux/keymap.toml")"
 recorder_testdelivery_offset="$(stat -c %s "$recorder_log")"
 printf 'Test delivery\r' >&9
 smoke_wait_for "Test delivery reader" sh -c \
-  "tail -c +$((recorder_testdelivery_offset + 1)) '$recorder_log' | grep -aFq 'Press a key combination'"
+  "tail -c +$((recorder_testdelivery_offset + 1)) '$recorder_log' | grep -aFq 'Press 1 to 4 strokes'"
 recorder_teststage_offset="$(stat -c %s "$recorder_log")"
 printf '\022' >&9
 smoke_wait_for "Test delivery observed C-r" sh -c \
-  "tail -c +$((recorder_teststage_offset + 1)) '$recorder_log' | grep -aFq 'Staged: C-r'"
+  "tail -c +$((recorder_teststage_offset + 1)) '$recorder_log' | grep -aFq 'Recorded: C-r'"
 recorder_testresult_offset="$(stat -c %s "$recorder_log")"
 printf '\r' >&9
 smoke_wait_for "Test delivery observable result" sh -c \
@@ -426,56 +426,59 @@ if [[ "$keymap_before_test" != "$(cat "$XDG_CONFIG_HOME/projmux/keymap.toml")" ]
   exit 1
 fi
 
-# Phase 1 sequence authoring uses the same attached Settings popup. Return to
-# Action detail, record one logical stroke per editor frame, save at two, prove
-# the generated/live trie exists, then remove it and prove stale state is gone.
+# Phase 1 sequence authoring uses the same attached Settings popup and the same
+# continuous recorder as one-stroke bindings. Record C-o,o, pop/re-add the
+# second stroke without closing the recorder, confirm once, prove the
+# generated/live trie exists, then remove it and prove stale state is gone.
 settings_nav_offset="$(stat -c %s "$recorder_log")"
 printf 'Back\r' >&9
 smoke_wait_for "Action detail after key delivery test" sh -c \
   "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Keybindings > Action > '"
 settings_nav_offset="$(stat -c %s "$recorder_log")"
-printf '+ Add sequence\r' >&9
-smoke_wait_for "sequence editor" sh -c \
-  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Save sequence'"
+printf '+ Add binding\r' >&9
+smoke_wait_for "unified sequence recorder" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Press 1 to 4 strokes'"
 if grep -Fq 'sequences = ' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
-  echo "sequence editor wrote keymap before capture" >&2
+  echo "sequence recorder wrote keymap before capture" >&2
   exit 1
 fi
 
 settings_nav_offset="$(stat -c %s "$recorder_log")"
-printf 'Record next stroke\r' >&9
-smoke_wait_for "first sequence stroke recorder" sh -c \
-  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Recording next stroke'"
-printf '\013' >&9
+printf '\017' >&9
 smoke_wait_for "first sequence stroke accumulated" sh -c \
-  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'C-k'"
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Recorded: C-o'"
 if grep -Fq 'sequences = ' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
   echo "first sequence stroke mutated keymap" >&2
   exit 1
 fi
 
 settings_nav_offset="$(stat -c %s "$recorder_log")"
-printf 'Record next stroke\r' >&9
-smoke_wait_for "second sequence stroke recorder" sh -c \
-  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Recording next stroke'"
-printf '\020' >&9
+printf 'o' >&9
 smoke_wait_for "two-stroke sequence draft" sh -c \
-  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'C-k C-p'"
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Recorded: C-o,o'"
 if grep -Fq 'sequences = ' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
   echo "sequence draft mutated keymap before Save" >&2
   exit 1
 fi
 
 settings_nav_offset="$(stat -c %s "$recorder_log")"
-printf 'Save sequence\r' >&9
-smoke_wait_for "saved sequence keymap" grep -Fq 'sequences = ["C-k C-p"]' "$XDG_CONFIG_HOME/projmux/keymap.toml"
+printf '\177' >&9
+smoke_wait_for "Backspace popped only the last stroke" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Recorded: C-o'"
+if grep -Fq 'sequences = ' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
+  echo "sequence Backspace mutated keymap" >&2
+  exit 1
+fi
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'o\r' >&9
+smoke_wait_for "saved sequence keymap" grep -Fq 'sequences = ["C-o o"]' "$XDG_CONFIG_HOME/projmux/keymap.toml"
 smoke_wait_for "sequence save feedback" sh -c \
   "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Keybinding complete'"
 sequence_table="$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_tables)"
-if [[ "$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots)" != "C-k" ]] ||
+if [[ "$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots)" != "C-o" ]] ||
   [[ -z "$sequence_table" ]] ||
-  [[ "$(tmux -L "$recorder_socket" list-keys -T root C-k)" != *"switch-client -T $sequence_table"* ]] ||
-  [[ "$(tmux -L "$recorder_socket" list-keys -T "$sequence_table" C-p)" != *"run-shell"* ]]; then
+  [[ "$(tmux -L "$recorder_socket" list-keys -T root C-o)" != *"switch-client -T $sequence_table"* ]] ||
+  [[ "$(tmux -L "$recorder_socket" list-keys -T "$sequence_table" o)" != *"run-shell"* ]]; then
   echo "Settings sequence save did not install the expected live trie" >&2
   tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots >&2 || true
   tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_tables >&2 || true
@@ -483,9 +486,9 @@ if [[ "$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots)" 
 fi
 
 settings_nav_offset="$(stat -c %s "$recorder_log")"
-printf 'sequence:C-k C-p\r' >&9
+printf 'sequence:C-o o\r' >&9
 smoke_wait_for "saved sequence detail" sh -c \
-  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Test sequence delivery'"
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'C-o,o'"
 settings_nav_offset="$(stat -c %s "$recorder_log")"
 printf 'Remove sequence\r' >&9
 smoke_wait_for "removed sequence keymap" sh -c \
@@ -498,7 +501,7 @@ if [[ -n "$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots
   echo "Settings sequence removal left stale live trie state" >&2
   echo "roots=$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots)" >&2
   echo "tables=$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_tables)" >&2
-  tmux -L "$recorder_socket" list-keys -T root C-k >&2 || true
+  tmux -L "$recorder_socket" list-keys -T root C-o >&2 || true
   tmux -L "$recorder_socket" list-keys -T "$sequence_table" >&2 || true
   exit 1
 fi

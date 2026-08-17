@@ -2,7 +2,7 @@ package picker
 
 import "strings"
 
-// RecorderPhase is the visible state of a purpose-built single-chord recorder.
+// RecorderPhase is the visible state of a purpose-built keystroke recorder.
 // Confirmation is terminal: the picker returns immediately after entering it.
 type RecorderPhase string
 
@@ -27,10 +27,14 @@ type RecorderKey struct {
 // must not write configuration.
 type RecorderOptions struct {
 	Normalize func(RecorderKey) (string, error)
-	Validate  func(string) error
-	// AutoConfirm returns the first valid candidate immediately. Sequence
-	// authoring uses one recorder frame per stroke, so it must not reserve a
-	// second key as a finish control.
+	// NormalizeStroke is the sequence-aware normalization seam. The index is
+	// the zero-based position the new stroke would occupy. When it is nil,
+	// Normalize is used for every stroke.
+	NormalizeStroke func(RecorderKey, int) (string, error)
+	Validate        func(string) error
+	// AutoConfirm returns the first valid candidate immediately. Delivery
+	// observation uses it to read one logical stroke without reserving a second
+	// key as a finish control.
 	AutoConfirm bool
 	// CaptureEnter treats plain Enter as a candidate when AutoConfirm is set.
 	// Escape remains the recorder cancel control.
@@ -40,6 +44,7 @@ type RecorderOptions struct {
 
 type RecorderState struct {
 	Phase     RecorderPhase
+	Strokes   []string
 	Candidate string
 	Message   string
 }
@@ -58,6 +63,7 @@ const (
 	recorderCandidate recorderEventKind = iota
 	recorderEnter
 	recorderEscape
+	recorderBackspace
 )
 
 type recorderEvent struct {
@@ -69,20 +75,36 @@ func newRecorderState() RecorderState {
 	return RecorderState{Phase: RecorderRecording}
 }
 
-func reduceRecorderState(state RecorderState, event recorderEvent, normalize func(RecorderKey) (string, error), validate func(string) error) (RecorderState, recorderOutcome) {
+func reduceRecorderStateAt(state RecorderState, event recorderEvent, normalize func(RecorderKey, int) (string, error), validate func(string) error) (RecorderState, recorderOutcome) {
 	if state.Phase == "" {
 		state = newRecorderState()
+	}
+	if len(state.Strokes) == 0 && strings.TrimSpace(state.Candidate) != "" {
+		state.Strokes = strings.Fields(state.Candidate)
 	}
 	switch event.kind {
 	case recorderEscape:
 		return state, recorderCancel
+	case recorderBackspace:
+		if len(state.Strokes) == 0 {
+			return state, recorderContinue
+		}
+		state.Strokes = state.Strokes[:len(state.Strokes)-1]
+		state.Candidate = strings.Join(state.Strokes, " ")
+		state.Message = ""
+		if len(state.Strokes) == 0 {
+			state.Phase = RecorderRecording
+		} else {
+			state.Phase = RecorderStaged
+		}
+		return state, recorderContinue
 	case recorderEnter:
 		if strings.TrimSpace(state.Candidate) == "" {
 			return state, recorderContinue
 		}
 		if validate != nil {
 			if err := validate(state.Candidate); err != nil {
-				state.Message = "Cannot save: " + err.Error() + ". Choose another key or use Enter key name manually."
+				state.Message = "Cannot save: " + err.Error() + ". Choose another key or use Enter binding manually."
 				return state, recorderContinue
 			}
 		}
@@ -90,22 +112,27 @@ func reduceRecorderState(state RecorderState, event recorderEvent, normalize fun
 		state.Message = ""
 		return state, recorderConfirm
 	case recorderCandidate:
-		if normalize == nil {
-			state.Message = "Cannot record this input. Choose another key or use Enter key name manually."
+		if len(state.Strokes) >= 4 {
+			state.Message = "Maximum 4 strokes. Press Enter to save or Backspace to remove the last stroke."
 			return state, recorderContinue
 		}
-		candidate, err := normalize(event.key)
+		if normalize == nil {
+			state.Message = "Cannot record this input. Choose another key or use Enter binding manually."
+			return state, recorderContinue
+		}
+		candidate, err := normalize(event.key, len(state.Strokes))
 		candidate = strings.TrimSpace(candidate)
 		if err != nil || candidate == "" {
 			detail := "Cannot record this input"
 			if err != nil && strings.TrimSpace(err.Error()) != "" {
 				detail += ": " + err.Error()
 			}
-			state.Message = detail + ". Choose another key or use Enter key name manually."
+			state.Message = detail + ". Choose another key or use Enter binding manually."
 			return state, recorderContinue
 		}
 		state.Phase = RecorderStaged
-		state.Candidate = candidate
+		state.Strokes = append(state.Strokes, candidate)
+		state.Candidate = strings.Join(state.Strokes, " ")
 		state.Message = ""
 		return state, recorderContinue
 	default:

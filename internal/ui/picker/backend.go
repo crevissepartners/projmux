@@ -128,8 +128,8 @@ type Options struct {
 	// filter/preview machinery. Purely additive; ignored by list pickers.
 	ColorGrid bool
 	// Recorder turns the navigation/search surface into a purpose-built
-	// single-chord recorder while retaining this native picker's input reader
-	// and lifecycle. It is ignored by the color-grid mode.
+	// continuous one-to-four-stroke recorder while retaining this native
+	// picker's input reader and lifecycle. It is ignored by the color-grid mode.
 	Recorder              *RecorderOptions
 	Theme                 *theme.EffectiveTheme
 	DeferredUpdate        func() (DeferredUpdate, error)
@@ -652,12 +652,12 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			continue
 		}
 		if options.Recorder != nil && key.Name == "enter" && options.Recorder.AutoConfirm && options.Recorder.CaptureEnter {
-			state, outcome := reduceRecorderState(options.Recorder.State, recorderEvent{
+			state, outcome := reduceRecorderStateAt(options.Recorder.State, recorderEvent{
 				kind: recorderCandidate,
 				key:  RecorderKey{Name: key.Name, Text: key.Text},
-			}, options.Recorder.Normalize, nil)
+			}, recorderNormalizer(options.Recorder), nil)
 			if outcome == recorderContinue && state.Phase == RecorderStaged {
-				state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEnter}, options.Recorder.Normalize, options.Recorder.Validate)
+				state, outcome = reduceRecorderStateAt(state, recorderEvent{kind: recorderEnter}, recorderNormalizer(options.Recorder), options.Recorder.Validate)
 			}
 			options.Recorder.State = state
 			if outcome == recorderConfirm {
@@ -665,12 +665,14 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			}
 			continue
 		}
-		if options.Recorder != nil && (key.Name == "enter" || key.Name == "esc") {
+		if options.Recorder != nil && (key.Name == "enter" || key.Name == "esc" || key.Name == "backspace") {
 			kind := recorderEnter
 			if key.Name == "esc" {
 				kind = recorderEscape
+			} else if key.Name == "backspace" {
+				kind = recorderBackspace
 			}
-			state, outcome := reduceRecorderState(options.Recorder.State, recorderEvent{kind: kind}, options.Recorder.Normalize, options.Recorder.Validate)
+			state, outcome := reduceRecorderStateAt(options.Recorder.State, recorderEvent{kind: kind}, recorderNormalizer(options.Recorder), options.Recorder.Validate)
 			options.Recorder.State = state
 			switch outcome {
 			case recorderConfirm:
@@ -721,9 +723,9 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 
 		if options.Recorder != nil {
 			event := recorderEvent{kind: recorderCandidate, key: RecorderKey{Name: key.Name, Text: key.Text}}
-			state, outcome := reduceRecorderState(options.Recorder.State, event, options.Recorder.Normalize, options.Recorder.Validate)
+			state, outcome := reduceRecorderStateAt(options.Recorder.State, event, recorderNormalizer(options.Recorder), options.Recorder.Validate)
 			if options.Recorder.AutoConfirm && outcome == recorderContinue && state.Phase == RecorderStaged {
-				state, outcome = reduceRecorderState(state, recorderEvent{kind: recorderEnter}, options.Recorder.Normalize, options.Recorder.Validate)
+				state, outcome = reduceRecorderStateAt(state, recorderEvent{kind: recorderEnter}, recorderNormalizer(options.Recorder), options.Recorder.Validate)
 			}
 			options.Recorder.State = state
 			switch outcome {
@@ -848,6 +850,21 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 				previewOffset = 0
 			}
 		}
+	}
+}
+
+func recorderNormalizer(options *RecorderOptions) func(RecorderKey, int) (string, error) {
+	if options == nil {
+		return nil
+	}
+	if options.NormalizeStroke != nil {
+		return options.NormalizeStroke
+	}
+	if options.Normalize == nil {
+		return nil
+	}
+	return func(key RecorderKey, _ int) (string, error) {
+		return options.Normalize(key)
 	}
 }
 
@@ -1917,9 +1934,9 @@ func renderNativeRecorderContent(w io.Writer, pickerTheme projmuxpicker.Theme, t
 	}
 	var main strings.Builder
 	if options.Recorder.AutoConfirm {
-		fmt.Fprintln(&main, "  Recording next stroke")
-		fmt.Fprintln(&main, "  Press one key; it returns to the sequence editor immediately")
-		fmt.Fprintln(&main, "  Enter is a stroke. Esc cancels without changes.")
+		fmt.Fprintln(&main, "  Observing sequence delivery")
+		fmt.Fprintln(&main, "  Press the next configured stroke; this observation completes immediately")
+		fmt.Fprintln(&main, "  Enter may be observed. Esc cancels without changes.")
 		if strings.TrimSpace(state.Message) != "" {
 			fmt.Fprintln(&main)
 			fmt.Fprintln(&main, "  "+state.Message)
@@ -1929,13 +1946,16 @@ func renderNativeRecorderContent(w io.Writer, pickerTheme projmuxpicker.Theme, t
 	}
 	switch state.Phase {
 	case RecorderStaged, RecorderConfirmed:
-		fmt.Fprintln(&main, "  Staged: "+state.Candidate)
-		fmt.Fprintln(&main, "  Not saved yet. Press Enter to save and apply, or Esc to discard.")
+		fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerRecorderRecorded, "Recorded")+": "+strings.ReplaceAll(state.Candidate, " ", ","))
+		strokeCount := strings.ReplaceAll(nativeLocalizedTextForOptions(options, i18n.KeyPickerRecorderStrokeCount, "{count} of 4 strokes"), "{count}", strconv.Itoa(len(state.Strokes)))
+		fmt.Fprintln(&main, "  "+strokeCount)
+		fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerRecorderPending, "Not saved yet. Press Enter to save and apply, or Esc to discard."))
 	default:
-		fmt.Fprintln(&main, "  Recording")
-		fmt.Fprintln(&main, "  Press a key combination")
-		fmt.Fprintln(&main, "  Not saved yet. Esc cancels without changes.")
+		fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerRecorderRecording, "Recording"))
+		fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerRecorderInstruction, "Press 1 to 4 strokes"))
+		fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerRecorderCancelPending, "Not saved yet. Esc cancels without changes."))
 	}
+	fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerRecorderBackspace, "Backspace removes the last stroke."))
 	if strings.TrimSpace(state.Message) != "" {
 		fmt.Fprintln(&main)
 		fmt.Fprintln(&main, "  "+state.Message)

@@ -22,13 +22,23 @@ func TestSettingsKeybindingDetailSeparatesSingleKeysAndSequences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keybindingDetailEntries() error = %v", err)
 	}
-	for _, want := range []string{"Single Keys", "Sequences", "C-k C-p", "+ Add key", "+ Add sequence", "Enter sequence manually"} {
+	for _, want := range []string{"Single Keys", "Sequences", "C-k,C-p", "+ Add binding", "Enter binding manually"} {
 		if !hasEntryLabelContaining(entries, want) {
 			t.Fatalf("detail entries = %#v, want %q", entries, want)
 		}
 	}
 	if !hasEntryValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:sequence:C-k C-p") {
 		t.Fatalf("detail entries = %#v, want sequence detail route", entries)
+	}
+	for _, retired := range []string{"+ Add key", "+ Add sequence", "Enter sequence manually", "Record next stroke", "Sequence Editor"} {
+		if hasEntryLabelContaining(entries, retired) {
+			t.Fatalf("detail entries = %#v, retired authoring label %q remains", entries, retired)
+		}
+	}
+	for _, retiredRoute := range []string{"sequence-add", "sequence-type", "sequence-capture", "sequence-save", "sequence-stroke-remove:0"} {
+		if op, ok := parseKeymapDetailAction(settingsActionPrefixKeymap+"ProjectSidebarToggle:"+retiredRoute, "ProjectSidebarToggle"); ok {
+			t.Fatalf("retired route %q still parses as %q", retiredRoute, op)
+		}
 	}
 
 	pickerEntries, _, err := cmd.keybindingDetailEntries("Sidebar:PinProject")
@@ -67,8 +77,8 @@ func TestSettingsKeybindingSequenceActionDetailGoldenAndKoreanLocale(t *testing.
 			routes = append(routes, "single-keys-state\t"+entry.Value)
 		case entry.Value == settingsNoopValue && strings.Contains(label, "Sequences"):
 			routes = append(routes, "sequences-state\t"+entry.Value)
-		case strings.Contains(entry.Value, "sequence"):
-			routes = append(routes, entry.Value)
+		case strings.Contains(entry.Value, ":sequence:"):
+			routes = append(routes, "sequence-detail\t"+entry.Value+"\tdisplay="+keybindingSequenceDisplay("C-k C-p"))
 		}
 	}
 	got := strings.Join(routes, "\n") + "\n"
@@ -91,45 +101,38 @@ func TestSettingsKeybindingSequenceActionDetailGoldenAndKoreanLocale(t *testing.
 	if err != nil {
 		t.Fatalf("Korean detail error = %v", err)
 	}
-	for _, want := range []string{"단일 키", "시퀀스", "+ 시퀀스 추가", "시퀀스 직접 입력"} {
+	for _, want := range []string{"단일 키", "시퀀스", "+ 바인딩 추가", "바인딩 직접 입력", "C-k,C-p"} {
 		if !hasEntryLabelContaining(koEntries, want) {
 			t.Fatalf("Korean detail = %#v, want %q", koEntries, want)
 		}
 	}
 }
 
-func TestSettingsSequenceEditorLengthAndOneStrokeCaptureContract(t *testing.T) {
+func TestSettingsUnifiedBindingCandidateLengthAndDisplayContract(t *testing.T) {
 	t.Parallel()
 
-	cmd := keybindingCorrectnessCommand(t, t.TempDir(), nil)
-	for count := 0; count <= 4; count++ {
-		strokes := []string{"C-k", "C-p", "Enter", "F12"}[:count]
-		entries, _, err := cmd.keybindingSequenceEditorEntries("ProjectSidebarToggle", "", strokes)
-		if err != nil {
-			t.Fatalf("count %d editor entries error = %v", count, err)
+	for _, tc := range []struct {
+		input     string
+		canonical string
+		display   string
+	}{
+		{input: "C-k", canonical: "C-k", display: "C-k"},
+		{input: "C-o,o", canonical: "C-o o", display: "C-o,o"},
+		{input: "C-o o", canonical: "C-o o", display: "C-o,o"},
+		{input: "C-k,C-p,o,F12", canonical: "C-k C-p o F12", display: "C-k,C-p,o,F12"},
+	} {
+		candidate, err := normalizeKeybindingAuthoringCandidate(tc.input)
+		if err != nil || candidate.Canonical != tc.canonical {
+			t.Fatalf("normalize candidate %q = %#v, %v, want %q", tc.input, candidate, err, tc.canonical)
 		}
-		if got := hasEntryValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:sequence-save"); got != (count >= 2) {
-			t.Fatalf("count %d Save reachable = %v, want %v", count, got, count >= 2)
-		}
-		if got := hasEntryValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:sequence-capture"); got != (count < 4) {
-			t.Fatalf("count %d capture reachable = %v, want %v", count, got, count < 4)
+		if got := keybindingSequenceDisplay(candidate.Canonical); got != tc.display {
+			t.Fatalf("display %q = %q, want %q", tc.input, got, tc.display)
 		}
 	}
-
-	var seen intpickercompat.Options
-	cmd = keybindingCorrectnessCommand(t, t.TempDir(), func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		seen = options
-		return intpickercompat.Result{Key: "enter", Value: "Enter"}, nil
-	})
-	stroke, cancelled, err := cmd.captureKeybindingSequenceStroke("ProjectSidebarToggle", []string{"C-k"})
-	if err != nil || !cancelled || stroke != "" {
-		t.Fatalf("capture reserved Enter = %q, cancelled=%v, err=%v", stroke, cancelled, err)
-	}
-	if seen.Recorder == nil || !seen.Recorder.AutoConfirm || !seen.Recorder.CaptureEnter {
-		t.Fatalf("recorder = %#v, want one-stroke auto-confirm with Enter capture", seen.Recorder)
-	}
-	if cmd.feedback == nil || cmd.feedback.Detail != keymapReservedAuthoringReason {
-		t.Fatalf("feedback = %#v, want shared reserved-key reason", cmd.feedback)
+	for _, input := range []string{"o", "C-o ,", "C-k C-p o F12 M-x", "C-k,Enter"} {
+		if _, err := normalizeKeybindingAuthoringCandidate(input); err == nil {
+			t.Fatalf("normalize candidate %q succeeded, want rejection", input)
+		}
 	}
 }
 
@@ -137,29 +140,11 @@ func TestSettingsSequenceCaptureAndTypedProduceSameV2BytesAndBinding(t *testing.
 	t.Parallel()
 
 	captureHome := t.TempDir()
-	prefix := settingsActionPrefixKeymap + "ProjectSidebarToggle:"
-	steps := 0
 	captured := keybindingCorrectnessCommand(t, captureHome, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		steps++
-		switch steps {
-		case 1, 3:
-			if options.UI != "settings-keybinding-sequence-editor" {
-				t.Fatalf("step %d UI = %q, want editor", steps, options.UI)
-			}
-			return intpickercompat.Result{Key: "enter", Value: prefix + "sequence-capture"}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Value: "C-k"}, nil
-		case 4:
-			return intpickercompat.Result{Key: "enter", Value: "C-p"}, nil
-		case 5:
-			if !hasEntryValue(options.Entries, prefix+"sequence-save") || !hasEntryLabelContaining(options.Entries, "C-k C-p") {
-				t.Fatalf("final editor = %#v, want accumulated sequence and Save", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: prefix + "sequence-save"}, nil
-		default:
-			t.Fatalf("unexpected capture picker step %d", steps)
-			return intpickercompat.Result{}, nil
+		if options.UI != "settings-keybinding-recorder" || options.Recorder == nil {
+			t.Fatalf("capture options = %#v", options)
 		}
+		return intpickercompat.Result{Key: "enter", Value: "C-k C-p"}, nil
 	})
 	captured.lookupEnv = func(name string) string {
 		if name == "TMUX" {
@@ -172,16 +157,16 @@ func TestSettingsSequenceCaptureAndTypedProduceSameV2BytesAndBinding(t *testing.
 		capturedCalls = append(capturedCalls, append([]string{name}, args...))
 		return nil
 	}
-	if err := captured.runKeybindingSequenceEditor("ProjectSidebarToggle", "", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("capture editor error = %v", err)
+	if err := captured.runKeybindingRecorder("ProjectSidebarToggle", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("capture recorder error = %v", err)
 	}
 
 	typedHome := t.TempDir()
 	typed := keybindingCorrectnessCommand(t, typedHome, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		if options.UI != "settings-keybinding-sequence-type" || !options.AcceptQuery {
+		if options.UI != "settings-keybinding-type" || !options.AcceptQuery {
 			t.Fatalf("typed options = %#v", options)
 		}
-		return intpickercompat.Result{Key: "enter", Query: "C-k C-p"}, nil
+		return intpickercompat.Result{Key: "enter", Query: "C-k,C-p"}, nil
 	})
 	typed.lookupEnv = captured.lookupEnv
 	var typedCalls [][]string
@@ -189,7 +174,7 @@ func TestSettingsSequenceCaptureAndTypedProduceSameV2BytesAndBinding(t *testing.
 		typedCalls = append(typedCalls, append([]string{name}, args...))
 		return nil
 	}
-	if err := typed.runKeybindingSequenceTyped("ProjectSidebarToggle", "", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := typed.runKeybindingTyped("ProjectSidebarToggle", false, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("typed sequence error = %v", err)
 	}
 
@@ -213,6 +198,47 @@ func TestSettingsSequenceCaptureAndTypedProduceSameV2BytesAndBinding(t *testing.
 	}
 }
 
+func TestSettingsUnifiedBindingReplaceIsLengthDrivenAndAtomic(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd := keybindingCorrectnessCommand(t, home, nil)
+	if err := cmd.addKeymapSequenceAndApply("ProjectSidebarToggle", "C-k C-p", &bytes.Buffer{}); err != nil {
+		t.Fatalf("seed sequence error = %v", err)
+	}
+	single, err := normalizeKeybindingAuthoringCandidate("C-r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.saveKeybindingCandidateAndApply("ProjectSidebarToggle", single, "C-k C-p", &bytes.Buffer{}); err != nil {
+		t.Fatalf("sequence-to-single replace error = %v", err)
+	}
+	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if !strings.Contains(keymap, `keys = ["M-1", "C-r"]`) || strings.Contains(keymap, "C-k C-p") {
+		t.Fatalf("sequence-to-single keymap = %q", keymap)
+	}
+
+	sequence, err := normalizeKeybindingAuthoringCandidate("C-o,o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.saveKeybindingCandidateAndApply("ProjectSidebarToggle", sequence, "C-r", &bytes.Buffer{}); err != nil {
+		t.Fatalf("single-to-sequence replace error = %v", err)
+	}
+	keymap = readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	if strings.Contains(keymap, `"C-r"`) || !strings.Contains(keymap, `sequences = ["C-o o"]`) || strings.Contains(keymap, "C-o,o") {
+		t.Fatalf("single-to-sequence keymap = %q, want space storage only", keymap)
+	}
+	entries, title, err := cmd.keybindingSequenceDetailEntries("ProjectSidebarToggle", "C-o o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(title, "C-o,o") || !hasEntryLabelContaining(entries, "C-o,o") ||
+		!hasEntryValue(entries, settingsActionPrefixKeymap+"ProjectSidebarToggle:sequence-remove:C-o o") {
+		t.Fatalf("sequence detail title=%q entries=%#v, want comma display and space route", title, entries)
+	}
+}
+
 func TestSettingsSequenceAddReplaceRemoveConflictAndNoLiveRecovery(t *testing.T) {
 	t.Parallel()
 
@@ -227,7 +253,11 @@ func TestSettingsSequenceAddReplaceRemoveConflictAndNoLiveRecovery(t *testing.T)
 			t.Fatalf("apply report = %q, want %q", out.String(), want)
 		}
 	}
-	if err := cmd.replaceKeymapSequenceAndApply("ProjectSidebarToggle", "C-k C-p", "C-k C-s", &bytes.Buffer{}); err != nil {
+	replacement, err := normalizeKeybindingAuthoringCandidate("C-k C-s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.saveKeybindingCandidateAndApply("ProjectSidebarToggle", replacement, "C-k C-p", &bytes.Buffer{}); err != nil {
 		t.Fatalf("replace error = %v", err)
 	}
 	beforeConflict := settingsNavConfigSnapshot(t, home)
@@ -304,7 +334,7 @@ func TestSettingsSequenceRemovalRetiresLiveTrieBeforeReload(t *testing.T) {
 	}
 }
 
-func TestSettingsSequenceConflictStaysInEditorWithoutMutation(t *testing.T) {
+func TestSettingsSequenceConflictStaysInRecorderWithoutMutation(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -313,44 +343,25 @@ func TestSettingsSequenceConflictStaysInEditorWithoutMutation(t *testing.T) {
 		t.Fatalf("seed sequence error = %v", err)
 	}
 	before := settingsNavConfigSnapshot(t, home)
-	prefix := settingsActionPrefixKeymap + "NotifySidebarToggle:"
-	step := 0
 	cmd := keybindingCorrectnessCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		step++
-		switch step {
-		case 1, 3:
-			return intpickercompat.Result{Key: "enter", Value: prefix + "sequence-capture"}, nil
-		case 2:
-			return intpickercompat.Result{Key: "enter", Value: "C-k"}, nil
-		case 4:
-			return intpickercompat.Result{Key: "enter", Value: "C-p"}, nil
-		case 5:
-			return intpickercompat.Result{Key: "enter", Value: prefix + "sequence-save"}, nil
-		case 6:
-			if options.UI != "settings-keybinding-sequence-editor" ||
-				!hasEntryLabelContainingAll(options.Entries, "Feedback", "Sequence failed", "bound to both") {
-				t.Fatalf("post-conflict editor = %#v, want visible conflict feedback", options.Entries)
-			}
-			if !hasEntryLabelContaining(options.Entries, "C-k C-p") ||
-				!hasEntryValue(options.Entries, prefix+"sequence-save") {
-				t.Fatalf("post-conflict editor = %#v, want intact draft and retryable Save", options.Entries)
-			}
-			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
-		default:
-			t.Fatalf("unexpected picker step %d", step)
-			return intpickercompat.Result{}, nil
+		if options.UI != "settings-keybinding-recorder" || options.Recorder == nil {
+			t.Fatalf("options = %#v, want unified recorder", options)
 		}
+		if err := options.Recorder.Validate("C-k C-p"); err == nil || !strings.Contains(err.Error(), "bound to both") {
+			t.Fatalf("recorder conflict = %v", err)
+		}
+		return intpickercompat.Result{Key: "esc"}, nil
 	})
 	var tmuxCalls [][]string
 	cmd.runCommand = func(name string, args ...string) error {
 		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
 		return nil
 	}
-	if err := cmd.runKeybindingSequenceEditor("NotifySidebarToggle", "", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("conflicting editor error = %v", err)
+	if err := cmd.runKeybindingRecorder("NotifySidebarToggle", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("conflicting recorder error = %v", err)
 	}
-	if step != 6 || len(tmuxCalls) != 0 {
-		t.Fatalf("steps=%d tmux calls=%#v, want editor recovery and zero live calls", step, tmuxCalls)
+	if len(tmuxCalls) != 0 {
+		t.Fatalf("tmux calls=%#v, want retry/cancel with zero live calls", tmuxCalls)
 	}
 	if after := settingsNavConfigSnapshot(t, home); after != before {
 		t.Fatalf("conflict changed config:\nbefore=%q\nafter=%q", before, after)
@@ -366,9 +377,6 @@ func TestSettingsSequenceNavigationCancelAndTestAreNoWrite(t *testing.T) {
 	if _, _, err := cmd.keybindingDetailEntries("ProjectSidebarToggle"); err != nil {
 		t.Fatalf("detail render error = %v", err)
 	}
-	if _, _, err := cmd.keybindingSequenceEditorEntries("ProjectSidebarToggle", "", []string{"C-k"}); err != nil {
-		t.Fatalf("editor render error = %v", err)
-	}
 	if after := settingsNavConfigSnapshot(t, home); after != before {
 		t.Fatalf("navigation mutated config")
 	}
@@ -376,15 +384,15 @@ func TestSettingsSequenceNavigationCancelAndTestAreNoWrite(t *testing.T) {
 	calls := 0
 	cmd = keybindingCorrectnessCommand(t, home, func(options intpickercompat.Options) (intpickercompat.Result, error) {
 		calls++
-		return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil
+		return intpickercompat.Result{Key: "esc"}, nil
 	})
 	var tmuxCalls [][]string
 	cmd.runCommand = func(name string, args ...string) error {
 		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
 		return nil
 	}
-	if err := cmd.runKeybindingSequenceEditor("ProjectSidebarToggle", "", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("cancel editor error = %v", err)
+	if err := cmd.runKeybindingRecorder("ProjectSidebarToggle", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("cancel recorder error = %v", err)
 	}
 	if calls != 1 || len(tmuxCalls) != 0 || settingsNavConfigSnapshot(t, home) != before {
 		t.Fatalf("cancel calls=%d tmux=%#v snapshot changed=%v", calls, tmuxCalls, settingsNavConfigSnapshot(t, home) != before)
@@ -418,7 +426,7 @@ func TestSettingsSequenceNavigationCancelAndTestAreNoWrite(t *testing.T) {
 		t.Fatalf("delivery steps=%d tmux=%#v snapshot changed=%v", step, tmuxCalls, settingsNavConfigSnapshot(t, home) != beforeTest)
 	}
 	if cmd.feedback == nil || cmd.feedback.Summary != "Sequence delivery complete" ||
-		!strings.Contains(cmd.feedback.Detail, "Observed C-k C-p exactly once") ||
+		!strings.Contains(cmd.feedback.Detail, "Observed C-k,C-p exactly once") ||
 		!strings.Contains(cmd.feedback.Detail, "without writes") {
 		t.Fatalf("delivery feedback = %#v", cmd.feedback)
 	}

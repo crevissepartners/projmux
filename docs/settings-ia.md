@@ -130,19 +130,22 @@ step, never a silent no-op.
   An action detail shows the action, its target kind, result kind, placement and
   anchor, the exact shipped handler the key dispatches to, then separate
   **Single Keys** and **Sequences** collections followed by unbind/reset
-  confirmations. Single Keys owns `+ Add key` and `Enter key name manually`.
-  Sequences owns `+ Add sequence` and `Enter sequence manually` for editable
-  action-level tmux triggers; picker-local actions render an explicit
-  unavailable reason. The sequence editor captures one logical stroke per
-  recorder frame, returns to the accumulated draft after each stroke, enables
-  Save at two strokes, and stops capture at four. Enter is authorable as a
-  stroke, Escape cancels without replay, and there is no reserved finish key.
-  Typed `C-k C-p` entry and capture share the v2 normalizer and conflict
-  preflight. Saved sequence detail owns replace, remove, delivery test, and the
-  partial-cancel plus platform-delivery diagnostics. Native macOS on/off and
-  Linux/WSL expose identical authoring routes; only the Delivery diagnostic
-  names the transport. Navigation, cancellation, and delivery tests write no
-  keymap/generated config and issue no live reload. There is no `Advanced` and
+  confirmations. Action detail owns one `+ Add binding` native reader and one
+  `Enter binding manually` row; picker-local actions reject multi-stroke input
+  with an explicit reason. The reader continuously accumulates one to four
+  logical strokes without closing: Enter saves once, Escape cancels with no
+  write, and Backspace pops only the last stroke or is an empty-draft no-op.
+  Reserved control/navigation keys and modifiers never become candidates. The
+  first plain printable is rejected, while later safe plain printables are allowed.
+  One stroke saves as a single key and two to four as a sequence. Typed comma
+  form (`C-o,o`) and legacy space form (`C-o o`) share the capture classifier,
+  conflict preflight, and save boundary; display uses commas while schema,
+  routes, generated config, and runtime keep spaces. Single and sequence detail
+  replace routes pass explicit old-binding context through the same pipeline,
+  so cross-kind replacement is atomic. Native macOS on/off and Linux/WSL expose
+  identical logical authoring routes; only the Delivery diagnostic names the
+  transport. Navigation, cancellation, Backspace editing, and delivery tests
+  write no keymap/generated config and issue no live reload. There is no `Advanced` and
   no `Troubleshooting` container: both named an implementation layer, and both
   fronted rows that did nothing.
   A key detail shows the canonical key, the delivery path and `Test delivery`.

@@ -49,6 +49,13 @@ const (
 	KeyPickerFooterBack              Key = "picker.footer.back"
 	KeyPickerFooterClose             Key = "picker.footer.close"
 	KeyPickerEmptyNoMatches          Key = "picker.empty.no_matches"
+	KeyPickerRecorderRecording       Key = "picker.recorder.recording"
+	KeyPickerRecorderInstruction     Key = "picker.recorder.instruction"
+	KeyPickerRecorderRecorded        Key = "picker.recorder.recorded"
+	KeyPickerRecorderStrokeCount     Key = "picker.recorder.stroke_count"
+	KeyPickerRecorderPending         Key = "picker.recorder.pending"
+	KeyPickerRecorderCancelPending   Key = "picker.recorder.cancel_pending"
+	KeyPickerRecorderBackspace       Key = "picker.recorder.backspace"
 	KeyPickerResourcesTitle          Key = "picker.resources.title"
 	KeyPickerResourcesPrompt         Key = "picker.resources.prompt"
 	KeyPickerResourcesStatusWarming  Key = "picker.resources.status.warming"
@@ -111,6 +118,13 @@ var foundationKeys = []Key{
 	KeyPickerFooterBack,
 	KeyPickerFooterClose,
 	KeyPickerEmptyNoMatches,
+	KeyPickerRecorderRecording,
+	KeyPickerRecorderInstruction,
+	KeyPickerRecorderRecorded,
+	KeyPickerRecorderStrokeCount,
+	KeyPickerRecorderPending,
+	KeyPickerRecorderCancelPending,
+	KeyPickerRecorderBackspace,
 	KeyWelcomeShellTitle,
 	KeyWelcomeShellDetach,
 	KeyWelcomeShellExit,
