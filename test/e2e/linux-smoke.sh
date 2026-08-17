@@ -376,9 +376,7 @@ printf '\033' >&9
 # recorder has returned to a newly rendered Action detail. Sending the next
 # byte before this boundary would correctly turn the pair into a modified key.
 # The returned Action detail carries the cancellation as an observable
-# feedback row, which is also the Phase 2 zero-silent-no-op contract. The row
-# is asserted rather than "+ Add binding" because the detail is taller than the
-# 20-row popup and the Add row can sit below the visible window.
+# feedback row, which is also the zero-silent-no-op contract.
 smoke_wait_for "Action detail after Esc cancellation" sh -c \
   "tail -c +$((recorder_cancel_log_offset + 1)) '$recorder_log' | grep -aFq 'Keybinding cancelled'"
 if grep -Fq '"M-s"' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
@@ -386,17 +384,17 @@ if grep -Fq '"M-s"' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
   exit 1
 fi
 
-# Phase 2 action-detail correctness on the same real client. The detail
-# projects the action's semantics and the shipped handler, the retired
-# Advanced/Troubleshooting containers are gone, and the key detail's Test
-# delivery row reports a result instead of returning to the same loop.
-recorder_detail_offset="$(stat -c %s "$recorder_log")"
-for marker in 'Target kind' 'Result kind' 'Handler'; do
+# Interaction-first action-detail correctness on the same real client. Current
+# bindings and actions remain visible, passive semantic/handler rows and
+# teaching containers are gone, and the key detail's Test delivery row reports
+# a result instead of returning to the same loop.
+recorder_detail_offset="$recorder_cancel_log_offset"
+for marker in 'Single Keys' 'Sequences' '+ Add binding'; do
   smoke_wait_for "action detail $marker" sh -c \
     "tail -c +$((recorder_detail_offset + 1)) '$recorder_log' | grep -aFq '$marker'"
 done
-if tail -c +$((recorder_detail_offset + 1)) "$recorder_log" | grep -aEq 'Troubleshooting|Advanced\.\.\.'; then
-  echo "action detail still renders a retired Advanced/Troubleshooting container" >&2
+if tail -c +$((recorder_detail_offset + 1)) "$recorder_log" | grep -aEq 'Target kind|Result kind|Placement|Anchor|Handler|Options|Troubleshooting|Advanced\.\.\.'; then
+  echo "action detail still renders passive internal copy or a teaching container" >&2
   exit 1
 fi
 recorder_keydetail_offset="$(stat -c %s "$recorder_log")"
@@ -408,6 +406,10 @@ smoke_wait_for "key detail" sh -c \
   "tail -c +$((recorder_keydetail_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Keybindings > Action > Key > '"
 smoke_wait_for "key detail Test delivery row" sh -c \
   "tail -c +$((recorder_keydetail_offset + 1)) '$recorder_log' | grep -aFq 'Test delivery'"
+if tail -c +$((recorder_keydetail_offset + 1)) "$recorder_log" | grep -aEq 'Canonical key|Delivery path'; then
+  echo "key detail still renders canonical-storage or delivery-path teaching" >&2
+  exit 1
+fi
 keymap_before_test="$(cat "$XDG_CONFIG_HOME/projmux/keymap.toml")"
 recorder_testdelivery_offset="$(stat -c %s "$recorder_log")"
 printf 'Test delivery\r' >&9
@@ -489,6 +491,10 @@ settings_nav_offset="$(stat -c %s "$recorder_log")"
 printf 'sequence:C-o o\r' >&9
 smoke_wait_for "saved sequence detail" sh -c \
   "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'C-o,o'"
+if tail -c +$((settings_nav_offset + 1)) "$recorder_log" | grep -aEq 'Cancellation|authoring and saved bytes|saved logical strokes'; then
+  echo "sequence detail still renders cancellation, delivery, or storage teaching" >&2
+  exit 1
+fi
 settings_nav_offset="$(stat -c %s "$recorder_log")"
 printf 'Remove sequence\r' >&9
 smoke_wait_for "removed sequence keymap" sh -c \
@@ -503,6 +509,79 @@ if [[ -n "$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_roots
   echo "tables=$(tmux -L "$recorder_socket" show-options -gqv @projmux_sequence_tables)" >&2
   tmux -L "$recorder_socket" list-keys -T root C-o >&2 || true
   tmux -L "$recorder_socket" list-keys -T "$sequence_table" >&2 || true
+  exit 1
+fi
+
+# Exercise the remaining normal state matrix on the same exact client. Remove
+# every single key, observe Unbound plus the reachable Use default action, then
+# restore the shipped binding and prove the live root table follows both writes.
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Unbind single keys\r' >&9
+smoke_wait_for "unbound keymap bytes" grep -Fq 'keys = []' "$XDG_CONFIG_HOME/projmux/keymap.toml"
+smoke_wait_for "unbound action detail" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Unbound'"
+smoke_wait_for "use-default action" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Use default'"
+if tmux -L "$recorder_socket" list-keys -T root M-1 >/dev/null 2>&1; then
+  echo "Unbind single keys left the M-1 live root binding active" >&2
+  exit 1
+fi
+
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Use default\r' >&9
+smoke_wait_for "default action detail" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Default'"
+smoke_wait_for "restored default root binding" sh -c \
+  "tmux -L '$recorder_socket' list-keys -T root M-1 | grep -Fq 'popup-toggle --client'"
+if grep -Fq '[bindings.ProjectSidebarToggle]' "$XDG_CONFIG_HOME/projmux/keymap.toml"; then
+  echo "Use default left a ProjectSidebarToggle override in keymap.toml" >&2
+  exit 1
+fi
+
+# A protected picker action supplies both conditional cases that normal detail
+# intentionally omits: the exact read-only reason, and an unavailable delivery
+# observation with a short, immediately usable alternative. Navigation alone
+# must not change the just-restored keymap bytes.
+protected_keymap_before="$(cat "$XDG_CONFIG_HOME/projmux/keymap.toml")"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Back\r' >&9
+smoke_wait_for "Launch category after default restore" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Keybindings > Launch & popups >'"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'Back\r' >&9
+smoke_wait_for "Keybindings root before protected action" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Keybindings >'"
+
+protected_action='Focus source and acknowledge Notification'
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf '%s\r' "$protected_action" >&9
+smoke_wait_for "protected action category" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Settings > Keybindings > Sidebar & picker actions >'"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf '%s\r' "$protected_action" >&9
+smoke_wait_for "protected action surface" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Sidebar & picker actions > Notificat'"
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf '%s\r' "$protected_action" >&9
+smoke_wait_for "protected action reason" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Editing locked'"
+smoke_wait_for "protected trigger reason" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'shipped/default trigger'"
+if tail -c +$((settings_nav_offset + 1)) "$recorder_log" | grep -aEq '\+ Add binding|Enter binding manually|Unbind single keys|Reset to default|Use default'; then
+  echo "protected action exposed a mutation row" >&2
+  exit 1
+fi
+
+settings_nav_offset="$(stat -c %s "$recorder_log")"
+printf 'key:Enter\r' >&9
+smoke_wait_for "protected unavailable key detail" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'Test delivery'"
+smoke_wait_for "unavailable recorder reason" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'recorder uses Enter'"
+smoke_wait_for "unavailable usable alternative" sh -c \
+  "tail -c +$((settings_nav_offset + 1)) '$recorder_log' | grep -aFq 'projmux setup'"
+if [[ "$protected_keymap_before" != "$(cat "$XDG_CONFIG_HOME/projmux/keymap.toml")" ]]; then
+  echo "protected/unavailable detail navigation mutated keymap.toml" >&2
   exit 1
 fi
 

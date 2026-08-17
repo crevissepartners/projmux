@@ -1014,10 +1014,10 @@ func keyBindingActionSemanticsFor(action keyBindingAction) (keyBindingActionSema
 }
 
 // keyBindingActionHandler pins the exact shipped handler one key action
-// dispatches to. It exists so an action detail can never imply a handler the
-// action does not have: Invocation is what the generated tmux config actually
-// runs, and Manifest/Disposition/Canonical are projected from the shipped CLI
-// command manifest in internal/cli rather than from a second hand-kept table.
+// dispatches to. It remains internal correctness/search metadata: Invocation
+// is what the generated tmux config actually runs, and
+// Manifest/Disposition/Canonical are projected from the shipped CLI command
+// manifest in internal/cli rather than from a second hand-kept table.
 type keyBindingActionHandler struct {
 	// Invocation is the exact shipped command the binding runs.
 	Invocation string
@@ -1038,8 +1038,8 @@ type keyBindingActionHandler struct {
 // exists: the shipped manifest classifies `projmux current` as a compatibility
 // route whose canonical projection is the read-only `get pane` cwd field, while
 // the shipped handler also ensures and attaches the derived runtime. Naming
-// both halves on the row is what stops the read-only query from being read as
-// the action's outcome.
+// both halves in the internal model is what stops the read-only query from
+// being treated as the action's outcome.
 var keyBindingActionHandlerNotes = map[string]string{
 	"current-project-session": "compatibility route; the manifest canonical `get pane` cwd projection is the read-only input step only, and the ensure/attach outcome is owned by this route",
 	"toggle-mouse":            "tmux `if-shell` flips the server-wide mouse option",
@@ -1098,8 +1098,8 @@ func keyBindingHandlerFromManifest(tokens []string, invocation string) keyBindin
 	return handler
 }
 
-// condenseTmuxHandlerBody keeps a direct tmux body readable in one popup row
-// without hiding which tmux command actually runs.
+// condenseTmuxHandlerBody keeps a direct tmux body bounded in non-visible
+// search metadata without hiding which tmux command actually runs.
 func condenseTmuxHandlerBody(body string) string {
 	condensed := strings.Join(strings.Fields(body), " ")
 	const max = 44

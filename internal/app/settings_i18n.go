@@ -698,7 +698,9 @@ var uiTextKeys = map[string]i18n.Key{
 	"Press one non-reserved stroke · Esc cancels observation.":                   "settings.footer.keybindings_sequence_stroke",
 	"Press one stroke · Esc cancels delivery observation.":                       "settings.footer.keybindings_sequence_test_stroke",
 	"Enter a sequence such as C-k C-p (2 to 4 strokes).":                         "settings.footer.keybindings_sequence_typed",
-	"Manage this sequence trigger and inspect its delivery contract.":            "settings.footer.keybindings_sequence_detail",
+	"Manage or test this sequence binding.":                                      "settings.footer.keybindings_sequence_detail",
+	"Try instead":                                                                "settings.text.try_instead",
+	"run projmux setup in a plain terminal":                                      "settings.text.run_projmux_setup_plain_terminal",
 
 	// --- Non-settings picker chrome (notify, switch pins, hookmaker) -------
 	// These render through the shared picker choke point or source-level

@@ -1,3 +1,7 @@
 single-keys-state	__settings_noop__
 sequences-state	__settings_noop__
 sequence-detail	keymap:ProjectSidebarToggle:sequence:C-k C-p	display=C-k,C-p
+add-binding	keymap:ProjectSidebarToggle:add
+type-binding	keymap:ProjectSidebarToggle:type
+unbind-single-keys	keymap:ProjectSidebarToggle:unbind
+reset-binding	keymap:ProjectSidebarToggle:reset

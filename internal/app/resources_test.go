@@ -946,8 +946,9 @@ func TestResourcesActionSettingsVisibilityAndLabsOffConfigOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasEntryLabelContaining(detail, "읽기 전용 프로젝트, 창, pane 리소스 검사기 열기") {
-		t.Fatalf("ko-KR Resources detail = %#v, want localized description", detail)
+	if !hasEntryLabelContainingAll(detail, "리소스 인스펙터 열기", "Available") ||
+		hasEntryLabelContaining(detail, "읽기 전용 프로젝트, 창, pane 리소스 검사기 열기") {
+		t.Fatalf("ko-KR Resources detail = %#v, want concise localized action state without the passive description", detail)
 	}
 	catalog := defaultKeyBindingCatalog()
 	for i := range catalog {

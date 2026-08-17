@@ -126,8 +126,12 @@ func TestDefaultCatalogProtectedActionInventoryAndMutationRows(t *testing.T) {
 		if err != nil {
 			t.Fatalf("keybindingDetailEntries(%q) error = %v", action.ID, err)
 		}
-		if !hasEntryLabelContainingAll(entries, "Editing locked", reason) {
-			t.Fatalf("protected detail %q = %#v, want visible lock reason %q", action.ID, entries, reason)
+		if !hasEntryLabelContainingAll(entries, "Editing locked", keybindingProtectedActionVisibleReason) {
+			t.Fatalf("protected detail %q = %#v, want concise visible lock reason", action.ID, entries)
+		}
+		lock := entryWithLabelContaining(entries, "Editing locked")
+		if lock == nil || !strings.Contains(lock.SearchKey, reason) {
+			t.Fatalf("protected detail %q = %#v, want exact policy reason retained as non-visible search context %q", action.ID, entries, reason)
 		}
 		for _, entry := range entries {
 			op, ok := parseKeymapDetailAction(entry.Value, action.ID)
