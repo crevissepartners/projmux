@@ -1444,9 +1444,9 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 		ID:             "codex-hooks",
 		Name:           "Codex hooks",
 		Status:         doctorAINotifyStatusMissing,
-		InstallCommand: "projmux ai integrate codex",
-		RemoveCommand:  "projmux ai integrate codex --remove",
-		DryRunCommand:  "projmux ai integrate codex --dry-run",
+		InstallCommand: "projmux agent integrate codex",
+		RemoveCommand:  "projmux agent integrate codex --remove",
+		DryRunCommand:  "projmux agent integrate codex --dry-run",
 	}
 	assertCataloguedEntries("delivery source detail", aiNotifyDiagnosticDetailEntriesLocale(settingsLocale(), diagnostic))
 
@@ -2740,9 +2740,9 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			ConflictReason: "unmanaged notify command",
 			Guidance:       "Codex requires reviewing/enabling installed hook commands from /hooks before they run.",
 			TestedVersion:  "codex-cli 0.130.0",
-			InstallCommand: "projmux ai integrate codex",
-			RemoveCommand:  "projmux ai integrate codex --remove",
-			DryRunCommand:  "projmux ai integrate codex --dry-run",
+			InstallCommand: "projmux agent integrate codex",
+			RemoveCommand:  "projmux agent integrate codex --remove",
+			DryRunCommand:  "projmux agent integrate codex --dry-run",
 		},
 		{
 			ID:             "claude-hooks",
@@ -2750,17 +2750,17 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			Status:         doctorAINotifyStatusMissing,
 			ConfigPath:     "/home/tester/.claude/settings.json",
 			TestedVersion:  "Claude Code 2.1.140",
-			InstallCommand: "projmux ai integrate claude",
-			RemoveCommand:  "projmux ai integrate claude --remove",
-			DryRunCommand:  "projmux ai integrate claude --dry-run",
+			InstallCommand: "projmux agent integrate claude",
+			RemoveCommand:  "projmux agent integrate claude --remove",
+			DryRunCommand:  "projmux agent integrate claude --dry-run",
 		},
 		{
 			ID:             "tmux-bell",
 			Name:           "tmux bell fallback",
 			Status:         doctorAINotifyStatusMissing,
-			InstallCommand: "projmux ai integrate tmux-bell",
-			RemoveCommand:  "projmux ai integrate tmux-bell --remove",
-			DryRunCommand:  "projmux ai integrate tmux-bell --dry-run",
+			InstallCommand: "projmux agent integrate tmux-bell",
+			RemoveCommand:  "projmux agent integrate tmux-bell --remove",
+			DryRunCommand:  "projmux agent integrate tmux-bell --dry-run",
 		},
 		{
 			ID:             "antigravity-hooks",
@@ -2770,9 +2770,9 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 			TestedVersion:  "Antigravity CLI 1.1.12",
 			ConfigPath:     "/home/tester/.gemini/config/hooks.json",
 			Guidance:       "Managed hooks use hooks.json as source of truth; /hooks is read-only diagnosis and PreToolUse is unchanged.",
-			InstallCommand: "projmux ai integrate antigravity",
-			RemoveCommand:  "projmux ai integrate antigravity --remove",
-			DryRunCommand:  "projmux ai integrate antigravity --dry-run",
+			InstallCommand: "projmux agent integrate antigravity",
+			RemoveCommand:  "projmux agent integrate antigravity --remove",
+			DryRunCommand:  "projmux agent integrate antigravity --dry-run",
 		},
 	}
 
@@ -2883,9 +2883,9 @@ func TestSettingsAINotifyDiagnosticsRenderDoctorRowsAndCommandGuidance(t *testin
 		"unmanaged notify command",
 		"codex-cli 0.130.0",
 		"Codex requires reviewing/enabling installed hook commands from /hooks before they run.",
-		"projmux ai integrate codex",
-		"projmux ai integrate codex --remove",
-		"projmux ai integrate codex --dry-run",
+		"projmux agent integrate codex",
+		"projmux agent integrate codex --remove",
+		"projmux agent integrate codex --dry-run",
 		"Copy only",
 	} {
 		if !hasEntryLabelContaining(detailOptions.Entries, want) {
@@ -2931,9 +2931,9 @@ func TestSettingsNotificationsDeliveryShowsAntigravityManagedCommands(t *testing
 		StatusLinePath: "/home/tester/.gemini/antigravity-cli/settings.json",
 		TestedVersion:  "Antigravity CLI 1.1.12",
 		Guidance:       "Managed hooks use hooks.json as source of truth; /hooks is read-only diagnosis and PreToolUse is unchanged.",
-		InstallCommand: "projmux ai integrate antigravity",
-		RemoveCommand:  "projmux ai integrate antigravity --remove",
-		DryRunCommand:  "projmux ai integrate antigravity --dry-run",
+		InstallCommand: "projmux agent integrate antigravity",
+		RemoveCommand:  "projmux agent integrate antigravity --remove",
+		DryRunCommand:  "projmux agent integrate antigravity --dry-run",
 	}}
 
 	var calls int
@@ -2983,9 +2983,9 @@ func TestSettingsNotificationsDeliveryShowsAntigravityManagedCommands(t *testing
 		"hooks.json as source of truth",
 		"/hooks is read-only diagnosis",
 		"PreToolUse is unchanged",
-		"projmux ai integrate antigravity",
-		"projmux ai integrate antigravity --remove",
-		"projmux ai integrate antigravity --dry-run",
+		"projmux agent integrate antigravity",
+		"projmux agent integrate antigravity --remove",
+		"projmux agent integrate antigravity --dry-run",
 	} {
 		if !hasEntryLabelContaining(detailOptions.Entries, want) {
 			t.Fatalf("antigravity detail entries = %#v, want %q", detailOptions.Entries, want)
@@ -3010,9 +3010,9 @@ func TestSettingsAINotifyDiagnosticsDetailCommandRowsCopyCommands(t *testing.T) 
 		Name:           "Claude Code hooks",
 		Status:         doctorAINotifyStatusMissing,
 		ConfigPath:     "/home/tester/.claude/settings.json",
-		InstallCommand: "projmux ai integrate claude",
-		RemoveCommand:  "projmux ai integrate claude --remove",
-		DryRunCommand:  "projmux ai integrate claude --dry-run",
+		InstallCommand: "projmux agent integrate claude",
+		RemoveCommand:  "projmux agent integrate claude --remove",
+		DryRunCommand:  "projmux agent integrate claude --dry-run",
 	}}
 
 	var calls int
@@ -3056,11 +3056,11 @@ func TestSettingsAINotifyDiagnosticsDetailCommandRowsCopyCommands(t *testing.T) 
 		t.Fatalf("Run() error = %v", err)
 	}
 	for _, want := range []recordedTmuxCall{
-		{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux ai integrate claude"}},
+		{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux agent integrate claude"}},
 		{name: "tmux", args: []string{"display-message", "Claude Code hooks install command copied to clipboard"}},
-		{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux ai integrate claude --remove"}},
+		{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux agent integrate claude --remove"}},
 		{name: "tmux", args: []string{"display-message", "Claude Code hooks remove command copied to clipboard"}},
-		{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux ai integrate claude --dry-run"}},
+		{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux agent integrate claude --dry-run"}},
 		{name: "tmux", args: []string{"display-message", "Claude Code hooks dry-run command copied to clipboard"}},
 	} {
 		if !hasRecordedTmuxCall(tmuxRunner.calls, want) {
@@ -3077,9 +3077,9 @@ func TestSettingsAINotifyDiagnosticsCommandCopyFailureStaysInDetail(t *testing.T
 		Name:           "Claude Code hooks",
 		Status:         doctorAINotifyStatusMissing,
 		ConfigPath:     "/home/tester/.claude/settings.json",
-		InstallCommand: "projmux ai integrate claude",
-		RemoveCommand:  "projmux ai integrate claude --remove",
-		DryRunCommand:  "projmux ai integrate claude --dry-run",
+		InstallCommand: "projmux agent integrate claude",
+		RemoveCommand:  "projmux agent integrate claude --remove",
+		DryRunCommand:  "projmux agent integrate claude --dry-run",
 	}}
 
 	var calls int
@@ -3125,10 +3125,10 @@ func TestSettingsAINotifyDiagnosticsCommandCopyFailureStaysInDetail(t *testing.T
 	if got, want := detailOptions.UI, "settings-notifications-delivery-detail"; got != want {
 		t.Fatalf("delivery source detail UI = %q, want %q", got, want)
 	}
-	if !hasEntryLabelContaining(detailOptions.Entries, "projmux ai integrate claude") {
+	if !hasEntryLabelContaining(detailOptions.Entries, "projmux agent integrate claude") {
 		t.Fatalf("AI notify detail entries = %#v, want install command despite clipboard failure", detailOptions.Entries)
 	}
-	wantCopy := recordedTmuxCall{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux ai integrate claude"}}
+	wantCopy := recordedTmuxCall{name: "tmux", args: []string{"set-buffer", "-w", "--", "projmux agent integrate claude"}}
 	if !hasRecordedTmuxCall(tmuxRunner.calls, wantCopy) {
 		t.Fatalf("tmux calls = %#v, want attempted clipboard copy %#v", tmuxRunner.calls, wantCopy)
 	}

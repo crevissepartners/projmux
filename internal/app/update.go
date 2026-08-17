@@ -191,6 +191,9 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 		if _, err := fmt.Fprintln(stdout, keymapMigrationStagePreviewLine("the updated binary")); err != nil {
 			return err
 		}
+		if _, err := fmt.Fprintln(stdout, managedIngestMigrationStagePreviewLine("the updated binary")); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -240,6 +243,12 @@ func postUpdateApplyArgs(noApply bool) []string {
 func keymapMigrationStagePreviewLine(target string) string {
 	return fmt.Sprintf(
 		"would migrate: keymap schema via %s (the installed binary computes the exact action-id table; this preview does not)",
+		target)
+}
+
+func managedIngestMigrationStagePreviewLine(target string) string {
+	return fmt.Sprintf(
+		"would migrate: marker-owned agent hook producers via %s (missing and unmanaged integrations remain untouched)",
 		target)
 }
 
@@ -299,6 +308,9 @@ func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writ
 		return err
 	}
 	if _, err := fmt.Fprintln(stdout, keymapMigrationStagePreviewLine(target)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(stdout, managedIngestMigrationStagePreviewLine(target)); err != nil {
 		return err
 	}
 	return nil

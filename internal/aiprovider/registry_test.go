@@ -66,7 +66,7 @@ func TestProviderRegistryMetadataForCurrentAgents(t *testing.T) {
 	if !antigravity.UsageSupported || antigravity.UsageModel != string(Antigravity) {
 		t.Fatalf("Antigravity metadata = %#v, want usage support with UsageModel set", antigravity)
 	}
-	if !antigravity.Integrate.Supported || antigravity.Integrate.Command != "projmux ai integrate antigravity" || !antigravity.SessionState.Supported {
+	if !antigravity.Integrate.Supported || antigravity.Integrate.Command != "projmux agent integrate antigravity" || !antigravity.SessionState.Supported {
 		t.Fatalf("Antigravity metadata = %#v, want managed integration and session-state support", antigravity)
 	}
 	if !antigravity.HookDiagnostics.Supported || antigravity.HookDiagnostics.ID != "antigravity-hooks" || antigravity.HookProvider != "antigravity" {

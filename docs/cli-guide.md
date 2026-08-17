@@ -713,10 +713,10 @@ projmux ai ingest   claude-hook < payload.json
 projmux ai ingest   antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop|Statusline>] < payload.json
 projmux ai ingest   bell --pane <pane_id>
 projmux ai ingest   log [--tail N] [--json] [--path]
-projmux ai integrate codex [--dry-run] [--remove]
-projmux ai integrate claude [--dry-run] [--remove]
-projmux ai integrate antigravity [--dry-run] [--remove]
-projmux ai integrate tmux-bell [--dry-run] [--remove]
+projmux agent integrate codex [--dry-run] [--remove]
+projmux agent integrate claude [--dry-run] [--remove]
+projmux agent integrate antigravity [--dry-run] [--remove]
+projmux agent integrate tmux-bell [--dry-run] [--remove]
 projmux ai topic     ...
 ```
 
@@ -814,7 +814,7 @@ Runtime action overrides from
 precedence over catalog `action` during ingest, including known events such as
 `Stop` and `PermissionRequest`. These overrides are managed by
 `Settings > Notifications > Agent event behavior` and do not change the catalog
-`install` field used by `projmux ai integrate codex`. A runtime `notify`
+`install` field used by `projmux agent integrate codex`. A runtime `notify`
 override for a known Codex event without a specialized handler, such as
 `PreToolUse` or `PostToolUse`, pushes a short generic in-app row like
 `PreToolUse · Bash` with agent/category metadata. Generic rows are
@@ -851,10 +851,10 @@ Claude hook commands.
 `ingest antigravity-hook` is the hook/statusline entrypoint for
 Antigravity CLI `agy` payloads. Official v1.1.12 hook commands must pass their
 event identity explicitly, for example
-`projmux ai ingest antigravity-hook --event Stop`; the official stdin payload
+`projmux internal agent-hook ingest antigravity-hook --event Stop`; the official stdin payload
 does not carry an event field. The explicit selector is authoritative, while
 payload `eventName` and its legacy aliases remain fallback inputs for existing
-manual wiring. `projmux ai integrate antigravity` manages exactly the named
+manual wiring. `projmux agent integrate antigravity` manages exactly the named
 `projmux` entry in `~/.gemini/config/hooks.json` and, separately, exactly the
 `statusLine` member in `~/.gemini/antigravity-cli/settings.json`. The managed
 statusline uses the official v1.1.12 `{type:"command", enabled:true,
@@ -1000,10 +1000,10 @@ only commands carrying the projmux marker. Removal and unmanaged conflict
 detection scan every `hooks` event in the settings file rather than trusting the
 current catalog, so stale managed events from older catalogs are still removed.
 Existing unrelated Claude settings and hooks are preserved. If any event already
-contains an unmanaged `projmux ai ingest claude-hook` command, projmux refuses
+contains an unmanaged `projmux internal agent-hook ingest claude-hook` command, projmux refuses
 to install over it and leaves the settings file untouched.
 
-`projmux ai integrate codex` manages a hooks-engine
+`projmux agent integrate codex` manages a hooks-engine
 block in `~/.codex/config.toml`. It enables `[features] hooks = true`,
 merging into an existing `[features]` table when present, and installs broad
 command hooks for every event whose effective Codex hook catalog entry has
@@ -1033,49 +1033,49 @@ hooks = true
 matcher = "*"
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.PermissionRequest]]
 matcher = "*"
 [[hooks.PermissionRequest.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.PostToolUse]]
 matcher = "*"
 [[hooks.PostToolUse.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.PreCompact]]
 matcher = "*"
 [[hooks.PreCompact.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.PostCompact]]
 matcher = "*"
 [[hooks.PostCompact.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.SessionStart]]
 matcher = "*"
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.UserPromptSubmit]]
 matcher = "*"
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 [[hooks.Stop]]
 matcher = "*"
 [[hooks.Stop.hooks]]
 type = "command"
-command = "projmux ai ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 ```
 
 Codex hooks are the default integration mode. The hooks install is idempotent,
@@ -1088,7 +1088,7 @@ the hook through its `/hooks` flow before commands run.
 `integrate tmux-bell` is opt-in server-level tmux wiring for arbitrary tools
 that emit BEL or OSC 9. It applies `allow-passthrough on`, `monitor-bell on`,
 `bell-action other`, and appends a marked `alert-bell` hook that invokes
-`projmux ai ingest bell --pane "#{pane_id}"`. `--dry-run` prints the tmux
+`projmux internal agent-hook ingest bell --pane "#{pane_id}"`. `--dry-run` prints the tmux
 commands. tmux `alert-bell` is a window alert and does not expose
 `#{hook_pane}` on tmux 3.4, so `#{pane_id}` is the best available pane context.
 `--remove` unsets only hook entries carrying the projmux marker and leaves
@@ -1214,12 +1214,14 @@ reported as `unknown` with guidance.
 `apply` is installer-aware and only runs after explicit user selection.
 For npm installs, it runs `npm install -g projmux@latest` (which reliably
 crosses minor/major versions where `npm update -g` does not, and re-resolves
-the per-platform optional dependency) and then `projmux tmux apply` unless
-`--no-apply` is set. For Go installs, it delegates to the existing atomic
+the per-platform optional dependency) and then runs the new binary's
+`projmux tmux apply`. With `--no-apply`, that convergence step uses
+`--no-reload`: it still migrates marker-owned files and writes generated
+configuration without accessing live tmux. For Go installs, it delegates to the existing atomic
 `projmux upgrade` flow. For `github-release` installs, it downloads the latest
 matching `projmux_<version>_<goos>_<goarch>.tar.gz` release asset, extracts the
-binary, atomically replaces the current executable, then applies tmux
-configuration unless `--no-apply` is set. `source` installs report an
+binary, atomically replaces the current executable, then performs the same
+apply/`--no-reload` convergence. `source` installs report an
 actionable error to update the checkout with `git pull --ff-only && make install`.
 
 ## upgrade
@@ -1230,7 +1232,8 @@ projmux upgrade [--ref @latest|@<tag>|@<branch>]
 ```
 
 `go install`s the binary, atomically replaces the on-disk file, then
-runs `projmux tmux apply` (skipped with `--no-apply`). Reads
+runs `projmux tmux apply`; `--no-apply` selects `tmux apply --no-reload` so
+file migration and generated config still converge without live tmux access. Reads
 `PROJMUX_PROJDIR` from the calling shell and memoizes the primary entry
 to `~/.config/projmux/projdir`. npm-installed binaries reject this
 command; use `projmux update apply` or `npm install -g projmux@latest` for npm

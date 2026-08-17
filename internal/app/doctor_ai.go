@@ -201,7 +201,7 @@ func doctorAntigravityIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegra
 }
 
 func doctorTmuxBellIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {
-	base := "projmux ai integrate tmux-bell"
+	base := "projmux agent integrate tmux-bell"
 	out := doctorAINotifyIntegration{
 		ID:             "tmux-bell",
 		Name:           "tmux bell fallback",
@@ -210,7 +210,12 @@ func doctorTmuxBellIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegratio
 		DryRunCommand:  base + " --dry-run",
 	}
 
-	removePlan := ai.planTmuxBellIntegration(true)
+	removePlan, err := ai.planTmuxBellIntegration(true)
+	if err != nil {
+		out.Status = doctorAINotifyStatusConflict
+		out.ConflictReason = err.Error()
+		return out
+	}
 	if removePlan.changed {
 		out.Status = doctorAINotifyStatusInstalled
 		return out

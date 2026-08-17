@@ -129,6 +129,9 @@ func (c *upgradeCommand) runDryRun(opts upgradeOptions, stdout io.Writer) error 
 	if _, err := fmt.Fprintln(stdout, keymapMigrationStagePreviewLine(opts.target)); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintln(stdout, managedIngestMigrationStagePreviewLine(opts.target)); err != nil {
+		return err
+	}
 	return nil
 }
 
