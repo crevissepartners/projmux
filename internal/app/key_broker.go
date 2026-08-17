@@ -226,6 +226,7 @@ func (c *keyBrokerCommand) loadBindings() ([]platformkeys.Binding, error) {
 		}
 		chords = append(chords, keyBindingEffectivePlainChords(action)...)
 	}
+	chords = append(chords, keyBindingSequenceTransportChords(catalog)...)
 	return platformkeys.ParseBindings(chords), nil
 }
 

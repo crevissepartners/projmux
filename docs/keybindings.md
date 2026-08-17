@@ -281,13 +281,15 @@ Settings writes the action-centered multi-alias schema, versioned by a root
 `schema_version` marker:
 
 ```toml
-schema_version = 1
+schema_version = 2
 
 [bindings."project-sidebar.toggle"]
 keys = ["M-1", "M-a"]
+sequences = ["C-k C-p"]
 
 [bindings."window.create"]
 keys = ["C-t"]
+sequences = ["C-k C-w"]
 
 [bindings."window.focus-previous"]
 keys = ["M-["] # additive alias; default M-S-Left is not stored here
@@ -302,6 +304,30 @@ aliases for that action. Legacy `prefix = ...` entries still parse during
 migration and are preserved when Settings rewrites the file, but Settings does
 not create new prefix entries.
 
+`sequences = [...]` adds action triggers made of two to four logical tmux
+strokes separated by exactly one space. It does not replace `keys`, and projmux
+ships no built-in sequences. The Phase 0 runtime reads hand-edited sequences;
+the Settings recorder continues to edit single chords only.
+
+The first stroke must be a modified chord (`C-k`, `M-x`, `C-M-k`), navigation
+key, or function key. Later strokes may also be safe named keys or one printable
+ASCII key. Escape is reserved for cancellation, and raw escape/sendInput,
+CSI-u/xterm payloads, `User*` fallbacks, unsafe tmux config characters, and
+undeliverable names are rejected. A sequence is also rejected when it duplicates
+another sequence, is a strict prefix of one, or starts with a root no-prefix
+single chord. Validation completes before any keymap, generated config, or live
+tmux write.
+
+Shared prefixes compile into deterministic `projmux-sequence-*` tmux key
+tables. Escape or an unknown continuation consumes the partial sequence and
+returns the client to `root` without dispatching an action or replaying input to
+the pane. Re-applying first removes the roots/tables recorded by the previous
+generated config, then installs the current trie; removing a sequence therefore
+leaves no ghost table. The macOS native broker only adds representable modified
+sequence strokes to its transport allowlist and still forwards each stroke via
+tmux's client key table—it does not turn those strokes into independent action
+triggers.
+
 Direct AI split actions stay distinct from the `Alt-7` popup picker toggle:
 `agent-pane.launch-default.right` and `agent-pane.launch-default.down` create a
 pane, `agent-pane-launcher.toggle` opens the picker.
@@ -312,11 +338,13 @@ pane, `agent-pane-launcher.toggle` opens the picker.
 | --- | --- | --- |
 | v0 | none | the runtime ids projmux has always used — `ProjectSidebarToggle`, `new-window`, `ai-split-right`, `Sidebar:KillSession` |
 | v1 | `schema_version = 1` | canonical dotted ids — `project-sidebar.toggle`, `window.create`, `agent-pane.launch-default.right`, `project-sidebar.runtime.stop` |
+| v2 | `schema_version = 2` | v1 canonical ids plus additive `sequences = [...]` action triggers |
 
-A file with no marker is v0. Both versions read: the v0 spelling of every action
+A file with no marker is v0. All versions read: the v0 spelling of every action
 stays a permanent read alias, so a hand-written or hand-restored v0 file keeps
-working. Only writes are versioned — once a file is migrated, Settings writes
-canonical ids into it.
+working. Only writes are versioned. A v0 migration writes canonical ids and the
+v2 marker; a v1 migration changes only the marker, preserving comments, table
+ordering, unknown tables, and hand formatting byte for byte.
 
 A canonical id containing a dot must be quoted. `[bindings."window.create"]` is
 a binding named `window.create`; `[bindings.window.create]` would be a nested
@@ -342,11 +370,13 @@ is the read-only preview that pairs with `projmux config apply`, because
 
 The migration order is fixed:
 
-1. Read and validate the whole v0 file, including chord conflicts.
-2. Write `keymap.toml.pre-v1-<digest>.bak`. The digest is the original's, so a
-   retry reuses the same backup and a different original can never overwrite it.
-3. Render v1 to a temp file, re-parse it, re-merge it and prove the effective
-   key table is unchanged.
+1. Read and validate the whole v0/v1 file, including chord and sequence conflicts.
+2. Write a digest-named backup. v0 keeps the established
+   `keymap.toml.pre-v1-<digest>.bak` name; v1 uses
+   `keymap.toml.pre-v2-<digest>.bak`. A retry reuses the same backup and a
+   different original can never overwrite it.
+3. Produce v2 in a temp file, re-parse it, re-merge it and prove the effective
+   single-chord and sequence tables are unchanged. v1 takes the marker-only path.
 4. Only then replace the original atomically.
 5. Only then write the generated tmux config and reload the live server.
 
@@ -362,9 +392,16 @@ installed yet, and only it knows its own canonical ids.
 still invoke the new binary as `tmux apply --no-reload` so the schema does not
 fall behind the binary that writes it.
 
-### Downgrading
+### Downgrading or rolling back
 
-Restore the v0 backup **before** installing an older projmux:
+To roll v2 back to the immediately previous v1 file, restore its pre-v2 backup:
+
+```sh
+cp ~/.config/projmux/keymap.toml.pre-v2-<digest>.bak ~/.config/projmux/keymap.toml
+```
+
+For a keymap that entered migration as v0, restore the established pre-v1
+backup **before** installing a projmux that predates versioned keymaps:
 
 ```sh
 cp ~/.config/projmux/keymap.toml.pre-v1-<digest>.bak ~/.config/projmux/keymap.toml

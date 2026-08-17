@@ -2881,7 +2881,7 @@ keys = ["M-a"] # unrelated current binding
 		}
 		if attempt == 1 {
 			for _, want := range []string{
-				"schema_version = 1\n",
+				"schema_version = 2\n",
 				"[bindings.\"pane.rename\"]\nkeys = [\"M-p\"]\n",
 				"[bindings.\"project-sidebar.toggle\"]\nkeys = [\"M-a\"]\n",
 			} {

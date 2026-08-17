@@ -1,0 +1,7 @@
+schema_version = 2
+
+[bindings."window.create"]
+sequences = ["C-k C-w"]
+
+[bindings."mouse.toggle"]
+sequences = ["C-k C-m"]

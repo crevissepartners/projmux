@@ -1860,6 +1860,10 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 		"set -g status-right "+tmuxConfigQuote(statusbarRowOneRightFormat(bin, roles, liveResourcesMode, rowOneVisibility, statusbarSettingsIcon+" projmux")),
 	)
 	lines = append(lines, statusbarRowFormatLines(bin, false, hudVisibility)...)
+	// Always reconcile generated sequence state. If keymap.toml was removed
+	// entirely, the empty current trie must still retire roots/tables recorded
+	// by the last successful source.
+	lines = append(lines, tmuxSequenceCleanupLines(standaloneKeyBindings)...)
 	if keymapPresent {
 		lines = append(lines, tmuxMergedUnbindLines(defaultStandaloneKeyBindings, standaloneKeyBindings)...)
 	} else {
@@ -1867,6 +1871,7 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 	}
 	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
 	lines = append(lines, tmuxBindLines(binaryPath, standaloneKeyBindings)...)
+	lines = append(lines, tmuxSequenceBindLines(binaryPath, standaloneKeyBindings)...)
 	lines = append(lines, tmuxStatusbarKeyBindings(binaryPath)...)
 	lines = append(lines, tmuxPaneContextMenuBindings(binaryPath)...)
 	return strings.Join(lines, "\n") + "\n"
@@ -1998,7 +2003,7 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 	lines = append(lines,
 		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
 	)
-	lines = append(lines, tmuxAppKeyBindings(catalog, keymapPresent)...)
+	lines = append(lines, tmuxAppKeyBindings(binaryPath, catalog, keymapPresent)...)
 	// Two-line status bar:
 	//   [0] notify HUD (left) + usage HUD (right)
 	//   [1] existing session/window/path/git/clock row
@@ -2036,10 +2041,19 @@ func withTmuxConfigDigest(body string) string {
 	return body + "set -g " + tmuxConfigDigestOption + " " + digest + "\n"
 }
 
-func tmuxAppKeyBindings(catalog []keyBindingAction, keymapPresent bool) []string {
+func tmuxAppKeyBindings(binaryPath string, catalog []keyBindingAction, keymapPresent bool) []string {
 	defaultAppKeyBindings := keyBindingCatalogForScope(keyBindingScopeApp)
 	appKeyBindings := keyBindingCatalogForScopeFrom(catalog, keyBindingScopeApp)
+	allKeyBindings := filterKeyBindingActions(catalog, func(action keyBindingAction) bool {
+		return action.Kind != keyBindingActionPickerInternal
+	})
 	var lines []string
+	// The app config embeds the standalone config first. Reconcile sequence
+	// state once more with the combined scope so shared prefixes spanning a
+	// standalone and app action compile into one trie rather than whichever
+	// scope happened to render last. This is unconditional so deleting the
+	// keymap also removes the previously recorded generated state.
+	lines = append(lines, tmuxSequenceCleanupLines(allKeyBindings)...)
 	if keymapPresent {
 		lines = append(lines, tmuxMergedUnbindLines(defaultAppKeyBindings, appKeyBindings)...)
 	} else {
@@ -2047,6 +2061,7 @@ func tmuxAppKeyBindings(catalog []keyBindingAction, keymapPresent bool) []string
 	}
 	lines = append(lines, tmuxRetiredKeyUnbindLines()...)
 	lines = append(lines, tmuxBindLines("", appKeyBindings)...)
+	lines = append(lines, tmuxSequenceBindLines(binaryPath, allKeyBindings)...)
 	return lines
 }
 

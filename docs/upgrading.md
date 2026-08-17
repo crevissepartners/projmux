@@ -54,8 +54,9 @@ The deprecated top-level `projmux init` command and its legacy-only
 `~/.config/projmux/keymap.toml` is now versioned by a root `schema_version`
 marker. A file without one is v0 and uses the action ids projmux has always
 written; `schema_version = 1` uses canonical dotted ids such as
-`window.create` and `project-sidebar.runtime.stop`. Both read — the v0 spelling
-of every action stays a permanent read alias.
+`window.create` and `project-sidebar.runtime.stop`; `schema_version = 2` keeps
+those ids and adds two-to-four-stroke `sequences`. All versions read — the v0
+spelling of every action stays a permanent read alias.
 
 The migration needs no command of its own. Every installer path ends by running
 the newly installed binary's `projmux tmux apply`, which migrates first and only
@@ -63,11 +64,19 @@ then writes generated config and reloads the live server. An install that never
 went through an updater converges on the first Settings key save or the next
 `projmux config apply`.
 
-Before it replaces anything it writes `keymap.toml.pre-v1-<digest>.bak`. Running
-the migration again on an already-migrated file writes no bytes. If it cannot
+Before it replaces anything it writes a digest-named backup: v0 keeps
+`keymap.toml.pre-v1-<digest>.bak`, while v1→v2 writes
+`keymap.toml.pre-v2-<digest>.bak` and changes only the schema marker. Running the
+migration again on an already-current file writes no bytes. If it cannot
 proceed — most often because a file carries both a legacy and a canonical table
 for one action with different keys — nothing is written at all and the report
 says so.
+
+Configured sequences compile to generated tmux key tables. Escape and unknown
+continuations cancel without pane input; apply removes tables recorded by the
+previous config before installing the current trie. Duplicate/strict-prefix
+sequences, a first stroke already owned by a no-prefix chord, and unsafe strokes
+fail before the keymap, generated config, or live server changes.
 
 **Downgrading to a projmux that predates the schema:** restore the backup first.
 

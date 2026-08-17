@@ -125,10 +125,11 @@ absent, generated tmux config stays on the built-in defaults.
 Supported schema:
 
 ```toml
-schema_version = 1
+schema_version = 2
 
 [bindings."project-sidebar.toggle"]
 keys = ["M-1", "M-a"]
+sequences = ["C-k C-p"]
 
 [bindings."window.create"]
 keys = ["C-t"]
@@ -146,13 +147,15 @@ Each table is `[bindings.<action-id>]`. Supported keys are:
 | --- | --- |
 | `keys` | A list of no-prefix tmux plain chords such as `M-a`, `C-t`, or `M-S-Left`. |
 | `plain` | Legacy single-primary replacement. Still read, but not written by Settings. |
+| `sequences` | Additive two-to-four-stroke triggers such as `C-k C-p`; manual-file/runtime support only in Phase 0. |
 
 The root `schema_version` marker is the file's own version. A file without one
 is v0 and uses the runtime action ids (`ProjectSidebarToggle`, `new-window`,
-`Sidebar:PinProject`); `schema_version = 1` uses canonical dotted ids. Both read
-— the v0 spelling of every action is a permanent read alias — and the migration
-that rewrites v0 to v1 runs at `projmux config apply` or at the first Settings
-key save. [docs/keybindings.md](keybindings.md#schema-versions) has the full
+`Sidebar:PinProject`); v1 uses canonical dotted ids, and
+`schema_version = 2` adds `sequences`. All versions read — the v0 spelling of
+every action is a permanent read alias — and migration to v2 runs at
+`projmux config apply` or at the first Settings key save. A v1 migration is a
+marker-only edit with a digest-named pre-v2 backup. [docs/keybindings.md](keybindings.md#schema-versions) has the full
 table, the upgrade ordering and the downgrade procedure.
 
 This marker is a separate version domain from the CLI resource registry's

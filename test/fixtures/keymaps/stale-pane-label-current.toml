@@ -1,4 +1,4 @@
-# unversioned (v0) file; the first apply migrates it to schema_version = 1 and
+# unversioned (v0) file; the first apply migrates it to schema_version = 2 and
 # keeps these bytes in a pre-v1 backup. Hand-written comments do not survive the
 # rewrite -- the writer regenerates the file from the parsed bindings.
 [bindings.rename-pane-label]
