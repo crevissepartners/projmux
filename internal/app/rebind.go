@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 // rebindKinds lists the resource kinds `rebind` implements.
@@ -23,7 +25,8 @@ var rebindKinds = []string{"project"}
 // exact cleaned-path comparison, so a shared basename, a shared git origin, a
 // shared inode, or scan order can never fold two Projects onto one uid.
 type rebindCommand struct {
-	store *resourceStore
+	store  *resourceStore
+	mirror resourceMutationMirror
 	// activeTarget is the empty-selector fallback seam; see active_target.go.
 	activeTarget activeTargetLookup
 }
@@ -31,6 +34,7 @@ type rebindCommand struct {
 func newRebindCommand() *rebindCommand {
 	return &rebindCommand{
 		store:        newResourceStore(),
+		mirror:       defaultResourceMutationMirror(),
 		activeTarget: defaultActiveTargetLookup(),
 	}
 }
@@ -93,6 +97,17 @@ func (c *rebindCommand) runProject(args []string, stdout, stderr io.Writer) erro
 			return nil
 		}); err != nil {
 		return err
+	}
+	if c.mirror != nil {
+		target, found, lookupErr := c.mirror.FindSessionForProjectUID(context.Background(), match.UID)
+		if lookupErr != nil && errors.Is(lookupErr, intmetadata.ErrAmbiguousMirror) {
+			return committedMirrorError("rebind", coremetadata.KindProject, match.UID, lookupErr)
+		}
+		if lookupErr == nil && found {
+			if mirrorErr := c.mirror.RebindProject(context.Background(), target, bound.Spec.Root); mirrorErr != nil {
+				return committedMirrorError("rebind", coremetadata.KindProject, match.UID, mirrorErr)
+			}
+		}
 	}
 
 	_, err = fmt.Fprintf(stdout, "project/%s root=%s\n", bound.Metadata.Name, bound.Spec.Root)

@@ -791,12 +791,14 @@ var routes = []Route{
 			"projmux rename project [<ref>] --name <name>",
 			"projmux rename window [<ref>] --name <name> [--project <ref>]",
 			"projmux rename pane [<ref>] --name <name> [--project <ref>] [--window <ref>]...",
+			"projmux rename agent [<ref>] --name <name> [--project <ref>] [--window <ref>]...",
 		},
-		Canonical: []string{"rename project", "rename window", "rename pane"},
+		Canonical: []string{"rename project", "rename window", "rename pane", "rename agent"},
 		Children: []Route{
 			{Name: "project", Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", Aliases: []string{"projects"}, Canonical: []string{"rename project"}},
 			{Name: "window", Summary: "Rename a Projmux Window resource; with no selector inside tmux, the active Window", Aliases: []string{"windows"}, Canonical: []string{"rename window"}},
 			{Name: "pane", Summary: "Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title", Aliases: []string{"panes"}, Canonical: []string{"rename pane"}},
+			{Name: "agent", Summary: "Rename an Agent stable resource name without changing its topic, provider, or managed Pane", Aliases: []string{"agents"}, Canonical: []string{"rename agent"}},
 		},
 	},
 	{

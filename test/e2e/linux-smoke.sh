@@ -2080,3 +2080,241 @@ done
 delete_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> delete Window/Pane/Agent e2e passed: socket=$delete_socket path=$delete_socket_path other-socket=$delete_other_socket other-path=$delete_other_socket_path cleanup=validated-exact-sockets"
+
+# Rename/rebind convergence uses its own exact two-socket environment. The app
+# receives an explicit synthetic client socket path for immediate mirror lookup;
+# every setup/read/repair command strips inherited client state and names -L.
+rename_root="$PROJMUX_SMOKE_WORKDIR/rename-rebind-phase5"
+rename_socket="projmux-rename-$RANDOM-$$"
+rename_other_socket="projmux-rename-other-$RANDOM-$$"
+rename_session="rename-alpha"
+mkdir -p \
+  "$rename_root/home" \
+  "$rename_root/config" \
+  "$rename_root/state" \
+  "$rename_root/runtime" \
+  "$rename_root/tmux" \
+  "$rename_root/work/alpha" \
+  "$rename_root/shim"
+chmod 0700 "$rename_root/runtime" "$rename_root/tmux"
+
+rename_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$rename_root/home" \
+    XDG_CONFIG_HOME="$rename_root/config" \
+    XDG_STATE_HOME="$rename_root/state" \
+    XDG_RUNTIME_DIR="$rename_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$rename_root/work" \
+    TMUX_TMPDIR="$rename_root/tmux" \
+    SHELL=/bin/sh \
+    tmux -L "$rename_socket" "$@"
+}
+
+rename_other_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$rename_root/home" \
+    XDG_CONFIG_HOME="$rename_root/config" \
+    XDG_STATE_HOME="$rename_root/state" \
+    XDG_RUNTIME_DIR="$rename_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$rename_root/work" \
+    TMUX_TMPDIR="$rename_root/tmux" \
+    SHELL=/bin/sh \
+    tmux -L "$rename_other_socket" "$@"
+}
+
+rename_base_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$rename_root/home" \
+    XDG_CONFIG_HOME="$rename_root/config" \
+    XDG_STATE_HOME="$rename_root/state" \
+    XDG_RUNTIME_DIR="$rename_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$rename_root/work" \
+    TMUX_TMPDIR="$rename_root/tmux" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+rename_tmux new-session -d -s "$rename_session" -n runtime-window -c "$rename_root/work/alpha" sleep 600
+rename_tmux set-option -t "$rename_session" -q @projmux_project_path "$rename_root/work/alpha"
+rename_pane="$(rename_tmux display-message -p -t "$rename_session:0.0" '#{pane_id}')"
+rename_tmux select-pane -T runtime-pane-title -t "$rename_pane"
+rename_other_tmux new-session -d -s untouched -c "$rename_root/work/alpha" sleep 600
+rename_other_tmux set-option -gq @projmux_rename_sentinel unchanged
+
+rename_socket_path="$(rename_tmux display-message -p -t "$rename_session" '#{socket_path}')"
+rename_socket_pid="$(rename_tmux display-message -p -t "$rename_session" '#{pid}')"
+rename_other_socket_path="$(rename_other_tmux display-message -p -t untouched '#{socket_path}')"
+for actual in "$rename_socket_path" "$rename_other_socket_path"; do
+  case "$actual" in
+    "$rename_root"/*) ;;
+    *)
+      echo "rename/rebind e2e socket escaped smoke root: $actual" >&2
+      exit 1
+      ;;
+  esac
+done
+
+rename_cleanup() {
+  local socket actual hook
+  for socket in "$rename_socket" "$rename_other_socket"; do
+    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$rename_root/tmux" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+    if [[ -z "$actual" ]]; then
+      continue
+    fi
+    case "$actual" in
+      "$rename_root"/*)
+        for hook in pane-exited after-kill-pane pane-focus-out pane-focus-in after-select-pane after-select-window client-session-changed; do
+          env -u TMUX -u TMUX_PANE tmux -S "$actual" set-hook -gu "$hook" >/dev/null 2>&1 || true
+        done
+        env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+        ;;
+      *) echo "refusing rename/rebind cleanup outside smoke root: $actual" >&2 ;;
+    esac
+  done
+}
+trap 'rename_cleanup; smoke_cleanup_env' EXIT
+
+rename_config="$rename_root/config/projmux/tmux.conf"
+rename_base_pmx tmux apply --bin "$bin" --config "$rename_config" --socket "$rename_socket" >"$rename_root/apply.out"
+rename_base_pmx reconcile resources --socket "$rename_socket" >"$rename_root/initial-reconcile.out"
+rename_project_uid="$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_uid)"
+rename_window="$(rename_tmux display-message -p -t "$rename_session:0" '#{window_id}')"
+rename_window_uid="$(rename_tmux show-options -wqv -t "$rename_window" @projmux_window_uid)"
+rename_pane_uid="$(rename_tmux show-options -pqv -t "$rename_pane" @projmux_pane_uid)"
+if [[ -z "$rename_project_uid" || -z "$rename_window_uid" || -z "$rename_pane_uid" ]]; then
+  echo "rename/rebind e2e apply left an identity mirror empty" >&2
+  exit 1
+fi
+rename_session_name_before="$(rename_tmux display-message -p -t "$rename_session" '#{session_name}')"
+rename_window_name_before="$(rename_tmux display-message -p -t "$rename_window" '#{window_name}')"
+rename_pane_title_before="$(rename_tmux display-message -p -t "$rename_pane" '#{pane_title}')"
+rename_other_before="$(rename_other_tmux show-options -gqv @projmux_rename_sentinel):$(rename_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+
+rename_pmx() {
+  env -u TMUX_PANE \
+    HOME="$rename_root/home" \
+    XDG_CONFIG_HOME="$rename_root/config" \
+    XDG_STATE_HOME="$rename_root/state" \
+    XDG_RUNTIME_DIR="$rename_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$rename_root/work" \
+    TMUX_TMPDIR="$rename_root/tmux" \
+    TMUX="$rename_socket_path,$rename_socket_pid,0" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+rename_pmx rename project "uid:$rename_project_uid" --name stable-project >"$rename_root/rename-project.out"
+rename_pmx rename window "uid:$rename_window_uid" --name stable-window >"$rename_root/rename-window.out"
+rename_pmx rename pane "uid:$rename_pane_uid" --name stable-pane >"$rename_root/rename-pane.out"
+mkdir -p "$rename_root/work/moved"
+rename_pmx rebind project "uid:$rename_project_uid" --root "$rename_root/work/moved" >"$rename_root/rebind-project.out"
+
+# Agent stable-name parity is Registry-only. A provider-shaped managed Pane
+# proves the rename does not leak into provider or Pane metadata/title.
+cat >"$rename_root/shim/codex" <<'RENAME_CODEX_STUB'
+#!/usr/bin/env bash
+exec sleep 600
+RENAME_CODEX_STUB
+chmod 0755 "$rename_root/shim/codex"
+rename_agent_pane="$(PATH="$rename_root/shim:$PATH" rename_pmx create agent --provider codex --project "uid:$rename_project_uid" --window "uid:$rename_window_uid" -o pane-id)"
+rename_agent_uid="$(rename_base_pmx get agents --project "uid:$rename_project_uid" --window "uid:$rename_window_uid" -o uid | tail -n 1)"
+rename_agent_pane_label_before="$(rename_tmux show-options -pqv -t "$rename_agent_pane" @projmux_pane_label)"
+rename_agent_pane_title_before="$(rename_tmux display-message -p -t "$rename_agent_pane" '#{pane_title}')"
+rename_pmx rename agent "uid:$rename_agent_uid" --name reviewer >"$rename_root/rename-agent.out"
+rename_base_pmx describe agent "uid:$rename_agent_uid" -o json >"$rename_root/agent-after.json"
+smoke_assert_file_contains "$rename_root/agent-after.json" '"name": "reviewer"'
+smoke_assert_file_contains "$rename_root/agent-after.json" '"provider": "codex"'
+if [[ "$(rename_tmux show-options -pqv -t "$rename_agent_pane" @projmux_pane_label)" != "$rename_agent_pane_label_before" ]] || \
+  [[ "$(rename_tmux display-message -p -t "$rename_agent_pane" '#{pane_title}')" != "$rename_agent_pane_title_before" ]]; then
+  echo "rename agent changed its managed Pane name/title" >&2
+  exit 1
+fi
+if [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_name)" != stable-project ]] || \
+  [[ "$(rename_tmux show-options -wqv -t "$rename_window" @projmux_window_name)" != stable-window ]] || \
+  [[ "$(rename_tmux show-options -pqv -t "$rename_pane" @projmux_pane_label)" != stable-pane ]] || \
+  [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_path)" != "$rename_root/work/moved" ]]; then
+  echo "rename/rebind e2e immediate mirrors did not converge" >&2
+  exit 1
+fi
+if [[ "$(rename_tmux display-message -p -t "$rename_session" '#{session_name}')" != "$rename_session_name_before" ]] || \
+  [[ "$(rename_tmux display-message -p -t "$rename_window" '#{window_name}')" != "$rename_window_name_before" ]] || \
+  [[ "$(rename_tmux display-message -p -t "$rename_pane" '#{pane_title}')" != "$rename_pane_title_before" ]]; then
+  echo "rename/rebind changed a raw runtime session/window/pane name" >&2
+  exit 1
+fi
+
+# With no live target, rename persists stable Registry state. Recreating the
+# same exact UID-bound session with stale mirrors lets the public exact-socket
+# route repair both name and path later.
+rename_tmux kill-session -t "$rename_session"
+rename_pmx rename project "uid:$rename_project_uid" --name offline-project >"$rename_root/offline-rename.out"
+rename_tmux new-session -d -s "$rename_session" -n replacement -c "$rename_root/work/alpha" sleep 600
+rename_tmux set-option -t "$rename_session" -q @projmux_project_uid "$rename_project_uid"
+rename_tmux set-option -t "$rename_session" -q @projmux_project_name stable-project
+rename_tmux set-option -t "$rename_session" -q @projmux_project_path "$rename_root/work/alpha"
+rename_socket_path="$(rename_tmux display-message -p -t "$rename_session" '#{socket_path}')"
+rename_socket_pid="$(rename_tmux display-message -p -t "$rename_session" '#{pid}')"
+rename_base_pmx reconcile resources --socket "$rename_socket" >"$rename_root/offline-reconcile.out"
+if [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_name)" != offline-project ]] || \
+  [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_path)" != "$rename_root/work/moved" ]]; then
+  echo "offline rename/rebind drift did not converge through public reconcile" >&2
+  exit 1
+fi
+
+# A narrow tmux shim forces only the live Project name option write to fail.
+# The Registry result remains durable and the unshimmed public retry repairs it.
+rename_real_tmux="$(command -v tmux)"
+cat >"$rename_root/shim/tmux" <<RENAME_TMUX_SHIM
+#!/usr/bin/env bash
+rename_tmux_args=("\$@")
+if [[ "\${rename_tmux_args[0]:-}" == "-S" && \${#rename_tmux_args[@]} -ge 2 ]]; then
+  rename_tmux_args=("\${rename_tmux_args[@]:2}")
+fi
+if [[ "\${rename_tmux_args[0]:-}" == "set-option" ]]; then
+  for rename_tmux_arg in "\${rename_tmux_args[@]:1}"; do
+    if [[ "\$rename_tmux_arg" == "@projmux_project_name" ]]; then
+      exit 77
+    fi
+  done
+fi
+exec $(printf %q "$rename_real_tmux") "\$@"
+RENAME_TMUX_SHIM
+chmod 0755 "$rename_root/shim/tmux"
+set +e
+PATH="$rename_root/shim:$PATH" rename_pmx rename project "uid:$rename_project_uid" --name retry-project \
+  >"$rename_root/failure.out" 2>"$rename_root/failure.err"
+rename_failure_status=$?
+set -e
+if [[ "$rename_failure_status" == 0 ]]; then
+  echo "injected live mirror failure unexpectedly succeeded" >&2
+  exit 1
+fi
+if ! grep -Fq "rename project \"$rename_project_uid\" committed Registry state" "$rename_root/failure.err" || \
+  ! grep -Fq "projmux reconcile resources" "$rename_root/failure.err"; then
+  echo "injected live mirror failure did not expose the committed/retry contract" >&2
+  cat "$rename_root/failure.err" >&2
+  exit 1
+fi
+rename_base_pmx describe project "uid:$rename_project_uid" -o name >"$rename_root/name-after-failure"
+smoke_assert_file_contains "$rename_root/name-after-failure" "retry-project"
+if [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_name)" != offline-project ]]; then
+  echo "injected live mirror failure unexpectedly changed the option" >&2
+  exit 1
+fi
+rename_base_pmx reconcile resources --socket "$rename_socket" >"$rename_root/failure-retry.out"
+if [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_name)" != retry-project ]]; then
+  echo "public retry did not repair failed live Project name mirror" >&2
+  exit 1
+fi
+rename_base_pmx reconcile resources --socket "$rename_socket" -o json >"$rename_root/repeat.json"
+smoke_assert_file_contains "$rename_root/repeat.json" '"outcome": "no-op"'
+
+rename_other_after="$(rename_other_tmux show-options -gqv @projmux_rename_sentinel):$(rename_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+if [[ "$rename_other_after" != "$rename_other_before" ]]; then
+  echo "rename/rebind touched the foreign socket" >&2
+  exit 1
+fi
+
+rename_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> rename/rebind e2e passed: socket=$rename_socket path=$rename_socket_path other-socket=$rename_other_socket other-path=$rename_other_socket_path cleanup=validated-exact-sockets"

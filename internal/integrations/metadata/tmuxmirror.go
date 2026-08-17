@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,6 +10,10 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
+
+// ErrAmbiguousMirror marks a UID claimed by more than one live tmux object.
+// Callers must fail closed rather than choosing one transport target.
+var ErrAmbiguousMirror = errors.New("ambiguous tmux resource mirror")
 
 // fieldSep matches the separator convention used by the existing tmux
 // inventory adapter: an ASCII unit separator, escaped for the tmux format
@@ -63,6 +68,30 @@ func (m Mirror) MirrorProject(ctx context.Context, sessionName string, project c
 	return nil
 }
 
+// RenameProject writes only the Project stable-name projection. It deliberately
+// leaves the tmux session name, uid mirror, and project-path anchor untouched.
+func (m Mirror) RenameProject(ctx context.Context, sessionName, name string) error {
+	if strings.TrimSpace(sessionName) == "" {
+		return fmt.Errorf("metadata: session name is required to rename project mirror")
+	}
+	if _, err := m.run(ctx, "set-option", "-t", sessionName, "-q", tmuxopts.ProjectNameSession, name); err != nil {
+		return fmt.Errorf("metadata: mirror project name: %w", err)
+	}
+	return nil
+}
+
+// RebindProject writes only the exact session's Project root anchor. It does
+// not rename the session or touch any filesystem path.
+func (m Mirror) RebindProject(ctx context.Context, sessionName, root string) error {
+	if strings.TrimSpace(sessionName) == "" {
+		return fmt.Errorf("metadata: session name is required to rebind project mirror")
+	}
+	if _, err := m.run(ctx, "set-option", "-t", sessionName, "-q", tmuxopts.ProjectPathSession, root); err != nil {
+		return fmt.Errorf("metadata: mirror project path: %w", err)
+	}
+	return nil
+}
+
 // MirrorWindow writes stable Window identity onto window-scoped tmux options,
 // turns automatic-rename off, and writes the duplicate-allowed displayName to
 // tmux window_name. A pre-projection Window with no displayName safely uses its
@@ -102,6 +131,15 @@ func (m Mirror) writeWindowIdentityName(ctx context.Context, target, name string
 		return fmt.Errorf("metadata: mirror window name: %w", err)
 	}
 	return nil
+}
+
+// RenameWindow writes only the stable Window name mirror. The duplicate-
+// allowed displayName and raw tmux window_name remain unchanged.
+func (m Mirror) RenameWindow(ctx context.Context, target, name string) error {
+	if strings.TrimSpace(target) == "" {
+		return fmt.Errorf("metadata: window target is required to rename window mirror")
+	}
+	return m.writeWindowIdentityName(ctx, target, name)
 }
 
 func (m Mirror) writeWindowDisplayName(ctx context.Context, target, displayName string) error {
@@ -172,16 +210,24 @@ func (m Mirror) livePaneRows(ctx context.Context) ([][]string, error) {
 // PaneTargetForUID scans every live pane for the mirrored uid and returns its
 // tmux pane id.
 func (m Mirror) PaneTargetForUID(ctx context.Context, uid string) (string, error) {
-	rows, err := m.livePaneRows(ctx)
+	target, found, err := m.FindPaneTargetForUID(ctx, uid)
 	if err != nil {
 		return "", err
 	}
-	for _, fields := range rows {
-		if fields[0] == uid && fields[0] != "" {
-			return fields[1], nil
-		}
+	if found {
+		return target, nil
 	}
 	return "", fmt.Errorf("metadata: no live pane mirrors uid %q", uid)
+}
+
+// FindPaneTargetForUID returns the exact live target for uid. No match is an
+// offline result; duplicate live claims are an error and are never guessed.
+func (m Mirror) FindPaneTargetForUID(ctx context.Context, uid string) (string, bool, error) {
+	rows, err := m.livePaneRows(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	return exactUIDTarget(rows, uid, 1, "pane")
 }
 
 // LivePaneUIDs returns the set of Projmux Pane uids that a live tmux pane still
@@ -205,18 +251,18 @@ func (m Mirror) LivePaneUIDs(ctx context.Context) (map[string]bool, error) {
 	return uids, nil
 }
 
-// liveWindowRows reads the (mirrored Window uid, session name, window index)
-// row of every window on the server.
+// liveWindowRows reads the (mirrored Window uid, stable tmux window id, session
+// name, window index) row of every window on the server.
 //
 // It is the single query behind both the uid -> target lookup and the
 // mirrored-uid inventory, the same way livePaneRows is for panes, so the two
 // can never disagree about which Windows still have a transport binding.
 func (m Mirror) liveWindowRows(ctx context.Context) ([][]string, error) {
-	out, err := m.run(ctx, "list-windows", "-a", "-F", tmuxFormat("#{"+tmuxopts.WindowUID+"}", "#{session_name}", "#{window_index}"))
+	out, err := m.run(ctx, "list-windows", "-a", "-F", tmuxFormat("#{"+tmuxopts.WindowUID+"}", "#{window_id}", "#{session_name}", "#{window_index}"))
 	if err != nil {
 		return nil, fmt.Errorf("metadata: list windows: %w", err)
 	}
-	return parseRows(string(out), 3), nil
+	return parseRows(string(out), 4), nil
 }
 
 // WindowTargetForUID scans every live window for the mirrored uid and returns
@@ -226,12 +272,31 @@ func (m Mirror) WindowTargetForUID(ctx context.Context, uid string) (string, err
 	if err != nil {
 		return "", err
 	}
+	var targets [][]string
 	for _, fields := range rows {
 		if fields[0] == uid && fields[0] != "" {
-			return fields[1] + ":" + fields[2], nil
+			targets = append(targets, []string{fields[0], fields[2] + ":" + fields[3]})
 		}
 	}
+	target, found, err := exactUIDTarget(targets, uid, 1, "window")
+	if err != nil {
+		return "", err
+	}
+	if found {
+		return target, nil
+	}
 	return "", fmt.Errorf("metadata: no live window mirrors uid %q", uid)
+}
+
+// FindWindowTargetForUID returns the stable tmux window id for uid. The id does
+// not retarget when a window is reordered or its session/window name changes
+// between lookup and write. No match is offline; duplicate claims fail closed.
+func (m Mirror) FindWindowTargetForUID(ctx context.Context, uid string) (string, bool, error) {
+	rows, err := m.liveWindowRows(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	return exactUIDTarget(rows, uid, 1, "window")
 }
 
 // LiveWindowUIDs returns the set of Projmux Window uids that a live tmux window
@@ -262,16 +327,58 @@ func (m Mirror) LiveWindowUIDs(ctx context.Context) (map[string]bool, error) {
 
 // SessionForProjectUID scans every live session for the mirrored Project uid.
 func (m Mirror) SessionForProjectUID(ctx context.Context, uid string) (string, error) {
-	out, err := m.run(ctx, "list-sessions", "-F", tmuxFormat("#{"+tmuxopts.ProjectUIDSession+"}", "#{session_name}"))
+	rows, err := m.liveProjectSessionRows(ctx)
 	if err != nil {
-		return "", fmt.Errorf("metadata: list sessions: %w", err)
+		return "", err
 	}
-	for _, fields := range parseRows(string(out), 2) {
+	var names [][]string
+	for _, fields := range rows {
 		if fields[0] == uid && fields[0] != "" {
-			return fields[1], nil
+			names = append(names, []string{fields[0], fields[2]})
 		}
 	}
+	target, found, err := exactUIDTarget(names, uid, 1, "project session")
+	if err != nil {
+		return "", err
+	}
+	if found {
+		return target, nil
+	}
 	return "", fmt.Errorf("metadata: no live session mirrors project uid %q", uid)
+}
+
+func (m Mirror) liveProjectSessionRows(ctx context.Context) ([][]string, error) {
+	out, err := m.run(ctx, "list-sessions", "-F", tmuxFormat("#{"+tmuxopts.ProjectUIDSession+"}", "#{session_id}", "#{session_name}"))
+	if err != nil {
+		return nil, fmt.Errorf("metadata: list sessions: %w", err)
+	}
+	return parseRows(string(out), 3), nil
+}
+
+// FindSessionForProjectUID returns the stable tmux session id carrying uid. The
+// id cannot be redirected by a concurrent session rename or name reuse between
+// lookup and write. No match is an offline Project; duplicate claims fail
+// closed.
+func (m Mirror) FindSessionForProjectUID(ctx context.Context, uid string) (string, bool, error) {
+	rows, err := m.liveProjectSessionRows(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	return exactUIDTarget(rows, uid, 1, "project session")
+}
+
+func exactUIDTarget(rows [][]string, uid string, targetIndex int, kind string) (string, bool, error) {
+	var target string
+	for _, fields := range rows {
+		if len(fields) <= targetIndex || fields[0] != uid || fields[0] == "" {
+			continue
+		}
+		if target != "" {
+			return "", false, fmt.Errorf("%w: multiple live %s targets mirror uid %q", ErrAmbiguousMirror, kind, uid)
+		}
+		target = fields[targetIndex]
+	}
+	return target, target != "", nil
 }
 
 // LegacyTargets carries the tmux transport handles of one observed legacy

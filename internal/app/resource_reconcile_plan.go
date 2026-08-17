@@ -91,6 +91,15 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 	}
 	reconciler.refusedSessions = refusedResourceProjectSessions(before, projectSessions, reconciler)
 	reconciler.refusedRoots = map[string]bool{}
+	reconciler.exactProjects = map[string]string{}
+	for _, session := range projectSessions {
+		if reconciler.refusedSessions[session.name] || session.uid == "" {
+			continue
+		}
+		if _, ok := before.Project(session.uid); ok {
+			reconciler.exactProjects[session.name] = session.uid
+		}
+	}
 	scopedBefore := scopeResourceRegistry(before, projectSessions, reconciler)
 	scopedAfter := scopedBefore.Clone()
 	if err := reconciler.reconcile(ctx, &scopedAfter, p.store.mutator(), "reconcile-resources"); err != nil {
@@ -260,6 +269,14 @@ func observeResourceProjectSessions(ctx context.Context, runner tmuxCommandRunne
 }
 
 func resourceProjectForSession(registry coremetadata.Registry, session observedResourceProjectSession, reconciler *registryReconciler) (*coremetadata.Project, bool) {
+	// A known mirrored UID is the authoritative identity edge. In particular,
+	// rebind intentionally makes the old path anchor stale while preserving this
+	// UID, so preferring the anchor would make the public retry route refuse the
+	// exact drift it is responsible for repairing. An unknown UID never falls
+	// through to path/name heuristics: foreign claims remain fail-closed.
+	if session.uid != "" {
+		return registry.Project(session.uid)
+	}
 	if session.root != "" {
 		if project, ok := registry.ProjectByRoot(session.root); ok {
 			return project, true
@@ -354,8 +371,13 @@ func planResourceProjectMirrors(ctx context.Context, recorder *resourcePlanTmuxR
 				return err
 			}
 		case session.meta != project.Metadata.Name:
-			if _, err := recorder.Run(ctx, "tmux", "set-option", "-t", session.id, "-q", tmuxopts.ProjectNameSession, project.Metadata.Name); err != nil {
-				return fmt.Errorf("metadata: mirror project name: %w", err)
+			if err := reconciler.mirror.RenameProject(ctx, session.id, project.Metadata.Name); err != nil {
+				return err
+			}
+		}
+		if session.root != project.Spec.Root {
+			if err := reconciler.mirror.RebindProject(ctx, session.id, project.Spec.Root); err != nil {
+				return err
 			}
 		}
 	}
@@ -712,12 +734,14 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 		}
 	case args[0] == "list-windows" && slices.Contains(args, "-a"):
 		for _, row := range rows {
-			if len(row) != 3 {
+			if len(row) != 4 {
 				continue
 			}
-			target := row[1] + ":" + row[2]
-			r.windowUID[target] = strings.TrimSpace(row[0])
-			r.initialWindowUID[target] = strings.TrimSpace(row[0])
+			id, target := row[1], row[2]+":"+row[3]
+			uid := strings.TrimSpace(row[0])
+			r.windowAlias[id] = target
+			r.windowUID[id], r.windowUID[target] = uid, uid
+			r.initialWindowUID[id], r.initialWindowUID[target] = uid, uid
 		}
 	case args[0] == "list-panes" && slices.Contains(args, "-a"):
 		for _, row := range rows {
@@ -771,8 +795,8 @@ func (r *resourcePlanTmuxRunner) applyOverlay(args []string, out []byte) []byte 
 	changed := false
 	for _, row := range rows {
 		switch {
-		case args[0] == "list-windows" && len(row) == 3:
-			if uid, ok := r.windowUID[row[1]+":"+row[2]]; ok && row[0] != uid {
+		case args[0] == "list-windows" && len(row) == 4:
+			if uid, ok := r.windowUID[row[1]]; ok && row[0] != uid {
 				row[0], changed = uid, true
 			}
 		case args[0] == "list-panes" && len(row) == 2:

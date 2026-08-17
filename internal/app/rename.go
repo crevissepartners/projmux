@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 // renameKinds lists the kind spellings `rename` implements, in help order, each
@@ -24,7 +26,8 @@ var renameKinds = cli.ChildSpellings("rename")
 // `displayName`, and never invents a suffix: an explicit name that is already
 // reserved in the target scope is a usage error with zero mutations.
 type renameCommand struct {
-	store *resourceStore
+	store  *resourceStore
+	mirror resourceMutationMirror
 	// runtime is the live-tmux observation the rendered result's Window and
 	// Pane status is derived from; see runtime_observation.go.
 	runtime runtimeLookup
@@ -35,6 +38,7 @@ type renameCommand struct {
 func newRenameCommand() *renameCommand {
 	return &renameCommand{
 		store:        newResourceStore(),
+		mirror:       defaultResourceMutationMirror(),
 		runtime:      defaultRuntimeLookup(),
 		activeTarget: defaultActiveTargetLookup(),
 	}
@@ -45,9 +49,6 @@ func (c *renameCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return usageError(fmt.Sprintf("rename requires a resource kind: %s", strings.Join(renameKinds, ", ")))
 	}
-	// `agent` and `agents` need no special case here any more: the manifest node
-	// for `rename` has no Agent child, so neither spelling normalizes and both
-	// land on the same refusal every other unknown kind gets.
 	token, ok := cli.CanonicalChildToken("rename", args[0])
 	if !ok {
 		return usageError(fmt.Sprintf("rename %s is not available; this release implements: %s",
@@ -115,10 +116,16 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 		case coremetadata.KindPane:
 			_, err := mutator.RenamePane(working, uid, *name)
 			return err
+		case coremetadata.KindAgent:
+			_, err := mutator.RenameAgent(working, uid, *name)
+			return err
 		default:
 			return fmt.Errorf("%s: unsupported kind %q", spelling, kind)
 		}
 	}); err != nil {
+		return err
+	}
+	if err := c.mirrorRenamed(context.Background(), kind, uid, *name); err != nil {
 		return err
 	}
 
@@ -130,4 +137,46 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 	match.Name = *name
 	// A singular result renders no elapsed time, so it passes no clock.
 	return writeResourceProjection(stdout, spelling, mode, kind, []selector.Match{match}, renamed, false, time.Time{})
+}
+
+func (c *renameCommand) mirrorRenamed(ctx context.Context, kind coremetadata.Kind, uid, name string) error {
+	if c.mirror == nil || kind == coremetadata.KindAgent {
+		return nil
+	}
+	var (
+		target string
+		found  bool
+		err    error
+	)
+	switch kind {
+	case coremetadata.KindProject:
+		target, found, err = c.mirror.FindSessionForProjectUID(ctx, uid)
+	case coremetadata.KindWindow:
+		target, found, err = c.mirror.FindWindowTargetForUID(ctx, uid)
+	case coremetadata.KindPane:
+		target, found, err = c.mirror.FindPaneTargetForUID(ctx, uid)
+	}
+	if err != nil {
+		if errors.Is(err, intmetadata.ErrAmbiguousMirror) {
+			return committedMirrorError("rename", kind, uid, err)
+		}
+		// An unavailable inventory cannot prove this resource is live. Preserve
+		// the authoritative Registry result for later exact-socket reconcile.
+		return nil
+	}
+	if !found {
+		return nil
+	}
+	switch kind {
+	case coremetadata.KindProject:
+		err = c.mirror.RenameProject(ctx, target, name)
+	case coremetadata.KindWindow:
+		err = c.mirror.RenameWindow(ctx, target, name)
+	case coremetadata.KindPane:
+		err = c.mirror.RenamePane(ctx, target, name)
+	}
+	if err != nil {
+		return committedMirrorError("rename", kind, uid, err)
+	}
+	return nil
 }

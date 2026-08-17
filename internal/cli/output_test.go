@@ -38,7 +38,7 @@ func TestCWDFieldProjectionIsAcceptedOnlyByThePaneCurrentRead(t *testing.T) {
 	// future Phase that adds `cwd` to a mutation route fails here loudly.
 	for _, spelling := range []string{
 		"create window", "create pane", "create agent", "create codex",
-		"rename project", "rename window", "rename pane",
+		"rename project", "rename window", "rename pane", "rename agent",
 		"rebind project", "delete window", "delete pane", "delete agent",
 		"focus pane", "attach project", "restore snapshot", "prune project",
 	} {

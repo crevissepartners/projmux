@@ -45,6 +45,7 @@ var canonicalRouteCardinalities = []routeCardinality{
 	{"rename project", selector.Target{Verb: selector.VerbRename, Kind: coremetadata.KindProject}, selector.CardinalityExactOne},
 	{"rename window", selector.Target{Verb: selector.VerbRename, Kind: coremetadata.KindWindow}, selector.CardinalityExactOne},
 	{"rename pane", selector.Target{Verb: selector.VerbRename, Kind: coremetadata.KindPane}, selector.CardinalityExactOne},
+	{"rename agent", selector.Target{Verb: selector.VerbRename, Kind: coremetadata.KindAgent}, selector.CardinalityExactOne},
 	{"rebind project", selector.Target{Verb: selector.VerbRebind, Kind: coremetadata.KindProject}, selector.CardinalityExactOne},
 	{"delete window", selector.Target{Verb: selector.VerbDelete, Kind: coremetadata.KindWindow}, selector.CardinalityAtLeastOne},
 	{"delete pane", selector.Target{Verb: selector.VerbDelete, Kind: coremetadata.KindPane}, selector.CardinalityAtLeastOne},

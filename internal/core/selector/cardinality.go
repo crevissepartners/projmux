@@ -105,6 +105,7 @@ var matrix = map[Target]Cardinality{
 	{Verb: VerbRename, Kind: metadata.KindProject}: CardinalityExactOne,
 	{Verb: VerbRename, Kind: metadata.KindWindow}:  CardinalityExactOne,
 	{Verb: VerbRename, Kind: metadata.KindPane}:    CardinalityExactOne,
+	{Verb: VerbRename, Kind: metadata.KindAgent}:   CardinalityExactOne,
 	{Verb: VerbRebind, Kind: metadata.KindProject}: CardinalityExactOne,
 
 	// create resolves an exact-one Project scope, fans out over its resolved

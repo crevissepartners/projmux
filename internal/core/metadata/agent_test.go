@@ -2,8 +2,52 @@ package metadata
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 )
+
+func TestRenameAgentChangesOnlyStableNameAndReservation(t *testing.T) {
+	t.Parallel()
+
+	m := testMutator(dirSet{"/src/projmux": true})
+	reg := NewRegistry()
+	registered, err := registerFixture(m, &reg, "/src/projmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := m.CreateAgent(&reg, registered.Windows[0].Metadata.UID, CreateAgentOptions{
+		Provider: "codex", Annotations: map[string]string{AnnotationAgentTopic: "keep-topic"}, OperationID: "op-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, err := m.AttachAgentPane(&reg, agent.Metadata.UID, BootstrapPane{Command: "codex", CWD: "/src/projmux"}, "op-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := reg.Agent(agent.Metadata.UID)
+	paneBefore, _ := reg.Pane(pane.Metadata.UID)
+
+	renamed, err := m.RenameAgent(&reg, agent.Metadata.UID, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Metadata.Name != "reviewer" || renamed.Metadata.UID != before.Metadata.UID {
+		t.Fatalf("renamed identity = %+v", renamed.Metadata)
+	}
+	if renamed.Spec.Provider != before.Spec.Provider ||
+		!reflect.DeepEqual(renamed.Metadata.Annotations, before.Metadata.Annotations) ||
+		!reflect.DeepEqual(renamed.Status, before.Status) {
+		t.Fatalf("rename changed provider/topic/status: before=%+v after=%+v", before, renamed)
+	}
+	paneAfter, _ := reg.Pane(pane.Metadata.UID)
+	if !reflect.DeepEqual(paneAfter, paneBefore) {
+		t.Fatalf("rename changed managed Pane: before=%+v after=%+v", paneBefore, paneAfter)
+	}
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("registry invalid after rename: %v", err)
+	}
+}
 
 func TestAgentPhaseSetIsClosedAndExitClassificationResolvesOfflineOrFailed(t *testing.T) {
 	t.Parallel()
