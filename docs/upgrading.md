@@ -73,8 +73,8 @@ for one action with different keys — nothing is written at all and the report
 says so.
 
 Configured sequences compile to generated tmux key tables. Escape and unknown
-continuations cancel without pane input; apply removes tables recorded by the
-previous config before installing the current trie. Duplicate/strict-prefix
+continuations cancel without pane input; each apply unbinds the roots and tables
+its predecessor recorded before sourcing the current trie. Duplicate/strict-prefix
 sequences, a first stroke already owned by a no-prefix chord, and unsafe strokes
 fail before the keymap, generated config, or live server changes.
 

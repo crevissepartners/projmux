@@ -554,7 +554,7 @@ mouse_after_terminal=""
 smoke_wait_for "terminal sequence action" sh -c \
   "test \"\$(tmux -L '$recorder_socket' show-options -gqv mouse)\" != '$mouse_before'"
 mouse_after_terminal="$(tmux -L "$recorder_socket" show-options -gqv mouse)"
-tmux -L "$recorder_socket" send-keys -K -c "$recorder_client" C-k C-m
+tmux -L "$recorder_socket" send-keys -K -c "$recorder_client" C-k Enter
 smoke_wait_for "native logical sequence action" sh -c \
   "test \"\$(tmux -L '$recorder_socket' show-options -gqv mouse)\" = '$mouse_before'"
 if [[ "$mouse_after_terminal" == "$mouse_before" ]]; then

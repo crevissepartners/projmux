@@ -883,6 +883,12 @@ func normalizeKeymapSequence(value string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("stroke %d: %w", i+1, err)
 		}
+		if named, ok := keymapUndeliverableStrokeAliases[strings.ToLower(normalized)]; ok {
+			if named == "Escape" {
+				return "", fmt.Errorf("stroke %d %q is Escape, which is reserved for cancelling a sequence", i+1, stroke)
+			}
+			return "", fmt.Errorf("stroke %d %q is not delivered under that name; write %q instead", i+1, stroke, named)
+		}
 		if !safeKeymapSequenceStroke(normalized) {
 			return "", fmt.Errorf("stroke %d %q is not a safe logical tmux chord", i+1, stroke)
 		}
@@ -892,6 +898,19 @@ func normalizeKeymapSequence(value string) (string, error) {
 		return "", fmt.Errorf("first stroke %q must be modified, navigation, or a function key", strokes[0])
 	}
 	return strings.Join(strokes, " "), nil
+}
+
+// keymapUndeliverableStrokeAliases are control chords a terminal never reports
+// under that spelling. tmux resolves the incoming byte to the named key
+// instead, so a sequence written with the control form binds a key the user
+// cannot press: the real keystroke misses the leaf and hits the table's cancel
+// fallback, silently doing nothing. Rejecting at parse time is what keeps
+// "a configured sequence runs its action" true. Measured against tmux 3.5a
+// driven by a real client: CR -> Enter, TAB -> Tab, ESC -> Escape.
+var keymapUndeliverableStrokeAliases = map[string]string{
+	"c-m": "Enter",
+	"c-i": "Tab",
+	"c-[": "Escape",
 }
 
 func safeKeymapSequenceStroke(stroke string) bool {

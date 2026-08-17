@@ -565,7 +565,7 @@ fi
 for contract in \
   "root C-k switch-client -T $sequence_tables" \
   "$sequence_tables C-w new-window" \
-  "$sequence_tables C-m set -g mouse" \
+  "$sequence_tables Enter set -g mouse" \
   "$sequence_tables Escape switch-client -T root" \
   "$sequence_tables Any switch-client -T root"; do
   read -r table key fragment <<<"$contract"
@@ -1109,11 +1109,13 @@ exec 9>&-
 wait "$control_pid" || true
 
 # Each explicit apply owns one correlated lifecycle pair and suppresses the
-# older generic top-level outcome. Fourteen apply invocations ran above: the
-# existing six, five row-0 visibility convergence applies, and three row-1
-# mixed/minimal/default convergence applies.
+# older generic top-level outcome. Eighteen apply invocations ran above: the
+# existing six, five row-0 visibility convergence applies, three row-1
+# mixed/minimal/default convergence applies, and four sequence applies
+# (install, repeat, rejected duplicate, removal). The rejected duplicate still
+# owns a correlated pair because it fails inside the apply operation.
 operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
-expected_apply_count=14
+expected_apply_count=18
 apply_starts="$(grep -c '"event":"lifecycle.start".*"operation":"tmux.apply"' "$operations_log")"
 apply_outcomes="$(grep -c '"event":"lifecycle.outcome".*"operation":"tmux.apply"' "$operations_log")"
 if [[ "$apply_starts" != "$expected_apply_count" || "$apply_outcomes" != "$expected_apply_count" ]]; then

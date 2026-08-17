@@ -86,20 +86,35 @@ func keySequenceGeneratedState(actions []keyBindingAction) (roots, tables []stri
 	return roots, tables
 }
 
-// tmuxSequenceCleanupLines retires exactly the generated roots and tables
-// recorded by the previous successful source. run-shell is synchronous here;
-// the new single-chord and sequence bindings are rendered afterwards.
-func tmuxSequenceCleanupLines(actions []keyBindingAction) []string {
+// tmuxSequenceStateLines records exactly the roots and generated tables this
+// config installs, so the next apply can retire them by name.
+//
+// Recording is all the generated config may do. Retiring the *previous*
+// state cannot live here: a `run-shell` loop is not ordered against the rest
+// of a sourced file, so it may read the option this same file has already
+// rewritten (leaving a ghost root behind) or unbind a root the file has
+// already re-bound. retireGeneratedKeySequenceState owns the removal from the
+// apply path, where the ordering against source-file is explicit.
+func tmuxSequenceStateLines(actions []keyBindingAction) []string {
 	roots, tables := keySequenceGeneratedState(actions)
-	socket := tmuxShellQuote("#{socket_path}")
-	rootCleanup := `for key in $(tmux -S ` + socket + ` show-option -gqv ` + tmuxSequenceRootsOption + `); do tmux -S ` + socket + ` unbind-key -q -n "$key"; done`
-	tableCleanup := `for table in $(tmux -S ` + socket + ` show-option -gqv ` + tmuxSequenceTablesOption + `); do tmux -S ` + socket + ` unbind-key -a -q -T "$table"; done`
 	return []string{
-		"run-shell " + tmuxConfigQuote(rootCleanup),
-		"run-shell " + tmuxConfigQuote(tableCleanup),
 		"set-option -g " + tmuxSequenceRootsOption + " " + tmuxConfigQuote(strings.Join(roots, " ")),
 		"set-option -g " + tmuxSequenceTablesOption + " " + tmuxConfigQuote(strings.Join(tables, " ")),
 	}
+}
+
+// keySequenceRetireCommands unbinds exactly the roots and generated tables a
+// previous successful source recorded. `-q` keeps an already-absent key or
+// table a success, so a partially applied predecessor still converges.
+func keySequenceRetireCommands(socketName, roots, tables string) [][]string {
+	var commands [][]string
+	for key := range strings.FieldsSeq(roots) {
+		commands = append(commands, []string{"tmux", "-L", socketName, "unbind-key", "-q", "-n", key})
+	}
+	for table := range strings.FieldsSeq(tables) {
+		commands = append(commands, []string{"tmux", "-L", socketName, "unbind-key", "-a", "-q", "-T", table})
+	}
+	return commands
 }
 
 func tmuxSequenceBindLines(binaryPath string, actions []keyBindingAction) []string {

@@ -2928,8 +2928,10 @@ keys = ["M-a"] # unrelated current binding
 			t.Fatalf("generated config missing preserved current binding %q\n%s", want, output)
 		}
 	}
-	if got := len(runner.calls); got != 4 {
-		t.Fatalf("repeated apply tmux calls = %d, want two probe/source pairs: %#v", got, runner.calls)
+	// Each apply is probe + the two sequence-state reads + source-file. No
+	// sequence state is recorded here, so nothing is unbound.
+	if got := len(runner.calls); got != 8 {
+		t.Fatalf("repeated apply tmux calls = %d, want two probe/read/read/source quads: %#v", got, runner.calls)
 	}
 }
 

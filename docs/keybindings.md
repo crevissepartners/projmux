@@ -313,7 +313,10 @@ The first stroke must be a modified chord (`C-k`, `M-x`, `C-M-k`), navigation
 key, or function key. Later strokes may also be safe named keys or one printable
 ASCII key. Escape is reserved for cancellation, and raw escape/sendInput,
 CSI-u/xterm payloads, `User*` fallbacks, unsafe tmux config characters, and
-undeliverable names are rejected. A sequence is also rejected when it duplicates
+undeliverable names are rejected. `C-m`, `C-i`, and `C-[` are rejected with the
+spelling to use instead: a terminal reports those bytes as `Enter`, `Tab`, and
+`Escape`, so a leaf bound to the control spelling could never be reached.
+A sequence is also rejected when it duplicates
 another sequence, is a strict prefix of one, or starts with a root no-prefix
 single chord. Validation completes before any keymap, generated config, or live
 tmux write.
@@ -321,9 +324,12 @@ tmux write.
 Shared prefixes compile into deterministic `projmux-sequence-*` tmux key
 tables. Escape or an unknown continuation consumes the partial sequence and
 returns the client to `root` without dispatching an action or replaying input to
-the pane. Re-applying first removes the roots/tables recorded by the previous
-generated config, then installs the current trie; removing a sequence therefore
-leaves no ghost table. The macOS native broker only adds representable modified
+the pane. The generated config records the exact roots and tables it installs in
+`@projmux_sequence_roots` / `@projmux_sequence_tables`; the *next* apply unbinds
+precisely those before it sources the new config, so removing a sequence leaves
+no ghost table. Removal is owned by the apply command rather than the config
+file, because a `run-shell` loop inside a sourced file is not ordered against
+the binds around it. The macOS native broker only adds representable modified
 sequence strokes to its transport allowlist and still forwards each stroke via
 tmux's client key table—it does not turn those strokes into independent action
 triggers.

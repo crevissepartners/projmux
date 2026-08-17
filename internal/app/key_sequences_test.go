@@ -56,6 +56,24 @@ func TestKeymapSequenceGrammar(t *testing.T) {
 			t.Errorf("normalize(%q) = nil error", invalid)
 		}
 	}
+	// A terminal reports CR as Enter and TAB as Tab, never as the control
+	// spelling, so these would bind a leaf the user cannot reach.
+	for invalid, want := range map[string]string{
+		"C-k C-m": `write "Enter"`,
+		"C-k C-i": `write "Tab"`,
+		"C-m C-k": `write "Enter"`,
+		"C-k C-[": "reserved for cancelling",
+	} {
+		_, err := normalizeKeymapSequence(invalid)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("normalize(%q) error = %v, want it to contain %q", invalid, err, want)
+		}
+	}
+	for _, valid := range []string{"C-k Enter", "C-k Tab"} {
+		if got, err := normalizeKeymapSequence(valid); err != nil || got != valid {
+			t.Errorf("normalize(%q) = %q, %v", valid, got, err)
+		}
+	}
 }
 
 func TestKeymapSequenceConflictMatrix(t *testing.T) {
@@ -154,36 +172,113 @@ func TestKeySequenceAppRenderCombinesStandaloneAndAppSharedPrefix(t *testing.T) 
 	}
 }
 
-func TestKeySequenceCleanupTracksOnlyGeneratedState(t *testing.T) {
+func TestKeySequenceGeneratedStateIsRecordedNotRetiredByTheConfig(t *testing.T) {
 	actions := defaultKeyBindingCatalog()
 	actions[0].Sequences = []string{"C-k p"}
-	lines := strings.Join(tmuxSequenceCleanupLines(actions), "\n")
+	lines := strings.Join(tmuxSequenceStateLines(actions), "\n")
 	for _, want := range []string{
-		`tmux -S '#{socket_path}' show-option`,
-		`tmux -S '#{socket_path}' unbind-key`,
-		"show-option -gqv " + tmuxSequenceRootsOption,
-		"show-option -gqv " + tmuxSequenceTablesOption,
-		"unbind-key -q -n",
-		"unbind-key -a -q -T",
 		"set-option -g " + tmuxSequenceRootsOption + " \"C-k\"",
-		keySequenceTableName([]string{"C-k"}),
+		"set-option -g " + tmuxSequenceTablesOption + " \"" + keySequenceTableName([]string{"C-k"}) + "\"",
 	} {
 		if !strings.Contains(lines, want) {
-			t.Fatalf("cleanup = %q, want %q", lines, want)
+			t.Fatalf("state lines = %q, want %q", lines, want)
+		}
+	}
+	// A `run-shell` loop is not ordered against the rest of a sourced file, so
+	// removal must never be expressed in the generated config.
+	config := tmuxStandaloneConfigWithKeymap("/tmp/projmux", statusbarDecorationSet{}, actions, true)
+	for _, forbidden := range []string{
+		"unbind-key -q -n \"$key\"",
+		"show-option -gqv " + tmuxSequenceRootsOption,
+		"show-option -gqv " + tmuxSequenceTablesOption,
+	} {
+		if strings.Contains(config, forbidden) {
+			t.Fatalf("generated config still retires sequence state via %q", forbidden)
 		}
 	}
 }
 
-func TestKeySequenceCleanupRendersWhenKeymapIsAbsent(t *testing.T) {
+func TestKeySequenceRetireCommandsTargetOnlyRecordedState(t *testing.T) {
+	table := keySequenceTableName([]string{"C-k"})
+	got := keySequenceRetireCommands("sock", "C-k F12", table)
+	want := [][]string{
+		{"tmux", "-L", "sock", "unbind-key", "-q", "-n", "C-k"},
+		{"tmux", "-L", "sock", "unbind-key", "-q", "-n", "F12"},
+		{"tmux", "-L", "sock", "unbind-key", "-a", "-q", "-T", table},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("commands = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if !slices.Equal(got[i], want[i]) {
+			t.Fatalf("command %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+	if len(keySequenceRetireCommands("sock", "", "")) != 0 {
+		t.Fatal("unrecorded state retired something")
+	}
+}
+
+// Removal correctness is an ordering property: the recorded state must be read
+// and unbound strictly before source-file installs the current trie. A
+// `run-shell` loop inside the generated config cannot guarantee that, so this
+// pins the apply-path ordering directly.
+func TestTmuxApplyRetiresRecordedSequenceStateBeforeSourcingTheNewConfig(t *testing.T) {
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	writeFile(t, configPath, "previous\n")
+	staleTable := keySequenceTableName([]string{"C-k"})
+	runner := &recordingTmuxRunner{outputs: map[string]string{
+		recordedTmuxCallKey("tmux", "-L", "seq-socket", "list-sessions", "-F", "#{session_id}"):           "$0\n",
+		recordedTmuxCallKey("tmux", "-L", "seq-socket", "show-options", "-gqv", tmuxSequenceRootsOption):  "C-k\n",
+		recordedTmuxCallKey("tmux", "-L", "seq-socket", "show-options", "-gqv", tmuxSequenceTablesOption): staleTable + "\n",
+	}}
+	cmd := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv:  func(string) string { return "" },
+		readFile:   os.ReadFile,
+		writeFile:  os.WriteFile,
+		runner:     runner,
+	}
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"apply", "--config", configPath, "--socket", "seq-socket"}, &stdout, &stderr); err != nil {
+		t.Fatalf("apply error = %v; stderr = %q", err, stderr.String())
+	}
+
+	indexOf := func(match func([]string) bool) int {
+		for i, call := range runner.calls {
+			if match(call.args) {
+				return i
+			}
+		}
+		return -1
+	}
+	unbindRoot := indexOf(func(args []string) bool {
+		return slices.Equal(args, []string{"-L", "seq-socket", "unbind-key", "-q", "-n", "C-k"})
+	})
+	unbindTable := indexOf(func(args []string) bool {
+		return slices.Equal(args, []string{"-L", "seq-socket", "unbind-key", "-a", "-q", "-T", staleTable})
+	})
+	source := indexOf(func(args []string) bool {
+		return len(args) >= 3 && args[2] == "source-file"
+	})
+	if unbindRoot < 0 || unbindTable < 0 || source < 0 {
+		t.Fatalf("missing retire/source calls: root=%d table=%d source=%d\n%#v", unbindRoot, unbindTable, source, runner.calls)
+	}
+	if unbindRoot > source || unbindTable > source {
+		t.Fatalf("retire ran after source-file: root=%d table=%d source=%d", unbindRoot, unbindTable, source)
+	}
+}
+
+func TestKeySequenceStateRecordedWhenKeymapIsAbsent(t *testing.T) {
 	config := tmuxStandaloneConfigWithKeymap("/tmp/projmux", statusbarDecorationSet{}, defaultKeyBindingCatalog(), false)
 	for _, want := range []string{
-		"show-option -gqv " + tmuxSequenceRootsOption,
-		"show-option -gqv " + tmuxSequenceTablesOption,
 		"set-option -g " + tmuxSequenceRootsOption + " \"\"",
 		"set-option -g " + tmuxSequenceTablesOption + " \"\"",
 	} {
 		if !strings.Contains(config, want) {
-			t.Fatalf("config without keymap missing stale cleanup %q", want)
+			t.Fatalf("config without keymap missing recorded empty state %q", want)
 		}
 	}
 	if strings.Contains(config, "switch-client -T "+tmuxSequenceTablePrefix) {

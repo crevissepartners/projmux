@@ -4,4 +4,4 @@ schema_version = 2
 sequences = ["C-k C-w"]
 
 [bindings."mouse.toggle"]
-sequences = ["C-k C-m"]
+sequences = ["C-k Enter"]
