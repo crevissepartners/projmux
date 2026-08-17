@@ -28,7 +28,14 @@ type RecorderKey struct {
 type RecorderOptions struct {
 	Normalize func(RecorderKey) (string, error)
 	Validate  func(string) error
-	State     RecorderState
+	// AutoConfirm returns the first valid candidate immediately. Sequence
+	// authoring uses one recorder frame per stroke, so it must not reserve a
+	// second key as a finish control.
+	AutoConfirm bool
+	// CaptureEnter treats plain Enter as a candidate when AutoConfirm is set.
+	// Escape remains the recorder cancel control.
+	CaptureEnter bool
+	State        RecorderState
 }
 
 type RecorderState struct {

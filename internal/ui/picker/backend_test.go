@@ -715,6 +715,46 @@ func TestNativeRecorderConsumesCandidateThenEnterInOneByteStream(t *testing.T) {
 	}
 }
 
+func TestNativeRecorderAutoConfirmsOneStrokeAndCapturesEnter(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "modified", input: "\x1br", want: "M-r"},
+		{name: "enter", input: "\r", want: "Enter"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			result, err := runNativeInteractive(strings.NewReader(tc.input), &out, Options{
+				UI:            "settings-keybinding-sequence-stroke",
+				DisableSearch: true,
+				Recorder: &RecorderOptions{
+					AutoConfirm:  true,
+					CaptureEnter: true,
+					Normalize: func(key RecorderKey) (string, error) {
+						if key.Name == "enter" {
+							return "Enter", nil
+						}
+						return "M-" + strings.TrimPrefix(key.Name, "alt-"), nil
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("runNativeInteractive() error = %v", err)
+			}
+			if result.Key != "enter" || result.Value != tc.want {
+				t.Fatalf("result = %#v, want auto-confirmed %q", result, tc.want)
+			}
+			if rendered := out.String(); !strings.Contains(rendered, "returns to the sequence editor immediately") {
+				t.Fatalf("output = %q, want one-stroke sequence copy", rendered)
+			}
+		})
+	}
+}
+
 func TestNativeRecorderCandidateReplaceConflictRecoveryAndEsc(t *testing.T) {
 	t.Parallel()
 

@@ -22,15 +22,16 @@ The recommended path when a key does not fire:
 5. For unsupported terminals, configure plain Meta bytes or add a custom key in
    Settings > Keybindings.
 
-Settings saves safe tmux plain chords for actions and automatically applies the
-change to the app config and the running tmux session when Settings is opened
-from inside tmux. After each save/reset it shows the three outcomes together:
-saved, prepared, and running session. Successful in-tmux saves keep those labels
-user-facing; failure and skipped states include diagnostic terms such as
-`keymap.toml`, generated tmux config, or live tmux reload so the broken stage is
-clear. If Settings is run outside tmux, the running-session stage is skipped and
-the recovery/sync action is `projmux tmux apply`. Raw escape payloads, Windows
-Terminal `sendInput` strings, and tmux User keys are rejected as action keys.
+Settings saves safe tmux plain chords and two-to-four-stroke sequences for
+actions, then automatically applies the change to the app config and the
+running tmux session when Settings is opened from inside tmux. After each
+save/reset it shows the three outcomes together: saved, prepared, and running
+session. Successful in-tmux saves keep those labels user-facing; failure and
+skipped states include diagnostic terms such as `keymap.toml`, generated tmux
+config, or live tmux reload so the broken stage is clear. If Settings is run
+outside tmux, the running-session stage is skipped and the recovery/sync action
+is `projmux tmux apply`. Raw escape payloads, Windows Terminal `sendInput`
+strings, and tmux User keys are rejected as action keys or sequence strokes.
 Settings capture diagnostics split the observed result into logical key, raw
 bytes, and the tmux key name that can be saved. Diagnostic states distinguish
 keys that did not arrive, ambiguous bytes such as Enter/Ctrl-M, and keys that
@@ -134,11 +135,14 @@ state. The key summary uses the first key plus `+N`, or `Not bound` when no key
 is active. State vocabulary is limited to Default, Custom, Available, and
 Unbound. Each action detail shows the action label, state, the action's target
 kind, result kind, placement and anchor, the exact shipped handler it dispatches
-to, a flat Keys list with `+ Add key` and `Enter key name manually`, and
-Options. There is no `Advanced` and no `Troubleshooting` container: both named
-an implementation layer instead of an outcome, and both fronted rows that did
-nothing. Key rows open key detail for the canonical key, the delivery path,
-Remove key, and Test delivery. In a Linux/WSL tmux popup, `+ Add key`
+to, separate **Single Keys** and **Sequences** collections, and Options. Single
+Keys owns `+ Add key` and `Enter key name manually`; Sequences owns
+`+ Add sequence` and `Enter sequence manually` for action-level tmux triggers.
+Picker-local actions show why sequences are unavailable instead of exposing an
+inert authoring row. There is no `Advanced` and no `Troubleshooting` container:
+both named an implementation layer instead of an outcome, and both fronted rows
+that did nothing. Key rows open key detail for the canonical key, the delivery
+path, Remove key, and Test delivery. In a Linux/WSL tmux popup, `+ Add key`
 enters a purpose-built recorder immediately: Recording waits for one chord,
 Staged previews its normalized tmux key name without writing, Enter saves and
 applies, and Esc discards it. Another chord replaces the staged candidate.
@@ -164,6 +168,22 @@ Options covers unbinding the action and reset/use-default flows.
 Diagnostic/probe/init workflows are not first-class Settings tabs; use
 `projmux setup` and, where the native adapter does not apply,
 `projmux setup terminal` from the terminal when key delivery needs remediation.
+
+`+ Add sequence` opens a stroke editor. `Record next stroke` records exactly
+one logical key and returns to the editor with the accumulated sequence visible;
+plain Enter is a sequence stroke, while Escape cancels that capture and returns
+without replaying input. Save becomes available after two strokes, capture stops
+at four, and no separate finish key is reserved. `Enter sequence manually`
+accepts the same `C-k C-p` grammar and runs the same normalizer and conflict
+preflight, so typed and captured authoring produce the same canonical v2 bytes.
+Each saved sequence has detail actions to replace, remove, or test its logical
+delivery. The detail states the partial Escape/unknown-stroke cancellation
+contract and keeps platform transport differences in a Delivery diagnostic;
+the authoring model is otherwise the same with native macOS keys on or off and
+on Linux/WSL. Navigation, cancellation, and delivery tests do not write the
+keymap or generated config and do not reload tmux. Rejected conflicts remain in
+Settings with the reason, and successful mutations report saved, prepared, and
+running-session stages.
 
 `Test delivery` in key detail is an observable action, not a diagnostic dump. It
 reports the logical key, the raw observation, the key tmux received, and one of
@@ -306,8 +326,9 @@ not create new prefix entries.
 
 `sequences = [...]` adds action triggers made of two to four logical tmux
 strokes separated by exactly one space. It does not replace `keys`, and projmux
-ships no built-in sequences. The Phase 0 runtime reads hand-edited sequences;
-the Settings recorder continues to edit single chords only.
+ships no built-in sequences. Settings can add, replace, remove, and test these
+triggers through the sequence editor described above; hand editing remains
+supported through the same grammar and preflight.
 
 The first stroke must be a modified chord (`C-k`, `M-x`, `C-M-k`), navigation
 key, or function key. Later strokes may also be safe named keys or one printable

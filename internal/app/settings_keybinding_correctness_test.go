@@ -116,8 +116,9 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 				t.Fatalf("action detail %q row %q does not parse to a keybinding operation", action.ID, value)
 			}
 			switch {
-			case op == "add", op == "type", op == "unbind", op == "reset":
+			case op == "add", op == "type", op == "unbind", op == "reset", op == "sequence-add", op == "sequence-type":
 			case strings.HasPrefix(op, "key:"):
+			case strings.HasPrefix(op, "sequence:"):
 			default:
 				t.Fatalf("action detail %q row %q resolves to unhandled operation %q", action.ID, value, op)
 			}
