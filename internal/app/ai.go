@@ -3749,8 +3749,8 @@ func parsePositiveInt(value string) int {
 
 func printAIUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux create agent --provider <claude|codex|antigravity> [--placement right|down] [-o pane-id|none] [-- <extra-arg>...]")
-	fmt.Fprintln(w, "  projmux create pane [--placement right|down] [-o pane-id|none]")
+	fmt.Fprintln(w, "  projmux create agent --provider <claude|codex|antigravity> [--project <ref>] [--window <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <extra-arg>...]")
+	fmt.Fprintln(w, "  projmux create pane [--project <ref>] [--window <ref>]... [--create-window] [--placement right|down] [-o <mode>]")
 	fmt.Fprintln(w, "  projmux config edit [--get|--set <mode>]")
 	fmt.Fprintln(w, "  projmux agent status set <thinking|waiting|idle> [pane]")
 	fmt.Fprintln(w, "  projmux create notification [flags]")

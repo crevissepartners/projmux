@@ -143,13 +143,6 @@ func TestAllProjectsShortOptionIsExactAndConflictsWithEitherProjectSpelling(t *t
 func TestResourceCreateShortOptionsPreserveDispatchOrderAndOpaquePayload(t *testing.T) {
 	t.Parallel()
 
-	if !hasProjectFlag([]string{"-p", "alpha", "--", "-p", "payload"}) {
-		t.Fatal("-p before -- did not select resource-backed create")
-	}
-	if hasProjectFlag([]string{"--", "-p", "payload"}) {
-		t.Fatal("-p after -- was reinterpreted as a Projmux scope")
-	}
-
 	longArgs := []string{"--project", "alpha", "--window", "review", "--window", "main", "-o", "pane-id", "--", "tool", "-p", "payload-project", "-w", "payload-window", "--project", "opaque", "--window", "opaque"}
 	shortArgs := []string{"-p", "alpha", "-w", "review", "--window", "main", "-o", "pane-id", "--", "tool", "-p", "payload-project", "-w", "payload-window", "--project", "opaque", "--window", "opaque"}
 	long, err := parseResourceCreateFlags("create pane", longArgs, &bytes.Buffer{}, resourceCreateShape{split: true})

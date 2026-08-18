@@ -114,10 +114,11 @@ The contract:
   `--project`/`-p`, `--window`/`-w`, `--pane`, or any `--selector` label keeps the
   pre-existing behavior unchanged. The fallback is never blended into a
   partially specified selector.
-- **Only the singular routes.** The plural reads (`get projects|windows|panes|
-  agents`) stay 0..N inventories over their whole scope. `delete` and `create`
-  are unchanged: `create`'s omitted `--pane` selects a split anchor inside an
-  already-chosen Window, which is not the same question.
+- **Only the singular routes and `create`.** The plural reads (`get
+  projects|windows|panes|agents`) stay 0..N inventories over their whole scope,
+  and `delete` is unchanged. `create` has its own spelling of the same rule --
+  see [Create scope](#create-scope) -- because a create resolves a scope to put
+  something *into* rather than a target to act *on*.
 - **Inside tmux is decided by `$TMUX_PANE` plus `$TMUX`**, not by whether a tmux
   server answers. A bare `display-message` from outside a client still succeeds
   and answers for the most-recently-used session; projmux never uses that.
@@ -135,6 +136,53 @@ Resolution reads only two tmux options — `@projmux_pane_uid` on the active pan
 and `@projmux_window_uid` on its window — and derives every ancestor from
 registry `ownerRef`. The session-scoped `@projmux_project_uid` is deliberately
 not consulted.
+
+### Create scope
+
+`create window|pane|agent|<provider>` is resource-backed on every spelling.
+There is no mode flag and no second parser: the same argv means the same thing
+whether or not `--project` is present, and `-w`, `--create-window`, `--pane`,
+`--selector`, `--placement`, `--name`, `--label`, `--cwd`, `--add-dir`, `-o`,
+and the `--` payload all reach the same parser either way.
+
+The scope resolves in two branches:
+
+- **Explicit `--project`/`-p` wins**, inside tmux and outside it. The active
+  tmux target is not consulted at all.
+- **With no `--project`, the Project comes from the active managed runtime**:
+  the `@projmux_window_uid` mirrored on the pane you are in, and that Window's
+  registry `ownerRef`. This is the same seam the empty-selector reads use.
+
+The Window and the anchor Pane follow the *whole* scope rather than the Project
+flag alone:
+
+```
+projmux create codex                       # active Project, active Window, split from the active Pane
+projmux create codex -w hi --create-window  # active Project, new Window "hi"
+projmux create codex -p beta -w main        # everything explicit
+projmux create pane -p alpha                # every Window of alpha; a deliberate fan-out
+```
+
+One explicit scope occurrence (`--project`, `--window`, `--pane`, or
+`--selector`) makes the whole scope explicit, so naming a Window never picks up
+an anchor from somewhere you did not address. With a scope but no `--pane`, the
+anchor is the target Window's stored `spec.primaryPaneRef`, and a missing or
+stale ref is exit `2` rather than a silent repair.
+
+Refusals are exit `2` with zero Registry writes and zero tmux mutations, and
+they name `--project` as the fix:
+
+- outside tmux with no `--project` — no default server is probed;
+- inside Home, a control session, an unattributed pane, or a foreign pane —
+  none of those carry a managed identity, and projmux never invents a Project
+  from `$HOME`, a session name, or a cwd;
+- a mirrored uid the Registry does not hold, or a Window whose owning Project is
+  gone — a `recoverable` runtime is reported, never adopted.
+
+Every create is **detached**: no create moves the client. Use `focus pane` or
+`-o pane-id` when you want to end up in the new pane. Creates run against the
+inherited exact socket inside tmux; outside tmux an explicit `--project` is
+required before anything live is touched.
 
 ### Rename and rebind live convergence
 
@@ -1017,8 +1065,8 @@ supplied window.
 ## Agent creation and hook ingress
 
 ```
-projmux create agent --provider <claude|codex|antigravity> [--placement right|down] ...
-projmux create pane [--placement right|down] ...
+projmux create agent --provider <claude|codex|antigravity> [--project <ref>] [--window <ref>]... [--create-window] [--placement right|down] ...
+projmux create pane [--project <ref>] [--window <ref>]... [--create-window] [--placement right|down] ...
 projmux config edit [--get|--set <mode>]
 projmux agent status set <thinking|waiting|idle> [pane]
 projmux agent topic ...
@@ -1049,11 +1097,12 @@ yellow respectively. That palette is independent from notify queue
 can still render a non-red action-required status badge.
 
 `create agent --provider ...` selects a provider without changing the saved
-default. Concrete provider invocations create a new managed
-agent pane every time; existing managed AI panes in the same project/session are
-not selected or reused.
-The provider picker and plain Pane creation remain available through the
-canonical create workflow. Arguments after `--` are extra arguments appended to
+default. Concrete provider invocations create a new Agent and a new managed
+Pane every time; existing managed AI panes in the same project/session are
+not selected or reused, and rebinding an existing conversation is `agent
+resume`, a different verb. The scope of the new resources follows
+[Create scope](#create-scope). The provider picker remains available through
+`internal agent-pane picker`. Arguments after `--` are extra arguments appended to
 the resolved `claude`, `codex`, or `agy` executable inside the managed wrapper;
 projmux still sets the context directory, tmux title, AI pane metadata, title
 watcher, and split layout.

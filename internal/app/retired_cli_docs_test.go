@@ -197,7 +197,7 @@ func TestLegacyRetirementLedgerPinsUnaffectedCanonicalResourceSurface(t *testing
 
 	reference := read("docs/cli.md")
 	for _, want := range []string{
-		"projmux create pane {--project <ref> | -p <ref>} [--window <ref> | -w <ref>]...",
+		"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
 		"projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A]",
 		"Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present",
 		"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>]",

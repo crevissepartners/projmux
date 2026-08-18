@@ -14,6 +14,23 @@ Provider shortcuts (`projmux create codex|claude|antigravity`) normalize to the
 same Agent route. Keep machine-local policy, private prompt text, and personal
 workflow recipes in user config or dotfiles rather than tracked project docs.
 
+Every form above is resource-backed. With no `--project` the command runs
+against the **active managed Project's active Window** and splits from the
+active Pane, so a shortcut invoked from inside a projmux Window lands where you
+are. Registered shortcuts therefore need no scope flag. Add `--project <ref>`,
+and optionally `--window <ref>` with `--create-window`, when a shortcut must
+target something other than where it was invoked. See
+[Create scope](cli-guide.md#create-scope) for the full rule and its refusals.
+
+Two consequences matter for shortcut authors:
+
+- **A shortcut invoked outside tmux, or from a Home/control/unattributed pane,
+  exits `2` and names `--project`.** It creates nothing. Give such a shortcut an
+  explicit `--project`.
+- **The client does not move.** Every create is detached. Follow with
+  `projmux focus pane uid:<uid>` — or take `-o pane-id` and move the client
+  yourself — when the shortcut should end up in the new pane.
+
 ## Command contract
 
 Choose a direct provider when a shortcut must always open that provider:
@@ -55,9 +72,10 @@ as a stable follow-up handle:
 pane_id="$(projmux create codex --placement right -o pane-id -- "prompt")"
 ```
 
-Success prints exactly one `%N` Pane id. Without `-o pane-id`, the direct
-current-Window form defaults to no output. Failure to obtain a valid tmux Pane
-id is nonzero rather than a false success.
+Success prints exactly one `%N` Pane id -- the managed Pane's raw tmux handle.
+Without `-o`, the default projection is the `<kind>/<name> created` summary
+line. Failure to obtain a valid tmux Pane id is nonzero rather than a false
+success.
 
 ## Naming pattern
 
@@ -119,4 +137,5 @@ project roots, permission policies, or model choices in shared docs.
 - Put provider arguments after `--`; omit it when the payload is empty.
 - Use `create pane` for a shell Pane.
 - Use `-o pane-id` only when automation consumes the returned `%N` handle.
+- Add `--project <ref>` to any shortcut that can run outside a managed Window.
 - Keep private workflow policy outside tracked project docs.

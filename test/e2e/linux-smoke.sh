@@ -10,8 +10,10 @@ cd "$smoke_root"
 smoke_build_binary
 bin="$PROJMUX_SMOKE_BIN"
 
-# Exercise the opt-in direct launch contract against a real isolated tmux
-# server, then prove that the returned handle names the pane that is live.
+# An unattributed pane is not a Projmux scope. `create` used to fall back to a
+# runtime-only split here; it now refuses and names --project, and it must leave
+# the server exactly as it found it. The positive implicit-scope path is
+# exercised further down, from a pane that really carries a managed identity.
 PROJMUX_SMOKE_TMUX_SOCKET="projmux-pane-id-e2e"
 export PROJMUX_SMOKE_TMUX_SOCKET
 pane_id_socket="$PROJMUX_SMOKE_TMUX_SOCKET"
@@ -20,21 +22,30 @@ tmux -L "$pane_id_socket" new-session -d -s "$pane_id_session" -c "$smoke_root" 
 pane_id_target="$(tmux -L "$pane_id_socket" display-message -p -t "$pane_id_session:0.0" '#{pane_id}')"
 pane_id_socket_path="$(tmux -L "$pane_id_socket" display-message -p -t "$pane_id_target" '#{socket_path}')"
 pane_id_server_pid="$(tmux -L "$pane_id_socket" display-message -p -t "$pane_id_target" '#{pid}')"
+pane_id_panes_before="$(tmux -L "$pane_id_socket" list-panes -a -F '#{pane_id}' | wc -l)"
+set +e
 pane_id_output="$(
   TMUX="$pane_id_socket_path,$pane_id_server_pid,0" \
     TMUX_PANE="$pane_id_target" \
-    TMUX_SPLIT_TARGET_PANE="$pane_id_target" \
-    TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
     SHELL="/bin/sh" \
-    "$bin" create pane -o pane-id --placement right
+    "$bin" create pane -o pane-id --placement right 2>"$PROJMUX_SMOKE_WORKDIR/unattributed-create.err"
 )"
-if [[ ! "$pane_id_output" =~ ^%[0-9]+$ ]]; then
-  echo "expected exactly one %N pane id line, got: $pane_id_output" >&2
+pane_id_status=$?
+set -e
+if [[ "$pane_id_status" != "2" ]]; then
+  echo "create from an unattributed pane exited $pane_id_status, want 2" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/unattributed-create.err" >&2 || true
   exit 1
 fi
-pane_id_live="$(tmux -L "$pane_id_socket" display-message -p -t "$pane_id_output" '#{pane_id}')"
-if [[ "$pane_id_live" != "$pane_id_output" ]]; then
-  echo "returned pane id is not live: returned=$pane_id_output resolved=$pane_id_live" >&2
+if [[ -n "$pane_id_output" ]]; then
+  echo "a refused create wrote to stdout: $pane_id_output" >&2
+  exit 1
+fi
+# The needle deliberately starts with a word: the helper passes it to grep as a
+# pattern, so a leading `--` would be read as an option.
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/unattributed-create.err" "pass --project <ref>"
+if [[ "$(tmux -L "$pane_id_socket" list-panes -a -F '#{pane_id}' | wc -l)" != "$pane_id_panes_before" ]]; then
+  echo "a refused create still split a pane" >&2
   exit 1
 fi
 tmux -L "$pane_id_socket" kill-server
@@ -1542,25 +1553,32 @@ if [[ "$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)" != "$agent_
   exit 1
 fi
 
-# 13. The compatibility bridge is untouched: with no --project the invocation is
-#     still the compatibility-free split bridge, and its identity projections name the flag
-#     that would make them work.
+# 13. Outside tmux an omitted --project is a refusal, not a fallback. There is
+#     no runtime-only split left to reach and no server to guess, so the command
+#     names the flag and mutates nothing.
+agent_outside_registry_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
 set +e
 pmx_agent create agent --provider codex -o uid \
-  >"$create_root/agent-bridge.out" 2>"$create_root/agent-bridge.err"
-agent_bridge_status=$?
+  >"$create_root/agent-outside.out" 2>"$create_root/agent-outside.err"
+agent_outside_status=$?
 set -e
-if [[ "$agent_bridge_status" != "2" ]]; then
-  echo "the bridge identity projection exit = $agent_bridge_status, want 2" >&2
+if [[ "$agent_outside_status" != "2" ]]; then
+  echo "an outside-tmux create with no --project exit = $agent_outside_status, want 2" >&2
+  cat "$create_root/agent-outside.err" >&2 || true
   exit 1
 fi
-if [[ -s "$create_root/agent-bridge.out" ]]; then
-  echo "the bridge identity projection wrote to stdout" >&2
+if [[ -s "$create_root/agent-outside.out" ]]; then
+  echo "an outside-tmux create with no --project wrote to stdout" >&2
+  exit 1
+fi
+if [[ "$(md5sum "$create_registry" | cut -d' ' -f1)" != "$agent_outside_registry_before" ]]; then
+  echo "an outside-tmux create with no --project mutated the registry" >&2
   exit 1
 fi
 # The needle deliberately starts with a word: the helper passes it to grep as a
 # pattern, so a leading `--` would be read as an option.
-smoke_assert_file_contains "$create_root/agent-bridge.err" "add --project <ref>"
+smoke_assert_file_contains "$create_root/agent-outside.err" "not inside a tmux client"
+smoke_assert_file_contains "$create_root/agent-outside.err" "pass --project <ref>"
 
 # 14. Phase 6 Agent authority runs on the inherited absolute socket only. The
 #     foreign socket deliberately carries matching title-like text and semantic
@@ -1675,6 +1693,178 @@ if ! pmx_agent get agents --project alpha -o name | grep -qx "$cross_agent_name"
   echo "cross-Project workspace changed Agent ownership" >&2
   exit 1
 fi
+
+# 15. The user reproduction, from inside a managed Pane. `create codex -w hi
+#     --create-window` names no Project: the scope is derived from the managed
+#     identity mirrored on the pane the command runs in, and the Window, the
+#     Agent, and the Agent's managed Pane are created below that Project in one
+#     transaction on the inherited exact socket.
+foreign_state_before="$(cfx list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{@projmux_pane_uid} #{@projmux_window_uid}')"
+implicit_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
+implicit_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
+: >"$create_root/agent-launch.log"
+pmx_agent_live create codex -w hi --create-window -o pane-id \
+  >"$create_root/implicit-agent.out" 2>"$create_root/implicit-agent.err"
+implicit_pane="$(tr -d '[:space:]' <"$create_root/implicit-agent.out")"
+if [[ ! "$implicit_pane" =~ ^%[0-9]+$ ]]; then
+  echo "implicit-scope create codex -o pane-id = $implicit_pane, want a raw %N handle" >&2
+  cat "$create_root/implicit-agent.err" >&2 || true
+  exit 1
+fi
+# The returned handle is live on the exact inherited socket and carries the
+# managed Pane uid mirror.
+if [[ "$(ctx display-message -p -t "$implicit_pane" '#{pane_id}')" != "$implicit_pane" ]]; then
+  echo "the implicit-scope pane handle is not live on the exact socket" >&2
+  exit 1
+fi
+if [[ -z "$(ctx display-message -p -t "$implicit_pane" '#{@projmux_pane_uid}')" ]]; then
+  echo "the implicit-scope managed Pane has no Projmux uid mirror" >&2
+  exit 1
+fi
+# The Window was created below the derived Project, not below any other one.
+if ! pmx_agent get windows --project alpha -o name | grep -qx "hi"; then
+  echo "implicit-scope --create-window did not create Window hi under the derived Project" >&2
+  pmx_agent get windows --project alpha -o name >&2 || true
+  exit 1
+fi
+if pmx_agent get windows --project beta -o name | grep -qx "hi"; then
+  echo "implicit-scope create leaked a Window into another Project" >&2
+  exit 1
+fi
+implicit_window_uid="$(ctx display-message -p -t "$implicit_pane" '#{@projmux_window_uid}')"
+if [[ -z "$implicit_window_uid" ]]; then
+  echo "the implicit-scope Window has no uid mirror" >&2
+  exit 1
+fi
+if [[ "$(ctx display-message -p -t "$implicit_pane" '#{session_name}')" != "legacy-alpha" ]]; then
+  echo "the implicit-scope Window landed outside the derived Project's session" >&2
+  exit 1
+fi
+if [[ "$(ctx display-message -p -t "$implicit_pane" '#{window_name}')" != "hi" ]]; then
+  echo "the implicit-scope Window is not named hi" >&2
+  exit 1
+fi
+# The provider really launched, and the client never moved.
+for _ in {1..200}; do
+  [[ -s "$create_root/agent-launch.log" ]] && break
+  sleep 0.05
+done
+if ! grep -Fq "cwd=$create_root/work/alpha" "$create_root/agent-launch.log"; then
+  echo "the implicit-scope create did not launch the provider in the derived Project root" >&2
+  cat "$create_root/agent-launch.log" >&2 || true
+  exit 1
+fi
+if [[ "$(ctx display-message -p -t legacy-alpha '#{window_id}')" != "$implicit_window_before" ]] ||
+  [[ "$(ctx display-message -p -t legacy-alpha '#{pane_id}')" != "$implicit_pane_before" ]]; then
+  echo "an implicit-scope create moved the active window or pane" >&2
+  exit 1
+fi
+
+# 15b. The same command on an app-owned host. Host mode is a runtime property,
+#      not an authority boundary: the create mutates only the socket it
+#      inherited, and the sibling server is byte-identical before and after both
+#      halves of the matrix.
+ctx set-option -gq @projmux_app 1
+pmx_agent_live create pane -w app-owned-host --create-window -o pane-id \
+  >"$create_root/app-owned.out" 2>"$create_root/app-owned.err"
+app_owned_pane="$(tr -d '[:space:]' <"$create_root/app-owned.out")"
+if [[ ! "$app_owned_pane" =~ ^%[0-9]+$ ]]; then
+  echo "app-owned host create -o pane-id = $app_owned_pane, want a raw %N handle" >&2
+  cat "$create_root/app-owned.err" >&2 || true
+  exit 1
+fi
+if [[ "$(ctx display-message -p -t "$app_owned_pane" '#{session_name}')" != "legacy-alpha" ]]; then
+  echo "the app-owned host create landed outside the derived Project's session" >&2
+  exit 1
+fi
+if [[ "$(ctx show-options -gqv @projmux_app)" != "1" ]]; then
+  echo "the app-owned host marker disappeared during the create" >&2
+  exit 1
+fi
+ctx set-option -gqu @projmux_app
+foreign_state_after="$(cfx list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{@projmux_pane_uid} #{@projmux_window_uid}')"
+if [[ "$foreign_state_after" != "$foreign_state_before" ]]; then
+  echo "an inherited-socket create changed a sibling tmux server" >&2
+  printf 'before:\n%s\nafter:\n%s\n' "$foreign_state_before" "$foreign_state_after" >&2
+  exit 1
+fi
+
+# 16. A pane whose Window carries no managed identity is unattributed. It is a
+#     refusal with zero mutations on the very server the command is running in;
+#     nothing is adopted by proximity.
+unattributed_pane="$(ctx new-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/work/alpha" sleep 600)"
+if [[ -n "$(ctx display-message -p -t "$unattributed_pane" '#{@projmux_window_uid}')" ]]; then
+  echo "the unattributed fixture window carries a managed uid" >&2
+  exit 1
+fi
+unattributed_registry_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
+unattributed_panes_before="$(ctx list-panes -a -F '#{pane_id}' | wc -l)"
+set +e
+pmx_agent_hook_at "$unattributed_pane" create pane -o pane-id \
+  >"$create_root/unattributed.out" 2>"$create_root/unattributed.err"
+unattributed_status=$?
+set -e
+if [[ "$unattributed_status" != "2" ]]; then
+  echo "an unattributed-pane create exit = $unattributed_status, want 2" >&2
+  cat "$create_root/unattributed.err" >&2 || true
+  exit 1
+fi
+if [[ -s "$create_root/unattributed.out" ]]; then
+  echo "an unattributed-pane create wrote to stdout" >&2
+  exit 1
+fi
+if [[ "$(md5sum "$create_registry" | cut -d' ' -f1)" != "$unattributed_registry_before" ]]; then
+  echo "an unattributed-pane create mutated the registry" >&2
+  exit 1
+fi
+if [[ "$(ctx list-panes -a -F '#{pane_id}' | wc -l)" != "$unattributed_panes_before" ]]; then
+  echo "an unattributed-pane create still split a pane" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$create_root/unattributed.err" "pass --project <ref>"
+ctx kill-pane -t "$unattributed_pane"
+
+# 17. A foreign server is not a scope either. The invocation inherits the other
+#     socket, finds no managed identity there, and refuses without touching
+#     either server or the registry.
+foreign_registry_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
+foreign_panes_before="$(cfx list-panes -a -F '#{pane_id}' | wc -l)"
+app_panes_before="$(ctx list-panes -a -F '#{pane_id}' | wc -l)"
+set +e
+env HOME="$agent_home" \
+  TMUX="$create_foreign_socket_path,1,0" \
+  TMUX_PANE="$foreign_agent_pane" \
+  TMUX_TMPDIR="$create_root/tt" \
+  XDG_STATE_HOME="$create_root/state" \
+  XDG_CONFIG_HOME="$create_root/config" \
+  PROJMUX_MANAGED_ROOTS="$create_root/work" \
+  SHELL=/bin/bash \
+  "$bin" create pane -o pane-id \
+  >"$create_root/foreign-create.out" 2>"$create_root/foreign-create.err"
+foreign_create_status=$?
+set -e
+if [[ "$foreign_create_status" != "2" ]]; then
+  echo "a foreign-server create exit = $foreign_create_status, want 2" >&2
+  cat "$create_root/foreign-create.err" >&2 || true
+  exit 1
+fi
+if [[ -s "$create_root/foreign-create.out" ]]; then
+  echo "a foreign-server create wrote to stdout" >&2
+  exit 1
+fi
+if [[ "$(md5sum "$create_registry" | cut -d' ' -f1)" != "$foreign_registry_before" ]]; then
+  echo "a foreign-server create mutated the registry" >&2
+  exit 1
+fi
+if [[ "$(cfx list-panes -a -F '#{pane_id}' | wc -l)" != "$foreign_panes_before" ]]; then
+  echo "a foreign-server create split a pane on the foreign server" >&2
+  exit 1
+fi
+if [[ "$(ctx list-panes -a -F '#{pane_id}' | wc -l)" != "$app_panes_before" ]]; then
+  echo "a foreign-server create reached the app-owned server" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$create_root/foreign-create.err" "pass --project <ref>"
 
 foreign_agent_after="$(cfx display-message -p -t "$foreign_agent_pane" '#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}')"
 if [[ "$foreign_agent_after" != "$foreign_agent_before" ]]; then

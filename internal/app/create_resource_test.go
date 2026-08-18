@@ -1510,14 +1510,17 @@ func TestResourceCreateNegativesNeverMutate(t *testing.T) {
 		want string
 	}{
 		{
-			name: "create window requires a project scope",
+			// The test command has no active-target seam, which is the
+			// outside-tmux observation. An omitted scope refuses there rather
+			// than guessing a server or a Project.
+			name: "create window outside tmux requires an explicit project scope",
 			args: []string{"window"},
-			want: "requires exactly one --project",
+			want: "requires a Project: no --project <ref> was given",
 		},
 		{
 			name: "create window takes at most one project",
 			args: []string{"window", "--project", "alpha", "--project", "beta"},
-			want: "requires exactly one --project",
+			want: "accepts at most one --project",
 		},
 		{
 			name: "an unknown project is a no-match",
@@ -1760,62 +1763,6 @@ func TestCreatePayloadReachesTheRuntimeUnreinterpreted(t *testing.T) {
 	}
 	if created == nil {
 		t.Fatalf("no Window was named after the payload command:\n%s", store.snapshot())
-	}
-}
-
-// TestCreatePaneWithoutAProjectKeepsTheLegacyShellSplit proves the dispatch
-// carve-out: without --project the route is byte-for-byte the shell split it
-// already shipped.
-func TestCreatePaneWithoutAProjectKeepsTheLegacyShellSplit(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name string
-		args []string
-		want []string
-	}{
-		{
-			name: "bare create pane",
-			args: []string{"pane"},
-			want: []string{"split", "--agent", "shell", "right"},
-		},
-		{
-			name: "placement and output still normalize onto the legacy argv",
-			args: []string{"pane", "--placement", "down", "-o", "pane-id"},
-			want: []string{"split", "--agent", "shell", "--print-pane-id", "down"},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			create, split := newTestCreateCommand()
-			if _, _, err := runRoute(t, create, test.args...); err != nil {
-				t.Fatalf("create %v error = %v", test.args, err)
-			}
-			if len(split.calls) != 1 {
-				t.Fatalf("split calls = %v, want exactly one", split.calls)
-			}
-			if strings.Join(split.calls[0], " ") != strings.Join(test.want, " ") {
-				t.Fatalf("argv = %v, want %v", split.calls[0], test.want)
-			}
-		})
-	}
-
-	// The discriminator is the flag itself, in every spelling the flag package
-	// accepts, and it never fires on payload text.
-	for _, test := range []struct {
-		args []string
-		want bool
-	}{
-		{args: []string{"--project", "alpha"}, want: true},
-		{args: []string{"--project=alpha"}, want: true},
-		{args: []string{"-project", "alpha"}, want: true},
-		{args: []string{"--placement", "down"}, want: false},
-		{args: []string{"--", "--project", "alpha"}, want: false},
-		{args: nil, want: false},
-	} {
-		if got := hasProjectFlag(test.args); got != test.want {
-			t.Fatalf("hasProjectFlag(%v) = %v, want %v", test.args, got, test.want)
-		}
 	}
 }
 

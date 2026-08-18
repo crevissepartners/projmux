@@ -50,6 +50,10 @@ const (
 	retiredPaneRenameActionID = "rename-pane-topic"
 )
 
+// tmuxPaneEnvPrefix carries the exact pane a key binding was pressed in into
+// the projmux process run-shell spawns. See renderTmuxBindingBody.
+const tmuxPaneEnvPrefix = "TMUX_PANE=#{pane_id} "
+
 // keyBindingAction is the in-app source of truth for built-in key actions.
 // Terminal init adapters and tmux config rendering derive their concrete
 // trigger/action tables from these entries.
@@ -1432,7 +1436,17 @@ func renderTmuxBindingBody(binaryPath string, action keyBindingAction) string {
 	case tmuxBindingPopupToggle:
 		return "run-shell " + tmuxConfigQuote(bin+" internal tmux popup-toggle --client #{client_tty} "+action.TmuxBody)
 	case tmuxBindingRunProjmux:
-		return "run-shell " + tmuxConfigQuote(bin+" "+action.TmuxBody)
+		// `run-shell` inherits $TMUX from the server but never exports
+		// $TMUX_PANE: tmux sets that variable only in the shell it spawns for a
+		// pane. A projmux invocation launched from a key binding would
+		// therefore see "inside tmux, no pane", and every route whose scope is
+		// the active target -- `create` first among them -- would refuse or fall
+		// back to `display-message` without a `-t`, which answers for the
+		// most-recently-used session rather than the pane the key was pressed
+		// in. Carrying the exact pane id is what makes a binding address the
+		// pane the operator is looking at. `#{pane_id}` is resolved by run-shell
+		// against the key binding's own target pane.
+		return "run-shell " + tmuxConfigQuote(tmuxPaneEnvPrefix+bin+" "+action.TmuxBody)
 	case tmuxBindingCommand:
 		return action.TmuxBody
 	case tmuxBindingCommandPrompt:

@@ -1068,6 +1068,43 @@ Agent runtime linkage:
   maintenance riding along inside somebody else's transaction: one pane it cannot
   register must not fail the `create` that happened to trigger it.
 
+Resource-first create:
+
+- **One parser, one product model.** `create window|pane|agent|<provider>` share
+  a single argv surface and a single resource-backed implementation.
+  `--project` is a scope flag, never a mode selector, so no flag chooses between
+  two meanings of the same command. The runtime-only "split the current window"
+  half that used to sit behind an absent `--project` is removed; a raw,
+  unmanaged split is tmux's own verb, not a projmux resource verb.
+- **Scope resolution has exactly two branches.** An explicit `--project`/`-p`
+  wins inside and outside tmux and suppresses the active-target read entirely.
+  With no `--project`, the Project is derived from the active exact runtime
+  through the same `@projmux_window_uid` mirror and registry `ownerRef` chain
+  the read verbs use.
+- **Window and anchor follow the whole scope, not the Project flag.** They are
+  derived only when the argv named no `--project`, `--window`, `--pane`, and no
+  `--selector` at all. That keeps a bare `create pane --placement right` -- the
+  generated keybinding body -- a split of the Window the operator is looking at,
+  instead of a fan-out over every Window of the Project, while one explicit
+  occurrence still fixes the whole target set. With a scope and no `--pane`, the
+  anchor stays the target Window's stored `spec.primaryPaneRef`, and a missing
+  or stale ref is a refusal rather than a silent repair.
+- **Refusals cost nothing.** Home, control, unattributed, foreign, a mirrored
+  uid the Registry does not hold, a Window whose Project is gone, and every
+  outside-tmux invocation with no `--project` are usage errors naming
+  `--project`. They are raised before the registry transaction opens, so they
+  are measurably zero Registry writes and zero tmux calls. Nothing falls back to
+  a runtime-only split, nothing invents a Project from `$HOME`, a session name,
+  or a cwd, and no default server is probed.
+- **Host neutrality is transport-level, not policy-level.** Inside an app-owned
+  or a standalone server the create mutates only the inherited exact socket,
+  because every tmux call it issues inherits `$TMUX` and it never enumerates
+  siblings. Outside tmux an explicit Project is the gate before anything live is
+  touched.
+- **Everything is detached.** No create path issues `switch-client`,
+  `select-window`, `select-pane`, or `attach-session`. `focus pane` and
+  `-o pane-id` are how a caller ends up in the new pane.
+
 Selector and the implicit active target:
 
 - A selector value is either `uid:<uid>` or a `metadata.name`. There is no
@@ -1080,7 +1117,8 @@ Selector and the implicit active target:
   no selector at all resolves the **active tmux target**: `get pane`,
   `describe project|window|pane|agent`, `rename project|window|pane`, and
   `rebind project`. Any reference, scope flag, or label keeps the pre-existing
-  singular-target meaning; `create` and the destructive routes are unaffected.
+  singular-target meaning; the destructive routes are unaffected. `create`
+  reads the same seam under its own rule, described below.
 - Project is also the namespace-like default scope of the plural registry reads
   `get windows|panes|agents`. When `--project` is absent inside tmux, the active
   Window uid mirror and its registry owner chain derive a Project on every

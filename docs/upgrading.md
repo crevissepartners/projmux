@@ -44,6 +44,54 @@ still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
 
+### `create` is resource-backed on every spelling
+
+**Breaking.** `create pane`, `create agent`, and the `create
+codex|claude|antigravity` shortcuts no longer have two product models behind the
+presence of `--project`. Previously an invocation *with* `--project` created
+Registry resources and materialized them detached, while an invocation *without*
+it ran a runtime-only split of the current tmux window that created no Projmux
+resource and moved the client. That second model is gone.
+
+What changes for an existing invocation:
+
+| Invocation | Before | Now |
+| --- | --- | --- |
+| `create codex --placement right` inside a managed Project | Runtime-only split of the current tmux window; no Registry resource; the client followed the new pane | Creates an Agent and its managed Pane below the **active managed Project's active Window**, anchored on the active Pane, materialized detached; the client does not move |
+| `create codex -w hi --create-window` | `flag provided but not defined: -w` | Creates Window `hi` under the active managed Project, then the Agent and its managed Pane inside it |
+| `create pane --placement down` inside a managed Project | Runtime-only shell split | Creates a Pane resource below the active Window and splits it detached |
+| Any `create` inside Home, a control session, an unattributed or foreign pane | Runtime-only split | Exit `2` naming `--project`, with zero Registry writes and zero tmux mutations |
+| Any `create` from outside tmux with no `--project` | Runtime-only split against the default server | Exit `2` naming `--project`; no server is probed |
+| Any `create` with an explicit `--project` | Resource-backed | Unchanged |
+| `create pane -o uid\|name\|ref\|metadata\|json` with no `--project` | Exit `2` saying the compatibility split creates no resource | Works: the projections resolve the created resource |
+
+Two consequences are worth calling out:
+
+- **The client no longer follows the new pane.** Every create is detached. Use
+  `projmux focus pane uid:<uid>` — or `-o pane-id` and your own `select-pane` —
+  when you want to move there.
+- **Panes created this way are now managed.** They appear in `get panes`,
+  in the primary navigation surface, and in `reconcile resources`. Nothing
+  adopts the runtime-only panes created by older releases; they stay visible in
+  the Runtime diagnostics surface and are never imported automatically.
+
+The default keybindings whose bodies are `create codex|claude|pane --placement
+right|down` keep their spelling and their "split where I am" meaning, and now
+produce Registry resources. `internal agent-pane launch-default` — the saved
+default split mode, bound to Ctrl-Shift-R/L in the terminal adapters — is a
+different route and is unchanged.
+
+The generated tmux config changed shape to support that. Every projmux
+`run-shell` binding is now rendered as `run-shell "TMUX_PANE=#{pane_id} <bin>
+..."`, because tmux exports `$TMUX` to a `run-shell` child but never
+`$TMUX_PANE`, and without the exact pane a binding cannot tell where it was
+pressed. `projmux config apply` — which `make install` and `projmux update
+apply` run for you — rewrites the generated file. If you hand-copied a projmux
+`run-shell` line into your own `~/.tmux.conf`, add the same prefix.
+
+If you need a raw, unmanaged tmux split, use tmux itself (`split-window`).
+projmux does not spell that as a resource verb.
+
 ### Legacy compatibility routes removed
 
 This release removes the human-facing compatibility argv and old

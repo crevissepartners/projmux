@@ -76,28 +76,124 @@ type resourceCreateShape struct {
 	provider bool
 }
 
-// hasProjectFlag reports whether argv carries a `--project`/`-p` occurrence before
-// the payload terminator.
+// createScope is the resolved Project/Window/anchor scope of one create.
 //
-// This is the dispatch discriminator of `create pane`. The route shipped one
-// release ago as the canonical spelling of the legacy shell split, and this
-// track adds rather than removes: with no `--project` the invocation keeps that
-// exact behavior, argv, stdout bytes, exit code and focus effect included.
-func hasProjectFlag(args []string) bool {
-	for _, arg := range args {
-		if arg == argumentTerminator {
-			return false
+// `--project` is a scope flag, never a mode selector: the same argv means the
+// same thing with and without it, and the only difference is where the scope
+// comes from. See resolveCreateScope for the rule.
+type createScope struct {
+	// project is the exact-one Project every created resource lands under.
+	project selector.Ref
+	// window and pane are filled in only when the whole scope was omitted and
+	// the active tmux target supplied it. They are never blended with an
+	// explicit --window/--pane/--selector occurrence.
+	window *selector.Ref
+	pane   *selector.Ref
+}
+
+// projectQuery builds the exact-one Project scope query.
+func (s createScope) projectQuery() selector.Query {
+	ref := s.project
+	return selector.Query{Project: &ref}
+}
+
+// uidRef spells a resolved uid as the selector ref form, so downstream error
+// text reports the identity that was actually selected rather than a name that
+// was never typed.
+func uidRef(kind coremetadata.Kind, uid string) selector.Ref {
+	return selector.Ref{Kind: kind, UID: uid, Raw: selector.UIDPrefix + uid}
+}
+
+// resolveCreateScope fixes the scope of one create before its transaction opens.
+//
+// The rule has exactly two branches and no third product model:
+//
+//   - An explicit `--project` wins everywhere, inside tmux and outside it. The
+//     ref is parsed here and resolved inside the transaction, after
+//     reconciliation, because a Project that exists only as a discovered workdir
+//     is registered by that reconciliation and not before it.
+//   - With no `--project`, the Project is derived from the active exact tmux
+//     runtime through the same registry identity mirror every other
+//     implicit-target route reads. Outside tmux, and on any runtime that carries
+//     no managed identity -- Home, a control session, an unattributed or foreign
+//     pane -- the derivation refuses. It never falls back to a runtime-only
+//     split, never invents a Project from `$HOME`, a session name, or a cwd, and
+//     never probes a server the invocation did not inherit.
+//
+// The Window and the anchor Pane follow the *whole* scope, not the Project flag:
+// they are derived only when no --window, --pane, or --selector was given at
+// all. That is the same "an omitted selector is the whole selector" rule the
+// read and rename verbs use, and it is what keeps a bare `create pane
+// --placement right` -- the generated keybinding body -- a split of the Window
+// the operator is looking at instead of a fan-out across every Window of the
+// Project. One explicit scope occurrence turns the whole scope explicit, so an
+// operator who names a Window never gets a silent anchor from somewhere else.
+func (c *createCommand) resolveCreateScope(spelling string, flags resourceCreateFlags, shape resourceCreateShape) (createScope, error) {
+	if len(flags.projects) == 1 {
+		ref, err := selector.ParseRef(coremetadata.KindProject, flags.projects[0])
+		if err != nil {
+			return createScope{}, MapMetadataError(err)
 		}
-		if !strings.HasPrefix(arg, "-") {
-			continue
-		}
-		name := strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-")
-		name, _, _ = strings.Cut(name, "=")
-		if name == "project" || name == "p" {
-			return true
-		}
+		return createScope{project: ref}, nil
 	}
-	return false
+	if c == nil || c.store == nil || c.store.load == nil {
+		return createScope{}, errors.New("create: the resource-backed create routes are not configured")
+	}
+	observer, inside := c.observeActiveTarget()
+	if !inside {
+		return createScope{}, requireExplicitProject(spelling, "this invocation is not inside a tmux client")
+	}
+	// Read-only. The derivation happens before the transaction so a refusal
+	// costs zero registry writes and zero tmux mutations.
+	registry, err := c.store.load()
+	if err != nil {
+		return createScope{}, MapMetadataError(err)
+	}
+	projectUID, detail := observer.uidFor(coremetadata.KindProject, registry)
+	if projectUID == "" {
+		return createScope{}, requireExplicitProject(spelling, detail)
+	}
+	scope := createScope{project: uidRef(coremetadata.KindProject, projectUID)}
+	if !shape.split || flags.explicitWindowScope() {
+		return scope, nil
+	}
+	windowUID, detail := observer.uidFor(coremetadata.KindWindow, registry)
+	if windowUID == "" {
+		return createScope{}, requireExplicitProject(spelling, detail)
+	}
+	window := uidRef(coremetadata.KindWindow, windowUID)
+	scope.window = &window
+	// The active Pane is the anchor when it carries a managed identity. When it
+	// does not -- an unmirrored pane inside a managed Window -- the Window's
+	// own spec.primaryPaneRef is the anchor, which is the same structural point
+	// an explicit --window resolves.
+	if paneUID, _ := observer.uidFor(coremetadata.KindPane, registry); paneUID != "" {
+		pane := uidRef(coremetadata.KindPane, paneUID)
+		scope.pane = &pane
+	}
+	return scope, nil
+}
+
+// observeActiveTarget is the nil-safe read of the invocation's tmux target.
+func (c *createCommand) observeActiveTarget() (activeTargetObserver, bool) {
+	if c == nil || c.activeTarget == nil {
+		return activeTargetObserver{}, false
+	}
+	return c.activeTarget()
+}
+
+// requireExplicitProject is the refusal of an omitted scope that resolved no
+// managed Project.
+//
+// It names `--project` as the fix rather than reporting a cardinality failure:
+// nothing was ambiguous, the runtime the operator is sitting in simply is not a
+// managed Projmux resource. Being a usage error, it exits 2 with zero bytes on
+// stdout, and it is raised before the registry transaction opens, so the refusal
+// is measurably zero Registry writes and zero tmux mutations.
+func requireExplicitProject(spelling, detail string) error {
+	return usageError(fmt.Sprintf(
+		"%s requires a Project: no --project <ref> was given and %s; nothing was created, so pass --project <ref>",
+		spelling, detail))
 }
 
 // argumentTerminator ends option scanning; everything after it is payload that
@@ -130,8 +226,8 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Var(&out.projects, "project", "exact-one Project selector: <name> or uid:<uid>")
-	fs.Var(&out.projects, "p", "exact-one Project selector: <name> or uid:<uid> (alias of --project)")
+	fs.Var(&out.projects, "project", "at-most-one Project scope: <name> or uid:<uid>; defaults to the active tmux runtime's managed Project")
+	fs.Var(&out.projects, "p", "at-most-one Project scope: <name> or uid:<uid> (alias of --project)")
 	if shape.provider {
 		fs.StringVar(&out.provider, "provider", "", "Agent provider: "+strings.Join(cli.AgentProviders(), "|"))
 		fs.StringVar(&out.cwd, "cwd", "", "effective Agent working directory (defaults to Project root)")
@@ -164,8 +260,9 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 			out.providerSet = true
 		}
 	})
-	if len(out.projects) != 1 {
-		return resourceCreateFlags{}, usageError(spelling + " requires exactly one --project <ref>")
+	if len(out.projects) > 1 {
+		return resourceCreateFlags{}, usageError(spelling +
+			" accepts at most one --project <ref>; an omitted --project takes the active tmux runtime's managed Project")
 	}
 	if pane && !slices.Contains(placementDirections, out.placement) {
 		return resourceCreateFlags{}, usageError(fmt.Sprintf("%s --placement must be one of: %s",
@@ -213,20 +310,21 @@ func payloadCommand(payload []string) string {
 	return strings.TrimSpace(strings.Join(payload, " "))
 }
 
-// projectQuery builds the exact-one Project scope query.
-func (f resourceCreateFlags) projectQuery() (selector.Query, error) {
-	ref, err := selector.ParseRef(coremetadata.KindProject, f.projects[0])
-	if err != nil {
-		return selector.Query{}, err
-	}
-	return selector.Query{Project: &ref}, nil
+// explicitWindowScope reports whether the argv named the Window scope itself.
+//
+// Any one of the three occurrences makes the whole scope explicit, which is what
+// stops an implicit anchor from being blended into a fan-out the operator
+// addressed on purpose.
+func (f resourceCreateFlags) explicitWindowScope() bool {
+	return len(f.windows) > 0 || len(f.panes) > 0 || len(f.selectors) > 0
 }
 
 // runResourceWindow answers the canonical `create window`.
 func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Writer) error {
 	const spelling = canonicalCreateWindow
 
-	flags, err := parseResourceCreateFlags(spelling, args, stderr, resourceCreateShape{})
+	shape := resourceCreateShape{}
+	flags, err := parseResourceCreateFlags(spelling, args, stderr, shape)
 	if err != nil {
 		return err
 	}
@@ -238,10 +336,18 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	if err != nil {
 		return MapMetadataError(err)
 	}
+	// Scope resolution runs last of the preflight, so every argv-only refusal --
+	// an unknown projection, a malformed label, a closed-enum violation -- is
+	// reported before an environment-dependent one. What the operator typed is
+	// wrong independently of where they typed it.
+	scope, err := c.resolveCreateScope(spelling, flags, shape)
+	if err != nil {
+		return err
+	}
 
 	var results []createResult
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
-		project, err := c.resolveProject(*working, flags)
+		project, err := c.resolveProject(*working, scope)
 		if err != nil {
 			return err
 		}
@@ -278,7 +384,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 			windowUID:   work.window.Metadata.UID,
 		})
 		return nil
-	}, c.projectOwnershipGuard(flags)); err != nil {
+	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
 	}
 	return c.writeResults(stdout, spelling, mode, coremetadata.KindWindow, results)
@@ -288,7 +394,8 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer) error {
 	const spelling = canonicalCreatePane
 
-	flags, err := parseResourceCreateFlags(spelling, args, stderr, resourceCreateShape{split: true})
+	shape := resourceCreateShape{split: true}
+	flags, err := parseResourceCreateFlags(spelling, args, stderr, shape)
 	if err != nil {
 		return err
 	}
@@ -300,10 +407,18 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return MapMetadataError(err)
 	}
+	// Scope resolution runs last of the preflight, so every argv-only refusal --
+	// an unknown projection, a malformed label, a closed-enum violation -- is
+	// reported before an environment-dependent one. What the operator typed is
+	// wrong independently of where they typed it.
+	scope, err := c.resolveCreateScope(spelling, flags, shape)
+	if err != nil {
+		return err
+	}
 
 	var results []createResult
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
-		project, err := c.resolveProject(*working, flags)
+		project, err := c.resolveProject(*working, scope)
 		if err != nil {
 			return err
 		}
@@ -314,7 +429,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 		// Full preflight plus the metadata half of the Window ensure. Every
 		// target Window and every anchor Pane is fixed, and every Window this
 		// operation must create is allocated, before the first tmux call.
-		plan, windows, err := c.resolveSplitTargets(working, mutator, project, flags,
+		plan, windows, err := c.resolveSplitTargets(working, mutator, project, scope, flags,
 			selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindWindow}, spelling, operationID)
 		if err != nil {
 			return err
@@ -385,7 +500,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 			})
 		}
 		return nil
-	}, c.projectOwnershipGuard(flags)); err != nil {
+	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
 	}
 	return c.writeResults(stdout, spelling, mode, coremetadata.KindPane, results)
@@ -428,11 +543,12 @@ func (c *createCommand) resolveSplitTargets(
 	working *coremetadata.Registry,
 	mutator coremetadata.Mutator,
 	project coremetadata.Project,
+	scope createScope,
 	flags resourceCreateFlags,
 	fanOut selector.Target,
 	spelling, operationID string,
 ) (panePlan, []windowWork, error) {
-	plan, err := c.planPaneTargets(*working, project, flags, fanOut, spelling)
+	plan, err := c.planPaneTargets(*working, project, scope, flags, fanOut, spelling)
 	if err != nil {
 		return panePlan{}, nil, err
 	}
@@ -464,14 +580,12 @@ func (c *createCommand) resolveSplitTargets(
 func (c *createCommand) planPaneTargets(
 	registry coremetadata.Registry,
 	project coremetadata.Project,
+	scope createScope,
 	flags resourceCreateFlags,
 	fanOut selector.Target,
 	spelling string,
 ) (panePlan, error) {
-	query, err := flags.projectQuery()
-	if err != nil {
-		return panePlan{}, err
-	}
+	query := scope.projectQuery()
 	for _, raw := range flags.windows {
 		ref, err := selector.ParseRef(coremetadata.KindWindow, raw)
 		if err != nil {
@@ -485,6 +599,9 @@ func (c *createCommand) planPaneTargets(
 			return panePlan{}, err
 		}
 		query.Labels = append(query.Labels, label)
+	}
+	if scope.window != nil && len(query.Windows) == 0 && len(query.Labels) == 0 {
+		query.Windows = append(query.Windows, *scope.window)
 	}
 
 	plan := panePlan{query: query}
@@ -507,7 +624,7 @@ func (c *createCommand) planPaneTargets(
 	}
 
 	for _, match := range resolution.Matches {
-		anchorUID, err := c.resolveAnchor(registry, project, match.UID, flags, spelling)
+		anchorUID, err := c.resolveAnchor(registry, project, scope, match.UID, flags, spelling)
 		if err != nil {
 			return panePlan{}, err
 		}
@@ -539,34 +656,31 @@ func unresolvedWindowNames(registry coremetadata.Registry, project coremetadata.
 //
 // An explicit --pane is resolved inside that Window's own owner scope and must
 // be exactly one. With no --pane the persisted spec.primaryPaneRef is the
-// anchor: the *anchor* resolution has deliberately no fallback to the active,
-// focused, or last-used Pane, and a missing or stale ref is a usage error rather
+// anchor: an explicitly scoped create has deliberately no fallback to the
+// focused or last-used Pane, and a missing or stale ref is a usage error rather
 // than a silent repair.
 //
-// That is a property of this anchor, not a repo-wide rule. The empty-selector
-// read and rename verbs do resolve the active tmux target (see
-// active_target.go), because for them the omitted selector *is* the whole
-// selector and the resolved resource is what the operator is looking at. Here
-// the omitted --pane is not the selector: --project and --window already fixed
-// the target set, and the anchor is the structural point the new Pane is split
-// from inside each of them. Substituting the focused pane would silently split
-// somewhere the invocation never addressed, possibly in a different Window
-// entirely.
-func (c *createCommand) resolveAnchor(registry coremetadata.Registry, project coremetadata.Project, windowUID string, flags resourceCreateFlags, spelling string) (string, error) {
+// The one implicit anchor is the whole-scope one, and it is not a fallback. When
+// the argv named no scope at all, resolveCreateScope resolved the active Window
+// *and* the active Pane together, so the anchor is a resolved target of the same
+// invocation rather than a substitution for one. As soon as any --project,
+// --window, --pane, or --selector is typed, that pair is gone: --project and
+// --window fixed the target set, and substituting the focused pane would
+// silently split somewhere the invocation never addressed, possibly in a
+// different Window entirely.
+func (c *createCommand) resolveAnchor(registry coremetadata.Registry, project coremetadata.Project, scope createScope, windowUID string, flags resourceCreateFlags, spelling string) (string, error) {
 	window, ok := registry.Window(windowUID)
 	if !ok {
 		return "", fmt.Errorf("%s: window %q disappeared during preflight", spelling, windowUID)
 	}
-	if len(flags.panes) > 0 {
-		query := selector.Query{
-			Windows: []selector.Ref{{Kind: coremetadata.KindWindow, UID: windowUID, Raw: window.Metadata.Name}},
-		}
-		projectRef, err := flags.projectQuery()
-		if err != nil {
-			return "", err
-		}
-		query.Project = projectRef.Project
-		for _, raw := range flags.panes {
+	panes := flags.panes
+	if len(panes) == 0 && scope.pane != nil {
+		panes = repeatedFlag{scope.pane.Raw}
+	}
+	if len(panes) > 0 {
+		query := scope.projectQuery()
+		query.Windows = []selector.Ref{{Kind: coremetadata.KindWindow, UID: windowUID, Raw: window.Metadata.Name}}
+		for _, raw := range panes {
 			ref, err := selector.ParseRef(coremetadata.KindPane, raw)
 			if err != nil {
 				return "", err
@@ -598,13 +712,13 @@ func (c *createCommand) resolveAnchor(registry coremetadata.Registry, project co
 	return anchor, nil
 }
 
-// resolveProject resolves the exact-one --project scope through the declared
+// resolveProject resolves the exact-one Project scope through the declared
 // <create, Project> cardinality cell.
-func (c *createCommand) resolveProject(registry coremetadata.Registry, flags resourceCreateFlags) (coremetadata.Project, error) {
-	query, err := flags.projectQuery()
-	if err != nil {
-		return coremetadata.Project{}, err
-	}
+//
+// The cell is the same whether the ref was typed or derived: a create always
+// lands under exactly one Project.
+func (c *createCommand) resolveProject(registry coremetadata.Registry, scope createScope) (coremetadata.Project, error) {
+	query := scope.projectQuery()
 	resolution, err := selector.New(registry).ResolveProjects(query)
 	if err != nil {
 		return coremetadata.Project{}, err
@@ -895,9 +1009,9 @@ type createPreReconcile func(
 // only through discovery has no durable UID proof yet; if its would-be session
 // name is already live, create refuses rather than importing that blank or
 // foreign runtime under a freshly allocated identity.
-func (c *createCommand) projectOwnershipGuard(flags resourceCreateFlags) createPreReconcile {
+func (c *createCommand) projectOwnershipGuard(scope createScope) createPreReconcile {
 	return func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
-		project, err := c.resolveProject(working, flags)
+		project, err := c.resolveProject(working, scope)
 		if err == nil {
 			sessionName := c.sessionNameFor(project.Spec.Root)
 			if project.Status.Session != nil && strings.TrimSpace(project.Status.Session.Name) != "" {
@@ -909,10 +1023,7 @@ func (c *createCommand) projectOwnershipGuard(flags resourceCreateFlags) createP
 			}
 			return identity, err
 		}
-		query, queryErr := flags.projectQuery()
-		if queryErr != nil {
-			return liveSessionIdentity{}, queryErr
-		}
+		query := scope.projectQuery()
 		var selectorErr *selector.SelectorError
 		if query.Project == nil || query.Project.IsUID() || !errors.As(err, &selectorErr) || !selectorErr.IsNoMatch() {
 			return liveSessionIdentity{}, err
