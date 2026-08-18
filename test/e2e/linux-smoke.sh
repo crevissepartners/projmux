@@ -2350,6 +2350,79 @@ if [[ "$(delete_tmux display-message -p -t "$delete_sibling_shell" '#{pane_id}')
   exit 1
 fi
 
+# Raw runtime loss leaves desired topology in the Registry. Canonical Window
+# delete must retire that graph without issuing a tmux kill. Include a shell
+# Pane and Agent descendant, then prove dry-run, repeat, sibling, and socket
+# containment around the Registry-only path. The pane-exited lifecycle may
+# already retire the Agent's dead managed Pane before this command; the unit
+# cascade fixture separately pins the full Agent-owned Pane case.
+delete_offline_window="$(delete_tmux new-window -d -t delete-alpha: -n offline-delete -c "$delete_root/work/alpha" -P -F '#{window_id}' sleep 600)"
+delete_offline_window_uid="$(delete_tmux show-options -wqv -t "$delete_offline_window" @projmux_window_uid)"
+delete_offline_shell="$(delete_tmux display-message -p -t "$delete_offline_window" '#{pane_id}')"
+delete_offline_shell_uid="$(delete_tmux show-options -pqv -t "$delete_offline_shell" @projmux_pane_uid)"
+delete_offline_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_offline_window_uid" -o pane-id)"
+delete_offline_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_offline_window_uid" -o uid | tail -n 1)"
+if [[ -z "$delete_offline_window_uid" || -z "$delete_offline_shell_uid" || -z "$delete_offline_agent_pane" || -z "$delete_offline_agent_uid" ]]; then
+  echo "offline Window delete fixture has an empty Registry identity" >&2
+  exit 1
+fi
+delete_tmux kill-window -t "$delete_offline_window"
+sleep 0.5
+
+cp "$delete_registry" "$delete_root/registry.before-offline-dry-run"
+delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' >"$delete_root/windows.before-offline-dry-run"
+delete_pmx delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --dry-run >"$delete_root/offline-dry-run.out"
+cmp "$delete_root/registry.before-offline-dry-run" "$delete_registry"
+delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' >"$delete_root/windows.after-offline-dry-run"
+cmp "$delete_root/windows.before-offline-dry-run" "$delete_root/windows.after-offline-dry-run"
+for expected in \
+  "cascade agent/" \
+  "uid=$delete_offline_agent_uid" \
+  "uid=$delete_offline_shell_uid" \
+  "registry-only would delete this Window; no tmux Window would be killed"; do
+  smoke_assert_file_contains "$delete_root/offline-dry-run.out" "$expected"
+done
+if grep -Fq "live would kill tmux window" "$delete_root/offline-dry-run.out"; then
+  echo "offline Window dry-run planned a tmux kill" >&2
+  exit 1
+fi
+
+delete_pmx delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --yes >"$delete_root/offline.out"
+smoke_assert_file_contains "$delete_root/offline.out" "registry-only deleted this Window; no tmux Window was killed"
+delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-offline"
+delete_pmx get panes --all-projects -o uid >"$delete_root/panes.after-offline"
+delete_pmx get agents --all-projects -o uid >"$delete_root/agents.after-offline"
+if grep -Fqx "$delete_offline_window_uid" "$delete_root/windows.after-offline"; then
+  echo "offline Window cascade left Window uid $delete_offline_window_uid" >&2
+  exit 1
+fi
+if grep -Fqx "$delete_offline_shell_uid" "$delete_root/panes.after-offline"; then
+  echo "offline Window cascade left Pane uid $delete_offline_shell_uid" >&2
+  exit 1
+fi
+if grep -Fqx "$delete_offline_agent_uid" "$delete_root/agents.after-offline"; then
+  echo "offline Window cascade left Agent uid $delete_offline_agent_uid" >&2
+  exit 1
+fi
+if ! grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-offline" || \
+  [[ "$(delete_tmux display-message -p -t "$delete_sibling" '#{window_id}')" != "$delete_sibling" ]]; then
+  echo "offline Window delete changed its live sibling" >&2
+  exit 1
+fi
+if grep -Fq -- "-L $delete_product_socket kill-window -t $delete_offline_window" "$delete_shim_log"; then
+  echo "offline Window canonical delete issued a tmux kill" >&2
+  exit 1
+fi
+
+cp "$delete_registry" "$delete_root/registry.before-offline-repeat"
+if delete_pmx delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --yes \
+  >"$delete_root/offline-repeat.out" 2>"$delete_root/offline-repeat.err"; then
+  echo "repeat offline Window delete unexpectedly succeeded" >&2
+  exit 1
+fi
+cmp "$delete_root/registry.before-offline-repeat" "$delete_registry"
+smoke_assert_file_contains "$delete_root/offline-repeat.err" "matched no windows"
+
 # Deleting the sole Pane predicts and causes both implicit Window and session
 # teardown. A following reconciliation must not mint the deleted Pane back.
 delete_last_window="$(delete_tmux new-window -d -t delete-alpha: -n pane-last -c "$delete_root/work/alpha" -P -F '#{window_id}' sleep 600)"
@@ -2393,6 +2466,27 @@ for deleted_uid in "$delete_split_uid" "$delete_agent_pane_uid" "$delete_agent_t
 done
 if ! grep -Fqx "$delete_sibling_shell_uid" "$delete_root/panes.after-reconcile"; then
   echo "Pane/Agent delete lost shell sibling Registry uid $delete_sibling_shell_uid" >&2
+  exit 1
+fi
+
+# The entire selected tmux server can be absent, not merely one Window. The
+# typed no-server inventory is authoritative empty runtime state and still
+# permits the exact Registry-only Window cascade. A byte-identical dry-run and
+# the live foreign socket prove the destructive exception stays narrow.
+delete_tmux kill-server
+cp "$delete_registry" "$delete_root/registry.before-no-server-dry-run"
+delete_pmx delete window "uid:$delete_sibling_uid" --project "uid:$delete_alpha_project_uid" --dry-run >"$delete_root/no-server-dry-run.out"
+cmp "$delete_root/registry.before-no-server-dry-run" "$delete_registry"
+smoke_assert_file_contains "$delete_root/no-server-dry-run.out" "registry-only would delete this Window; no tmux Window would be killed"
+if grep -Fq "live would kill tmux window" "$delete_root/no-server-dry-run.out"; then
+  echo "absent-server Window dry-run planned a tmux kill" >&2
+  exit 1
+fi
+delete_pmx delete window "uid:$delete_sibling_uid" --project "uid:$delete_alpha_project_uid" --yes >"$delete_root/no-server.out"
+smoke_assert_file_contains "$delete_root/no-server.out" "registry-only deleted this Window; no tmux Window was killed"
+delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-no-server"
+if grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-no-server"; then
+  echo "absent-server canonical delete left Registry Window $delete_sibling_uid" >&2
   exit 1
 fi
 delete_other_after="$(delete_other_tmux show-options -gqv @projmux_delete_sentinel):$(delete_other_tmux list-windows -a -F '#{session_name}:#{window_id}')"

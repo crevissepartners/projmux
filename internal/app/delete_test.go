@@ -179,16 +179,18 @@ func (r *fakePaneDeleteRuntime) queueSelfKill(_ context.Context, targets []paneL
 }
 
 type fakeWindowDeleteRuntime struct {
-	preflights   int
-	killed       []windowLiveDeleteTarget
-	queued       []windowLiveDeleteTarget
-	selfUID      string
-	preflightErr error
-	killErr      error
-	killErrs     map[string]error
-	queueErr     error
-	killHook     func(windowLiveDeleteTarget)
-	queueHook    func([]windowLiveDeleteTarget)
+	preflights    int
+	killed        []windowLiveDeleteTarget
+	queued        []windowLiveDeleteTarget
+	selfUID       string
+	preflightErr  error
+	killErr       error
+	killErrs      map[string]error
+	queueErr      error
+	killHook      func(windowLiveDeleteTarget)
+	queueHook     func([]windowLiveDeleteTarget)
+	offlineUIDs   map[string]bool
+	preflightHook func(int)
 }
 
 func newFixtureWindowDeleteRuntime() *fakeWindowDeleteRuntime {
@@ -197,22 +199,34 @@ func newFixtureWindowDeleteRuntime() *fakeWindowDeleteRuntime {
 
 func (r *fakeWindowDeleteRuntime) preflight(_ context.Context, registry coremetadata.Registry, plan deletePlan) (windowLiveDeletePlan, error) {
 	r.preflights++
+	if r.preflightHook != nil {
+		r.preflightHook(r.preflights)
+	}
 	if r.preflightErr != nil {
 		return windowLiveDeletePlan{}, r.preflightErr
 	}
 	sessionCounts := map[string]int{}
 	for _, window := range registry.Windows {
+		if r.offlineUIDs[window.Metadata.UID] {
+			continue
+		}
 		sessionCounts[window.Metadata.OwnerUID()]++
 	}
 	selectedCounts := map[string]int{}
 	lastSelected := map[string]string{}
 	for _, target := range plan.Targets {
+		if r.offlineUIDs[target.Match.UID] {
+			continue
+		}
 		window, _ := registry.Window(target.Match.UID)
 		selectedCounts[window.Metadata.OwnerUID()]++
 		lastSelected[window.Metadata.OwnerUID()] = target.Match.UID
 	}
 	out := windowLiveDeletePlan{}
 	for _, target := range plan.Targets {
+		if r.offlineUIDs[target.Match.UID] {
+			continue
+		}
 		window, _ := registry.Window(target.Match.UID)
 		project, _ := registry.Project(window.Metadata.OwnerUID())
 		sessionName := project.Metadata.Name
@@ -243,6 +257,107 @@ func (r *fakeWindowDeleteRuntime) preflight(_ context.Context, registry coremeta
 		})
 	}
 	return out, nil
+}
+
+func TestDeleteOfflineWindowDryRunAndExecutionAreRegistryOnly(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixtureWindowDeleteRuntime()
+	runtime.offlineUIDs = map[string]bool{"win-alpha-main": true}
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows = runtime
+	before := store.snapshot()
+
+	stdout, _, err := runRoute(t, cmd, "window", "uid:win-alpha-main", "--project", "uid:prj-alpha", "--dry-run")
+	if err != nil {
+		t.Fatalf("offline dry-run error = %v", err)
+	}
+	for _, want := range []string{
+		"delete window: would delete 1 window and 4 descendant resources",
+		"cascade agent/codex uid=agt-alpha-codex",
+		"cascade pane/codex-pane uid=pan-alpha-codex",
+		"cascade pane/zsh uid=pan-alpha-zsh",
+		"cascade pane/log uid=pan-alpha-log",
+		"registry-only would delete this Window; no tmux Window would be killed on socket=-L/projmux",
+		"dry-run: nothing was deleted",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("offline dry-run output missing %q:\n%s", want, stdout)
+		}
+	}
+	if store.transactions != 0 || store.snapshot() != before || len(runtime.killed) != 0 {
+		t.Fatalf("offline dry-run changed state: tx=%d killed=%v", store.transactions, runtime.killed)
+	}
+
+	stdout, _, err = runRoute(t, cmd, "window", "uid:win-alpha-main", "--project", "uid:prj-alpha", "--yes")
+	if err != nil {
+		t.Fatalf("offline delete error = %v", err)
+	}
+	for _, uid := range []string{"win-alpha-main", "agt-alpha-codex", "pan-alpha-codex", "pan-alpha-zsh", "pan-alpha-log"} {
+		if registryUIDs(store.registry)[uid] {
+			t.Fatalf("offline delete left %q behind", uid)
+		}
+	}
+	for _, uid := range []string{"prj-alpha", "win-alpha-review", "pan-alpha-review", "prj-beta", "win-beta-main"} {
+		if !registryUIDs(store.registry)[uid] {
+			t.Fatalf("offline delete removed sibling/owner %q", uid)
+		}
+	}
+	if len(runtime.killed) != 0 || !strings.Contains(stdout, "registry-only deleted this Window; no tmux Window was killed") {
+		t.Fatalf("offline delete used tmux or omitted result: killed=%v stdout=%q", runtime.killed, stdout)
+	}
+	if err := store.registry.Validate(); err != nil {
+		t.Fatalf("offline delete left invalid registry: %v", err)
+	}
+
+	beforeRepeat := store.snapshot()
+	stdout, _, err = runRoute(t, cmd, "window", "uid:win-alpha-main", "--project", "uid:prj-alpha", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "matched no windows") {
+		t.Fatalf("repeat offline delete error = %v", err)
+	}
+	if stdout != "" || store.snapshot() != beforeRepeat || len(runtime.killed) != 0 {
+		t.Fatalf("repeat offline delete changed state: stdout=%q killed=%v", stdout, runtime.killed)
+	}
+}
+
+func TestDeleteOfflineWindowBindingRaceFailsClosed(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		initialOffline bool
+		change         func(map[string]bool)
+	}{
+		{
+			name:           "offline mirror appears before locked execution",
+			initialOffline: true,
+			change:         func(offline map[string]bool) { delete(offline, "win-alpha-main") },
+		},
+		{
+			name:           "live mirror disappears before locked execution",
+			initialOffline: false,
+			change:         func(offline map[string]bool) { offline["win-alpha-main"] = true },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			runtime := newFixtureWindowDeleteRuntime()
+			runtime.offlineUIDs = map[string]bool{"win-alpha-main": test.initialOffline}
+			runtime.preflightHook = func(call int) {
+				if call == 2 {
+					test.change(runtime.offlineUIDs)
+				}
+			}
+			cmd := newTestDeleteCommand(store, false, false, nil)
+			cmd.windows = runtime
+			before := store.snapshot()
+
+			stdout, _, err := runRoute(t, cmd, "window", "uid:win-alpha-main", "--yes")
+			if err == nil || !strings.Contains(err.Error(), "exact live cascade changed") {
+				t.Fatalf("binding race error = %v", err)
+			}
+			if stdout != "" || store.writes != 0 || store.snapshot() != before || len(runtime.killed) != 0 {
+				t.Fatalf("binding race changed state: stdout=%q writes=%d killed=%v", stdout, store.writes, runtime.killed)
+			}
+		})
+	}
 }
 
 func (r *fakeWindowDeleteRuntime) kill(_ context.Context, target windowLiveDeleteTarget) error {
@@ -400,6 +515,33 @@ func TestDeletePaneLeavesAnAgentOwnedCurrentPaneAgentAliveAsOffline(t *testing.T
 	}
 	if _, ok := store.registry.Pane("pan-alpha-codex"); ok {
 		t.Fatal("the managed pane survived the delete")
+	}
+}
+
+func TestDeleteOfflineAgentAlreadyUsesRegistryOnlyPath(t *testing.T) {
+	store := newFakeResourceStore(t)
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	if _, _, err := runRoute(t, cmd, "pane", "uid:pan-alpha-codex"); err != nil {
+		t.Fatalf("prepare Offline Agent by deleting managed Pane: %v", err)
+	}
+	agent, ok := store.registry.Agent("agt-alpha-codex")
+	if !ok || agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
+		t.Fatalf("prepared Agent = %#v, present=%t; want unbound Offline", agent, ok)
+	}
+	paneKills := len(cmd.panes.(*fakePaneDeleteRuntime).killed)
+
+	stdout, _, err := runRoute(t, cmd, "agent", "uid:agt-alpha-codex", "--yes")
+	if err != nil {
+		t.Fatalf("delete Offline Agent error = %v", err)
+	}
+	if _, ok := store.registry.Agent("agt-alpha-codex"); ok {
+		t.Fatal("Offline Agent survived canonical delete")
+	}
+	if len(cmd.panes.(*fakePaneDeleteRuntime).killed) != paneKills {
+		t.Fatalf("delete Offline Agent attempted a tmux Pane kill: %#v", cmd.panes.(*fakePaneDeleteRuntime).killed)
+	}
+	if !strings.Contains(stdout, "delete agent: deleting 1 agent and 0 descendant resources") {
+		t.Fatalf("delete Offline Agent result = %q", stdout)
 	}
 }
 

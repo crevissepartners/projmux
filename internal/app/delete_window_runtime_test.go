@@ -9,6 +9,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 func deleteWindowRuntimePlan(uid string) deletePlan {
@@ -59,6 +60,110 @@ func TestWindowDeleteRuntimePreflightExactBindingAndSessionImpact(t *testing.T) 
 	}
 }
 
+func TestWindowDeleteRuntimePreflightAllowsExplicitOfflineWindow(t *testing.T) {
+	runtime, runner, registry := newWindowRuntimeFixture(t,
+		liveInventoryRow("$1", "alpha", "@11", "prj-alpha", "win-alpha-review")+
+			liveInventoryRow("$2", "beta", "@12", "prj-beta", "win-beta-main"))
+
+	live, err := runtime.preflight(context.Background(), registry, deleteWindowRuntimePlan("win-alpha-main"))
+	if err != nil {
+		t.Fatalf("offline preflight error = %v", err)
+	}
+	if len(live.Targets) != 0 || live.signature() != "" {
+		t.Fatalf("offline live plan = %#v, want no tmux targets", live)
+	}
+	for _, call := range runner.calls {
+		if strings.Contains(strings.Join(call.args, " "), "kill-window") {
+			t.Fatalf("offline preflight mutated tmux: %#v", runner.calls)
+		}
+	}
+}
+
+func TestDeleteWindowTreatsOnlyTypedNoServerAsOffline(t *testing.T) {
+	inventoryFormat := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{@projmux_project_uid}", "#{@projmux_window_uid}")
+	inventoryKey := recordedTmuxCallKey("tmux", "-L", "isolated-delete", "list-windows", "-a", "-F", inventoryFormat)
+
+	t.Run("typed no-server permits Registry-only cascade", func(t *testing.T) {
+		store := newFakeResourceStore(t)
+		runtime, runner, _ := newWindowRuntimeFixture(t, "")
+		runtime.getenv = func(name string) string {
+			switch name {
+			case "TMUX":
+				return "/tmp/foreign.sock,123,0"
+			case "TMUX_PANE":
+				return "%99"
+			}
+			return ""
+		}
+		runner.errors = map[string]error{inventoryKey: appTypedCommandFailure{failure: inttmux.CommandFailure{
+			Kind: inttmux.CommandFailureExit, Stderr: "no server running on /tmp/isolated-delete",
+		}}}
+		cmd := newTestDeleteCommand(store, false, false, nil)
+		cmd.windows = runtime
+
+		stdout, _, err := runRoute(t, cmd, "window", "uid:win-alpha-main", "--yes")
+		if err != nil {
+			t.Fatalf("typed no-server delete error = %v", err)
+		}
+		if _, ok := store.registry.Window("win-alpha-main"); ok {
+			t.Fatal("typed no-server delete left offline Window")
+		}
+		if !strings.Contains(stdout, "registry-only deleted this Window; no tmux Window was killed") {
+			t.Fatalf("typed no-server result = %q", stdout)
+		}
+		for _, call := range runner.calls {
+			if strings.Contains(strings.Join(call.args, " "), "kill-window") {
+				t.Fatalf("typed no-server delete mutated tmux: %#v", runner.calls)
+			}
+			if strings.Contains(strings.Join(call.args, " "), "display-message") {
+				t.Fatalf("typed no-server delete probed caller state after authoritative absent-server inventory: %#v", runner.calls)
+			}
+		}
+	})
+
+	t.Run("plain lookalike remains fail-closed", func(t *testing.T) {
+		store := newFakeResourceStore(t)
+		runtime, runner, _ := newWindowRuntimeFixture(t, "")
+		runner.errors = map[string]error{inventoryKey: errors.New("no server running on /tmp/isolated-delete")}
+		cmd := newTestDeleteCommand(store, false, false, nil)
+		cmd.windows = runtime
+		before := store.snapshot()
+
+		stdout, _, err := runRoute(t, cmd, "window", "uid:win-alpha-main", "--yes")
+		if err == nil || !strings.Contains(err.Error(), "inventory exact tmux socket") {
+			t.Fatalf("plain lookalike error = %v", err)
+		}
+		if stdout != "" || store.writes != 0 || store.snapshot() != before {
+			t.Fatalf("plain lookalike changed state: stdout=%q writes=%d", stdout, store.writes)
+		}
+	})
+}
+
+func TestWindowDeleteRuntimeStillRefusesImplicitOfflineWindow(t *testing.T) {
+	runtime, _, registry := newWindowRuntimeFixture(t, "")
+	runtime.getenv = func(name string) string {
+		switch name {
+		case "TMUX":
+			return "/tmp/exact.sock,123,0"
+		case "TMUX_PANE":
+			return "%7"
+		}
+		return ""
+	}
+	format := tmuxRowFormat("#{socket_path}", "#{window_id}")
+	runtime.runner.(*recordingTmuxRunner).outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "display-message", "-p", "-F", "#{socket_path}")] =
+		"/tmp/exact.sock\n"
+	runtime.runner.(*recordingTmuxRunner).outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "display-message", "-p", "-t", "%7", "-F", format)] =
+		liveInventoryRow("/tmp/exact.sock", "@10")
+	plan := deleteWindowRuntimePlan("win-alpha-main")
+	plan.Implicit = true
+
+	_, err := runtime.preflight(context.Background(), registry, plan)
+	if err == nil || !strings.Contains(err.Error(), "no exact live tmux Window mirror") {
+		t.Fatalf("implicit offline preflight error = %v", err)
+	}
+}
+
 func TestWindowDeleteRuntimeFailsClosedOnMissingDuplicateForeignAndStaleMirrors(t *testing.T) {
 	base := liveInventoryRow("$1", "alpha", "@10", "prj-alpha", "win-alpha-main")
 	for _, test := range []struct {
@@ -66,7 +171,6 @@ func TestWindowDeleteRuntimeFailsClosedOnMissingDuplicateForeignAndStaleMirrors(
 		inventory string
 		want      string
 	}{
-		{name: "missing exact Window mirror", inventory: liveInventoryRow("$1", "alpha", "@11", "prj-alpha", "win-alpha-review"), want: "no exact live tmux Window mirror"},
 		{name: "duplicate exact Window mirror", inventory: base + liveInventoryRow("$2", "alpha", "@12", "prj-alpha", "win-alpha-main"), want: "2 live tmux Window mirrors"},
 		{name: "foreign Project mirror", inventory: liveInventoryRow("$2", "beta", "@10", "prj-beta", "win-alpha-main"), want: "foreign Project uid"},
 		{name: "stale session projection", inventory: liveInventoryRow("$1", "renamed", "@10", "prj-alpha", "win-alpha-main"), want: "stale session"},

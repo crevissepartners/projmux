@@ -511,10 +511,12 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 			fmt.Fprintf(&b, "  cascade %s/%s uid=%s\n",
 				strings.ToLower(string(descendant.Kind)), descendant.Name, descendant.UID)
 		}
+		windowLive := false
 		for _, liveTarget := range live.Targets {
 			if liveTarget.UID != target.Match.UID {
 				continue
 			}
+			windowLive = true
 			action := "killed"
 			if dryRun {
 				action = "would kill"
@@ -533,6 +535,13 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 				fmt.Fprintf(&b, "  live cascade %s Project session %s because its last live Window is deleted\n",
 					impact, liveTarget.SessionName)
 			}
+		}
+		if plan.Kind == coremetadata.KindWindow && !windowLive {
+			action := "deleted this Window; no tmux Window was killed"
+			if dryRun {
+				action = "would delete this Window; no tmux Window would be killed"
+			}
+			fmt.Fprintf(&b, "  registry-only %s on socket=-L/%s\n", action, defaultAppSocket)
 		}
 		for _, liveTarget := range panes.Targets {
 			if liveTarget.ResourceUID != target.Match.UID {

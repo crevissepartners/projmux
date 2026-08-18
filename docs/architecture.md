@@ -433,6 +433,13 @@ Runtime observation and resource status:
   never releases a name reservation** — the same preservation contract
   `MissingRoot` established for a Project whose root disappeared. There is no
   auto-prune.
+- Explicit canonical deletion is the authority that retires that preserved
+  desired topology. A non-implicit `delete window` target (an explicit
+  reference or `--all`) accepts zero exact Window mirrors on its selected
+  socket as a Registry-only cascade through the Window's Agents and Panes. One
+  exact mirror is killed before the Registry commit; duplicate, foreign,
+  stale-owner, inventory-failure, and plan-to-execution race states remain
+  fail-closed. An implicit active Window is never treated as offline.
 - The inventory is a pure **read**. It never writes, re-mirrors, or adopts a uid
   onto a live tmux object; reattaching a lost binding belongs to the reconciler
   (see *Binding reapply and adoption* below). After a tmux server restart the
