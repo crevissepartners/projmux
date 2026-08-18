@@ -1,6 +1,6 @@
 {
   "name": "@projmux/linux-arm64",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "description": "Linux arm64 binary for projmux",
   "license": "MIT",
   "repository": {
