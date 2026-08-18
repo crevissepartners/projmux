@@ -37,6 +37,11 @@
       "rule": "G304",
       "scope": "internal/app/keymap_migration.go keymap schema migration",
       "reason": "the keymap path is derived from the resolved XDG/HOME config paths, not from CLI input; reads go through the bounded regular-file/supported-symlink policy and the backup open is O_EXCL"
+    },
+    {
+      "rule": "G204",
+      "scope": "internal/app/supervise_child_unix.go managed process supervisor",
+      "reason": "running the argv it was handed is the route's entire purpose, the same way env(1) or nohup(1) does; the argv is built by the materializer that minted the generation, `internal supervise` is hidden plumbing rather than a public verb, and it confers no privilege an operator running the same command directly would not already have"
     }
   ],
   "entries": [
@@ -241,6 +246,13 @@
       "path": "internal/app/statusbar.go",
       "message": "Subprocess launched with variable",
       "source": "cmd := exec.CommandContext(ctx, name, args...)",
+      "max_count": 1
+    },
+    {
+      "rule": "G204",
+      "path": "internal/app/supervise_child_unix.go",
+      "message": "Subprocess launched with a potential tainted input or cmd arguments",
+      "source": "cmd := exec.Command(argv[0], argv[1:]...)",
       "max_count": 1
     },
     {
