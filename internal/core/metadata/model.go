@@ -285,6 +285,13 @@ type PaneSpec struct {
 type PaneStatus struct {
 	DisplayTitle string      `json:"displayTitle,omitempty"`
 	Conditions   []Condition `json:"conditions,omitempty"`
+	// Activation names the current materialization of this Pane. It is the
+	// value a launched supervisor quotes back, and the only thing that
+	// separates the running process from the one a resume replaced.
+	Activation PaneActivation `json:"activation,omitzero"`
+	// LastTermination is the durable receipt of why the *current* generation's
+	// managed process stopped. Issuing a new generation clears it.
+	LastTermination *TerminationEvidence `json:"lastTermination,omitempty"`
 }
 
 // Clone returns a deep copy of the Pane.
@@ -292,6 +299,7 @@ func (p Pane) Clone() Pane {
 	out := p
 	out.Metadata = p.Metadata.Clone()
 	out.Status.Conditions = slices.Clone(p.Status.Conditions)
+	out.Status.LastTermination = p.Status.LastTermination.Clone()
 	return out
 }
 
@@ -461,13 +469,17 @@ func (a AgentActivation) IsZero() bool {
 // NewAgentSessionRef and the Agent section of docs/agent-workflow.md for the
 // reasoning.
 type AgentStatus struct {
-	Phase            AgentPhase       `json:"phase"`
-	PaneRef          string           `json:"paneRef,omitempty"`
-	SessionRef       *AgentSessionRef `json:"sessionRef,omitempty"`
-	Interaction      AgentInteraction `json:"interaction,omitzero"`
-	Activation       AgentActivation  `json:"activation,omitzero"`
-	Reason           string           `json:"reason,omitempty"`
-	LastTransitionAt time.Time        `json:"lastTransitionAt"`
+	Phase       AgentPhase       `json:"phase"`
+	PaneRef     string           `json:"paneRef,omitempty"`
+	SessionRef  *AgentSessionRef `json:"sessionRef,omitempty"`
+	Interaction AgentInteraction `json:"interaction,omitzero"`
+	Activation  AgentActivation  `json:"activation,omitzero"`
+	Reason      string           `json:"reason,omitempty"`
+	// LastTermination mirrors the receipt recorded against the Agent's current
+	// managed Pane, so the evidence survives the Pane resource a canonical
+	// delete removes.
+	LastTermination  *TerminationEvidence `json:"lastTermination,omitempty"`
+	LastTransitionAt time.Time            `json:"lastTransitionAt"`
 }
 
 // Clone returns a deep copy of the Agent.
@@ -476,6 +488,7 @@ func (a Agent) Clone() Agent {
 	out.Metadata = a.Metadata.Clone()
 	out.Spec.Workspace.AdditionalWritableRoots = slices.Clone(a.Spec.Workspace.AdditionalWritableRoots)
 	out.Status.SessionRef = a.Status.SessionRef.Clone()
+	out.Status.LastTermination = a.Status.LastTermination.Clone()
 	return out
 }
 

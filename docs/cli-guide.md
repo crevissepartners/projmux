@@ -383,6 +383,19 @@ tmux object is killed, and unrelated live objects and sockets are untouched. A
 unique live mirror keeps the exact-kill path, while duplicate, foreign,
 stale-owner, inventory-failure, and revalidation-race states are refused.
 
+`delete window|pane|agent` names the server its live half addresses the same
+way `reconcile resources` does: `--socket <name>`, `--socket-path <absolute>`,
+or the inherited absolute `$TMUX`. Outside tmux with neither flag it refuses
+rather than reaching for the app's own socket, so a delete issued against an
+isolated server can never inventory one host and kill objects on another.
+
+Before it kills anything, a delete commits an intentional termination receipt
+against every Pane whose process it is about to end, in its own Registry
+transaction. If that write fails, nothing live is touched; if the delete then
+refuses for any other reason, the receipt is withdrawn again. The receipt is
+what tells a later reader that a process disappeared because someone asked for
+it, rather than because it crashed.
+
 ## get runtime
 
 ```text

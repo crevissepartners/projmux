@@ -121,6 +121,7 @@ type App struct {
 	notification       *notificationCommand
 	pin                *pinCommand
 	popupWaitKey       *popupWaitKeyCommand
+	supervise          *superviseCommand
 	preview            *previewCommand
 	prune              *pruneCommand
 	quit               *quitCommand
@@ -274,6 +275,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// move onto the canonical spellings without a second implementation.
 	keyBrokerCmd := newKeyBrokerCommand()
 	popupWaitKeyCmd := newPopupWaitKeyCommand()
+	superviseCmd := newSuperviseCommand()
 	previewCmd := newPreviewCommand()
 	sessionPopupCmd := newSessionPopupCommand(recorder)
 	statusCmd := newStatusCommand()
@@ -288,6 +290,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	internalCmd.focus = focusCmd
 	internalCmd.keyBroker = keyBrokerCmd
 	internalCmd.popupWaitKey = popupWaitKeyCmd
+	internalCmd.supervise = superviseCmd
 	diagnosticsCmd := newDiagnosticsCommand()
 	diagnosticsCmd.ai = ai
 	return &App{
@@ -318,6 +321,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		notification:       notificationCmd,
 		pin:                newPinCommand(),
 		popupWaitKey:       popupWaitKeyCmd,
+		supervise:          superviseCmd,
 		preview:            previewCmd,
 		prune:              pruneCmd,
 		quit:               quit,
@@ -375,6 +379,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 			tmux: a.tmux, status: a.status, statusbar: a.statusbar,
 			preview: a.preview, sessionPopup: a.sessionPopup, ai: a.ai,
 			focus: a.focus, keyBroker: a.keyBroker, popupWaitKey: a.popupWaitKey,
+			supervise: a.supervise,
 		}
 	}
 	runtime := a.runtime

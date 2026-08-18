@@ -260,15 +260,36 @@ func (s *fakeResourceStore) snapshot() string {
 		b.WriteString("window " + window.Metadata.UID + " " + window.Metadata.Name + " " + window.Spec.PrimaryPaneRef + "\n")
 	}
 	for _, pane := range s.registry.Panes {
-		b.WriteString("pane " + pane.Metadata.UID + " " + pane.Metadata.Name + "\n")
+		b.WriteString("pane " + pane.Metadata.UID + " " + pane.Metadata.Name +
+			" " + pane.Status.Activation.Generation + " " + renderTerminationEvidence(pane.Status.LastTermination) + "\n")
 	}
 	for _, agent := range s.registry.Agents {
-		b.WriteString("agent " + agent.Metadata.UID + " " + agent.Metadata.Name + " " + string(agent.Status.Phase) + " " + agent.Status.PaneRef + "\n")
+		b.WriteString("agent " + agent.Metadata.UID + " " + agent.Metadata.Name + " " + string(agent.Status.Phase) + " " + agent.Status.PaneRef +
+			" " + renderTerminationEvidence(agent.Status.LastTermination) + "\n")
 	}
 	for _, reservation := range s.registry.NameReservations {
 		b.WriteString("reservation " + reservation.Scope + "/" + string(reservation.Kind) + "/" + reservation.Name + " " + reservation.UID + "\n")
 	}
 	return b.String()
+}
+
+// renderTerminationEvidence spells one receipt for the snapshot, so a "zero
+// mutations" assertion covers termination evidence too: a route that recorded
+// intent and failed to withdraw it changes the snapshot.
+func renderTerminationEvidence(receipt *coremetadata.TerminationEvidence) string {
+	if receipt == nil {
+		return "-"
+	}
+	code := "-"
+	if receipt.ExitCode != nil {
+		code = fmt.Sprintf("%d", *receipt.ExitCode)
+	}
+	signal := receipt.Signal
+	if signal == "" {
+		signal = "-"
+	}
+	return fmt.Sprintf("%s/%s/%s/%s/%s/%s", receipt.Source, receipt.Classification,
+		receipt.Generation, code, signal, receipt.OperationID)
 }
 
 // runRoute runs one raw-argv handler and returns its captured streams.

@@ -551,6 +551,7 @@ type registryProjectTopologyMaterializer struct {
 	target          explicitTmuxTarget
 	newReconciler   func(tmuxCommandRunner, sessionLister) *registryReconciler
 	newOperationID  func() (string, error)
+	newGeneration   func() (string, error)
 	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
 	warn            io.Writer
 }
@@ -593,6 +594,7 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		runner:          m.runner,
 		target:          m.target,
 		newOperationID:  m.newOperationID,
+		newGeneration:   m.newGeneration,
 		newMaterializer: m.newMaterializer,
 	}
 	warn := m.warn

@@ -22,6 +22,7 @@ type resourceReconcileCommand struct {
 	lookupEnv       func(string) string
 	newReconciler   func(tmuxCommandRunner, sessionLister) *registryReconciler
 	newOperationID  func() (string, error)
+	newGeneration   func() (string, error)
 	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
 	// registry is the sibling recovery boundary. `reconcile` dispatches to it
 	// rather than owning recovery here: the resource planner needs a loadable
@@ -32,7 +33,7 @@ type resourceReconcileCommand struct {
 
 func newResourceReconcileCommand(tmux *tmuxCommand) *resourceReconcileCommand {
 	command := &resourceReconcileCommand{
-		lookupEnv: os.Getenv, newOperationID: newCreateOperationID,
+		lookupEnv: os.Getenv, newOperationID: newCreateOperationID, newGeneration: coremetadata.NewGeneration,
 		registry: newRegistryRecoveryCommand(tmux),
 	}
 	if tmux != nil {

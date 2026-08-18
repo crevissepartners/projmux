@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
@@ -53,16 +54,23 @@ type deleteCommand struct {
 	// only by the managed Panes owned by its Registry resource.
 	windows windowDeleteRuntime
 	panes   paneDeleteRuntime
+	// lookupEnv reads the inherited $TMUX that routes this delete's live half
+	// when no socket flag was given.
+	lookupEnv func(string) string
+	// newOperationID labels the pre-mutation intentional termination receipt.
+	newOperationID func() (string, error)
 }
 
 func newDeleteCommand() *deleteCommand {
 	return &deleteCommand{
-		store:        newResourceStore(),
-		confirm:      newConfirmer(),
-		resolveKinds: deleteRegistryKinds,
-		activeTarget: defaultActiveTargetLookup(),
-		windows:      newTmuxWindowDeleteRuntime(),
-		panes:        newTmuxPaneDeleteRuntime(),
+		store:          newResourceStore(),
+		confirm:        newConfirmer(),
+		resolveKinds:   deleteRegistryKinds,
+		activeTarget:   defaultActiveTargetLookup(),
+		windows:        newTmuxWindowDeleteRuntime(),
+		panes:          newTmuxPaneDeleteRuntime(),
+		lookupEnv:      os.Getenv,
+		newOperationID: newCreateOperationID,
 	}
 }
 
@@ -203,6 +211,8 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	flags.register(fs)
 	dryRun := fs.Bool("dry-run", false, "print the full target and cascade plan without deleting anything")
 	yes := fs.Bool("yes", false, "skip the interactive confirmation")
+	socket := fs.String("socket", "", "exact tmux socket name (tmux -L) the live half of this delete addresses")
+	socketPath := fs.String("socket-path", "", "exact absolute tmux socket path (tmux -S) the live half of this delete addresses")
 	all := fs.Bool("all", false,
 		"delete every "+strings.ToLower(string(kind))+" in the registry, the only scope projmux has today; "+
 			"it is the sole way to fan out without a selector")
@@ -261,12 +271,18 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	plan.Unnamed = implicit
 	plan.Implicit = implicit && !*all
 
+	target, err := resolveDeleteTarget(spelling, deleteSocketFlags{socket: *socket, socketPath: *socketPath}, c.lookupEnv)
+	if err != nil {
+		return err
+	}
+
 	var livePlan windowLiveDeletePlan
 	var panePlan paneLiveDeletePlan
 	if kind == coremetadata.KindWindow {
 		if c.windows == nil {
 			return errors.New("delete window: live tmux deletion is not configured")
 		}
+		c.windows.useExactTarget(target)
 		livePlan, err = c.windows.preflight(context.Background(), registry, plan)
 		if err != nil {
 			return err
@@ -275,6 +291,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 		if c.panes == nil {
 			return fmt.Errorf("delete %s: live tmux deletion is not configured", token)
 		}
+		c.panes.useExactTarget(target)
 		panePlan, err = c.panes.preflight(context.Background(), registry, plan)
 		if err != nil {
 			return err
@@ -301,6 +318,27 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 		if err := c.confirm.confirm(*yes, prompt, refusal, stdout); err != nil {
 			return err
 		}
+	}
+
+	// Intent is durable before the first live mutation. See
+	// recordIntentionalTermination: a failure here aborts with zero tmux
+	// mutations, because nothing live has been touched yet.
+	operationID, err := c.mintOperationID()
+	if err != nil {
+		return err
+	}
+	recordedIntent, err := c.recordIntentionalTermination(spelling, plan, livePlan, panePlan, operationID)
+	if err != nil {
+		return err
+	}
+	// Every refusal below leaves live processes running, so the recorded intent
+	// has to be withdrawn on the way out.
+	withdrawIntent := func(cause error) error {
+		if withdrawErr := c.withdrawIntentionalTermination(recordedIntent, operationID); withdrawErr != nil {
+			return fmt.Errorf("%w; recorded intentional termination evidence for %s could not be withdrawn: %v; those Panes carry a stale intentional receipt until they are relaunched",
+				cause, strings.Join(recordedIntent, ","), withdrawErr)
+		}
+		return cause
 	}
 
 	approved := plan.signature()
@@ -370,17 +408,19 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	}); err != nil {
 		if paneTombstoned {
 			if restoreErr := c.panes.restoreSelfKill(context.Background(), panePlan.Targets); restoreErr != nil {
-				return fmt.Errorf("%w; Registry uid(s) %s remain, but rollback of pre-commit exact Pane tombstones was incomplete: %v; reported tombstoned drift cannot be orphan-imported",
-					err, strings.Join(resolution.UIDs(), ","), restoreErr)
+				return withdrawIntent(fmt.Errorf("%w; Registry uid(s) %s remain, but rollback of pre-commit exact Pane tombstones was incomplete: %v; reported tombstoned drift cannot be orphan-imported",
+					err, strings.Join(resolution.UIDs(), ","), restoreErr))
 			}
-			return fmt.Errorf("%w; pre-commit exact Pane tombstones %s were restored and Registry uid(s) %s remain unchanged for retry",
-				err, paneDeleteIDs(panePlan.Targets), strings.Join(resolution.UIDs(), ","))
+			return withdrawIntent(fmt.Errorf("%w; pre-commit exact Pane tombstones %s were restored and Registry uid(s) %s remain unchanged for retry",
+				err, paneDeleteIDs(panePlan.Targets), strings.Join(resolution.UIDs(), ",")))
 		}
 		if len(killedLive) > 0 {
 			var removed []string
 			for _, target := range killedLive {
 				removed = append(removed, fmt.Sprintf("%s/session=%s(%s)", target.WindowID, target.SessionName, target.SessionID))
 			}
+			// The exact live Windows are already gone, so the intent that
+			// explains their removal stays recorded rather than being withdrawn.
 			return fmt.Errorf("%w; exact live target(s) %s were removed before the store failure, while registry uid(s) %s remain as retryable drift; no unplanned Window was targeted",
 				err, strings.Join(removed, ","), strings.Join(resolution.UIDs(), ","))
 		}
@@ -390,10 +430,11 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 				removed = append(removed, fmt.Sprintf("%s/window=%s/session=%s(%s)/pane-uid=%s",
 					target.PaneID, target.WindowID, target.SessionName, target.SessionID, target.PaneUID))
 			}
+			// As above: those Panes really were terminated on purpose.
 			return fmt.Errorf("%w; exact live target(s) %s were removed before the store failure, while registry uid(s) %s remain as retryable drift; no unplanned Pane was targeted",
 				err, strings.Join(removed, ","), strings.Join(resolution.UIDs(), ","))
 		}
-		return err
+		return withdrawIntent(err)
 	}
 	if err := writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, false, selfTarget); err != nil {
 		if selfTarget {
@@ -428,6 +469,15 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 		}
 	}
 	return nil
+}
+
+// mintOperationID labels one delete's intentional termination receipt.
+func (c *deleteCommand) mintOperationID() (string, error) {
+	mint := c.newOperationID
+	if mint == nil {
+		mint = newCreateOperationID
+	}
+	return mint()
 }
 
 func plural(n int) string {

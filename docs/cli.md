@@ -404,9 +404,9 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Delete Projmux resources with an explicit cascade plan
 
 ```
-projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]
-projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]
-projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]
+projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
+projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
+projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
 
 Subcommands:
@@ -426,7 +426,7 @@ Canonical spelling: `projmux delete window`, `projmux delete pane`, `projmux del
 Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry
 
 ```
-projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]
+projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
 
 Aliases: `windows`
@@ -436,7 +436,7 @@ Aliases: `windows`
 Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry
 
 ```
-projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]
+projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
 
 Aliases: `panes`
@@ -446,7 +446,7 @@ Aliases: `panes`
 Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry
 
 ```
-projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]
+projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
 
 Aliases: `agents`

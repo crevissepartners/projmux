@@ -263,6 +263,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "internal focus", Summary: "Machine focus ingress", Sources: []string{"internal"}},
 	{Spelling: "internal key-broker", Summary: "Darwin physical key transport", Sources: []string{"internal"}},
 	{Spelling: "internal popup-wait-key", Summary: "Display-only popup single-key reader", Sources: []string{"internal"}},
+	{Spelling: "internal supervise", Summary: "Managed Pane process supervisor and termination receipt writer", Sources: []string{"internal"}},
 }
 
 // CanonicalRoutes returns the canonical route manifest in contract order.

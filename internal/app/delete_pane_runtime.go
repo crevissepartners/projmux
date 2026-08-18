@@ -20,6 +20,9 @@ import (
 const deletedPaneMirrorPrefix = coremetadata.DeletedPaneMirrorPrefix
 
 type paneDeleteRuntime interface {
+	// useExactTarget pins every read and write of this seam to one resolved
+	// server. It is called before the first inventory of an invocation.
+	useExactTarget(explicitTmuxTarget)
 	preflight(context.Context, coremetadata.Registry, deletePlan) (paneLiveDeletePlan, error)
 	kill(context.Context, paneLiveDeleteTarget) error
 	tombstoneSelfKill(context.Context, []paneLiveDeleteTarget) error
@@ -91,12 +94,21 @@ type tmuxPaneDeleteRuntime struct {
 	getenv func(string) string
 }
 
+// newTmuxPaneDeleteRuntime builds the live half with no server bound yet.
+//
+// There is deliberately no default target. The route resolves the exact server
+// from the invocation's own flags or inherited $TMUX and installs it with
+// useExactTarget; a runtime that was never given one refuses rather than
+// reaching for the app socket.
 func newTmuxPaneDeleteRuntime() *tmuxPaneDeleteRuntime {
-	target, err := tmuxSocketNameTarget(defaultAppSocket)
-	if err != nil {
-		panic(err)
+	return &tmuxPaneDeleteRuntime{runner: inttmux.ExecRunner{}, getenv: os.Getenv}
+}
+
+func (r *tmuxPaneDeleteRuntime) useExactTarget(target explicitTmuxTarget) {
+	if r == nil {
+		return
 	}
-	return &tmuxPaneDeleteRuntime{runner: inttmux.ExecRunner{}, target: target, getenv: os.Getenv}
+	r.target = target
 }
 
 type livePaneDeleteRow struct {
@@ -116,6 +128,9 @@ func (r *tmuxPaneDeleteRuntime) routed() explicitTmuxRunner {
 func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDeleteRow, error) {
 	if r == nil || r.runner == nil {
 		return nil, errors.New("delete pane: tmux runtime is not configured")
+	}
+	if r.target.flag == "" || r.target.value == "" {
+		return nil, errors.New("delete pane: no exact tmux target is bound")
 	}
 	format := tmuxRowFormat(
 		"#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",

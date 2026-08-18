@@ -413,14 +413,23 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if err != nil {
 			return err
 		}
-		anchorPaneID, err := r.create.ensureAnchorPane(ctx, *working, ledger, *project, sessionName, paneTarget{
+		anchorPaneID, err := r.create.ensureAnchorPane(ctx, working, mutator, ledger, *project, sessionName, operationID, paneTarget{
 			windowUID: plan.windowUID,
 			anchorUID: plan.anchorUID,
 		})
 		if err != nil {
 			return err
 		}
-		paneID, err := r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, contextDir, launchArgv)
+		// A resume is a new materialization of the same Agent, so it issues a
+		// fresh generation. That is what makes a late receipt from the process
+		// this resume replaced recognizable as stale instead of being applied
+		// to the Pane the operator is now looking at.
+		activation, err := r.create.issuePaneActivation(working, mutator, pane.Metadata.UID, plan.agentUID, operationID)
+		if err != nil {
+			return err
+		}
+		paneID, err := r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, contextDir,
+			r.create.runtime.supervisedLaunch(ctx, activation, launchArgv))
 		if paneID != "" {
 			if claimErr := r.create.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 				return errors.Join(err, claimErr)
@@ -428,6 +437,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			if mirrorErr := r.create.runtime.mirror.MirrorPane(ctx, paneID, pane); mirrorErr != nil {
 				return errors.Join(err, mirrorErr)
 			}
+			observeActivationRuntime(working, mutator, activation, paneID, r.create.runtime.warn)
 		}
 		if err != nil {
 			return err

@@ -12,6 +12,12 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
+// deleteCommitCount is how many Registry transactions one successful delete
+// commits when it ends at least one live process: the pre-mutation intentional
+// termination receipt first, then the resource cascade. A delete whose live
+// plan is empty has no mutation to explain and commits only the cascade.
+const deleteCommitCount = 2
+
 // newTestDeleteCommand builds a delete route whose confirmation answer is
 // scripted rather than read from a terminal.
 func newTestDeleteCommand(store *fakeResourceStore, interactive bool, answer bool, prompts *[]string) *deleteCommand {
@@ -29,8 +35,21 @@ func newTestDeleteCommand(store *fakeResourceStore, interactive bool, answer boo
 		resolveKinds: deleteRegistryKinds,
 		windows:      newFixtureWindowDeleteRuntime(),
 		panes:        newFixturePaneDeleteRuntime(),
+		// The live half routes to the server the invocation names, so a test
+		// supplies its own $TMUX instead of inheriting whatever server the
+		// developer happens to be attached to.
+		lookupEnv:      func(name string) string { return testDeleteEnvironment[name] },
+		newOperationID: func() (string, error) { return "op-delete", nil },
 	}
 }
+
+// testDeleteEnvironment is the hermetic environment every delete fixture routes
+// through. The socket path is deliberately not the app socket: a route that
+// fell back to `-L projmux` would be visible immediately.
+var testDeleteEnvironment = map[string]string{"TMUX": "/tmp/projmux-test/isolated,1234,0"}
+
+// testDeleteTarget is the exact target testDeleteEnvironment resolves to.
+var testDeleteTarget = explicitTmuxTarget{flag: "-S", value: "/tmp/projmux-test/isolated"}
 
 type fakePaneDeleteRuntime struct {
 	preflights   int
@@ -47,7 +66,12 @@ type fakePaneDeleteRuntime struct {
 	queueErr     error
 	killHook     func(paneLiveDeleteTarget)
 	queueHook    func([]paneLiveDeleteTarget)
+	// boundTarget records the exact server the route installed, so a test can
+	// prove the live half never routes anywhere the invocation did not name.
+	boundTarget explicitTmuxTarget
 }
+
+func (r *fakePaneDeleteRuntime) useExactTarget(target explicitTmuxTarget) { r.boundTarget = target }
 
 func newFixturePaneDeleteRuntime() *fakePaneDeleteRuntime { return &fakePaneDeleteRuntime{} }
 
@@ -191,7 +215,10 @@ type fakeWindowDeleteRuntime struct {
 	queueHook     func([]windowLiveDeleteTarget)
 	offlineUIDs   map[string]bool
 	preflightHook func(int)
+	boundTarget   explicitTmuxTarget
 }
+
+func (r *fakeWindowDeleteRuntime) useExactTarget(target explicitTmuxTarget) { r.boundTarget = target }
 
 func newFixtureWindowDeleteRuntime() *fakeWindowDeleteRuntime {
 	return &fakeWindowDeleteRuntime{}
@@ -353,8 +380,13 @@ func TestDeleteOfflineWindowBindingRaceFailsClosed(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "exact live cascade changed") {
 				t.Fatalf("binding race error = %v", err)
 			}
-			if stdout != "" || store.writes != 0 || store.snapshot() != before || len(runtime.killed) != 0 {
-				t.Fatalf("binding race changed state: stdout=%q writes=%d killed=%v", stdout, store.writes, runtime.killed)
+			// The snapshot covers activation and termination evidence, so an
+			// intentional receipt this refusal recorded and failed to withdraw
+			// would fail this assertion. A raw commit count would not: the
+			// withdrawal is itself a commit.
+			if stdout != "" || store.snapshot() != before || len(runtime.killed) != 0 {
+				t.Fatalf("binding race changed state: stdout=%q snapshot-changed=%t killed=%v",
+					stdout, store.snapshot() != before, runtime.killed)
 			}
 		})
 	}
@@ -466,8 +498,9 @@ func TestDeleteCascadeRemovesExactlyTheDescendantPlan(t *testing.T) {
 			if err != nil {
 				t.Fatalf("delete %v error = %v (stderr=%s)", test.args, err, stderr)
 			}
-			if store.writes != 1 {
-				t.Fatalf("delete %v committed %d writes, want 1", test.args, store.writes)
+			if store.writes != deleteCommitCount {
+				t.Fatalf("delete %v committed %d writes, want %d (intent, then cascade)",
+					test.args, store.writes, deleteCommitCount)
 			}
 			uids := registryUIDs(store.registry)
 			for _, uid := range test.gone {
@@ -650,8 +683,9 @@ func TestDeleteRequiresConfirmationAndRefusesNonInteractivelyWithoutYes(t *testi
 			if _, _, err := runRoute(t, newTestDeleteCommand(store, true, true, &prompts), test.args...); err != nil {
 				t.Fatalf("delete %v after an accepted confirmation error = %v", test.args, err)
 			}
-			if store.writes != 1 {
-				t.Fatalf("delete %v after confirmation committed %d writes, want 1", test.args, store.writes)
+			if store.writes != deleteCommitCount {
+				t.Fatalf("delete %v after confirmation committed %d writes, want %d (intent, then cascade)",
+					test.args, store.writes, deleteCommitCount)
 			}
 		})
 	}
@@ -671,8 +705,8 @@ func TestDeleteExactOneLeafPaneNeedsNoConfirmation(t *testing.T) {
 	if len(prompts) != 0 {
 		t.Fatalf("leaf pane delete prompted: %v", prompts)
 	}
-	if store.writes != 1 {
-		t.Fatalf("leaf pane delete committed %d writes, want 1", store.writes)
+	if store.writes != deleteCommitCount {
+		t.Fatalf("leaf pane delete committed %d writes, want %d (intent, then cascade)", store.writes, deleteCommitCount)
 	}
 
 	// The carve-out is exactly "one target, Pane kind, no descendants": a single
@@ -746,7 +780,15 @@ func TestDeleteAbortsWhenTheCascadePlanChangesBeforeExecution(t *testing.T) {
 	var beforeExecution string
 	// Simulate a concurrent writer: a new Pane appears under the target Window
 	// between the preflight read and the locked transaction.
+	commits := 0
 	cmd.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		commits++
+		if commits != 2 {
+			// Commit 1 is the intentional receipt and commit 3 is its
+			// withdrawal. The concurrent writer lands between them, so the
+			// cascade is the transaction that sees the changed plan.
+			return commit(fn)
+		}
 		store.registry.Panes = append(store.registry.Panes, coremetadata.Pane{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
 			Metadata: coremetadata.ObjectMeta{
@@ -773,14 +815,28 @@ func TestDeleteAbortsWhenTheCascadePlanChangesBeforeExecution(t *testing.T) {
 	if stdout != "" {
 		t.Fatalf("stdout = %q, want 0 bytes", stdout)
 	}
-	if store.writes != 0 {
-		t.Fatalf("committed %d writes, want 0", store.writes)
+	// The concurrent Pane the fake writer added is the only registry change:
+	// the delete itself committed no cascade and withdrew its recorded intent.
+	for _, pane := range store.registry.Panes {
+		if pane.Status.LastTermination != nil {
+			t.Fatalf("stale plan abort left an intentional receipt on %s: %#v",
+				pane.Metadata.UID, pane.Status.LastTermination)
+		}
+	}
+	if !registryUIDs(store.registry)["win-alpha-main"] {
+		t.Fatalf("stale plan abort deleted the target Window:\n%s", store.snapshot())
 	}
 	if beforeExecution == "" {
-		t.Fatal("the transaction never opened, so the abort proves nothing")
+		t.Fatal("the cascade transaction never opened, so the abort proves nothing")
 	}
-	if store.snapshot() != beforeExecution {
-		t.Fatalf("the aborted delete still mutated the registry")
+	// Nothing the plan named was removed. The snapshot is deliberately not
+	// compared verbatim: the withdrawal of this operation's own intent is a
+	// legitimate difference from the state the cascade transaction opened on.
+	uids := registryUIDs(store.registry)
+	for _, uid := range []string{"win-alpha-main", "pan-alpha-zsh", "pan-alpha-log", "pan-alpha-codex", "agt-alpha-codex", "pan-alpha-late"} {
+		if !uids[uid] {
+			t.Fatalf("the aborted delete removed %q:\n%s", uid, store.snapshot())
+		}
 	}
 }
 
@@ -927,8 +983,8 @@ func TestDeleteEmptySelectorWithYesCannotTouchTheWholeRegistry(t *testing.T) {
 			newTestDeleteCommandWithActiveTarget(store, active, false, false, nil), "pane", "--yes"); err != nil {
 			t.Fatalf("delete pane --yes inside tmux error = %v", err)
 		}
-		if store.writes != 1 {
-			t.Fatalf("delete pane --yes committed %d writes, want 1", store.writes)
+		if store.writes != deleteCommitCount {
+			t.Fatalf("delete pane --yes committed %d writes, want %d (intent, then cascade)", store.writes, deleteCommitCount)
 		}
 		uids := registryUIDs(store.registry)
 		if uids["pan-alpha-log"] {
@@ -1065,7 +1121,7 @@ func TestDeleteWithNoSelectorAlwaysConfirms(t *testing.T) {
 		false, false, &prompts), "pane", "log", "--project", "alpha", "--window", "main"); err != nil {
 		t.Fatalf("explicit leaf-pane delete error = %v", err)
 	}
-	if len(prompts) != 0 || store.writes != 1 {
+	if len(prompts) != 0 || store.writes != deleteCommitCount {
 		t.Fatalf("the explicit leaf-pane carve-out changed: prompts=%v writes=%d", prompts, store.writes)
 	}
 
@@ -1091,7 +1147,7 @@ func TestDeleteWithNoSelectorAlwaysConfirms(t *testing.T) {
 		insideTmux("pan-alpha-log", "win-alpha-main"), true, true, &prompts), "pane"); err != nil {
 		t.Fatalf("an accepted implicit delete error = %v", err)
 	}
-	if len(prompts) != 1 || store.writes != 1 {
+	if len(prompts) != 1 || store.writes != deleteCommitCount {
 		t.Fatalf("accepted implicit delete: prompts=%d writes=%d", len(prompts), store.writes)
 	}
 
@@ -1255,8 +1311,12 @@ func TestDeleteWindowKillsExactLiveTargetBeforeStoreCommitAndPreservesSibling(t 
 	if err != nil {
 		t.Fatalf("delete error = %v", err)
 	}
-	if got := strings.Join(events, ","); got != "kill @10,store committed" {
-		t.Fatalf("ordering = %q", got)
+	// The first commit is the intentional termination receipt, and it lands
+	// before the exact live kill. That ordering is the contract: a crash in the
+	// window between the kill and the cascade commit leaves durable evidence
+	// that a control action ended the process, not an unexplained disappearance.
+	if got := strings.Join(events, ","); got != "store committed,kill @10,store committed" {
+		t.Fatalf("ordering = %q, want intent, then exact kill, then cascade", got)
 	}
 	if _, ok := store.registry.Window("win-alpha-main"); ok {
 		t.Fatal("target Window survived")
@@ -1284,8 +1344,11 @@ func TestDeleteWindowTmuxFailureCommitsZeroRegistryWrites(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "injected tmux failure") {
 		t.Fatalf("tmux failure = %v", err)
 	}
-	if stdout != "" || store.writes != 0 || store.snapshot() != before || len(runtime.queued) != 0 {
-		t.Fatalf("tmux failure changed state: stdout=%q writes=%d queued=%v", stdout, store.writes, runtime.queued)
+	// No live Window was killed, so the recorded intent is withdrawn and the
+	// snapshot -- which covers termination evidence -- is byte-identical.
+	if stdout != "" || store.snapshot() != before || len(runtime.queued) != 0 {
+		t.Fatalf("tmux failure changed state: stdout=%q snapshot-changed=%t queued=%v",
+			stdout, store.snapshot() != before, runtime.queued)
 	}
 }
 
@@ -1295,7 +1358,6 @@ func TestDeleteWindowSecondTmuxFailureReportsFirstExactDriftWithoutUnplannedKill
 	runtime.killErrs = map[string]error{"@12": errors.New("injected second tmux failure")}
 	cmd := newTestDeleteCommand(store, false, false, nil)
 	cmd.windows = runtime
-	before := store.snapshot()
 	var attempts []string
 	runtime.killHook = func(target windowLiveDeleteTarget) { attempts = append(attempts, target.WindowID) }
 
@@ -1323,8 +1385,22 @@ func TestDeleteWindowSecondTmuxFailureReportsFirstExactDriftWithoutUnplannedKill
 	if strings.Contains(err.Error(), "@11") {
 		t.Fatalf("partial failure named unplanned sibling @11: %v", err)
 	}
-	if stdout != "" || store.writes != 0 || store.snapshot() != before {
-		t.Fatalf("partial tmux failure committed Registry/output: stdout=%q writes=%d", stdout, store.writes)
+	// The Registry cascade did not commit. The intentional receipt for the
+	// Window that really was killed stays recorded, so the partial outcome is
+	// still explained.
+	uids := registryUIDs(store.registry)
+	for _, uid := range []string{"win-alpha-main", "win-beta-main", "pan-alpha-zsh"} {
+		if !uids[uid] {
+			t.Fatalf("partial tmux failure removed %q from the Registry", uid)
+		}
+	}
+	killedPane, _ := store.registry.Pane("pan-alpha-zsh")
+	if killedPane.Status.LastTermination == nil ||
+		killedPane.Status.LastTermination.Classification != coremetadata.TerminationIntentional {
+		t.Fatalf("killed Window's Pane lost its intentional receipt: %#v", killedPane.Status.LastTermination)
+	}
+	if stdout != "" {
+		t.Fatalf("partial tmux failure wrote stdout: %q", stdout)
 	}
 }
 
@@ -1333,10 +1409,17 @@ func TestDeleteWindowStoreFailureReportsExactRetainedDrift(t *testing.T) {
 	runtime := newFixtureWindowDeleteRuntime()
 	cmd := newTestDeleteCommand(store, false, false, nil)
 	cmd.windows = runtime
-	before := store.snapshot()
 	var events []string
 	runtime.killHook = func(target windowLiveDeleteTarget) { events = append(events, "kill "+target.WindowID) }
+	// Commit 1 is the pre-mutation intentional receipt and must succeed; the
+	// failure under test is the resource cascade that follows the exact kill.
+	commit := cmd.store.update
+	commits := 0
 	cmd.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		commits++
+		if commits == 1 {
+			return commit(fn)
+		}
 		working := store.registry.Clone()
 		if err := fn(&working); err != nil {
 			return coremetadata.Registry{}, err
@@ -1357,8 +1440,18 @@ func TestDeleteWindowStoreFailureReportsExactRetainedDrift(t *testing.T) {
 	if got := strings.Join(events, ","); got != "kill @10,store failed" {
 		t.Fatalf("failure ordering = %q", got)
 	}
-	if stdout != "" || store.snapshot() != before {
-		t.Fatalf("store failure committed registry/output: stdout=%q", stdout)
+	// The Window really was killed, so its Panes keep the intentional receipt
+	// while every Registry resource survives for the retry.
+	if stdout != "" {
+		t.Fatalf("store failure wrote stdout: %q", stdout)
+	}
+	if !registryUIDs(store.registry)["win-alpha-main"] {
+		t.Fatalf("store failure removed the Registry Window:\n%s", store.snapshot())
+	}
+	killedPane, _ := store.registry.Pane("pan-alpha-zsh")
+	if killedPane.Status.LastTermination == nil ||
+		killedPane.Status.LastTermination.Classification != coremetadata.TerminationIntentional {
+		t.Fatalf("killed Window's Pane lost its intentional receipt: %#v", killedPane.Status.LastTermination)
 	}
 }
 
