@@ -389,7 +389,6 @@ func TestPaneDeleteRouteDryRunExecutionPartialFailureAndAgentOffline(t *testing.
 	runtime.killErrs = map[string]error{"%31": errors.New("injected second Pane failure")}
 	cmd = newTestDeleteCommand(store, false, false, nil)
 	cmd.panes = runtime
-	before = store.snapshot()
 	_, _, err = runRoute(t, cmd, "pane", "uid:pan-alpha-zsh", "uid:pan-alpha-log", "--yes")
 	if err == nil {
 		t.Fatal("partial failure succeeded")
