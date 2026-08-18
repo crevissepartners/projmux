@@ -8,8 +8,11 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -47,7 +50,32 @@ type sessionMaterializer interface {
 }
 
 type operationSessionMaterializer interface {
-	EnsureSessionWithEnvironment(ctx context.Context, sessionName, cwd string, env map[string]string) error
+	EnsureSessionWithEnvironmentResult(ctx context.Context, sessionName, cwd string, env map[string]string) (intmux.NewSessionResult, error)
+}
+
+type sessionStartupFinalizer interface {
+	FinalizeSessionStartup(ctx context.Context, result intmux.NewSessionResult, sessionName, cwd, operationMarker string) error
+}
+
+func (m *materializer) finalizeSessionStartup(ctx context.Context, result intmux.NewSessionResult, sessionName, cwd string, ledger *runtimeLedger) error {
+	if !result.Created {
+		return nil
+	}
+	finalizer, ok := m.sessions.(sessionStartupFinalizer)
+	if !ok {
+		return errors.New("materialize tmux session: startup finalization is unavailable")
+	}
+	if err := finalizer.FinalizeSessionStartup(ctx, result, sessionName, cwd, ledger.operationMarker); err != nil {
+		return tmuxError("finalize tmux session %q startup: %v", sessionName, err)
+	}
+	return nil
+}
+
+type liveSessionIdentity struct {
+	ID   string
+	Name string
+	UID  string
+	Root string
 }
 
 // runtimeObjectKind names one class of tmux object an operation can create.
@@ -204,79 +232,248 @@ func (m *materializer) ensureSession(
 	project coremetadata.Project,
 	sessionName string,
 	ledger *runtimeLedger,
-) (created bool, err error) {
+) (intmux.NewSessionResult, error) {
 	exists, err := m.sessions.SessionExists(ctx, sessionName)
 	if err != nil {
-		return false, tmuxError("check tmux session %q: %v", sessionName, err)
+		return intmux.NewSessionResult{}, tmuxError("check tmux session %q: %v", sessionName, err)
 	}
 	if exists {
-		if err := m.markCreateOperation(ctx, sessionName, ledger); err != nil {
-			return false, err
+		identity, err := m.requireOwnedSession(ctx, project, sessionName)
+		if err != nil {
+			return intmux.NewSessionResult{}, err
 		}
-		return false, nil
-	}
-	var ensureErr error
-	if sessions, ok := m.sessions.(operationSessionMaterializer); ok {
-		ensureErr = sessions.EnsureSessionWithEnvironment(ctx, sessionName, project.Spec.Root, map[string]string{
-			createOperationEnvironment: ledger.operationMarker,
-		})
-	} else {
-		ensureErr = m.sessions.EnsureSession(ctx, sessionName, project.Spec.Root)
-		if ensureErr == nil {
-			ensureErr = m.markCreateOperation(ctx, sessionName, ledger)
+		if err := m.markCreateOperation(ctx, identity.ID, ledger); err != nil {
+			return intmux.NewSessionResult{}, err
 		}
+		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, nil
 	}
+	if identity, found, err := m.preflightSessionOwnership(ctx, project, sessionName); err != nil {
+		return intmux.NewSessionResult{}, err
+	} else if found {
+		if err := m.markCreateOperation(ctx, identity.ID, ledger); err != nil {
+			return intmux.NewSessionResult{}, err
+		}
+		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, nil
+	}
+	sessions, ok := m.sessions.(operationSessionMaterializer)
+	if !ok {
+		return intmux.NewSessionResult{}, errors.New("materialize tmux session: atomic session result is unavailable")
+	}
+	result, ensureErr := sessions.EnsureSessionWithEnvironmentResult(ctx, sessionName, project.Spec.Root, map[string]string{
+		createOperationEnvironment: ledger.operationMarker,
+	})
 	if ensureErr != nil {
 		// A pre-create hook refusal lands here with nothing created. A later
 		// synchronous tmux hook can instead fail after new-session created the
 		// session. The -e lease is then exact ownership evidence, so establish
 		// the Project uid and ledger entry before surfacing the original error.
-		m.recordErrorCreatedSession(ctx, project, sessionName, ledger)
-		return false, tmuxError("materialize tmux session %q: %v", sessionName, ensureErr)
+		m.recordErrorCreatedSession(ctx, project, sessionName, result.SessionID, ledger)
+		return intmux.NewSessionResult{}, tmuxError("materialize tmux session %q: %v", sessionName, ensureErr)
 	}
-	ledger.markSession(sessionName)
-	sessionID := m.option(ctx, sessionName, "#{session_id}")
-	if err := m.mirror.MirrorProject(ctx, sessionName, project); err != nil {
-		// The session exists but is unidentifiable, so record it under the uid
-		// the caller expects before surfacing the failure; otherwise rollback
-		// would refuse to remove the session this operation just created.
-		m.recordSessionForRollback(ctx, ledger, sessionID, project.Metadata.UID)
-		return true, err
+	if !result.Created {
+		// The outer check missed and the client's inner check hit. Treat that
+		// session exactly like any other pre-existing runtime; never infer that
+		// this operation created its first Window or Pane.
+		identity, err := m.requireOwnedSession(ctx, project, sessionName)
+		if err != nil {
+			return intmux.NewSessionResult{}, err
+		}
+		if err := m.markCreateOperation(ctx, identity.ID, ledger); err != nil {
+			return intmux.NewSessionResult{}, err
+		}
+		result.SessionID = identity.ID
+		return result, nil
 	}
-	ledger.record(runtimeSession, sessionID, project.Metadata.UID)
+	if exactTmuxHandle(result.SessionID, "$") == "" || exactTmuxHandle(result.WindowID, "@") == "" || exactTmuxHandle(result.PaneID, "%") == "" {
+		m.recordErrorCreatedSession(ctx, project, sessionName, result.SessionID, ledger)
+		return intmux.NewSessionResult{}, fmt.Errorf("materialize tmux session %q: atomic result is incomplete", sessionName)
+	}
+	ledger.markSession(result.SessionID)
+	if claimErr := m.claimRuntimeUIDForRollback(ctx, runtimeSession, result.SessionID, project.Metadata.UID, ledger); claimErr != nil {
+		return intmux.NewSessionResult{}, claimErr
+	}
+	if err := m.mirror.MirrorProject(ctx, result.SessionID, project); err != nil {
+		return intmux.NewSessionResult{}, err
+	}
+	return result, nil
+}
+
+// requireOwnedSession validates the complete server-wide ownership proof for
+// one existing session before an operation lease or identity mirror is written.
+func (m *materializer) requireOwnedSession(ctx context.Context, project coremetadata.Project, sessionName string) (liveSessionIdentity, error) {
+	identity, found, err := m.preflightSessionOwnership(ctx, project, sessionName)
+	if err != nil {
+		return liveSessionIdentity{}, err
+	}
+	if !found {
+		return liveSessionIdentity{}, fmt.Errorf("create: tmux session %q disappeared during ownership preflight", sessionName)
+	}
+	return identity, nil
+}
+
+// preflightSessionOwnership rejects duplicate Project UID/root claims even
+// when the selected session is absent. An absent selected name is available
+// only when no other live session already owns either identity edge.
+func (m *materializer) preflightSessionOwnership(ctx context.Context, project coremetadata.Project, sessionName string) (liveSessionIdentity, bool, error) {
+	identities, err := m.sessionIdentities(ctx)
+	if err != nil {
+		if inttmux.IsNoServerFailure(err) {
+			return liveSessionIdentity{}, false, nil
+		}
+		return liveSessionIdentity{}, false, err
+	}
+	wantRoot := candidates.CanonicalPath(project.Spec.Root)
+	var named []liveSessionIdentity
+	uidClaims, rootClaims := 0, 0
+	for _, identity := range identities {
+		if identity.Name == sessionName {
+			named = append(named, identity)
+		}
+		if strings.TrimSpace(identity.UID) == project.Metadata.UID {
+			uidClaims++
+		}
+		if root := candidates.CanonicalPath(identity.Root); root != "" && root == wantRoot {
+			rootClaims++
+		}
+	}
+	if len(named) != 1 {
+		if len(named) == 0 && uidClaims == 0 && rootClaims == 0 {
+			return liveSessionIdentity{}, false, nil
+		}
+		return liveSessionIdentity{}, false, fmt.Errorf("create: tmux session %q ownership is unavailable or ambiguous: found %d same-name sessions, uid claims=%d, root claims=%d", sessionName, len(named), uidClaims, rootClaims)
+	}
+	identity := named[0]
+	gotRoot := candidates.CanonicalPath(identity.Root)
+	if strings.TrimSpace(identity.UID) == "" || identity.UID != project.Metadata.UID || gotRoot == "" || gotRoot != wantRoot || uidClaims != 1 || rootClaims != 1 {
+		return liveSessionIdentity{}, false, fmt.Errorf(
+			"create: refuse foreign tmux session %q: project uid=%q root=%q, want unique uid=%q root=%q (uid claims=%d, root claims=%d)",
+			sessionName, identity.UID, identity.Root, project.Metadata.UID, project.Spec.Root, uidClaims, rootClaims)
+	}
+	return identity, true, nil
+}
+
+// refuseUnregisteredSessionClaims is the read-only first-use variant of the
+// ownership preflight. There is no durable Project UID to prove yet, so any
+// same-name session or any session already claiming the discovered canonical
+// root is foreign to this create and must be handled explicitly first.
+func (m *materializer) refuseUnregisteredSessionClaims(ctx context.Context, sessionName, root string) error {
+	identities, err := m.sessionIdentities(ctx)
+	if err != nil {
+		if inttmux.IsNoServerFailure(err) {
+			return nil
+		}
+		return err
+	}
+	wantRoot := candidates.CanonicalPath(root)
+	for _, identity := range identities {
+		if identity.Name == sessionName {
+			return fmt.Errorf("create: refuse live tmux session %q for an unregistered Project; import or reconcile it explicitly before create", sessionName)
+		}
+		if wantRoot != "" && candidates.CanonicalPath(identity.Root) == wantRoot {
+			return fmt.Errorf("create: refuse unregistered Project root %q because tmux session %q already claims it", root, identity.Name)
+		}
+	}
+	return nil
+}
+
+func (m *materializer) sessionIdentities(ctx context.Context) ([]liveSessionIdentity, error) {
+	out, err := m.read(ctx, "list-sessions", "-F", tmuxRowFormat(
+		"#{session_id}", "#{session_name}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.ProjectPathSession+"}"))
+	if err != nil {
+		if inttmux.IsNoServerFailure(err) {
+			return nil, err
+		}
+		return nil, tmuxError("list tmux session identities: %v", err)
+	}
+	rows, parseErr := strictTmuxRows(out, 4)
+	if parseErr != nil {
+		return nil, fmt.Errorf("list tmux session identities: %w", parseErr)
+	}
+	identities := make([]liveSessionIdentity, 0, len(rows))
+	for _, fields := range rows {
+		if exactTmuxHandle(fields[0], "$") == "" || strings.TrimSpace(fields[1]) == "" {
+			return nil, fmt.Errorf("list tmux session identities: malformed session row")
+		}
+		identities = append(identities, liveSessionIdentity{ID: fields[0], Name: fields[1], UID: strings.TrimSpace(fields[2]), Root: strings.TrimSpace(fields[3])})
+	}
+	return identities, nil
+}
+
+func (m *materializer) claimRuntimeUID(ctx context.Context, kind runtimeObjectKind, target, uid string) (bool, error) {
+	ownershipOption := runtimeObject{Kind: kind}.ownershipOption()
+	args := []string{"set-option"}
+	switch kind {
+	case runtimeWindow:
+		args = append(args, "-w")
+	case runtimePane:
+		args = append(args, "-p")
+	}
+	args = append(args, "-t", target, "-q", ownershipOption, uid)
+	if _, err := m.runner.Run(ctx, "tmux", args...); err != nil {
+		claimErr := tmuxError("claim created tmux %s %s: %v", kind, target, err)
+		if got := m.option(ctx, target, "#{"+ownershipOption+"}"); got == uid {
+			return true, claimErr
+		}
+		return false, claimErr
+	}
 	return true, nil
+}
+
+// claimRuntimeUIDForRollback establishes the UID before recording the object.
+// A tmux command can report failure after applying the option, so an error is
+// followed by an exact readback: a stuck claim enters the ledger and can be
+// rolled back safely; an unstuck claim is preserved as an unowned residual.
+func (m *materializer) claimRuntimeUIDForRollback(ctx context.Context, kind runtimeObjectKind, target, uid string, ledger *runtimeLedger) error {
+	claimed, err := m.claimRuntimeUID(ctx, kind, target, uid)
+	if claimed {
+		ledger.record(kind, target, uid)
+	}
+	if err != nil && !claimed {
+		m.warnUnclaimedHandle(kind, target)
+	}
+	return err
 }
 
 func (m *materializer) recordErrorCreatedSession(
 	ctx context.Context,
 	project coremetadata.Project,
 	sessionName string,
+	exactSessionID string,
 	ledger *runtimeLedger,
 ) {
 	if ledger == nil || strings.TrimSpace(ledger.operationMarker) == "" {
 		return
 	}
-	exists, err := m.sessions.SessionExists(ctx, sessionName)
-	if err != nil || !exists {
-		return
+	target := exactTmuxHandle(exactSessionID, "$")
+	if target == "" {
+		exists, err := m.sessions.SessionExists(ctx, sessionName)
+		if err != nil || !exists {
+			return
+		}
+		target = sessionName
 	}
-	out, err := m.runner.Run(ctx, "tmux", "show-environment", "-t", sessionName)
+	out, err := m.runner.Run(ctx, "tmux", "show-environment", "-t", target)
 	if err != nil || sessionEnvironmentValue(string(out), createOperationEnvironment) != ledger.operationMarker {
+		if exactTmuxHandle(exactSessionID, "$") != "" {
+			m.warnUnclaimedHandle(runtimeSession, exactSessionID)
+		}
 		return
 	}
-	ledger.markSession(sessionName)
-	sessionID := m.option(ctx, sessionName, "#{session_id}")
+	ledger.markSession(target)
+	sessionID := exactTmuxHandle(exactSessionID, "$")
+	if sessionID == "" {
+		sessionID = m.option(ctx, target, "#{session_id}")
+	}
 	if sessionID == "" {
 		if m.warn != nil {
 			fmt.Fprintf(m.warn, "projmux: create failed with an owned but unidentifiable tmux session %s; preserved it\n", sessionName)
 		}
 		return
 	}
-	if err := m.mirror.MirrorProject(ctx, sessionName, project); err != nil {
-		m.recordSessionForRollback(ctx, ledger, sessionID, project.Metadata.UID)
+	if claimErr := m.claimRuntimeUIDForRollback(ctx, runtimeSession, sessionID, project.Metadata.UID, ledger); claimErr != nil {
 		return
 	}
-	ledger.record(runtimeSession, sessionID, project.Metadata.UID)
+	_ = m.mirror.MirrorProject(ctx, sessionID, project)
 }
 
 func (m *materializer) markCreateOperation(ctx context.Context, sessionName string, ledger *runtimeLedger) error {
@@ -307,16 +504,6 @@ func (m *materializer) clearCreateOperations(ctx context.Context, ledger *runtim
 			fmt.Fprintf(m.warn, "projmux: could not clear create-operation lease for session %s: %v\n", sessionName, err)
 		}
 	}
-}
-
-// recordSessionForRollback mirrors the Project uid onto a session whose normal
-// mirror failed, so the ownership-checked rollback can still recognize it.
-func (m *materializer) recordSessionForRollback(ctx context.Context, ledger *runtimeLedger, sessionID, uid string) {
-	if strings.TrimSpace(sessionID) == "" {
-		return
-	}
-	_, _ = m.runner.Run(ctx, "tmux", "set-option", "-t", sessionID, "-q", tmuxopts.ProjectUIDSession, uid)
-	ledger.record(runtimeSession, sessionID, uid)
 }
 
 // windowIDForUID returns the tmux window id inside sessionName that mirrors uid.
@@ -353,13 +540,29 @@ func (m *materializer) panesOf(ctx context.Context, windowID string) ([][2]strin
 	return panes, nil
 }
 
-// newWindow creates one detached tmux window and returns its stable window id.
-func (m *materializer) newWindow(ctx context.Context, sessionName, name, cwd string, command []string) (string, error) {
-	before, beforeErr := m.runtimeIDs(ctx, "list-windows", sessionName, "#{window_id}", "@")
+type windowCreateResult struct {
+	WindowID string
+	PaneID   string
+}
+
+type runtimeOwner struct {
+	SessionID string
+	WindowID  string
+}
+
+type runtimeOwnerSet map[runtimeOwner]struct{}
+
+type runtimeOwners map[string]runtimeOwnerSet
+
+// newWindow creates one detached tmux Window and accepts it only when the
+// composite output, global before/after inventory, and exact owner relation all
+// identify the same sole new Window and sole new primary Pane.
+func (m *materializer) newWindow(ctx context.Context, sessionID, name, cwd string, command []string) (windowCreateResult, error) {
+	beforeWindows, beforePanes, beforeErr := m.runtimeOwners(ctx)
 	if beforeErr != nil {
-		return "", tmuxError("list tmux windows of session %q before create: %v", sessionName, beforeErr)
+		return windowCreateResult{}, tmuxError("inventory tmux runtime before window create: %v", beforeErr)
 	}
-	args := []string{"new-window", "-d", "-P", "-F", "#{window_id}", "-t", sessionName + ":"}
+	args := []string{"new-window", "-d", "-P", "-F", tmuxRowFormat("#{window_id}", "#{pane_id}"), "-t", sessionID + ":"}
 	if strings.TrimSpace(name) != "" {
 		args = append(args, "-n", name)
 	}
@@ -367,24 +570,163 @@ func (m *materializer) newWindow(ctx context.Context, sessionName, name, cwd str
 		args = append(args, "-c", cwd)
 	}
 	args = append(args, command...)
-	id, err := m.read(ctx, args...)
-	if err != nil {
-		after, listErr := m.runtimeIDs(ctx, "list-windows", sessionName, "#{window_id}", "@")
-		if listErr == nil {
-			id = errorCreatedHandle(id, "@", before, after)
-			if id == "" {
-				m.warnUnclaimedRuntime("window", before, after)
-			}
-		} else {
-			id = ""
+	output, createErr := m.read(ctx, args...)
+	afterWindows, afterPanes, inventoryErr := m.runtimeOwners(ctx)
+	if inventoryErr != nil {
+		m.warnCompositeWindowResult(output)
+		inventoryFailure := tmuxError("inventory tmux runtime after window create: %v", inventoryErr)
+		if createErr != nil {
+			return windowCreateResult{}, errors.Join(tmuxError("create tmux window in session %q: %v", sessionID, createErr), inventoryFailure)
 		}
-		return id, tmuxError("create tmux window in session %q: %v", sessionName, err)
+		return windowCreateResult{}, inventoryFailure
 	}
-	id = exactTmuxHandle(id, "@")
-	if id == "" {
-		return "", fmt.Errorf("create tmux window in session %q: tmux returned no window id", sessionName)
+	result, attributionErr := attributeCreatedWindow(output, sessionID, beforeWindows, beforePanes, afterWindows, afterPanes)
+	if attributionErr != nil {
+		m.warnUnclaimedOwners("window", beforeWindows, afterWindows)
+		m.warnUnclaimedOwners("pane", beforePanes, afterPanes)
+		if createErr != nil {
+			return windowCreateResult{}, errors.Join(tmuxError("create tmux window in session %q: %v", sessionID, createErr), attributionErr)
+		}
+		return windowCreateResult{}, attributionErr
 	}
-	return id, nil
+	if createErr != nil {
+		return result, tmuxError("create tmux window in session %q: %v", sessionID, createErr)
+	}
+	return result, nil
+}
+
+func (m *materializer) runtimeOwners(ctx context.Context) (runtimeOwners, runtimeOwners, error) {
+	windowsOut, err := m.read(ctx, "list-windows", "-a", "-F", tmuxRowFormat("#{session_id}", "#{window_id}"))
+	if err != nil {
+		return nil, nil, err
+	}
+	panesOut, err := m.read(ctx, "list-panes", "-a", "-F", tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}"))
+	if err != nil {
+		return nil, nil, err
+	}
+	windows := runtimeOwners{}
+	windowRows, err := strictTmuxRows(windowsOut, 2)
+	if err != nil {
+		return nil, nil, fmt.Errorf("malformed Window owner inventory: %w", err)
+	}
+	for _, row := range windowRows {
+		if exactTmuxHandle(row[0], "$") == "" || exactTmuxHandle(row[1], "@") == "" {
+			return nil, nil, fmt.Errorf("malformed Window owner inventory")
+		}
+		owner := runtimeOwner{SessionID: row[0], WindowID: row[1]}
+		if windows[row[1]] == nil {
+			windows[row[1]] = runtimeOwnerSet{}
+		}
+		windows[row[1]][owner] = struct{}{}
+	}
+	panes := runtimeOwners{}
+	paneRows, err := strictTmuxRows(panesOut, 3)
+	if err != nil {
+		return nil, nil, fmt.Errorf("malformed Pane owner inventory: %w", err)
+	}
+	for _, row := range paneRows {
+		if exactTmuxHandle(row[0], "$") == "" || exactTmuxHandle(row[1], "@") == "" || exactTmuxHandle(row[2], "%") == "" {
+			return nil, nil, fmt.Errorf("malformed Pane owner inventory")
+		}
+		owner := runtimeOwner{SessionID: row[0], WindowID: row[1]}
+		if panes[row[2]] == nil {
+			panes[row[2]] = runtimeOwnerSet{}
+		}
+		panes[row[2]][owner] = struct{}{}
+	}
+	return windows, panes, nil
+}
+
+func attributeCreatedWindow(
+	output, sessionID string,
+	beforeWindows, beforePanes, afterWindows, afterPanes runtimeOwners,
+) (windowCreateResult, error) {
+	rows := splitTmuxRows(output, 2)
+	if len(rows) != 1 || exactTmuxHandle(rows[0][0], "@") == "" || exactTmuxHandle(rows[0][1], "%") == "" {
+		return windowCreateResult{}, fmt.Errorf("create tmux window in session %q: malformed composite result %q", sessionID, output)
+	}
+	result := windowCreateResult{WindowID: rows[0][0], PaneID: rows[0][1]}
+	newWindows := newRuntimeIDs(beforeWindows, afterWindows)
+	newPanes := newRuntimeIDs(beforePanes, afterPanes)
+	windowOwners, windowPresent := afterWindows[result.WindowID]
+	paneOwners, panePresent := afterPanes[result.PaneID]
+	wantWindowOwner := runtimeOwner{SessionID: sessionID, WindowID: result.WindowID}
+	wantPaneOwner := runtimeOwner{SessionID: sessionID, WindowID: result.WindowID}
+	if len(newWindows) != 1 || newWindows[0] != result.WindowID || len(newPanes) != 1 || newPanes[0] != result.PaneID ||
+		!windowPresent || !windowOwners.contains(wantWindowOwner) || !panePresent || !paneOwners.contains(wantPaneOwner) ||
+		!paneOwnerSetMatchesWindow(paneOwners, windowOwners, result.WindowID) {
+		return windowCreateResult{}, fmt.Errorf(
+			"create tmux window in session %q: attribution mismatch output=%s/%s new-windows=%v new-panes=%v window-owners=%v pane-owners=%v",
+			sessionID, result.WindowID, result.PaneID, newWindows, newPanes, sortedRuntimeOwners(windowOwners), sortedRuntimeOwners(paneOwners))
+	}
+	return result, nil
+}
+
+func paneOwnerSetMatchesWindow(paneOwners, windowOwners runtimeOwnerSet, windowID string) bool {
+	if len(paneOwners) == 0 {
+		return false
+	}
+	for owner := range paneOwners {
+		if owner.WindowID != windowID || !windowOwners.contains(owner) {
+			return false
+		}
+	}
+	return true
+}
+
+func (owners runtimeOwnerSet) contains(owner runtimeOwner) bool {
+	_, ok := owners[owner]
+	return ok
+}
+
+func sortedRuntimeOwners(owners runtimeOwnerSet) []string {
+	values := make([]string, 0, len(owners))
+	for owner := range owners {
+		values = append(values, owner.SessionID+"/"+owner.WindowID)
+	}
+	slices.Sort(values)
+	return values
+}
+
+func newRuntimeIDs(before, after runtimeOwners) []string {
+	var ids []string
+	for id := range after {
+		if _, existed := before[id]; !existed {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+func (m *materializer) warnUnclaimedOwners(kind string, before, after runtimeOwners) {
+	if m.warn == nil {
+		return
+	}
+	if residual := newRuntimeIDs(before, after); len(residual) > 0 {
+		fmt.Fprintf(m.warn, "projmux: create attribution failed with unclaimed tmux %s drift; preserved %s; inspect these exact handles before retry or cleanup\n",
+			kind, strings.Join(residual, ", "))
+	}
+}
+
+func (m *materializer) warnUnclaimedHandle(kind runtimeObjectKind, id string) {
+	if m.warn == nil || strings.TrimSpace(id) == "" {
+		return
+	}
+	fmt.Fprintf(m.warn, "projmux: create could not claim tmux %s %s; preserved this exact residual handle for inspection before retry or cleanup\n", kind, id)
+}
+
+func (m *materializer) warnCompositeWindowResult(output string) {
+	rows := splitTmuxRows(output, 2)
+	if len(rows) != 1 {
+		return
+	}
+	if id := exactTmuxHandle(rows[0][0], "@"); id != "" {
+		m.warnUnclaimedHandle(runtimeWindow, id)
+	}
+	if id := exactTmuxHandle(rows[0][1], "%"); id != "" {
+		m.warnUnclaimedHandle(runtimePane, id)
+	}
 }
 
 // splitPlacementFlag maps the closed placement enum onto its tmux split axis.
@@ -539,4 +881,24 @@ func splitTmuxRows(output string, want int) [][]string {
 		rows = append(rows, fields)
 	}
 	return rows
+}
+
+// strictTmuxRows is the identity-boundary variant of splitTmuxRows. Inventory
+// attribution must not silently discard a malformed row and then conclude an
+// identity is absent or unique from the incomplete set.
+func strictTmuxRows(output string, want int) ([][]string, error) {
+	output = strings.ReplaceAll(output, tmuxRowSepFormat, tmuxRowSep)
+	var rows [][]string
+	for line := range strings.SplitSeq(output, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, tmuxRowSep)
+		if len(fields) != want {
+			return nil, fmt.Errorf("row has %d fields, want %d", len(fields), want)
+		}
+		rows = append(rows, fields)
+	}
+	return rows, nil
 }

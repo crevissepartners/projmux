@@ -160,6 +160,45 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 	}
 }
 
+func TestFirstUseDiscoveredProjectRefusesBlankSameNameSessionBeforeRegistryOrMirror(t *testing.T) {
+	t.Parallel()
+	fixture := newOnDiskFixture(t, "alpha")
+	foreign := fixture.tmux.addSession("alpha")
+	before := fixture.tmux.state()
+	stdout, _, err := runRoute(t, fixture.command(nil), "window", "--project", "alpha")
+	if err == nil || stdout != "" {
+		t.Fatalf("stdout/error = %q / %v", stdout, err)
+	}
+	if _, statErr := os.Stat(fixture.registryPath()); !os.IsNotExist(statErr) {
+		t.Fatalf("refusal created Registry state: %v", statErr)
+	}
+	if fixture.tmux.state() != before || foreign.opts[tmuxopts.ProjectUIDSession] != "" || foreign.windows[0].opts[tmuxopts.WindowUID] != "" || foreign.windows[0].panes[0].opts[tmuxopts.PaneUID] != "" {
+		t.Fatalf("first-use refusal mutated foreign runtime:\n%s", fixture.tmux.state())
+	}
+	if fixture.tmux.argvContains("set-option") || fixture.tmux.argvContains("set-environment") || fixture.tmux.argvContains("new-window") {
+		t.Fatalf("first-use refusal reached a mutation: %v", fixture.tmux.calls)
+	}
+}
+
+func TestFirstUseDiscoveredProjectRefusesRootClaimedByOtherSession(t *testing.T) {
+	t.Parallel()
+	fixture := newOnDiskFixture(t, "alpha")
+	foreign := fixture.tmux.addSession("different-name")
+	foreign.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+	foreign.opts[tmuxopts.ProjectPathSession] = fixture.roots[0]
+	before := fixture.tmux.state()
+	stdout, _, err := runRoute(t, fixture.command(nil), "window", "--project", "alpha")
+	if err == nil || stdout != "" {
+		t.Fatalf("stdout/error = %q / %v", stdout, err)
+	}
+	if _, statErr := os.Stat(fixture.registryPath()); !os.IsNotExist(statErr) {
+		t.Fatalf("root-claim refusal created Registry state: %v", statErr)
+	}
+	if fixture.tmux.state() != before || fixture.tmux.argvContains("set-option") || fixture.tmux.argvContains("set-environment") || fixture.tmux.argvContains("new-window") {
+		t.Fatalf("root-claim refusal mutated foreign runtime:\n%s", fixture.tmux.state())
+	}
+}
+
 // TestASecondMutationExtendsTheExistingRegistryWithoutRenumbering is the
 // existing-registry check.
 func TestASecondMutationExtendsTheExistingRegistryWithoutRenumbering(t *testing.T) {
@@ -284,6 +323,11 @@ func TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNam
 
 	fixture := newOnDiskFixture(t)
 	root := t.TempDir()
+	targetRoot := filepath.Join(t.TempDir(), "create-target")
+	if err := os.MkdirAll(targetRoot, 0o755); err != nil {
+		t.Fatalf("create safe target root: %v", err)
+	}
+	fixture.roots = append(fixture.roots, targetRoot)
 	session := fixture.tmux.addSession("legacy")
 	// Two pre-v2 windows with every formerly trusted runtime seed populated. None
 	// of those values may become metadata.name; window_name is displayName only.
@@ -320,8 +364,8 @@ func TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNam
 			}, nil
 	}
 
-	if _, _, err := runRoute(t, fixture.command(observe), "pane", "--project", filepath.Base(root), "--window", "window"); err != nil {
-		t.Fatalf("create over a legacy session error = %v", err)
+	if _, _, err := runRoute(t, fixture.command(observe), "pane", "--project", filepath.Base(targetRoot)); err != nil {
+		t.Fatalf("create beside an unrelated legacy session error = %v", err)
 	}
 
 	registry := fixture.load(t)
@@ -376,7 +420,7 @@ func TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNam
 
 	// The migration is one-time: a second run assigns nothing new.
 	before := len(registry.Windows)
-	if _, _, err := runRoute(t, fixture.command(observe), "pane", "--project", filepath.Base(root), "--window", "window"); err != nil {
+	if _, _, err := runRoute(t, fixture.command(observe), "pane", "--project", filepath.Base(targetRoot)); err != nil {
 		t.Fatalf("second create error = %v", err)
 	}
 	after := fixture.load(t)

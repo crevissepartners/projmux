@@ -896,6 +896,64 @@ if [[ "$(stat -c '%a' "$create_registry")" != "600" ]]; then
   exit 1
 fi
 
+# A registered Project never adopts a same-name session that appeared outside
+# Projmux. Exercise both missing identity and an explicit foreign identity;
+# each refusal must precede reconcile, lease, mirror, Registry write, and any
+# subsequent Window creation on this exact socket.
+phase0_selected_session=""
+while IFS= read -r phase0_candidate_session; do
+  if [[ "$(ctx show-options -qv -t "$phase0_candidate_session" @projmux_project_path)" == "$create_root/work/beta" ]]; then
+    phase0_selected_session="$phase0_candidate_session"
+    break
+  fi
+done < <(ctx list-sessions -F '#{session_id}')
+if [[ -z "$phase0_selected_session" ]]; then
+  echo "could not resolve beta's exact created session before foreign-session smoke" >&2
+  exit 1
+fi
+phase0_selected_name="$(ctx display-message -p -t "$phase0_selected_session" '#{session_name}')"
+ctx kill-session -t "$phase0_selected_session"
+for phase0_identity in blank foreign; do
+  ctx new-session -d -s "$phase0_selected_name" -c "$create_root/work/beta" sleep 600
+  phase0_session="$(ctx display-message -p -t "$phase0_selected_name" '#{session_id}')"
+  phase0_window="$(ctx display-message -p -t "$phase0_selected_name" '#{window_id}')"
+  phase0_pane="$(ctx display-message -p -t "$phase0_selected_name" '#{pane_id}')"
+  ctx set-option -t "$phase0_session" -q @phase0_session_sentinel "$phase0_identity"
+  ctx set-option -w -t "$phase0_window" -q @phase0_window_sentinel "$phase0_identity"
+  ctx set-option -p -t "$phase0_pane" -q @phase0_pane_sentinel "$phase0_identity"
+  if [[ "$phase0_identity" == foreign ]]; then
+    ctx set-option -t "$phase0_session" -q @projmux_project_uid prj-foreign
+    ctx set-option -t "$phase0_session" -q @projmux_project_path "$create_root/work/alpha"
+  fi
+  cp "$create_registry" "$create_root/phase0-$phase0_identity.registry"
+  ctx show-options -t "$phase0_session" >"$create_root/phase0-$phase0_identity.session-options"
+  ctx show-options -w -t "$phase0_window" >"$create_root/phase0-$phase0_identity.window-options"
+  ctx show-options -p -t "$phase0_pane" >"$create_root/phase0-$phase0_identity.pane-options"
+  set +e
+  pmx create window --project beta --name "phase0-$phase0_identity" \
+    >"$create_root/phase0-$phase0_identity.out" 2>"$create_root/phase0-$phase0_identity.err"
+  phase0_status=$?
+  set -e
+  if [[ "$phase0_status" == 0 ]] || [[ -s "$create_root/phase0-$phase0_identity.out" ]]; then
+    echo "$phase0_identity same-name session was reused or wrote stdout" >&2
+    exit 1
+  fi
+  if ! cmp "$create_root/phase0-$phase0_identity.registry" "$create_registry" ||
+    ! ctx show-options -t "$phase0_session" | cmp "$create_root/phase0-$phase0_identity.session-options" - ||
+    ! ctx show-options -w -t "$phase0_window" | cmp "$create_root/phase0-$phase0_identity.window-options" - ||
+    ! ctx show-options -p -t "$phase0_pane" | cmp "$create_root/phase0-$phase0_identity.pane-options" -; then
+    echo "$phase0_identity same-name refusal changed Registry or existing tmux options" >&2
+    exit 1
+  fi
+  if [[ "$(ctx list-windows -t "$phase0_session" -F '#{window_id}' | wc -l)" != 1 ]] ||
+    [[ "$(ctx list-panes -s -t "$phase0_session" -F '#{pane_id}' | wc -l)" != 1 ]]; then
+    echo "$phase0_identity same-name refusal created a Window or Pane" >&2
+    exit 1
+  fi
+  smoke_assert_file_contains "$create_root/phase0-$phase0_identity.err" "refuse"
+  ctx kill-session -t "$phase0_session"
+done
+
 # 3. The legacy migration allocated a stable Window name independently of every
 #    runtime attribute, retained window_name as displayName, turned
 #    automatic-rename off, and mirrored the allocated uids back.
@@ -954,6 +1012,39 @@ PROJMUX_NOTIFY_HOOK=/bin/true pmx focus pane "$legacy_pane" -p legacy-alpha -w "
 smoke_assert_file_contains "$create_root/short-focus.json" '"ok":true'
 smoke_assert_file_contains "$create_root/short-focus.json" '"dispatch":"notify-only"'
 smoke_assert_file_contains "$create_root/short-focus.json" "legacy-alpha:$legacy_window_id.$legacy_pane"
+
+# Lifecycle create deliberately does not auto-claim an unrelated blank legacy
+# session. The explicit repair route establishes its exact Project ownership
+# before subsequent creates select it.
+pmx reconcile resources --socket "$create_socket" -o json >"$create_root/alpha-reconcile.json"
+if [[ -z "$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)" ]]; then
+  echo "explicit resource reconcile did not establish legacy-alpha Project ownership" >&2
+  cat "$create_root/alpha-reconcile.json" >&2
+  exit 1
+fi
+
+# tmux 3.4 reports one @N/%N row for every session that links the Window. A
+# pre-existing linked Window must remain one handle with an owner set, while a
+# newly returned @N/%N is still uniquely attributable to legacy-alpha.
+ctx new-session -d -s linked-observer -c "$create_root/work/alpha" sleep 600
+ctx link-window -s "$legacy_window_id" -t linked-observer:
+linked_window_uid_before="$(ctx show-options -wqv -t "$legacy_window_id" @projmux_window_uid)"
+linked_pane_uid_before="$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)"
+pmx create window --project alpha --name linked-owner-set >"$create_root/linked-owner-set.out"
+linked_owner_set_pane="$(ctx display-message -p -t legacy-alpha:linked-owner-set '#{pane_id}')"
+if [[ "$(head -c 7 "$create_root/linked-owner-set.out")" != "window/" ]] ||
+  [[ -z "$(ctx show-options -wqv -t legacy-alpha:linked-owner-set @projmux_window_uid)" ]] ||
+  [[ -z "$(ctx show-options -pqv -t "$linked_owner_set_pane" @projmux_pane_uid)" ]]; then
+  echo "linked-window owner rows prevented exact new Window attribution" >&2
+  cat "$create_root/linked-owner-set.out" >&2
+  exit 1
+fi
+if [[ "$(ctx show-options -wqv -t "$legacy_window_id" @projmux_window_uid)" != "$linked_window_uid_before" ]] ||
+  [[ "$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)" != "$linked_pane_uid_before" ]]; then
+  echo "linked-window attribution changed pre-existing identity" >&2
+  exit 1
+fi
+ctx kill-session -t linked-observer
 
 # 4. right and down produce the two split axes, detached, with no focus change.
 #    The create runs inside a real pane and the completion signal is the exit
@@ -1112,6 +1203,55 @@ ctx list-panes -t "$legacy_window_id" \
   >"$create_root/unrelated-after.geometry"
 if ! cmp "$create_root/unrelated-before.geometry" "$create_root/unrelated-after.geometry"; then
   echo "same-axis create changed unrelated Window topology" >&2
+  exit 1
+fi
+
+# Concurrent same-shape creates serialize through the Registry lock and retain
+# exact transport identity: one stable Window, one primary Pane, and one exact
+# claimed Pane per racer, with the pre-existing Window/Pane bindings unchanged.
+phase0_stress_window_uid_before="$(ctx show-options -wqv -t "$legacy_window_id" @projmux_window_uid)"
+phase0_stress_pane_uid_before="$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)"
+phase0_stress_project_uid_before="$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)"
+phase0_stress_pids=()
+for phase0_racer in {1..8}; do
+  pmx create pane --project alpha --window phase0-stress --create-window -o pane-id \
+    >"$create_root/phase0-stress-$phase0_racer.out" \
+    2>"$create_root/phase0-stress-$phase0_racer.err" &
+  phase0_stress_pids+=("$!")
+done
+phase0_stress_failed=0
+for phase0_racer in {1..8}; do
+  if ! wait "${phase0_stress_pids[$((phase0_racer - 1))]}"; then
+    phase0_stress_failed=1
+    cat "$create_root/phase0-stress-$phase0_racer.err" >&2 || true
+  fi
+done
+if [[ "$phase0_stress_failed" != 0 ]]; then
+  echo "concurrent exact-socket create stress had a failed racer" >&2
+  exit 1
+fi
+if [[ "$(ctx list-windows -t legacy-alpha -F '#{window_name}' | grep -cx phase0-stress)" != 1 ]] ||
+  [[ "$(ctx list-panes -t legacy-alpha:phase0-stress -F '#{pane_id}' | wc -l)" != 9 ]]; then
+  echo "concurrent create stress did not converge on one Window with nine Panes" >&2
+  exit 1
+fi
+for phase0_racer in {1..8}; do
+  phase0_stress_pane="$(tr -d '[:space:]' <"$create_root/phase0-stress-$phase0_racer.out")"
+  if [[ ! "$phase0_stress_pane" =~ ^%[0-9]+$ ]] ||
+    [[ -z "$(ctx show-options -pqv -t "$phase0_stress_pane" @projmux_pane_uid)" ]]; then
+    echo "concurrent create stress lost exact Pane attribution: racer=$phase0_racer pane=$phase0_stress_pane" >&2
+    exit 1
+  fi
+done
+if [[ "$(ctx list-panes -t legacy-alpha:phase0-stress -F '#{@projmux_pane_uid}' | sed '/^$/d' | sort -u | wc -l)" != 9 ]] ||
+  [[ -z "$(ctx show-options -wqv -t legacy-alpha:phase0-stress @projmux_window_uid)" ]]; then
+  echo "concurrent create stress produced blank or duplicate Registry mirrors" >&2
+  exit 1
+fi
+if [[ "$(ctx show-options -wqv -t "$legacy_window_id" @projmux_window_uid)" != "$phase0_stress_window_uid_before" ]] ||
+  [[ "$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)" != "$phase0_stress_pane_uid_before" ]] ||
+  [[ "$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)" != "$phase0_stress_project_uid_before" ]]; then
+  echo "concurrent create stress contaminated a pre-existing identity" >&2
   exit 1
 fi
 
@@ -1654,6 +1794,10 @@ binding_config="$binding_root/config/projmux/tmux.conf"
 binding_pmx internal tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
   >"$binding_root/first-apply.out"
 smoke_assert_file_contains "$binding_root/first-apply.out" "reloaded tmux server -L $binding_socket"
+# The lifecycle apply imports legacy Window/Pane topology but deliberately does
+# not turn blank Project session identity into create ownership. Establish that
+# ownership through the explicit exact-socket repair route before create tests.
+binding_pmx reconcile resources --socket "$binding_socket" -o json >"$binding_root/first-reconcile.json"
 
 binding_window="$(binding_tmux display-message -p -t "$binding_session:0" '#{window_id}')"
 binding_pane="$(binding_tmux display-message -p -t "$binding_session:0.0" '#{pane_id}')"
@@ -2025,6 +2169,9 @@ delete_config="$delete_root/config/projmux/tmux.conf"
 delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" \
   >"$delete_root/apply.out"
 smoke_assert_file_contains "$delete_root/apply.out" "reloaded tmux server -L $delete_socket"
+# Creation must not auto-import a blank legacy Project session. Exercise the
+# canonical explicit repair route before the later create/delete parity cases.
+delete_pmx reconcile resources --socket "$delete_socket" -o json >"$delete_root/reconcile.out"
 
 delete_primary="$(delete_tmux display-message -p -t delete-alpha:primary '#{window_id}')"
 delete_sibling="$(delete_tmux display-message -p -t delete-alpha:sibling '#{window_id}')"

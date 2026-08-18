@@ -811,7 +811,9 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 			r.sessionOpts[row[0]] = map[string]string{
 				tmuxopts.ProjectUIDSession: row[2], tmuxopts.ProjectNameSession: row[3], tmuxopts.ProjectPathSession: row[4],
 			}
-			r.initialSessionUID[row[0]] = strings.TrimSpace(row[2])
+			if _, observed := r.initialSessionUID[row[0]]; !observed {
+				r.initialSessionUID[row[0]] = strings.TrimSpace(row[2])
+			}
 		}
 	case args[0] == "list-windows" && slices.Contains(args, "-a"):
 		for _, row := range rows {
@@ -822,7 +824,12 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 			uid := strings.TrimSpace(row[0])
 			r.windowAlias[id] = target
 			r.windowUID[id], r.windowUID[target] = uid, uid
-			r.initialWindowUID[id], r.initialWindowUID[target] = uid, uid
+			if _, observed := r.initialWindowUID[id]; !observed {
+				r.initialWindowUID[id] = uid
+			}
+			if _, observed := r.initialWindowUID[target]; !observed {
+				r.initialWindowUID[target] = uid
+			}
 		}
 	case args[0] == "list-panes" && slices.Contains(args, "-a"):
 		for _, row := range rows {
@@ -830,7 +837,9 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 				continue
 			}
 			r.paneUID[row[1]] = strings.TrimSpace(row[0])
-			r.initialPaneUID[row[1]] = strings.TrimSpace(row[0])
+			if _, observed := r.initialPaneUID[row[1]]; !observed {
+				r.initialPaneUID[row[1]] = strings.TrimSpace(row[0])
+			}
 		}
 	case args[0] == "list-windows" && flagArg(args, "-t") != "":
 		session := flagArg(args, "-t")
@@ -842,7 +851,12 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 			coord := session + ":" + row[0]
 			r.windowAlias[id] = coord
 			r.windowUID[id], r.windowUID[coord] = uid, uid
-			r.initialWindowUID[id], r.initialWindowUID[coord] = uid, uid
+			if _, observed := r.initialWindowUID[id]; !observed {
+				r.initialWindowUID[id] = uid
+			}
+			if _, observed := r.initialWindowUID[coord]; !observed {
+				r.initialWindowUID[coord] = uid
+			}
 			r.addObject(observedPlanObject{kind: coremetadata.KindWindow, target: id, uid: uid, session: session, windowIndex: row[0], automatic: row[2]})
 		}
 	case args[0] == "list-panes" && slices.Contains(args, "-s"):
@@ -853,7 +867,9 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 			}
 			id, uid := row[7], strings.TrimSpace(row[8])
 			r.paneUID[id] = uid
-			r.initialPaneUID[id] = uid
+			if _, observed := r.initialPaneUID[id]; !observed {
+				r.initialPaneUID[id] = uid
+			}
 			r.addObject(observedPlanObject{kind: coremetadata.KindPane, target: id, uid: uid, session: session, windowIndex: row[0], nameMirror: row[1]})
 		}
 	}

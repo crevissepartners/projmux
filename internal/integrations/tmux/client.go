@@ -48,6 +48,11 @@ const (
 // by the app layer's resolveSessionProjectPath.
 const ProjectPathSessionOption = "@projmux_project_path"
 
+// createOperationEnvironment is a private, session-scoped ownership marker
+// supplied only by the resource create transaction. It is intentionally not a
+// public PROJMUX_* hook variable.
+const createOperationEnvironment = "__projmux_create_operation"
+
 type commandRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
 }
@@ -579,6 +584,105 @@ func (c *Client) EnsureSessionWithEnvironment(ctx context.Context, sessionName, 
 	return nil
 }
 
+// EnsureSessionWithEnvironmentResult is the atomic identity-bearing variant
+// used by resource create. An inner same-name hit is returned as Created=false
+// instead of being indistinguishable from the session this call created.
+func (c *Client) EnsureSessionWithEnvironmentResult(ctx context.Context, sessionName, cwd string, additionalEnv map[string]string) (intmux.NewSessionResult, error) {
+	if strings.TrimSpace(sessionName) == "" {
+		return intmux.NewSessionResult{}, errSessionNameRequired
+	}
+	if strings.TrimSpace(cwd) == "" {
+		return intmux.NewSessionResult{}, errSessionCWDRequired
+	}
+
+	exists, err := c.sessionExists(ctx, sessionName)
+	if err != nil {
+		return intmux.NewSessionResult{}, err
+	}
+	if exists {
+		return intmux.NewSessionResult{Created: false}, nil
+	}
+	operationMarker := strings.TrimSpace(additionalEnv[createOperationEnvironment])
+	if operationMarker == "" {
+		return intmux.NewSessionResult{}, errors.New("create tmux session with result: private operation marker is required")
+	}
+	c.markLifecycle(diagnostics.OperationSessionCreate)
+
+	if err := c.runPreCreate(ctx, sessionName, cwd, "persistent"); err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
+		return intmux.NewSessionResult{}, err
+	}
+
+	sessionEnv := c.projectSessionEnv(cwd)
+	if len(additionalEnv) > 0 {
+		merged := make(map[string]string, len(sessionEnv)+len(additionalEnv))
+		maps.Copy(merged, sessionEnv)
+		maps.Copy(merged, additionalEnv)
+		sessionEnv = merged
+	}
+	result, err := c.createDetachedSessionResult(ctx, sessionName, cwd, sessionEnv)
+	if err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
+		return result, fmt.Errorf("create tmux session %q: %w", sessionName, err)
+	}
+
+	c.applyProjectSessionEnv(ctx, result.SessionID, sessionEnv)
+	c.setProjectPathAnchor(ctx, result.SessionID, cwd)
+	c.runPostCreate(ctx, sessionName, cwd, "persistent", result.PaneID)
+	if err := c.verifyCreatedSessionOwnership(ctx, result, operationMarker); err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
+		return result, err
+	}
+	return result, nil
+}
+
+// FinalizeSessionStartup runs startup only after the app has claimed and
+// mirrored the exact Session, initial Window, and primary Pane. Both boundary
+// checks use the same one-observation ownership proof as the post-create path,
+// so startup never targets a tuple lost before it began and a synchronous
+// startup mutation cannot escape the app transaction unnoticed.
+func (c *Client) FinalizeSessionStartup(ctx context.Context, result intmux.NewSessionResult, sessionName, cwd, operationMarker string) error {
+	if !result.Created {
+		return nil
+	}
+	if err := c.verifyCreatedSessionOwnership(ctx, result, operationMarker); err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
+		return err
+	}
+	c.runStartupCommand(ctx, sessionName, cwd, "persistent", result.PaneID)
+	if err := c.verifyCreatedSessionOwnership(ctx, result, operationMarker); err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
+		return err
+	}
+	return nil
+}
+
+// verifyCreatedSessionOwnership observes the private marker and the complete
+// exact tuple in one session-scoped tmux command. A former two-command marker
+// then Pane probe would permit a replacement between reads; one row cannot mix
+// ownership evidence from two different runtime states.
+func (c *Client) verifyCreatedSessionOwnership(ctx context.Context, result intmux.NewSessionResult, operationMarker string) error {
+	format := tmuxFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{E:"+createOperationEnvironment+"}")
+	output, err := c.runner.Run(ctx, "tmux", "list-panes", "-s", "-t", result.SessionID, "-F", format)
+	if err != nil {
+		return fmt.Errorf("verify created tmux session tuple %s/%s/%s: %w", result.SessionID, result.WindowID, result.PaneID, err)
+	}
+	matches := 0
+	for rawLine := range strings.SplitSeq(strings.TrimSpace(string(output)), "\n") {
+		fields := splitTmuxFields(strings.TrimRight(rawLine, "\r"), 4)
+		if len(fields) != 4 {
+			return fmt.Errorf("verify created tmux session tuple %s/%s/%s: malformed owner row %q", result.SessionID, result.WindowID, result.PaneID, rawLine)
+		}
+		if fields[0] == result.SessionID && fields[1] == result.WindowID && fields[2] == result.PaneID && fields[3] == operationMarker {
+			matches++
+		}
+	}
+	if matches != 1 {
+		return fmt.Errorf("verify created tmux session tuple %s/%s/%s: exact owner matches=%d", result.SessionID, result.WindowID, result.PaneID, matches)
+	}
+	return nil
+}
+
 // CreateEphemeralSession creates a detached tmux session and marks it as a
 // CreateEphemeralSession creates a projmux-managed ephemeral session.
 func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd string) error {
@@ -624,6 +728,15 @@ func (c *Client) createDetachedSession(ctx context.Context, sessionName, cwd str
 	})
 }
 
+func (c *Client) createDetachedSessionResult(ctx context.Context, sessionName, cwd string, env map[string]string) (intmux.NewSessionResult, error) {
+	return intmux.NewRunner(c.runner).NewSessionWithResult(ctx, intmux.NewSessionOptions{
+		Detached: true,
+		Session:  sessionName,
+		Cwd:      cwd,
+		Env:      env,
+	})
+}
+
 func (c *Client) projectSessionEnv(cwd string) map[string]string {
 	if c.lifecycle == nil {
 		return nil
@@ -637,6 +750,9 @@ func (c *Client) projectSessionEnv(cwd string) map[string]string {
 
 func (c *Client) applyProjectSessionEnv(ctx context.Context, sessionName string, env map[string]string) {
 	for _, key := range sortedMapKeys(env) {
+		if key == createOperationEnvironment {
+			continue
+		}
 		_, _ = c.runner.Run(ctx, "tmux", "set-environment", "-t", sessionName, key, env[key])
 	}
 }

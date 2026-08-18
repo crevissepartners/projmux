@@ -163,7 +163,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			return err
 		}
 		for i := range windows {
-			if err := c.materializeWindow(ctx, ledger, project, sessionName, &windows[i]); err != nil {
+			if err := c.materializeWindow(ctx, working, mutator, ledger, project, sessionName, &windows[i]); err != nil {
 				return err
 			}
 		}
@@ -174,7 +174,9 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			}
 			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workspace.CWD, launchArgv)
 			if paneID != "" {
-				ledger.record(runtimePane, paneID, work.pane.Metadata.UID)
+				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
+					return errors.Join(err, claimErr)
+				}
 				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
 					return errors.Join(err, mirrorErr)
 				}
@@ -213,7 +215,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			})
 		}
 		return nil
-	}); err != nil {
+	}, c.projectOwnershipGuard(flags)); err != nil {
 		return err
 	}
 	if err := c.confirmAgentActivations(activationTargets); err != nil {

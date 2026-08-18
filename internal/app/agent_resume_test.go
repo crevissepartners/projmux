@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // resumeFixtureConversation is the Codex conversation the resume fixtures store
@@ -332,6 +333,35 @@ func TestAgentResumeRebindsTheExistingAgentToANewManagedPane(t *testing.T) {
 	// Resume is detached like create: it rebinds a pane, it does not move the
 	// operator's view onto it.
 	assertNoClientMovement(t, tmux)
+}
+
+func TestAgentResumeRefusesForeignSelectedSessionBeforeReconcileOrLaunch(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
+	tmux := newFakeTmux()
+	foreign := tmux.addSession("beta")
+	foreign.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+	foreign.opts[tmuxopts.ProjectPathSession] = "/srv/beta"
+	registryBefore, runtimeBefore := store.snapshot(), tmux.state()
+	agent, launcher, _, _ := newTestAgentResumeCommand(t, store, tmux)
+
+	stdout, _, err := runRoute(t, agent, "resume", "codex", "--project", "beta")
+	if err == nil || stdout != "" || !strings.Contains(err.Error(), "refuse foreign tmux session") {
+		t.Fatalf("stdout/error = %q / %v", stdout, err)
+	}
+	if store.snapshot() != registryBefore || store.writes != 0 || tmux.state() != runtimeBefore {
+		t.Fatal("foreign-session resume refusal mutated Registry or tmux")
+	}
+	if len(splitWindowCalls(tmux)) != 0 || len(launcher.bound) != 0 {
+		t.Fatalf("foreign-session resume launched or bound a conversation: splits=%v bound=%v", splitWindowCalls(tmux), launcher.bound)
+	}
+	for _, call := range tmux.calls {
+		if len(call) > 0 && slices.Contains([]string{"set-environment", "set-option", "rename-window", "new-window", "split-window"}, call[0]) {
+			t.Fatalf("foreign-session resume refusal issued a tmux mutation: %v", call)
+		}
+	}
 }
 
 // TestAgentResumeFailuresStartNoConversationAtAll is acceptance criterion 2 and

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -158,9 +159,39 @@ func discoverProjectRoots(homeDir string, lookupEnv func(string) string) ([]stri
 // same operation discards everything it did: a pre-create hook refusal leaves
 // the registry file byte-identical even though reconciliation ran first.
 func (r *registryReconciler) reconcile(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string) error {
+	return r.reconcileGuarded(ctx, working, mutator, operationID, nil)
+}
+
+// reconcileGuarded uses two deliberately independent probes: liveSessions
+// supplies the reconciler's name snapshot, then guard inventories full session
+// identity and carries the selected stable $N when it exists. They are not one
+// atomic tmux snapshot. Safety comes from removing the selected name from the
+// earlier set before import: whether the name disappeared, appeared, or was
+// replaced between either probe and a later write, it can feed neither
+// importLiveSessions nor the unresolved set passed to reapplyUnresolvedBindings.
+// The create operation subsequently re-inventories ownership and leases the
+// exact $N itself.
+func (r *registryReconciler) reconcileGuarded(
+	ctx context.Context,
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	operationID string,
+	guard createPreReconcile,
+) error {
 	live, err := r.liveSessions(ctx)
 	if err != nil {
 		return err
+	}
+	reconcileLive := live
+	if guard != nil {
+		selected, err := guard(ctx, working.Clone(), mutator, operationID)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(selected.Name) != "" {
+			reconcileLive = maps.Clone(live)
+			delete(reconcileLive, selected.Name)
+		}
 	}
 
 	// One pre-pass observation, shared by both binding steps. It answers exactly
@@ -174,7 +205,7 @@ func (r *registryReconciler) reconcile(ctx context.Context, working *coremetadat
 		binder = coremetadata.NewRepairBindingMatcher(runtime)
 	}
 
-	unresolved, err := r.importLiveSessions(ctx, working, mutator, operationID, live, binder)
+	unresolved, err := r.importLiveSessions(ctx, working, mutator, operationID, reconcileLive, binder)
 	if err != nil {
 		return err
 	}
