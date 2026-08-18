@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -9,6 +10,82 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 )
+
+func TestCurrentProjectSessionQuotesPaneCWDAsOneLiteralShellArgv(t *testing.T) {
+	t.Parallel()
+
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "current-project-session")
+	if !ok {
+		t.Fatal("catalog missing current-project-session")
+	}
+	if got, want := action.TmuxBody, "switch open #{q:pane_current_path}"; got != want {
+		t.Fatalf("tmux body = %q, want %q", got, want)
+	}
+
+	root := t.TempDir()
+	binDir := filepath.Join(root, "fake bin's")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir fake binary directory: %v", err)
+	}
+	bin := filepath.Join(binDir, "projmux")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$PROJMUX_CAPTURE\"\n"), 0o700); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	rendered := renderTmuxBindingBody(bin, action)
+	const prefix = `run-shell "`
+	const suffix = `"`
+	if !strings.HasPrefix(rendered, prefix) || !strings.HasSuffix(rendered, suffix) {
+		t.Fatalf("rendered binding = %q, want one run-shell config string", rendered)
+	}
+	commandTemplate := strings.TrimSuffix(strings.TrimPrefix(rendered, prefix), suffix)
+	if got := strings.Count(commandTemplate, "#{q:pane_current_path}"); got != 1 {
+		t.Fatalf("rendered command = %q, q-modified cwd tokens = %d, want 1", commandTemplate, got)
+	}
+	if strings.Contains(commandTemplate, `"#{pane_current_path}"`) {
+		t.Fatalf("rendered command = %q, contains unsafe quote-wrapped raw cwd format", commandTemplate)
+	}
+
+	paths := []string{
+		"/tmp/work tree",
+		"/tmp/single'quote",
+		`/tmp/double"quote`,
+		"/tmp/$(touch PWN_DOLLAR)",
+		"/tmp/`touch PWN_TICK`",
+		"/tmp/semi; touch PWN_SEMI & echo injected | cat > PWN_REDIRECT",
+	}
+	for i, cwd := range paths {
+		t.Run(string(rune('a'+i)), func(t *testing.T) {
+			capture := filepath.Join(root, "argv-"+string(rune('a'+i)))
+			// tmux's q modifier emits a shell-escaped format value. Substitute
+			// the equivalent production quoting here, then execute the exact
+			// rendered run-shell command to prove its argv boundary.
+			command := strings.Replace(commandTemplate, "#{q:pane_current_path}", tmuxShellQuote(cwd), 1)
+			cmd := exec.Command("sh", "-c", command)
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "PROJMUX_CAPTURE="+capture)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("execute rendered command: %v\n%s", err, output)
+			}
+
+			raw, err := os.ReadFile(capture)
+			if err != nil {
+				t.Fatalf("read captured argv: %v", err)
+			}
+			got := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+			want := []string{"switch", "open", cwd}
+			if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+				t.Fatalf("argv = %#v, want %#v", got, want)
+			}
+		})
+	}
+
+	for _, marker := range []string{"PWN_DOLLAR", "PWN_TICK", "PWN_SEMI", "PWN_REDIRECT"} {
+		if _, err := os.Stat(filepath.Join(root, marker)); !os.IsNotExist(err) {
+			t.Fatalf("injection marker %s exists (stat error %v)", marker, err)
+		}
+	}
+}
 
 func TestKeyBindingCatalogGuaranteedLaunchDefaultsAreOnlyAltOneThroughFive(t *testing.T) {
 	t.Parallel()

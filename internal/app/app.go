@@ -368,10 +368,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 			name: "attach", target: a.attach, allowedFirst: []string{"project"},
 			replacement: func([]string) string { return "`projmux runtime attach ...`" },
 		},
-		"config": a.config,
-		"current": retiredRoute{
-			name: "current", replacement: func([]string) string { return "`projmux get pane --current -o cwd`" },
-		},
+		"config":      a.config,
 		"delete":      a.delete,
 		"describe":    a.describe,
 		"doctor":      a.doctor,
@@ -385,11 +382,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		// The hidden internal plumbing namespace. It aliases the machine-invoked
 		// routes below so generated tmux config, tmux hooks, and popup payloads
 		// can emit one namespace instead of eight top-level tokens.
-		"internal": internal,
-		"kill": retiredRoute{
-			name: "kill", replacement: func([]string) string { return "`projmux runtime stop ...`" },
-		},
-		"notify":       retiredRoute{name: "notify", replacement: notifyReplacement},
+		"internal":     internal,
 		"notification": a.notification,
 		"pin": legacyRouteGate{
 			name: "pin", target: a.pin, allowedFirst: []string{"project"},
@@ -406,26 +399,13 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		"resources": a.resources,
 		"restore":   a.restore,
 		"runtime":   runtime,
-		"sessions": retiredRoute{
-			name: "sessions", replacement: func([]string) string { return "`projmux runtime sessions ...`" },
-		},
-		"session-state": retiredRoute{name: "session-state", replacement: sessionStateReplacement},
-		"settings":      a.settings,
-		"setup":         a.setup,
-		"shell":         a.shell,
-		"switch":        a.switcher,
-		"tag": retiredRoute{
-			name: "tag", replacement: func([]string) string { return "`projmux runtime tag ...`" },
-		},
-		"update": a.update,
-		"upgrade": retiredRoute{
-			name: "upgrade", replacement: func([]string) string { return "`projmux update apply ...`" },
-		},
-		"usage": retiredRoute{
-			name: "usage", replacement: func([]string) string { return "`projmux agent usage ...`" },
-		},
-		"welcome": a.welcome,
-		"window":  a.window,
+		"settings":  a.settings,
+		"setup":     a.setup,
+		"shell":     a.shell,
+		"switch":    a.switcher,
+		"update":    a.update,
+		"welcome":   a.welcome,
+		"window":    a.window,
 	}
 	handlers := make(map[string]cli.Handler, len(commands))
 	for token, command := range commands {

@@ -4,7 +4,6 @@ attach hidden=false disableFlagParsing=true args=true children=0
 attention hidden=false disableFlagParsing=true args=true children=0
 config hidden=false disableFlagParsing=true args=true children=0
 create hidden=false disableFlagParsing=true args=true children=0
-current hidden=true disableFlagParsing=true args=true children=0
 delete hidden=false disableFlagParsing=true args=true children=0
 describe hidden=false disableFlagParsing=true args=true children=0
 diagnostics hidden=false disableFlagParsing=true args=true children=0
@@ -14,9 +13,7 @@ get hidden=false disableFlagParsing=true args=true children=0
 help hidden=false disableFlagParsing=true args=true children=0
 hook hidden=false disableFlagParsing=true args=true children=0
 internal hidden=true disableFlagParsing=true args=true children=0
-kill hidden=true disableFlagParsing=true args=true children=0
 notification hidden=false disableFlagParsing=true args=true children=0
-notify hidden=true disableFlagParsing=true args=true children=0
 pin hidden=false disableFlagParsing=true args=true children=0
 prune hidden=false disableFlagParsing=true args=true children=0
 quit hidden=false disableFlagParsing=true args=true children=0
@@ -26,16 +23,11 @@ rename hidden=false disableFlagParsing=true args=true children=0
 resources hidden=false disableFlagParsing=true args=true children=0
 restore hidden=false disableFlagParsing=true args=true children=0
 runtime hidden=false disableFlagParsing=true args=true children=0
-session-state hidden=true disableFlagParsing=true args=true children=0
-sessions hidden=true disableFlagParsing=true args=true children=0
 settings hidden=false disableFlagParsing=true args=true children=0
 setup hidden=false disableFlagParsing=true args=true children=0
 shell hidden=false disableFlagParsing=true args=true children=0
 switch hidden=false disableFlagParsing=true args=true children=0
-tag hidden=true disableFlagParsing=true args=true children=0
 update hidden=false disableFlagParsing=true args=true children=0
-upgrade hidden=true disableFlagParsing=true args=true children=0
-usage hidden=true disableFlagParsing=true args=true children=0
 version hidden=false disableFlagParsing=true args=true children=0
 welcome hidden=false disableFlagParsing=true args=true children=0
 window hidden=false disableFlagParsing=true args=true children=0

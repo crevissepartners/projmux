@@ -164,3 +164,46 @@ func TestStaleUnmanagedLegacyHookRemediationIsExplicit(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyRetirementLedgerPinsUnaffectedCanonicalResourceSurface(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..")
+	read := func(rel string) string {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		return string(raw)
+	}
+
+	ledger := read("docs/legacy-cli-retirement.md")
+	for _, want := range []string{
+		"## Post-retirement invariants",
+		"`--project` / `-p`",
+		"`--window` / `-w`",
+		"`--all-projects` / `-A`",
+		"Registry-first startup",
+		"explicitly selected Offline Window",
+		"foreign tmux",
+		"issuing a tmux `kill-window`",
+		"Root help and `docs/cli.md` remain generated",
+	} {
+		if !strings.Contains(ledger, want) {
+			t.Errorf("retirement ledger is missing current-surface invariant %q", want)
+		}
+	}
+
+	reference := read("docs/cli.md")
+	for _, want := range []string{
+		"projmux create pane {--project <ref> | -p <ref>} [--window <ref> | -w <ref>]...",
+		"projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A]",
+		"Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present",
+		"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>]",
+	} {
+		if !strings.Contains(reference, want) {
+			t.Errorf("generated CLI reference lost preserved retirement boundary %q", want)
+		}
+	}
+}

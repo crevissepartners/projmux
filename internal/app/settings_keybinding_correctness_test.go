@@ -821,11 +821,9 @@ func TestSettingsKeybindingTypedNormalizationRejectionIsObservable(t *testing.T)
 }
 
 // TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler is the internal
-// current-directory navigation contract. The action keeps its legacy `current`
-// route: the manifest classifies the route's canonical projection as the
-// read-only `get pane` cwd field, while the action's own outcome remains
-// ensure-and-attach. None of that internal boundary becomes a passive detail
-// row.
+// current-directory navigation contract. The action passes the tmux cwd into
+// the retained `switch open` shortcut, whose outcome remains ensure-and-attach.
+// None of that internal boundary becomes a passive detail row.
 func TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler(t *testing.T) {
 	t.Parallel()
 
@@ -851,21 +849,21 @@ func TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler(t *testing.T) {
 	if !ok {
 		t.Fatalf("current-project-session has no pinned handler")
 	}
-	if handler.Invocation != "projmux current" {
-		t.Fatalf("handler invocation = %q, want the exact shipped route", handler.Invocation)
+	if handler.Invocation != `projmux switch open #{q:pane_current_path}` {
+		t.Fatalf("handler invocation = %q, want the canonical cwd navigation route", handler.Invocation)
 	}
-	route, found := cli.LookupRoute("current")
+	route, found := cli.LookupRoute("switch")
 	if !found {
-		t.Fatalf("shipped manifest lost the `current` route")
+		t.Fatalf("shipped manifest lost the `switch` shortcut")
 	}
-	if handler.Disposition != string(route.Disposition) || handler.Disposition != string(cli.DispositionCompatibility) {
-		t.Fatalf("handler disposition = %q, want the manifest compatibility classification", handler.Disposition)
+	if handler.Disposition != string(route.Disposition) || handler.Disposition != string(cli.DispositionShortcut) {
+		t.Fatalf("handler disposition = %q, want the manifest shortcut classification", handler.Disposition)
 	}
 	if strings.Join(handler.Canonical, ",") != strings.Join(route.Canonical, ",") {
 		t.Fatalf("handler canonical = %#v, want the manifest list %#v", handler.Canonical, route.Canonical)
 	}
-	if !strings.Contains(handler.Note, "read-only input step only") {
-		t.Fatalf("handler note = %q, want the read-only/ensure boundary spelled out", handler.Note)
+	if !strings.Contains(handler.Note, "ensure/attach outcome") {
+		t.Fatalf("handler note = %q, want the cwd/ensure boundary spelled out", handler.Note)
 	}
 
 	cmd := keybindingCorrectnessCommand(t, t.TempDir(), nil)
@@ -877,7 +875,7 @@ func TestSettingsKeybindingCurrentDirectoryActionPinsItsHandler(t *testing.T) {
 		!hasEntryLabelContaining(entries, "+ Add binding") {
 		t.Fatalf("current-directory detail = %#v, want state and binding actions", entries)
 	}
-	for _, forbidden := range []string{"Result kind", "ensure and attach the Project runtime", "read-only input, not the outcome", "projmux current", "compatibility", "get pane", "read-only input step only"} {
+	for _, forbidden := range []string{"Result kind", "ensure and attach the Project runtime", "read-only input, not the outcome", "projmux switch", "shortcut", "ensure/attach outcome"} {
 		if hasEntryLabelContaining(entries, forbidden) {
 			t.Fatalf("current-directory detail = %#v, internal contract %q became visible", entries, forbidden)
 		}

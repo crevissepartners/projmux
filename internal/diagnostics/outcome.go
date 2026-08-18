@@ -16,7 +16,7 @@ func RecordOutcome(store *Store, args []string, runID, version, muxBackend strin
 	if lifecycleRecorded {
 		return nil
 	}
-	// Phase 2 retirement tombstones and removed pre-namespace aliases are a
+	// Rejected mixed-root compatibility argv and fully removed roots are a
 	// strict zero-side-effect boundary. In particular, reporting their expected
 	// exit-2/exit-1 result must not create the diagnostics journal they were
 	// forbidden to touch during dispatch.

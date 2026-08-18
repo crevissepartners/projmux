@@ -1,12 +1,17 @@
 # Legacy CLI Retirement Ledger
 
-Phase 2 removed the human-facing compatibility argv below. Those non-AI
-tombstones return exit 2, write no stdout, perform no command or pre-dispatch
-migration side effect, and print their replacement on stderr. Phase 3 removes
-the final hidden `ai` producer dispatcher and catalog node: every `projmux ai
-...` invocation now follows the root unknown-command contract (exit 1, no
-stdout or side effect, and root help plus `unknown command: ai` on stderr).
-The seven removed old internal top-level aliases use the same root contract.
+Phase 2 removed the human-facing compatibility argv below. The mixed roots
+retain only their canonical children: rejected `attach`, `focus`, `pin`, and
+`prune` compatibility shapes return exit 2 with exact replacement guidance and
+no stdout, handler reach, or pre-dispatch migration. The fully removed roots
+`current`, `kill`, `notify`, `sessions`, `session-state`, `tag`, `upgrade`, and
+`usage` are absent from the catalog and handler map, so every argv under them
+uses the ordinary root unknown-command contract (exit 1, no stdout or side
+effect, and root help plus `unknown command: <root>` on stderr).
+
+Phase 3 removed the final hidden `ai` producer dispatcher and catalog node.
+The `ai` root and the seven removed old internal top-level aliases use that same
+unknown-command contract.
 
 | Removed argv | Replacement |
 | --- | --- |
@@ -84,3 +89,27 @@ The old notify action drove an immediate desktop-notification path from pane
 state; `create notification` creates a queue row and therefore requires an
 explicit `--text` and `--target`. The old reset action cleared transient
 desktop dedupe state, which the public queue commands do not reproduce.
+
+## Post-retirement invariants
+
+This breaking boundary removes only the compatibility argv listed above. It
+does not narrow the canonical resource model that shipped after the retirement
+work began. In particular:
+
+- Resource Project and Window scope keeps the paired `--project` / `-p` and
+  `--window` / `-w` options. Plural Window, Pane, and Agent reads keep
+  `--all-projects` / `-A`.
+- Registry-first startup and explicit reconciliation keep materializing the
+  recorded Project, Window, and Pane topology without adopting a foreign tmux
+  identity.
+- An explicitly selected Offline Window remains canonically deletable from the
+  Registry, cascading through its descendant Agent and Pane records without
+  issuing a tmux `kill-window` for a mirror that does not exist.
+- Root help and `docs/cli.md` remain generated from the current command
+  manifest. They advertise the canonical resource routes and their current
+  scope options, never the retired roots.
+
+These are preservation constraints for the retirement release, not aliases
+for the removed commands. A future change to one of these contracts needs its
+own feature or fix decision and must not be smuggled into compatibility
+cleanup.

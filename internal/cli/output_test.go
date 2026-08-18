@@ -159,17 +159,9 @@ func TestGetRouteOwnsTheReadKindFamily(t *testing.T) {
 		t.Fatal("pane-id left the shared catalog; only the read-route advertisement was meant to change")
 	}
 
-	// The compatibility route it will eventually replace is untouched: the
-	// canonical read is added alongside it and no old route is removed or
-	// reclassified.
-	current, ok := LookupRoute("current")
-	if !ok {
-		t.Fatal("current route missing")
-	}
-	if current.Disposition != DispositionCompatibility {
-		t.Fatalf("current disposition = %q, want compatibility", current.Disposition)
-	}
-	if len(current.Children) != 0 {
-		t.Fatalf("current grew sub-routes: %#v", current.Children)
+	// The compatibility root has been removed; the canonical exact-one read is
+	// the only command-manifest owner of the cwd projection.
+	if _, ok := LookupRoute("current"); ok {
+		t.Fatal("retired current root remains in the command manifest")
 	}
 }

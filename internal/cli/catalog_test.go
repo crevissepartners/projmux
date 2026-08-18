@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-// TestRouteCoverageHasExactlyOneDispositionAndNoOrphans audits the Phase 2
-// tree: 31 public canonical/shortcut roots, nine hidden compatibility
-// tombstones that only return migration errors (with the exact AI producer
-// exception), and the hidden internal namespace.
+// TestRouteCoverageHasExactlyOneDispositionAndNoOrphans audits the final tree:
+// 31 public canonical/shortcut roots and the hidden internal namespace. Retired
+// compatibility roots are absent rather than represented as dispatchable
+// tombstones.
 func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	t.Parallel()
 
@@ -45,16 +45,13 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		if route.Summary == "" {
 			t.Fatalf("route %q has no summary", route.Name)
 		}
-		if route.Retired && (!route.Hidden || route.Disposition != DispositionCompatibility || len(route.Children) != 0 || len(route.Canonical) != 0 || len(route.Usage) != 0) {
-			t.Fatalf("retired route %q leaks catalog metadata: %#v", route.Name, route)
-		}
 	}
 
 	if public != 31 {
 		t.Fatalf("public route count = %d, want 31", public)
 	}
-	if hidden != 9 {
-		t.Fatalf("hidden route count = %d, want 9", hidden)
+	if hidden != 1 {
+		t.Fatalf("hidden route count = %d, want 1", hidden)
 	}
 	wantPublicTally := map[Disposition]int{
 		DispositionCanonical: 24,
@@ -64,10 +61,9 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		t.Fatalf("public disposition tally = %v, want %v", publicTally, wantPublicTally)
 	}
 	wantTally := map[Disposition]int{
-		DispositionCanonical:     24,
-		DispositionShortcut:      7,
-		DispositionCompatibility: 8,
-		DispositionInternal:      1,
+		DispositionCanonical: 24,
+		DispositionShortcut:  7,
+		DispositionInternal:  1,
 	}
 	if !reflect.DeepEqual(tally, wantTally) {
 		t.Fatalf("disposition tally = %v, want %v", tally, wantTally)
@@ -187,7 +183,7 @@ func TestOnlyTheExplicitShortcutSetLeavesARouteUnmapped(t *testing.T) {
 
 	unmapped := map[string]bool{}
 	walkRoutes(Routes(), func(path []string, route Route) {
-		if len(route.Canonical) == 0 && !route.Retired {
+		if len(route.Canonical) == 0 {
 			unmapped[strings.Join(path, " ")] = true
 		}
 	})
@@ -231,14 +227,13 @@ func TestOnlyTheExplicitShortcutSetLeavesARouteUnmapped(t *testing.T) {
 	}
 }
 
-func TestTagProjectIsRetiredWithTheTagCompatibilityRoot(t *testing.T) {
+func TestTagProjectIsRemovedWithTheTagCompatibilityRoot(t *testing.T) {
 	t.Parallel()
 	if _, ok := LookupCanonicalRoute("tag project"); ok {
 		t.Fatal("tag project remains a false canonical target")
 	}
-	path, route, ok := Resolve([]string{"tag", "project"})
-	if !ok || !reflect.DeepEqual(path, []string{"tag"}) || !route.Retired {
-		t.Fatalf("tag project resolved to %v (%#v, ok=%v), want the retired tag tombstone", path, route, ok)
+	if path, route, ok := Resolve([]string{"tag", "project"}); ok {
+		t.Fatalf("tag project resolved to %v (%#v), want the removed root", path, route)
 	}
 }
 
@@ -446,26 +441,18 @@ func walkRoutes(nodes []Route, visit func(path []string, route Route)) {
 	walk(nil, nodes)
 }
 
-// TestRetirementCatalogMatchesTheRemainingLedger pins both halves of the
-// breaking tree:
-// public routes retain an error tombstone, while producer-zero internal aliases
-// disappear completely and therefore take the root unknown-command path.
+// TestRetirementCatalogMatchesTheRemainingLedger pins the final breaking tree:
+// every removed root disappears completely and takes the ordinary root
+// unknown-command path.
 func TestRetirementCatalogMatchesTheRemainingLedger(t *testing.T) {
 	t.Parallel()
 
-	retired := []string{"current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage"}
-	for _, token := range retired {
-		route, ok := LookupRoute(token)
-		if !ok {
-			t.Fatalf("retired public route %q has no error tombstone", token)
-		}
-		if !route.Retired || !route.Hidden || route.Disposition != DispositionCompatibility {
-			t.Fatalf("route %q = %#v, want a hidden compatibility tombstone", token, route)
-		}
-	}
-	for _, token := range []string{"ai", "tmux", "status", "statusbar", "preview", "session-popup", "key-broker", "popup-wait-key"} {
+	for _, token := range []string{
+		"ai", "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",
+		"tmux", "status", "statusbar", "preview", "session-popup", "key-broker", "popup-wait-key",
+	} {
 		if _, ok := LookupRoute(token); ok {
-			t.Errorf("retired internal top-level alias %q remains in the command catalog", token)
+			t.Errorf("retired top-level alias %q remains in the command catalog", token)
 		}
 	}
 	for _, token := range []string{"attach", "focus", "pin", "prune"} {
