@@ -1676,6 +1676,131 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-bad-kind.err" "this r
 
 echo ">> runtime diagnostics root=$PROJMUX_SMOKE_WORKDIR app_socket=$PROJMUX_RUNTIME_APP_ACTUAL guest_socket=$PROJMUX_RUNTIME_GUEST_ACTUAL sibling_unchanged=yes writes=0"
 
+# Registry-first primary navigation. The Projects surface used to enumerate the
+# machine: a filesystem scan produced the rows and `list-sessions` decided which
+# of them existed, so a Project whose session was closed vanished from the list
+# whose purpose is reopening it. The rows come from the Registry now, and the
+# runtime is an overlay.
+#
+# `switch preview` is the non-interactive projection of that view model, so this
+# block can assert the row set, the order, the status overlay, the host header,
+# and the zero-write property without driving a picker. It reuses the servers and
+# the Registry the runtime block above already built: the same app-owned socket,
+# the same guest socket, the same untouched sibling.
+nav_expect_rows() {
+  # The fixture Project owns exactly three managed rows -- itself, its Window,
+  # and that Window's shell Pane -- and every one of them has to carry the status
+  # the argument names. Counting them is what proves the projection enumerates the
+  # Registry rather than whatever tmux happened to answer with.
+  local file="$1"
+  local status="$2"
+  local rows
+  smoke_assert_file_contains "$file" "project "
+  smoke_assert_file_contains "$file" "window "
+  smoke_assert_file_contains "$file" "pane "
+  rows="$(tail -n +2 "$file" | awk -v want="$status" 'NF > 2 && $(NF - 1) == want' | wc -l | tr -d ' ')"
+  if [[ "$rows" != "3" ]]; then
+    echo "expected 3 registry rows with status $status in $file, got $rows" >&2
+    cat "$file" >&2
+    exit 1
+  fi
+}
+
+PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  TMUX="$PROJMUX_RUNTIME_APP_ACTUAL,$runtime_app_pid,0" \
+  "$bin" switch preview "uid:$runtime_project_uid" >"$PROJMUX_SMOKE_WORKDIR/nav-app.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-app.txt" "host app-owned  transport tmux -S $PROJMUX_RUNTIME_APP_ACTUAL"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-app.txt" "source inherited-tmux-env"
+nav_expect_rows "$PROJMUX_SMOKE_WORKDIR/nav-app.txt" "live"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-app.txt" "open,delete"
+# The runtime-only objects on this very server are not rows. That is the whole
+# separation: they are reachable, and they are reachable somewhere else.
+for nav_absent in runtime-home runtime-scratch ghost plain; do
+  smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/nav-app.txt" "$nav_absent"
+done
+
+# Acceptance: the same Registry renders the same rows in the same order with no
+# tmux server at all, with the status downgraded rather than the row dropped, and
+# with the action that would bring it back.
+env -u TMUX -u TMUX_PANE PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  "$bin" switch preview "uid:$runtime_project_uid" >"$PROJMUX_SMOKE_WORKDIR/nav-dark.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "host unknown  transport no tmux transport"
+nav_expect_rows "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "unknown"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "start,delete"
+smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "open,delete"
+# Identity and order are the same list; only the overlay differs. nav_shape
+# drops the header line and the two trailing columns -- status and actions --
+# leaving the kind and the name of every row in view order. Comparing that is
+# what "a refresh cannot re-identify or reorder a row" means.
+nav_shape() {
+  tail -n +2 "$1" | awk 'NF > 2 { NF -= 2; print }'
+}
+nav_shape "$PROJMUX_SMOKE_WORKDIR/nav-app.txt" >"$PROJMUX_SMOKE_WORKDIR/nav-app.shape"
+nav_shape "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" >"$PROJMUX_SMOKE_WORKDIR/nav-dark.shape"
+if [[ ! -s "$PROJMUX_SMOKE_WORKDIR/nav-app.shape" ]]; then
+  echo "registry-first navigation projected no rows for the fixture Project" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/nav-app.txt" >&2
+  exit 1
+fi
+if ! diff -u "$PROJMUX_SMOKE_WORKDIR/nav-app.shape" "$PROJMUX_SMOKE_WORKDIR/nav-dark.shape" \
+  >"$PROJMUX_SMOKE_WORKDIR/nav.rowdiff"; then
+  echo "registry-first rows changed identity or order when tmux went away" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/nav.rowdiff" >&2
+  exit 1
+fi
+
+# The standalone host is the same Registry, the same rows, and the same
+# eligibility; only the host header differs.
+runtime_guest_pid="$(runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{pid}')"
+PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  TMUX="$PROJMUX_RUNTIME_GUEST_ACTUAL,$runtime_guest_pid,0" \
+  "$bin" switch preview "uid:$runtime_project_uid" >"$PROJMUX_SMOKE_WORKDIR/nav-guest.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-guest.txt" "host standalone  transport tmux -S $PROJMUX_RUNTIME_GUEST_ACTUAL"
+nav_expect_rows "$PROJMUX_SMOKE_WORKDIR/nav-guest.txt" "live"
+smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/nav-guest.txt" "runtime-operator"
+nav_shape "$PROJMUX_SMOKE_WORKDIR/nav-guest.txt" >"$PROJMUX_SMOKE_WORKDIR/nav-guest.shape"
+if ! diff -u "$PROJMUX_SMOKE_WORKDIR/nav-app.shape" "$PROJMUX_SMOKE_WORKDIR/nav-guest.shape" \
+  >"$PROJMUX_SMOKE_WORKDIR/nav.hostdiff"; then
+  echo "registry-first rows differ between the app-owned and standalone hosts" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/nav.hostdiff" >&2
+  exit 1
+fi
+
+# The Runtime link states what it leads to, per exact host.
+PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  TMUX="$PROJMUX_RUNTIME_APP_ACTUAL,$runtime_app_pid,0" \
+  "$bin" switch preview __projmux_runtime__ >"$PROJMUX_SMOKE_WORKDIR/nav-link-app.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-link-app.txt" "control 1"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-link-app.txt" "ephemeral 1"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-link-app.txt" "unattributed"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-link-app.txt" "recoverable 1"
+env -u TMUX -u TMUX_PANE PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  "$bin" switch preview __projmux_runtime__ >"$PROJMUX_SMOKE_WORKDIR/nav-link-dark.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-link-dark.txt" "Runtime - no tmux transport"
+
+# Outside tmux with no socket flag the navigation read probes no default server
+# and creates no state.
+nav_outside_state="$PROJMUX_SMOKE_WORKDIR/nav-outside-state"
+env -u TMUX -u TMUX_PANE PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$nav_outside_state" \
+  "$bin" switch preview __projmux_runtime__ >"$PROJMUX_SMOKE_WORKDIR/nav-outside.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-outside.txt" "transport no tmux transport"
+if [[ -e "$nav_outside_state/projmux/metadata/registry.json" ]]; then
+  echo "a no-transport navigation read created a Registry" >&2
+  exit 1
+fi
+
+# Zero writes across every navigation read above: no Registry byte, no tmux
+# object on either host, and no sibling socket.
+cmp "$PROJMUX_SMOKE_WORKDIR/runtime-registry.before" "$runtime_registry"
+runtime_snapshot "$PROJMUX_RUNTIME_APP_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/nav-app.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/runtime-app.before" "$PROJMUX_SMOKE_WORKDIR/nav-app.after"
+runtime_snapshot "$PROJMUX_RUNTIME_GUEST_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/nav-guest.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/runtime-guest.before" "$PROJMUX_SMOKE_WORKDIR/nav-guest.after"
+runtime_snapshot "$PROJMUX_RUNTIME_SIBLING_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/nav-sibling.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/runtime-sibling.before" "$PROJMUX_SMOKE_WORKDIR/nav-sibling.after"
+
+echo ">> registry-first navigation root=$PROJMUX_SMOKE_WORKDIR app_host=app-owned guest_host=standalone rows=identical sibling_unchanged=yes writes=0"
+
 # Durable Registry envelope. registry.json is the source of truth for managed
 # identity and desired topology, so the installed shape has to tell a legitimate
 # first use apart from a lost Registry, keep the bytes every semantic write

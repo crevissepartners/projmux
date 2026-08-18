@@ -93,6 +93,12 @@ type recentWindowCommand struct {
 	homeDir              func() (string, error)
 	now                  func() time.Time
 	sidebarPreviewActive func() bool
+	// navigation is the shared zero-write Registry read seam. It supplies the
+	// attribution that decides which recent windows are managed rows.
+	navigation *registryNavigationReader
+	// runtime is the Runtime diagnostics route the withheld windows are reached
+	// through.
+	runtime rawArgvCommand
 }
 
 func newRecentWindowCommand(recorders ...*diagnostics.LifecycleRecorder) *recentWindowCommand {
@@ -162,7 +168,12 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 	if err != nil {
 		return fmt.Errorf("load recent windows: %w", err)
 	}
-	if len(candidates) == 0 {
+	// Managed rows only. A window projmux does not own is reached through the
+	// Runtime surface, not from a list whose Enter is "go to my window".
+	attribution := c.attributeRecentWindows(ctx, candidates)
+	candidates = attribution.managed
+	runtimeItem, hasRuntimeItem := attribution.runtimeLinkItem()
+	if len(candidates) == 0 && !hasRuntimeItem {
 		c.displayMessage(ctx, stderr, "no recent windows")
 		return nil
 	}
@@ -171,6 +182,10 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 	}
 
 	items, byValue, initialIndex := recentWindowPickerItems(candidates, c.currentTime(), c.recentWindowAIBadgeStyle())
+	items = attribution.annotate(items, candidates)
+	if hasRuntimeItem {
+		items = append(items, runtimeItem)
+	}
 	result, err := c.nativePicker.Run(recentWindowPickerOptions(items, initialIndex, c.homeDir, c.lookupEnv))
 	if err != nil {
 		return fmt.Errorf("run recent windows picker: %w", err)
@@ -178,6 +193,12 @@ func (c *recentWindowCommand) Run(args []string, _ io.Writer, stderr io.Writer) 
 	value := strings.TrimSpace(result.Value)
 	if value == "" {
 		return nil
+	}
+	if value == recentWindowRuntimeValue {
+		if c.runtime == nil {
+			return fmt.Errorf("recent window runtime diagnostics handler is not configured")
+		}
+		return c.runtime.Run([]string{"diagnostics"}, stderr, stderr)
 	}
 	selected, ok := byValue[value]
 	if !ok {

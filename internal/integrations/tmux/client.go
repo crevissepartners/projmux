@@ -286,6 +286,10 @@ type PopupOptions = intmux.PopupOptions
 // RecentSessionSummary describes one recent tmux session with lightweight row
 // metadata for session pickers.
 type RecentSessionSummary struct {
+	// ID is the stable `$N` tmux session id. It is the exact handle a
+	// Registry-first surface pairs this row with a resolved graph node by: a
+	// session name can be renamed or reused between two reads, an id cannot.
+	ID          string
 	Name        string
 	Attached    bool
 	WindowCount int
@@ -352,7 +356,7 @@ func (c *Client) CurrentSessionName(ctx context.Context) (string, error) {
 
 // RecentSessions lists tmux session names ordered by most-recent activity first.
 func (c *Client) RecentSessions(ctx context.Context) ([]string, error) {
-	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", tmuxFormat("#{session_activity}", "#{session_name}", "#{session_attached}", "#{session_windows}"))
+	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", tmuxFormat("#{session_id}", "#{session_activity}", "#{session_name}", "#{session_attached}", "#{session_windows}"))
 	if err != nil {
 		return nil, fmt.Errorf("list recent tmux sessions: %w", err)
 	}
@@ -375,7 +379,7 @@ func (c *Client) ExistingSessions(ctx context.Context) (map[string]bool, error) 
 // RecentSessionSummaries lists tmux session rows ordered by most-recent
 // activity first, enriched with attachment and pane metadata.
 func (c *Client) RecentSessionSummaries(ctx context.Context) ([]RecentSessionSummary, error) {
-	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", tmuxFormat("#{session_activity}", "#{session_name}", "#{session_attached}", "#{session_windows}"))
+	output, err := c.runner.Run(ctx, "tmux", "list-sessions", "-F", tmuxFormat("#{session_id}", "#{session_activity}", "#{session_name}", "#{session_attached}", "#{session_windows}"))
 	if err != nil {
 		return nil, fmt.Errorf("list recent tmux sessions: %w", err)
 	}
@@ -397,6 +401,7 @@ func (c *Client) RecentSessionSummaries(ctx context.Context) ([]RecentSessionSum
 	summaries := make([]RecentSessionSummary, 0, len(rows))
 	for _, row := range rows {
 		summary := RecentSessionSummary{
+			ID:          row.id,
 			Name:        row.name,
 			Attached:    row.attached,
 			WindowCount: row.windows,
@@ -1374,6 +1379,7 @@ func tmuxFormat(fields ...string) string {
 }
 
 type recentSession struct {
+	id       string
 	name     string
 	attached bool
 	windows  int
@@ -1394,29 +1400,30 @@ func parseRecentSessionRows(output []byte) ([]recentSession, error) {
 		}
 
 		fields := recentSessionFields(rawLine)
-		if len(fields) != 4 {
+		if len(fields) != 5 {
 			return nil, fmt.Errorf("parse recent tmux sessions: malformed row %q", rawLine)
 		}
 
-		activity, err := strconv.ParseInt(strings.TrimSpace(fields[0]), 10, 64)
+		activity, err := strconv.ParseInt(strings.TrimSpace(fields[1]), 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("parse recent tmux sessions for %q: %w", strings.TrimSpace(fields[1]), errSessionActivityInvalid)
+			return nil, fmt.Errorf("parse recent tmux sessions for %q: %w", strings.TrimSpace(fields[2]), errSessionActivityInvalid)
 		}
-		attached, err := parseAttachedFlag(fields[2])
+		attached, err := parseAttachedFlag(fields[3])
 		if err != nil {
-			return nil, fmt.Errorf("parse recent tmux sessions for %q: %w", strings.TrimSpace(fields[1]), err)
+			return nil, fmt.Errorf("parse recent tmux sessions for %q: %w", strings.TrimSpace(fields[2]), err)
 		}
-		windows, err := strconv.Atoi(strings.TrimSpace(fields[3]))
+		windows, err := strconv.Atoi(strings.TrimSpace(fields[4]))
 		if err != nil {
 			return nil, errWindowPaneCountInvalid
 		}
 
-		sessionName := strings.TrimSpace(fields[1])
+		sessionName := strings.TrimSpace(fields[2])
 		if sessionName == "" {
 			return nil, fmt.Errorf("parse recent tmux sessions: %w", errSessionNameRequired)
 		}
 
 		sessions = append(sessions, recentSession{
+			id:       strings.TrimSpace(fields[0]),
 			name:     sessionName,
 			attached: attached,
 			windows:  windows,
@@ -1436,21 +1443,24 @@ func parseRecentSessionRows(output []byte) ([]recentSession, error) {
 }
 
 func recentSessionFields(rawLine string) []string {
-	if fields := splitTmuxFields(rawLine, 4); len(fields) == 4 {
+	if fields := splitTmuxFields(rawLine, 5); len(fields) == 5 {
 		return fields
 	}
 
 	// Some tmux/script combinations render literal tab separators as
 	// underscores in `list-sessions -F` output. Session names can also contain
-	// underscores, so preserve the first field and the final two fields, then
-	// rejoin the middle as the session name.
+	// underscores, so preserve the leading id and activity fields and the final
+	// two fields, then rejoin the middle as the session name. The session id is
+	// safe to split on because tmux renders it as `$N`, which carries no
+	// underscore.
 	parts := strings.Split(rawLine, "_")
-	if len(parts) < 4 {
+	if len(parts) < 5 {
 		return parts
 	}
 	return []string{
 		parts[0],
-		strings.Join(parts[1:len(parts)-2], "_"),
+		parts[1],
+		strings.Join(parts[2:len(parts)-2], "_"),
 		parts[len(parts)-2],
 		parts[len(parts)-1],
 	}

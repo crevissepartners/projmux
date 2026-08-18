@@ -135,6 +135,11 @@ type switchCommand struct {
 	sidebarResume           switchSidebarResume
 	cleanupKilledSession    func(string)
 	projectTopology         switchProjectTopologyMaterializer
+	// navigation is the Registry-first row source and the resource hierarchy
+	// surface. It is the only thing here that reads the Registry, and it never
+	// writes: the picker's rows, its status overlay, and its refresh are one
+	// read-only projection.
+	navigation *registryNavigationCommand
 }
 
 type switchPlan struct {
@@ -192,6 +197,7 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		// on the app's own exact socket. It is wired here rather than resolved
 		// lazily so a project open never picks a socket from an inherited client.
 		projectTopology: newRegistryProjectTopologyMaterializer(),
+		navigation:      newRegistryNavigationCommand(inttmux.ExecRunner{}),
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)
@@ -428,6 +434,14 @@ func (c *switchCommand) runPreview(args []string, stdout, stderr io.Writer) erro
 	}
 	if fs.NArg() == 1 && strings.TrimSpace(fs.Arg(0)) == switchSettingsSentinel {
 		return c.writeSettingsPreview(stdout)
+	}
+	// The Runtime link and a uid-selected Registry row are not paths, so the
+	// filesystem preview model has nothing to render for them. Each gets the
+	// preview that matches what selecting it does.
+	if fs.NArg() == 1 {
+		if handled, err := c.writeRegistrySelectionPreview(context.Background(), stdout, fs.Arg(0)); handled {
+			return err
+		}
 	}
 
 	target, err := c.resolveSwitchTarget(fs.Args(), "switch preview")
@@ -1424,6 +1438,13 @@ func (c *switchCommand) completePlan(plan switchPlan) (switchPlan, error) {
 	if selection == switchSettingsSentinel {
 		return plan, nil
 	}
+	// A Registry row whose selection is a uid, and the Runtime link, are not
+	// filesystem paths. Validating them as directories is what used to make a
+	// Project with a vanished root fail the whole picker instead of offering the
+	// rebind that fixes it.
+	if selection == switchRuntimeSentinel || switchRegistrySelectionUID(selection) != "" {
+		return plan, nil
+	}
 
 	if c.validate == nil {
 		return switchPlan{}, fmt.Errorf("switch directory validator is not configured")
@@ -1454,6 +1475,38 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		}
 		return false, nil
 	}
+	if plan.Selection == switchRuntimeSentinel {
+		if c.navigation == nil {
+			return false, fmt.Errorf("switch runtime diagnostics handler is not configured")
+		}
+		if err := c.navigation.runRuntime(stdout, io.Discard); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	// The resource hierarchy is opened by the dedicated key on any row, and by
+	// selecting a Registry row that has no path to open -- a Project whose
+	// spec.root is gone. Both land on the same read-only surface, and both
+	// return to the Projects list when it closes.
+	if uid := switchRegistrySelectionUID(plan.Selection); uid != "" {
+		if err := c.openRegistryHierarchy(ctx, plan.UI, uid, stdout); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, plan.Action, registryNavigationActionID, registryNavigationExpectKey) {
+		uid, err := c.registryProjectUIDForSelection(ctx, plan.Selection)
+		if err != nil {
+			return false, err
+		}
+		if uid == "" {
+			return true, nil
+		}
+		if err := c.openRegistryHierarchy(ctx, plan.UI, uid, stdout); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
 	if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, plan.Action, "Sidebar:KillSession", switchKillExpectKey) {
 		if cleanOptionalPath(plan.Selection) == cleanOptionalPath(plan.HomeDir) {
 			return true, nil
@@ -1472,7 +1525,7 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		return true, nil
 	}
 	if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, plan.Action, "Sidebar:PinProject", switchPinExpectKey) {
-		if plan.Selection == switchSettingsSentinel {
+		if plan.Selection == switchSettingsSentinel || plan.Selection == switchRuntimeSentinel {
 			return false, nil
 		}
 		if err := c.togglePin(plan.Selection, nil); err != nil {
@@ -1917,6 +1970,9 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 	}
 	options.Actions = append(options.Actions, sidebarKillActions...)
 	options.Actions = append(options.Actions, intpicker.CustomActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:PinProject"}, []string{switchPinExpectKey})...)...)
+	if c.navigation != nil {
+		options.Actions = append(options.Actions, intpicker.CustomActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{registryNavigationActionID}, []string{registryNavigationExpectKey})...)...)
+	}
 	if source, err := configRenderThemeSource(c.homeDir, c.lookupEnv, plan.CurrentPath); err == nil {
 		options = source.pickerOptions(options)
 	} else {
@@ -1973,7 +2029,10 @@ func (c *switchCommand) switchSidebarKillActions() []intpicker.Action {
 
 func (c *switchCommand) mutateSwitchSidebarKill(ctx context.Context, action intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
 	target := cleanOptionalPath(action.Value)
-	if target == "" || target == switchSettingsSentinel {
+	// Settings, the Runtime link, and a uid-selected Registry row own no tmux
+	// session, so there is nothing for a kill to address on any of them.
+	if target == "" || target == switchSettingsSentinel || target == switchRuntimeSentinel ||
+		switchRegistrySelectionUID(target) != "" {
 		return c.switchSidebarRefreshUpdate(ctx)
 	}
 	homeDir, err := c.resolveHomeDir()
@@ -2532,11 +2591,6 @@ func (c *switchCommand) renderFullRows(ctx context.Context, ui string, candidate
 }
 
 func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candidatePaths []string, mode switchRowRenderMode) ([]intpickercompat.Entry, []intpicker.Item, map[string]string, error) {
-	renderCandidates := make([]intrender.SwitchCandidate, 0, len(candidatePaths))
-	existingBySession, err := c.lookupExistingSessions(ctx, candidatePaths)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	homeDir, err := c.resolveHomeDir()
 	if err != nil {
 		return nil, nil, nil, err
@@ -2546,7 +2600,6 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	sessionNames := make(map[string]string, len(candidatePaths))
 	attentionRanks := map[string]int(nil)
 	aiBadgeKinds := map[string]string(nil)
 	aiBadgeStyle := string(loadAIBadgeStyle(c.homeDir, c.lookupEnv))
@@ -2554,9 +2607,33 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 		attentionRanks, aiBadgeKinds = c.switchAttentionBadges(ctx)
 	}
 
-	for _, candidatePath := range candidatePaths {
+	// The Registry is the row source. Its Projects are listed first, in
+	// Registry order, whether or not a tmux server answered: a logical resource
+	// does not stop existing because the machine it was last live on is down,
+	// and the list whose purpose is reopening it is the last place that should
+	// pretend otherwise.
+	view, err := c.navigationView(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	renderCandidates, sessionNames, err := c.switchManagedRows(
+		view, ui, mode, pinnedSet, attentionRanks, aiBadgeKinds, aiBadgeStyle, homeDir, repoRoot)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Filesystem discovery is still shown, in its own section, for the one
+	// thing it is authoritative about: a directory that is not a Project yet.
+	settings := make([]intrender.SwitchCandidate, 0, 1)
+	unregisteredPaths := switchUnregisteredPaths(view, candidatePaths)
+	existingBySession, err := c.lookupExistingSessions(ctx, unregisteredPaths)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	unregistered := make([]intrender.SwitchCandidate, 0, len(unregisteredPaths))
+	for _, candidatePath := range unregisteredPaths {
 		if candidatePath == switchSettingsSentinel {
-			renderCandidates = append(renderCandidates, intrender.SwitchCandidate{
+			settings = append(settings, intrender.SwitchCandidate{
 				Path:        candidatePath,
 				DisplayPath: "Settings",
 				UI:          ui,
@@ -2588,7 +2665,7 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 			gitBranch = c.resolveGitBranch(candidatePath)
 			windowTabs = c.switchCardWindowTabs(ctx, sessionName, modeLabel)
 		}
-		renderCandidates = append(renderCandidates, intrender.SwitchCandidate{
+		unregistered = append(unregistered, intrender.SwitchCandidate{
 			Path:          candidatePath,
 			DisplayPath:   intrender.PrettyPath(candidatePath, homeDir, repoRoot),
 			DisplayName:   switchProjectName(candidatePath, sessionName),
@@ -2603,8 +2680,21 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 			Pinned:        pinnedSet[cleanOptionalPath(candidatePath)],
 		})
 	}
+	sortSwitchCandidates(unregistered, homeDir)
+	renderCandidates = append(renderCandidates, unregistered...)
+	// The Runtime link is last before Settings. It is the escape hatch that
+	// makes the managed list safe to read as complete: everything projmux does
+	// not own is reachable, and it is reachable from somewhere that cannot be
+	// mistaken for a Project.
+	//
+	// It is offered only where the surface it leads to is wired. A picker built
+	// without the navigation seam has no Registry rows to be incomplete about
+	// and no Runtime surface to open, so a link would be a dead row.
+	if c.navigation != nil {
+		renderCandidates = append(renderCandidates, switchRuntimeRow(view, ui))
+	}
+	renderCandidates = append(renderCandidates, settings...)
 
-	sortSwitchCandidates(renderCandidates, homeDir)
 	rows := intrender.BuildSwitchRows(renderCandidates)
 	entries := make([]intpickercompat.Entry, 0, len(rows))
 	items := make([]intpicker.Item, 0, len(rows))

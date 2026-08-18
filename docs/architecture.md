@@ -121,6 +121,12 @@ Packages:
   graph's runtime half -- every observed tmux object with its attribution, its
   exact coordinate, and the Registry resource it is bound to, plus the scopes
   that could not be observed. It performs no I/O and re-derives no attribution.
+- `internal/core/registryview` is pure: the primary navigation view model. It
+  projects a resolved graph plus the caller's filesystem discovery onto the rows
+  the Projects, Sessions, and Recent Windows surfaces list -- Registry resources
+  in Registry order, discovered directories in their own section, and one Runtime
+  link -- with a status overlay and the actions each resource state is eligible
+  for. It performs no I/O.
 - `internal/core/controller` is pure: the command-scoped controller kernel. It
   owns the closed intent x attribution authority table, the guard evidence, and
   the totally ordered plan every convergence producer is authorized through. It
@@ -863,6 +869,47 @@ Runtime diagnostics escape hatch:
   That picker lists recent sessions to open one; this one lists every object on
   the server to explain what it is. Merging them would put an operator's own
   shell into the open-a-session list.
+
+Registry-first primary navigation:
+
+- The primary surfaces enumerate the Registry, not the machine. `internal/core/
+  registryview` builds their rows from a resolved graph, so a Project is a row
+  because the Registry contains it and not because a tmux session exists. The
+  runtime contributes a status -- live, offline, missing-root, or unknown -- and
+  an exact handle, and nothing else.
+- Identity and order come from the Registry's own slice order, which is insertion
+  order. The only reordering is pinned-first, which is a stored preference. Two
+  consequences are contractual: the same Registry renders the same rows in the
+  same order on an app-owned server, on a standalone server, and outside tmux
+  entirely; and opening or closing a runtime object changes status without moving
+  or renaming a row, so a selection survives a refresh.
+- Row identity is the resource uid. A managed Project's *selection* is still its
+  `spec.root` so the shipped open flow is unchanged, except for a Project whose
+  root is gone: that row carries `uid:<uid>` and selecting it opens the read-only
+  resource surface, which is where rebind is stated. Before this, such a row
+  failed the whole picker on directory validation.
+- Filesystem discovery is kept and demoted. A discovered directory that no
+  Project root claims is an unregistered bootstrap candidate in its own section
+  with its shipped behavior; one that is already a Project root is dropped rather
+  than listed twice with a second set of actions.
+- Home is not a row. It is app control runtime with no `resourceRef`, and the
+  only evidence that a session is one is the exact `@projmux_session_role` value
+  the graph reads. A session named `home` with no marker is honestly
+  unattributed; the marker's writer belongs to the control-session track.
+- The Sessions and Recent Windows surfaces list managed rows only, attributed by
+  tmux's own `$N` and `@N` ids rather than by a name join, and carry the Registry
+  resource name beside the exact tmux handle their actions target. What they
+  withhold is tallied by class on a Runtime link that forwards to the escape
+  hatch above.
+- Every action forwards to a route that already owns it: `focus` for a live row,
+  `attach project` for an offline Project -- the one shipped route that
+  materializes one -- and `agent resume` for an Agent. Rebind and delete are
+  listed as eligible with the exact command that performs them rather than
+  executed from a read surface.
+- A navigation refresh is a read. It opens the Registry read-only, takes the
+  bounded four-query observation through one exact socket, and projects it
+  purely: no Registry or tmux write, no reconcile, no materialize, and no
+  default-server probe when there is no transport.
 
 Public resource reconciliation:
 
