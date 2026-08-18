@@ -2375,8 +2375,8 @@ termination_activation_generation() {
 }
 
 termination_await_receipt() {
-  local pane_uid="$1" attempt
-  for attempt in $(seq 1 200); do
+  local pane_uid="$1"
+  for _ in $(seq 1 200); do
     if [[ -n "$(termination_receipt_field "$pane_uid" classification)" ]]; then
       return 0
     fi
@@ -2476,13 +2476,13 @@ termination_agent_pane_ref() {
 termination_provider_case() {
   local provider="$1" want_class="$2" want_code="$3" want_signal="$4" script="$5"
   printf '%s\n' "$script" >"$termination_root/stub-script"
-  local agent_uid pane_ref attempt got_class got_code got_signal got_source got_generation activation
+  local agent_uid pane_ref got_class got_code got_signal got_source got_generation activation
   agent_uid="$(termination_pmx_provider create agent --project evidence --provider "$provider" -o uid)"
   if [[ -z "$agent_uid" ]]; then
     echo "termination provider case $provider created no Agent" >&2
     exit 1
   fi
-  for attempt in $(seq 1 200); do
+  for _ in $(seq 1 200); do
     termination_agent_json "$agent_uid"
     if [[ -n "$(termination_agent_field classification)" ]]; then
       break

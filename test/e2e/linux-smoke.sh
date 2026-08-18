@@ -3135,8 +3135,8 @@ topology_live_pmx create window --project "uid:$topology_project_uid" --name rev
 # The stored command is recorded as a one-time name seed. Materialization must
 # never execute it, which the recreated Pane's start command proves below: it
 # names the managed process supervisor over the default shell, never this.
-topology_stored_command="sleep 600"
-topology_live_pmx create pane --project "uid:$topology_project_uid" --window review --placement right -o pane-id -- $topology_stored_command >"$topology_root/create-pane.out"
+topology_stored_command=(sleep 600)
+topology_live_pmx create pane --project "uid:$topology_project_uid" --window review --placement right -o pane-id -- "${topology_stored_command[@]}" >"$topology_root/create-pane.out"
 
 topology_window_uids="$(topology_pmx get windows --project "uid:$topology_project_uid" -o uid | sort)"
 topology_pane_uids="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
@@ -3160,8 +3160,8 @@ topology_registry="$topology_root/state/projmux/metadata/registry.json"
 # not wait on. Every "the Registry did not change" assertion below therefore
 # snapshots the file only once those writes have settled.
 topology_settle_registry() {
-  local previous="" current attempt
-  for attempt in $(seq 1 100); do
+  local previous="" current
+  for _ in $(seq 1 100); do
     current="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
     if [[ -n "$previous" && "$current" == "$previous" ]]; then
       return 0
@@ -3231,7 +3231,7 @@ while IFS= read -r topology_start_command; do
       exit 1
       ;;
   esac
-  if [[ "$topology_start_command" == *"$topology_stored_command"* ]]; then
+  if [[ "$topology_start_command" == *"${topology_stored_command[*]}"* ]]; then
     echo "materialization replayed a stored Pane command: $topology_start_command" >&2
     exit 1
   fi
@@ -3443,9 +3443,9 @@ fi
 # The stored command is a one-time name seed. A startup that executed it would
 # show up inside the recreated Pane's start command below, which must name only
 # the managed process supervisor over the default shell.
-startup_stored_command="sleep 600"
+startup_stored_command=(sleep 600)
 startup_live_pmx create window --project "uid:$startup_project_uid" --name review >"$startup_root/create-window.out"
-startup_live_pmx create pane --project "uid:$startup_project_uid" --window review --placement right -o pane-id -- $startup_stored_command >"$startup_root/create-pane.out"
+startup_live_pmx create pane --project "uid:$startup_project_uid" --window review --placement right -o pane-id -- "${startup_stored_command[@]}" >"$startup_root/create-pane.out"
 
 startup_window_uids="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)"
 startup_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
@@ -3529,7 +3529,7 @@ while IFS= read -r startup_start_command; do
       exit 1
       ;;
   esac
-  if [[ "$startup_start_command" == *"$startup_stored_command"* ]]; then
+  if [[ "$startup_start_command" == *"${startup_stored_command[*]}"* ]]; then
     echo "closed Project open replayed a stored Pane command: $startup_start_command" >&2
     exit 1
   fi
