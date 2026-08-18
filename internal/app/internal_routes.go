@@ -19,6 +19,7 @@ var internalSubcommands = []string{
 	"focus",
 	"key-broker",
 	"popup-wait-key",
+	"supervise",
 }
 
 // internalAgentHookSubcommands lists the provider hook plumbing routes.
@@ -56,6 +57,10 @@ type internalCommand struct {
 	focus        rawArgvCommand
 	keyBroker    rawArgvCommand
 	popupWaitKey rawArgvCommand
+	// supervise is the managed process supervisor a launched Pane execs. It is
+	// the only internal route whose caller is a pane's own argv rather than a
+	// tmux command string.
+	supervise rawArgvCommand
 }
 
 func newInternalCommand() *internalCommand {
@@ -89,6 +94,8 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.keyBroker, "internal key-broker", "key-broker", nil, rest, stdout, stderr)
 	case "popup-wait-key":
 		return forwardRawArgv(c.popupWaitKey, "internal popup-wait-key", "popup-wait-key", nil, rest, stdout, stderr)
+	case "supervise":
+		return forwardRawArgv(c.supervise, "internal supervise", "supervise", nil, rest, stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("internal %s is not available; this release implements: %s",
 			args[0], strings.Join(internalSubcommands, ", ")))

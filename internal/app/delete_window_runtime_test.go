@@ -28,13 +28,16 @@ func liveInventoryRow(fields ...string) string {
 func newWindowRuntimeFixture(t *testing.T, inventory string) (*tmuxWindowDeleteRuntime, *recordingTmuxRunner, coremetadata.Registry) {
 	t.Helper()
 	runner := &recordingTmuxRunner{outputs: map[string]string{}}
-	target, err := tmuxSocketNameTarget("isolated-delete")
+	// The exact target matches what the route resolves from the hermetic
+	// $TMUX in newTestDeleteCommand, so a runtime fixture and a full route
+	// invocation address the same isolated server.
+	target, err := tmuxSocketPathTarget(testDeleteTarget.value)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtime := &tmuxWindowDeleteRuntime{runner: runner, target: target, getenv: func(string) string { return "" }}
 	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{@projmux_project_uid}", "#{@projmux_window_uid}")
-	runner.outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "list-windows", "-a", "-F", format)] = inventory
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "list-windows", "-a", "-F", format)] = inventory
 	return runtime, runner, resourceFixtureRegistry(t)
 }
 
@@ -81,7 +84,7 @@ func TestWindowDeleteRuntimePreflightAllowsExplicitOfflineWindow(t *testing.T) {
 
 func TestDeleteWindowTreatsOnlyTypedNoServerAsOffline(t *testing.T) {
 	inventoryFormat := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{@projmux_project_uid}", "#{@projmux_window_uid}")
-	inventoryKey := recordedTmuxCallKey("tmux", "-L", "isolated-delete", "list-windows", "-a", "-F", inventoryFormat)
+	inventoryKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "list-windows", "-a", "-F", inventoryFormat)
 
 	t.Run("typed no-server permits Registry-only cascade", func(t *testing.T) {
 		store := newFakeResourceStore(t)
@@ -151,9 +154,9 @@ func TestWindowDeleteRuntimeStillRefusesImplicitOfflineWindow(t *testing.T) {
 		return ""
 	}
 	format := tmuxRowFormat("#{socket_path}", "#{window_id}")
-	runtime.runner.(*recordingTmuxRunner).outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "display-message", "-p", "-F", "#{socket_path}")] =
+	runtime.runner.(*recordingTmuxRunner).outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] =
 		"/tmp/exact.sock\n"
-	runtime.runner.(*recordingTmuxRunner).outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "display-message", "-p", "-t", "%7", "-F", format)] =
+	runtime.runner.(*recordingTmuxRunner).outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-t", "%7", "-F", format)] =
 		liveInventoryRow("/tmp/exact.sock", "@10")
 	plan := deleteWindowRuntimePlan("win-alpha-main")
 	plan.Implicit = true
@@ -215,9 +218,9 @@ func TestWindowDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndWindow(t *
 		return ""
 	}
 	format := tmuxRowFormat("#{socket_path}", "#{window_id}")
-	runner.outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "display-message", "-p", "-F", "#{socket_path}")] =
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] =
 		"/tmp/exact.sock\n"
-	runner.outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "display-message", "-p", "-t", "%7", "-F", format)] =
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-t", "%7", "-F", format)] =
 		liveInventoryRow("/tmp/exact.sock", "@10")
 	plan := deleteWindowRuntimePlan("win-alpha-main")
 	plan.Implicit = true
@@ -230,7 +233,7 @@ func TestWindowDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndWindow(t *
 		t.Fatalf("implicit live plan = %#v", live)
 	}
 
-	runner.outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "display-message", "-p", "-F", "#{socket_path}")] =
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] =
 		"/tmp/foreign.sock\n"
 	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil || !strings.Contains(err.Error(), "not attached to the exact") {
 		t.Fatalf("foreign caller socket error = %v", err)
@@ -240,14 +243,14 @@ func TestWindowDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndWindow(t *
 func TestWindowDeleteRuntimeQueueUsesQuotedExactSocketAndWindow(t *testing.T) {
 	runtime, runner, _ := newWindowRuntimeFixture(t, "")
 	target := windowLiveDeleteTarget{UID: "win-alpha-main", WindowID: "@12", SessionName: "alpha", SessionID: "$1"}
-	mirrorKey := recordedTmuxCallKey("tmux", "-L", "isolated-delete", "show-options", "-wqv", "-t", "@12", "@projmux_window_uid")
+	mirrorKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "show-options", "-wqv", "-t", "@12", "@projmux_window_uid")
 	runner.outputs[mirrorKey] = "win-alpha-main\n"
 	if err := runtime.queueSelfKill(context.Background(), []windowLiveDeleteTarget{target}); err != nil {
 		t.Fatalf("queue error = %v", err)
 	}
 	wantQueue := recordedTmuxCall{name: "tmux", args: []string{
-		"-L", "isolated-delete", "run-shell", "-b",
-		"exec 'tmux' '-L' 'isolated-delete' kill-window -t '@12'",
+		"-S", testDeleteTarget.value, "run-shell", "-b",
+		"exec 'tmux' '-S' '" + testDeleteTarget.value + "' kill-window -t '@12'",
 	}}
 	if len(runner.calls) != 2 || !reflect.DeepEqual(runner.calls[1], wantQueue) {
 		t.Fatalf("queue calls = %#v, want mirror check then %#v", runner.calls, wantQueue)
@@ -267,8 +270,8 @@ func TestWindowDeleteRuntimeQueueRevalidatesEveryMirrorBeforeQueueing(t *testing
 		{UID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1"},
 		{UID: "win-alpha-review", WindowID: "@11", SessionName: "alpha", SessionID: "$1"},
 	}
-	runner.outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "show-options", "-wqv", "-t", "@10", "@projmux_window_uid")] = "win-alpha-main\n"
-	secondKey := recordedTmuxCallKey("tmux", "-L", "isolated-delete", "show-options", "-wqv", "-t", "@11", "@projmux_window_uid")
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "show-options", "-wqv", "-t", "@10", "@projmux_window_uid")] = "win-alpha-main\n"
+	secondKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "show-options", "-wqv", "-t", "@11", "@projmux_window_uid")
 
 	for _, test := range []struct {
 		name     string

@@ -186,6 +186,12 @@ type materializer struct {
 	// warn receives non-fatal rollback diagnostics. Progress and warnings are
 	// stderr-only; stdout stays empty until the operation succeeds.
 	warn io.Writer
+	// executable resolves this build's own binary for the managed process
+	// supervisor a launched pane execs. Nil means os.Executable.
+	executable func() (string, error)
+	// lookupEnv is the environment probe used only as the last fallback when
+	// the exact server reports no default-shell. Nil means os.Getenv.
+	lookupEnv func(string) string
 }
 
 func (m *materializer) read(ctx context.Context, args ...string) (string, error) {

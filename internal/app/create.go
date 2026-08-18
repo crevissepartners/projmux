@@ -96,9 +96,12 @@ type createCommand struct {
 	activeTarget activeTargetLookup
 	// shell is the configured shell whose basename seeds default names and
 	// whose process a payload-free Pane runs.
-	shell            string
-	sessionNameFor   func(root string) string
-	newOperationID   func() (string, error)
+	shell          string
+	sessionNameFor func(root string) string
+	newOperationID func() (string, error)
+	// newGeneration mints the opaque activation generation one materialized
+	// Pane's supervisor quotes back when its child stops.
+	newGeneration    func() (string, error)
 	resolveWorkspace func(coremetadata.Registry, coremetadata.Project, string, string, []string) (coremetadata.AgentWorkspace, error)
 }
 
@@ -111,15 +114,18 @@ func newCreateCommand() *createCommand {
 		store:      newResourceStore(),
 		reconciler: newRegistryReconciler(runner, client),
 		runtime: &materializer{
-			runner:   runner,
-			mirror:   intmetadata.NewMirror(runner),
-			sessions: client,
-			warn:     os.Stderr,
+			runner:     runner,
+			mirror:     intmetadata.NewMirror(runner),
+			sessions:   client,
+			warn:       os.Stderr,
+			executable: os.Executable,
+			lookupEnv:  os.Getenv,
 		},
 		activeTarget:     defaultActiveTargetLookup(),
 		shell:            configuredShell(os.Getenv),
 		sessionNameFor:   namer.SessionName,
 		newOperationID:   newCreateOperationID,
+		newGeneration:    coremetadata.NewGeneration,
 		resolveWorkspace: resolveAgentWorkspace,
 	}
 }

@@ -2258,4 +2258,335 @@ fi
 
 echo ">> discovery/pin authority split home=$discovery_home scan_root=$discovery_scan project=$discovery_project_uid guard=passed"
 
+# ---------------------------------------------------------------------------
+# Termination evidence transport.
+#
+# Managed panes launch through `internal supervise`, so the Registry records the
+# child's real wait status bound to the exact activation generation the launch
+# was issued with. This block proves all three observable outcomes -- clean
+# exit, non-zero exit, and death by signal -- against a real tmux server, and
+# proves `delete` names one exact server or refuses instead of reaching for the
+# app's own socket.
+#
+# Isolation: inherited TMUX/TMUX_PANE are stripped from every setup call, both
+# servers live under a run-unique -L name inside a TMUX_TMPDIR below the smoke
+# root, the real #{socket_path} is queried and proven to sit inside that root,
+# and cleanup kills only those exact sockets.
+# ---------------------------------------------------------------------------
+termination_root="$PROJMUX_SMOKE_WORKDIR/termination"
+termination_socket="projmux-termination-$$-$RANDOM"
+termination_sibling_socket="projmux-termination-sibling-$$-$RANDOM"
+mkdir -p "$termination_root/state" "$termination_root/config" "$termination_root/tmux" "$termination_root/work/evidence"
+chmod 0700 "$termination_root/tmux"
+termination_real_tmux="$(command -v tmux)"
+
+# The supervisor a managed pane execs resolves its state paths from the pane's
+# own inherited environment, which is the tmux *server's* environment. In
+# production that is the operator's; here the server has to be started with the
+# same isolated state root the CLI calls use, or the receipts would land in the
+# real one.
+termination_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    TMUX_TMPDIR="$termination_root/tmux" \
+    XDG_STATE_HOME="$termination_root/state" \
+    XDG_CONFIG_HOME="$termination_root/config" \
+    PROJMUX_MANAGED_ROOTS="$termination_root/work" \
+    "$termination_real_tmux" -L "$termination_socket" "$@"
+}
+termination_sibling_tmux() {
+  env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$termination_root/tmux" \
+    "$termination_real_tmux" -L "$termination_sibling_socket" "$@"
+}
+
+termination_tmux new-session -d -s evidence -n main -c "$termination_root/work/evidence" sleep 600
+termination_tmux set-option -t evidence -q @projmux_project_path "$termination_root/work/evidence"
+termination_sibling_tmux new-session -d -s sibling -n main sleep 600
+termination_sibling_tmux set-option -gq @projmux_termination_sentinel untouched
+
+termination_socket_path="$(termination_tmux display-message -p -t evidence '#{socket_path}')"
+termination_sibling_path="$(termination_sibling_tmux display-message -p -t sibling '#{socket_path}')"
+for termination_candidate in "$termination_socket_path" "$termination_sibling_path"; do
+  case "$termination_candidate" in
+    "$termination_root"/*) ;;
+    *)
+      echo "termination smoke socket escaped the smoke root: $termination_candidate" >&2
+      exit 1
+      ;;
+  esac
+done
+termination_server_pid="$(termination_tmux display-message -p -t evidence '#{pid}')"
+
+termination_cleanup() {
+  local actual
+  for actual in "$termination_socket_path" "$termination_sibling_path"; do
+    [[ -n "$actual" ]] || continue
+    case "$actual" in
+      "$termination_root"/*)
+        env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+        ;;
+      *)
+        echo "refusing termination smoke cleanup outside the smoke root: $actual" >&2
+        ;;
+    esac
+  done
+}
+
+termination_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    XDG_STATE_HOME="$termination_root/state" \
+    XDG_CONFIG_HOME="$termination_root/config" \
+    TMUX_TMPDIR="$termination_root/tmux" \
+    PROJMUX_MANAGED_ROOTS="$termination_root/work" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+# Inside a client the create routes address the inherited exact server, which is
+# the same server the explicit --socket calls above name.
+termination_pmx_inside() {
+  env -u TMUX_PANE \
+    TMUX="$termination_socket_path,$termination_server_pid,0" \
+    XDG_STATE_HOME="$termination_root/state" \
+    XDG_CONFIG_HOME="$termination_root/config" \
+    TMUX_TMPDIR="$termination_root/tmux" \
+    PROJMUX_MANAGED_ROOTS="$termination_root/work" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+termination_pmx reconcile resources --socket "$termination_socket" -o json >"$termination_root/reconcile.json"
+smoke_assert_file_contains "$termination_root/reconcile.json" '"outcome": "changed"'
+
+# The receipt is read back through the shipped route rather than out of the
+# registry file, so the smoke exercises the same projection an operator sees.
+termination_receipt_field() {
+  termination_pmx describe pane "uid:$1" -o json \
+    | sed -n '/"lastTermination"/,$p' \
+    | sed -n "s/^[[:space:]]*\"$2\": \(.*\)$/\1/p" \
+    | head -n 1 \
+    | sed 's/,$//; s/^"//; s/"$//'
+}
+
+termination_activation_generation() {
+  termination_pmx describe pane "uid:$1" -o json \
+    | sed -n '/"activation"/,/^[[:space:]]*}/p' \
+    | sed -n 's/^[[:space:]]*"generation": "\([^"]*\)".*/\1/p' \
+    | head -n 1
+}
+
+termination_await_receipt() {
+  local pane_uid="$1" attempt
+  for attempt in $(seq 1 200); do
+    if [[ -n "$(termination_receipt_field "$pane_uid" classification)" ]]; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "no termination receipt was recorded for $pane_uid" >&2
+  termination_pmx describe pane "uid:$pane_uid" -o json >&2 || true
+  exit 1
+}
+
+# Each case launches a managed shell Pane whose child ends a different way. The
+# `--` payload words are the child's own argv; the supervisor prefixes them, and
+# `-o uid` is read from the Registry so the assertion never races the pane's own
+# disappearance.
+termination_case() {
+  local label="$1" want_class="$2" want_code="$3" want_signal="$4"
+  shift 4
+  local pane_uid
+  pane_uid="$(termination_pmx_inside create pane --project evidence -o uid -- "$@")"
+  if [[ -z "$pane_uid" ]]; then
+    echo "termination case $label created no Pane" >&2
+    exit 1
+  fi
+  termination_await_receipt "$pane_uid"
+  local got_class got_code got_signal got_source got_generation activation
+  got_class="$(termination_receipt_field "$pane_uid" classification)"
+  got_code="$(termination_receipt_field "$pane_uid" exitCode)"
+  got_signal="$(termination_receipt_field "$pane_uid" signal)"
+  got_source="$(termination_receipt_field "$pane_uid" source)"
+  got_generation="$(termination_receipt_field "$pane_uid" generation)"
+  activation="$(termination_activation_generation "$pane_uid")"
+  if [[ "$got_class" != "$want_class" || "$got_code" != "$want_code" || "$got_signal" != "$want_signal" ]]; then
+    echo "termination case $label recorded class=$got_class code=$got_code signal=$got_signal, want class=$want_class code=$want_code signal=$want_signal" >&2
+    exit 1
+  fi
+  if [[ "$got_source" != "supervisor" ]]; then
+    echo "termination case $label recorded source=$got_source, want supervisor" >&2
+    exit 1
+  fi
+  if [[ -z "$activation" || "$got_generation" != "$activation" ]]; then
+    echo "termination case $label receipt generation '$got_generation' is not the Pane's activation generation '$activation'" >&2
+    exit 1
+  fi
+  echo ">> termination case $label uid=$pane_uid class=$got_class generation=$activation"
+}
+
+termination_case clean normal 0 "" sh -c 'exit 0'
+termination_case failure abnormal 7 "" sh -c 'exit 7'
+termination_case signal abnormal "" TERM sh -c 'kill -TERM $$; sleep 30'
+
+# The same evidence for the three managed providers. Each stub is a real
+# process that ends the way the case asks for; nothing about the provider's own
+# protocol participates, which is the point -- the receipt comes from the wait
+# status, never from what the provider said before it stopped.
+mkdir -p "$termination_root/bin"
+# The stub names are the provider *binaries* projmux resolves, which is not
+# always the provider id: Antigravity's CLI is `agy`.
+for termination_provider in claude codex agy; do
+  cat >"$termination_root/bin/$termination_provider" <<PROVIDER_STUB
+#!/usr/bin/env bash
+exec sh -c "\$(cat $(printf %q "$termination_root/stub-script"))"
+PROVIDER_STUB
+  chmod 0755 "$termination_root/bin/$termination_provider"
+done
+
+termination_pmx_provider() {
+  env -u TMUX_PANE \
+    TMUX="$termination_socket_path,$termination_server_pid,0" \
+    PATH="$termination_root/bin:$PATH" \
+    XDG_STATE_HOME="$termination_root/state" \
+    XDG_CONFIG_HOME="$termination_root/config" \
+    TMUX_TMPDIR="$termination_root/tmux" \
+    PROJMUX_MANAGED_ROOTS="$termination_root/work" \
+    SHELL=/bin/bash \
+    "$bin" "$@"
+}
+
+# The Agent document is fetched once per observation and parsed out of a file,
+# so a failed read is a visible empty document rather than a pipeline whose exit
+# status the last stage swallowed.
+termination_agent_json() {
+  termination_pmx describe agent "uid:$1" -o json >"$termination_root/agent.json"
+}
+
+termination_agent_field() {
+  sed -n '/"lastTermination"/,$p' "$termination_root/agent.json" \
+    | sed -n "s/^[[:space:]]*\"$1\": \(.*\)$/\1/p" \
+    | head -n 1 \
+    | sed 's/,$//; s/^"//; s/"$//'
+}
+
+termination_agent_pane_ref() {
+  sed -n 's/^[[:space:]]*"paneRef": "\([^"]*\)".*/\1/p' "$termination_root/agent.json" \
+    | head -n 1
+}
+
+termination_provider_case() {
+  local provider="$1" want_class="$2" want_code="$3" want_signal="$4" script="$5"
+  printf '%s\n' "$script" >"$termination_root/stub-script"
+  local agent_uid pane_ref attempt got_class got_code got_signal got_source got_generation activation
+  agent_uid="$(termination_pmx_provider create agent --project evidence --provider "$provider" -o uid)"
+  if [[ -z "$agent_uid" ]]; then
+    echo "termination provider case $provider created no Agent" >&2
+    exit 1
+  fi
+  for attempt in $(seq 1 200); do
+    termination_agent_json "$agent_uid"
+    if [[ -n "$(termination_agent_field classification)" ]]; then
+      break
+    fi
+    sleep 0.05
+  done
+  got_class="$(termination_agent_field classification)"
+  got_code="$(termination_agent_field exitCode)"
+  got_signal="$(termination_agent_field signal)"
+  got_source="$(termination_agent_field source)"
+  got_generation="$(termination_agent_field generation)"
+  pane_ref="$(termination_agent_pane_ref)"
+  if [[ "$got_class" != "$want_class" || "$got_code" != "$want_code" || "$got_signal" != "$want_signal" ]]; then
+    echo "termination provider case $provider recorded class=$got_class code=$got_code signal=$got_signal, want class=$want_class code=$want_code signal=$want_signal" >&2
+    cat "$termination_root/agent.json" >&2
+    exit 1
+  fi
+  if [[ "$got_source" != "supervisor" ]]; then
+    echo "termination provider case $provider recorded source=$got_source, want supervisor" >&2
+    cat "$termination_root/agent.json" >&2
+    exit 1
+  fi
+  if [[ -z "$pane_ref" ]]; then
+    echo "termination provider case $provider Agent carries no managed Pane binding" >&2
+    cat "$termination_root/agent.json" >&2
+    exit 1
+  fi
+  activation="$(termination_activation_generation "$pane_ref")"
+  if [[ -z "$activation" || "$got_generation" != "$activation" ]]; then
+    echo "termination provider case $provider receipt generation '$got_generation' is not the managed Pane's activation generation '$activation'" >&2
+    cat "$termination_root/agent.json" >&2
+    exit 1
+  fi
+  # The Agent keeps its conversation-independent identity; nothing here consumed
+  # the receipt or moved the phase, which belongs to a later Phase.
+  echo ">> termination provider case $provider agent=$agent_uid pane=$pane_ref class=$got_class generation=$activation"
+}
+
+termination_provider_case claude normal 0 "" 'exit 0'
+termination_provider_case codex abnormal 5 "" 'exit 5'
+termination_provider_case antigravity abnormal "" TERM 'kill -TERM $$; sleep 30'
+
+# A long-lived Pane proves the supervisor really is the pane's own process and
+# that the Registry recorded the exact live handle it landed on.
+termination_pane_uid="$(termination_pmx_inside create pane --project evidence -o uid -- sleep 600)"
+termination_pane_id="$(termination_tmux list-panes -a -F '#{@projmux_pane_uid} #{pane_id}' \
+  | awk -v uid="$termination_pane_uid" '$1 == uid { print $2; exit }')"
+if [[ -z "$termination_pane_id" ]]; then
+  echo "the long-lived termination Pane has no exact live binding" >&2
+  exit 1
+fi
+termination_start_command="$(termination_tmux display-message -p -t "$termination_pane_id" '#{pane_start_command}')"
+case "$termination_start_command" in
+  *"internal supervise"*"-- sleep 600") ;;
+  *)
+    echo "the managed Pane did not launch through the supervisor: $termination_start_command" >&2
+    exit 1
+    ;;
+esac
+if [[ -n "$(termination_receipt_field "$termination_pane_uid" classification)" ]]; then
+  echo "a running Pane already carries a termination receipt" >&2
+  exit 1
+fi
+
+# A delete names its server or refuses. It never reaches for `-L projmux`.
+set +e
+termination_pmx delete pane "uid:$termination_pane_uid" --yes \
+  >"$termination_root/delete-no-target.out" 2>"$termination_root/delete-no-target.err"
+termination_status=$?
+set -e
+if [[ "$termination_status" != "2" ]]; then
+  echo "delete outside tmux with no socket flag exited $termination_status, want the usage refusal" >&2
+  cat "$termination_root/delete-no-target.err" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$termination_root/delete-no-target.err" "requires --socket"
+if [[ -s "$termination_root/delete-no-target.out" ]]; then
+  echo "a refused delete wrote stdout" >&2
+  exit 1
+fi
+if [[ "$(termination_tmux display-message -p -t "$termination_pane_id" '#{pane_id}' 2>/dev/null || true)" != "$termination_pane_id" ]]; then
+  echo "a refused delete killed the live Pane anyway" >&2
+  exit 1
+fi
+
+termination_sibling_before="$(termination_sibling_tmux show-options -gqv @projmux_termination_sentinel):$(termination_sibling_tmux list-panes -a -F '#{pane_id}')"
+termination_pmx delete pane "uid:$termination_pane_uid" --socket "$termination_socket" --dry-run \
+  >"$termination_root/delete-dry-run.out"
+smoke_assert_file_contains "$termination_root/delete-dry-run.out" "live would kill tmux pane $termination_pane_id"
+if [[ "$(termination_tmux display-message -p -t "$termination_pane_id" '#{pane_id}' 2>/dev/null || true)" != "$termination_pane_id" ]]; then
+  echo "a dry-run delete killed the live Pane" >&2
+  exit 1
+fi
+termination_pmx delete pane "uid:$termination_pane_uid" --socket "$termination_socket" --yes \
+  >"$termination_root/delete-apply.out"
+if [[ "$(termination_tmux display-message -p -t "$termination_pane_id" '#{pane_id}' 2>/dev/null || true)" == "$termination_pane_id" ]]; then
+  echo "an exact-socket delete left the Pane live" >&2
+  exit 1
+fi
+if [[ "$(termination_sibling_tmux show-options -gqv @projmux_termination_sentinel):$(termination_sibling_tmux list-panes -a -F '#{pane_id}')" != "$termination_sibling_before" ]]; then
+  echo "an exact-socket delete mutated the sibling socket" >&2
+  exit 1
+fi
+
+termination_cleanup
+echo ">> termination evidence transport root=$termination_root socket=$termination_socket_path guard=passed"
 echo ">> lifecycle smoke root=$PROJMUX_SMOKE_WORKDIR actual_socket=$PROJMUX_SMOKE_TMUX_ACTUAL guard=passed"

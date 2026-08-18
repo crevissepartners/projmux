@@ -28,14 +28,17 @@ func paneRuntimeInventory() string {
 func newPaneRuntimeFixture(t *testing.T, inventory string) (*tmuxPaneDeleteRuntime, *recordingTmuxRunner, coremetadata.Registry) {
 	t.Helper()
 	runner := &recordingTmuxRunner{outputs: map[string]string{}}
-	target, err := tmuxSocketNameTarget("isolated-delete")
+	// The exact target matches what the route resolves from the hermetic
+	// $TMUX in newTestDeleteCommand, so a runtime fixture and a full route
+	// invocation address the same isolated server.
+	target, err := tmuxSocketPathTarget(testDeleteTarget.value)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runtime := &tmuxPaneDeleteRuntime{runner: runner, target: target, getenv: func(string) string { return "" }}
 	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
 		"#{@projmux_project_uid}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}")
-	runner.outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "list-panes", "-a", "-F", format)] = inventory
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "list-panes", "-a", "-F", format)] = inventory
 	return runtime, runner, resourceFixtureRegistry(t)
 }
 
@@ -158,9 +161,9 @@ func TestPaneDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndPane(t *test
 		}
 		return ""
 	}
-	runner.outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "display-message", "-p", "-F", "#{socket_path}")] = "/tmp/exact.sock\n"
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] = "/tmp/exact.sock\n"
 	format := tmuxRowFormat("#{socket_path}", "#{pane_id}")
-	runner.outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "display-message", "-p", "-t", "%31", "-F", format)] =
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-t", "%31", "-F", format)] =
 		livePaneInventoryRow("/tmp/exact.sock", "%31")
 	plan := panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
 	plan.Implicit = true
@@ -172,7 +175,7 @@ func TestPaneDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndPane(t *test
 	if len(live.Targets) != 1 || !live.Targets[0].Self {
 		t.Fatalf("implicit plan = %#v", live)
 	}
-	runner.outputs[recordedTmuxCallKey("tmux", "-L", "isolated-delete", "display-message", "-p", "-F", "#{socket_path}")] = "/tmp/foreign.sock\n"
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] = "/tmp/foreign.sock\n"
 	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil || !strings.Contains(err.Error(), "not attached to the exact") {
 		t.Fatalf("foreign socket error = %v", err)
 	}
@@ -181,7 +184,7 @@ func TestPaneDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndPane(t *test
 func TestPaneDeleteRuntimeQueueRevalidatesTombstonesAndUsesExactSocket(t *testing.T) {
 	runtime, runner, _ := newPaneRuntimeFixture(t, "")
 	target := paneLiveDeleteTarget{PaneUID: "pan-alpha-log", PaneID: "%31", WindowID: "@10", SessionName: "alpha", SessionID: "$1"}
-	showKey := recordedTmuxCallKey("tmux", "-L", "isolated-delete", "show-options", "-pqv", "-t", "%31", tmuxopts.PaneUID)
+	showKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "show-options", "-pqv", "-t", "%31", tmuxopts.PaneUID)
 	runner.outputs[showKey] = "pan-alpha-log\n"
 	if err := runtime.tombstoneSelfKill(context.Background(), []paneLiveDeleteTarget{target}); err != nil {
 		t.Fatalf("tombstone: %v", err)
@@ -191,10 +194,10 @@ func TestPaneDeleteRuntimeQueueRevalidatesTombstonesAndUsesExactSocket(t *testin
 		t.Fatalf("queue: %v", err)
 	}
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", "isolated-delete", "show-options", "-pqv", "-t", "%31", tmuxopts.PaneUID}},
-		{name: "tmux", args: []string{"-L", "isolated-delete", "set-option", "-pq", "-t", "%31", tmuxopts.PaneUID, "deleted:pan-alpha-log"}},
-		{name: "tmux", args: []string{"-L", "isolated-delete", "show-options", "-pqv", "-t", "%31", tmuxopts.PaneUID}},
-		{name: "tmux", args: []string{"-L", "isolated-delete", "run-shell", "-b", "exec 'tmux' '-L' 'isolated-delete' kill-pane -t '%31'"}},
+		{name: "tmux", args: []string{"-S", testDeleteTarget.value, "show-options", "-pqv", "-t", "%31", tmuxopts.PaneUID}},
+		{name: "tmux", args: []string{"-S", testDeleteTarget.value, "set-option", "-pq", "-t", "%31", tmuxopts.PaneUID, "deleted:pan-alpha-log"}},
+		{name: "tmux", args: []string{"-S", testDeleteTarget.value, "show-options", "-pqv", "-t", "%31", tmuxopts.PaneUID}},
+		{name: "tmux", args: []string{"-S", testDeleteTarget.value, "run-shell", "-b", "exec 'tmux' '-S' '" + testDeleteTarget.value + "' kill-pane -t '%31'"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("queue calls = %#v, want %#v", runner.calls, want)
@@ -222,8 +225,8 @@ func paneSetFailureKey(paneID, value string) string { return paneID + "\x00" + v
 
 func (r *statefulPaneDeleteRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
-	if name != "tmux" || len(args) < 3 || args[0] != "-L" {
-		return nil, errors.New("stateful Pane delete runner requires exact -L routing")
+	if name != "tmux" || len(args) < 3 || (args[0] != "-L" && args[0] != "-S") {
+		return nil, errors.New("stateful Pane delete runner requires exact -L/-S routing")
 	}
 	command := args[2]
 	paneID := flagValue(args[2:], "-t")
@@ -251,7 +254,7 @@ func (r *statefulPaneDeleteRunner) Run(_ context.Context, name string, args ...s
 
 func statefulPaneRuntime(t *testing.T, runner tmuxCommandRunner) *tmuxPaneDeleteRuntime {
 	t.Helper()
-	target, err := tmuxSocketNameTarget("isolated-delete")
+	target, err := tmuxSocketPathTarget(testDeleteTarget.value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,8 +399,20 @@ func TestPaneDeleteRouteDryRunExecutionPartialFailureAndAgentOffline(t *testing.
 			t.Fatalf("partial failure = %q, want %q", err, want)
 		}
 	}
-	if store.snapshot() != before || len(runtime.killed) != 1 || runtime.killed[0].PaneID != "%30" {
-		t.Fatalf("partial state RegistryChanged=%t killed=%#v", store.snapshot() != before, runtime.killed)
+	// The Registry resources are untouched, but the intentional receipt this
+	// operation recorded before killing %30 stays: that Pane really was ended
+	// on purpose, and withdrawing the evidence would leave a real termination
+	// with nothing to explain it.
+	if !registryUIDs(store.registry)["pan-alpha-zsh"] || !registryUIDs(store.registry)["pan-alpha-log"] {
+		t.Fatalf("partial failure removed a Registry Pane:\n%s", store.snapshot())
+	}
+	if len(runtime.killed) != 1 || runtime.killed[0].PaneID != "%30" {
+		t.Fatalf("partial state killed=%#v", runtime.killed)
+	}
+	killedPane, _ := store.registry.Pane("pan-alpha-zsh")
+	if killedPane.Status.LastTermination == nil ||
+		killedPane.Status.LastTermination.Classification != coremetadata.TerminationIntentional {
+		t.Fatalf("killed Pane lost its intentional receipt: %#v", killedPane.Status.LastTermination)
 	}
 }
 
@@ -415,10 +430,13 @@ func TestCallerContainingMultiPaneTombstoneFailureKeepsRegistryAndQueueUntouched
 	if err == nil || !strings.Contains(err.Error(), "injected multi-target tombstone failure") {
 		t.Fatalf("tombstone failure = %v", err)
 	}
-	if out != "" || store.snapshot() != before || store.writes != 0 ||
+	// The snapshot covers termination evidence, so a recorded intent that was
+	// not withdrawn would fail here. The commit count deliberately is not
+	// asserted: the withdrawal is itself a commit.
+	if out != "" || store.snapshot() != before ||
 		len(runtime.killed) != 0 || len(runtime.queued) != 0 {
-		t.Fatalf("tombstone failure mutated state: stdout=%q writes=%d killed=%#v queued=%#v",
-			out, store.writes, runtime.killed, runtime.queued)
+		t.Fatalf("tombstone failure mutated state: stdout=%q snapshot-changed=%t killed=%#v queued=%#v",
+			out, store.snapshot() != before, runtime.killed, runtime.queued)
 	}
 }
 
@@ -428,8 +446,16 @@ func TestCallerContainingPaneStoreFailureRestoresEveryPrecommitTombstone(t *test
 	runtime.selfUID = "pan-alpha-zsh"
 	cmd := newTestDeleteCommand(store, false, false, nil)
 	cmd.panes = runtime
-	before := store.snapshot()
+	// Commit 1 is the pre-mutation intentional receipt and commit 3 is its
+	// withdrawal; both must run. The failure under test is commit 2, the
+	// resource cascade between them.
+	commit := cmd.store.update
+	commits := 0
 	cmd.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		commits++
+		if commits != 2 {
+			return commit(fn)
+		}
 		working := store.registry.Clone()
 		if err := fn(&working); err != nil {
 			return coremetadata.Registry{}, err
@@ -447,10 +473,21 @@ func TestCallerContainingPaneStoreFailureRestoresEveryPrecommitTombstone(t *test
 			t.Fatalf("store failure = %q, want %q", err, want)
 		}
 	}
-	if out != "" || store.snapshot() != before || len(runtime.tombstoned) != 2 ||
+	if out != "" || len(runtime.tombstoned) != 2 ||
 		len(runtime.restored) != 2 || len(runtime.queued) != 0 {
 		t.Fatalf("store failure state: stdout=%q tombstoned=%#v restored=%#v queued=%#v",
 			out, runtime.tombstoned, runtime.restored, runtime.queued)
+	}
+	// Every tombstone was rolled back, so no live Pane was ended and the
+	// recorded intent has to be withdrawn with them.
+	for _, uid := range []string{"pan-alpha-zsh", "pan-alpha-log"} {
+		pane, ok := store.registry.Pane(uid)
+		if !ok {
+			t.Fatalf("Pane %s was removed by a failed delete", uid)
+		}
+		if pane.Status.LastTermination != nil {
+			t.Fatalf("Pane %s kept a stale intentional receipt: %#v", uid, pane.Status.LastTermination)
+		}
 	}
 }
 

@@ -465,9 +465,9 @@ var routes = []Route{
 		// destructive verb. Naming the scope in the string it prints is what
 		// makes the drift loud instead.
 		Usage: []string{
-			"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]",
-			"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]",
-			"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]",
+			"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
+			"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
+			"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 		},
 		Canonical: []string{"delete window", "delete pane", "delete agent", "delete notification", "delete snapshot"},
 		Children: []Route{
@@ -475,21 +475,21 @@ var routes = []Route{
 				Name:      "window",
 				Summary:   "Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry",
 				Aliases:   []string{"windows"},
-				Usage:     []string{"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]"},
+				Usage:     []string{"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
 				Canonical: []string{"delete window"},
 			},
 			{
 				Name:      "pane",
 				Summary:   "Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry",
 				Aliases:   []string{"panes"},
-				Usage:     []string{"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]"},
+				Usage:     []string{"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
 				Canonical: []string{"delete pane"},
 			},
 			{
 				Name:      "agent",
 				Summary:   "Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry",
 				Aliases:   []string{"agents"},
-				Usage:     []string{"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]"},
+				Usage:     []string{"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
 				Canonical: []string{"delete agent"},
 			},
 			{Name: "notification", Summary: "Delete pending notification rows", Aliases: []string{"notifications"}, Canonical: []string{"delete notification"}},
@@ -973,6 +973,7 @@ var routes = []Route{
 			"projmux internal focus --target <target> ...",
 			"projmux internal key-broker [--once]",
 			"projmux internal popup-wait-key",
+			"projmux internal supervise --pane-uid <uid> --generation <gen> -- <command> ...",
 		},
 		Canonical: []string{
 			"internal tmux",
@@ -985,6 +986,7 @@ var routes = []Route{
 			"internal focus",
 			"internal key-broker",
 			"internal popup-wait-key",
+			"internal supervise",
 		},
 		Children: []Route{
 			{
@@ -1095,6 +1097,12 @@ var routes = []Route{
 				Summary:   "Read a single key for a display-only tmux popup",
 				Usage:     []string{"projmux internal popup-wait-key"},
 				Canonical: []string{"internal popup-wait-key"},
+			},
+			{
+				Name:      "supervise",
+				Summary:   "Supervise one managed Pane process and record its exit evidence",
+				Usage:     []string{"projmux internal supervise --pane-uid <uid> --generation <gen> [--agent-uid <uid>] [--operation-id <id>] [--argv0 <name>] -- <command> ..."},
+				Canonical: []string{"internal supervise"},
 			},
 		},
 	},

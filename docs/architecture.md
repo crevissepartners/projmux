@@ -206,6 +206,79 @@ Agent lifecycle:
   failure or an abnormal exit resolves to `Failed`. The Agent survives its Pane
   as a resumable resource.
 
+Termination evidence transport:
+
+- A managed Pane's `status.activation` names one **materialization** of that
+  Pane, not the Pane. It carries an opaque `generation` minted per launch,
+  resume, and topology materialization, the exact `%N` handle it landed on, the
+  owning Agent uid for an Agent-managed Pane, and the operation id that issued
+  it. The uid survives kill/recreate and resume; the generation does not, and
+  that is what lets a receipt from a replaced process be recognized as stale
+  instead of applied to the Pane that now holds the uid.
+- Every managed launch execs `projmux internal supervise --pane-uid <uid>
+  --generation <gen> [--agent-uid <uid>] -- <command>...`. The supervisor gives
+  the child this pane's exact stdin/stdout/stderr -- the pty tmux allocated, not
+  a pipe -- puts it in its own process group, and makes that group the
+  terminal's foreground group, so job control works and
+  `#{pane_current_command}` keeps naming the child. argv, cwd, and the
+  environment are untouched. tmux-side signals aimed at the pane process are
+  relayed to the child's group, because the pane pid and the child pid used to
+  be the same process. The foreground handoff is attempted and retried without
+  it rather than probed for: there is no portable way to ask "is fd 0 my
+  controlling terminal" without an ioctl, and a start that fails forks no
+  surviving child.
+- A managed shell Pane -- one created with no command of its own -- is
+  supervised over the process tmux itself would have started: `default-command`
+  run by `default-shell` when it is set, and a **login** shell (argv[0] prefixed
+  with `-`) when it is empty. Both values are read from the same exact server
+  the pane is created on.
+- `status.lastTermination` on the Pane, mirrored onto the owning Agent, is the
+  minimal durable receipt: closed `source` and `classification` vocabularies,
+  `observedAt`, the Pane uid, the optional Agent uid, the generation, and either
+  an exit code or a signal name, plus the operation id. It carries no command
+  text, no pane content, and no provider conversation data. Like
+  `status.sessionRef` it is an optional pointer with `omitempty` and additive
+  inside `schemaVersion: 1`.
+- The classification vocabulary is four **kinds of proof**, not a severity
+  ladder. `intentional` is a canonical control action's own written record and
+  may only come from `source: control-action`. `normal` and `abnormal` mean a
+  supervisor actually reaped the child: exit 0 and everything else,
+  respectively. `unknown` is an explicitly evidence-free record. **Exit 0 is
+  never promoted to intent**: a provider that exits because the operator quit
+  and one that exits because it finished a batch produce byte-identical wait
+  statuses.
+- Receipts are applied under a generation guard: the Pane must still exist, the
+  receipt's generation must be the Pane's current one, a receipt naming an Agent
+  must name the Agent that owns the Pane and still binds it, a receipt the
+  registry already stores verbatim is a no-op, and recorded intent is sticky for
+  its generation. The last rule is load bearing -- a canonical delete records
+  intent and then kills the pane, and the supervisor watching it reports the
+  resulting signal; letting the observation win would turn every deliberate
+  deletion into a crash report.
+- Canonical `delete window|pane|agent` commits its intentional receipt in **its
+  own transaction, before the first live mutation**. A failure to make that
+  evidence durable aborts with zero tmux mutations. Every refusal after it
+  withdraws the receipt again, scoped by the operation id so it can only remove
+  what it wrote; a partial delete that really did kill something keeps the
+  evidence that explains it.
+- Nothing here consumes a receipt. Turning evidence into an Agent phase or a
+  Pane release is a separate concern with its own review.
+- The supervisor resolves its state paths from the pane's own inherited
+  environment, which is the tmux **server's** environment rather than the
+  environment of the CLI call that created the pane. That is the correct
+  production binding -- the server is started from the operator's session -- and
+  it is why an isolated test has to start its server with the same state root it
+  reads the receipts back from.
+- Losing a receipt is a supported outcome, not a failure mode. A supervisor
+  killed with `SIGKILL`, a lost tmux server, an unwritable registry, and a pane
+  whose supervisor could not be constructed all leave no receipt, and the pane
+  behaves exactly as it did before supervision existed. An absent receipt is the
+  input that resolves to `unknown`; it is never read as a normal exit.
+- A Pane **adopted** from a runtime object created for another reason -- the
+  first pane a `new-session` brings with it -- carries no generation until it is
+  relaunched. Adoption is not supervision: the process was already running, so
+  there is nothing to have launched it with.
+
 Agent provider session ref:
 
 - `status.sessionRef` is the durable pointer from an Agent to the provider
@@ -666,6 +739,13 @@ Runtime observation and resource status:
   exact mirror is killed before the Registry commit; duplicate, foreign,
   stale-owner, inventory-failure, and plan-to-execution race states remain
   fail-closed. An implicit active Window is never treated as offline.
+- **`delete window|pane|agent` names its server the same way `reconcile
+  resources` does**: explicit `--socket <name>`, explicit `--socket-path
+  <absolute>`, or the inherited absolute `$TMUX`, and outside tmux with no flag
+  it refuses. There used to be a fourth branch -- a hardcoded `-L projmux` --
+  which meant a delete issued against an isolated server inventoried one host
+  and killed objects on another. Refusing is the only remaining honest answer,
+  and it names the two flags that fix it.
 - The inventory is a pure **read**. It never writes, re-mirrors, or adopts a uid
   onto a live tmux object; reattaching a lost binding belongs to the reconciler
   (see *Binding reapply and adoption* below). After a tmux server restart the

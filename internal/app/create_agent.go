@@ -22,6 +22,8 @@ type agentWork struct {
 	windowName string
 	agent      coremetadata.Agent
 	pane       coremetadata.Pane
+	// activation is the generation this Agent launch was issued.
+	activation superviseSpec
 }
 
 // runResourceAgent answers the canonical resource-backed `create agent` and the
@@ -157,11 +159,16 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			if err != nil {
 				return MapMetadataError(err)
 			}
+			activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, agent.Metadata.UID, operationID)
+			if err != nil {
+				return err
+			}
 			agents = append(agents, agentWork{
 				target:     target,
 				windowName: window.Metadata.Name,
 				agent:      agent,
 				pane:       pane,
+				activation: activation,
 			})
 		}
 
@@ -176,11 +183,12 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			}
 		}
 		for _, work := range agents {
-			anchorPaneID, err := c.ensureAnchorPane(ctx, *working, ledger, project, sessionName, work.target)
+			anchorPaneID, err := c.ensureAnchorPane(ctx, working, mutator, ledger, project, sessionName, operationID, work.target)
 			if err != nil {
 				return err
 			}
-			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workspace.CWD, launchArgv)
+			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workspace.CWD,
+				c.runtime.supervisedLaunch(ctx, work.activation, launchArgv))
 			if paneID != "" {
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)
@@ -188,6 +196,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
 					return errors.Join(err, mirrorErr)
 				}
+				observeActivationRuntime(working, mutator, work.activation, paneID, c.runtime.warn)
 			}
 			if err != nil {
 				return err

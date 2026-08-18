@@ -91,6 +91,12 @@ func (r Registry) Validate() error {
 		default:
 			return stateErr(op, ErrInvalidRegistry, "pane %q has unsupported role %q", pane.Metadata.Name, pane.Spec.Role)
 		}
+		if activation := pane.Status.Activation; !activation.IsZero() && strings.TrimSpace(activation.Generation) == "" {
+			return stateErr(op, ErrInvalidRegistry, "pane %q has an activation record without a generation", pane.Metadata.Name)
+		}
+		if err := validateTermination(op, "pane "+pane.Metadata.Name, pane.Status.LastTermination); err != nil {
+			return err
+		}
 	}
 
 	for _, agent := range r.Agents {
@@ -156,6 +162,9 @@ func (r Registry) Validate() error {
 		if err := validateSessionRef(op, agent); err != nil {
 			return err
 		}
+		if err := validateTermination(op, "agent "+agent.Metadata.Name, agent.Status.LastTermination); err != nil {
+			return err
+		}
 	}
 
 	for _, window := range r.Windows {
@@ -175,6 +184,29 @@ func (r Registry) Validate() error {
 	}
 
 	return r.validateReservations(op, uids)
+}
+
+// validateTermination enforces the closed receipt vocabularies. A nil receipt
+// is the normal state and is always valid: absence of evidence is a legal
+// document, and the whole point of this transport is that it is never confused
+// with evidence of normality.
+func validateTermination(op, subject string, receipt *TerminationEvidence) error {
+	if receipt == nil {
+		return nil
+	}
+	if !ValidTerminationSource(receipt.Source) {
+		return stateErr(op, ErrInvalidRegistry, "%s has unsupported termination source %q", subject, receipt.Source)
+	}
+	if !ValidTerminationClassification(receipt.Classification) {
+		return stateErr(op, ErrInvalidRegistry, "%s has unsupported termination classification %q", subject, receipt.Classification)
+	}
+	if receipt.Classification == TerminationIntentional && receipt.Source != TerminationSourceControlAction {
+		return stateErr(op, ErrInvalidRegistry, "%s records intentional termination from source %q", subject, receipt.Source)
+	}
+	if strings.TrimSpace(receipt.PaneUID) == "" {
+		return stateErr(op, ErrInvalidRegistry, "%s has a termination receipt naming no pane", subject)
+	}
+	return nil
 }
 
 // windowPaneUIDs returns every Pane uid transitively owned by a Window: its

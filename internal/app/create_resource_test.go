@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -178,15 +179,38 @@ func newTestResourceCreateCommand(t *testing.T, store *fakeResourceStore, tmux *
 			sessionNameFor: filepath.Base,
 		},
 		runtime: &materializer{
-			runner:   tmux,
-			mirror:   mirror,
-			sessions: sessions,
-			warn:     testWarnWriter{t},
+			runner:     tmux,
+			mirror:     mirror,
+			sessions:   sessions,
+			warn:       testWarnWriter{t},
+			executable: func() (string, error) { return testSupervisorBinary, nil },
+			lookupEnv:  func(string) string { return "" },
 		},
 		shell:          "/bin/zsh",
 		sessionNameFor: filepath.Base,
 		newOperationID: func() (string, error) { return "op-test", nil },
+		newGeneration:  testGenerationSequence(),
 	}, sessions
+}
+
+// testSupervisorBinary is the stable projmux path the managed process
+// supervisor is spelled with inside launch-argv assertions.
+const testSupervisorBinary = "/opt/projmux/bin/projmux"
+
+// testGenerationSequence mints stable activation generations so a test can
+// quote a launched argv verbatim instead of matching around random entropy.
+func testGenerationSequence() func() (string, error) {
+	issued := 0
+	return func() (string, error) {
+		issued++
+		return fmt.Sprintf("gen-test-%d", issued), nil
+	}
+}
+
+// supervisedLaunchArgv is the argv assertion helper for one supervised child.
+func supervisedLaunchArgv(paneUID, generation, agentUID, operationID, argv0 string, child ...string) []string {
+	spec := superviseSpec{PaneUID: paneUID, AgentUID: agentUID, Generation: generation, OperationID: operationID}
+	return superviseArgv(testSupervisorBinary, spec, argv0, child)
 }
 
 type testWarnWriter struct{ t *testing.T }
@@ -1744,14 +1768,22 @@ func TestCreatePayloadReachesTheRuntimeUnreinterpreted(t *testing.T) {
 	if _, _, err := runRoute(t, create, "window", "--project", "beta", "--", "nvim", "--clean", "-o", "json"); err != nil {
 		t.Fatalf("payload error = %v", err)
 	}
-	var command string
+	var command []string
 	for _, call := range tmux.calls {
 		if len(call) > 0 && call[0] == "new-window" {
-			command = strings.Join(trailingCommand(call), " ")
+			command = trailingCommand(call)
 		}
 	}
-	if command != "nvim --clean -o json" {
-		t.Fatalf("payload argv = %q, want it forwarded untouched", command)
+	// The managed process supervisor prefixes the launch, and everything after
+	// its `--` terminator is the operator's payload byte for byte. The
+	// terminator is what makes this checkable: no payload word can be read as a
+	// supervisor flag, however it is spelled.
+	want := supervisedLaunchArgv("pane-test-2", "gen-test-1", "", "op-test", "", "nvim", "--clean", "-o", "json")
+	if !slices.Equal(command, want) {
+		t.Fatalf("payload argv = %v, want %v", command, want)
+	}
+	if payload := strings.Join(command[len(command)-4:], " "); payload != "nvim --clean -o json" {
+		t.Fatalf("payload tail = %q, want it forwarded untouched", payload)
 	}
 	// The Window name seeds from the payload's command basename, not from the
 	// configured shell.

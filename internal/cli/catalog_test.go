@@ -80,7 +80,14 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 // diagnostics escape hatch observes one exact server and writes nothing -- and
 // listing them explicitly is what keeps a future mutation route from arriving
 // under the same flag without anyone noticing.
-var exactTransportRoots = []string{"reconcile", "get", "runtime"}
+//
+// `delete` is here because its live half has to name a server and previously
+// did not. It defaulted to the app's own `-L projmux` socket, which meant a
+// delete issued against an isolated server inventoried one host and killed
+// objects on another. The flags replace that default rather than widening the
+// route: without one, and outside tmux, `delete` now refuses instead of
+// guessing.
+var exactTransportRoots = []string{"reconcile", "get", "runtime", "delete"}
 
 func TestManagedBindingConvergenceStaysHiddenBehindPublicResourceRepair(t *testing.T) {
 	t.Parallel()

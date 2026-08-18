@@ -184,6 +184,8 @@ func (r Registry) normalized() Registry {
 		r.Panes[i].APIVersion = APIVersion
 		r.Panes[i].Kind = KindPane
 		r.Panes[i].Metadata.CreatedAt = r.Panes[i].Metadata.CreatedAt.UTC()
+		r.Panes[i].Status.Activation.StartedAt = r.Panes[i].Status.Activation.StartedAt.UTC()
+		normalizeTermination(r.Panes[i].Status.LastTermination)
 	}
 	for i := range r.Agents {
 		r.Agents[i].APIVersion = APIVersion
@@ -192,8 +194,19 @@ func (r Registry) normalized() Registry {
 		r.Agents[i].Status.LastTransitionAt = r.Agents[i].Status.LastTransitionAt.UTC()
 		r.Agents[i].Status.Interaction.ObservedAt = r.Agents[i].Status.Interaction.ObservedAt.UTC()
 		r.Agents[i].Status.Activation.ObservedAt = r.Agents[i].Status.Activation.ObservedAt.UTC()
+		normalizeTermination(r.Agents[i].Status.LastTermination)
 	}
 	return r
+}
+
+// normalizeTermination canonicalizes one receipt's timestamp in place. A nil
+// receipt is the common case and stays nil, so a registry written before
+// termination evidence existed round-trips byte-identically.
+func normalizeTermination(receipt *TerminationEvidence) {
+	if receipt == nil {
+		return
+	}
+	receipt.ObservedAt = receipt.ObservedAt.UTC()
 }
 
 // Normalize returns the registry with the current envelope stamped and

@@ -454,10 +454,15 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 			if err != nil {
 				return MapMetadataError(err)
 			}
+			activation, err := c.issuePaneActivation(working, mutator, pane.Metadata.UID, "", operationID)
+			if err != nil {
+				return err
+			}
 			panes = append(panes, paneWork{
 				target:     target,
 				windowName: window.Metadata.Name,
 				pane:       pane,
+				activation: activation,
 			})
 		}
 
@@ -472,11 +477,12 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 			}
 		}
 		for _, work := range panes {
-			anchorPaneID, err := c.ensureAnchorPane(ctx, *working, ledger, project, sessionName, work.target)
+			anchorPaneID, err := c.ensureAnchorPane(ctx, working, mutator, ledger, project, sessionName, operationID, work.target)
 			if err != nil {
 				return err
 			}
-			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, project.Spec.Root, flags.payload)
+			launch := c.runtime.supervisedLaunch(ctx, work.activation, flags.payload)
+			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, project.Spec.Root, launch)
 			if paneID != "" {
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)
@@ -484,6 +490,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
 					return errors.Join(err, mirrorErr)
 				}
+				observeActivationRuntime(working, mutator, work.activation, paneID, c.runtime.warn)
 			}
 			if err != nil {
 				return err
@@ -511,6 +518,8 @@ type paneWork struct {
 	target     paneTarget
 	windowName string
 	pane       coremetadata.Pane
+	// activation is the generation this Pane's supervised launch was issued.
+	activation superviseSpec
 }
 
 // paneTarget is one preflighted (Window, anchor Pane) pair.
@@ -762,6 +771,9 @@ type windowWork struct {
 	window  coremetadata.Window
 	initial coremetadata.Pane
 	payload []string
+	// activation is the generation the initial Pane's supervised launch was
+	// issued.
+	activation superviseSpec
 	// initialPaneID is the tmux pane id of the Window's initial Pane, filled in
 	// by the runtime phase.
 	initialPaneID string
@@ -788,7 +800,11 @@ func (c *createCommand) allocateWindow(
 	if err != nil {
 		return windowWork{}, MapMetadataError(err)
 	}
-	return windowWork{window: window, initial: panes[0], payload: req.payload}, nil
+	activation, err := c.issuePaneActivation(working, mutator, panes[0].Metadata.UID, "", req.operationID)
+	if err != nil {
+		return windowWork{}, err
+	}
+	return windowWork{window: window, initial: panes[0], payload: req.payload, activation: activation}, nil
 }
 
 // materializeWindow creates the detached tmux window for an allocated Window and
@@ -802,7 +818,8 @@ func (c *createCommand) materializeWindow(
 	sessionName string,
 	work *windowWork,
 ) error {
-	created, err := c.runtime.newWindow(ctx, sessionName, work.window.Metadata.Name, project.Spec.Root, work.payload)
+	launch := c.runtime.supervisedLaunch(ctx, work.activation, work.payload)
+	created, err := c.runtime.newWindow(ctx, sessionName, work.window.Metadata.Name, project.Spec.Root, launch)
 	if created.WindowID == "" {
 		return err
 	}
@@ -829,6 +846,7 @@ func (c *createCommand) materializeWindow(
 	if mirrorErr := c.runtime.mirror.MirrorPane(ctx, work.initialPaneID, work.initial); mirrorErr != nil {
 		return errors.Join(err, mirrorErr)
 	}
+	observeActivationRuntime(working, mutator, work.activation, work.initialPaneID, c.runtime.warn)
 	return err
 }
 
@@ -836,12 +854,14 @@ func (c *createCommand) materializeWindow(
 // materializing the Window it belongs to when that Window is still offline.
 func (c *createCommand) ensureAnchorPane(
 	ctx context.Context,
-	registry coremetadata.Registry,
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
 	ledger *runtimeLedger,
 	project coremetadata.Project,
-	sessionName string,
+	sessionName, operationID string,
 	target paneTarget,
 ) (string, error) {
+	registry := *working
 	window, ok := registry.Window(target.windowUID)
 	if !ok {
 		return "", fmt.Errorf("create pane: window %q disappeared before the mutation ran", target.windowUID)
@@ -858,7 +878,17 @@ func (c *createCommand) ensureAnchorPane(
 	if windowID == "" {
 		// The Window exists in metadata but not in the runtime. Materialize it
 		// detached and adopt its initial pane as the anchor.
-		created, createErr := c.runtime.newWindow(ctx, sessionName, window.Metadata.Name, project.Spec.Root, nil)
+		// The Window's stored primary Pane is what this new-window materializes,
+		// so it is a launch this operation owns and gets its own generation.
+		var anchorActivation superviseSpec
+		if strings.TrimSpace(window.Spec.PrimaryPaneRef) == target.anchorUID {
+			anchorActivation, err = c.issuePaneActivation(working, mutator, target.anchorUID, "", operationID)
+			if err != nil {
+				return "", err
+			}
+		}
+		created, createErr := c.runtime.newWindow(ctx, sessionName, window.Metadata.Name, project.Spec.Root,
+			c.runtime.supervisedLaunch(ctx, anchorActivation, nil))
 		windowID, err = created.WindowID, createErr
 		if windowID != "" {
 			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, window.Metadata.UID, ledger); claimErr != nil {
@@ -874,6 +904,7 @@ func (c *createCommand) ensureAnchorPane(
 				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, created.PaneID, *anchor); mirrorErr != nil {
 					return "", errors.Join(err, mirrorErr)
 				}
+				observeActivationRuntime(working, mutator, anchorActivation, created.PaneID, c.runtime.warn)
 				return created.PaneID, err
 			}
 		}

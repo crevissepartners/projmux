@@ -16,6 +16,9 @@ import (
 // resource transaction; this seam owns only exact-server inventory and exact
 // tmux Window mutation.
 type windowDeleteRuntime interface {
+	// useExactTarget pins every read and write of this seam to one resolved
+	// server. It is called before the first inventory of an invocation.
+	useExactTarget(explicitTmuxTarget)
 	preflight(context.Context, coremetadata.Registry, deletePlan) (windowLiveDeletePlan, error)
 	kill(context.Context, windowLiveDeleteTarget) error
 	queueSelfKill(context.Context, []windowLiveDeleteTarget) error
@@ -69,16 +72,20 @@ type tmuxWindowDeleteRuntime struct {
 	getenv func(string) string
 }
 
+// newTmuxWindowDeleteRuntime builds the live half with no server bound yet.
+// See newTmuxPaneDeleteRuntime for why there is no default target.
 func newTmuxWindowDeleteRuntime() *tmuxWindowDeleteRuntime {
-	target, err := tmuxSocketNameTarget(defaultAppSocket)
-	if err != nil {
-		panic(err)
-	}
 	return &tmuxWindowDeleteRuntime{
 		runner: inttmux.ExecRunner{},
-		target: target,
 		getenv: os.Getenv,
 	}
+}
+
+func (r *tmuxWindowDeleteRuntime) useExactTarget(target explicitTmuxTarget) {
+	if r == nil {
+		return
+	}
+	r.target = target
 }
 
 type liveWindowRow struct {
@@ -96,6 +103,9 @@ func (r *tmuxWindowDeleteRuntime) routed() explicitTmuxRunner {
 func (r *tmuxWindowDeleteRuntime) inventory(ctx context.Context) ([]liveWindowRow, bool, error) {
 	if r == nil || r.runner == nil {
 		return nil, false, errors.New("delete window: tmux runtime is not configured")
+	}
+	if r.target.flag == "" || r.target.value == "" {
+		return nil, false, errors.New("delete window: no exact tmux target is bound")
 	}
 	format := tmuxRowFormat(
 		"#{session_id}",

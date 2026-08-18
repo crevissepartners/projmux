@@ -2302,6 +2302,16 @@ delete_other_tmux() {
     "$delete_real_tmux" -L "$delete_other_socket" "$@"
 }
 
+# `delete` names the exact server it mutates. Passing the run-unique socket is
+# what proves the route no longer defaults to the app's own `-L projmux`: the
+# shim below would map that default onto this same server, so a fallback would
+# be invisible without the explicit flag.
+delete_pmx_delete() {
+  local kind="$1"
+  shift
+  delete_pmx delete "$kind" --socket "$delete_socket" "$@"
+}
+
 delete_pmx() {
   env -u TMUX -u TMUX_PANE \
     HOME="$delete_root/home" \
@@ -2393,7 +2403,7 @@ delete_registry="$delete_root/state/projmux/metadata/registry.json"
 cp "$delete_registry" "$delete_root/registry.before-dry-run"
 delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' \
   >"$delete_root/windows.before-dry-run"
-delete_pmx delete window "uid:$delete_primary_uid" --dry-run >"$delete_root/external-dry-run.out"
+delete_pmx_delete window "uid:$delete_primary_uid" --dry-run >"$delete_root/external-dry-run.out"
 cmp "$delete_root/registry.before-dry-run" "$delete_registry"
 delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' \
   >"$delete_root/windows.after-dry-run"
@@ -2404,7 +2414,7 @@ if grep -Fq "last live Window" "$delete_root/external-dry-run.out"; then
   exit 1
 fi
 
-delete_pmx delete window "uid:$delete_primary_uid" --yes >"$delete_root/external.out"
+delete_pmx_delete window "uid:$delete_primary_uid" --yes >"$delete_root/external.out"
 if [[ "$(delete_tmux display-message -p -t "$delete_primary" '#{window_id}' 2>/dev/null || true)" == "$delete_primary" ]]; then
   echo "external Window delete left $delete_primary live" >&2
   exit 1
@@ -2425,9 +2435,9 @@ smoke_assert_file_contains "$delete_root/external.out" "live killed tmux window 
 
 # The only beta Window explicitly predicts and then causes the Project session
 # to end; alpha remains live and untouched.
-delete_pmx delete window "uid:$delete_beta_uid" --dry-run >"$delete_root/last-dry-run.out"
+delete_pmx_delete window "uid:$delete_beta_uid" --dry-run >"$delete_root/last-dry-run.out"
 smoke_assert_file_contains "$delete_root/last-dry-run.out" "live cascade would end Project session delete-beta"
-delete_pmx delete window "uid:$delete_beta_uid" --yes >"$delete_root/last.out"
+delete_pmx_delete window "uid:$delete_beta_uid" --yes >"$delete_root/last.out"
 if delete_tmux has-session -t delete-beta 2>/dev/null; then
   echo "last-Window delete left delete-beta session live" >&2
   exit 1
@@ -2450,7 +2460,7 @@ XDG_STATE_HOME=$(printf %q "$delete_root/state") \
     TMUX_TMPDIR=$(printf %q "$delete_root/tmux") \
     PATH=$(printf %q "$delete_shim"):\$PATH \
 SHELL=/bin/sh \
-$(printf %q "$bin") delete window --yes >$(printf %q "$delete_root/self.out") 2>$(printf %q "$delete_root/self.err")
+$(printf %q "$bin") delete window --socket $(printf %q "$delete_socket") --yes >$(printf %q "$delete_root/self.out") 2>$(printf %q "$delete_root/self.err")
 SELF_DELETE
 chmod 0755 "$self_script"
 self_window="$(delete_tmux new-window -d -t delete-alpha: -n self-delete -c "$delete_root/work/alpha" -P -F '#{window_id}' "$self_script")"
@@ -2493,13 +2503,13 @@ delete_sibling_shell_uid="$(delete_tmux show-options -pqv -t "$delete_sibling_sh
 delete_split="$(delete_pmx create pane --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id -- sleep 600)"
 delete_split_uid="$(delete_tmux show-options -pqv -t "$delete_split" @projmux_pane_uid)"
 echo ">> delete Pane sibling target pane=$delete_split uid=$delete_split_uid"
-delete_pmx delete pane "uid:$delete_split_uid" --dry-run >"$delete_root/pane-sibling-dry-run.out"
+delete_pmx_delete pane "uid:$delete_split_uid" --dry-run >"$delete_root/pane-sibling-dry-run.out"
 smoke_assert_file_contains "$delete_root/pane-sibling-dry-run.out" "live would kill tmux pane $delete_split pane-uid=$delete_split_uid"
 if grep -Fq "last live Pane" "$delete_root/pane-sibling-dry-run.out"; then
   echo "sibling Pane dry-run incorrectly predicted Window termination" >&2
   exit 1
 fi
-delete_pmx delete pane "uid:$delete_split_uid" --yes >"$delete_root/pane-sibling.out"
+delete_pmx_delete pane "uid:$delete_split_uid" --yes >"$delete_root/pane-sibling.out"
 if [[ "$(delete_tmux display-message -p -t "$delete_split" '#{pane_id}' 2>/dev/null || true)" == "$delete_split" ]] || \
   [[ "$(delete_tmux display-message -p -t "$delete_sibling_shell" '#{pane_id}')" != "$delete_sibling_shell" ]]; then
   echo "exact Pane delete removed the wrong sibling or left its target live" >&2
@@ -2523,7 +2533,7 @@ delete_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$de
 delete_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_agent_pane" @projmux_pane_uid)"
 echo ">> delete managed Pane target agent=$delete_agent_uid pane=$delete_agent_pane uid=$delete_agent_pane_uid"
-delete_pmx delete pane "uid:$delete_agent_pane_uid" --yes >"$delete_root/managed-pane.out"
+delete_pmx_delete pane "uid:$delete_agent_pane_uid" --yes >"$delete_root/managed-pane.out"
 delete_pmx describe agent "uid:$delete_agent_uid" -o json >"$delete_root/managed-agent-offline.json"
 smoke_assert_file_contains "$delete_root/managed-agent-offline.json" '"phase": "Offline"'
 if grep -Fq '"paneRef"' "$delete_root/managed-agent-offline.json"; then
@@ -2536,10 +2546,10 @@ delete_agent_two_pane="$(delete_pmx create agent --provider codex --project "uid
 delete_agent_two_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_agent_two_pane_uid="$(delete_tmux show-options -pqv -t "$delete_agent_two_pane" @projmux_pane_uid)"
 echo ">> delete Agent target agent=$delete_agent_two_uid pane=$delete_agent_two_pane uid=$delete_agent_two_pane_uid"
-delete_pmx delete agent "uid:$delete_agent_two_uid" --dry-run >"$delete_root/agent-dry-run.out"
+delete_pmx_delete agent "uid:$delete_agent_two_uid" --dry-run >"$delete_root/agent-dry-run.out"
 smoke_assert_file_contains "$delete_root/agent-dry-run.out" "cascade pane/"
 smoke_assert_file_contains "$delete_root/agent-dry-run.out" "live would kill tmux pane $delete_agent_two_pane pane-uid=$delete_agent_two_pane_uid"
-delete_pmx delete agent "uid:$delete_agent_two_uid" --yes >"$delete_root/agent.out"
+delete_pmx_delete agent "uid:$delete_agent_two_uid" --yes >"$delete_root/agent.out"
 if [[ "$(delete_tmux display-message -p -t "$delete_agent_two_pane" '#{pane_id}' 2>/dev/null || true)" == "$delete_agent_two_pane" ]]; then
   echo "Agent delete left managed Pane $delete_agent_two_pane live" >&2
   exit 1
@@ -2575,7 +2585,7 @@ sleep 0.5
 
 cp "$delete_registry" "$delete_root/registry.before-offline-dry-run"
 delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' >"$delete_root/windows.before-offline-dry-run"
-delete_pmx delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --dry-run >"$delete_root/offline-dry-run.out"
+delete_pmx_delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --dry-run >"$delete_root/offline-dry-run.out"
 cmp "$delete_root/registry.before-offline-dry-run" "$delete_registry"
 delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' >"$delete_root/windows.after-offline-dry-run"
 cmp "$delete_root/windows.before-offline-dry-run" "$delete_root/windows.after-offline-dry-run"
@@ -2591,7 +2601,7 @@ if grep -Fq "live would kill tmux window" "$delete_root/offline-dry-run.out"; th
   exit 1
 fi
 
-delete_pmx delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --yes >"$delete_root/offline.out"
+delete_pmx_delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --yes >"$delete_root/offline.out"
 smoke_assert_file_contains "$delete_root/offline.out" "registry-only deleted this Window; no tmux Window was killed"
 delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-offline"
 delete_pmx get panes --all-projects -o uid >"$delete_root/panes.after-offline"
@@ -2619,7 +2629,7 @@ if grep -Fq -- "-L $delete_product_socket kill-window -t $delete_offline_window"
 fi
 
 cp "$delete_registry" "$delete_root/registry.before-offline-repeat"
-if delete_pmx delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --yes \
+if delete_pmx_delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --yes \
   >"$delete_root/offline-repeat.out" 2>"$delete_root/offline-repeat.err"; then
   echo "repeat offline Window delete unexpectedly succeeded" >&2
   exit 1
@@ -2633,9 +2643,9 @@ delete_last_window="$(delete_tmux new-window -d -t delete-alpha: -n pane-last -c
 delete_last_pane="$(delete_tmux display-message -p -t "$delete_last_window" '#{pane_id}')"
 delete_last_pane_uid="$(delete_tmux show-options -pqv -t "$delete_last_pane" @projmux_pane_uid)"
 echo ">> delete last Pane Window target pane=$delete_last_pane uid=$delete_last_pane_uid window=$delete_last_window"
-delete_pmx delete pane "uid:$delete_last_pane_uid" --dry-run >"$delete_root/pane-last-dry-run.out"
+delete_pmx_delete pane "uid:$delete_last_pane_uid" --dry-run >"$delete_root/pane-last-dry-run.out"
 smoke_assert_file_contains "$delete_root/pane-last-dry-run.out" "live cascade would end Window $delete_last_window because its last live Pane is deleted"
-delete_pmx delete pane "uid:$delete_last_pane_uid" --yes >"$delete_root/pane-last.out"
+delete_pmx_delete pane "uid:$delete_last_pane_uid" --yes >"$delete_root/pane-last.out"
 if [[ "$(delete_tmux display-message -p -t "$delete_last_window" '#{window_id}' 2>/dev/null || true)" == "$delete_last_window" ]]; then
   echo "last-Pane delete left Window $delete_last_window live" >&2
   exit 1
@@ -2650,10 +2660,10 @@ delete_gamma_pane="$(delete_tmux display-message -p -t delete-gamma:only '#{pane
 delete_gamma_pane_uid="$(delete_tmux show-options -pqv -t "$delete_gamma_pane" @projmux_pane_uid)"
 delete_gamma_window="$(delete_tmux display-message -p -t "$delete_gamma_pane" '#{window_id}')"
 echo ">> delete last Pane session target pane=$delete_gamma_pane uid=$delete_gamma_pane_uid window=$delete_gamma_window session=delete-gamma"
-delete_pmx delete pane "uid:$delete_gamma_pane_uid" --dry-run >"$delete_root/pane-session-last-dry-run.out"
+delete_pmx_delete pane "uid:$delete_gamma_pane_uid" --dry-run >"$delete_root/pane-session-last-dry-run.out"
 smoke_assert_file_contains "$delete_root/pane-session-last-dry-run.out" "live cascade would end Window $delete_gamma_window because its last live Pane is deleted"
 smoke_assert_file_contains "$delete_root/pane-session-last-dry-run.out" "live cascade would end Project session delete-gamma because its last live Window is deleted"
-delete_pmx delete pane "uid:$delete_gamma_pane_uid" --yes >"$delete_root/pane-session-last.out"
+delete_pmx_delete pane "uid:$delete_gamma_pane_uid" --yes >"$delete_root/pane-session-last.out"
 if delete_tmux has-session -t delete-gamma 2>/dev/null; then
   echo "last-Pane delete left delete-gamma session live" >&2
   exit 1
@@ -2679,14 +2689,14 @@ fi
 # the live foreign socket prove the destructive exception stays narrow.
 delete_tmux kill-server
 cp "$delete_registry" "$delete_root/registry.before-no-server-dry-run"
-delete_pmx delete window "uid:$delete_sibling_uid" --project "uid:$delete_alpha_project_uid" --dry-run >"$delete_root/no-server-dry-run.out"
+delete_pmx_delete window "uid:$delete_sibling_uid" --project "uid:$delete_alpha_project_uid" --dry-run >"$delete_root/no-server-dry-run.out"
 cmp "$delete_root/registry.before-no-server-dry-run" "$delete_registry"
 smoke_assert_file_contains "$delete_root/no-server-dry-run.out" "registry-only would delete this Window; no tmux Window would be killed"
 if grep -Fq "live would kill tmux window" "$delete_root/no-server-dry-run.out"; then
   echo "absent-server Window dry-run planned a tmux kill" >&2
   exit 1
 fi
-delete_pmx delete window "uid:$delete_sibling_uid" --project "uid:$delete_alpha_project_uid" --yes >"$delete_root/no-server.out"
+delete_pmx_delete window "uid:$delete_sibling_uid" --project "uid:$delete_alpha_project_uid" --yes >"$delete_root/no-server.out"
 smoke_assert_file_contains "$delete_root/no-server.out" "registry-only deleted this Window; no tmux Window was killed"
 delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-no-server"
 if grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-no-server"; then
@@ -2699,19 +2709,29 @@ if [[ "$delete_other_after" != "$delete_other_before" ]]; then
   exit 1
 fi
 
+# Every live half of every delete above ran on the socket the invocation named.
 for canonical_call in \
-  "-L $delete_product_socket list-windows -a" \
-  "-L $delete_product_socket kill-window -t $delete_primary" \
-  "-L $delete_product_socket run-shell -b" \
-  "-L $delete_product_socket list-panes -a" \
-  "-L $delete_product_socket kill-pane -t $delete_split" \
-  "-L $delete_product_socket kill-pane -t $delete_agent_two_pane"; do
+  "-L $delete_socket list-windows -a" \
+  "-L $delete_socket kill-window -t $delete_primary" \
+  "-L $delete_socket run-shell -b" \
+  "-L $delete_socket list-panes -a" \
+  "-L $delete_socket kill-pane -t $delete_split" \
+  "-L $delete_socket kill-pane -t $delete_agent_two_pane"; do
   if ! grep -Fq -- "$canonical_call" "$delete_shim_log"; then
     echo "delete Window e2e did not observe canonical exact routing: $canonical_call" >&2
     cat "$delete_shim_log" >&2
     exit 1
   fi
 done
+# And nothing reached the app socket by its default name. The shim would have
+# mapped `-L projmux` onto this very server, so the fallback the route used to
+# perform is only detectable here, in the calls it made rather than in what they
+# did.
+if grep -Fq -- "-L $delete_product_socket " "$delete_shim_log"; then
+  echo "a delete fell back to the default app socket -L $delete_product_socket" >&2
+  grep -F -- "-L $delete_product_socket " "$delete_shim_log" >&2
+  exit 1
+fi
 
 delete_cleanup
 trap smoke_cleanup_env EXIT
@@ -3037,10 +3057,11 @@ topology_live_pmx() {
     "$bin" "$@"
 }
 
-# `delete` resolves the app socket by its default name rather than from the
-# inherited client, so a minimal shim maps that one default `-L projmux` route
-# onto the exact smoke socket. Every other explicit -L/-S call -- which is what
-# materialization always makes -- passes through untouched.
+# Every projmux tmux call in this block is explicit -L/-S and passes through
+# untouched; the shim's remaining job is to route a bare `tmux` onto the exact
+# smoke socket. The `-L projmux` branch is kept as a tripwire: nothing should
+# reach it any more, because `delete` now names its server like every other
+# exact-transport route.
 topology_real_tmux="$(command -v tmux)"
 mkdir -p "$topology_root/bin"
 cat >"$topology_root/bin/tmux" <<TOPOLOGY_TMUX_SHIM
@@ -3112,8 +3133,10 @@ if [[ -z "$topology_project_uid" ]]; then
 fi
 topology_live_pmx create window --project "uid:$topology_project_uid" --name review >"$topology_root/create-window.out"
 # The stored command is recorded as a one-time name seed. Materialization must
-# never execute it, which the recreated Pane's empty start command proves below.
-topology_live_pmx create pane --project "uid:$topology_project_uid" --window review --placement right -o pane-id -- sleep 600 >"$topology_root/create-pane.out"
+# never execute it, which the recreated Pane's start command proves below: it
+# names the managed process supervisor over the default shell, never this.
+topology_stored_command="sleep 600"
+topology_live_pmx create pane --project "uid:$topology_project_uid" --window review --placement right -o pane-id -- $topology_stored_command >"$topology_root/create-pane.out"
 
 topology_window_uids="$(topology_pmx get windows --project "uid:$topology_project_uid" -o uid | sort)"
 topology_pane_uids="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
@@ -3130,8 +3153,28 @@ topology_other_before="$(topology_other_tmux show-options -gqv @projmux_topology
 
 # 1. Raw runtime loss of a whole Window while the Project stays live is drift.
 # The preview writes nothing, and execute restores the exact Registry uids.
-topology_tmux kill-window -t "$topology_review_window"
 topology_registry="$topology_root/state/projmux/metadata/registry.json"
+
+# Killing a live pane makes its managed process supervisor record a termination
+# receipt, which is an asynchronous Registry write by a process this script does
+# not wait on. Every "the Registry did not change" assertion below therefore
+# snapshots the file only once those writes have settled.
+topology_settle_registry() {
+  local previous="" current attempt
+  for attempt in $(seq 1 100); do
+    current="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
+    if [[ -n "$previous" && "$current" == "$previous" ]]; then
+      return 0
+    fi
+    previous="$current"
+    sleep 0.1
+  done
+  echo "the Registry never settled after a live pane was killed" >&2
+  exit 1
+}
+
+topology_tmux kill-window -t "$topology_review_window"
+topology_settle_registry
 topology_registry_before="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" --dry-run -o json >"$topology_root/partial-dry-run.json"
 if [[ "$(sha256sum "$topology_registry" | cut -d' ' -f1)" != "$topology_registry_before" ]]; then
@@ -3160,6 +3203,7 @@ if [[ "$topology_pane_uids_after" != "$topology_pane_uids" ]]; then
 fi
 
 # 2. A converged graph is a true no-op: no create and no Registry byte change.
+topology_settle_registry
 topology_registry_before="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
 topology_runtime_before="$(topology_tmux list-panes -s -t "$topology_session" -F '#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort)"
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/repeat.json"
@@ -3174,15 +3218,28 @@ fi
 # The main Window's Pane is excluded because the fixture itself created it with
 # a raw `sleep 600`, which is not a materialization input.
 topology_review_window="$(topology_tmux list-windows -t "$topology_session" -F '#{window_id} #{@projmux_window_uid}' | awk -v uid="$topology_review_window_uid" '$2 == uid {print $1}')"
-topology_start_commands="$(topology_tmux list-panes -t "$topology_review_window" -F '#{pane_start_command}' | tr -d '[:space:]')"
-if [[ -n "$topology_start_commands" ]]; then
-  echo "materialization replayed a stored Pane command: $topology_start_commands" >&2
-  exit 1
-fi
+# Materialized panes launch through `internal supervise` over tmux's own
+# default shell, so a start command is expected. What must never appear in it is
+# the stored `Pane.spec.command`, which remains a one-time name seed.
+topology_start_commands="$(topology_tmux list-panes -t "$topology_review_window" -F '#{pane_start_command}')"
+while IFS= read -r topology_start_command; do
+  [[ -n "$topology_start_command" ]] || continue
+  case "$topology_start_command" in
+    *"internal supervise"*) ;;
+    *)
+      echo "materialization launched a pane outside the supervisor: $topology_start_command" >&2
+      exit 1
+      ;;
+  esac
+  if [[ "$topology_start_command" == *"$topology_stored_command"* ]]; then
+    echo "materialization replayed a stored Pane command: $topology_start_command" >&2
+    exit 1
+  fi
+done <<<"$topology_start_commands"
 
 # 3. Canonical delete removes the desire itself, so the Pane is not replayed --
 # unlike the raw kill above, which is drift.
-topology_app_pmx delete pane "uid:$topology_extra_pane_uid" --yes >"$topology_root/delete-pane.out"
+topology_app_pmx delete pane "uid:$topology_extra_pane_uid" --socket "$topology_socket" --yes >"$topology_root/delete-pane.out"
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/after-delete.json"
 if topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' | grep -Fqx "$topology_extra_pane_uid"; then
   echo "canonical delete was replayed by materialization" >&2
@@ -3384,9 +3441,11 @@ if [[ -z "$startup_project_uid" ]]; then
   exit 1
 fi
 # The stored command is a one-time name seed. A startup that executed it would
-# show up as a non-empty pane_start_command on the recreated Pane below.
+# show up inside the recreated Pane's start command below, which must name only
+# the managed process supervisor over the default shell.
+startup_stored_command="sleep 600"
 startup_live_pmx create window --project "uid:$startup_project_uid" --name review >"$startup_root/create-window.out"
-startup_live_pmx create pane --project "uid:$startup_project_uid" --window review --placement right -o pane-id -- sleep 600 >"$startup_root/create-pane.out"
+startup_live_pmx create pane --project "uid:$startup_project_uid" --window review --placement right -o pane-id -- $startup_stored_command >"$startup_root/create-pane.out"
 
 startup_window_uids="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)"
 startup_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
@@ -3457,12 +3516,24 @@ fi
 startup_wait_for "client moved to the opened Project session" sh -c \
   "test \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -c '$startup_client' '#{session_name}' 2>/dev/null)\" = '$startup_session'"
 
-# Every materialized Pane runs the default shell, never a stored command.
-startup_start_commands="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_start_command}' | tr -d '[:space:]')"
-if [[ -n "$startup_start_commands" ]]; then
-  echo "closed Project open replayed a stored Pane command: $startup_start_commands" >&2
-  exit 1
-fi
+# Every materialized Pane runs the default shell under the managed process
+# supervisor, never a stored command. A pane the session brought with it is
+# adopted rather than launched, so it carries no start command at all.
+startup_start_commands="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_start_command}')"
+while IFS= read -r startup_start_command; do
+  [[ -n "$startup_start_command" ]] || continue
+  case "$startup_start_command" in
+    *"internal supervise"*) ;;
+    *)
+      echo "closed Project open launched a pane outside the supervisor: $startup_start_command" >&2
+      exit 1
+      ;;
+  esac
+  if [[ "$startup_start_command" == *"$startup_stored_command"* ]]; then
+    echo "closed Project open replayed a stored Pane command: $startup_start_command" >&2
+    exit 1
+  fi
+done <<<"$startup_start_commands"
 if startup_pmx get agents --project "uid:$startup_project_uid" -o json 2>/dev/null | grep -Fq '"phase": "Running"'; then
   echo "closed Project open started an Agent" >&2
   exit 1

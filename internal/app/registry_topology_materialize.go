@@ -375,6 +375,7 @@ type topologyMaterializeRun struct {
 	runner          tmuxCommandRunner
 	target          explicitTmuxTarget
 	newOperationID  func() (string, error)
+	newGeneration   func() (string, error)
 	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
 }
 
@@ -449,7 +450,7 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 			outcome.completed = append(outcome.completed, write.itemKey())
 		}
 		*working = current.registry.Clone()
-		if err := executeRegistryTopology(ctx, runtime, working, r.resources.mutator(), current.materialization, ledger); err != nil {
+		if err := executeRegistryTopology(ctx, runtime, working, r.resources.mutator(), current.materialization, ledger, r.newGeneration, operationID); err != nil {
 			outcome.failedStage = "topology materialization"
 			return err
 		}
@@ -498,6 +499,7 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 		runner:          c.runner,
 		target:          target,
 		newOperationID:  c.newOperationID,
+		newGeneration:   c.newGeneration,
 		newMaterializer: c.newMaterializer,
 	}
 	retry := retryResourceReconcileProject(reportTarget, planner.materializeProject)
@@ -767,7 +769,15 @@ func executeRegistryTopology(
 	mutator coremetadata.Mutator,
 	plan *registryTopologyPlan,
 	ledger *runtimeLedger,
+	newGeneration func() (string, error),
+	operationID string,
 ) error {
+	// Every Pane this pass launches gets its own generation, exactly like an
+	// interactive create. Materializing a stored topology is a launch, not an
+	// adoption: the process that ends up in the pane is one this call started.
+	activate := func(paneUID string) (superviseSpec, error) {
+		return issuePaneActivation(newGeneration, registry, mutator, paneUID, "", operationID)
+	}
 	if plan == nil || len(plan.items) == 0 {
 		return nil
 	}
@@ -843,7 +853,13 @@ func executeRegistryTopology(
 			// still returning the exact attributed @N/%N pair. Claiming and
 			// ledgering that pair before surfacing the original error is what lets
 			// the ownership-checked rollback remove it.
-			result, createErr := runtime.newWindow(ctx, created.SessionID, work.window.Metadata.Name, materializePaneCWD(plan.project, work.primary), nil)
+			primaryActivation, activationErr := activate(work.primary.Metadata.UID)
+			if activationErr != nil {
+				return activationErr
+			}
+			result, createErr := runtime.newWindow(ctx, created.SessionID, work.window.Metadata.Name,
+				materializePaneCWD(plan.project, work.primary),
+				runtime.supervisedLaunch(ctx, primaryActivation, nil))
 			if result.WindowID != "" {
 				if claimErr := runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, result.WindowID, work.window.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(createErr, claimErr)
@@ -860,6 +876,7 @@ func executeRegistryTopology(
 					if mirrorErr := runtime.mirror.MirrorPane(ctx, result.PaneID, work.primary); mirrorErr != nil {
 						return errors.Join(createErr, mirrorErr)
 					}
+					observeActivationRuntime(registry, mutator, primaryActivation, result.PaneID, runtime.warn)
 				}
 			}
 			if createErr != nil {
@@ -900,11 +917,18 @@ func executeRegistryTopology(
 			if primaryWork == nil || !primaryWork.create || fallbackID == "" {
 				return fmt.Errorf("window %s has no exact primary Pane binding", work.window.Metadata.Name)
 			}
-			paneID, splitErr := runtime.splitPane(ctx, fallbackID, defaultPlacement, materializePaneCWD(plan.project, primaryWork.pane), nil)
+			primaryActivation, activationErr := activate(primaryWork.pane.Metadata.UID)
+			if activationErr != nil {
+				return activationErr
+			}
+			paneID, splitErr := runtime.splitPane(ctx, fallbackID, defaultPlacement,
+				materializePaneCWD(plan.project, primaryWork.pane),
+				runtime.supervisedLaunch(ctx, primaryActivation, nil))
 			if paneID != "" {
 				if adoptErr := adoptCreatedPane(ctx, runtime, paneID, created.SessionID, windowID, primaryWork.pane, ledger); adoptErr != nil {
 					return errors.Join(splitErr, adoptErr)
 				}
+				observeActivationRuntime(registry, mutator, primaryActivation, paneID, runtime.warn)
 			}
 			if splitErr != nil {
 				return splitErr
@@ -921,11 +945,18 @@ func executeRegistryTopology(
 			if !paneWork.create || paneWork.pane.Metadata.UID == work.primary.Metadata.UID {
 				continue
 			}
-			paneID, splitErr := runtime.splitPane(ctx, anchorID, defaultPlacement, materializePaneCWD(plan.project, paneWork.pane), nil)
+			paneActivation, activationErr := activate(paneWork.pane.Metadata.UID)
+			if activationErr != nil {
+				return activationErr
+			}
+			paneID, splitErr := runtime.splitPane(ctx, anchorID, defaultPlacement,
+				materializePaneCWD(plan.project, paneWork.pane),
+				runtime.supervisedLaunch(ctx, paneActivation, nil))
 			if paneID != "" {
 				if adoptErr := adoptCreatedPane(ctx, runtime, paneID, created.SessionID, windowID, paneWork.pane, ledger); adoptErr != nil {
 					return errors.Join(splitErr, adoptErr)
 				}
+				observeActivationRuntime(registry, mutator, paneActivation, paneID, runtime.warn)
 			}
 			if splitErr != nil {
 				return splitErr
