@@ -105,6 +105,15 @@ func (o *InventoryObserver) observe(ctx context.Context) resourcegraph.Inventory
 	runner := transportRunner{runner: o.runner, transport: o.transport}
 	host, err := runner.Run(ctx, "tmux", "show-options", "-gv", tmuxopts.AppGlobal)
 	switch {
+	case err != nil && optionUnset(err):
+		// tmux answers a read of an unset user option with a non-zero
+		// "invalid option", not with an empty value. That is an observation, not
+		// a failed one: a server with no @projmux_app is a server projmux did
+		// not start. Reporting it as unavailable instead would leave host mode
+		// permanently unknown on every standalone server, which downgrades every
+		// unmarked object there from unattributed to foreign for a reason that
+		// has nothing to do with the object.
+		inventory.HostMode = resourcegraph.HostModeFromAppMarker("")
 	case err != nil && serverAbsent(err):
 		// A server that is not running is knowledge, not a failure: nothing is
 		// live on it. The three object scopes stay available and empty, so every
@@ -189,6 +198,21 @@ func (o *InventoryObserver) observe(ctx context.Context) resourcegraph.Inventory
 		}
 	}
 	return inventory
+}
+
+// optionUnset recognizes the stderr signature tmux uses when a user option has
+// never been set on the object being read.
+//
+// It is matched on text for the same reason serverAbsent is: the typed
+// classifier lives behind the tmux client package, and importing it here would
+// pull config, theme, and provider dependencies into the metadata adapter for
+// one predicate.
+func optionUnset(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "invalid option") || strings.Contains(message, "unknown option")
 }
 
 // serverAbsent recognizes the stderr signatures tmux uses when the socket has no

@@ -468,3 +468,52 @@ func TestTransportRunnerRefusesEveryUnroutableCall(t *testing.T) {
 		})
 	}
 }
+
+// TestInventoryReadsAnUnsetAppMarkerAsStandaloneNotUnavailable pins the one
+// difference between "I could not look" and "I looked and it is not set".
+//
+// tmux answers a read of an unset user option with a non-zero `invalid option`.
+// Treating that as a failed observation leaves host mode permanently unknown on
+// every server projmux did not start -- which is every standalone host, the case
+// the graph exists to support -- and downgrades each unmarked object there from
+// unattributed to foreign for a reason that has nothing to do with the object.
+func TestInventoryReadsAnUnsetAppMarkerAsStandaloneNotUnavailable(t *testing.T) {
+	t.Parallel()
+
+	for _, signature := range []string{
+		"tmux show-options -gv @projmux_app: exit status 1: invalid option: @projmux_app",
+		"tmux show-options -gv @projmux_app: exit status 1: unknown option: @projmux_app",
+	} {
+		runner := &inventoryRunner{
+			outputs: liveServerOutputs(),
+			errs:    map[string]error{"show-options": errors.New(signature)},
+		}
+		observed := NewInventoryObserver(runner, resourcegraph.Transport{
+			Kind: resourcegraph.TransportSocketName, Value: "guest"}).Observe(context.Background())
+
+		if observed.HostMode != resourcegraph.HostModeStandalone {
+			t.Fatalf("%q resolved host mode to %q, want standalone", signature, observed.HostMode)
+		}
+		if _, unavailable := observed.Unavailability(resourcegraph.ScopeHostMode); unavailable {
+			t.Fatalf("%q was reported as an unavailable scope: %+v", signature, observed.Unavailable)
+		}
+		if len(observed.Unavailable) != 0 {
+			t.Fatalf("an unset marker degraded %d scope(s): %+v", len(observed.Unavailable), observed.Unavailable)
+		}
+		if len(runner.calls) != 4 {
+			t.Fatalf("calls = %d, want the full budget", len(runner.calls))
+		}
+	}
+
+	// A genuinely failed ownership read is still unknown, so the new branch did
+	// not turn every error into a standalone answer.
+	runner := &inventoryRunner{
+		outputs: liveServerOutputs(),
+		errs:    map[string]error{"show-options": errors.New("tmux: exit status 1: permission denied")},
+	}
+	observed := NewInventoryObserver(runner, resourcegraph.Transport{
+		Kind: resourcegraph.TransportSocketName, Value: "guest"}).Observe(context.Background())
+	if observed.HostMode != resourcegraph.HostModeUnknown {
+		t.Fatalf("an unreadable ownership option resolved to %q", observed.HostMode)
+	}
+}

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // fakeTmux is an in-memory tmux server for the materialization tests.
@@ -43,6 +45,13 @@ type fakeTmux struct {
 	// where a topology owner guard reads, so a test can move a runtime object
 	// after planning committed to it and before any mutation runs.
 	beforeOwnerInventory func(*fakeTmux)
+	// appMarker is the server-global @projmux_app value. It defaults to the
+	// app-owned marker because every fixture in this package models a server
+	// projmux started; a standalone fixture clears it.
+	appMarker string
+	// socketPath is what `display-message -p '#{socket_path}'` answers, which
+	// is the controller kernel's socket guard.
+	socketPath string
 	// failAlways keeps the trigger armed. A one-shot trigger cannot model a
 	// query that is simply unavailable -- reconcile reads some inventories more
 	// than once per pass, and the second read would then succeed and hide the
@@ -79,7 +88,9 @@ func newFakeTmuxPane(id string) *fakeTmuxPane {
 	return &fakeTmuxPane{id: id, opts: map[string]string{}, width: 80, height: 24}
 }
 
-func newFakeTmux() *fakeTmux { return &fakeTmux{} }
+func newFakeTmux() *fakeTmux {
+	return &fakeTmux{appMarker: "1", socketPath: "/tmp/fake-tmux/default"}
+}
 
 func (f *fakeTmux) mint(prefix string) string {
 	f.nextID++
@@ -241,6 +252,8 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		return f.runRenameWindow(args)
 	case "kill-session", "kill-window", "kill-pane":
 		return f.runKill(args)
+	case "show-options":
+		return f.runShowOptions(args)
 	case "list-sessions":
 		var b strings.Builder
 		format := flagValue(args, "-F")
@@ -454,9 +467,30 @@ func (f *fakeTmux) runListPanes(args []string) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// runShowOptions answers the server-global reads the resolved graph takes. Only
+// the @projmux_app marker is modeled; anything else reads as absent, exactly
+// like tmux's -v output for an unset user option.
+func (f *fakeTmux) runShowOptions(args []string) ([]byte, error) {
+	if !slices.Contains(args, "-gv") {
+		return nil, fmt.Errorf("fake tmux: show-options: unsupported argv %v", args)
+	}
+	if args[len(args)-1] == tmuxopts.AppGlobal {
+		return []byte(f.appMarker + "\n"), nil
+	}
+	return []byte("\n"), nil
+}
+
 func (f *fakeTmux) runDisplayMessage(args []string) ([]byte, error) {
 	target := flagValue(args, "-t")
 	format := flagValue(args, "-F")
+	// A targetless display-message is a server-scope read. `#{socket_path}` is
+	// the only one the app takes, and it is the controller's socket guard.
+	if target == "" {
+		if len(args) > 0 && args[len(args)-1] == "#{socket_path}" {
+			return []byte(f.socketPath + "\n"), nil
+		}
+		return nil, fmt.Errorf("fake tmux: display-message: no target %q", target)
+	}
 	if session, window, pane := f.pane(target); pane != nil {
 		return []byte(renderFormat(format, session, window, pane) + "\n"), nil
 	}
