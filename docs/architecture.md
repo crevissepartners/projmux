@@ -877,12 +877,23 @@ Registry-first primary navigation:
   because the Registry contains it and not because a tmux session exists. The
   runtime contributes a status -- live, offline, missing-root, or unknown -- and
   an exact handle, and nothing else.
-- Identity and order come from the Registry's own slice order, which is insertion
-  order. The only reordering is pinned-first, which is a stored preference. Two
-  consequences are contractual: the same Registry renders the same rows in the
-  same order on an app-owned server, on a standalone server, and outside tmux
-  entirely; and opening or closing a runtime object changes status without moving
-  or renaming a row, so a selection survives a refresh.
+- Identity is the Registry's. Membership and order in `registryview` are the
+  Registry's own slice order, which is insertion order, and the pure view model
+  applies no preference of its own: the same Registry projects the same rows in
+  the same order on an app-owned server, on a standalone server, and outside tmux
+  entirely.
+- Presentation order is the sidebar's, and only the sidebar's. The Projects list
+  projects the managed rows onto three tiers -- pinned, then live, then closed --
+  and preserves Registry order inside each tier as a stable tie-break. Pinned
+  outranks live because a pin is a stated preference and liveness is an accident
+  of the moment, so a pinned offline Project stays above an unpinned live one. The
+  live tier is an overlay of one exact host, which makes two things contractual:
+  the tier of a row may differ between hosts and between refreshes, and the
+  selection may not follow a position. It follows the Project uid -- the old
+  selection is resolved to its Project and that Project back to whatever row it
+  renders as now -- so a tier change moves the row and not the resource the cursor
+  is on. Nothing about a tier reaches the Registry: it is not stored, not
+  reconciled, and not part of desired topology.
 - Row identity is the resource uid. A managed Project's *selection* is still its
   `spec.root` so the shipped open flow is unchanged, except for a Project whose
   root is gone: that row carries `uid:<uid>` and selecting it opens the read-only
@@ -892,10 +903,17 @@ Registry-first primary navigation:
   Project root claims is an unregistered bootstrap candidate in its own section
   with its shipped behavior; one that is already a Project root is dropped rather
   than listed twice with a second set of actions.
-- Home is not a row. It is app control runtime with no `resourceRef`, and the
-  only evidence that a session is one is the exact `@projmux_session_role` value
-  the graph reads. A session named `home` with no marker is honestly
-  unattributed; the marker's writer belongs to the control-session track.
+- Home is chrome, not a Project, and the two senses of "Home" stay separate. The
+  Home *control session* is never a managed row: it is app control runtime with no
+  `resourceRef`, the only evidence that a session is one is the exact
+  `@projmux_session_role` value the graph reads, a session named `home` with no
+  marker is honestly unattributed, and the marker's writer belongs to the
+  control-session track. The Home *navigation row* is the operator's own root as
+  filesystem discovery offers it, and it leads the Projects list because it is
+  where the surface starts from rather than a member of what the surface orders.
+  It is synthesized from nothing: it carries no managed identity, it is not a
+  reconcile or create target, and if discovery does not offer `$HOME` there is no
+  Home row.
 - The Sessions and Recent Windows surfaces list managed rows only, attributed by
   tmux's own `$N` and `@N` ids rather than by a name join, and carry the Registry
   resource name beside the exact tmux handle their actions target. What they

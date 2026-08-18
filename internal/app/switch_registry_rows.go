@@ -21,21 +21,30 @@ import (
 // a directory that had never been a Project was indistinguishable from one that
 // had.
 //
-// Rows now come from the Registry, in Registry order, and split into two
-// sections that mean different things:
+// Rows now come from the Registry and split into sections that mean different
+// things:
 //
+//   - The Home row is chrome. It is the operator's own root, offered by
+//     filesystem discovery and claimed by no Project, and it leads the list
+//     because it is where the surface starts from rather than a member of what
+//     the surface orders.
 //   - Managed rows are Registry Projects. They are present whether or not a
-//     tmux server is, they keep their identity and their position across a
-//     refresh, and the runtime contributes a status and an exact handle.
+//     tmux server is, they keep their identity across a refresh, and the runtime
+//     contributes a status, an exact handle, and a presentation tier.
 //   - Unregistered rows are discovered directories that no Project claims.
 //     They keep exactly the behavior they have always had, because bootstrapping
 //     a new Project out of a directory is what they are for.
 //
-// The Runtime link is the third thing on the list and it is not a Project. It
+// The Runtime link is the last thing before Settings and it is not a Project. It
 // is what makes the Registry-first list safe to trust: an operator's own shell,
 // the Home control session, a scratch session and anything on a guest server
 // are correctly absent from the managed rows, and "correctly absent" has to be
 // distinguishable from "lost".
+//
+// Membership is the Registry's and presentation is the sidebar's. Only the
+// managed section is tiered, and a tier is a view of one exact host: it can move
+// a row between refreshes, which is why the cursor is anchored to a Project uid
+// rather than to a position.
 
 // switchRuntimeSentinel is the selection token of the Runtime link row.
 const switchRuntimeSentinel = "__projmux_runtime__"
@@ -69,13 +78,18 @@ func (c *switchCommand) navigationView(ctx context.Context) (registryview.View, 
 
 // switchManagedRows renders the Registry Projects as picker candidates.
 //
-// Order is the Registry's own slice order, which is insertion order, with
-// pinned Projects lifted to the front. Nothing observed contributes to it. That
-// is the whole ordering contract: pinning is a stored preference and is the
-// same on every machine, while liveness and attention are properties of one
-// exact host, and letting either of them move a row would mean the same
-// Registry rendered in a different order on a second server -- and a selection
-// that jumped when a session opened somewhere.
+// Order is a presentation projection over Registry order, never a second source
+// of membership. The Registry decides which Projects exist and in what order;
+// the sidebar decides which of them an operator is reaching for, in three tiers
+// -- pinned, then live, then everything else -- with Registry order as the
+// tie-break inside each tier.
+//
+// The live half of that is an overlay of one exact host, so the same Registry
+// does render in a different order on a second server, and that is the intended
+// reading: the tier says what is open *here*. What must not move with it is the
+// selection. It follows a Project uid rather than a row index or a path, so a
+// tier change relocates the row and not the resource the cursor is on; see
+// switchProjectRowFocusValue.
 func (c *switchCommand) switchManagedRows(
 	view registryview.View,
 	ui string,
@@ -88,6 +102,7 @@ func (c *switchCommand) switchManagedRows(
 	repoRoot string,
 ) ([]intrender.SwitchCandidate, map[string]string, error) {
 	projects := projectRowsOf(view)
+	sortManagedProjectRows(projects, pinnedSet)
 	rows := make([]intrender.SwitchCandidate, 0, len(projects))
 	sessionNames := make(map[string]string, len(projects))
 	for _, row := range projects {
@@ -135,7 +150,6 @@ func (c *switchCommand) switchManagedRows(
 			Pinned:        row.Root != "" && pinnedSet[cleanOptionalPath(row.Root)],
 		})
 	}
-	sortManagedRows(rows)
 	return rows, sessionNames, nil
 }
 
@@ -150,18 +164,47 @@ func projectRowsOf(view registryview.View) []registryview.Row {
 	return out
 }
 
-// sortManagedRows lifts pinned Projects to the front and preserves Registry
-// order everywhere else.
-func sortManagedRows(rows []intrender.SwitchCandidate) {
-	slices.SortStableFunc(rows, func(a, b intrender.SwitchCandidate) int {
-		switch {
-		case a.Pinned && !b.Pinned:
-			return -1
-		case b.Pinned && !a.Pinned:
-			return 1
-		default:
-			return 0
-		}
+// switchManagedProjectTier is the sidebar presentation tier of one Registry
+// Project.
+//
+// Pinned outranks live because pinning is a stated preference and liveness is an
+// accident of the moment: a pinned Project that is offline is still the one the
+// operator asked to keep at the top, and demoting it below whatever happens to
+// be running would make the pin mean nothing.
+type switchManagedProjectTier int
+
+const (
+	switchManagedTierPinned switchManagedProjectTier = iota
+	switchManagedTierLive
+	switchManagedTierOffline
+)
+
+// switchManagedProjectTierOf classifies one Project row.
+//
+// Pinning is keyed by spec.root because that is what the pin store holds. A
+// Project with no root cannot be pinned, which is the same answer the pin action
+// gives it.
+func switchManagedProjectTierOf(project registryview.Row, pinnedSet map[string]bool) switchManagedProjectTier {
+	switch {
+	case project.Root != "" && pinnedSet[cleanOptionalPath(project.Root)]:
+		return switchManagedTierPinned
+	case project.Live():
+		return switchManagedTierLive
+	default:
+		return switchManagedTierOffline
+	}
+}
+
+// sortManagedProjectRows partitions the Registry Projects into presentation
+// tiers and preserves Registry order inside each one.
+//
+// The sort is stable and the comparator answers with nothing but the tier
+// difference, so two Projects in the same tier keep the order the Registry gave
+// them. That is what makes a refresh deterministic: only a tier change can move
+// a row past a sibling, and a tier change is an observation the operator caused.
+func sortManagedProjectRows(projects []registryview.Row, pinnedSet map[string]bool) {
+	slices.SortStableFunc(projects, func(a, b registryview.Row) int {
+		return int(switchManagedProjectTierOf(a, pinnedSet)) - int(switchManagedProjectTierOf(b, pinnedSet))
 	})
 }
 
@@ -289,6 +332,66 @@ func (c *switchCommand) registryProjectUIDForSelection(ctx context.Context, sele
 			return row.UID, nil
 		}
 	}
+	return "", nil
+}
+
+// switchProjectRowFocusValue returns the row value the Project behind a
+// pre-refresh selection renders as now, or empty when the selection was not a
+// Project.
+//
+// The presentation tiers make a refresh able to move a Project past its
+// siblings, and a Project whose spec.root has since gone missing changes what
+// its own row's selection carries. Neither is a reason for the cursor to end up
+// on a different resource, so the anchor is the Project uid: the old selection
+// is resolved to the Project it belonged to, and that Project is resolved back
+// to whatever row it renders as after the refresh. An index would follow the
+// position and a path would be lost by a rebind; a uid is the only handle that
+// survives both.
+//
+// Home, Settings, the Runtime link and an unregistered directory belong to no
+// Project. They answer empty, which leaves the picker's shipped
+// preserve-the-previous-value behavior exactly as it was.
+func (c *switchCommand) switchProjectRowFocusValue(ctx context.Context, selection string) (string, error) {
+	selection = strings.TrimSpace(selection)
+	if selection == "" || selection == switchSettingsSentinel || selection == switchRuntimeSentinel {
+		return "", nil
+	}
+	view, err := c.navigationView(ctx)
+	if err != nil {
+		return "", err
+	}
+	projects := projectRowsOf(view)
+	uid := switchRegistrySelectionUID(selection)
+	if uid == "" {
+		// An exact stored-root lookup, the same one the hierarchy key uses. An
+		// unregistered directory simply has no Project and gets no anchor rather
+		// than the nearest match.
+		path := cleanOptionalPath(selection)
+		for _, project := range projects {
+			if cleanOptionalPath(project.Root) == path {
+				uid = project.UID
+				break
+			}
+		}
+	}
+	if uid == "" {
+		return "", nil
+	}
+	homeDir, err := c.resolveHomeDir()
+	if err != nil {
+		return "", err
+	}
+	repoRoot := c.switchRepoRoot(homeDir)
+	for _, project := range projects {
+		if project.UID != uid {
+			continue
+		}
+		value, _ := switchManagedRowValue(project, homeDir, repoRoot)
+		return value, nil
+	}
+	// The Project left the Registry between the render and this lookup. An
+	// absent anchor is safer than a stale one: the picker clamps rather than
+	// jumping to a resource the operator never selected.
 	return "", nil
 }
 

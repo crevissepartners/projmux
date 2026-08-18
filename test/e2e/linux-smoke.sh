@@ -3767,9 +3767,10 @@ nav_root="$PROJMUX_SMOKE_WORKDIR/registry-navigation-e2e"
 nav_socket="projmux-registry-nav-$$-$RANDOM"
 nav_other_socket="projmux-registry-nav-other-$$-$RANDOM"
 nav_session="nav-alpha"
+nav_beta_session="nav-beta"
 nav_driver="nav-driver"
 mkdir -p "$nav_root/tmux" "$nav_root/state" "$nav_root/config" "$nav_root/home" \
-  "$nav_root/runtime" "$nav_root/work/alpha"
+  "$nav_root/runtime" "$nav_root/work/alpha" "$nav_root/work/beta"
 chmod 0700 "$nav_root/runtime"
 nav_real_tmux="$(command -v tmux)"
 
@@ -3789,6 +3790,11 @@ nav_pmx() {
 
 nav_tmux new-session -d -s "$nav_session" -c "$nav_root/work/alpha" sleep 600
 nav_tmux set-option -t "$nav_session" -q @projmux_project_path "$nav_root/work/alpha"
+# A second managed Project, imported in the same reconcile so the Registry holds
+# both in a known slice order. Only one of them is live at a time later, which is
+# what makes the presentation tiers observable at all.
+nav_tmux new-session -d -s "$nav_beta_session" -c "$nav_root/work/beta" sleep 600
+nav_tmux set-option -t "$nav_beta_session" -q @projmux_project_path "$nav_root/work/beta"
 nav_tmux new-session -d -s "$nav_driver" -c "$nav_root" bash --noprofile --norc
 nav_other_tmux new-session -d -s untouched -c "$nav_root" sleep 600
 nav_other_tmux set-option -gq @projmux_nav_sentinel unchanged
@@ -3827,8 +3833,15 @@ nav_tmux set-option -g -q @projmux_app 1
 nav_tmux set-option -g -q automatic-rename off
 nav_pmx reconcile resources --socket "$nav_socket" >"$nav_root/import.out"
 nav_project_uid="$(nav_tmux show-options -t "$nav_session" -qv @projmux_project_uid)"
-if [[ -z "$nav_project_uid" ]]; then
-  echo "registry navigation e2e import left the Project uid empty" >&2
+nav_beta_uid="$(nav_tmux show-options -t "$nav_beta_session" -qv @projmux_project_uid)"
+for nav_uid in "$nav_project_uid" "$nav_beta_uid"; do
+  if [[ -z "$nav_uid" ]]; then
+    echo "registry navigation e2e import left a Project uid empty" >&2
+    exit 1
+  fi
+done
+if [[ "$nav_project_uid" == "$nav_beta_uid" ]]; then
+  echo "registry navigation e2e imported both Projects under one uid: $nav_project_uid" >&2
   exit 1
 fi
 
@@ -3945,6 +3958,84 @@ printf '\003' >&8
 nav_wait_for "Projects popup exit" sh -c "! kill -0 '$nav_popup_pid' 2>/dev/null"
 wait "$nav_popup_pid" || true
 
+# The presentation order of the managed rows.
+#
+# Order is a property of the list, so it is read out of a real pane instead of a
+# popup: `capture-pane` returns one frame with the rows in the order they are
+# drawn, and the sidebar's preview is placed below the list, so the first frame
+# line matching a row's path is always that row rather than its preview echo.
+#
+# Registry order is read from the Registry itself rather than assumed, because
+# what has to be proven is that the *live overlay* -- not the import order --
+# decides which managed Project comes first.
+#
+# The list is opened in a detached session with an explicit size rather than in
+# the attached driver session: a detached session's -x/-y are fixed, so the whole
+# list fits the viewport instead of depending on whatever size the harness's
+# terminal happens to have. It starts in `$HOME` so the cursor lands on the Home
+# row and the viewport is at the top of the list.
+nav_order_session="nav-order"
+nav_order_pane=""
+nav_open_order_pane() {
+  nav_order_pane="$(nav_tmux new-session -d -s "$nav_order_session" -x 100 -y 40 -P -F '#{pane_id}' -c "$nav_root/home" \
+    "env HOME='$nav_root/home' XDG_CONFIG_HOME='$nav_root/config' XDG_STATE_HOME='$nav_root/state' XDG_RUNTIME_DIR='$nav_root/runtime' PROJMUX_MANAGED_ROOTS='$nav_root/work' TMUX_TMPDIR='$nav_root/tmux' SHELL=/bin/sh '$bin' switch --ui=sidebar")"
+}
+nav_close_order_pane() {
+  nav_tmux kill-session -t "=$nav_order_session" >/dev/null 2>&1 || true
+  nav_order_pane=""
+}
+nav_order_sequence() {
+  nav_tmux capture-pane -p -t "$nav_order_pane" 2>/dev/null \
+    | grep -aoE 'work/(alpha|beta)' \
+    | sed -e 's|work/||' \
+    | awk '!seen[$0]++' \
+    | tr '\n' ' ' \
+    | sed -e 's/ *$//'
+}
+nav_order_ready() {
+  local sequence
+  sequence="$(nav_order_sequence)"
+  [[ "$sequence" == "alpha beta" || "$sequence" == "beta alpha" ]]
+}
+# Home leads the whole list. Its own card carries `~` as its path line, so an
+# exact match on the first such line is the Home row and nothing else.
+nav_home_row_leads() {
+  # `capture-pane` returns the framed cells, so the row is matched by content
+  # rather than by an exact line: the Home card is the only one whose path cell is
+  # `~`, and it is the only line on the screen that carries a `~` and no `/`.
+  nav_tmux capture-pane -p -t "$nav_order_pane" 2>/dev/null | awk '
+    { line = $0
+      if (!home && index(line, "~") > 0 && index(line, "/") == 0) { home = NR }
+      if (!project && (index(line, "work/alpha") > 0 || index(line, "work/beta") > 0)) { project = NR } }
+    END { exit !(home && project && home < project) }'
+}
+nav_registry_project_order() {
+  grep -a '"root":' "$nav_registry" \
+    | sed -e 's|.*/work/||' -e 's|".*||' \
+    | tr '\n' ' ' \
+    | sed -e 's/ *$//'
+}
+
+nav_registry_order="$(nav_registry_project_order)"
+case "$nav_registry_order" in
+  "alpha beta" | "beta alpha") ;;
+  *)
+    echo "registry navigation e2e expected two managed Project roots, got: $nav_registry_order" >&2
+    exit 1
+    ;;
+esac
+
+nav_open_order_pane
+nav_wait_for "sidebar order pane with both managed rows" nav_order_ready
+nav_wait_for "Home chrome row leading the managed rows" nav_home_row_leads
+nav_live_order="$(nav_order_sequence)"
+if [[ "$nav_live_order" != "$nav_registry_order" ]]; then
+  echo "both-live sidebar order = $nav_live_order, want Registry order $nav_registry_order" >&2
+  nav_tmux capture-pane -p -t "$nav_order_pane" >&2 || true
+  exit 1
+fi
+nav_close_order_pane
+
 # The runtime goes away. A Registry row is a logical resource, so the Project has
 # to still be a row -- with the same identity and only its status changed.
 nav_tmux kill-session -t "=$nav_session"
@@ -3969,6 +4060,29 @@ printf '\003' >&8
 nav_wait_for "offline Projects popup exit" sh -c "! kill -0 '$nav_popup_pid' 2>/dev/null"
 wait "$nav_popup_pid" || true
 
+# The closed Project is still a row and it is now behind the one that is still
+# live. Nothing about the Registry changed -- its slice order is the same file --
+# so the only thing that moved the row is the exact host's live overlay, which is
+# the whole point of a presentation tier.
+nav_open_order_pane
+nav_wait_for "sidebar order pane after the close" nav_order_ready
+nav_wait_for "Home chrome row still leading" nav_home_row_leads
+nav_closed_order="$(nav_order_sequence)"
+if [[ "$nav_closed_order" != "beta alpha" ]]; then
+  echo "post-close sidebar order = $nav_closed_order, want the live Project first: beta alpha" >&2
+  nav_tmux capture-pane -p -t "$nav_order_pane" >&2 || true
+  exit 1
+fi
+if [[ "$(nav_registry_project_order)" != "$nav_registry_order" ]]; then
+  echo "the sidebar reordering changed Registry order: $(nav_registry_project_order) != $nav_registry_order" >&2
+  exit 1
+fi
+if [[ "$nav_registry_order" == "alpha beta" && "$nav_closed_order" == "$nav_live_order" ]]; then
+  echo "closing the live Project moved no row, so the presentation tiers are untested" >&2
+  exit 1
+fi
+nav_close_order_pane
+
 # Zero writes: the Registry the whole surface read is byte-identical, the sibling
 # socket never moved, and the attached client is where it started.
 cmp "$nav_root/registry.before" "$nav_registry"
@@ -3987,4 +4101,4 @@ kill "$nav_client_pid" >/dev/null 2>&1 || true
 wait "$nav_client_pid" 2>/dev/null || true
 nav_cleanup
 trap smoke_cleanup_env EXIT
-echo ">> Registry-first navigation e2e passed: socket=$nav_socket path=$nav_socket_path other-socket=$nav_other_socket other-path=$nav_other_socket_path client=$nav_client project=$nav_project_uid offline-row=preserved writes=0 cleanup=validated-exact-sockets"
+echo ">> Registry-first navigation e2e passed: socket=$nav_socket path=$nav_socket_path other-socket=$nav_other_socket other-path=$nav_other_socket_path client=$nav_client project=$nav_project_uid beta=$nav_beta_uid offline-row=preserved registry-order=\"$nav_registry_order\" live-order=\"$nav_live_order\" closed-order=\"$nav_closed_order\" writes=0 cleanup=validated-exact-sockets"
