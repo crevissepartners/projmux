@@ -2656,3 +2656,273 @@ fi
 rename_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> rename/rebind e2e passed: socket=$rename_socket path=$rename_socket_path other-socket=$rename_other_socket other-path=$rename_other_socket_path cleanup=validated-exact-sockets"
+
+# Explicit Registry desired-topology materialization uses its own exact
+# two-socket environment. Every setup/read/repair command strips inherited
+# client state and names an exact -L socket; nothing here relies on a default
+# socket, an inherited $TMUX, or TMUX_TMPDIR alone.
+topology_root="$PROJMUX_SMOKE_WORKDIR/registry-topology"
+topology_socket="projmux-topology-$RANDOM-$$"
+topology_other_socket="projmux-topology-other-$RANDOM-$$"
+topology_session="topology-alpha"
+mkdir -p \
+  "$topology_root/home" \
+  "$topology_root/config" \
+  "$topology_root/state" \
+  "$topology_root/runtime" \
+  "$topology_root/tmux" \
+  "$topology_root/work/alpha" \
+  "$topology_root/work/alpha/logs" \
+  "$topology_root/shim"
+chmod 0700 "$topology_root/runtime" "$topology_root/tmux"
+
+# The container's default shell exits immediately in a detached pane, which
+# would make every materialized Pane disappear before it could be observed.
+# A persistent stub shell keeps the runtime graph inspectable without giving
+# any Pane a stored command.
+topology_shell="$topology_root/shim/persistent-shell"
+cat >"$topology_shell" <<'TOPOLOGY_SHELL_STUB'
+#!/usr/bin/env bash
+exec sleep 600
+TOPOLOGY_SHELL_STUB
+chmod 0755 "$topology_shell"
+
+topology_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$topology_root/home" \
+    XDG_CONFIG_HOME="$topology_root/config" \
+    XDG_STATE_HOME="$topology_root/state" \
+    XDG_RUNTIME_DIR="$topology_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$topology_root/work" \
+    TMUX_TMPDIR="$topology_root/tmux" \
+    SHELL="$topology_shell" \
+    tmux -L "$topology_socket" "$@"
+}
+
+topology_other_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$topology_root/home" \
+    XDG_CONFIG_HOME="$topology_root/config" \
+    XDG_STATE_HOME="$topology_root/state" \
+    XDG_RUNTIME_DIR="$topology_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$topology_root/work" \
+    TMUX_TMPDIR="$topology_root/tmux" \
+    SHELL="$topology_shell" \
+    tmux -L "$topology_other_socket" "$@"
+}
+
+topology_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$topology_root/home" \
+    XDG_CONFIG_HOME="$topology_root/config" \
+    XDG_STATE_HOME="$topology_root/state" \
+    XDG_RUNTIME_DIR="$topology_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$topology_root/work" \
+    TMUX_TMPDIR="$topology_root/tmux" \
+    SHELL="$topology_shell" \
+    "$bin" "$@"
+}
+
+# Resource creation routes through the client's inherited socket rather than a
+# --socket flag, so the live half of the fixture names the exact synthetic
+# client socket path instead of falling back to the default app socket.
+topology_live_pmx() {
+  env -u TMUX_PANE \
+    HOME="$topology_root/home" \
+    XDG_CONFIG_HOME="$topology_root/config" \
+    XDG_STATE_HOME="$topology_root/state" \
+    XDG_RUNTIME_DIR="$topology_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$topology_root/work" \
+    TMUX_TMPDIR="$topology_root/tmux" \
+    TMUX="$topology_socket_path,$topology_socket_pid,0" \
+    SHELL="$topology_shell" \
+    "$bin" "$@"
+}
+
+# `delete` resolves the app socket by its default name rather than from the
+# inherited client, so a minimal shim maps that one default `-L projmux` route
+# onto the exact smoke socket. Every other explicit -L/-S call -- which is what
+# materialization always makes -- passes through untouched.
+topology_real_tmux="$(command -v tmux)"
+mkdir -p "$topology_root/bin"
+cat >"$topology_root/bin/tmux" <<TOPOLOGY_TMUX_SHIM
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-L" && "\${2:-}" == "projmux" ]]; then
+  shift 2
+  exec $(printf %q "$topology_real_tmux") -L $(printf %q "$topology_socket") "\$@"
+fi
+if [[ "\${1:-}" == "-L" || "\${1:-}" == "-S" ]]; then
+  exec $(printf %q "$topology_real_tmux") "\$@"
+fi
+exec $(printf %q "$topology_real_tmux") -L $(printf %q "$topology_socket") "\$@"
+TOPOLOGY_TMUX_SHIM
+chmod 0755 "$topology_root/bin/tmux"
+
+topology_app_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$topology_root/home" \
+    XDG_CONFIG_HOME="$topology_root/config" \
+    XDG_STATE_HOME="$topology_root/state" \
+    XDG_RUNTIME_DIR="$topology_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$topology_root/work" \
+    TMUX_TMPDIR="$topology_root/tmux" \
+    PATH="$topology_root/bin:$PATH" \
+    SHELL="$topology_shell" \
+    "$bin" "$@"
+}
+
+topology_tmux new-session -d -s "$topology_session" -n main -c "$topology_root/work/alpha" sleep 600
+topology_tmux set-option -t "$topology_session" -q @projmux_project_path "$topology_root/work/alpha"
+topology_other_tmux new-session -d -s untouched -c "$topology_root/work/alpha" sleep 600
+topology_other_tmux set-option -gq @projmux_topology_sentinel unchanged
+
+topology_socket_path="$(topology_tmux display-message -p -t "$topology_session" '#{socket_path}')"
+topology_socket_pid="$(topology_tmux display-message -p -t "$topology_session" '#{pid}')"
+topology_other_socket_path="$(topology_other_tmux display-message -p -t untouched '#{socket_path}')"
+for actual in "$topology_socket_path" "$topology_other_socket_path"; do
+  case "$actual" in
+    "$topology_root"/*) ;;
+    *)
+      echo "topology e2e socket escaped smoke root: $actual" >&2
+      exit 1
+      ;;
+  esac
+done
+
+topology_cleanup() {
+  local socket actual
+  for socket in "$topology_socket" "$topology_other_socket"; do
+    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$topology_root/tmux" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+    if [[ -z "$actual" ]]; then
+      continue
+    fi
+    case "$actual" in
+      "$topology_root"/*) env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true ;;
+      *) echo "refusing topology cleanup outside smoke root: $actual" >&2 ;;
+    esac
+  done
+}
+trap 'topology_cleanup; smoke_cleanup_env' EXIT
+
+topology_pmx internal tmux apply --bin "$bin" --config "$topology_root/config/projmux/tmux.conf" --socket "$topology_socket" >"$topology_root/apply.out"
+topology_pmx reconcile resources --socket "$topology_socket" >"$topology_root/import.out"
+
+topology_project_uid="$(topology_tmux show-options -qv -t "$topology_session" @projmux_project_uid)"
+if [[ -z "$topology_project_uid" ]]; then
+  echo "topology e2e import left the Project uid empty" >&2
+  exit 1
+fi
+topology_live_pmx create window --project "uid:$topology_project_uid" --name review >"$topology_root/create-window.out"
+# The stored command is recorded as a one-time name seed. Materialization must
+# never execute it, which the recreated Pane's empty start command proves below.
+topology_live_pmx create pane --project "uid:$topology_project_uid" --window review --placement right -o pane-id -- sleep 600 >"$topology_root/create-pane.out"
+
+topology_window_uids="$(topology_pmx get windows --project "uid:$topology_project_uid" -o uid | sort)"
+topology_pane_uids="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
+topology_extra_pane="$(tr -d '[:space:]' <"$topology_root/create-pane.out")"
+topology_extra_pane_uid="$(topology_tmux show-options -pqv -t "$topology_extra_pane" @projmux_pane_uid)"
+if [[ "$(printf '%s\n' "$topology_window_uids" | wc -l)" != "2" ]] || [[ -z "$topology_extra_pane_uid" ]]; then
+  echo "topology e2e fixture did not build two Windows and an extra shell Pane" >&2
+  printf 'windows=%s panes=%s extra-pane=%s extra=%s\n' "$topology_window_uids" "$topology_pane_uids" "$topology_extra_pane" "$topology_extra_pane_uid" >&2
+  exit 1
+fi
+topology_review_window_uid="$(topology_pmx get windows --project "uid:$topology_project_uid" --window review -o uid | tr -d '[:space:]')"
+topology_review_window="$(topology_tmux list-windows -t "$topology_session" -F '#{window_id} #{@projmux_window_uid}' | awk -v uid="$topology_review_window_uid" '$2 == uid {print $1}')"
+topology_other_before="$(topology_other_tmux show-options -gqv @projmux_topology_sentinel):$(topology_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+
+# 1. Raw runtime loss of a whole Window while the Project stays live is drift.
+# The preview writes nothing, and execute restores the exact Registry uids.
+topology_tmux kill-window -t "$topology_review_window"
+topology_registry="$topology_root/state/projmux/metadata/registry.json"
+topology_registry_before="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
+topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" --dry-run -o json >"$topology_root/partial-dry-run.json"
+if [[ "$(sha256sum "$topology_registry" | cut -d' ' -f1)" != "$topology_registry_before" ]]; then
+  echo "topology dry-run wrote to the Registry" >&2
+  exit 1
+fi
+if [[ "$(topology_tmux list-windows -t "$topology_session" -F '#{window_id}' | wc -l)" != "1" ]]; then
+  echo "topology dry-run created runtime objects" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$topology_root/partial-dry-run.json" '"action": "materialize"'
+smoke_assert_file_contains "$topology_root/partial-dry-run.json" "uid:$topology_review_window_uid"
+
+topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/partial.json"
+topology_window_uids_after="$(topology_tmux list-windows -t "$topology_session" -F '#{@projmux_window_uid}' | sort)"
+if [[ "$topology_window_uids_after" != "$topology_window_uids" ]]; then
+  echo "live partial materialization did not restore the exact Registry Window uids" >&2
+  printf 'want=%s got=%s\n' "$topology_window_uids" "$topology_window_uids_after" >&2
+  exit 1
+fi
+topology_pane_uids_after="$(topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' | sort)"
+if [[ "$topology_pane_uids_after" != "$topology_pane_uids" ]]; then
+  echo "live partial materialization did not restore the exact Registry Pane uids" >&2
+  printf 'want=%s got=%s\n' "$topology_pane_uids" "$topology_pane_uids_after" >&2
+  exit 1
+fi
+
+# 2. A converged graph is a true no-op: no create and no Registry byte change.
+topology_registry_before="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
+topology_runtime_before="$(topology_tmux list-panes -s -t "$topology_session" -F '#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort)"
+topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/repeat.json"
+smoke_assert_file_contains "$topology_root/repeat.json" '"outcome": "no-op"'
+if [[ "$(sha256sum "$topology_registry" | cut -d' ' -f1)" != "$topology_registry_before" ]] ||
+  [[ "$(topology_tmux list-panes -s -t "$topology_session" -F '#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort)" != "$topology_runtime_before" ]]; then
+  echo "repeat materialization was not a zero-write no-op" >&2
+  exit 1
+fi
+
+# The recreated Window's panes run the default shell, never the stored command.
+# The main Window's Pane is excluded because the fixture itself created it with
+# a raw `sleep 600`, which is not a materialization input.
+topology_review_window="$(topology_tmux list-windows -t "$topology_session" -F '#{window_id} #{@projmux_window_uid}' | awk -v uid="$topology_review_window_uid" '$2 == uid {print $1}')"
+topology_start_commands="$(topology_tmux list-panes -t "$topology_review_window" -F '#{pane_start_command}' | tr -d '[:space:]')"
+if [[ -n "$topology_start_commands" ]]; then
+  echo "materialization replayed a stored Pane command: $topology_start_commands" >&2
+  exit 1
+fi
+
+# 3. Canonical delete removes the desire itself, so the Pane is not replayed --
+# unlike the raw kill above, which is drift.
+topology_app_pmx delete pane "uid:$topology_extra_pane_uid" --yes >"$topology_root/delete-pane.out"
+topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/after-delete.json"
+if topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' | grep -Fqx "$topology_extra_pane_uid"; then
+  echo "canonical delete was replayed by materialization" >&2
+  exit 1
+fi
+topology_pane_uids="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
+
+# 4. An offline Project is dormant, not deleted. Explicit materialization on the
+# exact socket rebuilds the whole stored topology under its original uids.
+topology_tmux kill-server >/dev/null 2>&1 || true
+topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/offline-full.json"
+topology_window_uids_after="$(topology_tmux list-windows -t "$topology_session" -F '#{@projmux_window_uid}' | sort)"
+topology_pane_uids_after="$(topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' | sort)"
+if [[ "$topology_window_uids_after" != "$topology_window_uids" ]] || [[ "$topology_pane_uids_after" != "$topology_pane_uids" ]]; then
+  echo "offline full materialization did not restore the exact Registry topology" >&2
+  printf 'windows want=%s got=%s\npanes want=%s got=%s\n' \
+    "$topology_window_uids" "$topology_window_uids_after" "$topology_pane_uids" "$topology_pane_uids_after" >&2
+  exit 1
+fi
+if [[ "$(topology_tmux show-options -qv -t "$topology_session" @projmux_project_uid)" != "$topology_project_uid" ]]; then
+  echo "offline full materialization did not restore the exact Project uid binding" >&2
+  exit 1
+fi
+topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/offline-repeat.json"
+smoke_assert_file_contains "$topology_root/offline-repeat.json" '"outcome": "no-op"'
+
+# 5. No Agent was resumed and no stored command was executed anywhere.
+if topology_pmx get agents --project "uid:$topology_project_uid" -o json 2>/dev/null | grep -Fq '"phase": "Running"'; then
+  echo "materialization started an Agent" >&2
+  exit 1
+fi
+
+topology_other_after="$(topology_other_tmux show-options -gqv @projmux_topology_sentinel):$(topology_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+if [[ "$topology_other_after" != "$topology_other_before" ]]; then
+  echo "topology materialization touched the foreign socket" >&2
+  exit 1
+fi
+
+topology_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> Registry topology materialization e2e passed: socket=$topology_socket path=$topology_socket_path other-socket=$topology_other_socket other-path=$topology_other_socket_path cleanup=validated-exact-sockets"

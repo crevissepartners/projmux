@@ -176,7 +176,9 @@ type fakeResourceStore struct {
 	// transactions counts how many times a route opened the store for writing.
 	transactions int
 	// writes counts how many transactions actually committed.
-	writes  int
+	writes int
+	// reads counts how many times a route opened the store for reading.
+	reads   int
 	dirs    map[string]bool
 	now     time.Time
 	newUIDs []string
@@ -221,8 +223,8 @@ func (s *fakeResourceStore) store() *resourceStore {
 		return working, nil
 	}
 	return &resourceStore{
-		load:     func() (coremetadata.Registry, error) { return s.registry.Clone(), nil },
-		snapshot: func() (coremetadata.Registry, error) { return s.registry.Clone(), nil },
+		load:     func() (coremetadata.Registry, error) { s.reads++; return s.registry.Clone(), nil },
+		snapshot: func() (coremetadata.Registry, error) { s.reads++; return s.registry.Clone(), nil },
 		update:   update,
 		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
 			s.transactions++

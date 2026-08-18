@@ -625,6 +625,52 @@ Public resource reconciliation:
   unchanged Project UID, and becomes a no-op after convergence. Unknown or
   duplicate Project UID claims remain refused.
 
+Explicit Registry topology materialization:
+
+- `reconcile resources --materialize-project <name|uid:uid>` selects exactly
+  one Registry Project and uses a separate pure plan. The default reconciliation
+  shadow never calls the materializer, and the materialization plan never runs
+  blank adoption, orphan minting, or Agent phase observation. Registry insertion
+  order determines session/Window/Window-owned shell Pane creation order; report
+  keys provide a separately stable rendering order.
+- Registry presence is desired topology. Missing runtime sessions, Windows, and
+  Window-owned `role=shell` Panes are drift; canonical Registry deletion removes
+  that desire. Exact uid/name/owner mirrors are retained. Stored Pane CWD drives
+  only that Pane's detached runtime cwd, while Project root remains the session
+  path anchor and `PROJMUX_CWD` hook value. `Pane.spec.command`, Agent-owned
+  Panes, Agent providers, snapshots, notifications, and ephemeral sessions are
+  never execution inputs.
+- Preflight rejects a missing/invalid root or Pane CWD, a zero-Window Project,
+  a primary ref that is not a direct Window-owned shell Pane, and foreign,
+  duplicate, wrong-owner, or ambiguous live claims before the first create.
+  Execute rechecks the same plan under the Registry lock. A server-wide uid
+  preflight runs first, *before* the selected Project session is created,
+  because creating it runs the public pre/post-create hooks whose side effects no
+  rollback can undo; a missing server is read as an empty inventory. The
+  inventory is then refreshed once the session exists, so the new tuple is
+  covered and any race since the preflight is caught. Together, and before the
+  first Window or Pane mutation, they prove that every planned live Window is
+  owned by the selected Session, every planned live Pane is owned by its planned
+  Window, and every planned Window/Pane uid is live on exactly the expected
+  handle or nowhere at all. UID equality alone is insufficient: a
+  relinked Window or a join-paned Pane keeps its uid, and a Window relinked out
+  of the selected Session is invisible to a selected-Session plan. Each created
+  Pane proves its own parent before its uid claim. It records only objects it
+  creates -- including one that tmux mutated before reporting a synchronous
+  hook failure -- and rolls those objects back in reverse order only while their
+  exact uid mirror still proves ownership. External hook effects are outside
+  that rollback guarantee. A successful repeat performs no session ensure,
+  lease write, tmux create, Registry replace, or mirror write.
+- Exact `--socket/-L` supports offline full materialization with the existing
+  pre/post-create hook contract. Exact `--socket-path/-S` supports live partial
+  Window/Pane repair. Offline session creation through arbitrary `-S` is a
+  stable safety refusal: the public hook contract exposes name-only
+  `PROJMUX_SOCKET`, so an absolute path cannot be represented without either
+  silently routing hook re-entry to another server or changing that public
+  contract. A future versioned hook socket-path contract can lift the refusal.
+  Only the selected exact socket is claimed and mutated; sibling sockets are
+  tested unchanged, and no global uniqueness across unknown sockets is claimed.
+
 Agent runtime linkage:
 
 - Once a live tmux pane has settled on a registry Pane, reconcile decides which

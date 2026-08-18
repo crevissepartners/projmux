@@ -257,7 +257,7 @@ source, different output, different failure surface — both stay.
 ## reconcile resources
 
 ```text
-projmux reconcile resources [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 `reconcile resources` is the explicit repair boundary for drift between the
@@ -298,6 +298,25 @@ runtime/integration health; `reconcile resources` is the opt-in repair command.
 It does not run `config apply`, reload unrelated configuration, reconstruct a
 missing Registry, heuristically merge identities, or turn a read verb into a
 write transaction.
+
+`--materialize-project <name|uid:uid>` is the explicit activation opt-in for
+one exact Registry Project. Its separate pure plan treats Registry insertion
+order as desired topology and reports a missing persistent session, each
+missing Window, and each missing Window-owned `role=shell` Pane. Execute creates
+only that missing subset on the selected socket, mirrors the existing Registry
+UID/name/owner graph, preserves each Pane's stored CWD, and is a true no-op when
+the graph is already live. The option is exact-one: repeating it is a usage
+error, and the reported retry preserves both the selector and socket route.
+
+Materialization never starts or resumes an Agent, creates an Agent-owned Pane,
+or executes `Pane.spec.command`; that field remains a one-time name seed. A
+new Window binds only its own tmux-created primary Pane. On an existing Window,
+every pre-existing uid-less Pane is refused rather than adopted; foreign,
+duplicate, wrong-owner, or otherwise ambiguous UID state is refused before the
+first create. Layout uses the existing deterministic right-axis equalizer and does
+not promise historic geometry. Canonical Registry deletion removes desired
+topology, so a deleted Window or Pane is not recreated; raw runtime loss while
+the resource remains is drift and is materialized.
 
 ## Internal plumbing (`projmux internal ...`)
 

@@ -38,6 +38,11 @@ type fakeTmux struct {
 	afterNewWindow    func(*fakeTmux, *fakeTmuxSession, *fakeTmuxWindow, *fakeTmuxPane)
 	newWindowResult   func(*fakeTmuxSession, *fakeTmuxWindow, *fakeTmuxPane) string
 	afterListSessions func(*fakeTmux)
+	// beforeOwnerInventory fires once, just before the first server-wide
+	// `list-windows -a` is served. That is exactly the plan-to-execute boundary
+	// where a topology owner guard reads, so a test can move a runtime object
+	// after planning committed to it and before any mutation runs.
+	beforeOwnerInventory func(*fakeTmux)
 	// failAlways keeps the trigger armed. A one-shot trigger cannot model a
 	// query that is simply unavailable -- reconcile reads some inventories more
 	// than once per pass, and the second read would then succeed and hide the
@@ -368,6 +373,11 @@ func (f *fakeTmux) runListWindows(args []string) ([]byte, error) {
 	// `-a` is the server-wide window inventory the mirrored-uid Window lookup
 	// reads. It ignores `-t` entirely, exactly like tmux.
 	if slices.Contains(args, "-a") {
+		if f.beforeOwnerInventory != nil {
+			inject := f.beforeOwnerInventory
+			f.beforeOwnerInventory = nil
+			inject(f)
+		}
 		format := flagValue(args, "-F")
 		var b strings.Builder
 		for _, s := range f.sessions {

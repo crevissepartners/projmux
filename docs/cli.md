@@ -903,7 +903,7 @@ projmux quit [--yes|--force]
 Preview or repair Registry and exact tmux resource drift
 
 ```
-projmux reconcile resources [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 Subcommands:
@@ -919,7 +919,7 @@ Canonical spelling: `projmux reconcile resources`
 Preview or repair safe Registry and tmux UID, owner, and runtime drift on one exact socket
 
 ```
-projmux reconcile resources [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 ## `projmux rebind`
