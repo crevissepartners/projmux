@@ -328,7 +328,12 @@ duplicate, wrong-owner, or otherwise ambiguous UID state is refused before the
 first create. Layout uses the existing deterministic right-axis equalizer and does
 not promise historic geometry. Canonical Registry deletion removes desired
 topology, so a deleted Window or Pane is not recreated; raw runtime loss while
-the resource remains is drift and is materialized.
+the resource remains is drift and is materialized. A non-implicit offline
+Window target (an explicit reference or `--all`) can be canonically deleted
+Registry-only: its complete Agent/Pane cascade is shown under `--dry-run`, no
+tmux object is killed, and unrelated live objects and sockets are untouched. A
+unique live mirror keeps the exact-kill path, while duplicate, foreign,
+stale-owner, inventory-failure, and revalidation-race states are refused.
 
 ## Internal plumbing (`projmux internal ...`)
 

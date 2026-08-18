@@ -447,7 +447,7 @@ var routes = []Route{
 		Children: []Route{
 			{
 				Name:      "window",
-				Summary:   "Delete exact live tmux Windows and every descendant Agent and Pane; no selector inside tmux means the active Window, and --all means every Window in the registry",
+				Summary:   "Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry",
 				Aliases:   []string{"windows"},
 				Usage:     []string{"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]"},
 				Canonical: []string{"delete window"},

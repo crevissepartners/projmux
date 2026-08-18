@@ -93,9 +93,9 @@ func (r *tmuxWindowDeleteRuntime) routed() explicitTmuxRunner {
 	return explicitTmuxRunner{runner: r.runner, target: r.target}
 }
 
-func (r *tmuxWindowDeleteRuntime) inventory(ctx context.Context) ([]liveWindowRow, error) {
+func (r *tmuxWindowDeleteRuntime) inventory(ctx context.Context) ([]liveWindowRow, bool, error) {
 	if r == nil || r.runner == nil {
-		return nil, errors.New("delete window: tmux runtime is not configured")
+		return nil, false, errors.New("delete window: tmux runtime is not configured")
 	}
 	format := tmuxRowFormat(
 		"#{session_id}",
@@ -106,7 +106,15 @@ func (r *tmuxWindowDeleteRuntime) inventory(ctx context.Context) ([]liveWindowRo
 	)
 	out, err := r.routed().Run(ctx, "tmux", "list-windows", "-a", "-F", format)
 	if err != nil {
-		return nil, tmuxError("delete window: inventory exact tmux socket: %v", err)
+		// An absent named server is the strongest possible observation that this
+		// selected socket projects zero Windows. Accept only the typed subprocess
+		// classification: permissions, missing executables, arbitrary runner
+		// failures, and plain errors containing similar words cannot authorize a
+		// destructive Registry-only path.
+		if inttmux.IsNoServerFailure(err) {
+			return nil, true, nil
+		}
+		return nil, false, tmuxError("delete window: inventory exact tmux socket: %v", err)
 	}
 	out = []byte(strings.ReplaceAll(string(out), tmuxRowSepFormat, tmuxRowSep))
 	var rows []liveWindowRow
@@ -117,7 +125,7 @@ func (r *tmuxWindowDeleteRuntime) inventory(ctx context.Context) ([]liveWindowRo
 		}
 		fields := strings.Split(line, tmuxRowSep)
 		if len(fields) != 5 {
-			return nil, fmt.Errorf("delete window: malformed exact tmux inventory row %q", line)
+			return nil, false, fmt.Errorf("delete window: malformed exact tmux inventory row %q", line)
 		}
 		row := liveWindowRow{
 			sessionID: strings.TrimSpace(fields[0]), sessionName: strings.TrimSpace(fields[1]),
@@ -125,16 +133,16 @@ func (r *tmuxWindowDeleteRuntime) inventory(ctx context.Context) ([]liveWindowRo
 			windowUID: strings.TrimSpace(fields[4]),
 		}
 		if exactTmuxHandle(row.sessionID, "$") == "" || exactTmuxHandle(row.windowID, "@") == "" {
-			return nil, fmt.Errorf("delete window: malformed exact tmux handles session=%q window=%q",
+			return nil, false, fmt.Errorf("delete window: malformed exact tmux handles session=%q window=%q",
 				row.sessionID, row.windowID)
 		}
 		rows = append(rows, row)
 	}
-	return rows, nil
+	return rows, false, nil
 }
 
 func (r *tmuxWindowDeleteRuntime) preflight(ctx context.Context, registry coremetadata.Registry, plan deletePlan) (windowLiveDeletePlan, error) {
-	rows, err := r.inventory(ctx)
+	rows, serverAbsent, err := r.inventory(ctx)
 	if err != nil {
 		return windowLiveDeletePlan{}, err
 	}
@@ -153,9 +161,12 @@ func (r *tmuxWindowDeleteRuntime) preflight(ctx context.Context, registry coreme
 		}
 	}
 
-	currentWindowID, currentSocket, err := r.currentInvocationWindow(ctx)
-	if err != nil {
-		return windowLiveDeletePlan{}, err
+	var currentWindowID, currentSocket string
+	if !serverAbsent {
+		currentWindowID, currentSocket, err = r.currentInvocationWindow(ctx)
+		if err != nil {
+			return windowLiveDeletePlan{}, err
+		}
 	}
 	if plan.Implicit && currentSocket == "" {
 		return windowLiveDeletePlan{}, errors.New("delete window: implicit active target is not attached to the exact projmux tmux socket")
@@ -174,8 +185,22 @@ func (r *tmuxWindowDeleteRuntime) preflight(ctx context.Context, registry coreme
 		}
 		matches := byUID[target.Match.UID]
 		if len(matches) == 0 {
-			return windowLiveDeletePlan{}, fmt.Errorf("delete window: registry window uid %q has no exact live tmux Window mirror on -L %s; nothing was changed",
-				target.Match.UID, r.target.value)
+			// A non-implicit Window target (an explicit selector or --all) is desired
+			// Registry topology even when the selected tmux socket currently projects
+			// none of it. Canonical deletion must be able to retire that offline
+			// topology without a raw Registry edit. The empty live target is part of
+			// the signed preflight:
+			// if a matching Window appears before the locked execution pass, the
+			// live signature changes and the route fails closed instead of skipping
+			// an unapproved kill.
+			//
+			// An implicit active target cannot legitimately be offline. Keeping its
+			// zero-match case closed also protects against a caller/window race.
+			if plan.Implicit {
+				return windowLiveDeletePlan{}, fmt.Errorf("delete window: registry window uid %q has no exact live tmux Window mirror on -L %s; nothing was changed",
+					target.Match.UID, r.target.value)
+			}
+			continue
 		}
 		if len(matches) != 1 {
 			return windowLiveDeletePlan{}, fmt.Errorf("delete window: registry window uid %q has %d live tmux Window mirrors on -L %s; exact target is ambiguous and nothing was changed",
