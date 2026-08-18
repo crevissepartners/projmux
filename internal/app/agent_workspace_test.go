@@ -1,10 +1,10 @@
 package app
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -76,42 +76,34 @@ func TestAgentWorkspaceValidationPrecedesRegistryAndTmuxMutation(t *testing.T) {
 	}
 }
 
+// TestAgentLaunchPassesExactCallerWorkspaceToCodexAndClaude asserts the launch
+// delivers the caller's workspace and nothing else.
+//
+// It used to assert that the argv *contained* each expected token, which could
+// not tell a delivered prompt from a prompt the provider absorbed as one more
+// directory -- the installed regression this Phase repairs. The assertion is now
+// the exact argv, and the provider-grammar replay in agent_launch_argv_test.go
+// owns the parse-level guarantee.
 func TestAgentLaunchPassesExactCallerWorkspaceToCodexAndClaude(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
-	binDir := filepath.Join(home, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	binaries := map[string]string{
-		"codex":  writeExecutable(t, filepath.Join(binDir, "codex")),
-		"claude": writeExecutable(t, filepath.Join(binDir, "claude")),
-	}
-	cmd := testAICommand(home)
-	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "command" && len(args) == 2 && args[0] == "-v" {
-			return []byte(binaries[args[1]] + "\n"), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	cmd := agentLaunchArgvTestCommand(t)
 	workspace := coremetadata.AgentWorkspace{CWD: "/work/owner", AdditionalWritableRoots: []string{"/work/extra-a", "/work/extra-b"}}
+	want := map[string][]string{
+		aiModeCodex:  {"-C", "/work/owner", "--add-dir", "/work/extra-a", "--add-dir", "/work/extra-b", "task-token"},
+		aiModeClaude: {"--add-dir", "/work/extra-a", "/work/extra-b", "--", "task-token"},
+	}
 	for _, provider := range []string{aiModeCodex, aiModeClaude} {
 		_, argv, err := cmd.PlanAgentLaunch(provider, workspace, []string{"task-token"})
 		if err != nil {
 			t.Fatalf("%s plan: %v", provider, err)
 		}
+		got := execArgvTail(t, argv, provider)
+		if !slices.Equal(got, want[provider]) {
+			t.Fatalf("%s argv = %q, want %q", provider, got, want[provider])
+		}
+		// Nothing the caller did not ask for reaches the provider: no implicit
+		// root, and no permission widening.
 		joined := strings.Join(argv, " ")
-		for _, required := range []string{"/work/owner", "--add-dir", "/work/extra-a", "/work/extra-b", "task-token"} {
-			if !strings.Contains(joined, required) {
-				t.Fatalf("%s argv = %q, missing %q", provider, joined, required)
-			}
-		}
-		if provider == aiModeCodex && !strings.Contains(joined, "-C") {
-			t.Fatalf("codex argv = %q, missing -C", joined)
-		}
-		if provider == aiModeClaude && strings.Contains(joined, " -C ") {
-			t.Fatalf("claude argv received Codex-only -C: %q", joined)
-		}
 		for _, forbidden := range []string{"/work/implicit", "--dangerously-skip-permissions"} {
 			if strings.Contains(joined, forbidden) {
 				t.Fatalf("%s argv widened with %q: %q", provider, forbidden, joined)

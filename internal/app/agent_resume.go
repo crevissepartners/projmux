@@ -67,12 +67,17 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 		return "", nil, errors.New(c.missingAgentRunnerMessage(mode))
 	}
 	resumeArgv[0] = agentBin
-	workspaceArgs := make([]string, 0, 2+2*len(workspace.AdditionalWritableRoots))
-	if mode == aiModeCodex && strings.TrimSpace(workspace.CWD) != "" {
-		workspaceArgs = append(workspaceArgs, "-C", workspace.CWD)
-	}
-	for _, root := range workspace.AdditionalWritableRoots {
-		workspaceArgs = append(workspaceArgs, "--add-dir", root)
+	// The workspace half of the argv comes from the same provider grammar the
+	// create seam uses, so a provider whose option arity is written down once
+	// cannot be spelled two ways. There is no payload on this route -- the
+	// conversation id is the provider's own resume option, not an operand -- so
+	// no option terminator participates.
+	workspaceArgs, err := providerLaunchArgs(mode, coremetadata.AgentWorkspace{
+		CWD:                     strings.TrimSpace(workspace.CWD),
+		AdditionalWritableRoots: workspace.AdditionalWritableRoots,
+	}, nil)
+	if err != nil {
+		return "", nil, err
 	}
 	resumeArgv = append(resumeArgv[:1], append(workspaceArgs, resumeArgv[1:]...)...)
 	plan, err := c.planAgentLaunch(mode, workspace.CWD, nil, resumeArgv, filepath.Dir(agentBin))

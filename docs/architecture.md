@@ -257,6 +257,33 @@ Agent provider session ref:
   hook whose provider contradicts the Agent's `spec.provider` is refused with
   zero mutations.
 
+Agent launch argv (workspace / task boundary):
+
+- One Agent launch hands the provider CLI two independent things in a single
+  argv: the **workspace** (`--cwd` and every `--add-dir` the create validated)
+  and the **initial task payload** given after `--`. Where the workspace stops
+  is a property of the provider's own parser, so the boundary is provider
+  grammar data in `internal/app/agent_launch_argv.go`, not a concatenation at
+  the call site. `create agent` and `agent resume` read that one grammar, so a
+  provider's option arity cannot be spelled two ways.
+- Claude's `--add-dir <directories...>` is **variadic**: it consumes every
+  following operand until an option-looking token or `--` stops it. So every
+  root travels in one occurrence and the payload is introduced by `--`. A
+  payload appended straight after the roots is parsed as one more directory, and
+  the session then starts with no task at all — an installed regression that is
+  invisible in the argv and surfaces only as an unacknowledged activation.
+- Codex's `-C <DIR>` and `--add-dir <DIR>` each take exactly one value, so roots
+  repeat the option and no payload can be absorbed. Codex's argv is deliberately
+  left byte-identical, which is also why a Codex prompt beginning with `-` is
+  still read in option position, exactly as before.
+- projmux gives additional roots only to Codex and Claude. A stored root for any
+  other provider is refused at launch construction rather than translated into a
+  flag this seam never validated, so an Agent never starts with access narrower
+  than what it records.
+- An empty payload contributes nothing, so the interactive create and the resume
+  argv (where the provider's own conversation option, not a terminator, ends the
+  variadic root option) are unchanged.
+
 Agent resume:
 
 - `agent resume <ref>` rebinds an existing Agent: it builds the provider's
