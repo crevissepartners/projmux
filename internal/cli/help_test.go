@@ -343,9 +343,6 @@ func TestRenderHelpForEveryManifestRouteIsNonEmpty(t *testing.T) {
 	t.Parallel()
 
 	walkRoutes(Routes(), func(path []string, route Route) {
-		if route.Retired {
-			return
-		}
 		for _, flag := range helpFlagSpellings() {
 			args := append(append([]string{}, path...), flag)
 			target, ok := RequestedHelp(args)

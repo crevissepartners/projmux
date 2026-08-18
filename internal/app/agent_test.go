@@ -75,7 +75,7 @@ func assertForward(t *testing.T, name string, target *recordingArgv, want []stri
 
 // TestAgentUsageOwnsTheFormerUsageHandlerAndForwardsArgv pins the Phase 2
 // retirement boundary: the implementation survives under the canonical route,
-// while the top-level spelling is a tombstone rather than a public alias.
+// while the top-level spelling has no route or handler.
 func TestAgentUsageOwnsTheFormerUsageHandlerAndForwardsArgv(t *testing.T) {
 	t.Parallel()
 
@@ -87,16 +87,18 @@ func TestAgentUsageOwnsTheFormerUsageHandlerAndForwardsArgv(t *testing.T) {
 		t.Fatal("agent usage does not share the top-level usage handler instance")
 	}
 	handlers := app.routeHandlers()
-	for _, token := range []string{"usage", "agent", "create"} {
+	for _, token := range []string{"agent", "create"} {
 		if _, ok := handlers[token]; !ok {
 			t.Fatalf("route %q has no handler", token)
 		}
 	}
-	if _, ok := handlers["ai"]; ok {
-		t.Fatal("the removed AI root still has a handler")
+	for _, token := range []string{"ai", "usage"} {
+		if _, ok := handlers[token]; ok {
+			t.Fatalf("removed root %q still has a handler", token)
+		}
 	}
-	// The argv the canonical spelling hands over is byte-identical to what the
-	// legacy spelling receives.
+	// The canonical spelling keeps forwarding argv byte-identically to the
+	// surviving provider-usage implementation.
 	usage := &recordingArgv{}
 	agent := &agentCommand{usage: usage}
 	argv := []string{"--model", "codex", "--json"}

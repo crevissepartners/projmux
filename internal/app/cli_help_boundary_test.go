@@ -38,9 +38,6 @@ func helpBoundaryArgv() [][]string {
 	var walk func(prefix []string, routes []cli.Route)
 	walk = func(prefix []string, routes []cli.Route) {
 		for _, route := range routes {
-			if route.Retired {
-				continue
-			}
 			path := append(append([]string{}, prefix...), route.Name)
 			for _, flag := range helpFlagSpellings() {
 				argv = append(argv, append(append([]string{}, path...), flag))

@@ -233,21 +233,11 @@ func TestAgentDomainNamespaceOwnsTheAgentWorkflowSpellings(t *testing.T) {
 		t.Fatal("the get node grew a usage kind")
 	}
 
-	// The old usage spelling remains only as a hidden error tombstone. The AI
-	// root was removed after managed ingest producers migrated.
-	for _, token := range []string{"usage"} {
-		compat, ok := LookupRoute(token)
-		if !ok {
-			t.Fatalf("compatibility route %q was removed", token)
+	// The old usage, AI, and status spellings are fully removed after their
+	// canonical Agent-domain replacements shipped.
+	for _, token := range []string{"usage", "ai", "status"} {
+		if _, ok := LookupRoute(token); ok {
+			t.Fatalf("removed top-level route %q remains in the command catalog", token)
 		}
-		if compat.Disposition != DispositionCompatibility || !compat.Hidden || !compat.Retired {
-			t.Fatalf("route %q = %#v, want a retired compatibility tombstone", token, compat)
-		}
-	}
-	if _, ok := LookupRoute("ai"); ok {
-		t.Fatal("the removed AI root remains in the command catalog")
-	}
-	if _, ok := LookupRoute("status"); ok {
-		t.Fatal("old top-level `status usage` alias remains")
 	}
 }

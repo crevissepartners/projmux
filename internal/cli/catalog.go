@@ -72,13 +72,9 @@ type Route struct {
 	Summary string
 	// Disposition is the primary classification. Only top-level routes set it.
 	Disposition Disposition
-	// Hidden keeps a route out of the primary help listing. The two internal
-	// helpers invoked from generated popup/key payloads are hidden.
+	// Hidden keeps a route out of the primary help listing. The internal
+	// namespace invoked from generated popup/key payloads is hidden.
 	Hidden bool
-	// Retired marks a hidden compatibility tombstone. It remains dispatchable
-	// only so a removed public argv can return exit 2 with its exact replacement;
-	// it has no documented children or canonical behavior edge.
-	Retired bool
 	// ProviderShortcut marks a `create <provider>` node. The contract keeps
 	// provider shortcuts out of the resource-kind listing, so the shared help
 	// renderer groups these separately and no reference or telemetry surface
@@ -123,16 +119,14 @@ var readProjectionCatalog = []OutputMode{
 	OutputModeNone,
 }
 
-// routes is the maintained Phase 0 manifest of the current CLI surface: the 33
-// top-level routes the compatibility contract inventoried, the canonical
-// top-level nodes added by later Phases, and the hidden internal plumbing.
+// routes is the maintained manifest of the current CLI surface: the canonical
+// and Shortcut top-level nodes plus the hidden internal plumbing namespace.
 // Top-level order is the historical primary help order and is load bearing for
 // root help byte-identity.
 //
-// Hidden is not necessarily removal: the `internal` namespace remains live,
-// while Retired nodes are side-effect-free compatibility tombstones kept only
-// to return their exact replacement. Phase 2 removed the old pre-namespace
-// plumbing nodes from this catalog entirely.
+// Hidden is not removal: the `internal` namespace remains live. Retired roots
+// are absent entirely so every old spelling follows the ordinary unknown-root
+// contract instead of retaining a second dispatch surface.
 var routes = []Route{
 	{
 		// The Agent domain namespace. An Agent is a Window-owned workload with a
@@ -410,13 +404,6 @@ var routes = []Route{
 		},
 	},
 	{
-		Name:        "current",
-		Summary:     "Retired current-pane compatibility route",
-		Disposition: DispositionCompatibility,
-		Hidden:      true,
-		Retired:     true,
-	},
-	{
 		// The registry-backed kinds own the cascade planner; `notification` and
 		// `snapshot` forward raw argv to the handlers that already own them.
 		Name:        "delete",
@@ -615,20 +602,6 @@ var routes = []Route{
 		},
 	},
 	{
-		Name:        "kill",
-		Summary:     "Retired session-stop compatibility route",
-		Disposition: DispositionCompatibility,
-		Hidden:      true,
-		Retired:     true,
-	},
-	{
-		Name:        "notify",
-		Summary:     "Retired notification compatibility route",
-		Disposition: DispositionCompatibility,
-		Hidden:      true,
-		Retired:     true,
-	},
-	{
 		Name:        "notification",
 		Summary:     "Manage pending notification workflow state",
 		Disposition: DispositionCanonical,
@@ -788,20 +761,6 @@ var routes = []Route{
 		},
 	},
 	{
-		Name:        "sessions",
-		Summary:     "Retired session-picker compatibility route",
-		Disposition: DispositionCompatibility,
-		Hidden:      true,
-		Retired:     true,
-	},
-	{
-		Name:        "session-state",
-		Summary:     "Retired snapshot compatibility route",
-		Disposition: DispositionCompatibility,
-		Hidden:      true,
-		Retired:     true,
-	},
-	{
 		Name:        "settings",
 		Summary:     "Configure projmux",
 		Disposition: DispositionShortcut,
@@ -834,13 +793,6 @@ var routes = []Route{
 		Canonical:   []string{"focus project"},
 	},
 	{
-		Name:        "tag",
-		Summary:     "Retired session-tag compatibility route",
-		Disposition: DispositionCompatibility,
-		Hidden:      true,
-		Retired:     true,
-	},
-	{
 		Name:        "update",
 		Summary:     "Check installer-aware release update status",
 		Disposition: DispositionCanonical,
@@ -851,20 +803,6 @@ var routes = []Route{
 			{Name: "check", Summary: "Check for a newer release and refresh the cache", Canonical: []string{"update check"}},
 			{Name: "apply", Summary: "Apply an available update", Canonical: []string{"update apply"}},
 		},
-	},
-	{
-		Name:        "upgrade",
-		Summary:     "Retired update compatibility route",
-		Disposition: DispositionCompatibility,
-		Hidden:      true,
-		Retired:     true,
-	},
-	{
-		Name:        "usage",
-		Summary:     "Retired Agent usage compatibility route",
-		Disposition: DispositionCompatibility,
-		Hidden:      true,
-		Retired:     true,
 	},
 	{
 		Name:        "welcome",
@@ -911,12 +849,9 @@ var routes = []Route{
 		// it in one hidden namespace is what lets the primary help listing carry
 		// zero internal routes.
 		//
-		// Every subcommand is an alias that forwards raw argv to the handler
-		// that already owns the behavior, so stdout, stderr, the exit code, and
-		// the side effects are identical to the current spelling. The current
-		// spellings all survive as hidden compatibility routes: a tmux server
-		// that is already running was configured by a previously installed
-		// binary and keeps invoking them.
+		// Every subcommand forwards raw argv to the handler that owns the
+		// behavior. Old pre-namespace spellings are absent from the public and
+		// hidden route graph; generated config uses only this namespace.
 		Name:        "internal",
 		Summary:     "Internal plumbing invoked by generated tmux config, hooks, and popups",
 		Disposition: DispositionInternal,

@@ -430,7 +430,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:        keyBindingTierUserConfigurableDirect,
 			Scope:       keyBindingScopeStandalone,
 			TmuxKind:    tmuxBindingRunProjmux,
-			TmuxBody:    "current",
+			TmuxBody:    "switch open #{q:pane_current_path}",
 		},
 		{
 			ID:             "new-window",
@@ -972,10 +972,10 @@ var keyBindingActionSemanticsByID = map[string]keyBindingActionSemantics{
 
 	// --- Pane & Window navigation ----------------------------------------
 	//
-	// current-project-session keeps the legacy `current` route spelling. Its
-	// Result kind states the navigation outcome and its Anchor states that the
-	// Pane cwd is a read-only input, so the row can never be read as "the cwd
-	// query succeeded, therefore the action succeeded".
+	// current-project-session passes the current Pane cwd to the retained
+	// `switch open` shortcut, which owns the same ensure-and-attach outcome.
+	// tmux's `q` format modifier keeps that cwd one literal shell argument when
+	// the generated binding crosses the run-shell boundary.
 	"current-project-session": {TargetKind: "Project", ResultKind: "ensure and attach the Project runtime derived from the current Pane cwd", Anchor: keyBindingAnchorCurrentPaneCwdInput},
 	"new-window":              {TargetKind: "Window", ResultKind: "new Window with its initial Pane", Placement: "next index in the current Session", Anchor: keyBindingAnchorCurrentPaneCwdSeed},
 	"rename-window":           {TargetKind: "Window", ResultKind: "rename the focused Window", Placement: keyBindingPlacementInFocusedWindow},
@@ -1034,14 +1034,9 @@ type keyBindingActionHandler struct {
 }
 
 // keyBindingActionHandlerNotes pins the handler boundaries that the invocation
-// string alone leaves implicit. The `current` entry is the reason this map
-// existed: the historical manifest classified `projmux current` as a compatibility
-// route whose canonical projection is the read-only `get pane` cwd field, while
-// the shipped handler also ensures and attaches the derived runtime. Naming
-// both halves in the internal model is what stops the read-only query from
-// being treated as the action's outcome.
+// string alone leaves implicit.
 var keyBindingActionHandlerNotes = map[string]string{
-	"current-project-session": "compatibility route; the manifest canonical `get pane` cwd projection is the read-only input step only, and the ensure/attach outcome is owned by this route",
+	"current-project-session": "the retained switch shortcut receives the current Pane cwd and owns the ensure/attach outcome",
 	"toggle-mouse":            "tmux `if-shell` flips the server-wide mouse option",
 }
 

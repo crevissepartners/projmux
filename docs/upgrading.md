@@ -48,11 +48,13 @@ still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 This release removes the human-facing compatibility argv and old
 pre-namespace internal aliases listed in the [retirement ledger](legacy-cli-retirement.md).
-Removed public argv exits 2 with its exact canonical replacement, no stdout,
-and no side effect. Removed internal aliases (`tmux`, `status`, `statusbar`,
-`preview`, `session-popup`, `key-broker`, and `popup-wait-key`) are unknown
-top-level commands and exit 1. Use `internal ...` for generated plumbing and
-`config render|apply` for public configuration work.
+Rejected compatibility argv below a surviving mixed root exits 2 with its exact
+canonical replacement, no stdout, and no side effect. Fully removed human roots
+(`current`, `kill`, `notify`, `sessions`, `session-state`, `tag`, `upgrade`, and
+`usage`) and removed internal aliases (`tmux`, `status`, `statusbar`, `preview`,
+`session-popup`, `key-broker`, and `popup-wait-key`) are unknown top-level
+commands and exit 1. Use `internal ...` for generated plumbing and `config
+render|apply` for public configuration work.
 
 The mixed roots retain only `attach project`, `focus project|window|pane`, `pin
 project`, and `prune project|snapshot`. Shortcuts and singular/plural resource

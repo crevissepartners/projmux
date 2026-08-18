@@ -121,8 +121,8 @@ func TestBridgeForwardsRawArgv(t *testing.T) {
 		args  []string
 	}{
 		{name: "no tail", argv: []string{"doctor"}, token: "doctor", args: []string{}},
-		{name: "positional", argv: []string{"current", "extra"}, token: "current", args: []string{"extra"}},
-		{name: "unknown flag", argv: []string{"notify", "list", "--bogus-flag"}, token: "notify", args: []string{"list", "--bogus-flag"}},
+		{name: "positional", argv: []string{"window", "recent"}, token: "window", args: []string{"recent"}},
+		{name: "unknown flag", argv: []string{"notification", "ack", "--bogus-flag"}, token: "notification", args: []string{"ack", "--bogus-flag"}},
 		{name: "flag with value", argv: []string{"focus", "--target", "%3"}, token: "focus", args: []string{"--target", "%3"}},
 		{name: "terminator with payload", argv: []string{"config", "edit", "--", "--help", "-h", "--"}, token: "config", args: []string{"edit", "--", "--help", "-h", "--"}},
 		{name: "double dash equals flag", argv: []string{"prune", "ephemeral", "--keep=3"}, token: "prune", args: []string{"ephemeral", "--keep=3"}},
@@ -188,9 +188,6 @@ func TestHelpInvocationsInvokeNoHandler(t *testing.T) {
 		argvs = append(argvs, []string{flag})
 	}
 	walkRoutes(Routes(), func(path []string, route Route) {
-		if route.Retired {
-			return
-		}
 		for _, flag := range helpFlagSpellings() {
 			argvs = append(argvs, append(append([]string{}, path...), flag))
 		}
@@ -237,6 +234,14 @@ func TestUnknownCommandKeepsHistoricalContract(t *testing.T) {
 		{argv: []string{"completion", "bash"}, token: "completion"},
 		{argv: []string{"tmux", "print-config"}, token: "tmux"},
 		{argv: []string{"ai", "ingest", "codex-hook"}, token: "ai"},
+		{argv: []string{"current"}, token: "current"},
+		{argv: []string{"kill", "tagged"}, token: "kill"},
+		{argv: []string{"notify", "list"}, token: "notify"},
+		{argv: []string{"sessions"}, token: "sessions"},
+		{argv: []string{"session-state", "save"}, token: "session-state"},
+		{argv: []string{"tag", "list"}, token: "tag"},
+		{argv: []string{"upgrade"}, token: "upgrade"},
+		{argv: []string{"usage"}, token: "usage"},
 		{argv: []string{"statusbar", "click"}, token: "statusbar"},
 		{argv: []string{"key-broker"}, token: "key-broker"},
 		{argv: []string{"popup-wait-key"}, token: "popup-wait-key"},

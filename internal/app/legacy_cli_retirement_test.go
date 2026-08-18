@@ -23,7 +23,7 @@ func (p *retirementProbe) Run(args []string, stdout, stderr io.Writer) error {
 	return p.err
 }
 
-func TestRemovedPublicArgvProcessMatrixIsUsageOnly(t *testing.T) {
+func TestRemovedMixedRootArgvProcessMatrixIsUsageOnly(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -31,17 +31,8 @@ func TestRemovedPublicArgvProcessMatrixIsUsageOnly(t *testing.T) {
 		replacement string
 	}{
 		{[]string{"attach", "auto"}, "runtime attach"},
-		{[]string{"current"}, "get pane --current -o cwd"},
 		{[]string{"focus", "--target", "alpha"}, "focus project|window|pane"},
 		{[]string{"focus", "--uri", "projmux://focus"}, "focus project|window|pane"},
-		{[]string{"kill", "tagged"}, "runtime stop"},
-		{[]string{"sessions"}, "runtime sessions"},
-		{[]string{"upgrade"}, "update apply"},
-		{[]string{"usage"}, "agent usage"},
-		{[]string{"notify", "push"}, "create notification"},
-		{[]string{"notify", "list"}, "get notifications"},
-		{[]string{"notify", "ack"}, "notification ack"},
-		{[]string{"notify", "reconcile"}, "notification reconcile"},
 		{[]string{"pin", "list"}, "pin project"},
 		{[]string{"pin", "add"}, "pin project"},
 		{[]string{"pin", "remove"}, "pin project"},
@@ -49,16 +40,6 @@ func TestRemovedPublicArgvProcessMatrixIsUsageOnly(t *testing.T) {
 		{[]string{"pin", "clear"}, "pin project"},
 		{[]string{"prune", "ephemeral"}, "runtime prune"},
 		{[]string{"prune", "session-state"}, "prune snapshot"},
-		{[]string{"session-state", "status"}, "get snapshots"},
-		{[]string{"session-state", "save"}, "create snapshot"},
-		{[]string{"session-state", "delete"}, "delete snapshot"},
-		{[]string{"session-state", "restore"}, "restore snapshot"},
-		{[]string{"session-state", "preview"}, "restore snapshot"},
-		{[]string{"session-state", "popup"}, "restore snapshot"},
-		{[]string{"tag", "list"}, "runtime tag"},
-		{[]string{"tag", "toggle"}, "runtime tag"},
-		{[]string{"tag", "clear"}, "runtime tag"},
-		{[]string{"tag", "project"}, "runtime tag"},
 	}
 	for _, test := range tests {
 		t.Run(strings.Join(test.args, "_"), func(t *testing.T) {
@@ -77,20 +58,38 @@ func TestRemovedPublicArgvProcessMatrixIsUsageOnly(t *testing.T) {
 	}
 }
 
-func TestRemovedOldInternalArgvUsesUnknownCommandContract(t *testing.T) {
+func TestRemovedTopLevelArgvUsesUnknownCommandContract(t *testing.T) {
 	t.Parallel()
 
-	for _, token := range []string{"ai", "key-broker", "popup-wait-key", "preview", "session-popup", "status", "statusbar", "tmux"} {
+	for _, args := range [][]string{
+		{"ai", "ingest", "codex-hook"},
+		{"current", "--help"},
+		{"kill", "tagged"},
+		{"notify", "list"},
+		{"sessions", "--ui=popup"},
+		{"session-state", "save"},
+		{"tag", "project", "list"},
+		{"upgrade", "--dry-run"},
+		{"usage", "--json"},
+		{"key-broker"},
+		{"popup-wait-key"},
+		{"preview", "select"},
+		{"session-popup", "open"},
+		{"status", "resources"},
+		{"statusbar", "click"},
+		{"tmux", "print-config"},
+	} {
+		token := args[0]
 		var stdout, stderr bytes.Buffer
-		err := (&App{}).Run([]string{token}, &stdout, &stderr)
+		err := (&App{}).Run(args, &stdout, &stderr)
 		if err == nil || IsUsageError(err) || !strings.Contains(err.Error(), "unknown command: "+token) {
-			t.Fatalf("Run(%q) error=%v, want exit-1 unknown command", token, err)
+			t.Fatalf("Run(%q) error=%v, want exit-1 unknown command", args, err)
 		}
 		if stdout.Len() != 0 || !strings.Contains(stderr.String(), "Commands:") {
-			t.Fatalf("Run(%q) streams=(%q,%q), want stdout empty and root help on stderr", token, stdout.String(), stderr.String())
+			t.Fatalf("Run(%q) streams=(%q,%q), want stdout empty and root help on stderr", args, stdout.String(), stderr.String())
 		}
-		if shouldRunLegacyHookMigrations([]string{token}) {
-			t.Fatalf("Run(%q) would perform a pre-dispatch migration", token)
+		if shouldRunLegacyHookMigrations(args) {
+			t.Fatalf("Run(%q) would perform a pre-dispatch migration", args)
 		}
 	}
 }
@@ -187,14 +186,6 @@ func TestRemovedPublicArgvMatrixReturnsReplacementUsageWithoutHandlerReach(t *te
 		{"focus target", legacyRouteGate{name: "focus", target: &retirementProbe{}, allowedFirst: focusKinds, replacement: func([]string) string { return "`projmux focus project|window|pane ...`" }}, []string{"--target", "alpha"}, "focus project|window|pane"},
 		{"pin direct", legacyRouteGate{name: "pin", target: &retirementProbe{}, allowedFirst: []string{"project"}, replacement: func([]string) string { return "`projmux pin project ...`" }}, []string{"toggle", "/repo"}, "pin project"},
 		{"prune ephemeral", legacyRouteGate{name: "prune", target: &retirementProbe{}, allowedFirst: []string{"project", "snapshot"}, replacement: pruneReplacement}, []string{"ephemeral"}, "runtime prune"},
-		{"current", retiredRoute{name: "current", replacement: func([]string) string { return "`projmux get pane --current -o cwd`" }}, nil, "get pane --current -o cwd"},
-		{"kill tagged", retiredRoute{name: "kill", replacement: func([]string) string { return "`projmux runtime stop ...`" }}, []string{"tagged"}, "runtime stop"},
-		{"notify ack", retiredRoute{name: "notify", replacement: notifyReplacement}, []string{"ack", "id"}, "notification ack"},
-		{"sessions", retiredRoute{name: "sessions", replacement: func([]string) string { return "`projmux runtime sessions ...`" }}, nil, "runtime sessions"},
-		{"session state save", retiredRoute{name: "session-state", replacement: sessionStateReplacement}, []string{"save"}, "create snapshot"},
-		{"tag project", retiredRoute{name: "tag", replacement: func([]string) string { return "`projmux runtime tag ...`" }}, []string{"project", "list"}, "runtime tag"},
-		{"upgrade", retiredRoute{name: "upgrade", replacement: func([]string) string { return "`projmux update apply ...`" }}, nil, "update apply"},
-		{"usage", retiredRoute{name: "usage", replacement: func([]string) string { return "`projmux agent usage ...`" }}, nil, "agent usage"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -243,7 +234,10 @@ func TestOldInternalTopLevelHandlersAreNotWired(t *testing.T) {
 	t.Parallel()
 
 	handlers := New().routeHandlers()
-	for _, token := range []string{"tmux", "status", "statusbar", "preview", "session-popup", "key-broker", "popup-wait-key"} {
+	for _, token := range []string{
+		"ai", "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",
+		"tmux", "status", "statusbar", "preview", "session-popup", "key-broker", "popup-wait-key",
+	} {
 		if _, ok := handlers[token]; ok {
 			t.Errorf("old internal alias %q still has a top-level handler", token)
 		}
