@@ -2584,6 +2584,9 @@ termination_sibling_before="$(termination_sibling_tmux show-options -gqv @projmu
 termination_pmx delete pane "uid:$termination_pane_uid" --socket "$termination_socket" --dry-run \
   >"$termination_root/delete-dry-run.out"
 smoke_assert_file_contains "$termination_root/delete-dry-run.out" "live would kill tmux pane $termination_pane_id"
+# The reported socket is the one the invocation named, not the app's default.
+smoke_assert_file_contains "$termination_root/delete-dry-run.out" "socket=-L/$termination_socket"
+smoke_assert_file_lacks "$termination_root/delete-dry-run.out" "socket=-L/projmux"
 if [[ "$(termination_tmux display-message -p -t "$termination_pane_id" '#{pane_id}' 2>/dev/null || true)" != "$termination_pane_id" ]]; then
   echo "a dry-run delete killed the live Pane" >&2
   exit 1

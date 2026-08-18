@@ -299,7 +299,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	}
 
 	if *dryRun {
-		return writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, true, false)
+		return writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, target, true, false)
 	}
 	needsConfirmation := plan.needsConfirmation() || panePlan.endsWindows() > 0 || panePlan.endsSessions() > 0
 	if needsConfirmation {
@@ -436,7 +436,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 		}
 		return withdrawIntent(err)
 	}
-	if err := writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, false, selfTarget); err != nil {
+	if err := writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, target, false, selfTarget); err != nil {
 		if selfTarget {
 			// The registry result is already durable. Still queue the exact live
 			// half so an unavailable output sink cannot leave a live orphan.
@@ -542,7 +542,7 @@ func cascadeOf(registry coremetadata.Registry, kind coremetadata.Kind, uid strin
 }
 
 // writeDeletePlan renders the plan for both the dry run and the executed run.
-func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live windowLiveDeletePlan, panes paneLiveDeletePlan, dryRun, selfQueued bool) error {
+func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live windowLiveDeletePlan, panes paneLiveDeletePlan, socket explicitTmuxTarget, dryRun, selfQueued bool) error {
 	var b strings.Builder
 	verb := "deleting"
 	if dryRun {
@@ -573,8 +573,8 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 			} else if selfQueued {
 				action = "will queue after this result is flushed to kill"
 			}
-			fmt.Fprintf(&b, "  live %s tmux window %s session=%s session-id=%s socket=-L/%s\n",
-				action, liveTarget.WindowID, liveTarget.SessionName, liveTarget.SessionID, defaultAppSocket)
+			fmt.Fprintf(&b, "  live %s tmux window %s session=%s session-id=%s socket=%s\n",
+				action, liveTarget.WindowID, liveTarget.SessionName, liveTarget.SessionID, socket.label())
 			if liveTarget.EndsSession {
 				impact := "ended"
 				if dryRun {
@@ -591,7 +591,7 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 			if dryRun {
 				action = "would delete this Window; no tmux Window would be killed"
 			}
-			fmt.Fprintf(&b, "  registry-only %s on socket=-L/%s\n", action, defaultAppSocket)
+			fmt.Fprintf(&b, "  registry-only %s on socket=%s\n", action, socket.label())
 		}
 		for _, liveTarget := range panes.Targets {
 			if liveTarget.ResourceUID != target.Match.UID {
@@ -603,9 +603,9 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 			} else if selfQueued {
 				action = "will queue after this result is flushed to kill"
 			}
-			fmt.Fprintf(&b, "  live %s tmux pane %s pane-uid=%s window=%s session=%s session-id=%s socket=-L/%s\n",
+			fmt.Fprintf(&b, "  live %s tmux pane %s pane-uid=%s window=%s session=%s session-id=%s socket=%s\n",
 				action, liveTarget.PaneID, liveTarget.PaneUID, liveTarget.WindowID,
-				liveTarget.SessionName, liveTarget.SessionID, defaultAppSocket)
+				liveTarget.SessionName, liveTarget.SessionID, socket.label())
 			if liveTarget.EndsWindow {
 				impact := "ended"
 				if dryRun {
