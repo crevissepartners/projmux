@@ -643,11 +643,16 @@ Explicit Registry topology materialization:
 - Preflight rejects a missing/invalid root or Pane CWD, a zero-Window Project,
   a primary ref that is not a direct Window-owned shell Pane, and foreign,
   duplicate, wrong-owner, or ambiguous live claims before the first create.
-  Execute rechecks the same plan under the Registry lock and, before the first
-  mutation, proves against one server-wide inventory that every planned live
-  Window is owned by the selected Session, every planned live Pane is owned by
-  its planned Window, and every planned Window/Pane uid is live on exactly the
-  expected handle or nowhere at all. UID equality alone is insufficient: a
+  Execute rechecks the same plan under the Registry lock. A server-wide uid
+  preflight runs first, *before* the selected Project session is created,
+  because creating it runs the public pre/post-create hooks whose side effects no
+  rollback can undo; a missing server is read as an empty inventory. The
+  inventory is then refreshed once the session exists, so the new tuple is
+  covered and any race since the preflight is caught. Together, and before the
+  first Window or Pane mutation, they prove that every planned live Window is
+  owned by the selected Session, every planned live Pane is owned by its planned
+  Window, and every planned Window/Pane uid is live on exactly the expected
+  handle or nowhere at all. UID equality alone is insufficient: a
   relinked Window or a join-paned Pane keeps its uid, and a Window relinked out
   of the selected Session is invisible to a selected-Session plan. Each created
   Pane proves its own parent before its uid claim. It records only objects it

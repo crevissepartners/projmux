@@ -471,11 +471,20 @@ func newTopologyOwnerGuard(ctx context.Context, runtime *materializer) (*topolog
 	windowsOut, err := runtime.read(ctx, "list-windows", "-a", "-F",
 		tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
 	if err != nil {
+		// No server is the ordinary state of an offline Project on a fresh
+		// socket, and it is also the strongest possible answer to "is this uid
+		// claimed anywhere": nothing is live, so the inventory is empty.
+		if isMissingTmuxServer(err) {
+			return emptyTopologyOwnerGuard(), nil
+		}
 		return nil, fmt.Errorf("inventory tmux Window owners: %w", err)
 	}
 	panesOut, err := runtime.read(ctx, "list-panes", "-a", "-F",
 		tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}"))
 	if err != nil {
+		if isMissingTmuxServer(err) {
+			return emptyTopologyOwnerGuard(), nil
+		}
 		return nil, fmt.Errorf("inventory tmux Pane owners: %w", err)
 	}
 	guard := &topologyOwnerGuard{
@@ -518,6 +527,83 @@ func newTopologyOwnerGuard(ctx context.Context, runtime *materializer) (*topolog
 		}
 	}
 	return guard, nil
+}
+
+func emptyTopologyOwnerGuard() *topologyOwnerGuard {
+	return &topologyOwnerGuard{
+		windowOwner: map[string]string{},
+		paneOwner:   map[string]runtimeOwner{},
+		windowUIDs:  map[string][]string{},
+		paneUIDs:    map[string][]string{},
+	}
+}
+
+// requireSoleUIDClaims proves every planned Window and Pane uid is live on
+// exactly its planned handle, or nowhere at all when this pass intends to create
+// it. It needs no session id, so it runs as a preflight before the selected
+// Project session is created -- creating that session runs the public
+// pre/post-create hooks, whose effects are outside the rollback guarantee, so a
+// foreign claim on a desired uid must be refused before them.
+func (g *topologyOwnerGuard) requireSoleUIDClaims(plan *registryTopologyPlan) error {
+	for wi := range plan.windows {
+		work := &plan.windows[wi]
+		windowLabel := work.window.Metadata.Name
+		if err := g.requireSoleWindowUID(work.window.Metadata.UID, work.liveID, windowLabel); err != nil {
+			return err
+		}
+		if err := g.requireSolePaneUID(work.primary.Metadata.UID, primaryPaneHandle(work), windowLabel+"/"+work.primary.Metadata.Name); err != nil {
+			return err
+		}
+		for pi := range work.panes {
+			paneWork := &work.panes[pi]
+			if paneWork.pane.Metadata.UID == work.primary.Metadata.UID {
+				continue
+			}
+			if err := g.requireSolePaneUID(paneWork.pane.Metadata.UID, paneWork.liveID, windowLabel+"/"+paneWork.pane.Metadata.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// requirePlannedParents proves every planned live handle's exact parent under
+// the now-known session id, and that no planned live handle's uid drifted.
+func (g *topologyOwnerGuard) requirePlannedParents(ctx context.Context, runtime *materializer, plan *registryTopologyPlan, sessionID string) error {
+	for wi := range plan.windows {
+		work := &plan.windows[wi]
+		windowLabel := work.window.Metadata.Name
+		if work.liveID != "" {
+			if runtime.option(ctx, work.liveID, "#{"+tmuxopts.WindowUID+"}") != work.window.Metadata.UID {
+				return fmt.Errorf("window %s uid changed after planning", windowLabel)
+			}
+			if err := g.requireWindowOf(sessionID, work.liveID, windowLabel); err != nil {
+				return err
+			}
+		}
+		for pi := range work.panes {
+			paneWork := &work.panes[pi]
+			if paneWork.liveID == "" {
+				continue
+			}
+			if err := g.requirePaneOf(sessionID, work.liveID, paneWork.liveID, windowLabel+"/"+paneWork.pane.Metadata.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// primaryPaneHandle returns the planned live handle of a Window's primary Pane.
+// The primary is tracked in the pane plan, so a Window whose plan predates its
+// own creation reports the empty handle.
+func primaryPaneHandle(work *registryTopologyWindowPlan) string {
+	for pi := range work.panes {
+		if work.panes[pi].pane.Metadata.UID == work.primary.Metadata.UID {
+			return work.panes[pi].liveID
+		}
+	}
+	return ""
 }
 
 // requireWindowOf proves windowID is present and owned by exactly sessionID.
@@ -630,6 +716,16 @@ func executeRegistryTopology(
 	if exists && runtime.option(ctx, plan.sessionName, "#{"+tmuxopts.ProjectUIDSession+"}") != plan.project.Metadata.UID {
 		return fmt.Errorf("selected Project session uid changed after planning")
 	}
+	// Creating the selected Project session runs the public pre/post-create
+	// hooks, whose side effects no rollback can undo. So a foreign live claim on
+	// any desired Window or Pane uid is refused here, before that happens.
+	preflight, err := newTopologyOwnerGuard(ctx, runtime)
+	if err != nil {
+		return err
+	}
+	if err := preflight.requireSoleUIDClaims(plan); err != nil {
+		return err
+	}
 	first := &plan.windows[0]
 	// The session's own first Window and Pane arrive with the atomic
 	// new-session result. Adopting those exact ids, rather than re-listing the
@@ -659,40 +755,18 @@ func executeRegistryTopology(
 			}
 		}
 	}
-	// One inventory proves every planned live handle's exact parent before the
-	// first mutation of this pass. Handles this pass creates prove their own
-	// parent at creation time instead.
+	// The inventory is refreshed after the session exists so the new tuple is
+	// included and any race since the preflight is caught. Both passes run
+	// before the first Window or Pane mutation of this pass.
 	guard, err := newTopologyOwnerGuard(ctx, runtime)
 	if err != nil {
 		return err
 	}
-	for wi := range plan.windows {
-		work := &plan.windows[wi]
-		windowLabel := work.window.Metadata.Name
-		if err := guard.requireSoleWindowUID(work.window.Metadata.UID, work.liveID, windowLabel); err != nil {
-			return err
-		}
-		if work.liveID != "" {
-			if runtime.option(ctx, work.liveID, "#{"+tmuxopts.WindowUID+"}") != work.window.Metadata.UID {
-				return fmt.Errorf("window %s uid changed after planning", windowLabel)
-			}
-			if err := guard.requireWindowOf(created.SessionID, work.liveID, windowLabel); err != nil {
-				return err
-			}
-		}
-		for pi := range work.panes {
-			paneWork := &work.panes[pi]
-			paneLabel := windowLabel + "/" + paneWork.pane.Metadata.Name
-			if err := guard.requireSolePaneUID(paneWork.pane.Metadata.UID, paneWork.liveID, paneLabel); err != nil {
-				return err
-			}
-			if paneWork.liveID == "" {
-				continue
-			}
-			if err := guard.requirePaneOf(created.SessionID, work.liveID, paneWork.liveID, paneLabel); err != nil {
-				return err
-			}
-		}
+	if err := guard.requireSoleUIDClaims(plan); err != nil {
+		return err
+	}
+	if err := guard.requirePlannedParents(ctx, runtime, plan, created.SessionID); err != nil {
+		return err
 	}
 	for wi := range plan.windows {
 		work := &plan.windows[wi]

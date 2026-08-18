@@ -15,6 +15,12 @@ import (
 
 func newTopologyMaterializeFixture(t *testing.T) (*resourceReconcileCommand, *fakeResourceStore, *fakeTmux, *routedTmuxRunner, string, string) {
 	t.Helper()
+	command, store, server, runner, root, logs, _ := newTopologyMaterializeFixtureWithSessions(t)
+	return command, store, server, runner, root, logs
+}
+
+func newTopologyMaterializeFixtureWithSessions(t *testing.T) (*resourceReconcileCommand, *fakeResourceStore, *fakeTmux, *routedTmuxRunner, string, string, *fakeSessionMaterializer) {
+	t.Helper()
 	root, logs := t.TempDir(), t.TempDir()
 	store := newFakeResourceStore(t)
 	project, _ := store.registry.Project("prj-beta")
@@ -48,7 +54,7 @@ func newTopologyMaterializeFixture(t *testing.T) (*resourceReconcileCommand, *fa
 			return &materializer{runner: exact, mirror: intmetadata.NewMirror(exact), sessions: sessions, warn: warn}
 		},
 	}
-	return command, store, server, runner, root, logs
+	return command, store, server, runner, root, logs, sessions
 }
 
 func TestRegistryTopologyMaterializationDryRunExecuteAndRepeatNoop(t *testing.T) {
@@ -440,6 +446,64 @@ func TestRegistryTopologyMaterializationPostMutationHookFailureRollsBackExactHan
 			}
 			if store.writes != writes || store.snapshot() != registry {
 				t.Fatalf("post-mutation failure committed Registry state: writes=%d want %d", store.writes, writes)
+			}
+		})
+	}
+}
+
+// Creating the selected Project session runs the public pre/post-create hooks,
+// and no rollback can undo a hook's side effects. So a foreign live claim on a
+// desired Window or Pane uid must be refused before the session is created, not
+// after -- which means the server-wide uid preflight cannot wait for
+// ensureSessionAt.
+func TestRegistryTopologyMaterializationOfflineForeignUIDRefusesBeforeSessionCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seed func(*fakeTmux)
+	}{
+		{
+			name: "foreign session claims a desired Window uid",
+			seed: func(server *fakeTmux) {
+				foreign := server.addSession("foreign-topology")
+				foreign.windows[0].opts[tmuxopts.WindowUID] = "win-beta-main"
+			},
+		},
+		{
+			name: "foreign session claims a desired Pane uid",
+			seed: func(server *fakeTmux) {
+				foreign := server.addSession("foreign-topology")
+				foreign.windows[0].panes[0].opts[tmuxopts.PaneUID] = "pan-beta-zsh"
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command, store, server, _, _, _, sessions := newTopologyMaterializeFixtureWithSessions(t)
+			hookRuns := 0
+			sessions.postCreate = func() { hookRuns++ }
+			tc.seed(server)
+			before := server.state()
+			registry := store.snapshot()
+
+			result, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+			if err == nil || !strings.Contains(err.Error(), "is already live on") {
+				t.Fatalf("foreign desired uid error = %v\n%s", err, result)
+			}
+			if got := len(sessions.created); got != 0 {
+				t.Fatalf("refusal created %d session(s) before detecting the collision: %v", got, sessions.created)
+			}
+			if hookRuns != 0 {
+				t.Fatalf("refusal ran %d post-create hook(s)", hookRuns)
+			}
+			if server.session("beta") != nil {
+				t.Fatalf("refusal materialized the selected Project session:\n%s", server.state())
+			}
+			for _, call := range server.calls {
+				if len(call) > 0 && slices.Contains([]string{"new-session", "new-window", "split-window", "set-environment"}, call[0]) {
+					t.Fatalf("refusal reached a runtime mutation: %v", call)
+				}
+			}
+			if server.state() != before || store.writes != 0 || store.snapshot() != registry {
+				t.Fatalf("refusal mutated state: writes=%d\n%s", store.writes, server.state())
 			}
 		})
 	}
