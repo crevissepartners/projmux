@@ -2584,6 +2584,11 @@ termination_sibling_before="$(termination_sibling_tmux show-options -gqv @projmu
 termination_pmx delete pane "uid:$termination_pane_uid" --socket "$termination_socket" --dry-run \
   >"$termination_root/delete-dry-run.out"
 smoke_assert_file_contains "$termination_root/delete-dry-run.out" "live would kill tmux pane $termination_pane_id"
+# The reported socket is the one the invocation named. The run-unique name is
+# the whole assertion: a fallback to the app default would print `-L/projmux`,
+# which is not this string. A separate "must not contain -L/projmux" check would
+# be a prefix collision, since the isolated name starts with `projmux` too.
+smoke_assert_file_contains "$termination_root/delete-dry-run.out" "socket=-L/$termination_socket"
 if [[ "$(termination_tmux display-message -p -t "$termination_pane_id" '#{pane_id}' 2>/dev/null || true)" != "$termination_pane_id" ]]; then
   echo "a dry-run delete killed the live Pane" >&2
   exit 1

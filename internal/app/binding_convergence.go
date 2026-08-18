@@ -20,6 +20,18 @@ type explicitTmuxTarget struct {
 	value string
 }
 
+// label renders the target the way the delete result reports it: the flag the
+// route used and the value it was given, never the app socket's default name.
+// Reporting a fixed `-L/projmux` was accurate only while the delete routes
+// could reach exactly one server; now that they resolve one, saying which is
+// the whole point of the line.
+func (t explicitTmuxTarget) label() string {
+	if t.flag == "" || t.value == "" {
+		return "none"
+	}
+	return t.flag + "/" + t.value
+}
+
 func tmuxSocketNameTarget(name string) (explicitTmuxTarget, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {

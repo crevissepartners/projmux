@@ -304,7 +304,9 @@ func TestDeleteOfflineWindowDryRunAndExecutionAreRegistryOnly(t *testing.T) {
 		"cascade pane/codex-pane uid=pan-alpha-codex",
 		"cascade pane/zsh uid=pan-alpha-zsh",
 		"cascade pane/log uid=pan-alpha-log",
-		"registry-only would delete this Window; no tmux Window would be killed on socket=-L/projmux",
+		// The reported socket is the one this invocation resolved, not the
+		// app's default name.
+		"registry-only would delete this Window; no tmux Window would be killed on socket=" + testDeleteTarget.label(),
 		"dry-run: nothing was deleted",
 	} {
 		if !strings.Contains(stdout, want) {
@@ -1274,7 +1276,7 @@ func TestDeleteWindowDryRunShowsLiveAndLastSessionCascadeWithoutWrites(t *testin
 		t.Fatalf("dry-run error = %v", err)
 	}
 	for _, want := range []string{
-		"live would kill tmux window @12 session=beta session-id=$21 socket=-L/projmux",
+		"live would kill tmux window @12 session=beta session-id=$21 socket=" + testDeleteTarget.label(),
 		"live cascade would end Project session beta because its last live Window is deleted",
 	} {
 		if !strings.Contains(stdout, want) {

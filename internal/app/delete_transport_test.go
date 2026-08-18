@@ -141,6 +141,43 @@ func TestDeleteInstallsTheResolvedTargetOnTheLiveHalf(t *testing.T) {
 	})
 }
 
+// TestDeleteResultNamesTheResolvedSocket keeps the reported target honest. The
+// line used to be a constant `-L/projmux`, which was accurate only while the
+// route could reach exactly one server; a result that names the wrong socket is
+// worse than no result at all, because it is what an operator audits.
+func TestDeleteResultNamesTheResolvedSocket(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "an explicit socket name", args: []string{"--socket", "isolated-run"}, want: "socket=-L/isolated-run"},
+		{name: "an explicit socket path", args: []string{"--socket-path", "/tmp/isolated/socket"}, want: "socket=-S//tmp/isolated/socket"},
+		{name: "the inherited client", want: "socket=" + testDeleteTarget.label()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			cmd := newTestDeleteCommand(store, false, false, nil)
+			runtime := newFixturePaneDeleteRuntime()
+			cmd.panes = runtime
+			args := append([]string{"pane", "log", "--project", "alpha", "--window", "main", "--dry-run"}, test.args...)
+			stdout, _, err := runRoute(t, cmd, args...)
+			if err != nil {
+				t.Fatalf("dry-run error = %v", err)
+			}
+			if !strings.Contains(stdout, test.want) {
+				t.Fatalf("result missing %q:\n%s", test.want, stdout)
+			}
+			if defaultLabel := "socket=-L/" + defaultAppSocket; test.want != defaultLabel && strings.Contains(stdout, defaultLabel) {
+				t.Fatalf("result reported the default app socket:\n%s", stdout)
+			}
+		})
+	}
+}
+
 // TestDeleteRefusesOutsideTmuxWithoutTouchingAnything is the containment half:
 // a delete that cannot name a server performs no inventory, no kill, and no
 // registry write.
