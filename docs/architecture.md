@@ -274,6 +274,12 @@ Termination evidence transport:
   whose supervisor could not be constructed all leave no receipt, and the pane
   behaves exactly as it did before supervision existed. An absent receipt is the
   input that resolves to `unknown`; it is never read as a normal exit.
+- A managed process that dies before the create transaction that launched it
+  commits is a real edge the shipped dead-managed-Pane sweep already owns: that
+  sweep runs inside the next mutation's transaction and can retire the Pane
+  before the supervisor's receipt arrives. The receipt is then refused as stale,
+  which is the correct outcome -- the Pane it describes is gone -- and the Agent
+  is left Offline by the sweep rather than by invented evidence.
 - A Pane **adopted** from a runtime object created for another reason -- the
   first pane a `new-session` brings with it -- carries no generation until it is
   relaunched. Adoption is not supervision: the process was already running, so

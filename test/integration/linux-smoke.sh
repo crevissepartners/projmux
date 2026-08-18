@@ -2475,11 +2475,30 @@ termination_agent_pane_ref() {
 
 termination_provider_case() {
   local provider="$1" want_class="$2" want_code="$3" want_signal="$4" script="$5"
-  printf '%s\n' "$script" >"$termination_root/stub-script"
+  # The stub outlives the create transaction on purpose. A provider that ends
+  # before its own create commits is a different case -- the shipped
+  # dead-managed-Pane sweep can retire the Pane inside that same transaction --
+  # and this block is about the receipt, not about that race.
+  printf 'sleep 0.5\n%s\n' "$script" >"$termination_root/stub-script"
   local agent_uid pane_ref got_class got_code got_signal got_source got_generation activation
   agent_uid="$(termination_pmx_provider create agent --project evidence --provider "$provider" -o uid)"
   if [[ -z "$agent_uid" ]]; then
     echo "termination provider case $provider created no Agent" >&2
+    exit 1
+  fi
+  # The managed Pane's generation is read while the provider is still running,
+  # so the comparison below is against the value the launch was issued with.
+  termination_agent_json "$agent_uid"
+  pane_ref="$(termination_agent_pane_ref)"
+  if [[ -z "$pane_ref" ]]; then
+    echo "termination provider case $provider Agent carries no managed Pane binding" >&2
+    cat "$termination_root/agent.json" >&2
+    exit 1
+  fi
+  activation="$(termination_activation_generation "$pane_ref")"
+  if [[ -z "$activation" ]]; then
+    echo "termination provider case $provider managed Pane $pane_ref carries no activation generation" >&2
+    termination_pmx describe pane "uid:$pane_ref" -o json >&2 || true
     exit 1
   fi
   for _ in $(seq 1 200); do
@@ -2494,7 +2513,6 @@ termination_provider_case() {
   got_signal="$(termination_agent_field signal)"
   got_source="$(termination_agent_field source)"
   got_generation="$(termination_agent_field generation)"
-  pane_ref="$(termination_agent_pane_ref)"
   if [[ "$got_class" != "$want_class" || "$got_code" != "$want_code" || "$got_signal" != "$want_signal" ]]; then
     echo "termination provider case $provider recorded class=$got_class code=$got_code signal=$got_signal, want class=$want_class code=$want_code signal=$want_signal" >&2
     cat "$termination_root/agent.json" >&2
@@ -2505,19 +2523,13 @@ termination_provider_case() {
     cat "$termination_root/agent.json" >&2
     exit 1
   fi
-  if [[ -z "$pane_ref" ]]; then
-    echo "termination provider case $provider Agent carries no managed Pane binding" >&2
-    cat "$termination_root/agent.json" >&2
-    exit 1
-  fi
-  activation="$(termination_activation_generation "$pane_ref")"
-  if [[ -z "$activation" || "$got_generation" != "$activation" ]]; then
+  if [[ "$got_generation" != "$activation" ]]; then
     echo "termination provider case $provider receipt generation '$got_generation' is not the managed Pane's activation generation '$activation'" >&2
     cat "$termination_root/agent.json" >&2
     exit 1
   fi
-  # The Agent keeps its conversation-independent identity; nothing here consumed
-  # the receipt or moved the phase, which belongs to a later Phase.
+  # The Agent keeps the evidence even though nothing here consumed it: turning a
+  # receipt into a phase belongs to a later Phase.
   echo ">> termination provider case $provider agent=$agent_uid pane=$pane_ref class=$got_class generation=$activation"
 }
 
