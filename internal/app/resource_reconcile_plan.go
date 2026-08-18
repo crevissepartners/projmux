@@ -114,9 +114,10 @@ func planExactPaneOption(ctx context.Context, recorder *resourcePlanTmuxRunner, 
 }
 
 type resourceReconcilePlan struct {
-	registry coremetadata.Registry
-	items    []resourceReconcileItem
-	writes   []plannedTmuxWrite
+	registry        coremetadata.Registry
+	items           []resourceReconcileItem
+	writes          []plannedTmuxWrite
+	materialization *registryTopologyPlan
 }
 
 func (p resourceReconcilePlan) safeItems() int {
@@ -140,9 +141,11 @@ func (p resourceReconcilePlan) refusedItems() int {
 }
 
 type resourceReconcilePlanner struct {
-	reader        tmuxCommandRunner
-	store         *resourceStore
-	newReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler
+	reader             tmuxCommandRunner
+	store              *resourceStore
+	newReconciler      func(tmuxCommandRunner, sessionLister) *registryReconciler
+	materializeProject string
+	exactTarget        explicitTmuxTarget
 }
 
 func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata.Registry) (resourceReconcilePlan, error) {
@@ -160,7 +163,21 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 	reconciler.targetLiveOnly = true
 	projectSessions, err := observeResourceProjectSessions(ctx, recorder)
 	if err != nil {
+		if p.materializeProject == "" || !isMissingTmuxServer(err) {
+			return resourceReconcilePlan{}, err
+		}
+		projectSessions = nil
+	}
+	topology, err := planRegistryTopology(ctx, p.reader, before, p.materializeProject, reconciler, projectSessions, p.exactTarget)
+	if err != nil {
 		return resourceReconcilePlan{}, err
+	}
+	// Materialization is a pure selected-Project graph plan. In particular it
+	// never runs the default reconciler's blank adoption, orphan minting, or
+	// Agent phase observation as an incidental side effect.
+	if p.materializeProject != "" {
+		items := slices.Clone(topology.items)
+		return resourceReconcilePlan{registry: before.Clone(), items: items, materialization: topology}, nil
 	}
 	reconciler.refusedSessions = refusedResourceProjectSessions(before, projectSessions, reconciler)
 	reconciler.refusedRoots = map[string]bool{}

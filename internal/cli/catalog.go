@@ -692,13 +692,13 @@ var routes = []Route{
 		Summary:     "Preview or repair Registry and exact tmux resource drift",
 		Disposition: DispositionCanonical,
 		Usage: []string{
-			"projmux reconcile resources [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]",
+			"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]",
 		},
 		Canonical: []string{"reconcile resources"},
 		Children: []Route{{
 			Name:      "resources",
 			Summary:   "Preview or repair safe Registry and tmux UID, owner, and runtime drift on one exact socket",
-			Usage:     []string{"projmux reconcile resources [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]"},
+			Usage:     []string{"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]"},
 			Canonical: []string{"reconcile resources"},
 		}},
 	},

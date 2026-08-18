@@ -2412,6 +2412,47 @@ func TestClientEnsureSessionWithEnvironmentResultReportsInnerSameNameHit(t *test
 	}
 }
 
+func TestClientEnsureSessionWithEnvironmentResultAtSeparatesInitialPaneAndProjectCWD(t *testing.T) {
+	t.Parallel()
+	row := []byte("$7\\037@8\\037%9\n")
+	ownershipRow := []byte("$7\\037@8\\037%9\\037v1:7:8:op-test\n")
+	runner := &scriptedRunner{t: t, steps: []scriptedStep{
+		{err: exitError(t, 1)},
+		{output: row},
+		{output: row},
+		{},
+		{output: ownershipRow},
+	}}
+	hook := &fakePostCreateRunner{}
+	client := NewClient(runner, withPostCreateRunnerInterface(hook))
+	result, err := client.EnsureSessionWithEnvironmentResultAt(context.Background(), "workspace", "/srv/project/logs", "/srv/project", map[string]string{
+		createOperationEnvironment: "v1:7:8:op-test",
+	})
+	if err != nil {
+		t.Fatalf("EnsureSessionWithEnvironmentResultAt error = %v", err)
+	}
+	if !result.Created || result.SessionID != "$7" || result.WindowID != "@8" || result.PaneID != "%9" {
+		t.Fatalf("result = %+v", result)
+	}
+	// The hook contract stays on the canonical Project root even though the
+	// initial shell Pane started in the stored Pane cwd.
+	if len(hook.calls) != 1 || hook.calls[0].CWD != "/srv/project" || hook.calls[0].PaneID != "%9" {
+		t.Fatalf("post-create calls = %+v", hook.calls)
+	}
+	format := "#{session_id}\\037#{window_id}\\037#{pane_id}"
+	verifyFormat := tmuxFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{E:"+createOperationEnvironment+"}")
+	want := []commandCall{
+		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
+		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/srv/project/logs", "-e", "__projmux_create_operation=v1:7:8:op-test", "-P", "-F", format}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%9", "-F", format}},
+		{name: "tmux", args: []string{"set-option", "-t", "$7", "-q", "@projmux_project_path", "/srv/project"}},
+		{name: "tmux", args: []string{"list-panes", "-s", "-t", "$7", "-F", verifyFormat}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
 func TestClientEnsureSessionSkipsPostCreateWhenSessionExists(t *testing.T) {
 	t.Parallel()
 

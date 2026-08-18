@@ -33,6 +33,7 @@ type fakeSessionMaterializer struct {
 	startup            func()
 	beforeEnsureResult func()
 	created            []string
+	initialPaneCWD     string
 }
 
 func (f *fakeSessionMaterializer) SessionExists(_ context.Context, name string) (bool, error) {
@@ -57,7 +58,7 @@ func (f *fakeSessionMaterializer) EnsureSession(_ context.Context, name, _ strin
 	return nil
 }
 
-func (f *fakeSessionMaterializer) EnsureSessionWithEnvironment(ctx context.Context, name, cwd string, env map[string]string) error {
+func (f *fakeSessionMaterializer) EnsureSessionWithEnvironment(_ context.Context, name, _ string, env map[string]string) error {
 	if f.tmux.session(name) != nil {
 		return nil
 	}
@@ -76,7 +77,13 @@ func (f *fakeSessionMaterializer) EnsureSessionWithEnvironment(ctx context.Conte
 	return nil
 }
 
-func (f *fakeSessionMaterializer) EnsureSessionWithEnvironmentResult(_ context.Context, name, cwd string, env map[string]string) (intmux.NewSessionResult, error) {
+func (f *fakeSessionMaterializer) EnsureSessionWithEnvironmentResult(ctx context.Context, name, cwd string, env map[string]string) (intmux.NewSessionResult, error) {
+	return f.EnsureSessionWithEnvironmentResultAt(ctx, name, cwd, cwd, env)
+}
+
+func (f *fakeSessionMaterializer) EnsureSessionWithEnvironmentResultAt(_ context.Context, name, runtimeCWD, projectCWD string, env map[string]string) (intmux.NewSessionResult, error) {
+	f.initialPaneCWD = runtimeCWD
+	cwd := projectCWD
 	if f.beforeEnsureResult != nil {
 		f.beforeEnsureResult()
 		f.beforeEnsureResult = nil

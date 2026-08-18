@@ -15,14 +15,18 @@ import (
 )
 
 type resourceReconcileCommand struct {
-	runner        tmuxCommandRunner
-	resources     *resourceStore
-	lookupEnv     func(string) string
-	newReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler
+	runner          tmuxCommandRunner
+	resources       *resourceStore
+	lookupEnv       func(string) string
+	newReconciler   func(tmuxCommandRunner, sessionLister) *registryReconciler
+	newOperationID  func() (string, error)
+	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
 }
 
 func newResourceReconcileCommand(tmux *tmuxCommand) *resourceReconcileCommand {
-	command := &resourceReconcileCommand{lookupEnv: os.Getenv}
+	command := &resourceReconcileCommand{
+		lookupEnv: os.Getenv, newOperationID: newCreateOperationID,
+	}
 	if tmux != nil {
 		command.runner = tmux.runner
 		command.resources = tmux.resources
@@ -32,10 +36,11 @@ func newResourceReconcileCommand(tmux *tmuxCommand) *resourceReconcileCommand {
 }
 
 type resourceReconcileOptions struct {
-	dryRun     bool
-	output     string
-	socket     string
-	socketPath string
+	dryRun              bool
+	output              string
+	socket              string
+	socketPath          string
+	materializeProjects repeatedFlag
 }
 
 type resourceReconcileTarget struct {
@@ -83,12 +88,17 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 		reportTarget.Mode = "socket-path"
 	}
 	planner := resourceReconcilePlanner{
-		reader:        explicitTmuxRunner{runner: c.runner, target: target},
-		store:         c.resources,
-		newReconciler: c.newReconciler,
+		reader:             explicitTmuxRunner{runner: c.runner, target: target},
+		store:              c.resources,
+		newReconciler:      c.newReconciler,
+		materializeProject: firstRepeatedValue(opts.materializeProjects),
+		exactTarget:        target,
 	}
 	if opts.dryRun {
 		return c.runDryRun(context.Background(), planner, reportTarget, opts, stdout)
+	}
+	if planner.materializeProject != "" {
+		return c.runMaterializeExecute(context.Background(), planner, target, reportTarget, opts, stdout, stderr)
 	}
 	return c.runExecute(context.Background(), planner, target, reportTarget, opts, stdout)
 }
@@ -102,6 +112,7 @@ func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceRec
 	fs.StringVar(&opts.output, "o", "", "output mode (alias of --output)")
 	fs.StringVar(&opts.socket, "socket", "", "exact tmux socket name (tmux -L)")
 	fs.StringVar(&opts.socketPath, "socket-path", "", "exact absolute tmux socket path (tmux -S)")
+	fs.Var(&opts.materializeProjects, "materialize-project", "materialize one exact Project by name or uid:<uid>")
 	if err := fs.Parse(args); err != nil {
 		return resourceReconcileOptions{}, err
 	}
@@ -115,7 +126,17 @@ func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceRec
 	if strings.TrimSpace(opts.socket) != "" && strings.TrimSpace(opts.socketPath) != "" {
 		return resourceReconcileOptions{}, usageError("reconcile resources accepts only one of --socket and --socket-path")
 	}
+	if len(opts.materializeProjects) > 1 {
+		return resourceReconcileOptions{}, usageError("reconcile resources accepts exactly one --materialize-project occurrence")
+	}
 	return opts, nil
+}
+
+func firstRepeatedValue(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[0])
 }
 
 func (c *resourceReconcileCommand) resolveTarget(opts resourceReconcileOptions) (explicitTmuxTarget, error) {
@@ -164,7 +185,7 @@ func (c *resourceReconcileCommand) runDryRun(ctx context.Context, planner resour
 	if err != nil {
 		return fmt.Errorf("plan resource reconciliation: %w", err)
 	}
-	report := reportForDryRun(plan, target, retryResourceReconcile(target))
+	report := reportForDryRun(plan, target, retryResourceReconcileProject(target, planner.materializeProject))
 	return writeResourceReconcileReport(stdout, opts.output, report)
 }
 
@@ -361,11 +382,19 @@ func clonePlanItems(items []resourceReconcileItem) []resourceReconcileItem {
 }
 
 func retryResourceReconcile(target resourceReconcileTarget) string {
+	return retryResourceReconcileProject(target, "")
+}
+
+func retryResourceReconcileProject(target resourceReconcileTarget, projectRef string) string {
 	flagName := "--socket"
 	if target.Flag == "-S" {
 		flagName = "--socket-path"
 	}
-	return "projmux reconcile resources " + flagName + " " + shellQuote(target.Value)
+	retry := "projmux reconcile resources " + flagName + " " + shellQuote(target.Value)
+	if strings.TrimSpace(projectRef) != "" {
+		retry += " --materialize-project " + shellQuote(projectRef)
+	}
+	return retry
 }
 
 func writeResourceReconcileReport(w io.Writer, output string, report resourceReconcileReport) error {
@@ -451,5 +480,5 @@ func displayPlanValue(value string) string {
 }
 
 func printResourceReconcileUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: projmux reconcile resources [--dry-run] [--socket <name> | --socket-path <absolute>] [-o json]")
+	fmt.Fprintln(w, "usage: projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]")
 }

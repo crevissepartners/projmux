@@ -53,6 +53,14 @@ type operationSessionMaterializer interface {
 	EnsureSessionWithEnvironmentResult(ctx context.Context, sessionName, cwd string, env map[string]string) (intmux.NewSessionResult, error)
 }
 
+// topologySessionMaterializer separates the initial shell Pane cwd from the
+// Project cwd. Only Registry topology materialization needs the split: a stored
+// primary Pane may sit below spec.root, while PROJMUX_CWD and the session path
+// anchor must stay on the canonical Project root.
+type topologySessionMaterializer interface {
+	EnsureSessionWithEnvironmentResultAt(ctx context.Context, sessionName, runtimeCWD, projectCWD string, env map[string]string) (intmux.NewSessionResult, error)
+}
+
 type sessionStartupFinalizer interface {
 	FinalizeSessionStartup(ctx context.Context, result intmux.NewSessionResult, sessionName, cwd, operationMarker string) error
 }
@@ -233,6 +241,21 @@ func (m *materializer) ensureSession(
 	sessionName string,
 	ledger *runtimeLedger,
 ) (intmux.NewSessionResult, error) {
+	return m.ensureSessionAt(ctx, project, sessionName, project.Spec.Root, ledger)
+}
+
+// ensureSessionAt is ensureSession with an explicit initial-shell-Pane cwd.
+//
+// Registry topology materialization starts a Project's first stored shell Pane
+// in that Pane's own recorded cwd, while the Project identity, the hook
+// contract's PROJMUX_CWD, and the session path anchor all stay on the canonical
+// spec.root. Passing spec.root here is exactly the ordinary create path.
+func (m *materializer) ensureSessionAt(
+	ctx context.Context,
+	project coremetadata.Project,
+	sessionName, runtimeCWD string,
+	ledger *runtimeLedger,
+) (intmux.NewSessionResult, error) {
 	exists, err := m.sessions.SessionExists(ctx, sessionName)
 	if err != nil {
 		return intmux.NewSessionResult{}, tmuxError("check tmux session %q: %v", sessionName, err)
@@ -255,13 +278,24 @@ func (m *materializer) ensureSession(
 		}
 		return intmux.NewSessionResult{Created: false, SessionID: identity.ID}, nil
 	}
-	sessions, ok := m.sessions.(operationSessionMaterializer)
-	if !ok {
-		return intmux.NewSessionResult{}, errors.New("materialize tmux session: atomic session result is unavailable")
+	env := map[string]string{createOperationEnvironment: ledger.operationMarker}
+	var (
+		result    intmux.NewSessionResult
+		ensureErr error
+	)
+	if separateRuntimeCWD(project, runtimeCWD) {
+		sessions, ok := m.sessions.(topologySessionMaterializer)
+		if !ok {
+			return intmux.NewSessionResult{}, errors.New("materialize tmux session: exact initial-pane cwd seam is unavailable")
+		}
+		result, ensureErr = sessions.EnsureSessionWithEnvironmentResultAt(ctx, sessionName, runtimeCWD, project.Spec.Root, env)
+	} else {
+		sessions, ok := m.sessions.(operationSessionMaterializer)
+		if !ok {
+			return intmux.NewSessionResult{}, errors.New("materialize tmux session: atomic session result is unavailable")
+		}
+		result, ensureErr = sessions.EnsureSessionWithEnvironmentResult(ctx, sessionName, project.Spec.Root, env)
 	}
-	result, ensureErr := sessions.EnsureSessionWithEnvironmentResult(ctx, sessionName, project.Spec.Root, map[string]string{
-		createOperationEnvironment: ledger.operationMarker,
-	})
 	if ensureErr != nil {
 		// A pre-create hook refusal lands here with nothing created. A later
 		// synchronous tmux hook can instead fail after new-session created the
@@ -296,6 +330,15 @@ func (m *materializer) ensureSession(
 		return intmux.NewSessionResult{}, err
 	}
 	return result, nil
+}
+
+// separateRuntimeCWD reports whether the initial shell Pane must start somewhere
+// other than the Project root. Equal paths take the ordinary create seam so the
+// common path keeps exactly one session-create implementation.
+func separateRuntimeCWD(project coremetadata.Project, runtimeCWD string) bool {
+	runtimeCWD = strings.TrimSpace(runtimeCWD)
+	root := strings.TrimSpace(project.Spec.Root)
+	return runtimeCWD != "" && runtimeCWD != root
 }
 
 // requireOwnedSession validates the complete server-wide ownership proof for
@@ -767,6 +810,9 @@ func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, c
 	id = exactTmuxHandle(id, "%")
 	if id == "" {
 		return "", fmt.Errorf("split tmux pane %q: tmux returned no pane id", anchorPaneID)
+	}
+	if before[id] {
+		return "", fmt.Errorf("split tmux pane %q: tmux returned pre-existing pane id %s", anchorPaneID, id)
 	}
 	return id, nil
 }

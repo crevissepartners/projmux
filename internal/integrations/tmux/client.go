@@ -588,10 +588,19 @@ func (c *Client) EnsureSessionWithEnvironment(ctx context.Context, sessionName, 
 // used by resource create. An inner same-name hit is returned as Created=false
 // instead of being indistinguishable from the session this call created.
 func (c *Client) EnsureSessionWithEnvironmentResult(ctx context.Context, sessionName, cwd string, additionalEnv map[string]string) (intmux.NewSessionResult, error) {
+	return c.EnsureSessionWithEnvironmentResultAt(ctx, sessionName, cwd, cwd, additionalEnv)
+}
+
+// EnsureSessionWithEnvironmentResultAt separates the initial shell Pane cwd from
+// the Project hook and routing cwd. Registry topology materialization needs this
+// when a stored primary Pane starts below the Project root, while the public
+// PROJMUX_CWD, the pre/post-create hook contract, and the Project path anchor
+// must all stay on the canonical Project root.
+func (c *Client) EnsureSessionWithEnvironmentResultAt(ctx context.Context, sessionName, runtimeCWD, projectCWD string, additionalEnv map[string]string) (intmux.NewSessionResult, error) {
 	if strings.TrimSpace(sessionName) == "" {
 		return intmux.NewSessionResult{}, errSessionNameRequired
 	}
-	if strings.TrimSpace(cwd) == "" {
+	if strings.TrimSpace(runtimeCWD) == "" || strings.TrimSpace(projectCWD) == "" {
 		return intmux.NewSessionResult{}, errSessionCWDRequired
 	}
 
@@ -608,27 +617,27 @@ func (c *Client) EnsureSessionWithEnvironmentResult(ctx context.Context, session
 	}
 	c.markLifecycle(diagnostics.OperationSessionCreate)
 
-	if err := c.runPreCreate(ctx, sessionName, cwd, "persistent"); err != nil {
+	if err := c.runPreCreate(ctx, sessionName, projectCWD, "persistent"); err != nil {
 		c.failLifecycle(diagnostics.OperationSessionCreate)
 		return intmux.NewSessionResult{}, err
 	}
 
-	sessionEnv := c.projectSessionEnv(cwd)
+	sessionEnv := c.projectSessionEnv(projectCWD)
 	if len(additionalEnv) > 0 {
 		merged := make(map[string]string, len(sessionEnv)+len(additionalEnv))
 		maps.Copy(merged, sessionEnv)
 		maps.Copy(merged, additionalEnv)
 		sessionEnv = merged
 	}
-	result, err := c.createDetachedSessionResult(ctx, sessionName, cwd, sessionEnv)
+	result, err := c.createDetachedSessionResult(ctx, sessionName, runtimeCWD, sessionEnv)
 	if err != nil {
 		c.failLifecycle(diagnostics.OperationSessionCreate)
 		return result, fmt.Errorf("create tmux session %q: %w", sessionName, err)
 	}
 
 	c.applyProjectSessionEnv(ctx, result.SessionID, sessionEnv)
-	c.setProjectPathAnchor(ctx, result.SessionID, cwd)
-	c.runPostCreate(ctx, sessionName, cwd, "persistent", result.PaneID)
+	c.setProjectPathAnchor(ctx, result.SessionID, projectCWD)
+	c.runPostCreate(ctx, sessionName, projectCWD, "persistent", result.PaneID)
 	if err := c.verifyCreatedSessionOwnership(ctx, result, operationMarker); err != nil {
 		c.failLifecycle(diagnostics.OperationSessionCreate)
 		return result, err
