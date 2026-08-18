@@ -292,9 +292,10 @@ Registry file and schema:
   at the registry path, which is exactly the write-on-unknown-input that
   fail-closed exists to prevent. The registry is deliberately not quarantined
   or reset the way a corrupt recent-windows file is.
-- A file that is absent, empty, or whitespace-only is still the legitimate
-  "no registry yet" case and yields a fresh empty registry. Only a file with
-  actual content and no usable `schemaVersion` is refused.
+- A file that is absent, empty, or whitespace-only is the legitimate "no
+  registry yet" case **only before the first successful write**; see the durable
+  envelope below. Only a file with actual content and no usable `schemaVersion`
+  is refused as unknown.
 - The migration machinery is generic and version-indexed, ready for the first
   real schema bump: a registered older step is applied with backup → temp
   write → validate → atomic replace, so an interrupted or failing migration
@@ -309,6 +310,64 @@ Registry file and schema:
   used by the older projmux on-disk JSON. The two spellings coexist on purpose:
   existing snake_case files are **not** retro-changed, and the resource registry
   follows the resource-model contract.
+
+Durable recovery envelope:
+
+- The registry is the source of truth for managed identity and desired topology,
+  so `registry.json` is not the whole state: beside it the store keeps
+  `registry.initialized`, the marker that records a completed write, and
+  `recovery/`, a bounded set of the bytes replaced by semantic writes. The marker
+  and every copy are 0600, `recovery/` is 0700 like the directory above it, and
+  **no read creates any of them**.
+- **First use versus state loss.** Before the first successful write there is no
+  marker, and an absent, empty, or whitespace-only registry is the empty
+  first-use registry — the zero-write read contract is unchanged, including the
+  `LoadReadOnly` short-circuit that must not materialize
+  `<state>/projmux/metadata/` for an operator who has never registered a
+  resource. Once the marker exists, the same content-free registry is
+  `ErrRegistryStateLost` on **every** route, reads and mutations alike. Answering
+  an empty registry there would hide the loss of every uid, name reservation, and
+  offline resource, and the next mutation would mint a second identity domain on
+  top of it. A registry written before the marker existed is ordinary state, not
+  a loss, and gains the marker on its next write.
+- **Rolling recovery copies.** A same-version semantic write copies the bytes it
+  is about to replace to `recovery/registry-<stamp>-<seq>.json` before the
+  replace. Only *verified* bytes are copied: an absent, empty, or
+  structurally invalid prior file yields no copy, and an invalid one does not
+  block the write that repairs it. Retention keeps the newest five and removes
+  the rest deterministically — names sort chronologically, and the sequence
+  continues past the newest name rather than reusing one retention freed. A
+  migration keeps its own versioned `.bak` instead, so it never spends a
+  recovery slot on bytes that already have a backup.
+- **A convergent no-op writes nothing at all.** `UpdateConvergent` on an
+  unchanged registry takes no recovery copy, publishes no marker, and leaves the
+  registry's bytes, mtime, and inode untouched. Convergence agreeing with stored
+  state is not a reason to replace it.
+- **Write sequence.** Stage into a temp file in the same directory → `fsync` it →
+  re-read and validate it → copy the prior verified bytes → publish the marker if
+  absent → `fsync` the directory → atomic `rename` → `fsync` the directory again.
+  The live registry is only ever touched by that rename, and every step before it
+  is undone on failure, so an injected or real failure at any step leaves the
+  prior registry byte-identical with no staged file, no orphan copy, and no
+  half-created marker. Directory `fsync` is best effort for filesystems that
+  reject it (DrvFs and friends, the same ones that reject the permission repair),
+  because losing the ability to write state there would be worse than losing the
+  ordering guarantee.
+- The marker is published **before** the rename so that its own failure cannot
+  leave a replaced registry behind. The cost is a crash window of one rename: a
+  hard crash between the marker and the very first registry rename leaves a
+  marker with no registry, which reads as state loss rather than first use. That
+  direction is deliberate — it asks the operator instead of silently starting
+  over — and the diagnostic names the marker so it can be removed to accept an
+  empty registry.
+- **Distinct diagnostics.** Missing-after-initialization
+  (`ErrRegistryStateLost`), malformed (`ErrMalformedRegistry`), too new
+  (`ErrSchemaTooNew`), and unreadable (`ErrRegistryPermission`) stay four
+  separate causes classified with `errors.Is`, because they ask for four
+  different repairs. None of them creates an empty registry or a uid.
+- **Restore is not part of this store.** Selecting a recovery source and putting
+  it back is an operator decision with its own validation and race rules, so the
+  store only produces and bounds the copies.
 
 Session State interoperability:
 

@@ -9,16 +9,27 @@
 // a 0700 directory. Field spelling follows the resource-model contract
 // (camelCase) rather than the snake_case used by the older projmux state
 // files; see docs/architecture.md.
+//
+// The registry is the source of truth for managed identity and desired
+// topology, so the file format is a durable envelope rather than a bare JSON
+// document. Beside registry.json the store keeps an initialized marker, which
+// separates a legitimate first use from a lost registry, and a bounded set of
+// recovery copies, which hold the last verified bytes replaced by a semantic
+// write. Reading never creates any of them.
 package metadata
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +43,21 @@ const (
 	stateDirName   = "metadata"
 	registryFile   = "registry.json"
 	lockFileSuffix = ".lock"
+	// markerFileName records that at least one registry write has completed.
+	// It is the boundary between "this operator has never registered a
+	// resource" and "the registry that existed is gone".
+	markerFileName = "registry.initialized"
+	// recoveryDirName holds the bounded rolling copies of the bytes replaced
+	// by semantic writes. Reading a copy back is deliberately not part of this
+	// store: selecting and restoring a source is an operator decision.
+	recoveryDirName    = "recovery"
+	recoveryFilePrefix = "registry-"
+	recoveryFileSuffix = ".json"
+	// recoveryStampLayout keeps copy names sortable: lexicographic order over
+	// stamp plus same-second sequence is chronological order.
+	recoveryStampLayout = "20060102T150405Z"
+	// recoverySequenceLimit bounds the same-second sequence suffix.
+	recoverySequenceLimit = 100
 )
 
 var (
@@ -39,6 +65,10 @@ var (
 	defaultLockBaseDelay   = 2 * time.Millisecond
 	defaultLockMaxDelay    = 50 * time.Millisecond
 	defaultLockStaleAfter  = 30 * time.Second
+	// defaultRecoveryRetention is how many recovery copies survive a write.
+	// The copies exist to undo the most recent damaging commits, not to be an
+	// archive, so the bound is small and enforced on every semantic write.
+	defaultRecoveryRetention = 5
 )
 
 // ErrMalformedRegistry marks registry JSON that cannot be decoded. Like a
@@ -47,22 +77,46 @@ var (
 // would destroy state the operator still owns.
 var ErrMalformedRegistry = errors.New("malformed resource registry JSON")
 
+// ErrRegistryStateLost marks a registry that is missing or empty even though
+// the initialized marker records a completed write. It is a different
+// diagnostic from first use on purpose: silently answering an empty registry
+// there would hide the loss of every managed uid, name reservation, and
+// offline resource, and the next mutation would mint a fresh identity domain
+// on top of it.
+var ErrRegistryStateLost = errors.New("resource registry is missing after initialization")
+
+// ErrRegistryPermission marks a registry file that exists but cannot be read.
+// It stays distinct from missing, empty, malformed, and too-new so an operator
+// is told to fix an access problem instead of to recover lost state.
+var ErrRegistryPermission = errors.New("resource registry is not readable")
+
 // storeHooks are failure-injection seams used by the atomicity tests. They are
-// nil in production.
+// nil in production, and every one of them fires at a point where the live
+// registry has not been touched yet, so a test can prove the prior bytes
+// survive a failure at each step of the envelope.
 type storeHooks struct {
-	afterBackup    func() error
-	afterTempWrite func() error
-	beforeRename   func() error
+	afterBackup       func() error
+	afterTempWrite    func() error
+	validateStaged    func(path string) error
+	afterRecoveryCopy func() error
+	afterMarker       func() error
+	beforeRename      func() error
+	syncFile          func(*os.File) error
+	syncDir           func(string) error
 }
 
 // Store persists one resource registry file behind a cross-process lock.
 type Store struct {
-	path     string
-	lockPath string
-	clock    func() time.Time
-	rngMu    sync.Mutex
-	rng      *rand.Rand
-	hooks    storeHooks
+	path        string
+	lockPath    string
+	markerPath  string
+	recoveryDir string
+	// retention is the number of recovery copies kept after a semantic write.
+	retention int
+	clock     func() time.Time
+	rngMu     sync.Mutex
+	rng       *rand.Rand
+	hooks     storeHooks
 	// migrations overrides the schema migration set. It is nil in production,
 	// which means the (currently empty) production set; the migration
 	// atomicity tests register a step here so the write sequence can be
@@ -73,10 +127,14 @@ type Store struct {
 // NewStore builds a registry store for an explicit file path. Tests pass a
 // temp path so they never touch the real user state directory.
 func NewStore(path string) *Store {
+	dir := filepath.Dir(path)
 	return &Store{
-		path:     path,
-		lockPath: path + lockFileSuffix,
-		clock:    time.Now,
+		path:        path,
+		lockPath:    path + lockFileSuffix,
+		markerPath:  filepath.Join(dir, markerFileName),
+		recoveryDir: filepath.Join(dir, recoveryDirName),
+		retention:   defaultRecoveryRetention,
+		clock:       time.Now,
 		// #nosec G404 -- lock retry jitter is scheduling noise, not a secret;
 		// this matches the notify and recent-window store lock jitter.
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -140,6 +198,8 @@ func DirExists(path string) (bool, error) {
 // A newer-than-supported schemaVersion and malformed JSON both fail closed: an
 // error is returned and the file is left byte-identical. A known older schema
 // is migrated in memory only; the durable migration happens on the next write.
+// A registry that is gone or empty while the initialized marker exists fails
+// with ErrRegistryStateLost rather than answering the empty first-use registry.
 func (s *Store) Load() (coremetadata.Registry, error) {
 	if s == nil {
 		return coremetadata.NewRegistry(), nil
@@ -176,6 +236,17 @@ func (s *Store) LoadReadOnly() (coremetadata.Registry, error) {
 	}
 	if _, err := os.Stat(s.path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			// The short-circuit is also where first use and state loss are
+			// separated, and both answers come from stats alone: an absent
+			// registry must not create the directory just to learn that the
+			// marker beside it is gone too.
+			initialized, markerErr := s.initialized()
+			if markerErr != nil {
+				return coremetadata.Registry{}, markerErr
+			}
+			if initialized {
+				return coremetadata.Registry{}, s.stateLossError("missing")
+			}
 			return coremetadata.NewRegistry(), nil
 		}
 		return coremetadata.Registry{}, fmt.Errorf("metadata: stat registry %s: %w", s.path, err)
@@ -314,7 +385,7 @@ func (s *Store) Migrate() (MigrationResult, error) {
 			return err
 		}
 		out.BackupPath = backup
-		if err := s.writeAfterBackup(registry); err != nil {
+		if err := s.writeAfterBackup(registry, false); err != nil {
 			return err
 		}
 		out.Migrated = true
@@ -338,12 +409,15 @@ func (s *Store) readWithoutRepair() (coremetadata.Registry, int, bool, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return coremetadata.NewRegistry(), coremetadata.SchemaVersion, false, nil
+			return s.absentRegistry("missing")
+		}
+		if errors.Is(err, fs.ErrPermission) {
+			return coremetadata.Registry{}, 0, true, fmt.Errorf("metadata: read registry %s: %w: %w", s.path, ErrRegistryPermission, err)
 		}
 		return coremetadata.Registry{}, 0, false, fmt.Errorf("metadata: read registry %s: %w", s.path, err)
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
-		return coremetadata.NewRegistry(), coremetadata.SchemaVersion, false, nil
+		return s.absentRegistry("empty")
 	}
 
 	var envelope struct {
@@ -371,19 +445,73 @@ func (s *Store) readWithoutRepair() (coremetadata.Registry, int, bool, error) {
 	return migrated, envelope.SchemaVersion, true, nil
 }
 
+// absentRegistry answers the two ways registry.json can carry no content. Which
+// answer is correct is not a property of the file: it depends on whether this
+// state directory has ever held a committed registry. Without the marker the
+// empty registry is the legitimate first use; with it, the content is gone and
+// every caller -- reads and mutations alike -- must fail instead of quietly
+// starting a second identity domain.
+func (s *Store) absentRegistry(state string) (coremetadata.Registry, int, bool, error) {
+	initialized, err := s.initialized()
+	if err != nil {
+		return coremetadata.Registry{}, 0, false, err
+	}
+	if initialized {
+		return coremetadata.Registry{}, 0, false, s.stateLossError(state)
+	}
+	return coremetadata.NewRegistry(), coremetadata.SchemaVersion, false, nil
+}
+
+// initialized reports whether a registry write has ever completed in this state
+// directory. It only stats, so it is safe on the zero-write read routes.
+func (s *Store) initialized() (bool, error) {
+	if _, err := os.Stat(s.markerPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		if errors.Is(err, fs.ErrPermission) {
+			return false, fmt.Errorf("metadata: stat initialized marker %s: %w: %w", s.markerPath, ErrRegistryPermission, err)
+		}
+		return false, fmt.Errorf("metadata: stat initialized marker %s: %w", s.markerPath, err)
+	}
+	return true, nil
+}
+
+// stateLossError names both halves of the evidence and the two ways out, so the
+// message is actionable without this store choosing a recovery for the
+// operator. Restoring a copy is deliberately a separate, reviewed decision.
+func (s *Store) stateLossError(state string) error {
+	return fmt.Errorf("metadata: %w: %s records a completed registry write but %s is %s; restore a verified copy from %s, or remove the marker to accept an empty registry",
+		ErrRegistryStateLost, s.markerPath, s.path, state, s.recoveryDir)
+}
+
 func (s *Store) write(registry coremetadata.Registry, migrating bool) error {
 	if migrating {
 		if _, err := s.backup(0); err != nil {
 			return err
 		}
 	}
-	return s.writeAfterBackup(registry)
+	// A migration already copied the pre-migration bytes to its own versioned
+	// backup, so it does not also take a same-version recovery copy.
+	return s.writeAfterBackup(registry, !migrating)
 }
 
-// writeAfterBackup performs the temp write -> validate -> atomic replace
-// sequence. An interruption at any point leaves the original file intact,
-// because the destination is only ever touched by the final rename.
-func (s *Store) writeAfterBackup(registry coremetadata.Registry) error {
+// writeAfterBackup performs the durable envelope sequence: stage -> fsync ->
+// validate -> recovery copy -> initialized marker -> directory sync -> atomic
+// replace -> directory sync.
+//
+// Every step before the rename is reversible, and every failure after the first
+// reversible step undoes what this write created. The live registry is only ever
+// touched by the final rename, so a failure or an interruption anywhere leaves
+// the prior bytes byte-identical with no staged file left behind.
+//
+// The marker is published before the rename rather than after it so that its
+// failure cannot leave a replaced registry behind. The cost is a crash window of
+// one rename: a hard crash between the marker and the first registry rename
+// leaves a marker with no registry, which reads as state loss instead of first
+// use. That direction is deliberate -- it asks the operator instead of silently
+// starting over -- and the message names the marker so it can be removed.
+func (s *Store) writeAfterBackup(registry coremetadata.Registry, keepRecoveryCopy bool) error {
 	if s.hooks.afterBackup != nil {
 		if err := s.hooks.afterBackup(); err != nil {
 			return err
@@ -415,7 +543,7 @@ func (s *Store) writeAfterBackup(registry coremetadata.Registry) error {
 		_ = tmp.Close()
 		return fmt.Errorf("metadata: write temp registry: %w", err)
 	}
-	if err := tmp.Sync(); err != nil {
+	if err := s.syncFile(tmp); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("metadata: sync temp registry: %w", err)
 	}
@@ -427,19 +555,337 @@ func (s *Store) writeAfterBackup(registry coremetadata.Registry) error {
 			return err
 		}
 	}
-	if err := validateWrittenFile(tmpName); err != nil {
+	if err := s.validateStaged(tmpName); err != nil {
 		return err
+	}
+
+	rollback := newRollback()
+	if keepRecoveryCopy {
+		copied, err := s.recoveryCopy()
+		if err != nil {
+			return rollback.undo(err)
+		}
+		if copied != "" {
+			rollback.add(func() { _ = os.Remove(copied) })
+		}
+		if s.hooks.afterRecoveryCopy != nil {
+			if err := s.hooks.afterRecoveryCopy(); err != nil {
+				return rollback.undo(err)
+			}
+		}
+	}
+	created, err := s.ensureInitializedMarker()
+	if err != nil {
+		return rollback.undo(err)
+	}
+	if created {
+		rollback.add(func() { _ = os.Remove(s.markerPath) })
+	}
+	if s.hooks.afterMarker != nil {
+		if err := s.hooks.afterMarker(); err != nil {
+			return rollback.undo(err)
+		}
+	}
+	// Make the staged file, the marker, and the recovery copy durable directory
+	// entries before the entry for the live registry is repointed at any of them.
+	if err := s.syncDir(dir); err != nil {
+		return rollback.undo(err)
 	}
 	if s.hooks.beforeRename != nil {
 		if err := s.hooks.beforeRename(); err != nil {
-			return err
+			return rollback.undo(err)
 		}
 	}
 	if err := os.Rename(tmpName, s.path); err != nil {
-		return fmt.Errorf("metadata: rename temp registry: %w", err)
+		return rollback.undo(fmt.Errorf("metadata: rename temp registry: %w", err))
 	}
 	cleanup = false
+	// Past this point the new bytes are the registry. The remaining steps are
+	// durability and hygiene: a failure must not be reported as a failed write,
+	// and there is nothing to roll back to.
+	_ = s.syncDir(dir)
 	localstate.RepairPrivateFile(s.path)
+	if keepRecoveryCopy {
+		s.pruneRecoveryCopies()
+	}
+	return nil
+}
+
+// rollbackStack undoes the reversible steps of one write in reverse order.
+type rollbackStack struct {
+	steps []func()
+}
+
+func newRollback() *rollbackStack { return &rollbackStack{} }
+
+func (r *rollbackStack) add(step func()) { r.steps = append(r.steps, step) }
+
+// undo runs the recorded steps newest first and returns err unchanged, so a
+// failing step reads as `return rollback.undo(err)` at the call site.
+func (r *rollbackStack) undo(err error) error {
+	for i := len(r.steps) - 1; i >= 0; i-- {
+		r.steps[i]()
+	}
+	return err
+}
+
+// syncFile flushes a staged file. The seam exists so the failure matrix can
+// exercise an fsync failure without an unwritable filesystem.
+func (s *Store) syncFile(f *os.File) error {
+	if s.hooks.syncFile != nil {
+		return s.hooks.syncFile(f)
+	}
+	return f.Sync()
+}
+
+// syncDir makes directory entries durable so a crash cannot leave the rename
+// unrecorded. Filesystems that do not support directory fsync -- DrvFs and
+// friends, the same ones that reject the permission repair -- must not lose the
+// ability to write state over it, so an unsupported, invalid, or refused sync is
+// not an error. An injected failure is.
+func (s *Store) syncDir(dir string) error {
+	if s.hooks.syncDir != nil {
+		return s.hooks.syncDir(dir)
+	}
+	f, err := os.Open(dir) // #nosec G304 -- dir is the store's own registry directory
+	if err != nil {
+		if ignorableSyncError(err) {
+			return nil
+		}
+		return fmt.Errorf("metadata: open registry dir %s for sync: %w", dir, err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := f.Sync(); err != nil {
+		if ignorableSyncError(err) {
+			return nil
+		}
+		return fmt.Errorf("metadata: sync registry dir %s: %w", dir, err)
+	}
+	return nil
+}
+
+func ignorableSyncError(err error) bool {
+	return errors.Is(err, errors.ErrUnsupported) ||
+		errors.Is(err, fs.ErrInvalid) ||
+		errors.Is(err, fs.ErrPermission)
+}
+
+// validateStaged re-reads the staged file so only a decodable, valid registry
+// can replace the live one.
+func (s *Store) validateStaged(path string) error {
+	if s.hooks.validateStaged != nil {
+		return s.hooks.validateStaged(path)
+	}
+	return validateWrittenFile(path)
+}
+
+// ensureInitializedMarker publishes the marker when it is absent and reports
+// whether this write created it. The marker is written through the same
+// stage-and-rename sequence as the registry, so it is either absent or complete.
+func (s *Store) ensureInitializedMarker() (bool, error) {
+	initialized, err := s.initialized()
+	if err != nil {
+		return false, err
+	}
+	if initialized {
+		return false, nil
+	}
+	payload, err := json.Marshal(initializedMarker{
+		SchemaVersion: coremetadata.SchemaVersion,
+		InitializedAt: s.clock().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return false, fmt.Errorf("metadata: encode initialized marker: %w", err)
+	}
+	if err := s.writePrivateFile(s.markerPath, append(payload, '\n')); err != nil {
+		return false, fmt.Errorf("metadata: write initialized marker %s: %w", s.markerPath, err)
+	}
+	return true, nil
+}
+
+// initializedMarker is the marker payload. It is diagnostic only: the file's
+// existence carries the contract, and no reader depends on these fields.
+type initializedMarker struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	InitializedAt string `json:"initializedAt"`
+}
+
+// recoveryCopy preserves the bytes a semantic write is about to replace and
+// returns the copy path, or "" when there is nothing worth preserving.
+//
+// Only verified bytes are kept. An absent or empty registry has nothing to
+// recover, and bytes that do not decode into a valid registry are not a copy an
+// operator could safely restore, so neither produces a copy -- and neither
+// blocks the write, because refusing to replace an unusable file would strand
+// the store.
+func (s *Store) recoveryCopy() (string, error) {
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		if errors.Is(err, fs.ErrPermission) {
+			return "", fmt.Errorf("metadata: read registry for recovery copy %s: %w: %w", s.path, ErrRegistryPermission, err)
+		}
+		return "", fmt.Errorf("metadata: read registry for recovery copy %s: %w", s.path, err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "", nil
+	}
+	if !decodesToValidRegistry(data) {
+		return "", nil
+	}
+	if err := localstate.EnsurePrivateDir(s.recoveryDir); err != nil {
+		return "", fmt.Errorf("metadata: create registry recovery dir %s: %w", s.recoveryDir, err)
+	}
+	path, err := s.nextRecoveryPath()
+	if err != nil {
+		return "", err
+	}
+	if err := s.writePrivateFile(path, data); err != nil {
+		return "", fmt.Errorf("metadata: write registry recovery copy %s: %w", path, err)
+	}
+	return path, nil
+}
+
+func decodesToValidRegistry(data []byte) bool {
+	var registry coremetadata.Registry
+	if err := json.Unmarshal(data, &registry); err != nil {
+		return false
+	}
+	return registry.Validate() == nil
+}
+
+// nextRecoveryPath allocates the next copy name so that lexicographic order over
+// the recovery directory is creation order.
+//
+// The stamp has one-second resolution, so a sequence suffix separates copies
+// taken inside one second. The sequence continues from the newest name present
+// rather than from the first free slot: retention frees the earliest names, and
+// reusing one would sort the newest copy to the front and make "the last
+// verified bytes" mean the wrong file.
+func (s *Store) nextRecoveryPath() (string, error) {
+	stamp := s.clock().UTC().Format(recoveryStampLayout)
+	seq := 0
+	if names := s.recoveryCopyNames(); len(names) > 0 {
+		newestStamp, newestSeq, ok := parseRecoveryName(names[len(names)-1])
+		// The layout is fixed-width, so string order over stamps is time order.
+		if ok && newestStamp >= stamp {
+			stamp, seq = newestStamp, newestSeq+1
+		}
+	}
+	for range recoverySequenceLimit * recoverySequenceLimit {
+		if seq >= recoverySequenceLimit {
+			// More copies inside one stamp than the sequence holds. Borrowing
+			// the next second keeps the order total instead of failing a write
+			// that has already been staged and validated.
+			parsed, err := time.Parse(recoveryStampLayout, stamp)
+			if err != nil {
+				return "", fmt.Errorf("metadata: unparsable registry recovery stamp %q in %s", stamp, s.recoveryDir)
+			}
+			stamp, seq = parsed.Add(time.Second).Format(recoveryStampLayout), 0
+		}
+		path := filepath.Join(s.recoveryDir, fmt.Sprintf("%s%s-%02d%s", recoveryFilePrefix, stamp, seq, recoveryFileSuffix))
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return path, nil
+		} else if err != nil {
+			return "", fmt.Errorf("metadata: stat registry recovery copy %s: %w", path, err)
+		}
+		seq++
+	}
+	return "", fmt.Errorf("metadata: no free registry recovery copy name near %s in %s", stamp, s.recoveryDir)
+}
+
+// parseRecoveryName splits a copy name into its stamp and sequence. The stamp
+// layout carries no separator, so the single dash before the sequence is
+// unambiguous.
+func parseRecoveryName(name string) (string, int, bool) {
+	trimmed := strings.TrimSuffix(strings.TrimPrefix(name, recoveryFilePrefix), recoveryFileSuffix)
+	stamp, sequence, ok := strings.Cut(trimmed, "-")
+	if !ok {
+		return "", 0, false
+	}
+	seq, err := strconv.Atoi(sequence)
+	if err != nil {
+		return "", 0, false
+	}
+	return stamp, seq, true
+}
+
+// pruneRecoveryCopies keeps the newest retained copies and removes the rest.
+// It runs after the replace succeeded, so it is hygiene rather than durability:
+// a filesystem that refuses the removals must not turn a committed write into a
+// reported failure.
+func (s *Store) pruneRecoveryCopies() {
+	retention := s.retention
+	if retention <= 0 {
+		retention = defaultRecoveryRetention
+	}
+	names := s.recoveryCopyNames()
+	if len(names) <= retention {
+		return
+	}
+	for _, name := range names[:len(names)-retention] {
+		_ = os.Remove(filepath.Join(s.recoveryDir, name))
+	}
+}
+
+// recoveryCopyNames lists the recovery copies oldest first. Entries that are not
+// copies -- a staged temp file, an operator's own note -- are ignored so the
+// retention bound never removes something this store did not create.
+func (s *Store) recoveryCopyNames() []string {
+	entries, err := os.ReadDir(s.recoveryDir)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, recoveryFilePrefix) || !strings.HasSuffix(name, recoveryFileSuffix) {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// writePrivateFile publishes data at path through a staged temp file, an fsync,
+// an atomic rename, and a directory sync. os.CreateTemp already creates the
+// staged file at 0600, and the containing directory is created 0700 by
+// EnsurePrivateDir, so the published file inherits both.
+func (s *Store) writePrivateFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp: %w", err)
+	}
+	if err := s.syncFile(tmp); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename temp: %w", err)
+	}
+	cleanup = false
+	_ = s.syncDir(dir)
 	return nil
 }
 
