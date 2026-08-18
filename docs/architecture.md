@@ -113,8 +113,13 @@ Packages:
   allocation, schema migration, snapshot reconciliation, and the operation
   transaction. It performs no I/O; the clock, uid source, and root-directory
   probe are injected through `Mutator`.
+- `internal/core/resourcegraph` is pure: the resolved resource graph that joins
+  the Registry's desired topology to one exact tmux server, the typed
+  session/window/pane inventory it is resolved against, the closed attribution
+  and status vocabularies, and the transport descriptor. It performs no I/O.
 - `internal/integrations/metadata` owns the registry file (lock, atomic write,
-  migration) and the tmux transport mirror.
+  migration), the tmux transport mirror, and the bounded observation adapter that
+  fills a `resourcegraph.Inventory` from one exact server.
 - `internal/integrations/tmuxopts` is a dependency-free leaf holding the
   canonical spelling of every projmux-owned tmux option name, so the generated
   tmux config, session-state replay, and the resource mirror cannot drift.
@@ -425,6 +430,69 @@ Registry recovery boundary (`projmux reconcile registry`):
   that it has no exact target. The diagnostic is also skipped entirely when a
   verified copy exists or the registry is healthy, so it never answers a question
   nobody asked.
+
+Resolved resource graph (`internal/core/resourcegraph`):
+
+- **One join, consumed by everything.** The Registry is the source of truth for
+  managed identity and logical desired topology; a runtime observation is a status
+  overlay. `Resolve(registry, inventory)` produces the typed read model that the
+  controller, the runtime diagnostics surface, and the primary UI all consume, so
+  "is this Window live" and "may I mutate this pane" have one answer instead of
+  one per call site.
+- **Rows come from the Registry, objects come from the machine.** Every Registry
+  row is emitted whatever the observation said, and every observed tmux object is
+  named and classified even when projmux owns none of it. Neither direction can
+  delete or invent the other's members.
+- **Exact evidence only.** Attribution uses mirrored uids, the mirrored owner uid,
+  the exact session role value, and the stable containment ids tmux itself
+  reports. Session name, working directory, and running command are never
+  ownership keys: a heuristic merge here would attach an operator's unrelated
+  shell to a managed resource, and a wrong identity is worse than an unattributed
+  object.
+- **Closed attribution set.** `managed` is a Registry resource, or the object bound
+  to one; `recoverable` mirrors a uid this Registry does not contain; `control` is
+  an app-owned session carrying the exact `@projmux_session_role=control` marker;
+  `ephemeral` is an auto-attach scratch session; `unattributed` has no mirrored
+  identity but sits inside a managed enclosure or on a server projmux started;
+  `foreign` has neither and belongs to the operator's own tmux; `conflict` is
+  evidence that contradicts itself.
+- **Contradiction refuses to bind.** One uid claimed by two live objects, a uid
+  mirrored onto the wrong kind of object, and a claim whose live containment names
+  a different owner than the Registry does are all recorded as conflicts with both
+  tmux handles, and the row is never reported live and never handed a transport
+  handle. Absent containment evidence is not a contradiction: a session that lost
+  its Project option says nothing about ownership, so the object's own exact uid
+  still binds. A binding that would cross a Project boundary is impossible by
+  construction.
+- **Status is derived, never stored.** `missing-root` outranks every runtime
+  answer, a bound handle is `live`, a scope that could not be observed is
+  `unknown` with a stated reason, and only a readable observation with no handle is
+  `offline`. An empty or failed observation can only downgrade a row; it can never
+  invent a live one. An Agent has no tmux object of its own, so its status is its
+  current managed Pane's status and its phase is reported from the Registry
+  verbatim.
+- **Partial failure stays partial.** The host-ownership probe and the three list
+  queries are independent scopes. A failed windows query leaves Window rows
+  `unknown` while Pane rows keep their own observation, because a pane that is
+  provably gone is still offline. A socket with no server behind it is different
+  again: that is definite knowledge that nothing is live, so rows read `offline`
+  and only host ownership is unavailable.
+- **Both hosts, one identity.** `@projmux_app=1` on the server is the only proof
+  of an app-owned host; anything else is a standalone host projmux is a guest on.
+  The same Registry and the same objects produce identical managed rows under both,
+  and a control-role marker on a server projmux does not own is refused, because
+  any process can set an option on the operator's tmux.
+- **Explicit transport or none.** An observation is routed through exactly one
+  `-L <name>` or `-S <absolute path>`, resolved from the explicit socket flags
+  first and the inherited `$TMUX` socket path second. There is no implicit
+  default-server probe: with no transport the graph is a Registry-only snapshot
+  whose runtime answers are all `unknown`, and a sibling socket is never read.
+- **Bounded and pure.** One observation costs one option probe plus three list
+  queries whatever the size of the server, is memoized for the invocation rather
+  than cached with a TTL — closing a pane must make the *next* command report it
+  offline — and issues no write verb. `Resolve` itself touches no filesystem, no
+  process, and no tmux, so the same inputs always produce byte-identical output
+  and a read can never materialize state.
 
 Session State interoperability:
 

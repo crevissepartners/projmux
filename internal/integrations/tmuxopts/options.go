@@ -54,6 +54,18 @@ const (
 	AgentSessionIDPane = "@projmux_ai_session_id"
 	AgentThreadIDPane  = "@projmux_ai_thread_id"
 
+	// AppGlobal is the server-global marker the generated app config writes.
+	// Its exact value "1" is the only proof that projmux started the server it
+	// is looking at, which is what separates an app-owned host from a
+	// standalone host projmux is a guest on.
+	AppGlobal = "@projmux_app"
+	// SessionRole is the session-scoped role marker. The resolved resource
+	// graph reads it as attribution evidence; the marker's writer and lifecycle
+	// belong to the control-session surface.
+	SessionRole = "@projmux_session_role"
+	// EphemeralSession is the session-scoped marker of an auto-attach scratch
+	// session. Such a session is never a Registry Project.
+	EphemeralSession = "@projmux_ephemeral"
 	// AutomaticRenameWindow is turned off on every registry-managed Window so
 	// a focused-Pane change cannot overwrite the Window name. The global
 	// `automatic-rename on` default is deliberately left alone: unmanaged
