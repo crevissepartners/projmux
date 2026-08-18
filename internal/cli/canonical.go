@@ -129,6 +129,10 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "rename agent", Summary: "Rename an Agent stable resource name only", Sources: []string{"rename"}},
 	{Spelling: "rebind project", Summary: "Rebind one Project spec.root to a new absolute directory", Sources: []string{"rebind"}},
 	{Spelling: "reconcile resources", Summary: "Preview or repair Registry and exact tmux resource drift", Sources: []string{"reconcile"}},
+	// The recovery boundary is deliberately a separate spelling. Restoring the
+	// Registry is not a stronger `reconcile resources`: it is the operation that
+	// runs when the Registry the resource planner reads cannot be loaded at all.
+	{Spelling: "reconcile registry", Summary: "Plan Registry state-loss recovery with zero writes, then restore one explicitly named verified source", Sources: []string{"reconcile"}},
 
 	// delete / restore
 	{Spelling: "delete window", Summary: "Delete a Window and its descendants", Sources: []string{"delete"}},

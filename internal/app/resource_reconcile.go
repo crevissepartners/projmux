@@ -21,11 +21,17 @@ type resourceReconcileCommand struct {
 	newReconciler   func(tmuxCommandRunner, sessionLister) *registryReconciler
 	newOperationID  func() (string, error)
 	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
+	// registry is the sibling recovery boundary. `reconcile` dispatches to it
+	// rather than owning recovery here: the resource planner needs a loadable
+	// Registry as its input, and recovery is what runs when that input is the
+	// thing that is broken.
+	registry *registryRecoveryCommand
 }
 
 func newResourceReconcileCommand(tmux *tmuxCommand) *resourceReconcileCommand {
 	command := &resourceReconcileCommand{
 		lookupEnv: os.Getenv, newOperationID: newCreateOperationID,
+		registry: newRegistryRecoveryCommand(tmux),
 	}
 	if tmux != nil {
 		command.runner = tmux.runner
@@ -68,9 +74,16 @@ type resourceReconcileReport struct {
 }
 
 func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "registry" {
+		if c.registry == nil {
+			return errors.New("registry recovery is not configured")
+		}
+		return c.registry.Run(args[1:], stdout, stderr)
+	}
 	if len(args) == 0 || args[0] != "resources" {
 		printResourceReconcileUsage(stderr)
-		return usageError("reconcile requires the resources subcommand")
+		printRegistryRecoveryUsage(stderr)
+		return usageError("reconcile requires the resources or registry subcommand")
 	}
 	opts, err := parseResourceReconcileOptions(args[1:], stderr)
 	if err != nil {

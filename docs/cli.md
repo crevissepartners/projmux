@@ -904,6 +904,7 @@ Preview or repair Registry and exact tmux resource drift
 
 ```
 projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]
+projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 Subcommands:
@@ -911,8 +912,9 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux reconcile resources`](#projmux-reconcile-resources) | Preview or repair safe Registry and tmux UID, owner, and runtime drift on one exact socket |
+| [`projmux reconcile registry`](#projmux-reconcile-registry) | Plan Registry state-loss recovery with zero writes, then restore one explicitly named verified source |
 
-Canonical spelling: `projmux reconcile resources`
+Canonical spelling: `projmux reconcile resources`, `projmux reconcile registry`
 
 ### `projmux reconcile resources`
 
@@ -920,6 +922,14 @@ Preview or repair safe Registry and tmux UID, owner, and runtime drift on one ex
 
 ```
 projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]
+```
+
+### `projmux reconcile registry`
+
+Plan Registry state-loss recovery with zero writes, then restore one explicitly named verified source
+
+```
+projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
 
 ## `projmux rebind`
