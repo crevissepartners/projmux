@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.12.2](https://github.com/crevissepartners/projmux/compare/v0.12.1...v0.12.2) (2026-08-18)
+
+
+### Features
+
+* **cli:** add resource scope short options ([#679](https://github.com/crevissepartners/projmux/issues/679)) ([bda9792](https://github.com/crevissepartners/projmux/commit/bda97921737f96877e944c0d666135e2d34fbeee))
+* **reconcile:** materialize registry topology ([#681](https://github.com/crevissepartners/projmux/issues/681)) ([69a5a39](https://github.com/crevissepartners/projmux/commit/69a5a39cb332f4cc05cf9023d62124edfa2d0b81))
+* **settings:** add directional hierarchy navigation ([#677](https://github.com/crevissepartners/projmux/issues/677)) ([3673c09](https://github.com/crevissepartners/projmux/commit/3673c0907e041f783ae1d12a6710f029177c765a))
+* **startup:** materialize Registry topology for closed Projects ([#682](https://github.com/crevissepartners/projmux/issues/682)) ([e75c476](https://github.com/crevissepartners/projmux/commit/e75c476145fb7320877c8a3b8aeb340035a4015d))
+
+
+### Bug Fixes
+
+* **create:** prevent foreign window identity contamination ([#680](https://github.com/crevissepartners/projmux/issues/680)) ([bc51d4d](https://github.com/crevissepartners/projmux/commit/bc51d4dedc8746c42b86d2d9e734d754d5347bd8))
+* **delete:** allow offline window canonical removal ([#683](https://github.com/crevissepartners/projmux/issues/683)) ([8e7e560](https://github.com/crevissepartners/projmux/commit/8e7e560952463cdf3c17a8edcd675cf0e1aa05cd))
+* **resources:** remove impossible multiple-project group ([#676](https://github.com/crevissepartners/projmux/issues/676)) ([bf86bbd](https://github.com/crevissepartners/projmux/commit/bf86bbda104d629c332dd53450ddadcf7d3a0874))
+
 ## [0.12.1](https://github.com/crevissepartners/projmux/compare/v0.12.0...v0.12.1) (2026-08-17)
 
 
