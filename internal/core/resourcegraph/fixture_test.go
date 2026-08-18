@@ -84,6 +84,14 @@ func testRegistry(t *testing.T) coremetadata.Registry {
 			Metadata: meta("pane-gone-1", "shell", own(coremetadata.KindWindow, "win-gone-1")),
 			Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell},
 		},
+		// A Pane whose owner Agent is not in the registry. Validation refuses this
+		// shape on write, so it exists here only to pin what the graph does when a
+		// row it is handed is already damaged: refuse to bind, never guess.
+		{
+			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
+			Metadata: meta("pane-dangling", "orphan", own(coremetadata.KindAgent, "agent-vanished")),
+			Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleAgent},
+		},
 	}
 	registry.Agents = []coremetadata.Agent{
 		{

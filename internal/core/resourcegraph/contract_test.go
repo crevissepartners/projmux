@@ -119,7 +119,7 @@ func TestResolveWithoutTransportIsARegistryOnlySnapshot(t *testing.T) {
 		t.Fatalf("registry-only graph observed %d runtime objects and %d conflicts",
 			len(graph.Runtime), len(graph.Conflicts))
 	}
-	if len(graph.Projects) != 3 || len(graph.Windows) != 4 || len(graph.Panes) != 4 || len(graph.Agents) != 2 {
+	if len(graph.Projects) != 3 || len(graph.Windows) != 4 || len(graph.Panes) != 5 || len(graph.Agents) != 2 {
 		t.Fatalf("registry-only graph dropped rows: %d/%d/%d/%d",
 			len(graph.Projects), len(graph.Windows), len(graph.Panes), len(graph.Agents))
 	}

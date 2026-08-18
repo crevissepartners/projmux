@@ -172,6 +172,15 @@ func (r *resolver) windowContainmentContradiction(window Window, projectUID stri
 // claiming pane names a different owner than the Registry does. The same
 // absent-versus-contradicting rule as windows applies at both levels.
 func (r *resolver) paneContainmentContradiction(pane Pane, windowUID, projectUID string) (string, bool) {
+	if windowUID == "" {
+		// A Pane whose ownerRef chain does not reach a Window cannot be verified
+		// against tmux containment at all. Registry validation refuses that shape
+		// on write, so reaching it means the row is already damaged, and binding a
+		// live pane to a damaged owner chain is how a mutation lands on the wrong
+		// object later.
+		return fmt.Sprintf("live pane %s mirrors pane %s whose Registry owner chain does not resolve to a Window",
+			pane.ID, pane.UID), true
+	}
 	window, known := r.windowByID[pane.WindowID]
 	if !known {
 		return "", false

@@ -211,6 +211,15 @@ func TestResolveClassifiesObservedObjectsFromExactEvidence(t *testing.T) {
 			id: "%9", want: ClassConflict, wantUID: "agent-alpha-1",
 		},
 		{
+			name: "pane whose owner chain does not reach a Window is refused",
+			inventory: func() Inventory {
+				inv := liveInventory(HostModeAppOwned)
+				inv.Panes = append(inv.Panes, Pane{ID: "%9", WindowID: "@1", UID: "pane-dangling"})
+				return inv
+			},
+			id: "%9", want: ClassConflict, wantUID: "pane-dangling",
+		},
+		{
 			name: "absent containment evidence does not refuse an exact uid",
 			inventory: func() Inventory {
 				inv := liveInventory(HostModeAppOwned)
