@@ -7,7 +7,7 @@ import (
 )
 
 // runtimeSubcommands lists the runtime-domain routes, in help order.
-var runtimeSubcommands = []string{"sessions", "attach", "stop", "tag", "prune"}
+var runtimeSubcommands = []string{"sessions", "diagnostics", "attach", "stop", "tag", "prune"}
 
 // runtimeCommand owns the runtime domain: the live and ephemeral tmux inventory
 // that is not a Projmux resource.
@@ -24,10 +24,15 @@ var runtimeSubcommands = []string{"sessions", "attach", "stop", "tag", "prune"}
 // is `attach project`.
 type runtimeCommand struct {
 	sessions rawArgvCommand
-	attach   rawArgvCommand
-	kill     rawArgvCommand
-	tag      rawArgvCommand
-	prune    rawArgvCommand
+	// diagnostics is the read-only escape hatch. It is the one runtime route
+	// with a handler of its own rather than a forwarder, because no existing
+	// surface shows the whole server: `runtime sessions` lists what an operator
+	// would open, and this lists what is there.
+	diagnostics rawArgvCommand
+	attach      rawArgvCommand
+	kill        rawArgvCommand
+	tag         rawArgvCommand
+	prune       rawArgvCommand
 }
 
 func newRuntimeCommand() *runtimeCommand {
@@ -43,6 +48,8 @@ func (c *runtimeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "sessions":
 		return forwardRawArgv(c.sessions, "runtime sessions", "sessions", nil, rest, stdout, stderr)
+	case "diagnostics":
+		return forwardRawArgv(c.diagnostics, "runtime diagnostics", "runtime diagnostics", nil, rest, stdout, stderr)
 	case "attach":
 		return forwardRawArgv(c.attach, "runtime attach", "attach", []string{"auto"}, rest, stdout, stderr)
 	case "stop":

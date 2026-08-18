@@ -3300,3 +3300,258 @@ wait "$startup_client_pid" 2>/dev/null || true
 startup_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Closed Project topology startup e2e passed: socket=$startup_socket path=$startup_socket_path other-socket=$startup_other_socket other-path=$startup_other_socket_path client=$startup_client cleanup=validated-exact-sockets"
+
+# ---------------------------------------------------------------------------
+# Runtime diagnostics escape hatch.
+#
+# The Registry-first surfaces list managed resources, so an operator's own
+# window, the Home control session, and a scratch session are correctly absent
+# from them -- and "correctly absent" is indistinguishable from "lost" without a
+# surface that shows the server as it is. This block proves that surface against
+# a real tmux server and a real attached client: every live object is named with
+# its attribution and its exact handle, the picker shows the same rows through a
+# real popup, and neither the read nor the UI writes a byte anywhere.
+#
+# Isolation follows the four mandatory conditions: inherited TMUX/TMUX_PANE are
+# stripped from every call, the server lives under a run-unique TMUX_TMPDIR with
+# its own -L name, the real #{socket_path} is queried and proven to sit inside
+# the smoke root, and only that exact socket is killed.
+# ---------------------------------------------------------------------------
+rtd_root="$PROJMUX_SMOKE_WORKDIR/runtime-diagnostics-e2e"
+rtd_socket="projmux-runtime-diag-$$-$RANDOM"
+rtd_other_socket="projmux-runtime-diag-other-$$-$RANDOM"
+rtd_session="runtime-alpha"
+rtd_driver="runtime-driver"
+mkdir -p "$rtd_root/tmux" "$rtd_root/state" "$rtd_root/config" "$rtd_root/home" \
+  "$rtd_root/runtime" "$rtd_root/work/alpha"
+chmod 0700 "$rtd_root/runtime"
+rtd_real_tmux="$(command -v tmux)"
+
+rtd_tmux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$rtd_root/tmux" "$rtd_real_tmux" -L "$rtd_socket" "$@"; }
+rtd_other_tmux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$rtd_root/tmux" "$rtd_real_tmux" -L "$rtd_other_socket" "$@"; }
+rtd_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$rtd_root/home" \
+    XDG_CONFIG_HOME="$rtd_root/config" \
+    XDG_STATE_HOME="$rtd_root/state" \
+    XDG_RUNTIME_DIR="$rtd_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$rtd_root/work" \
+    TMUX_TMPDIR="$rtd_root/tmux" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+rtd_tmux new-session -d -s "$rtd_session" -c "$rtd_root/work/alpha" sleep 600
+rtd_tmux set-option -t "$rtd_session" -q @projmux_project_path "$rtd_root/work/alpha"
+rtd_tmux new-session -d -s "$rtd_driver" -c "$rtd_root" bash --noprofile --norc
+rtd_other_tmux new-session -d -s untouched -c "$rtd_root" sleep 600
+rtd_other_tmux set-option -gq @projmux_runtime_sentinel unchanged
+
+rtd_socket_path="$(rtd_tmux display-message -p -t "$rtd_session" '#{socket_path}')"
+rtd_socket_pid="$(rtd_tmux display-message -p -t "$rtd_session" '#{pid}')"
+rtd_other_socket_path="$(rtd_other_tmux display-message -p -t untouched '#{socket_path}')"
+for actual in "$rtd_socket_path" "$rtd_other_socket_path"; do
+  case "$actual" in
+    "$rtd_root"/*) ;;
+    *)
+      echo "runtime diagnostics e2e socket escaped smoke root: $actual" >&2
+      exit 1
+      ;;
+  esac
+done
+
+rtd_cleanup() {
+  local socket actual
+  for socket in "$rtd_socket" "$rtd_other_socket"; do
+    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$rtd_root/tmux" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+    if [[ -z "$actual" ]]; then
+      continue
+    fi
+    case "$actual" in
+      "$rtd_root"/*) env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true ;;
+      *) echo "refusing runtime diagnostics cleanup outside smoke root: $actual" >&2 ;;
+    esac
+  done
+}
+trap 'rtd_cleanup; smoke_cleanup_env' EXIT
+
+# This is a server projmux started, so unmarked objects on it are projmux's own
+# world rather than the operator's.
+rtd_tmux set-option -g -q @projmux_app 1
+# tmux renames a window to its foreground command on its own. That is tmux
+# writing, not projmux, and leaving it on would make the zero-write comparison
+# below fail the moment a client attaches and a shell starts.
+rtd_tmux set-option -g -q automatic-rename off
+rtd_pmx reconcile resources --socket "$rtd_socket" >"$rtd_root/import.out"
+rtd_project_uid="$(rtd_tmux show-options -t "$rtd_session" -qv @projmux_project_uid)"
+if [[ -z "$rtd_project_uid" ]]; then
+  echo "runtime diagnostics e2e import left the Project uid empty" >&2
+  exit 1
+fi
+
+# Everything the managed UI cannot show, on one server: the control session, a
+# scratch session, an unmarked window, and a window mirroring a uid no Registry
+# contains.
+rtd_tmux new-session -d -s runtime-home -c "$rtd_root" sleep 600
+rtd_tmux set-option -t runtime-home -q @projmux_session_role control
+rtd_tmux new-session -d -s runtime-scratch -c "$rtd_root" sleep 600
+rtd_tmux set-option -t runtime-scratch -q @projmux_ephemeral 1
+rtd_tmux new-window -d -t "=$rtd_session" -n plain -c "$rtd_root" sleep 600
+rtd_tmux new-window -d -t "=$rtd_session" -n ghost -c "$rtd_root" sleep 600
+rtd_ghost_window="$(rtd_tmux list-windows -t "=$rtd_session" -F '#{window_id} #{window_name}' | awk '$2 == "ghost" {print $1}')"
+rtd_tmux set-option -w -t "$rtd_ghost_window" -q @projmux_window_uid win-not-in-this-registry
+
+rtd_snapshot() {
+  rtd_tmux list-sessions -F '#{session_id} #{session_name} #{@projmux_project_uid} #{@projmux_session_role} #{@projmux_ephemeral}'
+  rtd_tmux list-windows -a -F '#{window_id} #{session_id} #{window_name} #{@projmux_window_uid}'
+  rtd_tmux list-panes -a -F '#{pane_id} #{window_id} #{@projmux_pane_uid}'
+}
+rtd_registry="$rtd_root/state/projmux/metadata/registry.json"
+rtd_snapshot >"$rtd_root/server.before"
+rtd_other_before="$(rtd_other_tmux show-options -gqv @projmux_runtime_sentinel):$(rtd_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+cp "$rtd_registry" "$rtd_root/registry.before"
+
+# The read, taken through the inherited client socket exactly as an in-tmux
+# invocation would. Every live object of every kind has to be in it.
+rtd_live_pmx() {
+  env -u TMUX_PANE \
+    HOME="$rtd_root/home" \
+    XDG_CONFIG_HOME="$rtd_root/config" \
+    XDG_STATE_HOME="$rtd_root/state" \
+    XDG_RUNTIME_DIR="$rtd_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$rtd_root/work" \
+    TMUX_TMPDIR="$rtd_root/tmux" \
+    TMUX="$rtd_socket_path,$rtd_socket_pid,0" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+for rtd_kind in sessions windows panes; do
+  rtd_live_pmx get runtime "$rtd_kind" -o json >"$rtd_root/runtime-$rtd_kind.json"
+  smoke_assert_file_contains "$rtd_root/runtime-$rtd_kind.json" '"hostMode": "app-owned"'
+  smoke_assert_file_contains "$rtd_root/runtime-$rtd_kind.json" '"source": "inherited-tmux-env"'
+  smoke_assert_file_contains "$rtd_root/runtime-$rtd_kind.json" "\"value\": \"$rtd_socket_path\""
+done
+for rtd_id in $(rtd_tmux list-sessions -F '#{session_id}'); do
+  smoke_assert_file_contains "$rtd_root/runtime-sessions.json" "\"id\": \"$rtd_id\""
+done
+for rtd_id in $(rtd_tmux list-windows -a -F '#{window_id}'); do
+  smoke_assert_file_contains "$rtd_root/runtime-windows.json" "\"id\": \"$rtd_id\""
+done
+for rtd_id in $(rtd_tmux list-panes -a -F '#{pane_id}'); do
+  smoke_assert_file_contains "$rtd_root/runtime-panes.json" "\"id\": \"$rtd_id\""
+done
+smoke_assert_file_contains "$rtd_root/runtime-sessions.json" '"class": "managed"'
+smoke_assert_file_contains "$rtd_root/runtime-sessions.json" '"class": "control"'
+smoke_assert_file_contains "$rtd_root/runtime-sessions.json" '"class": "ephemeral"'
+smoke_assert_file_contains "$rtd_root/runtime-windows.json" '"class": "unattributed"'
+smoke_assert_file_contains "$rtd_root/runtime-windows.json" '"class": "recoverable"'
+smoke_assert_file_contains "$rtd_root/runtime-windows.json" '"uid": "win-not-in-this-registry"'
+
+# The picker through a real attached client and a real display-popup. The rows
+# an operator sees are the rows the read reported.
+rtd_client_log="$rtd_root/driver-client.log"
+rtd_client_input="$rtd_root/driver-client.in"
+mkfifo "$rtd_client_input"
+exec 7<>"$rtd_client_input"
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$rtd_root/tmux' tmux -L '$rtd_socket' attach-session -t '$rtd_driver'" \
+  "$rtd_client_log" <"$rtd_client_input" >/dev/null 2>&1 &
+rtd_client_pid=$!
+
+rtd_wait_for() {
+  local description="$1"
+  shift
+  for _ in {1..200}; do
+    if "$@"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for $description" >&2
+  tail -c 12000 "$rtd_client_log" >&2 || true
+  return 1
+}
+
+rtd_wait_for "attached runtime diagnostics client" sh -c \
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$rtd_root/tmux' tmux -L '$rtd_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+rtd_client="$(rtd_tmux list-clients -F '#{client_name}' | head -n 1)"
+
+rtd_popup_offset="$(stat -c %s "$rtd_client_log")"
+rtd_tmux display-popup -c "$rtd_client" -T "Runtime E2E" -w 72 -h 24 -E \
+  "env HOME='$rtd_root/home' XDG_CONFIG_HOME='$rtd_root/config' XDG_STATE_HOME='$rtd_root/state' XDG_RUNTIME_DIR='$rtd_root/runtime' TMUX_TMPDIR='$rtd_root/tmux' '$bin' runtime diagnostics --socket '$rtd_socket'" &
+rtd_popup_pid=$!
+
+rtd_screen_has() {
+  tail -c +$((rtd_popup_offset + 1)) "$rtd_client_log" | grep -aFq "$1"
+}
+rtd_wait_for "Runtime diagnostics picker" rtd_screen_has "Runtime diagnostics"
+rtd_wait_for "runtime diagnostics host header" rtd_screen_has "host app-owned"
+rtd_wait_for "runtime diagnostics footer" rtd_screen_has "Enter: actions"
+# Every attribution class the managed UI cannot show is on the first screen,
+# beside the managed rows a drift-only report would have omitted.
+for rtd_class in managed control ephemeral unattributed recoverable; do
+  rtd_wait_for "runtime diagnostics class $rtd_class" rtd_screen_has "$rtd_class"
+done
+
+# The popup is shorter than the list, so walking to the last row is what proves
+# the model holds every observed object rather than the visible prefix. The
+# three leading rows are the host header, the attribution tally, and the column
+# header.
+rtd_object_total=$(( $(rtd_tmux list-sessions -F '#{session_id}' | wc -l) \
+  + $(rtd_tmux list-windows -a -F '#{window_id}' | wc -l) \
+  + $(rtd_tmux list-panes -a -F '#{pane_id}' | wc -l) ))
+for _ in $(seq 1 $((rtd_object_total + 2))); do
+  printf '\016' >&7
+done
+for rtd_id in $(rtd_tmux list-sessions -F '#{session_id}') $(rtd_tmux list-windows -a -F '#{window_id}') $(rtd_tmux list-panes -a -F '#{pane_id}'); do
+  rtd_wait_for "runtime diagnostics row $rtd_id" rtd_screen_has "$rtd_id"
+done
+
+# The action menu of the last row -- a Pane -- offers exactly the existing safe
+# routes, and states why the ones that do not apply do not.
+rtd_menu_offset="$(stat -c %s "$rtd_client_log")"
+printf '\r' >&7
+rtd_menu_has() {
+  tail -c +$((rtd_menu_offset + 1)) "$rtd_client_log" | grep -aFq "$1"
+}
+rtd_wait_for "runtime diagnostics action menu" rtd_menu_has "Runtime object"
+rtd_wait_for "runtime diagnostics focus action" rtd_menu_has "Focus"
+rtd_wait_for "runtime diagnostics inspect action" rtd_menu_has "Open Resource Inspector"
+# The popup truncates the refusal at its width, so the needle is the part that
+# always fits.
+rtd_wait_for "runtime diagnostics attach refusal" rtd_menu_has "unavailable - only a session"
+if tail -c +$((rtd_menu_offset + 1)) "$rtd_client_log" | grep -aEq 'Kill|Delete|Adopt|Import|Rename'; then
+  echo "runtime diagnostics action menu offered a destructive or adopting action" >&2
+  exit 1
+fi
+
+printf '\003' >&7
+printf '\003' >&7
+rtd_wait_for "runtime diagnostics popup exit" sh -c "! kill -0 '$rtd_popup_pid' 2>/dev/null"
+wait "$rtd_popup_pid" || true
+
+# Zero writes: the whole surface -- the reads and the picker session above --
+# left the Registry, the exact server, and the sibling socket untouched.
+cmp "$rtd_root/registry.before" "$rtd_registry"
+rtd_snapshot >"$rtd_root/server.after"
+if ! diff -u "$rtd_root/server.before" "$rtd_root/server.after" >"$rtd_root/server.diff"; then
+  echo "runtime diagnostics mutated the exact server" >&2
+  cat "$rtd_root/server.diff" >&2
+  exit 1
+fi
+rtd_other_after="$(rtd_other_tmux show-options -gqv @projmux_runtime_sentinel):$(rtd_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+if [[ "$rtd_other_after" != "$rtd_other_before" ]]; then
+  echo "runtime diagnostics touched the sibling socket" >&2
+  exit 1
+fi
+if [[ "$(rtd_tmux display-message -p -c "$rtd_client" '#{session_name}')" != "$rtd_driver" ]]; then
+  echo "runtime diagnostics moved the attached client" >&2
+  exit 1
+fi
+
+exec 7>&-
+kill "$rtd_client_pid" >/dev/null 2>&1 || true
+wait "$rtd_client_pid" 2>/dev/null || true
+rtd_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> Runtime diagnostics e2e passed: socket=$rtd_socket path=$rtd_socket_path other-socket=$rtd_other_socket other-path=$rtd_other_socket_path client=$rtd_client writes=0 cleanup=validated-exact-sockets"

@@ -80,6 +80,17 @@ type Route struct {
 	// renderer groups these separately and no reference or telemetry surface
 	// counts a provider as a resource kind.
 	ProviderShortcut bool
+	// Namespace marks a child that groups sub-routes instead of naming a
+	// resource kind of its parent verb.
+	//
+	// It exists for `get runtime`, whose children are tmux object kinds rather
+	// than Projmux resource kinds. Without it the kind-parity contracts would
+	// read `runtime` as a fifth kind of the read family and demand a `runtimes`
+	// alias, a singular `runtime` read, and a Registry projection catalog for
+	// objects that have no Registry identity at all -- which is exactly the
+	// merge between runtime inventory and managed resources this surface exists
+	// to keep apart.
+	Namespace bool
 	// Usage holds representative synopsis lines (not an exhaustive flag list).
 	Usage []string
 	// Canonical lists the canonical v2 route spellings this node maps onto.
@@ -115,6 +126,20 @@ var readProjectionCatalog = []OutputMode{
 	OutputModeName,
 	OutputModeRef,
 	OutputModeMetadata,
+	OutputModeJSON,
+	OutputModeNone,
+}
+
+// runtimeProjectionCatalog is the `-o` catalog of the runtime read route.
+//
+// It is deliberately two modes wide. `uid`, `name`, and `ref` are Registry
+// projections of a Projmux resource, and most of what a runtime read returns is
+// not one: an operator's own pane has no uid to print, no `metadata.name`, and
+// no `kind/name` reference. Advertising those modes here would promise a
+// projection that is empty for the majority of rows, which is worse than not
+// offering it. The whole runtime object -- its exact handle, its attribution,
+// and the reason for it -- is in the JSON document.
+var runtimeProjectionCatalog = []OutputMode{
 	OutputModeJSON,
 	OutputModeNone,
 }
@@ -556,8 +581,11 @@ var routes = []Route{
 			"projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]",
 			"projmux get pane --current -o cwd",
 			"projmux get pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]",
+			"projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o json|none]",
 		},
-		Canonical: []string{"get projects", "get windows", "get panes", "get agents", "get notifications", "get snapshots", "get pane"},
+		Canonical: []string{"get projects", "get windows", "get panes", "get agents",
+			"get runtime sessions", "get runtime windows", "get runtime panes",
+			"get notifications", "get snapshots", "get pane"},
 		Children: []Route{
 			{Name: "projects", Summary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: readProjectionCatalog},
 			{
@@ -574,6 +602,47 @@ var routes = []Route{
 				Name: "agents", Summary: "List Agent resources; inside tmux defaults to the active Project, and --all-projects lists every Project",
 				Aliases: []string{"agent"}, Usage: []string{"projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
 				Canonical: []string{"get agents"}, Outputs: readProjectionCatalog,
+			},
+			{
+				// The Runtime diagnostics escape hatch. It is a child of `get`
+				// rather than of the `runtime` domain because it is a read with a
+				// projection, and every other `get` child is too; the `runtime`
+				// domain owns the surfaces that act on the inventory.
+				//
+				// Its kinds are tmux object kinds, not resource kinds. A tmux
+				// session is not a Projmux resource, a window here is any window
+				// on the server rather than a Registry Window, and neither
+				// accepts a selector -- most of what this route reports has no
+				// name to resolve. The plural spellings stand alone with no
+				// singular alias for the same reason `get pane` is not the
+				// singular of `get panes`: an exact-one runtime read would have
+				// to resolve an identity these objects do not have.
+				Name:      "runtime",
+				Namespace: true,
+				Summary:   "List every tmux Session, Window, and Pane on one exact server with its attribution",
+				Usage: []string{
+					"projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]",
+					"projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o json|none]",
+					"projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o json|none]",
+				},
+				Canonical: []string{"get runtime sessions", "get runtime windows", "get runtime panes"},
+				Children: []Route{
+					{
+						Name: "sessions", Summary: "List every tmux session on one exact server with its attribution",
+						Usage:     []string{"projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]"},
+						Canonical: []string{"get runtime sessions"}, Outputs: runtimeProjectionCatalog,
+					},
+					{
+						Name: "windows", Summary: "List every tmux window on one exact server with its attribution",
+						Usage:     []string{"projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o json|none]"},
+						Canonical: []string{"get runtime windows"}, Outputs: runtimeProjectionCatalog,
+					},
+					{
+						Name: "panes", Summary: "List every tmux pane on one exact server with its attribution",
+						Usage:     []string{"projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o json|none]"},
+						Canonical: []string{"get runtime panes"}, Outputs: runtimeProjectionCatalog,
+					},
+				},
 			},
 			{Name: "notifications", Summary: "List pending notification rows", Aliases: []string{"notification"}, Canonical: []string{"get notifications"}},
 			{Name: "snapshots", Summary: "List saved session snapshots", Aliases: []string{"snapshot"}, Canonical: []string{"get snapshots"}},
@@ -755,14 +824,28 @@ var routes = []Route{
 		Disposition: DispositionCanonical,
 		Usage: []string{
 			"projmux runtime sessions [--ui=popup|sidebar]",
+			"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]",
 			"projmux runtime attach [--keep=N] [--fallback=home|ephemeral]",
 			"projmux runtime stop [<session>...]",
 			"projmux runtime tag list|toggle|clear",
 			"projmux runtime prune [--keep=N]",
 		},
-		Canonical: []string{"runtime sessions", "runtime attach", "runtime stop", "runtime tag", "runtime prune"},
+		Canonical: []string{"runtime sessions", "runtime diagnostics", "runtime attach", "runtime stop", "runtime tag", "runtime prune"},
 		Children: []Route{
 			{Name: "sessions", Summary: "Pick a live or ephemeral tmux session", Canonical: []string{"runtime sessions"}},
+			{
+				// The diagnostics escape hatch, kept separate from `runtime
+				// sessions` on purpose. That picker lists recent sessions to open
+				// one; this one lists every object on the server -- control,
+				// ephemeral, unattributed, foreign, contradictory -- to explain
+				// what they are. Merging them would put an operator's own shell
+				// into the open-a-session list, which is the adoption this track
+				// refuses.
+				Name:      "diagnostics",
+				Summary:   "Inspect every tmux object on one exact server, with attribution and safe actions",
+				Usage:     []string{"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]"},
+				Canonical: []string{"runtime diagnostics"},
+			},
 			{Name: "attach", Summary: "Attach a live or ephemeral runtime without Project identity", Canonical: []string{"runtime attach"}},
 			{Name: "stop", Summary: "Terminate live tmux sessions by tagged selection", Canonical: []string{"runtime stop"}},
 			{Name: "tag", Summary: "Manage the ephemeral tagged session selection", Canonical: []string{"runtime tag"}},
@@ -1105,6 +1188,48 @@ func ChildSpellings(parent string) []string {
 	out := make([]string, 0, len(route.Children))
 	for _, child := range route.Children {
 		out = append(out, strings.Join(append([]string{child.Name}, child.Aliases...), "|"))
+	}
+	return out
+}
+
+// CanonicalGrandchildToken normalizes one token of a two-level route onto the
+// canonical spelling of the node it addresses.
+//
+// It is the depth-two sibling of CanonicalChildToken and exists for the same
+// reason: `get runtime sessions` is one route with three kinds, and the kind
+// token has to reach the manifest that owns its spellings rather than a second
+// hand-written list inside the handler.
+func CanonicalGrandchildToken(parent, child, token string) (string, bool) {
+	route, ok := LookupRoute(parent)
+	if !ok {
+		return "", false
+	}
+	node, ok := findChild(route, child)
+	if !ok {
+		return "", false
+	}
+	grandchild, ok := findChild(node, token)
+	if !ok {
+		return "", false
+	}
+	return grandchild.Name, true
+}
+
+// GrandchildSpellings renders the accepted tokens of a two-level route in
+// manifest order, each canonical spelling followed by its aliases joined with
+// `|`.
+func GrandchildSpellings(parent, child string) []string {
+	route, ok := LookupRoute(parent)
+	if !ok {
+		return nil
+	}
+	node, ok := findChild(route, child)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(node.Children))
+	for _, grandchild := range node.Children {
+		out = append(out, strings.Join(append([]string{grandchild.Name}, grandchild.Aliases...), "|"))
 	}
 	return out
 }

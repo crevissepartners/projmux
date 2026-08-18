@@ -118,13 +118,35 @@ func TestGetRouteOwnsTheReadKindFamily(t *testing.T) {
 	if route.Disposition != DispositionCanonical || route.Hidden {
 		t.Fatalf("get route disposition=%q hidden=%v", route.Disposition, route.Hidden)
 	}
-	var children []string
+	var children, namespaces []string
 	for _, child := range route.Children {
+		if child.Namespace {
+			namespaces = append(namespaces, child.Name)
+			continue
+		}
 		children = append(children, child.Name)
 	}
 	want := []string{"projects", "windows", "panes", "agents", "notifications", "snapshots", "pane"}
 	if !reflect.DeepEqual(children, want) {
-		t.Fatalf("get children = %v, want %v", children, want)
+		t.Fatalf("get kind children = %v, want %v", children, want)
+	}
+	// The read family owns exactly one namespace child. `runtime` groups tmux
+	// object kinds, which carry no Registry identity, and pinning it here is
+	// what keeps a later kind from being added as a namespace to dodge the
+	// parity contract above.
+	if !reflect.DeepEqual(namespaces, []string{"runtime"}) {
+		t.Fatalf("get namespace children = %v, want [runtime]", namespaces)
+	}
+	runtime, ok := findChild(route, "runtime")
+	if !ok {
+		t.Fatal("get runtime child missing")
+	}
+	var runtimeKinds []string
+	for _, child := range runtime.Children {
+		runtimeKinds = append(runtimeKinds, child.Name)
+	}
+	if !reflect.DeepEqual(runtimeKinds, []string{"sessions", "windows", "panes"}) {
+		t.Fatalf("get runtime children = %v, want [sessions windows panes]", runtimeKinds)
 	}
 	// `cwd` stays scoped to the singular Pane read. No plural kind may declare
 	// it, which is what keeps the field projection from leaking across kinds.

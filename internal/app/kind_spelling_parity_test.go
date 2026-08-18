@@ -190,6 +190,14 @@ func TestEveryManifestKindHasAParityCase(t *testing.T) {
 			t.Fatalf("%s is not a top-level route", verb)
 		}
 		for _, child := range route.Children {
+			// A namespace child groups sub-routes rather than naming a resource
+			// kind. `get runtime` addresses tmux objects, which have no singular
+			// resource read to be the alias of, so the kind-parity matrix has
+			// nothing to say about it; its own contract lives in the runtime
+			// diagnostics tests.
+			if child.Namespace {
+				continue
+			}
 			key := verb + " " + child.Name
 			switch {
 			case aliasFree[key]:

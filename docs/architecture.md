@@ -117,6 +117,10 @@ Packages:
   the Registry's desired topology to one exact tmux server, the typed
   session/window/pane inventory it is resolved against, the closed attribution
   and status vocabularies, and the transport descriptor. It performs no I/O.
+- `internal/core/runtimediag` is pure: the read-only projection of one resolved
+  graph's runtime half -- every observed tmux object with its attribution, its
+  exact coordinate, and the Registry resource it is bound to, plus the scopes
+  that could not be observed. It performs no I/O and re-derives no attribution.
 - `internal/core/controller` is pure: the command-scoped controller kernel. It
   owns the closed intent x attribution authority table, the guard evidence, and
   the totally ordered plan every convergence producer is authorized through. It
@@ -815,6 +819,50 @@ Command-scoped controller kernel:
 - Explicit topology materialization keeps its own engine and its own
   plan-time guard, because it plans against objects it is about to create, which
   no prior observation can have seen.
+
+Runtime diagnostics escape hatch:
+
+- A Registry-first surface is not an inventory, and that is the point of this
+  one. The managed UI lists Registry resources, so an operator's own shell, the
+  Home control session, a scratch session, and anything on a server projmux is a
+  guest on are all correctly absent from it -- and "correctly absent" is
+  indistinguishable from "lost" without a surface that shows the machine as it
+  is. `projmux get runtime sessions|windows|panes` and the `projmux runtime
+  diagnostics` picker are that surface.
+- It is a projection of `resourcegraph`, not a second join. Every row comes from
+  the resolved graph, which already decided attribution from exact uid, owner,
+  and role evidence; nothing here re-derives a class and nothing here consults a
+  session name, a working directory, or a running command. Every observed object
+  is emitted, managed ones included, because a managed object that needs no
+  repair is exactly the row an operator looks for when the managed UI shows it
+  and the machine seems not to.
+- Two handles per row, and they are not interchangeable. The stable tmux id is
+  the only thing worth storing; the qualified coordinate -- a session name,
+  `<session>:@N`, `<session>:@N.%N` -- is what an operator and the focus route
+  address the object by. The session half of a coordinate degrades from the
+  observed name to the `$N` id, and an object whose enclosing session cannot be
+  resolved gets no coordinate at all rather than an unqualified handle the focus
+  grammar would read as a session name.
+- One exact host, and no transport is an answer. The routing is an explicit
+  `--socket`/`--socket-path` or the inherited `$TMUX` socket path, never a
+  default-server probe and never a second socket. Outside tmux the read succeeds
+  and reports every scope unavailable with a stated reason, where `reconcile
+  resources` refuses the same case because it is about to write.
+- The whole surface is read-only. The Registry is opened without creating it,
+  the observation is the bounded four-query adapter that owns no write verb, and
+  the projection is pure, so a refresh is indistinguishable from not having run
+  it. An empty item list next to a populated unavailability list is a different
+  answer from an empty item list beside none.
+- The picker's actions are forwards, not features. `focus` moves a client and
+  never materializes, `attach project` is the outside-tmux Project entry point,
+  and the Resource Inspector is read-only; each is offered only where it
+  applies, and where it does not the row states why. There is deliberately no
+  adopt, import, rename, or kill: a diagnostic surface that could adopt what it
+  found would be the heuristic merge the resolved graph refuses, wearing a menu.
+- `projmux runtime diagnostics` stays separate from `projmux runtime sessions`.
+  That picker lists recent sessions to open one; this one lists every object on
+  the server to explain what it is. Merging them would put an operator's own
+  shell into the open-a-session list.
 
 Public resource reconciliation:
 

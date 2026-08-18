@@ -91,51 +91,55 @@ func IsUsageError(err error) bool {
 
 // App wires the CLI entrypoints to concrete command handlers.
 type App struct {
-	lifecycle    *diagnostics.LifecycleRecorder
-	agent        *agentCommand
-	ai           *aiCommand
-	attention    *attentionCommand
-	create       *createCommand
-	attach       *attachCommand
-	config       *configCommand
-	delete       *deleteCommand
-	describe     *describeCommand
-	doctor       *doctorCommand
-	diagnostics  *diagnosticsCommand
-	focus        *focusCommand
-	get          *getCommand
-	hook         *hookCommand
-	internal     *internalCommand
-	rebind       *rebindCommand
-	reconcile    *resourceReconcileCommand
-	rename       *renameCommand
-	restore      *restoreCommand
-	runtime      *runtimeCommand
-	keyBroker    *keyBrokerCommand
-	kill         *killCommand
-	notify       *notifyCommand
-	notification *notificationCommand
-	pin          *pinCommand
-	popupWaitKey *popupWaitKeyCommand
-	preview      *previewCommand
-	prune        *pruneCommand
-	quit         *quitCommand
-	resources    *resourceCommand
-	sessions     *sessionsCommand
-	sessionState *sessionStateCommand
-	sessionPopup *sessionPopupCommand
-	settings     *settingsCommand
-	setup        *setupCommand
-	shell        *shellCommand
-	status       *statusCommand
-	statusbar    *statusbarCommand
-	switcher     *switchCommand
-	tag          *tagCommand
-	tmux         *tmuxCommand
-	update       *updateCommand
-	usage        *usagecmd.Command
-	welcome      *welcomeCommand
-	window       *windowCommand
+	lifecycle   *diagnostics.LifecycleRecorder
+	agent       *agentCommand
+	ai          *aiCommand
+	attention   *attentionCommand
+	create      *createCommand
+	attach      *attachCommand
+	config      *configCommand
+	delete      *deleteCommand
+	describe    *describeCommand
+	doctor      *doctorCommand
+	diagnostics *diagnosticsCommand
+	focus       *focusCommand
+	get         *getCommand
+	hook        *hookCommand
+	internal    *internalCommand
+	rebind      *rebindCommand
+	reconcile   *resourceReconcileCommand
+	rename      *renameCommand
+	restore     *restoreCommand
+	runtime     *runtimeCommand
+	// runtimeDiagnostics is the Runtime diagnostics escape hatch handler, held
+	// beside the namespace so the narrow fixtures that rebuild `runtime` can
+	// still reach it.
+	runtimeDiagnostics *runtimeDiagnosticsCommand
+	keyBroker          *keyBrokerCommand
+	kill               *killCommand
+	notify             *notifyCommand
+	notification       *notificationCommand
+	pin                *pinCommand
+	popupWaitKey       *popupWaitKeyCommand
+	preview            *previewCommand
+	prune              *pruneCommand
+	quit               *quitCommand
+	resources          *resourceCommand
+	sessions           *sessionsCommand
+	sessionState       *sessionStateCommand
+	sessionPopup       *sessionPopupCommand
+	settings           *settingsCommand
+	setup              *setupCommand
+	shell              *shellCommand
+	status             *statusCommand
+	statusbar          *statusbarCommand
+	switcher           *switchCommand
+	tag                *tagCommand
+	tmux               *tmuxCommand
+	update             *updateCommand
+	usage              *usagecmd.Command
+	welcome            *welcomeCommand
+	window             *windowCommand
 }
 
 // New builds the default application graph.
@@ -236,8 +240,14 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// keeps the two verbs one implementation of "make a managed pane" and two
 	// implementations of "which conversation does it join".
 	agentCmd.rebind = newAgentRebinder(createCmd, ai)
+	runtimeDiagnosticsCmd := newRuntimeDiagnosticsCommand(tmuxCmd.runner)
+	runtimeDiagnosticsCmd.focus = focusCmd
+	runtimeDiagnosticsCmd.attach = attach
+	runtimeDiagnosticsCmd.inspect = resourcesCmd
+	getCmd.runtimeDiag = runtimeDiagnosticsCmd.reader
 	runtimeCmd := newRuntimeCommand()
 	runtimeCmd.sessions = sessions
+	runtimeCmd.diagnostics = runtimeDiagnosticsCmd
 	runtimeCmd.attach = attach
 	runtimeCmd.kill = kill
 	runtimeCmd.tag = tagCmd
@@ -265,51 +275,52 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	diagnosticsCmd := newDiagnosticsCommand()
 	diagnosticsCmd.ai = ai
 	return &App{
-		lifecycle:    recorder,
-		agent:        agentCmd,
-		ai:           ai,
-		attention:    attentionCmd,
-		create:       createCmd,
-		attach:       attach,
-		config:       configCmd,
-		delete:       deleteCmd,
-		describe:     newDescribeCommand(),
-		doctor:       newDoctorCommand(),
-		diagnostics:  diagnosticsCmd,
-		focus:        focusCmd,
-		get:          getCmd,
-		hook:         newHookCommand(),
-		internal:     internalCmd,
-		rebind:       newRebindCommand(),
-		reconcile:    reconcileCmd,
-		rename:       newRenameCommand(),
-		restore:      restoreCmd,
-		runtime:      runtimeCmd,
-		keyBroker:    keyBrokerCmd,
-		kill:         kill,
-		notify:       notifyCmd,
-		notification: notificationCmd,
-		pin:          newPinCommand(),
-		popupWaitKey: popupWaitKeyCmd,
-		preview:      previewCmd,
-		prune:        pruneCmd,
-		quit:         quit,
-		resources:    resourcesCmd,
-		sessions:     sessions,
-		sessionState: sessionStateCmd,
-		sessionPopup: sessionPopupCmd,
-		settings:     settingsCmd,
-		setup:        newSetupCommand(initCmd),
-		shell:        newShellCommand(update, recorder),
-		status:       statusCmd,
-		statusbar:    statusbarCmd,
-		switcher:     switcher,
-		tag:          tagCmd,
-		tmux:         tmuxCmd,
-		update:       update,
-		usage:        usageCmd,
-		welcome:      newWelcomeCommand(update),
-		window:       newWindowCommand(recorder),
+		lifecycle:          recorder,
+		agent:              agentCmd,
+		ai:                 ai,
+		attention:          attentionCmd,
+		create:             createCmd,
+		attach:             attach,
+		config:             configCmd,
+		delete:             deleteCmd,
+		describe:           newDescribeCommand(),
+		doctor:             newDoctorCommand(),
+		diagnostics:        diagnosticsCmd,
+		focus:              focusCmd,
+		get:                getCmd,
+		hook:               newHookCommand(),
+		internal:           internalCmd,
+		rebind:             newRebindCommand(),
+		reconcile:          reconcileCmd,
+		rename:             newRenameCommand(),
+		restore:            restoreCmd,
+		runtime:            runtimeCmd,
+		runtimeDiagnostics: runtimeDiagnosticsCmd,
+		keyBroker:          keyBrokerCmd,
+		kill:               kill,
+		notify:             notifyCmd,
+		notification:       notificationCmd,
+		pin:                newPinCommand(),
+		popupWaitKey:       popupWaitKeyCmd,
+		preview:            previewCmd,
+		prune:              pruneCmd,
+		quit:               quit,
+		resources:          resourcesCmd,
+		sessions:           sessions,
+		sessionState:       sessionStateCmd,
+		sessionPopup:       sessionPopupCmd,
+		settings:           settingsCmd,
+		setup:              newSetupCommand(initCmd),
+		shell:              newShellCommand(update, recorder),
+		status:             statusCmd,
+		statusbar:          statusbarCmd,
+		switcher:           switcher,
+		tag:                tagCmd,
+		tmux:               tmuxCmd,
+		update:             update,
+		usage:              usageCmd,
+		welcome:            newWelcomeCommand(update),
+		window:             newWindowCommand(recorder),
 	}
 }
 
@@ -358,6 +369,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 		runtime = &runtimeCommand{
 			sessions: a.sessions, attach: a.attach, kill: a.kill,
 			tag: a.tag, prune: a.prune,
+			diagnostics: a.runtimeDiagnostics,
 		}
 	}
 	commands := map[string]rawArgvCommand{

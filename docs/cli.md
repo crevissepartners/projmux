@@ -641,6 +641,7 @@ projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-
 projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 projmux get pane --current -o cwd
 projmux get pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
+projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o json|none]
 ```
 
 Subcommands:
@@ -651,11 +652,12 @@ Subcommands:
 | [`projmux get windows`](#projmux-get-windows) | List Window resources; inside tmux defaults to the active Project, and --all-projects lists every Project |
 | [`projmux get panes`](#projmux-get-panes) | List Pane resources; inside tmux defaults to the active Project, and --all-projects lists every Project |
 | [`projmux get agents`](#projmux-get-agents) | List Agent resources; inside tmux defaults to the active Project, and --all-projects lists every Project |
+| [`projmux get runtime`](#projmux-get-runtime) | List every tmux Session, Window, and Pane on one exact server with its attribution |
 | [`projmux get notifications`](#projmux-get-notifications) | List pending notification rows |
 | [`projmux get snapshots`](#projmux-get-snapshots) | List saved session snapshots |
 | [`projmux get pane`](#projmux-get-pane) | Read one Pane resource; with no selector inside tmux, the active Pane |
 
-Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get panes`, `projmux get agents`, `projmux get notifications`, `projmux get snapshots`, `projmux get pane`
+Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get panes`, `projmux get agents`, `projmux get runtime sessions`, `projmux get runtime windows`, `projmux get runtime panes`, `projmux get notifications`, `projmux get snapshots`, `projmux get pane`
 
 ### `projmux get projects`
 
@@ -702,6 +704,56 @@ projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [
 Aliases: `agent`
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
+
+### `projmux get runtime`
+
+List every tmux Session, Window, and Pane on one exact server with its attribution
+
+```
+projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]
+projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o json|none]
+projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o json|none]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux get runtime sessions`](#projmux-get-runtime-sessions) | List every tmux session on one exact server with its attribution |
+| [`projmux get runtime windows`](#projmux-get-runtime-windows) | List every tmux window on one exact server with its attribution |
+| [`projmux get runtime panes`](#projmux-get-runtime-panes) | List every tmux pane on one exact server with its attribution |
+
+Canonical spelling: `projmux get runtime sessions`, `projmux get runtime windows`, `projmux get runtime panes`
+
+#### `projmux get runtime sessions`
+
+List every tmux session on one exact server with its attribution
+
+```
+projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]
+```
+
+Output modes (`-o`): `json`, `none`
+
+#### `projmux get runtime windows`
+
+List every tmux window on one exact server with its attribution
+
+```
+projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o json|none]
+```
+
+Output modes (`-o`): `json`, `none`
+
+#### `projmux get runtime panes`
+
+List every tmux pane on one exact server with its attribution
+
+```
+projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o json|none]
+```
+
+Output modes (`-o`): `json`, `none`
 
 ### `projmux get notifications`
 
@@ -1056,6 +1108,7 @@ Manage the live and ephemeral tmux runtime inventory
 
 ```
 projmux runtime sessions [--ui=popup|sidebar]
+projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]
 projmux runtime attach [--keep=N] [--fallback=home|ephemeral]
 projmux runtime stop [<session>...]
 projmux runtime tag list|toggle|clear
@@ -1067,12 +1120,13 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux runtime sessions`](#projmux-runtime-sessions) | Pick a live or ephemeral tmux session |
+| [`projmux runtime diagnostics`](#projmux-runtime-diagnostics) | Inspect every tmux object on one exact server, with attribution and safe actions |
 | [`projmux runtime attach`](#projmux-runtime-attach) | Attach a live or ephemeral runtime without Project identity |
 | [`projmux runtime stop`](#projmux-runtime-stop) | Terminate live tmux sessions by tagged selection |
 | [`projmux runtime tag`](#projmux-runtime-tag) | Manage the ephemeral tagged session selection |
 | [`projmux runtime prune`](#projmux-runtime-prune) | Trim old ephemeral tmux sessions |
 
-Canonical spelling: `projmux runtime sessions`, `projmux runtime attach`, `projmux runtime stop`, `projmux runtime tag`, `projmux runtime prune`
+Canonical spelling: `projmux runtime sessions`, `projmux runtime diagnostics`, `projmux runtime attach`, `projmux runtime stop`, `projmux runtime tag`, `projmux runtime prune`
 
 ### `projmux runtime sessions`
 
@@ -1080,6 +1134,14 @@ Pick a live or ephemeral tmux session
 
 ```
 projmux runtime sessions
+```
+
+### `projmux runtime diagnostics`
+
+Inspect every tmux object on one exact server, with attribution and safe actions
+
+```
+projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]
 ```
 
 ### `projmux runtime attach`

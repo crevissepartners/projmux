@@ -12,6 +12,9 @@ PROJMUX_SMOKE_TMUX_ACTUAL=""
 PROJMUX_SMOKE_TMUX_STARTED=0
 PROJMUX_RECONCILE_PRIMARY_STARTED=0
 PROJMUX_RECONCILE_SECONDARY_STARTED=0
+PROJMUX_RUNTIME_APP_STARTED=0
+PROJMUX_RUNTIME_GUEST_STARTED=0
+PROJMUX_RUNTIME_SIBLING_STARTED=0
 cleanup_reconcile_socket() {
   local started="$1"
   local socket="$2"
@@ -38,6 +41,9 @@ cleanup_reconcile_socket() {
 integration_cleanup() {
 	cleanup_reconcile_socket "${PROJMUX_RECONCILE_PRIMARY_STARTED:-0}" "${PROJMUX_RECONCILE_PRIMARY_SOCKET:-}" "${PROJMUX_RECONCILE_PRIMARY_ACTUAL:-}" "${PROJMUX_RECONCILE_SESSION:-}"
 	cleanup_reconcile_socket "${PROJMUX_RECONCILE_SECONDARY_STARTED:-0}" "${PROJMUX_RECONCILE_SECONDARY_SOCKET:-}" "${PROJMUX_RECONCILE_SECONDARY_ACTUAL:-}" "${PROJMUX_RECONCILE_SESSION:-}"
+	cleanup_reconcile_socket "${PROJMUX_RUNTIME_APP_STARTED:-0}" "${PROJMUX_RUNTIME_APP_SOCKET:-}" "${PROJMUX_RUNTIME_APP_ACTUAL:-}" "${PROJMUX_RUNTIME_SESSION:-}"
+	cleanup_reconcile_socket "${PROJMUX_RUNTIME_GUEST_STARTED:-0}" "${PROJMUX_RUNTIME_GUEST_SOCKET:-}" "${PROJMUX_RUNTIME_GUEST_ACTUAL:-}" "${PROJMUX_RUNTIME_SESSION:-}"
+	cleanup_reconcile_socket "${PROJMUX_RUNTIME_SIBLING_STARTED:-0}" "${PROJMUX_RUNTIME_SIBLING_SOCKET:-}" "${PROJMUX_RUNTIME_SIBLING_ACTUAL:-}" "${PROJMUX_RUNTIME_SESSION:-}"
 	if [[ "${PROJMUX_SMOKE_TMUX_STARTED:-0}" == "1" ]]; then
 		if [[ -z "${PROJMUX_SMOKE_TMUX_ACTUAL:-}" || -z "${PROJMUX_SMOKE_TMUX_SOCKET:-}" ]]; then
 			echo "refusing integration cleanup without expected socket identity" >&2
@@ -1458,6 +1464,217 @@ PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" "$bin" descr
 cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-registry.before-repeat" "$registry_path"
 resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-reads"
 cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.before-repeat" "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-reads"
+
+# Runtime diagnostics escape hatch. The Registry-first surfaces are, correctly,
+# not an inventory: an operator's own shell, the Home control session, and a
+# scratch session are not managed resources and do not appear where managed rows
+# are listed. `get runtime` is the surface that shows the machine as it is, and
+# what has to hold on a real server is that it names everything, explains every
+# classification, reads exactly one socket, and writes nothing anywhere.
+runtime_root="$PROJMUX_SMOKE_WORKDIR/runtime-root"
+runtime_state="$PROJMUX_SMOKE_WORKDIR/runtime-state"
+mkdir -p "$runtime_root"
+PROJMUX_RUNTIME_SESSION="$(basename "$runtime_root")"
+PROJMUX_RUNTIME_APP_SOCKET="projmux-runtime-app-$$-$RANDOM"
+PROJMUX_RUNTIME_GUEST_SOCKET="projmux-runtime-guest-$$-$RANDOM"
+PROJMUX_RUNTIME_SIBLING_SOCKET="projmux-runtime-sibling-$$-$RANDOM"
+export PROJMUX_RUNTIME_SESSION PROJMUX_RUNTIME_APP_SOCKET PROJMUX_RUNTIME_GUEST_SOCKET PROJMUX_RUNTIME_SIBLING_SOCKET
+
+runtime_tmux() {
+  local socket="$1"
+  shift
+  env -u TMUX -u TMUX_PANE tmux -L "$socket" "$@"
+}
+
+runtime_snapshot() {
+  local socket="$1"
+  runtime_tmux "$socket" list-sessions -F '#{session_id}\037#{session_name}\037#{@projmux_project_uid}\037#{@projmux_session_role}\037#{@projmux_ephemeral}'
+  runtime_tmux "$socket" list-windows -a -F '#{window_id}\037#{session_id}\037#{window_name}\037#{@projmux_window_uid}'
+  runtime_tmux "$socket" list-panes -a -F '#{pane_id}\037#{window_id}\037#{@projmux_pane_uid}'
+}
+
+for runtime_socket in "$PROJMUX_RUNTIME_APP_SOCKET" "$PROJMUX_RUNTIME_GUEST_SOCKET" "$PROJMUX_RUNTIME_SIBLING_SOCKET"; do
+  runtime_tmux "$runtime_socket" new-session -d -s "$PROJMUX_RUNTIME_SESSION" -c "$runtime_root" sleep 300
+  runtime_tmux "$runtime_socket" set-option -t "$PROJMUX_RUNTIME_SESSION" -q @projmux_project_path "$runtime_root"
+done
+PROJMUX_RUNTIME_APP_STARTED=1
+PROJMUX_RUNTIME_GUEST_STARTED=1
+PROJMUX_RUNTIME_SIBLING_STARTED=1
+PROJMUX_RUNTIME_APP_ACTUAL="$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{socket_path}')"
+PROJMUX_RUNTIME_GUEST_ACTUAL="$(runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{socket_path}')"
+PROJMUX_RUNTIME_SIBLING_ACTUAL="$(runtime_tmux "$PROJMUX_RUNTIME_SIBLING_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{socket_path}')"
+export PROJMUX_RUNTIME_APP_ACTUAL PROJMUX_RUNTIME_GUEST_ACTUAL PROJMUX_RUNTIME_SIBLING_ACTUAL
+# The socket every later cleanup targets is the one tmux itself reports, and it
+# has to be under this run's TMUX_TMPDIR before anything kills it.
+for runtime_actual in "$PROJMUX_RUNTIME_APP_ACTUAL" "$PROJMUX_RUNTIME_GUEST_ACTUAL" "$PROJMUX_RUNTIME_SIBLING_ACTUAL"; do
+  case "$runtime_actual" in
+    "$PROJMUX_SMOKE_WORKDIR"/tmux/*) ;;
+    *)
+      echo "runtime diagnostics socket escaped smoke root: $runtime_actual" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Only the app socket carries the ownership marker. The guest socket is the
+# operator's own tmux that projmux is a guest on, and the third is a sibling
+# that must never be read.
+runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" set-option -g -q @projmux_app 1
+
+PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  "$bin" reconcile resources --socket "$PROJMUX_RUNTIME_APP_SOCKET" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/runtime-seed-reconcile.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-seed-reconcile.json" '"outcome": "changed"'
+runtime_registry="$runtime_state/projmux/metadata/registry.json"
+runtime_project_uid="$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" show-options -t "$PROJMUX_RUNTIME_SESSION" -qv @projmux_project_uid)"
+runtime_window_uid="$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" show-options -wqv -t "=$PROJMUX_RUNTIME_SESSION:0" @projmux_window_uid)"
+runtime_pane_uid="$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" show-options -pqv -t "=$PROJMUX_RUNTIME_SESSION:0.0" @projmux_pane_uid)"
+if [[ -z "$runtime_project_uid" || -z "$runtime_window_uid" || -z "$runtime_pane_uid" ]]; then
+  echo "runtime diagnostics seed did not mirror identity: project=$runtime_project_uid window=$runtime_window_uid pane=$runtime_pane_uid" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/runtime-seed-reconcile.json" >&2
+  runtime_snapshot "$PROJMUX_RUNTIME_APP_SOCKET" >&2 || true
+  exit 1
+fi
+
+# Everything the managed UI does not show: the Home control session, a scratch
+# session, an unmarked window inside the managed session, and a window mirroring
+# a uid no Registry contains.
+runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" new-session -d -s runtime-home -c "$runtime_root" sleep 300
+runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" set-option -t runtime-home -q @projmux_session_role control
+runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" new-session -d -s runtime-scratch -c "$runtime_root" sleep 300
+runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" set-option -t runtime-scratch -q @projmux_ephemeral 1
+runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" new-window -d -t "=$PROJMUX_RUNTIME_SESSION" -n plain -c "$runtime_root" sleep 300
+runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" new-window -d -t "=$PROJMUX_RUNTIME_SESSION" -n ghost -c "$runtime_root" sleep 300
+runtime_ghost_window="$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" list-windows -t "=$PROJMUX_RUNTIME_SESSION" -F '#{window_id}\037#{window_name}' | awk -F'\037' '$2 == "ghost" {print $1}')"
+runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" set-option -w -t "$runtime_ghost_window" -q @projmux_window_uid win-not-in-this-registry
+
+runtime_snapshot "$PROJMUX_RUNTIME_APP_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/runtime-app.before"
+runtime_snapshot "$PROJMUX_RUNTIME_SIBLING_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/runtime-sibling.before"
+cp "$runtime_registry" "$PROJMUX_SMOKE_WORKDIR/runtime-registry.before"
+
+for runtime_kind in sessions windows panes; do
+  PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+    "$bin" get runtime "$runtime_kind" --socket "$PROJMUX_RUNTIME_APP_SOCKET" -o json \
+    >"$PROJMUX_SMOKE_WORKDIR/runtime-app-$runtime_kind.json"
+  PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+    "$bin" get runtime "$runtime_kind" --socket "$PROJMUX_RUNTIME_APP_SOCKET" -o json \
+    >"$PROJMUX_SMOKE_WORKDIR/runtime-app-$runtime_kind-repeat.json"
+  cmp "$PROJMUX_SMOKE_WORKDIR/runtime-app-$runtime_kind.json" "$PROJMUX_SMOKE_WORKDIR/runtime-app-$runtime_kind-repeat.json"
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-$runtime_kind.json" '"hostMode": "app-owned"'
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-$runtime_kind.json" '"kind": "socket-name"'
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-$runtime_kind.json" "\"value\": \"$PROJMUX_RUNTIME_APP_SOCKET\""
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-$runtime_kind.json" '"class": "managed"'
+  smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/runtime-app-$runtime_kind.json" '"unavailable"'
+done
+# Every class the managed UI cannot show is present with its exact handle and a
+# stated reason, and the managed no-op row is there beside them.
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-sessions.json" '"class": "control"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-sessions.json" '"class": "ephemeral"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-sessions.json" "\"uid\": \"$runtime_project_uid\""
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-windows.json" '"class": "unattributed"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-windows.json" '"class": "recoverable"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-windows.json" '"uid": "win-not-in-this-registry"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-panes.json" '"class": "unattributed"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-panes.json" "\"uid\": \"$runtime_pane_uid\""
+# Nothing an operator can go look at may be missing from a report that claims to
+# name the whole server.
+for runtime_live_session in $(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" list-sessions -F '#{session_id}'); do
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-sessions.json" "\"id\": \"$runtime_live_session\""
+done
+for runtime_live_window in $(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" list-windows -a -F '#{window_id}'); do
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-windows.json" "\"id\": \"$runtime_live_window\""
+done
+for runtime_live_pane in $(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" list-panes -a -F '#{pane_id}'); do
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-panes.json" "\"id\": \"$runtime_live_pane\""
+done
+
+# The human projection states which server answered before it states anything
+# about that server.
+PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  "$bin" get runtime sessions --socket "$PROJMUX_RUNTIME_APP_SOCKET" \
+  >"$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt" "host app-owned  transport tmux -L $PROJMUX_RUNTIME_APP_SOCKET"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt" "SESSION"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt" "control"
+
+# The standalone host is the same Registry and the same managed identity; only
+# the classification of what projmux did not mark differs.
+runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" set-option -t "$PROJMUX_RUNTIME_SESSION" -q @projmux_project_uid "$runtime_project_uid"
+runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" set-option -w -t "=$PROJMUX_RUNTIME_SESSION:0" -q @projmux_window_uid "$runtime_window_uid"
+runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" set-option -p -t "=$PROJMUX_RUNTIME_SESSION:0.0" -q @projmux_pane_uid "$runtime_pane_uid"
+runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" new-session -d -s runtime-operator -c "$runtime_root" sleep 300
+runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" set-option -t runtime-operator -q @projmux_session_role control
+if [[ "$(runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" show-options -t "$PROJMUX_RUNTIME_SESSION" -qv @projmux_project_uid)" != "$runtime_project_uid" ]]; then
+  echo "runtime diagnostics guest fixture did not mirror the Project uid" >&2
+  exit 1
+fi
+runtime_snapshot "$PROJMUX_RUNTIME_GUEST_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/runtime-guest.before"
+PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  "$bin" get runtime sessions --socket "$PROJMUX_RUNTIME_GUEST_SOCKET" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/runtime-guest-sessions.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-guest-sessions.json" '"hostMode": "standalone"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-guest-sessions.json" '"class": "managed"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-guest-sessions.json" "\"uid\": \"$runtime_project_uid\""
+# A control marker on a server projmux does not own proves nothing: that session
+# is the operator's, and it is reported as foreign rather than as a projmux role.
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-guest-sessions.json" '"class": "foreign"'
+smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/runtime-guest-sessions.json" '"class": "control"'
+# The two hosts stay two servers. The guest report names the operator's own
+# session; the app report, taken against the same Registry, never does.
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-guest-sessions.json" '"name": "runtime-operator"'
+smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/runtime-app-sessions.json" '"name": "runtime-operator"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-sessions.json" '"name": "runtime-home"'
+smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/runtime-guest-sessions.json" '"name": "runtime-home"' 
+
+# Outside tmux with no socket flag the read succeeds and says why it is empty,
+# and it probes no default server.
+runtime_outside_state="$PROJMUX_SMOKE_WORKDIR/runtime-outside-state"
+env -u TMUX -u TMUX_PANE PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_outside_state" \
+  "$bin" get runtime panes -o json >"$PROJMUX_SMOKE_WORKDIR/runtime-outside.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-outside.json" '"kind": "none"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-outside.json" '"hostMode": "unknown"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-outside.json" '"items": []'
+for runtime_scope in host-mode sessions windows panes; do
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-outside.json" "\"scope\": \"$runtime_scope\""
+done
+if [[ -e "$runtime_outside_state/projmux/metadata/registry.json" ]]; then
+  echo "a no-transport runtime read created a Registry" >&2
+  exit 1
+fi
+
+# The whole surface is read-only: no Registry byte, no tmux object, and no
+# sibling socket changed across every read above.
+cmp "$PROJMUX_SMOKE_WORKDIR/runtime-registry.before" "$runtime_registry"
+runtime_snapshot "$PROJMUX_RUNTIME_APP_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/runtime-app.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/runtime-app.before" "$PROJMUX_SMOKE_WORKDIR/runtime-app.after"
+runtime_snapshot "$PROJMUX_RUNTIME_GUEST_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/runtime-guest.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/runtime-guest.before" "$PROJMUX_SMOKE_WORKDIR/runtime-guest.after"
+runtime_snapshot "$PROJMUX_RUNTIME_SIBLING_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/runtime-sibling.after"
+cmp "$PROJMUX_SMOKE_WORKDIR/runtime-sibling.before" "$PROJMUX_SMOKE_WORKDIR/runtime-sibling.after"
+
+# The inherited $TMUX socket path reaches the same exact server as the flag.
+runtime_app_pid="$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{pid}')"
+PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  TMUX="$PROJMUX_RUNTIME_APP_ACTUAL,$runtime_app_pid,0" \
+  "$bin" get runtime sessions -o json >"$PROJMUX_SMOKE_WORKDIR/runtime-inherited.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-inherited.json" '"source": "inherited-tmux-env"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-inherited.json" "\"value\": \"$PROJMUX_RUNTIME_APP_ACTUAL\""
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-inherited.json" "\"uid\": \"$runtime_project_uid\""
+
+# The refusals are operator input errors, and they cost no observation.
+set +e
+PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  "$bin" get runtime agents --socket "$PROJMUX_RUNTIME_APP_SOCKET" \
+  >"$PROJMUX_SMOKE_WORKDIR/runtime-bad-kind.out" 2>"$PROJMUX_SMOKE_WORKDIR/runtime-bad-kind.err"
+runtime_bad_kind_status=$?
+set -e
+if [[ "$runtime_bad_kind_status" != "2" ]] || [[ -s "$PROJMUX_SMOKE_WORKDIR/runtime-bad-kind.out" ]]; then
+  echo "get runtime agents did not refuse as usage: status=$runtime_bad_kind_status" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-bad-kind.err" "this release implements: sessions, windows, panes"
+
+echo ">> runtime diagnostics root=$PROJMUX_SMOKE_WORKDIR app_socket=$PROJMUX_RUNTIME_APP_ACTUAL guest_socket=$PROJMUX_RUNTIME_GUEST_ACTUAL sibling_unchanged=yes writes=0"
 
 # Durable Registry envelope. registry.json is the source of truth for managed
 # identity and desired topology, so the installed shape has to tell a legitimate

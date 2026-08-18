@@ -70,14 +70,23 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 	}
 }
 
-// The hidden reconcile-bindings spelling stays lifecycle plumbing. The public
-// resource repair route may expose --socket-path, but no other route may borrow
-// that exact-server mutation contract by accident.
+// exactTransportRoots are the top-level routes allowed to name an exact tmux
+// server on the command line.
+//
+// The guard below is about the mutation contract, not about the flag: the
+// hidden `reconcile-bindings` spelling stays lifecycle plumbing, and no route
+// may pick up an exact-server *repair* surface by accident. `reconcile` owns
+// that repair. `get` and `runtime` are here for the read half -- the Runtime
+// diagnostics escape hatch observes one exact server and writes nothing -- and
+// listing them explicitly is what keeps a future mutation route from arriving
+// under the same flag without anyone noticing.
+var exactTransportRoots = []string{"reconcile", "get", "runtime"}
+
 func TestManagedBindingConvergenceStaysHiddenBehindPublicResourceRepair(t *testing.T) {
 	t.Parallel()
 
 	walkRoutes(Routes(), func(path []string, route Route) {
-		publicRepair := len(path) > 0 && path[0] == "reconcile"
+		publicRepair := len(path) > 0 && slices.Contains(exactTransportRoots, path[0])
 		if route.Name == "reconcile-bindings" || slices.Contains(route.Usage, "--socket-path") && !publicRepair {
 			t.Fatalf("binding convergence leaked into command catalog at %q: %#v", strings.Join(path, " "), route)
 		}

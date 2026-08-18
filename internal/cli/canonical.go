@@ -87,6 +87,12 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "get windows", Summary: "List Window resources", Sources: []string{"window", "get"}, Outputs: projectionCatalog},
 	{Spelling: "get panes", Summary: "List Pane resources", Sources: []string{"get"}, Outputs: projectionCatalog},
 	{Spelling: "get agents", Summary: "List Agent resources", Sources: []string{"get"}, Outputs: projectionCatalog},
+	// The runtime read is not a resource read, and its projection catalog says
+	// so: `uid`, `name`, and `ref` are Registry projections, and most of what
+	// this route reports carries none of them.
+	{Spelling: "get runtime sessions", Summary: "List every tmux session on one exact server with its attribution", Sources: []string{"get"}, Outputs: runtimeProjectionCatalog},
+	{Spelling: "get runtime windows", Summary: "List every tmux window on one exact server with its attribution", Sources: []string{"get"}, Outputs: runtimeProjectionCatalog},
+	{Spelling: "get runtime panes", Summary: "List every tmux pane on one exact server with its attribution", Sources: []string{"get"}, Outputs: runtimeProjectionCatalog},
 	{Spelling: "get notifications", Summary: "List pending notification rows", Sources: []string{"get"}, Outputs: projectionCatalog},
 	{Spelling: "get snapshots", Summary: "List saved session snapshots", Sources: []string{"get"}, Outputs: projectionCatalog},
 	{
@@ -217,6 +223,7 @@ var canonicalRoutes = []CanonicalRoute{
 
 	// runtime domain
 	{Spelling: "runtime sessions", Summary: "Pick a live or ephemeral tmux session", Sources: []string{"runtime"}},
+	{Spelling: "runtime diagnostics", Summary: "Inspect every tmux object on one exact server, with attribution and safe actions", Sources: []string{"runtime"}},
 	{Spelling: "runtime attach", Summary: "Attach a live or ephemeral runtime without Project identity", Sources: []string{"runtime"}},
 	{Spelling: "runtime stop", Summary: "Terminate live tmux sessions by tagged selection", Sources: []string{"runtime"}},
 	{Spelling: "runtime tag", Summary: "Manage the ephemeral tagged session selection", Sources: []string{"runtime"}},

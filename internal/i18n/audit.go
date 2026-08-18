@@ -110,6 +110,11 @@ func PickerChromeStringAuditOptions() StringAuditOptions {
 		"internal/app/trust.go":                 true,
 		"internal/app/ai.go":                    true,
 		"internal/app/hookmaker.go":             true,
+		// The Runtime diagnostics escape hatch is scoped from the start: it is a
+		// new picker surface, and the cheapest moment to keep its chrome inside
+		// the catalog is before any of it ships untranslated.
+		"internal/app/runtime_diagnostics_picker.go": true,
+		"internal/app/runtime_diagnostics_view.go":   true,
 	}
 	return StringAuditOptions{
 		DisableKoreanCandidates:       true,

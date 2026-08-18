@@ -37,13 +37,26 @@ func splitKindSpellingPair(token string) (singular, plural string) {
 	return token, token + "s"
 }
 
+// resourceVerbChildren returns the kind children of one resource verb.
+//
+// Namespace children are skipped. `get runtime` groups tmux object kinds, which
+// are not Projmux resource kinds and have no singular resource read, so folding
+// it in here would make the parity matrix demand a `runtimes` spelling for
+// objects the Registry does not name.
 func resourceVerbChildren(t *testing.T, verb string) []Route {
 	t.Helper()
 	route, ok := LookupRoute(verb)
 	if !ok {
 		t.Fatalf("%s is not a top-level route", verb)
 	}
-	return route.Children
+	kinds := make([]Route, 0, len(route.Children))
+	for _, child := range route.Children {
+		if child.Namespace {
+			continue
+		}
+		kinds = append(kinds, child)
+	}
+	return kinds
 }
 
 // TestCanonicalKindSpellingsSurviveTheAliasContract is the negative half of the
@@ -205,7 +218,13 @@ func TestChildSpellingsListsEveryAcceptedKindToken(t *testing.T) {
 
 	for _, verb := range resourceVerbs {
 		spellings := ChildSpellings(verb)
-		children := resourceVerbChildren(t, verb)
+		// Every accepted child token, namespace nodes included: the refusal
+		// offers what argv accepts, and `get runtime` is accepted.
+		route, ok := LookupRoute(verb)
+		if !ok {
+			t.Fatalf("%s is not a top-level route", verb)
+		}
+		children := route.Children
 		if len(spellings) != len(children) {
 			t.Fatalf("%s renders %d spelling groups for %d children", verb, len(spellings), len(children))
 		}
