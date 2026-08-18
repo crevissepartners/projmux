@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -621,6 +623,19 @@ func TestConcurrentUpdatesSerializeThroughTheRegistryLock(t *testing.T) {
 		}
 		names[project.Metadata.Name] = true
 	}
+	// The envelope must stay bounded and clean under contention: the lock is
+	// released, nothing is left staged, and the retention bound holds no matter
+	// how the eight writes interleaved.
+	if _, err := os.Stat(store.lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the registry lock survived the concurrent updates: %v", err)
+	}
+	assertNoStagedGarbage(t, store)
+	if copies := recoveryCopies(t, store); len(copies) > store.retention {
+		t.Fatalf("recovery copies = %v, want at most the bounded %d", copies, store.retention)
+	}
+	if _, err := os.Stat(store.markerPath); err != nil {
+		t.Fatalf("the concurrent updates did not establish the initialized marker: %v", err)
+	}
 }
 
 // TestAnAbsentOrContentFreeRegistryFileLoadsAnEmptyRegistry keeps the
@@ -812,5 +827,664 @@ func TestLoadSnapshotReadsExistingRegistryWithoutLockOrPermissionRepair(t *testi
 	}
 	if _, err := os.Stat(store.Path() + ".lock"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("LoadSnapshot created a lock: %v", err)
+	}
+}
+
+// --- Durable recovery envelope -------------------------------------------
+//
+// The registry is the source of truth for managed identity and desired
+// topology, so these tests pin the two boundaries that make it trustworthy:
+// first use is distinguishable from state loss, and no failure step replaces or
+// damages bytes that are already committed.
+
+func fileFingerprint(t *testing.T, path string) string {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("stat %s: no inode information", path)
+	}
+	return fmt.Sprintf("ino=%d size=%d mtime=%d.%09d mode=%o",
+		stat.Ino, info.Size(), info.ModTime().Unix(), info.ModTime().Nanosecond(), info.Mode().Perm())
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %o, want %o", path, got, want)
+	}
+}
+
+// registerProject performs one semantic write against the store. Uids are
+// derived from the root so repeated calls against one store stay unique without
+// the caller threading a counter through.
+func registerProject(t *testing.T, store *Store, root string) {
+	t.Helper()
+	counts := map[coremetadata.Kind]int{}
+	mutator := coremetadata.Mutator{
+		Now: func() time.Time { return fixedNow },
+		NewUID: func(kind coremetadata.Kind) (string, error) {
+			counts[kind]++
+			return fmt.Sprintf("%s-%s-%02d", strings.ToLower(string(kind)), filepath.Base(root), counts[kind]), nil
+		},
+		DirExists: func(path string) (bool, error) { return path == root, nil },
+	}
+	if _, err := store.Update(func(registry *coremetadata.Registry) error {
+		_, err := mutator.RegisterProject(registry, coremetadata.RegisterProjectOptions{
+			Root:         root,
+			DefaultShell: "/bin/zsh",
+			OperationID:  "op-" + filepath.Base(root),
+		})
+		return err
+	}); err != nil {
+		t.Fatalf("register %s: %v", root, err)
+	}
+}
+
+func recoveryCopies(t *testing.T, store *Store) []string {
+	t.Helper()
+	entries, err := os.ReadDir(store.recoveryDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		t.Fatalf("read recovery dir: %v", err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	return names
+}
+
+func assertNoStagedGarbage(t *testing.T, store *Store) {
+	t.Helper()
+	for _, name := range dirListing(t, filepath.Dir(store.Path())) {
+		if strings.Contains(name, ".tmp-") {
+			t.Fatalf("leaked staged file in the registry dir: %q", name)
+		}
+	}
+	for _, name := range recoveryCopies(t, store) {
+		if strings.Contains(name, ".tmp-") {
+			t.Fatalf("leaked staged file in the recovery dir: %q", name)
+		}
+	}
+}
+
+// TestFirstUseIsAZeroWriteEmptyRegistryAndTheFirstCommitEstablishesTheBoundary
+// pins the initialized boundary from both sides. Before any commit every read
+// answers the empty registry and creates nothing at all; the first successful
+// commit publishes the registry and the marker that make a later disappearance
+// diagnosable.
+func TestFirstUseIsAZeroWriteEmptyRegistryAndTheFirstCommitEstablishesTheBoundary(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	store := NewStore(PathFor(stateDir))
+	store.SetClock(func() time.Time { return fixedNow })
+
+	for _, read := range []struct {
+		name string
+		call func() (coremetadata.Registry, error)
+	}{
+		{name: "LoadReadOnly", call: store.LoadReadOnly},
+		{name: "LoadSnapshot", call: store.LoadSnapshot},
+	} {
+		registry, err := read.call()
+		if err != nil {
+			t.Fatalf("%s on a fresh state dir: %v", read.name, err)
+		}
+		if registry.SchemaVersion != coremetadata.SchemaVersion || len(registry.Projects) != 0 {
+			t.Fatalf("%s = %+v, want an empty current-version registry", read.name, registry)
+		}
+		entries, err := os.ReadDir(stateDir)
+		if err != nil {
+			t.Fatalf("read state dir: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("%s created %d entries under the state dir", read.name, len(entries))
+		}
+	}
+
+	registerProject(t, store, "/src/projmux")
+
+	assertMode(t, filepath.Dir(store.Path()), 0o700)
+	assertMode(t, store.Path(), 0o600)
+	assertMode(t, store.markerPath, 0o600)
+	if registry, err := store.LoadReadOnly(); err != nil || len(registry.Projects) != 1 {
+		t.Fatalf("after the first commit LoadReadOnly = %+v, %v", registry, err)
+	}
+	var marker initializedMarker
+	if err := json.Unmarshal([]byte(readFile(t, store.markerPath)), &marker); err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+	if marker.SchemaVersion != coremetadata.SchemaVersion || marker.InitializedAt != fixedNow.Format(time.RFC3339) {
+		t.Fatalf("marker = %+v, want the current schema and the commit time", marker)
+	}
+	// The first commit replaced nothing, so it preserved nothing.
+	if copies := recoveryCopies(t, store); len(copies) != 0 {
+		t.Fatalf("the first commit took recovery copies %v", copies)
+	}
+	assertNoStagedGarbage(t, store)
+}
+
+// TestAMissingOrEmptyRegistryAfterTheFirstCommitIsTypedStateLoss is the other
+// half of the boundary: once the marker exists, content-free registry bytes are
+// a loss report on every route instead of a fresh identity domain.
+func TestAMissingOrEmptyRegistryAfterTheFirstCommitIsTypedStateLoss(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		lose func(t *testing.T, store *Store)
+	}{
+		{name: "registry removed", lose: func(t *testing.T, store *Store) {
+			if err := os.Remove(store.Path()); err != nil {
+				t.Fatalf("remove registry: %v", err)
+			}
+		}},
+		{name: "registry truncated", lose: func(t *testing.T, store *Store) {
+			writeRegistryFile(t, store, "")
+		}},
+		{name: "registry whitespace only", lose: func(t *testing.T, store *Store) {
+			writeRegistryFile(t, store, "\n\t \n")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := testStore(t)
+			registerProject(t, store, "/src/projmux")
+			tt.lose(t, store)
+			markerBefore := fileFingerprint(t, store.markerPath)
+
+			for _, read := range []struct {
+				name string
+				call func() (coremetadata.Registry, error)
+			}{
+				{name: "Load", call: store.Load},
+				{name: "LoadReadOnly", call: store.LoadReadOnly},
+				{name: "LoadSnapshot", call: store.LoadSnapshot},
+			} {
+				registry, err := read.call()
+				if !errors.Is(err, ErrRegistryStateLost) {
+					t.Fatalf("%s = %+v, %v, want ErrRegistryStateLost", read.name, registry, err)
+				}
+				if len(registry.Projects) != 0 {
+					t.Fatalf("%s answered resources from a lost registry: %+v", read.name, registry)
+				}
+			}
+			// The message has to be actionable without this store choosing a
+			// recovery: both halves of the evidence and both ways out.
+			_, err := store.Load()
+			for _, want := range []string{store.Path(), store.markerPath, store.recoveryDir} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("state-loss error %q does not name %q", err, want)
+				}
+			}
+
+			// A mutation must not paper over the loss by minting a new
+			// identity domain on top of it.
+			mutator := testMutator(map[string]bool{"/src/other": true})
+			minted := false
+			if _, err := store.Update(func(registry *coremetadata.Registry) error {
+				minted = true
+				_, err := mutator.RegisterProject(registry, coremetadata.RegisterProjectOptions{
+					Root: "/src/other", DefaultShell: "/bin/zsh", OperationID: "op-after-loss",
+				})
+				return err
+			}); !errors.Is(err, ErrRegistryStateLost) {
+				t.Fatalf("Update after state loss = %v, want ErrRegistryStateLost", err)
+			}
+			if minted {
+				t.Fatal("Update ran its mutation against a lost registry")
+			}
+			if _, _, err := store.UpdateConvergent(func(*coremetadata.Registry) error { return nil }); !errors.Is(err, ErrRegistryStateLost) {
+				t.Fatalf("UpdateConvergent after state loss = %v, want ErrRegistryStateLost", err)
+			}
+			if fileFingerprint(t, store.markerPath) != markerBefore {
+				t.Fatal("a refused route rewrote the initialized marker")
+			}
+			assertNoStagedGarbage(t, store)
+		})
+	}
+}
+
+// TestALegacyRegistryWithoutTheMarkerReadsAndTheNextSemanticWriteBackfillsIt
+// keeps the boundary backward compatible. A registry written before the marker
+// existed is ordinary state, not a loss, and it gains the marker on its next
+// write without a separate migration.
+func TestALegacyRegistryWithoutTheMarkerReadsAndTheNextSemanticWriteBackfillsIt(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	registerProject(t, store, "/src/projmux")
+	legacyBytes := readFile(t, store.Path())
+	if err := os.Remove(store.markerPath); err != nil {
+		t.Fatalf("remove marker: %v", err)
+	}
+
+	registry, err := store.Load()
+	if err != nil {
+		t.Fatalf("a registry without the marker must still read: %v", err)
+	}
+	if len(registry.Projects) != 1 {
+		t.Fatalf("projects = %d, want the legacy 1", len(registry.Projects))
+	}
+	if _, statErr := os.Stat(store.markerPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a read created the marker: %v", statErr)
+	}
+
+	registerProject(t, store, "/src/other")
+	if _, statErr := os.Stat(store.markerPath); statErr != nil {
+		t.Fatalf("the next semantic write did not backfill the marker: %v", statErr)
+	}
+	// The legacy bytes are the prior verified state, so they are the copy.
+	copies := recoveryCopies(t, store)
+	if len(copies) != 1 {
+		t.Fatalf("recovery copies = %v, want exactly the legacy bytes", copies)
+	}
+	if got := readFile(t, filepath.Join(store.recoveryDir, copies[0])); got != legacyBytes {
+		t.Fatal("the recovery copy does not hold the replaced legacy bytes")
+	}
+}
+
+// TestSemanticWritesKeepTheLastVerifiedBytesInBoundedRecoveryCopies pins the
+// rolling copy: every same-version semantic write preserves what it replaced,
+// the newest retained copies are the ones that survive, and the copies are
+// ordinary private files an operator can read.
+func TestSemanticWritesKeepTheLastVerifiedBytesInBoundedRecoveryCopies(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	var replaced []string
+	for i := range store.retention + 3 {
+		if i > 0 {
+			replaced = append(replaced, readFile(t, store.Path()))
+		}
+		registerProject(t, store, fmt.Sprintf("/src/p%d", i))
+	}
+
+	copies := recoveryCopies(t, store)
+	if len(copies) != store.retention {
+		t.Fatalf("recovery copies = %v, want the bounded %d", copies, store.retention)
+	}
+	assertMode(t, store.recoveryDir, 0o700)
+	// Names sort chronologically, so the retained window is the newest slice of
+	// what each write replaced.
+	wantBytes := replaced[len(replaced)-store.retention:]
+	for i, name := range copies {
+		assertMode(t, filepath.Join(store.recoveryDir, name), 0o600)
+		got := readFile(t, filepath.Join(store.recoveryDir, name))
+		if got != wantBytes[i] {
+			t.Fatalf("recovery copy %s does not hold the bytes it replaced:\n--- got ---\n%s\n--- want ---\n%s", name, got, wantBytes[i])
+		}
+		if !sort.StringsAreSorted(copies) {
+			t.Fatalf("recovery copies are not in a deterministic order: %v", copies)
+		}
+	}
+	// Every retained copy is a registry a reader still accepts, which is what
+	// makes it a recovery source rather than a byte dump.
+	for _, name := range copies {
+		path := filepath.Join(store.recoveryDir, name)
+		if _, err := NewStore(path).LoadSnapshot(); err != nil {
+			t.Fatalf("retained recovery copy %s does not read as a registry: %v", name, err)
+		}
+	}
+	assertNoStagedGarbage(t, store)
+}
+
+// TestARecoveryCopyIsOnlyTakenForVerifiedPriorBytes keeps unusable bytes out of
+// the recovery set. A file that decodes but violates the model is not something
+// an operator could safely restore, and refusing to replace it would strand the
+// store instead of repairing it.
+func TestARecoveryCopyIsOnlyTakenForVerifiedPriorBytes(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	registerProject(t, store, "/src/projmux")
+	invalid := fmt.Sprintf(`{"apiVersion":%q,"schemaVersion":%d,"panes":[{"apiVersion":%q,"kind":"Pane","metadata":{"uid":"pane-orphan","name":"zsh","ownerRef":{"kind":"Window","uid":"window-missing"}},"spec":{"role":"shell"}}]}`,
+		coremetadata.APIVersion, coremetadata.SchemaVersion, coremetadata.APIVersion)
+	writeRegistryFile(t, store, invalid)
+	before := recoveryCopies(t, store)
+
+	// The write has to be one that repairs the file rather than one that builds
+	// on it: Update validates the whole working registry, so an invalid document
+	// can only be replaced wholesale.
+	if _, err := store.Update(func(registry *coremetadata.Registry) error {
+		*registry = coremetadata.NewRegistry()
+		return nil
+	}); err != nil {
+		t.Fatalf("replace the invalid registry: %v", err)
+	}
+
+	if got := recoveryCopies(t, store); len(got) != len(before) {
+		t.Fatalf("recovery copies = %v, want the unchanged %v: invalid prior bytes are not a recovery source", got, before)
+	}
+}
+
+// TestConvergentNoOpTouchesNeitherTheRegistryNorItsRecoveryCopies pins the
+// zero-write side of convergence. A lifecycle pass that agrees with the stored
+// state must not spend a recovery slot or a byte replace merely because it took
+// the mutation lock.
+func TestConvergentNoOpTouchesNeitherTheRegistryNorItsRecoveryCopies(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	registerProject(t, store, "/src/projmux")
+	registerProject(t, store, "/src/other")
+	registryBefore := fileFingerprint(t, store.Path())
+	markerBefore := fileFingerprint(t, store.markerPath)
+	copiesBefore := recoveryCopies(t, store)
+
+	for range 3 {
+		if _, changed, err := store.UpdateConvergent(func(*coremetadata.Registry) error { return nil }); err != nil || changed {
+			t.Fatalf("convergent no-op changed=%v err=%v", changed, err)
+		}
+	}
+
+	if got := fileFingerprint(t, store.Path()); got != registryBefore {
+		t.Fatalf("registry fingerprint = %s, want the unchanged %s", got, registryBefore)
+	}
+	if got := fileFingerprint(t, store.markerPath); got != markerBefore {
+		t.Fatalf("marker fingerprint = %s, want the unchanged %s", got, markerBefore)
+	}
+	if got := recoveryCopies(t, store); !reflect.DeepEqual(got, copiesBefore) {
+		t.Fatalf("recovery copies = %v, want the unchanged %v", got, copiesBefore)
+	}
+	assertNoStagedGarbage(t, store)
+}
+
+// TestAFailureAtEachDurabilityStepLeavesThePriorRegistryByteIdentical walks the
+// whole envelope. Every step is injected in turn against a registry that already
+// holds committed state, and the committed state has to survive each of them
+// unchanged -- same bytes, same inode, same mtime -- with nothing staged left
+// behind and the next attempt still able to succeed.
+func TestAFailureAtEachDurabilityStepLeavesThePriorRegistryByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("injected durability failure")
+	tests := []struct {
+		name   string
+		inject func(t *testing.T, store *Store)
+	}{
+		{name: "staged temp fsync", inject: func(_ *testing.T, store *Store) {
+			store.hooks.syncFile = func(*os.File) error { return boom }
+		}},
+		{name: "after the staged temp write", inject: func(_ *testing.T, store *Store) {
+			store.hooks.afterTempWrite = func() error { return boom }
+		}},
+		{name: "staged validation", inject: func(_ *testing.T, store *Store) {
+			store.hooks.validateStaged = func(string) error { return boom }
+		}},
+		{name: "recovery copy", inject: func(_ *testing.T, store *Store) {
+			store.hooks.afterRecoveryCopy = func() error { return boom }
+		}},
+		{name: "initialized marker", inject: func(_ *testing.T, store *Store) {
+			store.hooks.afterMarker = func() error { return boom }
+		}},
+		{name: "directory sync before the replace", inject: func(_ *testing.T, store *Store) {
+			registryDir := filepath.Dir(store.Path())
+			store.hooks.syncDir = func(dir string) error {
+				if dir == registryDir {
+					return boom
+				}
+				return nil
+			}
+		}},
+		{name: "atomic replace", inject: func(_ *testing.T, store *Store) {
+			store.hooks.beforeRename = func() error { return boom }
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := testStore(t)
+			registerProject(t, store, "/src/projmux")
+			registerProject(t, store, "/src/other")
+			registryBytes := readFile(t, store.Path())
+			registryBefore := fileFingerprint(t, store.Path())
+			markerBefore := fileFingerprint(t, store.markerPath)
+			copiesBefore := recoveryCopies(t, store)
+			if len(copiesBefore) != 1 {
+				t.Fatalf("fixture recovery copies = %v, want exactly one", copiesBefore)
+			}
+
+			tt.inject(t, store)
+			mutator := testMutator(map[string]bool{"/src/third": true})
+			_, err := store.Update(func(registry *coremetadata.Registry) error {
+				_, err := mutator.RegisterProject(registry, coremetadata.RegisterProjectOptions{
+					Root: "/src/third", DefaultShell: "/bin/zsh", OperationID: "op-injected",
+				})
+				return err
+			})
+			if !errors.Is(err, boom) {
+				t.Fatalf("Update = %v, want the injected failure", err)
+			}
+
+			if got := readFile(t, store.Path()); got != registryBytes {
+				t.Fatalf("a failed write changed the registry bytes:\n--- got ---\n%s\n--- want ---\n%s", got, registryBytes)
+			}
+			if got := fileFingerprint(t, store.Path()); got != registryBefore {
+				t.Fatalf("registry fingerprint = %s, want the unchanged %s", got, registryBefore)
+			}
+			if got := fileFingerprint(t, store.markerPath); got != markerBefore {
+				t.Fatalf("marker fingerprint = %s, want the unchanged %s", got, markerBefore)
+			}
+			if got := recoveryCopies(t, store); !reflect.DeepEqual(got, copiesBefore) {
+				t.Fatalf("recovery copies = %v, want the unchanged %v: a failed write must roll back the copy it took", got, copiesBefore)
+			}
+			assertNoStagedGarbage(t, store)
+			if _, statErr := os.Stat(store.lockPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("a failed write left the lock behind: %v", statErr)
+			}
+
+			// The retry is the whole point of preserving the prior state.
+			store.hooks = storeHooks{}
+			registerProject(t, store, "/src/third")
+			registry, err := store.Load()
+			if err != nil {
+				t.Fatalf("load after the retry: %v", err)
+			}
+			if len(registry.Projects) != 3 {
+				t.Fatalf("projects = %d, want the retried 3", len(registry.Projects))
+			}
+			if got := recoveryCopies(t, store); len(got) != 2 {
+				t.Fatalf("recovery copies after the retry = %v, want the prior copy plus one", got)
+			}
+		})
+	}
+}
+
+// TestAFailedFirstCommitLeavesNeitherARegistryNorTheInitializedMarker keeps the
+// boundary from being poisoned by a write that never landed. A first commit that
+// fails must leave the state dir exactly as first use found it, so the next read
+// is still the empty registry rather than a state-loss report.
+func TestAFailedFirstCommitLeavesNeitherARegistryNorTheInitializedMarker(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("injected first-commit failure")
+	tests := []struct {
+		name   string
+		inject func(*Store)
+	}{
+		{name: "initialized marker", inject: func(store *Store) {
+			store.hooks.afterMarker = func() error { return boom }
+		}},
+		{name: "atomic replace", inject: func(store *Store) {
+			store.hooks.beforeRename = func() error { return boom }
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := testStore(t)
+			tt.inject(store)
+			mutator := testMutator(map[string]bool{"/src/projmux": true})
+			if _, err := store.Update(func(registry *coremetadata.Registry) error {
+				_, err := mutator.RegisterProject(registry, coremetadata.RegisterProjectOptions{
+					Root: "/src/projmux", DefaultShell: "/bin/zsh", OperationID: "op-first",
+				})
+				return err
+			}); !errors.Is(err, boom) {
+				t.Fatalf("Update = %v, want the injected failure", err)
+			}
+
+			if _, statErr := os.Stat(store.Path()); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("a failed first commit published a registry: %v", statErr)
+			}
+			if _, statErr := os.Stat(store.markerPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("a failed first commit left the initialized marker behind: %v", statErr)
+			}
+			assertNoStagedGarbage(t, store)
+
+			store.hooks = storeHooks{}
+			registry, err := store.LoadReadOnly()
+			if err != nil {
+				t.Fatalf("a read after a failed first commit = %v, want the empty first-use registry", err)
+			}
+			if len(registry.Projects) != 0 {
+				t.Fatalf("registry = %+v, want empty", registry)
+			}
+		})
+	}
+}
+
+// TestRegistryReadDiagnosticsAreDistinctPerFailureMode pins the four unreadable
+// states apart. They ask an operator for four different actions -- recover lost
+// state, fix a corrupt file, upgrade the binary, fix an access mode -- so
+// collapsing any two of them into one error would send the wrong repair.
+func TestRegistryReadDiagnosticsAreDistinctPerFailureMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		seed  func(t *testing.T, store *Store)
+		want  error
+		other []error
+	}{
+		{
+			name: "missing after initialization",
+			seed: func(t *testing.T, store *Store) {
+				registerProject(t, store, "/src/projmux")
+				if err := os.Remove(store.Path()); err != nil {
+					t.Fatalf("remove registry: %v", err)
+				}
+			},
+			want:  ErrRegistryStateLost,
+			other: []error{ErrMalformedRegistry, coremetadata.ErrSchemaTooNew, ErrRegistryPermission},
+		},
+		{
+			name: "malformed",
+			seed: func(t *testing.T, store *Store) {
+				writeRegistryFile(t, store, "{ this is not json")
+			},
+			want:  ErrMalformedRegistry,
+			other: []error{ErrRegistryStateLost, coremetadata.ErrSchemaTooNew, ErrRegistryPermission},
+		},
+		{
+			name: "newer schema",
+			seed: func(t *testing.T, store *Store) {
+				writeRegistryFile(t, store, fmt.Sprintf(`{"apiVersion":%q,"schemaVersion":%d}`,
+					coremetadata.APIVersion, coremetadata.SchemaVersion+1))
+			},
+			want:  coremetadata.ErrSchemaTooNew,
+			other: []error{ErrRegistryStateLost, ErrMalformedRegistry, ErrRegistryPermission},
+		},
+		{
+			name: "unreadable",
+			seed: func(t *testing.T, store *Store) {
+				if os.Geteuid() == 0 {
+					t.Skip("root bypasses the file mode, so an unreadable registry cannot be staged")
+				}
+				registerProject(t, store, "/src/projmux")
+				if err := os.Chmod(store.Path(), 0o000); err != nil {
+					t.Fatalf("chmod registry: %v", err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(store.Path(), 0o600) })
+			},
+			want:  ErrRegistryPermission,
+			other: []error{ErrRegistryStateLost, ErrMalformedRegistry, coremetadata.ErrSchemaTooNew},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := testStore(t)
+			tt.seed(t, store)
+			// LoadSnapshot is the strict route: it neither locks nor repairs
+			// permissions, so it classifies without touching anything.
+			registry, err := store.LoadSnapshot()
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("LoadSnapshot = %v, want %v", err, tt.want)
+			}
+			for _, other := range tt.other {
+				if errors.Is(err, other) {
+					t.Fatalf("%v is not distinguishable from %v", tt.want, other)
+				}
+			}
+			if len(registry.Projects) != 0 || registry.SchemaVersion != 0 {
+				t.Fatalf("a refused read answered %+v, want the zero registry", registry)
+			}
+			// No refused read may invent state: no registry, no marker, no uid.
+			if tt.want == ErrRegistryStateLost {
+				if _, statErr := os.Stat(store.Path()); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("a refused read recreated the registry: %v", statErr)
+				}
+			}
+			assertNoStagedGarbage(t, store)
+		})
+	}
+}
+
+// TestMigrationKeepsItsVersionedBackupAndTakesNoRecoveryCopy pins the parity
+// between the two copies. The pre-migration bytes already have a dedicated
+// versioned backup, so a migration must not also spend a same-version recovery
+// slot, and it must still establish the initialized boundary.
+func TestMigrationKeepsItsVersionedBackupAndTakesNoRecoveryCopy(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	writeRegistryFile(t, store, olderEnvelopeRegistry)
+	withOlderEnvelopeStep(store)
+
+	result, err := store.Migrate()
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if !result.Migrated || result.BackupPath == "" {
+		t.Fatalf("result = %+v, want a migration with a backup", result)
+	}
+	if got := readFile(t, result.BackupPath); got != olderEnvelopeRegistry {
+		t.Fatal("the versioned backup does not hold the pre-migration bytes")
+	}
+	if copies := recoveryCopies(t, store); len(copies) != 0 {
+		t.Fatalf("recovery copies = %v, want none: the versioned backup already holds the replaced bytes", copies)
+	}
+	if _, statErr := os.Stat(store.markerPath); statErr != nil {
+		t.Fatalf("a migration write did not establish the initialized marker: %v", statErr)
+	}
+	migratedBytes := readFile(t, store.Path())
+
+	// The next ordinary semantic write is back on the rolling copy path.
+	registerProject(t, store, "/src/other")
+	copies := recoveryCopies(t, store)
+	if len(copies) != 1 {
+		t.Fatalf("recovery copies = %v, want the migrated bytes", copies)
+	}
+	if got := readFile(t, filepath.Join(store.recoveryDir, copies[0])); got != migratedBytes {
+		t.Fatal("the recovery copy does not hold the post-migration bytes it replaced")
 	}
 }

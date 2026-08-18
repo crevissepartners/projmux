@@ -1459,4 +1459,126 @@ cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-registry.before-repeat" "$registry_path"
 resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-reads"
 cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.before-repeat" "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-reads"
 
+# Durable Registry envelope. registry.json is the source of truth for managed
+# identity and desired topology, so the installed shape has to tell a legitimate
+# first use apart from a lost Registry, keep the bytes every semantic write
+# replaces, and spend nothing on a convergent no-op. Every state root below lives
+# under the smoke workdir, so the operator's own state is never read or written.
+envelope_fresh_state="$PROJMUX_SMOKE_WORKDIR/envelope-fresh-state"
+mkdir -p "$envelope_fresh_state"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$envelope_fresh_state" \
+  "$bin" get projects -o json >"$PROJMUX_SMOKE_WORKDIR/envelope-fresh-get.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/envelope-fresh-get.json" '"items": []'
+if [[ -e "$envelope_fresh_state/projmux/metadata" ]]; then
+  echo "a first-use Registry read materialized $envelope_fresh_state/projmux/metadata" >&2
+  find "$envelope_fresh_state" >&2
+  exit 1
+fi
+
+envelope_metadata="$reconcile_state/projmux/metadata"
+envelope_marker="$envelope_metadata/registry.initialized"
+envelope_recovery="$envelope_metadata/recovery"
+if [[ ! -s "$envelope_marker" ]]; then
+  echo "the committed Registry has no initialized marker at $envelope_marker" >&2
+  find "$envelope_metadata" >&2
+  exit 1
+fi
+if [[ "$(stat -c '%a' "$envelope_metadata")" != "700" ]] ||
+  [[ "$(stat -c '%a' "$registry_path")" != "600" ]] ||
+  [[ "$(stat -c '%a' "$envelope_marker")" != "600" ]]; then
+  echo "durable envelope permissions: dir=$(stat -c '%a' "$envelope_metadata") registry=$(stat -c '%a' "$registry_path") marker=$(stat -c '%a' "$envelope_marker")" >&2
+  exit 1
+fi
+
+# Seven semantic writes take one recovery copy each, bounded at five retained.
+for envelope_write in 1 2 3 4 5 6 7; do
+  cp "$registry_path" "$PROJMUX_SMOKE_WORKDIR/envelope-before-$envelope_write"
+  PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$primary_tmux_env" \
+    "$bin" rename project "uid:$primary_project_uid" --name "envelope-$envelope_write" \
+    >"$PROJMUX_SMOKE_WORKDIR/envelope-rename-$envelope_write.out"
+done
+mapfile -t envelope_copies < <(find "$envelope_recovery" -maxdepth 1 -type f -name 'registry-*.json' -printf '%f\n' | sort)
+if [[ "${#envelope_copies[@]}" != 5 ]]; then
+  echo "recovery copies = ${#envelope_copies[@]} (${envelope_copies[*]}), want the bounded 5" >&2
+  exit 1
+fi
+# Copy names sort chronologically, so the retained window is the newest five and
+# the ends of it are the bytes the third and the seventh write replaced.
+cmp "$PROJMUX_SMOKE_WORKDIR/envelope-before-3" "$envelope_recovery/${envelope_copies[0]}"
+cmp "$PROJMUX_SMOKE_WORKDIR/envelope-before-7" "$envelope_recovery/${envelope_copies[4]}"
+if [[ "$(stat -c '%a' "$envelope_recovery")" != "700" ]]; then
+  echo "recovery dir mode = $(stat -c '%a' "$envelope_recovery"), want 700" >&2
+  exit 1
+fi
+for envelope_copy in "${envelope_copies[@]}"; do
+  if [[ "$(stat -c '%a' "$envelope_recovery/$envelope_copy")" != "600" ]]; then
+    echo "recovery copy $envelope_copy mode = $(stat -c '%a' "$envelope_recovery/$envelope_copy"), want 600" >&2
+    exit 1
+  fi
+done
+if find "$envelope_metadata" "$envelope_recovery" -maxdepth 1 -name '*.tmp-*' -print -quit | grep -q .; then
+  echo "the durable envelope leaked a staged temp file" >&2
+  find "$envelope_metadata" >&2
+  exit 1
+fi
+
+# A convergent no-op replaces neither the Registry nor a recovery slot.
+envelope_registry_before="$(stat -c '%i %s %y' "$registry_path")"
+envelope_marker_before="$(stat -c '%i %s %y' "$envelope_marker")"
+envelope_copies_before="$(find "$envelope_recovery" -maxdepth 1 -type f -name 'registry-*.json' -printf '%f\n' | sort)"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile resources --socket "$PROJMUX_RECONCILE_PRIMARY_SOCKET" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/envelope-noop.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/envelope-noop.json" '"outcome": "no-op"'
+if [[ "$(stat -c '%i %s %y' "$registry_path")" != "$envelope_registry_before" ]] ||
+  [[ "$(stat -c '%i %s %y' "$envelope_marker")" != "$envelope_marker_before" ]] ||
+  [[ "$(find "$envelope_recovery" -maxdepth 1 -type f -name 'registry-*.json' -printf '%f\n' | sort)" != "$envelope_copies_before" ]]; then
+  echo "a convergent no-op touched the durable envelope" >&2
+  exit 1
+fi
+
+# Losing only registry.json is a typed diagnostic, not an empty first use, and
+# neither reads nor mutations recreate state on top of the loss.
+rm "$registry_path"
+set +e
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" get projects -o json >"$PROJMUX_SMOKE_WORKDIR/envelope-loss.out" 2>"$PROJMUX_SMOKE_WORKDIR/envelope-loss.err"
+envelope_loss_status=$?
+set -e
+if [[ "$envelope_loss_status" == "0" ]] || [[ -s "$PROJMUX_SMOKE_WORKDIR/envelope-loss.out" ]]; then
+  echo "a lost Registry read as a first use: status=$envelope_loss_status" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/envelope-loss.out" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/envelope-loss.err" 'resource registry is missing after initialization'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/envelope-loss.err" "$envelope_recovery"
+set +e
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$primary_tmux_env" \
+  "$bin" rename project "uid:$primary_project_uid" --name envelope-after-loss \
+  >"$PROJMUX_SMOKE_WORKDIR/envelope-loss-mutation.out" 2>"$PROJMUX_SMOKE_WORKDIR/envelope-loss-mutation.err"
+envelope_mutation_status=$?
+set -e
+if [[ "$envelope_mutation_status" == "0" ]] || [[ -e "$registry_path" ]]; then
+  echo "a mutation after Registry loss minted state instead of refusing: status=$envelope_mutation_status" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/envelope-loss-mutation.err" 'resource registry is missing after initialization'
+if [[ "$(find "$envelope_recovery" -maxdepth 1 -type f -name 'registry-*.json' -printf '%f\n' | sort)" != "$envelope_copies_before" ]]; then
+  echo "a refused route changed the recovery copies" >&2
+  exit 1
+fi
+
+# The remedy the diagnostic names: without the marker the same state dir is a
+# first use again, so an operator who accepts the loss is not stuck.
+rm "$envelope_marker"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" get projects -o json >"$PROJMUX_SMOKE_WORKDIR/envelope-after-marker-removal.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/envelope-after-marker-removal.json" '"items": []'
+if [[ -e "$registry_path" ]]; then
+  echo "a first-use read after marker removal recreated the Registry" >&2
+  exit 1
+fi
+
+echo ">> durable registry envelope root=$reconcile_state retained_copies=${#envelope_copies[@]} guard=passed"
+
 echo ">> lifecycle smoke root=$PROJMUX_SMOKE_WORKDIR actual_socket=$PROJMUX_SMOKE_TMUX_ACTUAL guard=passed"
