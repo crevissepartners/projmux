@@ -227,7 +227,7 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 		"'/tmp/projmux' 'switch' 'sidebar-open'",
 		"'--path' " + tmuxShellQuote(target),
 		"'--session' 'target'",
-		"'--mode' 'empty'",
+		"'--mode' 'topology'",
 		"'--client' '/dev/pts/9'",
 	} {
 		if !strings.Contains(command, want) {
@@ -254,7 +254,7 @@ func TestSwitchExecuteSidebarTrustDenyRefreshesWithoutSessionCreate(t *testing.T
 	err := cmd.runSidebarOpen([]string{
 		"--path", target,
 		"--session", "target",
-		"--mode", projectStartupKindEmpty,
+		"--mode", projectStartupKindTopology,
 		"--query", "tar",
 		"--client", "/dev/pts/9",
 	}, &bytes.Buffer{})
@@ -305,7 +305,7 @@ func TestSwitchSidebarOpenApproveContinuesSelectedEmptyOpen(t *testing.T) {
 	err := cmd.runSidebarOpen([]string{
 		"--path", target,
 		"--session", "target",
-		"--mode", projectStartupKindEmpty,
+		"--mode", projectStartupKindTopology,
 		"--client", "/dev/pts/9",
 	}, &bytes.Buffer{})
 	if err != nil {
@@ -351,7 +351,7 @@ func TestSwitchSidebarOpenTrustPopupUsesClientScope(t *testing.T) {
 	err := cmd.runSidebarOpen([]string{
 		"--path", target,
 		"--session", "target",
-		"--mode", projectStartupKindEmpty,
+		"--mode", projectStartupKindTopology,
 		"--client", "/dev/pts/9",
 	}, &bytes.Buffer{})
 	if err != nil {
@@ -1082,7 +1082,7 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 	executor := &capturingSwitchSessionExecutor{}
 	runner, native := scriptedPicker(t, []pickerStep{
 		{observe: func(o intpickercompat.Options) { startupOptions = o },
-			reply: intpickercompat.Result{Value: projectStartupValueEmpty}},
+			reply: intpickercompat.Result{Value: projectStartupValueTopology}},
 	})
 	cmd := &switchCommand{
 		sessions: executor,
@@ -1110,7 +1110,7 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 	}
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Latest snapshot")
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Named snapshot")
-	requireSwitchEntryLabel(t, startupOptions.Entries, "Empty session")
+	requireSwitchEntryLabel(t, startupOptions.Entries, "Project topology")
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Back")
 	requireSwitchNoPrimaryLayoutPresetLabels(t, startupOptions.Entries)
 	requireSwitchEntryLabel(t, startupOptions.Entries, "2026-05-13 12:00:00")
@@ -1118,7 +1118,7 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 	requireSwitchEntryValueOrder(t, startupOptions.Entries, []string{
 		projectStartupValueLatest,
 		projectStartupValueNamed + "team",
-		projectStartupValueEmpty,
+		projectStartupValueTopology,
 		settingsBackValue,
 	})
 	if got, want := executor.ensureSessionName, "workspace"; got != want {
@@ -1223,9 +1223,9 @@ func TestProjectStartupPickerLabelStateColors(t *testing.T) {
 			wantColor: settingsColorType,
 		},
 		{
-			name:      "empty session back tone",
-			candidate: projectStartupCandidate{Kind: projectStartupKindEmpty, Description: "start without restoring"},
-			wantColor: settingsColorBack,
+			name:      "project topology start action",
+			candidate: projectStartupCandidate{Kind: projectStartupKindTopology, Description: projectTopologyStartupDescription},
+			wantColor: settingsColorType,
 		},
 		{
 			name:      "back row secondary tone",
@@ -1690,7 +1690,11 @@ func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndCreate(t *te
 	}
 }
 
-func TestSwitchProjectOpenEmptySelectionChecksTrustAfterStartupSelection(t *testing.T) {
+// TestSwitchProjectOpenLegacyEmptyValueChecksTrustAfterStartupSelection pins the
+// retired `empty` picker value: it still resolves to the topology start rather
+// than an unknown mode, so a continuation launched across an upgrade keeps
+// working and the trust gate still runs after the startup selection.
+func TestSwitchProjectOpenLegacyEmptyValueChecksTrustAfterStartupSelection(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -1699,7 +1703,7 @@ func TestSwitchProjectOpenEmptySelectionChecksTrustAfterStartupSelection(t *test
 	runner, native := scriptedPicker(t, []pickerStep{
 		{observe: func(intpickercompat.Options) {
 			if executor.authorizeCalled {
-				t.Fatal("trust gate ran before empty startup selection")
+				t.Fatal("trust gate ran before topology startup selection")
 			}
 		}, reply: intpickercompat.Result{Value: projectStartupValueEmpty}},
 	})

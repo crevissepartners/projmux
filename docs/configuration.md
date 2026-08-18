@@ -699,10 +699,12 @@ override with `inherit`, `on`, and `off`; `inherit` follows the global value,
 while `on` and `off` take precedence. Auto-save only updates the latest
 snapshot. Named snapshots are manual and are never updated by auto-save.
 
-Project open from the Alt-1 sidebar defaults to opening a closed project as an
-`Empty session`. The optional `Settings > Session State > Sidebar startup
-picker` toggle enables the native sidebar `Start project` step. Rows appear as `Latest
-snapshot`, named snapshot rows, `Empty session`, and `Back`. `Latest snapshot`
+Project open from the Alt-1 sidebar defaults to opening a closed project as its
+`Project topology`, which materializes every Registry Window and Window-owned
+shell Pane of that project before the client moves. The optional `Settings >
+Session State > Sidebar startup picker` toggle enables the native sidebar `Start
+project` step. Rows appear as `Latest snapshot`, named snapshot rows, `Project
+topology`, and `Back`. `Latest snapshot`
 is the snapshot auto-save that changes as auto-save runs; named snapshots are
 fixed snapshots. Rows include saved-at date/time metadata when projmux can
 determine it. `Back` returns to the project list without creating, replaying, or

@@ -4,26 +4,39 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 const (
-	projectStartupKindLatest = "latest"
-	projectStartupKindNamed  = "named"
-	projectStartupKindEmpty  = "empty"
-	projectStartupKindBack   = "back"
+	projectStartupKindLatest   = "latest"
+	projectStartupKindNamed    = "named"
+	projectStartupKindTopology = "topology"
+	projectStartupKindBack     = "back"
 
-	projectStartupValueLatest = "latest"
-	projectStartupValueEmpty  = "empty"
-	projectStartupValueNamed  = "named:"
+	projectStartupValueLatest   = "latest"
+	projectStartupValueTopology = "topology"
+	projectStartupValueNamed    = "named:"
+
+	// projectStartupValueEmpty is the retired spelling of the non-snapshot start
+	// row. It is still accepted on the internal sidebar-open transport so a
+	// re-exec that straddles an upgrade keeps working; it resolves to the
+	// topology start, which is what the row always claimed to be doing.
+	projectStartupValueEmpty = "empty"
+
+	// projectTopologyStartupDescription is the one description shared by the
+	// startup picker row and the Settings choice, so the two cannot drift.
+	projectTopologyStartupDescription = "restore every saved Window and shell Pane"
 )
 
 var errProjectStartupBack = errors.New("project startup back")
@@ -68,7 +81,7 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 	if exists {
 		return c.openProjectSession(ctx, sessionName)
 	}
-	mode := projectStartupCandidate{Kind: projectStartupKindEmpty}
+	mode := projectStartupCandidate{Kind: projectStartupKindTopology}
 	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
 		mode = c.pickProjectStartupMode(sessionName, target)
 	}
@@ -131,7 +144,7 @@ func (c *switchCommand) continueProjectOpen(ctx context.Context, target, session
 		}
 		return c.restoreProjectNamedSnapshot(ctx, sessionName, target, *layoutArtifact)
 	default:
-		return diagnostics.SessionStateCounts{}, c.ensureAndOpenProjectSession(ctx, sessionName, target)
+		return diagnostics.SessionStateCounts{}, c.materializeAndOpenProjectTopology(ctx, sessionName, target)
 	}
 }
 
@@ -158,16 +171,16 @@ func (c *switchCommand) authorizeProjectLayout(ctx context.Context, target strin
 func (c *switchCommand) pickProjectStartupMode(sessionName, target string) projectStartupCandidate {
 	candidates := c.projectStartupCandidates(sessionName, target)
 	if len(candidates) == 0 {
-		return projectStartupCandidate{Kind: projectStartupKindEmpty}
+		return projectStartupCandidate{Kind: projectStartupKindTopology}
 	}
 	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, projectStartupPickerOptions(candidates))
 	if err != nil {
-		return projectStartupCandidate{Kind: projectStartupKindEmpty}
+		return projectStartupCandidate{Kind: projectStartupKindTopology}
 	}
 	if candidate, ok := projectStartupCandidateFromValue(result.Value); ok {
 		return candidate
 	}
-	return projectStartupCandidate{Kind: projectStartupKindEmpty}
+	return projectStartupCandidate{Kind: projectStartupKindTopology}
 }
 
 func (c *switchCommand) projectStartupCandidates(sessionName, target string) []projectStartupCandidate {
@@ -194,18 +207,21 @@ func (c *switchCommand) projectStartupCandidates(sessionName, target string) []p
 		}
 	}
 	if len(candidates) == 0 {
-		return []projectStartupCandidate{emptyProjectStartupCandidate(), backProjectStartupCandidate()}
+		return []projectStartupCandidate{topologyProjectStartupCandidate(), backProjectStartupCandidate()}
 	}
-	candidates = append(candidates, emptyProjectStartupCandidate())
+	candidates = append(candidates, topologyProjectStartupCandidate())
 	candidates = append(candidates, backProjectStartupCandidate())
 	return candidates
 }
 
-func emptyProjectStartupCandidate() projectStartupCandidate {
+// topologyProjectStartupCandidate is the non-snapshot start row. It materializes
+// the Project's own Registry Window and shell Pane topology, so it is a start
+// action rather than the `Empty session` it used to advertise.
+func topologyProjectStartupCandidate() projectStartupCandidate {
 	return projectStartupCandidate{
-		Kind:        projectStartupKindEmpty,
-		Label:       "Empty session",
-		Description: "start without restoring a snapshot",
+		Kind:        projectStartupKindTopology,
+		Label:       "Project topology",
+		Description: projectTopologyStartupDescription,
 	}
 }
 
@@ -272,7 +288,7 @@ func projectStartupPickerOptions(candidates []projectStartupCandidate) intpicker
 		UI:            "project-startup",
 		Prompt:        settingsCatalogText("Start project > "),
 		Header:        settingsCatalogText("Start project"),
-		Footer:        projmuxFooter("Enter: start  |  Back row: projects  |  Esc: empty session"),
+		Footer:        projmuxFooter("Enter: start  |  Back row: projects  |  Esc: Project topology"),
 		Entries:       entries,
 		Bindings:      settingsCloseBindings(),
 		DisableSearch: true,
@@ -285,8 +301,8 @@ func projectStartupPickerLabel(candidate projectStartupCandidate) string {
 		return settingsLabel(settingsGlyphOpen, settingsColorType, "Latest snapshot", candidate.Description)
 	case projectStartupKindNamed:
 		return settingsLabel(settingsGlyphOpen, settingsColorType, "Named snapshot", candidate.Description)
-	case projectStartupKindEmpty:
-		return settingsLabel(settingsGlyphBack, settingsColorBack, "Empty session", candidate.Description)
+	case projectStartupKindTopology:
+		return settingsLabel(settingsGlyphOpen, settingsColorType, "Project topology", candidate.Description)
 	case projectStartupKindBack:
 		return settingsLabel(settingsGlyphBack, settingsColorBack, "Back", candidate.Description)
 	default:
@@ -300,8 +316,8 @@ func projectStartupPickerValue(candidate projectStartupCandidate) string {
 		return projectStartupValueLatest
 	case projectStartupKindNamed:
 		return projectStartupValueNamed + candidate.Name
-	case projectStartupKindEmpty:
-		return projectStartupValueEmpty
+	case projectStartupKindTopology:
+		return projectStartupValueTopology
 	case projectStartupKindBack:
 		return settingsBackValue
 	default:
@@ -314,8 +330,8 @@ func projectStartupCandidateFromValue(value string) (projectStartupCandidate, bo
 	switch {
 	case value == projectStartupValueLatest:
 		return projectStartupCandidate{Kind: projectStartupKindLatest}, true
-	case value == projectStartupValueEmpty:
-		return projectStartupCandidate{Kind: projectStartupKindEmpty}, true
+	case value == projectStartupValueTopology, value == projectStartupValueEmpty:
+		return projectStartupCandidate{Kind: projectStartupKindTopology}, true
 	case value == settingsBackValue:
 		return projectStartupCandidate{Kind: projectStartupKindBack}, true
 	case strings.HasPrefix(value, projectStartupValueNamed):
@@ -395,4 +411,130 @@ func (c *switchCommand) projectStartupSessionStateStore() (sessionstate.Store, e
 
 func (c *switchCommand) projectStartupNow() time.Time {
 	return time.Now()
+}
+
+// switchProjectTopologyMaterializer is the closed-Project activation seam.
+//
+// A `false, nil` result means the exact Project root declares no Registry
+// desired topology -- an unregistered directory, or a Project with no Registry
+// Window -- which is the ordinary case for a first open and keeps the historic
+// `EnsureSession` behavior. Everything else is an error: a refusal, a failed
+// preflight, and a rolled-back partial materialization all reach the caller as
+// one, so the client is never moved into a session the topology never reached.
+type switchProjectTopologyMaterializer interface {
+	MaterializeProjectTopology(ctx context.Context, root, sessionName string) (bool, error)
+}
+
+// materializeAndOpenProjectTopology is the non-snapshot closed-Project start.
+// The client move is strictly last: materialization either converges the whole
+// declared shell topology or fails without an open.
+func (c *switchCommand) materializeAndOpenProjectTopology(ctx context.Context, sessionName, target string) error {
+	if c.projectTopology != nil {
+		materialized, err := c.projectTopology.MaterializeProjectTopology(ctx, target, sessionName)
+		if err != nil {
+			return fmt.Errorf("materialize Registry topology for session %q: %w", sessionName, err)
+		}
+		if materialized {
+			return c.openProjectSession(ctx, sessionName)
+		}
+	}
+	return c.ensureAndOpenProjectSession(ctx, sessionName, target)
+}
+
+// registryProjectTopologyMaterializer runs closed-Project activation through the
+// same exact-socket engine `reconcile resources --materialize-project` uses, so
+// the ownership, rollback, no-stored-command, and no-Agent-autostart contract has
+// one implementation rather than a startup-flavored copy.
+type registryProjectTopologyMaterializer struct {
+	resources       *resourceStore
+	runner          tmuxCommandRunner
+	target          explicitTmuxTarget
+	newReconciler   func(tmuxCommandRunner, sessionLister) *registryReconciler
+	newOperationID  func() (string, error)
+	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
+	warn            io.Writer
+}
+
+// newRegistryProjectTopologyMaterializer binds activation to the app's own
+// `-L projmux` socket. Startup never infers a socket from an inherited client,
+// which is the same exact-target rule the reconcile and delete routes follow.
+func newRegistryProjectTopologyMaterializer() *registryProjectTopologyMaterializer {
+	target, err := tmuxSocketNameTarget(defaultAppSocket)
+	if err != nil {
+		panic(err)
+	}
+	return &registryProjectTopologyMaterializer{
+		resources: newResourceStore(),
+		runner:    inttmux.ExecRunner{},
+		target:    target,
+		warn:      io.Discard,
+	}
+}
+
+func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx context.Context, root, sessionName string) (bool, error) {
+	root, sessionName = strings.TrimSpace(root), strings.TrimSpace(sessionName)
+	if m == nil || m.resources == nil || root == "" || sessionName == "" {
+		return false, nil
+	}
+	projectRef, ok, err := m.desiredTopologyRef(root)
+	if err != nil || !ok {
+		return false, err
+	}
+	planner := resourceReconcilePlanner{
+		reader:             explicitTmuxRunner{runner: m.runner, target: m.target},
+		store:              m.resources,
+		newReconciler:      m.newReconciler,
+		materializeProject: projectRef,
+		materializeSession: sessionName,
+		exactTarget:        m.target,
+	}
+	run := topologyMaterializeRun{
+		resources:       m.resources,
+		runner:          m.runner,
+		target:          m.target,
+		newOperationID:  m.newOperationID,
+		newMaterializer: m.newMaterializer,
+	}
+	warn := m.warn
+	if warn == nil {
+		warn = io.Discard
+	}
+	outcome, err := run.execute(ctx, planner, warn)
+	if err != nil {
+		stage := outcome.failedStage
+		if stage == "" {
+			stage = "topology activation"
+		}
+		return false, fmt.Errorf("%s: %w", stage, MapMetadataError(err))
+	}
+	return true, nil
+}
+
+// desiredTopologyRef resolves the exact Project selector for a root that declares
+// Registry topology.
+//
+// The read is the zero-write snapshot read on purpose: opening a directory that
+// was never registered must not create the Registry state directory, so an
+// absent Registry and a Project with no Registry Window both answer "nothing to
+// materialize" rather than failing the open.
+func (m *registryProjectTopologyMaterializer) desiredTopologyRef(root string) (string, bool, error) {
+	read := m.resources.snapshot
+	if read == nil {
+		read = m.resources.load
+	}
+	if read == nil {
+		return "", false, nil
+	}
+	registry, err := read()
+	if err != nil {
+		return "", false, MapMetadataError(err)
+	}
+	project, ok := registry.ProjectByRoot(root)
+	if !ok {
+		return "", false, nil
+	}
+	if len(registry.WindowsOf(project.Metadata.UID)) == 0 {
+		return "", false, nil
+	}
+	return selector.UIDPrefix + project.Metadata.UID, true, nil
 }

@@ -97,16 +97,23 @@ existing or non-empty live sessions.
 Named snapshots may currently be backed by legacy project files in
 `<project>/.projmux/layouts/*.toml`. They reuse the same window, pane, cwd, and
 startup recipe concepts as session snapshots, but the user-facing restore model
-is still `Latest snapshot`, `Named snapshot`, or `Empty session`. The legacy
+is still `Latest snapshot`, `Named snapshot`, or `Project topology`. The legacy
 files are imported read-only by Project open
 when building `Named snapshot` candidates; new primary surfaces should describe
 the restore unit as a snapshot, not as a separate layout or preset feature.
 
-Project open from the Alt-1 sidebar defaults to opening a closed project as an
-`Empty session`. `Settings > Session State > Sidebar startup picker` is an opt-in toggle;
+Project open from the Alt-1 sidebar defaults to opening a closed project as its
+`Project topology`: the same explicit Registry materialization engine the public
+`reconcile resources --materialize-project` route uses rebuilds every Registry
+Window and Window-owned shell Pane under their existing uids, and the client
+moves only after that converges. A refusal or failure reports the exact stage and
+leaves the client where it was. A directory with no Registry Project, and a
+Project with no Registry Window, still start as a single default session.
+`Settings > Session State > Sidebar startup picker` is an opt-in toggle;
 when it is on, closed project open advances inside the sidebar to the native
 `Start project` step. Rows are ordered `Latest snapshot`, named snapshot rows,
-`Empty session`, then `Back`. `Latest snapshot` is the auto-saved snapshot that
+`Project topology`, then `Back`; a snapshot row stays entirely on the snapshot
+engine, so the two sources are never mixed in one open. `Latest snapshot` is the auto-saved snapshot that
 keeps changing as auto-save runs. `Named snapshot` is a fixed, user-named
 snapshot and is not updated by auto-save. Rows include saved-at date/time
 metadata when available. `Back` returns to the project list without creating,
@@ -136,7 +143,7 @@ Default `projmux shell` no longer opens a compatibility startup picker and no
 longer accepts startup selector flags for snapshot restore. It always
 follows the normal empty attach path after resolving the target app session name
 and startup directory. Use `Settings > Session State > Sidebar startup picker` for
-interactive Latest snapshot / Named snapshot / Empty session selection.
+interactive Latest snapshot / Named snapshot / Project topology selection.
 
 ## Operational diagnostics
 

@@ -134,6 +134,7 @@ type switchCommand struct {
 	focusSession            string
 	sidebarResume           switchSidebarResume
 	cleanupKilledSession    func(string)
+	projectTopology         switchProjectTopologyMaterializer
 }
 
 type switchPlan struct {
@@ -187,6 +188,10 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		loadWorkdirs:  config.LoadWorkdirs,
 		tmuxProjdir:   tmuxProjdirOption,
 		nativePicker:  intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		// Closed-Project activation reuses the explicit Registry topology engine
+		// on the app's own exact socket. It is wired here rather than resolved
+		// lazily so a project open never picks a socket from an inherited client.
+		projectTopology: newRegistryProjectTopologyMaterializer(),
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)
@@ -1576,7 +1581,7 @@ func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, pl
 		c.commitSidebarPreview(ctx)
 		return nil
 	}
-	mode := projectStartupCandidate{Kind: projectStartupKindEmpty}
+	mode := projectStartupCandidate{Kind: projectStartupKindTopology}
 	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
 		mode = c.pickProjectStartupMode(sessionName, target)
 	}
@@ -1650,7 +1655,7 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	target := fs.String("path", "", "project path to open")
 	sessionName := fs.String("session", "", "target session name")
-	mode := fs.String("mode", projectStartupKindEmpty, "startup mode")
+	mode := fs.String("mode", projectStartupKindTopology, "startup mode")
 	name := fs.String("name", "", "named snapshot name")
 	query := fs.String("query", "", "sidebar query to restore on deny")
 	client := fs.String("client", "", "tmux client to restore sidebar popup")
@@ -1679,8 +1684,11 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	}
 	c.closeSidebarPopupForTrust(context.Background(), targetClient)
 	openMode := projectStartupCandidate{Kind: strings.TrimSpace(*mode), Name: strings.TrimSpace(*name)}
-	if openMode.Kind == "" {
-		openMode.Kind = projectStartupKindEmpty
+	// The retired `empty` spelling is still accepted here: this route is the
+	// re-exec transport, so a continuation launched by the previous binary must
+	// resolve to the topology start it always described.
+	if openMode.Kind == "" || openMode.Kind == projectStartupValueEmpty {
+		openMode.Kind = projectStartupKindTopology
 	}
 	exists, err := c.switchSessionExists(context.Background(), openSession)
 	if err != nil {

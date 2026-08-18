@@ -2926,3 +2926,283 @@ fi
 topology_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Registry topology materialization e2e passed: socket=$topology_socket path=$topology_socket_path other-socket=$topology_other_socket other-path=$topology_other_socket_path cleanup=validated-exact-sockets"
+
+# Closed Project topology startup parity gets its own exact two-socket
+# environment and its own real attached tmux client. Opening a closed Project is
+# an explicit activation, so this section drives the installed `switch open`
+# route from inside a client rather than calling the reconcile CLI: the client
+# move is the half that only a real client can prove.
+startup_root="$PROJMUX_SMOKE_WORKDIR/topology-startup"
+startup_socket="projmux-startup-$RANDOM-$$"
+startup_other_socket="projmux-startup-other-$RANDOM-$$"
+startup_driver="startup-driver"
+# The namer derives the session name from <parent>-<base> of the Project root, so
+# the fixture session must be named exactly what a later `switch open` resolves.
+startup_session="work-alpha"
+mkdir -p \
+  "$startup_root/home" \
+  "$startup_root/config" \
+  "$startup_root/state" \
+  "$startup_root/runtime" \
+  "$startup_root/tmux" \
+  "$startup_root/work/alpha" \
+  "$startup_root/shim" \
+  "$startup_root/bin"
+chmod 0700 "$startup_root/runtime" "$startup_root/tmux"
+startup_project="$startup_root/work/alpha"
+
+# A detached pane running the container's default shell exits immediately, which
+# would destroy every materialized Pane before it could be observed.
+startup_shell="$startup_root/shim/persistent-shell"
+cat >"$startup_shell" <<'STARTUP_SHELL_STUB'
+#!/usr/bin/env bash
+exec sleep 600
+STARTUP_SHELL_STUB
+chmod 0755 "$startup_shell"
+
+startup_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$startup_root/home" \
+    XDG_CONFIG_HOME="$startup_root/config" \
+    XDG_STATE_HOME="$startup_root/state" \
+    XDG_RUNTIME_DIR="$startup_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$startup_root/work" \
+    TMUX_TMPDIR="$startup_root/tmux" \
+    SHELL="$startup_shell" \
+    tmux -L "$startup_socket" "$@"
+}
+
+startup_other_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$startup_root/home" \
+    XDG_CONFIG_HOME="$startup_root/config" \
+    XDG_STATE_HOME="$startup_root/state" \
+    XDG_RUNTIME_DIR="$startup_root/runtime" \
+    TMUX_TMPDIR="$startup_root/tmux" \
+    SHELL="$startup_shell" \
+    tmux -L "$startup_other_socket" "$@"
+}
+
+startup_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$startup_root/home" \
+    XDG_CONFIG_HOME="$startup_root/config" \
+    XDG_STATE_HOME="$startup_root/state" \
+    XDG_RUNTIME_DIR="$startup_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$startup_root/work" \
+    TMUX_TMPDIR="$startup_root/tmux" \
+    SHELL="$startup_shell" \
+    "$bin" "$@"
+}
+
+# `switch open` resolves the app socket by its default name, exactly as the
+# installed build does. A minimal shim maps that one default `-L projmux` route
+# onto this smoke socket; every explicit -L/-S call passes through untouched.
+startup_real_tmux="$(command -v tmux)"
+cat >"$startup_root/bin/tmux" <<STARTUP_TMUX_SHIM
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-L" && "\${2:-}" == "projmux" ]]; then
+  shift 2
+  exec $(printf %q "$startup_real_tmux") -L $(printf %q "$startup_socket") "\$@"
+fi
+if [[ "\${1:-}" == "-L" || "\${1:-}" == "-S" ]]; then
+  exec $(printf %q "$startup_real_tmux") "\$@"
+fi
+exec $(printf %q "$startup_real_tmux") -L $(printf %q "$startup_socket") "\$@"
+STARTUP_TMUX_SHIM
+chmod 0755 "$startup_root/bin/tmux"
+
+# The open runs from inside the attached client's pane so `$TMUX`/`$TMUX_PANE`
+# are the real inherited client state: that is the only way the switch-client
+# half of the contract is exercised rather than simulated.
+cat >"$startup_root/open-project.sh" <<STARTUP_OPEN_SCRIPT
+#!/usr/bin/env bash
+export HOME="$startup_root/home"
+export XDG_CONFIG_HOME="$startup_root/config"
+export XDG_STATE_HOME="$startup_root/state"
+export XDG_RUNTIME_DIR="$startup_root/runtime"
+export PROJMUX_MANAGED_ROOTS="$startup_root/work"
+export TMUX_TMPDIR="$startup_root/tmux"
+export SHELL="$startup_shell"
+export PATH="$startup_root/bin:\$PATH"
+$(printf %q "$bin") switch open "\$1" >"$startup_root/open-\$2.out" 2>"$startup_root/open-\$2.err"
+echo \$? >"$startup_root/open-\$2.rc"
+STARTUP_OPEN_SCRIPT
+chmod 0755 "$startup_root/open-project.sh"
+
+startup_tmux new-session -d -s "$startup_session" -n main -c "$startup_project" sleep 600
+startup_tmux set-option -t "$startup_session" -q @projmux_project_path "$startup_project"
+startup_tmux new-session -d -s "$startup_driver" -c "$startup_root" bash --noprofile --norc
+startup_other_tmux new-session -d -s untouched -c "$startup_root" sleep 600
+startup_other_tmux set-option -gq @projmux_startup_sentinel unchanged
+
+startup_socket_path="$(startup_tmux display-message -p -t "$startup_session" '#{socket_path}')"
+startup_socket_pid="$(startup_tmux display-message -p -t "$startup_session" '#{pid}')"
+startup_other_socket_path="$(startup_other_tmux display-message -p -t untouched '#{socket_path}')"
+for actual in "$startup_socket_path" "$startup_other_socket_path"; do
+  case "$actual" in
+    "$startup_root"/*) ;;
+    *)
+      echo "startup e2e socket escaped smoke root: $actual" >&2
+      exit 1
+      ;;
+  esac
+done
+
+startup_live_pmx() {
+  env -u TMUX_PANE \
+    HOME="$startup_root/home" \
+    XDG_CONFIG_HOME="$startup_root/config" \
+    XDG_STATE_HOME="$startup_root/state" \
+    XDG_RUNTIME_DIR="$startup_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$startup_root/work" \
+    TMUX_TMPDIR="$startup_root/tmux" \
+    TMUX="$startup_socket_path,$startup_socket_pid,0" \
+    SHELL="$startup_shell" \
+    "$bin" "$@"
+}
+
+startup_cleanup() {
+  local socket actual
+  for socket in "$startup_socket" "$startup_other_socket"; do
+    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$startup_root/tmux" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+    if [[ -z "$actual" ]]; then
+      continue
+    fi
+    case "$actual" in
+      "$startup_root"/*) env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true ;;
+      *) echo "refusing startup cleanup outside smoke root: $actual" >&2 ;;
+    esac
+  done
+}
+trap 'startup_cleanup; smoke_cleanup_env' EXIT
+
+startup_pmx internal tmux apply --bin "$bin" --config "$startup_root/config/projmux/tmux.conf" --socket "$startup_socket" >"$startup_root/apply.out"
+startup_pmx reconcile resources --socket "$startup_socket" >"$startup_root/import.out"
+
+startup_project_uid="$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)"
+if [[ -z "$startup_project_uid" ]]; then
+  echo "startup e2e import left the Project uid empty" >&2
+  exit 1
+fi
+# The stored command is a one-time name seed. A startup that executed it would
+# show up as a non-empty pane_start_command on the recreated Pane below.
+startup_live_pmx create window --project "uid:$startup_project_uid" --name review >"$startup_root/create-window.out"
+startup_live_pmx create pane --project "uid:$startup_project_uid" --window review --placement right -o pane-id -- sleep 600 >"$startup_root/create-pane.out"
+
+startup_window_uids="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)"
+startup_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
+if [[ "$(printf '%s\n' "$startup_window_uids" | wc -l)" != "2" ]] || [[ "$(printf '%s\n' "$startup_pane_uids" | wc -l)" != "3" ]]; then
+  echo "startup e2e fixture did not build two Windows and three shell Panes" >&2
+  printf 'windows=%s panes=%s\n' "$startup_window_uids" "$startup_pane_uids" >&2
+  exit 1
+fi
+startup_other_before="$(startup_other_tmux show-options -gqv @projmux_startup_sentinel):$(startup_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+
+# Attach a real client to the driver session. `switch open` runs inside its pane,
+# so the client move is a real switch-client on the same exact server.
+startup_client_log="$startup_root/driver-client.log"
+startup_client_input="$startup_root/driver-client.in"
+mkfifo "$startup_client_input"
+exec 8<>"$startup_client_input"
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' attach-session -t '$startup_driver'" \
+  "$startup_client_log" <"$startup_client_input" >/dev/null 2>&1 &
+startup_client_pid=$!
+
+startup_wait_for() {
+  local description="$1"
+  shift
+  for _ in {1..200}; do
+    if "$@"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for $description" >&2
+  tail -c 8000 "$startup_client_log" >&2 || true
+  return 1
+}
+
+startup_wait_for "attached startup tmux client" sh -c \
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+startup_client="$(startup_tmux list-clients -F '#{client_name}' | head -n 1)"
+startup_driver_pane="$(startup_tmux display-message -p -c "$startup_client" '#{pane_id}')"
+
+# 1. The Project is closed. Opening it must materialize the whole declared shell
+# topology under the stored uids and only then move the client.
+startup_tmux kill-session -t "$startup_session"
+if startup_tmux has-session -t "$startup_session" 2>/dev/null; then
+  echo "startup e2e could not close the Project session" >&2
+  exit 1
+fi
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-project.sh' '$startup_project' topology" Enter
+startup_wait_for "closed Project topology open" test -s "$startup_root/open-topology.rc"
+if [[ "$(tr -d '[:space:]' <"$startup_root/open-topology.rc")" != "0" ]]; then
+  echo "closed Project topology open failed" >&2
+  cat "$startup_root/open-topology.err" >&2 || true
+  exit 1
+fi
+
+startup_window_uids_after="$(startup_tmux list-windows -t "$startup_session" -F '#{@projmux_window_uid}' | sort)"
+startup_pane_uids_after="$(startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' | sort)"
+if [[ "$startup_window_uids_after" != "$startup_window_uids" ]] || [[ "$startup_pane_uids_after" != "$startup_pane_uids" ]]; then
+  echo "closed Project open did not materialize the exact Registry topology" >&2
+  printf 'windows want=%s got=%s\npanes want=%s got=%s\n' \
+    "$startup_window_uids" "$startup_window_uids_after" "$startup_pane_uids" "$startup_pane_uids_after" >&2
+  exit 1
+fi
+if [[ "$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)" != "$startup_project_uid" ]]; then
+  echo "closed Project open did not restore the exact Project uid binding" >&2
+  exit 1
+fi
+startup_wait_for "client moved to the opened Project session" sh -c \
+  "test \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -c '$startup_client' '#{session_name}' 2>/dev/null)\" = '$startup_session'"
+
+# Every materialized Pane runs the default shell, never a stored command.
+startup_start_commands="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_start_command}' | tr -d '[:space:]')"
+if [[ -n "$startup_start_commands" ]]; then
+  echo "closed Project open replayed a stored Pane command: $startup_start_commands" >&2
+  exit 1
+fi
+if startup_pmx get agents --project "uid:$startup_project_uid" -o json 2>/dev/null | grep -Fq '"phase": "Running"'; then
+  echo "closed Project open started an Agent" >&2
+  exit 1
+fi
+
+# 2. A failed preflight must not move the client. The Project root is taken away,
+# so the plan is refused before the first create and the client stays put.
+startup_tmux switch-client -c "$startup_client" -t "$startup_driver"
+startup_wait_for "client back on the driver session" sh -c \
+  "test \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -c '$startup_client' '#{session_name}' 2>/dev/null)\" = '$startup_driver'"
+startup_tmux kill-session -t "$startup_session"
+mv "$startup_project" "$startup_project-withdrawn"
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-project.sh' '$startup_project' refused" Enter
+startup_wait_for "refused closed Project open" test -s "$startup_root/open-refused.rc"
+if [[ "$(tr -d '[:space:]' <"$startup_root/open-refused.rc")" == "0" ]]; then
+  echo "a missing Project root did not fail the closed Project open" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$startup_root/open-refused.err" "materialize Registry topology"
+if startup_tmux has-session -t "$startup_session" 2>/dev/null; then
+  echo "refused closed Project open still created the session" >&2
+  exit 1
+fi
+if [[ "$(startup_tmux display-message -p -c "$startup_client" '#{session_name}')" != "$startup_driver" ]]; then
+  echo "refused closed Project open moved the client" >&2
+  exit 1
+fi
+mv "$startup_project-withdrawn" "$startup_project"
+
+startup_other_after="$(startup_other_tmux show-options -gqv @projmux_startup_sentinel):$(startup_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+if [[ "$startup_other_after" != "$startup_other_before" ]]; then
+  echo "closed Project topology startup touched the sibling socket" >&2
+  exit 1
+fi
+
+exec 8>&-
+kill "$startup_client_pid" >/dev/null 2>&1 || true
+wait "$startup_client_pid" 2>/dev/null || true
+startup_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> Closed Project topology startup e2e passed: socket=$startup_socket path=$startup_socket_path other-socket=$startup_other_socket other-path=$startup_other_socket_path client=$startup_client cleanup=validated-exact-sockets"

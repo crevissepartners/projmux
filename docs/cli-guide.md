@@ -308,6 +308,18 @@ UID/name/owner graph, preserves each Pane's stored CWD, and is a true no-op when
 the graph is already live. The option is exact-one: repeating it is a usage
 error, and the reported retry preserves both the selector and socket route.
 
+Opening a closed Project is the other activation authority for that same
+engine. The Alt-1 sidebar/`switch open` path materializes the selected Project's
+declared shell topology on the app's own `-L projmux` socket and moves the
+client only after it converges; a refusal, a failed preflight, or a rolled-back
+partial leaves the client where it was and reports the exact stage. The
+activation is pinned to the session the open targets, so a Project whose
+Registry projects a different session name is refused instead of populating a
+session the open never reaches. Choosing `Latest snapshot` or `Named snapshot`
+instead stays entirely on the Session State snapshot engine. Reading whether a
+Project declares topology is a zero-write snapshot read, so opening a directory
+that was never registered still creates no Registry state.
+
 Materialization never starts or resumes an Agent, creates an Agent-owned Pane,
 or executes `Pane.spec.command`; that field remains a one-time name seed. A
 new Window binds only its own tmux-created primary Pane. On an existing Window,
@@ -1400,11 +1412,14 @@ human configuration work should prefer `config render` and `config apply`.
   generated config. The generated app config uses absolute `$SHELL` as the
   tmux default shell when set, otherwise `/bin/sh`. `shell` starts or attaches
   the app session directly after resolving the target app session name and
-  startup directory. Alt-1 sidebar project open defaults to `Empty session`; the
-  Session State `Sidebar startup picker` opt-in shows `Latest snapshot`, `Named
-  snapshot`, and `Empty session` before creating a closed project session.
-  `Latest snapshot` is auto-saved; named snapshots are fixed until the user
-  saves or replaces them.
+  startup directory. Alt-1 sidebar project open defaults to `Project topology`,
+  which materializes the Project's Registry Windows and Window-owned shell Panes
+  before the client moves; the Session State `Sidebar startup picker` opt-in
+  shows `Latest snapshot`, `Named snapshot`, and `Project topology` before
+  starting a closed project session. `Latest snapshot` is auto-saved; named
+  snapshots are fixed until the user saves or replaces them. A directory with no
+  Registry Project, and a Project with no Registry Window, still start as a
+  single default session.
 - `quit` — open an action picker with `Quit projmux` and `Cancel`. Selecting
   `Quit projmux` terminates only a `tmux -L projmux` runtime whose global
   `@projmux_app` option is set by the generated app config. Missing servers,

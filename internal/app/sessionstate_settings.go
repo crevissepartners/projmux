@@ -358,8 +358,8 @@ func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStat
 		mode config.SessionStateToggle
 		desc string
 	}{
-		{config.SessionStateToggleOn, "ask whether to restore a Snapshot or use the Project topology"},
-		{config.SessionStateToggleOff, "materialize the Project topology directly"},
+		{config.SessionStateToggleOn, "ask whether to restore a Snapshot or materialize the Project topology"},
+		{config.SessionStateToggleOff, projectTopologyStartupDescription},
 	} {
 		glyph := settingsGlyphInactive
 		color := settingsColorDim

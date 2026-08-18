@@ -141,10 +141,17 @@ func (p resourceReconcilePlan) refusedItems() int {
 }
 
 type resourceReconcilePlanner struct {
-	reader             tmuxCommandRunner
-	store              *resourceStore
-	newReconciler      func(tmuxCommandRunner, sessionLister) *registryReconciler
+	reader        tmuxCommandRunner
+	store         *resourceStore
+	newReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler
+	// materializeProject names the one exact Project whose desired topology this
+	// plan materializes. Empty means the ordinary identity/mirror reconcile.
 	materializeProject string
+	// materializeSession is the exact session name the activation is opening.
+	// Only an activation that already owns a session identity sets it; the
+	// public reconcile route leaves it empty and accepts whatever session the
+	// Registry projects.
+	materializeSession string
 	exactTarget        explicitTmuxTarget
 }
 
@@ -176,6 +183,7 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 	// never runs the default reconciler's blank adoption, orphan minting, or
 	// Agent phase observation as an incidental side effect.
 	if p.materializeProject != "" {
+		requireMaterializeSession(topology, p.materializeSession)
 		items := slices.Clone(topology.items)
 		return resourceReconcilePlan{registry: before.Clone(), items: items, materialization: topology}, nil
 	}
