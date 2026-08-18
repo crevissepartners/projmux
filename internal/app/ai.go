@@ -1737,15 +1737,16 @@ func (c *aiCommand) planAgentLaunch(mode, contextDir string, extraArgs, execArgv
 // stays the only thing that creates the pane and the client never moves.
 
 // PlanAgentLaunch builds the provider launch for one detached Agent create.
+//
+// The workspace and the initial task are assembled by providerLaunchArgs rather
+// than concatenated here, because where the workspace options stop is a property
+// of the provider's own parser: Claude's variadic `--add-dir` eats a payload
+// appended straight after it and starts a session with no task at all.
 func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (title string, argv []string, err error) {
-	extra := make([]string, 0, len(payload)+2+2*len(workspace.AdditionalWritableRoots))
-	if provider == aiModeCodex && workspace.CWD != "" {
-		extra = append(extra, "-C", workspace.CWD)
+	extra, err := providerLaunchArgs(provider, workspace, payload)
+	if err != nil {
+		return "", nil, err
 	}
-	for _, root := range workspace.AdditionalWritableRoots {
-		extra = append(extra, "--add-dir", root)
-	}
-	extra = append(extra, payload...)
 	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
 	if err != nil {
 		return "", nil, err
