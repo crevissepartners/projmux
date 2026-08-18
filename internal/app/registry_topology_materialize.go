@@ -451,6 +451,161 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	return writeResourceReconcileReport(stdout, opts.output, report)
 }
 
+// topologyOwnerGuard is one execute pass's exact parent and uid-claim proof.
+//
+// UID strings on the planned handles are not enough. A live Window can be
+// relinked to another session and a live Pane can be join-paned into another
+// Window without either uid changing, so a split could otherwise land in the
+// wrong parent. Worse, a Window relinked out of the selected session is invisible
+// to the selected-session plan, which would happily create a second live Window
+// carrying the same Registry uid. Both are proven here against one server-wide
+// inventory, before the first mutation.
+type topologyOwnerGuard struct {
+	windowOwner map[string]string
+	paneOwner   map[string]runtimeOwner
+	windowUIDs  map[string][]string
+	paneUIDs    map[string][]string
+}
+
+func newTopologyOwnerGuard(ctx context.Context, runtime *materializer) (*topologyOwnerGuard, error) {
+	windowsOut, err := runtime.read(ctx, "list-windows", "-a", "-F",
+		tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
+	if err != nil {
+		return nil, fmt.Errorf("inventory tmux Window owners: %w", err)
+	}
+	panesOut, err := runtime.read(ctx, "list-panes", "-a", "-F",
+		tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}"))
+	if err != nil {
+		return nil, fmt.Errorf("inventory tmux Pane owners: %w", err)
+	}
+	guard := &topologyOwnerGuard{
+		windowOwner: map[string]string{},
+		paneOwner:   map[string]runtimeOwner{},
+		windowUIDs:  map[string][]string{},
+		paneUIDs:    map[string][]string{},
+	}
+	windowRows, err := strictTmuxRows(windowsOut, 3)
+	if err != nil {
+		return nil, fmt.Errorf("malformed tmux Window owner inventory: %w", err)
+	}
+	for _, row := range windowRows {
+		if exactTmuxHandle(row[0], "$") == "" || exactTmuxHandle(row[1], "@") == "" {
+			return nil, fmt.Errorf("malformed tmux Window owner inventory")
+		}
+		if existing, seen := guard.windowOwner[row[1]]; seen && existing != row[0] {
+			return nil, fmt.Errorf("tmux window %s reports two owning sessions", row[1])
+		}
+		guard.windowOwner[row[1]] = row[0]
+		if uid := strings.TrimSpace(row[2]); uid != "" && !slices.Contains(guard.windowUIDs[uid], row[1]) {
+			guard.windowUIDs[uid] = append(guard.windowUIDs[uid], row[1])
+		}
+	}
+	paneRows, err := strictTmuxRows(panesOut, 4)
+	if err != nil {
+		return nil, fmt.Errorf("malformed tmux Pane owner inventory: %w", err)
+	}
+	for _, row := range paneRows {
+		if exactTmuxHandle(row[0], "$") == "" || exactTmuxHandle(row[1], "@") == "" || exactTmuxHandle(row[2], "%") == "" {
+			return nil, fmt.Errorf("malformed tmux Pane owner inventory")
+		}
+		owner := runtimeOwner{SessionID: row[0], WindowID: row[1]}
+		if existing, seen := guard.paneOwner[row[2]]; seen && existing != owner {
+			return nil, fmt.Errorf("tmux pane %s reports two owning windows", row[2])
+		}
+		guard.paneOwner[row[2]] = owner
+		if uid := strings.TrimSpace(row[3]); uid != "" && !slices.Contains(guard.paneUIDs[uid], row[2]) {
+			guard.paneUIDs[uid] = append(guard.paneUIDs[uid], row[2])
+		}
+	}
+	return guard, nil
+}
+
+// requireWindowOf proves windowID is present and owned by exactly sessionID.
+func (g *topologyOwnerGuard) requireWindowOf(sessionID, windowID, label string) error {
+	if owner, present := g.windowOwner[windowID]; !present || owner != sessionID {
+		return fmt.Errorf("window %s (%s) is not owned by session %s: owner=%q",
+			label, windowID, sessionID, owner)
+	}
+	return nil
+}
+
+// requirePaneOf proves paneID is present and owned by exactly sessionID/windowID.
+func (g *topologyOwnerGuard) requirePaneOf(sessionID, windowID, paneID, label string) error {
+	want := runtimeOwner{SessionID: sessionID, WindowID: windowID}
+	if owner, present := g.paneOwner[paneID]; !present || owner != want {
+		return fmt.Errorf("pane %s (%s) is not owned by session %s window %s: owner=%q/%q",
+			label, paneID, sessionID, windowID, owner.SessionID, owner.WindowID)
+	}
+	return nil
+}
+
+// requireSoleWindowUID proves uid is live on exactly the expected handle across
+// the whole socket. An empty handle asserts the uid is live nowhere, which is
+// what makes creating a Window for it safe.
+func (g *topologyOwnerGuard) requireSoleWindowUID(uid, handle, label string) error {
+	return requireSoleUIDClaim("window", label, uid, handle, g.windowUIDs[uid])
+}
+
+// requireSolePaneUID is requireSoleWindowUID for a Pane uid.
+func (g *topologyOwnerGuard) requireSolePaneUID(uid, handle, label string) error {
+	return requireSoleUIDClaim("pane", label, uid, handle, g.paneUIDs[uid])
+}
+
+func requireSoleUIDClaim(kind, label, uid, handle string, claims []string) error {
+	if handle == "" {
+		if len(claims) != 0 {
+			return fmt.Errorf("%s %s uid %s is already live on %v elsewhere on this socket", kind, label, uid, claims)
+		}
+		return nil
+	}
+	if len(claims) != 1 || claims[0] != handle {
+		return fmt.Errorf("%s %s uid %s is claimed by %v, want exactly %s", kind, label, uid, claims, handle)
+	}
+	return nil
+}
+
+// requireCreatedPaneParent re-reads one freshly created Pane's exact parent
+// tuple. A split is not attributed by a before/after owner diff the way
+// new-window is, so the returned handle's parent is proven with its own exact
+// observation before any uid claim or mirror is written to it.
+func requireCreatedPaneParent(ctx context.Context, runtime *materializer, paneID, sessionID, windowID string) error {
+	out, err := runtime.read(ctx, "display-message", "-p", "-t", paneID, "-F",
+		tmuxRowFormat("#{session_id}", "#{window_id}"))
+	if err != nil {
+		return fmt.Errorf("inspect created tmux pane %s parent: %w", paneID, err)
+	}
+	rows := splitTmuxRows(out, 2)
+	if len(rows) != 1 || exactTmuxHandle(rows[0][0], "$") == "" || exactTmuxHandle(rows[0][1], "@") == "" {
+		return fmt.Errorf("inspect created tmux pane %s parent: malformed row %q", paneID, strings.TrimSpace(out))
+	}
+	if rows[0][0] != sessionID || rows[0][1] != windowID {
+		return fmt.Errorf("created tmux pane %s landed in %s/%s, want %s/%s",
+			paneID, rows[0][0], rows[0][1], sessionID, windowID)
+	}
+	return nil
+}
+
+// adoptCreatedPane claims, ledgers, and mirrors one Pane this operation created
+// after proving its parent. A Pane whose parent cannot be proven is left
+// unclaimed and reported as an exact residual instead of being given this
+// Project's identity in the wrong topology.
+func adoptCreatedPane(
+	ctx context.Context,
+	runtime *materializer,
+	paneID, sessionID, windowID string,
+	pane coremetadata.Pane,
+	ledger *runtimeLedger,
+) error {
+	if err := requireCreatedPaneParent(ctx, runtime, paneID, sessionID, windowID); err != nil {
+		runtime.warnUnclaimedHandle(runtimePane, paneID)
+		return err
+	}
+	if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); err != nil {
+		return err
+	}
+	return runtime.mirror.MirrorPane(ctx, paneID, pane)
+}
+
 func executeRegistryTopology(
 	ctx context.Context,
 	runtime *materializer,
@@ -504,28 +659,69 @@ func executeRegistryTopology(
 			}
 		}
 	}
+	// One inventory proves every planned live handle's exact parent before the
+	// first mutation of this pass. Handles this pass creates prove their own
+	// parent at creation time instead.
+	guard, err := newTopologyOwnerGuard(ctx, runtime)
+	if err != nil {
+		return err
+	}
 	for wi := range plan.windows {
 		work := &plan.windows[wi]
-		windowID := work.liveID
-		if windowID != "" && runtime.option(ctx, windowID, "#{"+tmuxopts.WindowUID+"}") != work.window.Metadata.UID {
-			return fmt.Errorf("window %s uid changed after planning", work.window.Metadata.Name)
+		windowLabel := work.window.Metadata.Name
+		if err := guard.requireSoleWindowUID(work.window.Metadata.UID, work.liveID, windowLabel); err != nil {
+			return err
 		}
-		if windowID == "" {
+		if work.liveID != "" {
+			if runtime.option(ctx, work.liveID, "#{"+tmuxopts.WindowUID+"}") != work.window.Metadata.UID {
+				return fmt.Errorf("window %s uid changed after planning", windowLabel)
+			}
+			if err := guard.requireWindowOf(created.SessionID, work.liveID, windowLabel); err != nil {
+				return err
+			}
+		}
+		for pi := range work.panes {
+			paneWork := &work.panes[pi]
+			paneLabel := windowLabel + "/" + paneWork.pane.Metadata.Name
+			if err := guard.requireSolePaneUID(paneWork.pane.Metadata.UID, paneWork.liveID, paneLabel); err != nil {
+				return err
+			}
+			if paneWork.liveID == "" {
+				continue
+			}
+			if err := guard.requirePaneOf(created.SessionID, work.liveID, paneWork.liveID, paneLabel); err != nil {
+				return err
+			}
+		}
+	}
+	for wi := range plan.windows {
+		work := &plan.windows[wi]
+		if work.liveID == "" {
+			// newWindow can report a synchronous post-mutation hook failure while
+			// still returning the exact attributed @N/%N pair. Claiming and
+			// ledgering that pair before surfacing the original error is what lets
+			// the ownership-checked rollback remove it.
 			result, createErr := runtime.newWindow(ctx, created.SessionID, work.window.Metadata.Name, materializePaneCWD(plan.project, work.primary), nil)
+			if result.WindowID != "" {
+				if claimErr := runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, result.WindowID, work.window.Metadata.UID, ledger); claimErr != nil {
+					return errors.Join(createErr, claimErr)
+				}
+				if mirrorErr := runtime.mirror.MirrorWindow(ctx, result.WindowID, work.window); mirrorErr != nil {
+					return errors.Join(createErr, mirrorErr)
+				}
+				if result.PaneID != "" {
+					// Attribution already proved this Pane belongs to the exact new
+					// Window under the selected Session.
+					if claimErr := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, result.PaneID, work.primary.Metadata.UID, ledger); claimErr != nil {
+						return errors.Join(createErr, claimErr)
+					}
+					if mirrorErr := runtime.mirror.MirrorPane(ctx, result.PaneID, work.primary); mirrorErr != nil {
+						return errors.Join(createErr, mirrorErr)
+					}
+				}
+			}
 			if createErr != nil {
 				return createErr
-			}
-			if err := runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, result.WindowID, work.window.Metadata.UID, ledger); err != nil {
-				return err
-			}
-			if err := runtime.mirror.MirrorWindow(ctx, result.WindowID, work.window); err != nil {
-				return err
-			}
-			if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, result.PaneID, work.primary.Metadata.UID, ledger); err != nil {
-				return err
-			}
-			if err := runtime.mirror.MirrorPane(ctx, result.PaneID, work.primary); err != nil {
-				return err
 			}
 			work.liveID = result.WindowID
 			for pi := range work.panes {
@@ -535,6 +731,7 @@ func executeRegistryTopology(
 				}
 			}
 		}
+		windowID := work.liveID
 		anchorID := ""
 		for pi := range work.panes {
 			paneWork := &work.panes[pi]
@@ -562,14 +759,13 @@ func executeRegistryTopology(
 				return fmt.Errorf("window %s has no exact primary Pane binding", work.window.Metadata.Name)
 			}
 			paneID, splitErr := runtime.splitPane(ctx, fallbackID, defaultPlacement, materializePaneCWD(plan.project, primaryWork.pane), nil)
+			if paneID != "" {
+				if adoptErr := adoptCreatedPane(ctx, runtime, paneID, created.SessionID, windowID, primaryWork.pane, ledger); adoptErr != nil {
+					return errors.Join(splitErr, adoptErr)
+				}
+			}
 			if splitErr != nil {
 				return splitErr
-			}
-			if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, primaryWork.pane.Metadata.UID, ledger); err != nil {
-				return err
-			}
-			if err := runtime.mirror.MirrorPane(ctx, paneID, primaryWork.pane); err != nil {
-				return err
 			}
 			primaryWork.create, primaryWork.liveID = false, paneID
 			anchorID = paneID
@@ -584,14 +780,13 @@ func executeRegistryTopology(
 				continue
 			}
 			paneID, splitErr := runtime.splitPane(ctx, anchorID, defaultPlacement, materializePaneCWD(plan.project, paneWork.pane), nil)
+			if paneID != "" {
+				if adoptErr := adoptCreatedPane(ctx, runtime, paneID, created.SessionID, windowID, paneWork.pane, ledger); adoptErr != nil {
+					return errors.Join(splitErr, adoptErr)
+				}
+			}
 			if splitErr != nil {
 				return splitErr
-			}
-			if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, paneWork.pane.Metadata.UID, ledger); err != nil {
-				return err
-			}
-			if err := runtime.mirror.MirrorPane(ctx, paneID, paneWork.pane); err != nil {
-				return err
 			}
 			paneWork.create, paneWork.liveID = false, paneID
 			runtime.equalizeSplitLayout(ctx, anchorID, defaultPlacement)

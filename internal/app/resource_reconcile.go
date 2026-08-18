@@ -129,6 +129,12 @@ func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceRec
 	if len(opts.materializeProjects) > 1 {
 		return resourceReconcileOptions{}, usageError("reconcile resources accepts exactly one --materialize-project occurrence")
 	}
+	// A present-but-blank selector must not silently degrade into the broad
+	// default reconcile. The caller asked for one scoped Project; an empty
+	// value names none, so refuse before any read, transaction, or write.
+	if len(opts.materializeProjects) == 1 && strings.TrimSpace(opts.materializeProjects[0]) == "" {
+		return resourceReconcileOptions{}, usageError("reconcile resources --materialize-project requires a non-empty Project name or uid:<uid>")
+	}
 	return opts, nil
 }
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -141,6 +142,44 @@ func TestRegistryTopologyMaterializationRejectsDuplicateSelectorOccurrence(t *te
 	}
 	if store.transactions != 0 || store.writes != 0 || len(server.calls) != 0 {
 		t.Fatalf("duplicate selector reached state: transactions=%d writes=%d calls=%v", store.transactions, store.writes, server.calls)
+	}
+}
+
+// A present-but-blank selector must never degrade into the broad default
+// reconcile, which would execute unrelated repair the caller did not ask for.
+func TestRegistryTopologyMaterializationRejectsBlankSelectorValue(t *testing.T) {
+	for _, blank := range []string{"", " ", "\t", "  \t "} {
+		t.Run(fmt.Sprintf("%q", blank), func(t *testing.T) {
+			command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
+			before := store.snapshot()
+			stdout, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", blank)
+			if err == nil || !IsUsageError(err) {
+				t.Fatalf("blank --materialize-project error = %v (usage=%t)", err, IsUsageError(err))
+			}
+			if !strings.Contains(err.Error(), "requires a non-empty Project name or uid") {
+				t.Fatalf("blank selector error is not the exact refusal: %v", err)
+			}
+			if store.reads != 0 || store.transactions != 0 || store.writes != 0 {
+				t.Fatalf("blank selector reached the Registry: reads=%d transactions=%d writes=%d",
+					store.reads, store.transactions, store.writes)
+			}
+			if len(server.calls) != 0 || store.snapshot() != before {
+				t.Fatalf("blank selector reached tmux or mutated the Registry: calls=%v", server.calls)
+			}
+			if stdout != "" || stderr != "" {
+				t.Fatalf("blank selector produced output: stdout=%q stderr=%q", stdout, stderr)
+			}
+		})
+	}
+
+	// The same blank value with --dry-run is refused on the identical boundary,
+	// so a preview cannot become the broad default preview either.
+	command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
+	if _, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "topology", "--materialize-project", " "); err == nil || !IsUsageError(err) {
+		t.Fatalf("blank --materialize-project --dry-run error = %v", err)
+	}
+	if store.reads != 0 || store.transactions != 0 || len(server.calls) != 0 {
+		t.Fatalf("blank selector dry-run reached state: reads=%d transactions=%d calls=%v", store.reads, store.transactions, server.calls)
 	}
 }
 
@@ -344,6 +383,156 @@ func TestRegistryTopologyMaterializationFirstUIDMarkerFailurePreservesUnownedRes
 			}
 		})
 	}
+}
+
+// tmux can apply a mutation and then report a synchronous lifecycle-hook
+// failure in the same call. The exact attributed handle must be claimed and
+// ledgered before the original error surfaces, or the ownership-checked
+// rollback has nothing to remove and the object leaks.
+func TestRegistryTopologyMaterializationPostMutationHookFailureRollsBackExactHandle(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fail    []string
+		shrink  func(*fakeTmux, *testing.T)
+		residue string
+	}{
+		{
+			name:    "new-window",
+			fail:    []string{"new-window"},
+			residue: "window",
+			shrink: func(server *fakeTmux, _ *testing.T) {
+				session := server.session("beta")
+				session.windows = session.windows[:1]
+			},
+		},
+		{
+			name:    "split-window",
+			fail:    []string{"split-window"},
+			residue: "pane",
+			shrink: func(server *fakeTmux, _ *testing.T) {
+				main := server.session("beta").windows[0]
+				main.panes = main.panes[:1]
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
+			if _, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json"); err != nil {
+				t.Fatal(err)
+			}
+			tc.shrink(server, t)
+			before := server.state()
+			writes := store.writes
+			registry := store.snapshot()
+			server.fail, server.failed = tc.fail, false
+			server.failAfterMutation = true
+			server.failMessage = "synchronous lifecycle hook refused"
+
+			result, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+			if err == nil || !strings.Contains(err.Error(), "synchronous lifecycle hook refused") {
+				t.Fatalf("post-mutation %s failure error = %v", tc.residue, err)
+			}
+			if !strings.Contains(result, `"remainingDrift"`) {
+				t.Fatalf("post-mutation failure omitted residual drift:\n%s", result)
+			}
+			if got := server.state(); got != before {
+				t.Fatalf("rollback did not remove the exact error-created %s:\n--- got ---\n%s\n--- want ---\n%s", tc.residue, got, before)
+			}
+			if store.writes != writes || store.snapshot() != registry {
+				t.Fatalf("post-mutation failure committed Registry state: writes=%d want %d", store.writes, writes)
+			}
+		})
+	}
+}
+
+// UID strings alone do not prove topology. A live Window relinked to another
+// session, and a live anchor Pane moved into another Window, both keep their
+// uid; materialization must refuse them before the first mutation rather than
+// split into the wrong parent.
+func TestRegistryTopologyMaterializationRefusesRelinkedParentBeforeMutation(t *testing.T) {
+	t.Run("Window moved to a foreign session", func(t *testing.T) {
+		command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
+		if _, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json"); err != nil {
+			t.Fatal(err)
+		}
+		beta := server.session("beta")
+		main := beta.windows[0]
+		// Raw loss of one Pane makes the next pass want a split inside `main`.
+		main.panes = main.panes[:1]
+		// `main` is relinked into a foreign session with its uid intact.
+		foreign := server.addSession("foreign-topology")
+		beta.windows = beta.windows[1:]
+		foreign.windows = append(foreign.windows, main)
+		before := server.state()
+		writes := store.writes
+
+		result, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+		// The relinked Window is invisible to the selected-session plan, so the
+		// refusal that matters is the server-wide uid claim: creating a second
+		// live Window for the same Registry uid must never happen.
+		if err == nil || !strings.Contains(err.Error(), "is already live on") {
+			t.Fatalf("relinked Window error = %v\n%s", err, result)
+		}
+		if server.state() != before || store.writes != writes {
+			t.Fatalf("relinked Window was mutated: writes=%d want %d\n%s", store.writes, writes, server.state())
+		}
+	})
+
+	t.Run("anchor Pane joined away after planning", func(t *testing.T) {
+		command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
+		if _, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json"); err != nil {
+			t.Fatal(err)
+		}
+		beta := server.session("beta")
+		main, review := beta.windows[0], beta.windows[1]
+		// The extra shell Pane is gone, so the pass plans one split off the
+		// still-live primary anchor inside `main`.
+		anchor := main.panes[0]
+		main.panes = main.panes[:1]
+		// After the plan commits to that anchor, and before any mutation, the
+		// anchor is join-paned into another Window with its uid intact.
+		// The baseline is captured after the injected move, so any difference is
+		// a materialization mutation rather than the test's own race.
+		var before string
+		server.beforeOwnerInventory = func(f *fakeTmux) {
+			main.panes = main.panes[:0]
+			review.panes = append(review.panes, anchor)
+			before = f.state()
+		}
+		writes := store.writes
+
+		result, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+		if err == nil || !strings.Contains(err.Error(), "is not owned by session") {
+			t.Fatalf("anchor Pane moved after planning was accepted: err=%v\n%s\n%s", err, result, server.state())
+		}
+		if server.state() != before || store.writes != writes {
+			t.Fatalf("raced anchor Pane was mutated: writes=%d want %d\n%s", store.writes, writes, server.state())
+		}
+	})
+
+	t.Run("anchor Pane joined into another Window before planning", func(t *testing.T) {
+		command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
+		if _, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json"); err != nil {
+			t.Fatal(err)
+		}
+		beta := server.session("beta")
+		main, review := beta.windows[0], beta.windows[1]
+		sibling := main.panes[1]
+		main.panes = main.panes[:0]
+		review.panes = append(review.panes, sibling)
+		before := server.state()
+		writes := store.writes
+
+		// Observable before the plan is built, so this is a pre-create planner
+		// refusal rather than a guard failure. Either way nothing is mutated.
+		result, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+		if err == nil || !strings.Contains(result, `"action": "refuse"`) {
+			t.Fatalf("joined anchor Pane was accepted: err=%v\n%s", err, result)
+		}
+		if server.state() != before || store.writes != writes {
+			t.Fatalf("joined anchor Pane was mutated: writes=%d want %d\n%s", store.writes, writes, server.state())
+		}
+	})
 }
 
 func TestRegistryTopologyMaterializationFailureRollsBackOwnedRuntime(t *testing.T) {
