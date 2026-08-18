@@ -417,7 +417,9 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		}
 		paneID, err := r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, contextDir, launchArgv)
 		if paneID != "" {
-			ledger.record(runtimePane, paneID, pane.Metadata.UID)
+			if claimErr := r.create.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
+				return errors.Join(err, claimErr)
+			}
 			if mirrorErr := r.create.runtime.mirror.MirrorPane(ctx, paneID, pane); mirrorErr != nil {
 				return errors.Join(err, mirrorErr)
 			}
@@ -441,7 +443,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			}
 		}
 		return nil
-	}); err != nil {
+	}, r.create.exactProjectOwnershipGuard(plan.projectUID)); err != nil {
 		return err
 	}
 

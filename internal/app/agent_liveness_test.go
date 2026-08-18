@@ -470,7 +470,7 @@ func TestReconciliationReleasesAnAgentWhoseManagedPaneIsGone(t *testing.T) {
 	tmux := newFakeTmux()
 	// alpha's Window is live and its shell Pane is mirrored; only the Agent's
 	// managed Pane is missing from the machine.
-	seedLiveAgentPane(t, tmux, "alpha", "win-alpha-main", "pan-alpha-zsh")
+	seedOwnedSession(seedLiveAgentPane(t, tmux, "alpha", "win-alpha-main", "pan-alpha-zsh"), "prj-alpha", "/srv/alpha")
 	create, _ := newTestResourceCreateCommand(t, store, tmux)
 
 	if _, _, err := runRoute(t, create, "pane", "--project", "alpha", "--window", "main"); err != nil {
@@ -497,7 +497,7 @@ func TestReconciliationLeavesAnAgentWhoseManagedPaneIsStillLive(t *testing.T) {
 
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
-	seedLiveAgentPane(t, tmux, "alpha", "win-alpha-main", "pan-alpha-zsh", "pan-alpha-codex")
+	seedOwnedSession(seedLiveAgentPane(t, tmux, "alpha", "win-alpha-main", "pan-alpha-zsh", "pan-alpha-codex"), "prj-alpha", "/srv/alpha")
 	create, _ := newTestResourceCreateCommand(t, store, tmux)
 
 	if _, _, err := runRoute(t, create, "pane", "--project", "alpha", "--window", "main"); err != nil {

@@ -28,10 +28,16 @@ type fakeTmux struct {
 	fail        []string
 	failMessage string
 	failed      bool
-	// failAfterCreate models tmux lifecycle-hook failures: tmux has already
-	// created the requested Window/Pane and printed its stable id, then returns
+	// failAfterMutation models tmux lifecycle-hook failures: tmux has already
+	// applied the requested mutation and produced its normal output, then returns
 	// the hook's non-zero status and diagnostic in the same combined output.
-	failAfterCreate bool
+	failAfterMutation bool
+	// afterNewWindow and newWindowResult are deterministic attribution-race
+	// seams. The callback may add/move runtime objects after tmux created the
+	// requested Window; the result hook may return stale or foreign handles.
+	afterNewWindow    func(*fakeTmux, *fakeTmuxSession, *fakeTmuxWindow, *fakeTmuxPane)
+	newWindowResult   func(*fakeTmuxSession, *fakeTmuxWindow, *fakeTmuxPane) string
+	afterListSessions func(*fakeTmux)
 	// failAlways keeps the trigger armed. A one-shot trigger cannot model a
 	// query that is simply unavailable -- reconcile reads some inventories more
 	// than once per pass, and the second read would then succeed and hide the
@@ -192,7 +198,7 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	}
 	f.calls = append(f.calls, append([]string(nil), args...))
 	shouldFail := (!f.failed || f.failAlways) && len(f.fail) > 0 && containsAll(args, f.fail)
-	if shouldFail && !f.failAfterCreate {
+	if shouldFail && !f.failAfterMutation {
 		f.failed = true
 		message := f.failMessage
 		if message == "" {
@@ -221,7 +227,7 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	case "resize-pane":
 		return f.runResizePane(args)
 	case "set-option":
-		return f.runSetOption(args)
+		out, err = f.runSetOption(args)
 	case "set-environment":
 		return f.runSetEnvironment(args)
 	case "show-environment":
@@ -238,6 +244,11 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		}
 		for _, s := range f.sessions {
 			fmt.Fprintf(&b, "%s\n", renderFormat(format, s, nil, nil))
+		}
+		if f.afterListSessions != nil {
+			callback := f.afterListSessions
+			f.afterListSessions = nil
+			callback(f)
 		}
 		return []byte(b.String()), nil
 	default:
@@ -277,7 +288,17 @@ func (f *fakeTmux) runNewWindow(args []string) ([]byte, error) {
 	pane.command = strings.Join(trailingCommand(args), " ")
 	window.panes = append(window.panes, pane)
 	session.windows = append(session.windows, window)
-	return []byte(window.id + "\n"), nil
+	if f.afterNewWindow != nil {
+		f.afterNewWindow(f, session, window, pane)
+	}
+	if f.newWindowResult != nil {
+		return []byte(f.newWindowResult(session, window, pane) + "\n"), nil
+	}
+	format := flagValue(args, "-F")
+	if format == "" {
+		format = "#{window_id}"
+	}
+	return []byte(renderFormat(format, session, window, pane) + "\n"), nil
 }
 
 func (f *fakeTmux) runSplitWindow(args []string) ([]byte, error) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // fakeAgentLauncher stands in for the provider launch half of the AI command.
@@ -199,6 +201,67 @@ func newTestAgentCreateCommand(t *testing.T, store *fakeResourceStore, tmux *fak
 	return create, launcher
 }
 
+func TestProviderShortcutPreservesForeignWindowOnAttributionFailure(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	session := tmux.addSession("alpha")
+	seedOwnedSession(session, "prj-alpha", "/srv/alpha")
+	seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+	tmux.afterNewWindow = func(tmux *fakeTmux, session *fakeTmuxSession, _ *fakeTmuxWindow, _ *fakeTmuxPane) {
+		foreign := &fakeTmuxWindow{id: tmux.mint("@"), name: "provider-hook", opts: map[string]string{}}
+		foreign.panes = append(foreign.panes, newFakeTmuxPane(tmux.mint("%")))
+		session.windows = append(session.windows, foreign)
+	}
+	registryBefore := store.snapshot()
+	create, launcher := newTestAgentCreateCommand(t, store, tmux)
+
+	stdout, _, err := runRoute(t, create, "codex", "--project", "alpha", "--window", "provider-race", "--create-window")
+	if err == nil || stdout != "" {
+		t.Fatalf("stdout/error = %q / %v", stdout, err)
+	}
+	if store.snapshot() != registryBefore || store.writes != 0 || len(launcher.bound) != 0 {
+		t.Fatal("provider shortcut attribution failure committed or bound an Agent")
+	}
+	for _, window := range session.windows {
+		if window.name != "provider-race" && window.name != "provider-hook" {
+			continue
+		}
+		if window.opts[tmuxopts.WindowUID] != "" {
+			t.Fatalf("provider shortcut claimed residual Window %s", window.id)
+		}
+		for _, pane := range window.panes {
+			if pane.opts[tmuxopts.PaneUID] != "" {
+				t.Fatalf("provider shortcut claimed residual Pane %s", pane.id)
+			}
+		}
+	}
+}
+
+func TestProviderShortcutRefusesForeignSelectedSessionWithZeroTmuxWrites(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	foreign := tmux.addSession("alpha")
+	foreign.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+	foreign.opts[tmuxopts.ProjectPathSession] = "/srv/alpha"
+	registryBefore, runtimeBefore := store.snapshot(), tmux.state()
+	create, launcher := newTestAgentCreateCommand(t, store, tmux)
+
+	stdout, _, err := runRoute(t, create, "codex", "--project", "alpha", "--window", "main")
+	if err == nil || stdout != "" {
+		t.Fatalf("stdout/error = %q / %v", stdout, err)
+	}
+	if store.snapshot() != registryBefore || store.writes != 0 || tmux.state() != runtimeBefore || len(launcher.bound) != 0 {
+		t.Fatal("provider shortcut foreign-session refusal mutated state or bound an Agent")
+	}
+	for _, call := range tmux.calls {
+		if len(call) > 0 && slices.Contains([]string{"set-environment", "set-option", "rename-window", "new-window", "split-window"}, call[0]) {
+			t.Fatalf("provider shortcut foreign-session refusal issued a tmux mutation: %v", call)
+		}
+	}
+}
+
 // agentNamed returns the created Agent with the given name inside one Window.
 func agentNamed(t *testing.T, store *fakeResourceStore, windowUID, name string) coremetadata.Agent {
 	t.Helper()
@@ -361,7 +424,7 @@ func TestCreateAgentNeverReusesAnExistingAgent(t *testing.T) {
 	// releases an Agent whose managed Pane is gone, so an unmirrored fixture would
 	// make "the existing Agent kept its pane" unobservable for a reason that has
 	// nothing to do with reuse.
-	seedLiveAgentPane(t, tmux, "alpha", "win-alpha-main", "pan-alpha-zsh", "pan-alpha-codex")
+	seedOwnedSession(seedLiveAgentPane(t, tmux, "alpha", "win-alpha-main", "pan-alpha-zsh", "pan-alpha-codex"), "prj-alpha", "/srv/alpha")
 	create, _ := newTestAgentCreateCommand(t, store, tmux)
 
 	existing := agentNamed(t, store, "win-alpha-main", "codex")

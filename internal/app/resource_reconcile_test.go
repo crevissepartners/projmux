@@ -416,6 +416,91 @@ func TestResourceReconcileExecuteConvergesOneSocketAndRepeatsNoop(t *testing.T) 
 	}
 }
 
+func TestResourceReconcileBlankOrphanPaneKeepsInitialGuardThroughOverlay(t *testing.T) {
+	t.Parallel()
+
+	command, store, primary, _, _ := newReconcileFixture(t, "-L", "primary")
+	if _, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json"); err != nil {
+		t.Fatalf("seed reconcile: %v", err)
+	}
+	raw := newFakeTmuxPane(primary.mint("%"))
+	raw.opts[aiPaneAgentOption] = "antigravity"
+	primary.session("alpha").windows[0].panes = append(primary.session("alpha").windows[0].panes, raw)
+	primary.calls = nil
+
+	first, stderr, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || stderr != "" {
+		t.Fatalf("blank orphan reconcile error=%v stderr=%q\n%s", err, stderr, first)
+	}
+	if raw.opts[tmuxopts.PaneUID] == "" {
+		t.Fatalf("blank orphan Pane %s did not receive its exact Registry mirror", raw.id)
+	}
+	if !strings.Contains(first, `"outcome": "changed"`) {
+		t.Fatalf("blank orphan reconcile report:\n%s", first)
+	}
+
+	primary.calls = nil
+	repeat, stderr, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || stderr != "" || !strings.Contains(repeat, `"outcome": "no-op"`) || tmuxMutationCallCount(primary) != 0 {
+		t.Fatalf("blank orphan repeat error=%v stderr=%q mutations=%d\n%s", err, stderr, tmuxMutationCallCount(primary), repeat)
+	}
+	if store.writes != 2 {
+		t.Fatalf("Registry writes = %d, want seed + orphan only", store.writes)
+	}
+}
+
+func TestResourceReconcileBlankOrphanPaneGuardRejectsForeignClaimAfterPlanning(t *testing.T) {
+	t.Parallel()
+
+	command, store, primary, _, _ := newReconcileFixture(t, "-L", "primary")
+	if _, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json"); err != nil {
+		t.Fatalf("seed reconcile: %v", err)
+	}
+	raw := newFakeTmuxPane(primary.mint("%"))
+	raw.opts[aiPaneAgentOption] = "antigravity"
+	primary.session("alpha").windows[0].panes = append(primary.session("alpha").windows[0].panes, raw)
+
+	target, err := tmuxSocketNameTarget("primary")
+	if err != nil {
+		t.Fatalf("socket target: %v", err)
+	}
+	planner := resourceReconcilePlanner{
+		reader:        explicitTmuxRunner{runner: command.runner, target: target},
+		store:         command.resources,
+		newReconciler: command.newReconciler,
+	}
+	registryBefore, writesBefore := store.snapshot(), store.writes
+	plan, err := planner.build(context.Background(), store.registry.Clone())
+	if err != nil {
+		t.Fatalf("plan blank orphan: %v", err)
+	}
+	guardFound := false
+	for _, write := range plan.writes {
+		if write.target == raw.id && write.field == tmuxopts.PaneUID {
+			guardFound = true
+			if write.guardBefore != "" {
+				t.Fatalf("blank orphan guard = %q, want preserved initial blank", write.guardBefore)
+			}
+		}
+	}
+	if !guardFound {
+		t.Fatalf("plan contains no Pane UID mirror for blank orphan %s: %#v", raw.id, plan.writes)
+	}
+
+	raw.opts[tmuxopts.PaneUID] = "foreign-pane"
+	primary.calls = nil
+	err = validateResourcePlanWrites(context.Background(), explicitTmuxRunner{runner: command.runner, target: target}, plan.writes)
+	if err == nil || !strings.Contains(err.Error(), "changed before repair") {
+		t.Fatalf("foreign post-plan Pane claim was not rejected: %v", err)
+	}
+	if got := raw.opts[tmuxopts.PaneUID]; got != "foreign-pane" {
+		t.Fatalf("foreign Pane uid = %q, want preserved", got)
+	}
+	if store.snapshot() != registryBefore || store.writes != writesBefore || tmuxMutationCallCount(primary) != 0 {
+		t.Fatalf("failed prevalidation mutated state: Registry writes=%d want=%d tmux mutations=%d", store.writes, writesBefore, tmuxMutationCallCount(primary))
+	}
+}
+
 func TestResourceReconcilePreservesRegistryGraphOwnedByAnotherSocket(t *testing.T) {
 	t.Parallel()
 

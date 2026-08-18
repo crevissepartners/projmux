@@ -14,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -24,11 +25,14 @@ import (
 // before anything is created. A post-create hook failure is modeled the way the
 // real client handles it -- logged, ignored, creation continues.
 type fakeSessionMaterializer struct {
-	tmux         *fakeTmux
-	preCreateErr error
-	createErr    error
-	postCreate   func()
-	created      []string
+	tmux               *fakeTmux
+	preCreateErr       error
+	createErr          error
+	createErrResult    bool
+	postCreate         func()
+	startup            func()
+	beforeEnsureResult func()
+	created            []string
 }
 
 func (f *fakeSessionMaterializer) SessionExists(_ context.Context, name string) (bool, error) {
@@ -70,6 +74,75 @@ func (f *fakeSessionMaterializer) EnsureSessionWithEnvironment(ctx context.Conte
 		return f.createErr
 	}
 	return nil
+}
+
+func (f *fakeSessionMaterializer) EnsureSessionWithEnvironmentResult(_ context.Context, name, cwd string, env map[string]string) (intmux.NewSessionResult, error) {
+	if f.beforeEnsureResult != nil {
+		f.beforeEnsureResult()
+		f.beforeEnsureResult = nil
+	}
+	if f.tmux.session(name) != nil {
+		return intmux.NewSessionResult{Created: false}, nil
+	}
+	if f.preCreateErr != nil {
+		return intmux.NewSessionResult{}, f.preCreateErr
+	}
+	session := f.tmux.addSession(name)
+	maps.Copy(session.env, env)
+	session.opts[tmuxopts.ProjectPathSession] = cwd
+	f.created = append(f.created, name)
+	result := intmux.NewSessionResult{
+		Created:   true,
+		SessionID: session.id,
+		WindowID:  session.windows[0].id,
+		PaneID:    session.windows[0].panes[0].id,
+	}
+	if f.postCreate != nil {
+		f.postCreate()
+	}
+	if f.createErr != nil {
+		if !f.createErrResult {
+			return intmux.NewSessionResult{}, f.createErr
+		}
+		result.Created = false
+		return result, f.createErr
+	}
+	marker := env[createOperationEnvironment]
+	if !fakeCreatedTupleOwned(f.tmux, result, marker) {
+		return result, errors.New("verify created tmux session after post-create")
+	}
+	return result, nil
+}
+
+func (f *fakeSessionMaterializer) FinalizeSessionStartup(_ context.Context, result intmux.NewSessionResult, _, _, marker string) error {
+	if !fakeCreatedTupleOwned(f.tmux, result, marker) {
+		return errors.New("verify created tmux session before startup")
+	}
+	if f.startup != nil {
+		f.startup()
+	}
+	if !fakeCreatedTupleOwned(f.tmux, result, marker) {
+		return errors.New("verify created tmux session after startup")
+	}
+	return nil
+}
+
+func fakeCreatedTupleOwned(tmux *fakeTmux, result intmux.NewSessionResult, marker string) bool {
+	session := tmux.session(result.SessionID)
+	if session == nil || session.env[createOperationEnvironment] != marker || marker == "" {
+		return false
+	}
+	for _, window := range session.windows {
+		if window.id != result.WindowID {
+			continue
+		}
+		for _, pane := range window.panes {
+			if pane.id == result.PaneID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // newTestResourceCreateCommand wires the resource-backed create routes onto the
@@ -126,6 +199,11 @@ func seedLiveWindow(t *testing.T, tmux *fakeTmux, session *fakeTmuxSession, wind
 	window.panes = append(window.panes, pane)
 	session.windows = append(session.windows, window)
 	return window
+}
+
+func seedOwnedSession(session *fakeTmuxSession, uid, root string) {
+	session.opts[tmuxopts.ProjectUIDSession] = uid
+	session.opts[tmuxopts.ProjectPathSession] = root
 }
 
 // focusMovingCommands is the closed set of tmux verbs that move a client. The
@@ -201,6 +279,55 @@ func TestCreateMaterializesAMissingProjectRuntimeInTheBackground(t *testing.T) {
 		t.Fatalf("status.session = %+v, want live", project.Status.Session)
 	}
 	assertNoClientMovement(t, tmux)
+}
+
+func TestCreateWindowPersistsExactRuntimeDisplayNameBeforeLifecycleReconcile(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	if _, _, err := runRoute(t, create, "window", "--project", "beta", "--name", "review"); err != nil {
+		t.Fatalf("create window: %v", err)
+	}
+
+	var created *coremetadata.Window
+	for index := range store.registry.Windows {
+		window := &store.registry.Windows[index]
+		if window.Metadata.OwnerUID() == "prj-beta" && window.Metadata.Name == "review" {
+			created = window
+			break
+		}
+	}
+	if created == nil {
+		t.Fatal("created review Window is absent from Registry")
+	}
+	if created.Metadata.DisplayName != created.Metadata.Name {
+		t.Fatalf("created Window displayName = %q, want exact runtime name %q", created.Metadata.DisplayName, created.Metadata.Name)
+	}
+
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": tmux}}
+	reconcile := &resourceReconcileCommand{
+		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
+		newReconciler: reconcileFixtureReconciler("/srv/beta", "beta"),
+	}
+	// The first public pass may refresh runtime status that the guarded create
+	// pass deliberately excluded. Once that canonical convergence completes,
+	// the exact created display projection must not cause a later drift/write.
+	tmux.calls = nil
+	stdout, stderr, err := runReconcile(t, reconcile, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || stderr != "" {
+		t.Fatalf("initial lifecycle reconcile: err=%v stderr=%q\n%s", err, stderr, stdout)
+	}
+	writesBefore := store.writes
+	tmux.calls = nil
+	stdout, stderr, err = runReconcile(t, reconcile, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || stderr != "" || !strings.Contains(stdout, `"outcome": "no-op"`) {
+		t.Fatalf("repeat lifecycle reconcile drifted: err=%v stderr=%q\n%s", err, stderr, stdout)
+	}
+	if store.writes != writesBefore || tmuxMutationCallCount(tmux) != 0 {
+		t.Fatalf("repeat lifecycle reconcile mutated state: Registry writes=%d want=%d tmux mutations=%d", store.writes, writesBefore, tmuxMutationCallCount(tmux))
+	}
 }
 
 // TestCreateResultKindsFollowTheRouteNotTheSideEffects is acceptance criterion 2.
@@ -454,6 +581,7 @@ func TestAStalePrimaryPaneRefIsExitTwoWithNoFocusFallback(t *testing.T) {
 			// A live session with a live pane is present, so a fallback to the
 			// active or last-used Pane would have something to fall back to.
 			session := tmux.addSession("beta")
+			seedOwnedSession(session, "prj-beta", "/srv/beta")
 			seedLiveWindow(t, tmux, session, "win-beta-main", "pan-beta-zsh")
 			create, _ := newTestResourceCreateCommand(t, store, tmux)
 			panesBefore := tmux.paneCount()
@@ -803,6 +931,7 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 		// live session, plus alpha's own already-live Window and Pane.
 		bystander := tmux.addSession("bystander")
 		alpha := tmux.addSession("alpha")
+		seedOwnedSession(alpha, "prj-alpha", "/srv/alpha")
 		seedLiveWindow(t, tmux, alpha, "win-alpha-main", "pan-alpha-zsh")
 		before := tmux.state()
 		registryBefore := store.snapshot()
@@ -866,13 +995,14 @@ func TestObjectCreatedHookFailureRollsBackExactPaneAndRegistry(t *testing.T) {
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
 	session := tmux.addSession("alpha")
+	seedOwnedSession(session, "prj-alpha", "/srv/alpha")
 	seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
 	before := tmux.state()
 	registryBefore := store.snapshot()
 
 	create, _ := newTestResourceCreateCommand(t, store, tmux)
 	tmux.fail = []string{"split-window"}
-	tmux.failAfterCreate = true
+	tmux.failAfterMutation = true
 	tmux.failMessage = "synchronous lifecycle hook refused"
 
 	stdout, _, err := runRoute(t, create, "pane", "--project", "alpha", "--window", "main")
@@ -896,13 +1026,14 @@ func TestObjectCreatedHookFailureRollsBackExactWindowAndRegistry(t *testing.T) {
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
 	session := tmux.addSession("alpha")
+	seedOwnedSession(session, "prj-alpha", "/srv/alpha")
 	seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
 	before := tmux.state()
 	registryBefore := store.snapshot()
 
 	create, _ := newTestResourceCreateCommand(t, store, tmux)
 	tmux.fail = []string{"new-window"}
-	tmux.failAfterCreate = true
+	tmux.failAfterMutation = true
 	tmux.failMessage = "synchronous lifecycle hook refused"
 
 	stdout, _, err := runRoute(t, create, "window", "--project", "alpha", "--name", "phase0-hook")
@@ -942,6 +1073,402 @@ func TestObjectCreatedHookFailureRollsBackExactSessionAndRegistry(t *testing.T) 
 	}
 	if store.snapshot() != registryBefore || store.writes != 0 {
 		t.Fatal("object-created session failure committed registry state")
+	}
+}
+
+func TestSessionResultErrorUsesExactHandleAndPreservesUnknownOwnership(t *testing.T) {
+	t.Parallel()
+
+	t.Run("exact leased handle survives rename and rolls back", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		tmux := newFakeTmux()
+		create, sessions := newTestResourceCreateCommand(t, store, tmux)
+		sessions.createErr = errors.New("owner verification failed")
+		sessions.createErrResult = true
+		sessions.postCreate = func() { tmux.session("beta").name = "renamed-after-create" }
+		registryBefore, runtimeBefore := store.snapshot(), tmux.state()
+
+		stdout, _, err := runRoute(t, create, "window", "--project", "beta")
+		if err == nil || stdout != "" {
+			t.Fatalf("stdout/error = %q / %v", stdout, err)
+		}
+		if store.snapshot() != registryBefore || store.writes != 0 || tmux.state() != runtimeBefore {
+			t.Fatalf("exact renamed result-error session was not rolled back:\n%s", tmux.state())
+		}
+	})
+
+	t.Run("exact handle without private marker is preserved and diagnosed", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeResourceStore(t)
+		tmux := newFakeTmux()
+		create, sessions := newTestResourceCreateCommand(t, store, tmux)
+		var warnings bytes.Buffer
+		create.runtime.warn = &warnings
+		sessions.createErr = errors.New("owner verification failed")
+		sessions.createErrResult = true
+		sessions.postCreate = func() {
+			session := tmux.session("beta")
+			delete(session.env, createOperationEnvironment)
+		}
+		registryBefore := store.snapshot()
+
+		stdout, _, err := runRoute(t, create, "window", "--project", "beta")
+		if err == nil || stdout != "" {
+			t.Fatalf("stdout/error = %q / %v", stdout, err)
+		}
+		residual := tmux.session("beta")
+		if residual == nil || residual.opts[tmuxopts.ProjectUIDSession] != "" || store.snapshot() != registryBefore || store.writes != 0 {
+			t.Fatalf("unknown-ownership result-error session was claimed or removed:\n%s", tmux.state())
+		}
+		if !strings.Contains(warnings.String(), residual.id) || !strings.Contains(warnings.String(), "preserved this exact residual handle") {
+			t.Fatalf("unknown exact residual diagnostic = %q", warnings.String())
+		}
+	})
+}
+
+func TestCreatedSessionRevalidationRefusesHookAndStartupIdentityLoss(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		startup bool
+		mutate  func(*fakeTmux)
+	}{
+		{
+			name: "post-create moves initial Window to another session",
+			mutate: func(tmux *fakeTmux) {
+				session := tmux.session("beta")
+				window := session.windows[0]
+				session.windows = nil
+				tmux.session("bystander").windows = append(tmux.session("bystander").windows, window)
+			},
+		},
+		{
+			name: "post-create kills session and same-name replacement appears",
+			mutate: func(tmux *fakeTmux) {
+				tmux.sessions = slices.DeleteFunc(tmux.sessions, func(session *fakeTmuxSession) bool { return session.name == "beta" })
+				replacement := tmux.addSession("beta")
+				replacement.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+				replacement.opts[tmuxopts.ProjectPathSession] = "/srv/foreign"
+			},
+		},
+		{
+			name: "post-create replacement reuses returned handles without marker",
+			mutate: func(tmux *fakeTmux) {
+				created := tmux.session("beta")
+				sessionID, windowID, paneID := created.id, created.windows[0].id, created.windows[0].panes[0].id
+				tmux.sessions = slices.DeleteFunc(tmux.sessions, func(session *fakeTmuxSession) bool { return session == created })
+				replacement := tmux.addSession("beta")
+				replacement.id = sessionID
+				replacement.windows[0].id = windowID
+				replacement.windows[0].panes[0].id = paneID
+				replacement.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+				replacement.opts[tmuxopts.ProjectPathSession] = "/srv/foreign"
+			},
+		},
+		{
+			name:    "startup moves returned Pane under another Window",
+			startup: true,
+			mutate: func(tmux *fakeTmux) {
+				session := tmux.session("beta")
+				pane := session.windows[0].panes[0]
+				session.windows[0].panes = nil
+				other := &fakeTmuxWindow{id: tmux.mint("@"), name: "startup", opts: map[string]string{}, panes: []*fakeTmuxPane{pane}}
+				session.windows = append(session.windows, other)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			bystander := tmux.addSession("bystander")
+			bystanderOpts := maps.Clone(bystander.opts)
+			bystanderWindowOpts := maps.Clone(bystander.windows[0].opts)
+			bystanderPaneOpts := maps.Clone(bystander.windows[0].panes[0].opts)
+			create, sessions := newTestResourceCreateCommand(t, store, tmux)
+			if test.startup {
+				sessions.startup = func() {
+					session := tmux.session("beta")
+					if session == nil || session.opts[tmuxopts.ProjectUIDSession] == "" ||
+						len(session.windows) != 1 || session.windows[0].opts[tmuxopts.WindowUID] == "" ||
+						len(session.windows[0].panes) != 1 || session.windows[0].panes[0].opts[tmuxopts.PaneUID] == "" {
+						t.Fatalf("startup ran before Session/Window/Pane claims and mirrors:\n%s", tmux.state())
+					}
+					test.mutate(tmux)
+				}
+			} else {
+				sessions.postCreate = func() { test.mutate(tmux) }
+			}
+			registryBefore := store.snapshot()
+
+			stdout, _, err := runRoute(t, create, "window", "--project", "beta")
+			if err == nil || stdout != "" {
+				t.Fatalf("stdout/error = %q / %v", stdout, err)
+			}
+			if store.snapshot() != registryBefore || store.writes != 0 {
+				t.Fatal("identity-loss callback committed Registry state")
+			}
+			if test.startup && tmux.session("beta") != nil {
+				t.Fatalf("startup ownership failure preserved the operation-owned Session:\n%s", tmux.state())
+			}
+			if tmux.session("bystander") != bystander || !maps.Equal(bystander.opts, bystanderOpts) ||
+				!maps.Equal(bystander.windows[0].opts, bystanderWindowOpts) ||
+				!maps.Equal(bystander.windows[0].panes[0].opts, bystanderPaneOpts) {
+				t.Fatalf("identity-loss callback contaminated pre-existing bystander:\n%s", tmux.state())
+			}
+			for _, session := range tmux.sessions {
+				for _, window := range session.windows {
+					if window.opts[tmuxopts.WindowUID] != "" {
+						t.Fatalf("identity-loss callback claimed Window %s: %#v", window.id, window.opts)
+					}
+					for _, pane := range window.panes {
+						if pane.opts[tmuxopts.PaneUID] != "" {
+							t.Fatalf("identity-loss callback claimed Pane %s: %#v", pane.id, pane.opts)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCreatedSessionRevalidationAllowsInitialWindowToRemainOwnedButNotCurrent(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, sessions := newTestResourceCreateCommand(t, store, tmux)
+	sessions.postCreate = func() {
+		session := tmux.session("beta")
+		other := &fakeTmuxWindow{id: tmux.mint("@"), name: "hook-selected", opts: map[string]string{}}
+		other.panes = append(other.panes, newFakeTmuxPane(tmux.mint("%")))
+		session.windows = append([]*fakeTmuxWindow{other}, session.windows...)
+	}
+
+	if _, _, err := runRoute(t, create, "window", "--project", "beta"); err != nil {
+		t.Fatalf("create with retained non-current initial Window: %v", err)
+	}
+	project, _ := store.registry.ProjectByName("beta")
+	if session := tmux.session("beta"); session == nil || session.opts[tmuxopts.ProjectUIDSession] != project.Metadata.UID {
+		t.Fatalf("retained initial Window session was not claimed:\n%s", tmux.state())
+	}
+}
+
+func TestUIDClaimFailurePreservesUnownedResidualAndRegistry(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		args       []string
+		fail       []string
+		wantKind   string
+		setup      func(*fakeTmux)
+		residualID func(*fakeTmux) string
+	}{
+		{
+			name:     "new session",
+			args:     []string{"window", "--project", "beta", "--name", "claim-session"},
+			fail:     []string{"set-option", tmuxopts.ProjectUIDSession},
+			wantKind: "session",
+			residualID: func(tmux *fakeTmux) string {
+				if session := tmux.session("beta"); session != nil && session.opts[tmuxopts.ProjectUIDSession] == "" {
+					return session.id
+				}
+				return ""
+			},
+		},
+		{
+			name:     "new window",
+			args:     []string{"window", "--project", "alpha", "--name", "claim-window"},
+			fail:     []string{"set-option", "-w", tmuxopts.WindowUID},
+			wantKind: "window",
+			setup: func(tmux *fakeTmux) {
+				session := tmux.addSession("alpha")
+				seedOwnedSession(session, "prj-alpha", "/srv/alpha")
+				seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+			},
+			residualID: func(tmux *fakeTmux) string {
+				for _, window := range tmux.session("alpha").windows {
+					if window.name == "claim-window" && window.opts[tmuxopts.WindowUID] == "" {
+						return window.id
+					}
+				}
+				return ""
+			},
+		},
+		{
+			name:     "split pane",
+			args:     []string{"pane", "--project", "alpha", "--window", "main", "--name", "claim-pane"},
+			fail:     []string{"set-option", "-p", tmuxopts.PaneUID},
+			wantKind: "pane",
+			setup: func(tmux *fakeTmux) {
+				session := tmux.addSession("alpha")
+				seedOwnedSession(session, "prj-alpha", "/srv/alpha")
+				seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+			},
+			residualID: func(tmux *fakeTmux) string {
+				for _, window := range tmux.session("alpha").windows {
+					if window.opts[tmuxopts.WindowUID] != "win-alpha-main" {
+						continue
+					}
+					for _, pane := range window.panes {
+						if pane.opts[tmuxopts.PaneUID] == "" {
+							return pane.id
+						}
+					}
+				}
+				return ""
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			if test.setup != nil {
+				test.setup(tmux)
+			}
+			beforeRegistry := store.snapshot()
+			create, _ := newTestResourceCreateCommand(t, store, tmux)
+			var warnings bytes.Buffer
+			create.runtime.warn = &warnings
+			tmux.fail = test.fail
+
+			stdout, _, err := runRoute(t, create, test.args...)
+			if err == nil || stdout != "" || !strings.Contains(err.Error(), "claim created tmux "+test.wantKind) {
+				t.Fatalf("stdout/error = %q / %v", stdout, err)
+			}
+			if store.snapshot() != beforeRegistry || store.writes != 0 {
+				t.Fatal("UID-claim failure committed Registry state")
+			}
+			residualID := test.residualID(tmux)
+			if residualID == "" {
+				t.Fatalf("UID-claim failure removed or claimed the raw residual:\n%s", tmux.state())
+			}
+			if !strings.Contains(warnings.String(), "preserved this exact residual handle") || !strings.Contains(warnings.String(), residualID) {
+				t.Fatalf("residual diagnostic = %q, want exact %s", warnings.String(), residualID)
+			}
+		})
+	}
+}
+
+func TestUIDClaimAfterApplyErrorRollsBackExactOwnedObject(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		args  []string
+		fail  []string
+		setup func(*fakeTmux)
+	}{
+		{
+			name: "new session",
+			args: []string{"window", "--project", "beta", "--name", "after-apply-session"},
+			fail: []string{"set-option", tmuxopts.ProjectUIDSession},
+		},
+		{
+			name: "new window",
+			args: []string{"window", "--project", "alpha", "--name", "after-apply-window"},
+			fail: []string{"set-option", "-w", tmuxopts.WindowUID},
+			setup: func(tmux *fakeTmux) {
+				session := tmux.addSession("alpha")
+				seedOwnedSession(session, "prj-alpha", "/srv/alpha")
+				seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+			},
+		},
+		{
+			name: "split pane",
+			args: []string{"pane", "--project", "alpha", "--window", "main", "--name", "after-apply-pane"},
+			fail: []string{"set-option", "-p", tmuxopts.PaneUID},
+			setup: func(tmux *fakeTmux) {
+				session := tmux.addSession("alpha")
+				seedOwnedSession(session, "prj-alpha", "/srv/alpha")
+				seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			if test.setup != nil {
+				test.setup(tmux)
+			}
+			registryBefore, runtimeBefore := store.snapshot(), tmux.state()
+			create, _ := newTestResourceCreateCommand(t, store, tmux)
+			var warnings bytes.Buffer
+			create.runtime.warn = &warnings
+			tmux.fail = test.fail
+			tmux.failAfterMutation = true
+
+			stdout, _, err := runRoute(t, create, test.args...)
+			if err == nil || stdout != "" || !strings.Contains(err.Error(), "claim created tmux") {
+				t.Fatalf("stdout/error = %q / %v", stdout, err)
+			}
+			if store.snapshot() != registryBefore || store.writes != 0 || tmux.state() != runtimeBefore {
+				t.Fatalf("after-apply claim error was not rolled back exactly:\n--- got ---\n%s\n--- want ---\n%s", tmux.state(), runtimeBefore)
+			}
+			if strings.Contains(warnings.String(), "unclaimed") || strings.Contains(warnings.String(), "preserved this exact residual") {
+				t.Fatalf("stuck claim was diagnosed as unowned: %q", warnings.String())
+			}
+		})
+	}
+}
+
+func TestClaimedWindowRollsBackAfterMirrorOrRegistryCommitFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		inject func(*fakeResourceStore, *createCommand, *fakeTmux)
+	}{
+		{
+			name: "later mirror",
+			inject: func(_ *fakeResourceStore, _ *createCommand, tmux *fakeTmux) {
+				tmux.fail = []string{"set-option", "-w", tmuxopts.AutomaticRenameWindow}
+			},
+		},
+		{
+			name: "Registry commit",
+			inject: func(store *fakeResourceStore, create *createCommand, _ *fakeTmux) {
+				create.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+					store.transactions++
+					working := store.registry.Clone()
+					if err := fn(&working); err != nil {
+						return coremetadata.Registry{}, err
+					}
+					return coremetadata.Registry{}, errors.New("injected Registry commit failure")
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			session := tmux.addSession("alpha")
+			seedOwnedSession(session, "prj-alpha", "/srv/alpha")
+			seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+			registryBefore, runtimeBefore := store.snapshot(), tmux.state()
+			create, _ := newTestResourceCreateCommand(t, store, tmux)
+			test.inject(store, create, tmux)
+
+			stdout, _, err := runRoute(t, create, "window", "--project", "alpha", "--name", "claimed-rollback")
+			if err == nil || stdout != "" {
+				t.Fatalf("stdout/error = %q / %v", stdout, err)
+			}
+			if store.snapshot() != registryBefore || store.writes != 0 || tmux.state() != runtimeBefore {
+				t.Fatalf("claimed Window did not roll back after %s failure:\n--- got ---\n%s\n--- want ---\n%s", test.name, tmux.state(), runtimeBefore)
+			}
+		})
+	}
+}
+
+func TestStrictTmuxRowsRejectsIncompleteIdentityInventory(t *testing.T) {
+	t.Parallel()
+	if _, err := strictTmuxRows("$1"+tmuxRowSep+"alpha"+tmuxRowSep+"uid\n", 4); err == nil {
+		t.Fatal("strict identity inventory accepted a truncated row")
 	}
 }
 
@@ -1293,6 +1820,7 @@ func TestResourceCreateAdoptsAnAlreadyLiveWindow(t *testing.T) {
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
 	session := tmux.addSession("alpha")
+	seedOwnedSession(session, "prj-alpha", "/srv/alpha")
 	live := seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
 	create, sessions := newTestResourceCreateCommand(t, store, tmux)
 	windowsBefore := tmux.windowCount()
@@ -1389,6 +1917,471 @@ func TestCreateHelpAdvertisesOnlyImplementedProjections(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSelectedSessionOwnershipFailsBeforeReconcileOrLease(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		setup func(*fakeTmux, *fakeTmuxSession)
+	}{
+		{name: "blank identity"},
+		{name: "foreign uid", setup: func(_ *fakeTmux, session *fakeTmuxSession) {
+			session.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+			session.opts[tmuxopts.ProjectPathSession] = "/srv/alpha"
+		}},
+		{name: "foreign root", setup: func(_ *fakeTmux, session *fakeTmuxSession) {
+			session.opts[tmuxopts.ProjectUIDSession] = "prj-alpha"
+			session.opts[tmuxopts.ProjectPathSession] = "/srv/foreign"
+		}},
+		{name: "duplicate uid on other session", setup: func(tmux *fakeTmux, session *fakeTmuxSession) {
+			session.opts[tmuxopts.ProjectUIDSession] = "prj-alpha"
+			session.opts[tmuxopts.ProjectPathSession] = "/srv/alpha"
+			other := tmux.addSession("other")
+			other.opts[tmuxopts.ProjectUIDSession] = "prj-alpha"
+			other.opts[tmuxopts.ProjectPathSession] = "/srv/other"
+		}},
+		{name: "duplicate root on other session", setup: func(tmux *fakeTmux, session *fakeTmuxSession) {
+			session.opts[tmuxopts.ProjectUIDSession] = "prj-alpha"
+			session.opts[tmuxopts.ProjectPathSession] = "/srv/alpha"
+			other := tmux.addSession("other")
+			other.opts[tmuxopts.ProjectUIDSession] = "prj-other"
+			other.opts[tmuxopts.ProjectPathSession] = "/srv/alpha"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			session := tmux.addSession("alpha")
+			if test.setup != nil {
+				test.setup(tmux, session)
+			}
+			beforeRegistry, beforeRuntime := store.snapshot(), tmux.state()
+			create, _ := newTestResourceCreateCommand(t, store, tmux)
+			stdout, _, err := runRoute(t, create, "window", "--project", "alpha")
+			if err == nil || stdout != "" {
+				t.Fatalf("stdout/error = %q / %v", stdout, err)
+			}
+			if store.snapshot() != beforeRegistry || store.writes != 0 || tmux.state() != beforeRuntime {
+				t.Fatalf("refusal mutated state\nregistry before=%s\nafter=%s\nruntime before=%s\nafter=%s", beforeRegistry, store.snapshot(), beforeRuntime, tmux.state())
+			}
+			if tmux.argvContains("set-environment") || tmux.argvContains("set-option") || tmux.argvContains("new-window") {
+				t.Fatalf("refusal reached a mutation: %v", tmux.calls)
+			}
+		})
+	}
+}
+
+func TestAbsentSelectedSessionRefusesDuplicateOwnershipElsewhere(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		uid  string
+		root string
+	}{
+		{name: "duplicate uid", uid: "prj-alpha", root: "/srv/other"},
+		{name: "duplicate root", uid: "prj-other", root: "/srv/alpha"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			other := tmux.addSession("other")
+			other.opts[tmuxopts.ProjectUIDSession] = test.uid
+			other.opts[tmuxopts.ProjectPathSession] = test.root
+			registryBefore, runtimeBefore := store.snapshot(), tmux.state()
+			create, _ := newTestResourceCreateCommand(t, store, tmux)
+
+			stdout, _, err := runRoute(t, create, "window", "--project", "alpha")
+			if err == nil || stdout != "" {
+				t.Fatalf("stdout/error = %q / %v", stdout, err)
+			}
+			if store.snapshot() != registryBefore || store.writes != 0 || tmux.state() != runtimeBefore {
+				t.Fatal("absent selected-session duplicate refusal mutated state")
+			}
+			for _, call := range tmux.calls {
+				if len(call) > 0 && slices.Contains([]string{"set-environment", "set-option", "rename-window", "new-window", "split-window"}, call[0]) {
+					t.Fatalf("absent selected-session duplicate refusal issued a mutation: %v", call)
+				}
+			}
+		})
+	}
+}
+
+func TestOuterMissInnerForeignHitNeverAdoptsOrLeases(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, sessions := newTestResourceCreateCommand(t, store, tmux)
+	sessions.beforeEnsureResult = func() {
+		session := tmux.addSession("beta")
+		session.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+		session.opts[tmuxopts.ProjectPathSession] = "/srv/beta"
+	}
+	before := store.snapshot()
+	stdout, _, err := runRoute(t, create, "window", "--project", "beta")
+	if err == nil || stdout != "" {
+		t.Fatalf("stdout/error = %q / %v", stdout, err)
+	}
+	if store.snapshot() != before || store.writes != 0 {
+		t.Fatal("outer-miss/inner-hit committed Registry state")
+	}
+	session := tmux.session("beta")
+	if session == nil || len(session.windows) != 1 || session.opts[tmuxopts.ProjectUIDSession] != "prj-foreign" || session.env[createOperationEnvironment] != "" {
+		t.Fatalf("foreign session was adopted or leased:\n%s", tmux.state())
+	}
+	if session.windows[0].opts[tmuxopts.WindowUID] != "" || session.windows[0].panes[0].opts[tmuxopts.PaneUID] != "" {
+		t.Fatalf("foreign initial handles were ordinally adopted:\n%s", tmux.state())
+	}
+}
+
+func TestOuterMissInnerUnsafeIdentityMatrixFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		setup func(*fakeTmux, *fakeTmuxSession)
+	}{
+		{name: "blank"},
+		{name: "foreign", setup: func(_ *fakeTmux, session *fakeTmuxSession) {
+			session.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+			session.opts[tmuxopts.ProjectPathSession] = "/srv/beta"
+		}},
+		{name: "duplicate uid", setup: func(tmux *fakeTmux, session *fakeTmuxSession) {
+			session.opts[tmuxopts.ProjectUIDSession] = "prj-beta"
+			session.opts[tmuxopts.ProjectPathSession] = "/srv/beta"
+			other := tmux.addSession("duplicate-uid")
+			other.opts[tmuxopts.ProjectUIDSession] = "prj-beta"
+			other.opts[tmuxopts.ProjectPathSession] = "/srv/other"
+		}},
+		{name: "duplicate root", setup: func(tmux *fakeTmux, session *fakeTmuxSession) {
+			session.opts[tmuxopts.ProjectUIDSession] = "prj-beta"
+			session.opts[tmuxopts.ProjectPathSession] = "/srv/beta"
+			other := tmux.addSession("duplicate-root")
+			other.opts[tmuxopts.ProjectUIDSession] = "prj-other"
+			other.opts[tmuxopts.ProjectPathSession] = "/srv/beta"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			create, sessions := newTestResourceCreateCommand(t, store, tmux)
+			var raced *fakeTmuxSession
+			sessions.beforeEnsureResult = func() {
+				raced = tmux.addSession("beta")
+				if test.setup != nil {
+					test.setup(tmux, raced)
+				}
+			}
+			registryBefore := store.snapshot()
+			stdout, _, err := runRoute(t, create, "window", "--project", "beta")
+			if err == nil || stdout != "" {
+				t.Fatalf("stdout/error = %q / %v", stdout, err)
+			}
+			if raced == nil || store.snapshot() != registryBefore || store.writes != 0 || raced.env[createOperationEnvironment] != "" {
+				t.Fatalf("outer-miss/inner-%s mutated Registry or leased the session:\n%s", test.name, tmux.state())
+			}
+			if raced.windows[0].opts[tmuxopts.WindowUID] != "" || raced.windows[0].panes[0].opts[tmuxopts.PaneUID] != "" {
+				t.Fatalf("outer-miss/inner-%s adopted initial handles:\n%s", test.name, tmux.state())
+			}
+			for _, call := range tmux.calls {
+				if len(call) > 0 && slices.Contains([]string{"set-environment", "set-option", "rename-window", "new-window", "split-window"}, call[0]) {
+					t.Fatalf("outer-miss/inner-%s issued a tmux mutation: %v", test.name, call)
+				}
+			}
+		})
+	}
+}
+
+func TestGuardMissThenReconcilerLiveHitRefusesBeforeImportWrites(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	tmux.afterListSessions = func(tmux *fakeTmux) {
+		session := tmux.addSession("beta")
+		session.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+		session.opts[tmuxopts.ProjectPathSession] = "/srv/beta"
+	}
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	before := store.snapshot()
+	stdout, _, err := runRoute(t, create, "window", "--project", "beta")
+	if err == nil || stdout != "" {
+		t.Fatalf("stdout/error = %q / %v", stdout, err)
+	}
+	if store.snapshot() != before || store.writes != 0 {
+		t.Fatal("reconciler race refusal committed Registry state")
+	}
+	session := tmux.session("beta")
+	if session == nil || session.opts[tmuxopts.ProjectUIDSession] != "prj-foreign" || session.env[createOperationEnvironment] != "" || session.windows[0].opts[tmuxopts.WindowUID] != "" {
+		t.Fatalf("reconciler race imported or leased the selected foreign session:\n%s", tmux.state())
+	}
+}
+
+func TestGuardedReconcileNeverWritesToSameNameReplacement(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	owned := tmux.addSession("alpha")
+	seedOwnedSession(owned, "prj-alpha", "/srv/alpha")
+	seedLiveWindow(t, tmux, owned, "win-alpha-main", "pan-alpha-zsh")
+	var replacement *fakeTmuxSession
+	identityReads := 0
+	var replaceAfterGuard func(*fakeTmux)
+	replaceAfterGuard = func(tmux *fakeTmux) {
+		identityReads++
+		if identityReads == 1 {
+			tmux.afterListSessions = replaceAfterGuard
+			return
+		}
+		tmux.sessions = slices.DeleteFunc(tmux.sessions, func(session *fakeTmuxSession) bool { return session == owned })
+		replacement = tmux.addSession("alpha")
+		replacement.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
+		replacement.opts[tmuxopts.ProjectPathSession] = "/srv/alpha"
+	}
+	tmux.afterListSessions = replaceAfterGuard
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	registryBefore := store.snapshot()
+
+	stdout, _, err := runRoute(t, create, "window", "--project", "alpha", "--name", "replacement-race")
+	if err == nil || stdout != "" {
+		t.Fatalf("stdout/error = %q / %v", stdout, err)
+	}
+	if replacement == nil {
+		t.Fatal("the deterministic same-name replacement race did not run")
+	}
+	if store.snapshot() != registryBefore || store.writes != 0 || replacement.env[createOperationEnvironment] != "" {
+		t.Fatalf("same-name replacement was reconciled, leased, or committed:\n%s", tmux.state())
+	}
+	if replacement.opts[tmuxopts.ProjectUIDSession] != "prj-foreign" || replacement.windows[0].opts[tmuxopts.WindowUID] != "" || tmux.argvContains("new-window") {
+		t.Fatalf("guarded reconcile contaminated the replacement:\n%s", tmux.state())
+	}
+	for _, call := range tmux.calls {
+		if len(call) == 0 || !slices.Contains([]string{"set-option", "set-environment", "rename-window"}, call[0]) {
+			continue
+		}
+		if flagValue(call, "-t") == replacement.id || flagValue(call, "-t") == replacement.name {
+			t.Fatalf("guarded reconcile wrote to same-name replacement: %v", call)
+		}
+	}
+}
+
+func TestOuterMissInnerExactHitDoesNotAdoptInitialOrdinalHandles(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, sessions := newTestResourceCreateCommand(t, store, tmux)
+	var raced *fakeTmuxSession
+	sessions.beforeEnsureResult = func() {
+		raced = tmux.addSession("beta")
+		raced.opts[tmuxopts.ProjectUIDSession] = "prj-beta"
+		raced.opts[tmuxopts.ProjectPathSession] = "/srv/beta"
+	}
+	if _, _, err := runRoute(t, create, "window", "--project", "beta"); err != nil {
+		t.Fatalf("exact inner hit error = %v", err)
+	}
+	if raced == nil || raced.windows[0].opts[tmuxopts.WindowUID] != "" || raced.windows[0].panes[0].opts[tmuxopts.PaneUID] != "" {
+		t.Fatalf("inner-hit initial handles were adopted:\n%s", tmux.state())
+	}
+}
+
+func TestNewWindowAttributionMatrixPreservesPreexistingIdentity(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		inject func(*fakeTmux, *fakeTmuxSession, *fakeTmuxWindow, *fakeTmuxPane)
+		output func(*fakeTmuxSession, *fakeTmuxWindow, *fakeTmuxPane) string
+	}{
+		{name: "returned preexisting handles", output: func(session *fakeTmuxSession, _ *fakeTmuxWindow, _ *fakeTmuxPane) string {
+			return tmuxRowFormat(session.windows[0].id, session.windows[0].panes[0].id)
+		}},
+		{name: "absent after", inject: func(_ *fakeTmux, session *fakeTmuxSession, window *fakeTmuxWindow, _ *fakeTmuxPane) {
+			session.windows = slices.DeleteFunc(session.windows, func(candidate *fakeTmuxWindow) bool { return candidate == window })
+		}},
+		{name: "wrong session", inject: func(tmux *fakeTmux, session *fakeTmuxSession, window *fakeTmuxWindow, _ *fakeTmuxPane) {
+			session.windows = slices.DeleteFunc(session.windows, func(candidate *fakeTmuxWindow) bool { return candidate == window })
+			tmux.session("bystander").windows = append(tmux.session("bystander").windows, window)
+		}},
+		{name: "two new windows", inject: func(tmux *fakeTmux, session *fakeTmuxSession, _ *fakeTmuxWindow, _ *fakeTmuxPane) {
+			other := &fakeTmuxWindow{id: tmux.mint("@"), name: "hook", opts: map[string]string{}}
+			other.panes = append(other.panes, newFakeTmuxPane(tmux.mint("%")))
+			session.windows = append(session.windows, other)
+		}},
+		{name: "returned preexisting pane", output: func(session *fakeTmuxSession, window *fakeTmuxWindow, _ *fakeTmuxPane) string {
+			return tmuxRowFormat(window.id, session.windows[0].panes[0].id)
+		}},
+		{name: "primary pane wrong window", inject: func(_ *fakeTmux, session *fakeTmuxSession, window *fakeTmuxWindow, pane *fakeTmuxPane) {
+			window.panes = slices.DeleteFunc(window.panes, func(candidate *fakeTmuxPane) bool { return candidate == pane })
+			session.windows[0].panes = append(session.windows[0].panes, pane)
+		}},
+		{name: "primary pane has mixed window owners", inject: func(_ *fakeTmux, session *fakeTmuxSession, _ *fakeTmuxWindow, pane *fakeTmuxPane) {
+			session.windows[0].panes = append(session.windows[0].panes, pane)
+		}},
+		{name: "zero initial panes", inject: func(_ *fakeTmux, _ *fakeTmuxSession, window *fakeTmuxWindow, pane *fakeTmuxPane) {
+			window.panes = slices.DeleteFunc(window.panes, func(candidate *fakeTmuxPane) bool { return candidate == pane })
+		}},
+		{name: "multiple initial panes", inject: func(tmux *fakeTmux, _ *fakeTmuxSession, window *fakeTmuxWindow, _ *fakeTmuxPane) {
+			window.panes = append(window.panes, newFakeTmuxPane(tmux.mint("%")))
+		}},
+		{name: "malformed output", output: func(_ *fakeTmuxSession, _ *fakeTmuxWindow, _ *fakeTmuxPane) string {
+			return "@not-a-handle"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			bystander := tmux.addSession("bystander")
+			_ = bystander
+			session := tmux.addSession("alpha")
+			seedOwnedSession(session, "prj-alpha", "/srv/alpha")
+			seed := seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+			beforeWindowOpts := maps.Clone(seed.opts)
+			beforePaneOpts := maps.Clone(seed.panes[0].opts)
+			beforeRegistry := store.snapshot()
+			tmux.afterNewWindow = test.inject
+			tmux.newWindowResult = test.output
+			create, _ := newTestResourceCreateCommand(t, store, tmux)
+			var warnings bytes.Buffer
+			create.runtime.warn = &warnings
+			beforeWindowIDs, beforePaneIDs := map[string]bool{}, map[string]bool{}
+			for _, candidateSession := range tmux.sessions {
+				for _, window := range candidateSession.windows {
+					beforeWindowIDs[window.id] = true
+					for _, pane := range window.panes {
+						beforePaneIDs[pane.id] = true
+					}
+				}
+			}
+			stdout, _, err := runRoute(t, create, "window", "--project", "alpha", "--name", "race")
+			if err == nil || stdout != "" {
+				t.Fatalf("stdout/error = %q / %v", stdout, err)
+			}
+			if store.snapshot() != beforeRegistry || store.writes != 0 || !maps.Equal(seed.opts, beforeWindowOpts) || !maps.Equal(seed.panes[0].opts, beforePaneOpts) {
+				t.Fatalf("attribution failure contaminated preexisting state:\n%s", tmux.state())
+			}
+			for _, candidateSession := range tmux.sessions {
+				for _, window := range candidateSession.windows {
+					if window != seed && window.opts[tmuxopts.WindowUID] != "" {
+						t.Fatalf("residual Window %s was claimed: %v", window.id, window.opts)
+					}
+					for _, pane := range window.panes {
+						if pane.opts[tmuxopts.PaneUID] != "" && pane != seed.panes[0] {
+							t.Fatalf("residual Pane %s was claimed: %v", pane.id, pane.opts)
+						}
+					}
+				}
+			}
+			if test.name == "two new windows" || test.name == "malformed output" {
+				for _, candidateSession := range tmux.sessions {
+					for _, window := range candidateSession.windows {
+						if !beforeWindowIDs[window.id] && !strings.Contains(warnings.String(), window.id) {
+							t.Fatalf("residual diagnostics %q omit exact Window %s", warnings.String(), window.id)
+						}
+						for _, pane := range window.panes {
+							if !beforePaneIDs[pane.id] && !strings.Contains(warnings.String(), pane.id) {
+								t.Fatalf("residual diagnostics %q omit exact Pane %s", warnings.String(), pane.id)
+							}
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestNewWindowAttributionAllowsPreexistingLinkedWindowOwnerRows(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	bystander := tmux.addSession("bystander")
+	session := tmux.addSession("alpha")
+	seedOwnedSession(session, "prj-alpha", "/srv/alpha")
+	shared := seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+	// tmux 3.4 reports the same @N/%N once per linked session. Those repeated
+	// handles are one pre-existing runtime with an owner set, not ambiguity.
+	bystander.windows = append(bystander.windows, shared)
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+
+	stdout, _, err := runRoute(t, create, "window", "--project", "alpha", "--name", "linked-safe")
+	if err != nil || !strings.HasPrefix(stdout, "window/") {
+		t.Fatalf("stdout/error = %q / %v", stdout, err)
+	}
+	if shared.opts[tmuxopts.WindowUID] != "win-alpha-main" || shared.panes[0].opts[tmuxopts.PaneUID] != "pan-alpha-zsh" {
+		t.Fatalf("linked pre-existing identity drifted: window=%#v pane=%#v", shared.opts, shared.panes[0].opts)
+	}
+	created := slices.DeleteFunc(slices.Clone(session.windows), func(window *fakeTmuxWindow) bool { return window == shared || window.opts[tmuxopts.WindowUID] == "" })
+	if len(created) != 1 || len(created[0].panes) != 1 || created[0].panes[0].opts[tmuxopts.PaneUID] == "" {
+		t.Fatalf("new exact Window/Pane was not attributed with linked rows:\n%s", tmux.state())
+	}
+}
+
+func TestAttributeCreatedWindowUsesLinkedOwnerSetsWithoutWeakeningPaneOwnership(t *testing.T) {
+	t.Parallel()
+	linkedWindowOwners := runtimeOwnerSet{
+		{SessionID: "$1", WindowID: "@1"}: {},
+		{SessionID: "$2", WindowID: "@1"}: {},
+	}
+	linkedPaneOwners := runtimeOwnerSet{
+		{SessionID: "$1", WindowID: "@1"}: {},
+		{SessionID: "$2", WindowID: "@1"}: {},
+	}
+	beforeWindows := runtimeOwners{"@1": linkedWindowOwners}
+	beforePanes := runtimeOwners{"%1": linkedPaneOwners}
+	afterWindows := runtimeOwners{
+		"@1": linkedWindowOwners,
+		"@3": {{SessionID: "$1", WindowID: "@3"}: {}},
+	}
+	afterPanes := runtimeOwners{
+		"%1": linkedPaneOwners,
+		"%3": {{SessionID: "$1", WindowID: "@3"}: {}},
+	}
+	if result, err := attributeCreatedWindow(tmuxRowFormat("@3", "%3"), "$1", beforeWindows, beforePanes, afterWindows, afterPanes); err != nil || result.WindowID != "@3" || result.PaneID != "%3" {
+		t.Fatalf("linked owner-set attribution = %+v / %v", result, err)
+	}
+
+	afterPanes["%3"][runtimeOwner{SessionID: "$1", WindowID: "@9"}] = struct{}{}
+	if _, err := attributeCreatedWindow(tmuxRowFormat("@3", "%3"), "$1", beforeWindows, beforePanes, afterWindows, afterPanes); err == nil {
+		t.Fatal("Pane handle shared across different Window owners was accepted")
+	}
+}
+
+func TestFailedWindowAttributionDoesNotCreateChainedNameOrUIDSelector(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	session := tmux.addSession("alpha")
+	seedOwnedSession(session, "prj-alpha", "/srv/alpha")
+	seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+	tmux.afterNewWindow = func(tmux *fakeTmux, session *fakeTmuxSession, _ *fakeTmuxWindow, _ *fakeTmuxPane) {
+		other := &fakeTmuxWindow{id: tmux.mint("@"), name: "hook", opts: map[string]string{}}
+		other.panes = append(other.panes, newFakeTmuxPane(tmux.mint("%")))
+		session.windows = append(session.windows, other)
+	}
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	registryBefore := store.snapshot()
+	if stdout, _, err := runRoute(t, create, "pane", "--project", "alpha", "--window", "race", "--create-window"); err == nil || stdout != "" {
+		t.Fatalf("first create stdout/error = %q / %v", stdout, err)
+	}
+	panesBefore := tmux.paneCount()
+	tmux.afterNewWindow = nil
+	for _, selector := range []string{"race", "uid:window-test-1"} {
+		if stdout, _, err := runRoute(t, create, "pane", "--project", "alpha", "--window", selector); err == nil || stdout != "" {
+			t.Fatalf("chained %s stdout/error = %q / %v", selector, stdout, err)
+		}
+		if tmux.paneCount() != panesBefore {
+			t.Fatalf("chained selector %s split a foreign Window", selector)
+		}
+		if store.snapshot() != registryBefore || store.writes != 0 {
+			t.Fatalf("chained selector %s committed failed attribution metadata", selector)
+		}
+		for _, window := range session.windows {
+			if (window.name == "race" || window.name == "hook") && window.opts[tmuxopts.WindowUID] != "" {
+				t.Fatalf("chained selector %s claimed foreign Window %s", selector, window.id)
+			}
+		}
 	}
 }
 

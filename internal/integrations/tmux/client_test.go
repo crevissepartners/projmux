@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -2282,7 +2283,6 @@ func TestClientEnsureSessionWithEnvironmentIncludesLeaseInNewSession(t *testing.
 			{err: exitError(t, 1)},
 			{},
 			{},
-			{},
 		},
 	}
 	client := NewClient(runner)
@@ -2295,11 +2295,120 @@ func TestClientEnsureSessionWithEnvironmentIncludesLeaseInNewSession(t *testing.
 	wantCalls := []commandCall{
 		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
 		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-e", "__projmux_create_operation=v1:7:8:op-test"}},
-		{name: "tmux", args: []string{"set-environment", "-t", "workspace", "__projmux_create_operation", "v1:7:8:op-test"}},
 		{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_project_path", "/tmp/projmux"}},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("unexpected tmux calls %#v", runner.calls)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "set-environment") && slices.Contains(call.args, createOperationEnvironment) {
+			t.Fatalf("private operation marker was reinstalled after new-session -e: %#v", runner.calls)
+		}
+	}
+}
+
+func TestClientEnsureSessionWithEnvironmentResultPreservesAtomicIdentityAndHookPane(t *testing.T) {
+	t.Parallel()
+	row := []byte("$7\\037@8\\037%9\n")
+	ownershipRow := []byte("$7\\037@8\\037%9\\037v1:7:8:op-test\n")
+	runner := &scriptedRunner{t: t, steps: []scriptedStep{
+		{err: exitError(t, 1)},
+		{output: row},
+		{output: row},
+		{},
+		{output: ownershipRow},
+	}}
+	hook := &fakePostCreateRunner{}
+	client := NewClient(runner, withPostCreateRunnerInterface(hook))
+	result, err := client.EnsureSessionWithEnvironmentResult(context.Background(), "workspace", "/tmp/projmux", map[string]string{
+		"__projmux_create_operation": "v1:7:8:op-test",
+	})
+	if err != nil {
+		t.Fatalf("EnsureSessionWithEnvironmentResult error = %v", err)
+	}
+	if !result.Created || result.SessionID != "$7" || result.WindowID != "@8" || result.PaneID != "%9" {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(hook.calls) != 1 || hook.calls[0].PaneID != "%9" {
+		t.Fatalf("post-create calls = %+v", hook.calls)
+	}
+	format := "#{session_id}\\037#{window_id}\\037#{pane_id}"
+	verifyFormat := tmuxFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{E:"+createOperationEnvironment+"}")
+	want := []commandCall{
+		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
+		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-e", "__projmux_create_operation=v1:7:8:op-test", "-P", "-F", format}},
+		{name: "tmux", args: []string{"display-message", "-p", "-t", "%9", "-F", format}},
+		{name: "tmux", args: []string{"set-option", "-t", "$7", "-q", "@projmux_project_path", "/tmp/projmux"}},
+		{name: "tmux", args: []string{"list-panes", "-s", "-t", "$7", "-F", verifyFormat}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestClientEnsureSessionWithEnvironmentResultRevalidatesAfterArbitraryCallbacks(t *testing.T) {
+	t.Parallel()
+	row := []byte("$7\\037@8\\037%9\n")
+	owned := []byte("$7\\037@8\\037%9\\037v1:7:8:op-test\n")
+
+	t.Run("single observation rejects replacement tuple", func(t *testing.T) {
+		t.Parallel()
+		runner := &scriptedRunner{t: t, steps: []scriptedStep{
+			{err: exitError(t, 1)}, {output: row}, {output: row}, {},
+			{output: []byte("$70\\037@8\\037%9\\037v1:7:8:op-test\n")},
+		}}
+		client := NewClient(runner, withPostCreateRunnerInterface(&fakePostCreateRunner{}))
+		result, err := client.EnsureSessionWithEnvironmentResult(context.Background(), "workspace", "/tmp/projmux", map[string]string{
+			createOperationEnvironment: "v1:7:8:op-test",
+		})
+		if err == nil || result.SessionID != "$7" || result.WindowID != "@8" || result.PaneID != "%9" {
+			t.Fatalf("result/error = %+v / %v", result, err)
+		}
+		if slices.ContainsFunc(runner.calls, func(call commandCall) bool { return slices.Contains(call.args, "send-keys") }) {
+			t.Fatalf("startup ran after post-create ownership loss: %#v", runner.calls)
+		}
+		ownerReads := 0
+		for _, call := range runner.calls {
+			if slices.Contains(call.args, "show-environment") || slices.Contains(call.args, "set-environment") {
+				t.Fatalf("private marker used a split or post-create environment probe: %#v", runner.calls)
+			}
+			if slices.Contains(call.args, "list-panes") {
+				ownerReads++
+			}
+		}
+		if ownerReads != 1 {
+			t.Fatalf("post-create ownership observations = %d, want one: %#v", ownerReads, runner.calls)
+		}
+	})
+
+	t.Run("startup replaced returned Pane", func(t *testing.T) {
+		t.Parallel()
+		runner := &scriptedRunner{t: t, steps: []scriptedStep{
+			{err: exitError(t, 1)}, {output: row}, {output: row}, {}, {output: owned},
+			{output: owned},
+			{output: []byte("zsh\n")}, {}, {}, {},
+			{output: []byte("$7\\037@8\\037%90\\037v1:7:8:op-test\n")},
+		}}
+		hook := &fakeLifecycleRunner{startupCommand: "tmux tamper", startupOK: true}
+		client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
+		result, err := client.EnsureSessionWithEnvironmentResult(context.Background(), "workspace", "/tmp/projmux", map[string]string{
+			createOperationEnvironment: "v1:7:8:op-test",
+		})
+		if err == nil {
+			err = client.FinalizeSessionStartup(context.Background(), result, "workspace", "/tmp/projmux", "v1:7:8:op-test")
+		}
+		if err == nil || result.SessionID != "$7" || !containsCommandCall(runner.calls, commandCall{name: "tmux", args: []string{"send-keys", "-t", "%9", "tmux tamper", "Enter"}}) {
+			t.Fatalf("result/error/calls = %+v / %v / %#v", result, err, runner.calls)
+		}
+	})
+}
+
+func TestClientEnsureSessionWithEnvironmentResultReportsInnerSameNameHit(t *testing.T) {
+	t.Parallel()
+	runner := &scriptedRunner{t: t, steps: []scriptedStep{{}}}
+	result, err := NewClient(runner).EnsureSessionWithEnvironmentResult(context.Background(), "workspace", "/tmp/projmux", nil)
+	if err != nil || result.Created || result.SessionID != "" || result.WindowID != "" || result.PaneID != "" {
+		t.Fatalf("result/error = %+v / %v", result, err)
 	}
 }
 

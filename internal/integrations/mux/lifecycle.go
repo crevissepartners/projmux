@@ -2,9 +2,22 @@ package mux
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 )
+
+const newSessionResultSeparator = "\\037"
+
+// NewSessionResult is the atomic transport identity returned by one tmux
+// new-session command. Stable ids, rather than names or indexes, are the only
+// handles safe to hand to a caller that will claim the new runtime.
+type NewSessionResult struct {
+	Created   bool
+	SessionID string
+	WindowID  string
+	PaneID    string
+}
 
 // NewSessionOptions describes a `new-session` lifecycle command.
 type NewSessionOptions struct {
@@ -130,6 +143,83 @@ func (r Runner) NewSession(ctx context.Context, opts NewSessionOptions) (string,
 		return r.ReadTrimmed(ctx, args...)
 	}
 	return "", r.Run(ctx, args...)
+}
+
+// NewSessionWithResult creates a session with one composite -P/-F projection,
+// then proves the exact returned pane still belongs to the returned window and
+// session. The verification target is the stable pane id, so a same-name
+// session or a renumbered window cannot redirect it.
+func (r Runner) NewSessionWithResult(ctx context.Context, opts NewSessionOptions) (NewSessionResult, error) {
+	if opts.Attach {
+		return NewSessionResult{}, fmt.Errorf("create tmux session with result: attach-or-create cannot prove Created attribution")
+	}
+	args := appendSocketArgs(nil, opts.Socket)
+	if config := strings.TrimSpace(opts.ConfigPath); config != "" {
+		args = append(args, "-f", config)
+	}
+	args = append(args, "new-session")
+	if opts.Detached {
+		args = append(args, "-d")
+	}
+	if sessionName := strings.TrimSpace(opts.Session); sessionName != "" {
+		args = append(args, "-s", sessionName)
+	}
+	if cwd := strings.TrimSpace(opts.Cwd); cwd != "" {
+		args = append(args, "-c", cwd)
+	}
+	args = appendEnvArgs(args, opts.Env)
+	format := strings.Join([]string{TmuxFormat("session_id"), TmuxFormat("window_id"), TmuxFormat("pane_id")}, newSessionResultSeparator)
+	args = append(args, "-P", "-F", format)
+	args = append(args, opts.Command...)
+
+	output, err := r.ReadTrimmed(ctx, args...)
+	result, parseErr := parseNewSessionResult(output)
+	if err != nil {
+		return result, err
+	}
+	if parseErr != nil {
+		return NewSessionResult{}, parseErr
+	}
+
+	ownerArgs := appendSocketArgs(nil, opts.Socket)
+	ownerArgs = append(ownerArgs, "display-message", "-p", "-t", result.PaneID, "-F", format)
+	owner, ownerErr := r.ReadTrimmed(ctx, ownerArgs...)
+	if ownerErr != nil {
+		return result, fmt.Errorf("verify created tmux session owner: %w", ownerErr)
+	}
+	verified, parseErr := parseNewSessionResult(owner)
+	if parseErr != nil || verified.SessionID != result.SessionID || verified.WindowID != result.WindowID || verified.PaneID != result.PaneID {
+		return result, fmt.Errorf("verify created tmux session owner: returned %s/%s/%s, observed %q",
+			result.SessionID, result.WindowID, result.PaneID, strings.TrimSpace(owner))
+	}
+	result.Created = true
+	return result, nil
+}
+
+func parseNewSessionResult(output string) (NewSessionResult, error) {
+	rows := strings.Split(strings.TrimSpace(output), "\n")
+	if len(rows) != 1 || strings.TrimSpace(rows[0]) == "" {
+		return NewSessionResult{}, fmt.Errorf("parse created tmux session: expected one result row, got %q", strings.TrimSpace(output))
+	}
+	row := strings.ReplaceAll(strings.TrimSpace(rows[0]), newSessionResultSeparator, "\x1f")
+	fields := strings.Split(row, "\x1f")
+	if len(fields) != 3 || stableTmuxID(fields[0], '$') == "" || stableTmuxID(fields[1], '@') == "" || stableTmuxID(fields[2], '%') == "" {
+		return NewSessionResult{}, fmt.Errorf("parse created tmux session: malformed result row %q", strings.TrimSpace(rows[0]))
+	}
+	return NewSessionResult{SessionID: fields[0], WindowID: fields[1], PaneID: fields[2]}, nil
+}
+
+func stableTmuxID(value string, prefix byte) string {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 || value[0] != prefix {
+		return ""
+	}
+	for i := 1; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return ""
+		}
+	}
+	return value
 }
 
 // NewWindow creates a tmux window.
