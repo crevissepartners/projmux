@@ -363,3 +363,68 @@ settingsNavByID
 settingsNavByValue
 renderSettingsNavTree
 writeSettingsNavNode
+
+# ---------------------------------------------------------------------------
+# Registry-first control plane Phase 2 — resolved resource graph producer.
+#
+# `internal/core/resourcegraph` is the pure read model that joins the Registry's
+# desired graph to one exact tmux server, plus the bounded observation adapter
+# that fills it (`InventoryObserver` in internal/integrations/metadata). The
+# phase ships the producer and its contract tests deliberately without a
+# consumer: the controller kernel (Phase 3), the runtime diagnostics route
+# (Phase 4), and the Registry-first primary UI (Phase 5) are the planned
+# consumers, and each is a separate reviewable change. Wiring a call site now
+# would mean changing UI or reconcile semantics inside the phase that is
+# supposed to only define the model.
+#
+# These entries are expected to leave this list as those phases land. They are
+# NOT MUST-KEEP, and they must not be deleted as dead code in the meantime.
+Resolve
+newResolver
+Classes
+Graph.RuntimeOfClass
+ObjectKinds
+objectKindRank
+Scopes
+scopeRank
+Inventory.Clone
+Inventory.Available
+Inventory.Unavailability
+Inventory.withUnavailable
+Inventory.MarkUnavailable
+Session.isControlSession
+resolver.resolveClaims
+resolver.acceptClaim
+resolver.bind
+resolver.reject
+resolver.classify
+resolver.windowContainmentContradiction
+resolver.paneContainmentContradiction
+resolver.paneOwnerChain
+resolver.sessionRef
+resolver.windowRef
+resolver.paneRef
+resolver.buildRegistryNodes
+resolver.buildRuntimeNodes
+resolver.resolvedClass
+resolver.unownedClass
+resolver.rowClass
+resolver.boundRef
+resolver.status
+resolver.projectMissingRootByUID
+projectMissingRoot
+resolver.graph
+compareRuntimeID
+tmuxIDNumber
+sortedKeys
+nonEmpty
+Transport.Present
+Transport.Args
+Transport.String
+ResolveTransport
+HostModeFromAppMarker
+transportRunner.Run
+NewInventoryObserver
+InventoryObserver.Observe
+InventoryObserver.observe
+serverAbsent
