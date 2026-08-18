@@ -147,6 +147,8 @@ func (c *getCommand) runList(token string, args []string, stdout, stderr io.Writ
 		flags.defaultProjectScope = true
 		fs.BoolVar(&flags.allProjects, "all-projects", false,
 			"list resources across every Project instead of the active Project")
+		fs.BoolVar(&flags.allProjects, "A", false,
+			"list resources across every Project instead of the active Project (alias of --all-projects)")
 	}
 	flags.registerOutput(fs)
 	if err := fs.Parse(args); err != nil {
@@ -201,7 +203,9 @@ func (c *getCommand) runPane(args []string, stdout, stderr io.Writer) error {
 	var current bool
 	var output string
 	fs.Var(&projects, "project", "exact-one Project selector: <name> or uid:<uid>")
+	fs.Var(&projects, "p", "exact-one Project selector: <name> or uid:<uid> (alias of --project)")
 	fs.Var(&windows, "window", "repeatable Window selector: <name> or uid:<uid>")
+	fs.Var(&windows, "w", "repeatable Window selector: <name> or uid:<uid> (alias of --window)")
 	fs.Var(&panes, "pane", "repeatable Pane selector: <name> or uid:<uid>")
 	fs.Var(&labels, "selector", "repeatable label filter: key=value (AND)")
 	fs.BoolVar(&current, "current", false, "read the active tmux pane instead of resolving a selector")

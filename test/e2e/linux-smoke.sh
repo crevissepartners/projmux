@@ -942,9 +942,18 @@ if ! awk -v display="$legacy_window_name_before" '
   cat "$create_root/alpha-windows-table.out" >&2
   exit 1
 fi
-pmx describe window window --project alpha >"$create_root/alpha-window.describe"
+pmx describe window window -p alpha >"$create_root/alpha-window.describe"
 smoke_assert_file_contains "$create_root/alpha-window.describe" "DisplayName:"
 smoke_assert_file_contains "$create_root/alpha-window.describe" "$legacy_window_name_before"
+
+# Canonical focus resolves the short Project/Window scopes on this exact
+# guarded socket. This server deliberately has no attached client, so success
+# is the observable notify-only dispatch rather than a fabricated focus move.
+PROJMUX_NOTIFY_HOOK=/bin/true pmx focus pane "$legacy_pane" -p legacy-alpha -w "$legacy_window_id" --json \
+  >"$create_root/short-focus.json"
+smoke_assert_file_contains "$create_root/short-focus.json" '"ok":true'
+smoke_assert_file_contains "$create_root/short-focus.json" '"dispatch":"notify-only"'
+smoke_assert_file_contains "$create_root/short-focus.json" "legacy-alpha:$legacy_window_id.$legacy_pane"
 
 # 4. right and down produce the two split axes, detached, with no focus change.
 #    The create runs inside a real pane and the completion signal is the exit
@@ -1265,7 +1274,7 @@ pmx_agent_hook_at() {
 agent_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
 agent_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
 
-pmx_agent create agent --provider codex --project alpha --window window -o pane-id \
+pmx_agent create agent --provider codex -p alpha -w window -o pane-id \
   >"$create_root/agent.out" 2>"$create_root/agent.err"
 agent_pane="$(tr -d '[:space:]' <"$create_root/agent.out")"
 if [[ ! "$agent_pane" =~ ^%[0-9]+$ ]]; then
@@ -1313,12 +1322,12 @@ fi
 
 # 9. The shortcut normalizes onto the same route, and a second create allocates a
 #    new Agent instead of reusing the first.
-pmx_agent create codex --project alpha --window window -o name >"$create_root/agent-second.out"
+pmx_agent create codex -p alpha -w window -o name >"$create_root/agent-second.out"
 if [[ "$(tr -d '[:space:]' <"$create_root/agent-second.out")" != "codex-1" ]]; then
   echo "the second Agent name = $(cat "$create_root/agent-second.out"), want codex-1" >&2
   exit 1
 fi
-pmx_agent get agents --project alpha -o name >"$create_root/agent-list.out"
+pmx_agent get agents -p alpha -o name >"$create_root/agent-list.out"
 for want in codex codex-1; do
   if ! grep -qx "$want" "$create_root/agent-list.out"; then
     echo "get agents is missing $want:" >&2
@@ -1329,8 +1338,8 @@ done
 
 # 10. The payload after -- reaches the provider and never the naming.
 : >"$create_root/agent-launch.log"
-pmx_agent create agent --provider codex --project alpha --window window -o name \
-  -- --topic "release triage" >"$create_root/agent-payload.out"
+pmx_agent create agent --provider codex -p alpha -w window -o name \
+  -- -p payload-project -w payload-window --topic "release triage" >"$create_root/agent-payload.out"
 if [[ "$(tr -d '[:space:]' <"$create_root/agent-payload.out")" != "codex-2" ]]; then
   echo "a payload changed the Agent name: $(cat "$create_root/agent-payload.out")" >&2
   exit 1
@@ -1339,7 +1348,7 @@ for _ in {1..200}; do
   [[ -s "$create_root/agent-launch.log" ]] && break
   sleep 0.05
 done
-if ! grep -Fq -- "args=-C $create_root/work/alpha --topic release triage" "$create_root/agent-launch.log"; then
+if ! grep -Fq -- "args=-C $create_root/work/alpha -p payload-project -w payload-window --topic release triage" "$create_root/agent-launch.log"; then
   echo "the payload did not reach the provider:" >&2
   cat "$create_root/agent-launch.log" >&2 || true
   exit 1
@@ -1759,7 +1768,7 @@ binding_inside_pmx() {
 # weakening standalone hooks, and the second in-transaction reconcile must
 # leave registry status aligned with the exact returned pane.
 create_reentrant_pane="$(
-  binding_inside_pmx create pane --project alpha --window roadmap --create-window \
+  binding_inside_pmx create pane -p alpha -w roadmap --create-window \
     -o pane-id -- sleep 600
 )"
 if [[ ! "$create_reentrant_pane" =~ ^%[0-9]+$ ]]; then
@@ -1771,7 +1780,7 @@ if [[ -z "$create_reentrant_uid" ]]; then
   echo "reentrant --create-window returned before pane uid mirror" >&2
   exit 1
 fi
-binding_inside_pmx get panes --project alpha --window roadmap -o json >"$binding_root/create-reentrant.json"
+binding_inside_pmx get panes -p alpha -w roadmap -o json >"$binding_root/create-reentrant.json"
 smoke_assert_file_contains "$binding_root/create-reentrant.json" "$create_reentrant_uid"
 if grep -Fq '"type": "MissingRuntime"' "$binding_root/create-reentrant.json"; then
   echo "reentrant create committed stale MissingRuntime status" >&2
@@ -1813,7 +1822,7 @@ if grep -Fqx "$binding_beta_window_uid" "$binding_root/project-windows.out"; the
   exit 1
 fi
 
-binding_inside_pmx get panes --all-projects -o uid >"$binding_root/all-project-panes.out"
+binding_inside_pmx get panes -A -o uid >"$binding_root/all-project-panes.out"
 smoke_assert_file_contains "$binding_root/all-project-panes.out" "$lifecycle_split_uid"
 smoke_assert_file_contains "$binding_root/all-project-panes.out" "$binding_beta_pane_uid"
 binding_pmx get panes -o uid >"$binding_root/outside-panes.out"
@@ -1821,7 +1830,7 @@ sort "$binding_root/all-project-panes.out" >"$binding_root/all-project-panes.sor
 sort "$binding_root/outside-panes.out" >"$binding_root/outside-panes.sorted"
 cmp "$binding_root/all-project-panes.sorted" "$binding_root/outside-panes.sorted"
 
-binding_inside_pmx get panes --project beta -o uid >"$binding_root/explicit-beta-panes.out"
+binding_inside_pmx get panes -p beta -o uid >"$binding_root/explicit-beta-panes.out"
 smoke_assert_file_contains "$binding_root/explicit-beta-panes.out" "$binding_beta_pane_uid"
 if grep -Fqx "$lifecycle_split_uid" "$binding_root/explicit-beta-panes.out"; then
   echo "explicit --project beta included an alpha Pane" >&2
