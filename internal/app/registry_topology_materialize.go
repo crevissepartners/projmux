@@ -362,6 +362,126 @@ func isMissingTmuxServer(err error) bool {
 		strings.Contains(message, "failed to connect to server: connection refused")
 }
 
+// topologyMaterializeRun is one exact-socket Project materialization
+// transaction, deliberately separate from any reporting surface.
+//
+// The public `reconcile resources --materialize-project` route and
+// closed-Project startup activation are two different user-visible results over
+// exactly one engine. Keeping the Registry lock, the prevalidation order, the
+// tmux write pass, and the ownership-checked rollback here is what stops the
+// startup path from growing a second, weaker copy of that contract.
+type topologyMaterializeRun struct {
+	resources       *resourceStore
+	runner          tmuxCommandRunner
+	target          explicitTmuxTarget
+	newOperationID  func() (string, error)
+	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
+}
+
+// topologyMaterializeOutcome is the bookkeeping a caller needs to report. The
+// plan it carries is the one rechecked under the Registry lock, never the
+// caller's earlier preview.
+type topologyMaterializeOutcome struct {
+	plan            resourceReconcilePlan
+	completed       []string
+	failedStage     string
+	registryChanged bool
+}
+
+// defaultTopologyMaterializer builds the runtime for one exact target. The tmux
+// client is the existing one, so the public pre/post-create and startup hook
+// contract has exactly one implementation.
+func defaultTopologyMaterializer(target explicitTmuxTarget) func(tmuxCommandRunner, io.Writer) *materializer {
+	return func(runner tmuxCommandRunner, warn io.Writer) *materializer {
+		opts := []inttmux.ClientOption{}
+		if target.flag == "-L" {
+			opts = append(opts, inttmux.WithSocketName(target.value))
+		}
+		if hooks := defaultLifecycleHookRunner(); hooks != nil {
+			opts = append(opts, inttmux.WithLifecycleHookRunner(hooks))
+		}
+		return &materializer{runner: runner, mirror: intmetadata.NewMirror(runner), sessions: inttmux.NewClient(runner, opts...), warn: warn}
+	}
+}
+
+func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceReconcilePlanner, warn io.Writer) (topologyMaterializeOutcome, error) {
+	var outcome topologyMaterializeOutcome
+	if r.resources == nil || r.resources.updateConvergent == nil {
+		return outcome, errors.New("resource topology materialization write store is not configured")
+	}
+	newID := r.newOperationID
+	if newID == nil {
+		newID = newCreateOperationID
+	}
+	operationID, err := newID()
+	if err != nil {
+		return outcome, err
+	}
+	ledger := newRuntimeLedger(operationID)
+	routed := explicitTmuxRunner{runner: r.runner, target: r.target}
+	newRuntime := r.newMaterializer
+	if newRuntime == nil {
+		newRuntime = defaultTopologyMaterializer(r.target)
+	}
+	runtime := newRuntime(routed, warn)
+	_, registryChanged, updateErr := r.resources.updateConvergent(func(working *coremetadata.Registry) error {
+		current, buildErr := planner.build(ctx, working.Clone())
+		if buildErr != nil {
+			outcome.failedStage = "locked plan"
+			return buildErr
+		}
+		outcome.plan = current
+		outcome.completed = append(outcome.completed, "plan rechecked under Registry lock")
+		if current.refusedItems() != 0 {
+			outcome.failedStage = "topology prevalidation"
+			return fmt.Errorf("selected Project topology contains %d refused item(s)", current.refusedItems())
+		}
+		if err := validateResourcePlanWrites(ctx, routed, current.writes); err != nil {
+			outcome.failedStage = "tmux prevalidation"
+			return err
+		}
+		outcome.completed = append(outcome.completed, "tmux targets prevalidated")
+		for _, write := range current.writes {
+			if _, err := routed.Run(ctx, "tmux", write.args...); err != nil {
+				outcome.failedStage = write.itemKey()
+				return err
+			}
+			outcome.completed = append(outcome.completed, write.itemKey())
+		}
+		*working = current.registry.Clone()
+		if err := executeRegistryTopology(ctx, runtime, working, r.resources.mutator(), current.materialization, ledger); err != nil {
+			outcome.failedStage = "topology materialization"
+			return err
+		}
+		return nil
+	})
+	outcome.registryChanged = registryChanged
+	if updateErr != nil {
+		runtime.rollback(ctx, ledger)
+		runtime.clearCreateOperations(ctx, ledger)
+		return outcome, updateErr
+	}
+	runtime.clearCreateOperations(ctx, ledger)
+	return outcome, nil
+}
+
+// requireMaterializeSession pins one activation's exact session name onto the
+// plan.
+//
+// Closed-Project startup materializes into the single session the client is
+// about to be moved to. If the Registry projects a different session name for
+// that Project, populating it would leave the open pointing at a session the
+// topology never reached, so the plan is refused before the first mutation
+// rather than silently building the wrong runtime.
+func requireMaterializeSession(plan *registryTopologyPlan, sessionName string) {
+	sessionName = strings.TrimSpace(sessionName)
+	if plan == nil || sessionName == "" || plan.sessionName == sessionName {
+		return
+	}
+	plan.refuse(coremetadata.KindProject, plan.project.Metadata.Name,
+		fmt.Sprintf("Registry projects session %q but this activation opens session %q", plan.sessionName, sessionName))
+}
+
 func (c *resourceReconcileCommand) runMaterializeExecute(
 	ctx context.Context,
 	planner resourceReconcilePlanner,
@@ -370,84 +490,32 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	opts resourceReconcileOptions,
 	stdout, stderr io.Writer,
 ) error {
-	if c.resources.updateConvergent == nil {
+	if c.resources == nil || c.resources.updateConvergent == nil {
 		return errors.New("resource topology materialization write store is not configured")
 	}
-	newID := c.newOperationID
-	if newID == nil {
-		newID = newCreateOperationID
+	run := topologyMaterializeRun{
+		resources:       c.resources,
+		runner:          c.runner,
+		target:          target,
+		newOperationID:  c.newOperationID,
+		newMaterializer: c.newMaterializer,
 	}
-	operationID, err := newID()
-	if err != nil {
-		return err
-	}
-	ledger := newRuntimeLedger(operationID)
-	routed := explicitTmuxRunner{runner: c.runner, target: target}
-	newRuntime := c.newMaterializer
-	if newRuntime == nil {
-		newRuntime = func(runner tmuxCommandRunner, warn io.Writer) *materializer {
-			opts := []inttmux.ClientOption{}
-			if target.flag == "-L" {
-				opts = append(opts, inttmux.WithSocketName(target.value))
-			}
-			if hooks := defaultLifecycleHookRunner(); hooks != nil {
-				opts = append(opts, inttmux.WithLifecycleHookRunner(hooks))
-			}
-			return &materializer{runner: runner, mirror: intmetadata.NewMirror(runner), sessions: inttmux.NewClient(runner, opts...), warn: warn}
-		}
-	}
-	runtime := newRuntime(routed, stderr)
-	var plan resourceReconcilePlan
-	var completed []string
-	failedStage := ""
-	_, registryChanged, updateErr := c.resources.updateConvergent(func(working *coremetadata.Registry) error {
-		current, buildErr := planner.build(ctx, working.Clone())
-		if buildErr != nil {
-			failedStage = "locked plan"
-			return buildErr
-		}
-		plan = current
-		completed = append(completed, "plan rechecked under Registry lock")
-		if plan.refusedItems() != 0 {
-			failedStage = "topology prevalidation"
-			return fmt.Errorf("selected Project topology contains %d refused item(s)", plan.refusedItems())
-		}
-		if err := validateResourcePlanWrites(ctx, routed, plan.writes); err != nil {
-			failedStage = "tmux prevalidation"
-			return err
-		}
-		completed = append(completed, "tmux targets prevalidated")
-		for _, write := range plan.writes {
-			if _, err := routed.Run(ctx, "tmux", write.args...); err != nil {
-				failedStage = write.itemKey()
-				return err
-			}
-			completed = append(completed, write.itemKey())
-		}
-		*working = plan.registry.Clone()
-		if err := executeRegistryTopology(ctx, runtime, working, c.resources.mutator(), plan.materialization, ledger); err != nil {
-			failedStage = "topology materialization"
-			return err
-		}
-		return nil
-	})
-	if updateErr != nil {
-		runtime.rollback(ctx, ledger)
-		runtime.clearCreateOperations(ctx, ledger)
+	retry := retryResourceReconcileProject(reportTarget, planner.materializeProject)
+	outcome, runErr := run.execute(ctx, planner, stderr)
+	if runErr != nil {
 		remaining, replanErr := c.replanAfterFailure(ctx, planner)
-		report := reportForFailure(plan, remaining, reportTarget, completed, failedStage, retryResourceReconcileProject(reportTarget, planner.materializeProject), updateErr, replanErr)
+		report := reportForFailure(outcome.plan, remaining, reportTarget, outcome.completed, outcome.failedStage, retry, runErr, replanErr)
 		if writeErr := writeResourceReconcileReport(stdout, opts.output, report); writeErr != nil {
 			return writeErr
 		}
-		return fmt.Errorf("reconcile resources failed at %s: %w", failedStage, MapMetadataError(updateErr))
+		return fmt.Errorf("reconcile resources failed at %s: %w", outcome.failedStage, MapMetadataError(runErr))
 	}
-	runtime.clearCreateOperations(ctx, ledger)
 	stage := "Registry commit"
-	if !registryChanged {
+	if !outcome.registryChanged {
 		stage += " (no-op)"
 	}
-	completed = append(completed, stage)
-	report := reportForExecute(plan, reportTarget, completed, retryResourceReconcileProject(reportTarget, planner.materializeProject))
+	completed := append(outcome.completed, stage)
+	report := reportForExecute(outcome.plan, reportTarget, completed, retry)
 	return writeResourceReconcileReport(stdout, opts.output, report)
 }
 

@@ -46,8 +46,15 @@ step, never a silent no-op.
     calls the canonical `rebind project` route and keeps the same uid. Settings
     performs no heuristic uid merge and no automatic prune.
   - `Project Sidebar [View]` — `Closed Project startup` chooses between using
-    the stored Project topology and asking for a Snapshot. The saved file keeps
-    its `sidebar-startup-picker` spelling.
+    the stored Project topology and asking for a Snapshot. `Use Project
+    topology` materializes every Registry Window and Window-owned shell Pane of
+    that Project under their existing uids and only then moves the client; it is
+    not an empty session, and the startup picker names that row `Project
+    topology` for the same reason. `Ask for Snapshot or Project topology` adds
+    the `Latest snapshot` and `Named snapshot` rows, which stay on the Session
+    State snapshot engine — the two sources are never mixed in one open. Neither
+    choice resumes an Agent or executes a stored `Pane.spec.command`. The saved
+    file keeps its `sidebar-startup-picker` spelling.
 - **AI** — `AI` is a product category, never an addressable resource.
   - `Default launch target [Choice]` — an Agent Provider, a Shell Pane, or
     choose-at-launch. It is a keybinding/picker preference and does not weaken
