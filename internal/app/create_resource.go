@@ -1035,37 +1035,53 @@ func (c *createCommand) projectOwnershipGuard(scope createScope) createPreReconc
 			return liveSessionIdentity{}, err
 		}
 
-		roots, discoverErr := c.reconciler.discoverRoots()
-		if discoverErr != nil {
-			return liveSessionIdentity{}, discoverErr
-		}
-		roots = slices.Clone(roots)
-		slices.SortStableFunc(roots, func(a, b string) int {
-			return strings.Compare(candidates.CanonicalPath(a), candidates.CanonicalPath(b))
-		})
-		reserved := map[string]bool{}
-		for _, reservation := range working.NameReservations {
-			if reservation.Scope == "" && reservation.Kind == coremetadata.KindProject {
-				reserved[reservation.Name] = true
-			}
-		}
-		for _, root := range roots {
-			if _, registered := working.ProjectByRoot(root); registered {
-				continue
-			}
-			name := nextDiscoveredProjectName(coremetadata.ProjectNameBase(root), reserved)
-			reserved[name] = true
-			if name != query.Project.Name {
-				continue
-			}
-			sessionName := c.sessionNameFor(root)
-			if err := c.runtime.refuseUnregisteredSessionClaims(ctx, sessionName, root); err != nil {
-				return liveSessionIdentity{}, err
-			}
-			return liveSessionIdentity{Name: sessionName}, nil
-		}
-		return liveSessionIdentity{Name: query.Project.Name}, nil
+		// A name that matches no Project used to be a name that was about to
+		// become one: the reconcile prelude registered every discovered workdir,
+		// so this guard only had to predict the name that registration would
+		// allocate. Registration is explicit now, so the honest answer is a
+		// refusal -- and the useful refusal names the exact path and the route
+		// that would register it, which is why discovery is still read here.
+		return liveSessionIdentity{}, c.unregisteredProjectRefusal(query.Project.Name, err)
 	}
+}
+
+// unregisteredProjectRefusal turns a Project selector no-match into an actionable
+// bootstrap instruction.
+//
+// Discovery is consulted for the message and for nothing else. Finding a candidate
+// directory whose basename matches the requested name does not register it, does
+// not reserve the name, and does not change the refusal -- it only lets the error
+// name the exact `--root` an operator would pass next.
+func (c *createCommand) unregisteredProjectRefusal(name string, cause error) error {
+	name = strings.TrimSpace(name)
+	if root := c.discoveredCandidateRootFor(name); root != "" {
+		return usageError(fmt.Sprintf(
+			"create: no Registry Project is named %q; %q is a discovered directory that no Project claims. Register it with `projmux create project --root %s`, or open it once from the Project sidebar",
+			name, root, root))
+	}
+	return cause
+}
+
+// discoveredCandidateRootFor returns the discovered, unregistered directory whose
+// automatic Project name would be name, or empty when there is none.
+func (c *createCommand) discoveredCandidateRootFor(name string) string {
+	if name == "" || c.reconciler == nil || c.reconciler.discoverRoots == nil {
+		return ""
+	}
+	roots, err := c.reconciler.discoverRoots()
+	if err != nil {
+		return ""
+	}
+	roots = slices.Clone(roots)
+	slices.SortStableFunc(roots, func(a, b string) int {
+		return strings.Compare(candidates.CanonicalPath(a), candidates.CanonicalPath(b))
+	})
+	for _, root := range roots {
+		if coremetadata.ProjectNameBase(root) == name {
+			return root
+		}
+	}
+	return ""
 }
 
 func (c *createCommand) exactProjectOwnershipGuard(projectUID string) createPreReconcile {
@@ -1083,18 +1099,6 @@ func (c *createCommand) exactProjectOwnershipGuard(projectUID string) createPreR
 			identity.Name = sessionName
 		}
 		return identity, err
-	}
-}
-
-func nextDiscoveredProjectName(base string, reserved map[string]bool) string {
-	if !reserved[base] {
-		return base
-	}
-	for suffix := 1; ; suffix++ {
-		candidate := fmt.Sprintf("%s-%d", base, suffix)
-		if !reserved[candidate] {
-			return candidate
-		}
 	}
 }
 

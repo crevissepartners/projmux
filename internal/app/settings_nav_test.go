@@ -855,29 +855,55 @@ func TestSettingsResourceVocabularyGolden(t *testing.T) {
 }
 
 // TestSettingsPinnedProjectDetailUsesCanonicalProjectIdentity covers the
-// Project identity half of the vocabulary contract: the pinned item View
-// separates unique name, display name and uid from the bound root, keeps a
-// `MissingRoot` condition visible, and offers same-uid remediation instead of
-// re-pinning under a new identity.
+// Project identity half of the vocabulary contract. The managed pin item View is
+// addressed by uid, so a uid the Registry no longer answers for is stated as
+// exactly that -- not as a path that might or might not be a Project -- and the
+// remediation rows reflect it.
 func TestSettingsPinnedProjectDetailUsesCanonicalProjectIdentity(t *testing.T) {
 	t.Parallel()
 
 	cmd := settingsNavTestCommand(t, t.TempDir())
-	entries, err := cmd.pinnedProjectDetailEntries("/tmp/not-a-registered-project")
+	entries, err := cmd.pinnedProjectDetailEntries("uid:proj-missing")
 	if err != nil {
 		t.Fatalf("pinnedProjectDetailEntries() error = %v", err)
 	}
-	if !hasEntryLabelContaining(entries, "not registered as a Project resource") {
-		t.Fatalf("pin item entries = %#v, want the unregistered-path state", entries)
+	if !hasEntryLabelContaining(entries, "pinned UID with no Registry Project") {
+		t.Fatalf("pin item entries = %#v, want the missing-Project state", entries)
 	}
-	// An unregistered path cannot be rebound: the row is disabled with its
-	// reason rather than silently doing nothing.
+	// A uid the Registry does not carry cannot be rebound: the row is disabled
+	// with its reason rather than silently doing nothing.
 	rebind := entryWithLabelContaining(entries, "Rebind Project root")
 	if rebind == nil || rebind.Value != settingsNoopValue {
-		t.Fatalf("rebind row = %#v, want a disabled row for an unregistered path", rebind)
+		t.Fatalf("rebind row = %#v, want a disabled row for an unknown uid", rebind)
 	}
-	if !hasEntryValue(entries, settingsActionPrefixSwitch+"pin:/tmp/not-a-registered-project") {
-		t.Fatalf("pin item entries = %#v, want the item-owned unpin action", entries)
+	if !hasEntryValue(entries, settingsActionPrefixSwitch+"pin:uid:proj-missing") {
+		t.Fatalf("pin item entries = %#v, want the item-owned unpin action addressed by uid", entries)
+	}
+}
+
+// TestSettingsCandidatePinDetailStaysACandidate is the other half of the split.
+// A pinned path that no Project claims says so, offers the explicit registration
+// route, and offers nothing that would imply it is already managed.
+func TestSettingsCandidatePinDetailStaysACandidate(t *testing.T) {
+	t.Parallel()
+
+	const path = "/tmp/not-a-registered-project"
+	cmd := settingsNavTestCommand(t, t.TempDir())
+	entries, err := cmd.candidatePinDetailEntries(path)
+	if err != nil {
+		t.Fatalf("candidatePinDetailEntries() error = %v", err)
+	}
+	if !hasEntryLabelContaining(entries, "no Registry Project claims this path") {
+		t.Fatalf("candidate item entries = %#v, want the unregistered state", entries)
+	}
+	if !hasEntryValue(entries, settingsActionPrefixCandidatePinItem+path+":register") {
+		t.Fatalf("candidate item entries = %#v, want the explicit register action", entries)
+	}
+	if !hasEntryValue(entries, settingsActionPrefixSwitch+"pin:"+path) {
+		t.Fatalf("candidate item entries = %#v, want the item-owned unpin action", entries)
+	}
+	if hasEntryLabelContaining(entries, "Rebind Project root") {
+		t.Fatalf("candidate item entries = %#v, want no rebind affordance on a candidate", entries)
 	}
 }
 
@@ -898,7 +924,7 @@ func settingsNavTestCommand(t *testing.T, home string) *settingsCommand {
 			}
 		},
 		ai:                  testAICommand(home),
-		switcher:            testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{}),
+		switcher:            testSettingsSwitchCommandWithHome(t, home, newStubPinStore()),
 		aiNotifyDiagnostics: func() []doctorAINotifyIntegration { return nil },
 	}
 }

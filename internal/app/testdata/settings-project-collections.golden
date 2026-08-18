@@ -1,0 +1,36 @@
+== linux ==
+Projects
+  project-root:manage	· Primary discovery root not configured
+  workdir:list	▸ Additional discovery roots scan roots; scanning never registers a Project
+  project:pins	▸ Pinned Projects pinned Registry Projects, by UID
+  project:candidate-pins	▸ Candidate Pins pinned paths no Registry Project claims
+  projects:sidebar	▸ Project Sidebar closed Project startup: use Project topology
+Additional discovery roots
+  __settings_noop__	· Effective roots 1 saved (~/.config/projmux/workdirs)
+  workdir-item:/srv/work	▸ /srv/work saved
+  __settings_noop__	· Add current directory no project context
+  workdir:add	＋ Add path choose or type a directory to scan
+Pinned Projects
+  pin-item:uid:proj-app	▸ app /srv/work/app
+  __settings_noop__	· Add Current Project no project context
+  project:add	＋ Select Project to pin scan filesystem roots
+Candidate Pins
+  candidate-pin-item:/srv/work/scratch	▸ /srv/work/scratch not registered as a Project resource
+== windows ==
+Projects
+  project-root:manage	· Primary discovery root not configured
+  workdir:list	▸ Additional discovery roots scan roots; scanning never registers a Project
+  project:pins	▸ Pinned Projects pinned Registry Projects, by UID
+  project:candidate-pins	▸ Candidate Pins pinned paths no Registry Project claims
+  projects:sidebar	▸ Project Sidebar closed Project startup: use Project topology
+Additional discovery roots
+  __settings_noop__	· Effective roots 1 saved (~/.config/projmux/workdirs)
+  workdir-item:C:\Users\dev\src	▸ C:\Users\dev\src saved
+  __settings_noop__	· Add current directory no project context
+  workdir:add	＋ Add path choose or type a directory to scan
+Pinned Projects
+  pin-item:uid:proj-winapp	▸ app C:\Users\dev\src\app
+  __settings_noop__	· Add Current Project no project context
+  project:add	＋ Select Project to pin scan filesystem roots
+Candidate Pins
+  candidate-pin-item:C:\Users\dev\src\scratch	▸ C:\Users\dev\src\scratch not registered as a Project resource

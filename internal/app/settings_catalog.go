@@ -129,6 +129,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsSectionAbout:                           settingsNavigationMeta("About", settingsAxisGlobal, settingsOwnerRoot),
 	settingsProjectAdd:                             settingsActionMeta("Select Project to pin", settingsAxisGlobal, settingsOwnerProjectPicker),
 	settingsProjectPins:                            settingsNavigationMeta("Pinned Projects", settingsAxisGlobal, settingsOwnerProjectPicker),
+	settingsProjectCandidatePins:                   settingsNavigationMeta("Candidate Pins", settingsAxisGlobal, settingsOwnerProjectPicker),
 	settingsProjectRootManage:                      settingsNavigationMeta("Primary discovery root", settingsAxisGlobal, settingsOwnerProjectPicker),
 	settingsProjectsSidebar:                        settingsNavigationMeta("Project Sidebar", settingsAxisGlobal, settingsOwnerProjectPicker),
 	settingsProjdirClear:                           settingsActionMeta("Clear saved root", settingsAxisGlobal, settingsOwnerProject),
@@ -196,6 +197,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixKeymapSurface, settingsNavigationMeta("Keybindings surface", settingsAxisGlobal, settingsOwnerKeybindings)},
 	{settingsActionPrefixWorkdirItem, settingsNavigationMeta("Additional discovery roots", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixPinItem, settingsNavigationMeta("Pinned Projects", settingsAxisGlobal, settingsOwnerProjectPicker)},
+	{settingsActionPrefixCandidatePinItem, settingsNavigationMeta("Candidate Pins", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixSessionStateSidebarStartup, settingsActionMeta("Closed Project startup", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixHookAdd, settingsActionMeta("Hook maker - add", settingsAxisBoth, settingsOwnerHooks)},
 	{settingsActionPrefixHookEdit, settingsActionMeta("Hook maker - edit", settingsAxisBoth, settingsOwnerHooks)},
@@ -263,12 +265,14 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 		}
 	case settingsOwnerProjectPicker:
 		switch value {
-		case settingsProjectAdd, settingsProjectPins, settingsProjectRootManage, settingsWorkdirAdd,
+		case settingsProjectAdd, settingsProjectPins, settingsProjectCandidatePins,
+			settingsProjectRootManage, settingsWorkdirAdd,
 			settingsWorkdirList, settingsProjectsSidebar, settingsSessionStateSidebarStartupPickerDetail:
 			return true
 		}
 		return strings.HasPrefix(value, settingsActionPrefixWorkdirItem) ||
 			strings.HasPrefix(value, settingsActionPrefixPinItem) ||
+			strings.HasPrefix(value, settingsActionPrefixCandidatePinItem) ||
 			strings.HasPrefix(value, settingsActionPrefixSessionStateSidebarStartup)
 	case settingsOwnerAI:
 		return value == settingsAIDefaultMode || value == settingsAIEnabledAgents ||
@@ -379,6 +383,7 @@ const (
 	settingsActionPrefixKeymapSurface      = "keymap-surface:"
 	settingsActionPrefixWorkdirItem        = "workdir-item:"
 	settingsActionPrefixPinItem            = "pin-item:"
+	settingsActionPrefixCandidatePinItem   = "candidate-pin-item:"
 	settingsActionPrefixHookEvent          = "hook-event:"
 	// settingsActionPrefixSessionStateSidebarStartup keeps the shipped
 	// `sessionstate:` config/action spelling while the row itself moves under
@@ -397,6 +402,7 @@ const (
 	settingsActionPrefixQuit                       = "quit:"
 	settingsProjectAdd                             = "project:add"
 	settingsProjectPins                            = "project:pins"
+	settingsProjectCandidatePins                   = "project:candidate-pins"
 	settingsProjectRootManage                      = "project-root:manage"
 	settingsProjdirClear                           = "projdir:clear"
 	settingsProjdirSetCurrent                      = "projdir:set-current"

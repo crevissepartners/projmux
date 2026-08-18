@@ -71,7 +71,7 @@ Responsibilities that remain outside `projmux`:
 Config should be explicit and file-backed.
 
 Candidate areas:
-- managed roots
+- managed roots (scan roots for candidate discovery; never managed identity)
 - default home-like roots
 - preview preferences
 - session naming exceptions
@@ -80,7 +80,7 @@ Candidate areas:
 ## State model
 
 Persistent state:
-- pins
+- pins (typed: managed Project uid, or unregistered candidate path)
 - lightweight user preferences
 
 Ephemeral runtime state:
@@ -927,9 +927,10 @@ Registry-first primary navigation:
   resource surface, which is where rebind is stated. Before this, such a row
   failed the whole picker on directory validation.
 - Filesystem discovery is kept and demoted. A discovered directory that no
-  Project root claims is an unregistered bootstrap candidate in its own section
-  with its shipped behavior; one that is already a Project root is dropped rather
-  than listed twice with a second set of actions.
+  Project root claims is an unregistered bootstrap candidate in its own section;
+  one that is already a Project root is dropped rather than listed twice with a
+  second set of actions. Opening a candidate is the explicit gesture that
+  registers it -- see the authority split below.
 - Home is chrome, not a Project, and the two senses of "Home" stay separate. The
   Home *control session* is never a managed row: it is app control runtime with no
   `resourceRef`, the only evidence that a session is one is the exact
@@ -955,6 +956,69 @@ Registry-first primary navigation:
   bounded four-query observation through one exact socket, and projects it
   purely: no Registry or tmux write, no reconcile, no materialize, and no
   default-server probe when there is no transport.
+
+Project discovery and pin authority:
+
+Five things used to share two files, and each of them answered a different
+question wrongly as a result. Workdirs were a scan source *and* the thing that
+decided which Projects existed. The pin file was a presentation preference *and*
+a discovery input *and* the only record that a directory mattered. They are five
+separate authorities now, and the boundaries are the point.
+
+- **Workdirs and project roots are scan roots.** `PROJMUX_MANAGED_ROOTS`,
+  `PROJMUX_PROJDIR` and `~/.config/projmux/workdirs` name directories to look
+  inside. Looking inside a directory registers nothing. On Windows they are
+  OS-native paths and stay OS-native paths; nothing normalizes them into identity.
+- **A discovered child is an unregistered candidate.** It is a filesystem fact
+  with no uid, no name reservation, and no Registry row. It stays one until
+  something explicitly registers it, however many times it is scanned, rendered,
+  or reconciled.
+- **The Registry is managed identity.** `projmux create project --root <path>` is
+  the canonical bootstrap, and opening a candidate from the Projects sidebar
+  performs the same registration for that one exact path. Both go through one
+  transaction and both are idempotent: a root an existing Project already claims
+  is answered from the Registry and writes nothing. Nothing else registers a
+  Project. In particular the reconcile prelude no longer walks the discovery
+  roots, so `create pane` in one repository cannot add a Project for every
+  sibling directory under a scan root -- which is exactly what it used to do.
+  `--project <name>` naming an unregistered candidate is a refusal that names the
+  exact `--root` and the route that would register it.
+- **A managed pin is a Registry Project uid.** Its displayed root and name are
+  projected from the Registry on every render, so the pin survives a rebind, a
+  rename, and a `MissingRoot` condition. The sidebar tier reads the uid, never the
+  path.
+- **A candidate pin is a path no Project claims.** It is a preference about a
+  directory, kept as one. Rendering it, listing it, and pinning it never mint a
+  Project.
+
+Storage and migration:
+
+- The pin file is a typed envelope: a `projmux-pins v2` header followed by
+  `project <uid>` and `candidate <path>` lines. The kind is stored, not inferred,
+  which is what lets one file hold both collections without either surface having
+  to guess.
+- Reading never writes. Every rendering surface projects a pre-v2 file in memory
+  through the same resolution a migration would persist, so the sidebar is
+  identical before and after `projmux pin project migrate`.
+- Migration is per-line and atomic as a whole. A path exactly one Project's root
+  claims becomes that uid; a path no Project claims stays a candidate; a path more
+  than one Project claims refuses the entire migration with the pin file and the
+  Registry byte-identical, and names the repair. A corrupt or newer-version
+  envelope is refused rather than partially parsed, because a wrong guess about
+  which resource a preference points at is worse than declining to load one.
+- Path folding is confined to two questions: candidate exact-match, and legacy
+  path-to-uid migration. `candidates.MatchKeyFor` resolves symlinks on every
+  platform and additionally folds separator, case, and drive-letter case on
+  Windows, so `C:\Users\dev\src` and `c:/users/dev/src` are one candidate. It is
+  never an identity operation: no amount of path agreement mints a Project uid or
+  merges two, and the Windows rules are frozen by a compatibility table that a
+  Linux test run asserts.
+- `pin project add|remove|toggle <dir>` keeps working unchanged and now resolves
+  to a typed pin under one rule -- exactly one Project with that root makes the pin
+  managed, none makes it a candidate, more than one is refused -- with
+  `uid:<uid>` available when an operator wants to be explicit. Settings shows the
+  three collections as three collections: Additional discovery roots, Pinned
+  Projects, and Candidate Pins.
 
 Public resource reconciliation:
 

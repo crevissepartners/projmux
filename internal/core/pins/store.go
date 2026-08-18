@@ -1,17 +1,22 @@
 package pins
 
 import (
-	"errors"
-	"slices"
-	"strings"
-
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/state"
 )
 
-var ErrInvalidPin = errors.New("invalid pin path")
-
-// Store manages a file-backed set of pinned project directories.
+// Store is the file half of the pin collection: it reads and it writes, and it
+// decides nothing.
+//
+// Every rule about what a pin means -- which kind a path resolves to, when a
+// legacy file may be rewritten, when a mutation is a no-op -- lives in pure
+// functions over Set instead, so the surfaces that own those decisions can be
+// tested without a filesystem and cannot each grow their own version.
+//
+// Reads never write. That is not an optimization: rendering the sidebar, listing
+// the pins and resolving a tier all read this file, and a read that rewrote it
+// would turn every refresh into a migration attempt against whatever the Registry
+// happened to look like at that moment.
 type Store struct {
 	file state.LinesFile
 }
@@ -31,126 +36,23 @@ func (s Store) Path() string {
 	return s.file.Path()
 }
 
-// List returns the current ordered pin set.
-func (s Store) List() ([]string, error) {
-	return s.load()
-}
-
-// Add records a new pin unless it already exists.
-func (s Store) Add(pin string) error {
-	pin, err := validate(pin)
-	if err != nil {
-		return err
-	}
-
-	lines, err := s.load()
-	if err != nil {
-		return err
-	}
-	if contains(lines, pin) {
-		return nil
-	}
-
-	lines = append(lines, pin)
-	return s.file.Write(lines)
-}
-
-// Remove drops a pin if present.
-func (s Store) Remove(pin string) error {
-	pin, err := validate(pin)
-	if err != nil {
-		return err
-	}
-
-	lines, err := s.load()
-	if err != nil {
-		return err
-	}
-
-	filtered := lines[:0]
-	for _, line := range lines {
-		if line == pin {
-			continue
-		}
-		filtered = append(filtered, line)
-	}
-
-	return s.file.Write(filtered)
-}
-
-// Toggle flips the pin state and returns whether the pin is now present.
-func (s Store) Toggle(pin string) (bool, error) {
-	pin, err := validate(pin)
-	if err != nil {
-		return false, err
-	}
-
-	lines, err := s.load()
-	if err != nil {
-		return false, err
-	}
-
-	if contains(lines, pin) {
-		filtered := lines[:0]
-		for _, line := range lines {
-			if line == pin {
-				continue
-			}
-			filtered = append(filtered, line)
-		}
-		if err := s.file.Write(filtered); err != nil {
-			return false, err
-		}
-		return false, nil
-	}
-
-	lines = append(lines, pin)
-	if err := s.file.Write(lines); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// Clear truncates the underlying file to an empty set.
-func (s Store) Clear() error {
-	return s.file.Write(nil)
-}
-
-func (s Store) load() ([]string, error) {
+// Load returns the stored set exactly as written, with the format it was written
+// in. A legacy file comes back as candidate pins with FormatLegacy; resolving it
+// against the Registry is the caller's separate, write-free step.
+func (s Store) Load() (Set, error) {
 	lines, err := s.file.Read()
 	if err != nil {
-		return nil, err
+		return Set{}, err
 	}
-	return unique(lines), nil
+	return parse(lines)
 }
 
-func validate(pin string) (string, error) {
-	if strings.TrimSpace(pin) == "" {
-		return "", ErrInvalidPin
-	}
-	if strings.ContainsAny(pin, "\r\n") {
-		return "", ErrInvalidPin
-	}
-	return pin, nil
-}
-
-func unique(lines []string) []string {
-	if len(lines) == 0 {
-		return nil
-	}
-
-	seen := make(map[string]struct{}, len(lines))
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if _, ok := seen[line]; ok {
-			continue
+// Save replaces the file with the typed envelope of set, atomically.
+func (s Store) Save(set Set) error {
+	for _, pin := range set.Pins {
+		if _, err := validPin(pin); err != nil {
+			return err
 		}
-		seen[line] = struct{}{}
-		out = append(out, line)
 	}
-	return out
-}
-
-func contains(lines []string, target string) bool {
-	return slices.Contains(lines, target)
+	return s.file.Write(format(set))
 }

@@ -1604,7 +1604,8 @@ returns a usage error.
 
 The live tmux inventory is under `runtime`: `runtime sessions`, `runtime
 attach`, `runtime stop`, `runtime tag`, and `runtime prune`. Project pins use
-`pin project list|add|remove|toggle|clear`. Resource retention uses `prune
+`pin project list|add|remove|toggle|clear|migrate`; `list` takes `--kind
+project|candidate` and `migrate` takes `--dry-run`. Resource retention uses `prune
 project|snapshot`, while explicit snapshot deletion uses `delete snapshot`.
 
 Popup-marker, preview, status, and tmux configuration plumbing is hidden under

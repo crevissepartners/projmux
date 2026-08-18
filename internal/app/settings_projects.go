@@ -11,6 +11,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
@@ -179,6 +180,10 @@ func (c *settingsCommand) runProjectPickerSection(stdout, stderr io.Writer) erro
 			}
 		case action == settingsProjectPins:
 			if err := c.runPinnedProjects(stdout, stderr); err != nil {
+				return err
+			}
+		case action == settingsProjectCandidatePins:
+			if err := c.runCandidatePins(stdout, stderr); err != nil {
 				return err
 			}
 		case action == settingsProjectRootManage:
@@ -688,6 +693,12 @@ func (c *settingsCommand) runDiscoveryRootDetail(root string, stdout, stderr io.
 	}
 }
 
+// The Pinned Projects collection: managed pins only.
+//
+// Every row here is a Registry Project uid. That is the whole change from the
+// path-keyed list this replaces: the item View reads its name, root and condition
+// out of the Registry on each render, so a rebind, a rename and a MissingRoot
+// condition are all visible on the same pin instead of orphaning it.
 func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 	for {
 		entries, err := c.pinnedProjectEntries()
@@ -698,7 +709,7 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-project-pins",
 			Entries:    entries,
-			Title:      "Pinned Projects - Pin, rebind, and unpin",
+			Title:      "Pinned Projects - Managed Registry Project pins",
 			Prompt:     "Settings > Projects > Pinned Projects > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
@@ -723,8 +734,8 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 			}
 			continue
 		}
-		if pin, ok := strings.CutPrefix(action, settingsActionPrefixPinItem); ok {
-			if err := c.runPinnedProjectDetail(pin, stdout, stderr); err != nil {
+		if reference, ok := strings.CutPrefix(action, settingsActionPrefixPinItem); ok {
+			if err := c.runPinnedProjectDetail(reference, stdout, stderr); err != nil {
 				return err
 			}
 			continue
@@ -735,22 +746,25 @@ func (c *settingsCommand) runPinnedProjects(stdout, stderr io.Writer) error {
 	}
 }
 
-// runPinnedProjectDetail is one pinned Project's item View. It shows the
-// Project's canonical identity (unique name, display name, uid) separately
-// from its bound root and runtime, keeps a `MissingRoot` condition visible
-// instead of hiding it, and offers same-uid remediation through the canonical
-// rebind route rather than re-pinning the Project under a new identity.
-func (c *settingsCommand) runPinnedProjectDetail(pin string, stdout, stderr io.Writer) error {
+// runPinnedProjectDetail is one managed pin's item View.
+//
+// reference is the pin's own `uid:<uid>` spelling, so the View and the unpin
+// action name the same resource no matter what happened to its root. It shows the
+// Project's canonical identity separately from its bound root and runtime, keeps a
+// MissingRoot condition visible instead of hiding it, and offers same-uid
+// remediation through the canonical rebind route rather than re-pinning the
+// Project under a new identity.
+func (c *settingsCommand) runPinnedProjectDetail(reference string, stdout, stderr io.Writer) error {
 	for {
-		entries, err := c.pinnedProjectDetailEntries(pin)
+		entries, err := c.pinnedProjectDetailEntries(reference)
 		if err != nil {
 			return err
 		}
 		result, err := c.runPicker(intpickercompat.Options{
 			UI:         "settings-project-pin-item",
 			Entries:    entries,
-			Title:      "Pinned Projects - " + pin,
-			Prompt:     "Settings > Projects > Pinned Projects > " + pin + " > ",
+			Title:      "Pinned Projects - " + c.settingsPinnedProjectTitle(reference),
+			Prompt:     "Settings > Projects > Pinned Projects > " + c.settingsPinnedProjectTitle(reference) + " > ",
 			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
 			ExpectKeys: []string{"enter"},
 			Bindings:   c.settingsCloseBindings(),
@@ -767,11 +781,11 @@ func (c *settingsCommand) runPinnedProjectDetail(pin string, stdout, stderr io.W
 			return nil
 		case action == settingsNoopValue:
 			continue
-		case action == settingsActionPrefixPinItem+pin+":rebind":
-			if err := c.runRebindPinnedProjectRoot(pin, stdout, stderr); err != nil {
+		case action == settingsActionPrefixPinItem+reference+":rebind":
+			if err := c.runRebindPinnedProjectRoot(reference, stdout, stderr); err != nil {
 				return err
 			}
-		case action == settingsActionPrefixSwitch+"pin:"+pin:
+		case action == settingsActionPrefixSwitch+"pin:"+reference:
 			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
 				return err
 			}
@@ -783,38 +797,68 @@ func (c *settingsCommand) runPinnedProjectDetail(pin string, stdout, stderr io.W
 	}
 }
 
-func (c *settingsCommand) pinnedProjectDetailEntries(pin string) ([]intpickercompat.Entry, error) {
+// settingsPinnedProjectUID strips the `uid:` marker a managed pin reference
+// carries.
+func settingsPinnedProjectUID(reference string) string {
+	uid, _ := strings.CutPrefix(strings.TrimSpace(reference), "uid:")
+	return strings.TrimSpace(uid)
+}
+
+// settingsPinnedProjectTitle names a managed pin the way an operator recognizes
+// it: the Project's unique name while the Registry answers, and the uid when it
+// does not.
+func (c *settingsCommand) settingsPinnedProjectTitle(reference string) string {
+	uid := settingsPinnedProjectUID(reference)
+	registry := c.settingsProjectRegistry()
+	if project, ok := registry.Project(uid); ok {
+		if name := strings.TrimSpace(project.Metadata.Name); name != "" {
+			return name
+		}
+	}
+	return reference
+}
+
+func (c *settingsCommand) pinnedProjectDetailEntries(reference string) ([]intpickercompat.Entry, error) {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
+	uid := settingsPinnedProjectUID(reference)
+	registered := coremetadata.Project{}
 	registry := c.settingsProjectRegistry()
-	project, registered := settingsProjectForRoot(registry, pin)
+	stored, ok := registry.Project(uid)
+	if ok {
+		registered = *stored
+	}
 
-	if !registered {
+	if !ok {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabelInfoLocale(locale, "Project", pin, "pinned path, not registered as a Project resource"),
+			Label:     settingsLabelInfoLocale(locale, "Project", reference, "pinned UID with no Registry Project"),
 			Value:     settingsNoopValue,
-			SearchKey: "pinned project path unregistered " + pin,
+			SearchKey: "pinned project uid missing registry " + reference,
 		})
 	} else {
-		display := strings.TrimSpace(project.Metadata.DisplayName)
+		display := strings.TrimSpace(registered.Metadata.DisplayName)
 		if display == "" {
 			display = "(none)"
 		}
 		runtime := "offline"
-		if project.Status.Session != nil {
-			runtime = "session " + project.Status.Session.Name
+		if registered.Status.Session != nil {
+			runtime = "session " + registered.Status.Session.Name
 		}
 		condition := "Ready"
 		missingSince := "-"
-		if missing, ok := settingsProjectMissingRoot(project); ok {
+		if missing, found := settingsProjectMissingRoot(registered); found {
 			condition = coremetadata.ConditionMissingRoot
 			missingSince = missing.FirstObservedAt.Format(time.RFC3339)
 		}
+		root := strings.TrimSpace(registered.Spec.Root)
+		if root == "" {
+			root = "(no root)"
+		}
 		for _, row := range [][3]string{
 			{"Display name", display, "duplicates allowed"},
-			{"Unique name", project.Metadata.Name, "stable query name"},
-			{"UID", project.Metadata.UID, "never changes across a rebind"},
-			{"Root", project.Spec.Root, "spec.root"},
+			{"Unique name", registered.Metadata.Name, "stable query name"},
+			{"UID", registered.Metadata.UID, "never changes across a rebind"},
+			{"Root", root, "spec.root"},
 			{"Condition", condition, "registry status"},
 			{"Missing since", missingSince, "first observed"},
 			{"Runtime", runtime, "status.session"},
@@ -827,28 +871,28 @@ func (c *settingsCommand) pinnedProjectDetailEntries(pin string) ([]intpickercom
 		}
 	}
 
-	entries = append(entries, c.rebindPinnedProjectEntry(locale, pin, project, registered))
+	entries = append(entries, c.rebindPinnedProjectEntry(locale, reference, registered, ok))
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, settingsNavLabel(settingsNavProjectsPins+".item.unpin"), "removes the pin; Project metadata is kept"),
-		Value:     settingsActionPrefixSwitch + "pin:" + pin,
-		SearchKey: "unpin project " + pin,
+		Value:     settingsActionPrefixSwitch + "pin:" + reference,
+		SearchKey: "unpin project " + reference,
 	})
 	return entries, nil
 }
 
-func (c *settingsCommand) rebindPinnedProjectEntry(locale i18n.Locale, pin string, project coremetadata.Project, registered bool) intpickercompat.Entry {
+func (c *settingsCommand) rebindPinnedProjectEntry(locale i18n.Locale, reference string, project coremetadata.Project, registered bool) intpickercompat.Entry {
 	label := settingsNavLabel(settingsNavProjectsPins + ".item.rebind")
 	if !registered {
 		return intpickercompat.Entry{
-			Label:     settingsLabelDimLocale(locale, label, "unavailable - this path is not a registered Project"),
+			Label:     settingsLabelDimLocale(locale, label, "unavailable - no Registry Project carries this UID"),
 			Value:     settingsNoopValue,
-			SearchKey: "rebind project root unavailable " + pin,
+			SearchKey: "rebind project root unavailable " + reference,
 		}
 	}
 	return intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, label, "keeps uid "+project.Metadata.UID),
-		Value:     settingsActionPrefixPinItem + pin + ":rebind",
-		SearchKey: "rebind project root missing root same uid " + pin,
+		Value:     settingsActionPrefixPinItem + reference + ":rebind",
+		SearchKey: "rebind project root missing root same uid " + reference,
 	}
 }
 
@@ -856,14 +900,16 @@ func (c *settingsCommand) rebindPinnedProjectEntry(locale i18n.Locale, pin strin
 // canonical `rebind project` handler. Settings adds no second rebind
 // implementation, so the uid, the name reservation and the collision refusals
 // are exactly the CLI's.
-func (c *settingsCommand) runRebindPinnedProjectRoot(pin string, stdout, stderr io.Writer) error {
+func (c *settingsCommand) runRebindPinnedProjectRoot(reference string, stdout, stderr io.Writer) error {
+	uid := settingsPinnedProjectUID(reference)
 	registry := c.settingsProjectRegistry()
-	project, ok := settingsProjectForRoot(registry, pin)
+	project, ok := registry.Project(uid)
 	if !ok {
-		return fmt.Errorf("rebind project root: %s is not a registered Project", pin)
+		return fmt.Errorf("rebind project root: no Registry Project carries uid %s", uid)
 	}
+	title := c.settingsPinnedProjectTitle(reference)
 	typed, err := c.promptSettingsPath("Rebind Project root - Type one absolute Project root",
-		"Settings > Projects > Pinned Projects > "+pin+" > Rebind Project root > ", pin)
+		"Settings > Projects > Pinned Projects > "+title+" > Rebind Project root > ", project.Spec.Root)
 	if err != nil {
 		return err
 	}
@@ -880,6 +926,179 @@ func (c *settingsCommand) runRebindPinnedProjectRoot(pin string, stdout, stderr 
 	})
 }
 
+// The Candidate Pins collection: pinned paths no Registry Project claims.
+//
+// It exists because the two facts used to share one list. A pinned directory that
+// had never been registered rendered next to a pinned Project and offered the same
+// affordances, which is how "pinned" came to look like "managed". Here the only
+// affordances are the two a candidate actually has: register this exact path, or
+// stop preferring it.
+func (c *settingsCommand) runCandidatePins(stdout, stderr io.Writer) error {
+	for {
+		entries, err := c.candidatePinEntries()
+		if err != nil {
+			return err
+		}
+
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-project-candidate-pins",
+			Entries:    entries,
+			Title:      "Candidate Pins - Pinned paths with no Registry Project",
+			Prompt:     "Settings > Projects > Candidate Pins > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		if action == settingsBackValue {
+			return nil
+		}
+		if action == settingsNoopValue {
+			continue
+		}
+		if path, ok := strings.CutPrefix(action, settingsActionPrefixCandidatePinItem); ok {
+			if err := c.runCandidatePinDetail(path, stdout, stderr); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
+			return err
+		}
+	}
+}
+
+func (c *settingsCommand) candidatePinEntries() ([]intpickercompat.Entry, error) {
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
+	if c.switcher == nil {
+		return append(entries, intpickercompat.Entry{
+			Label: settingsLabelDimLocale(locale, "(no candidate pins)", ""),
+			Value: settingsNoopValue,
+		}), nil
+	}
+
+	rows, _, err := c.switcher.loadPinRows()
+	if err != nil {
+		return nil, err
+	}
+	homeDir, err := c.switcher.resolveHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	repoRoot := c.switcher.switchRepoRoot(homeDir)
+
+	count := 0
+	for _, row := range rows {
+		if row.Pin.Kind != pins.KindCandidate {
+			continue
+		}
+		count++
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, intrender.PrettyPath(row.Pin.Value, homeDir, repoRoot), "not registered as a Project resource"),
+			Value:     settingsActionPrefixCandidatePinItem + row.Pin.Value,
+			SearchKey: "candidate pin " + row.Pin.Value + " register unpin",
+		})
+	}
+	if count == 0 {
+		entries = append(entries, intpickercompat.Entry{
+			Label: settingsLabelDimLocale(locale, "(no candidate pins)", ""),
+			Value: settingsNoopValue,
+		})
+	}
+	return entries, nil
+}
+
+// runCandidatePinDetail is one candidate pin's item View.
+func (c *settingsCommand) runCandidatePinDetail(path string, stdout, stderr io.Writer) error {
+	for {
+		entries, err := c.candidatePinDetailEntries(path)
+		if err != nil {
+			return err
+		}
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-project-candidate-pin-item",
+			Entries:    entries,
+			Title:      "Candidate Pins - " + path,
+			Prompt:     "Settings > Projects > Candidate Pins > " + path + " > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case action == settingsActionPrefixCandidatePinItem+path+":register":
+			if err := c.runRegisterCandidateProject(path, stdout, stderr); err != nil {
+				return err
+			}
+			// Registering re-types the pin, so this candidate View is gone.
+			return nil
+		case action == settingsActionPrefixSwitch+"pin:"+path:
+			if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
+				return err
+			}
+			return nil
+		default:
+			return fmt.Errorf("unknown candidate pin action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) candidatePinDetailEntries(path string) ([]intpickercompat.Entry, error) {
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
+	for _, row := range [][3]string{
+		{"Path", path, "candidate preference, not managed identity"},
+		{"Registration", "none", "no Registry Project claims this path"},
+	} {
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabelInfoLocale(locale, row[0], row[1], row[2]),
+			Value:     settingsNoopValue,
+			SearchKey: "candidate " + row[0] + " " + row[1],
+		})
+	}
+	entries = append(entries, intpickercompat.Entry{
+		Label:     settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, settingsNavLabel(settingsNavProjectsCandidates+".item.register"), "registers this exact path only"),
+		Value:     settingsActionPrefixCandidatePinItem + path + ":register",
+		SearchKey: "register candidate as project " + path,
+	})
+	entries = append(entries, intpickercompat.Entry{
+		Label:     settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, settingsNavLabel(settingsNavProjectsCandidates+".item.unpin"), "removes the pin; the directory is untouched"),
+		Value:     settingsActionPrefixSwitch + "pin:" + path,
+		SearchKey: "unpin candidate " + path,
+	})
+	return entries, nil
+}
+
+// runRegisterCandidateProject hands one exact path to the canonical
+// `create project` route.
+//
+// Settings adds no second registration implementation, and it registers exactly
+// the path this View is about: sibling candidates under the same discovery root
+// stay unregistered, which is the difference between an explicit bootstrap and the
+// scan-wide registration this replaces.
+func (c *settingsCommand) runRegisterCandidateProject(path string, stdout, stderr io.Writer) error {
+	return c.runSettingsMutation("Register as Project", stdout, stderr, func(out, errOut io.Writer) error {
+		return newCreateCommand().Run([]string{"project", "--root", path}, out, errOut)
+	})
+}
+
 // projectPickerEntries renders the Projects container. Settings owns Project
 // discovery, pins and sidebar policy here; the runtime picker UI keeps the name
 // `Project Picker`, which is why this container is not called that.
@@ -891,14 +1110,19 @@ func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
 
 	entries = append(entries, c.projectRootEntryLocale(locale))
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsExtraRoots), "discovery roots scanned for Projects"),
+		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsExtraRoots), "scan roots; scanning never registers a Project"),
 		Value:     settingsWorkdirList,
 		SearchKey: "additional discovery roots workdirs scan roots",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsPins), "pinned Projects and their roots"),
+		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsPins), "pinned Registry Projects, by UID"),
 		Value:     settingsProjectPins,
-		SearchKey: "pinned projects pin unpin rebind root",
+		SearchKey: "pinned projects pin unpin rebind root managed uid",
+	})
+	entries = append(entries, intpickercompat.Entry{
+		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsCandidates), "pinned paths no Registry Project claims"),
+		Value:     settingsProjectCandidatePins,
+		SearchKey: "candidate pins unregistered path register project",
 	})
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsSidebar), c.projectSidebarSummary()),
@@ -1105,7 +1329,7 @@ func (c *settingsCommand) addCurrentProjectEntryLocale(locale i18n.Locale) intpi
 		}
 	}
 
-	pins, err := c.switcher.loadPins()
+	_, selection, err := c.switcher.loadPinRows()
 	if err != nil {
 		return intpickercompat.Entry{
 			Label: settingsLabelDimLocale(locale, "Add Current Project", "pins unavailable"),
@@ -1127,7 +1351,7 @@ func (c *settingsCommand) addCurrentProjectEntryLocale(locale i18n.Locale) intpi
 			Value: settingsNoopValue,
 		}
 	}
-	if containsString(pins, currentTarget) {
+	if selection.pinnedPath(currentTarget) {
 		return intpickercompat.Entry{
 			Label: settingsLabelDimLocale(locale, "Add Current Project", "already pinned  "+intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
 			Value: settingsNoopValue,
@@ -1139,9 +1363,12 @@ func (c *settingsCommand) addCurrentProjectEntryLocale(locale i18n.Locale) intpi
 	}
 }
 
-// pinnedProjectEntries renders the Pinned Projects collection. Each pin is an
-// item View; unpinning and root remediation belong to the item, and only the
+// pinnedProjectEntries renders the Pinned Projects collection. Each managed pin is
+// an item View; unpinning and root remediation belong to the item, and only the
 // two add rows belong to the collection.
+//
+// Candidate pins are deliberately absent: they are a different collection with
+// different affordances, and mixing them is what made "pinned" read as "managed".
 func (c *settingsCommand) pinnedProjectEntries() ([]intpickercompat.Entry, error) {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
@@ -1152,7 +1379,7 @@ func (c *settingsCommand) pinnedProjectEntries() ([]intpickercompat.Entry, error
 		}), nil
 	}
 
-	pins, err := c.switcher.loadPins()
+	rows, _, err := c.switcher.loadPinRows()
 	if err != nil {
 		return nil, err
 	}
@@ -1163,17 +1390,22 @@ func (c *settingsCommand) pinnedProjectEntries() ([]intpickercompat.Entry, error
 	repoRoot := c.switcher.switchRepoRoot(homeDir)
 	registry := c.settingsProjectRegistry()
 
-	if len(pins) == 0 {
+	managed := 0
+	for _, row := range rows {
+		if row.Pin.Kind != pins.KindProject {
+			continue
+		}
+		managed++
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsPinnedProjectName(registry, row, homeDir, repoRoot), settingsPinnedProjectSummary(registry, row)),
+			Value:     settingsActionPrefixPinItem + row.Reference,
+			SearchKey: "pinned project " + row.Reference + " unpin rebind root condition",
+		})
+	}
+	if managed == 0 {
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelDimLocale(locale, "(no pinned Projects)", ""),
 			Value: settingsNoopValue,
-		})
-	}
-	for _, pin := range pins {
-		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsPinnedProjectName(registry, pin, homeDir, repoRoot), settingsPinnedProjectSummary(registry, pin)),
-			Value:     settingsActionPrefixPinItem + pin,
-			SearchKey: "pinned project " + pin + " unpin rebind root condition",
 		})
 	}
 	entries = append(entries, c.addCurrentProjectEntryLocale(locale))
@@ -1189,45 +1421,50 @@ func (c *settingsCommand) pinnedProjectEntries() ([]intpickercompat.Entry, error
 // state. Settings only displays this metadata; identity allocation, uid merges
 // and pruning stay out of the Settings surface entirely.
 func (c *settingsCommand) settingsProjectRegistry() coremetadata.Registry {
-	registry, err := loadResourceRegistry()
+	read := loadResourceRegistry
+	if c != nil && c.resourceRegistry != nil {
+		read = c.resourceRegistry
+	}
+	registry, err := read()
 	if err != nil {
 		return coremetadata.Registry{}
 	}
 	return registry
 }
 
-// settingsProjectForRoot resolves the Project bound to an exact cleaned root.
-// The comparison is exact by design: a shared basename, a shared git origin or
-// a shared inode must never fold two Projects onto one identity.
-func settingsProjectForRoot(registry coremetadata.Registry, root string) (coremetadata.Project, bool) {
-	want := filepath.Clean(strings.TrimSpace(root))
-	for _, project := range registry.Projects {
-		if filepath.Clean(project.Spec.Root) == want {
-			return project, true
-		}
-	}
-	return coremetadata.Project{}, false
-}
-
-func settingsPinnedProjectName(registry coremetadata.Registry, pin, homeDir, repoRoot string) string {
-	if project, ok := settingsProjectForRoot(registry, pin); ok {
+// settingsPinnedProjectName names a managed pin from the Registry.
+//
+// The projection is the point: the pin holds a uid, so the name and the root are
+// re-read on every render and a rebind or a rename shows up here instead of
+// stranding the pin under its old spelling.
+func settingsPinnedProjectName(registry coremetadata.Registry, row pinRow, homeDir, repoRoot string) string {
+	if project, ok := registry.Project(row.Pin.Value); ok {
 		if display := strings.TrimSpace(project.Metadata.DisplayName); display != "" {
 			return display
 		}
-		return project.Metadata.Name
+		if name := strings.TrimSpace(project.Metadata.Name); name != "" {
+			return name
+		}
 	}
-	return intrender.PrettyPath(pin, homeDir, repoRoot)
+	if root := strings.TrimSpace(row.Root); root != "" {
+		return intrender.PrettyPath(root, homeDir, repoRoot)
+	}
+	return row.Reference
 }
 
-func settingsPinnedProjectSummary(registry coremetadata.Registry, pin string) string {
-	project, ok := settingsProjectForRoot(registry, pin)
+func settingsPinnedProjectSummary(registry coremetadata.Registry, row pinRow) string {
+	project, ok := registry.Project(row.Pin.Value)
 	if !ok {
-		return pin + " - not registered"
+		return row.Reference + " - no Registry Project"
 	}
-	if condition, found := settingsProjectMissingRoot(project); found {
-		return pin + " - MissingRoot since " + condition.FirstObservedAt.Format(time.RFC3339)
+	root := strings.TrimSpace(project.Spec.Root)
+	if root == "" {
+		root = "(no root)"
 	}
-	return pin
+	if condition, found := settingsProjectMissingRoot(*project); found {
+		return root + " - MissingRoot since " + condition.FirstObservedAt.Format(time.RFC3339)
+	}
+	return root
 }
 
 func settingsProjectMissingRoot(project coremetadata.Project) (coremetadata.Condition, bool) {

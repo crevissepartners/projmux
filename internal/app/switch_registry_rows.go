@@ -94,7 +94,7 @@ func (c *switchCommand) switchManagedRows(
 	view registryview.View,
 	ui string,
 	mode switchRowRenderMode,
-	pinnedSet map[string]bool,
+	selection pinSelection,
 	attentionRanks map[string]int,
 	aiBadgeKinds map[string]string,
 	aiBadgeStyle string,
@@ -102,7 +102,7 @@ func (c *switchCommand) switchManagedRows(
 	repoRoot string,
 ) ([]intrender.SwitchCandidate, map[string]string, error) {
 	projects := projectRowsOf(view)
-	sortManagedProjectRows(projects, pinnedSet)
+	sortManagedProjectRows(projects, selection)
 	rows := make([]intrender.SwitchCandidate, 0, len(projects))
 	sessionNames := make(map[string]string, len(projects))
 	for _, row := range projects {
@@ -147,7 +147,7 @@ func (c *switchCommand) switchManagedRows(
 			AttentionRank: attentionRanks[sessionName],
 			AIBadgeKind:   aiBadgeKinds[sessionName],
 			AIBadgeStyle:  aiBadgeStyle,
-			Pinned:        row.Root != "" && pinnedSet[cleanOptionalPath(row.Root)],
+			Pinned:        selection.pinnedProject(row.UID),
 		})
 	}
 	return rows, sessionNames, nil
@@ -181,12 +181,14 @@ const (
 
 // switchManagedProjectTierOf classifies one Project row.
 //
-// Pinning is keyed by spec.root because that is what the pin store holds. A
-// Project with no root cannot be pinned, which is the same answer the pin action
-// gives it.
-func switchManagedProjectTierOf(project registryview.Row, pinnedSet map[string]bool) switchManagedProjectTier {
+// Pinning is keyed by the Project uid, which is what the typed pin store holds. A
+// Project with no root, or one whose root has gone missing, is still pinnable and
+// still pinned: the preference is about the resource, and a rebind, a rename or a
+// vanished directory does not change which resource the operator asked to keep on
+// top.
+func switchManagedProjectTierOf(project registryview.Row, selection pinSelection) switchManagedProjectTier {
 	switch {
-	case project.Root != "" && pinnedSet[cleanOptionalPath(project.Root)]:
+	case selection.pinnedProject(project.UID):
 		return switchManagedTierPinned
 	case project.Live():
 		return switchManagedTierLive
@@ -202,9 +204,9 @@ func switchManagedProjectTierOf(project registryview.Row, pinnedSet map[string]b
 // difference, so two Projects in the same tier keep the order the Registry gave
 // them. That is what makes a refresh deterministic: only a tier change can move
 // a row past a sibling, and a tier change is an observation the operator caused.
-func sortManagedProjectRows(projects []registryview.Row, pinnedSet map[string]bool) {
+func sortManagedProjectRows(projects []registryview.Row, selection pinSelection) {
 	slices.SortStableFunc(projects, func(a, b registryview.Row) int {
-		return int(switchManagedProjectTierOf(a, pinnedSet)) - int(switchManagedProjectTierOf(b, pinnedSet))
+		return int(switchManagedProjectTierOf(a, selection)) - int(switchManagedProjectTierOf(b, selection))
 	})
 }
 

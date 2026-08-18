@@ -860,6 +860,26 @@ create_cleanup() {
 }
 trap 'create_cleanup; smoke_cleanup_env' EXIT
 
+# 0. The explicit Project bootstrap. A directory under the discovery root is a
+# candidate until something registers it, so `beta` is registered by name here
+# rather than appearing as a side effect of the first create below.
+pmx create project --root "$create_root/work/beta" >"$create_root/register-beta.out"
+smoke_assert_file_contains "$create_root/register-beta.out" "project/beta created"
+if [[ ! -f "$create_registry" ]]; then
+  echo "the explicit Project bootstrap did not write the registry" >&2
+  exit 1
+fi
+if [[ "$(stat -c '%a' "$create_registry")" != "600" ]]; then
+  echo "registry mode = $(stat -c '%a' "$create_registry"), want 600" >&2
+  exit 1
+fi
+# Its siblings under the same discovery root stay unregistered.
+pmx get projects -o json >"$create_root/projects-after-bootstrap.json"
+if grep -Fq "$create_root/work/alpha" "$create_root/projects-after-bootstrap.json"; then
+  echo "the explicit bootstrap also registered the sibling candidate alpha" >&2
+  exit 1
+fi
+
 # 1. A pre-create hook refusal aborts with zero mutations.
 mkdir -p "$create_root/config/projmux"
 cat >"$create_root/config/projmux/config.toml" <<'PRECREATE'
@@ -867,6 +887,7 @@ cat >"$create_root/config/projmux/config.toml" <<'PRECREATE'
 run = "exit 7"
 PRECREATE
 create_sessions_before="$(ctx list-sessions -F '#{session_name}' | wc -l)"
+cp "$create_registry" "$create_root/precreate.registry"
 set +e
 pmx create window --project beta >"$create_root/precreate.out" 2>"$create_root/precreate.err"
 precreate_status=$?
@@ -879,10 +900,7 @@ if [[ -s "$create_root/precreate.out" ]]; then
   echo "a pre-create hook refusal wrote to stdout" >&2
   exit 1
 fi
-if [[ -e "$create_registry" ]]; then
-  echo "a pre-create hook refusal created the registry" >&2
-  exit 1
-fi
+cmp "$create_root/precreate.registry" "$create_registry"
 if [[ "$(ctx list-sessions -F '#{session_name}' | wc -l)" != "$create_sessions_before" ]]; then
   echo "a pre-create hook refusal materialized a session" >&2
   exit 1
@@ -898,10 +916,6 @@ pmx create window --project beta >"$create_root/postcreate.out" 2>"$create_root/
 smoke_assert_file_contains "$create_root/postcreate.out" "created"
 smoke_assert_file_contains "$create_root/postcreate.err" "post-create"
 rm -f "$create_root/config/projmux/config.toml"
-if [[ ! -f "$create_registry" ]]; then
-  echo "the first successful create did not write the registry" >&2
-  exit 1
-fi
 if [[ "$(stat -c '%a' "$create_registry")" != "600" ]]; then
   echo "registry mode = $(stat -c '%a' "$create_registry"), want 600" >&2
   exit 1
@@ -4102,3 +4116,266 @@ wait "$nav_client_pid" 2>/dev/null || true
 nav_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Registry-first navigation e2e passed: socket=$nav_socket path=$nav_socket_path other-socket=$nav_other_socket other-path=$nav_other_socket_path client=$nav_client project=$nav_project_uid beta=$nav_beta_uid offline-row=preserved registry-order=\"$nav_registry_order\" live-order=\"$nav_live_order\" closed-order=\"$nav_closed_order\" writes=0 cleanup=validated-exact-sockets"
+
+# ---------------------------------------------------------------------------
+# Project discovery and pin authority split.
+#
+# A discovery root full of directories used to be a Registry full of Projects:
+# any mutation registered everything the scan found, so "unregistered" was a
+# state a directory passed through rather than one it stayed in. This block
+# proves the three collections against a real server, a real attached client and
+# a real `switch open`: scanning registers nothing, opening one candidate
+# registers that one path, its siblings stay candidates, and the pin file states
+# which authority each preference points at.
+#
+# The Windows half of the same contract is frozen by the cross-platform Settings
+# golden and the MatchKeyFor compatibility table in the unit suite; this block is
+# the Linux runtime half.
+#
+# Isolation follows the four mandatory conditions: inherited TMUX/TMUX_PANE are
+# stripped from every call, the server lives under a run-unique TMUX_TMPDIR with
+# its own -L name, the real #{socket_path} is queried and proven to sit inside the
+# smoke root, and only those exact sockets are killed.
+# ---------------------------------------------------------------------------
+disc_root="$PROJMUX_SMOKE_WORKDIR/discovery-authority-e2e"
+disc_socket="projmux-discovery-$$-$RANDOM"
+disc_other_socket="projmux-discovery-other-$$-$RANDOM"
+disc_driver="disc-driver"
+mkdir -p "$disc_root/home" "$disc_root/config" "$disc_root/state" "$disc_root/runtime" \
+  "$disc_root/tmux" "$disc_root/bin" "$disc_root/shim" \
+  "$disc_root/work/app" "$disc_root/work/scratch" "$disc_root/work/sibling"
+chmod 0700 "$disc_root/runtime" "$disc_root/tmux"
+disc_registry="$disc_root/state/projmux/metadata/registry.json"
+disc_pins="$disc_root/config/projmux/pins"
+disc_real_tmux="$(command -v tmux)"
+
+disc_shell="$disc_root/shim/persistent-shell"
+cat >"$disc_shell" <<'DISC_SHELL_STUB'
+#!/usr/bin/env bash
+exec sleep 600
+DISC_SHELL_STUB
+chmod 0755 "$disc_shell"
+
+disc_tmux() {
+  env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$disc_root/tmux" SHELL="$disc_shell" \
+    "$disc_real_tmux" -L "$disc_socket" "$@"
+}
+disc_other_tmux() {
+  env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$disc_root/tmux" SHELL="$disc_shell" \
+    "$disc_real_tmux" -L "$disc_other_socket" "$@"
+}
+disc_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$disc_root/home" \
+    XDG_CONFIG_HOME="$disc_root/config" \
+    XDG_STATE_HOME="$disc_root/state" \
+    XDG_RUNTIME_DIR="$disc_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$disc_root/work" \
+    TMUX_TMPDIR="$disc_root/tmux" \
+    SHELL="$disc_shell" \
+    "$bin" "$@"
+}
+
+# `switch open` resolves the app socket by its default name. The same shim the
+# startup block uses maps that one default route onto this smoke socket.
+cat >"$disc_root/bin/tmux" <<DISC_TMUX_SHIM
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-L" && "\${2:-}" == "projmux" ]]; then
+  shift 2
+  exec $(printf %q "$disc_real_tmux") -L $(printf %q "$disc_socket") "\$@"
+fi
+if [[ "\${1:-}" == "-L" || "\${1:-}" == "-S" ]]; then
+  exec $(printf %q "$disc_real_tmux") "\$@"
+fi
+exec $(printf %q "$disc_real_tmux") -L $(printf %q "$disc_socket") "\$@"
+DISC_TMUX_SHIM
+chmod 0755 "$disc_root/bin/tmux"
+
+cat >"$disc_root/open-candidate.sh" <<DISC_OPEN_SCRIPT
+#!/usr/bin/env bash
+export HOME="$disc_root/home"
+export XDG_CONFIG_HOME="$disc_root/config"
+export XDG_STATE_HOME="$disc_root/state"
+export XDG_RUNTIME_DIR="$disc_root/runtime"
+export PROJMUX_MANAGED_ROOTS="$disc_root/work"
+export TMUX_TMPDIR="$disc_root/tmux"
+export SHELL="$disc_shell"
+export PATH="$disc_root/bin:\$PATH"
+$(printf %q "$bin") switch open "\$1" >"$disc_root/open-\$2.out" 2>"$disc_root/open-\$2.err"
+echo \$? >"$disc_root/open-\$2.rc"
+DISC_OPEN_SCRIPT
+chmod 0755 "$disc_root/open-candidate.sh"
+
+disc_tmux new-session -d -s "$disc_driver" -c "$disc_root" bash --noprofile --norc
+disc_tmux set-option -g -q @projmux_app 1
+disc_tmux set-option -g -q automatic-rename off
+disc_other_tmux new-session -d -s untouched -c "$disc_root" sleep 600
+disc_other_tmux set-option -gq @projmux_disc_sentinel unchanged
+
+disc_socket_path="$(disc_tmux display-message -p -t "$disc_driver" '#{socket_path}')"
+disc_other_socket_path="$(disc_other_tmux display-message -p -t untouched '#{socket_path}')"
+for actual in "$disc_socket_path" "$disc_other_socket_path"; do
+  case "$actual" in
+    "$disc_root"/*) ;;
+    *)
+      echo "discovery authority e2e socket escaped smoke root: $actual" >&2
+      exit 1
+      ;;
+  esac
+done
+
+disc_cleanup() {
+  local socket actual
+  for socket in "$disc_socket" "$disc_other_socket"; do
+    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$disc_root/tmux" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+    if [[ -z "$actual" ]]; then
+      continue
+    fi
+    case "$actual" in
+      "$disc_root"/*) env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true ;;
+      *) echo "refusing discovery authority cleanup outside smoke root: $actual" >&2 ;;
+    esac
+  done
+}
+trap 'disc_cleanup; smoke_cleanup_env' EXIT
+
+disc_other_before="$(disc_other_tmux show-options -gqv @projmux_disc_sentinel):$(disc_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+
+# 1. Reconciling a server whose only sessions are the driver and nothing
+# attributable registers no Project, with three directories under the scan root.
+disc_pmx reconcile resources --socket "$disc_socket" >"$disc_root/import.out"
+disc_pmx get projects -o json >"$disc_root/projects-after-reconcile.json"
+smoke_assert_file_contains "$disc_root/projects-after-reconcile.json" '"items": []'
+
+# 2. Attach a real client and open exactly one candidate from inside its pane.
+disc_client_log="$disc_root/driver-client.log"
+disc_client_input="$disc_root/driver-client.in"
+mkfifo "$disc_client_input"
+exec 9<>"$disc_client_input"
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$disc_root/tmux' tmux -L '$disc_socket' attach-session -t '$disc_driver'" \
+  "$disc_client_log" <"$disc_client_input" >/dev/null 2>&1 &
+disc_client_pid=$!
+
+disc_wait_for() {
+  local description="$1"
+  shift
+  for _ in {1..200}; do
+    if "$@"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for $description" >&2
+  tail -c 8000 "$disc_client_log" >&2 || true
+  return 1
+}
+
+disc_wait_for "attached discovery tmux client" sh -c \
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$disc_root/tmux' tmux -L '$disc_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+disc_client="$(disc_tmux list-clients -F '#{client_name}' | head -n 1)"
+disc_driver_pane="$(disc_tmux display-message -p -c "$disc_client" '#{pane_id}')"
+
+disc_tmux send-keys -t "$disc_driver_pane" "bash '$disc_root/open-candidate.sh' '$disc_root/work/app' bootstrap" Enter
+disc_wait_for "candidate bootstrap open" test -s "$disc_root/open-bootstrap.rc"
+if [[ "$(tr -d '[:space:]' <"$disc_root/open-bootstrap.rc")" != "0" ]]; then
+  echo "opening an unregistered candidate failed" >&2
+  cat "$disc_root/open-bootstrap.err" >&2 || true
+  exit 1
+fi
+
+disc_project_uids="$(disc_pmx get projects -o uid)"
+if [[ "$(printf '%s\n' "$disc_project_uids" | wc -l)" != "1" ]]; then
+  echo "one candidate open registered more than one Project: $disc_project_uids" >&2
+  disc_pmx get projects -o json >&2
+  exit 1
+fi
+disc_project_uid="$disc_project_uids"
+disc_pmx describe project "uid:$disc_project_uid" -o json >"$disc_root/project.json"
+smoke_assert_file_contains "$disc_root/project.json" "\"root\": \"$disc_root/work/app\""
+for disc_unregistered in scratch sibling; do
+  if grep -Fq "$disc_root/work/$disc_unregistered" "$disc_root/project.json"; then
+    echo "the bootstrap claimed a sibling candidate ($disc_unregistered)" >&2
+    exit 1
+  fi
+done
+disc_pmx get projects -o json >"$disc_root/projects-after-bootstrap.json"
+for disc_unregistered in scratch sibling; do
+  if grep -Fq "$disc_root/work/$disc_unregistered" "$disc_root/projects-after-bootstrap.json"; then
+    echo "a sibling candidate ($disc_unregistered) was registered by the bootstrap" >&2
+    exit 1
+  fi
+done
+
+# 3. Reopening the now-registered Project is write-free.
+cp "$disc_registry" "$disc_root/registry.after-bootstrap"
+disc_tmux send-keys -t "$disc_driver_pane" "bash '$disc_root/open-candidate.sh' '$disc_root/work/app' repeat" Enter
+disc_wait_for "candidate reopen" test -s "$disc_root/open-repeat.rc"
+if [[ "$(tr -d '[:space:]' <"$disc_root/open-repeat.rc")" != "0" ]]; then
+  echo "reopening the registered Project failed" >&2
+  cat "$disc_root/open-repeat.err" >&2 || true
+  exit 1
+fi
+cmp "$disc_root/registry.after-bootstrap" "$disc_registry"
+
+# 3b. Home is chrome. Opening it opens a session and registers nothing, because
+# `$HOME` alone has never been evidence of a Project.
+disc_tmux send-keys -t "$disc_driver_pane" "bash '$disc_root/open-candidate.sh' '$disc_root/home' home" Enter
+disc_wait_for "Home open" test -s "$disc_root/open-home.rc"
+if [[ "$(tr -d '[:space:]' <"$disc_root/open-home.rc")" != "0" ]]; then
+  echo "opening Home failed" >&2
+  cat "$disc_root/open-home.err" >&2 || true
+  exit 1
+fi
+disc_pmx get projects -o uid >"$disc_root/projects-after-home.uid"
+if [[ "$(wc -l <"$disc_root/projects-after-home.uid")" != "1" ]]; then
+  echo "opening Home registered a Project:" >&2
+  cat "$disc_root/projects-after-home.uid" >&2
+  exit 1
+fi
+if grep -Fq "$disc_root/home" "$disc_root/projects-after-home.uid"; then
+  echo "the home directory became a Project" >&2
+  exit 1
+fi
+
+# 4. The two pin collections. A registered root types itself as the Project uid;
+# an unregistered sibling stays a path.
+disc_pmx pin project add "$disc_root/work/app" >"$disc_root/pin-managed.out"
+smoke_assert_file_contains "$disc_root/pin-managed.out" "pinned: project $disc_project_uid"
+disc_pmx pin project add "$disc_root/work/scratch" >"$disc_root/pin-candidate.out"
+smoke_assert_file_contains "$disc_root/pin-candidate.out" "pinned: candidate $disc_root/work/scratch"
+if [[ "$(cat "$disc_pins")" != "$(printf 'projmux-pins v2\nproject %s\ncandidate %s' "$disc_project_uid" "$disc_root/work/scratch")" ]]; then
+  echo "the pin file is not the typed envelope:" >&2
+  cat "$disc_pins" >&2
+  exit 1
+fi
+disc_pmx pin project list >"$disc_root/pin-list.out" 2>"$disc_root/pin-list.err"
+smoke_assert_file_contains "$disc_root/pin-list.out" "project	uid:$disc_project_uid	$disc_root/work/app"
+smoke_assert_file_contains "$disc_root/pin-list.out" "candidate	$disc_root/work/scratch"
+disc_pmx pin project list --kind project >"$disc_root/pin-list-managed.out" 2>/dev/null
+if grep -Fq "$disc_root/work/scratch" "$disc_root/pin-list-managed.out"; then
+  echo "the managed pin listing leaked a candidate pin" >&2
+  exit 1
+fi
+
+# 5. The managed pin follows the Project through a rebind: same uid, new root,
+# candidate pin untouched.
+mkdir -p "$disc_root/moved"
+disc_pmx rebind project "uid:$disc_project_uid" --root "$disc_root/moved" >"$disc_root/rebind.out"
+disc_pmx pin project list >"$disc_root/pin-list-after-rebind.out" 2>/dev/null
+smoke_assert_file_contains "$disc_root/pin-list-after-rebind.out" "project	uid:$disc_project_uid	$disc_root/moved"
+smoke_assert_file_contains "$disc_root/pin-list-after-rebind.out" "candidate	$disc_root/work/scratch"
+
+# The sibling socket never moved.
+disc_other_after="$(disc_other_tmux show-options -gqv @projmux_disc_sentinel):$(disc_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+if [[ "$disc_other_after" != "$disc_other_before" ]]; then
+  echo "discovery authority e2e touched the sibling socket" >&2
+  exit 1
+fi
+
+exec 9>&-
+kill "$disc_client_pid" >/dev/null 2>&1 || true
+wait "$disc_client_pid" 2>/dev/null || true
+disc_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> discovery/pin authority e2e passed: socket=$disc_socket path=$disc_socket_path other-socket=$disc_other_socket other-path=$disc_other_socket_path client=$disc_client project=$disc_project_uid siblings=unregistered cleanup=validated-exact-sockets"

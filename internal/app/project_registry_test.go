@@ -33,9 +33,44 @@ func newTestReconciler(tmux *fakeTmux, roots []string) *registryReconciler {
 	}
 }
 
-// TestDiscoveryRegistrationIsSortedByResolvedRootAndNeverDuplicatesAProject
-// pins the deterministic registration order and the canonical-path dedupe.
-func TestDiscoveryRegistrationIsSortedByResolvedRootAndNeverDuplicatesAProject(t *testing.T) {
+// reconcileFixtureMutator is the deterministic mutator every reconciler test uses.
+func reconcileFixtureMutator() coremetadata.Mutator {
+	return coremetadata.Mutator{
+		Now:       func() time.Time { return resourceFixtureClock },
+		NewUID:    coremetadata.NewUID,
+		DirExists: intmetadata.DirExists,
+	}
+}
+
+// registerFixtureProject performs the explicit bootstrap a test needs, so a test
+// about reconciliation states plainly that the Project got there on purpose.
+func registerFixtureProject(t *testing.T, registry *coremetadata.Registry, mutator coremetadata.Mutator, root string) coremetadata.Project {
+	t.Helper()
+	result, err := mutator.RegisterProject(registry, coremetadata.RegisterProjectOptions{
+		Root:         root,
+		DefaultShell: "/bin/zsh",
+		SessionName:  filepath.Base(root),
+		OperationID:  "op-register-" + filepath.Base(root),
+	})
+	if err != nil {
+		t.Fatalf("register project %q: %v", root, err)
+	}
+	return result.Project
+}
+
+// TestReconcileNeverRegistersADiscoveredWorkdir is acceptance (1).
+//
+// Discovery used to be a registration: every reconciliation pass walked the
+// configured workdirs and registered the ones it did not recognize, so any
+// unrelated mutation -- a `create pane` in one repository -- could add a Project
+// for every sibling directory under a scan root. Scanning finds candidates; it
+// decides nothing.
+//
+// The fixture is deliberately the worst case for the old behaviour: several
+// children under one root, plus a symlinked spelling, plus a pinned path. The
+// reconciler is handed all of them and must still add zero Projects, while still
+// doing its actual job of importing the live session it can attribute.
+func TestReconcileNeverRegistersADiscoveredWorkdir(t *testing.T) {
 	t.Parallel()
 
 	base := t.TempDir()
@@ -47,58 +82,45 @@ func TestDiscoveryRegistrationIsSortedByResolvedRootAndNeverDuplicatesAProject(t
 		}
 		roots = append(roots, root)
 	}
-	// A symlinked spelling of one root must not become a second Project.
 	link := filepath.Join(base, "alpha-link")
 	if err := os.Symlink(filepath.Join(base, "alpha"), link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	// Deliberately unsorted. The link follows the root it points at, which is
-	// the order candidate discovery itself would produce, so first-spelling-wins
-	// keeps the real path.
-	reconciler := newTestReconciler(newFakeTmux(), []string{roots[0], roots[1], link, roots[2]})
+	reconciler := newTestReconciler(newFakeTmux(), append(slices.Clone(roots), link))
 
 	registry := coremetadata.NewRegistry()
-	mutator := coremetadata.Mutator{
-		Now:       func() time.Time { return resourceFixtureClock },
-		NewUID:    coremetadata.NewUID,
-		DirExists: intmetadata.DirExists,
+	mutator := reconcileFixtureMutator()
+	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
 	}
-	if err := reconciler.registerDiscoveredRoots(&registry, mutator, "op-test"); err != nil {
-		t.Fatalf("register: %v", err)
-	}
-
-	var got []string
-	for _, project := range registry.Projects {
-		got = append(got, project.Metadata.Name)
-	}
-	// Registration order follows the resolved absolute path, not argv order,
-	// which is what makes automatic suffix allocation reproducible.
-	if want := []string{"alpha", "mango", "zebra"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("registration order = %v, want %v", got, want)
-	}
-	// The symlink spelling resolved to an already-registered root, so it is not
-	// a second Project. Nothing was merged or re-identified: a second Project
-	// simply was not created.
-	if len(registry.Projects) != 3 {
-		t.Fatalf("projects = %d, want 3", len(registry.Projects))
-	}
-	if candidates.CanonicalPath(link) != candidates.CanonicalPath(filepath.Join(base, "alpha")) {
-		t.Fatal("the fixture symlink does not resolve onto the alpha root")
-	}
-
-	// Re-running registers nothing new: first registration wins.
-	before := registry.Clone()
-	if err := reconciler.registerDiscoveredRoots(&registry, mutator, "op-test-2"); err != nil {
-		t.Fatalf("second register: %v", err)
-	}
-	if len(registry.Projects) != len(before.Projects) {
-		t.Fatalf("a second reconcile registered %d extra Projects", len(registry.Projects)-len(before.Projects))
-	}
-	for i := range registry.Projects {
-		if registry.Projects[i].Metadata.UID != before.Projects[i].Metadata.UID ||
-			registry.Projects[i].Metadata.Name != before.Projects[i].Metadata.Name {
-			t.Fatalf("a second reconcile renumbered %+v", registry.Projects[i].Metadata)
+	if len(registry.Projects) != 0 {
+		var names []string
+		for _, project := range registry.Projects {
+			names = append(names, project.Metadata.Name+"="+project.Spec.Root)
 		}
+		t.Fatalf("reconciliation registered %d Projects from discovery alone: %v", len(registry.Projects), names)
+	}
+
+	// Registering one candidate explicitly registers that candidate and nothing
+	// adjacent to it, and a later pass still adds none of its siblings.
+	explicit := registerFixtureProject(t, &registry, mutator, roots[1])
+	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-2"); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if len(registry.Projects) != 1 {
+		t.Fatalf("projects = %d, want only the explicitly registered one", len(registry.Projects))
+	}
+	if got := registry.Projects[0].Metadata.UID; got != explicit.Metadata.UID {
+		t.Fatalf("project uid = %q, want the explicitly registered %q", got, explicit.Metadata.UID)
+	}
+	if got, want := registry.Projects[0].Spec.Root, roots[1]; got != want {
+		t.Fatalf("project root = %q, want the exact registered path %q", got, want)
+	}
+	// The symlinked spelling of the registered root is still not a second
+	// Project, and it is not one because nothing registered it -- not because a
+	// uid was merged.
+	if candidates.CanonicalPath(link) != candidates.CanonicalPath(roots[1]) {
+		t.Fatal("the fixture symlink does not resolve onto the alpha root")
 	}
 }
 
@@ -117,13 +139,13 @@ func TestReconcileRefreshesStatusSessionAndMissingRoot(t *testing.T) {
 	}
 	tmux := newFakeTmux()
 	reconciler := newTestReconciler(tmux, []string{live, gone})
-	mutator := coremetadata.Mutator{
-		Now:       func() time.Time { return resourceFixtureClock },
-		NewUID:    coremetadata.NewUID,
-		DirExists: intmetadata.DirExists,
-	}
+	mutator := reconcileFixtureMutator()
 
+	// Both Projects are registered explicitly. Reconciliation refreshes status;
+	// it is not what puts a Project in the Registry.
 	registry := coremetadata.NewRegistry()
+	registerFixtureProject(t, &registry, mutator, live)
+	registerFixtureProject(t, &registry, mutator, gone)
 	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -194,20 +216,18 @@ func TestAnUnobservableOrRootlessSessionIsSkippedRatherThanFailingTheCreate(t *t
 	}
 
 	registry := coremetadata.NewRegistry()
-	mutator := coremetadata.Mutator{
-		Now:       func() time.Time { return resourceFixtureClock },
-		NewUID:    coremetadata.NewUID,
-		DirExists: intmetadata.DirExists,
-	}
+	mutator := reconcileFixtureMutator()
 	if err := reconciler.reconcile(context.Background(), &registry, mutator, "op-1"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(registry.Projects) != 1 || registry.Projects[0].Metadata.Name != "alpha" {
+	// Neither strange session is importable, and the discovered workdir is not a
+	// Project either: nothing registered it.
+	if len(registry.Projects) != 0 {
 		var names []string
 		for _, project := range registry.Projects {
 			names = append(names, project.Metadata.Name)
 		}
-		t.Fatalf("projects = %v, want only the discovered workdir", names)
+		t.Fatalf("projects = %v, want none", names)
 	}
 }
 
@@ -268,11 +288,7 @@ func TestReconcileConvergesRuntimeBindingsWithNoHookFired(t *testing.T) {
 	})
 
 	reconciler := newTestReconciler(tmux, []string{root})
-	mutator := coremetadata.Mutator{
-		Now:       func() time.Time { return resourceFixtureClock },
-		NewUID:    coremetadata.NewUID,
-		DirExists: intmetadata.DirExists,
-	}
+	mutator := reconcileFixtureMutator()
 	registry := runtimeBindingRegistry(t, root)
 
 	reconcileOnce := func(operationID string) {

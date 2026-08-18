@@ -21,134 +21,176 @@ func TestNewDefaultStoreUsesConfigPinFile(t *testing.T) {
 	}
 }
 
-func TestStoreListMissingFile(t *testing.T) {
+// TestLoadMissingFileIsAbsentNotLegacy separates "nothing pinned" from "pinned in
+// the old format". A missing file has no legacy paths to migrate, so it must not
+// invite a migration that would rewrite a file nobody created.
+func TestLoadMissingFileIsAbsentNotLegacy(t *testing.T) {
 	t.Parallel()
 
 	store := NewStore(filepath.Join(t.TempDir(), "pins"))
 
-	got, err := store.List()
+	set, err := store.Load()
 	if err != nil {
-		t.Fatalf("List() error = %v", err)
+		t.Fatalf("Load() error = %v", err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("List() = %v, want empty", got)
+	if set.Format != FormatAbsent {
+		t.Fatalf("Format = %q, want %q", set.Format, FormatAbsent)
+	}
+	if !set.Format.Typed() {
+		t.Fatal("an absent pin file needs no migration, so it must report as typed")
+	}
+	if len(set.Pins) != 0 {
+		t.Fatalf("Pins = %#v, want none", set.Pins)
 	}
 }
 
-func TestStoreAddAndList(t *testing.T) {
-	t.Parallel()
-
-	store := NewStore(filepath.Join(t.TempDir(), "pins"))
-
-	if err := store.Add("/tmp/app"); err != nil {
-		t.Fatalf("Add() error = %v", err)
-	}
-	if err := store.Add("/tmp/lib"); err != nil {
-		t.Fatalf("Add() error = %v", err)
-	}
-	if err := store.Add("/tmp/app"); err != nil {
-		t.Fatalf("Add() duplicate error = %v", err)
-	}
-
-	got, err := store.List()
-	if err != nil {
-		t.Fatalf("List() error = %v", err)
-	}
-
-	want := []string{"/tmp/app", "/tmp/lib"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("List() = %v, want %v", got, want)
-	}
-}
-
-func TestStoreRemoveRemovesAllMatchingEntries(t *testing.T) {
+// TestSaveAndLoadRoundTripsBothKinds is the envelope contract: a typed file states
+// the kind of every entry, so reloading it never has to guess which authority an
+// entry points at.
+func TestSaveAndLoadRoundTripsBothKinds(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "pins")
-	if err := os.WriteFile(path, []byte("/tmp/app\n/tmp/lib\n/tmp/app\n"), 0o644); err != nil {
+	store := NewStore(path)
+
+	managed, err := ProjectPin("proj-aaaa")
+	if err != nil {
+		t.Fatalf("ProjectPin() error = %v", err)
+	}
+	candidate, err := CandidatePin("/srv/work/with space")
+	if err != nil {
+		t.Fatalf("CandidatePin() error = %v", err)
+	}
+	want := Set{Format: FormatTyped, Pins: []Pin{managed, candidate}}
+	if err := store.Save(want); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got, want := string(raw), "projmux-pins v2\nproject proj-aaaa\ncandidate /srv/work/with space\n"; got != want {
+		t.Fatalf("stored bytes = %q, want %q", got, want)
+	}
+
+	got, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Load() = %#v, want %#v", got, want)
+	}
+}
+
+// TestSaveEmptyTypedSetKeepsTheHeader keeps an emptied file typed. Without the
+// header an empty v2 file would read back as legacy and re-offer a migration for
+// pins that no longer exist.
+func TestSaveEmptyTypedSetKeepsTheHeader(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "pins")
+	store := NewStore(path)
+	if err := store.Save(Set{Format: FormatTyped}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	set, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if set.Format != FormatTyped {
+		t.Fatalf("Format = %q, want %q", set.Format, FormatTyped)
+	}
+}
+
+func TestLoadLegacyPathsReadAsCandidates(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "pins")
+	if err := os.WriteFile(path, []byte("/srv/a\n/srv/b\n/srv/a\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	store := NewStore(path)
-	if err := store.Remove("/tmp/app"); err != nil {
-		t.Fatalf("Remove() error = %v", err)
-	}
-
-	got, err := store.List()
+	set, err := NewStore(path).Load()
 	if err != nil {
-		t.Fatalf("List() error = %v", err)
+		t.Fatalf("Load() error = %v", err)
 	}
-
-	want := []string{"/tmp/lib"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("List() = %v, want %v", got, want)
+	if set.Format != FormatLegacy {
+		t.Fatalf("Format = %q, want %q", set.Format, FormatLegacy)
+	}
+	if got, want := set.LegacyPaths(), []string{"/srv/a", "/srv/b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("LegacyPaths() = %#v, want %#v (duplicates collapse, order preserved)", got, want)
 	}
 }
 
-func TestStoreToggleAddsAndRemoves(t *testing.T) {
+// TestLoadRefusesACorruptTypedLine is the refusal half of the envelope. A line the
+// envelope cannot mean is not repaired by guessing: a pin points at a resource, and
+// guessing which resource is worse than declining to load one.
+func TestLoadRefusesACorruptTypedLine(t *testing.T) {
 	t.Parallel()
 
-	store := NewStore(filepath.Join(t.TempDir(), "pins"))
-
-	pinned, err := store.Toggle("/tmp/app")
-	if err != nil {
-		t.Fatalf("Toggle() add error = %v", err)
-	}
-	if !pinned {
-		t.Fatalf("Toggle() pinned = %v, want true", pinned)
-	}
-
-	pinned, err = store.Toggle("/tmp/app")
-	if err != nil {
-		t.Fatalf("Toggle() remove error = %v", err)
-	}
-	if pinned {
-		t.Fatalf("Toggle() pinned = %v, want false", pinned)
-	}
-
-	got, err := store.List()
-	if err != nil {
-		t.Fatalf("List() error = %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("List() = %v, want empty", got)
+	for name, body := range map[string]string{
+		"unknown kind":        "projmux-pins v2\nworkdir /srv/a\n",
+		"missing value":       "projmux-pins v2\nproject\n",
+		"empty value":         "projmux-pins v2\nproject \n",
+		"non-project uid":     "projmux-pins v2\nproject win-aaaa\n",
+		"uid with whitespace": "projmux-pins v2\nproject proj-a b\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "pins")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			if _, err := NewStore(path).Load(); !errors.Is(err, ErrCorruptPinFile) {
+				t.Fatalf("Load() error = %v, want ErrCorruptPinFile", err)
+			}
+		})
 	}
 }
 
-func TestStoreClearLeavesEmptyInspectableFile(t *testing.T) {
+// TestLoadRefusesANewerEnvelope keeps a downgrade from silently dropping entries it
+// cannot parse. Saving after such a read would rewrite the file, so the read fails
+// instead.
+func TestLoadRefusesANewerEnvelope(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "pins")
+	if err := os.WriteFile(path, []byte("projmux-pins v9\nproject proj-aaaa\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := NewStore(path).Load(); !errors.Is(err, ErrUnsupportedPinVersion) {
+		t.Fatalf("Load() error = %v, want ErrUnsupportedPinVersion", err)
+	}
+}
+
+func TestSaveRefusesAnInvalidPin(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "pins")
 	store := NewStore(path)
-
-	if err := store.Add("/tmp/app"); err != nil {
-		t.Fatalf("Add() error = %v", err)
+	if err := store.Save(Set{Format: FormatTyped, Pins: []Pin{{Kind: KindProject, Value: "not-a-project-uid"}}}); !errors.Is(err, ErrInvalidPin) {
+		t.Fatalf("Save() error = %v, want ErrInvalidPin", err)
 	}
-	if err := store.Clear(); err != nil {
-		t.Fatalf("Clear() error = %v", err)
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat() error = %v", err)
-	}
-	if size := info.Size(); size != 0 {
-		t.Fatalf("file size = %d, want 0", size)
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat() error = %v, want the file never to be created", err)
 	}
 }
 
-func TestStoreRejectsInvalidPins(t *testing.T) {
+func TestSetWithAndWithoutAreOrderPreservingAndDeduplicated(t *testing.T) {
 	t.Parallel()
 
-	store := NewStore(filepath.Join(t.TempDir(), "pins"))
-
-	if err := store.Add("   "); !errors.Is(err, ErrInvalidPin) {
-		t.Fatalf("Add() error = %v, want %v", err, ErrInvalidPin)
+	a := Pin{Kind: KindCandidate, Value: "/srv/a"}
+	b := Pin{Kind: KindProject, Value: "proj-b"}
+	set := Set{Format: FormatTyped}.With(a).With(b).With(a)
+	if got, want := set.Pins, []Pin{a, b}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Pins = %#v, want %#v", got, want)
 	}
-	if err := store.Remove(""); !errors.Is(err, ErrInvalidPin) {
-		t.Fatalf("Remove() error = %v, want %v", err, ErrInvalidPin)
+	if !set.Equal(set.With(a)) {
+		t.Fatal("adding a present pin must not change the set")
 	}
-	if _, err := store.Toggle("bad\npin"); !errors.Is(err, ErrInvalidPin) {
-		t.Fatalf("Toggle() error = %v, want %v", err, ErrInvalidPin)
+	if got, want := set.Without(a).Pins, []Pin{b}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Without() = %#v, want %#v", got, want)
 	}
 }

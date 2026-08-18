@@ -12,6 +12,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -34,7 +35,7 @@ func switchRegistryFixture(t *testing.T, inherited string, discovered []string, 
 	runner := &oneShotSwitchRunner{result: intpickercompat.Result{Value: result}}
 	return &switchCommand{
 		discover: func(candidates.Inputs) ([]string, error) { return discovered, nil },
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:   runner,
 		// The picker is driven through the compat shim the shipped surfaces use
 		// so the entries asserted are the entries a real run would render.
@@ -372,14 +373,18 @@ func switchOrderReader(t *testing.T, host, inherited string, projects []switchOr
 func switchOrderFixture(t *testing.T, host, inherited string, projects []switchOrderProject, discovered []string) (*switchCommand, *oneShotSwitchRunner) {
 	t.Helper()
 
-	var pins []string
+	var pinnedUIDs []string
+	refs := make([]pins.ProjectRef, 0, len(projects))
 	for _, project := range projects {
+		refs = append(refs, pins.ProjectRef{UID: project.uid, Root: project.root})
 		if project.pinned {
-			pins = append(pins, project.root)
+			pinnedUIDs = append(pinnedUIDs, project.uid)
 		}
 	}
 	command, pickerRunner := switchRegistryFixture(t, inherited, discovered, "")
-	command.pinStore = func() (switchPinStore, error) { return &stubSwitchPinStore{list: pins}, nil }
+	store := newStubPinStore(pinnedUIDs...)
+	command.pinStore = func() (switchPinStore, error) { return store, nil }
+	command.pinProjects = func() ([]pins.ProjectRef, error) { return refs, nil }
 	command.navigation.reader, _, _ = switchOrderReader(t, host, inherited, projects)
 	return command, pickerRunner
 }

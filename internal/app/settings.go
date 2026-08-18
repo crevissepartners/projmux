@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -39,7 +40,11 @@ type settingsCommand struct {
 	nativeKeyCaptureGrace    time.Duration
 	physicalCaptureAvailable func() bool
 	aiNotifyDiagnostics      func() []doctorAINotifyIntegration
-	feedback                 *settingsFeedback
+	// resourceRegistry is the read-only Registry projection the Project surfaces
+	// display. It is a seam so a fixture can declare one instead of reaching for
+	// whatever Registry the host machine has.
+	resourceRegistry func() (coremetadata.Registry, error)
+	feedback         *settingsFeedback
 }
 
 type settingsFeedback struct {

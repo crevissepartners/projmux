@@ -92,6 +92,99 @@ apply` run for you — rewrites the generated file. If you hand-copied a projmux
 If you need a raw, unmanaged tmux split, use tmux itself (`split-window`).
 projmux does not spell that as a resource verb.
 
+### Discovery no longer registers Projects
+
+**Breaking.** A directory found under a discovery root used to become a Registry
+Project on its own. Any mutation route ran a reconcile prelude that walked the
+configured workdirs and registered every child it did not recognize, so a single
+`projmux create pane` in one repository could add a Project for every sibling
+directory beside it. Scanning a directory is now a scan and nothing else.
+
+Three collections, three authorities:
+
+| Thing | What it is | What it is not |
+| --- | --- | --- |
+| Workdirs / `PROJMUX_MANAGED_ROOTS` / `PROJMUX_PROJDIR` | Scan roots to look inside | Not a statement that anything inside them is a Project |
+| A discovered child | An unregistered candidate | Not managed identity, however often it is scanned |
+| A Registry Project | Managed identity, with a stable uid | Not derived from a path, a name, or a scan |
+
+What registers a Project now:
+
+```sh
+projmux create project --root /abs/path/to/repo
+```
+
+…or opening that one candidate from the Projects sidebar, which performs the same
+registration for that exact path. Both are idempotent: a root an existing Project
+already claims writes nothing at all. Sibling candidates under the same discovery
+root stay unregistered.
+
+What changes for an existing invocation:
+
+| Invocation | Before | Now |
+| --- | --- | --- |
+| `create window --project <name>` where `<name>` is a discovered-but-unregistered directory | The reconcile prelude registered it (and every other discovered child) first, then the create succeeded | Exits non-zero naming the exact `--root` to register, or open it once from the sidebar |
+| Any mutation route, with N children under a scan root | Up to N Projects appeared | Zero Projects appear |
+| `switch open <unregistered directory>` | Opened a session; the Project appeared later, as a side effect of some unrelated mutation | Registers that one path, then opens it exactly as before |
+
+If you relied on the old behavior to populate the Registry, register the roots
+you actually want once:
+
+```sh
+for root in ~/src/*; do projmux create project --root "$root"; done
+projmux get projects
+```
+
+### Pins are typed, and migrate on request
+
+**Breaking.** `~/.config/projmux/pins` held one absolute path per line, which
+could not say whether the path was a Project. It is now a typed envelope:
+
+```text
+projmux-pins v2
+project proj-kwo4qozry2sr2ycij2g45zyvam
+candidate /home/dev/src/scratch
+```
+
+A `project` pin references a Registry Project uid; its displayed root and name
+are projected from the Registry on every read, so the pin survives a rebind, a
+rename, and a missing root. A `candidate` pin references a path that no Project
+claims and stays a path.
+
+Nothing migrates behind your back. Reads project a pre-v2 file in memory, so the
+sidebar looks the same before and after; the file is rewritten only when you ask:
+
+```sh
+projmux pin project migrate --dry-run   # report only
+projmux pin project migrate             # store the typed form
+```
+
+Per line, migration has exactly three outcomes:
+
+| Registry Projects claiming the path | Result |
+| --- | --- |
+| exactly one | becomes that Project's `project <uid>` pin |
+| none | stays a `candidate <path>` pin |
+| two or more | the **entire** migration is refused; the pin file and the Registry keep their bytes, and the message names the repair |
+
+Repair an ambiguous pin with `projmux rebind project` so one Project claims the
+path, or pin the Project you meant directly with `projmux pin project add
+uid:<uid>`, then re-run the migration. A corrupt file, or one written by a newer
+projmux, is refused rather than partially read.
+
+`pin project add|remove|toggle <dir>` is unchanged in argv and now resolves to a
+typed pin under the same rule (one Project → managed, none → candidate, more than
+one → refused). `pin project list` gained a kind column and a `--kind
+project|candidate` filter; the first mutation after an upgrade migrates the file
+first, so it can refuse for the reasons above.
+
+Settings > Projects shows the three collections separately: **Additional
+discovery roots** (scan roots), **Pinned Projects** (managed, by uid, with rebind
+and unpin), and **Candidate Pins** (unregistered paths, with register and unpin).
+On Windows the discovery roots stay OS-native paths; drive-letter, case, and
+separator differences are folded only when matching a candidate or migrating a
+legacy pin, never to mint or merge a Project uid.
+
 ### Legacy compatibility routes removed
 
 This release removes the human-facing compatibility argv and old
