@@ -335,6 +335,87 @@ tmux object is killed, and unrelated live objects and sockets are untouched. A
 unique live mirror keeps the exact-kill path, while duplicate, foreign,
 stale-owner, inventory-failure, and revalidation-race states are refused.
 
+## reconcile registry
+
+```text
+projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]
+```
+
+`reconcile registry` is the recovery boundary for the Registry itself. It is a
+sibling of `reconcile resources`, not a stronger version of it: `reconcile
+resources` converges a Registry that loads, and this route runs when the
+Registry is the thing that is wrong.
+
+Planning writes nothing. With no `--source` — and with `--dry-run` at any time —
+the command reads the current `registry.json`, the `registry.initialized`
+marker, and the bounded copies under `recovery/`, then reports:
+
+- the current state as `valid`, `first-use`, `missing`, `empty`, `malformed`,
+  `schema-too-new`, `invalid`, or `unreadable`, with a `sha256:` digest of the
+  exact bytes;
+- every candidate newest first, each marked `eligible` or `rejected` with the
+  reason, its digest, size, mtime, schema version, and the
+  projects/windows/panes/agents/reservations it holds;
+- the exact guarded command that would restore the candidate it suggests.
+
+No lock is taken, no permission is repaired, and `<state>/projmux/metadata/` is
+not created — a preview is safe against a first-use state directory and against
+one nobody should be writing to yet.
+
+Restoring requires `--source`. There is no "restore the newest" mode: which copy
+is the truth is a judgment about which mutations were wanted. A source is an
+exact copy name, a unique fragment of one, or an absolute path to a copy carried
+from elsewhere; a fragment matching several copies is refused rather than ranked.
+An explicit path gets exactly the same verification as a bounded copy.
+
+Verification is fail closed. Malformed JSON, an empty file, an envelope newer
+than this build, and a graph with a duplicate uid, a dangling `ownerRef`, or a
+broken name reservation are all refused with the current Registry byte-identical.
+The verified bytes are then published **verbatim**, so uids, owner relations, and
+name reservations are preserved exactly rather than re-encoded, and a
+known-older-but-valid envelope stays readable through the normal safe read and
+migrates on the next semantic write.
+
+The bytes being replaced are kept first, at
+`recovery/replaced-<stamp>-<seq>.json`. Unlike the write-side copies this keeps
+content that does not verify: a damaged Registry is the only remaining evidence
+if the restore turns out to be the wrong call, and the preserved copy is offered
+back as a candidate. Replaced copies are their own bounded family, so a restore
+never consumes the automatic write history.
+
+Race guards are the operator's tie to the plan they read:
+
+- `--expect-source-checksum <sha256:hex>` refuses unless the source still hashes
+  to that digest.
+- `--expect-current-checksum <sha256:hex>` refuses unless the current Registry
+  still does.
+- Both are what the printed `next:` command already carries, so copy-pasting the
+  preview's suggestion is guarded by construction.
+
+Underneath, the source is re-read and re-verified under the store lock, the
+staged copy is re-validated, and both inputs are re-hashed immediately before the
+single atomic rename. Anything that moved refuses with nothing published, no
+preserved copy, and no staged file left behind, and says to re-run the preview. A
+repeat restore is a byte no-op: no rename, no preserved copy, no marker write.
+Restoring into a state directory with no marker publishes one, so a later loss on
+that machine reads as state loss rather than as a fresh first use.
+
+When recovery is needed and no verified copy exists, the report adds a mirror
+diagnostic — and it is **only** a diagnostic. It reports the Projmux identity the
+one exact tmux server still carries (Project/Window/Pane uids, mirrored names,
+the Project root, and containment resolved from stable tmux ids) beside a fixed
+statement of what no mirror can return: offline resources, every Agent (no tmux
+option carries an Agent uid), an Agent-owned Pane's `ownerRef`, the name
+reservation table, `spec.primaryPaneRef`, and labels/annotations/timestamps/
+status. Panes carrying a provider option are counted as proof that Agents existed
+whose uids are nowhere on the server. Nothing is imported and no Registry is
+generated from fragments. Socket selection follows the same `--socket` /
+`--socket-path` / inherited-`$TMUX` rule as `reconcile resources`, except that
+having no exact target is reported as a reason rather than being a usage error:
+a restore is a filesystem operation, so recovery must work on a machine with no
+tmux server. The diagnostic is skipped entirely when a verified copy exists or
+the Registry is healthy.
+
 ## Internal plumbing (`projmux internal ...`)
 
 `internal` is a hidden namespace for the routes generated tmux config, tmux

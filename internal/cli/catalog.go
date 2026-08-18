@@ -666,14 +666,23 @@ var routes = []Route{
 		Disposition: DispositionCanonical,
 		Usage: []string{
 			"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]",
+			"projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]",
 		},
-		Canonical: []string{"reconcile resources"},
-		Children: []Route{{
-			Name:      "resources",
-			Summary:   "Preview or repair safe Registry and tmux UID, owner, and runtime drift on one exact socket",
-			Usage:     []string{"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]"},
-			Canonical: []string{"reconcile resources"},
-		}},
+		Canonical: []string{"reconcile resources", "reconcile registry"},
+		Children: []Route{
+			{
+				Name:      "resources",
+				Summary:   "Preview or repair safe Registry and tmux UID, owner, and runtime drift on one exact socket",
+				Usage:     []string{"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]"},
+				Canonical: []string{"reconcile resources"},
+			},
+			{
+				Name:      "registry",
+				Summary:   "Plan Registry state-loss recovery with zero writes, then restore one explicitly named verified source",
+				Usage:     []string{"projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]"},
+				Canonical: []string{"reconcile registry"},
+			},
+		},
 	},
 	{
 		Name:        "rebind",

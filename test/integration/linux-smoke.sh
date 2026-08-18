@@ -1568,6 +1568,99 @@ if [[ "$(find "$envelope_recovery" -maxdepth 1 -type f -name 'registry-*.json' -
   exit 1
 fi
 
+# Phase 1 recovery boundary, against the same live loss. The preview must be
+# zero-write, the restore must publish only the source it was handed, the reads
+# that were refused above must work again, and an unverifiable source must be
+# refused with the Registry untouched.
+envelope_preview_before="$(find "$envelope_metadata" -printf '%p %s %i %T@\n' | sort)"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile registry --dry-run -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/recovery-preview.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/recovery-preview.json" '"outcome": "planned"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/recovery-preview.json" '"state": "missing"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/recovery-preview.json" '"eligible": true'
+if [[ "$(find "$envelope_metadata" -printf '%p %s %i %T@\n' | sort)" != "$envelope_preview_before" ]]; then
+  echo "the recovery preview wrote to the state dir" >&2
+  exit 1
+fi
+# A second preview over the same state is byte-identical output.
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile registry --dry-run -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/recovery-preview-2.json"
+cmp "$PROJMUX_SMOKE_WORKDIR/recovery-preview.json" "$PROJMUX_SMOKE_WORKDIR/recovery-preview-2.json"
+
+# The preview's own suggestion is the guarded command an operator runs.
+recovery_source="$(sed -n 's/.*"next": "projmux reconcile registry --source \x27\([^\x27]*\)\x27.*/\1/p' "$PROJMUX_SMOKE_WORKDIR/recovery-preview.json")"
+recovery_expect="$(sed -n 's/.*--expect-source-checksum \(sha256:[0-9a-f]*\).*/\1/p' "$PROJMUX_SMOKE_WORKDIR/recovery-preview.json")"
+if [[ -z "$recovery_source" ]] || [[ -z "$recovery_expect" ]]; then
+  echo "the recovery preview printed no guarded restore command" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/recovery-preview.json" >&2
+  exit 1
+fi
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile registry --source "$recovery_source" --expect-source-checksum "$recovery_expect" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/recovery-restore.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/recovery-restore.json" '"outcome": "restored"'
+cmp "$registry_path" "$envelope_recovery/$recovery_source"
+if [[ "$(stat -c '%a' "$registry_path")" != "600" ]]; then
+  echo "restored registry mode = $(stat -c '%a' "$registry_path"), want 600" >&2
+  exit 1
+fi
+# The reads that failed under state loss work again on the restored identity.
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" get projects -o json >"$PROJMUX_SMOKE_WORKDIR/recovery-projects.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/recovery-projects.json" "$primary_project_uid"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" describe project "uid:$primary_project_uid" >"$PROJMUX_SMOKE_WORKDIR/recovery-describe.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/recovery-describe.out" "$primary_project_uid"
+
+# A repeat restore of the same source changes no byte.
+recovery_registry_fingerprint="$(stat -c '%i %s %y' "$registry_path")"
+recovery_copies_before="$(find "$envelope_recovery" -maxdepth 1 -type f -printf '%f\n' | sort)"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile registry --source "$recovery_source" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/recovery-repeat.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/recovery-repeat.json" '"outcome": "no-op"'
+if [[ "$(stat -c '%i %s %y' "$registry_path")" != "$recovery_registry_fingerprint" ]] ||
+  [[ "$(find "$envelope_recovery" -maxdepth 1 -type f -printf '%f\n' | sort)" != "$recovery_copies_before" ]]; then
+  echo "a repeat restore wrote to the durable envelope" >&2
+  exit 1
+fi
+
+# Unverifiable and raced sources are refused with the Registry untouched.
+printf 'not a registry at all' >"$envelope_recovery/registry-20260101T000000Z-00.json"
+chmod 600 "$envelope_recovery/registry-20260101T000000Z-00.json"
+smoke_recovery_refusal() {
+  local label="$1"
+  shift
+  set +e
+  PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+    "$bin" reconcile registry "$@" -o json \
+    >"$PROJMUX_SMOKE_WORKDIR/recovery-refuse-$label.json" 2>"$PROJMUX_SMOKE_WORKDIR/recovery-refuse-$label.err"
+  local status=$?
+  set -e
+  if [[ "$status" == "0" ]]; then
+    echo "recovery refusal $label exited 0" >&2
+    exit 1
+  fi
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/recovery-refuse-$label.json" '"outcome": "refused"'
+  if [[ "$(stat -c '%i %s %y' "$registry_path")" != "$recovery_registry_fingerprint" ]]; then
+    echo "recovery refusal $label mutated the Registry" >&2
+    exit 1
+  fi
+}
+smoke_recovery_refusal corrupt --source registry-20260101T000000Z-00.json
+smoke_recovery_refusal ambiguous --source registry-
+smoke_recovery_refusal raced --source "$recovery_source" \
+  --expect-current-checksum sha256:0000000000000000000000000000000000000000000000000000000000000000
+rm "$envelope_recovery/registry-20260101T000000Z-00.json"
+
+echo ">> registry recovery boundary root=$reconcile_state restored_from=$recovery_source guard=passed"
+
+# Restore the state-loss precondition the marker-removal remedy below asserts
+# against: the recovery boundary deliberately repaired it.
+rm "$registry_path"
+
 # The remedy the diagnostic names: without the marker the same state dir is a
 # first use again, so an operator who accepts the loss is not stuck.
 rm "$envelope_marker"

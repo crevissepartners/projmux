@@ -365,9 +365,66 @@ Durable recovery envelope:
   (`ErrSchemaTooNew`), and unreadable (`ErrRegistryPermission`) stay four
   separate causes classified with `errors.Is`, because they ask for four
   different repairs. None of them creates an empty registry or a uid.
-- **Restore is not part of this store.** Selecting a recovery source and putting
-  it back is an operator decision with its own validation and race rules, so the
-  store only produces and bounds the copies.
+- **Restore is a separate operation.** Producing and bounding the copies is a
+  property of a write; selecting one and putting it back is an operator decision,
+  so it lives in the recovery boundary below rather than in the write path.
+
+Registry recovery boundary (`projmux reconcile registry`):
+
+- **Two operations with deliberately different powers.** Planning classifies the
+  current registry and every bounded candidate and writes nothing at all — no
+  lock, no permission repair, no directory creation, no tmux mutation. Restoring
+  publishes exactly one source the operator named. There is no "just fix it"
+  mode: which copy is the truth is a judgment about which mutations were wanted,
+  and the command never makes it.
+- **Classification, not authority.** A plan reports the current registry and each
+  candidate as `valid`, `first-use`, `missing`, `empty`, `malformed`,
+  `schema-too-new`, `invalid`, or `unreadable`, with a `sha256:` digest of the
+  exact bytes, size, mtime, and the resource/reservation counts a verified
+  envelope holds. Only `valid` is restorable. The same classifier runs at publish
+  time, so a source is never previewed one way and validated another.
+- **Fail-closed on the source.** Malformed JSON, an empty file, an envelope newer
+  than this build, and a graph that decodes but holds a duplicate uid, a dangling
+  `ownerRef`, or a broken name reservation are all refused. Restoring an
+  unverified source would replace a known-damaged registry with an
+  unknown-damaged one, and the second state is worse because it looks healthy.
+- **Byte-semantic restore.** The verified bytes are published verbatim rather than
+  re-encoded, so uids, owner relations, and name reservations are preserved
+  exactly, a repeat restore is a byte comparison instead of a normalization
+  argument, and an older-but-known schema stays readable through the existing safe
+  read and migrates on the next semantic write.
+- **The bytes being replaced are kept.** A restore copies the current registry to
+  `recovery/replaced-<stamp>-<seq>.json` before replacing it, and unlike the
+  write-side copy it keeps content that does **not** verify — that damaged
+  registry is the only remaining evidence if the restore turns out to be the wrong
+  call. Replaced copies are their own bounded family, so a restore never consumes
+  the automatic write history and never grows without bound.
+- **Race guards.** `--expect-source-checksum` and `--expect-current-checksum` tie
+  a restore to the plan it was read from, and the preview prints the exact guarded
+  command. Underneath, the source is re-read and re-verified under the store lock,
+  the staged copy is re-validated, and both inputs are re-hashed immediately
+  before the single rename. Anything that moved refuses with the registry
+  byte-identical and tells the operator to re-run the preview.
+- **A repeat restore is a byte no-op.** Bytes already equal to the source mean no
+  rename, no preserved copy, and no marker write.
+- **Restore establishes the boundary.** Restoring into a state directory with no
+  marker publishes one, so a later loss on that machine reads as state loss rather
+  than as a fresh first use.
+- **The live tmux mirror is evidence, never a source.** When no verified copy
+  exists, the plan reports what identity the *exact* server can still testify to —
+  mirrored Project/Window/Pane uids, names, the Project root, and containment
+  resolved from stable tmux ids — beside a fixed statement of what no mirror can
+  return: offline resources, every Agent (no tmux option carries an Agent uid),
+  an Agent-owned Pane's `ownerRef`, the name reservation table,
+  `spec.primaryPaneRef`, and labels/annotations/timestamps/status. A pane carrying
+  a provider option is counted as proof that an Agent existed whose own uid is
+  nowhere on the server. Nothing is imported and no registry is generated:
+  rebuilding from fragments would convert a visible loss into an invisible one.
+- **No transport is a reason, not an error.** A restore is a filesystem
+  operation, so planning works outside tmux; the mirror section simply reports
+  that it has no exact target. The diagnostic is also skipped entirely when a
+  verified copy exists or the registry is healthy, so it never answers a question
+  nobody asked.
 
 Session State interoperability:
 
