@@ -117,6 +117,11 @@ Packages:
   the Registry's desired topology to one exact tmux server, the typed
   session/window/pane inventory it is resolved against, the closed attribution
   and status vocabularies, and the transport descriptor. It performs no I/O.
+- `internal/core/controller` is pure: the command-scoped controller kernel. It
+  owns the closed intent x attribution authority table, the guard evidence, and
+  the totally ordered plan every convergence producer is authorized through. It
+  performs no I/O and holds no tmux dependency; the guard field spellings are
+  supplied by the caller.
 - `internal/integrations/metadata` owns the registry file (lock, atomic write,
   migration), the tmux transport mirror, and the bounded observation adapter that
   fills a `resourcegraph.Inventory` from one exact server.
@@ -774,6 +779,43 @@ Managed runtime binding convergence:
   cwd, or a new ordinal heuristic, uid merge/reassignment, pruning, or forced
   adoption. The Project scope remains derived from the active binding on read.
 
+Command-scoped controller kernel:
+
+- One seam runs the whole sequence: observe one exact server, resolve it into a
+  `resourcegraph.Graph`, plan, commit the Registry, guard tmux, execute, and
+  reobserve. It is command-scoped and event-triggerable; there is no daemon.
+- Authority is a closed table over intent x attribution plus one explicit grant,
+  not a predicate. The grant is `OperatorTargeted`: this invocation names one
+  exact server the operator chose. `reconcile resources` cannot run without such
+  a target, and that selection -- nothing else -- is what makes an unmarked
+  object on a host projmux does not own repairable. Without the grant `foreign`
+  is refused, and with it every lifecycle intent still is.
+  `start`, `import`, and `delete` are refused for every class, so an offline
+  resource, Home, an ephemeral session, and an unattributed Pane cannot be
+  created, adopted, or removed by convergence. Repair is allowed on `managed`
+  and on `unattributed` -- an unmarked object inside projmux's own runtime world
+  carries no competing identity, so restoring a Registry-owned mirror overwrites
+  nobody. `recoverable`, `foreign`, and `conflict` are refused; `control` and
+  `ephemeral` are observe-only. An unknown class fails closed.
+- A planned write must also carry one of the two convergence verbs,
+  `set-option` or `rename-window`. The verb gate is what makes "convergence
+  never created or killed a runtime object" structural rather than a property of
+  which candidates happen to exist today.
+- The plan is totally ordered: registry surface before tmux surface, then
+  outermost containment first, then by stable key. Containment order is load
+  bearing -- a Pane uid written into a Window that does not yet carry its own uid
+  is attributable to nothing, and the next pass reads it as a Pane outside its
+  owner scope.
+- Guards are exact evidence captured at observation time and re-proved
+  immediately before the first live write, all or nothing: the server's own
+  `#{socket_path}`, the target's mirrored uid, and the containing object's id.
+  A stale guard aborts having written nothing and reports the exact retry.
+- After a run that changed anything, the kernel replans against fresh bytes and
+  reports whether a repeat would write. Convergence is observed, not assumed.
+- Explicit topology materialization keeps its own engine and its own
+  plan-time guard, because it plans against objects it is about to create, which
+  no prior observation can have seen.
+
 Public resource reconciliation:
 
 - `projmux reconcile resources` exposes the same Registry matcher, mutator,
@@ -787,16 +829,22 @@ Public resource reconciliation:
   normalized to deterministic placeholders; they are not matching keys and do
   not obscure owner or target identity. Human and JSON output share the same
   sorted items and missing/stale/foreign/orphan vocabulary.
-- Execute rebuilds the plan from the locked current Registry. Runtime
-  observation is limited to the Registry Project graphs safely attributable to
-  sessions on the selected socket; absence there never marks another socket's
-  graph missing or releases its Agents. The desired
-  Registry is validated and committed before any non-transactional tmux mirror
-  write, keeping Registry identity authoritative and retryable if a later live
-  step fails. After commit, every planned live write is guarded by re-reading
-  its target's Project, Window, or Pane UID binding from the exact socket; all
-  guards and planned before-values must still match before the first write. A
-  recycled or raced handle therefore causes zero live writes.
+- Execute runs through the controller kernel. It rebuilds the plan from the
+  locked current Registry and authorizes every runtime write against the graph
+  resolved from the pre-lock observation. Runtime observation is limited to the
+  Registry Project graphs safely attributable to sessions on the selected
+  socket; absence there never marks another socket's graph missing or releases
+  its Agents. The desired Registry is validated and committed before any
+  non-transactional tmux mirror write, keeping Registry identity authoritative
+  and retryable if a later live step fails. After commit, the socket identity
+  and every planned write's uid and containment guards are re-proved from the
+  exact socket; all of them must still match before the first write. A recycled,
+  moved, or raced handle therefore causes zero live writes.
+- The report is one projection consumed by both renderers. Alongside the sorted
+  items it carries the observed host mode, the authority rows the run
+  exercised -- including the start, import, and delete refusals that are the
+  evidence nothing was activated or adopted -- and the post-execute
+  reobservation.
 - A Registry commit failure performs no tmux mutation. A partial tmux failure
   leaves the durable Registry identity in place, replans current drift, and
   reports completed stages, remaining items, and the exact retry command.

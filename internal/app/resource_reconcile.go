@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 )
 
 type resourceReconcileCommand struct {
@@ -62,15 +64,28 @@ type resourceReconcileCounts struct {
 }
 
 type resourceReconcileReport struct {
-	Target          resourceReconcileTarget `json:"target"`
-	DryRun          bool                    `json:"dryRun"`
+	Target resourceReconcileTarget `json:"target"`
+	DryRun bool                    `json:"dryRun"`
+	// HostMode is which of the two supported hosts the exact socket turned out
+	// to be. It is reported because the same Registry produces the same managed
+	// rows on both, and an operator debugging a refusal needs to know which
+	// host answered.
+	HostMode        string                  `json:"hostMode,omitempty"`
 	Outcome         string                  `json:"outcome"`
 	Counts          resourceReconcileCounts `json:"counts"`
 	Items           []resourceReconcileItem `json:"items"`
 	CompletedStages []string                `json:"completedStages"`
 	RemainingDrift  []resourceReconcileItem `json:"remainingDrift"`
-	Retry           string                  `json:"retry,omitempty"`
-	Error           string                  `json:"error,omitempty"`
+	// Policy is the subset of the controller's authority table this run
+	// exercised. It is what turns "nothing was started" from a claim into
+	// evidence.
+	Policy []controller.Verdict `json:"policy,omitempty"`
+	// Reobserved is the post-execute replan against fresh bytes. It is absent
+	// on a dry-run and on a run that changed nothing, because there is then
+	// nothing a reobservation could have discovered.
+	Reobserved *controllerReobservation `json:"reobserved,omitempty"`
+	Retry      string                   `json:"retry,omitempty"`
+	Error      string                   `json:"error,omitempty"`
 }
 
 func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -107,13 +122,22 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 		materializeProject: firstRepeatedValue(opts.materializeProjects),
 		exactTarget:        target,
 	}
-	if opts.dryRun {
-		return c.runDryRun(context.Background(), planner, reportTarget, opts, stdout)
-	}
+	ctx := context.Background()
+	// Explicit topology materialization keeps its own engine. It activates
+	// resources, and activation is exactly the authority this kernel refuses to
+	// hold, so routing it through the policy table would either weaken the table
+	// or break the materializer.
 	if planner.materializeProject != "" {
-		return c.runMaterializeExecute(context.Background(), planner, target, reportTarget, opts, stdout, stderr)
+		if opts.dryRun {
+			return c.runDryRun(ctx, planner, reportTarget, opts, stdout)
+		}
+		return c.runMaterializeExecute(ctx, planner, target, reportTarget, opts, stdout, stderr)
 	}
-	return c.runExecute(context.Background(), planner, target, reportTarget, opts, stdout)
+	kernel := newResourceControllerKernel(c.runner, c.resources, planner, target)
+	if opts.dryRun {
+		return c.runControllerDryRun(ctx, kernel, reportTarget, opts, stdout)
+	}
+	return c.runControllerExecute(ctx, kernel, target, reportTarget, opts, stdout)
 }
 
 func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceReconcileOptions, error) {
@@ -208,19 +232,52 @@ func (c *resourceReconcileCommand) runDryRun(ctx context.Context, planner resour
 	return writeResourceReconcileReport(stdout, opts.output, report)
 }
 
-func (c *resourceReconcileCommand) runExecute(ctx context.Context, planner resourceReconcilePlanner, target explicitTmuxTarget, reportTarget resourceReconcileTarget, opts resourceReconcileOptions, stdout io.Writer) error {
+// runControllerDryRun is the observe-plan half of the kernel with the write
+// half deliberately absent. It reads the Registry, resolves one graph, plans,
+// applies the policy, and returns the same projection an execute produces.
+func (c *resourceReconcileCommand) runControllerDryRun(ctx context.Context, kernel *resourceControllerKernel, target resourceReconcileTarget, opts resourceReconcileOptions, stdout io.Writer) error {
+	registry, err := kernel.loadRegistry()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	pass, err := kernel.plan(ctx, registry)
+	if err != nil {
+		return fmt.Errorf("plan resource reconciliation: %w", err)
+	}
+	report := reportForDryRun(pass.registry, target, retryResourceReconcile(target))
+	applyControllerProjection(&report, pass.plan)
+	return writeResourceReconcileReport(stdout, opts.output, report)
+}
+
+// runControllerExecute runs the six stages in their contractual order.
+//
+// The observation is taken once, before the Registry lock, and the plan is
+// authorized against it twice: once as observed and once as rebuilt under the
+// lock. Re-observing between those two would produce a plan whose guards
+// describe a machine nobody looked at, and the guards are the only reason a
+// recycled handle cannot redirect a write.
+func (c *resourceReconcileCommand) runControllerExecute(ctx context.Context, kernel *resourceControllerKernel, target explicitTmuxTarget, reportTarget resourceReconcileTarget, opts resourceReconcileOptions, stdout io.Writer) error {
 	if c.resources.updateConvergent == nil {
 		return errors.New("resource reconciliation write store is not configured")
 	}
+	snapshot, err := kernel.loadRegistry()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	graph := resourcegraph.Resolve(snapshot, kernel.observe(ctx))
+	socket, _ := kernel.socketPath(ctx)
+	completed := []string{"exact socket observed: " + graph.Transport.String()}
+
 	var plan resourceReconcilePlan
-	var completed []string
+	var authorized controller.Plan
 	failedStage := ""
 	_, registryChanged, updateErr := c.resources.updateConvergent(func(working *coremetadata.Registry) error {
-		currentPlan, err := planner.build(ctx, working.Clone())
+		currentPlan, err := kernel.planner.build(ctx, working.Clone())
 		if err != nil {
 			failedStage = "locked plan"
 			return err
 		}
+		authorized = kernel.authorize(graph, &currentPlan)
 		plan = currentPlan
 		completed = append(completed, "plan rechecked under Registry lock")
 		*working = plan.registry.Clone()
@@ -230,8 +287,9 @@ func (c *resourceReconcileCommand) runExecute(ctx context.Context, planner resou
 		if failedStage == "" {
 			failedStage = "registry commit"
 		}
-		remaining, replanErr := c.replanAfterFailure(ctx, planner)
+		remaining, replanErr := c.replanAfterFailure(ctx, kernel.planner)
 		report := reportForFailure(plan, remaining, reportTarget, completed, failedStage, retryResourceReconcile(reportTarget), updateErr, replanErr)
+		applyControllerProjection(&report, authorized)
 		if err := writeResourceReconcileReport(stdout, opts.output, report); err != nil {
 			return err
 		}
@@ -248,30 +306,39 @@ func (c *resourceReconcileCommand) runExecute(ctx context.Context, planner resou
 			completed = append(completed, item.Key)
 		}
 	}
-	routed := explicitTmuxRunner{runner: c.runner, target: target}
-	if err := validateResourcePlanWrites(ctx, routed, plan.writes); err != nil {
+	writes := authorized.Writes()
+	if err := kernel.guardPlan(ctx, socket, writes); err != nil {
 		failedStage = "tmux prevalidation"
-		remaining, replanErr := c.replanAfterFailure(ctx, planner)
+		remaining, replanErr := c.replanAfterFailure(ctx, kernel.planner)
 		report := reportForFailure(plan, remaining, reportTarget, completed, failedStage, retryResourceReconcile(reportTarget), err, replanErr)
+		applyControllerProjection(&report, authorized)
 		if writeErr := writeResourceReconcileReport(stdout, opts.output, report); writeErr != nil {
 			return writeErr
 		}
 		return fmt.Errorf("reconcile resources failed at %s: %w", failedStage, err)
 	}
 	completed = append(completed, "tmux targets prevalidated")
-	for _, write := range plan.writes {
-		if _, err := routed.Run(ctx, "tmux", write.args...); err != nil {
-			failedStage = write.itemKey()
-			remaining, replanErr := c.replanAfterFailure(ctx, planner)
+	routed := explicitTmuxRunner{runner: c.runner, target: target}
+	for _, write := range writes {
+		if _, err := routed.Run(ctx, "tmux", write.Args...); err != nil {
+			failedStage = write.Key
+			remaining, replanErr := c.replanAfterFailure(ctx, kernel.planner)
 			report := reportForFailure(plan, remaining, reportTarget, completed, failedStage, retryResourceReconcile(reportTarget), err, replanErr)
+			applyControllerProjection(&report, authorized)
 			if writeErr := writeResourceReconcileReport(stdout, opts.output, report); writeErr != nil {
 				return writeErr
 			}
 			return fmt.Errorf("reconcile resources failed at %s: %w", failedStage, err)
 		}
-		completed = append(completed, write.itemKey())
+		completed = append(completed, write.Key)
 	}
 	report := reportForExecute(plan, reportTarget, completed, retryResourceReconcile(reportTarget))
+	applyControllerProjection(&report, authorized)
+	if len(writes) > 0 || registryChanged {
+		reobserved := kernel.reobserve(ctx)
+		report.Reobserved = &reobserved
+		report.CompletedStages = append(report.CompletedStages, controllerReobserveStage(reobserved))
+	}
 	if err := writeResourceReconcileReport(stdout, opts.output, report); err != nil {
 		return err
 	}
@@ -281,10 +348,35 @@ func (c *resourceReconcileCommand) runExecute(ctx context.Context, planner resou
 	return nil
 }
 
+// applyControllerProjection copies the kernel's own facts onto the report so
+// human and JSON output read from one value.
+func applyControllerProjection(report *resourceReconcileReport, plan controller.Plan) {
+	if plan.HostMode != "" && plan.HostMode != resourcegraph.HostModeUnknown {
+		report.HostMode = string(plan.HostMode)
+	}
+	report.Policy = plan.Policy
+}
+
+func controllerReobserveStage(reobserved controllerReobservation) string {
+	switch {
+	case reobserved.Unavailable != "":
+		return "reobserved: unavailable (" + reobserved.Unavailable + ")"
+	case reobserved.Converged:
+		return "reobserved: converged"
+	default:
+		return fmt.Sprintf("reobserved: %d residual item(s)", len(reobserved.Residual))
+	}
+}
+
 // validateResourcePlanWrites proves every UID-bearing live target still has
 // the value the locked plan observed. Validation is all-or-nothing and runs
 // before the first mirror write, so a recycled tmux handle cannot redirect one
 // plan item onto an unrelated object after the Registry commit.
+//
+// It is the explicit-materialization engine's guard. The reconcile route uses
+// the controller kernel's graph-derived guards instead: materialization plans
+// against objects it is about to create, which the observation cannot have seen,
+// so the two cannot share one evidence source.
 func validateResourcePlanWrites(ctx context.Context, routed explicitTmuxRunner, writes []plannedTmuxWrite) error {
 	for _, write := range writes {
 		if write.guardField == "" {
