@@ -335,6 +335,77 @@ tmux object is killed, and unrelated live objects and sockets are untouched. A
 unique live mirror keeps the exact-kill path, while duplicate, foreign,
 stale-owner, inventory-failure, and revalidation-race states are refused.
 
+## get runtime
+
+```text
+projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o json|none]
+```
+
+`get runtime` is the read-only escape hatch onto one exact tmux server. The
+resource reads (`get projects|windows|panes|agents`) enumerate the Registry;
+this one enumerates the machine, including everything projmux does not own, and
+it accepts no selector because most of what it reports has no name to resolve.
+Its kinds are tmux object kinds, not resource kinds, and they have no singular
+spelling for the same reason.
+
+Every row carries the attribution the resolved resource graph decided from exact
+evidence -- `managed`, `recoverable`, `control`, `ephemeral`, `unattributed`,
+`foreign`, `conflict` -- the reason for it, the stable tmux id, the fully
+qualified coordinate (`<session>`, `<session>:@N`, `<session>:@N.%N`), and, for a
+managed object, the Registry resource it is bound to. A refused object is named
+and explained and is never handed a resource identity.
+
+Socket selection is the same fail-closed rule `reconcile resources` uses, with
+one difference at the end:
+
+- `--socket <name>` means exactly `tmux -L <name>`.
+- `--socket-path <absolute>` means exactly `tmux -S <absolute>`.
+- The two flags are mutually exclusive.
+- With neither flag, an invocation inside tmux inherits only the absolute socket
+  path from `$TMUX` and uses `-S`.
+- With neither flag outside tmux the read still succeeds. It returns the
+  unavailable projection: no items, every scope reported unobservable with a
+  reason, and zero tmux calls. There is no default-socket guess, and a sibling
+  socket is never read.
+
+The default projection is a table preceded by a header line naming the host mode
+and the exact transport, plus one line per scope that could not be observed. The
+header is always printed, even when the table is empty: "no sessions" is only
+trustworthy next to which server was asked and whether the answer could be taken
+at all. `-o json` emits the same data as a stable `Runtime{Session,Window,Pane}List`
+envelope; `-o none` prints nothing. The Registry projections (`uid`, `name`,
+`ref`, `metadata`) are deliberately not offered, because most of what this route
+returns has none of them.
+
+The read writes nothing: the Registry is opened without being created, the
+observation issues one option probe and three list queries whatever the size of
+the server, and no write verb is ever sent.
+
+## runtime diagnostics
+
+```text
+projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]
+```
+
+The interactive half of the same read. It lists every tmux object on the exact
+server in containment order with an attribution tally, and it is deliberately
+separate from `projmux runtime sessions`: that picker lists recent sessions so
+you can open one, this one lists everything so you can understand it.
+
+Selecting a row opens its action menu, which offers only routes that already
+exist:
+
+- **Focus** hands `projmux focus` the row's exact coordinate and the server's own
+  `#{socket_path}`. It moves a client and never materializes anything.
+- **Attach** forwards to `projmux attach project uid:<uid>`, and is offered only
+  for a session bound to a Registry Project while you are outside tmux.
+- **Open Resource Inspector** opens `projmux resources` unchanged.
+
+An action that does not apply is listed with the reason instead of being hidden:
+"no Registry Project claims this session; diagnostics never adopts one" is the
+diagnostic. There is no adopt, import, rename, or kill action, and opening the
+surface writes nothing.
+
 ## reconcile registry
 
 ```text

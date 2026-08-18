@@ -47,6 +47,11 @@ type getCommand struct {
 	currentPath currentPathResolver
 	notify      rawArgvCommand
 	snapshots   rawArgvCommand
+	// runtimeDiag is the Runtime diagnostics escape hatch's read seam. It is a
+	// separate field from `runtime` above, which observes mirrored uids to
+	// derive Registry row status; this one resolves the whole server, including
+	// everything projmux does not own.
+	runtimeDiag *runtimeDiagnosticsReader
 	// activeTarget is the active-derived seam shared by the singular Pane
 	// fallback and the plural Window/Pane/Agent Project default; see
 	// active_target.go. It is deliberately unrelated to `--current`: see
@@ -122,6 +127,8 @@ func (c *getCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runPane(args[1:], stdout, stderr)
 	case "projects", "windows", "panes", "agents":
 		return c.runList(kind, args[1:], stdout, stderr)
+	case "runtime":
+		return c.runRuntime(args[1:], stdout, stderr)
 	case "notifications":
 		return forwardRawArgv(c.notify, "get notifications", "notify", []string{"list"}, args[1:], stdout, stderr)
 	case "snapshots":
