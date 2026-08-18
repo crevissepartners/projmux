@@ -1,12 +1,31 @@
 package app
 
 import (
+	"io"
 	"reflect"
 	"strings"
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
+
+// recordingArgv captures the argv a canonical route forwards to the handler
+// that already owns the behavior.
+type recordingArgv struct {
+	calls [][]string
+	out   string
+	err   error
+}
+
+func (r *recordingArgv) Run(args []string, stdout, _ io.Writer) error {
+	r.calls = append(r.calls, append([]string(nil), args...))
+	if r.out != "" {
+		if _, err := io.WriteString(stdout, r.out); err != nil {
+			return err
+		}
+	}
+	return r.err
+}
 
 // newTestAgentCommand wires the Agent namespace with a full resume rebinder, so
 // the refusal tests below observe the real route rather than a route that could

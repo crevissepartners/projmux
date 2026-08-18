@@ -27,9 +27,10 @@ type agentWork struct {
 // runResourceAgent answers the canonical resource-backed `create agent` and the
 // three provider shortcuts.
 //
-// It is `create pane --project` with two substitutions, which is the point:
-// the Window fan-out, the split anchor, the Window ensure, the operation ledger
-// and the rollback are the ones Phase 6 shipped, not a second implementation.
+// It is `create pane` with two substitutions, which is the point: the scope
+// resolution, the Window fan-out, the split anchor, the Window ensure, the
+// operation ledger and the rollback are the shared ones, not a second
+// implementation.
 // What differs is the metadata it allocates -- a Window-owned Agent plus the
 // Agent-owned managed Pane, rather than a Window-owned shell Pane -- and the
 // command the detached split runs, which is the provider launch instead of the
@@ -53,7 +54,8 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 		spelling = "create " + shortcutProvider
 	}
 
-	flags, err := parseResourceCreateFlags(spelling, args, stderr, resourceCreateShape{split: true, provider: true})
+	shape := resourceCreateShape{split: true, provider: true}
+	flags, err := parseResourceCreateFlags(spelling, args, stderr, shape)
 	if err != nil {
 		return err
 	}
@@ -79,11 +81,17 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	if err != nil {
 		return MapMetadataError(err)
 	}
+	// Scope resolution runs last of the preflight, so every argv-only refusal is
+	// reported before an environment-dependent one. See runResourceWindow.
+	scope, err := c.resolveCreateScope(spelling, flags, shape)
+	if err != nil {
+		return err
+	}
 
 	var results []createResult
 	var activationTargets []agentActivationTarget
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
-		project, err := c.resolveProject(*working, flags)
+		project, err := c.resolveProject(*working, scope)
 		if err != nil {
 			return err
 		}
@@ -113,7 +121,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 		// Agent row rather than the Window row because this route never resolves
 		// an existing Agent -- rebinding a conversation is `agent resume` -- so
 		// the only Agent count it can fix is the one it produces.
-		plan, windows, err := c.resolveSplitTargets(working, mutator, project, flags,
+		plan, windows, err := c.resolveSplitTargets(working, mutator, project, scope, flags,
 			selector.Target{Verb: selector.VerbCreate, Kind: coremetadata.KindAgent}, spelling, operationID)
 		if err != nil {
 			return err
@@ -215,7 +223,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			})
 		}
 		return nil
-	}, c.projectOwnershipGuard(flags)); err != nil {
+	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
 	}
 	if err := c.confirmAgentActivations(activationTargets); err != nil {

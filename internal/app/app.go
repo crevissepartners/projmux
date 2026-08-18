@@ -225,12 +225,11 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// canonical spelling is a parity alias rather than a second implementation.
 	usageCmd := usagecmd.New(nil)
 	createCmd := newCreateCommand()
-	createCmd.ai = ai
 	createCmd.notify = notifyCmd
 	createCmd.snapshots = sessionStateCmd
-	// The same object serves both halves of `create agent`: raw argv for the
-	// compatibility bridge, and the narrow launch seam for the canonical
-	// resource-backed route.
+	// `create agent` consumes the AI command through the narrow provider-launch
+	// seam only. There is no raw-argv half left: every create kind is
+	// resource-backed, so nothing forwards a split.
 	createCmd.agents = ai
 	agentCmd := newAgentCommand()
 	agentCmd.ai = ai

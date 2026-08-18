@@ -283,10 +283,10 @@ projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
 Create Projmux resources
 
 ```
-projmux create window {--project <ref> | -p <ref>} [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
-projmux create pane {--project <ref> | -p <ref>} [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create agent --provider <provider> {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create codex|claude|antigravity {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
+projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create codex|claude|antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
 projmux create snapshot
 ```
@@ -296,8 +296,8 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux create window`](#projmux-create-window) | Create a Window and its initial Pane below one Project; the runtime is materialized detached |
-| [`projmux create pane`](#projmux-create-pane) | Create a shell Pane; --project splits the resolved Windows detached, without it the current Window |
-| [`projmux create agent`](#projmux-create-agent) | Create an Agent and its managed Pane; --provider is required, and --project splits the resolved Windows detached |
+| [`projmux create pane`](#projmux-create-pane) | Create a shell Pane below a Window; the scope defaults to the active managed runtime |
+| [`projmux create agent`](#projmux-create-agent) | Create an Agent and its managed Pane; --provider is required and the scope defaults to the active managed runtime |
 | [`projmux create notification`](#projmux-create-notification) | Create a pending notification row |
 | [`projmux create snapshot`](#projmux-create-snapshot) | Create a session snapshot |
 
@@ -316,29 +316,27 @@ Canonical spelling: `projmux create window`, `projmux create pane`, `projmux cre
 Create a Window and its initial Pane below one Project; the runtime is materialized detached
 
 ```
-projmux create window {--project <ref> | -p <ref>} [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
+projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 
 ### `projmux create pane`
 
-Create a shell Pane; --project splits the resolved Windows detached, without it the current Window
+Create a shell Pane below a Window; the scope defaults to the active managed runtime
 
 ```
-projmux create pane {--project <ref> | -p <ref>} [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create pane [--placement right|down] [-o <mode>]
+projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 
 ### `projmux create agent`
 
-Create an Agent and its managed Pane; --provider is required, and --project splits the resolved Windows detached
+Create an Agent and its managed Pane; --provider is required and the scope defaults to the active managed runtime
 
 ```
-projmux create agent --provider <provider> {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create agent --provider <provider> [--placement right|down] [-o pane-id|none] [-- <payload>]
+projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
@@ -364,8 +362,7 @@ projmux create snapshot
 Provider shortcut for create agent --provider codex
 
 ```
-projmux create codex {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create codex [--placement right|down] [-o pane-id|none] [-- <payload>]
+projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
@@ -375,8 +372,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Provider shortcut for create agent --provider claude
 
 ```
-projmux create claude {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create claude [--placement right|down] [-o pane-id|none] [-- <payload>]
+projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
@@ -386,8 +382,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Provider shortcut for create agent --provider antigravity
 
 ```
-projmux create antigravity {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create antigravity [--placement right|down] [-o pane-id|none] [-- <payload>]
+projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`

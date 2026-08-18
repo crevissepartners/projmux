@@ -314,10 +314,14 @@ var routes = []Route{
 		},
 	},
 	{
-		// The create verb. This Phase owns the two kinds the Agent decomposition
-		// splits apart: an Agent split becomes `create agent`, and the legacy
-		// shell split becomes `create pane`, because a plain shell surface is a
-		// Pane and never an Agent.
+		// The create verb. An Agent split is `create agent`, and a shell split
+		// is `create pane`, because a plain shell surface is a Pane and never
+		// an Agent.
+		//
+		// Every kind is resource-backed and shares one parser. `--project` is a
+		// scope flag, not a mode selector: omitted, the scope comes from the
+		// active managed runtime, and there is no second product model behind
+		// its absence.
 		//
 		// The kinds and the provider shortcuts share one handler and one schema.
 		// A shortcut is a spelling of `create agent --provider <id>`, so it is
@@ -326,10 +330,10 @@ var routes = []Route{
 		Summary:     "Create Projmux resources",
 		Disposition: DispositionCanonical,
 		Usage: []string{
-			"projmux create window {--project <ref> | -p <ref>} [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
-			"projmux create pane {--project <ref> | -p <ref>} [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
-			"projmux create agent --provider <provider> {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
-			"projmux create codex|claude|antigravity {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
+			"projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
+			"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
+			"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
+			"projmux create codex|claude|antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
 			"projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]",
 			"projmux create snapshot",
 		},
@@ -343,40 +347,35 @@ var routes = []Route{
 				Name:    "window",
 				Summary: "Create a Window and its initial Pane below one Project; the runtime is materialized detached",
 				Usage: []string{
-					"projmux create window {--project <ref> | -p <ref>} [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
+					"projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 				},
 				Outputs:   sharedOutputModes,
 				Canonical: []string{"create window"},
 			},
 			{
-				// Two spellings share this node. With --project it is the
-				// canonical resource-backed Pane create: it resolves Windows from
-				// the registry, anchors on each Window's primaryPaneRef, splits
-				// detached, and never moves the client. Without --project it is
-				// the shell split the route already shipped, which does follow
-				// focus; that half is unchanged.
+				// One resource-backed spelling. It resolves Windows from the
+				// registry, anchors on each Window's primaryPaneRef, splits
+				// detached, and never moves the client. With no scope flag at
+				// all the Project, the Window, and the anchor come from the
+				// active managed runtime, so the split lands where the operator
+				// is looking.
 				Name:    "pane",
-				Summary: "Create a shell Pane; --project splits the resolved Windows detached, without it the current Window",
+				Summary: "Create a shell Pane below a Window; the scope defaults to the active managed runtime",
 				Usage: []string{
-					"projmux create pane {--project <ref> | -p <ref>} [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
-					"projmux create pane [--placement right|down] [-o <mode>]",
+					"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
 				Outputs:   sharedOutputModes,
 				Canonical: []string{"create pane"},
 			},
 			{
-				// Two spellings share this node, on the same discriminator as
-				// `create pane`. With --project it is the canonical
-				// resource-backed Agent create: it allocates a Window-owned
-				// Agent plus its managed Pane, splits the resolved Windows
-				// detached, and never moves the client. Without --project it is
-				// the `ai split` compatibility bridge, which does follow focus
-				// and creates no Projmux resource; that half is unchanged.
+				// One resource-backed spelling, sharing `create pane`'s scope
+				// rule. It allocates a Window-owned Agent plus its managed Pane,
+				// splits the resolved Windows detached, and never moves the
+				// client.
 				Name:    "agent",
-				Summary: "Create an Agent and its managed Pane; --provider is required, and --project splits the resolved Windows detached",
+				Summary: "Create an Agent and its managed Pane; --provider is required and the scope defaults to the active managed runtime",
 				Usage: []string{
-					"projmux create agent --provider <provider> {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
-					"projmux create agent --provider <provider> [--placement right|down] [-o pane-id|none] [-- <payload>]",
+					"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
 				Outputs:   sharedOutputModes,
 				Canonical: []string{"create agent"},
@@ -397,8 +396,7 @@ var routes = []Route{
 				Name:    "codex",
 				Summary: "Provider shortcut for create agent --provider codex",
 				Usage: []string{
-					"projmux create codex {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
-					"projmux create codex [--placement right|down] [-o pane-id|none] [-- <payload>]",
+					"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
 				ProviderShortcut: true,
 				Outputs:          sharedOutputModes,
@@ -408,8 +406,7 @@ var routes = []Route{
 				Name:    "claude",
 				Summary: "Provider shortcut for create agent --provider claude",
 				Usage: []string{
-					"projmux create claude {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
-					"projmux create claude [--placement right|down] [-o pane-id|none] [-- <payload>]",
+					"projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
 				ProviderShortcut: true,
 				Outputs:          sharedOutputModes,
@@ -419,8 +416,7 @@ var routes = []Route{
 				Name:    "antigravity",
 				Summary: "Provider shortcut for create agent --provider antigravity",
 				Usage: []string{
-					"projmux create antigravity {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
-					"projmux create antigravity [--placement right|down] [-o pane-id|none] [-- <payload>]",
+					"projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
 				ProviderShortcut: true,
 				Outputs:          sharedOutputModes,

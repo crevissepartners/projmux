@@ -114,7 +114,7 @@ var canonicalRoutes = []CanonicalRoute{
 
 	// create
 	{Spelling: "create window", Summary: "Create a Window with its initial Pane", Sources: []string{"window", "create"}, Outputs: projectionCatalog},
-	{Spelling: "create pane", Summary: "Create a shell Pane in an existing Window", Sources: []string{"create"}, Outputs: projectionCatalog},
+	{Spelling: "create pane", Summary: "Create a shell Pane below a Window", Sources: []string{"create"}, Outputs: projectionCatalog},
 	{Spelling: "create agent", Summary: "Create an Agent and its managed Pane", Sources: []string{"create"}, Outputs: projectionCatalog},
 	{Spelling: "create notification", Summary: "Create a pending notification row", Sources: []string{"create"}},
 	{Spelling: "create snapshot", Summary: "Create a session snapshot", Sources: []string{"create"}},

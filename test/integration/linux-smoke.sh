@@ -78,8 +78,15 @@ cd "$smoke_root"
 smoke_build_binary
 bin="$PROJMUX_SMOKE_BIN"
 
-# The CLI contract must propagate the pane id returned by tmux without scraping
-# a second command. Keep this fake-backed check at the built-binary boundary.
+# `create` is resource-backed on every spelling, so an invocation that resolves
+# no managed Project creates nothing at all. Pin that at the built-binary
+# boundary: a `$TMUX` with no `$TMUX_PANE` is "inside tmux, no active target",
+# which is exactly what a `run-shell` child would see if the generated binding
+# ever stopped carrying `#{pane_id}`. The command must exit 2 naming --project
+# and must issue no tmux command at all -- not even a probe of the server it
+# inherited. The positive pane-id propagation runs against a real tmux server in
+# the e2e smoke, which is the only place a resource-backed create can be
+# observed end to end.
 fake_mux_dir="$PROJMUX_SMOKE_WORKDIR/fake-mux"
 mkdir -p "$fake_mux_dir"
 cat >"$fake_mux_dir/tmux" <<'FAKE_TMUX'
@@ -93,20 +100,37 @@ FAKE_TMUX
 chmod 0755 "$fake_mux_dir/tmux"
 
 fake_tmux_log="$PROJMUX_SMOKE_WORKDIR/fake-tmux.log"
+: >"$fake_tmux_log"
+# A failing command journals one outcome event, which is correct and unrelated
+# to what this check measures. Give it its own state root so the shared
+# diagnostics journal keeps the empty-source invariant the report assertions
+# below depend on.
+set +e
 fake_tmux_output="$(
   PROJMUX_FAKE_MUX_LOG="$fake_tmux_log" \
     PATH="$fake_mux_dir:$PATH" \
     TMUX="fake" \
-    TMUX_SPLIT_TARGET_PANE="%7" \
-    TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
+    XDG_STATE_HOME="$PROJMUX_SMOKE_WORKDIR/create-no-scope-state" \
     SHELL="/bin/sh" \
-    "$bin" create pane -o pane-id --placement right
+    "$bin" create pane -o pane-id --placement right 2>"$PROJMUX_SMOKE_WORKDIR/create-no-scope.err"
 )"
-if [[ "$fake_tmux_output" != "%81" ]]; then
-  echo "expected fake tmux pane id %81, got: $fake_tmux_output" >&2
+fake_tmux_status=$?
+set -e
+if [[ "$fake_tmux_status" != "2" ]]; then
+  echo "a create with no resolvable scope exited $fake_tmux_status, want 2" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/create-no-scope.err" >&2 || true
   exit 1
 fi
-smoke_assert_file_contains "$fake_tmux_log" "split-window -P -F #{pane_id} -h -t %7"
+if [[ -n "$fake_tmux_output" ]]; then
+  echo "a refused create wrote to stdout: $fake_tmux_output" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/create-no-scope.err" "pass --project <ref>"
+if [[ -s "$fake_tmux_log" ]]; then
+  echo "a refused create issued tmux commands:" >&2
+  cat "$fake_tmux_log" >&2
+  exit 1
+fi
 
 # Generated keybindings enter the saved-default split handler through the
 # hidden post-`ai` retirement bridge. Exercise that built-binary boundary so a
