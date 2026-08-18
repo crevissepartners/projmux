@@ -1,12 +1,14 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/i18n"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -94,6 +96,283 @@ func TestSettingsNavigationAffordanceExclusivity(t *testing.T) {
 			t.Fatalf("navigation node %q is a %s but owns children; only a View is a navigation boundary", node.ID, node.Kind)
 		}
 	}
+}
+
+func TestSettingsDirectionalIntentCatalogKindMatrix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		key       string
+		value     string
+		hasParent bool
+		want      settingsDirectionalIntent
+	}{
+		{name: "Right opens static navigation", key: "right", value: settingsSectionNotifications, want: settingsDirectionalForward},
+		{name: "Right opens dynamic navigation", key: "right", value: settingsActionPrefixAINotifyDiagnostic + "claude", hasParent: true, want: settingsDirectionalForward},
+		{name: "Right does not execute actionable", key: "right", value: settingsActionPrefixDesktopNotifyMode + "notify", hasParent: true, want: settingsDirectionalStay},
+		{name: "Right does not execute dynamic actionable", key: "right", value: settingsActionPrefixKeymap + "SettingsToggle:add", hasParent: true, want: settingsDirectionalStay},
+		{name: "Right does not activate passive", key: "right", value: settingsNoopValue, hasParent: true, want: settingsDirectionalStay},
+		{name: "Right does not activate Back", key: "right", value: settingsBackValue, hasParent: true, want: settingsDirectionalStay},
+		{name: "Right does not activate unknown", key: "right", value: "unknown", hasParent: true, want: settingsDirectionalStay},
+		{name: "Left backs one child boundary", key: "left", value: settingsNoopValue, hasParent: true, want: settingsDirectionalBack},
+		{name: "Left is root no-op", key: "left", value: settingsSectionNotifications, want: settingsDirectionalStay},
+		{name: "Enter remains owned by loops", key: "enter", value: settingsSectionNotifications, hasParent: true, want: settingsDirectionalStay},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := settingsDirectionalIntentFor(tc.key, tc.value, tc.hasParent); got != tc.want {
+				t.Fatalf("settingsDirectionalIntentFor(%q, %q, %v) = %v, want %v", tc.key, tc.value, tc.hasParent, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSettingsDirectionalNativeActionMatrixAndLocalizedHints(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		locale     i18n.Locale
+		items      []intpicker.Item
+		key        string
+		value      string
+		wantKey    string
+		wantValue  string
+		wantNoop   bool
+		footerPart string
+	}{
+		{
+			name:  "root Right opens navigation",
+			items: []intpicker.Item{{Value: settingsSectionNotifications}}, key: "right", value: settingsSectionNotifications,
+			wantKey: "enter", wantValue: settingsSectionNotifications, footerPart: "→: open row",
+		},
+		{
+			name:  "child Right leaves actionable in place",
+			items: []intpicker.Item{{Value: settingsBackValue}, {Value: settingsActionPrefixDesktopNotifyMode + "notify"}},
+			key:   "right", value: settingsActionPrefixDesktopNotifyMode + "notify", wantNoop: true, footerPart: "←: back",
+		},
+		{
+			name:  "child Right leaves passive in place",
+			items: []intpicker.Item{{Value: settingsBackValue}, {Value: settingsNoopValue}},
+			key:   "right", value: settingsNoopValue, wantNoop: true, footerPart: "←: back",
+		},
+		{
+			name:  "child Right leaves Back in place",
+			items: []intpicker.Item{{Value: settingsBackValue}}, key: "right", value: settingsBackValue,
+			wantNoop: true, footerPart: "←: back",
+		},
+		{
+			name:   "child Left backs exactly one level in Korean",
+			locale: i18n.Locale("ko-KR"), items: []intpicker.Item{{Value: settingsBackValue}, {Value: settingsNoopValue}},
+			key: "left", value: settingsNoopValue, wantKey: "enter", wantValue: settingsBackValue, footerPart: "←: 뒤로",
+		},
+		{
+			name:  "root Left stays in place",
+			items: []intpicker.Item{{Value: settingsSectionNotifications}}, key: "left", value: settingsSectionNotifications,
+			wantNoop: true, footerPart: "→: open row",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			called := false
+			runner := settingsDirectionalPickerRunner{next: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+				called = true
+				if !strings.Contains(options.Footer, tc.footerPart) {
+					t.Fatalf("footer = %q, want localized directional hint %q", options.Footer, tc.footerPart)
+				}
+				action, ok := pickerAction(options.Actions, tc.key)
+				if !ok || action.Intent != intpicker.ActionCustom || action.Mutate == nil {
+					t.Fatalf("%s action = %#v, want Settings-local mutable action", tc.key, action)
+				}
+				update, err := action.Mutate(intpicker.ActionContext{Key: tc.key, Value: tc.value, Query: "kept-query"})
+				if err != nil {
+					t.Fatalf("%s action error = %v", tc.key, err)
+				}
+				if tc.wantNoop {
+					if update.Result != nil {
+						t.Fatalf("%s on %q result = %#v, want in-picker no-op", tc.key, tc.value, update.Result)
+					}
+				} else if update.Result == nil || update.Result.Key != tc.wantKey || update.Result.Value != tc.wantValue || update.Result.Query != "kept-query" {
+					t.Fatalf("%s on %q result = %#v, want key=%q value=%q with query preserved", tc.key, tc.value, update.Result, tc.wantKey, tc.wantValue)
+				}
+				return intpicker.Result{Key: "esc", Closed: true}, nil
+			})}
+			_, err := runner.Run(intpicker.Options{UI: "settings-directional-fixture", Items: tc.items, Locale: tc.locale, Footer: "existing"})
+			if err != nil {
+				t.Fatalf("directional runner error = %v", err)
+			}
+			if !called {
+				t.Fatal("directional runner did not call the native picker")
+			}
+		})
+	}
+}
+
+func TestSettingsDirectionalPolicyPreservesTransientInputArrows(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*intpicker.Options)
+	}{
+		{name: "typed query", mutate: func(options *intpicker.Options) { options.AcceptQuery = true }},
+		{name: "color grid", mutate: func(options *intpicker.Options) { options.ColorGrid = true }},
+		{name: "key recorder", mutate: func(options *intpicker.Options) { options.Recorder = &intpicker.RecorderOptions{} }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := settingsDirectionalPickerRunner{next: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+				for _, key := range []string{"left", "right"} {
+					if action, ok := pickerAction(options.Actions, key); ok && action.Mutate != nil {
+						t.Fatalf("transient %s gained Settings hierarchy action %#v", tc.name, action)
+					}
+				}
+				if strings.Contains(options.Footer, "→: open row") || strings.Contains(options.Footer, "←: back") {
+					t.Fatalf("transient %s footer = %q, want native-input hint unchanged", tc.name, options.Footer)
+				}
+				return intpicker.Result{Key: "esc", Closed: true}, nil
+			})}
+			options := intpicker.Options{UI: "settings-transient", Items: []intpicker.Item{{Value: settingsNoopValue}}, Footer: "native input"}
+			tc.mutate(&options)
+			if _, err := runner.Run(options); err != nil {
+				t.Fatalf("transient runner error = %v", err)
+			}
+		})
+	}
+}
+
+func TestSettingsDirectionalNativeHierarchyBackAndAllDepthClose(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), `[bindings.SettingsToggle]
+keys = ["M-s"]
+`)
+	cmd := settingsNavTestCommand(t, home)
+	var frames []string
+	step := 0
+	cmd.nativePicker = pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+		frames = append(frames, options.Prompt)
+		for _, closeKey := range []string{"esc", "alt-s"} {
+			action, ok := pickerAction(options.Actions, closeKey)
+			if !ok || action.Intent != intpicker.ActionClose {
+				t.Fatalf("frame %q close action %q = %#v, want close", options.Prompt, closeKey, action)
+			}
+		}
+
+		key, value := "", ""
+		switch step {
+		case 0:
+			key, value = "right", settingsSectionNotifications
+		case 1:
+			key, value = "right", settingsNotificationsProviders
+		case 2, 3:
+			key, value = "left", settingsNoopValue
+		case 4:
+			// Root Left must not return a result (and therefore cannot close the
+			// picker). The following Esc is the explicit all-Settings close.
+			action, _ := pickerAction(options.Actions, "left")
+			update, err := action.Mutate(intpicker.ActionContext{Key: "left", Value: settingsSectionNotifications})
+			if err != nil || update.Result != nil {
+				t.Fatalf("root Left update = %#v, err = %v, want in-picker no-op", update, err)
+			}
+			step++
+			return intpicker.Result{Key: "esc", Closed: true}, nil
+		default:
+			t.Fatalf("unexpected Settings frame %d: %q", step, options.Prompt)
+		}
+		step++
+		action, ok := pickerAction(options.Actions, key)
+		if !ok || action.Mutate == nil {
+			t.Fatalf("frame %q action %q missing", options.Prompt, key)
+		}
+		update, err := action.Mutate(intpicker.ActionContext{Key: key, Value: value})
+		if err != nil || update.Result == nil {
+			t.Fatalf("frame %q action %q update = %#v, err = %v", options.Prompt, key, update, err)
+		}
+		return *update.Result, nil
+	})
+
+	if err := cmd.Run(nil, &strings.Builder{}, &strings.Builder{}); err != nil {
+		t.Fatalf("Settings hierarchy run error = %v", err)
+	}
+	if step != 5 {
+		t.Fatalf("picker steps = %d, want root→child→grandchild→child→root then close", step)
+	}
+	wantPrompts := []string{
+		"Settings > ",
+		"Settings > Notifications > ",
+		"Settings > Notifications > Provider Integrations > ",
+		"Settings > Notifications > ",
+		"Settings > ",
+	}
+	if strings.Join(frames, "\n") != strings.Join(wantPrompts, "\n") {
+		t.Fatalf("Settings hierarchy frames = %#v, want %#v", frames, wantPrompts)
+	}
+}
+
+func TestSettingsRightOnActionableDoesNotMutateOrClose(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	cmd := settingsNavTestCommand(t, home)
+	cmd.runCommand = func(name string, args ...string) error {
+		t.Fatalf("actionable Right ran command %q with args %v", name, args)
+		return nil
+	}
+	cmd.runOutput = func(name string, args ...string) ([]byte, error) {
+		t.Fatalf("actionable Right ran output command %q with args %v", name, args)
+		return nil, nil
+	}
+	cmd.tmuxRunner = settingsDirectionalTmuxRunnerFunc(func(_ context.Context, name string, args ...string) ([]byte, error) {
+		t.Fatalf("actionable Right ran tmux command %q with args %v", name, args)
+		return nil, nil
+	})
+	before := settingsNavConfigSnapshot(t, configHome)
+	step := 0
+	cmd.nativePicker = pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+		switch step {
+		case 0:
+			step++
+			action, _ := pickerAction(options.Actions, "right")
+			update, err := action.Mutate(intpicker.ActionContext{Key: "right", Value: settingsSectionAI})
+			if err != nil || update.Result == nil {
+				t.Fatalf("root Right navigation update = %#v, err = %v", update, err)
+			}
+			return *update.Result, nil
+		case 1:
+			step++
+			action, _ := pickerAction(options.Actions, "right")
+			update, err := action.Mutate(intpicker.ActionContext{Key: "right", Value: settingsActionPrefixAI + "claude"})
+			if err != nil || update.Result != nil {
+				t.Fatalf("actionable Right update = %#v, err = %v, want in-picker no-op", update, err)
+			}
+			// Returning Esc from the same native invocation proves Right itself
+			// neither closed the View nor escaped into the owner mutation loop.
+			return intpicker.Result{Key: "esc", Closed: true}, nil
+		default:
+			t.Fatalf("unexpected picker call %d", step)
+		}
+		return intpicker.Result{}, nil
+	})
+
+	if err := cmd.Run(nil, &strings.Builder{}, &strings.Builder{}); err != nil {
+		t.Fatalf("Settings actionable Right run error = %v", err)
+	}
+	if step != 2 {
+		t.Fatalf("picker calls = %d, want root and still-open AI View", step)
+	}
+	if after := settingsNavConfigSnapshot(t, configHome); after != before {
+		t.Fatalf("actionable Right mutated Settings state:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+type settingsDirectionalTmuxRunnerFunc func(context.Context, string, ...string) ([]byte, error)
+
+func (f settingsDirectionalTmuxRunnerFunc) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return f(ctx, name, args...)
 }
 
 // TestSettingsNavigationControlOwnerCardinality pins the control-owner

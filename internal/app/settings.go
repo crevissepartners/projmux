@@ -212,6 +212,7 @@ func (c *settingsCommand) runSection(section string, stdout, stderr io.Writer) e
 func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickercompat.Result, error) {
 	options = c.withSettingsFeedback(options)
 	options = c.withSettingsScopeTabs(options)
+	options = c.withSettingsClosePolicy(options)
 	options = c.localizeSettingsOptions(options)
 	if err := validateSettingsEntryContracts(options); err != nil {
 		return intpickercompat.Result{}, err
@@ -221,7 +222,7 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 			options = source.pickerCompatOptions(options)
 		}
 	}
-	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, options)
+	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, settingsDirectionalPickerRunner{next: c.nativePicker}, options)
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return intpickercompat.Result{}, errSettingsClosed
@@ -230,6 +231,98 @@ func (c *settingsCommand) runPicker(options intpickercompat.Options) (intpickerc
 	}
 	c.clearSettingsFeedbackFor(strings.TrimSpace(result.Value))
 	return result, nil
+}
+
+// withSettingsClosePolicy makes the command's effective SettingsToggle alias
+// authoritative at every depth, including older option builders that still
+// carry the fallback close bindings. Non-close bindings remain untouched.
+func (c *settingsCommand) withSettingsClosePolicy(options intpickercompat.Options) intpickercompat.Options {
+	bindings := make([]string, 0, len(options.Bindings)+3)
+	seen := map[string]bool{}
+	for _, binding := range options.Bindings {
+		_, action, ok := strings.Cut(strings.TrimSpace(binding), ":")
+		if ok && strings.TrimSpace(action) == "abort" {
+			continue
+		}
+		if binding = strings.TrimSpace(binding); binding != "" && !seen[binding] {
+			bindings = append(bindings, binding)
+			seen[binding] = true
+		}
+	}
+	for _, binding := range c.settingsCloseBindings() {
+		if binding = strings.TrimSpace(binding); binding != "" && !seen[binding] {
+			bindings = append(bindings, binding)
+			seen[binding] = true
+		}
+	}
+	options.Bindings = bindings
+	return options
+}
+
+// settingsDirectionalPickerRunner adds hierarchy navigation only at the
+// Settings list boundary. Query forms, the key recorder, and the color grid
+// retain their native Left/Right input semantics because they are transient
+// input controls rather than catalogued Settings Views.
+type settingsDirectionalPickerRunner struct {
+	next intpicker.Runner
+}
+
+func (r settingsDirectionalPickerRunner) Run(options intpicker.Options) (intpicker.Result, error) {
+	if r.next == nil {
+		return intpicker.Result{}, errors.New("native picker is not configured")
+	}
+	if !settingsDirectionalListView(options) {
+		return r.next.Run(options)
+	}
+
+	hasParent := false
+	for _, item := range options.Items {
+		if strings.TrimSpace(item.Value) == settingsBackValue {
+			hasParent = true
+			break
+		}
+	}
+	options.Footer = settingsDirectionalFooter(options.Locale, options.Footer, hasParent)
+	options.Actions = append(options.Actions,
+		intpicker.Action{
+			Key:    "right",
+			Intent: intpicker.ActionCustom,
+			Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+				if settingsDirectionalIntentFor(ctx.Key, ctx.Value, hasParent) != settingsDirectionalForward {
+					return intpicker.DeferredUpdate{}, nil
+				}
+				return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: "enter", Value: ctx.Value, Query: ctx.Query}}, nil
+			},
+		},
+		intpicker.Action{
+			Key:    "left",
+			Intent: intpicker.ActionCustom,
+			Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+				if settingsDirectionalIntentFor(ctx.Key, ctx.Value, hasParent) != settingsDirectionalBack {
+					return intpicker.DeferredUpdate{}, nil
+				}
+				return intpicker.DeferredUpdate{Result: &intpicker.Result{Key: "enter", Value: settingsBackValue, Query: ctx.Query}}, nil
+			},
+		},
+	)
+	return r.next.Run(options)
+}
+
+func settingsDirectionalListView(options intpicker.Options) bool {
+	return strings.HasPrefix(strings.TrimSpace(options.UI), "settings") &&
+		len(options.Items) > 0 && options.Recorder == nil && !options.AcceptQuery && !options.ColorGrid
+}
+
+func settingsDirectionalFooter(locale i18n.Locale, footer string, hasParent bool) string {
+	hint := settingsCatalogTextLocale(locale, "→: open row")
+	if hasParent {
+		hint += "  |  " + settingsCatalogTextLocale(locale, "←: back")
+	}
+	footer = strings.TrimSpace(footer)
+	if footer == "" {
+		return hint
+	}
+	return footer + "  |  " + hint
 }
 
 // withSettingsFeedback projects the most recent handled mutation result into

@@ -213,6 +213,8 @@ var uiTextKeys = map[string]i18n.Key{
 	"Type primary discovery root path > ":                               "settings.prompt.type_primary_discovery_root",
 	"Type discovery root path > ":                                       "settings.prompt.type_discovery_root",
 	"Enter: open/add  |  Back row: parent":                              "settings.footer.enter_open_add_back_parent",
+	"→: open row":                                                       "settings.footer.right_open_row",
+	"←: back":                                                           "settings.footer.left_back",
 
 	"Settings": "settings.root.title",
 	"Global":   "settings.root.tab.global",
