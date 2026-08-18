@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -175,6 +176,7 @@ func describeSpecRows(resource any) [][2]string {
 		if typed.Status.DisplayTitle != "" {
 			rows = append(rows, [2]string{"DisplayTitle", typed.Status.DisplayTitle})
 		}
+		rows = append(rows, describeTerminationRows(typed.Status.LastTermination)...)
 		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Agent:
 		rows := [][2]string{{"Provider", typed.Spec.Provider}, {"Phase", string(typed.Status.Phase)}}
@@ -217,10 +219,64 @@ func describeSpecRows(resource any) [][2]string {
 			rows = append(rows, ref.Fields()...)
 			rows = append(rows, [2]string{"SessionObservedAt", describeTimestamp(ref.ObservedAt)})
 		}
-		return rows
+		// The termination rows are rendered last, under the phase they explain.
+		// An Offline Agent's phase says it is resumable; these say whether it got
+		// there by a deliberate close, a clean exit, a crash, or a disappearance
+		// nothing accounted for -- which is the distinction the two-valued phase
+		// cannot carry and the one an operator needs before resuming.
+		return append(rows, describeTerminationRows(typed.Status.LastTermination)...)
 	default:
 		return nil
 	}
+}
+
+// describeTerminationRows renders the stored termination receipt of one Pane or
+// Agent.
+//
+// It is a pure projection of what is already in the registry. Nothing here reads
+// a transcript, a pane's contents, a process table, or a provider history, and
+// nothing here consumes the receipt: describe is a read verb, and a read that
+// advanced a lifecycle would make querying the state change it.
+//
+// A resource with no receipt renders no rows at all rather than a row saying
+// "none". Absence of evidence is the normal state of a live resource, and a
+// permanent empty row would make every healthy Pane look like it was missing
+// something.
+//
+// The classification, its provenance and the instant it was observed are always
+// rendered together. Classification alone is not actionable -- "abnormal" from a
+// supervisor that read a wait status and "unknown" from a reconciliation that
+// found an empty socket are different kinds of claim -- and an undated one
+// cannot be told apart from a stale one.
+func describeTerminationRows(receipt *coremetadata.TerminationEvidence) [][2]string {
+	if receipt == nil || receipt.IsZero() {
+		return nil
+	}
+	rows := [][2]string{
+		{"Termination", string(receipt.Classification)},
+		{"TerminationSource", string(receipt.Source)},
+	}
+	if !receipt.ObservedAt.IsZero() {
+		rows = append(rows, [2]string{"TerminationObservedAt", describeTimestamp(receipt.ObservedAt)})
+	}
+	// The exit status is rendered only when one was actually read. A receipt with
+	// no exit code is not an exit code of zero: see TerminationEvidence.ExitCode.
+	if receipt.ExitCode != nil {
+		rows = append(rows, [2]string{"TerminationExitCode", strconv.Itoa(*receipt.ExitCode)})
+	}
+	if receipt.Signal != "" {
+		rows = append(rows, [2]string{"TerminationSignal", receipt.Signal})
+	}
+	if receipt.PaneUID != "" {
+		rows = append(rows, [2]string{"TerminationPaneRef", receipt.PaneUID})
+	}
+	if receipt.Generation != "" {
+		rows = append(rows, [2]string{"TerminationGeneration", receipt.Generation})
+	}
+	if receipt.OperationID != "" {
+		rows = append(rows, [2]string{"TerminationOperationID", receipt.OperationID})
+	}
+	return rows
 }
 
 // describeConditionRows renders the observed conditions of one resource.

@@ -4450,3 +4450,293 @@ wait "$disc_client_pid" 2>/dev/null || true
 disc_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> discovery/pin authority e2e passed: socket=$disc_socket path=$disc_socket_path other-socket=$disc_other_socket other-path=$disc_other_socket_path client=$disc_client project=$disc_project_uid siblings=unregistered cleanup=validated-exact-sockets"
+
+# --- exit reconciliation end to end -----------------------------------------
+#
+# The integration smoke drives the reconciliation through an explicit route. This
+# block proves the user-visible property instead: with the generated config
+# installed on an exact socket, a managed Agent whose process ends converges to
+# the right phase **without any projmux command being run to make it happen**, and
+# a whole-server loss followed by a restart converges without starting anything.
+exitrec_root="$PROJMUX_SMOKE_WORKDIR/exit-reconciliation"
+exitrec_socket="projmux-exitrec-$RANDOM-$$"
+exitrec_other_socket="projmux-exitrec-other-$RANDOM-$$"
+exitrec_session="exitrec-alpha"
+mkdir -p \
+  "$exitrec_root/home" \
+  "$exitrec_root/config" \
+  "$exitrec_root/state" \
+  "$exitrec_root/runtime" \
+  "$exitrec_root/tmux" \
+  "$exitrec_root/bin" \
+  "$exitrec_root/shim" \
+  "$exitrec_root/work/alpha"
+chmod 0700 "$exitrec_root/runtime" "$exitrec_root/tmux"
+
+# The container's default shell exits immediately in a detached pane, which would
+# make every Pane disappear before the fixture could name it. A persistent stub
+# keeps the graph inspectable without giving any Pane a stored command.
+exitrec_shell="$exitrec_root/shim/persistent-shell"
+cat >"$exitrec_shell" <<'EXITREC_SHELL_STUB'
+#!/usr/bin/env bash
+exec sleep 600
+EXITREC_SHELL_STUB
+chmod 0755 "$exitrec_shell"
+
+# The provider stub is a real process that ends the way each case asks for.
+# Nothing about a provider's own protocol participates: the classification comes
+# from the wait status.
+for exitrec_provider in claude codex agy; do
+  cat >"$exitrec_root/bin/$exitrec_provider" <<PROVIDER_STUB
+#!/usr/bin/env bash
+exec sh -c "\$(cat $(printf %q "$exitrec_root/stub-script"))"
+PROVIDER_STUB
+  chmod 0755 "$exitrec_root/bin/$exitrec_provider"
+done
+printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
+
+exitrec_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$exitrec_root/home" \
+    XDG_CONFIG_HOME="$exitrec_root/config" \
+    XDG_STATE_HOME="$exitrec_root/state" \
+    XDG_RUNTIME_DIR="$exitrec_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$exitrec_root/work" \
+    TMUX_TMPDIR="$exitrec_root/tmux" \
+    PATH="$exitrec_root/bin:$PATH" \
+    SHELL="$exitrec_shell" \
+    tmux -L "$exitrec_socket" "$@"
+}
+
+exitrec_other_tmux() {
+  env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$exitrec_root/tmux" \
+    tmux -L "$exitrec_other_socket" "$@"
+}
+
+exitrec_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$exitrec_root/home" \
+    XDG_CONFIG_HOME="$exitrec_root/config" \
+    XDG_STATE_HOME="$exitrec_root/state" \
+    XDG_RUNTIME_DIR="$exitrec_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$exitrec_root/work" \
+    TMUX_TMPDIR="$exitrec_root/tmux" \
+    PATH="$exitrec_root/bin:$PATH" \
+    SHELL="$exitrec_shell" \
+    "$bin" "$@"
+}
+
+# Creation routes through the client's inherited socket rather than a --socket
+# flag, so the live half names the exact synthetic client socket instead of
+# falling back to the default app socket.
+exitrec_live_pmx() {
+  env -u TMUX_PANE \
+    HOME="$exitrec_root/home" \
+    XDG_CONFIG_HOME="$exitrec_root/config" \
+    XDG_STATE_HOME="$exitrec_root/state" \
+    XDG_RUNTIME_DIR="$exitrec_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$exitrec_root/work" \
+    TMUX_TMPDIR="$exitrec_root/tmux" \
+    TMUX="$exitrec_socket_path,$exitrec_socket_pid,0" \
+    PATH="$exitrec_root/bin:$PATH" \
+    SHELL="$exitrec_shell" \
+    "$bin" "$@"
+}
+
+exitrec_tmux new-session -d -s "$exitrec_session" -n main -c "$exitrec_root/work/alpha" sleep 600
+exitrec_tmux set-option -t "$exitrec_session" -q @projmux_project_path "$exitrec_root/work/alpha"
+exitrec_other_tmux new-session -d -s untouched sleep 600
+exitrec_other_tmux set-option -gq @projmux_exitrec_sentinel unchanged
+
+exitrec_other_before="$(exitrec_other_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+exitrec_socket_path="$(exitrec_tmux display-message -p -t "$exitrec_session" '#{socket_path}')"
+exitrec_socket_pid="$(exitrec_tmux display-message -p -t "$exitrec_session" '#{pid}')"
+exitrec_other_socket_path="$(exitrec_other_tmux display-message -p -t untouched '#{socket_path}')"
+for exitrec_candidate in "$exitrec_socket_path" "$exitrec_other_socket_path"; do
+  case "$exitrec_candidate" in
+    "$exitrec_root"/*) ;;
+    *)
+      echo "exit reconciliation e2e socket escaped the smoke root: $exitrec_candidate" >&2
+      exit 1
+      ;;
+  esac
+done
+
+exitrec_cleanup() {
+  local actual
+  for actual in "$exitrec_socket_path" "$exitrec_other_socket_path"; do
+    [[ -n "$actual" ]] || continue
+    case "$actual" in
+      "$exitrec_root"/*)
+        env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+        ;;
+      *)
+        echo "refusing exit reconciliation e2e cleanup outside the smoke root: $actual" >&2
+        ;;
+    esac
+  done
+}
+trap 'exitrec_cleanup; smoke_cleanup_env' EXIT
+
+# Install the generated config on the exact socket. This is what puts the
+# `pane-exited` and `after-kill-pane` hooks in place; every convergence below is
+# driven by them and by nothing this script runs.
+exitrec_pmx internal tmux apply --bin "$bin" \
+  --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
+  >"$exitrec_root/apply.out"
+exitrec_pmx reconcile resources --socket "$exitrec_socket" >"$exitrec_root/import.out"
+exitrec_project_uid="$(exitrec_tmux show-options -qv -t "$exitrec_session" @projmux_project_uid)"
+if [[ -z "$exitrec_project_uid" ]]; then
+  echo "exit reconciliation e2e import left the Project uid empty" >&2
+  exit 1
+fi
+if ! exitrec_tmux show-hooks -g | grep -q "release-dead-agent-panes"; then
+  echo "the generated config installed no pane-exit hook, so hook-driven convergence cannot be observed" >&2
+  exitrec_tmux show-hooks -g >&2
+  exit 1
+fi
+
+# Read helpers. One document per observation, parsed out of a file, so a failed
+# read is a visible empty document rather than a swallowed pipeline status.
+exitrec_doc() {
+  exitrec_pmx describe "$1" "uid:$2" -o json >"$exitrec_root/doc.json" 2>"$exitrec_root/doc.err" || true
+}
+
+exitrec_field() {
+  sed -n "s/^[[:space:]]*\"$1\": \(.*\)$/\1/p" "$exitrec_root/doc.json" \
+    | head -n 1 | sed 's/,$//; s/^"//; s/"$//'
+}
+
+exitrec_termination_field() {
+  sed -n '/"lastTermination"/,$p' "$exitrec_root/doc.json" \
+    | sed -n "s/^[[:space:]]*\"$1\": \(.*\)$/\1/p" \
+    | head -n 1 | sed 's/,$//; s/^"//; s/"$//'
+}
+
+# The hook is backgrounded by the generated config, so the convergence it drives
+# is asynchronous. Polling `describe` is what makes this an end-to-end assertion:
+# `describe` is a read verb and reconciles nothing, so a phase that appears here
+# was written by the hook.
+exitrec_await_phase() {
+  local kind="$1" uid="$2" want="$3"
+  for _ in $(seq 1 150); do
+    exitrec_doc "$kind" "$uid"
+    if [[ "$(exitrec_field phase)" == "$want" ]]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "$kind $uid never reached $want; the pane-exit hook did not converge" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+}
+
+# 1. A provider that exits non-zero converges to Failed on the hook alone.
+printf '%s\n' 'exit 42' >"$exitrec_root/stub-script"
+exitrec_failed_agent="$(exitrec_live_pmx create agent --provider codex \
+  --project "uid:$exitrec_project_uid" -o uid)"
+if [[ -z "$exitrec_failed_agent" ]]; then
+  echo "exit reconciliation e2e created no Agent" >&2
+  exit 1
+fi
+exitrec_await_phase agent "$exitrec_failed_agent" Failed
+if [[ "$(exitrec_termination_field classification)" != "abnormal" ]]; then
+  echo "the hook classified an exit 42 as $(exitrec_termination_field classification), want abnormal" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+if [[ -n "$(exitrec_field paneRef)" ]]; then
+  echo "the hook left the failed Agent bound to its dead pane" >&2
+  exit 1
+fi
+echo ">> exit reconciliation e2e hook-driven failure agent=$exitrec_failed_agent phase=Failed class=abnormal"
+
+# 2. A provider that exits 0 converges to Offline, not Failed, and keeps its
+# conversation pointer if one was ever reported. Exit 0 is `normal`, never
+# `intentional`.
+printf '%s\n' 'exit 0' >"$exitrec_root/stub-script"
+exitrec_clean_agent="$(exitrec_live_pmx create agent --provider claude \
+  --project "uid:$exitrec_project_uid" -o uid)"
+exitrec_await_phase agent "$exitrec_clean_agent" Offline
+if [[ "$(exitrec_termination_field classification)" != "normal" ]]; then
+  echo "the hook classified an exit 0 as $(exitrec_termination_field classification), want normal" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+echo ">> exit reconciliation e2e hook-driven clean exit agent=$exitrec_clean_agent phase=Offline class=normal"
+
+# 3. The read surfaces project what the hook stored, and write nothing.
+exitrec_registry="$exitrec_root/state/projmux/metadata/registry.json"
+exitrec_settle_registry() {
+  local previous="" current
+  for _ in $(seq 1 150); do
+    current="$(sha256sum "$exitrec_registry" | cut -d' ' -f1)"
+    if [[ -n "$previous" && "$current" == "$previous" ]]; then
+      return 0
+    fi
+    previous="$current"
+    sleep 0.2
+  done
+  echo "the Registry never settled after the pane-exit hooks fired" >&2
+  exit 1
+}
+exitrec_settle_registry
+exitrec_read_before="$(sha256sum "$exitrec_registry" | cut -d' ' -f1)"
+exitrec_pmx get agents --project "uid:$exitrec_project_uid" >"$exitrec_root/get-agents.txt"
+exitrec_pmx get panes --project "uid:$exitrec_project_uid" >"$exitrec_root/get-panes.txt"
+exitrec_pmx describe agent "uid:$exitrec_failed_agent" >"$exitrec_root/describe-agent.txt"
+smoke_assert_file_contains "$exitrec_root/get-agents.txt" "TERMINATION"
+smoke_assert_file_contains "$exitrec_root/get-agents.txt" "abnormal/supervisor exit=42"
+smoke_assert_file_contains "$exitrec_root/get-panes.txt" "TERMINATION"
+smoke_assert_file_contains "$exitrec_root/describe-agent.txt" "TerminationSource:"
+if [[ "$(sha256sum "$exitrec_registry" | cut -d' ' -f1)" != "$exitrec_read_before" ]]; then
+  echo "a read surface wrote to the Registry" >&2
+  exit 1
+fi
+echo ">> exit reconciliation e2e read projection write-free"
+
+# 4. Whole-server loss, then restart on the same socket. The reconciliation after
+# the restart converges the logical graph and starts nothing: an observation is
+# not an activation authority.
+exitrec_shell_pane="$(exitrec_live_pmx create pane --project "uid:$exitrec_project_uid" -o uid -- sleep 600)"
+exitrec_settle_registry
+env -u TMUX -u TMUX_PANE tmux -S "$exitrec_socket_path" kill-server >/dev/null 2>&1 || true
+exitrec_settle_registry
+exitrec_doc pane "$exitrec_shell_pane"
+if [[ "$(exitrec_termination_field source)" == "reconcile" ]]; then
+  echo "reconciler evidence was filed while the server was unreadable" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+exitrec_tmux new-session -d -s exitrec-restarted -n main sleep 600
+exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json >"$exitrec_root/after-restart.json"
+exitrec_doc pane "$exitrec_shell_pane"
+if [[ -z "$(cat "$exitrec_root/doc.json")" ]]; then
+  echo "the restart deleted the logical shell Pane $exitrec_shell_pane" >&2
+  exit 1
+fi
+case "$(exitrec_termination_field classification)" in
+  abnormal|unknown) ;;
+  *)
+    echo "the restarted host classified the lost pane as '$(exitrec_termination_field classification)', want abnormal or unknown" >&2
+    cat "$exitrec_root/doc.json" >&2
+    exit 1
+    ;;
+esac
+if [[ "$(exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}' | grep -c . || true)" != "0" ]]; then
+  echo "the reconciliation after a restart materialized managed panes:" >&2
+  exitrec_tmux list-panes -a -F '#{pane_id} #{@projmux_pane_uid}' >&2
+  exit 1
+fi
+echo ">> exit reconciliation e2e restart converged pane=$exitrec_shell_pane class=$(exitrec_termination_field classification) no-autostart"
+
+# 5. The sibling socket was never read or written.
+exitrec_other_after="$(exitrec_other_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+if [[ "$exitrec_other_after" != "$exitrec_other_before" ]]; then
+  echo "exit reconciliation e2e touched the sibling socket: $exitrec_other_after" >&2
+  exit 1
+fi
+
+exitrec_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> exit reconciliation e2e passed: socket=$exitrec_socket path=$exitrec_socket_path other-path=$exitrec_other_socket_path project=$exitrec_project_uid cleanup=validated-exact-sockets"

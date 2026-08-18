@@ -2607,3 +2607,485 @@ fi
 termination_cleanup
 echo ">> termination evidence transport root=$termination_root socket=$termination_socket_path guard=passed"
 echo ">> lifecycle smoke root=$PROJMUX_SMOKE_WORKDIR actual_socket=$PROJMUX_SMOKE_TMUX_ACTUAL guard=passed"
+
+# --- exit reconciliation and lifecycle projection ---------------------------
+#
+# Phase 8's block above proved a receipt is *recorded*. This one proves it is
+# *consumed*: a receipt plus one exact runtime absence become an Agent phase, a
+# released binding, and a preserved shell Pane, in one transition.
+#
+# Everything runs on run-unique sockets under a run-unique root, with a sibling
+# server carrying the same mirrored Pane uid so containment is an assertion
+# rather than a claim. Nothing here touches the user's server or the default
+# socket.
+exitrec_root="$PROJMUX_SMOKE_WORKDIR/exit-reconcile"
+exitrec_socket="projmux-exitrec-$$-$RANDOM"
+exitrec_standalone_socket="projmux-exitrec-standalone-$$-$RANDOM"
+exitrec_sibling_socket="projmux-exitrec-sibling-$$-$RANDOM"
+mkdir -p "$exitrec_root/state" "$exitrec_root/config" "$exitrec_root/tmux" \
+  "$exitrec_root/bin" "$exitrec_root/work/evidence" "$exitrec_root/work/standalone"
+chmod 0700 "$exitrec_root/tmux"
+exitrec_real_tmux="$(command -v tmux)"
+
+# Every server in this block is started with the same isolated state root the
+# receipts are read back from. That is not tidiness: the supervisor resolves its
+# state paths from the pane's inherited environment, which is the tmux server's
+# environment, so a server started with a different root would write its receipts
+# somewhere the assertions never look.
+exitrec_tmux() {
+  local socket="$1"
+  shift
+  env -u TMUX -u TMUX_PANE \
+    TMUX_TMPDIR="$exitrec_root/tmux" \
+    XDG_STATE_HOME="$exitrec_root/state" \
+    XDG_CONFIG_HOME="$exitrec_root/config" \
+    PROJMUX_MANAGED_ROOTS="$exitrec_root/work" \
+    PATH="$exitrec_root/bin:$PATH" \
+    SHELL=/bin/bash \
+    "$exitrec_real_tmux" -L "$socket" "$@"
+}
+
+exitrec_sibling_tmux() {
+  env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$exitrec_root/tmux" \
+    "$exitrec_real_tmux" -L "$exitrec_sibling_socket" "$@"
+}
+
+# The three provider stubs are real processes that end the way each case asks
+# for. Nothing about a provider's own protocol participates: the classification
+# comes from the wait status, never from what the provider said before it
+# stopped.
+for exitrec_provider in claude codex agy; do
+  cat >"$exitrec_root/bin/$exitrec_provider" <<PROVIDER_STUB
+#!/usr/bin/env bash
+exec sh -c "\$(cat $(printf %q "$exitrec_root/stub-script"))"
+PROVIDER_STUB
+  chmod 0755 "$exitrec_root/bin/$exitrec_provider"
+done
+
+exitrec_tmux "$exitrec_socket" new-session -d -s evidence -n main \
+  -c "$exitrec_root/work/evidence" sleep 600
+exitrec_tmux "$exitrec_socket" set-option -t evidence -q @projmux_project_path \
+  "$exitrec_root/work/evidence"
+exitrec_tmux "$exitrec_standalone_socket" new-session -d -s standalone -n main \
+  -c "$exitrec_root/work/standalone" sleep 600
+exitrec_tmux "$exitrec_standalone_socket" set-option -t standalone -q @projmux_project_path \
+  "$exitrec_root/work/standalone"
+exitrec_sibling_tmux new-session -d -s sibling -n main sleep 600
+exitrec_sibling_tmux set-option -gq @projmux_exitrec_sentinel untouched
+
+exitrec_socket_path="$(exitrec_tmux "$exitrec_socket" display-message -p -t evidence '#{socket_path}')"
+exitrec_standalone_path="$(exitrec_tmux "$exitrec_standalone_socket" display-message -p -t standalone '#{socket_path}')"
+exitrec_sibling_path="$(exitrec_sibling_tmux display-message -p -t sibling '#{socket_path}')"
+for exitrec_candidate in "$exitrec_socket_path" "$exitrec_standalone_path" "$exitrec_sibling_path"; do
+  case "$exitrec_candidate" in
+    "$exitrec_root"/*) ;;
+    *)
+      echo "exit reconciliation smoke socket escaped the smoke root: $exitrec_candidate" >&2
+      exit 1
+      ;;
+  esac
+done
+exitrec_server_pid="$(exitrec_tmux "$exitrec_socket" display-message -p -t evidence '#{pid}')"
+exitrec_standalone_pid="$(exitrec_tmux "$exitrec_standalone_socket" display-message -p -t standalone '#{pid}')"
+
+# Cleanup kills the exact `#{socket_path}` each server reported, and only when it
+# is under this run's root. A bare `kill-server` or a cleanup that trusted
+# TMUX_TMPDIR alone could reach the operator's own session.
+exitrec_cleanup() {
+  local actual
+  for actual in "$exitrec_socket_path" "$exitrec_standalone_path" "$exitrec_sibling_path"; do
+    [[ -n "$actual" ]] || continue
+    case "$actual" in
+      "$exitrec_root"/*)
+        env -u TMUX -u TMUX_PANE "$exitrec_real_tmux" -S "$actual" kill-server >/dev/null 2>&1 || true
+        ;;
+      *)
+        echo "refusing exit reconciliation cleanup outside the smoke root: $actual" >&2
+        ;;
+    esac
+  done
+}
+# The outer guarded cleanup stays installed: this block chains in front of it and
+# restores it afterwards, so a failure anywhere below still tears down both this
+# block's servers and the smoke run's own.
+trap 'exitrec_cleanup; integration_cleanup' EXIT
+
+exitrec_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    XDG_STATE_HOME="$exitrec_root/state" \
+    XDG_CONFIG_HOME="$exitrec_root/config" \
+    TMUX_TMPDIR="$exitrec_root/tmux" \
+    PROJMUX_MANAGED_ROOTS="$exitrec_root/work" \
+    PATH="$exitrec_root/bin:$PATH" \
+    SHELL=/bin/bash \
+    "$bin" "$@"
+}
+
+# The in-tmux caller. $TMUX is the inherited absolute socket path, which is the
+# exact-host rule both host modes share -- an app-owned server and a standalone
+# one are addressed identically, because the address is the inherited socket and
+# not a name projmux knows.
+exitrec_pmx_inside() {
+  local socket_path="$1" server_pid="$2"
+  shift 2
+  env -u TMUX_PANE \
+    TMUX="$socket_path,$server_pid,0" \
+    XDG_STATE_HOME="$exitrec_root/state" \
+    XDG_CONFIG_HOME="$exitrec_root/config" \
+    TMUX_TMPDIR="$exitrec_root/tmux" \
+    PROJMUX_MANAGED_ROOTS="$exitrec_root/work" \
+    PATH="$exitrec_root/bin:$PATH" \
+    SHELL=/bin/bash \
+    "$bin" "$@"
+}
+
+exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json >"$exitrec_root/reconcile.json"
+smoke_assert_file_contains "$exitrec_root/reconcile.json" '"outcome": "changed"'
+exitrec_pmx reconcile resources --socket "$exitrec_standalone_socket" -o json \
+  >"$exitrec_root/reconcile-standalone.json"
+smoke_assert_file_contains "$exitrec_root/reconcile-standalone.json" '"outcome": "changed"'
+
+# One document per observation, parsed out of a file, so a failed read is a
+# visible empty document rather than a pipeline whose exit status the last stage
+# swallowed.
+exitrec_doc() {
+  exitrec_pmx describe "$1" "uid:$2" -o json >"$exitrec_root/doc.json" 2>"$exitrec_root/doc.err" || true
+}
+
+exitrec_field() {
+  sed -n "s/^[[:space:]]*\"$1\": \(.*\)$/\1/p" "$exitrec_root/doc.json" \
+    | head -n 1 \
+    | sed 's/,$//; s/^"//; s/"$//'
+}
+
+exitrec_termination_field() {
+  sed -n '/"lastTermination"/,$p' "$exitrec_root/doc.json" \
+    | sed -n "s/^[[:space:]]*\"$1\": \(.*\)$/\1/p" \
+    | head -n 1 \
+    | sed 's/,$//; s/^"//; s/"$//'
+}
+
+exitrec_doc_exists() {
+  exitrec_doc "$1" "$2"
+  [[ -s "$exitrec_root/doc.json" ]]
+}
+
+# The reconciliation is driven through the installed public mutation route on the
+# exact socket. Reading is a separate call so the read/write split stays visible:
+# nothing below reconciles as a side effect of asking a question.
+exitrec_reconcile() {
+  exitrec_pmx reconcile resources --socket "$1" -o json >"$exitrec_root/reconcile-run.json"
+}
+
+# A managed Agent whose child ends a different way each time. The Agent uid is
+# read out of the Registry before the child is gone, so the assertion never races
+# the pane's own disappearance.
+exitrec_agent_case() {
+  local label="$1" provider="$2" want_phase="$3" want_class="$4" script="$5"
+  local agent_uid pane_ref got_phase got_class got_source got_reason
+  printf '%s\n' "$script" >"$exitrec_root/stub-script"
+  agent_uid="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
+    create agent --provider "$provider" --project evidence -o uid)"
+  if [[ -z "$agent_uid" ]]; then
+    echo "exit reconciliation case $label created no Agent" >&2
+    exit 1
+  fi
+  exitrec_doc agent "$agent_uid"
+  pane_ref="$(exitrec_field paneRef)"
+  if [[ -z "$pane_ref" ]]; then
+    echo "exit reconciliation case $label bound no managed Pane" >&2
+    cat "$exitrec_root/doc.json" >&2
+    exit 1
+  fi
+
+  # Wait for the runtime object to actually be gone, which is the input the
+  # reconciliation consumes. Polling the live server rather than sleeping is what
+  # keeps this from being timing-dependent.
+  for _ in $(seq 1 100); do
+    if ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
+      | grep -qx "$pane_ref"; then
+      break
+    fi
+    sleep 0.1
+  done
+  if exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
+    | grep -qx "$pane_ref"; then
+    echo "exit reconciliation case $label still has a live pane for $pane_ref" >&2
+    exit 1
+  fi
+
+  exitrec_reconcile "$exitrec_socket"
+  exitrec_doc agent "$agent_uid"
+  got_phase="$(exitrec_field phase)"
+  got_reason="$(exitrec_field reason)"
+  got_class="$(exitrec_termination_field classification)"
+  got_source="$(exitrec_termination_field source)"
+  if [[ "$got_phase" != "$want_phase" ]]; then
+    echo "exit reconciliation case $label phase=$got_phase, want $want_phase" >&2
+    cat "$exitrec_root/doc.json" >&2
+    exit 1
+  fi
+  case " $want_class " in
+    *" $got_class "*) ;;
+    *)
+      echo "exit reconciliation case $label classification=$got_class, want one of [$want_class]" >&2
+      cat "$exitrec_root/doc.json" >&2
+      exit 1
+      ;;
+  esac
+  if [[ -n "$(exitrec_field paneRef)" ]]; then
+    echo "exit reconciliation case $label left paneRef=$(exitrec_field paneRef) bound to a dead pane" >&2
+    exit 1
+  fi
+  if exitrec_doc_exists pane "$pane_ref"; then
+    echo "exit reconciliation case $label kept the released managed Pane resource $pane_ref" >&2
+    exit 1
+  fi
+  if [[ -z "$got_reason" ]]; then
+    echo "exit reconciliation case $label recorded no status.reason" >&2
+    exit 1
+  fi
+
+  # A repeat reconciliation of the same disappearance must change nothing.
+  local before after
+  before="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
+  exitrec_reconcile "$exitrec_socket"
+  after="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
+  if [[ "$before" != "$after" ]]; then
+    echo "exit reconciliation case $label rewrote the registry on a repeat pass" >&2
+    exit 1
+  fi
+  echo ">> exit reconciliation case $label agent=$agent_uid phase=$got_phase class=$got_class source=$got_source"
+}
+
+exitrec_agent_case clean-exit claude Offline normal 'exit 0'
+exitrec_agent_case failed-exit codex Failed abnormal 'exit 42'
+exitrec_agent_case signal-death antigravity Failed abnormal 'kill -TERM $$; sleep 30'
+
+# An external kill is a death projmux did not ask for. The supervisor may or may
+# not survive long enough to reap and record: `kill-pane` signals the whole
+# process group. Both outcomes are correct and neither invents intent, so the
+# assertion is over the honest set -- the phase is decided from whatever evidence
+# existed, and it is never `normal` and never `intentional`.
+printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
+exitrec_external_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
+  create agent --provider claude --project evidence -o uid)"
+exitrec_doc agent "$exitrec_external_agent"
+exitrec_external_pane="$(exitrec_field paneRef)"
+exitrec_external_pane_id="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid} #{pane_id}' \
+  | awk -v uid="$exitrec_external_pane" '$1 == uid { print $2; exit }')"
+if [[ -z "$exitrec_external_pane_id" ]]; then
+  echo "the externally killed Agent Pane has no exact live binding" >&2
+  exit 1
+fi
+exitrec_tmux "$exitrec_socket" kill-pane -t "$exitrec_external_pane_id"
+exitrec_reconcile "$exitrec_socket"
+exitrec_doc agent "$exitrec_external_agent"
+case "$(exitrec_field phase)" in
+  Offline|Failed) ;;
+  *)
+    echo "an external kill left phase=$(exitrec_field phase), want Offline or Failed" >&2
+    cat "$exitrec_root/doc.json" >&2
+    exit 1
+    ;;
+esac
+case "$(exitrec_termination_field classification)" in
+  abnormal|unknown) ;;
+  *)
+    echo "an external kill was classified $(exitrec_termination_field classification), want abnormal or unknown" >&2
+    cat "$exitrec_root/doc.json" >&2
+    exit 1
+    ;;
+esac
+if [[ -n "$(exitrec_field paneRef)" ]]; then
+  echo "an external kill left the Agent bound to its dead pane" >&2
+  exit 1
+fi
+echo ">> exit reconciliation external kill agent=$exitrec_external_agent phase=$(exitrec_field phase) class=$(exitrec_termination_field classification)"
+
+# A supervisor killed with SIGKILL writes no receipt at all. The absence must
+# converge on `unknown` -- never on `normal`, which would claim a clean exit
+# nobody observed -- and the Agent must stay resumable.
+printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
+exitrec_sigkill_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
+  create agent --provider claude --project evidence -o uid)"
+exitrec_doc agent "$exitrec_sigkill_agent"
+exitrec_sigkill_pane="$(exitrec_field paneRef)"
+exitrec_sigkill_pid="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid} #{pane_pid}' \
+  | awk -v uid="$exitrec_sigkill_pane" '$1 == uid { print $2; exit }')"
+if [[ -z "$exitrec_sigkill_pid" ]]; then
+  echo "the supervised Agent Pane reported no pane pid" >&2
+  exit 1
+fi
+kill -KILL "$exitrec_sigkill_pid" 2>/dev/null || true
+for _ in $(seq 1 100); do
+  exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
+    | grep -qx "$exitrec_sigkill_pane" || break
+  sleep 0.1
+done
+exitrec_reconcile "$exitrec_socket"
+exitrec_doc agent "$exitrec_sigkill_agent"
+if [[ "$(exitrec_field phase)" != "Offline" ]]; then
+  echo "a SIGKILLed supervisor left phase=$(exitrec_field phase), want Offline" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+if [[ "$(exitrec_termination_field classification)" != "unknown" ]]; then
+  echo "a SIGKILLed supervisor was classified $(exitrec_termination_field classification), want unknown" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+if [[ "$(exitrec_termination_field source)" != "reconcile" ]]; then
+  echo "an unknown receipt came from $(exitrec_termination_field source), want reconcile" >&2
+  exit 1
+fi
+echo ">> exit reconciliation supervisor SIGKILL agent=$exitrec_sigkill_agent class=unknown"
+
+# A shell Pane's runtime loss keeps the logical Pane. Runtime loss is not a
+# statement about desired topology, so the resource survives with a
+# MissingRuntime condition and the evidence -- offline for a stated reason
+# instead of silently absent.
+exitrec_shell_pane="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
+  create pane --project evidence -o uid -- sh -c 'exit 0')"
+for _ in $(seq 1 100); do
+  exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
+    | grep -qx "$exitrec_shell_pane" || break
+  sleep 0.1
+done
+exitrec_reconcile "$exitrec_socket"
+if ! exitrec_doc_exists pane "$exitrec_shell_pane"; then
+  echo "a shell Pane's runtime loss deleted the logical Pane $exitrec_shell_pane" >&2
+  exit 1
+fi
+exitrec_doc pane "$exitrec_shell_pane"
+if [[ "$(exitrec_termination_field classification)" != "normal" ]]; then
+  echo "the shell Pane recorded $(exitrec_termination_field classification), want the supervised normal exit" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+exitrec_pmx describe pane "uid:$exitrec_shell_pane" >"$exitrec_root/shell-pane.txt"
+smoke_assert_file_contains "$exitrec_root/shell-pane.txt" "MissingRuntime"
+smoke_assert_file_contains "$exitrec_root/shell-pane.txt" "Termination:"
+echo ">> exit reconciliation shell pane preserved uid=$exitrec_shell_pane"
+
+# The read surfaces project the stored evidence and write nothing. A read that
+# advanced a lifecycle would make asking about the state change it.
+exitrec_read_before="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
+exitrec_pmx get panes --project evidence >"$exitrec_root/get-panes.txt"
+exitrec_pmx get agents --project evidence >"$exitrec_root/get-agents.txt"
+exitrec_pmx describe agent "uid:$exitrec_sigkill_agent" >"$exitrec_root/describe-agent.txt"
+smoke_assert_file_contains "$exitrec_root/get-panes.txt" "TERMINATION"
+smoke_assert_file_contains "$exitrec_root/get-agents.txt" "TERMINATION"
+smoke_assert_file_contains "$exitrec_root/get-agents.txt" "unknown/reconcile"
+smoke_assert_file_contains "$exitrec_root/describe-agent.txt" "Termination:"
+smoke_assert_file_contains "$exitrec_root/describe-agent.txt" "TerminationSource:"
+smoke_assert_file_contains "$exitrec_root/describe-agent.txt" "TerminationObservedAt:"
+exitrec_read_after="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
+if [[ "$exitrec_read_before" != "$exitrec_read_after" ]]; then
+  echo "a read surface wrote to the registry" >&2
+  exit 1
+fi
+echo ">> exit reconciliation read projection write-free"
+
+# Server loss, then restart, on both host modes.
+#
+# An unreadable observation must reconcile nothing: it is indistinguishable from
+# an empty one, and reading it as empty would file an unknown termination against
+# every managed Pane on a machine whose server simply is not up. The restarted
+# server then answers honestly-empty, every managed Pane converges on `unknown`,
+# and nothing is started to fill the gap.
+exitrec_restart_case() {
+  local label="$1" socket="$2" socket_path="$3" server_pid="$4" project="$5"
+  local pane_uid
+  pane_uid="$(exitrec_pmx_inside "$socket_path" "$server_pid" \
+    create pane --project "$project" -o uid -- sleep 600)"
+  if [[ -z "$pane_uid" ]]; then
+    echo "restart case $label created no Pane" >&2
+    exit 1
+  fi
+  exitrec_reconcile "$socket"
+
+  env -u TMUX -u TMUX_PANE "$exitrec_real_tmux" -S "$socket_path" kill-server >/dev/null 2>&1 || true
+  # The whole server is gone, so the mirrored-uid observation *fails* rather than
+  # returning an empty set, and the lifecycle projection must file nothing.
+  #
+  # Two things are deliberately not asserted here. The whole registry file does
+  # change, because the same pass honestly projects the Project session as no
+  # longer live. And evidence may well appear, because `kill-server` SIGHUPs the
+  # panes and a supervisor that survives long enough reaps its child and records a
+  # real `abnormal signal=HUP` receipt -- which is the transport working, not the
+  # reconciliation guessing. The precise fail-closed property is that nothing with
+  # `source: reconcile` was filed against an unreadable host.
+  exitrec_pmx reconcile resources --socket "$socket" -o json \
+    >"$exitrec_root/reconcile-lost-$label.json" 2>"$exitrec_root/reconcile-lost-$label.err" || true
+  if ! exitrec_doc_exists pane "$pane_uid"; then
+    echo "restart case $label deleted $pane_uid against an unreadable server" >&2
+    exit 1
+  fi
+  exitrec_doc pane "$pane_uid"
+  if [[ "$(exitrec_termination_field source)" == "reconcile" ]]; then
+    echo "restart case $label filed reconciler evidence against an unreadable server" >&2
+    cat "$exitrec_root/doc.json" >&2
+    exit 1
+  fi
+
+  # Restart the same socket. The observation is now readable and honestly empty.
+  exitrec_tmux "$socket" new-session -d -s "restarted-$label" -n main sleep 600
+  exitrec_reconcile "$socket"
+  if ! exitrec_doc_exists pane "$pane_uid"; then
+    echo "restart case $label deleted the logical Pane $pane_uid" >&2
+    exit 1
+  fi
+  exitrec_doc pane "$pane_uid"
+  # A supervisor that got its SIGHUP written down leaves `abnormal`; one that went
+  # with the server leaves nothing for the restarted, honestly-empty observation to
+  # find, and that converges on `unknown`. Both are correct and neither is
+  # `normal`, which would claim a clean exit nobody observed.
+  case "$(exitrec_termination_field classification)" in
+    abnormal|unknown) ;;
+    *)
+      echo "restart case $label classified the lost server as '$(exitrec_termination_field classification)', want abnormal or unknown" >&2
+      cat "$exitrec_root/doc.json" >&2
+      exit 1
+      ;;
+  esac
+  # No autostart: the restarted server holds only the bare session this smoke
+  # made, whose pane carries no mirrored uid. The reconciliation observed a
+  # registry full of offline Panes and materialized not one of them -- an
+  # observation is not an activation authority.
+  if [[ "$(exitrec_tmux "$socket" list-panes -a -F '#{@projmux_pane_uid}' | grep -c . || true)" != "0" ]]; then
+    echo "restart case $label materialized panes on the restarted server:" >&2
+    exitrec_tmux "$socket" list-panes -a -F '#{pane_id} #{@projmux_pane_uid}' >&2
+    exit 1
+  fi
+  echo ">> exit reconciliation restart $label pane=$pane_uid class=$(exitrec_termination_field classification) no-autostart"
+}
+
+exitrec_restart_case app-owned "$exitrec_socket" "$exitrec_socket_path" \
+  "$exitrec_server_pid" evidence
+exitrec_restart_case standalone "$exitrec_standalone_socket" "$exitrec_standalone_path" \
+  "$exitrec_standalone_pid" standalone
+
+# Sibling containment. The sibling server carries a pane whose mirrored uid is one
+# this Registry owns, and reuses the same `%N` handle space. It must be neither
+# read nor written, and its identical metadata must not have decided any outcome
+# above.
+exitrec_sibling_tmux set-option -t sibling -q @projmux_project_path "$exitrec_root/work/evidence"
+exitrec_sibling_pane_id="$(exitrec_sibling_tmux list-panes -a -F '#{pane_id}' | head -n 1)"
+exitrec_sibling_tmux set-option -p -t "$exitrec_sibling_pane_id" -q @projmux_pane_uid "$exitrec_shell_pane"
+exitrec_sibling_before="$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_sibling_tmux list-panes -a -F '#{pane_id} #{@projmux_pane_uid}')"
+exitrec_reconcile "$exitrec_socket"
+if [[ "$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_sibling_tmux list-panes -a -F '#{pane_id} #{@projmux_pane_uid}')" != "$exitrec_sibling_before" ]]; then
+  echo "the sibling server changed during exit reconciliation" >&2
+  exit 1
+fi
+exitrec_doc pane "$exitrec_shell_pane"
+if [[ "$(exitrec_termination_field classification)" != "normal" ]]; then
+  echo "the sibling's identical pane uid changed the shell Pane's evidence to $(exitrec_termination_field classification)" >&2
+  exit 1
+fi
+echo ">> exit reconciliation sibling containment socket=$exitrec_sibling_path unchanged"
+
+exitrec_cleanup
+trap integration_cleanup EXIT
+echo ">> exit reconciliation root=$exitrec_root sockets=$exitrec_socket_path,$exitrec_standalone_path guard=passed"

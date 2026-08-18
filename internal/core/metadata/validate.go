@@ -200,8 +200,9 @@ func validateTermination(op, subject string, receipt *TerminationEvidence) error
 	if !ValidTerminationClassification(receipt.Classification) {
 		return stateErr(op, ErrInvalidRegistry, "%s has unsupported termination classification %q", subject, receipt.Classification)
 	}
-	if receipt.Classification == TerminationIntentional && receipt.Source != TerminationSourceControlAction {
-		return stateErr(op, ErrInvalidRegistry, "%s records intentional termination from source %q", subject, receipt.Source)
+	if !validTerminationPairing(receipt.Source, receipt.Classification) {
+		return stateErr(op, ErrInvalidRegistry, "%s records %q termination from source %q",
+			subject, receipt.Classification, receipt.Source)
 	}
 	if strings.TrimSpace(receipt.PaneUID) == "" {
 		return stateErr(op, ErrInvalidRegistry, "%s has a termination receipt naming no pane", subject)

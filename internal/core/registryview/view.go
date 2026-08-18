@@ -118,6 +118,18 @@ type Row struct {
 	Actions []Action `json:"actions,omitempty"`
 	// Reason states why this row looks the way it does, in one clause.
 	Reason string `json:"reason,omitempty"`
+	// Termination is the last stored termination receipt of a Pane or Agent row,
+	// reported verbatim from the Registry and empty when none is stored.
+	//
+	// It is what turns an offline row from a fact into an explanation. Status
+	// already says no runtime object mirrors this resource; this says whether a
+	// control action ended it, its process exited cleanly, its process crashed,
+	// or nothing accounted for the disappearance at all.
+	//
+	// Nothing in this package records, consumes, or transitions it. The view is a
+	// read projection, and a refresh that advanced a lifecycle would make opening
+	// the list change the thing the list describes.
+	Termination *coremetadata.TerminationEvidence `json:"termination,omitempty"`
 }
 
 // Live reports whether an exact runtime object was observed for this row.
@@ -370,6 +382,7 @@ func (b *builder) agents(windowUID, windowID, root string) {
 			Runtime:     agent.Runtime,
 			Actions:     resourceActions(RowKindAgent, agent.Status, agent.MissingRoot),
 			Reason:      statusReason(agent.Status, agent.MissingRoot),
+			Termination: agent.Agent.Status.LastTermination.Clone(),
 		})
 		for _, pane := range b.graph.Panes {
 			if pane.AgentUID != agent.Agent.Metadata.UID {
@@ -397,6 +410,7 @@ func (b *builder) paneRow(pane resourcegraph.PaneNode, parentID string, depth in
 		Runtime:     pane.Runtime,
 		Actions:     resourceActions(RowKindPane, pane.Status, pane.MissingRoot),
 		Reason:      statusReason(pane.Status, pane.MissingRoot),
+		Termination: pane.Pane.Status.LastTermination.Clone(),
 	}
 }
 

@@ -562,8 +562,8 @@ func resourceSummary(match selector.Match, kind coremetadata.Kind, registry core
 var resourceTableColumns = map[coremetadata.Kind][]string{
 	coremetadata.KindProject: {"DISPLAY NAME", "NAME", "STATUS", "AGE"},
 	coremetadata.KindWindow:  {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "AGE"},
-	coremetadata.KindPane:    {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "AGE"},
-	coremetadata.KindAgent:   {"DISPLAY NAME", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "AGE"},
+	coremetadata.KindPane:    {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "TERMINATION", "AGE"},
+	coremetadata.KindAgent:   {"DISPLAY NAME", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "TERMINATION", "AGE"},
 }
 
 // resourceTableGap is the minimum run of spaces between two columns. It is the
@@ -595,14 +595,23 @@ func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry cor
 	case coremetadata.KindWindow:
 		return append(row, match.Owner.Project, age)
 	case coremetadata.KindPane:
-		return append(row, match.Owner.Project, match.Owner.Window, match.Owner.Agent, age)
+		pane, _ := registry.Pane(match.UID)
+		var termination *coremetadata.TerminationEvidence
+		if pane != nil {
+			termination = pane.Status.LastTermination
+		}
+		return append(row, match.Owner.Project, match.Owner.Window, match.Owner.Agent,
+			resourceTerminationCell(termination, now), age)
 	case coremetadata.KindAgent:
 		agent, _ := registry.Agent(match.UID)
 		interaction := coremetadata.InteractionUnknown
+		var termination *coremetadata.TerminationEvidence
 		if agent != nil {
 			interaction = agent.EffectiveInteraction(now).Kind
+			termination = agent.Status.LastTermination
 		}
-		return append(row, string(interaction), match.Owner.Project, match.Owner.Window, resourceSessionCell(match, registry), age)
+		return append(row, string(interaction), match.Owner.Project, match.Owner.Window,
+			resourceSessionCell(match, registry), resourceTerminationCell(termination, now), age)
 	default:
 		return append(row, age)
 	}
@@ -660,6 +669,34 @@ func resourceAgeCell(registry coremetadata.Registry, kind coremetadata.Kind, uid
 		return ""
 	}
 	return i18n.FormatDuration(now.Sub(meta.CreatedAt), i18n.FallbackLocale, i18n.FormatCompact)
+}
+
+// resourceTerminationCell renders the TERMINATION column: the last stored
+// termination receipt of one Pane or Agent, and how long ago it was observed.
+//
+// A resource with no receipt leaves the cell empty, exactly as an Agent with no
+// conversation leaves SESSION empty. That is what keeps the column readable: on a
+// healthy machine it is blank, and every non-blank cell is a resource whose
+// managed process stopped and which is now offline for a stated reason.
+//
+// The age is rendered relative, through the same i18n.FormatDuration compact form
+// the AGE column beside it uses, and against the same passed-in clock. describe
+// renders the absolute instant; a table cell wide enough for an RFC 3339 stamp
+// would push the owner-chain columns sideways on every row, including the blank
+// ones. A receipt with no observedAt renders the classification alone rather than
+// an age counted from year 1.
+//
+// This reads the registry the route already loaded. No tmux query, no provider
+// history, no transcript, and no write.
+func resourceTerminationCell(receipt *coremetadata.TerminationEvidence, now time.Time) string {
+	summary := receipt.Summary()
+	if summary == "" {
+		return ""
+	}
+	if now.IsZero() || receipt.ObservedAt.IsZero() {
+		return summary
+	}
+	return summary + " " + i18n.FormatDuration(now.Sub(receipt.ObservedAt), i18n.FallbackLocale, i18n.FormatCompact)
 }
 
 // resourceSessionCell renders the SESSION column of one Agent. An Agent that has
