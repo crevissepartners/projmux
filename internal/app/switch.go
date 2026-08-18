@@ -2033,14 +2033,14 @@ func (c *switchCommand) mutateSwitchSidebarKill(ctx context.Context, action intp
 	// session, so there is nothing for a kill to address on any of them.
 	if target == "" || target == switchSettingsSentinel || target == switchRuntimeSentinel ||
 		switchRegistrySelectionUID(target) != "" {
-		return c.switchSidebarRefreshUpdate(ctx)
+		return c.switchSidebarRefreshUpdate(ctx, action.Value)
 	}
 	homeDir, err := c.resolveHomeDir()
 	if err != nil {
 		return intpicker.DeferredUpdate{}, err
 	}
 	if target == cleanOptionalPath(homeDir) {
-		return c.switchSidebarRefreshUpdate(ctx)
+		return c.switchSidebarRefreshUpdate(ctx, action.Value)
 	}
 	if c.validate == nil {
 		return intpicker.DeferredUpdate{}, fmt.Errorf("switch directory validator is not configured")
@@ -2063,16 +2063,18 @@ func (c *switchCommand) mutateSwitchSidebarKill(ctx context.Context, action intp
 		return intpicker.DeferredUpdate{}, err
 	}
 	if fallbackSession == "" {
-		return c.switchSidebarRefreshUpdate(ctx)
+		return c.switchSidebarRefreshUpdate(ctx, action.Value)
 	}
 	if err := c.killFocusedSession(ctx, sessionName, fallbackSession, nil); err != nil {
 		return intpicker.DeferredUpdate{}, err
 	}
 	c.focusSession = fallbackSession
-	return c.switchSidebarRefreshUpdate(ctx)
+	return c.switchSidebarRefreshUpdate(ctx, action.Value)
 }
 
-func (c *switchCommand) switchSidebarRefreshUpdate(ctx context.Context) (intpicker.DeferredUpdate, error) {
+// switchSidebarRefreshUpdate re-reads the rows and decides where the cursor
+// lands, given the selection the operator had before the refresh.
+func (c *switchCommand) switchSidebarRefreshUpdate(ctx context.Context, selection string) (intpicker.DeferredUpdate, error) {
 	inputs, err := c.candidateInputs("")
 	if err != nil {
 		return intpicker.DeferredUpdate{}, err
@@ -2102,6 +2104,18 @@ func (c *switchCommand) switchSidebarRefreshUpdate(ctx context.Context) (intpick
 				break
 			}
 		}
+	}
+	// Without an explicit focus intent, the cursor stays on the resource it was
+	// already on. A refresh can move a Project between presentation tiers, so
+	// "the same row" has to mean a Project uid rather than a position -- and the
+	// anchor is resolved through the uid rather than through whichever value the
+	// row happened to carry before.
+	if update.FocusValue == "" {
+		focusValue, err := c.switchProjectRowFocusValue(ctx, selection)
+		if err != nil {
+			return intpicker.DeferredUpdate{}, err
+		}
+		update.FocusValue = focusValue
 	}
 	surface, err := c.switchPickerSurface(switchPlan{UI: switchUISidebar}, true)
 	if err != nil {
@@ -2616,7 +2630,7 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	renderCandidates, sessionNames, err := c.switchManagedRows(
+	managed, sessionNames, err := c.switchManagedRows(
 		view, ui, mode, pinnedSet, attentionRanks, aiBadgeKinds, aiBadgeStyle, homeDir, repoRoot)
 	if err != nil {
 		return nil, nil, nil, err
@@ -2680,7 +2694,25 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 			Pinned:        pinnedSet[cleanOptionalPath(candidatePath)],
 		})
 	}
-	sortSwitchCandidates(unregistered, homeDir)
+	// Home is chrome, not a Project, and it leads the list.
+	//
+	// It is the operator's own root: discovery offers it, no Registry Project
+	// claims it, and it carries no managed identity -- so it is not a reconcile
+	// target, not a create target, and not something the Registry is asked
+	// about. Lifting it out of the discovered section is the whole change; the
+	// row keeps the value, label and actions it has always had, because the only
+	// thing wrong with it was that it sat behind every managed Project.
+	//
+	// Nothing here is synthesized either. If discovery does not offer $HOME --
+	// or a Registry Project has claimed it, in which case it is that Project's
+	// row and the dedup above already dropped the duplicate -- there is no Home
+	// chrome row rather than an invented one.
+	home, unregistered := splitSwitchHomeRow(unregistered, homeDir)
+	sortSwitchCandidates(unregistered)
+
+	renderCandidates := make([]intrender.SwitchCandidate, 0, len(home)+len(managed)+len(unregistered)+len(settings)+1)
+	renderCandidates = append(renderCandidates, home...)
+	renderCandidates = append(renderCandidates, managed...)
 	renderCandidates = append(renderCandidates, unregistered...)
 	// The Runtime link is last before Settings. It is the escape hatch that
 	// makes the managed list safe to read as complete: everything projmux does
@@ -2820,23 +2852,41 @@ func attentionRankForBadgeKind(kind string) int {
 	}
 }
 
-func sortSwitchCandidates(candidates []intrender.SwitchCandidate, homeDir string) {
+// splitSwitchHomeRow lifts the discovered $HOME row out of the unregistered
+// section so it can lead the whole list.
+//
+// Home is recognised the way every other Home-aware branch of this surface
+// recognises it -- an exact match on the resolved home directory -- so this
+// moves a row and classifies nothing new. Everything that is not Home comes back
+// in its original relative order for the section sort to handle.
+func splitSwitchHomeRow(candidates []intrender.SwitchCandidate, homeDir string) (home, rest []intrender.SwitchCandidate) {
 	homeDir = cleanOptionalPath(homeDir)
+	if homeDir == "" {
+		return nil, candidates
+	}
+	rest = make([]intrender.SwitchCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if len(home) == 0 && cleanOptionalPath(candidate.Path) == homeDir {
+			home = append(home, candidate)
+			continue
+		}
+		rest = append(rest, candidate)
+	}
+	return home, rest
+}
+
+// sortSwitchCandidates orders the discovered directories no Project claims.
+//
+// Home is not among them any more -- it is chrome and leads the whole list, so
+// the rule that used to lift it to the front of this section would now be a
+// second, contradicting answer to where Home goes.
+func sortSwitchCandidates(candidates []intrender.SwitchCandidate) {
 	slices.SortStableFunc(candidates, func(a, b intrender.SwitchCandidate) int {
 		if a.Path == switchSettingsSentinel && b.Path != switchSettingsSentinel {
 			return 1
 		}
 		if b.Path == switchSettingsSentinel && a.Path != switchSettingsSentinel {
 			return -1
-		}
-
-		aHome := homeDir != "" && cleanOptionalPath(a.Path) == homeDir
-		bHome := homeDir != "" && cleanOptionalPath(b.Path) == homeDir
-		if aHome != bHome {
-			if aHome {
-				return -1
-			}
-			return 1
 		}
 
 		aExisting := a.ModeLabel == "existing"
