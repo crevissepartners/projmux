@@ -515,7 +515,6 @@ func executeRegistryTopology(
 			if createErr != nil {
 				return createErr
 			}
-			windowID = result.WindowID
 			if err := runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, result.WindowID, work.window.Metadata.UID, ledger); err != nil {
 				return err
 			}
