@@ -25,23 +25,20 @@ import (
 func TestResourceViewHierarchyDisplayResolverSortAndExplicitRoots(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 2, 0, time.UTC)
 	view := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
-	view.setSnapshot(resourceReadySnapshot(now.Add(-time.Second)), false)
+	snapshot := resourceReadySnapshot(now.Add(-time.Second))
+	snapshot.Projects = append(snapshot.Projects, coreresources.ProjectUsage{Key: coreresources.ProjectShared})
+	view.setSnapshot(snapshot, false)
 
 	items, header, footer := renderResourceView(view)
 	api := pickerItemByValue(items, "project:/repo/api")
-	if len(items) != 3 || api == nil || api.Label != "api" || !strings.Contains(strings.Join(api.MetaLines, "\n"), "Path  /repo/api") {
+	if len(items) != 2 || api == nil || api.Label != "api" || !strings.Contains(strings.Join(api.MetaLines, "\n"), "Path  /repo/api") {
 		t.Fatalf("project items = %#v, want primary identity separate from path context", items)
 	}
 	if pickerItemByValue(items, "project:"+coreresources.ProjectUnassigned) == nil {
 		t.Fatalf("project items = %#v, want explicit unassigned root", items)
 	}
-	shared := pickerItemByValue(items, resourceInfoValuePrefix+coreresources.ProjectShared)
-	if shared == nil || !strings.Contains(shared.Label, "·  Multiple project matches") || !strings.Contains(strings.Join(shared.MetaLines, "\n"), "No row to open") {
-		t.Fatalf("project items = %#v, want empty shared bucket as disabled info row", items)
-	}
-	view.enter(shared.Value)
-	if view.scope.kind != resourceScopeProjects || !strings.HasPrefix(view.screen().footer, "No row to open |") {
-		t.Fatalf("empty shared Enter changed scope or lacked feedback: scope=%#v footer=%q", view.scope, view.screen().footer)
+	if pickerItemByValue(items, "project:"+coreresources.ProjectShared) != nil || pickerItemsContain(items, "Multiple project matches") || pickerItemsContain(items, "No row to open") || strings.Contains(header, "Ambiguous attribution") {
+		t.Fatalf("project items = %#v, want no impossible shared group or placeholder", items)
 	}
 	if !strings.Contains(header, "Host CPU 50.0%") || !strings.Contains(header, "Attributed CPU 12.0%") || !strings.Contains(header, "RSS") || !strings.Contains(header, "Sample age 1s") || !strings.Contains(header, "ready · fresh") || !strings.Contains(header, "Coverage Other / unattributed") || !strings.Contains(header, "not drillable") || len(view.screen().bands) != 4 {
 		t.Fatalf("header = %q, want separate host/attributed/Other bands", header)
@@ -99,8 +96,8 @@ func TestResourceBreadcrumbActionableListEmptyAndReadOnlyDetailChrome(t *testing
 	if pickerItemsContain(root.Items, coreresources.OtherUnattributed) || !chromeBandsContain(root.ResourceSummaryDock, "Other / unattributed") {
 		t.Fatalf("root items=%#v dock=%#v, want Other summary outside actionable rows", root.Items, root.ResourceSummaryDock)
 	}
-	if pickerItemByValue(root.Items, "project:"+coreresources.ProjectUnassigned) == nil || pickerItemByValue(root.Items, resourceInfoValuePrefix+coreresources.ProjectShared) == nil {
-		t.Fatalf("root items=%#v, want actionable Unassigned and disabled empty Shared rows", root.Items)
+	if pickerItemByValue(root.Items, "project:"+coreresources.ProjectUnassigned) == nil || pickerItemByValue(root.Items, "project:"+coreresources.ProjectShared) != nil {
+		t.Fatalf("root items=%#v, want actionable Unassigned and no Shared project row", root.Items)
 	}
 
 	view.enter("project:/repo/api")
@@ -150,7 +147,7 @@ func TestResourceStructuredMetricColumnsStayAlignedAcrossKnownAndUnknownRows(t *
 		snapshot.Projects = append(snapshot.Projects, coreresources.ProjectUsage{Key: coreresources.ProjectUnassigned})
 		view.setSnapshot(snapshot, false)
 		items := view.screen().items
-		if len(items) != 3 {
+		if len(items) != 2 {
 			t.Fatalf("locale %s rows=%#v", locale, items)
 		}
 		var wantCPU, wantMemory, wantCount int
@@ -517,15 +514,14 @@ func TestResourceInspectorLocalizesEnglishAndKoreanUX(t *testing.T) {
 		header      string
 		footer      string
 		unassigned  string
-		shared      string
 		other       string
 		detail      string
 		caveat      string
 		unavailable string
 		help        string
 	}{
-		{name: "en-US", locale: i18n.FallbackLocale, title: "Resources · Projects", prompt: "› ", header: "Host CPU", footer: "Enter: drill down", unassigned: "No project match", shared: "Multiple project matches", other: "Other / unattributed", detail: "Processes:", caveat: "RSS sum may count shared pages", unavailable: "unavailable on darwin", help: "Usage: projmux resources\n  Open the read-only"},
-		{name: "ko-KR", locale: i18n.Locale("ko-KR"), title: "리소스 · 프로젝트", prompt: "› ", header: "호스트 CPU", footer: "Enter: 상세 보기", unassigned: "프로젝트 일치 없음", shared: "여러 프로젝트 일치", other: "기타 / 귀속되지 않음", detail: "프로세스:", caveat: "RSS 합계는 공유 페이지", unavailable: "darwin에서는 리소스 귀속을 사용할 수 없습니다", help: "사용법: projmux resources\n  읽기 전용"},
+		{name: "en-US", locale: i18n.FallbackLocale, title: "Resources · Projects", prompt: "› ", header: "Host CPU", footer: "Enter: drill down", unassigned: "No project match", other: "Other / unattributed", detail: "Processes:", caveat: "RSS sum may count shared pages", unavailable: "unavailable on darwin", help: "Usage: projmux resources\n  Open the read-only"},
+		{name: "ko-KR", locale: i18n.Locale("ko-KR"), title: "리소스 · 프로젝트", prompt: "› ", header: "호스트 CPU", footer: "Enter: 상세 보기", unassigned: "프로젝트 일치 없음", other: "기타 / 귀속되지 않음", detail: "프로세스:", caveat: "RSS 합계는 공유 페이지", unavailable: "darwin에서는 리소스 귀속을 사용할 수 없습니다", help: "사용법: projmux resources\n  읽기 전용"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -560,9 +556,8 @@ func TestResourceInspectorLocalizesEnglishAndKoreanUX(t *testing.T) {
 				t.Fatalf("root header %q missing non-actionable %q", header, tt.other)
 			}
 			for value, label := range map[string]string{
-				"project:" + coreresources.ProjectUnassigned:          tt.unassigned,
-				resourceInfoValuePrefix + coreresources.ProjectShared: tt.shared,
-				"project:/repo/api": "api",
+				"project:" + coreresources.ProjectUnassigned: tt.unassigned,
+				"project:/repo/api":                          "api",
 			} {
 				item := pickerItemByValue(items, value)
 				if item == nil || !strings.Contains(item.Label, label) {
@@ -594,7 +589,7 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 	now := time.Now()
 	view := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
 	items, header, _ := renderResourceView(view)
-	if !strings.Contains(header, "warming") || !strings.Contains(header, "CPU --") || !strings.Contains(header, "Other / unattributed") || !strings.Contains(header, "Memory --") || len(items) != 2 {
+	if !strings.Contains(header, "warming") || !strings.Contains(header, "CPU --") || !strings.Contains(header, "Other / unattributed") || !strings.Contains(header, "Memory --") || len(items) != 1 {
 		t.Fatalf("first paint header=%q items=%#v, want chrome + warming/unknown explicit Other", header, items)
 	}
 
@@ -621,7 +616,7 @@ func TestResourceViewWarmingPartialUnavailableOverageAndOtherUnknown(t *testing.
 
 	view.setSnapshot(coreresources.Snapshot{At: now, Status: coreresources.StatusUnavailable, StatusReason: "resource attribution is unavailable on darwin"}, false)
 	items, header, footer := renderResourceView(view)
-	if !strings.Contains(header, "unavailable") || !strings.Contains(header, "unavailable on darwin") || len(items) != 2 || strings.Contains(footer, "Enter") || !strings.Contains(footer, "Read-only") {
+	if !strings.Contains(header, "unavailable") || !strings.Contains(header, "unavailable on darwin") || len(items) != 1 || strings.Contains(footer, "Enter") || !strings.Contains(footer, "Read-only") {
 		t.Fatalf("unavailable header=%q footer=%q items=%#v", header, footer, items)
 	}
 
@@ -734,26 +729,78 @@ func TestResourcePaneIdentityPrecedenceAndSecondaryIDs(t *testing.T) {
 func TestResourceScopeCopyEnglishAndKoreanHasNoGenericContextOrCoreBucketNames(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
-		locale                                  i18n.Locale
-		path, noMatch, multi, noHelp, multiHelp string
+		locale                i18n.Locale
+		path, noMatch, noHelp string
 	}{
-		{locale: i18n.FallbackLocale, path: "Path  /repo/api", noMatch: "No project match", multi: "Multiple project matches", noHelp: "matches no managed project root", multiHelp: "multiple anchors"},
-		{locale: i18n.Locale("ko-KR"), path: "경로  /repo/api", noMatch: "프로젝트 일치 없음", multi: "여러 프로젝트 일치", noHelp: "프로젝트 루트와 일치하지 않습니다", multiHelp: "여러 anchor"},
+		{locale: i18n.FallbackLocale, path: "Path  /repo/api", noMatch: "No project match", noHelp: "matches no managed project root"},
+		{locale: i18n.Locale("ko-KR"), path: "경로  /repo/api", noMatch: "프로젝트 일치 없음", noHelp: "프로젝트 루트와 일치하지 않습니다"},
 	} {
 		rows := resourceProjectRows(resourceReadySnapshot(time.Now()), resourceText{locale: tt.locale})
 		all := fmt.Sprintf("%#v", rows)
-		for _, want := range []string{tt.path, tt.noMatch, tt.multi, tt.noHelp, tt.multiHelp} {
+		for _, want := range []string{tt.path, tt.noMatch, tt.noHelp} {
 			if !strings.Contains(all, want) {
 				t.Fatalf("locale %s rows missing %q: %s", tt.locale, want, all)
 			}
 		}
-		for _, forbidden := range []string{"Context", "Unassigned", "Shared / ambiguous"} {
+		for _, forbidden := range []string{"Context", "Unassigned", "Shared / ambiguous", "Multiple project matches", "여러 프로젝트 일치"} {
 			for _, row := range rows {
 				if strings.Contains(row.identity+" "+row.context, forbidden) {
 					t.Fatalf("locale %s displayed copy leaked %q: %#v", tt.locale, forbidden, row)
 				}
 			}
 		}
+	}
+}
+
+func TestResourceProjectRowsHideSharedAndConserveAmbiguousDiagnostic(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	sharedCPU := 7.0
+	sharedMemoryPercent := 1.25
+	snapshot := resourceReadySnapshot(now)
+	snapshot.Projects = append(snapshot.Projects, coreresources.ProjectUsage{
+		Key:          coreresources.ProjectShared,
+		PaneCount:    2,
+		WindowCount:  1,
+		ProcessCount: 3,
+		CPU:          &coreresources.CPUUsage{HostSharePercent: sharedCPU, CoreEquivalent: .56},
+		Memory:       coreresources.MemoryUsage{RSSBytes: 96 << 20, HostPercent: &sharedMemoryPercent},
+	})
+	snapshot.Windows = append(snapshot.Windows, coreresources.WindowUsage{
+		Socket: "sock", WindowID: "@8", WindowName: "linked", ProjectKey: coreresources.ProjectShared, PaneCount: 2, ProcessCount: 3,
+	})
+	attributedCPU := 19.0
+	snapshot.CPU.AttributedPercent = &attributedCPU
+	snapshot.Memory.AttributedRSSBytes = 480 << 20
+
+	rows := resourceProjectRows(snapshot, resourceText{locale: i18n.FallbackLocale})
+	if len(rows) != 2 || rows[0].value == "project:"+coreresources.ProjectShared || rows[1].value == "project:"+coreresources.ProjectShared {
+		t.Fatalf("project rows=%#v, want only concrete and No project match rows", rows)
+	}
+	api := slices.IndexFunc(rows, func(row resourceRow) bool { return row.value == "project:/repo/api" })
+	if api < 0 || rows[api].count != 2 || rows[api].rss != 384<<20 || rows[api].cpu == nil || rows[api].cpu.HostSharePercent != 12 {
+		t.Fatalf("concrete project was changed or received ambiguous totals: %#v", rows)
+	}
+
+	view := newResourceViewState(func() time.Time { return now }, i18n.FallbackLocale)
+	view.setSnapshot(snapshot, false)
+	items, header, _ := renderResourceView(view)
+	if pickerItemByValue(items, "project:"+coreresources.ProjectShared) != nil || strings.Contains(fmt.Sprint(items), "Multiple project matches") || strings.Contains(fmt.Sprint(items), "No row to open") {
+		t.Fatalf("root items=%#v, want no Shared navigation or impossible placeholder", items)
+	}
+	for _, want := range []string{"Attributed CPU 19.0%", "RSS 480.0 MiB", "Ambiguous attribution retained", "CPU 7.0%", "RSS 96.0 MiB", "panes 2", "included in Attributed totals, not drillable"} {
+		if !strings.Contains(header, want) {
+			t.Fatalf("header=%q, missing conserved ambiguous diagnostic %q", header, want)
+		}
+	}
+	view.enter("project:" + coreresources.ProjectShared)
+	if view.scope.kind != resourceScopeProjects {
+		t.Fatalf("synthetic Shared Enter changed scope: %#v", view.scope)
+	}
+
+	koBands := resourceSummaryBands(snapshot, now, false, false, resourceScope{}, resourceSemanticPalette{}, resourceText{locale: i18n.Locale("ko-KR")})
+	if !chromeBandsContain(koBands, "모호한 귀속 보존") || chromeBandsContain(koBands, "여러 프로젝트 일치") {
+		t.Fatalf("ko-KR bands=%#v, want bounded ambiguity diagnostic without removed group copy", koBands)
 	}
 }
 
@@ -765,7 +812,7 @@ func TestResourceRefreshPreservesStableRowOrderUntilTab(t *testing.T) {
 	first.Projects = append(first.Projects, coreresources.ProjectUsage{Key: "/repo/zeta", CPU: &coreresources.CPUUsage{HostSharePercent: 80}})
 	view.setSnapshot(first, false)
 	before := resourceItemValues(view.screen().items)
-	if want := []string{"project:/repo/api", resourceInfoValuePrefix + coreresources.ProjectShared, "project:Unassigned", "project:/repo/zeta"}; !slices.Equal(before, want) {
+	if want := []string{"project:/repo/api", "project:Unassigned", "project:/repo/zeta"}; !slices.Equal(before, want) {
 		t.Fatalf("default Name order=%#v, want %#v", before, want)
 	}
 	second := first

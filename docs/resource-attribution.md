@@ -161,6 +161,13 @@ at every depth. Unsupported platforms show an unavailable reason, not zero
 metrics. PSS, non-Linux collectors, process-list drill-down, history, and
 resource mutation remain outside this contract.
 
+The project root exposes only concrete project paths and `No project match` as
+drill-down groups. `ProjectShared` remains a defensive core attribution bucket,
+but it is never projected as a project row, even when a snapshot contains
+ambiguous panes or windows. Those CPU, RSS, and pane aggregates remain included
+in Attributed totals and appear only as a bounded, non-drillable Sample
+diagnostic. They are neither dropped nor reassigned to a concrete project.
+
 Host and attributed CPU/memory use the same semantic classifier as the live
 statusbar: CPU is normal below 70%, warning at 70–89.9%, and critical at 90%
 or above; memory is normal below 75%, warning at 75–89.9%, and critical at 90%
@@ -197,9 +204,9 @@ boundary, so diagnostic values and key hints never share a role. The 80x24
 layout retains a navigable list viewport without clipping, border bleed, or a
 second dock divider.
 
-Project rows label project paths explicitly. The two attribution buckets keep
-their stable core keys but display `No project match` and `Multiple project
-matches` with bounded explanations. Pane primary identity follows the shared
-label → agent-only AI topic → interactive shell → raw title resolver; pane id,
+Project rows label project paths explicitly, and the unassigned attribution
+bucket keeps its stable core key while displaying `No project match` with a
+bounded explanation. Pane primary identity follows the shared label →
+agent-only AI topic → interactive shell → raw title resolver; pane id,
 process id, and TTY remain labeled secondary details and stable keys are
 unchanged.
