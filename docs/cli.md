@@ -64,7 +64,7 @@ Manage Agent state, topic, integrations, and account usage
 projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
-projmux agent resume <ref> [--project <ref>] [--window <ref>]...
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
 projmux agent integrate <provider> [--dry-run]
 projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
 ```
@@ -103,7 +103,7 @@ projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 Rebind an Offline or Failed Agent to a new managed Pane
 
 ```
-projmux agent resume <ref> [--project <ref>] [--window <ref>]... [--selector key=value]...
+projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
 
 ### `projmux agent integrate`
@@ -283,10 +283,10 @@ projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
 Create Projmux resources
 
 ```
-projmux create window --project <ref> [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
-projmux create pane --project <ref> [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create agent --provider <provider> --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
-projmux create codex|claude|antigravity --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create window {--project <ref> | -p <ref>} [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
+projmux create pane {--project <ref> | -p <ref>} [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create agent --provider <provider> {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create codex|claude|antigravity {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
 projmux create snapshot
 ```
@@ -316,7 +316,7 @@ Canonical spelling: `projmux create window`, `projmux create pane`, `projmux cre
 Create a Window and its initial Pane below one Project; the runtime is materialized detached
 
 ```
-projmux create window --project <ref> [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
+projmux create window {--project <ref> | -p <ref>} [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
@@ -326,7 +326,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Create a shell Pane; --project splits the resolved Windows detached, without it the current Window
 
 ```
-projmux create pane --project <ref> [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create pane {--project <ref> | -p <ref>} [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create pane [--placement right|down] [-o <mode>]
 ```
 
@@ -337,7 +337,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Create an Agent and its managed Pane; --provider is required, and --project splits the resolved Windows detached
 
 ```
-projmux create agent --provider <provider> --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create agent --provider <provider> {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create agent --provider <provider> [--placement right|down] [-o pane-id|none] [-- <payload>]
 ```
 
@@ -364,7 +364,7 @@ projmux create snapshot
 Provider shortcut for create agent --provider codex
 
 ```
-projmux create codex --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create codex {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create codex [--placement right|down] [-o pane-id|none] [-- <payload>]
 ```
 
@@ -375,7 +375,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Provider shortcut for create agent --provider claude
 
 ```
-projmux create claude --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create claude {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create claude [--placement right|down] [-o pane-id|none] [-- <payload>]
 ```
 
@@ -386,7 +386,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Provider shortcut for create agent --provider antigravity
 
 ```
-projmux create antigravity --project <ref> [--cwd <path>] [--add-dir <path>]... [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
+projmux create antigravity {--project <ref> | -p <ref>} [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create antigravity [--placement right|down] [-o pane-id|none] [-- <payload>]
 ```
 
@@ -397,9 +397,9 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Delete Projmux resources with an explicit cascade plan
 
 ```
-projmux delete window [<ref>...] [--project <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]
-projmux delete pane [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]
-projmux delete agent [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]
+projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]
+projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]
+projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]
 ```
 
 Subcommands:
@@ -419,7 +419,7 @@ Canonical spelling: `projmux delete window`, `projmux delete pane`, `projmux del
 Delete exact live tmux Windows and every descendant Agent and Pane; no selector inside tmux means the active Window, and --all means every Window in the registry
 
 ```
-projmux delete window [<ref>...] [--project <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]
+projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--dry-run] [--yes]
 ```
 
 Aliases: `windows`
@@ -429,7 +429,7 @@ Aliases: `windows`
 Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry
 
 ```
-projmux delete pane [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]
+projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]
 ```
 
 Aliases: `panes`
@@ -439,7 +439,7 @@ Aliases: `panes`
 Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry
 
 ```
-projmux delete agent [<ref>...] [--project <ref>] [--window <ref>]... [--all] [--dry-run] [--yes]
+projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--dry-run] [--yes]
 ```
 
 Aliases: `agents`
@@ -469,10 +469,10 @@ Aliases: `snapshots`
 Describe one Projmux resource
 
 ```
-projmux describe project [<ref>] [-o <mode>]
-projmux describe window [<ref>] [--project <ref>] [-o <mode>]
-projmux describe pane [<ref>] [--project <ref>] [--window <ref>]... [-o <mode>]
-projmux describe agent [<ref>] [--project <ref>] [--window <ref>]... [-o <mode>]
+projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
+projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
+projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
+projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
 ```
 
 Subcommands:
@@ -491,7 +491,7 @@ Canonical spelling: `projmux describe project`, `projmux describe window`, `proj
 Describe one Project resource; with no selector inside tmux, the active Project
 
 ```
-projmux describe project
+projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
 ```
 
 Aliases: `projects`
@@ -503,7 +503,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 Describe one Window resource; with no selector inside tmux, the active Window
 
 ```
-projmux describe window
+projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
 ```
 
 Aliases: `windows`
@@ -515,7 +515,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 Describe one Pane resource; with no selector inside tmux, the active Pane
 
 ```
-projmux describe pane
+projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
 ```
 
 Aliases: `panes`
@@ -527,7 +527,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 Describe one Agent resource; with no selector inside tmux, the Agent owning the active Pane
 
 ```
-projmux describe agent
+projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
 ```
 
 Aliases: `agents`
@@ -592,8 +592,8 @@ Move the current client to a live resource
 
 ```
 projmux focus project <ref>
-projmux focus window <ref> --project <ref>
-projmux focus pane <ref> --project <ref> --window <ref>
+projmux focus window <ref> {--project <ref> | -p <ref>}
+projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>}
 ```
 
 Subcommands:
@@ -619,7 +619,7 @@ projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]
 Move the current client to an already-live Window; never materializes
 
 ```
-projmux focus window <ref> --project <ref> [--socket <path>] [--client <tty>] [--json]
+projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]
 ```
 
 ### `projmux focus pane`
@@ -627,7 +627,7 @@ projmux focus window <ref> --project <ref> [--socket <path>] [--client <tty>] [-
 Move the current client to an already-live Pane; never materializes
 
 ```
-projmux focus pane <ref> --project <ref> --window <ref> [--socket <path>] [--json]
+projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]
 ```
 
 ## `projmux get`
@@ -635,12 +635,12 @@ projmux focus pane <ref> --project <ref> --window <ref> [--socket <path>] [--jso
 Read Projmux resources by selector
 
 ```
-projmux get projects [--project <ref>] [--selector key=value]... [-o <mode>]
-projmux get windows [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
-projmux get panes [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
-projmux get agents [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
+projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]
+projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
+projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
+projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 projmux get pane --current -o cwd
-projmux get pane [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
+projmux get pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Subcommands:
@@ -662,7 +662,7 @@ Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get 
 List Project resources
 
 ```
-projmux get projects
+projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]
 ```
 
 Aliases: `project`
@@ -674,7 +674,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 List Window resources; inside tmux defaults to the active Project, and --all-projects lists every Project
 
 ```
-projmux get windows [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
+projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 ```
 
 Aliases: `window`
@@ -686,7 +686,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 List Pane resources; inside tmux defaults to the active Project, and --all-projects lists every Project
 
 ```
-projmux get panes [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
+projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
@@ -696,7 +696,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 List Agent resources; inside tmux defaults to the active Project, and --all-projects lists every Project
 
 ```
-projmux get agents [--project <ref>] [--window <ref>]... [--selector key=value]... [--all-projects] [-o <mode>]
+projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 ```
 
 Aliases: `agent`
@@ -728,7 +728,7 @@ Aliases: `snapshot`
 Read one Pane resource; with no selector inside tmux, the active Pane
 
 ```
-projmux get pane [--current] [--project <ref>] [--window <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
+projmux get pane [--current] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
 ```
 
 Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
@@ -927,7 +927,7 @@ projmux reconcile resources [--dry-run] [--socket <name> | --socket-path <absolu
 Rebind a Project to a new absolute root without moving files
 
 ```
-projmux rebind project [<ref>] --root <absolute-path>
+projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>
 ```
 
 Subcommands:
@@ -943,7 +943,7 @@ Canonical spelling: `projmux rebind project`
 Rewrite one Project spec.root; no filesystem move, no heuristic uid merge
 
 ```
-projmux rebind project [<ref>] --root <absolute-path>
+projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>
 ```
 
 ## `projmux rename`
@@ -951,10 +951,10 @@ projmux rebind project [<ref>] --root <absolute-path>
 Rename a Projmux resource metadata.name
 
 ```
-projmux rename project [<ref>] --name <name>
-projmux rename window [<ref>] --name <name> [--project <ref>]
-projmux rename pane [<ref>] --name <name> [--project <ref>] [--window <ref>]...
-projmux rename agent [<ref>] --name <name> [--project <ref>] [--window <ref>]...
+projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>
+projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]
+projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
 ```
 
 Subcommands:
@@ -973,7 +973,7 @@ Canonical spelling: `projmux rename project`, `projmux rename window`, `projmux 
 Rename a Projmux Project resource; with no selector inside tmux, the active Project
 
 ```
-projmux rename project
+projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>
 ```
 
 Aliases: `projects`
@@ -983,7 +983,7 @@ Aliases: `projects`
 Rename a Projmux Window resource; with no selector inside tmux, the active Window
 
 ```
-projmux rename window
+projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]
 ```
 
 Aliases: `windows`
@@ -993,7 +993,7 @@ Aliases: `windows`
 Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title
 
 ```
-projmux rename pane
+projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
 ```
 
 Aliases: `panes`
@@ -1003,7 +1003,7 @@ Aliases: `panes`
 Rename an Agent stable resource name without changing its topic, provider, or managed Pane
 
 ```
-projmux rename agent
+projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
 ```
 
 Aliases: `agents`

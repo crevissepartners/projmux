@@ -71,12 +71,23 @@ The resource routes (`get`, `describe`, `create`, `rename`, `rebind`, `delete`,
 The grammar in one paragraph: a value is either `uid:<uid>` or a bare
 `metadata.name`. There is no bare-uid form, values are never split on commas,
 and a `displayName`, a `spec.root` path, or a raw tmux `%N`/`@N`/`$N` handle
-never resolves anything. `--project` occurs at most once and fixes the scope;
-`--window` and `--pane` repeat and union in argv order; `--selector key=value`
+never resolves anything. `--project`/`-p` occurs at most once and fixes the
+Project scope; `--window`/`-w` and `--pane` repeat and union in argv order;
+`--selector key=value`
 repeats and ANDs. A singular route also accepts the target as a positional
 `<ref>`, which may appear before or after the flags. How many resolved targets
 each `<verb, kind>` pair accepts is a declared matrix, not a per-route rule, and
 a violation is exit `2` with a candidate listing bounded to five rows.
+
+`-p` always means Project, never Pane; Pane has no shorthand. The three plural
+reads `get windows|panes|agents` also accept `-A` as the exact alias of
+`--all-projects`. That escape is mutually exclusive with either spelling of the
+Project selector and is not registered on any other route. Long-only,
+short-only, and mixed scope occurrences share the same value sinks, so repeated
+Window order, cardinality, output, and mutation plans do not depend on spelling.
+For resource-backed `create pane|agent|<provider>`, only aliases before the
+first `--` are Projmux scope flags; every token after it, including `-p`, `-w`,
+`--project`, and `--window`, remains opaque payload in its original order.
 
 ### Empty selector: the active tmux target
 
@@ -100,7 +111,7 @@ The contract:
   --name current` succeeds — so a sentinel token would silently shadow a real
   resource.
 - **"No selector at all" means exactly that.** Any positional `<ref>`, any
-  `--project`/`--window`/`--pane`, or any `--selector` label keeps the
+  `--project`/`-p`, `--window`/`-w`, `--pane`, or any `--selector` label keeps the
   pre-existing behavior unchanged. The fallback is never blended into a
   partially specified selector.
 - **Only the singular routes.** The plural reads (`get projects|windows|panes|
@@ -545,8 +556,8 @@ back into the unredacted Doctor Go types.
 
 ```
 projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]
-projmux focus window <ref> --project <ref> [--socket <path>] [--client <tty>] [--json]
-projmux focus pane <ref> --project <ref> --window <ref> [--socket <path>] [--json]
+projmux focus window <ref> -p <project-ref> [--socket <path>] [--client <tty>] [--json]
+projmux focus pane <ref> -p <project-ref> -w <window-ref> [--socket <path>] [--json]
 ```
 
 Moves one attached client to an exact live Project, Window, or Pane. It never

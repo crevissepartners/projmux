@@ -324,9 +324,11 @@ func parseCanonicalFocusArgs(kind string, args []string, stderr io.Writer) (focu
 	var project, window string
 	if kind != "project" {
 		fs.StringVar(&project, "project", "", "the live Project whose runtime scopes the target")
+		fs.StringVar(&project, "p", "", "the live Project whose runtime scopes the target (alias of --project)")
 	}
 	if kind == "pane" {
 		fs.StringVar(&window, "window", "", "the live Window that owns the target Pane")
+		fs.StringVar(&window, "w", "", "the live Window that owns the target Pane (alias of --window)")
 	}
 	fs.StringVar(&opts.Socket, "socket", "", "tmux socket path (overrides $TMUX)")
 	fs.StringVar(&opts.Client, "client", "", "preferred origin tmux client tty")

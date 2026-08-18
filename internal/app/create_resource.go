@@ -74,7 +74,7 @@ type resourceCreateShape struct {
 	provider bool
 }
 
-// hasProjectFlag reports whether argv carries a `--project` occurrence before
+// hasProjectFlag reports whether argv carries a `--project`/`-p` occurrence before
 // the payload terminator.
 //
 // This is the dispatch discriminator of `create pane`. The route shipped one
@@ -91,7 +91,7 @@ func hasProjectFlag(args []string) bool {
 		}
 		name := strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-")
 		name, _, _ = strings.Cut(name, "=")
-		if name == "project" {
+		if name == "project" || name == "p" {
 			return true
 		}
 	}
@@ -129,6 +129,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Var(&out.projects, "project", "exact-one Project selector: <name> or uid:<uid>")
+	fs.Var(&out.projects, "p", "exact-one Project selector: <name> or uid:<uid> (alias of --project)")
 	if shape.provider {
 		fs.StringVar(&out.provider, "provider", "", "Agent provider: "+strings.Join(cli.AgentProviders(), "|"))
 		fs.StringVar(&out.cwd, "cwd", "", "effective Agent working directory (defaults to Project root)")
@@ -136,6 +137,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	}
 	if pane {
 		fs.Var(&out.windows, "window", "repeatable Window selector: <name> or uid:<uid>")
+		fs.Var(&out.windows, "w", "repeatable Window selector: <name> or uid:<uid> (alias of --window)")
 		fs.Var(&out.panes, "pane", "repeatable anchor Pane selector: <name> or uid:<uid>")
 		fs.Var(&out.selectors, "selector", "repeatable Window label filter: key=value (AND)")
 		fs.BoolVar(&out.createWindow, "create-window", false, "create the exact-name --window Windows that do not exist yet")

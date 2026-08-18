@@ -204,17 +204,19 @@ func (f *resourceQueryFlags) selectorIsEmpty() bool {
 }
 
 func (f *resourceQueryFlags) register(fs *flag.FlagSet) {
-	scope := func(name string, value *repeatedFlag, usage string) {
+	scope := func(name, short string, value *repeatedFlag, usage string) {
 		fs.Var(value, name, usage)
+		fs.Var(value, short, usage+" (alias of --"+name+")")
 		f.scopes = append(f.scopes, "--"+name)
 	}
-	scope("project", &f.projects, "exact-one Project selector: <name> or uid:<uid>")
+	scope("project", "p", &f.projects, "exact-one Project selector: <name> or uid:<uid>")
 	switch f.kind {
 	case coremetadata.KindWindow, coremetadata.KindPane, coremetadata.KindAgent:
-		scope("window", &f.windows, "repeatable Window selector: <name> or uid:<uid>")
+		scope("window", "w", &f.windows, "repeatable Window selector: <name> or uid:<uid>")
 	}
 	if f.kind == coremetadata.KindPane {
-		scope("pane", &f.panes, "repeatable Pane selector: <name> or uid:<uid>")
+		fs.Var(&f.panes, "pane", "repeatable Pane selector: <name> or uid:<uid>")
+		f.scopes = append(f.scopes, "--pane")
 	}
 	fs.Var(&f.labels, "selector", "repeatable label filter: key=value (AND)")
 }
