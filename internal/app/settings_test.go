@@ -313,7 +313,7 @@ locale = "ko-KR"
 	if got, want := localeOptions.Prompt, "설정 > 모양 > 언어 / Locale > "; got != want {
 		t.Fatalf("locale detail prompt = %q, want %q", got, want)
 	}
-	if got, want := localeOptions.Footer, "Enter: 적용  |  뒤로 행: 상위"; got != want {
+	if got, want := localeOptions.Footer, "Enter: 적용  |  뒤로 행: 상위  |  →: 행 열기  |  ←: 뒤로"; got != want {
 		t.Fatalf("locale detail footer = %q, want %q", got, want)
 	}
 	if !hasEntryLabelContainingAll(localeOptions.Entries, "현재", "ko-KR", "config.toml") {
@@ -1588,7 +1588,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 	if got := rootOptions.TitleChips; len(got) < 1 || !got[0].Active {
 		t.Fatalf("root settings chips = %#v, want Global active", got)
 	}
-	if got, want := rootOptions.Footer, "Open rows or click a scope chip to switch tabs."; got != want {
+	if got, want := rootOptions.Footer, "Open rows or click a scope chip to switch tabs.  |  →: open row"; got != want {
 		t.Fatalf("root settings footer = %q, want %q", got, want)
 	}
 	if got, want := entryValues(rootOptions.Entries), []string{
@@ -4562,7 +4562,7 @@ func TestSettingsProjectPickerBackReturnsToHubWithMatchingFooter(t *testing.T) {
 	runner, native := scriptedPicker(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
 		{observe: func(o intpickercompat.Options) {
-			if got, want := o.Footer, "Enter: back/open  |  Back row: parent"; got != want {
+			if got, want := o.Footer, "Enter: back/open  |  Back row: parent  |  →: open row  |  ←: back"; got != want {
 				t.Fatalf("project picker footer = %q, want %q", got, want)
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
@@ -6605,7 +6605,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	if got, want := aboutOptions.Prompt, "Settings > About > "; got != want {
 		t.Fatalf("settings about prompt = %q, want %q", got, want)
 	}
-	if got, want := aboutOptions.Footer, "Enter: action  |  Back row: parent"; got != want {
+	if got, want := aboutOptions.Footer, "Enter: action  |  Back row: parent  |  →: open row  |  ←: back"; got != want {
 		t.Fatalf("settings about footer = %q, want %q", got, want)
 	}
 	if !hasEntryValue(aboutOptions.Entries, settingsBackValue) {

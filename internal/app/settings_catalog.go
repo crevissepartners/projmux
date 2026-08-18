@@ -41,6 +41,35 @@ const (
 	settingsEntryPassive    settingsEntryKind = "info-or-disabled"
 )
 
+type settingsDirectionalIntent uint8
+
+const (
+	settingsDirectionalStay settingsDirectionalIntent = iota
+	settingsDirectionalForward
+	settingsDirectionalBack
+)
+
+// settingsDirectionalIntentFor is the shared Settings arrow-key policy. Right
+// follows only catalogued navigation rows (the explicit Back row is not a
+// forward destination); actionable and passive rows stay in the current View.
+// Left follows the actual picker boundary: a rendered Back row means the View
+// has one parent, while its absence identifies a root or transient input.
+func settingsDirectionalIntentFor(key, value string, hasParent bool) settingsDirectionalIntent {
+	switch strings.TrimSpace(key) {
+	case "right":
+		value = strings.TrimSpace(value)
+		meta, ok := settingsEntryMetaForValue(value)
+		if ok && meta.Kind == settingsEntryNavigation && value != settingsBackValue {
+			return settingsDirectionalForward
+		}
+	case "left":
+		if hasParent {
+			return settingsDirectionalBack
+		}
+	}
+	return settingsDirectionalStay
+}
+
 type settingsEntryOwner uint8
 
 const (
