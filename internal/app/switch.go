@@ -57,11 +57,12 @@ var switchPinHiddenWhitelist = []string{
 
 type candidateDiscoverer func(inputs candidates.Inputs) ([]string, error)
 
+// switchPinStore is the pin file the switch surfaces read and write. Every rule
+// about what a pin means lives in pinAuthority; this is bytes.
 type switchPinStore interface {
-	List() ([]string, error)
-	Add(path string) error
-	Toggle(path string) (bool, error)
-	Clear() error
+	Path() string
+	Load() (pins.Set, error)
+	Save(pins.Set) error
 }
 
 type switchPinStoreFactory func() (switchPinStore, error)
@@ -109,32 +110,37 @@ type switchCommand struct {
 	sessionStateDiagnostics *diagnostics.SessionStateRecorder
 	discover                candidateDiscoverer
 	pinStore                switchPinStoreFactory
-	tagStore                switchTagStoreFactory
-	runner                  switchRunner
-	tmuxRunner              tmuxRunner
-	sessions                switchSessionExecutor
-	previewStore            switchPreviewStore
-	previewStoreErr         error
-	inventory               previewInventory
-	inventoryErr            error
-	executable              func() (string, error)
-	rawExecutable           func() (string, error)
-	identity                sessionIdentityResolver
-	identityErr             error
-	validate                func(path string) error
-	homeDir                 func() (string, error)
-	workingDir              func() (string, error)
-	lookupEnv               func(string) string
-	gitBranch               func(string) string
-	loadProjdir             func(homeDir string) (string, error)
-	saveProjdir             func(homeDir, value string) error
-	loadWorkdirs            func(homeDir string) ([]string, error)
-	tmuxProjdir             func() string
-	nativePicker            intpicker.Runner
-	focusSession            string
-	sidebarResume           switchSidebarResume
-	cleanupKilledSession    func(string)
-	projectTopology         switchProjectTopologyMaterializer
+	// pinProjects reads the Registry Project identities a pin resolution matches
+	// against. It is a seam so a fixture can declare a Registry without a file.
+	pinProjects          func() ([]pins.ProjectRef, error)
+	tagStore             switchTagStoreFactory
+	runner               switchRunner
+	tmuxRunner           tmuxRunner
+	sessions             switchSessionExecutor
+	previewStore         switchPreviewStore
+	previewStoreErr      error
+	inventory            previewInventory
+	inventoryErr         error
+	executable           func() (string, error)
+	rawExecutable        func() (string, error)
+	identity             sessionIdentityResolver
+	identityErr          error
+	validate             func(path string) error
+	homeDir              func() (string, error)
+	workingDir           func() (string, error)
+	lookupEnv            func(string) string
+	gitBranch            func(string) string
+	loadProjdir          func(homeDir string) (string, error)
+	saveProjdir          func(homeDir, value string) error
+	loadWorkdirs         func(homeDir string) ([]string, error)
+	tmuxProjdir          func() string
+	nativePicker         intpicker.Runner
+	focusSession         string
+	sidebarResume        switchSidebarResume
+	cleanupKilledSession func(string)
+	projectTopology      switchProjectTopologyMaterializer
+	// projectRegistrar performs the explicit Project bootstrap of one open.
+	projectRegistrar switchProjectRegistrar
 	// navigation is the Registry-first row source and the resource hierarchy
 	// surface. It is the only thing here that reads the Registry, and it never
 	// writes: the picker's rows, its status overlay, and its refresh are one
@@ -175,6 +181,7 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		diagnostics:   recorderFrom(recorders),
 		discover:      candidates.Discover,
 		pinStore:      newDefaultSwitchPinStore,
+		pinProjects:   registryProjectRefs,
 		tagStore:      newDefaultSwitchTagStore,
 		tmuxRunner:    inttmux.ExecRunner{},
 		sessions:      client,
@@ -196,8 +203,9 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		// Closed-Project activation reuses the explicit Registry topology engine
 		// on the app's own exact socket. It is wired here rather than resolved
 		// lazily so a project open never picks a socket from an inherited client.
-		projectTopology: newRegistryProjectTopologyMaterializer(),
-		navigation:      newRegistryNavigationCommand(inttmux.ExecRunner{}),
+		projectTopology:  newRegistryProjectTopologyMaterializer(),
+		projectRegistrar: newDefaultSwitchProjectRegistrar(),
+		navigation:       newRegistryNavigationCommand(inttmux.ExecRunner{}),
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)
@@ -637,7 +645,7 @@ func (c *switchCommand) projectDiscoveryInputs(memoize bool) (candidates.Inputs,
 		return candidates.Inputs{}, err
 	}
 
-	pins, err := c.loadPins()
+	pinPaths, err := c.loadPinDiscoveryPaths()
 	if err != nil {
 		return candidates.Inputs{}, err
 	}
@@ -653,7 +661,7 @@ func (c *switchCommand) projectDiscoveryInputs(memoize bool) (candidates.Inputs,
 		HomeDir:      homeDir,
 		RepoRoot:     repoRoot,
 		ManagedRoots: switchManagedRoots(homeDir, repoRoot, extraRoots, c.lookupEnv, c.loadWorkdirs),
-		Pins:         pins,
+		Pins:         pinPaths,
 	}, nil
 }
 
@@ -670,20 +678,35 @@ func (c *switchCommand) resolveHomeDir() (string, error) {
 	return filepath.Clean(homeDir), nil
 }
 
-func (c *switchCommand) loadPins() ([]string, error) {
+// pinAuthority binds the configured pin file to the Registry read that types it.
+func (c *switchCommand) pinAuthority() (pinAuthority, error) {
 	store, err := c.loadPinStore()
+	if err != nil {
+		return pinAuthority{}, err
+	}
+	if store == nil {
+		return pinAuthority{}, errNoPinStore
+	}
+	// The Registry read is the caller's, not this type's default: a switch
+	// command assembled without one resolves against no Projects at all rather
+	// than reaching for whatever Registry the host machine happens to have.
+	return pinAuthority{store: store, projects: c.pinProjects}, nil
+}
+
+// loadPinDiscoveryPaths returns the paths the pin collections contribute to
+// filesystem candidate discovery.
+func (c *switchCommand) loadPinDiscoveryPaths() ([]string, error) {
+	authority, err := c.pinAuthority()
+	if errors.Is(err, errNoPinStore) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	if store == nil {
-		return nil, nil
-	}
-
-	paths, err := store.List()
+	paths, err := authority.discoveryPaths()
 	if err != nil {
 		return nil, fmt.Errorf("load pin set: %w", err)
 	}
-
 	return paths, nil
 }
 
@@ -2541,13 +2564,23 @@ func (c *switchCommand) toggleTag(target string, stdout io.Writer) error {
 	return err
 }
 
+// togglePin flips the pin on one picker row.
+//
+// The row decides the kind, not the action: a managed row carries a Project uid or
+// a Project's exact stored root and toggles a managed pin, and an unregistered
+// directory toggles a candidate pin. Pinning a row has never registered anything
+// and still does not.
 func (c *switchCommand) togglePin(target string, stdout io.Writer) error {
-	store, err := c.loadPinStore()
+	authority, err := c.pinAuthority()
+	if err != nil {
+		return err
+	}
+	pin, err := authority.pinTargetForSelector(target)
 	if err != nil {
 		return err
 	}
 
-	pinned, err := store.Toggle(target)
+	pinned, err := authority.toggle(pin)
 	if err != nil {
 		return fmt.Errorf("toggle switch candidate pin: %w", err)
 	}
@@ -2556,24 +2589,28 @@ func (c *switchCommand) togglePin(target string, stdout io.Writer) error {
 	}
 
 	if pinned {
-		_, err = fmt.Fprintf(stdout, "pinned: %s\n", target)
+		_, err = fmt.Fprintf(stdout, "pinned: %s\n", pin)
 		return err
 	}
 
-	_, err = fmt.Fprintf(stdout, "unpinned: %s\n", target)
+	_, err = fmt.Fprintf(stdout, "unpinned: %s\n", pin)
 	return err
 }
 
 func (c *switchCommand) addPin(target string, stdout io.Writer) error {
-	store, err := c.loadPinStore()
+	authority, err := c.pinAuthority()
+	if errors.Is(err, errNoPinStore) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	if store == nil {
-		return nil
+	pin, err := authority.pinTargetForSelector(target)
+	if err != nil {
+		return err
 	}
 
-	if err := store.Add(target); err != nil {
+	if err := authority.add(pin); err != nil {
 		return fmt.Errorf("add switch pin: %w", err)
 	}
 
@@ -2581,7 +2618,7 @@ func (c *switchCommand) addPin(target string, stdout io.Writer) error {
 		return nil
 	}
 
-	_, err = fmt.Fprintf(stdout, "pinned: %s\n", target)
+	_, err = fmt.Fprintf(stdout, "pinned: %s\n", pin)
 	return err
 }
 
@@ -2610,7 +2647,7 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 		return nil, nil, nil, err
 	}
 	repoRoot := c.switchRepoRoot(homeDir)
-	pinnedSet, err := c.loadPinnedSet()
+	selection, err := c.loadPinSelection()
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -2631,7 +2668,7 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 		return nil, nil, nil, err
 	}
 	managed, sessionNames, err := c.switchManagedRows(
-		view, ui, mode, pinnedSet, attentionRanks, aiBadgeKinds, aiBadgeStyle, homeDir, repoRoot)
+		view, ui, mode, selection, attentionRanks, aiBadgeKinds, aiBadgeStyle, homeDir, repoRoot)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -2691,7 +2728,7 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 			AttentionRank: attentionRanks[sessionName],
 			AIBadgeKind:   aiBadgeKinds[sessionName],
 			AIBadgeStyle:  aiBadgeStyle,
-			Pinned:        pinnedSet[cleanOptionalPath(candidatePath)],
+			Pinned:        selection.pinnedCandidate(candidatePath),
 		})
 	}
 	// Home is chrome, not a Project, and it leads the list.
@@ -2950,16 +2987,20 @@ func switchProjectName(path, sessionName string) string {
 	return name
 }
 
-func (c *switchCommand) loadPinnedSet() (map[string]bool, error) {
-	pins, err := c.loadPins()
+// loadPinSelection reads the pin lookups the row renderers need.
+func (c *switchCommand) loadPinSelection() (pinSelection, error) {
+	authority, err := c.pinAuthority()
+	if errors.Is(err, errNoPinStore) {
+		return pinSelection{}, nil
+	}
 	if err != nil {
-		return nil, err
+		return pinSelection{}, err
 	}
-	set := make(map[string]bool, len(pins))
-	for _, pin := range pins {
-		set[cleanOptionalPath(pin)] = true
+	selection, err := authority.selection()
+	if err != nil {
+		return pinSelection{}, fmt.Errorf("load pin set: %w", err)
 	}
-	return set, nil
+	return selection, nil
 }
 
 func (c *switchCommand) lookupExistingSessions(ctx context.Context, candidatePaths []string) (map[string]bool, error) {
@@ -3029,8 +3070,13 @@ func printSwitchUsage(w io.Writer) {
 	fmt.Fprintln(w, "  alt-p         Toggle a pin on the focused candidate and reopen the picker")
 }
 
+// settingsEntries renders the picker's own pin menu.
+//
+// A remove row carries the pin's typed reference -- a uid for a managed pin, the
+// path for a candidate -- rather than the label an operator reads, so removing a
+// pinned Project after a rebind still names the same resource.
 func (c *switchCommand) settingsEntries() ([]intpickercompat.Entry, error) {
-	pins, err := c.loadPins()
+	rows, selection, err := c.loadPinRows()
 	if err != nil {
 		return nil, err
 	}
@@ -3042,31 +3088,60 @@ func (c *switchCommand) settingsEntries() ([]intpickercompat.Entry, error) {
 	repoRoot := c.switchRepoRoot(homeDir)
 
 	locale := appLocale(c.homeDir, c.lookupEnv)
-	entries := make([]intpickercompat.Entry, 0, len(pins)+3)
+	entries := make([]intpickercompat.Entry, 0, len(rows)+3)
 	entries = append(entries, intpickercompat.Entry{
 		Label: localizeUIText(locale, "+ Add pin..."),
 		Value: "add-interactive",
 	})
 	currentTarget, err := c.resolveSwitchTarget(nil, "switch settings")
-	if err == nil && currentTarget != "" && currentTarget != switchSettingsSentinel && !containsString(pins, currentTarget) {
+	if err == nil && currentTarget != "" && currentTarget != switchSettingsSentinel && !selection.pinnedPath(currentTarget) {
 		entries = append(entries, intpickercompat.Entry{
 			Label: localizeUIText(locale, "+ Add current pin  ") + intrender.PrettyPath(currentTarget, homeDir, repoRoot),
 			Value: "add:" + currentTarget,
 		})
 	}
-	if len(pins) != 0 {
+	if len(rows) != 0 {
 		entries = append(entries, intpickercompat.Entry{
 			Label: localizeUIText(locale, "x Clear all pins"),
 			Value: "clear",
 		})
 	}
-	for _, pin := range pins {
+	for _, row := range rows {
 		entries = append(entries, intpickercompat.Entry{
-			Label: localizeUIText(locale, "x Remove  ") + intrender.PrettyPath(pin, homeDir, repoRoot),
-			Value: "pin:" + pin,
+			Label: localizeUIText(locale, "x Remove  ") + switchPinRowLabel(row, homeDir, repoRoot),
+			Value: "pin:" + row.Reference,
 		})
 	}
 	return entries, nil
+}
+
+// loadPinRows reads the typed pin rows and the membership lookup in one pass.
+func (c *switchCommand) loadPinRows() ([]pinRow, pinSelection, error) {
+	authority, err := c.pinAuthority()
+	if errors.Is(err, errNoPinStore) {
+		return nil, pinSelection{}, nil
+	}
+	if err != nil {
+		return nil, pinSelection{}, err
+	}
+	rows, _, err := authority.pinnedRows()
+	if err != nil {
+		return nil, pinSelection{}, fmt.Errorf("load pin set: %w", err)
+	}
+	selection, err := authority.selection()
+	if err != nil {
+		return nil, pinSelection{}, fmt.Errorf("load pin set: %w", err)
+	}
+	return rows, selection, nil
+}
+
+// switchPinRowLabel renders a typed pin the way an operator recognizes it: the
+// directory when one is known, and the uid when the Registry no longer answers.
+func switchPinRowLabel(row pinRow, homeDir, repoRoot string) string {
+	if root := strings.TrimSpace(row.Root); root != "" {
+		return intrender.PrettyPath(root, homeDir, repoRoot)
+	}
+	return row.Reference
 }
 
 func (c *switchCommand) addPinEntries() ([]intpickercompat.Entry, error) {
@@ -3084,7 +3159,7 @@ func (c *switchCommand) addPinEntries() ([]intpickercompat.Entry, error) {
 		return nil, fmt.Errorf("discover switch add-pin candidates: %w", err)
 	}
 
-	pins, err := c.loadPins()
+	selection, err := c.loadPinSelection()
 	if err != nil {
 		return nil, err
 	}
@@ -3097,7 +3172,7 @@ func (c *switchCommand) addPinEntries() ([]intpickercompat.Entry, error) {
 
 	entries := make([]intpickercompat.Entry, 0, len(paths))
 	for _, path := range paths {
-		if path == switchSettingsSentinel || containsString(pins, path) {
+		if path == switchSettingsSentinel || selection.pinnedPath(path) {
 			continue
 		}
 
@@ -3116,7 +3191,7 @@ func (c *switchCommand) filesystemPinEntries() ([]intpickercompat.Entry, error) 
 		return nil, err
 	}
 
-	pins, err := c.loadPins()
+	selection, err := c.loadPinSelection()
 	if err != nil {
 		return nil, err
 	}
@@ -3129,7 +3204,7 @@ func (c *switchCommand) filesystemPinEntries() ([]intpickercompat.Entry, error) 
 
 	entries := make([]intpickercompat.Entry, 0, len(paths))
 	for _, path := range paths {
-		if containsString(pins, path) {
+		if selection.pinnedPath(path) {
 			continue
 		}
 		entries = append(entries, intpickercompat.Entry{
@@ -3374,7 +3449,7 @@ func dirExistsForSwitch(path string) bool {
 }
 
 func (c *switchCommand) writeSettingsPreview(stdout io.Writer) error {
-	pins, err := c.loadPins()
+	rows, _, err := c.loadPinRows()
 	if err != nil {
 		return err
 	}
@@ -3388,12 +3463,14 @@ func (c *switchCommand) writeSettingsPreview(stdout io.Writer) error {
 	var builder strings.Builder
 	builder.WriteString("settings\n")
 	builder.WriteString("pins:\n")
-	if len(pins) == 0 {
+	if len(rows) == 0 {
 		builder.WriteString("  (no pins yet)\n")
 	} else {
-		for _, pin := range pins {
+		for _, row := range rows {
 			builder.WriteString("  * ")
-			builder.WriteString(intrender.PrettyPath(pin, homeDir, repoRoot))
+			builder.WriteString(string(row.Pin.Kind))
+			builder.WriteString("  ")
+			builder.WriteString(switchPinRowLabel(row, homeDir, repoRoot))
 			builder.WriteString("\n")
 		}
 	}
@@ -3453,14 +3530,14 @@ func runSwitchGitCommand(ctx context.Context, name string, args ...string) ([]by
 }
 
 func (c *switchCommand) clearPins() error {
-	store, err := c.loadPinStore()
+	authority, err := c.pinAuthority()
+	if errors.Is(err, errNoPinStore) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	if store == nil {
-		return nil
-	}
-	if err := store.Clear(); err != nil {
+	if err := authority.clear(); err != nil {
 		return fmt.Errorf("clear switch pins: %w", err)
 	}
 	return nil

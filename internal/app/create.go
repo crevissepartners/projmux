@@ -18,7 +18,7 @@ import (
 )
 
 // createKinds lists the resource kinds `create` implements, in help order.
-var createKinds = []string{"window", "pane", "agent", "notification", "snapshot"}
+var createKinds = []string{"project", "window", "pane", "agent", "notification", "snapshot"}
 
 // placementDirections is the closed placement enum shared by the Pane and Agent
 // create routes. `left`/`up` are outside current parity and stay out of v2's
@@ -82,8 +82,11 @@ type createCommand struct {
 	// the implicit-scope resolution reads it before the transaction opens.
 	store *resourceStore
 	// reconciler brings the registry up to date with the machine before a
-	// selector is resolved. Without it `--project <name>` has nothing to match:
-	// there is no other production path that registers a Project.
+	// selector is resolved: it imports the live sessions it can attribute and
+	// refreshes status. It no longer registers the configured discovery roots, so
+	// `--project <name>` matches a Project that something explicitly registered --
+	// `create project`, or opening a candidate from the sidebar -- and a name that
+	// matches only a discovered directory is a refusal that names those routes.
 	reconciler *registryReconciler
 	// runtime performs the detached tmux mutations and owns the rollback.
 	runtime *materializer
@@ -144,6 +147,8 @@ func (c *createCommand) Run(args []string, stdout, stderr io.Writer) error {
 	token := args[0]
 	rest := args[1:]
 	switch token {
+	case "project":
+		return c.runResourceProject(rest, stdout, stderr)
 	case "agent":
 		return c.runResourceAgent("", rest, stdout, stderr)
 	case "window":

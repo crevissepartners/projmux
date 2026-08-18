@@ -33,18 +33,31 @@ step, never a silent no-op.
 
 ## Global
 
-- **Projects** — Project discovery, pins, and sidebar policy. Settings manages
-  discovery and pinning; the runtime picker UI keeps the name `Project Picker`.
+- **Projects** — Project discovery, pins, and sidebar policy, as three separate
+  collections with three separate authorities: discovery roots are scan sources,
+  Pinned Projects are Registry Project uids, and Candidate Pins are paths no
+  Project claims. Settings manages discovery and pinning; the runtime picker UI
+  keeps the name `Project Picker`.
   - `Primary discovery root [View]` — effective/saved/source state, then
     `Use current directory`, `Enter path`, `Clear saved root`.
   - `Additional discovery roots [View]` — the collection owns the two add rows;
-    each saved root is an item View that owns `Remove discovery root`.
-  - `Pinned Projects [View]` — each pin is an item View showing the Project's
-    display name, unique name, uid, bound root, condition, missing-since and
-    runtime separately. A `MissingRoot` Project is never hidden, deleted, or
-    re-pinned under a new identity: the item offers `Rebind Project root`, which
-    calls the canonical `rebind project` route and keeps the same uid. Settings
-    performs no heuristic uid merge and no automatic prune.
+    each saved root is an item View that owns `Remove discovery root`. These are
+    scan roots: adding one never registers a Project, and scanning one never
+    does either.
+  - `Pinned Projects [View]` — managed pins only. Each pin references a Registry
+    Project uid and is an item View showing the Project's display name, unique
+    name, uid, bound root, condition, missing-since and runtime separately, all
+    projected from the Registry on every render. Because the pin is a uid rather
+    than a path, a rebind, a rename, and a vanished directory all keep the same
+    pin: a `MissingRoot` Project is never hidden, deleted, or re-pinned under a
+    new identity, and the item offers `Rebind Project root`, which calls the
+    canonical `rebind project` route and keeps the same uid. Settings performs no
+    heuristic uid merge and no automatic prune.
+  - `Candidate Pins [View]` — pinned paths that no Registry Project claims. A
+    candidate has exactly the two affordances a candidate has: `Register as
+    Project`, which forwards to the canonical `create project --root` route for
+    that one exact path, and `Unpin candidate`, which removes the preference and
+    leaves the directory alone. Nothing here adopts a path automatically.
   - `Project Sidebar [View]` — `Closed Project startup` chooses between using
     the stored Project topology and asking for a Snapshot. `Use Project
     topology` materializes every Registry Window and Window-owned shell Pane of

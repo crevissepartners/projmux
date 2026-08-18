@@ -23,10 +23,14 @@ type projectContextResolver interface {
 	projdirSettingsInfo() (projdirSettingsInfo, error)
 }
 
-// projectDirStore reads and writes pinned projects and saved workdirs
+// projectDirStore reads and writes the pin collections and the saved workdirs
 // (implemented by *switchCommand; consumed by settings_projects.go).
+//
+// loadPinRows is the typed read: it returns the managed and candidate pins as
+// rows plus the membership lookup, so Settings never has to infer a pin's kind
+// from its spelling.
 type projectDirStore interface {
-	loadPins() ([]string, error)
+	loadPinRows() ([]pinRow, pinSelection, error)
 	loadSavedWorkdirs() ([]string, error)
 	envWorkdirSources() []envWorkdirSource
 	filesystemPinEntries() ([]intpickercompat.Entry, error)

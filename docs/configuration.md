@@ -56,6 +56,42 @@ The saved workdir file is:
 It stores one absolute path per line. Lines beginning with `#` are comments.
 The file is read only when no env root list is set.
 
+Workdirs are a **scan source and nothing else**. Adding a root, and scanning one,
+never registers a Registry Project: a discovered child is an unregistered
+candidate until `projmux create project --root <path>` or opening it once from the
+Projects sidebar registers that exact path. See
+[upgrading.md](upgrading.md#discovery-no-longer-registers-projects).
+
+## Project pins
+
+Pins are presentation preferences, stored typed:
+
+```text
+~/.config/projmux/pins
+```
+
+```text
+projmux-pins v2
+project proj-kwo4qozry2sr2ycij2g45zyvam
+candidate /home/dev/src/scratch
+```
+
+A `project` pin references a Registry Project uid, so its displayed root and name
+come from the Registry and the pin survives a rebind, a rename, and a missing
+root. A `candidate` pin references a path no Project claims. Neither kind is a
+discovery source and neither is managed identity.
+
+`projmux pin project list [--kind project|candidate]` prints both collections with
+their kind. `pin project add|remove|toggle <dir>` accepts the same directory
+argument it always has and resolves it to a typed pin — exactly one Project with
+that root makes the pin managed, none makes it a candidate, more than one is
+refused — with `uid:<uid>` available to name a Project directly.
+
+A pre-v2 file of bare paths is read without being rewritten and migrated only on
+request with `projmux pin project migrate`; see
+[upgrading.md](upgrading.md#pins-are-typed-and-migrate-on-request) for the
+per-line outcomes and the ambiguity refusal.
+
 ## Project Named Snapshots
 
 Project open exposes reusable restore choices as named snapshots. Older

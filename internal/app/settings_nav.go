@@ -75,6 +75,7 @@ const (
 	settingsNavProjectsPrimaryRoot = "global.projects.primary-root"
 	settingsNavProjectsExtraRoots  = "global.projects.additional-roots"
 	settingsNavProjectsPins        = "global.projects.pinned"
+	settingsNavProjectsCandidates  = "global.projects.candidate-pins"
 	settingsNavProjectsSidebar     = "global.projects.sidebar"
 	settingsNavAI                  = "global.ai"
 	settingsNavAIProviders         = "global.ai.enabled-providers"
@@ -140,6 +141,12 @@ var settingsNavCatalog = []settingsNavNode{
 	{ID: settingsNavProjectsPins + ".item.unpin", Parent: settingsNavProjectsPins + ".item", Label: "Unpin Project", Kind: settingsNavConfirm, Axis: settingsAxisGlobal, Dynamic: true},
 	{ID: settingsNavProjectsPins + ".pin-current", Parent: settingsNavProjectsPins, Label: "Pin current Project", Kind: settingsNavEdit, Axis: settingsAxisGlobal, Dynamic: true},
 	{ID: settingsNavProjectsPins + ".select", Parent: settingsNavProjectsPins, Label: "Select Project to pin", Kind: settingsNavEdit, Axis: settingsAxisGlobal, Value: settingsProjectAdd},
+
+	{ID: settingsNavProjectsCandidates, Parent: settingsNavProjects, Label: "Candidate Pins", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsProjectCandidatePins},
+	{ID: settingsNavProjectsCandidates + ".item", Parent: settingsNavProjectsCandidates, Label: "<Candidate>", Kind: settingsNavView, Axis: settingsAxisGlobal, Dynamic: true},
+	{ID: settingsNavProjectsCandidates + ".item.state", Parent: settingsNavProjectsCandidates + ".item", Label: "Path / Registration", Kind: settingsNavState, Axis: settingsAxisGlobal, Value: settingsNoopValue},
+	{ID: settingsNavProjectsCandidates + ".item.register", Parent: settingsNavProjectsCandidates + ".item", Label: "Register as Project", Kind: settingsNavConfirm, Axis: settingsAxisGlobal, Dynamic: true, Note: "canonical create project, this exact path only"},
+	{ID: settingsNavProjectsCandidates + ".item.unpin", Parent: settingsNavProjectsCandidates + ".item", Label: "Unpin candidate", Kind: settingsNavConfirm, Axis: settingsAxisGlobal, Dynamic: true},
 
 	{ID: settingsNavProjectsSidebar, Parent: settingsNavProjects, Label: "Project Sidebar", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsProjectsSidebar},
 	{ID: settingsNavProjectsSidebar + ".closed-startup", Parent: settingsNavProjectsSidebar, Label: "Closed Project startup", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Dynamic: true, Note: "Use Project topology / Ask for Snapshot or Project topology"},

@@ -27,7 +27,7 @@ func keybindingCorrectnessCommand(t *testing.T, home string, run func(intpickerc
 	runner := switchRunnerFunc(run)
 	return &settingsCommand{
 		ai:           testAICommand(home),
-		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:     testSettingsSwitchCommand(t, newStubPinStore()),
 		homeDir:      func() (string, error) { return home, nil },
 		lookupEnv:    func(string) string { return "" },
 		runCommand:   func(string, ...string) error { return nil },
@@ -311,7 +311,7 @@ func keybindingRenderedSurfaceLabels(t *testing.T, locale string) []string {
 	})
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
-		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher: testSettingsSwitchCommand(t, newStubPinStore()),
 		homeDir:  func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
 			if name == i18n.LocaleEnvName {

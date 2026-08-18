@@ -1055,6 +1055,7 @@ func TestConcurrentAgentCreatesConvergeOnOneEnsuredWindow(t *testing.T) {
 
 	const racers = 6
 	fixture := newOnDiskFixture(t, "alpha")
+	fixture.register(t, fixture.roots...)
 	launcher := newFakeAgentLauncher()
 
 	var wg sync.WaitGroup

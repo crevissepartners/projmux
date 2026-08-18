@@ -245,7 +245,7 @@ func TestProductionPickerConstructorsDoNotCreateCompatRunner(t *testing.T) {
 	if cmd := newAICommand(); cmd.runner != nil {
 		t.Fatal("newAICommand() created compat runner")
 	}
-	if cmd := newSettingsCommand(testAICommand(t.TempDir()), testSettingsSwitchCommand(t, &stubSwitchPinStore{}), nil, nil); cmd.runner != nil {
+	if cmd := newSettingsCommand(testAICommand(t.TempDir()), testSettingsSwitchCommand(t, newStubPinStore()), nil, nil); cmd.runner != nil {
 		t.Fatal("newSettingsCommand() created compat runner")
 	}
 	if cmd := newSwitchCommand(); cmd.runner != nil {
@@ -296,7 +296,7 @@ func TestSettingsUsesNativePicker(t *testing.T) {
 	var compatCalled bool
 	cmd := &settingsCommand{
 		ai:        testAICommand(home),
-		switcher:  testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:  testSettingsSwitchCommand(t, newStubPinStore()),
 		lookupEnv: func(string) string { return "" },
 		// Root tab chrome moved out of the entry list in Phase 2.5, so AI
 		// Settings is now the second row in the Global tab. AI Settings

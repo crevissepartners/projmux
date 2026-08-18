@@ -18,6 +18,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	"github.com/crevissepartners/projmux/internal/core/pins"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
@@ -48,7 +49,7 @@ func TestAppRunSwitchDefaultsToPopupAndOpensSelectedSession(t *testing.T) {
 				return []string{"/home/tester", "/home/tester/workspace"}, nil
 			},
 			pinStore: func() (switchPinStore, error) {
-				return &stubSwitchPinStore{list: []string{"/pins/app"}}, nil
+				return newCandidateStubPinStore("/pins/app"), nil
 			},
 			runner:       runner,
 			nativePicker: native,
@@ -458,7 +459,7 @@ func TestAppRunSwitchUsesNativePickerWithoutBackendLookup(t *testing.T) {
 				return []string{"/home/tester/workspace"}, nil
 			},
 			pinStore: func() (switchPinStore, error) {
-				return &stubSwitchPinStore{}, nil
+				return newStubPinStore(), nil
 			},
 			runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 				compatCalled = true
@@ -521,7 +522,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{exists: map[string]bool{"tmp-app": true}},
@@ -601,7 +602,7 @@ func TestSwitchCommandNativeSidebarSetsTitle(t *testing.T) {
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner: switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
 			t.Fatal("compat runner should not be called for native sidebar")
 			return intpickercompat.Result{}, nil
@@ -639,7 +640,7 @@ func TestSwitchCommandSidebarRowsIncludeAttentionBadge(t *testing.T) {
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			gotNativeOptions = options
 			var err error
@@ -698,7 +699,7 @@ func TestSwitchCommandSidebarUsesBulkExistingSessionMap(t *testing.T) {
 				return "", errors.New("unexpected path")
 			}
 		}),
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		homeDir:  func() (string, error) { return "/home/tester", nil },
 	}
 
@@ -744,7 +745,7 @@ func TestSwitchCommandBulkExistingSessionFailureFallsBackPerCandidate(t *testing
 				return "", errors.New("unexpected path")
 			}
 		}),
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		homeDir:  func() (string, error) { return "/home/tester", nil },
 	}
 
@@ -776,7 +777,7 @@ func TestSwitchCommandNativeSidebarDefersGitWindowsAttentionAndPreview(t *testin
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			if len(gitCalls) != 0 {
 				t.Fatalf("git calls before first paint = %q, want none", gitCalls)
@@ -853,7 +854,7 @@ func TestSwitchCommandDeferredSidebarEnrichmentUpdatesAllRowsWithoutChangingValu
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/api", "/tmp/web"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			initialValues := pickerItemValues(options.Items)
 			update, err := options.DeferredUpdate()
@@ -914,7 +915,7 @@ func TestSwitchCommandSidebarAggregatesSemanticBadgePriority(t *testing.T) {
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			update, err := options.DeferredUpdate()
 			if err != nil {
@@ -956,7 +957,7 @@ func TestSwitchCommandPopupRowsUseSemanticSessionBadge(t *testing.T) {
 			},
 		},
 		identity: stubSwitchIdentityResolver{name: "tmp-app"},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		homeDir:  func() (string, error) { return "/home/tester", nil },
 	}
 
@@ -983,7 +984,7 @@ func TestSwitchCommandSidebarUsesContextSessionForInitialPosition(t *testing.T) 
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/a", "/tmp/b"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions: &capturingSwitchSessionExecutor{
@@ -1759,7 +1760,7 @@ func TestSwitchCommandMarksExistingSessionsInRows(t *testing.T) {
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/new-app", "/tmp/live-app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions: &capturingSwitchSessionExecutor{
@@ -1953,7 +1954,7 @@ func TestSwitchCommandRejectsInvalidUsage(t *testing.T) {
 			var stderr bytes.Buffer
 			err := (&switchCommand{
 				discover:     func(candidates.Inputs) ([]string, error) { return nil, nil },
-				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+				pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 				runner:       runner,
 				nativePicker: native,
 				sessions:     &capturingSwitchSessionExecutor{},
@@ -2013,7 +2014,7 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 			name: "working dir",
 			cmd: &switchCommand{
 				homeDir:      func() (string, error) { return "/home/tester", nil },
-				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+				pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 				runner:       emptyRunner,
 				nativePicker: emptyNative,
 				workingDir: func() (string, error) {
@@ -2027,7 +2028,7 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &switchCommand{
 				discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
 				homeDir:      func() (string, error) { return "/home/tester", nil },
-				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+				pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 				workingDir:   func() (string, error) { return "/tmp", nil },
 				identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 				runner:       errRunner,
@@ -2040,7 +2041,7 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &switchCommand{
 				discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
 				homeDir:      func() (string, error) { return "/home/tester", nil },
-				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+				pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 				workingDir:   func() (string, error) { return "/tmp", nil },
 				runner:       appRunner,
 				nativePicker: appNative,
@@ -2054,7 +2055,7 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 			cmd: &switchCommand{
 				discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
 				homeDir:      func() (string, error) { return "/home/tester", nil },
-				pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+				pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 				workingDir:   func() (string, error) { return "/tmp", nil },
 				runner:       appRunner2,
 				nativePicker: appNative2,
@@ -2089,7 +2090,7 @@ func TestSwitchCommandAllowsEmptySelection(t *testing.T) {
 	runner, native := scriptedPicker(t, nil)
 	cmd := &switchCommand{
 		discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/a"}, nil },
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
@@ -2118,7 +2119,7 @@ func TestSwitchCommandToggleTagUsesCurrentSnappedCandidate(t *testing.T) {
 	store := &capturingSwitchTagStore{tagged: true}
 	cmd := &switchCommand{
 		discover: candidates.Discover,
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		tagStore: func() (switchTagStore, error) { return store, nil },
 		validate: validateDirectory,
 		homeDir:  func() (string, error) { return fixture.path("home"), nil },
@@ -2160,7 +2161,7 @@ func TestSwitchCommandUsesWeakManagedRootHeuristicsWhenEnvUnset(t *testing.T) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
@@ -2197,7 +2198,7 @@ func TestSwitchCommandUsesSavedWorkdirsWhenEnvUnset(t *testing.T) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
@@ -2237,7 +2238,7 @@ func TestSwitchCommandManagedRootsEnvBeatsSavedWorkdirs(t *testing.T) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
@@ -2282,7 +2283,7 @@ func TestSwitchCommandMultiPathProjdirSplitsPrimaryAndExtras(t *testing.T) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
@@ -2326,7 +2327,7 @@ func TestSwitchCommandMultiPathProjdirCombinesWithManagedRootsEnv(t *testing.T) 
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
@@ -2362,7 +2363,7 @@ func TestSwitchCommandSinglePathProjdirRetainsSavedWorkdirs(t *testing.T) {
 			gotInputs = inputs
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     &capturingSwitchSessionExecutor{},
@@ -2393,7 +2394,7 @@ func TestProjectDiscoveryInputsReadOnlyPathNeverMemoizes(t *testing.T) {
 
 	cmd := &switchCommand{
 		pinStore: func() (switchPinStore, error) {
-			return &stubSwitchPinStore{list: []string{"/pinned/project"}}, nil
+			return newCandidateStubPinStore("/pinned/project"), nil
 		},
 		homeDir: func() (string, error) { return "/home/tester", nil },
 		workingDir: func() (string, error) {
@@ -2504,7 +2505,7 @@ func TestSwitchFullRowRenderDoesNotBlockOnSlowGitRepository(t *testing.T) {
 		})
 	}
 	cmd := &switchCommand{
-		pinStore:  func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:  func() (switchPinStore, error) { return newStubPinStore(), nil },
 		sessions:  &bulkSwitchSessionExecutor{existing: map[string]bool{}},
 		inventory: &stubPreviewInventory{},
 		identity:  switchIdentityResolverFunc(func(path string) (string, error) { return filepath.Base(path), nil }),
@@ -2563,7 +2564,7 @@ func TestSwitchCommandPreviewRendersExistingSessionContext(t *testing.T) {
 	}
 	cmd := &switchCommand{
 		discover:     candidates.Discover,
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		sessions:     &capturingSwitchSessionExecutor{exists: map[string]bool{"repo-a": true}},
 		previewStore: store,
 		inventory:    inventory,
@@ -2625,7 +2626,7 @@ func TestSwitchCommandPreviewRendersNewSessionContextWithoutInventory(t *testing
 	inventory := &stubPreviewInventory{}
 	cmd := &switchCommand{
 		discover:     candidates.Discover,
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		sessions:     &capturingSwitchSessionExecutor{},
 		previewStore: &stubPreviewStore{},
 		inventory:    inventory,
@@ -2669,7 +2670,7 @@ func TestSwitchCommandPreviewRendersSettingsSentinel(t *testing.T) {
 
 	cmd := &switchCommand{
 		pinStore: func() (switchPinStore, error) {
-			return &stubSwitchPinStore{list: []string{"/home/tester/source/repos/app"}}, nil
+			return newCandidateStubPinStore("/home/tester/source/repos/app"), nil
 		},
 		homeDir: func() (string, error) { return "/home/tester", nil },
 		lookupEnv: func(name string) string {
@@ -2688,7 +2689,7 @@ func TestSwitchCommandPreviewRendersSettingsSentinel(t *testing.T) {
 	want := "" +
 		"settings\n" +
 		"pins:\n" +
-		"  * ~rp/app\n" +
+		"  * candidate  ~rp/app\n" +
 		"keys:\n" +
 		"  enter  open settings menu\n" +
 		"  alt-p  pin/unpin focused directory\n" +
@@ -2710,7 +2711,7 @@ func TestSwitchCommandSettingsMenuOffersAddCurrentPin(t *testing.T) {
 			return []string{"/home/tester/source/repos/app", "/home/tester/source/repos/new-app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) {
-			return &stubSwitchPinStore{list: []string{"/home/tester/source/repos/app"}}, nil
+			return newCandidateStubPinStore("/home/tester/source/repos/app"), nil
 		},
 		homeDir:    func() (string, error) { return "/home/tester", nil },
 		workingDir: func() (string, error) { return "/home/tester/source/repos/new-app/subdir", nil },
@@ -2748,7 +2749,7 @@ func TestSwitchCommandSettingsMenuSkipsAddWhenCurrentTargetAlreadyPinned(t *test
 			return []string{"/home/tester/source/repos/app"}, nil
 		},
 		pinStore: func() (switchPinStore, error) {
-			return &stubSwitchPinStore{list: []string{"/home/tester/source/repos/app"}}, nil
+			return newCandidateStubPinStore("/home/tester/source/repos/app"), nil
 		},
 		homeDir:    func() (string, error) { return "/home/tester", nil },
 		workingDir: func() (string, error) { return "/home/tester/source/repos/app/subdir", nil },
@@ -2890,7 +2891,7 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app", "/tmp/previous"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     executor,
@@ -2963,7 +2964,7 @@ func TestSwitchCommandPickerCtrlXBlocksKillWithoutPreviousLiveSession(t *testing
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     executor,
@@ -2996,7 +2997,7 @@ func TestSwitchCommandPickerCtrlXDoesNotKillHome(t *testing.T) {
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/home/tester"}, nil
 		},
-		pinStore:     func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
 		runner:       runner,
 		nativePicker: native,
 		sessions:     executor,
@@ -3035,7 +3036,7 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app", "/tmp/previous", "/tmp/worker"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			nativeCalls++
 			if options.UI != switchUISidebar {
@@ -3131,7 +3132,7 @@ func TestSwitchCommandPickerSidebarKillRefreshFocusesActiveSession(t *testing.T)
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app", "/tmp/previous", "/tmp/worker"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			var killAction intpicker.Action
 			for _, action := range options.Actions {
@@ -3198,7 +3199,7 @@ func TestSwitchCommandPickerSidebarKillMutateBlocksWithoutPreviousLiveSession(t 
 		discover: func(candidates.Inputs) ([]string, error) {
 			return []string{"/tmp/app"}, nil
 		},
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		nativePicker: pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
 			var killAction intpicker.Action
 			for _, action := range options.Actions {
@@ -3250,7 +3251,7 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 	t.Parallel()
 
 	var gotRunnerOptions []intpickercompat.Options
-	store := &stubSwitchPinStore{toggled: true}
+	store := newStubPinStore()
 	executor := &capturingSwitchSessionExecutor{}
 
 	observe := func(o intpickercompat.Options) { gotRunnerOptions = append(gotRunnerOptions, o) }
@@ -3284,8 +3285,13 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 			t.Fatalf("runner expect keys call %d = %q, want %q", i, got, want)
 		}
 	}
-	if got, want := store.toggleCalls, []string{"/tmp/app"}; !equalStrings(got, want) {
-		t.Fatalf("Toggle() calls = %q, want %q", got, want)
+	// alt-p on an unregistered directory pins a candidate, not a Project: the
+	// keystroke states a preference and never registers anything.
+	if got, want := store.set.CandidatePaths(), []string{"/tmp/app"}; !equalStrings(got, want) {
+		t.Fatalf("candidate pins = %q, want %q", got, want)
+	}
+	if len(store.set.ProjectUIDs()) != 0 {
+		t.Fatalf("alt-p minted managed identity: %#v", store.set.ProjectUIDs())
 	}
 	if got, want := executor.ensureSessionName, "tmp-app"; got != want {
 		t.Fatalf("ensure session = %q, want %q", got, want)
@@ -3302,7 +3308,7 @@ func TestSwitchCommandSettingsSubcommandRunsSettingsMenu(t *testing.T) {
 	t.Parallel()
 
 	var runnerCalls int
-	store := &stubSwitchPinStore{list: []string{"/tmp/app"}, toggled: false}
+	store := newCandidateStubPinStore("/tmp/app")
 	tick := func(intpickercompat.Options) { runnerCalls++ }
 	runner, native := scriptedPicker(t, []pickerStep{
 		{observe: tick, reply: intpickercompat.Result{Value: "clear"}},
@@ -3329,8 +3335,8 @@ func TestSwitchCommandSettingsSubcommandRunsSettingsMenu(t *testing.T) {
 	if got, want := runnerCalls, 2; got != want {
 		t.Fatalf("runner calls = %d, want %d", got, want)
 	}
-	if got, want := store.clearCalls, 1; got != want {
-		t.Fatalf("clear calls = %d, want %d", got, want)
+	if len(store.set.Pins) != 0 {
+		t.Fatalf("pins after clear = %#v, want empty", store.set.Pins)
 	}
 }
 
@@ -3338,7 +3344,7 @@ func TestSwitchCommandSettingsMenuAddCurrentPin(t *testing.T) {
 	t.Parallel()
 
 	var runnerCalls int
-	store := &stubSwitchPinStore{}
+	store := newStubPinStore()
 	tick := func(intpickercompat.Options) { runnerCalls++ }
 	runner, native := scriptedPicker(t, []pickerStep{
 		{observe: tick, reply: intpickercompat.Result{Value: "add:/home/tester/source/repos/new-app"}},
@@ -3371,10 +3377,10 @@ func TestSwitchCommandSettingsMenuAddCurrentPin(t *testing.T) {
 	if got, want := runnerCalls, 2; got != want {
 		t.Fatalf("runner calls = %d, want %d", got, want)
 	}
-	if got, want := store.addCalls, []string{"/home/tester/source/repos/new-app"}; !equalStrings(got, want) {
+	if got, want := store.set.CandidatePaths(), []string{"/home/tester/source/repos/new-app"}; !equalStrings(got, want) {
 		t.Fatalf("add calls = %q, want %q", got, want)
 	}
-	if got, want := stdout.String(), "pinned: /home/tester/source/repos/new-app\n"; got != want {
+	if got, want := stdout.String(), "pinned: candidate /home/tester/source/repos/new-app\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -3383,7 +3389,7 @@ func TestSwitchCommandSettingsMenuInteractiveAddPin(t *testing.T) {
 	t.Parallel()
 
 	var runnerCalls int
-	store := &stubSwitchPinStore{list: []string{"/home/tester/source/repos/app"}}
+	store := newCandidateStubPinStore("/home/tester/source/repos/app")
 	runner, native := scriptedPicker(t, []pickerStep{
 		{observe: func(o intpickercompat.Options) {
 			runnerCalls++
@@ -3437,10 +3443,10 @@ func TestSwitchCommandSettingsMenuInteractiveAddPin(t *testing.T) {
 	if got, want := runnerCalls, 3; got != want {
 		t.Fatalf("runner calls = %d, want %d", got, want)
 	}
-	if got, want := store.addCalls, []string{"/home/tester/source/repos/lib"}; !equalStrings(got, want) {
+	if got, want := store.set.CandidatePaths(), []string{"/home/tester/source/repos/app", "/home/tester/source/repos/lib"}; !equalStrings(got, want) {
 		t.Fatalf("add calls = %q, want %q", got, want)
 	}
-	if got, want := stdout.String(), "pinned: /home/tester/source/repos/lib\n"; got != want {
+	if got, want := stdout.String(), "pinned: candidate /home/tester/source/repos/lib\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -3455,7 +3461,7 @@ func TestSwitchCommandToggleTagSnapsExplicitPathToCandidate(t *testing.T) {
 	store := &capturingSwitchTagStore{tagged: false}
 	cmd := &switchCommand{
 		discover: candidates.Discover,
-		pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+		pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 		tagStore: func() (switchTagStore, error) { return store, nil },
 		validate: validateDirectory,
 		homeDir:  func() (string, error) { return fixture.path("home"), nil },
@@ -3525,7 +3531,7 @@ func TestSwitchCommandTogglePinSnapsExplicitPathToCandidate(t *testing.T) {
 	fixture.mkdir("home/workspace")
 	fixture.mkdir("managed/work-a/nested/deeper")
 
-	store := &stubSwitchPinStore{toggled: false}
+	store := newStubPinStore()
 	cmd := &switchCommand{
 		discover: candidates.Discover,
 		pinStore: func() (switchPinStore, error) { return store, nil },
@@ -3547,10 +3553,12 @@ func TestSwitchCommandTogglePinSnapsExplicitPathToCandidate(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := store.toggleCalls, []string{fixture.path("managed/work-a")}; !equalStrings(got, want) {
-		t.Fatalf("Toggle() calls = %q, want %q", got, want)
+	if got, want := store.set.CandidatePaths(), []string{fixture.path("managed/work-a")}; !equalStrings(got, want) {
+		t.Fatalf("candidate pins = %q, want %q", got, want)
 	}
-	if got, want := stdout.String(), "unpinned: "+fixture.path("managed/work-a")+"\n"; got != want {
+	// The message states the kind, because "pinned" alone could no longer say
+	// which of the two collections just changed.
+	if got, want := stdout.String(), "pinned: candidate "+fixture.path("managed/work-a")+"\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -3873,47 +3881,63 @@ func requireSwitchNoPrimaryLayoutPresetLabels(t *testing.T, entries []intpickerc
 	}
 }
 
+// stubSwitchPinStore is an in-memory typed pin file.
+//
+// It counts writes, because "a repeated pin action writes nothing" is a contract
+// rather than an optimization and a fake that silently absorbed the write would
+// hide it.
 type stubSwitchPinStore struct {
-	list        []string
-	err         error
-	addCalls    []string
-	toggleCalls []string
-	clearCalls  int
-	toggled     bool
+	set    pins.Set
+	writes int
+	err    error
 }
 
-func (s stubSwitchPinStore) List() ([]string, error) {
-	if s.err != nil {
-		return nil, s.err
+// newStubPinStore seeds a typed store with managed pins by uid.
+func newStubPinStore(uids ...string) *stubSwitchPinStore {
+	set := pins.Set{Format: pins.FormatTyped}
+	for _, uid := range uids {
+		set = set.With(pins.Pin{Kind: pins.KindProject, Value: uid})
 	}
-	return append([]string(nil), s.list...), nil
+	return &stubSwitchPinStore{set: set}
 }
 
-func (s *stubSwitchPinStore) Add(path string) error {
-	s.addCalls = append(s.addCalls, path)
+// newCandidateStubPinStore seeds a typed store with candidate pins by path.
+func newCandidateStubPinStore(paths ...string) *stubSwitchPinStore {
+	set := pins.Set{Format: pins.FormatTyped}
+	for _, path := range paths {
+		set = set.With(pins.Pin{Kind: pins.KindCandidate, Value: path})
+	}
+	return &stubSwitchPinStore{set: set}
+}
+
+// newLegacyStubPinStore seeds the pre-v2 shape: bare paths with no statement about
+// which of them a Project claims.
+func newLegacyStubPinStore(paths ...string) *stubSwitchPinStore {
+	set := pins.Set{Format: pins.FormatLegacy}
+	for _, path := range paths {
+		set.Pins = append(set.Pins, pins.Pin{Kind: pins.KindCandidate, Value: path})
+	}
+	if len(set.Pins) == 0 {
+		set.Format = pins.FormatAbsent
+	}
+	return &stubSwitchPinStore{set: set}
+}
+
+func (s *stubSwitchPinStore) Path() string { return "/fixture/pins" }
+
+func (s *stubSwitchPinStore) Load() (pins.Set, error) {
+	if s.err != nil {
+		return pins.Set{}, s.err
+	}
+	return s.set, nil
+}
+
+func (s *stubSwitchPinStore) Save(set pins.Set) error {
 	if s.err != nil {
 		return s.err
 	}
-	if !containsString(s.list, path) {
-		s.list = append(s.list, path)
-	}
-	return nil
-}
-
-func (s *stubSwitchPinStore) Toggle(path string) (bool, error) {
-	s.toggleCalls = append(s.toggleCalls, path)
-	if s.err != nil {
-		return false, s.err
-	}
-	return s.toggled, nil
-}
-
-func (s *stubSwitchPinStore) Clear() error {
-	s.clearCalls++
-	if s.err != nil {
-		return s.err
-	}
-	s.list = nil
+	s.writes++
+	s.set = set
 	return nil
 }
 

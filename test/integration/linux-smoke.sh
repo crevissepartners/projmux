@@ -15,6 +15,7 @@ PROJMUX_RECONCILE_SECONDARY_STARTED=0
 PROJMUX_RUNTIME_APP_STARTED=0
 PROJMUX_RUNTIME_GUEST_STARTED=0
 PROJMUX_RUNTIME_SIBLING_STARTED=0
+PROJMUX_DISCOVERY_STARTED=0
 cleanup_reconcile_socket() {
   local started="$1"
   local socket="$2"
@@ -44,6 +45,7 @@ integration_cleanup() {
 	cleanup_reconcile_socket "${PROJMUX_RUNTIME_APP_STARTED:-0}" "${PROJMUX_RUNTIME_APP_SOCKET:-}" "${PROJMUX_RUNTIME_APP_ACTUAL:-}" "${PROJMUX_RUNTIME_SESSION:-}"
 	cleanup_reconcile_socket "${PROJMUX_RUNTIME_GUEST_STARTED:-0}" "${PROJMUX_RUNTIME_GUEST_SOCKET:-}" "${PROJMUX_RUNTIME_GUEST_ACTUAL:-}" "${PROJMUX_RUNTIME_SESSION:-}"
 	cleanup_reconcile_socket "${PROJMUX_RUNTIME_SIBLING_STARTED:-0}" "${PROJMUX_RUNTIME_SIBLING_SOCKET:-}" "${PROJMUX_RUNTIME_SIBLING_ACTUAL:-}" "${PROJMUX_RUNTIME_SESSION:-}"
+	cleanup_reconcile_socket "${PROJMUX_DISCOVERY_STARTED:-0}" "${PROJMUX_DISCOVERY_SOCKET:-}" "${PROJMUX_DISCOVERY_ACTUAL:-}" "${PROJMUX_DISCOVERY_SESSION:-}"
 	if [[ "${PROJMUX_SMOKE_TMUX_STARTED:-0}" == "1" ]]; then
 		if [[ -z "${PROJMUX_SMOKE_TMUX_ACTUAL:-}" || -z "${PROJMUX_SMOKE_TMUX_SOCKET:-}" ]]; then
 			echo "refusing integration cleanup without expected socket identity" >&2
@@ -1331,8 +1333,13 @@ if [[ "$(stat -c '%a' "$XDG_STATE_HOME/projmux")" != "700" ]] ||
   exit 1
 fi
 
+# The operational diagnostics writer is best effort: only its own log path is
+# broken here. The Registry lives under the same state home and stays readable,
+# because typing a pin is a Registry question and a pin mutation that could not
+# read the Registry refuses instead of guessing the pin's kind.
 blocked_state="$PROJMUX_SMOKE_WORKDIR/blocked-state"
-printf 'not-a-directory\n' >"$blocked_state"
+mkdir -p "$blocked_state/projmux/metadata"
+printf 'not-a-directory\n' >"$blocked_state/projmux/logs"
 set +e
 XDG_STATE_HOME="$blocked_state" "$bin" pin project add "$smoke_root" \
   >"$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.out" \
@@ -1347,7 +1354,7 @@ if [[ -s "$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.err" ]]; then
   echo "best-effort operational writer failure leaked to command stderr" >&2
   exit 1
 fi
-if [[ "$(cat "$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.out")" != "pinned: $smoke_root" ]]; then
+if [[ "$(cat "$PROJMUX_SMOKE_WORKDIR/pin-add-blocked-log.out")" != "pinned: candidate $smoke_root" ]]; then
   echo "best-effort operational writer failure changed command stdout" >&2
   exit 1
 fi
@@ -2039,5 +2046,216 @@ if [[ -e "$registry_path" ]]; then
 fi
 
 echo ">> durable registry envelope root=$reconcile_state retained_copies=${#envelope_copies[@]} guard=passed"
+
+# ---------------------------------------------------------------------------
+# Project discovery and pin authority split
+#
+# Three collections, three authorities, asserted against real files: the
+# workdirs scan root, the Registry, and the typed pin file. Every leg below is
+# about the boundary between them -- a scan result is not a Project, a managed
+# pin is a uid, and an unregistered path is a candidate.
+# ---------------------------------------------------------------------------
+
+discovery_home="$PROJMUX_SMOKE_WORKDIR/discovery-home"
+discovery_scan="$PROJMUX_SMOKE_WORKDIR/discovery-scan"
+discovery_pins="$discovery_home/.config/projmux/pins"
+discovery_registry="$discovery_home/.local/state/projmux/metadata/registry.json"
+mkdir -p "$discovery_home/.config/projmux" "$discovery_scan/app" "$discovery_scan/scratch" "$discovery_scan/sibling"
+printf '%s\n' "$discovery_scan" >"$discovery_home/.config/projmux/workdirs"
+chmod 600 "$discovery_home/.config/projmux/workdirs"
+
+# An isolated HOME with no XDG overrides: the workdirs file, the pin file and the
+# Registry all live under it, so nothing here can reach the caller's real config.
+pmx_discovery() {
+  env -u TMUX -u TMUX_PANE -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u PROJMUX_PROJDIR -u PROJMUX_MANAGED_ROOTS \
+    HOME="$discovery_home" "$bin" "$@"
+}
+
+# Reading with a scan root full of children creates nothing at all.
+pmx_discovery get projects -o json >"$PROJMUX_SMOKE_WORKDIR/discovery-projects-initial.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-projects-initial.json" '"items": []'
+if [[ -e "$discovery_registry" ]]; then
+  echo "a read over a populated scan root created a Registry" >&2
+  exit 1
+fi
+
+# One explicit bootstrap registers one exact path.
+pmx_discovery create project --root "$discovery_scan/app" >"$PROJMUX_SMOKE_WORKDIR/discovery-register.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register.out" 'project/app created'
+discovery_project_uid="$(pmx_discovery get projects -o uid)"
+if [[ "$(printf '%s\n' "$discovery_project_uid" | wc -l)" != "1" ]]; then
+  echo "explicit registration produced more than one Project: $discovery_project_uid" >&2
+  exit 1
+fi
+pmx_discovery get projects -o json >"$PROJMUX_SMOKE_WORKDIR/discovery-projects-registered.json"
+for unregistered in scratch sibling; do
+  if grep -q "$discovery_scan/$unregistered" "$PROJMUX_SMOKE_WORKDIR/discovery-projects-registered.json"; then
+    echo "a sibling candidate ($unregistered) was registered by the explicit bootstrap" >&2
+    exit 1
+  fi
+done
+
+# A repeated registration is a write-free no-op.
+discovery_registry_fingerprint="$(stat -c '%i %s %y' "$discovery_registry")"
+pmx_discovery create project --root "$discovery_scan/app" >"$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out"
+cmp "$PROJMUX_SMOKE_WORKDIR/discovery-register.out" "$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out"
+if [[ "$(stat -c '%i %s %y' "$discovery_registry")" != "$discovery_registry_fingerprint" ]]; then
+  echo "a repeated registration rewrote the Registry" >&2
+  exit 1
+fi
+
+# A generic mutation route runs the full reconcile prelude against a real server
+# and still adds no Project for the two adjacent candidates.
+PROJMUX_DISCOVERY_SESSION="app"
+PROJMUX_DISCOVERY_SOCKET="projmux-discovery-$$-$RANDOM"
+export PROJMUX_DISCOVERY_SESSION PROJMUX_DISCOVERY_SOCKET
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" new-session -d -s "$PROJMUX_DISCOVERY_SESSION" -c "$discovery_scan/app" sleep 300
+PROJMUX_DISCOVERY_STARTED=1
+PROJMUX_DISCOVERY_ACTUAL="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" display-message -p -t "=$PROJMUX_DISCOVERY_SESSION" '#{socket_path}')"
+export PROJMUX_DISCOVERY_ACTUAL
+discovery_pid="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" display-message -p -t "=$PROJMUX_DISCOVERY_SESSION" '#{pid}')"
+discovery_tmux_env="$PROJMUX_DISCOVERY_ACTUAL,$discovery_pid,0"
+env -u TMUX -u TMUX_PANE -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u PROJMUX_PROJDIR -u PROJMUX_MANAGED_ROOTS \
+  HOME="$discovery_home" TMUX="$discovery_tmux_env" \
+  "$bin" create window --project app >"$PROJMUX_SMOKE_WORKDIR/discovery-create-window.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-create-window.out" 'window/'
+pmx_discovery get projects -o uid >"$PROJMUX_SMOKE_WORKDIR/discovery-projects-after-mutation.uid"
+if [[ "$(wc -l <"$PROJMUX_SMOKE_WORKDIR/discovery-projects-after-mutation.uid")" != "1" ]]; then
+  echo "a generic mutation registered extra Projects from the scan root:" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/discovery-projects-after-mutation.uid" >&2
+  exit 1
+fi
+
+# An unregistered candidate is refused by name, with the bootstrap route named.
+set +e
+pmx_discovery create window --project scratch \
+  >"$PROJMUX_SMOKE_WORKDIR/discovery-refusal.out" 2>"$PROJMUX_SMOKE_WORKDIR/discovery-refusal.err"
+discovery_refusal_status=$?
+set -e
+if [[ "$discovery_refusal_status" == "0" ]]; then
+  echo "create resolved a Project that nothing registered" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-refusal.err" 'projmux create project --root'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-refusal.err" "$discovery_scan/scratch"
+
+# Legacy pin migration: one line resolves to the registered uid, the other has no
+# Project and stays a candidate.
+printf '%s\n%s\n' "$discovery_scan/app" "$discovery_scan/scratch" >"$discovery_pins"
+chmod 600 "$discovery_pins"
+pmx_discovery pin project migrate --dry-run >"$PROJMUX_SMOKE_WORKDIR/discovery-pin-dry-run.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-pin-dry-run.out" "would migrate: $discovery_scan/app -> uid:$discovery_project_uid"
+if [[ "$(head -n1 "$discovery_pins")" != "$discovery_scan/app" ]]; then
+  echo "a pin migration dry run rewrote the pin file" >&2
+  exit 1
+fi
+pmx_discovery pin project migrate >"$PROJMUX_SMOKE_WORKDIR/discovery-pin-migrate.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-pin-migrate.out" "migrated: $discovery_scan/app -> uid:$discovery_project_uid"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-pin-migrate.out" "candidate: $discovery_scan/scratch"
+if [[ "$(cat "$discovery_pins")" != "$(printf 'projmux-pins v2\nproject %s\ncandidate %s' "$discovery_project_uid" "$discovery_scan/scratch")" ]]; then
+  echo "the migrated pin file is not the typed envelope:" >&2
+  cat "$discovery_pins" >&2
+  exit 1
+fi
+
+# A repeat migration writes nothing.
+discovery_pins_fingerprint="$(stat -c '%i %s %y' "$discovery_pins")"
+pmx_discovery pin project migrate >"$PROJMUX_SMOKE_WORKDIR/discovery-pin-migrate-repeat.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-pin-migrate-repeat.out" 'already typed'
+if [[ "$(stat -c '%i %s %y' "$discovery_pins")" != "$discovery_pins_fingerprint" ]]; then
+  echo "a repeat pin migration rewrote the pin file" >&2
+  exit 1
+fi
+
+# The managed pin follows the Project through a rename, a rebind, and a root that
+# disappears. Its uid never changes and the candidate pin is never touched.
+mkdir -p "$PROJMUX_SMOKE_WORKDIR/discovery-moved"
+pmx_discovery rename project "uid:$discovery_project_uid" --name renamed-app >/dev/null
+pmx_discovery rebind project "uid:$discovery_project_uid" --root "$PROJMUX_SMOKE_WORKDIR/discovery-moved" >/dev/null
+pmx_discovery pin project list >"$PROJMUX_SMOKE_WORKDIR/discovery-pin-list-after-rebind.out" 2>/dev/null
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-pin-list-after-rebind.out" "uid:$discovery_project_uid"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-pin-list-after-rebind.out" "$PROJMUX_SMOKE_WORKDIR/discovery-moved"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-pin-list-after-rebind.out" "renamed-app"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-pin-list-after-rebind.out" "candidate	$discovery_scan/scratch"
+
+rm -rf "$PROJMUX_SMOKE_WORKDIR/discovery-moved"
+pmx_discovery get projects -o json >"$PROJMUX_SMOKE_WORKDIR/discovery-missing-root.json"
+pmx_discovery pin project list --kind project >"$PROJMUX_SMOKE_WORKDIR/discovery-pin-list-missing-root.out" 2>/dev/null
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-pin-list-missing-root.out" "uid:$discovery_project_uid"
+
+# An ambiguous legacy pin refuses the whole migration with the pin file and the
+# Registry byte-identical, and a concurrent pair of migrations converges on one
+# valid typed file rather than a torn one.
+discovery_ambiguous_home="$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous-home"
+discovery_ambiguous_dup="$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous-dup"
+discovery_ambiguous_pins="$discovery_ambiguous_home/.config/projmux/pins"
+discovery_ambiguous_registry="$discovery_ambiguous_home/.local/state/projmux/metadata/registry.json"
+mkdir -p "$discovery_ambiguous_home/.config/projmux" "$discovery_ambiguous_dup"
+pmx_ambiguous() {
+  env -u TMUX -u TMUX_PANE -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u PROJMUX_PROJDIR -u PROJMUX_MANAGED_ROOTS \
+    HOME="$discovery_ambiguous_home" "$bin" "$@"
+}
+pmx_ambiguous create project --root "$discovery_ambiguous_dup" --name dup-a >/dev/null
+# A second Project on the same canonical root, reached the only way it can be:
+# registered elsewhere and rebound onto it. This is the state a path pin cannot
+# be migrated through.
+mkdir -p "$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous-other"
+pmx_ambiguous create project --root "$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous-other" --name dup-b >/dev/null
+ln -sfn "$discovery_ambiguous_dup" "$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous-link"
+pmx_ambiguous rebind project dup-b --root "$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous-link" >/dev/null
+printf '%s\n' "$discovery_ambiguous_dup" >"$discovery_ambiguous_pins"
+chmod 600 "$discovery_ambiguous_pins"
+discovery_ambiguous_pins_before="$(cat "$discovery_ambiguous_pins")"
+discovery_ambiguous_registry_fingerprint="$(stat -c '%i %s %y' "$discovery_ambiguous_registry")"
+set +e
+pmx_ambiguous pin project migrate \
+  >"$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous.out" 2>"$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous.err"
+discovery_ambiguous_status=$?
+set -e
+if [[ "$discovery_ambiguous_status" == "0" ]]; then
+  echo "an ambiguous legacy pin migrated instead of refusing" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous.err" 'match more than one Project'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous.err" 'the pin file is unchanged'
+if [[ "$(cat "$discovery_ambiguous_pins")" != "$discovery_ambiguous_pins_before" ]]; then
+  echo "a refused migration rewrote the pin file" >&2
+  exit 1
+fi
+if [[ "$(stat -c '%i %s %y' "$discovery_ambiguous_registry")" != "$discovery_ambiguous_registry_fingerprint" ]]; then
+  echo "a refused migration mutated the Registry" >&2
+  exit 1
+fi
+# The refusal names a repair; performing it lets the same migration through.
+pmx_ambiguous rebind project dup-b --root "$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous-other" >/dev/null
+pmx_ambiguous pin project migrate >"$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous-repaired.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-ambiguous-repaired.out" 'migrated:'
+smoke_assert_file_contains "$discovery_ambiguous_pins" 'projmux-pins v2'
+
+# Concurrent migrations of one legacy file converge on one valid typed envelope.
+discovery_race_home="$PROJMUX_SMOKE_WORKDIR/discovery-race-home"
+discovery_race_pins="$discovery_race_home/.config/projmux/pins"
+mkdir -p "$discovery_race_home/.config/projmux"
+printf '%s\n%s\n' "$discovery_scan/scratch" "$discovery_scan/sibling" >"$discovery_race_pins"
+chmod 600 "$discovery_race_pins"
+for _ in 1 2 3 4; do
+  env -u TMUX -u TMUX_PANE -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u PROJMUX_PROJDIR -u PROJMUX_MANAGED_ROOTS \
+    HOME="$discovery_race_home" "$bin" pin project migrate >/dev/null 2>&1 &
+done
+wait
+if [[ "$(head -n1 "$discovery_race_pins")" != "projmux-pins v2" ]]; then
+  echo "concurrent migrations left a pin file that is not a typed envelope:" >&2
+  cat "$discovery_race_pins" >&2
+  exit 1
+fi
+env -u TMUX -u TMUX_PANE -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u PROJMUX_PROJDIR -u PROJMUX_MANAGED_ROOTS \
+  HOME="$discovery_race_home" "$bin" pin project list >"$PROJMUX_SMOKE_WORKDIR/discovery-race-list.out" 2>/dev/null
+if [[ "$(wc -l <"$PROJMUX_SMOKE_WORKDIR/discovery-race-list.out")" != "2" ]]; then
+  echo "concurrent migrations dropped or duplicated pins:" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/discovery-race-list.out" >&2
+  exit 1
+fi
+
+echo ">> discovery/pin authority split home=$discovery_home scan_root=$discovery_scan project=$discovery_project_uid guard=passed"
 
 echo ">> lifecycle smoke root=$PROJMUX_SMOKE_WORKDIR actual_socket=$PROJMUX_SMOKE_TMUX_ACTUAL guard=passed"

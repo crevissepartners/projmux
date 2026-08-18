@@ -283,6 +283,7 @@ projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
 Create Projmux resources
 
 ```
+projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
 projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
 projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]
@@ -295,6 +296,7 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
+| [`projmux create project`](#projmux-create-project) | Register one exact filesystem path as a Registry Project; no runtime is materialized |
 | [`projmux create window`](#projmux-create-window) | Create a Window and its initial Pane below one Project; the runtime is materialized detached |
 | [`projmux create pane`](#projmux-create-pane) | Create a shell Pane below a Window; the scope defaults to the active managed runtime |
 | [`projmux create agent`](#projmux-create-agent) | Create an Agent and its managed Pane; --provider is required and the scope defaults to the active managed runtime |
@@ -309,7 +311,17 @@ Provider shortcuts:
 | [`projmux create claude`](#projmux-create-claude) | Provider shortcut for create agent --provider claude |
 | [`projmux create antigravity`](#projmux-create-antigravity) | Provider shortcut for create agent --provider antigravity |
 
-Canonical spelling: `projmux create window`, `projmux create pane`, `projmux create agent`, `projmux create notification`, `projmux create snapshot`, `projmux create codex`, `projmux create claude`, `projmux create antigravity`
+Canonical spelling: `projmux create project`, `projmux create window`, `projmux create pane`, `projmux create agent`, `projmux create notification`, `projmux create snapshot`, `projmux create codex`, `projmux create claude`, `projmux create antigravity`
+
+### `projmux create project`
+
+Register one exact filesystem path as a Registry Project; no runtime is materialized
+
+```
+projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
+```
+
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux create window`
 

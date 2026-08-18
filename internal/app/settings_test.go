@@ -19,6 +19,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
@@ -587,7 +588,7 @@ func TestSettingsKoreanVisibleStringsHaveNoEnglishChromeResidue(t *testing.T) {
 			return ""
 		},
 		ai:       testAICommand(home),
-		switcher: testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{}),
+		switcher: testSettingsSwitchCommandWithHome(t, home, newStubPinStore()),
 	}
 
 	options := settingsKoreanVisibleOptionSamples(t, cmd)
@@ -670,8 +671,12 @@ func settingsKoreanStaticRowSamples() []string {
 	locale := i18n.Locale("ko-KR")
 	samples := []string{
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Primary discovery root", "not configured"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Additional discovery roots", "discovery roots scanned for Projects"),
-		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Pinned Projects", "pinned Projects and their roots"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Additional discovery roots", "scan roots; scanning never registers a Project"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Pinned Projects", "pinned Registry Projects, by UID"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Candidate Pins", "pinned paths no Registry Project claims"),
+		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Register as Project", "registers this exact path only"),
+		settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Unpin candidate", "removes the pin; the directory is untouched"),
+		settingsLabelInfoLocale(locale, "Path / Registration", "none", "no Registry Project claims this path"),
 		settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Project Sidebar", "closed Project startup"),
 		settingsLabelInfoLocale(locale, "Effective roots", "(none)", "~/.config/projmux/workdirs"),
 		settingsLabelInfoLocale(locale, "Effective discovery root", "not configured", "no env, tmux option, or saved value"),
@@ -1218,7 +1223,7 @@ func TestSettingsProjectContextPrefersPROJMUXCWD(t *testing.T) {
 	cmd := &settingsCommand{
 		switcher: &switchCommand{
 			discover: candidates.Discover,
-			pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+			pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 			validate: func(string) error { return nil },
 			homeDir:  func() (string, error) { return home, nil },
 			workingDir: func() (string, error) {
@@ -1257,7 +1262,7 @@ func TestSettingsProjectContextFallsBackToPaneProjectRoot(t *testing.T) {
 	cmd := &settingsCommand{
 		switcher: &switchCommand{
 			discover: candidates.Discover,
-			pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+			pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 			validate: func(string) error { return nil },
 			homeDir:  func() (string, error) { return home, nil },
 			workingDir: func() (string, error) {
@@ -1290,7 +1295,7 @@ func TestSettingsProjectContextFallsBackToSwitchContext(t *testing.T) {
 	cmd := &settingsCommand{
 		switcher: &switchCommand{
 			discover: candidates.Discover,
-			pinStore: func() (switchPinStore, error) { return &stubSwitchPinStore{}, nil },
+			pinStore: func() (switchPinStore, error) { return newStubPinStore(), nil },
 			validate: func(string) error { return nil },
 			homeDir:  func() (string, error) { return home, nil },
 			workingDir: func() (string, error) {
@@ -1361,7 +1366,7 @@ func TestSettingsEntryBuildersEmitCataloguedValues(t *testing.T) {
 	home := t.TempDir()
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
-		switcher: testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{}),
+		switcher: testSettingsSwitchCommandWithHome(t, home, newStubPinStore()),
 		homeDir:  func() (string, error) { return home, nil },
 		lookupEnv: func(string) string {
 			return ""
@@ -1552,7 +1557,7 @@ func TestSettingsHubSetsAIDefaultMode(t *testing.T) {
 
 	home := t.TempDir()
 	ai := testAICommand(home)
-	switcher := testSettingsSwitchCommand(t, &stubSwitchPinStore{})
+	switcher := testSettingsSwitchCommand(t, newStubPinStore())
 	var rootOptions intpickercompat.Options
 	var aiOptions intpickercompat.Options
 	var aiDetailOptions intpickercompat.Options
@@ -1659,7 +1664,7 @@ func TestSettingsHubTogglesAIEnabledAgentPersists(t *testing.T) {
 
 	home := t.TempDir()
 	ai := testAICommand(home)
-	switcher := testSettingsSwitchCommand(t, &stubSwitchPinStore{})
+	switcher := testSettingsSwitchCommand(t, newStubPinStore())
 	var enabledOptions intpickercompat.Options
 	runner, native := scriptedPicker(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionAI}},
@@ -1803,7 +1808,7 @@ func TestSettingsHubAutomationReplacesLabsAndKeepsRetiredRowsOut(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
-		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher: testSettingsSwitchCommand(t, newStubPinStore()),
 		homeDir:  func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
 			if name == "TMUX" {
@@ -1876,7 +1881,7 @@ func TestSettingsHubSetsProjectHooksMode(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
-		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher: testSettingsSwitchCommand(t, newStubPinStore()),
 		homeDir:  func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
 			if name == "TMUX" {
@@ -1993,7 +1998,7 @@ func TestSettingsHubSetsStatusbarDecoration(t *testing.T) {
 			})
 			cmd := &settingsCommand{
 				ai:       testAICommand(home),
-				switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+				switcher: testSettingsSwitchCommand(t, newStubPinStore()),
 				homeDir:  func() (string, error) { return home, nil },
 				lookupEnv: func(name string) string {
 					if name == "TMUX" {
@@ -2123,7 +2128,7 @@ func TestSettingsHubSetsAIBadgeStyle(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
-		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher: testSettingsSwitchCommand(t, newStubPinStore()),
 		homeDir:  func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
 			if name == "TMUX" {
@@ -2312,7 +2317,7 @@ locale = "auto"
 `)
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
-		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher: testSettingsSwitchCommand(t, newStubPinStore()),
 		homeDir:  func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
 			if name == "LC_MESSAGES" {
@@ -2510,7 +2515,7 @@ func TestSettingsHubStatusbarDecorationChangeActionIsUnreachable(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:       testAICommand(home),
-		switcher: testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher: testSettingsSwitchCommand(t, newStubPinStore()),
 		homeDir:  func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
 			if name == "TMUX" {
@@ -4520,7 +4525,7 @@ func TestSettingsSessionStateMissingSnapshotDisablesDelete(t *testing.T) {
 func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 	t.Parallel()
 
-	store := &stubSwitchPinStore{}
+	store := newStubPinStore()
 	switcher := testSettingsSwitchCommand(t, store)
 	runner, native := scriptedPicker(t, []pickerStep{
 		{observe: func(o intpickercompat.Options) {
@@ -4548,10 +4553,10 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := store.addCalls, []string{"/home/tester/source/repos/app"}; !equalStrings(got, want) {
-		t.Fatalf("add calls = %q, want %q", got, want)
+	if got, want := store.set.CandidatePaths(), []string{"/home/tester/source/repos/app"}; !equalStrings(got, want) {
+		t.Fatalf("candidate pins = %q, want %q", got, want)
 	}
-	if got, want := stdout.String(), "pinned: /home/tester/source/repos/app\n"; got != want {
+	if got, want := stdout.String(), "pinned: candidate /home/tester/source/repos/app\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -4574,7 +4579,7 @@ func TestSettingsProjectPickerBackReturnsToHubWithMatchingFooter(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:           testAICommand(t.TempDir()),
-		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:     testSettingsSwitchCommand(t, newStubPinStore()),
 		runner:       runner,
 		nativePicker: native,
 	}
@@ -6584,7 +6589,7 @@ func TestSettingsHubShowsAboutSection(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:           testAICommand(t.TempDir()),
-		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:     testSettingsSwitchCommand(t, newStubPinStore()),
 		update:       update,
 		runner:       runner,
 		nativePicker: native,
@@ -6705,7 +6710,7 @@ func TestSettingsAboutQuitRowRoutesThroughQuitPicker(t *testing.T) {
 	}
 	cmd := &settingsCommand{
 		ai:           testAICommand(t.TempDir()),
-		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:     testSettingsSwitchCommand(t, newStubPinStore()),
 		update:       nil,
 		quit:         quit,
 		runner:       runner,
@@ -6746,7 +6751,7 @@ func TestSettingsAboutWelcomeOpensVisibleViewer(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:           testAICommand(t.TempDir()),
-		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:     testSettingsSwitchCommand(t, newStubPinStore()),
 		update:       nil,
 		runner:       runner,
 		nativePicker: native,
@@ -6825,7 +6830,7 @@ func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:           testAICommand(t.TempDir()),
-		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:     testSettingsSwitchCommand(t, newStubPinStore()),
 		update:       update,
 		runner:       runner,
 		nativePicker: native,
@@ -6867,7 +6872,7 @@ func TestSettingsHubUpdateFailureStaysOpenWithPassiveFeedback(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:           testAICommand(t.TempDir()),
-		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:     testSettingsSwitchCommand(t, newStubPinStore()),
 		update:       update,
 		runner:       runner,
 		nativePicker: native,
@@ -7064,7 +7069,7 @@ func TestSettingsHubRunsUpdateCheckAction(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:           testAICommand(t.TempDir()),
-		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:     testSettingsSwitchCommand(t, newStubPinStore()),
 		update:       update,
 		runner:       runner,
 		nativePicker: native,
@@ -7091,7 +7096,7 @@ func TestSettingsHubAddProjectScansFilesystem(t *testing.T) {
 	mkdirAll(t, filepath.Join(home, ".config"))
 	mkdirAll(t, filepath.Join(home, ".cache"))
 
-	store := &stubSwitchPinStore{}
+	store := newStubPinStore()
 	switcher := testSettingsSwitchCommandWithHome(t, home, store)
 	app := filepath.Join(home, "source", "repos", "app")
 	runner, native := scriptedPicker(t, []pickerStep{
@@ -7144,34 +7149,40 @@ func TestSettingsHubAddProjectScansFilesystem(t *testing.T) {
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := store.addCalls, []string{filepath.Join(home, "source", "repos", "app")}; !equalStrings(got, want) {
-		t.Fatalf("add calls = %q, want %q", got, want)
+	if got, want := store.set.CandidatePaths(), []string{filepath.Join(home, "source", "repos", "app")}; !equalStrings(got, want) {
+		t.Fatalf("candidate pins = %q, want %q", got, want)
 	}
 }
 
-func TestSettingsHubPinnedProjectsRemovesPins(t *testing.T) {
+// TestSettingsHubCandidatePinsRemovesACandidate drives the candidate collection
+// end to end. A pinned path that no Project claims lives here, not under Pinned
+// Projects, and its item View owns the unpin.
+func TestSettingsHubCandidatePinsRemovesACandidate(t *testing.T) {
 	t.Parallel()
 
 	pin := "/home/tester/source/repos/app"
-	store := &stubSwitchPinStore{list: []string{pin}}
+	store := newCandidateStubPinStore(pin)
 	switcher := testSettingsSwitchCommand(t, store)
 	runner, native := scriptedPicker(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
-		{reply: intpickercompat.Result{Key: "enter", Value: settingsProjectPins}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsProjectCandidatePins}},
 		{observe: func(o intpickercompat.Options) {
-			if got, want := o.UI, "settings-project-pins"; got != want {
-				t.Fatalf("pinned projects UI = %q, want %q", got, want)
+			if got, want := o.UI, "settings-project-candidate-pins"; got != want {
+				t.Fatalf("candidate pins UI = %q, want %q", got, want)
 			}
-			if !hasEntryValue(o.Entries, settingsActionPrefixPinItem+pin) {
-				t.Fatalf("pinned project entries = %#v, want the pinned Project item view", o.Entries)
+			if !hasEntryValue(o.Entries, settingsActionPrefixCandidatePinItem+pin) {
+				t.Fatalf("candidate pin entries = %#v, want the candidate item view", o.Entries)
 			}
-		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixPinItem + pin}},
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixCandidatePinItem + pin}},
 		{observe: func(o intpickercompat.Options) {
-			if got, want := o.UI, "settings-project-pin-item"; got != want {
-				t.Fatalf("pinned project item UI = %q, want %q", got, want)
+			if got, want := o.UI, "settings-project-candidate-pin-item"; got != want {
+				t.Fatalf("candidate pin item UI = %q, want %q", got, want)
 			}
-			if !hasEntryLabelContaining(o.Entries, "Unpin Project") {
-				t.Fatalf("pinned project item entries = %#v, want the item-owned Unpin row", o.Entries)
+			if !hasEntryLabelContaining(o.Entries, "Unpin candidate") {
+				t.Fatalf("candidate item entries = %#v, want the item-owned Unpin row", o.Entries)
+			}
+			if !hasEntryLabelContaining(o.Entries, "Register as Project") {
+				t.Fatalf("candidate item entries = %#v, want the explicit register row", o.Entries)
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSwitch + "pin:" + pin}},
 	})
@@ -7186,8 +7197,59 @@ func TestSettingsHubPinnedProjectsRemovesPins(t *testing.T) {
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got, want := store.toggleCalls, []string{pin}; !equalStrings(got, want) {
-		t.Fatalf("toggle calls = %q, want %q", got, want)
+	if got, want := store.set.CandidatePaths(), []string(nil); !equalStrings(got, want) {
+		t.Fatalf("candidate pins = %q, want the pin removed", got)
+	}
+}
+
+// TestSettingsHubPinnedProjectsRemovesAManagedPin is acceptance (5)'s Settings
+// half for the managed collection: the row and the unpin action both address the
+// Project uid, and a candidate pin in the same file does not appear here.
+func TestSettingsHubPinnedProjectsRemovesAManagedPin(t *testing.T) {
+	t.Parallel()
+
+	const uid = "proj-app"
+	const root = "/home/tester/source/repos/app"
+	store := &stubSwitchPinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{
+		{Kind: pins.KindProject, Value: uid},
+		{Kind: pins.KindCandidate, Value: "/home/tester/scratch"},
+	}}}
+	switcher := testSettingsSwitchCommand(t, store)
+	switcher.pinProjects = func() ([]pins.ProjectRef, error) {
+		return []pins.ProjectRef{{UID: uid, Root: root}}, nil
+	}
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
+		{reply: intpickercompat.Result{Key: "enter", Value: settingsProjectPins}},
+		{observe: func(o intpickercompat.Options) {
+			if !hasEntryValue(o.Entries, settingsActionPrefixPinItem+"uid:"+uid) {
+				t.Fatalf("pinned project entries = %#v, want the uid-addressed item view", o.Entries)
+			}
+			if hasEntryValue(o.Entries, settingsActionPrefixPinItem+"/home/tester/scratch") {
+				t.Fatalf("pinned project entries = %#v, want the candidate pin excluded", o.Entries)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixPinItem + "uid:" + uid}},
+		{observe: func(o intpickercompat.Options) {
+			if !hasEntryLabelContaining(o.Entries, "Unpin Project") {
+				t.Fatalf("pinned project item entries = %#v, want the item-owned Unpin row", o.Entries)
+			}
+		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSwitch + "pin:uid:" + uid}},
+	})
+	cmd := &settingsCommand{
+		ai:           testAICommand(t.TempDir()),
+		switcher:     switcher,
+		runner:       runner,
+		nativePicker: native,
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(store.set.ProjectUIDs()) != 0 {
+		t.Fatalf("managed pins = %#v, want the pin removed", store.set.ProjectUIDs())
+	}
+	if got, want := store.set.CandidatePaths(), []string{"/home/tester/scratch"}; !equalStrings(got, want) {
+		t.Fatalf("candidate pins = %#v, want %#v; unpinning a Project must not touch the other collection", got, want)
 	}
 }
 
@@ -7233,7 +7295,7 @@ func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
 	home := t.TempDir()
 	mkdirAll(t, filepath.Join(home, "source", "repos", "app"))
 
-	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
 	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
 
 	appPath := filepath.Join(home, "source", "repos", "app")
@@ -7299,7 +7361,7 @@ func TestSettingsHubWorkdirsListRemovesSavedEntry(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
 	switcher.loadWorkdirs = func(homeDir string) ([]string, error) {
 		// Use the real loader so removal is observed end-to-end via the saved file.
 		return loadSavedWorkdirsFromFile(homeDir), nil
@@ -7408,7 +7470,7 @@ func TestAddWorkdirEntriesIncludesTypedRow(t *testing.T) {
 	home := t.TempDir()
 	mkdirAll(t, filepath.Join(home, "source", "repos", "app"))
 
-	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
 	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
 
 	var addOptions intpickercompat.Options
@@ -7448,7 +7510,7 @@ func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
 	typed := filepath.Join(home, "mnt", "c", "Users", "me", "code")
 	mkdirAll(t, typed)
 
-	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
 	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
 
 	var typedOptions intpickercompat.Options
@@ -7511,7 +7573,7 @@ func TestSettingsHubAddWorkdirTypedRejectsRelativePath(t *testing.T) {
 	t.Setenv(projdirEnvVar, "")
 
 	home := t.TempDir()
-	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
 	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
 
 	runner, native := scriptedPicker(t, []pickerStep{
@@ -7569,7 +7631,7 @@ func TestSettingsHubBackReturnsToRoot(t *testing.T) {
 	})
 	cmd := &settingsCommand{
 		ai:           testAICommand(t.TempDir()),
-		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:     testSettingsSwitchCommand(t, newStubPinStore()),
 		runner:       runner,
 		nativePicker: native,
 	}
@@ -7891,7 +7953,7 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 	target := filepath.Join(home, "projects")
 	mkdirAll(t, target)
 
-	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
 	switcher.lookupEnv = func(string) string { return "" }
 	switcher.loadProjdir = config.LoadProjdir
 	switcher.saveProjdir = config.SaveProjdir
@@ -7957,7 +8019,7 @@ func TestSettingsHubUseCurrentProjectAsRootSavesProjdir(t *testing.T) {
 	currentProject := filepath.Join(home, "source", "repos", "app")
 	mkdirAll(t, currentProject)
 
-	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
 	switcher.lookupEnv = func(string) string { return "" }
 	switcher.loadProjdir = config.LoadProjdir
 	switcher.saveProjdir = config.SaveProjdir
@@ -8002,7 +8064,7 @@ func TestSettingsHubClearProjectRootRemovesSavedProjdir(t *testing.T) {
 		t.Fatalf("SaveProjdir() error = %v", err)
 	}
 
-	switcher := testSettingsSwitchCommandWithHome(t, home, &stubSwitchPinStore{})
+	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
 	switcher.lookupEnv = func(string) string { return "" }
 	switcher.loadProjdir = config.LoadProjdir
 	switcher.saveProjdir = config.SaveProjdir
@@ -8139,7 +8201,7 @@ func testKeybindingSettingsCommand(t *testing.T, home string, run func(intpicker
 	runner := switchRunnerFunc(run)
 	return &settingsCommand{
 		ai:           testAICommand(home),
-		switcher:     testSettingsSwitchCommand(t, &stubSwitchPinStore{}),
+		switcher:     testSettingsSwitchCommand(t, newStubPinStore()),
 		homeDir:      func() (string, error) { return home, nil },
 		lookupEnv:    func(string) string { return "" },
 		runCommand:   func(string, ...string) error { return nil },

@@ -57,8 +57,9 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 	roots := slices.Clone(f.roots)
 	return &createCommand{
 		store: &resourceStore{
-			load:   store.LoadReadOnly,
-			update: store.Update,
+			load:             store.LoadReadOnly,
+			update:           store.Update,
+			updateConvergent: store.UpdateConvergent,
 			mutator: func() coremetadata.Mutator {
 				return coremetadata.Mutator{
 					Now:       time.Now,
@@ -89,6 +90,20 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 	}
 }
 
+// register performs the explicit Project bootstrap through the real store.
+//
+// Every test below that used to rely on a create registering its own Projects now
+// says so out loud, because that is the change: a scan no longer decides
+// membership, and `create project` is the route that does.
+func (f *onDiskFixture) register(t *testing.T, roots ...string) {
+	t.Helper()
+	for _, root := range roots {
+		if _, _, err := runRoute(t, f.command(nil), "project", "--root", root); err != nil {
+			t.Fatalf("register project %q: %v", root, err)
+		}
+	}
+}
+
 func (f *onDiskFixture) load(t *testing.T) coremetadata.Registry {
 	t.Helper()
 	registry, err := intmetadata.NewStore(f.registryPath()).LoadReadOnly()
@@ -99,7 +114,12 @@ func (f *onDiskFixture) load(t *testing.T) coremetadata.Registry {
 }
 
 // TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState is the
-// first-real-creation check.
+// first-real-creation check, and it is now also the exact-path check.
+//
+// The first mutation is an explicit `create project`, and the fixture has two
+// discovered workdirs. Exactly one of them becomes a Project: the one that was
+// named. `beta` is discovered, adjacent, and sitting under the same scan root, and
+// it stays unregistered -- which under the previous behaviour it would not have.
 func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.T) {
 	t.Parallel()
 
@@ -108,12 +128,12 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 		t.Fatalf("the fixture did not start from an empty state: %v", err)
 	}
 
-	stdout, stderr, err := runRoute(t, fixture.command(nil), "window", "--project", "alpha")
+	stdout, stderr, err := runRoute(t, fixture.command(nil), "project", "--root", fixture.roots[0])
 	if err != nil {
-		t.Fatalf("first create error = %v (stderr %q)", err, stderr)
+		t.Fatalf("register error = %v (stderr %q)", err, stderr)
 	}
-	if !strings.HasPrefix(stdout, "window/") {
-		t.Fatalf("stdout = %q", stdout)
+	if got, want := stdout, "project/alpha created\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 
 	info, err := os.Stat(fixture.registryPath())
@@ -139,8 +159,6 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 	if registry.SchemaVersion != coremetadata.SchemaVersion || registry.APIVersion != coremetadata.APIVersion {
 		t.Fatalf("envelope = %d/%s", registry.SchemaVersion, registry.APIVersion)
 	}
-	// Every selectable workdir became a Project, each with a bootstrap Window
-	// and a primaryPaneRef, and registration order followed the sorted roots.
 	var names []string
 	for _, project := range registry.Projects {
 		names = append(names, project.Metadata.Name)
@@ -152,11 +170,66 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 			t.Fatalf("project %s bootstrap Window has no resolvable primaryPaneRef", project.Metadata.Name)
 		}
 	}
-	if !slices.Contains(names, "alpha") || !slices.Contains(names, "beta") {
-		t.Fatalf("registered projects = %v, want alpha and beta", names)
+	if !slices.Equal(names, []string{"alpha"}) {
+		t.Fatalf("registered projects = %v, want only the named root; a discovered sibling must stay unregistered", names)
 	}
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("the written registry does not validate: %v", err)
+	}
+
+	// Registering the same root again is a write-free no-op that still reports the
+	// same Project.
+	before, err := os.ReadFile(fixture.registryPath())
+	if err != nil {
+		t.Fatalf("read registry: %v", err)
+	}
+	repeatOut, _, err := runRoute(t, fixture.command(nil), "project", "--root", fixture.roots[0])
+	if err != nil {
+		t.Fatalf("repeat register error = %v", err)
+	}
+	if got, want := repeatOut, "project/alpha created\n"; got != want {
+		t.Fatalf("repeat stdout = %q, want %q", got, want)
+	}
+	after, err := os.ReadFile(fixture.registryPath())
+	if err != nil {
+		t.Fatalf("re-read registry: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("registering an already-registered root rewrote the Registry")
+	}
+
+	// And the Project the bootstrap created is the one the ordinary create routes
+	// resolve.
+	windowOut, windowErr, err := runRoute(t, fixture.command(nil), "window", "--project", "alpha")
+	if err != nil {
+		t.Fatalf("create window error = %v (stderr %q)", err, windowErr)
+	}
+	if !strings.HasPrefix(windowOut, "window/") {
+		t.Fatalf("stdout = %q", windowOut)
+	}
+}
+
+// TestCreateRefusesAnUnregisteredDiscoveredWorkdirWithABootstrapInstruction is the
+// other half of the same change. A discovered directory is not a Project, and the
+// refusal says which route would make it one instead of quietly registering it.
+func TestCreateRefusesAnUnregisteredDiscoveredWorkdirWithABootstrapInstruction(t *testing.T) {
+	t.Parallel()
+
+	fixture := newOnDiskFixture(t, "alpha")
+	stdout, _, err := runRoute(t, fixture.command(nil), "window", "--project", "alpha")
+	if err == nil {
+		t.Fatal("create resolved a Project that nothing registered")
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	for _, want := range []string{"no Registry Project is named", fixture.roots[0], "projmux create project --root"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+	if _, statErr := os.Stat(fixture.registryPath()); !os.IsNotExist(statErr) {
+		t.Fatalf("the refusal created Registry state: %v", statErr)
 	}
 }
 
@@ -205,6 +278,7 @@ func TestASecondMutationExtendsTheExistingRegistryWithoutRenumbering(t *testing.
 	t.Parallel()
 
 	fixture := newOnDiskFixture(t, "alpha", "beta")
+	fixture.register(t, fixture.roots...)
 	if _, _, err := runRoute(t, fixture.command(nil), "window", "--project", "alpha"); err != nil {
 		t.Fatalf("first create error = %v", err)
 	}
@@ -246,6 +320,7 @@ func TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow(t *test
 
 	const racers = 6
 	fixture := newOnDiskFixture(t, "alpha")
+	fixture.register(t, fixture.roots...)
 
 	var wg sync.WaitGroup
 	errs := make([]error, racers)
@@ -364,6 +439,10 @@ func TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNam
 			}, nil
 	}
 
+	// The create target is registered explicitly; the legacy session's own root is
+	// not, because importing a live session is the reconciler's job and this test
+	// is about exactly that import happening beside an unrelated create.
+	fixture.register(t, targetRoot)
 	if _, _, err := runRoute(t, fixture.command(observe), "pane", "--project", filepath.Base(targetRoot)); err != nil {
 		t.Fatalf("create beside an unrelated legacy session error = %v", err)
 	}

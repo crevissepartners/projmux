@@ -113,6 +113,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "describe agent", Summary: "Describe one Agent resource", Sources: []string{"describe"}, Outputs: projectionCatalog},
 
 	// create
+	{Spelling: "create project", Summary: "Register one exact filesystem path as a Registry Project", Sources: []string{"create"}, Outputs: readProjectionCatalog},
 	{Spelling: "create window", Summary: "Create a Window with its initial Pane", Sources: []string{"window", "create"}, Outputs: projectionCatalog},
 	{Spelling: "create pane", Summary: "Create a shell Pane below a Window", Sources: []string{"create"}, Outputs: projectionCatalog},
 	{Spelling: "create agent", Summary: "Create an Agent and its managed Pane", Sources: []string{"create"}, Outputs: projectionCatalog},

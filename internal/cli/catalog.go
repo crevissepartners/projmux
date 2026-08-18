@@ -330,6 +330,7 @@ var routes = []Route{
 		Summary:     "Create Projmux resources",
 		Disposition: DispositionCanonical,
 		Usage: []string{
+			"projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]",
 			"projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 			"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
 			"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--create-window] [--placement right|down] [-o <mode>] [-- <payload>]",
@@ -337,8 +338,25 @@ var routes = []Route{
 			"projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]",
 			"projmux create snapshot",
 		},
-		Canonical: []string{"create window", "create pane", "create agent", "create notification", "create snapshot", "create codex", "create claude", "create antigravity"},
+		Canonical: []string{"create project", "create window", "create pane", "create agent", "create notification", "create snapshot", "create codex", "create claude", "create antigravity"},
 		Children: []Route{
+			{
+				// The explicit Project bootstrap. It is the only route that adds a
+				// Project, which is what makes a filesystem scan stop being one:
+				// discovery finds candidate directories and this decides that one
+				// exact path is a managed resource.
+				//
+				// Registration is Registry-only -- no session, window or pane is
+				// materialized -- so `-o pane-id` is deliberately absent from the
+				// projections it advertises.
+				Name:    "project",
+				Summary: "Register one exact filesystem path as a Registry Project; no runtime is materialized",
+				Usage: []string{
+					"projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]",
+				},
+				Outputs:   readProjectionCatalog,
+				Canonical: []string{"create project"},
+			},
 			{
 				// A Window is always created together with the initial Pane it
 				// owns, and that Pane's uid is stored as the Window's

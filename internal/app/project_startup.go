@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
@@ -130,11 +132,15 @@ func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, tar
 			return errProjectTrustDenied
 		}
 	}
-	counts, err = c.continueProjectOpen(ctx, target, sessionName, mode, layoutArtifact)
+	bootstrapped, err := c.registerOpenedProjectRoot(ctx, target)
+	if err != nil {
+		return err
+	}
+	counts, err = c.continueProjectOpen(ctx, target, sessionName, mode, layoutArtifact, bootstrapped)
 	return err
 }
 
-func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, layoutArtifact *corelayout.Artifact) (diagnostics.SessionStateCounts, error) {
+func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, layoutArtifact *corelayout.Artifact, bootstrapped bool) (diagnostics.SessionStateCounts, error) {
 	switch mode.Kind {
 	case projectStartupKindLatest:
 		return c.restoreProjectLatestSnapshot(ctx, sessionName, target)
@@ -144,7 +150,7 @@ func (c *switchCommand) continueProjectOpen(ctx context.Context, target, session
 		}
 		return c.restoreProjectNamedSnapshot(ctx, sessionName, target, *layoutArtifact)
 	default:
-		return diagnostics.SessionStateCounts{}, c.materializeAndOpenProjectTopology(ctx, sessionName, target)
+		return diagnostics.SessionStateCounts{}, c.materializeAndOpenProjectTopology(ctx, sessionName, target, bootstrapped)
 	}
 }
 
@@ -413,6 +419,90 @@ func (c *switchCommand) projectStartupNow() time.Time {
 	return time.Now()
 }
 
+// switchProjectRegistrar is the explicit Project bootstrap seam of the open flow.
+//
+// Opening an unregistered directory from the sidebar is the gesture that makes it
+// a Project. It used to be nothing of the kind: the Project appeared because some
+// unrelated mutation had walked the discovery roots and registered everything it
+// found, so the sidebar's "unregistered" section was a list of directories that
+// were about to be registered whether or not anyone opened them.
+//
+// The seam registers exactly the path being opened and reports whether that was a
+// new Project. A path an existing Project already claims writes nothing, which is
+// what makes reopening free.
+type switchProjectRegistrar interface {
+	RegisterProjectRoot(ctx context.Context, root string) (uid string, created bool, err error)
+}
+
+// registerOpenedProjectRoot is the bootstrap step of one explicit open.
+//
+// It runs after the trust gate and before any materialization, in that order on
+// purpose. A denied trust prompt must leave the Registry exactly as it was -- the
+// operator declined to open the directory, which is not the moment to record that
+// it is a Project -- and materialization needs the Registry topology this step
+// declares.
+// It reports whether this open is what created the Project, which decides how the
+// runtime is brought up; see materializeAndOpenProjectTopology.
+func (c *switchCommand) registerOpenedProjectRoot(ctx context.Context, target string) (bool, error) {
+	if c.projectRegistrar == nil {
+		return false, nil
+	}
+	target = cleanOptionalPath(target)
+	if target == "" || target == switchSettingsSentinel || target == switchRuntimeSentinel {
+		return false, nil
+	}
+	if c.openedRootIsHome(target) {
+		// Home is chrome. It leads the Projects list because it is where the
+		// surface starts from, not because it is a member of what the surface
+		// orders, and `$HOME` alone is never evidence of a Project. Opening it
+		// still opens a session; it just does not mint managed identity.
+		return false, nil
+	}
+	_, created, err := c.projectRegistrar.RegisterProjectRoot(ctx, target)
+	if err != nil {
+		return false, fmt.Errorf("register Project for %q: %w", target, err)
+	}
+	return created, nil
+}
+
+// openedRootIsHome reports whether target is the operator's own home directory.
+//
+// A home directory that cannot be resolved answers false: the guard exists to
+// refuse a specific known path, not to refuse everything when the environment is
+// unreadable, and the registration itself is still bounded by the exact path.
+func (c *switchCommand) openedRootIsHome(target string) bool {
+	homeDir, err := c.resolveHomeDir()
+	if err != nil || strings.TrimSpace(homeDir) == "" {
+		return false
+	}
+	return candidates.MatchKey(target) == candidates.MatchKey(homeDir)
+}
+
+// defaultSwitchProjectRegistrar registers through the same transaction and the
+// same idempotence `projmux create project` uses.
+type defaultSwitchProjectRegistrar struct {
+	store          *resourceStore
+	shell          string
+	sessionNameFor func(string) string
+}
+
+func newDefaultSwitchProjectRegistrar() *defaultSwitchProjectRegistrar {
+	home, _ := os.UserHomeDir()
+	namer := coresessions.NewNamer(home)
+	return &defaultSwitchProjectRegistrar{
+		store:          newResourceStore(),
+		shell:          configuredShell(os.Getenv),
+		sessionNameFor: namer.SessionName,
+	}
+}
+
+func (r *defaultSwitchProjectRegistrar) RegisterProjectRoot(ctx context.Context, root string) (string, bool, error) {
+	if r == nil {
+		return "", false, nil
+	}
+	return registerProjectRoot(ctx, r.store, r.shell, r.sessionNameFor, root)
+}
+
 // switchProjectTopologyMaterializer is the closed-Project activation seam.
 //
 // A `false, nil` result means the exact Project root declares no Registry
@@ -428,8 +518,18 @@ type switchProjectTopologyMaterializer interface {
 // materializeAndOpenProjectTopology is the non-snapshot closed-Project start.
 // The client move is strictly last: materialization either converges the whole
 // declared shell topology or fails without an open.
-func (c *switchCommand) materializeAndOpenProjectTopology(ctx context.Context, sessionName, target string) error {
-	if c.projectTopology != nil {
+//
+// bootstrapped means this open is what registered the Project, and it takes the
+// shipped ensure path rather than the topology engine. The two would build the
+// same thing -- a Project registered a moment ago has exactly the one-Window,
+// one-shell-Pane bootstrap topology EnsureSession produces -- but they build it on
+// different servers: the topology engine binds to the app-owned socket by design,
+// while a first open of a directory has always started its session on the transport
+// the operator is actually in. Reusing the shipped path keeps a first open
+// unchanged; every later open of the now-registered Project converges through the
+// topology engine exactly as it already did.
+func (c *switchCommand) materializeAndOpenProjectTopology(ctx context.Context, sessionName, target string, bootstrapped bool) error {
+	if c.projectTopology != nil && !bootstrapped {
 		materialized, err := c.projectTopology.MaterializeProjectTopology(ctx, target, sessionName)
 		if err != nil {
 			return fmt.Errorf("materialize Registry topology for session %q: %w", sessionName, err)

@@ -71,15 +71,13 @@ type registryReconciler struct {
 	// observes a foreign or ambiguous Project binding. Lifecycle reconciliation
 	// leaves it nil and retains its existing behavior.
 	refusedSessions map[string]bool
-	refusedRoots    map[string]bool
 	// exactProjects is populated only by the public repair planner. It carries
 	// a known Registry Project UID already mirrored on a live session so a
 	// stale project-path anchor after rebind can be repaired without treating
 	// the old path as a new Project identity candidate.
 	exactProjects map[string]string
 	// targetLiveOnly keeps the public exact-socket repair scoped to resources
-	// observed on that server. Lifecycle mutation retains configured-root
-	// bootstrap registration.
+	// observed on that server.
 	targetLiveOnly bool
 }
 
@@ -120,15 +118,19 @@ func configuredShell(lookupEnv func(string) string) string {
 
 // discoverProjectRoots returns the selectable workdirs in a deterministic order.
 //
-// It reads exactly the sources the project picker reads -- pins, the resolved
-// repo root, and the configured managed roots -- through
+// It reads exactly the sources the project picker reads -- candidate pins, the
+// resolved repo root, and the configured managed roots -- through
 // candidates.DiscoverProjectRoots, which deliberately excludes the home
 // directory and the current path: those are picker conveniences, not evidence
 // that a directory is a managed project.
 //
-// The result is sorted by resolved (symlink-free) absolute path so registration
-// order, and therefore automatic name suffix allocation, never depends on
-// filesystem scan order.
+// Only candidate pins are a discovery source. A managed pin names a Registry
+// Project uid, and a Project's existence is the Registry's statement rather than
+// something a filesystem scan has to rediscover; feeding managed pins back into
+// discovery would make a presentation preference look like a scan root.
+//
+// The result is sorted by resolved (symlink-free) absolute path so candidate
+// order never depends on filesystem scan order.
 func discoverProjectRoots(homeDir string, lookupEnv func(string) string) ([]string, error) {
 	homeDir = filepath.Clean(homeDir)
 	repoRoot, _ := resolveProjdir(homeDir, lookupEnv, tmuxProjdirOption, config.LoadProjdir)
@@ -140,8 +142,8 @@ func discoverProjectRoots(homeDir string, lookupEnv func(string) string) ([]stri
 		StateHome:  lookupEnv("XDG_STATE_HOME"),
 	}
 	if paths, err := homes.Paths(); err == nil {
-		if list, err := pins.NewStore(paths.PinFile()).List(); err == nil {
-			pinned = list
+		if set, err := pins.NewStore(paths.PinFile()).Load(); err == nil {
+			pinned = set.CandidatePaths()
 		}
 	}
 
@@ -208,11 +210,6 @@ func (r *registryReconciler) reconcileGuarded(
 	unresolved, err := r.importLiveSessions(ctx, working, mutator, operationID, reconcileLive, binder)
 	if err != nil {
 		return err
-	}
-	if !r.targetLiveOnly {
-		if err := r.registerDiscoveredRoots(working, mutator, operationID); err != nil {
-			return err
-		}
 	}
 	if err := mutator.ObserveProjectRoots(working); err != nil {
 		return err
@@ -308,9 +305,6 @@ func (r *registryReconciler) importLiveSessions(
 			continue
 		}
 		if r.refusedSessions[name] {
-			if strings.TrimSpace(legacy.Root) != "" {
-				r.refusedRoots[candidates.CanonicalPath(legacy.Root)] = true
-			}
 			continue
 		}
 		if projectUID := r.exactProjects[name]; projectUID != "" {
@@ -328,9 +322,6 @@ func (r *registryReconciler) importLiveSessions(
 			}
 			if resourceSessionHasUnsafeBinding(*working, projectUID, legacy) {
 				r.refusedSessions[name] = true
-				if strings.TrimSpace(legacy.Root) != "" {
-					r.refusedRoots[candidates.CanonicalPath(legacy.Root)] = true
-				}
 				continue
 			}
 		}
@@ -701,60 +692,6 @@ func (r *registryReconciler) mirrorImported(
 		if err := r.mirror.MirrorPane(ctx, row[imported.PaneIndex], *pane); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// registerDiscoveredRoots registers every selectable workdir that is not a
-// Project yet, with the bootstrap topology.
-//
-// Registration order is the sorted resolved (symlink-free) absolute path, not
-// filesystem scan order, so the automatic name-suffix allocator produces the
-// same names on every machine that sees the same set of workdirs. The sort is
-// stable, so two spellings of one directory keep their discovery order and the
-// first spelling wins.
-//
-// A root whose resolved path already belongs to a registered Project is skipped.
-// That is the same canonical identity candidate discovery itself dedupes on, and
-// it is not a heuristic uid merge: no existing Project is re-identified, a second
-// Project is simply not created for a second spelling of one directory.
-func (r *registryReconciler) registerDiscoveredRoots(working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string) error {
-	discovered, err := r.discoverRoots()
-	if err != nil {
-		return err
-	}
-	roots := slices.Clone(discovered)
-	slices.SortStableFunc(roots, func(a, b string) int {
-		return strings.Compare(candidates.CanonicalPath(a), candidates.CanonicalPath(b))
-	})
-	registered := map[string]bool{}
-	for _, project := range working.Projects {
-		registered[candidates.CanonicalPath(project.Spec.Root)] = true
-	}
-	for _, root := range roots {
-		if r.refusedRoots[candidates.CanonicalPath(root)] {
-			continue
-		}
-		key := candidates.CanonicalPath(root)
-		if key == "" || registered[key] {
-			continue
-		}
-		_, err := mutator.RegisterProject(working, coremetadata.RegisterProjectOptions{
-			Root:         root,
-			DefaultShell: r.shell,
-			SessionName:  r.sessionNameFor(root),
-			OperationID:  operationID,
-		})
-		if err != nil {
-			if coremetadata.IsUsageError(err) {
-				// A workdir that vanished between discovery and registration, or
-				// whose basename cannot seed a name, is skipped rather than
-				// failing an unrelated create.
-				continue
-			}
-			return err
-		}
-		registered[key] = true
 	}
 	return nil
 }

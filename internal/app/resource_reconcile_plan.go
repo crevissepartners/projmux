@@ -188,7 +188,6 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		return resourceReconcilePlan{registry: before.Clone(), items: items, materialization: topology}, nil
 	}
 	reconciler.refusedSessions = refusedResourceProjectSessions(before, projectSessions, reconciler)
-	reconciler.refusedRoots = map[string]bool{}
 	reconciler.exactProjects = map[string]string{}
 	for _, session := range projectSessions {
 		if reconciler.refusedSessions[session.name] || session.uid == "" {
