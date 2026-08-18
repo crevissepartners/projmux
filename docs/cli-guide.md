@@ -702,10 +702,12 @@ core-equivalent CPU. Project and window rows count panes, while pane rows count
 the attributed processes. Pane rows and detail share the resolved pane identity
 and label the tmux current command, PID/SID, pane id, and TTY separately. Memory
 is explicitly an RSS sum (shared pages can be counted more than once) plus its
-host ratio. `No project match`, `Multiple project matches`, and non-drillable
-`Other / unattributed` remain explicit. The first two are display labels over
-stable internal attribution keys. Warming, partial, unavailable, unknown, and
-overage states also remain explicit. No process
+host ratio. Concrete projects and `No project match` are the only project
+drill-down groups; non-drillable `Other / unattributed` remains explicit.
+Defensive ambiguous attribution stays in its stable internal bucket, is
+included in Attributed totals, and appears only as a bounded CPU/RSS/pane
+diagnostic rather than a project row. Warming, partial, unavailable, unknown,
+and overage states also remain explicit. No process
 command list, mutation, history, graph, daemon, persistence, or Session State
 telemetry is created. Linux/tmux provides attribution; unsupported platforms
 show an unavailable reason rather than zero metrics.

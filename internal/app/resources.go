@@ -28,7 +28,6 @@ const (
 	resourceInspectorPopupMode = "resource-inspector"
 	resourceRefreshInterval    = 2 * time.Second
 	resourceScanBudget         = resourceRefreshInterval
-	resourceInfoValuePrefix    = "__projmux_resource_info__:"
 )
 
 type resourceSnapshotCollector interface {
@@ -651,14 +650,10 @@ func (v *resourceViewState) back() bool {
 func (v *resourceViewState) enter(value string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if strings.HasPrefix(value, resourceInfoValuePrefix) {
-		v.feedback = v.text.value("picker.resources.empty.not_actionable", "No row to open")
-		return
-	}
 	v.feedback = ""
 	switch v.scope.kind {
 	case resourceScopeProjects:
-		if value == "project:"+coreresources.OtherUnattributed || !strings.HasPrefix(value, "project:") {
+		if value == "project:"+coreresources.OtherUnattributed || value == "project:"+coreresources.ProjectShared || !strings.HasPrefix(value, "project:") {
 			return
 		}
 		v.scope = resourceScope{kind: resourceScopeWindows, projectKey: strings.TrimPrefix(value, "project:")}
@@ -845,7 +840,7 @@ func resourceProjectRows(snapshot coreresources.Snapshot, text resourceText) []r
 	for _, project := range snapshot.Projects {
 		byKey[project.Key] = project
 	}
-	keys := []string{coreresources.ProjectUnassigned, coreresources.ProjectShared}
+	keys := []string{coreresources.ProjectUnassigned}
 	for _, project := range snapshot.Projects {
 		if project.Key != coreresources.ProjectUnassigned && project.Key != coreresources.ProjectShared {
 			keys = append(keys, project.Key)
@@ -856,32 +851,15 @@ func resourceProjectRows(snapshot coreresources.Snapshot, text resourceText) []r
 		project, ok := byKey[key]
 		identity := resourceProjectDisplayName(key, text)
 		context := ""
-		if key != coreresources.ProjectUnassigned && key != coreresources.ProjectShared {
+		if key != coreresources.ProjectUnassigned {
 			identity = filepath.Base(key)
 			context = text.format("picker.resources.row.path", "Path  {path}", "{path}", key)
-		} else if key == coreresources.ProjectUnassigned {
-			context = text.value("picker.resources.bucket.unassigned_help", "Pane path matches no managed project root.")
 		} else {
-			context = text.value("picker.resources.bucket.shared_help", "Linked pane or multiple anchors match more than one project.")
+			context = text.value("picker.resources.bucket.unassigned_help", "Pane path matches no managed project root.")
 		}
-		disabled := key == coreresources.ProjectShared && !resourceProjectHasWindows(snapshot, key)
-		value := "project:" + key
-		if disabled {
-			value = resourceInfoValuePrefix + key
-			context += " · " + text.value("picker.resources.empty.not_actionable", "No row to open")
-		}
-		rows = append(rows, resourceRow{identity: identity, context: context, value: value, search: identity + " " + key, cpu: project.CPU, rss: project.Memory.RSSBytes, memPercent: project.Memory.HostPercent, memKnown: ok && snapshot.Host.MemoryAvailable, count: project.PaneCount, countKnown: ok && snapshot.Status != coreresources.StatusUnavailable, disabled: disabled})
+		rows = append(rows, resourceRow{identity: identity, context: context, value: "project:" + key, search: identity + " " + key, cpu: project.CPU, rss: project.Memory.RSSBytes, memPercent: project.Memory.HostPercent, memKnown: ok && snapshot.Host.MemoryAvailable, count: project.PaneCount, countKnown: ok && snapshot.Status != coreresources.StatusUnavailable})
 	}
 	return rows
-}
-
-func resourceProjectHasWindows(snapshot coreresources.Snapshot, projectKey string) bool {
-	for _, window := range snapshot.Windows {
-		if window.ProjectKey == projectKey {
-			return true
-		}
-	}
-	return false
 }
 
 func resourceProjectDisplayName(key string, text resourceText) string {
@@ -889,7 +867,7 @@ func resourceProjectDisplayName(key string, text resourceText) string {
 	case coreresources.ProjectUnassigned:
 		return text.value("picker.resources.bucket.unassigned", "No project match")
 	case coreresources.ProjectShared:
-		return text.value("picker.resources.bucket.shared", "Multiple project matches")
+		return text.value("picker.resources.diagnostic.ambiguous_label", "Ambiguous attribution")
 	case coreresources.OtherUnattributed:
 		return text.value("picker.resources.bucket.other", coreresources.OtherUnattributed)
 	default:
@@ -1164,6 +1142,17 @@ func resourceSampleAge(snapshot coreresources.Snapshot, now time.Time) (string, 
 
 func resourceDiagnostic(snapshot coreresources.Snapshot, text resourceText) string {
 	var diagnostics []string
+	if shared, ok := resourceSharedProjectUsage(snapshot); ok {
+		cpu := formatResourceUnknown()
+		if shared.CPU != nil {
+			cpu = formatResourcePercent(&shared.CPU.HostSharePercent)
+		}
+		diagnostics = append(diagnostics, text.format("picker.resources.diagnostic.ambiguous", "Ambiguous attribution retained: CPU {cpu} · RSS {rss} · panes {panes}; included in Attributed totals, not drillable",
+			"{cpu}", cpu,
+			"{rss}", formatBytes(shared.Memory.RSSBytes),
+			"{panes}", fmt.Sprint(shared.PaneCount),
+		))
+	}
 	if snapshot.Status == coreresources.StatusPartial {
 		d := snapshot.Diagnostics
 		diagnostics = append(diagnostics, text.format("picker.resources.diagnostic.partial", "partial sampled={sampled} skipped={skipped} race={race} permission={permission}",
@@ -1183,6 +1172,15 @@ func resourceDiagnostic(snapshot coreresources.Snapshot, text resourceText) stri
 		diagnostics = append(diagnostics, resourceUnavailableReason(snapshot.StatusReason, text))
 	}
 	return strings.Join(diagnostics, " | ")
+}
+
+func resourceSharedProjectUsage(snapshot coreresources.Snapshot) (coreresources.ProjectUsage, bool) {
+	for _, project := range snapshot.Projects {
+		if project.Key == coreresources.ProjectShared && (project.PaneCount > 0 || project.WindowCount > 0 || project.ProcessCount > 0 || project.CPU != nil || project.Memory.RSSBytes > 0) {
+			return project, true
+		}
+	}
+	return coreresources.ProjectUsage{}, false
 }
 
 func resourceUnavailableReason(reason string, text resourceText) string {
