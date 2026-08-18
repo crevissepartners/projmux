@@ -315,7 +315,7 @@ func TestClientRecentSessionsSortsByActivityDescending(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("10\tstale\t0\t1\n35\tfresh\t1\t3\n35\ttie-kept-order\t0\t2\n"), nil
+		return []byte("$1\t10\tstale\t0\t1\n$2\t35\tfresh\t1\t3\n$3\t35\ttie-kept-order\t0\t2\n"), nil
 	}))
 
 	sessions, err := client.RecentSessions(context.Background())
@@ -333,7 +333,7 @@ func TestClientRecentSessionsAcceptsUnderscoreSeparatedRows(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("10_repo_with_underscores_0_1\n35_projmux-projects-bravo-web_1_2\n"), nil
+		return []byte("$1_10_repo_with_underscores_0_1\n$2_35_projmux-projects-bravo-web_1_2\n"), nil
 	}))
 
 	sessions, err := client.RecentSessions(context.Background())
@@ -350,7 +350,7 @@ func TestClientRecentSessionsAcceptsUnderscoreSeparatedRows(t *testing.T) {
 func TestParseRecentSessionRowsAllowsPipeInSessionName(t *testing.T) {
 	t.Parallel()
 
-	row := strings.Join([]string{"42", "team|workspace", "1", "3"}, tmuxFieldSep)
+	row := strings.Join([]string{"$4", "42", "team|workspace", "1", "3"}, tmuxFieldSep)
 
 	sessions, err := parseRecentSessionRows([]byte(row + "\n"))
 	if err != nil {
@@ -358,7 +358,7 @@ func TestParseRecentSessionRowsAllowsPipeInSessionName(t *testing.T) {
 	}
 
 	want := []recentSession{
-		{name: "team|workspace", attached: true, windows: 3, activity: 42, order: 0},
+		{id: "$4", name: "team|workspace", attached: true, windows: 3, activity: 42, order: 0},
 	}
 	if !reflect.DeepEqual(sessions, want) {
 		t.Fatalf("parseRecentSessionRows = %#v, want %#v", sessions, want)
@@ -368,7 +368,7 @@ func TestParseRecentSessionRowsAllowsPipeInSessionName(t *testing.T) {
 func TestParseRecentSessionRowsAcceptsEscapedUnitSeparator(t *testing.T) {
 	t.Parallel()
 
-	row := strings.Join([]string{"42", "workspace", "1", "3"}, tmuxEscapedFieldSep)
+	row := strings.Join([]string{"$4", "42", "workspace", "1", "3"}, tmuxEscapedFieldSep)
 
 	sessions, err := parseRecentSessionRows([]byte(row + "\n"))
 	if err != nil {
@@ -376,7 +376,7 @@ func TestParseRecentSessionRowsAcceptsEscapedUnitSeparator(t *testing.T) {
 	}
 
 	want := []recentSession{
-		{name: "workspace", attached: true, windows: 3, activity: 42, order: 0},
+		{id: "$4", name: "workspace", attached: true, windows: 3, activity: 42, order: 0},
 	}
 	if !reflect.DeepEqual(sessions, want) {
 		t.Fatalf("parseRecentSessionRows = %#v, want %#v", sessions, want)
@@ -435,7 +435,7 @@ func TestClientRecentSessionsRejectsInvalidActivity(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("oops\tworkspace\t1\t2"), nil
+		return []byte("$1\toops\tworkspace\t1\t2"), nil
 	}))
 
 	_, err := client.RecentSessions(context.Background())
@@ -609,7 +609,7 @@ func TestClientRecentSessionsRejectsEmptySessionNames(t *testing.T) {
 	t.Parallel()
 
 	client := NewClient(staticRunner(func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("10\t \t1\t2\n"), nil
+		return []byte("$1\t10\t \t1\t2\n"), nil
 	}))
 
 	_, err := client.RecentSessions(context.Background())
@@ -629,10 +629,10 @@ func TestClientRecentSessionSummariesIncludeAttachedPaneCountAndPath(t *testing.
 		call++
 		switch call {
 		case 1:
-			if got, want := args, []string{"list-sessions", "-F", tmuxFormat("#{session_activity}", "#{session_name}", "#{session_attached}", "#{session_windows}")}; !reflect.DeepEqual(got, want) {
+			if got, want := args, []string{"list-sessions", "-F", tmuxFormat("#{session_id}", "#{session_activity}", "#{session_name}", "#{session_attached}", "#{session_windows}")}; !reflect.DeepEqual(got, want) {
 				t.Fatalf("list-sessions args = %#v, want %#v", got, want)
 			}
-			return []byte("10\tstale\t0\t1\n35\tfresh\t1\t3\n"), nil
+			return []byte("$3\t10\tstale\t0\t1\n$1\t35\tfresh\t1\t3\n"), nil
 		case 2:
 			if got, want := args, []string{"list-panes", "-a", "-F", tmuxFormat(
 				"#{session_name}",
@@ -671,8 +671,8 @@ func TestClientRecentSessionSummariesIncludeAttachedPaneCountAndPath(t *testing.
 	}
 
 	want := []RecentSessionSummary{
-		{Name: "fresh", Attached: true, WindowCount: 3, PaneCount: 2, Path: "/tmp/fresh-active", Activity: 35},
-		{Name: "stale", Attached: false, WindowCount: 1, PaneCount: 1, Path: "/tmp/stale", Activity: 10},
+		{ID: "$1", Name: "fresh", Attached: true, WindowCount: 3, PaneCount: 2, Path: "/tmp/fresh-active", Activity: 35},
+		{ID: "$3", Name: "stale", Attached: false, WindowCount: 1, PaneCount: 1, Path: "/tmp/stale", Activity: 10},
 	}
 	if !reflect.DeepEqual(summaries, want) {
 		t.Fatalf("RecentSessionSummaries = %#v, want %#v", summaries, want)
@@ -686,7 +686,7 @@ func TestClientRecentSessionSummariesPropagatePaneListingErrors(t *testing.T) {
 	client := NewClient(staticRunner(func(_ context.Context, _ string, _ ...string) ([]byte, error) {
 		call++
 		if call == 1 {
-			return []byte("35\tfresh\t1\t3\n"), nil
+			return []byte("$1\t35\tfresh\t1\t3\n"), nil
 		}
 		return nil, errors.New("tmux failed")
 	}))

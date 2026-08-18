@@ -159,6 +159,8 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	ai.operationalDiagnostics = aiOperationalDiagnostics
 	ai.producer = newAttentionNotifyProducer(notifyFocusDiagnostics)
 	switcher := newSwitchCommand(recorder)
+	windowCmd := newWindowCommand(recorder)
+	recentWindowCmd := windowCmd.recent
 	switcher.sessionStateDiagnostics = sessionStateDiagnostics
 	attach := newAttachCommand(recorder)
 	kill := newKillCommand(recorder)
@@ -253,6 +255,21 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	runtimeCmd.tag = tagCmd
 	runtimeCmd.prune = pruneCmd
 	attach.switcher = switcher
+	// The Registry-first primary navigation forwards every action to the route
+	// that already owns it: focus moves a client, `attach project` is the one
+	// route that materializes an offline Project, `agent resume` is the one that
+	// revives an Agent, and the Runtime surface is the escape hatch. Nothing
+	// here is a second implementation of a shipped behavior.
+	if switcher.navigation != nil {
+		switcher.navigation.focus = focusCmd
+		switcher.navigation.attach = attach
+		switcher.navigation.agent = agentCmd
+		switcher.navigation.runtime = runtimeCmd
+	}
+	sessions.navigation = newRegistryNavigationReader(tmuxCmd.runner)
+	sessions.runtime = runtimeCmd
+	recentWindowCmd.navigation = newRegistryNavigationReader(tmuxCmd.runner)
+	recentWindowCmd.runtime = runtimeCmd
 	// The hidden internal plumbing namespace. Every entry is an alias over the
 	// handler that already owns the behavior, so the generated tmux config can
 	// move onto the canonical spellings without a second implementation.
@@ -320,7 +337,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		update:             update,
 		usage:              usageCmd,
 		welcome:            newWelcomeCommand(update),
-		window:             newWindowCommand(recorder),
+		window:             windowCmd,
 	}
 }
 

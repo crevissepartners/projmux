@@ -24,7 +24,7 @@ func TestSessionsKoreanRowsPreviewAndNarrowFooterAreLocalized(t *testing.T) {
 	t.Parallel()
 	locale := i18n.Locale("ko-KR")
 	cmd := &sessionsCommand{}
-	rows, err := cmd.buildRows([]inttmux.RecentSessionSummary{{Name: "repo", Attached: false, WindowCount: 2}}, locale)
+	rows, err := cmd.buildRows([]inttmux.RecentSessionSummary{{Name: "repo", Attached: false, WindowCount: 2}}, sessionsAttribution{}, locale)
 	if err != nil {
 		t.Fatal(err)
 	}

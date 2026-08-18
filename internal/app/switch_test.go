@@ -1850,6 +1850,10 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 		expectedCheapSidebarEntry("repo-a", "~rp/repo-a", fixture.path("rp/repo-a"), false),
 		expectedCheapSidebarEntry("work-a", fixture.path("managed/work-a"), fixture.path("managed/work-a"), false),
 		expectedCheapSidebarEntry("work-b", fixture.path("managed/work-b"), fixture.path("managed/work-b"), false),
+		// The Registry-first list ends with the Runtime escape hatch. This
+		// fixture has no Registry, so every directory is an unregistered
+		// candidate and the link reports no transport.
+		expectedCheapSidebarEntry("Runtime", "Runtime - no tmux transport", switchRuntimeSentinel, false),
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)
@@ -1914,6 +1918,7 @@ func TestNewSwitchCommandDoesNotInferRepoRootFromHomeSourceRepos(t *testing.T) {
 	wantEntries := []intpickercompat.Entry{
 		expectedCheapSidebarEntry("home", "~", fixture.path("home"), false),
 		expectedCheapSidebarEntry("repos", "~/source/repos", fixture.path("home/source/repos"), false),
+		expectedCheapSidebarEntry("Runtime", "Runtime - no tmux transport", switchRuntimeSentinel, false),
 	}
 	if got := fakeRunner.last.Entries; !equalEntries(got, wantEntries) {
 		t.Fatalf("runner entries = %#v, want %#v", got, wantEntries)

@@ -3555,3 +3555,246 @@ wait "$rtd_client_pid" 2>/dev/null || true
 rtd_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Runtime diagnostics e2e passed: socket=$rtd_socket path=$rtd_socket_path other-socket=$rtd_other_socket other-path=$rtd_other_socket_path client=$rtd_client writes=0 cleanup=validated-exact-sockets"
+
+# ---------------------------------------------------------------------------
+# Registry-first primary navigation.
+#
+# The Projects surface used to enumerate the machine, so a Project whose session
+# was closed disappeared from the list whose purpose is reopening it. This block
+# proves the inverted authority against a real tmux server, a real attached
+# client, and a real 80x24 popup: the Registry Project is a row while its session
+# is live and still a row after the session is killed, with the same identity and
+# only its status changed; the operator's own window, the Home control session,
+# and a scratch session are not rows and are reachable through the Runtime link;
+# and the whole surface writes nothing.
+#
+# Isolation follows the four mandatory conditions: inherited TMUX/TMUX_PANE are
+# stripped from every call, the server lives under a run-unique TMUX_TMPDIR with
+# its own -L name, the real #{socket_path} is queried and proven to sit inside the
+# smoke root, and only that exact socket is killed.
+# ---------------------------------------------------------------------------
+nav_root="$PROJMUX_SMOKE_WORKDIR/registry-navigation-e2e"
+nav_socket="projmux-registry-nav-$$-$RANDOM"
+nav_other_socket="projmux-registry-nav-other-$$-$RANDOM"
+nav_session="nav-alpha"
+nav_driver="nav-driver"
+mkdir -p "$nav_root/tmux" "$nav_root/state" "$nav_root/config" "$nav_root/home" \
+  "$nav_root/runtime" "$nav_root/work/alpha"
+chmod 0700 "$nav_root/runtime"
+nav_real_tmux="$(command -v tmux)"
+
+nav_tmux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$nav_root/tmux" "$nav_real_tmux" -L "$nav_socket" "$@"; }
+nav_other_tmux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$nav_root/tmux" "$nav_real_tmux" -L "$nav_other_socket" "$@"; }
+nav_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$nav_root/home" \
+    XDG_CONFIG_HOME="$nav_root/config" \
+    XDG_STATE_HOME="$nav_root/state" \
+    XDG_RUNTIME_DIR="$nav_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$nav_root/work" \
+    TMUX_TMPDIR="$nav_root/tmux" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+nav_tmux new-session -d -s "$nav_session" -c "$nav_root/work/alpha" sleep 600
+nav_tmux set-option -t "$nav_session" -q @projmux_project_path "$nav_root/work/alpha"
+nav_tmux new-session -d -s "$nav_driver" -c "$nav_root" bash --noprofile --norc
+nav_other_tmux new-session -d -s untouched -c "$nav_root" sleep 600
+nav_other_tmux set-option -gq @projmux_nav_sentinel unchanged
+
+nav_socket_path="$(nav_tmux display-message -p -t "$nav_session" '#{socket_path}')"
+nav_socket_pid="$(nav_tmux display-message -p -t "$nav_session" '#{pid}')"
+nav_other_socket_path="$(nav_other_tmux display-message -p -t untouched '#{socket_path}')"
+for actual in "$nav_socket_path" "$nav_other_socket_path"; do
+  case "$actual" in
+    "$nav_root"/*) ;;
+    *)
+      echo "registry navigation e2e socket escaped smoke root: $actual" >&2
+      exit 1
+      ;;
+  esac
+done
+
+nav_cleanup() {
+  local socket actual
+  for socket in "$nav_socket" "$nav_other_socket"; do
+    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$nav_root/tmux" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+    if [[ -z "$actual" ]]; then
+      continue
+    fi
+    case "$actual" in
+      "$nav_root"/*) env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true ;;
+      *) echo "refusing registry navigation cleanup outside smoke root: $actual" >&2 ;;
+    esac
+  done
+}
+trap 'nav_cleanup; smoke_cleanup_env' EXIT
+
+nav_tmux set-option -g -q @projmux_app 1
+# tmux renames a window to its foreground command on its own. That is tmux
+# writing, not projmux, and it would break the zero-write comparison below.
+nav_tmux set-option -g -q automatic-rename off
+nav_pmx reconcile resources --socket "$nav_socket" >"$nav_root/import.out"
+nav_project_uid="$(nav_tmux show-options -t "$nav_session" -qv @projmux_project_uid)"
+if [[ -z "$nav_project_uid" ]]; then
+  echo "registry navigation e2e import left the Project uid empty" >&2
+  exit 1
+fi
+
+# Everything the managed list must not contain, on the same server: the control
+# session, a scratch session, an operator's own window, and a window mirroring a
+# uid the Registry does not carry.
+nav_tmux new-session -d -s nav-home -c "$nav_root" sleep 600
+nav_tmux set-option -t nav-home -q @projmux_session_role control
+nav_tmux new-session -d -s nav-scratch -c "$nav_root" sleep 600
+nav_tmux set-option -t nav-scratch -q @projmux_ephemeral 1
+nav_tmux new-window -d -t "=$nav_session" -n handmade -c "$nav_root" sleep 600
+nav_tmux new-window -d -t "=$nav_session" -n phantom -c "$nav_root" sleep 600
+nav_phantom_window="$(nav_tmux list-windows -t "=$nav_session" -F '#{window_id} #{window_name}' | awk '$2 == "phantom" {print $1}')"
+nav_tmux set-option -w -t "$nav_phantom_window" -q @projmux_window_uid win-not-in-this-registry
+
+nav_snapshot() {
+  nav_tmux list-sessions -F '#{session_id} #{session_name} #{@projmux_project_uid} #{@projmux_session_role} #{@projmux_ephemeral}'
+  nav_tmux list-windows -a -F '#{window_id} #{session_id} #{window_name} #{@projmux_window_uid}'
+  nav_tmux list-panes -a -F '#{pane_id} #{window_id} #{@projmux_pane_uid}'
+}
+nav_registry="$nav_root/state/projmux/metadata/registry.json"
+cp "$nav_registry" "$nav_root/registry.before"
+nav_other_before="$(nav_other_tmux show-options -gqv @projmux_nav_sentinel):$(nav_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+
+# The attached client the popups are rendered into.
+nav_client_log="$nav_root/driver-client.log"
+nav_client_input="$nav_root/driver-client.in"
+mkfifo "$nav_client_input"
+exec 8<>"$nav_client_input"
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$nav_root/tmux' tmux -L '$nav_socket' attach-session -t '$nav_driver'" \
+  "$nav_client_log" <"$nav_client_input" >/dev/null 2>&1 &
+nav_client_pid=$!
+
+nav_wait_for() {
+  local description="$1"
+  shift
+  for _ in {1..200}; do
+    if "$@"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for $description" >&2
+  tail -c 12000 "$nav_client_log" >&2 || true
+  return 1
+}
+
+nav_wait_for "attached registry navigation client" sh -c \
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$nav_root/tmux' tmux -L '$nav_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+nav_client="$(nav_tmux list-clients -F '#{client_name}' | head -n 1)"
+
+# One 80x24 popup run of the Projects sidebar, rendered through the exact
+# inherited socket the client is attached to.
+nav_open_projects() {
+  local offset_var="$1"
+  printf -v "$offset_var" '%s' "$(stat -c %s "$nav_client_log")"
+  nav_tmux display-popup -c "$nav_client" -T "Projects E2E" -w 80 -h 24 -E \
+    "env -u TMUX_PANE HOME='$nav_root/home' XDG_CONFIG_HOME='$nav_root/config' XDG_STATE_HOME='$nav_root/state' XDG_RUNTIME_DIR='$nav_root/runtime' PROJMUX_MANAGED_ROOTS='$nav_root/work' TMUX_TMPDIR='$nav_root/tmux' TMUX='$nav_socket_path,$nav_socket_pid,0' SHELL=/bin/sh '$bin' switch --ui=sidebar" &
+  nav_popup_pid=$!
+}
+
+nav_open_projects nav_popup_offset
+nav_screen_has() {
+  tail -c +$((nav_popup_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+}
+nav_wait_for "Projects sidebar" nav_screen_has "Projects"
+# The Runtime link is a row of the Projects list, and it says what it leads to.
+# The tally is the observation that the runtime-only objects on this server are
+# present and reachable while being absent from the managed rows.
+nav_wait_for "Runtime link row" nav_screen_has "Runtime -"
+nav_wait_for "Runtime link control tally" nav_screen_has "control 1"
+nav_wait_for "Runtime link ephemeral tally" nav_screen_has "ephemeral 1"
+nav_wait_for "Runtime link recoverable tally" nav_screen_has "recoverable 1"
+
+# The managed row is reached through the list's own filter rather than by
+# assuming a viewport. An 80x24 popup shows three cards at a time, so a row's
+# presence is a property of the model, and the filter is how an operator asks the
+# model for it.
+nav_filter_offset="$(stat -c %s "$nav_client_log")"
+printf 'alpha' >&8
+nav_filter_has() {
+  tail -c +$((nav_filter_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+}
+# The needle is the row's own path line rather than the name, because the search
+# field echoes whatever was typed: only the card can put the Project root on the
+# screen.
+nav_wait_for "managed Project row" nav_filter_has "work/alpha"
+
+# The dedicated key opens the read-only Registry hierarchy of the selected
+# Project: its Window, its shell Pane, and their live status. This surface is the
+# one that has to contain the Registry rows and nothing else, so it is where the
+# separation is observed.
+nav_hier_offset="$(stat -c %s "$nav_client_log")"
+printf '\022' >&8
+nav_hier_has() {
+  tail -c +$((nav_hier_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+}
+nav_wait_for "Projects resources hierarchy" nav_hier_has "Projects > Resources"
+nav_wait_for "hierarchy host header" nav_hier_has "host app-owned"
+nav_wait_for "hierarchy project row" nav_hier_has "project"
+nav_wait_for "hierarchy window row" nav_hier_has "window"
+nav_wait_for "hierarchy pane row" nav_hier_has "pane"
+nav_wait_for "hierarchy live status" nav_hier_has "live"
+for nav_absent in nav-home nav-scratch handmade phantom; do
+  if nav_hier_has "$nav_absent"; then
+    echo "the Registry hierarchy named the runtime-only object $nav_absent" >&2
+    tail -c 12000 "$nav_client_log" >&2 || true
+    exit 1
+  fi
+done
+printf '\003' >&8
+printf '\003' >&8
+nav_wait_for "Projects popup exit" sh -c "! kill -0 '$nav_popup_pid' 2>/dev/null"
+wait "$nav_popup_pid" || true
+
+# The runtime goes away. A Registry row is a logical resource, so the Project has
+# to still be a row -- with the same identity and only its status changed.
+nav_tmux kill-session -t "=$nav_session"
+nav_open_projects nav_popup_offset
+nav_wait_for "Projects sidebar after the session was killed" nav_screen_has "Projects"
+nav_offline_filter_offset="$(stat -c %s "$nav_client_log")"
+printf 'alpha' >&8
+nav_offline_filter_has() {
+  tail -c +$((nav_offline_filter_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+}
+nav_wait_for "offline Project row" nav_offline_filter_has "work/alpha"
+nav_offline_offset="$(stat -c %s "$nav_client_log")"
+printf '\022' >&8
+nav_offline_has() {
+  tail -c +$((nav_offline_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+}
+nav_wait_for "offline hierarchy" nav_offline_has "Projects > Resources"
+nav_wait_for "offline hierarchy row" nav_offline_has "offline"
+nav_wait_for "offline start action" nav_offline_has "start"
+printf '\003' >&8
+printf '\003' >&8
+nav_wait_for "offline Projects popup exit" sh -c "! kill -0 '$nav_popup_pid' 2>/dev/null"
+wait "$nav_popup_pid" || true
+
+# Zero writes: the Registry the whole surface read is byte-identical, the sibling
+# socket never moved, and the attached client is where it started.
+cmp "$nav_root/registry.before" "$nav_registry"
+nav_other_after="$(nav_other_tmux show-options -gqv @projmux_nav_sentinel):$(nav_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+if [[ "$nav_other_after" != "$nav_other_before" ]]; then
+  echo "registry navigation touched the sibling socket" >&2
+  exit 1
+fi
+if [[ "$(nav_tmux display-message -p -c "$nav_client" '#{session_name}')" != "$nav_driver" ]]; then
+  echo "registry navigation moved the attached client" >&2
+  exit 1
+fi
+
+exec 8>&-
+kill "$nav_client_pid" >/dev/null 2>&1 || true
+wait "$nav_client_pid" 2>/dev/null || true
+nav_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> Registry-first navigation e2e passed: socket=$nav_socket path=$nav_socket_path other-socket=$nav_other_socket other-path=$nav_other_socket_path client=$nav_client project=$nav_project_uid offline-row=preserved writes=0 cleanup=validated-exact-sockets"

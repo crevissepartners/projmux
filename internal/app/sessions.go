@@ -57,6 +57,14 @@ type sessionsCommand struct {
 	homeDir              func() (string, error)
 	stateStore           func() (sessionstate.Store, error)
 	cleanupKilledSession func(string)
+	// navigation is the shared zero-write Registry read seam. It supplies the
+	// attribution that decides which observed sessions are managed rows; it
+	// never writes and never materializes.
+	navigation *registryNavigationReader
+	// runtime is the Runtime diagnostics route the withheld sessions are
+	// reached through. It is a field so this surface forwards to the shipped
+	// escape hatch rather than growing a second one.
+	runtime rawArgvCommand
 }
 
 func newSessionsCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionsCommand {
@@ -112,7 +120,13 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolve recent tmux sessions: %w", err)
 	}
-	if len(summaries) == 0 {
+	// Managed rows only. A session projmux does not own is not a Project, and a
+	// Main surface that listed it beside one would be offering the same actions
+	// on two objects with different owners.
+	attribution := c.attributeSessions(context.Background(), summaries)
+	summaries = attribution.managed
+	runtimeLink, hasRuntimeLink := attribution.runtimeLinkEntry()
+	if len(summaries) == 0 && !hasRuntimeLink {
 		return nil
 	}
 
@@ -150,13 +164,17 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	for {
-		rows, err := c.buildRows(summaries, locale)
+		rows, err := c.buildRows(summaries, attribution, locale)
 		if err != nil {
 			return err
 		}
+		entries := rowsToEntries(rows)
+		if hasRuntimeLink {
+			entries = append(entries, runtimeLink)
+		}
 		result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.native, intpickercompat.Options{
 			UI:      *ui,
-			Entries: rowsToEntries(rows),
+			Entries: entries,
 			Prompt:  "› ",
 			Footer:  sessionsPickerFooter(locale),
 			ExpectKeys: append(
@@ -177,6 +195,12 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 		if result.Value == "" {
 			return nil
+		}
+		if result.Value == sessionsRuntimeSentinel {
+			if c.runtime == nil {
+				return fmt.Errorf("sessions runtime diagnostics handler is not configured")
+			}
+			return c.runtime.Run([]string{"diagnostics"}, stdout, stderr)
 		}
 		if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "SessionPopup:OpenState", sessionsStateExpectKey) {
 			if err := c.runSessionStateOverview(result.Value, summaries); err != nil {
@@ -358,16 +382,17 @@ func sessionsSummaryByName(summaries []inttmux.RecentSessionSummary, sessionName
 	return inttmux.RecentSessionSummary{}
 }
 
-func (c *sessionsCommand) buildRows(summaries []inttmux.RecentSessionSummary, locale i18n.Locale) ([]intrender.SessionRow, error) {
+func (c *sessionsCommand) buildRows(summaries []inttmux.RecentSessionSummary, attribution sessionsAttribution, locale i18n.Locale) ([]intrender.SessionRow, error) {
 	renderSummaries := make([]intrender.SessionSummary, 0, len(summaries))
 	for _, summary := range summaries {
 		renderSummary := intrender.SessionSummary{
-			Name:        summary.Name,
-			Attached:    summary.Attached,
-			WindowCount: summary.WindowCount,
-			PaneCount:   summary.PaneCount,
-			Path:        summary.Path,
-			Activity:    summary.Activity,
+			Name:         summary.Name,
+			ResourceName: attribution.byID[strings.TrimSpace(summary.ID)].ResourceName,
+			Attached:     summary.Attached,
+			WindowCount:  summary.WindowCount,
+			PaneCount:    summary.PaneCount,
+			Path:         summary.Path,
+			Activity:     summary.Activity,
 		}
 
 		windowIndex, paneIndex, err := c.resolveSelection(summary.Name)

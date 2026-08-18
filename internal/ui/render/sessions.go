@@ -12,7 +12,12 @@ type SessionRow struct {
 }
 
 type SessionSummary struct {
-	Name         string
+	Name string
+	// ResourceName is the managed Registry resource this session projects. It
+	// is rendered beside the tmux session name so the row reads as the resource
+	// it is, while the value the picker returns stays the exact tmux handle the
+	// action adapter needs.
+	ResourceName string
 	Attached     bool
 	WindowCount  int
 	PaneCount    int
@@ -49,6 +54,10 @@ func BuildSessionRowsWithText(summaries []SessionSummary, text SessionRowText) [
 
 		if name := sanitizeCell(summary.Name); name != "" {
 			parts = append(parts, name)
+		}
+
+		if resource := sanitizeCell(summary.ResourceName); resource != "" && resource != sanitizeCell(summary.Name) {
+			parts = append(parts, ansiBlue+resource+ansiReset)
 		}
 
 		if activity := formatSessionActivity(summary.Activity); activity != "" {
