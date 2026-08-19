@@ -1643,7 +1643,11 @@ pmx_agent_live delete pane "uid:$agent_pane_uid" --yes
 pmx_agent_live agent topic set "offline resume topic" "uid:$agent_uid"
 pmx_agent_live agent resume "uid:$agent_uid" >"$create_root/agent-resume.out"
 smoke_assert_file_contains "$create_root/agent-resume.out" "resumed"
-resumed_pane_uid="$(pmx_agent_live describe agent "uid:$agent_uid" -o json | sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
+# This read runs from the pane the delete above just killed, so its Projmux
+# identity mirror is gone. An explicit --project is what keeps it resolvable:
+# a singular reference derives its Project namespace from the active Window,
+# and naming the Project skips that observation entirely.
+resumed_pane_uid="$(pmx_agent_live describe agent "uid:$agent_uid" -p alpha -o json | sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
 resumed_pane="$(ctx list-panes -a -F '#{@projmux_pane_uid} #{pane_id}' | awk -v uid="$resumed_pane_uid" '$1 == uid { print $2; exit }')"
 if [[ -z "$resumed_pane" ]] ||
   [[ "$(ctx show-options -pqv -t "$resumed_pane" @projmux_ai_topic)" != "offline resume topic" ]]; then
@@ -2189,6 +2193,125 @@ binding_inside_pmx get projects -o name >"$binding_root/projects.out"
 smoke_assert_file_contains "$binding_root/projects.out" "alpha"
 smoke_assert_file_contains "$binding_root/projects.out" "beta"
 
+# An explicit singular reference resolves inside the active Project too, not
+# against the whole Registry. The fixture is built to separate the two failure
+# modes it has to keep apart: Window `ns-one` and Pane `shared` exist in alpha
+# *and* in beta, so a cross-Project leak is visible, and alpha holds a second
+# Pane `shared` under `ns-two`, so a real intra-Project ambiguity must survive
+# the narrowing instead of being silently broken by the active Window.
+binding_ns_alpha_pane="$(
+  binding_inside_pmx create pane -p alpha -w ns-one --create-window --name shared -o pane-id -- sleep 600
+)"
+binding_ns_sibling_pane="$(
+  binding_inside_pmx create pane -p alpha -w ns-two --create-window --name shared -o pane-id -- sleep 600
+)"
+binding_ns_beta_pane="$(
+  binding_inside_pmx create pane -p beta -w ns-one --create-window --name shared -o pane-id -- sleep 600
+)"
+binding_ns_alpha_pane_uid="$(binding_tmux show-options -pqv -t "$binding_ns_alpha_pane" @projmux_pane_uid)"
+binding_ns_sibling_pane_uid="$(binding_tmux show-options -pqv -t "$binding_ns_sibling_pane" @projmux_pane_uid)"
+binding_ns_beta_pane_uid="$(binding_tmux show-options -pqv -t "$binding_ns_beta_pane" @projmux_pane_uid)"
+binding_ns_alpha_window_uid="$(binding_inside_pmx describe window ns-one -p alpha -o uid | tr -d '[:space:]')"
+binding_ns_beta_window_uid="$(binding_inside_pmx describe window ns-one -p beta -o uid | tr -d '[:space:]')"
+if [[ -z "$binding_ns_alpha_pane_uid" ]] || [[ -z "$binding_ns_sibling_pane_uid" ]] ||
+  [[ -z "$binding_ns_beta_pane_uid" ]] || [[ -z "$binding_ns_alpha_window_uid" ]] ||
+  [[ -z "$binding_ns_beta_window_uid" ]]; then
+  echo "singular namespace fixture left an identity empty" >&2
+  exit 1
+fi
+if [[ "$binding_ns_alpha_window_uid" == "$binding_ns_beta_window_uid" ]]; then
+  echo "singular namespace fixture reused one Window across Projects" >&2
+  exit 1
+fi
+
+binding_assert_singular_uid() {
+  local want="$1" label="$2"
+  shift 2
+  binding_inside_pmx "$@" >"$binding_root/singular-$label.out"
+  if [[ "$(tr -d '[:space:]' <"$binding_root/singular-$label.out")" != "$want" ]]; then
+    echo "singular $label did not resolve $want" >&2
+    cat "$binding_root/singular-$label.out" >&2
+    exit 1
+  fi
+}
+
+# The reproduction: a name that exists in both Projects resolves to this one.
+binding_assert_singular_uid "$binding_ns_alpha_window_uid" window   describe window ns-one -o uid
+# Explicit --project still wins, and outside tmux the whole-Registry ambiguity
+# is exactly what it was before the namespace existed.
+binding_assert_singular_uid "$binding_ns_beta_window_uid" window-explicit   describe window ns-one -p beta -o uid
+set +e
+binding_pmx describe window ns-one -o uid \
+  >"$binding_root/singular-outside.out" 2>"$binding_root/singular-outside.err"
+binding_singular_outside_status=$?
+set -e
+if [[ "$binding_singular_outside_status" == "0" ]] || [[ -s "$binding_root/singular-outside.out" ]]; then
+  echo "outside tmux a duplicated Window name resolved instead of failing" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$binding_root/singular-outside.err" "matched 2 windows"
+
+# The Project narrows the search; it never picks the target. Two same-named
+# Panes inside alpha stay a bounded exact-one ambiguity, and the candidate
+# listing must not reach into beta.
+set +e
+binding_inside_pmx describe pane shared -o uid \
+  >"$binding_root/singular-ambiguous.out" 2>"$binding_root/singular-ambiguous.err"
+binding_singular_ambiguous_status=$?
+set -e
+if [[ "$binding_singular_ambiguous_status" == "0" ]] || [[ -s "$binding_root/singular-ambiguous.out" ]]; then
+  echo "an intra-Project Pane ambiguity was silently resolved" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$binding_root/singular-ambiguous.err" "matched 2 panes"
+smoke_assert_file_contains "$binding_root/singular-ambiguous.err" "window/ns-one"
+smoke_assert_file_contains "$binding_root/singular-ambiguous.err" "window/ns-two"
+if grep -Fq "project/beta" "$binding_root/singular-ambiguous.err"; then
+  echo "intra-Project ambiguity listed a beta candidate" >&2
+  cat "$binding_root/singular-ambiguous.err" >&2
+  exit 1
+fi
+binding_assert_singular_uid "$binding_ns_alpha_pane_uid" pane-scoped \
+  describe pane shared -w ns-one -o uid
+binding_assert_singular_uid "$binding_ns_sibling_pane_uid" pane-sibling \
+  describe pane shared -w ns-two -o uid
+binding_assert_singular_uid "$binding_ns_beta_pane_uid" pane-explicit \
+  describe pane shared -p beta -o uid
+
+# A uid that belongs to another Project is a no-match, not a cross-Project hit.
+set +e
+binding_inside_pmx describe window "uid:$binding_ns_beta_window_uid" -o uid \
+  >"$binding_root/singular-foreign-uid.out" 2>"$binding_root/singular-foreign-uid.err"
+binding_singular_foreign_status=$?
+set -e
+if [[ "$binding_singular_foreign_status" == "0" ]] || [[ -s "$binding_root/singular-foreign-uid.out" ]]; then
+  echo "an out-of-scope Window uid resolved across Projects" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$binding_root/singular-foreign-uid.err" "matched no windows"
+
+# rename reads the same universe, so the preview and the mutation agree.
+binding_inside_pmx rename window ns-one --name ns-renamed >"$binding_root/singular-rename.out"
+binding_assert_singular_uid "$binding_ns_alpha_window_uid" window-renamed \
+  describe window ns-renamed -o uid
+binding_assert_singular_uid "$binding_ns_beta_window_uid" window-beta-intact \
+  describe window ns-one -p beta -o uid
+
+# Inside tmux an underivable namespace refuses; it never widens back to the
+# whole Registry, which is the cross-Project match this rule exists to prevent.
+binding_tmux set-option -wu -t "$lifecycle_window" @projmux_window_uid
+set +e
+binding_inside_pmx describe window ns-renamed -o uid \
+  >"$binding_root/singular-refusal.out" 2>"$binding_root/singular-refusal.err"
+binding_singular_refusal_status=$?
+set -e
+binding_tmux set-option -wq -t "$lifecycle_window" @projmux_window_uid "$lifecycle_window_uid"
+if [[ "$binding_singular_refusal_status" == "0" ]] || [[ -s "$binding_root/singular-refusal.out" ]]; then
+  echo "a broken owner chain fell back to the global Window search" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$binding_root/singular-refusal.err" "the active Project namespace is undecidable"
+
 set +e
 binding_inside_pmx get panes --all >"$binding_root/bare-all.out" 2>"$binding_root/bare-all.err"
 binding_bare_all_status=$?
@@ -2397,6 +2520,64 @@ delete_alpha_project_uid="$(delete_pmx describe project alpha -o uid)"
 if [[ -z "$delete_primary_uid" || -z "$delete_sibling_uid" || -z "$delete_beta_uid" || -z "$delete_alpha_project_uid" ]]; then
   echo "delete Window e2e apply left an identity mirror empty" >&2
   exit 1
+fi
+
+# The active-Project namespace of a singular reference is a Registry rule, not
+# a transport one. This block is the app-owned host: the shim maps the product
+# `-L projmux` spelling onto this exact server, and the reads below are the
+# same three shapes the standalone-host block above ran, so a host-dependent
+# scope would show up as a different answer to identical argv. They are
+# deliberately read-only -- no resource is created, renamed, or removed -- so
+# the delete fixture this block owns is unchanged.
+delete_server_pid="$(delete_tmux display-message -p -t delete-alpha:primary '#{pid}')"
+delete_primary_pane="$(delete_tmux display-message -p -t delete-alpha:primary '#{pane_id}')"
+delete_pmx_inside() {
+  env \
+    HOME="$delete_root/home" \
+    XDG_CONFIG_HOME="$delete_root/config" \
+    XDG_STATE_HOME="$delete_root/state" \
+    XDG_RUNTIME_DIR="$delete_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$delete_root/work" \
+    TMUX_TMPDIR="$delete_root/tmux" \
+    TMUX="$delete_socket_path,$delete_server_pid,0" \
+    TMUX_PANE="$delete_primary_pane" \
+    PATH="$delete_shim:$PATH" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+# The legacy import allocates a stable Window metadata.name independently of
+# the tmux window_name, so the references are read back from the Registry
+# rather than assumed from the session layout above.
+delete_primary_name="$(delete_pmx describe window "uid:$delete_primary_uid" -o name | tr -d '[:space:]')"
+delete_beta_name="$(delete_pmx describe window "uid:$delete_beta_uid" -o name | tr -d '[:space:]')"
+if [[ -z "$delete_primary_name" ]] || [[ -z "$delete_beta_name" ]]; then
+  echo "app-owned host could not read back a Window name" >&2
+  exit 1
+fi
+
+if [[ "$(delete_pmx_inside describe window "$delete_primary_name" -o uid | tr -d '[:space:]')" != "$delete_primary_uid" ]]; then
+  echo "app-owned host did not resolve the reference inside the active Project" >&2
+  exit 1
+fi
+if [[ "$(delete_pmx_inside describe window "$delete_beta_name" -p beta -o uid | tr -d '[:space:]')" != "$delete_beta_uid" ]]; then
+  echo "app-owned host ignored an explicit --project" >&2
+  exit 1
+fi
+# beta's Window name is resolved in beta only when beta is named. From inside
+# alpha the very same word must never reach beta's uid -- whether alpha happens
+# to hold that name too (a different uid) or holds nothing (a no-match).
+set +e
+delete_pmx_inside describe window "$delete_beta_name" -o uid \
+  >"$delete_root/singular-foreign.out" 2>"$delete_root/singular-foreign.err"
+delete_singular_status=$?
+set -e
+if [[ "$(tr -d '[:space:]' <"$delete_root/singular-foreign.out")" == "$delete_beta_uid" ]]; then
+  echo "app-owned host resolved a Window owned by another Project" >&2
+  exit 1
+fi
+if [[ "$delete_singular_status" != "0" ]]; then
+  smoke_assert_file_contains "$delete_root/singular-foreign.err" "matched no windows"
 fi
 
 delete_registry="$delete_root/state/projmux/metadata/registry.json"

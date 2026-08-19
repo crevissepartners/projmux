@@ -68,6 +68,13 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	flags := resourceQueryFlags{kind: kind, active: c.activeTarget, runtime: c.runtime}
+	// The rename half of the applied matrix is Window and Pane: those are the
+	// two kinds whose read counterpart this verb has to agree with, so a
+	// `describe` preview and the `rename` that follows it resolve in the same
+	// universe. `rename agent` is deliberately left global for now -- widening
+	// it is a separate contract decision, not a side effect of this one -- and
+	// `rename project` has no enclosing Project at all.
+	flags.projectNamespaceScope = kind == coremetadata.KindWindow || kind == coremetadata.KindPane
 	flags.register(fs)
 	name := fs.String("name", "", "the new Projmux metadata.name")
 	refs, err := parseWithPositionals(fs, args)

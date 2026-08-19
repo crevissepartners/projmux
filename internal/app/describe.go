@@ -66,6 +66,9 @@ func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []s
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	flags := resourceQueryFlags{kind: kind, active: c.activeTarget, runtime: c.runtime}
+	// Every kind a Project encloses reads its explicit reference inside the
+	// active Project; `describe project` has no enclosing Project to default.
+	flags.projectNamespaceScope = singularProjectNamespaceKind(kind)
 	flags.register(fs)
 	flags.registerOutput(fs)
 	refs, err := parseWithPositionals(fs, args)
