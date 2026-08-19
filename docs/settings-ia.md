@@ -60,13 +60,15 @@ step, never a silent no-op.
     leaves the directory alone. Nothing here adopts a path automatically.
   - `Project Sidebar [View]` — `Closed Project startup` chooses between using
     the stored Project topology and asking for a Snapshot. `Use Project
-    topology` materializes every Registry Window and Window-owned shell Pane of
-    that Project under their existing uids and only then moves the client; it is
-    not an empty session, and the startup picker names that row `Project
-    topology` for the same reason. `Ask for Snapshot or Project topology` adds
-    the `Latest snapshot` and `Named snapshot` rows, which stay on the Session
-    State snapshot engine — the two sources are never mixed in one open. Neither
-    choice resumes an Agent or executes a stored `Pane.spec.command`. The saved
+    topology` materializes every Registry Window, Window-owned shell Pane, and
+    Agent of that Project under their existing uids and only then moves the
+    client; it is not an empty session, and the startup picker names that row
+    `Project topology` for the same reason. `Ask for Snapshot or Project
+    topology` adds the `Latest snapshot` and `Named snapshot` rows, which stay on
+    the Session State snapshot engine — the two sources are never mixed in one
+    open. A replayed Agent rejoins the conversation its Registry
+    `status.sessionRef` names, or starts a new one and says so; neither choice
+    executes a stored `Pane.spec.command`, and the snapshot rows resume nothing. The saved
     file keeps its `sidebar-startup-picker` spelling.
 - **AI** — `AI` is a product category, never an addressable resource.
   - `Default launch target [Choice]` — an Agent Provider, a Shell Pane, or

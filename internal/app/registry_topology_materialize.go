@@ -18,15 +18,25 @@ import (
 )
 
 // registryTopologyPlan is the immutable Project-scoped desired-topology plan
-// shared by dry-run and execute. It contains only persistent Project, Window,
-// and Window-owned shell Pane work. Agent-owned panes and stored commands have
-// no representation here, which makes launching either impossible by design.
+// shared by dry-run and execute. It contains persistent Project, Window,
+// Window-owned shell Pane, and Agent work. A stored Pane *command* still has no
+// representation here, which makes replaying one impossible by design; an
+// Agent's launch, by contrast, is fixed at plan time from the provider seams
+// `create agent` already owns, so nothing here can invent a third way to start
+// a provider either.
 type registryTopologyPlan struct {
 	project     coremetadata.Project
 	sessionName string
 	sessionLive bool
 	windows     []registryTopologyWindowPlan
 	items       []resourceReconcileItem
+	// notices are the operator-facing disclosures this plan owes: which stored
+	// Agents will not rejoin their recorded conversation, and why. They are
+	// deliberately not plan items -- an Agent that comes back on a new
+	// conversation is converged work, and an Agent that cannot come back at all
+	// is not work this pass will do, so counting either as drift would make a
+	// stable topology report churn forever.
+	notices []string
 }
 
 type registryTopologyWindowPlan struct {
@@ -35,6 +45,7 @@ type registryTopologyWindowPlan struct {
 	create  bool
 	primary coremetadata.Pane
 	panes   []registryTopologyPanePlan
+	agents  []registryTopologyAgentPlan
 }
 
 type registryTopologyPanePlan struct {
@@ -59,6 +70,7 @@ func planRegistryTopology(
 	reconciler *registryReconciler,
 	sessions []observedResourceProjectSession,
 	exactTarget explicitTmuxTarget,
+	launcher topologyAgentLauncher,
 ) (*registryTopologyPlan, error) {
 	if strings.TrimSpace(projectRef) == "" {
 		return nil, nil
@@ -194,6 +206,7 @@ func planRegistryTopology(
 				work.panes = append(work.panes, registryTopologyPanePlan{pane: pane, create: true})
 				plan.addItem((wi+1)*1000+pi, coremetadata.KindPane, window.Metadata.Name+"/"+pane.Metadata.Name, pane.Metadata.UID, "materialize")
 			}
+			work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, nil, launcher)
 			plan.windows = append(plan.windows, work)
 			continue
 		}
@@ -264,6 +277,7 @@ func planRegistryTopology(
 		if !primaryLive && !shellAnchorLive {
 			plan.refuse(coremetadata.KindWindow, window.Metadata.Name, "missing primary Pane has no exact-bound Window-owned shell anchor")
 		}
+		work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, livePanes, launcher)
 		plan.windows = append(plan.windows, work)
 	}
 	return plan, nil
@@ -345,6 +359,30 @@ func (p *registryTopologyPlan) refuse(kind coremetadata.Kind, target, reason str
 	})
 }
 
+// noteAgent records that one stored Agent will not be brought back at all.
+func (p *registryTopologyPlan) noteAgent(label, reason string) {
+	p.notices = append(p.notices, fmt.Sprintf("projmux: agent/%s was not restored: %s", label, reason))
+}
+
+// noteNewConversation records that one stored Agent comes back on a *new*
+// provider conversation rather than the one it recorded.
+func (p *registryTopologyPlan) noteNewConversation(label, reason string) {
+	p.notices = append(p.notices,
+		fmt.Sprintf("projmux: agent/%s starts a new conversation instead of resuming: %s", label, reason))
+}
+
+// writeNotices discloses the Agent decisions of one plan. A write failure is
+// never fatal: the disclosure is a diagnostic, and losing it must not turn a
+// converged topology into a failed open.
+func (p *registryTopologyPlan) writeNotices(w io.Writer) {
+	if p == nil || w == nil {
+		return
+	}
+	for _, notice := range p.notices {
+		fmt.Fprintln(w, notice)
+	}
+}
+
 func (p *registryTopologyPlan) hasRefusal() bool {
 	return slices.ContainsFunc(p.items, func(item resourceReconcileItem) bool { return item.refused })
 }
@@ -377,6 +415,15 @@ type topologyMaterializeRun struct {
 	newOperationID  func() (string, error)
 	newGeneration   func() (string, error)
 	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
+	// agents is the provider-launch seam of the Agent half. It is the exact
+	// object `create agent` and `agent resume` consume, so a replayed Agent's
+	// argv is built by the shipped launch builders rather than a second copy.
+	agents topologyAgentLauncher
+	// notices receives the plan's operator-facing Agent disclosures. It is a
+	// separate writer from the rollback `warn` stream because the two have
+	// different audiences: startup discards rollback diagnostics and must still
+	// tell the operator which Agents did not rejoin their conversation.
+	notices io.Writer
 }
 
 // topologyMaterializeOutcome is the bookkeeping a caller needs to report. The
@@ -437,6 +484,11 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 			outcome.failedStage = "topology prevalidation"
 			return fmt.Errorf("selected Project topology contains %d refused item(s)", current.refusedItems())
 		}
+		// The Agent disclosures describe what this pass is about to do, so they
+		// are written only once the pass is going to happen. A refused plan
+		// materializes nothing, and "this Agent starts a new conversation" would
+		// be false about it.
+		current.materialization.writeNotices(r.notices)
 		if err := validateResourcePlanWrites(ctx, routed, current.writes); err != nil {
 			outcome.failedStage = "tmux prevalidation"
 			return err
@@ -450,7 +502,7 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 			outcome.completed = append(outcome.completed, write.itemKey())
 		}
 		*working = current.registry.Clone()
-		if err := executeRegistryTopology(ctx, runtime, working, r.resources.mutator(), current.materialization, ledger, r.newGeneration, operationID); err != nil {
+		if err := executeRegistryTopology(ctx, runtime, working, r.resources.mutator(), current.materialization, ledger, r.newGeneration, operationID, r.agents); err != nil {
 			outcome.failedStage = "topology materialization"
 			return err
 		}
@@ -501,6 +553,8 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 		newOperationID:  c.newOperationID,
 		newGeneration:   c.newGeneration,
 		newMaterializer: c.newMaterializer,
+		agents:          c.agents,
+		notices:         stderr,
 	}
 	retry := retryResourceReconcileProject(reportTarget, planner.materializeProject)
 	outcome, runErr := run.execute(ctx, planner, stderr)
@@ -631,6 +685,18 @@ func (g *topologyOwnerGuard) requireSoleUIDClaims(plan *registryTopologyPlan) er
 			}
 			if err := g.requireSolePaneUID(paneWork.pane.Metadata.UID, paneWork.liveID, windowLabel+"/"+paneWork.pane.Metadata.Name); err != nil {
 				return err
+			}
+		}
+		// A stale managed Pane row of a replayed Agent is about to be released.
+		// Releasing it deletes a Registry row, so the empty handle is asserted
+		// for its uid first: if that uid is live anywhere on this socket, the
+		// row is not stale and the pass refuses instead of orphaning a pane.
+		for ai := range work.agents {
+			replay := &work.agents[ai]
+			for _, paneUID := range replay.releaseUIDs {
+				if err := g.requireSolePaneUID(paneUID, "", windowLabel+"/"+replay.agent.Metadata.Name); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -771,6 +837,7 @@ func executeRegistryTopology(
 	ledger *runtimeLedger,
 	newGeneration func() (string, error),
 	operationID string,
+	launcher topologyAgentLauncher,
 ) error {
 	// Every Pane this pass launches gets its own generation, exactly like an
 	// interactive create. Materializing a stored topology is a launch, not an
@@ -963,6 +1030,13 @@ func executeRegistryTopology(
 			}
 			paneWork.create, paneWork.liveID = false, paneID
 			runtime.equalizeSplitLayout(ctx, anchorID, defaultPlacement)
+		}
+		// Agents come last inside their Window, on the very anchor the shell
+		// half just proved. Their launch argv was fixed at plan time, so the
+		// only work left here is the ordinary managed-Pane materialization.
+		if err := replayTopologyWindowAgents(ctx, runtime, registry, mutator, launcher, work,
+			anchorID, created.SessionID, windowID, ledger, newGeneration, operationID); err != nil {
+			return err
 		}
 	}
 	if _, err := mutator.BindProjectSession(registry, plan.project.Metadata.UID, plan.sessionName, true); err != nil {

@@ -1321,15 +1321,31 @@ Explicit Registry topology materialization:
   one Registry Project and uses a separate pure plan. The default reconciliation
   shadow never calls the materializer, and the materialization plan never runs
   blank adoption, orphan minting, or Agent phase observation. Registry insertion
-  order determines session/Window/Window-owned shell Pane creation order; report
-  keys provide a separately stable rendering order.
-- Registry presence is desired topology. Missing runtime sessions, Windows, and
-  Window-owned `role=shell` Panes are drift; canonical Registry deletion removes
-  that desire. Exact uid/name/owner mirrors are retained. Stored Pane CWD drives
-  only that Pane's detached runtime cwd, while Project root remains the session
-  path anchor and `PROJMUX_CWD` hook value. `Pane.spec.command`, Agent-owned
-  Panes, Agent providers, snapshots, notifications, and ephemeral sessions are
-  never execution inputs.
+  order determines session/Window/Window-owned shell Pane/Agent creation order;
+  report keys provide a separately stable rendering order. Agents are created
+  last inside their Window, after that Window's shell anchor is proven.
+- Registry presence is desired topology. Missing runtime sessions, Windows,
+  Window-owned `role=shell` Panes, and Agents are drift; canonical Registry
+  deletion removes that desire. Exact uid/name/owner mirrors are retained. Stored
+  Pane CWD drives only that Pane's detached runtime cwd, while Project root
+  remains the session path anchor and `PROJMUX_CWD` hook value.
+  `Pane.spec.command`, snapshot recipes, notifications, and ephemeral sessions
+  are never execution inputs.
+- An Agent whose managed Pane is not live is replayed into a new managed Pane on
+  its Window's proven anchor, through the same allocation, activation ledger,
+  ownership-checked adoption, and rollback the shell half uses. The **only**
+  replay identifier is Registry `status.sessionRef`: no provider conversation
+  store is read, `ClaudeSessionRef.TranscriptPath` in particular is never
+  consulted, and snapshot recipe `resumeID` is a separate value that never feeds
+  this path. The launch argv comes from the two seams `create agent` already
+  owns -- `PlanAgentResume` for a ref that names a conversation, `PlanAgentLaunch`
+  with no payload otherwise -- so the topology engine holds no launch builder of
+  its own and the Settings enabled-agents gate still applies. An Agent that
+  cannot rejoin its conversation comes back on a *new* one and the reason is
+  disclosed; an Agent that cannot be launched at all is disclosed and skipped.
+  Neither aborts the materialization, and neither is ever silent. A stale managed
+  Pane row is released only after the server-wide uid preflight proves its uid is
+  live nowhere on the exact socket.
 - Preflight rejects a missing/invalid root or Pane CWD, a zero-Window Project,
   a primary ref that is not a direct Window-owned shell Pane, and foreign,
   duplicate, wrong-owner, or ambiguous live claims before the first create.

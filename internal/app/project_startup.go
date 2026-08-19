@@ -37,8 +37,11 @@ const (
 	projectStartupValueEmpty = "empty"
 
 	// projectTopologyStartupDescription is the one description shared by the
-	// startup picker row and the Settings choice, so the two cannot drift.
-	projectTopologyStartupDescription = "restore every saved Window and shell Pane"
+	// startup picker row and the Settings choice, so the two cannot drift. It
+	// names Agents because the row restores them: a saved Agent comes back into
+	// its own Pane and, when the Registry recorded a provider session ref, into
+	// the conversation it already had.
+	projectTopologyStartupDescription = "restore every saved Window, shell Pane, and Agent"
 )
 
 var errProjectStartupBack = errors.New("project startup back")
@@ -554,6 +557,15 @@ type registryProjectTopologyMaterializer struct {
 	newGeneration   func() (string, error)
 	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
 	warn            io.Writer
+	// agents is the provider-launch seam replayed Agents are launched through.
+	// It is injected from the process wiring rather than constructed here so
+	// startup, `create agent`, and `agent resume` share one object.
+	agents topologyAgentLauncher
+	// notices is where the operator is told which stored Agents did not rejoin
+	// their recorded conversation. It is stderr rather than the discarded
+	// rollback stream: silently substituting a new conversation is exactly the
+	// failure this Phase exists to prevent.
+	notices io.Writer
 }
 
 // newRegistryProjectTopologyMaterializer binds activation to the app's own
@@ -569,6 +581,7 @@ func newRegistryProjectTopologyMaterializer() *registryProjectTopologyMaterializ
 		runner:    inttmux.ExecRunner{},
 		target:    target,
 		warn:      io.Discard,
+		notices:   os.Stderr,
 	}
 }
 
@@ -588,6 +601,7 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		materializeProject: projectRef,
 		materializeSession: sessionName,
 		exactTarget:        m.target,
+		agents:             m.agents,
 	}
 	run := topologyMaterializeRun{
 		resources:       m.resources,
@@ -596,6 +610,8 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		newOperationID:  m.newOperationID,
 		newGeneration:   m.newGeneration,
 		newMaterializer: m.newMaterializer,
+		agents:          m.agents,
+		notices:         m.notices,
 	}
 	warn := m.warn
 	if warn == nil {

@@ -736,8 +736,10 @@ while `on` and `off` take precedence. Auto-save only updates the latest
 snapshot. Named snapshots are manual and are never updated by auto-save.
 
 Project open from the Alt-1 sidebar defaults to opening a closed project as its
-`Project topology`, which materializes every Registry Window and Window-owned
-shell Pane of that project before the client moves. The optional `Settings >
+`Project topology`, which materializes every Registry Window, Window-owned
+shell Pane, and Agent of that project before the client moves. A replayed Agent
+rejoins the provider conversation its Registry `status.sessionRef` names; one
+with no usable ref starts a new conversation and is reported on stderr. The optional `Settings >
 Session State > Sidebar startup picker` toggle enables the native sidebar `Start
 project` step. Rows appear as `Latest snapshot`, named snapshot rows, `Project
 topology`, and `Back`. `Latest snapshot`

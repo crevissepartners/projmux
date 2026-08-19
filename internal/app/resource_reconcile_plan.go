@@ -153,6 +153,10 @@ type resourceReconcilePlanner struct {
 	// Registry projects.
 	materializeSession string
 	exactTarget        explicitTmuxTarget
+	// agents is the provider-launch seam the Agent half of a materialization
+	// plan consumes. It is read-only at plan time: it builds argv and applies
+	// the Settings gate, and creates nothing.
+	agents topologyAgentLauncher
 }
 
 func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata.Registry) (resourceReconcilePlan, error) {
@@ -175,7 +179,7 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		}
 		projectSessions = nil
 	}
-	topology, err := planRegistryTopology(ctx, p.reader, before, p.materializeProject, reconciler, projectSessions, p.exactTarget)
+	topology, err := planRegistryTopology(ctx, p.reader, before, p.materializeProject, reconciler, projectSessions, p.exactTarget, p.agents)
 	if err != nil {
 		return resourceReconcilePlan{}, err
 	}

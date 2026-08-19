@@ -105,9 +105,13 @@ the restore unit as a snapshot, not as a separate layout or preset feature.
 Project open from the Alt-1 sidebar defaults to opening a closed project as its
 `Project topology`: the same explicit Registry materialization engine the public
 `reconcile resources --materialize-project` route uses rebuilds every Registry
-Window and Window-owned shell Pane under their existing uids, and the client
-moves only after that converges. A refusal or failure reports the exact stage and
-leaves the client where it was. A directory with no Registry Project, and a
+Window, Window-owned shell Pane, and Agent under their existing uids, and the
+client moves only after that converges. Each Agent is brought back into a managed
+Pane of its own; an Agent whose Registry `status.sessionRef` names a provider
+conversation rejoins exactly that conversation, and one with no usable ref starts
+a new conversation and is named on stderr with the reason. A stored
+`Pane.spec.command` is still never executed. A refusal or failure reports the
+exact stage and leaves the client where it was. A directory with no Registry Project, and a
 Project with no Registry Window, still start as a single default session.
 `Settings > Session State > Sidebar startup picker` is an opt-in toggle;
 when it is on, closed project open advances inside the sidebar to the native
