@@ -78,8 +78,9 @@ Two consequences are worth calling out:
 The default keybindings whose bodies are `create codex|claude|pane --placement
 right|down` keep their spelling and their "split where I am" meaning, and now
 produce Registry resources. `internal agent-pane launch-default` — the saved
-default split mode, bound to Ctrl-Shift-R/L in the terminal adapters — is a
-different route and is unchanged.
+default split mode, bound to Ctrl-Shift-R/L in the terminal adapters — kept its
+spelling and its meaning, and now produces the same Registry resources: see
+[Every split surface is Registry-first](#every-split-surface-is-registry-first).
 
 The generated tmux config changed shape to support that. Every projmux
 `run-shell` binding is now rendered as `run-shell "TMUX_PANE=#{pane_id} <bin>
@@ -91,6 +92,63 @@ apply` run for you — rewrites the generated file. If you hand-copied a projmux
 
 If you need a raw, unmanaged tmux split, use tmux itself (`split-window`).
 projmux does not spell that as a resource verb.
+
+### Every split surface is Registry-first
+
+The saved-default split binding, the `Alt-7` provider picker, and the resume
+picker used to open a pane by calling tmux's `split-window` directly. Those panes
+were runtime-only: no uid, no owner Window, no Agent row, and no row in `get
+panes` or the primary navigation surface. They now go through the same canonical
+`create` route the `create codex|claude|pane` bindings and typed commands use, so
+every pane a Projmux surface opens is a managed resource.
+
+What changes for you:
+
+- **Panes from the picker and the saved default are managed.** They appear in
+  `get panes`, `get agents`, the primary navigation surface, and `reconcile
+  resources`, and they are deleted with `projmux delete pane|agent`. Panes those
+  surfaces created in older releases are not adopted; they stay visible in the
+  Runtime diagnostics surface.
+- **A launch needs a resolvable Project.** These surfaces create resources, so
+  they follow [Create scope](cli-guide.md#create-scope) like any other create. A
+  UI action taken outside a managed Project fails with the same
+  `pass --project <ref>` guidance instead of opening an unmanaged pane.
+- **The legacy `ai split` route is gone**, along with its `--agent`,
+  `--force-agent`, and `--print-pane-id` flags. The `ai` root itself was retired
+  earlier; nothing reaches that handler now. Automation that wants the new pane's
+  handle uses `-o pane-id` on a canonical create — see
+  [AI Agent Shortcuts](ai-agent-shortcuts.md).
+- **The AI title watcher no longer starts automatically.** The canonical create
+  route never started it, and these surfaces now behave the same way. Pane
+  titles, topics, and status come from provider hooks and from `projmux agent
+  topic`. `projmux internal agent-hook watch-title` still exists for the hook
+  contract.
+
+If you need a raw, unmanaged tmux split, use tmux itself (`split-window`).
+
+### One lifecycle trigger route
+
+The generated tmux config used to install two lifecycle routes: `internal tmux
+reconcile-bindings` on `after-new-window`/`after-split-window`, and `internal tmux
+release-dead-agent-panes` on `pane-exited`/`after-kill-pane`. Both answered the
+same question with a different subset of one reconciliation, so a pane exit
+inside a session that had also just gained a window paid for two registry
+transactions to reach the state one pass reaches.
+
+All four hooks now invoke one hidden route, `internal tmux converge
+--socket-path <path> --session <id> --reason <config-apply|runtime-created|runtime-exited>`,
+and so does `projmux config apply`. At most one convergence worker runs per exact
+tmux server, so a burst of hooks costs one pass instead of one per event. Which
+hooks each config installs is unchanged: the app config carries all four, and the
+standalone snippet carries the two pane-exit hooks only, so a raw `new-window` in
+a session projmux does not own still stays unmanaged.
+
+`projmux config apply` — which `make install` and `projmux update apply` run for
+you — rewrites the generated file. A tmux server still holding config from an
+older binary keeps invoking the two retired routes, which now fail; the hooks
+guard every invocation with `>/dev/null 2>&1`, so nothing surfaces, and the next
+`config apply` replaces them. If you hand-copied a projmux `set-hook` line into
+your own `~/.tmux.conf`, re-copy it from `projmux config render standalone`.
 
 ### Discovery no longer registers Projects
 

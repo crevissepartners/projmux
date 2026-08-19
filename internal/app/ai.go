@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -99,6 +98,10 @@ type aiCommand struct {
 	// reach the real state directory just because a hook was ingested.
 	loadRegistry   func() (coremetadata.Registry, error)
 	updateRegistry func(func(*coremetadata.Registry) error) (coremetadata.Registry, error)
+	// panes is the canonical create route the Projmux split UI hands its intents
+	// to. It is nil unless explicitly wired; see createPaneFromIntent for why an
+	// unwired seam fails loudly instead of quietly creating nothing.
+	panes canonicalPaneCreator
 	// A hook's session ref and semantic interaction are staged until the event
 	// has been classified, then committed in one Registry transaction. Quiet
 	// events flush only the session ref at the top-level ingest return.
@@ -178,8 +181,8 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
-	case "split":
-		return c.runSplit(args[1:], stdout, stderr)
+	case "launch-default":
+		return c.runLaunchDefault(args[1:], stderr)
 	case "picker":
 		return c.runPicker(args[1:], stderr)
 	case "settings":
@@ -809,90 +812,50 @@ func (c *aiCommand) resolveTopicPaneID(explicit string) (string, error) {
 	return "", errors.New("ai topic requires a tmux pane (set --pane or run inside tmux)")
 }
 
-type aiSplitInvocation struct {
-	direction   string
-	agent       string
-	agentSet    bool
-	forceAgent  bool
-	printPaneID bool
-	extraArgs   []string
-}
-
 type aiSplitLaunchPath string
 
 const (
-	aiSplitLaunchDirect aiSplitLaunchPath = "direct"
-	// aiSplitLaunchCanonical is the resource-backed `create agent` route. It
-	// gets its own message because `--force-agent` does not exist there.
+	// aiSplitLaunchCanonical is the resource-backed `create agent` route.
 	aiSplitLaunchCanonical aiSplitLaunchPath = "canonical"
-	aiSplitLaunchDefault   aiSplitLaunchPath = "default"
-	aiSplitLaunchPicker    aiSplitLaunchPath = "picker"
+	// aiSplitLaunchDefault is the saved-default split binding, whose message names
+	// the saved mode because that is the thing the operator has to change.
+	aiSplitLaunchDefault aiSplitLaunchPath = "default"
+	// aiSplitLaunchPicker is the Alt-7 and resume pickers.
+	aiSplitLaunchPicker aiSplitLaunchPath = "picker"
 )
 
-func (c *aiCommand) runSplit(args []string, stdout, stderr io.Writer) error {
-	invocation, err := parseAISplitInvocation(args, stderr)
+// runLaunchDefault answers the saved-default split binding.
+//
+// It is the one producer whose result depends on hidden state -- the saved mode
+// file -- which is exactly why the canonical `create agent` route refuses to
+// consult it: a canonical route whose outcome depends on something the operator
+// cannot see in the argv is not canonical. This route is where that lookup is
+// allowed to live, and its whole job is to turn the saved mode into one of the
+// intents or pickers the rest of the UI already has.
+func (c *aiCommand) runLaunchDefault(args []string, stderr io.Writer) error {
+	direction, err := parseAISplitDirection(args, "internal agent-pane launch-default", stderr)
 	if err != nil {
 		return err
 	}
-	if invocation.agentSet {
-		if invocation.agent == aiModeSelective {
-			return c.openPickerToggle(invocation.direction)
-		}
-		if invocation.agent == aiModeResume {
-			return c.openResumePickerToggle(invocation.direction)
-		}
-		if invocation.agent == aiModeShell && len(invocation.extraArgs) == 0 {
-			if invocation.printPaneID {
-				paneID, err := c.runShellSplitWithPaneID(invocation.direction)
-				if err != nil {
-					return err
-				}
-				_, err = fmt.Fprintln(stdout, paneID)
-				return err
-			}
-			return c.runShellSplit(invocation.direction)
-		}
-		if !invocation.forceAgent {
-			if err := c.requireAIAgentEnabled(invocation.agent, aiSplitLaunchDirect); err != nil {
-				return err
-			}
-		}
-		if invocation.printPaneID {
-			paneID, err := c.runDirectAgentSplitWithExtraArgsAndPaneID(invocation.agent, invocation.direction, invocation.extraArgs)
-			if err != nil {
-				return err
-			}
-			_, err = fmt.Fprintln(stdout, paneID)
-			return err
-		}
-		return c.runDirectAgentSplitWithExtraArgs(invocation.agent, invocation.direction, invocation.extraArgs)
-	}
-
 	mode := c.getMode()
 	switch mode {
-	case aiModeClaude:
-		if err := c.requireAIAgentEnabled(aiModeClaude, aiSplitLaunchDefault); err != nil {
+	case aiModeClaude, aiModeCodex, aiModeAntigravity:
+		// The Settings gate runs before the intent is built. A saved default that
+		// has since been switched off fails clearly rather than falling back to
+		// another provider, and it costs zero Registry and zero tmux mutations.
+		if err := c.requireAIAgentEnabled(mode, aiSplitLaunchDefault); err != nil {
 			return err
 		}
-		return c.runDirectAgentSplit(aiModeClaude, invocation.direction)
-	case aiModeCodex:
-		if err := c.requireAIAgentEnabled(aiModeCodex, aiSplitLaunchDefault); err != nil {
-			return err
-		}
-		return c.runDirectAgentSplit(aiModeCodex, invocation.direction)
-	case aiModeAntigravity:
-		if err := c.requireAIAgentEnabled(aiModeAntigravity, aiSplitLaunchDefault); err != nil {
-			return err
-		}
-		return c.runDirectAgentSplit(aiModeAntigravity, invocation.direction)
+		return c.createAgentPane(mode, direction)
 	case aiModeShell:
-		return c.runShellSplit(invocation.direction)
-	case aiModeSelective:
-		return c.openPickerToggle(invocation.direction)
+		return c.createShellPane(direction)
 	case aiModeResume:
-		return c.openResumePickerToggle(invocation.direction)
+		return c.openResumePickerToggle(direction)
 	default:
-		return c.openPickerToggle(invocation.direction)
+		// aiModeSelective and any unrecognized saved value open the picker. The
+		// picker is the honest answer to "the saved default does not name a
+		// launch", and it is what an unset mode has always meant.
+		return c.openPickerToggle(direction)
 	}
 }
 
@@ -914,7 +877,7 @@ func (c *aiCommand) runPicker(args []string, stderr io.Writer) error {
 		return errors.New("ai picker cannot combine --shell and --resume")
 	}
 	if *shellOnly {
-		return c.runShellSplit(direction)
+		return c.createShellPane(direction)
 	}
 	if *resumeOnly {
 		return c.runResumePicker(direction)
@@ -938,27 +901,74 @@ func (c *aiCommand) runAgentPickerSelection(direction string) error {
 		return nil
 	}
 
-	switch normalizeAIMode(result.Value) {
-	case aiModeClaude:
-		if err := c.requireAIAgentEnabled(aiModeClaude, aiSplitLaunchPicker); err != nil {
+	mode := normalizeAIMode(result.Value)
+	switch mode {
+	case aiModeClaude, aiModeCodex, aiModeAntigravity:
+		if err := c.requireAIAgentEnabled(mode, aiSplitLaunchPicker); err != nil {
 			return err
 		}
-		return c.runAgentSplit(aiModeClaude, direction)
-	case aiModeCodex:
-		if err := c.requireAIAgentEnabled(aiModeCodex, aiSplitLaunchPicker); err != nil {
-			return err
-		}
-		return c.runAgentSplit(aiModeCodex, direction)
-	case aiModeAntigravity:
-		if err := c.requireAIAgentEnabled(aiModeAntigravity, aiSplitLaunchPicker); err != nil {
-			return err
-		}
-		return c.runAgentSplit(aiModeAntigravity, direction)
+		return c.createAgentPane(mode, direction)
 	case aiModeShell:
-		return c.runShellSplit(direction)
+		return c.createShellPane(direction)
 	default:
 		return nil
 	}
+}
+
+// The split UI's three terminal actions.
+//
+// Each one produces a canonical create intent and hands it to the create route.
+// They used to call tmux's `split-window` themselves, which is why a pane the
+// operator opened from the picker was a runtime object the Registry had never
+// heard of: it had no uid, no owner Window, no Agent row, and it showed up in the
+// Main UI only after something else happened to reconcile. The intent is the
+// whole of what this layer knows -- which provider, which side, and for a resume
+// which conversation -- and every question about where the pane comes from is
+// answered once, by create.
+
+// createAgentPane opens a provider Agent beside the current Pane.
+func (c *aiCommand) createAgentPane(mode, direction string) error {
+	return c.createPaneFromIntent(agentPaneIntent{provider: mode, placement: direction})
+}
+
+// createShellPane opens a plain shell Pane beside the current Pane. A shell
+// surface is a Pane and not an Agent, which is why this is a different intent
+// rather than a provider named "shell".
+func (c *aiCommand) createShellPane(direction string) error {
+	return c.createPaneFromIntent(agentPaneIntent{placement: direction})
+}
+
+// createResumedAgentPane opens a provider Agent that joins an existing
+// conversation instead of starting a new one.
+func (c *aiCommand) createResumedAgentPane(mode, direction, conversationID string) error {
+	return c.createPaneFromIntent(agentPaneIntent{
+		provider: mode, placement: direction, conversationID: conversationID,
+	})
+}
+
+// createPaneFromIntent is the one call from the split UI into create.
+//
+// A nil seam is an error rather than a silent no-op. The fixtures that build an
+// aiCommand literal do reach this path, and the failure that matters is a UI
+// action that reports success while creating nothing -- so an unwired creator
+// says so.
+func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
+	if c.panes == nil {
+		return errors.New("the Projmux split UI has no canonical create route configured")
+	}
+	stdout, stderr := c.splitUIWriters()
+	return c.panes.createFromIntent(intent, stdout, stderr)
+}
+
+// splitUIWriters are where a UI-driven create reports.
+//
+// stdout is discarded: the split UI's result is the pane the operator can see,
+// and the create route's `agent/<name> created` line would otherwise be printed
+// into whatever pane or popup happened to invoke the binding. Diagnostics still
+// go to stderr, which is where the generated bindings already send anything worth
+// keeping.
+func (c *aiCommand) splitUIWriters() (io.Writer, io.Writer) {
+	return io.Discard, os.Stderr
 }
 
 func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
@@ -1355,29 +1365,18 @@ func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direct
 	if err := c.requireAIAgentEnabled(mode, aiSplitLaunchPicker); err != nil {
 		return err
 	}
+	// The conversation id is normalized by the provider's own resume builder, so
+	// a row whose id this provider cannot address is caught before any Registry
+	// or tmux mutation. Degrading to a fresh conversation stays the deliberate
+	// behavior of this interactive path -- the operator asked for "resume
+	// something", and the picker already told them which row failed -- and it is
+	// the one difference from `agent resume`, which must never fall through.
 	resumeArgv, err := resumeArgsForAgent(mode, selection.resumeID)
 	if err != nil {
 		_ = c.displayMessage(fmt.Sprintf("Could not resume %s session: %v; launching new session", mode, err))
-		return c.runAgentSplit(mode, direction)
+		return c.createAgentPane(mode, direction)
 	}
-	agentBin := c.findAgentBinary(mode)
-	if agentBin == "" {
-		message := c.missingAgentRunnerMessage(mode)
-		_ = c.displayMessage(message)
-		return errors.New(message)
-	}
-	normalizedResumeID := resumeArgv[len(resumeArgv)-1]
-	resumeArgv[0] = agentBin
-	return c.runAgentSplitResolvedWithOptions(mode, direction, nil, c.resolveTargetPane(), c.resolveAgentContextDir(mode), aiSplitLaunchOptions{
-		execArgv:    resumeArgv,
-		pathPrepend: filepath.Dir(agentBin),
-		resume: aiPaneResumeMetadata{
-			sessionID: normalizedResumeID,
-			resumeID:  normalizedResumeID,
-			source:    selection.source,
-			updatedAt: selection.updatedAt,
-		},
-	})
+	return c.createResumedAgentPane(mode, direction, resumeArgv[len(resumeArgv)-1])
 }
 
 func resumeArgsForAgent(mode, resumeID string) ([]string, error) {
@@ -1639,42 +1638,11 @@ func (c *aiCommand) openResumePickerToggle(direction string) error {
 	return err
 }
 
-func (c *aiCommand) runAgentSplit(mode, direction string) error {
-	return c.runAgentSplitWithExtraArgs(mode, direction, nil)
-}
-
-func (c *aiCommand) runDirectAgentSplit(mode, direction string) error {
-	return c.runDirectAgentSplitWithExtraArgs(mode, direction, nil)
-}
-
-func (c *aiCommand) runDirectAgentSplitWithExtraArgs(mode, direction string, extraArgs []string) error {
-	targetPane := c.resolveTargetPane()
-	contextDir := c.resolveAgentContextDir(mode)
-	return c.runAgentSplitResolved(mode, direction, extraArgs, targetPane, contextDir)
-}
-
-func (c *aiCommand) runDirectAgentSplitWithExtraArgsAndPaneID(mode, direction string, extraArgs []string) (string, error) {
-	targetPane := c.resolveTargetPane()
-	if strings.TrimSpace(targetPane) == "" {
-		return "", c.printPaneIDUnavailableError("")
-	}
-	contextDir := c.resolveAgentContextDir(mode)
-	return c.runAgentSplitResolvedWithOptionsResult(mode, direction, extraArgs, targetPane, contextDir, aiSplitLaunchOptions{
-		requirePaneID: true,
-	})
-}
-
-func (c *aiCommand) runAgentSplitWithExtraArgs(mode, direction string, extraArgs []string) error {
-	return c.runAgentSplitResolved(mode, direction, extraArgs, c.resolveTargetPane(), c.resolveAgentContextDir(mode))
-}
-
-type aiSplitLaunchOptions struct {
-	execArgv      []string
-	pathPrepend   string
-	resume        aiPaneResumeMetadata
-	requirePaneID bool
-}
-
+// aiPaneResumeMetadata is the live routing index a resumed managed Pane carries
+// from the moment it exists: the provider conversation id hook ingest scans to
+// decide which live pane an incoming event belongs to, plus the discovery
+// provenance the picker recorded. The durable pointer on the Agent is a separate
+// value and is not written from here.
 type aiPaneResumeMetadata struct {
 	sessionID string
 	resumeID  string
@@ -1682,22 +1650,6 @@ type aiPaneResumeMetadata struct {
 	updatedAt time.Time
 }
 
-func (c *aiCommand) runAgentSplitResolved(mode, direction string, extraArgs []string, targetPane, contextDir string) error {
-	return c.runAgentSplitResolvedWithOptions(mode, direction, extraArgs, targetPane, contextDir, aiSplitLaunchOptions{})
-}
-
-func (c *aiCommand) runAgentSplitResolvedWithOptions(mode, direction string, extraArgs []string, targetPane, contextDir string, options aiSplitLaunchOptions) error {
-	_, err := c.runAgentSplitResolvedWithOptionsResult(mode, direction, extraArgs, targetPane, contextDir, options)
-	return err
-}
-
-// agentLaunchPlan is one provider launch, constructed but not yet run.
-//
-// It exists so the detached resource-backed Agent create and the legacy focus-
-// following split share exactly one launch construction. Everything that makes
-// a pane an agent pane -- the PATH prepend for node-managed CLIs, the working
-// directory, the OSC-0 title, the exec argv -- is decided here; how the pane
-// comes into existence is the caller's business.
 type agentLaunchPlan struct {
 	// title is the agent pane title, also the seed of the pane's topic option.
 	title string
@@ -1828,48 +1780,6 @@ func (c *aiCommand) BindManagedAgentPane(paneID, provider, contextDir, title str
 	c.configureAIPane(paneID, provider, contextDir, title, aiPaneResumeMetadata{})
 }
 
-func (c *aiCommand) runAgentSplitResolvedWithOptionsResult(mode, direction string, extraArgs []string, targetPane, contextDir string, options aiSplitLaunchOptions) (string, error) {
-	plan, err := c.planAgentLaunch(mode, contextDir, extraArgs, options.execArgv, options.pathPrepend)
-	if err != nil {
-		return "", err
-	}
-	title, command, commandArgs := plan.title, plan.command, plan.commandArgs
-	if targetPane == "" {
-		if options.requirePaneID {
-			return "", c.printPaneIDUnavailableError("")
-		}
-		return "", c.run(command[0], command[1:]...)
-	}
-
-	splitDirection := intmux.SplitRight
-	if direction == "down" {
-		splitDirection = intmux.SplitDown
-	}
-	paneID, err := c.muxRunner().SplitWindow(context.Background(), intmux.SplitWindowOptions{
-		ReturnPaneID: true,
-		Direction:    splitDirection,
-		Target:       targetPane,
-		Cwd:          contextDir,
-		Command:      commandArgs,
-	})
-	if err != nil {
-		if options.requirePaneID {
-			return "", c.printPaneIDSplitError(err)
-		}
-		return "", err
-	}
-	if options.requirePaneID {
-		paneID, err = c.requirePrintedPaneID(paneID)
-		if err != nil {
-			return "", err
-		}
-	}
-	c.configureAIPane(paneID, mode, contextDir, title, options.resume)
-	c.applySplitLayout(targetPane, direction)
-	c.startAIWatchTitle(paneID)
-	return paneID, nil
-}
-
 func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, string, error) {
 	if mode == aiModeShell {
 		if len(extraArgs) > 0 {
@@ -1886,85 +1796,6 @@ func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, st
 	execArgv := []string{agentBin}
 	execArgv = append(execArgv, extraArgs...)
 	return execArgv, filepath.Dir(agentBin), nil
-}
-
-func (c *aiCommand) runShellSplit(direction string) error {
-	_, err := c.runShellSplitResolved(direction, false)
-	return err
-}
-
-func (c *aiCommand) runShellSplitWithPaneID(direction string) (string, error) {
-	return c.runShellSplitResolved(direction, true)
-}
-
-func (c *aiCommand) runShellSplitResolved(direction string, requirePaneID bool) (string, error) {
-	targetPane := c.resolveTargetPane()
-	if requirePaneID && strings.TrimSpace(targetPane) == "" {
-		return "", c.printPaneIDUnavailableError("")
-	}
-	contextDir := c.resolveContextDir()
-	splitDirection := intmux.SplitRight
-	if direction == "down" {
-		splitDirection = intmux.SplitDown
-	}
-	command := loginShellCommand(defaultInteractiveShell(c.lookupEnv))
-
-	paneID, err := c.muxRunner().SplitWindow(context.Background(), intmux.SplitWindowOptions{
-		ReturnPaneID: requirePaneID,
-		Direction:    splitDirection,
-		Target:       targetPane,
-		Cwd:          contextDir,
-		Command:      command,
-	})
-	if err != nil {
-		if requirePaneID {
-			return "", c.printPaneIDSplitError(err)
-		}
-		return "", err
-	}
-	if requirePaneID {
-		paneID, err = c.requirePrintedPaneID(paneID)
-		if err != nil {
-			return "", err
-		}
-	}
-	c.applySplitLayout(targetPane, direction)
-	return paneID, nil
-}
-
-func (c *aiCommand) requirePrintedPaneID(paneID string) (string, error) {
-	paneID = strings.TrimSpace(paneID)
-	if len(paneID) < 2 || paneID[0] != '%' {
-		return "", c.printPaneIDUnavailableError(paneID)
-	}
-	for _, r := range paneID[1:] {
-		if r < '0' || r > '9' {
-			return "", c.printPaneIDUnavailableError(paneID)
-		}
-	}
-	return paneID, nil
-}
-
-func (c *aiCommand) printPaneIDUnavailableError(paneID string) error {
-	backend := c.printPaneIDBackendName()
-	if paneID == "" {
-		return fmt.Errorf("ai split --print-pane-id: %s backend did not return a pane ID; expected %%N from split-window -P -F '#{pane_id}'", backend)
-	}
-	return fmt.Errorf("ai split --print-pane-id: %s backend returned invalid pane ID %q; expected %%N from split-window -P -F '#{pane_id}'", backend, paneID)
-}
-
-func (c *aiCommand) printPaneIDSplitError(err error) error {
-	return fmt.Errorf("ai split --print-pane-id: %s backend split-window -P -F '#{pane_id}' failed: %w", c.printPaneIDBackendName(), err)
-}
-
-func (c *aiCommand) printPaneIDBackendName() string {
-	return "tmux"
-}
-
-func (c *aiCommand) applySplitLayout(targetPane, direction string) {
-	applyEvenSplitLayout(targetPane, direction,
-		func(args ...string) ([]byte, error) { return c.read("tmux", args...) },
-		func(args ...string) error { return c.run("tmux", args...) })
 }
 
 func (c *aiCommand) resolveContextDir() string {
@@ -2034,20 +1865,6 @@ func pathWithinTree(anchor, path string) bool {
 	}
 	rel = filepath.ToSlash(rel)
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, "../"))
-}
-
-func (c *aiCommand) resolveAgentContextDir(mode string) string {
-	switch mode {
-	case aiModeClaude:
-		if dir := c.env("CLAUDE_CONTEXT_DIR"); isDir(dir) {
-			return dir
-		}
-	case aiModeCodex:
-		if dir := c.env("CODEX_CONTEXT_DIR"); isDir(dir) {
-			return dir
-		}
-	}
-	return c.resolveContextDir()
 }
 
 func (c *aiCommand) resolveTargetPane() string {
@@ -2208,21 +2025,6 @@ func (c *aiCommand) configureAIPaneResumeMetadata(paneID string, resume aiPaneRe
 	}
 	if !resume.updatedAt.IsZero() {
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeUpdatedAtOption, resume.updatedAt.UTC().Format(time.RFC3339))
-	}
-}
-
-func (c *aiCommand) startAIWatchTitle(paneID string) {
-	if strings.TrimSpace(paneID) == "" {
-		return
-	}
-	started := c.now()
-	binaryPath, err := c.binaryPath()
-	if err != nil || strings.TrimSpace(binaryPath) == "" {
-		c.recordAIWatcher(diagnostics.AIResultFailed, diagnostics.AIFailureWatcherLaunch, started, false)
-		return
-	}
-	if err := c.run("tmux", "run-shell", "-b", shellQuote(binaryPath)+" internal agent-hook watch-title "+shellQuote(paneID)); err != nil {
-		c.recordAIWatcher(diagnostics.AIResultFailed, diagnostics.AIFailureWatcherLaunch, started, false)
 	}
 }
 
@@ -2401,10 +2203,6 @@ func aiMuxCommandNeedsOutput(args []string) bool {
 	switch args[0] {
 	case "display-message", "list-panes", "list-windows", "capture-pane", "show-option", "show-options", "show-hooks":
 		return true
-	case "split-window", "new-session":
-		if slices.Contains(args[1:], "-P") {
-			return true
-		}
 	}
 	return false
 }
@@ -2769,95 +2567,6 @@ func parseAISplitDirection(args []string, command string, stderr io.Writer) (str
 		printAIUsage(stderr)
 		return "", fmt.Errorf("%s direction must be right or down", command)
 	}
-}
-
-func parseAISplitInvocation(args []string, stderr io.Writer) (aiSplitInvocation, error) {
-	invocation := aiSplitInvocation{direction: "right"}
-	positionals := make([]string, 0, 1)
-	extraArgsSeen := false
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--":
-			extraArgsSeen = true
-			invocation.extraArgs = append([]string(nil), args[i+1:]...)
-			i = len(args)
-		case arg == "--agent":
-			if i+1 >= len(args) {
-				printAIUsage(stderr)
-				return aiSplitInvocation{}, errors.New("ai split --agent requires a value")
-			}
-			invocation.agent = strings.TrimSpace(args[i+1])
-			invocation.agentSet = true
-			i++
-		case strings.HasPrefix(arg, "--agent="):
-			invocation.agent = strings.TrimSpace(strings.TrimPrefix(arg, "--agent="))
-			invocation.agentSet = true
-		case arg == "--force-agent":
-			invocation.forceAgent = true
-		case arg == "--print-pane-id":
-			invocation.printPaneID = true
-		case strings.HasPrefix(arg, "-"):
-			printAIUsage(stderr)
-			return aiSplitInvocation{}, fmt.Errorf("unknown ai split flag: %s", arg)
-		default:
-			positionals = append(positionals, arg)
-		}
-	}
-	if extraArgsSeen && len(invocation.extraArgs) == 0 {
-		printAIUsage(stderr)
-		return aiSplitInvocation{}, errors.New("ai split -- requires extra args")
-	}
-	if extraArgsSeen && strings.TrimSpace(invocation.extraArgs[0]) == "" {
-		printAIUsage(stderr)
-		return aiSplitInvocation{}, errors.New("ai split extra args require a non-empty first argument")
-	}
-	if extraArgsSeen && !invocation.agentSet {
-		printAIUsage(stderr)
-		return aiSplitInvocation{}, errors.New("ai split extra args require --agent")
-	}
-	if invocation.forceAgent && !invocation.agentSet {
-		printAIUsage(stderr)
-		return aiSplitInvocation{}, errors.New("ai split --force-agent requires --agent claude, --agent codex, or --agent antigravity")
-	}
-	if invocation.printPaneID && !invocation.agentSet {
-		printAIUsage(stderr)
-		return aiSplitInvocation{}, errors.New("ai split --print-pane-id requires explicit --agent claude, --agent codex, --agent antigravity, or --agent shell")
-	}
-	direction, err := parseAISplitDirection(positionals, "ai split", stderr)
-	if err != nil {
-		return aiSplitInvocation{}, err
-	}
-	invocation.direction = direction
-	if invocation.agentSet {
-		switch invocation.agent {
-		case aiModeClaude, aiModeCodex, aiModeAntigravity, aiModeShell, aiModeSelective, aiModeResume:
-		default:
-			printAIUsage(stderr)
-			return aiSplitInvocation{}, fmt.Errorf("unknown ai split agent: %s", invocation.agent)
-		}
-		if invocation.agent == aiModeSelective && len(invocation.extraArgs) > 0 {
-			printAIUsage(stderr)
-			return aiSplitInvocation{}, errors.New("ai split --agent selective cannot use extra args")
-		}
-		if invocation.agent == aiModeResume && len(invocation.extraArgs) > 0 {
-			printAIUsage(stderr)
-			return aiSplitInvocation{}, errors.New("ai split --agent resume cannot use extra args")
-		}
-		if invocation.agent == aiModeShell && len(invocation.extraArgs) > 0 {
-			printAIUsage(stderr)
-			return aiSplitInvocation{}, errors.New("ai split --agent shell cannot use extra args")
-		}
-		if invocation.forceAgent && invocation.agent != aiModeClaude && invocation.agent != aiModeCodex && invocation.agent != aiModeAntigravity {
-			printAIUsage(stderr)
-			return aiSplitInvocation{}, errors.New("ai split --force-agent only applies to --agent claude, --agent codex, or --agent antigravity")
-		}
-		if invocation.printPaneID && (invocation.agent == aiModeSelective || invocation.agent == aiModeResume) {
-			printAIUsage(stderr)
-			return aiSplitInvocation{}, fmt.Errorf("ai split --print-pane-id cannot be used with --agent %s; use an explicit direct agent or shell", invocation.agent)
-		}
-	}
-	return invocation, nil
 }
 
 func trimAIStatePrefix(title string) string {

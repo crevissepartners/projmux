@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -77,6 +78,44 @@ func bindingFixtureReconciler(root string) func(tmuxCommandRunner, sessionLister
 	}
 }
 
+// recordingTriggering records what a route handed the controller entrypoint and
+// converges nothing. It is the seam that lets a route's argv contract be pinned
+// without a reconciliation in the way.
+type recordingTriggering struct {
+	triggers []controllerTrigger
+	err      error
+}
+
+func (r *recordingTriggering) run(_ context.Context, trigger controllerTrigger) (controllerTriggerOutcome, error) {
+	r.triggers = append(r.triggers, trigger)
+	if r.err != nil {
+		return controllerTriggerOutcome{reason: trigger.reason}, r.err
+	}
+	return controllerTriggerOutcome{reason: trigger.reason, passes: 1, converged: true}, nil
+}
+
+func (r *recordingTriggering) targets() []explicitTmuxTarget {
+	out := make([]explicitTmuxTarget, 0, len(r.triggers))
+	for _, trigger := range r.triggers {
+		out = append(out, trigger.target)
+	}
+	return out
+}
+
+// isolatedTriggerRunner builds the production controller entrypoint with its
+// event log and worker lease under a temporary directory, so a test converges
+// for real without sharing the user's state dir or another test's lease.
+func isolatedTriggerRunner(t *testing.T, runner tmuxCommandRunner, store *resourceStore,
+	newReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler) *controllerTriggerRunner {
+	t.Helper()
+	return &controllerTriggerRunner{
+		runner:        runner,
+		store:         store,
+		events:        controllerEventLog{dir: t.TempDir()},
+		newReconciler: newReconciler,
+	}
+}
+
 func bindingWriteCalls(calls [][]string) int {
 	count := 0
 	for _, call := range calls {
@@ -103,17 +142,19 @@ func TestBindingConvergenceRepairsOnlyTheExplicitSocketAndThenBecomesANoop(t *te
 	}}
 	store := &fakeResourceStore{registry: bindingFixture(t, root), dirs: map[string]bool{root: true}, now: resourceFixtureClock}
 	registryBefore := store.snapshot()
-	cmd := &tmuxCommand{
-		runner:            runner,
-		resources:         store.store(),
-		bindingReconciler: bindingFixtureReconciler(root),
-	}
+	trigger := isolatedTriggerRunner(t, runner, store.store(), bindingFixtureReconciler(root))
 	target, err := tmuxSocketNameTarget("primary")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.convergeRuntimeBindings(context.Background(), target); err != nil {
+	first, err := trigger.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerConfigApply, target: target,
+	})
+	if err != nil {
 		t.Fatalf("first convergence: %v", err)
+	}
+	if !first.converged || first.passes < 1 {
+		t.Fatalf("first convergence did not report convergence: %s", first.describe())
 	}
 
 	session := primary.session(driftedSessionName)
@@ -140,8 +181,14 @@ func TestBindingConvergenceRepairsOnlyTheExplicitSocketAndThenBecomesANoop(t *te
 
 	primary.calls = nil
 	runner.calls = nil
-	if err := cmd.convergeRuntimeBindings(context.Background(), target); err != nil {
+	repeat, err := trigger.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerConfigApply, target: target,
+	})
+	if err != nil {
 		t.Fatalf("repeat convergence: %v", err)
+	}
+	if !repeat.converged || repeat.passes != 1 || repeat.changed != 0 {
+		t.Fatalf("repeat convergence was not a single no-op pass: %s", repeat.describe())
 	}
 	if got := bindingWriteCalls(primary.calls); got != 0 {
 		t.Fatalf("repeat convergence issued %d binding writes: %v", got, primary.calls)
@@ -151,49 +198,106 @@ func TestBindingConvergenceRepairsOnlyTheExplicitSocketAndThenBecomesANoop(t *te
 	}
 }
 
-func TestGeneratedLifecycleUsesSynchronousExactSocketPathBoundary(t *testing.T) {
+// TestGeneratedLifecycleTriggersConvergeOnOneEntrypoint is the trigger-inventory
+// assertion: every generated lifecycle hook, in both host configs, invokes the
+// one controller route with an exact socket path and a declared reason, and no
+// hook retains a route of its own.
+func TestGeneratedLifecycleTriggersConvergeOnOneEntrypoint(t *testing.T) {
 	t.Parallel()
 
-	config := tmuxAppConfig("/opt/projmux", "/bin/zsh", "")
-	for _, hook := range []string{"after-new-window", "after-split-window"} {
-		line := "set-hook -g " + hook
-		if !strings.Contains(config, line) {
-			t.Fatalf("generated app config missing %s", line)
-		}
+	// The two exit hooks are in both configs; the two creation hooks are
+	// app-config only. That asymmetry is the adoption boundary: a convergence
+	// caused by a new runtime object mints and rebinds, and the standalone snippet
+	// runs on every server the operator starts, where a raw `new-window` in a
+	// session projmux does not own must stay unmanaged.
+	hooks := map[string]controllerTriggerReason{
+		"pane-exited":     controllerTriggerRuntimeExited,
+		"after-kill-pane": controllerTriggerRuntimeExited,
 	}
-	for _, want := range []string{"internal tmux reconcile-bindings", "--socket-path", "#{socket_path}", "--session", "#{session_id}"} {
-		if !strings.Contains(config, want) {
-			t.Fatalf("generated app config missing %q", want)
-		}
+	appOnlyHooks := map[string]controllerTriggerReason{
+		"after-new-window":   controllerTriggerRuntimeCreated,
+		"after-split-window": controllerTriggerRuntimeCreated,
 	}
-	for line := range strings.SplitSeq(config, "\n") {
-		if strings.Contains(line, "reconcile-bindings") && strings.Contains(line, "run-shell -b") {
-			t.Fatalf("binding lifecycle hook became asynchronous: %s", line)
+	for name, config := range map[string]string{
+		"app":        tmuxAppConfig("/opt/projmux", "/bin/zsh", ""),
+		"standalone": tmuxStandaloneConfig("/opt/projmux", config.StatusbarDecorationOff),
+	} {
+		expected := map[string]controllerTriggerReason{}
+		for hook, reason := range hooks {
+			expected[hook] = reason
 		}
-	}
-	if strings.Contains(config, "reconcile-bindings --socket ") || strings.Contains(config, "reconcile-bindings >/dev") {
-		t.Fatal("generated lifecycle has an implicit/default socket route")
+		if name == "app" {
+			for hook, reason := range appOnlyHooks {
+				expected[hook] = reason
+			}
+		} else {
+			for hook := range appOnlyHooks {
+				if strings.Contains(config, "set-hook -g "+hook+" ") {
+					t.Fatalf("standalone config installs the %s creation hook, which would adopt raw windows on every server the operator starts", hook)
+				}
+			}
+		}
+		for hook, reason := range expected {
+			line := ""
+			for candidate := range strings.SplitSeq(config, "\n") {
+				if strings.HasPrefix(candidate, "set-hook -g "+hook+" ") {
+					line = candidate
+				}
+			}
+			if line == "" {
+				t.Fatalf("%s config has no %s hook", name, hook)
+			}
+			for _, want := range []string{"internal tmux converge", "--socket-path", "#{socket_path}", "--session", "#{session_id}", "--reason " + string(reason)} {
+				if !strings.Contains(line, want) {
+					t.Fatalf("%s %s hook missing %q: %s", name, hook, want, line)
+				}
+			}
+			// The creation boundary stays synchronous: the next implicit read
+			// must not race the binding write. The exit boundary stays
+			// backgrounded so closing a pane never waits on convergence.
+			background := strings.Contains(line, "run-shell -b")
+			if want := reason == controllerTriggerRuntimeExited; background != want {
+				t.Fatalf("%s %s hook backgrounded = %t, want %t: %s", name, hook, background, want, line)
+			}
+		}
+		// The two retired routes must not survive anywhere in either config.
+		for _, retired := range []string{"reconcile-bindings", "release-dead-agent-panes"} {
+			if strings.Contains(config, retired) {
+				t.Fatalf("%s config still invokes the retired %s route", name, retired)
+			}
+		}
+		if strings.Contains(config, "converge --socket ") || strings.Contains(config, "converge >/dev") {
+			t.Fatalf("%s config has an implicit/default socket trigger", name)
+		}
 	}
 
-	var got explicitTmuxTarget
 	path := filepath.Join(t.TempDir(), "managed.sock")
 	server := newFakeTmux()
 	server.addSession("alpha")
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-S\x00" + path: server}}
-	cmd := &tmuxCommand{runner: runner, bindingConverger: func(_ context.Context, target explicitTmuxTarget) error {
-		got = target
-		return nil
-	}}
+	recorder := &recordingTriggering{}
+	cmd := &tmuxCommand{runner: runner, triggerRunner: recorder}
 	var stderr bytes.Buffer
-	if err := cmd.runReconcileBindings([]string{"--socket-path", path, "--session", "alpha"}, &stderr); err != nil {
+	if err := cmd.runConverge([]string{"--socket-path", path, "--session", "alpha", "--reason", "runtime-created"}, &stderr); err != nil {
 		t.Fatalf("hidden lifecycle command: %v; stderr=%q", err, stderr.String())
 	}
-	if got.flag != "-S" || got.value != path {
-		t.Fatalf("lifecycle target = %+v, want exact -S %s", got, path)
+	want := []controllerTrigger{{reason: controllerTriggerRuntimeCreated, target: explicitTmuxTarget{flag: "-S", value: path}, session: "alpha"}}
+	if !reflect.DeepEqual(recorder.triggers, want) {
+		t.Fatalf("trigger = %+v, want %+v", recorder.triggers, want)
 	}
-	for _, args := range [][]string{{}, {"--socket-path", "relative", "--session", "alpha"}, {"--socket-path", path}, {"--socket-path", path, "--session", "alpha", "extra"}} {
-		if err := cmd.runReconcileBindings(args, &bytes.Buffer{}); err == nil {
-			t.Fatalf("hidden lifecycle accepted implicit/malformed target: %v", args)
+	for _, args := range [][]string{
+		{},
+		{"--socket-path", "relative", "--session", "alpha", "--reason", "runtime-created"},
+		{"--socket-path", path, "--session", "alpha"},
+		{"--socket-path", path, "--session", "alpha", "--reason", "made-up"},
+		{"--socket-path", path, "--session", "alpha", "--reason", "runtime-created", "extra"},
+	} {
+		before := len(recorder.triggers)
+		if err := cmd.runConverge(args, &bytes.Buffer{}); err == nil {
+			t.Fatalf("hidden lifecycle accepted implicit/malformed trigger: %v", args)
+		}
+		if len(recorder.triggers) != before {
+			t.Fatalf("refused trigger %v still reached the controller", args)
 		}
 	}
 }
@@ -206,28 +310,35 @@ func TestLifecycleDefersOnlyALiveCreateOperationOnTheExactSession(t *testing.T) 
 	session.env[createOperationEnvironment] = newCreateOperationMarker("op-test")
 	path := filepath.Join(t.TempDir(), "managed.sock")
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-S\x00" + path: server}}
-	converged := 0
-	cmd := &tmuxCommand{
-		runner: runner,
-		bindingConverger: func(_ context.Context, _ explicitTmuxTarget) error {
-			converged++
-			return nil
-		},
+	store := &fakeResourceStore{registry: coremetadata.Registry{}, now: resourceFixtureClock}
+	trigger := isolatedTriggerRunner(t, runner, store.store(), bindingFixtureReconciler(t.TempDir()))
+	target, err := tmuxSocketPathTarget(path)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if err := cmd.runReconcileBindings([]string{"--socket-path", path, "--session", "alpha"}, &bytes.Buffer{}); err != nil {
+	active, err := trigger.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerRuntimeCreated, target: target, session: "alpha",
+	})
+	if err != nil {
 		t.Fatalf("active create hook: %v", err)
 	}
-	if converged != 0 {
-		t.Fatalf("active create hook entered registry convergence %d times", converged)
+	if active.passes != 0 || active.deferred == "" {
+		t.Fatalf("active create hook converged anyway: %s", active.describe())
+	}
+	if store.transactions != 0 {
+		t.Fatalf("active create hook opened %d registry transactions", store.transactions)
 	}
 
 	delete(session.env, createOperationEnvironment)
-	if err := cmd.runReconcileBindings([]string{"--socket-path", path, "--session", "alpha"}, &bytes.Buffer{}); err != nil {
+	deferred, err := trigger.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerRuntimeCreated, target: target, session: "alpha",
+	})
+	if err != nil {
 		t.Fatalf("standalone lifecycle hook: %v", err)
 	}
-	if converged != 1 {
-		t.Fatalf("standalone lifecycle convergence calls = %d, want 1", converged)
+	if deferred.deferred != "" || deferred.passes != 1 {
+		t.Fatalf("standalone lifecycle hook did not converge once: %s", deferred.describe())
 	}
 }
 
@@ -239,20 +350,21 @@ func TestLifecycleClearsStaleCreateLeaseBeforeSynchronousConvergence(t *testing.
 	session.env[createOperationEnvironment] = "v1:999999999:1:op-stale"
 	path := filepath.Join(t.TempDir(), "managed.sock")
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-S\x00" + path: server}}
-	converged := 0
-	cmd := &tmuxCommand{
-		runner: runner,
-		bindingConverger: func(_ context.Context, _ explicitTmuxTarget) error {
-			converged++
-			return nil
-		},
+	store := &fakeResourceStore{registry: coremetadata.Registry{}, now: resourceFixtureClock}
+	trigger := isolatedTriggerRunner(t, runner, store.store(), bindingFixtureReconciler(t.TempDir()))
+	target, err := tmuxSocketPathTarget(path)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if err := cmd.runReconcileBindings([]string{"--socket-path", path, "--session", "alpha"}, &bytes.Buffer{}); err != nil {
+	outcome, err := trigger.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerRuntimeCreated, target: target, session: "alpha",
+	})
+	if err != nil {
 		t.Fatalf("stale create hook: %v", err)
 	}
-	if converged != 1 {
-		t.Fatalf("stale create convergence calls = %d, want 1", converged)
+	if outcome.deferred != "" || outcome.passes != 1 {
+		t.Fatalf("a stale lease blocked convergence: %s", outcome.describe())
 	}
 	if got := session.env[createOperationEnvironment]; got != "" {
 		t.Fatalf("stale create lease survived: %q", got)
@@ -265,7 +377,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	home := t.TempDir()
 	configPath := filepath.Join(home, "tmux.conf")
 	runner := &recordingTmuxRunner{}
-	var targets []explicitTmuxTarget
+	recorder := &recordingTriggering{}
 	configWrites := 0
 	cmd := &tmuxCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -285,18 +397,22 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 			configWrites++
 			return os.WriteFile(path, data, mode)
 		},
-		runner: runner,
-		bindingConverger: func(_ context.Context, target explicitTmuxTarget) error {
-			targets = append(targets, target)
-			return nil
-		},
+		runner:        runner,
+		triggerRunner: recorder,
 	}
 	var stdout, stderr bytes.Buffer
 	if err := cmd.runApply([]string{"--config", configPath, "--socket", "isolated"}, &stdout, &stderr); err != nil {
 		t.Fatalf("apply: %v; stderr=%q", err, stderr.String())
 	}
-	if want := []explicitTmuxTarget{{flag: "-L", value: "isolated"}}; !reflect.DeepEqual(targets, want) {
-		t.Fatalf("convergence targets = %+v, want %+v", targets, want)
+	if want := []explicitTmuxTarget{{flag: "-L", value: "isolated"}}; !reflect.DeepEqual(recorder.targets(), want) {
+		t.Fatalf("convergence targets = %+v, want %+v", recorder.targets(), want)
+	}
+	// Apply carries no hook session: it is not caused by a create, so it has no
+	// create-operation lease to defer to.
+	for _, trigger := range recorder.triggers {
+		if trigger.reason != controllerTriggerConfigApply || trigger.session != "" {
+			t.Fatalf("apply trigger = %+v, want config-apply with no session", trigger)
+		}
 	}
 	calls := runner.calls
 	sourceIdx := slices.IndexFunc(calls, func(call recordedTmuxCall) bool {
@@ -311,7 +427,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 
 	// A normal repeat apply still reloads and converges, but an identical
 	// generated config is not byte-written again.
-	targets = nil
+	recorder.triggers = nil
 	runner.calls = nil
 	if err := cmd.runApply([]string{"--config", configPath, "--socket", "isolated"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
@@ -319,17 +435,17 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	if configWrites != 1 {
 		t.Fatalf("repeat apply rewrote generated config: writes=%d", configWrites)
 	}
-	if want := []explicitTmuxTarget{{flag: "-L", value: "isolated"}}; !reflect.DeepEqual(targets, want) {
-		t.Fatalf("repeat convergence targets = %+v, want %+v", targets, want)
+	if want := []explicitTmuxTarget{{flag: "-L", value: "isolated"}}; !reflect.DeepEqual(recorder.targets(), want) {
+		t.Fatalf("repeat convergence targets = %+v, want %+v", recorder.targets(), want)
 	}
 
-	targets = nil
+	recorder.triggers = nil
 	runner.calls = nil
 	if err := cmd.runApply([]string{"--config", configPath, "--socket", "isolated", "--no-reload"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(targets) != 0 || len(runner.calls) != 0 {
-		t.Fatalf("--no-reload touched live state: targets=%v calls=%v", targets, runner.calls)
+	if len(recorder.triggers) != 0 || len(runner.calls) != 0 {
+		t.Fatalf("--no-reload touched live state: triggers=%v calls=%v", recorder.triggers, runner.calls)
 	}
 
 	keymap := filepath.Join(home, ".config", "projmux", "keymap.toml")
@@ -342,7 +458,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	if err := cmd.runApply([]string{"--config", configPath, "--socket", "isolated"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 		t.Fatal("malformed keymap preflight unexpectedly succeeded")
 	}
-	if len(targets) != 0 || len(runner.calls) != 0 {
-		t.Fatalf("failed preflight touched live state: targets=%v calls=%v", targets, runner.calls)
+	if len(recorder.triggers) != 0 || len(runner.calls) != 0 {
+		t.Fatalf("failed preflight touched live state: triggers=%v calls=%v", recorder.triggers, runner.calls)
 	}
 }

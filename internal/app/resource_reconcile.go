@@ -138,7 +138,7 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 	if opts.dryRun {
 		return c.runControllerDryRun(ctx, kernel, reportTarget, opts, stdout)
 	}
-	return c.runControllerExecute(ctx, kernel, target, reportTarget, opts, stdout)
+	return c.runControllerExecute(ctx, kernel, reportTarget, opts, stdout)
 }
 
 func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceReconcileOptions, error) {
@@ -250,101 +250,43 @@ func (c *resourceReconcileCommand) runControllerDryRun(ctx context.Context, kern
 	return writeResourceReconcileReport(stdout, opts.output, report)
 }
 
-// runControllerExecute runs the six stages in their contractual order.
+// runControllerExecute reports one kernel convergence.
 //
-// The observation is taken once, before the Registry lock, and the plan is
-// authorized against it twice: once as observed and once as rebuilt under the
-// lock. Re-observing between those two would produce a plan whose guards
-// describe a machine nobody looked at, and the guards are the only reason a
-// recycled handle cannot redirect a write.
-func (c *resourceReconcileCommand) runControllerExecute(ctx context.Context, kernel *resourceControllerKernel, target explicitTmuxTarget, reportTarget resourceReconcileTarget, opts resourceReconcileOptions, stdout io.Writer) error {
+// The stage sequence itself is the kernel's (see resourceControllerKernel.
+// converge). What is left here is what only this route owns: the operator-facing
+// report, the retry hint, and the refused-drift exit code. Keeping the sequence
+// out of the report body is what lets a lifecycle trigger reach the same six
+// stages without reimplementing five of them and forgetting the sixth.
+func (c *resourceReconcileCommand) runControllerExecute(ctx context.Context, kernel *resourceControllerKernel, reportTarget resourceReconcileTarget, opts resourceReconcileOptions, stdout io.Writer) error {
 	if c.resources.updateConvergent == nil {
 		return errors.New("resource reconciliation write store is not configured")
 	}
-	snapshot, err := kernel.loadRegistry()
+	run, err := kernel.converge(ctx)
 	if err != nil {
-		return MapMetadataError(err)
-	}
-	graph := resourcegraph.Resolve(snapshot, kernel.observe(ctx))
-	socket, _ := kernel.socketPath(ctx)
-	completed := []string{"exact socket observed: " + graph.Transport.String()}
-
-	var plan resourceReconcilePlan
-	var authorized controller.Plan
-	failedStage := ""
-	_, registryChanged, updateErr := c.resources.updateConvergent(func(working *coremetadata.Registry) error {
-		currentPlan, err := kernel.planner.build(ctx, working.Clone())
-		if err != nil {
-			failedStage = "locked plan"
+		var runErr *controllerRunError
+		if !errors.As(err, &runErr) {
 			return err
 		}
-		authorized = kernel.authorize(graph, &currentPlan)
-		plan = currentPlan
-		completed = append(completed, "plan rechecked under Registry lock")
-		*working = plan.registry.Clone()
-		return nil
-	})
-	if updateErr != nil {
-		if failedStage == "" {
-			failedStage = "registry commit"
+		if runErr.stage == "registry read" {
+			return runErr.err
 		}
 		remaining, replanErr := c.replanAfterFailure(ctx, kernel.planner)
-		report := reportForFailure(plan, remaining, reportTarget, completed, failedStage, retryResourceReconcile(reportTarget), updateErr, replanErr)
-		applyControllerProjection(&report, authorized)
-		if err := writeResourceReconcileReport(stdout, opts.output, report); err != nil {
-			return err
-		}
-		return fmt.Errorf("reconcile resources failed at %s: %w", failedStage, MapMetadataError(updateErr))
-	}
-
-	registryStage := "Registry commit"
-	if !registryChanged {
-		registryStage += " (no-op)"
-	}
-	completed = append(completed, registryStage)
-	for _, item := range plan.items {
-		if item.registry {
-			completed = append(completed, item.Key)
-		}
-	}
-	writes := authorized.Writes()
-	if err := kernel.guardPlan(ctx, socket, writes); err != nil {
-		failedStage = "tmux prevalidation"
-		remaining, replanErr := c.replanAfterFailure(ctx, kernel.planner)
-		report := reportForFailure(plan, remaining, reportTarget, completed, failedStage, retryResourceReconcile(reportTarget), err, replanErr)
-		applyControllerProjection(&report, authorized)
+		report := reportForFailure(runErr.run.plan, remaining, reportTarget, runErr.run.completed, runErr.stage,
+			retryResourceReconcile(reportTarget), runErr.err, replanErr)
+		applyControllerProjection(&report, runErr.run.authorized)
 		if writeErr := writeResourceReconcileReport(stdout, opts.output, report); writeErr != nil {
 			return writeErr
 		}
-		return fmt.Errorf("reconcile resources failed at %s: %w", failedStage, err)
+		return fmt.Errorf("reconcile resources failed at %s: %w", runErr.stage, runErr.err)
 	}
-	completed = append(completed, "tmux targets prevalidated")
-	routed := explicitTmuxRunner{runner: c.runner, target: target}
-	for _, write := range writes {
-		if _, err := routed.Run(ctx, "tmux", write.Args...); err != nil {
-			failedStage = write.Key
-			remaining, replanErr := c.replanAfterFailure(ctx, kernel.planner)
-			report := reportForFailure(plan, remaining, reportTarget, completed, failedStage, retryResourceReconcile(reportTarget), err, replanErr)
-			applyControllerProjection(&report, authorized)
-			if writeErr := writeResourceReconcileReport(stdout, opts.output, report); writeErr != nil {
-				return writeErr
-			}
-			return fmt.Errorf("reconcile resources failed at %s: %w", failedStage, err)
-		}
-		completed = append(completed, write.Key)
-	}
-	report := reportForExecute(plan, reportTarget, completed, retryResourceReconcile(reportTarget))
-	applyControllerProjection(&report, authorized)
-	if len(writes) > 0 || registryChanged {
-		reobserved := kernel.reobserve(ctx)
-		report.Reobserved = &reobserved
-		report.CompletedStages = append(report.CompletedStages, controllerReobserveStage(reobserved))
-	}
+	report := reportForExecute(run.plan, reportTarget, run.completed, retryResourceReconcile(reportTarget))
+	applyControllerProjection(&report, run.authorized)
+	report.Reobserved = run.reobserved
 	if err := writeResourceReconcileReport(stdout, opts.output, report); err != nil {
 		return err
 	}
-	if plan.refusedItems() > 0 {
-		return fmt.Errorf("reconcile resources left %d refused drift item(s); Registry identity remains authoritative", plan.refusedItems())
+	if run.plan.refusedItems() > 0 {
+		return fmt.Errorf("reconcile resources left %d refused drift item(s); Registry identity remains authoritative", run.plan.refusedItems())
 	}
 	return nil
 }

@@ -722,20 +722,3 @@ func (r *registryReconciler) refreshSessionProjections(working *coremetadata.Reg
 type livePaneInventory interface {
 	LivePaneUIDs(ctx context.Context) (map[string]bool, error)
 }
-
-// runDeadAgentPaneSweep runs the exit reconciliation outside a reconciliation
-// pass. It is what the two tmux pane-exit hooks invoke.
-//
-// The hook is not an optimization. registryReconciler.reconcile runs only on the
-// mutation routes; the read verbs load read-only and never reconcile, so without
-// a hook `projmux describe agent X` right after closing its pane would still
-// print Phase: Running.
-//
-// The event it builds is the widest legal one -- this host, no pane, no
-// generation -- because tmux fires `after-kill-pane` with an empty
-// `#{hook_pane}` and there is nothing narrower to honestly say. Narrowing is the
-// producer's option, never its obligation; see lifecycleDirtyEvent.
-func runDeadAgentPaneSweep(ctx context.Context, inventory livePaneInventory, store *resourceStore) error {
-	_, err := reconcileLifecycle(ctx, lifecycleDirtyEvent{}, inventory, store)
-	return err
-}

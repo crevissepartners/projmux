@@ -305,7 +305,7 @@ func TestInternalNamespaceForwardsRawArgvUnchanged(t *testing.T) {
 		{name: "popup wait key", args: []string{"popup-wait-key"}, target: "popup-wait-key", want: []string{}},
 		{name: "agent hook ingest", args: []string{"agent-hook", "ingest", "codex-hook"}, target: "ai", want: []string{"ingest", "codex-hook"}},
 		{name: "agent hook watch title", args: []string{"agent-hook", "watch-title", "%9"}, target: "ai", want: []string{"watch-title", "%9"}},
-		{name: "agent pane default", args: []string{"agent-pane", "launch-default", "down"}, target: "ai", want: []string{"split", "down"}},
+		{name: "agent pane default", args: []string{"agent-pane", "launch-default", "down"}, target: "ai", want: []string{"launch-default", "down"}},
 		{name: "agent pane picker", args: []string{"agent-pane", "picker", "--resume", "--inside", "right"}, target: "ai", want: []string{"picker", "--resume", "--inside", "right"}},
 		{name: "machine focus", args: []string{"focus", "--target", "alpha:1.0", "--source", "status-bar"}, target: "focus", want: []string{"--target", "alpha:1.0", "--source", "status-bar"}},
 		{name: "terminator payload survives", args: []string{"tmux", "rename-pane", "%1", "--", "--help"}, target: "tmux", want: []string{"rename-pane", "%1", "--", "--help"}},

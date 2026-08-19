@@ -57,6 +57,12 @@ type resourceCreateFlags struct {
 	createWindow bool
 	output       string
 	payload      []string
+	// resumeConversation is set by the Projmux split UI's resume selection and by
+	// nothing else. It is deliberately not a parsed flag: no public spelling of
+	// `create` accepts it, so an operator cannot reach a resume through the create
+	// verb, which is `agent resume`'s job for a Registry Agent and this field's
+	// job for a conversation the picker found on disk.
+	resumeConversation string
 }
 
 // resourceCreateShape selects which optional flag groups a resource-backed

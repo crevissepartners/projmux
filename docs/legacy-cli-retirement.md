@@ -15,7 +15,7 @@ unknown-command contract.
 
 | Removed argv | Replacement |
 | --- | --- |
-| `ai split`, `ai picker` | `create agent`, `create pane`, or a provider shortcut |
+| `ai split`, `ai picker` | `create agent`, `create pane`, or a provider shortcut. The `split` handler itself is now gone: the hidden `internal agent-pane launch-default|picker` bridge produces canonical create intents, so `--agent`, `--force-agent`, and `--print-pane-id` have no implementation left. Use `-o pane-id` on a canonical create for the pane handle |
 | `ai settings` | `config edit` |
 | `ai status`, `ai topic`, `ai integrate` | `agent status`, `agent topic`, `agent integrate` |
 | `ai notify [notify] [pane]` | `create notification --text ... --target ...`; translate the old pane/payload because the input and semantics changed |

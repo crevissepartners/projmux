@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -301,8 +302,8 @@ func TestALiveManagedPaneCostsTheRegistryNothing(t *testing.T) {
 		"pan-alpha-review": true, "pan-beta-zsh": true,
 	}}
 
-	if err := runDeadAgentPaneSweep(context.Background(), inventory, store.store()); err != nil {
-		t.Fatalf("runDeadAgentPaneSweep: %v", err)
+	if _, err := reconcileLifecycle(context.Background(), lifecycleDirtyEvent{}, inventory, store.store()); err != nil {
+		t.Fatalf("reconcileLifecycle: %v", err)
 	}
 	if inventory.calls != 1 {
 		t.Fatalf("tmux inventory queried %d times, want exactly 1 per invocation", inventory.calls)
@@ -331,8 +332,8 @@ func TestATmuxInventoryFailureReleasesNothingAndIsNotAnError(t *testing.T) {
 	before := store.snapshot()
 	inventory := &stubPaneInventory{err: errors.New("no server running on /tmp/tmux-1000/default")}
 
-	if err := runDeadAgentPaneSweep(context.Background(), inventory, store.store()); err != nil {
-		t.Fatalf("runDeadAgentPaneSweep = %v, want a silent no-op", err)
+	if _, err := reconcileLifecycle(context.Background(), lifecycleDirtyEvent{}, inventory, store.store()); err != nil {
+		t.Fatalf("reconcileLifecycle = %v, want a silent no-op", err)
 	}
 	if store.transactions != 0 || store.writes != 0 {
 		t.Fatalf("transactions = %d, writes = %d; an unreadable inventory must not open the store",
@@ -357,8 +358,8 @@ func TestASweptDeathOpensExactlyOneWriteTransaction(t *testing.T) {
 		"pan-alpha-review": true, "pan-beta-zsh": true,
 	}}
 
-	if err := runDeadAgentPaneSweep(context.Background(), inventory, store.store()); err != nil {
-		t.Fatalf("runDeadAgentPaneSweep: %v", err)
+	if _, err := reconcileLifecycle(context.Background(), lifecycleDirtyEvent{}, inventory, store.store()); err != nil {
+		t.Fatalf("reconcileLifecycle: %v", err)
 	}
 	if store.transactions != 1 || store.writes != 1 {
 		t.Fatalf("transactions = %d, writes = %d, want exactly one of each", store.transactions, store.writes)
@@ -432,8 +433,8 @@ func TestAWaitingPaneExitSweepCannotReleaseANewerCreate(t *testing.T) {
 		refreshed,
 	}}
 
-	if err := runDeadAgentPaneSweep(context.Background(), inventory, resourceStore); err != nil {
-		t.Fatalf("runDeadAgentPaneSweep: %v", err)
+	if _, err := reconcileLifecycle(context.Background(), lifecycleDirtyEvent{}, inventory, resourceStore); err != nil {
+		t.Fatalf("reconcileLifecycle: %v", err)
 	}
 	if inventory.calls != 2 {
 		t.Fatalf("tmux inventory calls = %d, want preflight plus in-transaction refresh", inventory.calls)
@@ -475,8 +476,8 @@ func TestASecondInventoryFailureKeepsEveryAgentAndPane(t *testing.T) {
 		errs: []error{nil, errors.New("tmux server disappeared before locked refresh")},
 	}
 
-	if err := runDeadAgentPaneSweep(context.Background(), inventory, store.store()); err != nil {
-		t.Fatalf("runDeadAgentPaneSweep = %v, want fail-closed no-op", err)
+	if _, err := reconcileLifecycle(context.Background(), lifecycleDirtyEvent{}, inventory, store.store()); err != nil {
+		t.Fatalf("reconcileLifecycle = %v, want fail-closed no-op", err)
 	}
 	if inventory.calls != 2 {
 		t.Fatalf("tmux inventory calls = %d, want preflight plus failed locked refresh", inventory.calls)
@@ -489,17 +490,17 @@ func TestASecondInventoryFailureKeepsEveryAgentAndPane(t *testing.T) {
 	}
 }
 
-// TestTheSweepRefusesToRunWithoutItsSeams pins the two misconfiguration guards.
-// Neither is reachable from the hook, and that is the point: they fail loudly
-// here rather than silently reporting "nothing to release" if a future call
-// site forgets a seam.
-func TestTheSweepRefusesToRunWithoutItsSeams(t *testing.T) {
+// TestTheExitProjectionRefusesToRunWithoutItsSeams pins the two
+// misconfiguration guards. Neither is reachable from the controller trigger, and
+// that is the point: they fail loudly here rather than silently reporting
+// "nothing to release" if a future call site forgets a seam.
+func TestTheExitProjectionRefusesToRunWithoutItsSeams(t *testing.T) {
 	t.Parallel()
 
-	if err := runDeadAgentPaneSweep(context.Background(), nil, newFakeResourceStore(t).store()); err == nil {
+	if _, err := reconcileLifecycle(context.Background(), lifecycleDirtyEvent{}, nil, newFakeResourceStore(t).store()); err == nil {
 		t.Fatal("a missing tmux inventory was accepted")
 	}
-	if err := runDeadAgentPaneSweep(context.Background(), &stubPaneInventory{}, nil); err == nil {
+	if _, err := reconcileLifecycle(context.Background(), lifecycleDirtyEvent{}, &stubPaneInventory{}, nil); err == nil {
 		t.Fatal("a missing registry store was accepted")
 	}
 }
@@ -640,9 +641,14 @@ func TestTheReconcilerSweepsAfterImportingLiveSessions(t *testing.T) {
 	}
 }
 
-// TestTheHiddenTmuxRouteRunsTheSweep is the hook half of the trigger: the
-// subcommand the generated hook string invokes dispatches and does the work.
-func TestTheHiddenTmuxRouteRunsTheSweep(t *testing.T) {
+// TestTheHiddenTmuxRouteConvergesTheExactHost is the hook half of the trigger:
+// the subcommand the generated hook string invokes dispatches, converges, and
+// releases the Agent whose managed Pane exited.
+//
+// The route is deliberately driven end to end through cmd.Run rather than
+// through the runner, because the thing under test is that the generated hook's
+// argv reaches a convergence at all.
+func TestTheHiddenTmuxRouteConvergesTheExactHost(t *testing.T) {
 	t.Parallel()
 
 	store := newFakeResourceStore(t)
@@ -650,11 +656,18 @@ func TestTheHiddenTmuxRouteRunsTheSweep(t *testing.T) {
 	// The Window's shell Pane is live; the Agent's managed Pane is the pane
 	// that just exited, so it is not in the inventory.
 	seedLiveAgentPane(t, tmux, "alpha", "win-alpha-main", "pan-alpha-zsh")
-	cmd := &tmuxCommand{runner: tmux, resources: store.store()}
+	socket := filepath.Join(t.TempDir(), "managed.sock")
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-S\x00" + socket: tmux}}
+	cmd := &tmuxCommand{
+		runner: runner,
+		triggerRunner: isolatedTriggerRunner(t, runner, store.store(),
+			bindingFixtureReconciler(t.TempDir())),
+	}
 
 	var stdout, stderr bytes.Buffer
-	if err := cmd.Run([]string{"release-dead-agent-panes"}, &stdout, &stderr); err != nil {
-		t.Fatalf("release-dead-agent-panes error = %v (stderr %q)", err, stderr.String())
+	if err := cmd.Run([]string{"converge", "--socket-path", socket, "--session", "alpha", "--reason", "runtime-exited"},
+		&stdout, &stderr); err != nil {
+		t.Fatalf("converge error = %v (stderr %q)", err, stderr.String())
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want a silent hook route", stdout.String())
@@ -667,36 +680,36 @@ func TestTheHiddenTmuxRouteRunsTheSweep(t *testing.T) {
 	if agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
 		t.Fatalf("status = %+v, want the hook route to have released the Agent", agent.Status)
 	}
-	if store.transactions != 1 {
-		t.Fatalf("transactions = %d, want exactly 1", store.transactions)
-	}
 }
 
-// TestTheHiddenTmuxRouteTakesNoArguments keeps the hook string honest: the
-// route is an inventory sweep, so a caller that passes it a pane id is a
-// mistake rather than a per-pane request.
-func TestTheHiddenTmuxRouteTakesNoArguments(t *testing.T) {
+// TestTheHiddenTmuxRouteTakesNoPositionalArguments keeps the hook string honest:
+// the route states one exact server and a reason, so a caller that passes it a
+// pane id is a mistake rather than a per-pane request. A pane exit cannot name
+// the pane that died in the first place.
+func TestTheHiddenTmuxRouteTakesNoPositionalArguments(t *testing.T) {
 	t.Parallel()
 
-	cmd := &tmuxCommand{runner: newFakeTmux(), resources: newFakeResourceStore(t).store()}
+	socket := filepath.Join(t.TempDir(), "managed.sock")
+	cmd := &tmuxCommand{runner: newFakeTmux(), triggerRunner: &recordingTriggering{}}
 	var stderr bytes.Buffer
-	err := cmd.Run([]string{"release-dead-agent-panes", "%3"}, &bytes.Buffer{}, &stderr)
+	err := cmd.Run([]string{"converge", "--socket-path", socket, "--reason", "runtime-exited", "%3"},
+		&bytes.Buffer{}, &stderr)
 	if err == nil {
 		t.Fatal("the route accepted a pane argument")
 	}
-	if !strings.Contains(err.Error(), "accepts no arguments") {
-		t.Fatalf("error = %q, want the no-arguments refusal", err)
+	if !strings.Contains(err.Error(), "does not accept positional arguments") {
+		t.Fatalf("error = %q, want the no-positional-arguments refusal", err)
 	}
 }
 
-// TestBothPaneExitHooksRebalanceThenSweep pins the generated hook strings.
+// TestBothPaneExitHooksRebalanceThenConverge pins the generated hook strings.
 //
 // Both hooks need both halves: `pane-exited` covers a child process that ended
 // and `after-kill-pane` covers `tmux kill-pane` and the pane close key. The
 // rebalance half stays first and keeps its own `|| true`, so pane layout never
-// depends on whether the registry sweep succeeded, and the sweep still runs
-// when there was no layout to rebalance.
-func TestBothPaneExitHooksRebalanceThenSweep(t *testing.T) {
+// depends on whether convergence succeeded, and convergence still runs when
+// there was no layout to rebalance.
+func TestBothPaneExitHooksRebalanceThenConverge(t *testing.T) {
 	t.Parallel()
 
 	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil }}
@@ -706,7 +719,8 @@ func TestBothPaneExitHooksRebalanceThenSweep(t *testing.T) {
 	}
 
 	const body = "sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true; " +
-		"'/tmp/proj mux/bin/projmux' internal tmux release-dead-agent-panes >/dev/null 2>&1 || true"
+		"'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' " +
+		"--session '#{session_id}' --reason runtime-exited >/dev/null 2>&1 || true"
 	for _, hook := range []string{"pane-exited", "after-kill-pane"} {
 		line := hookLine(t, stdout.String(), hook)
 		if !strings.Contains(line, body) {

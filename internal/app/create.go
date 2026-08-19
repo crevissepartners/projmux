@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -78,6 +79,12 @@ type createCommand struct {
 	snapshots rawArgvCommand
 	// agents builds the provider launch of the `create agent` route.
 	agents agentLauncher
+	// resumes builds the provider *resume* launch. It is the same object as
+	// agents and a separate field on purpose: the split UI's resume selection may
+	// only ever reach PlanAgentResume, and keeping the two launch seams apart is
+	// what makes "a resume never falls through to a fresh conversation" a
+	// property of the type system rather than of a code review.
+	resumes agentResumeLauncher
 	// store is the locked registry file. Every resource route touches it, and
 	// the implicit-scope resolution reads it before the transaction opens.
 	store *resourceStore
@@ -200,4 +207,92 @@ func requireCanonicalProvider(spelling, raw string) (string, error) {
 			spelling, provider, strings.Join(cli.AgentProviders(), ", ")))
 	}
 	return provider, nil
+}
+
+// agentPaneIntent is the canonical create intent the Projmux split UI produces.
+//
+// The split UI -- the saved default binding, the Alt-7 picker, the resume picker,
+// the provider and shell direct actions -- decides *what the operator asked for*
+// and nothing else. It does not know where the pane comes from, which Window owns
+// it, or what the Registry has to allocate first, because those are create's
+// business and there is exactly one implementation of them. Before this type the
+// UI reached tmux's `split-window` directly and produced panes the Registry had
+// never heard of, which is why a pane opened from the picker existed in the Main
+// UI only until something reconciled.
+type agentPaneIntent struct {
+	// provider is empty for a plain shell Pane. A shell surface is a Pane and not
+	// an Agent, so an empty provider selects a different kind rather than a
+	// default one.
+	provider string
+	// placement is the closed right/down enum. The anchor is always the current
+	// Pane, which create resolves the same way it does for a typed invocation.
+	placement string
+	// conversationID joins a provider conversation the machine already has
+	// instead of starting a new one. It requires a provider.
+	conversationID string
+}
+
+// canonicalPaneCreator is the seam the split UI hands its intents to.
+type canonicalPaneCreator interface {
+	createFromIntent(intent agentPaneIntent, stdout, stderr io.Writer) error
+}
+
+var _ canonicalPaneCreator = (*createCommand)(nil)
+
+// createFromIntent projects one split-UI intent onto the canonical create route.
+//
+// The provider and shell branches render the exact argv an operator would type,
+// which is deliberate: it keeps one parser and one set of refusals in play, so a
+// UI action and a typed command cannot disagree about what `--placement down`
+// means. The resume branch cannot be spelled in argv -- there is no public
+// `--resume` on create, and adding one would widen the public surface for an
+// interactive selection -- so it reaches the shared body with the one extra field
+// set.
+func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr io.Writer) error {
+	argv, provider, conversation, err := intent.canonicalArgv()
+	if err != nil {
+		return err
+	}
+	if conversation == "" {
+		return c.Run(argv, stdout, stderr)
+	}
+	// A resume cannot be spelled: `create` has no public `--resume`, and adding
+	// one would widen the public surface for what is an interactive selection. It
+	// reaches the shared Agent body through the same parser instead, so every
+	// refusal the typed spelling has still applies.
+	shape := resourceCreateShape{split: true, provider: true}
+	flags, err := parseResourceCreateFlags(canonicalCreateAgent, argv[len(argv)-2:], stderr, shape)
+	if err != nil {
+		return err
+	}
+	flags.resumeConversation = conversation
+	return c.createAgent(canonicalCreateAgent, provider, flags, shape, stdout, stderr)
+}
+
+// canonicalArgv renders one intent as the argv an operator would type, and
+// returns the resolved provider and conversation alongside it.
+//
+// It is a pure function so the projection is assertable on its own: "the UI
+// action and the typed command mean the same thing" is a property of this
+// mapping, and a test that had to run a create to see the argv would be
+// measuring the create instead.
+func (i agentPaneIntent) canonicalArgv() (argv []string, provider, conversation string, err error) {
+	placement := strings.TrimSpace(i.placement)
+	if !slices.Contains(placementDirections, placement) {
+		return nil, "", "", usageError(fmt.Sprintf("agent pane intent placement must be one of: %s",
+			strings.Join(placementDirections, ", ")))
+	}
+	raw := strings.TrimSpace(i.provider)
+	conversation = strings.TrimSpace(i.conversationID)
+	if raw == "" {
+		if conversation != "" {
+			return nil, "", "", usageError("agent pane intent cannot resume a conversation without a provider; a shell surface is a Pane")
+		}
+		return []string{"pane", "--placement", placement}, "", "", nil
+	}
+	canonical, err := requireCanonicalProvider(canonicalCreateAgent, raw)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return []string{"agent", "--provider", canonical, "--placement", placement}, canonical, conversation, nil
 }

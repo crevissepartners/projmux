@@ -426,29 +426,6 @@ func TestAIWatcherLifecycleIsBoundedAndSuppressesGenericOutcome(t *testing.T) {
 	}
 }
 
-func TestAIWatcherActualLaunchFailureWiring(t *testing.T) {
-	cmd, store, lifecycle, _ := testAIOperationalCommand(t)
-	launchErr := errors.New("launch " + aiDiagnosticsPrivacySeed)
-	cmd.runCommand = func(_ context.Context, name string, args ...string) error {
-		if name == "tmux" && len(args) >= 1 && args[0] == "run-shell" {
-			return launchErr
-		}
-		return nil
-	}
-	cmd.startAIWatchTitle("%55")
-	events := readAIOperationalEvents(t, store)
-	if len(events) != 1 || events[0].Event != "ai.watcher.transition" || events[0].AIResult != "failed" || events[0].Failure != "watcher-launch-failed" {
-		t.Fatalf("launch failure events = %#v", events)
-	}
-	if lifecycle.RecordedOutcome() {
-		t.Fatal("nested watcher launch failure claimed the outer split top level")
-	}
-	raw, _ := json.Marshal(events)
-	if bytes.Contains(raw, []byte(aiDiagnosticsPrivacySeed)) || bytes.Contains(raw, []byte("%55")) {
-		t.Fatalf("watcher launch event leaked error/target: %s", raw)
-	}
-}
-
 func TestAIOperationalAppendFailureDoesNotChangeIngestError(t *testing.T) {
 	home := t.TempDir()
 	blocker := filepath.Join(home, "not-a-directory")
