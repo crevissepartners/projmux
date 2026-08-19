@@ -258,6 +258,17 @@ func resourceProjectUIDsForSessions(registry coremetadata.Registry, sessions []o
 	return projects
 }
 
+// resourceRegistryProjectGraph is the graph of the named Projects: their
+// Windows, those Windows' Agents, and the Panes of both, plus exactly the name
+// reservations of the resources it kept.
+//
+// ControlSessions are the one root it carries whole. Clone() brings them along
+// and nothing here can select them, so their reservations are claimed
+// unconditionally -- otherwise the projection holds a root that
+// Registry.Validate rejects from the other direction, "ControlSession %q has no
+// name reservation in scope", which is the same class of defect as a
+// reservation with no resource. Their Windows and Panes are still out of the
+// Project graph and stay out, along with the reservations naming them.
 func resourceRegistryProjectGraph(registry coremetadata.Registry, projects map[string]bool) coremetadata.Registry {
 	out := registry.Clone()
 	out.Projects = nil
@@ -268,6 +279,9 @@ func resourceRegistryProjectGraph(registry coremetadata.Registry, projects map[s
 	includedUIDs := map[string]bool{}
 	windows := map[string]bool{}
 	agents := map[string]bool{}
+	for _, control := range registry.ControlSessions {
+		includedUIDs[control.Metadata.UID] = true
+	}
 	for _, project := range registry.Projects {
 		if projects[project.Metadata.UID] {
 			out.Projects = append(out.Projects, project.Clone())
@@ -322,7 +336,7 @@ func mergeScopedResourceRegistry(before, scopedBefore, scopedAfter coremetadata.
 	}
 
 	out := before.Clone()
-	retained := resourceRegistryProjectGraph(before, complementProjectUIDs(before, removeProjects))
+	retained := resourceRegistryWithoutProjectGraphs(before, removeProjects)
 	out.Projects, out.Windows, out.Panes, out.Agents = retained.Projects, retained.Windows, retained.Panes, retained.Agents
 	changed := resourceRegistryProjectGraph(scopedAfter, activeAfter)
 	out.Projects = append(out.Projects, changed.Projects...)
@@ -331,17 +345,95 @@ func mergeScopedResourceRegistry(before, scopedBefore, scopedAfter coremetadata.
 	out.Agents = append(out.Agents, changed.Agents...)
 	out.NameReservations = slices.Clone(scopedAfter.NameReservations)
 	out.UpdatedAt = scopedAfter.UpdatedAt
-	return out.Normalize()
+	return retainReservedResourceNames(out.Normalize())
 }
 
-func complementProjectUIDs(registry coremetadata.Registry, excluded map[string]bool) map[string]bool {
-	projects := make(map[string]bool, len(registry.Projects))
+// resourceRegistryWithoutProjectGraphs removes the whole graphs of the named
+// Projects and carries everything else through untouched.
+//
+// It replaced "the graph of every Project except these", which is a different
+// set the moment a resource is rooted anywhere but a Project. A Window owned by
+// a ControlSession belongs to no Project graph at all, so the inclusion
+// projection dropped it from the retained half while the merge put every
+// reservation back -- the dangling `Window name reservation "window" refers to
+// unknown uid` that aborted every `reconcile resources` commit once the Home
+// session became a Registry owner.
+//
+// Removal follows the ownership chain the same way inclusion does, so over a
+// well-formed registry the two are exact complements and a Project-only
+// registry projects byte-for-byte as before. Where they differ is a resource
+// the removal set does not reach: this keeps it, which is the safe direction.
+func resourceRegistryWithoutProjectGraphs(registry coremetadata.Registry, removed map[string]bool) coremetadata.Registry {
+	out := registry.Clone()
+	out.Projects = nil
+	out.Windows = nil
+	out.Panes = nil
+	out.Agents = nil
+	droppedWindows := map[string]bool{}
+	droppedAgents := map[string]bool{}
 	for _, project := range registry.Projects {
-		if !excluded[project.Metadata.UID] {
-			projects[project.Metadata.UID] = true
+		if !removed[project.Metadata.UID] {
+			out.Projects = append(out.Projects, project.Clone())
 		}
 	}
-	return projects
+	for _, window := range registry.Windows {
+		if removed[window.Metadata.OwnerUID()] {
+			droppedWindows[window.Metadata.UID] = true
+			continue
+		}
+		out.Windows = append(out.Windows, window.Clone())
+	}
+	for _, agent := range registry.Agents {
+		if droppedWindows[agent.Metadata.OwnerUID()] {
+			droppedAgents[agent.Metadata.UID] = true
+			continue
+		}
+		out.Agents = append(out.Agents, agent.Clone())
+	}
+	for _, pane := range registry.Panes {
+		owner := pane.Metadata.OwnerUID()
+		if droppedWindows[owner] || droppedAgents[owner] {
+			continue
+		}
+		out.Panes = append(out.Panes, pane.Clone())
+	}
+	return out
+}
+
+// retainReservedResourceNames drops every reservation whose uid names no
+// resource in the projection.
+//
+// Registry.Validate requires the reservation table and the resource set to
+// agree in both directions, so a reservation left behind by a resource this
+// projection did not carry is not allocator input -- it is a row that makes the
+// whole registry unwritable, and the commit that would have written it aborts
+// with nothing repaired. The merge above no longer produces one for a control
+// graph; this is the total guarantee for any other input, including a scoped
+// pass whose Project stopped resolving between the two halves.
+//
+// It only ever removes rows. A reservation is never invented here: a resource
+// with no reservation is a different defect and stays a Validate failure rather
+// than being papered over with a row the allocator never issued.
+func retainReservedResourceNames(registry coremetadata.Registry) coremetadata.Registry {
+	known := map[string]bool{}
+	for _, project := range registry.Projects {
+		known[project.Metadata.UID] = true
+	}
+	for _, control := range registry.ControlSessions {
+		known[control.Metadata.UID] = true
+	}
+	for _, window := range registry.Windows {
+		known[window.Metadata.UID] = true
+	}
+	for _, pane := range registry.Panes {
+		known[pane.Metadata.UID] = true
+	}
+	for _, agent := range registry.Agents {
+		known[agent.Metadata.UID] = true
+	}
+	registry.NameReservations = slices.DeleteFunc(slices.Clone(registry.NameReservations),
+		func(reservation coremetadata.NameReservation) bool { return !known[reservation.UID] })
+	return registry
 }
 
 type observedResourceProjectSession struct {
@@ -1011,7 +1103,20 @@ func (r *resourcePlanTmuxRunner) foreignItems(registry coremetadata.Registry, re
 			reason = "multiple live objects claim the same Registry uid"
 		} else if object.kind == coremetadata.KindWindow {
 			window, _ := registry.Window(uid)
-			if projectUID := bySession[object.session]; projectUID == "" || window.Metadata.OwnerUID() != projectUID {
+			owner := window.Metadata.OwnerUID()
+			// A ControlSession owner is not Project drift and must not be
+			// reported as though it were: the Registry says an app-owned session
+			// owns this Window, so "outside the exact Project owner scope" would
+			// name a scope the Window was never in. Sitting in the session its
+			// own ControlSession is bound to is the converged state, and a
+			// converged object is not drift at all -- so it is not listed. Only
+			// a control-owned Window observed somewhere else is, with the owner
+			// scope it actually has.
+			if control, ok := registry.ControlSession(owner); ok {
+				if strings.TrimSpace(control.Spec.Session) != object.session {
+					reason = "live Window uid is outside the exact ControlSession owner scope"
+				}
+			} else if projectUID := bySession[object.session]; projectUID == "" || owner != projectUID {
 				reason = "live Window uid is outside the exact Project owner scope"
 			}
 		} else if object.kind == coremetadata.KindPane && !paneOwnedByObservedWindow(registry, object, r.objects) {
