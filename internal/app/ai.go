@@ -956,6 +956,12 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 	if c.panes == nil {
 		return errors.New("the Projmux split UI has no canonical create route configured")
 	}
+	// The anchor is attached here, at the single funnel, so all four terminal
+	// actions -- provider, shell, resume, and the resume picker's `new` row --
+	// carry the same origin pane. When this producer runs in the pane it acts on
+	// there is no origin env and the anchor stays empty, which is create's
+	// inherited-target path unchanged.
+	intent.anchorPaneID = c.splitOriginPane()
 	stdout, stderr := c.splitUIWriters()
 	return c.panes.createFromIntent(intent, stdout, stderr)
 }
@@ -1867,11 +1873,33 @@ func pathWithinTree(anchor, path string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, "../"))
 }
 
+// splitOriginPane is the pane a popup-hosted split UI acts on.
+//
+// $TMUX_SPLIT_TARGET_PANE is written by popup-toggle when it opens a split
+// picker (see buildPopupToggleWithStyle) and by openPicker's inline popup, and it
+// holds the pane the operator pressed the key in. It is read here and only here: the
+// popup job inherits $TMUX but no $TMUX_PANE, so the origin pane is the split
+// UI's own knowledge to hand to create, not an ambient scope other verbs may
+// consult.
+//
+// The value is resolved back through tmux so what leaves this function is an
+// exact `%N` on the inherited server. An unresolvable value is returned
+// verbatim rather than dropped, which keeps one behavior for both callers: the
+// pane appears in the popup argv and in create's refusal text as the operator
+// spelled it instead of silently becoming a different target.
+func (c *aiCommand) splitOriginPane() string {
+	pane := strings.TrimSpace(c.env("TMUX_SPLIT_TARGET_PANE"))
+	if pane == "" {
+		return ""
+	}
+	if resolved := c.readMuxTrimmed("display-message", "-p", "-t", pane, "-F", "#{pane_id}"); resolved != "" {
+		return resolved
+	}
+	return pane
+}
+
 func (c *aiCommand) resolveTargetPane() string {
-	if pane := strings.TrimSpace(c.env("TMUX_SPLIT_TARGET_PANE")); pane != "" {
-		if resolved := c.readMuxTrimmed("display-message", "-p", "-t", pane, "-F", "#{pane_id}"); resolved != "" {
-			return resolved
-		}
+	if pane := c.splitOriginPane(); pane != "" {
 		return pane
 	}
 	if c.env("TMUX") != "" {

@@ -101,6 +101,11 @@ type createCommand struct {
 	// only source of an omitted create scope, and it is nil-safe: a create with
 	// no --project outside tmux refuses rather than guessing a server.
 	activeTarget activeTargetLookup
+	// anchorTarget builds the activeTarget of one invocation whose anchor pane is
+	// stated rather than inherited. Only the split UI supplies an anchor, and it
+	// supplies it per intent, which is what keeps the popup's origin pane out of
+	// every other verb's scope resolution. See createFromIntent.
+	anchorTarget func(paneID string) activeTargetLookup
 	// shell is the configured shell whose basename seeds default names and
 	// whose process a payload-free Pane runs.
 	shell          string
@@ -129,6 +134,7 @@ func newCreateCommand() *createCommand {
 			lookupEnv:  os.Getenv,
 		},
 		activeTarget:     defaultActiveTargetLookup(),
+		anchorTarget:     defaultAnchoredActiveTargetLookup,
 		shell:            configuredShell(os.Getenv),
 		sessionNameFor:   namer.SessionName,
 		newOperationID:   newCreateOperationID,
@@ -224,12 +230,20 @@ type agentPaneIntent struct {
 	// an Agent, so an empty provider selects a different kind rather than a
 	// default one.
 	provider string
-	// placement is the closed right/down enum. The anchor is always the current
-	// Pane, which create resolves the same way it does for a typed invocation.
+	// placement is the closed right/down enum. The anchor is always the Pane the
+	// operator pressed the key in -- inherited by a producer that runs in that
+	// pane, stated by anchorPaneID for one that does not.
 	placement string
 	// conversationID joins a provider conversation the machine already has
 	// instead of starting a new one. It requires a provider.
 	conversationID string
+	// anchorPaneID states the origin pane this split hangs off, for the one
+	// producer that cannot let create infer it: a tmux popup inherits $TMUX but
+	// no $TMUX_PANE, so the picker running inside one has no target of its own
+	// and carries the pane the keypress came from instead. It is empty for a
+	// producer that runs in the anchor pane, which is the case create resolves
+	// exactly as it does for a typed invocation.
+	anchorPaneID string
 }
 
 // canonicalPaneCreator is the seam the split UI hands its intents to.
@@ -253,8 +267,9 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 	if err != nil {
 		return err
 	}
+	anchored := c.withAnchorPane(intent.anchorPaneID)
 	if conversation == "" {
-		return c.Run(argv, stdout, stderr)
+		return anchored.Run(argv, stdout, stderr)
 	}
 	// A resume cannot be spelled: `create` has no public `--resume`, and adding
 	// one would widen the public surface for what is an interactive selection. It
@@ -266,7 +281,24 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 		return err
 	}
 	flags.resumeConversation = conversation
-	return c.createAgent(canonicalCreateAgent, provider, flags, shape, stdout, stderr)
+	return anchored.createAgent(canonicalCreateAgent, provider, flags, shape, stdout, stderr)
+}
+
+// withAnchorPane returns the create command one anchored intent runs as.
+//
+// The anchor replaces the invocation's active target for this create and for
+// nothing else, which is why it is a copy rather than a mutation: the same
+// process serves several bindings, and an anchor that outlived one intent would
+// be exactly the implicit global scope the contract refuses. An empty anchor
+// returns the receiver unchanged, so a producer that already runs in its anchor
+// pane keeps resolving through the inherited $TMUX_PANE.
+func (c *createCommand) withAnchorPane(paneID string) *createCommand {
+	if c == nil || strings.TrimSpace(paneID) == "" || c.anchorTarget == nil {
+		return c
+	}
+	anchored := *c
+	anchored.activeTarget = c.anchorTarget(paneID)
+	return &anchored
 }
 
 // canonicalArgv renders one intent as the argv an operator would type, and
