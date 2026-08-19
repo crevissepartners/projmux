@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -54,6 +55,33 @@ func (r Registry) Validate() error {
 		roots[project.Spec.Root] = project.Metadata.UID
 	}
 
+	sessions := map[string]string{}
+	for _, control := range r.ControlSessions {
+		if err := claim(KindControlSession, control.Metadata.UID); err != nil {
+			return err
+		}
+		if control.Kind != KindControlSession || control.APIVersion != APIVersion {
+			return stateErr(op, ErrInvalidRegistry, "control session %q has envelope %s/%s", control.Metadata.UID, control.APIVersion, control.Kind)
+		}
+		if err := ValidateName(control.Metadata.Name); err != nil {
+			return err
+		}
+		if control.Metadata.OwnerRef != nil {
+			return stateErr(op, ErrInvalidRegistry, "control session %q must not have an ownerRef", control.Metadata.Name)
+		}
+		if strings.TrimSpace(control.Spec.Session) == "" {
+			return stateErr(op, ErrInvalidRegistry, "control session %q names no tmux session", control.Metadata.Name)
+		}
+		// One tmux session projects onto at most one control session, for the
+		// same reason one root binds at most one Project: two roots claiming the
+		// same session would make "which resource is this session" unanswerable
+		// and let a later pass adopt the same live windows twice.
+		if owner, ok := sessions[control.Spec.Session]; ok {
+			return stateErr(op, ErrInvalidRegistry, "tmux session %q is bound to both %s and %s", control.Spec.Session, owner, control.Metadata.UID)
+		}
+		sessions[control.Spec.Session] = control.Metadata.UID
+	}
+
 	for _, window := range r.Windows {
 		if err := claim(KindWindow, window.Metadata.UID); err != nil {
 			return err
@@ -64,7 +92,7 @@ func (r Registry) Validate() error {
 		if err := ValidateName(window.Metadata.Name); err != nil {
 			return err
 		}
-		if err := r.requireOwner(op, KindWindow, window.Metadata, KindProject); err != nil {
+		if err := r.requireOwner(op, KindWindow, window.Metadata, KindProject, KindControlSession); err != nil {
 			return err
 		}
 	}
@@ -228,17 +256,35 @@ func (r Registry) windowPaneUIDs(windowUID string) map[string]bool {
 	return out
 }
 
-func (r Registry) requireOwner(op string, kind Kind, meta ObjectMeta, wantKind Kind) error {
+// requireOwner enforces that meta names an existing owner of one of wantKinds.
+//
+// The allowed *set* replaced a single wantKind when a Window became ownable by
+// either a Project or a ControlSession. It is a set rather than a second
+// call-site branch on purpose: the caller states which owner kinds are legal for
+// its kind in one place, so there is exactly one refusal to keep in step, and a
+// kind that is not in the set is refused rather than falling through to a
+// lookup that would answer false for a reason the message cannot name.
+//
+// The refusal wording is preserved byte-for-byte for the single-kind case, which
+// is every caller except Window. A Window's message lists its allowed kinds in
+// declaration order; there is no other spelling that can name two legal owners
+// without lying about one of them.
+func (r Registry) requireOwner(op string, kind Kind, meta ObjectMeta, wantKinds ...Kind) error {
+	if len(wantKinds) == 0 {
+		return stateErr(op, ErrInvalidRegistry, "%s %q has no allowed owner kind", kind, meta.Name)
+	}
 	if meta.OwnerRef == nil {
 		return stateErr(op, ErrInvalidRegistry, "%s %q has no ownerRef", kind, meta.Name)
 	}
-	if meta.OwnerRef.Kind != wantKind {
-		return stateErr(op, ErrInvalidRegistry, "%s %q ownerRef kind %q is not %q", kind, meta.Name, meta.OwnerRef.Kind, wantKind)
+	if !slices.Contains(wantKinds, meta.OwnerRef.Kind) {
+		return stateErr(op, ErrInvalidRegistry, "%s %q ownerRef kind %q is not %s", kind, meta.Name, meta.OwnerRef.Kind, quotedKinds(wantKinds))
 	}
 	var exists bool
-	switch wantKind {
+	switch meta.OwnerRef.Kind {
 	case KindProject:
 		_, exists = r.Project(meta.OwnerRef.UID)
+	case KindControlSession:
+		_, exists = r.ControlSession(meta.OwnerRef.UID)
 	case KindWindow:
 		_, exists = r.Window(meta.OwnerRef.UID)
 	case KindAgent:
@@ -248,6 +294,16 @@ func (r Registry) requireOwner(op string, kind Kind, meta ObjectMeta, wantKind K
 		return stateErr(op, ErrInvalidRegistry, "%s %q ownerRef %q does not exist", kind, meta.Name, meta.OwnerRef.UID)
 	}
 	return nil
+}
+
+// quotedKinds renders an allowed owner set the way the single-kind refusal
+// rendered one kind, so a one-element set produces the exact pre-existing text.
+func quotedKinds(kinds []Kind) string {
+	quoted := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		quoted = append(quoted, `"`+string(kind)+`"`)
+	}
+	return strings.Join(quoted, " or ")
 }
 
 // validateReservations proves the reservation table and the resource names
@@ -278,6 +334,11 @@ func (r Registry) validateReservations(op string, uids map[string]Kind) error {
 	}
 	for _, project := range r.Projects {
 		if err := require("", KindProject, project.Metadata.Name, project.Metadata.UID); err != nil {
+			return err
+		}
+	}
+	for _, control := range r.ControlSessions {
+		if err := require("", KindControlSession, control.Metadata.Name, control.Metadata.UID); err != nil {
 			return err
 		}
 	}

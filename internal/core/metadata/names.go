@@ -23,6 +23,9 @@ const (
 	FallbackWindowNameBase  = "window"
 	FallbackPaneNameBase    = "pane"
 	FallbackAgentNameBase   = "agent"
+	// FallbackControlSessionNameBase is used when the bound tmux session name
+	// sanitizes to nothing usable as a query key.
+	FallbackControlSessionNameBase = "control"
 )
 
 // ValidateName rejects names that cannot serve as a stable, unambiguous query
@@ -150,6 +153,19 @@ func WindowNameBase(explicit, command, shell string) string {
 	return FallbackWindowNameBase
 }
 
+// ControlSessionNameBase derives the ControlSession name base from the tmux
+// session name it is bound to.
+//
+// The session name is the only seed there is: a control session owns no root to
+// take a basename from, and inventing one from $HOME would be the very
+// path-derived identity this kind exists to avoid.
+func ControlSessionNameBase(session string) string {
+	if base := SanitizeNameBase(session); base != "" {
+		return base
+	}
+	return FallbackControlSessionNameBase
+}
+
 // PaneNameBase applies the shell Pane naming order: command basename,
 // configured shell basename, then "pane".
 func PaneNameBase(command, shell string) string {
@@ -217,10 +233,18 @@ type nameKey struct {
 	Name  string
 }
 
-// scopeFor returns the uniqueness scope for a kind and owner. Project names
-// are unique across the whole registry, so their scope is empty.
+// scopeFor returns the uniqueness scope for a kind and owner. Project and
+// ControlSession names are unique across the whole registry, so their scope is
+// empty.
+//
+// The two root kinds share the empty scope but not a slot: nameKey carries the
+// Kind, so a Project named `home` and a ControlSession named `home` are two
+// reservations that never collide. That is deliberate -- a control session's
+// name comes from a tmux session name the operator chose long before any
+// Project existed, and failing `projmux shell` because a Project already holds
+// that word would make the app's own entrypoint hostage to registry contents.
 func scopeFor(kind Kind, ownerUID string) string {
-	if kind == KindProject {
+	if kind == KindProject || kind == KindControlSession {
 		return ""
 	}
 	return ownerUID

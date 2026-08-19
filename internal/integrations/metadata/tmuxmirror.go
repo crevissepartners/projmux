@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -90,6 +91,145 @@ func (m Mirror) RebindProject(ctx context.Context, sessionName, root string) err
 		return fmt.Errorf("metadata: mirror project path: %w", err)
 	}
 	return nil
+}
+
+// ControlSessionMarkers is the writer-side evidence about one exact session on
+// one exact server, read before any control marker is written.
+//
+// Both fields are refusals waiting to happen, not capabilities:
+//
+//   - AppOwned is `@projmux_app == "1"` on the server. Writing a control role
+//     onto a server projmux did not start would let projmux claim a role on the
+//     operator's own tmux, which is exactly what the reader-side host check in
+//     internal/core/resourcegraph refuses to honor. Writing a marker no reader
+//     will ever trust is worse than not writing it: it leaves an option behind
+//     on someone else's server.
+//   - Ephemeral is `@projmux_ephemeral == "1"` on the session. Ephemeral grants
+//     nothing, and the resolved graph fails closed on a session carrying both
+//     markers. The writer must therefore never be the thing that produces that
+//     pair.
+type ControlSessionMarkers struct {
+	AppOwned  bool
+	Ephemeral bool
+}
+
+// ControlSessionEligible reports whether this session may carry the control
+// role. It is the writer-side half of the reader's two-fact rule.
+func (c ControlSessionMarkers) ControlSessionEligible() bool {
+	return c.AppOwned && !c.Ephemeral
+}
+
+// ObserveControlSessionMarkers reads the two facts that decide whether a session
+// may be marked as the control session. It performs no writes.
+//
+// An unset option is an observation, not a failure, exactly as it is for the
+// resolved-graph host read: tmux answers a read of a never-set user option with
+// a non-zero "invalid option", and a server with no `@projmux_app` is simply a
+// server projmux did not start.
+func (m Mirror) ObserveControlSessionMarkers(ctx context.Context, sessionName string) (ControlSessionMarkers, error) {
+	if strings.TrimSpace(sessionName) == "" {
+		return ControlSessionMarkers{}, fmt.Errorf("metadata: session name is required to observe control session markers")
+	}
+	app, err := m.run(ctx, "show-options", "-gv", tmuxopts.AppGlobal)
+	switch {
+	case err != nil && optionUnset(err):
+		app = nil
+	case err != nil:
+		return ControlSessionMarkers{}, fmt.Errorf("metadata: read app marker: %w", err)
+	}
+	ephemeral, err := m.run(ctx, "display-message", "-p", "-t", sessionName, "-F", "#{"+tmuxopts.EphemeralSession+"}")
+	if err != nil {
+		return ControlSessionMarkers{}, fmt.Errorf("metadata: read session ephemeral marker: %w", err)
+	}
+	return ControlSessionMarkers{
+		AppOwned:  strings.TrimSpace(string(app)) == resourcegraph.AppOwnedMarker,
+		Ephemeral: strings.TrimSpace(string(ephemeral)) == resourcegraph.EphemeralMarker,
+	}, nil
+}
+
+// MirrorControlSessionRole writes the control role onto one exact session.
+//
+// It names one `-t <session>` target and never a pattern, a group, or `-g`. That
+// is the whole of contract row 4's "config apply must not mutate unrelated
+// sessions in bulk": there is no spelling of this call that can reach a second
+// session. Repeating it converges, because tmux set-option with the same value
+// is a no-op the reader cannot distinguish from the first write.
+func (m Mirror) MirrorControlSessionRole(ctx context.Context, sessionName string) error {
+	if strings.TrimSpace(sessionName) == "" {
+		return fmt.Errorf("metadata: session name is required to mirror the control session role")
+	}
+	if _, err := m.run(ctx, "set-option", "-t", sessionName, "-q", tmuxopts.SessionRole, resourcegraph.ControlSessionRole); err != nil {
+		return fmt.Errorf("metadata: mirror control session role: %w", err)
+	}
+	return nil
+}
+
+// ObserveControlSession reads one live control session's windows and panes,
+// together with the tmux ids the caller must mirror the bound uids onto. It
+// performs no writes.
+//
+// It is a separate reader from ObserveLegacySessionTargets rather than a reuse of
+// it for one reason: that one starts by reading `@projmux_project_path` as the
+// Project root, and a control session has no root. Everything a control session
+// binding needs is the identity a live object already carries plus the display
+// sources -- and specifically not the provider conversation ids, because no
+// Agent is ever minted below a control session.
+func (m Mirror) ObserveControlSession(ctx context.Context, sessionName string) (coremetadata.ControlSessionObservation, LegacyTargets, error) {
+	if strings.TrimSpace(sessionName) == "" {
+		return coremetadata.ControlSessionObservation{}, LegacyTargets{}, fmt.Errorf("metadata: session name is required to observe a control session")
+	}
+	observed := coremetadata.ControlSessionObservation{Session: sessionName}
+	var targets LegacyTargets
+
+	windowsOut, err := m.run(ctx, "list-windows", "-t", sessionName, "-F", tmuxFormat(
+		"#{window_index}",
+		"#{window_name}",
+		"#{window_id}",
+		"#{"+tmuxopts.WindowUID+"}",
+	))
+	if err != nil {
+		return coremetadata.ControlSessionObservation{}, LegacyTargets{}, fmt.Errorf("metadata: list control session windows: %w", err)
+	}
+	// tmux lists windows in window_index ascending order, which is the ordinal
+	// the adoption rule pairs against.
+	indexOrder := map[string]int{}
+	for _, fields := range parseRows(string(windowsOut), 4) {
+		indexOrder[fields[0]] = len(observed.Windows)
+		observed.Windows = append(observed.Windows, coremetadata.ControlSessionWindow{
+			DisplayName: fields[1],
+			UID:         strings.TrimSpace(fields[3]),
+		})
+		targets.Windows = append(targets.Windows, fields[2])
+		targets.Panes = append(targets.Panes, nil)
+	}
+
+	panesOut, err := m.run(ctx, "list-panes", "-s", "-t", sessionName, "-F", tmuxFormat(
+		"#{window_index}",
+		"#{"+tmuxopts.PaneName+"}",
+		"#{pane_current_command}",
+		"#{pane_title}",
+		"#{pane_current_path}",
+		"#{pane_id}",
+		"#{"+tmuxopts.PaneUID+"}",
+	))
+	if err != nil {
+		return coremetadata.ControlSessionObservation{}, LegacyTargets{}, fmt.Errorf("metadata: list control session panes: %w", err)
+	}
+	for _, fields := range parseRows(string(panesOut), 7) {
+		position, ok := indexOrder[fields[0]]
+		if !ok {
+			continue
+		}
+		observed.Windows[position].Panes = append(observed.Windows[position].Panes, coremetadata.ControlSessionPane{
+			UID:     strings.TrimSpace(fields[6]),
+			Name:    fields[1],
+			Command: fields[2],
+			Title:   fields[3],
+			CWD:     fields[4],
+		})
+		targets.Panes[position] = append(targets.Panes[position], fields[5])
+	}
+	return observed, targets, nil
 }
 
 // MirrorWindow writes stable Window identity onto window-scoped tmux options,

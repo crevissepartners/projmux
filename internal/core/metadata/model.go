@@ -24,11 +24,23 @@ const (
 	KindWindow  Kind = "Window"
 	KindPane    Kind = "Pane"
 	KindAgent   Kind = "Agent"
+	// KindControlSession is the app-owned control session -- the Home session
+	// `projmux shell` opens -- as an OWNER of Windows and Panes.
+	//
+	// It is a fifth root kind rather than a Project with a special role for one
+	// reason that no flag can reproduce: a control session owns no filesystem
+	// path, and the type below has no field to put one in. Every path-based
+	// surface projmux has (managed roots, trust, rebind, cwd defaults,
+	// ProjectByRoot) reads Project.Spec.Root, so a control session cannot leak
+	// into any of them by omission, by a forgotten filter, or by a later
+	// refactor -- the leak would not compile. $HOME is therefore permanently
+	// incapable of becoming a Project or a managed root through this kind.
+	KindControlSession Kind = "ControlSession"
 )
 
 // Kinds returns the closed kind set in declaration order.
 func Kinds() []Kind {
-	return []Kind{KindProject, KindWindow, KindPane, KindAgent}
+	return []Kind{KindProject, KindWindow, KindPane, KindAgent, KindControlSession}
 }
 
 // OwnerRef points at the owning resource by opaque uid. It never carries a
@@ -201,7 +213,55 @@ func (p Project) Clone() Project {
 	return out
 }
 
-// Window is owned by exactly one Project and always owns an initial Pane.
+// ControlSession is the app-owned control session as a Registry root.
+//
+// It is the second thing a Window may be owned by, and the only root kind that
+// carries no filesystem path. The tmux session it is bound to is named in
+// spec.session and is matched exactly, never by basename, cwd, or a name
+// heuristic: an operator's session that happens to be called `home` on a server
+// projmux does not own is not this resource, and the marker read in
+// internal/core/resourcegraph is what decides that at observation time.
+//
+// It deliberately has no status.session projection either. A Project's session
+// projection exists so an offline Project remembers which session name it will
+// come back as; a control session's whole identity *is* that name, so a second
+// copy of it in status would be a field that can disagree with spec.
+type ControlSession struct {
+	APIVersion string               `json:"apiVersion"`
+	Kind       Kind                 `json:"kind"`
+	Metadata   ObjectMeta           `json:"metadata"`
+	Spec       ControlSessionSpec   `json:"spec"`
+	Status     ControlSessionStatus `json:"status,omitzero"`
+}
+
+// ControlSessionSpec names the tmux session this control session is bound to.
+//
+// There is no Root field and there must never be one. See KindControlSession.
+type ControlSessionSpec struct {
+	Session string `json:"session"`
+}
+
+// ControlSessionStatus carries the observed conditions of one control session.
+//
+// It is `omitzero` for the same read-compatibility reason WindowStatus is: a
+// control session that has never carried a condition serializes without the
+// key, so the block stays additive inside schemaVersion 1.
+type ControlSessionStatus struct {
+	Conditions []Condition `json:"conditions,omitempty"`
+}
+
+// Clone returns a deep copy of the ControlSession.
+func (c ControlSession) Clone() ControlSession {
+	out := c
+	out.Metadata = c.Metadata.Clone()
+	out.Status.Conditions = slices.Clone(c.Status.Conditions)
+	return out
+}
+
+// Window is owned by exactly one Project or ControlSession and always owns an
+// initial Pane. The two owner kinds are structurally identical from a Window's
+// point of view -- ownerRef is an opaque uid plus a kind -- so nothing below a
+// Window needs to know which root it hangs from.
 type Window struct {
 	APIVersion string       `json:"apiVersion"`
 	Kind       Kind         `json:"kind"`
@@ -509,10 +569,18 @@ type NameReservation struct {
 // Slice order is insertion order and is preserved verbatim so serialization is
 // deterministic without a sort pass.
 type Registry struct {
-	APIVersion       string            `json:"apiVersion"`
-	SchemaVersion    int               `json:"schemaVersion"`
-	UpdatedAt        time.Time         `json:"updatedAt"`
-	Projects         []Project         `json:"projects,omitempty"`
+	APIVersion    string    `json:"apiVersion"`
+	SchemaVersion int       `json:"schemaVersion"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+	Projects      []Project `json:"projects,omitempty"`
+	// ControlSessions is `omitempty`, which is the whole no-migration story for
+	// this slice: a registry written before control sessions existed decodes the
+	// absent key to a nil slice and re-encodes it as an absent key, so the
+	// document round-trips byte-identically and schemaVersion stays 1. Bumping
+	// the envelope would make every already installed build reject the file
+	// fail-closed with ErrSchemaTooNew -- a hard downgrade break bought for
+	// nothing.
+	ControlSessions  []ControlSession  `json:"controlSessions,omitempty"`
 	Windows          []Window          `json:"windows,omitempty"`
 	Panes            []Pane            `json:"panes,omitempty"`
 	Agents           []Agent           `json:"agents,omitempty"`
@@ -529,6 +597,7 @@ func NewRegistry() Registry {
 func (r Registry) Clone() Registry {
 	out := r
 	out.Projects = cloneSlice(r.Projects, Project.Clone)
+	out.ControlSessions = cloneSlice(r.ControlSessions, ControlSession.Clone)
 	out.Windows = cloneSlice(r.Windows, Window.Clone)
 	out.Panes = cloneSlice(r.Panes, Pane.Clone)
 	out.Agents = cloneSlice(r.Agents, Agent.Clone)
@@ -561,6 +630,35 @@ func (r *Registry) Project(uid string) (*Project, bool) {
 	for i := range r.Projects {
 		if r.Projects[i].Metadata.UID == uid {
 			return &r.Projects[i], true
+		}
+	}
+	return nil, false
+}
+
+// ControlSession returns the ControlSession with uid.
+func (r *Registry) ControlSession(uid string) (*ControlSession, bool) {
+	for i := range r.ControlSessions {
+		if r.ControlSessions[i].Metadata.UID == uid {
+			return &r.ControlSessions[i], true
+		}
+	}
+	return nil, false
+}
+
+// ControlSessionBySession returns the ControlSession bound to an exact tmux
+// session name.
+//
+// Matching is exact and never heuristic, for the same reason ProjectByRoot's
+// is: the session name is the identity, so a trimmed, cased, or prefixed
+// variant is a different session and must not merge onto this uid.
+func (r *Registry) ControlSessionBySession(session string) (*ControlSession, bool) {
+	session = strings.TrimSpace(session)
+	if session == "" {
+		return nil, false
+	}
+	for i := range r.ControlSessions {
+		if r.ControlSessions[i].Spec.Session == session {
+			return &r.ControlSessions[i], true
 		}
 	}
 	return nil, false

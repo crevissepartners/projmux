@@ -141,14 +141,37 @@ Packages:
 
 Resources and ownership:
 
-- Kinds are `Project`, `Window`, `Pane`, and `Agent`, stamped with
-  `apiVersion: projmux.io/v1alpha1`.
-- `ownerRef` runs Project → Window → (shell Pane | Agent), and an Agent owns
-  its current managed Pane.
+- Kinds are `Project`, `Window`, `Pane`, `Agent`, and `ControlSession`, stamped
+  with `apiVersion: projmux.io/v1alpha1`.
+- `ownerRef` runs (Project | ControlSession) → Window → (shell Pane | Agent),
+  and an Agent owns its current managed Pane. A Window's allowed owner set is
+  exactly those two root kinds; every other ownerRef kind is refused.
+- A `ControlSession` is the app-owned control session -- the Home session
+  `projmux shell` opens -- as a Registry root. It exists so Home's Windows and
+  Panes have an owner chain at all: before it, pane `%0` of Home carried no
+  `@projmux_window_uid`, so every route that resolves "the active target"
+  refused there.
+- **A ControlSession owns no filesystem path, and `ControlSessionSpec` has no
+  field that could hold one.** `spec.session` names the exact tmux session and
+  nothing else. That is the structural guarantee behind "$HOME is never a
+  Project": managed roots, trust, rebind, cwd defaults, and `ProjectByRoot` all
+  read `Project.spec.root`, so a control session cannot leak into any of them
+  even by accident. `$HOME` is never registered as a Project and never added to
+  managed roots.
+- A ControlSession is recognized as one only on evidence, never by name: the
+  server must carry `@projmux_app=1` and the exact session's
+  `@projmux_session_role` must be exactly `control`. `@projmux_ephemeral=1`
+  together with a control role fails closed on both sides -- the reader refuses
+  the pair and the writer refuses to produce it.
+- ControlSession names share the registry-wide scope with Project names but not
+  a reservation slot, because `nameReservations` is keyed by kind as well as
+  scope. A Project named `home` and a ControlSession named `home` coexist.
 - A persistent tmux **Session is not a resource**. It is a 1:1 runtime
   projection of a Project recorded in `Project.status.session` with a `live`
   flag, and it owns no uid, name, or ownerRef. Auto-attach ephemeral sessions
-  live only in runtime inventory, outside the Project hierarchy.
+  live only in runtime inventory, outside the Project hierarchy. A
+  ControlSession is not a counter-example: it is a root resource that *names* a
+  session, and the session still carries no identity of its own.
 - `Window` and `Pane` carry **no stored liveness field**, deliberately. Their
   `status` block holds observed conditions only; live/offline is derived from a
   live tmux observation at read time. See *Runtime observation and resource
@@ -1179,11 +1202,15 @@ Registry-first primary navigation:
   second set of actions. Opening a candidate is the explicit gesture that
   registers it -- see the authority split below.
 - Home is chrome, not a Project, and the two senses of "Home" stay separate. The
-  Home *control session* is never a managed row: it is app control runtime with no
-  `resourceRef`, the only evidence that a session is one is the exact
-  `@projmux_session_role` value the graph reads, a session named `home` with no
-  marker is honestly unattributed, and the marker's writer belongs to the
-  control-session track. The Home *navigation row* is the operator's own root as
+  Home *control session* is never a managed row: the tmux session itself is app
+  control runtime with no `resourceRef`, the only evidence that a session is one
+  is the exact `@projmux_session_role` value the graph reads, and a session named
+  `home` with no marker is honestly unattributed. The marker is written by the
+  canonical `projmux shell` entry, for the app-session target only, and the same
+  pass mirrors Home's Window and Pane identity -- so Home's *windows and panes*
+  are managed rows owned by a `ControlSession`, while the session row itself
+  stays `control`. Home is still not a Project and never appears in
+  `get projects`. The Home *navigation row* is the operator's own root as
   filesystem discovery offers it, and it leads the Projects list because it is
   where the surface starts from rather than a member of what the surface orders.
   It is synthesized from nothing: it carries no managed identity, it is not a

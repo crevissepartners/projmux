@@ -19,6 +19,10 @@ var uidPrefixes = map[Kind]string{
 	KindWindow:  "win",
 	KindPane:    "pane",
 	KindAgent:   "agent",
+	// "ctl" rather than "control" or "session": the prefix is read in tmux
+	// option values and log lines, and it must not be mistakable for the tmux
+	// session name it is bound to.
+	KindControlSession: "ctl",
 }
 
 // NewUID mints an opaque Projmux identity for kind. The value is independent
