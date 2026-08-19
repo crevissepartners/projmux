@@ -152,6 +152,8 @@ func (c *switchCommand) continueProjectOpen(ctx context.Context, target, session
 			return diagnostics.SessionStateCounts{}, errors.New("named snapshot artifact is not prepared")
 		}
 		return c.restoreProjectNamedSnapshot(ctx, sessionName, target, *layoutArtifact)
+	case projectStartupKindNew:
+		return diagnostics.SessionStateCounts{}, c.startProjectFresh(ctx, sessionName, target, bootstrapped)
 	default:
 		return diagnostics.SessionStateCounts{}, c.materializeAndOpenProjectTopology(ctx, sessionName, target, bootstrapped)
 	}
@@ -177,19 +179,56 @@ func (c *switchCommand) authorizeProjectLayout(ctx context.Context, target strin
 	return authorizer.AuthorizeProjectLayout(ctx, target, artifact)
 }
 
+// pickProjectStartupMode runs the startup screen and returns the approved start.
+//
+// The loop exists for exactly one row: a cancelled `new` confirmation returns the
+// operator to the rows they came from rather than to the Projects list, because
+// declining to destroy saved state is not the same gesture as declining to open
+// the Project. Every other row leaves on its first pass, and a picker that stops
+// answering resolves to the topology start, so the loop cannot spin.
 func (c *switchCommand) pickProjectStartupMode(sessionName, target string) projectStartupCandidate {
-	candidates := c.projectStartupCandidates(sessionName, target)
-	if len(candidates) == 0 {
-		return projectStartupCandidate{Kind: projectStartupKindTopology}
+	for {
+		candidates := c.projectStartupCandidates(sessionName, target)
+		if len(candidates) == 0 {
+			return projectStartupCandidate{Kind: projectStartupKindTopology}
+		}
+		result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, projectStartupPickerOptions(candidates))
+		if err != nil {
+			return projectStartupCandidate{Kind: projectStartupKindTopology}
+		}
+		candidate, ok := projectStartupCandidateFromValue(result.Value)
+		if !ok {
+			return projectStartupCandidate{Kind: projectStartupKindTopology}
+		}
+		if candidate.Kind != projectStartupKindNew {
+			return candidate
+		}
+		approved, err := c.approveProjectFreshStart(sessionName, target)
+		if err != nil {
+			// A confirmation that could not be shown is not an approval. Falling
+			// back to the non-destructive topology start is the only outcome that
+			// cannot delete something nobody agreed to.
+			c.reportProjectStartup("projmux: fresh start confirmation could not be shown: " + err.Error())
+			return projectStartupCandidate{Kind: projectStartupKindTopology}
+		}
+		if approved {
+			return candidate
+		}
+		c.reportProjectStartup(projectStartupNewCanceledMessage)
 	}
-	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, projectStartupPickerOptions(candidates))
+}
+
+// approveProjectFreshStart plans the prune and asks for approval.
+//
+// Cancel is zero writes by construction: planning is the read-only snapshot read,
+// the confirmation is a picker, and neither one reaches resourceStore.mutate,
+// sessionstate.Store.Delete, or any tmux command that changes tmux state.
+func (c *switchCommand) approveProjectFreshStart(sessionName, target string) (bool, error) {
+	plan, err := c.planProjectFreshStart(sessionName, target)
 	if err != nil {
-		return projectStartupCandidate{Kind: projectStartupKindTopology}
+		return false, err
 	}
-	if candidate, ok := projectStartupCandidateFromValue(result.Value); ok {
-		return candidate
-	}
-	return projectStartupCandidate{Kind: projectStartupKindTopology}
+	return c.confirmProjectFreshStart(plan)
 }
 
 func (c *switchCommand) projectStartupCandidates(sessionName, target string) []projectStartupCandidate {
@@ -215,10 +254,20 @@ func (c *switchCommand) projectStartupCandidates(sessionName, target string) []p
 			}
 		}
 	}
+	// The fresh-start row is offered unconditionally, including when the Project
+	// declares nothing to prune. "Start this Project clean" is a decision about
+	// the start, not about how much saved state happens to exist, and a row that
+	// appears and disappears with the Registry would be a row the operator cannot
+	// learn. Its confirmation states the real counts, zeroes included.
 	if len(candidates) == 0 {
-		return []projectStartupCandidate{topologyProjectStartupCandidate(), backProjectStartupCandidate()}
+		return []projectStartupCandidate{
+			topologyProjectStartupCandidate(),
+			newProjectStartupCandidate(),
+			backProjectStartupCandidate(),
+		}
 	}
 	candidates = append(candidates, topologyProjectStartupCandidate())
+	candidates = append(candidates, newProjectStartupCandidate())
 	candidates = append(candidates, backProjectStartupCandidate())
 	return candidates
 }
@@ -297,7 +346,7 @@ func projectStartupPickerOptions(candidates []projectStartupCandidate) intpicker
 		UI:            "project-startup",
 		Prompt:        settingsCatalogText("Start project > "),
 		Header:        settingsCatalogText("Start project"),
-		Footer:        projmuxFooter("Enter: start  |  Back row: projects  |  Esc: Project topology"),
+		Footer:        projmuxFooter("Enter: start  |  New row: discards saved state  |  Back row: projects  |  Esc: Project topology"),
 		Entries:       entries,
 		Bindings:      settingsCloseBindings(),
 		DisableSearch: true,
@@ -312,6 +361,12 @@ func projectStartupPickerLabel(candidate projectStartupCandidate) string {
 		return settingsLabel(settingsGlyphOpen, settingsColorType, "Named snapshot", candidate.Description)
 	case projectStartupKindTopology:
 		return settingsLabel(settingsGlyphOpen, settingsColorType, "Project topology", candidate.Description)
+	case projectStartupKindNew:
+		// The destructive glyph and color are the same pair the notify clear-all
+		// confirmation uses. This row starts a Project like the rows above it, but
+		// it is the only one that deletes anything, and it has to read that way
+		// before it is selected rather than only in the confirmation.
+		return settingsLabel(settingsGlyphRemove, settingsColorRemove, projectStartupNewLabel, candidate.Description)
 	case projectStartupKindBack:
 		return settingsLabel(settingsGlyphBack, settingsColorBack, "Back", candidate.Description)
 	default:
@@ -327,6 +382,8 @@ func projectStartupPickerValue(candidate projectStartupCandidate) string {
 		return projectStartupValueNamed + candidate.Name
 	case projectStartupKindTopology:
 		return projectStartupValueTopology
+	case projectStartupKindNew:
+		return projectStartupValueNew
 	case projectStartupKindBack:
 		return settingsBackValue
 	default:
@@ -341,6 +398,8 @@ func projectStartupCandidateFromValue(value string) (projectStartupCandidate, bo
 		return projectStartupCandidate{Kind: projectStartupKindLatest}, true
 	case value == projectStartupValueTopology, value == projectStartupValueEmpty:
 		return projectStartupCandidate{Kind: projectStartupKindTopology}, true
+	case value == projectStartupValueNew:
+		return projectStartupCandidate{Kind: projectStartupKindNew}, true
 	case value == settingsBackValue:
 		return projectStartupCandidate{Kind: projectStartupKindBack}, true
 	case strings.HasPrefix(value, projectStartupValueNamed):
@@ -562,9 +621,14 @@ type registryProjectTopologyMaterializer struct {
 	// startup, `create agent`, and `agent resume` share one object.
 	agents topologyAgentLauncher
 	// notices is where the operator is told which stored Agents did not rejoin
-	// their recorded conversation. It is stderr rather than the discarded
-	// rollback stream: silently substituting a new conversation is exactly the
-	// failure this Phase exists to prevent.
+	// their recorded conversation. It is not the discarded rollback stream:
+	// silently substituting a new conversation is exactly the failure Phase 0
+	// existed to prevent.
+	//
+	// Production wires a projectStartupNoticeSink, which mirrors every line to
+	// stderr and flushes the batch to `tmux display-message`. The field stays a
+	// plain io.Writer so a fixture can keep passing a bytes.Buffer; the flush is
+	// opt-in through projectStartupNoticeFlusher.
 	notices io.Writer
 }
 
@@ -581,7 +645,11 @@ func newRegistryProjectTopologyMaterializer() *registryProjectTopologyMaterializ
 		runner:    inttmux.ExecRunner{},
 		target:    target,
 		warn:      io.Discard,
-		notices:   os.Stderr,
+		// The disclosure surface is the shared stderr/display-message tee this
+		// Phase settled on for every closed-Project startup report. See
+		// projectStartupNoticeSink: a popup guarantees the emit and denies the
+		// read, so stderr alone was a disclosure nobody received.
+		notices: newProjectStartupNoticeSink(inttmux.ExecRunner{}),
 	}
 }
 
@@ -618,6 +686,11 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		warn = io.Discard
 	}
 	outcome, err := run.execute(ctx, planner, warn)
+	// The plan writes its Agent disclosures line by line during the transaction;
+	// the flush is what turns them into the one message the operator actually
+	// sees. It runs on both outcomes: a failed activation is exactly when the
+	// "this Agent did not rejoin its conversation" line matters most.
+	flushProjectStartupNotices(m.notices)
 	if err != nil {
 		stage := outcome.failedStage
 		if stage == "" {

@@ -141,6 +141,14 @@ type switchCommand struct {
 	projectTopology      switchProjectTopologyMaterializer
 	// projectRegistrar performs the explicit Project bootstrap of one open.
 	projectRegistrar switchProjectRegistrar
+	// projectFreshStart is the `new` row's prune seam: it plans the exact
+	// Window/Pane/Agent cascade the confirmation states, and removes it through
+	// the canonical delete cascade.
+	projectFreshStart switchProjectFreshStarter
+	// startupNotices is the operator-facing report surface of the startup flow.
+	// It is the same stderr/display-message tee closed-Project topology
+	// activation discloses unresumed Agents through.
+	startupNotices projectStartupReporter
 	// navigation is the Registry-first row source and the resource hierarchy
 	// surface. It is the only thing here that reads the Registry, and it never
 	// writes: the picker's rows, its status overlay, and its refresh are one
@@ -205,7 +213,11 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		// lazily so a project open never picks a socket from an inherited client.
 		projectTopology:  newRegistryProjectTopologyMaterializer(),
 		projectRegistrar: newDefaultSwitchProjectRegistrar(),
-		navigation:       newRegistryNavigationCommand(inttmux.ExecRunner{}),
+		// The fresh-start prune reads and writes the same Registry every other
+		// resource route uses; it owns no store of its own.
+		projectFreshStart: newRegistryProjectFreshStarter(),
+		startupNotices:    newProjectStartupNoticeSink(inttmux.ExecRunner{}),
+		navigation:        newRegistryNavigationCommand(inttmux.ExecRunner{}),
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)

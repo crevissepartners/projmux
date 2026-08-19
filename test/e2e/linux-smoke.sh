@@ -3317,6 +3317,7 @@ topology_pmx() {
     XDG_RUNTIME_DIR="$topology_root/runtime" \
     PROJMUX_MANAGED_ROOTS="$topology_root/work" \
     TMUX_TMPDIR="$topology_root/tmux" \
+    PATH="$topology_root/shim:$PATH" \
     SHELL="$topology_shell" \
     "$bin" "$@"
 }
@@ -3418,6 +3419,57 @@ topology_live_pmx create window --project "uid:$topology_project_uid" --name rev
 topology_stored_command=(sleep 600)
 topology_live_pmx create pane --project "uid:$topology_project_uid" --window review --placement right -o pane-id -- "${topology_stored_command[@]}" >"$topology_root/create-pane.out"
 
+# A stored Agent with a recorded conversation. The guard at the end of this
+# block used to assert that materialization started no Agent; against a fixture
+# with no Agent in it that was vacuously true, and it now contradicts the shipped
+# contract, which is that materialization DOES replay stored Agents and DOES
+# resume the conversation `status.sessionRef` names. The provider is a PATH shim
+# that records its argv, so the resume is asserted without a real provider.
+# The shell Pane uid set is captured before the Agent exists. A replayed Agent is
+# rebound into a *new* managed Pane resource -- releasing the dead one is what
+# clears the stale binding -- so its uid legitimately changes across a kill and a
+# replay, while every Window-owned shell Pane must keep the uid it was created
+# with. Splitting the two is what keeps the shell-Pane identity assertion exact
+# instead of loosening it to accommodate the Agent.
+topology_shell_pane_uids="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
+
+topology_agent_argv="$topology_root/codex-argv.log"
+: >"$topology_agent_argv"
+cat >"$topology_root/shim/codex" <<TOPOLOGY_CODEX_STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>$(printf %q "$topology_agent_argv")
+exec sleep 600
+TOPOLOGY_CODEX_STUB
+chmod 0755 "$topology_root/shim/codex"
+topology_agent_pane="$(PATH="$topology_root/shim:$PATH" topology_live_pmx create agent --provider codex \
+  --project "uid:$topology_project_uid" --window review -o pane-id)"
+# Agent reads run through the client-socket helper. A read with no inherited
+# $TMUX and no -L would observe live Agent state against the *default* socket,
+# which is a server this smoke never created.
+topology_agent_uid="$(topology_live_pmx get agents --project "uid:$topology_project_uid" -o uid | tail -n 1)"
+if [[ -z "$topology_agent_pane" || -z "$topology_agent_uid" ]]; then
+  echo "topology e2e fixture did not create an Agent" >&2
+  exit 1
+fi
+topology_hook_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$topology_root/home" \
+    XDG_CONFIG_HOME="$topology_root/config" \
+    XDG_STATE_HOME="$topology_root/state" \
+    XDG_RUNTIME_DIR="$topology_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$topology_root/work" \
+    TMUX_TMPDIR="$topology_root/tmux" \
+    TMUX="$topology_socket_path,$topology_socket_pid,0" \
+    TMUX_PANE="$topology_agent_pane" \
+    PATH="$topology_root/shim:$PATH" \
+    SHELL="$topology_shell" \
+    "$bin" "$@"
+}
+printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"topology-thread","session_id":"topology-session","turn_id":"topology-turn","cwd":"'"$topology_root"'/work/alpha"}' |
+  topology_hook_pmx internal agent-hook ingest codex-hook >"$topology_root/agent-ingest.out"
+topology_live_pmx describe agent "uid:$topology_agent_uid" -o json >"$topology_root/agent-before.json"
+smoke_assert_file_contains "$topology_root/agent-before.json" 'topology-thread'
+
 topology_window_uids="$(topology_pmx get windows --project "uid:$topology_project_uid" -o uid | sort)"
 topology_pane_uids="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
 topology_extra_pane="$(tr -d '[:space:]' <"$topology_root/create-pane.out")"
@@ -3453,6 +3505,27 @@ topology_settle_registry() {
   exit 1
 }
 
+# topology_assert_panes_converged is the Pane half of "the runtime is exactly the
+# Registry". It asserts two independent things rather than one loose one: the
+# live Pane uid set equals the Registry Pane uid set as it stands now, and every
+# shell Pane uid the fixture created is still in both. A replayed Agent's managed
+# Pane is allowed to be a new resource; a shell Pane is not.
+topology_assert_panes_converged() {
+  local stage="$1" registry live missing
+  registry="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
+  live="$(topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' | sort)"
+  if [[ "$registry" != "$live" ]]; then
+    echo "$stage did not restore the exact Registry Pane uids" >&2
+    printf 'registry=%s\nlive=%s\n' "$registry" "$live" >&2
+    exit 1
+  fi
+  missing="$(comm -23 <(printf '%s\n' "$topology_shell_pane_uids") <(printf '%s\n' "$live"))"
+  if [[ -n "$missing" ]]; then
+    echo "$stage lost shell Pane uids that must never change: $missing" >&2
+    exit 1
+  fi
+}
+
 topology_tmux kill-window -t "$topology_review_window"
 topology_settle_registry
 topology_registry_before="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
@@ -3475,12 +3548,7 @@ if [[ "$topology_window_uids_after" != "$topology_window_uids" ]]; then
   printf 'want=%s got=%s\n' "$topology_window_uids" "$topology_window_uids_after" >&2
   exit 1
 fi
-topology_pane_uids_after="$(topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' | sort)"
-if [[ "$topology_pane_uids_after" != "$topology_pane_uids" ]]; then
-  echo "live partial materialization did not restore the exact Registry Pane uids" >&2
-  printf 'want=%s got=%s\n' "$topology_pane_uids" "$topology_pane_uids_after" >&2
-  exit 1
-fi
+topology_assert_panes_converged "live partial materialization"
 
 # 2. A converged graph is a true no-op: no create and no Registry byte change.
 topology_settle_registry
@@ -3525,20 +3593,21 @@ if topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' 
   echo "canonical delete was replayed by materialization" >&2
   exit 1
 fi
-topology_pane_uids="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
+topology_shell_pane_uids="$(comm -12 \
+  <(printf '%s\n' "$topology_shell_pane_uids") \
+  <(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort))"
 
 # 4. An offline Project is dormant, not deleted. Explicit materialization on the
 # exact socket rebuilds the whole stored topology under its original uids.
 topology_tmux kill-server >/dev/null 2>&1 || true
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/offline-full.json"
 topology_window_uids_after="$(topology_tmux list-windows -t "$topology_session" -F '#{@projmux_window_uid}' | sort)"
-topology_pane_uids_after="$(topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' | sort)"
-if [[ "$topology_window_uids_after" != "$topology_window_uids" ]] || [[ "$topology_pane_uids_after" != "$topology_pane_uids" ]]; then
-  echo "offline full materialization did not restore the exact Registry topology" >&2
-  printf 'windows want=%s got=%s\npanes want=%s got=%s\n' \
-    "$topology_window_uids" "$topology_window_uids_after" "$topology_pane_uids" "$topology_pane_uids_after" >&2
+if [[ "$topology_window_uids_after" != "$topology_window_uids" ]]; then
+  echo "offline full materialization did not restore the exact Registry Window uids" >&2
+  printf 'want=%s got=%s\n' "$topology_window_uids" "$topology_window_uids_after" >&2
   exit 1
 fi
+topology_assert_panes_converged "offline full materialization"
 if [[ "$(topology_tmux show-options -qv -t "$topology_session" @projmux_project_uid)" != "$topology_project_uid" ]]; then
   echo "offline full materialization did not restore the exact Project uid binding" >&2
   exit 1
@@ -3546,9 +3615,23 @@ fi
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/offline-repeat.json"
 smoke_assert_file_contains "$topology_root/offline-repeat.json" '"outcome": "no-op"'
 
-# 5. No Agent was resumed and no stored command was executed anywhere.
-if topology_pmx get agents --project "uid:$topology_project_uid" -o json 2>/dev/null | grep -Fq '"phase": "Running"'; then
-  echo "materialization started an Agent" >&2
+# 5. The stored Agent is replayed, and the conversation its `status.sessionRef`
+# names is resumed rather than silently replaced by a new one. The stored Pane
+# command is still never executed; that is asserted in section 2 above.
+topology_live_pmx describe agent "uid:$topology_agent_uid" -o json >"$topology_root/agent-after.json"
+smoke_assert_file_contains "$topology_root/agent-after.json" '"phase": "Running"'
+smoke_assert_file_contains "$topology_root/agent-after.json" 'topology-thread'
+topology_resume_seen=0
+for _ in $(seq 1 200); do
+  if grep -Fq "resume topology-thread" "$topology_agent_argv"; then
+    topology_resume_seen=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$topology_resume_seen" != "1" ]]; then
+  echo "materialization did not resume the Agent's recorded conversation" >&2
+  cat "$topology_agent_argv" >&2 || true
   exit 1
 fi
 
@@ -3659,11 +3742,32 @@ export XDG_RUNTIME_DIR="$startup_root/runtime"
 export PROJMUX_MANAGED_ROOTS="$startup_root/work"
 export TMUX_TMPDIR="$startup_root/tmux"
 export SHELL="$startup_shell"
-export PATH="$startup_root/bin:\$PATH"
+export PATH="$startup_root/bin:$startup_root/shim:\$PATH"
 $(printf %q "$bin") switch open "\$1" >"$startup_root/open-\$2.out" 2>"$startup_root/open-\$2.err"
 echo \$? >"$startup_root/open-\$2.rc"
 STARTUP_OPEN_SCRIPT
 chmod 0755 "$startup_root/open-project.sh"
+
+# The `new` row's execution half is the same re-exec the sidebar launches once
+# the operator has approved the confirmation, so it is driven through that exact
+# transport. The confirmation itself is a native picker this harness cannot type
+# into; its approve/cancel branches and its verbatim text are pinned by the unit
+# tables instead.
+cat >"$startup_root/open-fresh.sh" <<STARTUP_FRESH_SCRIPT
+#!/usr/bin/env bash
+export HOME="$startup_root/home"
+export XDG_CONFIG_HOME="$startup_root/config"
+export XDG_STATE_HOME="$startup_root/state"
+export XDG_RUNTIME_DIR="$startup_root/runtime"
+export PROJMUX_MANAGED_ROOTS="$startup_root/work"
+export TMUX_TMPDIR="$startup_root/tmux"
+export SHELL="$startup_shell"
+export PATH="$startup_root/bin:$startup_root/shim:\$PATH"
+$(printf %q "$bin") switch sidebar-open --path "\$1" --session "\$2" --mode new \
+  >"$startup_root/open-new.out" 2>"$startup_root/open-new.err"
+echo \$? >"$startup_root/open-new.rc"
+STARTUP_FRESH_SCRIPT
+chmod 0755 "$startup_root/open-fresh.sh"
 
 startup_tmux new-session -d -s "$startup_session" -n main -c "$startup_project" sleep 600
 startup_tmux set-option -t "$startup_session" -q @projmux_project_path "$startup_project"
@@ -3727,11 +3831,62 @@ startup_stored_command=(sleep 600)
 startup_live_pmx create window --project "uid:$startup_project_uid" --name review >"$startup_root/create-window.out"
 startup_live_pmx create pane --project "uid:$startup_project_uid" --window review --placement right -o pane-id -- "${startup_stored_command[@]}" >"$startup_root/create-pane.out"
 
+# A stored Agent with a recorded conversation.
+#
+# Without one, the "no Agent was resumed" guard this section used to carry was
+# vacuously true -- the fixture had no Agent at all -- and, since closed-Project
+# topology materialization now replays stored Agents, it also asserted the exact
+# opposite of the shipped contract. The provider is a PATH shim that appends its
+# own argv to a log, so "the recorded conversation was resumed" is checked
+# against real argv rather than against a real provider.
+# The shell Pane uid set is captured before the Agent exists. A replayed Agent is
+# rebound into a new managed Pane resource, so its uid legitimately changes across
+# a close and a replay; a Window-owned shell Pane's uid never does.
+startup_shell_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
+
+startup_agent_argv="$startup_root/codex-argv.log"
+: >"$startup_agent_argv"
+cat >"$startup_root/shim/codex" <<STARTUP_CODEX_STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>$(printf %q "$startup_agent_argv")
+exec sleep 600
+STARTUP_CODEX_STUB
+chmod 0755 "$startup_root/shim/codex"
+startup_agent_pane="$(PATH="$startup_root/shim:$PATH" startup_live_pmx create agent --provider codex \
+  --project "uid:$startup_project_uid" --window review -o pane-id)"
+# Agent reads run through the client-socket helper, so live Agent state is never
+# observed against the default socket this smoke never created.
+startup_agent_uid="$(startup_live_pmx get agents --project "uid:$startup_project_uid" -o uid | tail -n 1)"
+if [[ -z "$startup_agent_pane" || -z "$startup_agent_uid" ]]; then
+  echo "startup e2e fixture did not create an Agent" >&2
+  exit 1
+fi
+
+# Seed the durable conversation pointer through the canonical hook ingress, the
+# only route that writes Agent.status.sessionRef.
+startup_hook_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$startup_root/home" \
+    XDG_CONFIG_HOME="$startup_root/config" \
+    XDG_STATE_HOME="$startup_root/state" \
+    XDG_RUNTIME_DIR="$startup_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$startup_root/work" \
+    TMUX_TMPDIR="$startup_root/tmux" \
+    TMUX="$startup_socket_path,$startup_socket_pid,0" \
+    TMUX_PANE="$startup_agent_pane" \
+    SHELL="$startup_shell" \
+    "$bin" "$@"
+}
+printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"startup-thread","session_id":"startup-session","turn_id":"startup-turn","cwd":"'"$startup_project"'"}' |
+  startup_hook_pmx internal agent-hook ingest codex-hook >"$startup_root/agent-ingest.out"
+startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-before.json"
+smoke_assert_file_contains "$startup_root/agent-before.json" 'startup-thread'
+
 startup_window_uids="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)"
 startup_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
-if [[ "$(printf '%s\n' "$startup_window_uids" | wc -l)" != "2" ]] || [[ "$(printf '%s\n' "$startup_pane_uids" | wc -l)" != "3" ]]; then
-  echo "startup e2e fixture did not build two Windows and three shell Panes" >&2
-  printf 'windows=%s panes=%s\n' "$startup_window_uids" "$startup_pane_uids" >&2
+if [[ "$(printf '%s\n' "$startup_window_uids" | wc -l)" != "2" ]] || [[ "$(printf '%s\n' "$startup_pane_uids" | wc -l)" != "4" ]]; then
+  echo "startup e2e fixture did not build two Windows, three shell Panes, and one Agent Pane" >&2
+  printf 'windows=%s panes=%s agent=%s\n' "$startup_window_uids" "$startup_pane_uids" "$startup_agent_uid" >&2
   exit 1
 fi
 startup_other_before="$(startup_other_tmux show-options -gqv @projmux_startup_sentinel):$(startup_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
@@ -3782,11 +3937,24 @@ if [[ "$(tr -d '[:space:]' <"$startup_root/open-topology.rc")" != "0" ]]; then
 fi
 
 startup_window_uids_after="$(startup_tmux list-windows -t "$startup_session" -F '#{@projmux_window_uid}' | sort)"
+if [[ "$startup_window_uids_after" != "$startup_window_uids" ]]; then
+  echo "closed Project open did not materialize the exact Registry Window uids" >&2
+  printf 'want=%s got=%s\n' "$startup_window_uids" "$startup_window_uids_after" >&2
+  exit 1
+fi
+# The live Pane set equals the Registry Pane set as it stands after the open, and
+# every shell Pane uid the fixture created is still in it. The Agent's managed
+# Pane is the one resource allowed to be new; nothing else is.
+startup_registry_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
 startup_pane_uids_after="$(startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' | sort)"
-if [[ "$startup_window_uids_after" != "$startup_window_uids" ]] || [[ "$startup_pane_uids_after" != "$startup_pane_uids" ]]; then
-  echo "closed Project open did not materialize the exact Registry topology" >&2
-  printf 'windows want=%s got=%s\npanes want=%s got=%s\n' \
-    "$startup_window_uids" "$startup_window_uids_after" "$startup_pane_uids" "$startup_pane_uids_after" >&2
+if [[ "$startup_pane_uids_after" != "$startup_registry_pane_uids" ]]; then
+  echo "closed Project open did not materialize the exact Registry Pane uids" >&2
+  printf 'registry=%s\nlive=%s\n' "$startup_registry_pane_uids" "$startup_pane_uids_after" >&2
+  exit 1
+fi
+startup_missing_shell_panes="$(comm -23 <(printf '%s\n' "$startup_shell_pane_uids") <(printf '%s\n' "$startup_pane_uids_after"))"
+if [[ -n "$startup_missing_shell_panes" ]]; then
+  echo "closed Project open lost shell Pane uids that must never change: $startup_missing_shell_panes" >&2
   exit 1
 fi
 if [[ "$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)" != "$startup_project_uid" ]]; then
@@ -3814,8 +3982,20 @@ while IFS= read -r startup_start_command; do
     exit 1
   fi
 done <<<"$startup_start_commands"
-if startup_pmx get agents --project "uid:$startup_project_uid" -o json 2>/dev/null | grep -Fq '"phase": "Running"'; then
-  echo "closed Project open started an Agent" >&2
+# The stored Agent is replayed, and because its Registry record carries a
+# `status.sessionRef` it is resumed into the conversation that pointer names
+# rather than silently starting a new one. This guard used to assert that no
+# Agent was running -- against a fixture with no Agent in it.
+startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-topology.json"
+smoke_assert_file_contains "$startup_root/agent-after-topology.json" '"phase": "Running"'
+smoke_assert_file_contains "$startup_root/agent-after-topology.json" 'startup-thread'
+startup_wait_for "the replayed Agent to record its resume argv" \
+  grep -Fq "resume startup-thread" "$startup_agent_argv"
+startup_agent_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-topology.json" | head -n 1)"
+if [[ -z "$startup_agent_pane_uid" ]] ||
+  ! startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' | grep -Fqx "$startup_agent_pane_uid"; then
+  echo "the replayed Agent's managed Pane never reached tmux" >&2
+  startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' >&2 || true
   exit 1
 fi
 
@@ -3842,6 +4022,67 @@ if [[ "$(startup_tmux display-message -p -c "$startup_client" '#{session_name}')
   exit 1
 fi
 mv "$startup_project-withdrawn" "$startup_project"
+
+# 3. The `new` row force-prunes and starts clean.
+#
+# The Project still declares the whole stored topology and one Agent whose
+# conversation pointer was resumed a moment ago, so "started fresh" is only
+# distinguishable from "restored" if the Registry really is emptied of that
+# Project's Window/Pane/Agent records first.
+startup_registry="$startup_root/state/projmux/metadata/registry.json"
+startup_registry_before="$(sha256sum "$startup_registry" | cut -d' ' -f1)"
+startup_agents_before="$(startup_live_pmx get agents --project "uid:$startup_project_uid" -o uid 2>/dev/null | grep -c . || true)"
+if [[ "$startup_agents_before" != "1" ]]; then
+  echo "fresh start fixture expected exactly one stored Agent, got $startup_agents_before" >&2
+  exit 1
+fi
+: >"$startup_agent_argv"
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session'" Enter
+startup_wait_for "fresh start open" test -s "$startup_root/open-new.rc"
+if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
+  echo "fresh start open failed" >&2
+  cat "$startup_root/open-new.err" >&2 || true
+  exit 1
+fi
+if [[ "$(sha256sum "$startup_registry" | cut -d' ' -f1)" == "$startup_registry_before" ]]; then
+  echo "fresh start did not write the Registry at all" >&2
+  exit 1
+fi
+for kind in windows panes agents; do
+  startup_remaining="$(startup_live_pmx get "$kind" --project "uid:$startup_project_uid" -o uid 2>/dev/null | grep -c . || true)"
+  if [[ "$startup_remaining" != "0" ]]; then
+    echo "fresh start left $startup_remaining stored $kind behind" >&2
+    startup_live_pmx get "$kind" --project "uid:$startup_project_uid" -o json >&2 || true
+    exit 1
+  fi
+done
+# The Project itself, its registration, and its managed root all survive.
+if ! startup_pmx get projects -o uid | grep -Fqx "$startup_project_uid"; then
+  echo "fresh start deregistered the Project" >&2
+  exit 1
+fi
+if [[ ! -d "$startup_project" ]]; then
+  echo "fresh start removed the managed root" >&2
+  exit 1
+fi
+# The runtime is one fresh Window with one shell Pane, and no Agent was replayed
+# because no Agent record remained to replay.
+startup_wait_for "the fresh Project session" sh -c \
+  "env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' has-session -t '$startup_session' 2>/dev/null"
+startup_fresh_windows="$(startup_tmux list-windows -t "$startup_session" -F '#{window_id}' | grep -c .)"
+startup_fresh_panes="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}' | grep -c .)"
+if [[ "$startup_fresh_windows" != "1" ]] || [[ "$startup_fresh_panes" != "1" ]]; then
+  echo "fresh start did not come up as a single Window with a single shell Pane" >&2
+  startup_tmux list-panes -s -t "$startup_session" -F '#{window_id}:#{pane_id}:#{pane_start_command}' >&2 || true
+  exit 1
+fi
+if [[ -s "$startup_agent_argv" ]]; then
+  echo "fresh start launched a provider even though no Agent record remained" >&2
+  cat "$startup_agent_argv" >&2 || true
+  exit 1
+fi
+startup_wait_for "client moved to the freshly started Project session" sh -c \
+  "test \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -c '$startup_client' '#{session_name}' 2>/dev/null)\" = '$startup_session'"
 
 startup_other_after="$(startup_other_tmux show-options -gqv @projmux_startup_sentinel):$(startup_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
 if [[ "$startup_other_after" != "$startup_other_before" ]]; then

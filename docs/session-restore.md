@@ -116,11 +116,23 @@ Project with no Registry Window, still start as a single default session.
 `Settings > Session State > Sidebar startup picker` is an opt-in toggle;
 when it is on, closed project open advances inside the sidebar to the native
 `Start project` step. Rows are ordered `Latest snapshot`, named snapshot rows,
-`Project topology`, then `Back`; a snapshot row stays entirely on the snapshot
+`Project topology`, `New`, then `Back`; a snapshot row stays entirely on the snapshot
 engine, so the two sources are never mixed in one open. `Latest snapshot` is the auto-saved snapshot that
 keeps changing as auto-save runs. `Named snapshot` is a fixed, user-named
 snapshot and is not updated by auto-save. Rows include saved-at date/time
-metadata when available. `Back` returns to the project list without creating,
+metadata when available. `New` is the fresh-start row: it discards the latest
+snapshot, force-prunes every stored Window, Pane, and Agent of that Project
+through the canonical delete cascade, and then starts the Project as a single
+fresh Window with one shell Pane, because a Project with no Registry Window
+declares no topology to materialize. It is destructive and always confirms
+first: the confirmation states the exact `Window n / Pane n / Agent n` that will
+be deleted and names the Agents' conversation pointer `status.sessionRef`, which
+is deleted with the Agent records and cannot be recovered. Cancelling performs
+zero Registry writes and zero tmux writes and returns to these rows. `New` never
+deletes Named snapshots, the Project itself, its registration, its managed root,
+its trust decision, or any other Project's records. Because no Agent record
+survives the prune, the fresh start resumes nothing, and that outcome is
+reported as a result rather than left silent. `Back` returns to the project list without creating,
 replaying, or opening a session. After the startup mode is selected, project
 automation trust is evaluated if needed. For a named snapshot with a startup
 `command`, projmux rejects symlink artifacts, reads the selected layout once,
