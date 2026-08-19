@@ -782,3 +782,45 @@ func TestTheProjectionNeverStartsAnything(t *testing.T) {
 		t.Fatal("the projection materialized a replacement Pane for an Offline Agent")
 	}
 }
+
+// TestAStaleStoredIntentIsProjectedAsWhatTheRegistrySays covers the one case
+// where the offered receipt loses and the stored one wins.
+//
+// A registry whose stored receipt names a generation the Pane no longer holds is
+// unreachable through the mutators -- RecordPaneActivation clears the old receipt
+// and RecordTermination refuses to write a mismatched one -- so this is the
+// hand-edited or downgraded file. The projection still has to be coherent: it
+// reports the classification the document ends up holding, not the one it
+// offered and had refused.
+func TestAStaleStoredIntentIsProjectedAsWhatTheRegistrySays(t *testing.T) {
+	t.Parallel()
+
+	registry := lifecycleFixture(t)
+	pane, _ := registry.Pane(lifecyclePaneUID)
+	pane.Status.LastTermination = &TerminationEvidence{
+		Source:         TerminationSourceControlAction,
+		Classification: TerminationIntentional,
+		ObservedAt:     lifecycleClock,
+		PaneUID:        lifecyclePaneUID,
+		Generation:     "gen-replaced",
+		OperationID:    "op-older-delete",
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("hand-edited fixture does not validate: %v", err)
+	}
+
+	projection, err := lifecycleMutator().ProjectTermination(registry,
+		TerminationProjectionInput{PaneUID: lifecyclePaneUID, ObservedAt: lifecycleClock})
+	if err != nil {
+		t.Fatalf("ProjectTermination: %v", err)
+	}
+	// Sticky intent refused the unknown receipt, so the stored document is
+	// unchanged and the projection says so.
+	if projection.Classification != TerminationIntentional {
+		t.Fatalf("classification = %q, want the stored intent the registry kept", projection.Classification)
+	}
+	agent, _ := registry.Agent(lifecycleAgentUID)
+	if agent.Status.Phase != PhaseOffline || agent.Status.Reason != TerminationReasonIntentional {
+		t.Fatalf("agent status = %+v, want Offline for the intentional clause", agent.Status)
+	}
+}

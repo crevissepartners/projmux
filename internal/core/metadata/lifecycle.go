@@ -241,6 +241,15 @@ func (m Mutator) resolveTerminationEvidence(reg *Registry, pane *Pane, observedA
 	if err != nil {
 		return "", false, err
 	}
+	// The classification is read back out of the registry rather than assumed to
+	// be the one just offered. A refused offer means something the registry
+	// already stores won -- the sticky-intent rule, for one -- and reporting
+	// `unknown` while the document says `intentional` would make the projection
+	// disagree with the evidence it is projecting.
+	if stored := pane.Status.LastTermination; stored != nil &&
+		ValidTerminationClassification(stored.Classification) {
+		return stored.Classification, outcome.Applied, nil
+	}
 	return TerminationUnknown, outcome.Applied, nil
 }
 
