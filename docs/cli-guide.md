@@ -111,9 +111,11 @@ The contract:
   --name current` succeeds — so a sentinel token would silently shadow a real
   resource.
 - **"No selector at all" means exactly that.** Any positional `<ref>`, any
-  `--project`/`-p`, `--window`/`-w`, `--pane`, or any `--selector` label keeps the
-  pre-existing behavior unchanged. The fallback is never blended into a
-  partially specified selector.
+  `--project`/`-p`, `--window`/`-w`, `--pane`, or any `--selector` label keeps
+  picking the target itself. The active *target* is never blended into a
+  partially specified selector. The active *Project* is a separate rule and does
+  apply to a reference -- see [Reference scope](#reference-scope-the-active-project-namespace)
+  below.
 - **Only the singular routes and `create`.** The plural reads (`get
   projects|windows|panes|agents`) stay 0..N inventories over their whole scope,
   and `delete` is unchanged. `create` has its own spelling of the same rule --
@@ -136,6 +138,48 @@ Resolution reads only two tmux options — `@projmux_pane_uid` on the active pan
 and `@projmux_window_uid` on its window — and derives every ancestor from
 registry `ownerRef`. The session-scoped `@projmux_project_uid` is deliberately
 not consulted.
+
+### Reference scope: the active Project namespace
+
+A `metadata.name` is unique inside its owner scope, never across the registry: a
+Window name is unique inside its Project, a Pane name inside its Window or
+Agent, an Agent name inside its Window. So inside tmux a reference is resolved
+inside the Project that owns the active Window, which is the same universe
+`get windows|panes|agents` already reads:
+
+```
+projmux describe window zsh    # the Window named zsh in *this* Project
+projmux describe pane log      # the Pane named log in this Project
+projmux describe agent codex   # the Agent named codex in this Project
+projmux rename window zsh --name review
+projmux rename pane log --name build
+```
+
+The applied matrix is `describe window|pane|agent` and `rename window|pane`.
+`describe project` and `rename project` are not in it — a Project has no
+enclosing Project — and neither are `delete`, `rebind`, `agent resume`, or
+`rename agent`, which keep their whole-registry meaning.
+
+The contract:
+
+- **It narrows the search, it does not pick the target.** The Project fixes the
+  universe and nothing else. The active Window and the active Pane are not used
+  to break a tie, so two same-named resources inside the one Project stay the
+  ordinary bounded `matched N ..., want exactly one` ambiguity. Resolving that
+  is what `--window`/`--pane` and a `uid:` reference are for.
+- **Explicit `--project`/`-p` wins, with zero observations.** Naming a Project
+  never costs a tmux round trip and never depends on the pane you are sitting
+  in.
+- **A `uid:` reference is scoped too.** A uid that belongs to another Project is
+  a no-match, not a cross-Project hit. Pass `--project` to address it.
+- **Outside tmux nothing changes.** The whole registry is searched and the
+  previous `matched N ..., want exactly one` ambiguity is unchanged. No default
+  tmux server is probed.
+- **Inside tmux a broken owner chain refuses.** A pane carrying no
+  `@projmux_window_uid`, a mirrored Window uid the registry does not hold, or a
+  Window with no owning Project is exit `2` with zero bytes on stdout and zero
+  mutations. It is never a silent fallback to the whole registry, because that
+  is exactly the cross-Project match this rule exists to prevent.
 
 ### Create scope
 

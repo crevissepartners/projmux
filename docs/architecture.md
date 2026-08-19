@@ -1398,27 +1398,35 @@ Selector and the implicit active target:
 - Inside tmux, an invocation of a **singular read or rename verb** that carries
   no selector at all resolves the **active tmux target**: `get pane`,
   `describe project|window|pane|agent`, `rename project|window|pane`, and
-  `rebind project`. Any reference, scope flag, or label keeps the pre-existing
-  singular-target meaning; the destructive routes are unaffected. `create`
-  reads the same seam under its own rule, described below.
-- Project is also the namespace-like default scope of the plural registry reads
-  `get windows|panes|agents`. When `--project` is absent inside tmux, the active
-  Window uid mirror and its registry owner chain derive a Project on every
-  invocation. This narrows the Window universe only; it never chooses one
-  Window, Pane, or Agent for the operator. `get projects` is above that scope,
-  while notifications and snapshots belong to separate stores, so all three
-  remain global.
+  `rebind project`. Any reference, scope flag, or label keeps picking the target
+  itself; the destructive routes are unaffected. `create` reads the same seam
+  under its own rule, described below.
+- Project is the namespace-like default scope of both the plural registry reads
+  `get windows|panes|agents` and an **explicit singular reference** on
+  `describe window|pane|agent` and `rename window|pane`. When `--project` is
+  absent inside tmux, the active Window uid mirror and its registry owner chain
+  derive a Project on every invocation. This narrows the Window universe only;
+  it never chooses one Window, Pane, or Agent for the operator, so a same-named
+  pair inside the one Project stays the ordinary bounded exact-one ambiguity and
+  a `uid:` reference outside the scope is a no-match rather than a cross-Project
+  hit. `get projects`, `describe|rename project`, `delete`, `rebind`,
+  `agent resume`, and `rename agent` are outside that scope, and notifications
+  and snapshots belong to separate stores, so all of them remain global.
 - `--all-projects` is the explicit registry-wide escape for those three reads.
   It is deliberately different from destructive `delete --all`, whose existing
   whole-registry compatibility meaning is unchanged. A bare `--all` is not a
   read flag. Explicit `--project` keeps its prior result and cannot be combined
   with `--all-projects`.
 - Outside tmux, an omitted Project scope keeps the historical whole-registry
-  inventory. Inside tmux, a missing Window binding or broken Project owner chain
-  is a usage refusal with zero stdout, never a silent global fallback. The
-  selector engine's `windowScope` is the single choice point for explicit
-  Project, active-derived default, or global scope, shared by Window, Pane, and
-  Agent resolution.
+  inventory and its ambiguity, for a plural read and for a reference alike.
+  Inside tmux, a missing Window binding or broken Project owner chain is a usage
+  refusal with zero stdout, never a silent global fallback. The selector
+  engine's `windowScope` is the single choice point for explicit Project,
+  active-derived default, or global scope, shared by Window, Pane, and Agent
+  resolution; the plural default and the reference namespace fill the same
+  `Query.DefaultProject` and differ only in which invocations opt in -- an empty
+  selector for the first, a non-empty one for the second, which is why the two
+  can never blend an implicit target into an explicit scope.
 - There is **no sentinel value token**. `current` and `active` pass
   `ValidateName`, so `--pane current` would shadow a resource that legitimately
   carries that name. Omission is the only spelling. If an explicit one is ever
@@ -1447,7 +1455,10 @@ Selector and the implicit active target:
   a message naming what was inspected. It is deliberately not the
   `matched N ..., want exactly one` cardinality error, because an unmanaged pane
   carrying no `@projmux_pane_uid` is the common case and presenting it as
-  ambiguity would hide the cause.
+  ambiguity would hide the cause. An undecidable *namespace* refuses with its
+  own message rather than that one, because "no selector was given" is false on
+  an invocation that carried a reference and would send the operator after the
+  wrong cause.
 
 ## Naming metadata model
 

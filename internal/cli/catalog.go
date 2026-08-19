@@ -514,9 +514,9 @@ var routes = []Route{
 		Canonical: []string{"describe project", "describe window", "describe pane", "describe agent"},
 		Children: []Route{
 			{Name: "project", Summary: "Describe one Project resource; with no selector inside tmux, the active Project", Aliases: []string{"projects"}, Usage: []string{"projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe project"}, Outputs: readProjectionCatalog},
-			{Name: "window", Summary: "Describe one Window resource; with no selector inside tmux, the active Window", Aliases: []string{"windows"}, Usage: []string{"projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe window"}, Outputs: readProjectionCatalog},
-			{Name: "pane", Summary: "Describe one Pane resource; with no selector inside tmux, the active Pane", Aliases: []string{"panes"}, Usage: []string{"projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog},
-			{Name: "agent", Summary: "Describe one Agent resource; with no selector inside tmux, the Agent owning the active Pane", Aliases: []string{"agents"}, Usage: []string{"projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog},
+			{Name: "window", Summary: "Describe one Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window", Aliases: []string{"windows"}, Usage: []string{"projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe window"}, Outputs: readProjectionCatalog},
+			{Name: "pane", Summary: "Describe one Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane", Aliases: []string{"panes"}, Usage: []string{"projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog},
+			{Name: "agent", Summary: "Describe one Agent resource; inside tmux a reference resolves within the active Project and no selector means the Agent owning the active Pane", Aliases: []string{"agents"}, Usage: []string{"projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog},
 		},
 	},
 	{
@@ -795,8 +795,8 @@ var routes = []Route{
 		Canonical: []string{"rename project", "rename window", "rename pane", "rename agent"},
 		Children: []Route{
 			{Name: "project", Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", Aliases: []string{"projects"}, Usage: []string{"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>"}, Canonical: []string{"rename project"}},
-			{Name: "window", Summary: "Rename a Projmux Window resource; with no selector inside tmux, the active Window", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}},
-			{Name: "pane", Summary: "Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}},
+			{Name: "window", Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}},
+			{Name: "pane", Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}},
 			{Name: "agent", Summary: "Rename an Agent stable resource name without changing its topic, provider, or managed Pane", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename agent"}},
 		},
 	},

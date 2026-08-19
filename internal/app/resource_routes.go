@@ -182,6 +182,15 @@ type resourceQueryFlags struct {
 	// allProjects is the explicit escape hatch from defaultProjectScope. It is
 	// registered only by get windows|panes|agents.
 	allProjects bool
+	// projectNamespaceScope opts a singular route into the active-derived
+	// Project namespace of an explicit reference; see active_project_scope.go.
+	//
+	// It is orthogonal to defaultProjectScope, which covers the plural reads:
+	// this one fires only when the invocation *did* carry a selector, that one
+	// only on a list route. Both hand the same DefaultProject to the same
+	// windowScope seam, so the search universe of `describe window zsh` and of
+	// `get windows` is one rule with one implementation.
+	projectNamespaceScope bool
 	// scopes records the scope-flag spellings register actually installed, which
 	// differ per kind: a Window route has no --pane, an Agent route has neither
 	// --pane nor an --agent. Refusal text is built from this rather than from a
@@ -374,6 +383,12 @@ func (f *resourceQueryFlags) resolveQuery(registry coremetadata.Registry, query 
 // target occurrence; its optional defaultProjectScope narrows only the enclosing
 // Project universe and keeps the 0..N inventory meaning inside that scope.
 //
+// A selector that *was* given takes the other branch: an optional
+// projectNamespaceScope narrows the same enclosing Project universe around the
+// reference the operator typed. The two are mutually exclusive by construction
+// -- one requires an empty selector, the other a non-empty one -- so a route
+// that sets both never blends an implicit target into an explicit scope.
+//
 // A route that also set wholeSetFlag refuses the empty selector outright when
 // the fallback resolved nothing. On a 1..N cell that is the only thing standing
 // between "no selector" and the whole registry: Enforce is satisfied by any
@@ -406,6 +421,15 @@ func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry cor
 			query = withActiveTargetRef(query, f.kind, ref)
 		case f.wholeSetFlag != "":
 			return selector.Resolution{}, f.emptySelectorRefusal()
+		}
+	}
+	if f.projectNamespaceScope && !f.selectorIsEmpty() && query.Project == nil {
+		ref, resolved, err := activeProjectScopeRef(f.active, registry)
+		if err != nil {
+			return selector.Resolution{}, err
+		}
+		if resolved {
+			query.DefaultProject = &ref
 		}
 	}
 	resolution, err := f.resolveQuery(registry, query)

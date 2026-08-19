@@ -487,9 +487,9 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux describe project`](#projmux-describe-project) | Describe one Project resource; with no selector inside tmux, the active Project |
-| [`projmux describe window`](#projmux-describe-window) | Describe one Window resource; with no selector inside tmux, the active Window |
-| [`projmux describe pane`](#projmux-describe-pane) | Describe one Pane resource; with no selector inside tmux, the active Pane |
-| [`projmux describe agent`](#projmux-describe-agent) | Describe one Agent resource; with no selector inside tmux, the Agent owning the active Pane |
+| [`projmux describe window`](#projmux-describe-window) | Describe one Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window |
+| [`projmux describe pane`](#projmux-describe-pane) | Describe one Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane |
+| [`projmux describe agent`](#projmux-describe-agent) | Describe one Agent resource; inside tmux a reference resolves within the active Project and no selector means the Agent owning the active Pane |
 
 Canonical spelling: `projmux describe project`, `projmux describe window`, `projmux describe pane`, `projmux describe agent`
 
@@ -507,7 +507,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux describe window`
 
-Describe one Window resource; with no selector inside tmux, the active Window
+Describe one Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window
 
 ```
 projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
@@ -519,7 +519,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux describe pane`
 
-Describe one Pane resource; with no selector inside tmux, the active Pane
+Describe one Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane
 
 ```
 projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
@@ -531,7 +531,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux describe agent`
 
-Describe one Agent resource; with no selector inside tmux, the Agent owning the active Pane
+Describe one Agent resource; inside tmux a reference resolves within the active Project and no selector means the Agent owning the active Pane
 
 ```
 projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
@@ -1031,8 +1031,8 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux rename project`](#projmux-rename-project) | Rename a Projmux Project resource; with no selector inside tmux, the active Project |
-| [`projmux rename window`](#projmux-rename-window) | Rename a Projmux Window resource; with no selector inside tmux, the active Window |
-| [`projmux rename pane`](#projmux-rename-pane) | Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title |
+| [`projmux rename window`](#projmux-rename-window) | Rename a Projmux Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window |
+| [`projmux rename pane`](#projmux-rename-pane) | Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane; does not change tmux pane_title |
 | [`projmux rename agent`](#projmux-rename-agent) | Rename an Agent stable resource name without changing its topic, provider, or managed Pane |
 
 Canonical spelling: `projmux rename project`, `projmux rename window`, `projmux rename pane`, `projmux rename agent`
@@ -1049,7 +1049,7 @@ Aliases: `projects`
 
 ### `projmux rename window`
 
-Rename a Projmux Window resource; with no selector inside tmux, the active Window
+Rename a Projmux Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window
 
 ```
 projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]
@@ -1059,7 +1059,7 @@ Aliases: `windows`
 
 ### `projmux rename pane`
 
-Rename a Projmux Pane resource; with no selector inside tmux, the active Pane; does not change tmux pane_title
+Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane; does not change tmux pane_title
 
 ```
 projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...

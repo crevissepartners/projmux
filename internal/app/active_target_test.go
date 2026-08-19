@@ -776,38 +776,48 @@ func TestAnUnmappedActiveTargetRefusesAtTheRoute(t *testing.T) {
 	}
 }
 
-// TestAnExplicitSelectorSuppressesTheActiveTargetFallback is acceptance
-// criterion 3: given any reference or selector, behavior is identical to today.
+// TestAnExplicitSelectorSuppressesTheActiveTargetFallback is the target half of
+// acceptance criterion 3: given any reference or selector, no implicit target is
+// ever blended into what the operator typed.
 //
-// The assertion is not only on the outcome but on the call count: a route that
-// happened to produce the same answer while still consulting tmux would be
-// blending an implicit target into an explicit selector, which is exactly what
-// the contract forbids.
+// What an explicit selector suppresses is the *target* fallback, not the
+// Project namespace. Since the active-Project scope shipped (see
+// active_project_scope.go) a reference is resolved inside the active Project,
+// so these invocations do consult the observation -- wantCalls records exactly
+// which ones and why, and an explicit --project still costs zero lookups.
+//
+// The proof that no target leaked is the outcome, and it is sharper than a call
+// count: the fake resolves pan-alpha-codex / win-alpha-main, which is not the
+// answer to any row here. A blended target would turn each cardinality failure
+// below into a spurious exact-one success.
 func TestAnExplicitSelectorSuppressesTheActiveTargetFallback(t *testing.T) {
 	t.Parallel()
 
 	// The fake would resolve a completely different resource than any of these
 	// invocations address, so a leak would be visible in the output too.
 	for _, test := range []struct {
-		name     string
-		args     []string
-		wantUID  string
-		wantFail string
+		name string
+		args []string
+		// wantCalls is 0 when an explicit --project fixes the scope outright
+		// and 1 when the namespace has to be derived from the observation.
+		wantCalls int
+		wantUID   string
+		wantFail  string
 	}{
 		{name: "positional ref", args: []string{"pane", "log", "--project", "alpha", "--window", "main"}, wantUID: "pan-alpha-log"},
-		{name: "uid ref", args: []string{"window", "uid:win-alpha-review"}, wantUID: "win-alpha-review"},
+		{name: "uid ref", args: []string{"window", "uid:win-alpha-review"}, wantCalls: 1, wantUID: "win-alpha-review"},
 		{name: "project scope only", args: []string{"pane", "--project", "alpha"}, wantFail: "want exactly one"},
-		{name: "window scope only", args: []string{"pane", "--window", "main"}, wantFail: "want exactly one"},
-		{name: "label selector only", args: []string{"pane", "--selector", "role=shell"}, wantFail: "want exactly one"},
-		{name: "an unmatched explicit ref stays a no-match", args: []string{"pane", "nosuch"}, wantFail: "matched no panes"},
+		{name: "window scope only", args: []string{"pane", "--window", "main"}, wantCalls: 1, wantFail: "want exactly one"},
+		{name: "label selector only", args: []string{"pane", "--selector", "role=shell"}, wantCalls: 1, wantFail: "want exactly one"},
+		{name: "an unmatched explicit ref stays a no-match", args: []string{"pane", "nosuch"}, wantCalls: 1, wantFail: "matched no panes"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			store := newFakeResourceStore(t)
 			active := insideTmux("pan-alpha-codex", "win-alpha-main")
 			stdout, _, err := runRoute(t, newTestDescribeCommandWithActiveTarget(t, store, active), test.args...)
-			if active.calls != 0 {
-				t.Fatalf("describe %v consulted the active target %d times, want 0", test.args, active.calls)
+			if active.calls != test.wantCalls {
+				t.Fatalf("describe %v consulted the active target %d times, want %d", test.args, active.calls, test.wantCalls)
 			}
 			if test.wantFail != "" {
 				if err == nil {

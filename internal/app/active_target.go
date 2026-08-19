@@ -17,10 +17,11 @@ import (
 //
 // Inside a tmux client, a singular invocation that carries no selector resolves
 // the resource the operator is looking at instead of the whole registry. The
-// plural Window/Pane/Agent reads consume only its Project ancestor as a default
-// enclosing scope, never as an individual target. The contract has four
-// deliberate edges, each of which is a decision rather than an implementation
-// detail:
+// Window/Pane/Agent reads consume only its Project ancestor as a default
+// enclosing scope, never as an individual target -- for the plural reads and,
+// per active_project_scope.go, for a singular reference too. The contract has
+// four deliberate edges, each of which is a decision rather than an
+// implementation detail:
 //
 //  1. There is no sentinel value token. `--pane current` is not added, and
 //     neither is `active`: selector.ParseRef treats any non-`uid:` token as a
@@ -135,21 +136,48 @@ func (o activeTargetObserver) mirroredWindowUID() string {
 // (_, false, err) is the refusal of an active target that maps onto no registry
 // resource.
 func activeTargetRef(lookup activeTargetLookup, kind coremetadata.Kind, registry coremetadata.Registry) (selector.Ref, bool, error) {
-	if lookup == nil {
+	uid, resolved, detail := activeUID(lookup, kind, registry)
+	switch {
+	case resolved:
+		return activeUIDRef(kind, uid), true, nil
+	case detail == "":
 		return selector.Ref{}, false, nil
+	default:
+		return selector.Ref{}, false, activeTargetError(kind, detail)
+	}
+}
+
+// activeUID is the observation half of the seam, shared by the implicit target
+// above and by the Project namespace default in active_project_scope.go.
+//
+// The three results are the same three outcomes activeTargetRef reports, minus
+// the refusal wording: (uid, true, "") resolved, ("", false, "") means the
+// invocation is not inside a tmux client, and ("", false, detail) is an active
+// target that maps onto no registry resource, where detail names exactly what
+// was inspected. The wording is left to the caller because the same failed
+// observation refuses differently depending on whether it was asked to pick a
+// target or to fix a search scope.
+func activeUID(lookup activeTargetLookup, kind coremetadata.Kind, registry coremetadata.Registry) (string, bool, string) {
+	if lookup == nil {
+		return "", false, ""
 	}
 	observer, inside := lookup()
 	if !inside {
-		return selector.Ref{}, false, nil
+		return "", false, ""
 	}
 	uid, detail := observer.uidFor(kind, registry)
 	if uid == "" {
-		return selector.Ref{}, false, activeTargetError(kind, detail)
+		return "", false, detail
 	}
-	// The ref is spelled in its uid form so any downstream error text reports
-	// the identity that was actually selected rather than a name that was never
-	// typed.
-	return selector.Ref{Kind: kind, UID: uid, Raw: selector.UIDPrefix + uid}, true, nil
+	return uid, true, ""
+}
+
+// activeUIDRef spells an observed uid as a selector ref.
+//
+// The ref is spelled in its uid form so any downstream error text reports the
+// identity that was actually selected rather than a name that was never typed.
+func activeUIDRef(kind coremetadata.Kind, uid string) selector.Ref {
+	return selector.Ref{Kind: kind, UID: uid, Raw: selector.UIDPrefix + uid}
 }
 
 // uidFor resolves the registry uid of kind for this observation. An empty uid is
