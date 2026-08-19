@@ -746,6 +746,20 @@ tmux transport mirror:
   `@projmux_pane_uid` plus the existing `@projmux_pane_label` as the Pane
   **name** mirror. These are the first window-scoped projmux options; every
   earlier one was pane-, session-, or global-scoped.
+- Opening an unregistered directory is the gesture that mints a Project, and the
+  same flow finishes that Project's identity mirror. The first open takes the
+  shipped `EnsureSession` path -- which writes only the `@projmux_project_path`
+  anchor -- so the open itself writes `@projmux_project_uid` and
+  `@projmux_project_name` onto the session it just created, after the session
+  exists and before the client moves. It uses the same `MirrorProject` writer
+  every other mirror goes through, on the same plain `tmux` transport the session
+  was created on. The write is gated strictly on "this open registered the
+  Project": an already-registered Project converges through the Registry topology
+  engine, a snapshot start stays wholly on the snapshot engine, and opening `$HOME`
+  mints no managed identity at all, so none of them writes a mirror option. That
+  gate is also what makes repeating an open write nothing. Repairing a session that
+  is already live without its identity mirror is not this path's job:
+  `projmux reconcile resources` is the recovery route.
 - `rename pane` changes `Pane.metadata.name` and its `@projmux_pane_label`
   mirror only. It never writes the raw tmux `pane_title`.
 - `rename window` is the explicit stable-identity path: it changes only

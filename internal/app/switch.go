@@ -21,6 +21,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
 	coretags "github.com/crevissepartners/projmux/internal/core/tags"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -141,6 +142,10 @@ type switchCommand struct {
 	projectTopology      switchProjectTopologyMaterializer
 	// projectRegistrar performs the explicit Project bootstrap of one open.
 	projectRegistrar switchProjectRegistrar
+	// projectMirror finishes the identity of a session a first open minted. It
+	// is the shipped identity writer, not a startup-flavored copy, so there is
+	// exactly one place that assembles a Project identity set-option.
+	projectMirror switchProjectIdentityMirror
 	// projectFreshStart is the `new` row's prune seam: it plans the exact
 	// Window/Pane/Agent cascade the confirmation states, and removes it through
 	// the canonical delete cascade.
@@ -213,6 +218,14 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		// lazily so a project open never picks a socket from an inherited client.
 		projectTopology:  newRegistryProjectTopologyMaterializer(),
 		projectRegistrar: newDefaultSwitchProjectRegistrar(),
+		// The identity mirror of a first open rides the plain `tmux` transport
+		// on purpose. EnsureSession shells out with no `-L`, so a first open
+		// lands its session on whatever server the operator is actually in --
+		// inttmux.Client's socket name is metadata it never passes on the
+		// command line. Binding this writer to the app socket the way the
+		// topology engine does would write the identity onto a different
+		// server than the session it describes.
+		projectMirror: intmetadata.NewMirror(inttmux.ExecRunner{}),
 		// The fresh-start prune reads and writes the same Registry every other
 		// resource route uses; it owns no store of its own.
 		projectFreshStart: newRegistryProjectFreshStarter(),

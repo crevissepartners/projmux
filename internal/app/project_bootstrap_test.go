@@ -16,18 +16,27 @@ import (
 type fakeProjectRegistrar struct {
 	calls []string
 	uid   string
+	name  string
 	// reused reports the path as already registered, so the open is not a first
 	// bootstrap.
 	reused bool
 	err    error
 }
 
-func (f *fakeProjectRegistrar) RegisterProjectRoot(_ context.Context, root string) (string, bool, error) {
+func (f *fakeProjectRegistrar) RegisterProjectRoot(_ context.Context, root string) (coremetadata.Project, bool, error) {
 	f.calls = append(f.calls, root)
 	if f.err != nil {
-		return "", false, f.err
+		return coremetadata.Project{}, false, f.err
 	}
-	return f.uid, !f.reused, nil
+	// Only the first registration of a root no Project claims creates one; every
+	// repeat reuses it, exactly as the real transaction does. That is what lets a
+	// test run the same open twice and observe convergence rather than a fake
+	// that reports a fresh bootstrap forever.
+	created := !f.reused && len(f.calls) == 1
+	return coremetadata.Project{
+		Metadata: coremetadata.ObjectMeta{UID: f.uid, Name: f.name},
+		Spec:     coremetadata.ProjectSpec{Root: root},
+	}, created, nil
 }
 
 // TestOpeningACandidateRegistersExactlyThatPath is acceptance (3) at the switch
@@ -187,12 +196,17 @@ func TestRegisterProjectRootIsExactAndIdempotent(t *testing.T) {
 		},
 	}
 
-	uid, created, err := registerProjectRoot(context.Background(), store, "/bin/zsh", filepath.Base, selected)
+	project, created, err := registerProjectRoot(context.Background(), store, "/bin/zsh", filepath.Base, selected)
 	if err != nil {
 		t.Fatalf("registerProjectRoot() error = %v", err)
 	}
 	if !created {
 		t.Fatal("the first registration did not report a new Project")
+	}
+	// The whole identity is handed back, not just the uid: the open flow mirrors
+	// uid *and* name onto the session it is about to mint.
+	if project.Metadata.UID == "" || project.Metadata.Name == "" || project.Spec.Root != selected {
+		t.Fatalf("registered Project identity = %+v, want a uid, a name and root %q", project.Metadata, selected)
 	}
 	registry, err := backing.LoadReadOnly()
 	if err != nil {
@@ -212,12 +226,12 @@ func TestRegisterProjectRootIsExactAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read registry: %v", err)
 	}
-	repeatUID, repeatCreated, err := registerProjectRoot(context.Background(), store, "/bin/zsh", filepath.Base, selected)
+	repeat, repeatCreated, err := registerProjectRoot(context.Background(), store, "/bin/zsh", filepath.Base, selected)
 	if err != nil {
 		t.Fatalf("repeat registerProjectRoot() error = %v", err)
 	}
-	if repeatUID != uid {
-		t.Fatalf("repeat uid = %q, want the first %q", repeatUID, uid)
+	if repeat.Metadata.UID != project.Metadata.UID || repeat.Metadata.Name != project.Metadata.Name {
+		t.Fatalf("repeat identity = %+v, want the first %+v", repeat.Metadata, project.Metadata)
 	}
 	if repeatCreated {
 		t.Fatal("the repeat reported a new Project")

@@ -4098,6 +4098,339 @@ trap smoke_cleanup_env EXIT
 echo ">> Closed Project topology startup e2e passed: socket=$startup_socket path=$startup_socket_path other-socket=$startup_other_socket other-path=$startup_other_socket_path client=$startup_client cleanup=validated-exact-sockets"
 
 # ---------------------------------------------------------------------------
+# First-open Project identity mirror.
+#
+# Opening an unregistered directory mints a Project and then starts its session
+# through the shipped `EnsureSession` path, which writes only the
+# `@projmux_project_path` anchor. The session therefore carried no
+# `@projmux_project_uid` / `@projmux_project_name`, so the next `create` in it
+# read a blank identity and refused its own session as foreign. This block drives
+# the installed `switch open` route from inside a real attached client and proves
+# the open now finishes the identity mirror in the same flow, that `create` in
+# that session succeeds, that repeating the open changes nothing, and that
+# opening `$HOME` still mints no managed identity.
+#
+# Isolation follows the four mandatory conditions: inherited TMUX/TMUX_PANE are
+# stripped from every no--L call, the server is a run-unique -L socket name under
+# a dedicated TMUX_TMPDIR, the real #{socket_path} is queried and proven to sit
+# inside the smoke root, and only that exact queried socket is killed.
+# ---------------------------------------------------------------------------
+fopen_root="$PROJMUX_SMOKE_WORKDIR/first-open-mirror"
+fopen_socket="projmux-firstopen-$RANDOM-$$"
+fopen_other_socket="projmux-firstopen-other-$RANDOM-$$"
+fopen_driver="firstopen-driver"
+# The namer derives the session name from <parent>-<base> of the Project root, so
+# the session a first open mints is known before the open runs.
+fopen_session="work-gamma"
+mkdir -p \
+  "$fopen_root/home" \
+  "$fopen_root/config" \
+  "$fopen_root/state" \
+  "$fopen_root/runtime" \
+  "$fopen_root/tmux" \
+  "$fopen_root/work/gamma" \
+  "$fopen_root/work/delta" \
+  "$fopen_root/shim" \
+  "$fopen_root/bin"
+chmod 0700 "$fopen_root/runtime" "$fopen_root/tmux"
+fopen_project="$fopen_root/work/gamma"
+
+fopen_shell="$fopen_root/shim/persistent-shell"
+cat >"$fopen_shell" <<'FOPEN_SHELL_STUB'
+#!/usr/bin/env bash
+exec sleep 600
+FOPEN_SHELL_STUB
+chmod 0755 "$fopen_shell"
+
+fopen_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$fopen_root/home" \
+    XDG_CONFIG_HOME="$fopen_root/config" \
+    XDG_STATE_HOME="$fopen_root/state" \
+    XDG_RUNTIME_DIR="$fopen_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$fopen_root/work" \
+    TMUX_TMPDIR="$fopen_root/tmux" \
+    SHELL="$fopen_shell" \
+    tmux -L "$fopen_socket" "$@"
+}
+
+fopen_other_tmux() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$fopen_root/home" \
+    XDG_CONFIG_HOME="$fopen_root/config" \
+    XDG_STATE_HOME="$fopen_root/state" \
+    XDG_RUNTIME_DIR="$fopen_root/runtime" \
+    TMUX_TMPDIR="$fopen_root/tmux" \
+    SHELL="$fopen_shell" \
+    tmux -L "$fopen_other_socket" "$@"
+}
+
+fopen_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$fopen_root/home" \
+    XDG_CONFIG_HOME="$fopen_root/config" \
+    XDG_STATE_HOME="$fopen_root/state" \
+    XDG_RUNTIME_DIR="$fopen_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$fopen_root/work" \
+    TMUX_TMPDIR="$fopen_root/tmux" \
+    SHELL="$fopen_shell" \
+    "$bin" "$@"
+}
+
+# A first open shells out to a bare `tmux` on purpose -- the session lands on the
+# transport the operator is actually in, and so must its identity mirror. The shim
+# maps that bare route and the default `-L projmux` app socket onto this smoke
+# socket; every other explicit -L/-S call passes through untouched.
+fopen_real_tmux="$(command -v tmux)"
+cat >"$fopen_root/bin/tmux" <<FOPEN_TMUX_SHIM
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-L" && "\${2:-}" == "projmux" ]]; then
+  shift 2
+  exec $(printf %q "$fopen_real_tmux") -L $(printf %q "$fopen_socket") "\$@"
+fi
+if [[ "\${1:-}" == "-L" || "\${1:-}" == "-S" ]]; then
+  exec $(printf %q "$fopen_real_tmux") "\$@"
+fi
+exec $(printf %q "$fopen_real_tmux") -L $(printf %q "$fopen_socket") "\$@"
+FOPEN_TMUX_SHIM
+chmod 0755 "$fopen_root/bin/tmux"
+
+# The open runs from inside the attached client's pane so `$TMUX`/`$TMUX_PANE` are
+# the real inherited client state rather than a simulation.
+cat >"$fopen_root/open-project.sh" <<FOPEN_OPEN_SCRIPT
+#!/usr/bin/env bash
+export HOME="$fopen_root/home"
+export XDG_CONFIG_HOME="$fopen_root/config"
+export XDG_STATE_HOME="$fopen_root/state"
+export XDG_RUNTIME_DIR="$fopen_root/runtime"
+export PROJMUX_MANAGED_ROOTS="$fopen_root/work"
+export TMUX_TMPDIR="$fopen_root/tmux"
+export SHELL="$fopen_shell"
+export PATH="$fopen_root/bin:\$PATH"
+$(printf %q "$bin") switch open "\$1" >"$fopen_root/open-\$2.out" 2>"$fopen_root/open-\$2.err"
+echo \$? >"$fopen_root/open-\$2.rc"
+FOPEN_OPEN_SCRIPT
+chmod 0755 "$fopen_root/open-project.sh"
+
+fopen_tmux new-session -d -s "$fopen_driver" -c "$fopen_root" bash --noprofile --norc
+fopen_other_tmux new-session -d -s untouched -c "$fopen_root" sleep 600
+fopen_other_tmux set-option -gq @projmux_firstopen_sentinel unchanged
+fopen_other_before="$(fopen_other_tmux show-options -gqv @projmux_firstopen_sentinel):$(fopen_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+
+fopen_socket_path="$(fopen_tmux display-message -p -t "$fopen_driver" '#{socket_path}')"
+fopen_socket_pid="$(fopen_tmux display-message -p -t "$fopen_driver" '#{pid}')"
+fopen_other_socket_path="$(fopen_other_tmux display-message -p -t untouched '#{socket_path}')"
+for actual in "$fopen_socket_path" "$fopen_other_socket_path"; do
+  case "$actual" in
+    "$fopen_root"/*) ;;
+    *)
+      echo "first-open e2e socket escaped smoke root: $actual" >&2
+      exit 1
+      ;;
+  esac
+done
+
+fopen_cleanup() {
+  local socket actual
+  for socket in "$fopen_socket" "$fopen_other_socket"; do
+    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$fopen_root/tmux" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+    if [[ -z "$actual" ]]; then
+      continue
+    fi
+    case "$actual" in
+      "$fopen_root"/*)
+        echo ">> first-open e2e cleanup target=$actual"
+        env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+        ;;
+      *) echo "refusing first-open cleanup outside smoke root: $actual" >&2 ;;
+    esac
+  done
+}
+trap 'fopen_cleanup; smoke_cleanup_env' EXIT
+
+fopen_registry="$fopen_root/state/projmux/metadata/registry.json"
+if [[ -e "$fopen_registry" ]]; then
+  echo "first-open e2e did not start from an unregistered world" >&2
+  exit 1
+fi
+
+# Attach a real client to the driver session so the client move is a real
+# switch-client on this exact server.
+fopen_client_log="$fopen_root/driver-client.log"
+fopen_client_input="$fopen_root/driver-client.in"
+mkfifo "$fopen_client_input"
+exec 9<>"$fopen_client_input"
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$fopen_root/tmux' tmux -L '$fopen_socket' attach-session -t '$fopen_driver'" \
+  "$fopen_client_log" <"$fopen_client_input" >/dev/null 2>&1 &
+fopen_client_pid=$!
+
+fopen_wait_for() {
+  local description="$1"
+  shift
+  for _ in {1..200}; do
+    if "$@"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for $description" >&2
+  tail -c 8000 "$fopen_client_log" >&2 || true
+  return 1
+}
+
+fopen_wait_for "attached first-open tmux client" sh -c \
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$fopen_root/tmux' tmux -L '$fopen_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+fopen_client="$(fopen_tmux list-clients -F '#{client_name}' | head -n 1)"
+fopen_driver_pane="$(fopen_tmux display-message -p -c "$fopen_client" '#{pane_id}')"
+
+# 1. The first open of an unregistered directory.
+fopen_tmux send-keys -t "$fopen_driver_pane" "bash '$fopen_root/open-project.sh' '$fopen_project' first" Enter
+fopen_wait_for "first open of an unregistered directory" test -s "$fopen_root/open-first.rc"
+if [[ "$(tr -d '[:space:]' <"$fopen_root/open-first.rc")" != "0" ]]; then
+  echo "the first open of an unregistered directory failed" >&2
+  cat "$fopen_root/open-first.err" >&2 || true
+  exit 1
+fi
+if [[ ! -f "$fopen_registry" ]]; then
+  echo "the first open minted no Project" >&2
+  exit 1
+fi
+fopen_project_uid="$(fopen_pmx get projects -o uid)"
+if [[ "$(printf '%s\n' "$fopen_project_uid" | wc -l)" != "1" ]] || [[ -z "$fopen_project_uid" ]]; then
+  echo "the first open registered something other than exactly the opened path: $fopen_project_uid" >&2
+  exit 1
+fi
+# The sibling candidate under the same discovery root stays unregistered.
+if fopen_pmx get projects -o json | grep -Fq "$fopen_root/work/delta"; then
+  echo "the first open also registered the sibling candidate delta" >&2
+  exit 1
+fi
+
+# 2. The session exists and carries the whole identity mirror, not just the
+# project-path anchor `EnsureSession` writes for itself.
+if ! fopen_tmux has-session -t "$fopen_session" 2>/dev/null; then
+  echo "the first open minted no session named $fopen_session" >&2
+  fopen_tmux list-sessions -F '#{session_name}' >&2 || true
+  exit 1
+fi
+fopen_mirrored_uid="$(fopen_tmux show-options -qv -t "$fopen_session" @projmux_project_uid)"
+fopen_mirrored_name="$(fopen_tmux show-options -qv -t "$fopen_session" @projmux_project_name)"
+fopen_mirrored_path="$(fopen_tmux show-options -qv -t "$fopen_session" @projmux_project_path)"
+if [[ "$fopen_mirrored_uid" != "$fopen_project_uid" ]]; then
+  echo "first open session project uid = '$fopen_mirrored_uid', want '$fopen_project_uid'" >&2
+  exit 1
+fi
+if [[ "$fopen_mirrored_name" != "gamma" ]]; then
+  echo "first open session project name = '$fopen_mirrored_name', want 'gamma'" >&2
+  exit 1
+fi
+if [[ "$fopen_mirrored_path" != "$fopen_project" ]]; then
+  echo "first open session project path = '$fopen_mirrored_path', want '$fopen_project'" >&2
+  exit 1
+fi
+fopen_wait_for "client moved to the freshly opened session" sh -c \
+  "test \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$fopen_root/tmux' tmux -L '$fopen_socket' display-message -p -c '$fopen_client' '#{session_name}' 2>/dev/null)\" = '$fopen_session'"
+
+# 3. `create` in that session owns it now. This is the exact route that used to
+# refuse: `preflightSessionOwnership` reads the session identity the open wrote.
+fopen_pane="$(fopen_tmux display-message -p -t "$fopen_session" '#{pane_id}')"
+fopen_live_pmx() {
+  env \
+    HOME="$fopen_root/home" \
+    XDG_CONFIG_HOME="$fopen_root/config" \
+    XDG_STATE_HOME="$fopen_root/state" \
+    XDG_RUNTIME_DIR="$fopen_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$fopen_root/work" \
+    TMUX_TMPDIR="$fopen_root/tmux" \
+    PATH="$fopen_root/bin:$PATH" \
+    TMUX="$fopen_socket_path,$fopen_socket_pid,0" \
+    TMUX_PANE="$fopen_pane" \
+    SHELL="$fopen_shell" \
+    "$bin" "$@"
+}
+fopen_live_pmx create window --project "uid:$fopen_project_uid" --name smoke >"$fopen_root/create-window.out"
+smoke_assert_file_contains "$fopen_root/create-window.out" "window/smoke created"
+fopen_live_pmx create pane --project "uid:$fopen_project_uid" --window smoke --placement right -o pane-id >"$fopen_root/create-pane.out"
+fopen_created_pane="$(tr -d '[:space:]' <"$fopen_root/create-pane.out")"
+if [[ -z "$fopen_created_pane" ]]; then
+  echo "create pane in the freshly opened session returned no pane id" >&2
+  exit 1
+fi
+# The pane is managed: the Registry lists it and the live pane mirrors its uid.
+fopen_pane_uids="$(fopen_pmx get panes --project "uid:$fopen_project_uid" -o uid)"
+if [[ -z "$fopen_pane_uids" ]]; then
+  echo "get panes listed nothing for the freshly opened Project" >&2
+  exit 1
+fi
+fopen_live_pane_uid="$(fopen_tmux display-message -p -t "$fopen_created_pane" '#{@projmux_pane_uid}')"
+if ! printf '%s\n' "$fopen_pane_uids" | grep -Fqx "$fopen_live_pane_uid"; then
+  echo "the created pane uid '$fopen_live_pane_uid' is not in get panes: $fopen_pane_uids" >&2
+  exit 1
+fi
+
+# 4. Repeating the open converges. Every session option and the Registry itself
+# stay byte-identical, which is the observable form of "no second mirror write".
+fopen_options_before="$(fopen_tmux show-options -t "$fopen_session" | sort)"
+cp "$fopen_registry" "$fopen_root/registry.before-repeat"
+fopen_tmux send-keys -t "$fopen_driver_pane" "bash '$fopen_root/open-project.sh' '$fopen_project' repeat" Enter
+fopen_wait_for "repeat open of the now-registered Project" test -s "$fopen_root/open-repeat.rc"
+if [[ "$(tr -d '[:space:]' <"$fopen_root/open-repeat.rc")" != "0" ]]; then
+  echo "the repeat open failed" >&2
+  cat "$fopen_root/open-repeat.err" >&2 || true
+  exit 1
+fi
+if [[ "$(fopen_tmux show-options -t "$fopen_session" | sort)" != "$fopen_options_before" ]]; then
+  echo "the repeat open rewrote a session option" >&2
+  diff <(printf '%s\n' "$fopen_options_before") <(fopen_tmux show-options -t "$fopen_session" | sort) >&2 || true
+  exit 1
+fi
+if ! cmp -s "$fopen_registry" "$fopen_root/registry.before-repeat"; then
+  echo "the repeat open rewrote the Registry" >&2
+  exit 1
+fi
+
+# 5. Opening Home still mints no managed identity. Home is chrome: it opens a
+# session and nothing else.
+fopen_projects_before="$(fopen_pmx get projects -o uid | sort)"
+fopen_tmux send-keys -t "$fopen_driver_pane" "bash '$fopen_root/open-project.sh' '$fopen_root/home' home" Enter
+fopen_wait_for "open of Home" test -s "$fopen_root/open-home.rc"
+if [[ "$(tr -d '[:space:]' <"$fopen_root/open-home.rc")" != "0" ]]; then
+  echo "opening Home failed" >&2
+  cat "$fopen_root/open-home.err" >&2 || true
+  exit 1
+fi
+if [[ "$(fopen_pmx get projects -o uid | sort)" != "$fopen_projects_before" ]]; then
+  echo "opening Home minted a Project" >&2
+  exit 1
+fi
+fopen_managed_sessions="$(fopen_tmux list-sessions -F '#{session_name} #{@projmux_project_uid}' | awk 'NF == 2 && $2 != "" {print $1}')"
+if [[ "$fopen_managed_sessions" != "$fopen_session" ]]; then
+  echo "sessions carrying a managed Project uid = '$fopen_managed_sessions', want only '$fopen_session'" >&2
+  fopen_tmux list-sessions -F '#{session_name} #{@projmux_project_uid} #{@projmux_project_name}' >&2 || true
+  exit 1
+fi
+if [[ "$(fopen_tmux list-sessions -F '#{session_name}' | wc -l)" -lt 3 ]]; then
+  echo "opening Home minted no session at all" >&2
+  fopen_tmux list-sessions -F '#{session_name}' >&2 || true
+  exit 1
+fi
+
+# 6. The sibling socket never heard about any of it.
+fopen_other_after="$(fopen_other_tmux show-options -gqv @projmux_firstopen_sentinel):$(fopen_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+if [[ "$fopen_other_after" != "$fopen_other_before" ]]; then
+  echo "the first-open flow touched the sibling socket: $fopen_other_after" >&2
+  exit 1
+fi
+
+exec 9>&-
+kill "$fopen_client_pid" >/dev/null 2>&1 || true
+wait "$fopen_client_pid" 2>/dev/null || true
+fopen_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> First-open Project identity mirror e2e passed: socket=$fopen_socket path=$fopen_socket_path other-socket=$fopen_other_socket other-path=$fopen_other_socket_path client=$fopen_client project=$fopen_project_uid session=$fopen_session cleanup=validated-exact-sockets"
+
+# ---------------------------------------------------------------------------
 # Runtime diagnostics escape hatch.
 #
 # The Registry-first surfaces list managed resources, so an operator's own

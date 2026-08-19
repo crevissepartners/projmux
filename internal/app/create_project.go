@@ -114,22 +114,28 @@ func (c *createCommand) registerSessionName(root string) string {
 
 // registerProjectRoot is the shared explicit-bootstrap seam.
 //
-// It answers the question the sidebar's candidate open asks -- "which Project uid
-// is this exact path, registering it if none is" -- with the same transaction and
+// It answers the question the sidebar's candidate open asks -- "which Project is
+// this exact path, registering it if none is" -- with the same transaction and
 // the same idempotence the `create project` route uses, so there is one
 // registration implementation rather than a UI-flavored copy.
-func registerProjectRoot(ctx context.Context, store *resourceStore, shell string, sessionNameFor func(string) string, root string) (string, bool, error) {
+//
+// It hands back the whole registered Project rather than only its uid because the
+// open flow mirrors identity onto the session it is about to mint, and the
+// identity mirror is uid *and* name. Narrowing the result to a uid here would
+// force the caller to re-read the Registry for the other half of an identity this
+// transaction already resolved.
+func registerProjectRoot(ctx context.Context, store *resourceStore, shell string, sessionNameFor func(string) string, root string) (coremetadata.Project, bool, error) {
 	_ = ctx
 	root = filepath.Clean(strings.TrimSpace(root))
 	if root == "" || !filepath.IsAbs(root) {
-		return "", false, fmt.Errorf("register project root: %q must be an absolute path", root)
+		return coremetadata.Project{}, false, fmt.Errorf("register project root: %q must be an absolute path", root)
 	}
 	if store == nil || store.updateConvergent == nil || store.mutator == nil {
-		return "", false, fmt.Errorf("register project root: the resource store is not configured")
+		return coremetadata.Project{}, false, fmt.Errorf("register project root: the resource store is not configured")
 	}
 	operationID, err := newCreateOperationID()
 	if err != nil {
-		return "", false, err
+		return coremetadata.Project{}, false, err
 	}
 	sessionName := ""
 	if sessionNameFor != nil {
@@ -149,9 +155,9 @@ func registerProjectRoot(ctx context.Context, store *resourceStore, shell string
 		result = registered
 		return nil
 	}); err != nil {
-		return "", false, MapMetadataError(err)
+		return coremetadata.Project{}, false, MapMetadataError(err)
 	}
-	return result.Project.Metadata.UID, !result.Reused, nil
+	return result.Project, !result.Reused, nil
 }
 
 // reuseOrRegisterProject answers an already-registered root from the Registry and

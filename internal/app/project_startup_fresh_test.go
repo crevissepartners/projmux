@@ -786,7 +786,7 @@ func TestProjectFreshStartKeepsNamedSnapshots(t *testing.T) {
 		projectTopology: &fakeProjectTopologyMaterializer{},
 	}
 
-	if err := cmd.startProjectFresh(context.Background(), "workspace", project, false); err != nil {
+	if err := cmd.startProjectFresh(context.Background(), "workspace", project, openedProjectBootstrap{}); err != nil {
 		t.Fatalf("startProjectFresh() error = %v", err)
 	}
 	if _, err := os.Stat(named); err != nil {
