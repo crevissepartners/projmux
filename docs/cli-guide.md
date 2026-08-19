@@ -425,7 +425,12 @@ partial leaves the client where it was and reports the exact stage. The
 activation is pinned to the session the open targets, so a Project whose
 Registry projects a different session name is refused instead of populating a
 session the open never reaches. Choosing `Latest snapshot` or `Named snapshot`
-instead stays entirely on the Session State snapshot engine. Reading whether a
+instead stays entirely on the Session State snapshot engine. Choosing `New`
+discards the latest snapshot and prunes that Project's whole stored
+Window/Pane/Agent set through the canonical delete cascade first, after a
+confirmation that states the exact counts and the Agents' `status.sessionRef`
+loss; the Project then has no declared topology, so the open falls through to the
+single-Window, single-shell-Pane bootstrap. Reading whether a
 Project declares topology is a zero-write snapshot read, so opening a directory
 that was never registered still creates no Registry state.
 
@@ -1698,9 +1703,12 @@ human configuration work should prefer `config render` and `config apply`.
   startup directory. Alt-1 sidebar project open defaults to `Project topology`,
   which materializes the Project's Registry Windows, Window-owned shell Panes,
   and Agents before the client moves; the Session State `Sidebar startup picker` opt-in
-  shows `Latest snapshot`, `Named snapshot`, and `Project topology` before
+  shows `Latest snapshot`, `Named snapshot`, `Project topology`, and `New` before
   starting a closed project session. `Latest snapshot` is auto-saved; named
-  snapshots are fixed until the user saves or replaces them. A directory with no
+  snapshots are fixed until the user saves or replaces them. `New` is the
+  destructive fresh start: it confirms the exact `Window n / Pane n / Agent n`
+  it will delete and the Agents' `status.sessionRef` loss, then discards the
+  latest snapshot, prunes those records, and starts one fresh Window. A directory with no
   Registry Project, and a Project with no Registry Window, still start as a
   single default session.
 - `quit` — open an action picker with `Quit projmux` and `Cancel`. Selecting

@@ -742,9 +742,14 @@ rejoins the provider conversation its Registry `status.sessionRef` names; one
 with no usable ref starts a new conversation and is reported on stderr. The optional `Settings >
 Session State > Sidebar startup picker` toggle enables the native sidebar `Start
 project` step. Rows appear as `Latest snapshot`, named snapshot rows, `Project
-topology`, and `Back`. `Latest snapshot`
+topology`, `New`, and `Back`. `Latest snapshot`
 is the snapshot auto-save that changes as auto-save runs; named snapshots are
-fixed snapshots. Rows include saved-at date/time metadata when projmux can
+fixed snapshots. `New` discards the latest snapshot and force-prunes every
+stored Window, Pane, and Agent of that Project, then starts it as a single fresh
+Window and shell Pane; it always confirms first with the exact
+`Window n / Pane n / Agent n` counts and the Agents' `status.sessionRef` loss,
+and a cancel writes nothing. Named snapshots, the Project registration, the
+managed root, and the trust decision all survive it. Rows include saved-at date/time metadata when projmux can
 determine it. `Back` returns to the project list without creating, replaying, or
 opening a session. After the startup mode is selected, project automation trust
 is evaluated if needed. A named snapshot containing a startup `command` must

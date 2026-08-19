@@ -66,7 +66,10 @@ step, never a silent no-op.
     `Project topology` for the same reason. `Ask for Snapshot or Project
     topology` adds the `Latest snapshot` and `Named snapshot` rows, which stay on
     the Session State snapshot engine — the two sources are never mixed in one
-    open. A replayed Agent rejoins the conversation its Registry
+    open — plus the destructive `New` row, which discards the latest snapshot,
+    force-prunes that Project's stored Windows, Panes, and Agents after a
+    confirmation naming the exact counts and the `status.sessionRef` loss, and
+    starts one fresh Window. A replayed Agent rejoins the conversation its Registry
     `status.sessionRef` names, or starts a new one and says so; neither choice
     executes a stored `Pane.spec.command`, and the snapshot rows resume nothing. The saved
     file keeps its `sidebar-startup-picker` spelling.

@@ -687,7 +687,6 @@ var uiTextKeys = map[string]i18n.Key{
 	"Enter: save  |  Example: 30":                                                "settings.footer.enter_save_example_30",
 	"Enter: save  |  Example: 2":                                                 "settings.footer.enter_save_example_2",
 	"Enter: save  |  Examples: 30s, 2m, 90":                                      "settings.footer.enter_save_examples_interval",
-	"Enter: start  |  Back row: projects  |  Esc: Project topology":              "settings.footer.enter_start_back_projects_esc_topology",
 	"Enter: choose  |  Esc: continue shell":                                      "settings.footer.enter_choose_esc_continue_shell",
 	"Enter: choose  |  Esc: cancel":                                              "settings.footer.enter_choose_esc_cancel",
 	"Enter: confirm":                                                             "settings.footer.enter_confirm",
@@ -773,6 +772,20 @@ var uiTextKeys = map[string]i18n.Key{
 	"Sessions": "picker.crumb.sessions",
 	"State":    "picker.crumb.state",
 	"Session state opens read-only; destructive actions keep the current confirmation policy.": "picker.sessions.state_readonly_note",
+
+	"Enter: start  |  New row: discards saved state  |  Back row: projects  |  Esc: Project topology": "settings.footer.enter_start_new_back_projects_esc_topology",
+
+	// The closed-Project startup screen's fresh-start row, its confirmation, and
+	// the startup footer that now names the row. They are one alignment group of
+	// their own: two of these literals are long enough that gofmt would otherwise
+	// re-align every unrelated entry around them.
+	"New": "settings.text.project_startup_new_row",
+	"discard the latest snapshot and every saved Window, Pane, and Agent, then start one fresh shell Window": "settings.desc.project_startup_new_action",
+	"Start new: discard saved state?":          "settings.title.project_startup_new_confirm",
+	"Start new > ":                             "settings.prompt.project_startup_new_confirm",
+	"Enter: discard and start  |  Esc: cancel": "settings.footer.project_startup_new_confirm",
+	"Yes, discard and start new":               "settings.text.project_startup_new_confirm_row",
+	"keep the saved state; nothing is deleted": "settings.desc.project_startup_new_cancel",
 }
 
 // settingsTextKeys preserves the historical name for the shared registry so

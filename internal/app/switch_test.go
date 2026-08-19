@@ -1112,6 +1112,7 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Latest snapshot")
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Named snapshot")
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Project topology")
+	requireSwitchEntryLabel(t, startupOptions.Entries, projectStartupNewLabel)
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Back")
 	requireSwitchNoPrimaryLayoutPresetLabels(t, startupOptions.Entries)
 	requireSwitchEntryLabel(t, startupOptions.Entries, "2026-05-13 12:00:00")
@@ -1120,6 +1121,7 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 		projectStartupValueLatest,
 		projectStartupValueNamed + "team",
 		projectStartupValueTopology,
+		projectStartupValueNew,
 		settingsBackValue,
 	})
 	if got, want := executor.ensureSessionName, "workspace"; got != want {
