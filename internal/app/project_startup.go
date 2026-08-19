@@ -11,6 +11,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
@@ -135,15 +136,15 @@ func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, tar
 			return errProjectTrustDenied
 		}
 	}
-	bootstrapped, err := c.registerOpenedProjectRoot(ctx, target)
+	opened, err := c.registerOpenedProjectRoot(ctx, target)
 	if err != nil {
 		return err
 	}
-	counts, err = c.continueProjectOpen(ctx, target, sessionName, mode, layoutArtifact, bootstrapped)
+	counts, err = c.continueProjectOpen(ctx, target, sessionName, mode, layoutArtifact, opened)
 	return err
 }
 
-func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, layoutArtifact *corelayout.Artifact, bootstrapped bool) (diagnostics.SessionStateCounts, error) {
+func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, layoutArtifact *corelayout.Artifact, opened openedProjectBootstrap) (diagnostics.SessionStateCounts, error) {
 	switch mode.Kind {
 	case projectStartupKindLatest:
 		return c.restoreProjectLatestSnapshot(ctx, sessionName, target)
@@ -153,9 +154,9 @@ func (c *switchCommand) continueProjectOpen(ctx context.Context, target, session
 		}
 		return c.restoreProjectNamedSnapshot(ctx, sessionName, target, *layoutArtifact)
 	case projectStartupKindNew:
-		return diagnostics.SessionStateCounts{}, c.startProjectFresh(ctx, sessionName, target, bootstrapped)
+		return diagnostics.SessionStateCounts{}, c.startProjectFresh(ctx, sessionName, target, opened)
 	default:
-		return diagnostics.SessionStateCounts{}, c.materializeAndOpenProjectTopology(ctx, sessionName, target, bootstrapped)
+		return diagnostics.SessionStateCounts{}, c.materializeAndOpenProjectTopology(ctx, sessionName, target, opened)
 	}
 }
 
@@ -455,11 +456,52 @@ func (c *switchCommand) restoreProjectSnapshot(ctx context.Context, snap session
 	return c.openProjectSession(ctx, snap.Session)
 }
 
-func (c *switchCommand) ensureAndOpenProjectSession(ctx context.Context, sessionName, target string) error {
+// ensureAndOpenProjectSession is the shipped first-session start: create the
+// session if it is missing, finish its identity, then move the client.
+//
+// The identity mirror sits between the two on purpose. EnsureSession mints a
+// session that already carries the `@projmux_project_path` anchor it writes
+// itself, but nothing had ever written the Project uid and name onto it, so a
+// session minted by a first open looked exactly like a session projmux does not
+// own -- and the next `create` in it refused its own session as foreign. Mirroring
+// here closes the bootstrap in the same flow that opened it, using the same
+// writer every other mirror goes through.
+//
+// Order matters twice over. The mirror runs before the client move because the
+// client move is strictly last, the same rule the topology path states; and a
+// failed mirror returns without opening, because a session whose identity is half
+// written is exactly the state this exists to prevent.
+func (c *switchCommand) ensureAndOpenProjectSession(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
 	if err := c.sessions.EnsureSession(ctx, sessionName, target); err != nil {
 		return fmt.Errorf("ensure tmux session %q: %w", sessionName, err)
 	}
+	if err := c.mirrorBootstrappedProjectIdentity(ctx, sessionName, opened); err != nil {
+		return err
+	}
 	return c.openProjectSession(ctx, sessionName)
+}
+
+// mirrorBootstrappedProjectIdentity writes the minted Project identity onto the
+// session this open just created, and only then.
+//
+// The gate is `bootstrapped`, not "the mirror looks unset". An open of an
+// already-registered Project converges through the topology engine, which already
+// owns that session's identity, and a snapshot restore reaches a session the
+// Registry did not declare; writing here in either case would put this flow in the
+// business of repairing identity it did not mint. Repair has a route already --
+// `projmux reconcile resources` plans exactly these two set-options -- and keeping
+// it there is what makes a second pass of this flow write nothing at all.
+func (c *switchCommand) mirrorBootstrappedProjectIdentity(ctx context.Context, sessionName string, opened openedProjectBootstrap) error {
+	if !opened.bootstrapped || c.projectMirror == nil {
+		return nil
+	}
+	if strings.TrimSpace(opened.project.Metadata.UID) == "" {
+		return fmt.Errorf("mirror Project identity onto tmux session %q: the bootstrapped Project carries no uid", sessionName)
+	}
+	if err := c.projectMirror.MirrorProject(ctx, sessionName, opened.project); err != nil {
+		return fmt.Errorf("mirror Project identity onto tmux session %q: %w", sessionName, err)
+	}
+	return nil
 }
 
 func (c *switchCommand) openProjectSession(ctx context.Context, sessionName string) error {
@@ -493,7 +535,30 @@ func (c *switchCommand) projectStartupNow() time.Time {
 // new Project. A path an existing Project already claims writes nothing, which is
 // what makes reopening free.
 type switchProjectRegistrar interface {
-	RegisterProjectRoot(ctx context.Context, root string) (uid string, created bool, err error)
+	RegisterProjectRoot(ctx context.Context, root string) (project coremetadata.Project, created bool, err error)
+}
+
+// switchProjectIdentityMirror is the identity-writer seam of the open flow.
+//
+// Its one method is spelled exactly as the shipped writer spells it, so
+// `intmetadata.Mirror` satisfies it with no adapter. That is the point: the first
+// open must not grow a second mirror implementation, and no tmux `set-option` for
+// Project identity is ever assembled outside that writer.
+type switchProjectIdentityMirror interface {
+	MirrorProject(ctx context.Context, sessionName string, project coremetadata.Project) error
+}
+
+// openedProjectBootstrap is what one explicit open bootstrapped.
+//
+// It travels as one value rather than a bare `bootstrapped bool` because the two
+// facts are only useful together: the flag decides whether this open owns the new
+// session's identity, and the Project is that identity. A zero value is the honest
+// answer for every open that minted nothing -- an unwired registrar, a sentinel
+// target, Home -- so nothing downstream can mistake a withheld registration for a
+// half-filled one.
+type openedProjectBootstrap struct {
+	project      coremetadata.Project
+	bootstrapped bool
 }
 
 // registerOpenedProjectRoot is the bootstrap step of one explicit open.
@@ -503,28 +568,32 @@ type switchProjectRegistrar interface {
 // operator declined to open the directory, which is not the moment to record that
 // it is a Project -- and materialization needs the Registry topology this step
 // declares.
-// It reports whether this open is what created the Project, which decides how the
-// runtime is brought up; see materializeAndOpenProjectTopology.
-func (c *switchCommand) registerOpenedProjectRoot(ctx context.Context, target string) (bool, error) {
+// It reports whether this open is what created the Project and which Project that
+// is. Together those decide how the runtime is brought up and whose identity the
+// new session carries; see materializeAndOpenProjectTopology and
+// ensureAndOpenProjectSession.
+func (c *switchCommand) registerOpenedProjectRoot(ctx context.Context, target string) (openedProjectBootstrap, error) {
 	if c.projectRegistrar == nil {
-		return false, nil
+		return openedProjectBootstrap{}, nil
 	}
 	target = cleanOptionalPath(target)
 	if target == "" || target == switchSettingsSentinel || target == switchRuntimeSentinel {
-		return false, nil
+		return openedProjectBootstrap{}, nil
 	}
 	if c.openedRootIsHome(target) {
 		// Home is chrome. It leads the Projects list because it is where the
 		// surface starts from, not because it is a member of what the surface
 		// orders, and `$HOME` alone is never evidence of a Project. Opening it
-		// still opens a session; it just does not mint managed identity.
-		return false, nil
+		// still opens a session; it just does not mint managed identity, so it
+		// answers with a zero Project and nothing downstream has an identity to
+		// mirror.
+		return openedProjectBootstrap{}, nil
 	}
-	_, created, err := c.projectRegistrar.RegisterProjectRoot(ctx, target)
+	project, created, err := c.projectRegistrar.RegisterProjectRoot(ctx, target)
 	if err != nil {
-		return false, fmt.Errorf("register Project for %q: %w", target, err)
+		return openedProjectBootstrap{}, fmt.Errorf("register Project for %q: %w", target, err)
 	}
-	return created, nil
+	return openedProjectBootstrap{project: project, bootstrapped: created}, nil
 }
 
 // openedRootIsHome reports whether target is the operator's own home directory.
@@ -558,9 +627,9 @@ func newDefaultSwitchProjectRegistrar() *defaultSwitchProjectRegistrar {
 	}
 }
 
-func (r *defaultSwitchProjectRegistrar) RegisterProjectRoot(ctx context.Context, root string) (string, bool, error) {
+func (r *defaultSwitchProjectRegistrar) RegisterProjectRoot(ctx context.Context, root string) (coremetadata.Project, bool, error) {
 	if r == nil {
-		return "", false, nil
+		return coremetadata.Project{}, false, nil
 	}
 	return registerProjectRoot(ctx, r.store, r.shell, r.sessionNameFor, root)
 }
@@ -581,7 +650,7 @@ type switchProjectTopologyMaterializer interface {
 // The client move is strictly last: materialization either converges the whole
 // declared shell topology or fails without an open.
 //
-// bootstrapped means this open is what registered the Project, and it takes the
+// A bootstrapped open -- this open is what registered the Project -- takes the
 // shipped ensure path rather than the topology engine. The two would build the
 // same thing -- a Project registered a moment ago has exactly the one-Window,
 // one-shell-Pane bootstrap topology EnsureSession produces -- but they build it on
@@ -590,8 +659,12 @@ type switchProjectTopologyMaterializer interface {
 // the operator is actually in. Reusing the shipped path keeps a first open
 // unchanged; every later open of the now-registered Project converges through the
 // topology engine exactly as it already did.
-func (c *switchCommand) materializeAndOpenProjectTopology(ctx context.Context, sessionName, target string, bootstrapped bool) error {
-	if c.projectTopology != nil && !bootstrapped {
+//
+// The Project itself travels with the flag because that ensure path is the only
+// route that has to finish the identity mirror itself; see
+// ensureAndOpenProjectSession.
+func (c *switchCommand) materializeAndOpenProjectTopology(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
+	if c.projectTopology != nil && !opened.bootstrapped {
 		materialized, err := c.projectTopology.MaterializeProjectTopology(ctx, target, sessionName)
 		if err != nil {
 			return fmt.Errorf("materialize Registry topology for session %q: %w", sessionName, err)
@@ -600,7 +673,7 @@ func (c *switchCommand) materializeAndOpenProjectTopology(ctx context.Context, s
 			return c.openProjectSession(ctx, sessionName)
 		}
 	}
-	return c.ensureAndOpenProjectSession(ctx, sessionName, target)
+	return c.ensureAndOpenProjectSession(ctx, sessionName, target, opened)
 }
 
 // registryProjectTopologyMaterializer runs closed-Project activation through the

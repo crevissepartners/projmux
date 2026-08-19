@@ -345,7 +345,11 @@ func (c *switchCommand) planProjectFreshStart(sessionName, target string) (proje
 // intact and the whole operation retryable, while the reverse order could leave a
 // pruned Project still offering a `Latest snapshot` row that restores the state
 // the operator just asked to be rid of.
-func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, target string, bootstrapped bool) error {
+// The bootstrap value travels through untouched. The `new` row prunes a Project
+// the Registry already declares topology for, so in practice it is never the open
+// that minted the Project -- but the mirror decision stays in the one place that
+// owns it rather than being re-decided here.
+func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
 	plan, err := c.planProjectFreshStart(sessionName, target)
 	if err != nil {
 		return err
@@ -367,7 +371,7 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 	if err := c.verifyProjectFreshStartPruned(target); err != nil {
 		return err
 	}
-	if err := c.materializeAndOpenProjectTopology(ctx, sessionName, target, bootstrapped); err != nil {
+	if err := c.materializeAndOpenProjectTopology(ctx, sessionName, target, opened); err != nil {
 		return err
 	}
 	c.reportProjectStartup(plan.ResultMessage(sessionName))
