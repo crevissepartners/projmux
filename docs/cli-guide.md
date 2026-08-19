@@ -1161,28 +1161,32 @@ resume`, a different verb. The scope of the new resources follows
 [Create scope](#create-scope). The provider picker remains available through
 `internal agent-pane picker`. Arguments after `--` are extra arguments appended to
 the resolved `claude`, `codex`, or `agy` executable inside the managed wrapper;
-projmux still sets the context directory, tmux title, AI pane metadata, title
-watcher, and split layout.
+projmux still sets the context directory, tmux title, AI pane metadata, and
+split layout.
 
-Automation callers can add `--print-pane-id` to an explicit direct
-`--agent claude|codex|antigravity|shell` launch. On success, stdout contains
-exactly the new `%N` pane id followed by one newline. The value comes directly
-from tmux's existing
-`split-window -P -F '#{pane_id}'` result. If tmux returns no valid pane id, the
-command fails non-zero with tmux-specific guidance and writes no
-success value. Without `--print-pane-id`, successful split invocations keep the
-existing empty-stdout behavior.
+Automation callers get the new pane's handle from `-o pane-id` on the canonical
+create routes: `projmux create agent --provider <p> --placement right -o pane-id`
+and `projmux create pane --placement right -o pane-id` each print exactly the
+managed Pane's `%N` followed by one newline. See
+[AI Agent Shortcuts](ai-agent-shortcuts.md) for the shortcut spellings.
 
-`--print-pane-id` is not available for the saved default mode or for
-`--agent selective|resume`, because those paths may open a picker and launch
-only after a later user selection. Those combinations fail before opening a
-picker or creating a pane. Arguments after `--` keep their existing argv-tail
-meaning when the flag is used with a concrete AI agent.
+Every Projmux split surface produces the same canonical create intent. The
+default `ai-split-right/down` binding reads the saved split mode and turns it
+into one intent -- a provider Agent, a shell Pane, or one of the two pickers --
+and the `Alt-7` picker and the resume picker do the same with what the operator
+selected. Only the create route's materializer runs tmux's `split-window`, so a
+pane opened from the UI is a Registry resource on the same terms as one asked for
+by name, and a failed launch leaves zero Registry and zero tmux mutations. A raw
+unmanaged split exists only where you make one yourself.
+
 The resume picker lists the newest deduplicated Claude, Codex, and Antigravity
 resume sessions for the current project, with `[+ New Session]` pinned first.
 If there are no resume sessions it goes straight to the existing selective
-picker. Selecting a row directly starts `claude --resume <id>`,
-`codex resume <id>`, or `agy --conversation <uuid>`.
+picker. Selecting a row creates a managed Agent whose pane joins that
+conversation -- `claude --resume <id>`, `codex resume <id>`, or
+`agy --conversation <uuid>`. Rebinding an Agent the Registry already has is
+`projmux agent resume`, a different verb that never falls back to a fresh
+conversation.
 
 Live Antigravity hook/session-state resume metadata remains a separate,
 high-confidence lane; it is not enumerated from disk by the picker. Within the
@@ -1202,10 +1206,8 @@ Settings > AI Settings > Enabled agents controls Claude/Codex/Antigravity launch
 visibility. Disabled agents are hidden from the selective picker and from the
 default-mode picker. A saved default that later becomes disabled fails clearly
 instead of falling back to another agent. Direct
-`--agent claude|codex|antigravity` launches also fail when disabled, including
-shortcuts that call the same command. For a deliberate one-shot direct CLI
-launch, pass `--force-agent`; picker and saved default paths do not use this
-override. If all AI agents are disabled, the selective picker still offers the
+Canonical `create agent --provider <p>` launches and the provider shortcuts also
+fail when disabled. If all AI agents are disabled, the selective picker still offers the
 plain `shell` split and shows guidance to re-enable Claude/Codex/Antigravity.
 For user-level skill, slash-command, editor, or launcher registrations that
 call this contract, see [AI Agent Shortcuts](ai-agent-shortcuts.md).

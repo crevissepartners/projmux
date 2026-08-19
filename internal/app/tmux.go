@@ -83,17 +83,19 @@ type tmuxCommand struct {
 	popupOptions            func(sessionName string, ctx tmuxPopupContext) inttmux.PopupOptions
 	switchPopup             func(ctx tmuxPopupContext) inttmux.PopupOptions
 	sessionsPopup           func(ctx tmuxPopupContext) inttmux.PopupOptions
-	// resources is the resource registry seam of the pane-exit sweep. It is the
-	// only tmux helper route that touches the registry, and it is a field so a
-	// test can point the sweep at a temporary store.
+	// resources is the resource registry seam of the lifecycle triggers. It is
+	// the only tmux helper route family that touches the registry, and it is a
+	// field so a test can point convergence at a temporary store.
 	resources *resourceStore
 	// ai owns marker-aware managed hook migration. It is shared with the
 	// public agent/compatibility routes so installer convergence uses exactly
 	// the same provider encoders without installing missing integrations.
 	ai *aiCommand
-	// bindingConverger is the test seam for the apply/lifecycle mutation
-	// boundary. Production leaves it nil and uses convergeRuntimeBindings.
-	bindingConverger func(context.Context, explicitTmuxTarget) error
+	// triggerRunner is the one controller entrypoint every mutation and
+	// lifecycle producer in this file reaches. Production leaves it nil and
+	// builds the real runner per invocation; a test installs one whose event log
+	// and store are temporary, or one that only records what it was handed.
+	triggerRunner controllerTriggering
 	// bindingReconciler replaces only construction in tests; production still
 	// uses the one registryReconciler implementation.
 	bindingReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler
@@ -149,10 +151,8 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runPopupToggle(fs.Args()[1:], stderr)
 	case "rebalance-panes":
 		return c.runRebalancePanes(fs.Args()[1:], stderr)
-	case "release-dead-agent-panes":
-		return c.runReleaseDeadAgentPanes(fs.Args()[1:], stderr)
-	case "reconcile-bindings":
-		return c.runReconcileBindings(fs.Args()[1:], stderr)
+	case "converge":
+		return c.runConverge(fs.Args()[1:], stderr)
 	case "rename-pane":
 		return c.runRenamePane(fs.Args()[1:], stderr)
 	case "print-config":
@@ -357,60 +357,79 @@ func (c *tmuxCommand) runRebalancePanes(args []string, stderr io.Writer) error {
 	return nil
 }
 
-// runReleaseDeadAgentPanes is the pane-exit hook half of the dead-pane sweep:
-// it releases every Agent whose managed Pane is no longer a live tmux pane.
+// runConverge is the one hidden lifecycle/mutation trigger route.
 //
-// It is its own hidden route rather than extra work inside rebalance-panes.
-// Rebalance is pane layout behavior that has to stay byte-identical, and the
-// hook runs both under `|| true`, so a registry the sweep cannot open can never
-// cost the operator their pane layout.
-func (c *tmuxCommand) runReleaseDeadAgentPanes(args []string, stderr io.Writer) error {
-	if len(args) != 0 {
-		printTmuxUsage(stderr)
-		return fmt.Errorf("tmux release-dead-agent-panes accepts no arguments")
-	}
-	if c.runner == nil {
-		return errors.New("configure tmux runner: tmux runner is not configured")
-	}
-	store := c.resources
-	if store == nil {
-		store = newResourceStore()
-	}
-	// A zero target routes the observation through the inherited client, which is
-	// the absolute socket in $TMUX. That is what this hook has always done and is
-	// the exact-host rule for an in-tmux invocation; naming the seam here keeps it
-	// from quietly acquiring a default socket later.
-	return runDeadAgentPaneSweep(context.Background(),
-		lifecycleInventory(c.runner, explicitTmuxTarget{}), store)
-}
-
-// runReconcileBindings is the hidden generated-lifecycle mutation boundary.
-// The config passes tmux's expanded absolute #{socket_path}; accepting no
-// implicit target is what keeps the hook independent of inherited $TMUX and of
-// whatever server happens to own the default socket.
-func (c *tmuxCommand) runReconcileBindings(args []string, stderr io.Writer) error {
-	fs := flag.NewFlagSet("internal tmux reconcile-bindings", flag.ContinueOnError)
+// It replaced two: `reconcile-bindings`, which ran the binding half of
+// convergence, and `release-dead-agent-panes`, which ran the exit projection on
+// its own transaction. Both were caused by the same class of event and both
+// answered it with a different subset of one reconciliation, so on a pane exit
+// inside a session that had also just gained a window the machine paid for two
+// registry transactions to reach the state one pass reaches.
+//
+// Every argument is supplied by the generated config from tmux's own formats.
+// `--socket-path` is the expanded `#{socket_path}`, which is what keeps the
+// route independent of inherited $TMUX and of whatever server owns the default
+// socket; `--session` is `#{session_id}`, which carries the create-operation
+// lease; `--reason` names the producer for the diagnostic line and nothing else.
+func (c *tmuxCommand) runConverge(args []string, stderr io.Writer) error {
+	fs := flag.NewFlagSet("internal tmux converge", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	socketPath := fs.String("socket-path", "", "absolute tmux socket path")
 	session := fs.String("session", "", "tmux hook session")
+	reason := fs.String("reason", "", "trigger reason: "+strings.Join(controllerTriggerReasonSpellings(), ", "))
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return usageError("internal tmux reconcile-bindings does not accept positional arguments")
+		return usageError("internal tmux converge does not accept positional arguments")
 	}
 	target, err := tmuxSocketPathTarget(*socketPath)
 	if err != nil {
 		return usageError(err.Error())
 	}
-	deferCreate, err := deferBindingConvergence(context.Background(), c.runner, target, *session)
+	parsed, err := parseControllerTriggerReason(*reason)
+	if err != nil {
+		return usageError(err.Error())
+	}
+	outcome, err := c.trigger(context.Background(), controllerTrigger{
+		reason: parsed, target: target, session: *session,
+	})
 	if err != nil {
 		return err
 	}
-	if deferCreate {
-		return nil
+	// stdout stays empty: the generated hooks discard both streams, and a route
+	// whose success is silent is what lets an operator run it by hand and see
+	// nothing but the diagnostic. The outcome line goes to stderr, which is where
+	// the same operator looks to find out whether the pass converged, coalesced
+	// behind another worker, or deferred to a live create.
+	_, err = fmt.Fprintln(stderr, "projmux: controller "+outcome.describe())
+	return err
+}
+
+// trigger routes one producer through the single controller entrypoint.
+//
+// Construction is per invocation rather than per command because the event log
+// resolves the state directory from the environment, and the two callers that
+// matter -- a hook and an apply -- are separate short-lived processes anyway. A
+// test installs triggerRunner directly and never touches the real state dir.
+func (c *tmuxCommand) trigger(ctx context.Context, trigger controllerTrigger) (controllerTriggerOutcome, error) {
+	runner := c.triggerRunner
+	if runner == nil {
+		// A nil store exists only on narrow legacy unit fixtures that construct a
+		// tmuxCommand literal instead of the production graph. Do not let those
+		// fixtures reach the caller's real state directory: newTmuxCommand always
+		// supplies the store, and a trigger test installs an explicit one.
+		if c.resources == nil {
+			return controllerTriggerOutcome{reason: trigger.reason,
+				deferred: "the resource registry store is not configured: " + trigger.describe()}, nil
+		}
+		built, err := newControllerTriggerRunner(c.runner, c.resources, c.bindingReconciler, c.homeDir, c.lookupEnv)
+		if err != nil {
+			return controllerTriggerOutcome{reason: trigger.reason}, err
+		}
+		runner = built
 	}
-	return c.convergeBindings(context.Background(), target)
+	return runner.run(ctx, trigger)
 }
 
 func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
@@ -1056,11 +1075,17 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	// --no-reload and every config/keymap preflight failure remain strict
 	// live-server no-touch paths. Reuse the exact -L target the reload used;
 	// convergence never falls back to a default socket or inherited $TMUX.
+	//
+	// Apply reaches the same controller entrypoint the generated hooks it just
+	// installed reach, and carries no hook session: an apply is not caused by a
+	// create, so there is no create-operation lease for it to defer to.
 	target, targetErr := tmuxSocketNameTarget(socketName)
 	if targetErr != nil {
 		return rollbackManagedIngest(targetErr)
 	}
-	if err := c.convergeBindings(ctx, target); err != nil {
+	if _, err := c.trigger(ctx, controllerTrigger{
+		reason: controllerTriggerConfigApply, target: target,
+	}); err != nil {
 		return rollbackManagedIngest(fmt.Errorf("converge managed runtime bindings on -L %s: %w", socketName, err))
 	}
 
@@ -2026,16 +2051,45 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 // Both hooks have to run both halves. `pane-exited` covers a child process that
 // ended; `after-kill-pane` covers `tmux kill-pane` and the pane close key, and
 // it fires with an empty #{hook_pane}, so neither hook can name the pane that
-// died. That is why the second half is an inventory sweep with no arguments
-// rather than a per-pane handler.
+// died. That is why the second half states only the exact server and lets the
+// controller re-derive the rest rather than passing a pane the hook cannot know.
 //
 // The rebalance half is unchanged, still first, and still independently
-// `|| true`-guarded: pane layout must not depend on whether the registry sweep
-// succeeded, and the sweep must still run when there was no layout to rebalance.
+// `|| true`-guarded: pane layout must not depend on whether convergence
+// succeeded, and convergence must still run when there was no layout to
+// rebalance.
 func tmuxPaneExitHookBody(bin string) string {
 	return "run-shell -b " + tmuxConfigQuote(
 		"sleep 0.05; "+bin+" internal tmux rebalance-panes >/dev/null 2>&1 || true; "+
-			bin+" internal tmux release-dead-agent-panes >/dev/null 2>&1 || true")
+			controllerTriggerHookCommand(bin, controllerTriggerRuntimeExited)+" >/dev/null 2>&1 || true")
+}
+
+// controllerTriggerHookCommand renders the one trigger invocation every
+// generated lifecycle hook uses.
+//
+// The two formats are tmux's own and are expanded by tmux before the shell sees
+// them: `#{socket_path}` is the absolute socket of the server that fired the
+// hook, and `#{session_id}` is the stable `$N` whose environment carries the
+// create-operation lease. Naming them in one function is what keeps a new hook
+// from acquiring a different notion of which server it is talking about.
+func controllerTriggerHookCommand(bin string, reason controllerTriggerReason) string {
+	return bin + " internal tmux converge --socket-path '#{socket_path}'" +
+		" --session '#{session_id}' --reason " + string(reason)
+}
+
+// tmuxRuntimeCreatedHookBody is synchronous on purpose: after-new-window and
+// after-split-window are the lifecycle boundary, and the next implicit read must
+// not race the binding write. MirrorWindow's set-option/rename-window and
+// MirrorPane's set-option do not fire either creation hook, so convergence
+// cannot recursively trigger itself.
+//
+// Synchronous is safe under a burst precisely because the trigger holds an
+// at-most-one lease: the first hook converges and every hook that arrives during
+// that pass records its event and returns immediately instead of queuing behind
+// the registry lock.
+func tmuxRuntimeCreatedHookBody(bin string) string {
+	return "run-shell " + tmuxConfigQuote(
+		controllerTriggerHookCommand(bin, controllerTriggerRuntimeCreated)+" >/dev/null 2>&1")
 }
 
 func tmuxRecentWindowRecordHookLines(bin string) []string {
@@ -2140,9 +2194,18 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 		"set -g pane-border-format " + tmuxConfigQuote(paneBorderFormat),
 	}
 	lines = append(lines, strings.Split(strings.TrimSpace(tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVisibility(binaryPath, decorations, badgeStyle, desktopNotifyMode, liveResourcesMode, hudVisibility, rowOneVisibility, catalog, keymapPresent, effective)), "\n")[1:]...)
+	// The creation hooks are app-config only, and the asymmetry with the two
+	// exit hooks above is deliberate. A convergence caused by a *new* runtime
+	// object mints and rebinds -- it adopts an unmarked window inside a managed
+	// enclosure -- and on the app-owned server every session is projmux's own, so
+	// there is nothing there to adopt by accident. The standalone snippet is
+	// sourced from the operator's `~/.tmux.conf` and therefore runs on every
+	// server they start, where a raw `new-window` in a session projmux does not
+	// own must stay an unmanaged runtime object that only the Runtime diagnostics
+	// surface shows.
 	lines = append(lines,
-		"set-hook -g after-new-window "+tmuxConfigQuote(tmuxBindingConvergenceHookBody(bin)),
-		"set-hook -g after-split-window "+tmuxConfigQuote(tmuxBindingConvergenceHookBody(bin)),
+		"set-hook -g after-new-window "+tmuxConfigQuote(tmuxRuntimeCreatedHookBody(bin)),
+		"set-hook -g after-split-window "+tmuxConfigQuote(tmuxRuntimeCreatedHookBody(bin)),
 	)
 	lines = append(lines,
 		"set-hook -g client-attached "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" welcome --popup >/dev/null 2>&1")),
@@ -2167,16 +2230,6 @@ func tmuxAppConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourcesAndVi
 	)
 	lines = append(lines, statusbarRowFormatLines(bin, true, hudVisibility)...)
 	return withTmuxConfigDigest(strings.Join(lines, "\n") + "\n")
-}
-
-// tmuxBindingConvergenceHookBody is synchronous on purpose: after-new-window
-// and after-split-window are the lifecycle boundary, and the next implicit read
-// must not race the binding write. MirrorWindow's set-option/rename-window and
-// MirrorPane's set-option do not fire either creation hook, so convergence
-// cannot recursively trigger itself.
-func tmuxBindingConvergenceHookBody(bin string) string {
-	return "run-shell " + tmuxConfigQuote(
-		bin+" internal tmux reconcile-bindings --socket-path '#{socket_path}' --session '#{session_id}' >/dev/null 2>&1")
 }
 
 func withTmuxConfigDigest(body string) string {

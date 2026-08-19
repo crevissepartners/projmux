@@ -601,48 +601,6 @@ func TestRunnerNewWindowBuildsDetachedWindowWithNameAndCommand(t *testing.T) {
 	}
 }
 
-func TestRunnerSplitWindowBuildsPaneIDReadWithDirectionCwdAndCommand(t *testing.T) {
-	backend := &recordingBackend{out: []byte("%9\n")}
-	runner := NewRunner(backend)
-
-	paneID, err := runner.SplitWindow(context.Background(), SplitWindowOptions{
-		ReturnPaneID: true,
-		Direction:    SplitRight,
-		Target:       " %7 ",
-		Cwd:          "/repo",
-		Command:      []string{"/bin/bash", "-lc", "exec codex"},
-	})
-	if err != nil {
-		t.Fatalf("SplitWindow returned error: %v", err)
-	}
-
-	wantArgs := []string{"split-window", "-P", "-F", "#{pane_id}", "-h", "-t", "%7", "-c", "/repo", "/bin/bash", "-lc", "exec codex"}
-	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
-		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
-	}
-	if paneID != "%9" {
-		t.Fatalf("SplitWindow paneID = %q, want %%9", paneID)
-	}
-}
-
-func TestRunnerSplitWindowBuildsDetachedReplayStyleArgs(t *testing.T) {
-	backend := &recordingBackend{}
-	runner := NewRunner(backend)
-
-	if _, err := runner.SplitWindow(context.Background(), SplitWindowOptions{
-		Detached: true,
-		Target:   "home:0.0",
-		Cwd:      "/repo",
-	}); err != nil {
-		t.Fatalf("SplitWindow returned error: %v", err)
-	}
-
-	wantArgs := []string{"split-window", "-d", "-t", "home:0.0", "-c", "/repo"}
-	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
-		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
-	}
-}
-
 func TestRunnerSetHookBuildsAppendAndUnsetArgs(t *testing.T) {
 	backend := &recordingBackend{}
 	runner := NewRunner(backend)

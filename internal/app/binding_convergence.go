@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-
-	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 // explicitTmuxTarget is the closed routing input of binding convergence.
@@ -70,42 +67,4 @@ func (r explicitTmuxRunner) Run(ctx context.Context, name string, args ...string
 	routed = append(routed, r.target.flag, r.target.value)
 	routed = append(routed, args...)
 	return r.runner.Run(ctx, name, routed...)
-}
-
-// convergeRuntimeBindings runs the existing mutation-route reconciler against
-// exactly target. Read routes never call this function.
-func (c *tmuxCommand) convergeRuntimeBindings(ctx context.Context, target explicitTmuxTarget) error {
-	if c == nil {
-		return errors.New("binding convergence command is not configured")
-	}
-	// A nil store exists only on narrow legacy unit fixtures that construct a
-	// tmuxCommand literal instead of the production graph. Do not let those
-	// fixtures reach the caller's real state directory. NewTmuxCommand always
-	// supplies the store, and lifecycle convergence tests install an explicit
-	// fake one.
-	if c.resources == nil {
-		return nil
-	}
-	runner := explicitTmuxRunner{runner: c.runner, target: target}
-	sessions := inttmux.NewClient(runner)
-	newReconciler := c.bindingReconciler
-	if newReconciler == nil {
-		newReconciler = newRegistryReconciler
-	}
-	reconciler := newReconciler(runner, sessions)
-	operationID, err := newCreateOperationID()
-	if err != nil {
-		return err
-	}
-	_, err = c.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		return reconciler.reconcile(ctx, working, mutator, operationID)
-	})
-	return err
-}
-
-func (c *tmuxCommand) convergeBindings(ctx context.Context, target explicitTmuxTarget) error {
-	if c.bindingConverger != nil {
-		return c.bindingConverger(ctx, target)
-	}
-	return c.convergeRuntimeBindings(ctx, target)
 }

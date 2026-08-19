@@ -55,7 +55,7 @@ func TestV0101NormalUpdaterHandoffConvergesThroughCandidateApply(t *testing.T) {
 		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", tmuxSequenceTablesOption): "",
 	}}
 	cmd := managedIngestApplyFixture(home, runner)
-	cmd.bindingConverger = func(context.Context, explicitTmuxTarget) error { return nil }
+	cmd.triggerRunner = &recordingTriggering{}
 	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
 		return os.WriteFile(path, data, mode)
 	}
@@ -203,7 +203,7 @@ func TestTmuxApplyMigratesBellOnlyThroughExactSocket(t *testing.T) {
 		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", tmuxSequenceTablesOption): "",
 	}}
 	cmd := managedIngestApplyFixture(home, runner)
-	cmd.bindingConverger = func(context.Context, explicitTmuxTarget) error { return nil }
+	cmd.triggerRunner = &recordingTriggering{}
 	if err := cmd.runApply([]string{"--config", filepath.Join(home, "tmux.conf"), "--socket", socket}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}

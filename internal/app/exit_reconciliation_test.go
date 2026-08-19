@@ -419,8 +419,8 @@ func TestTheHookRouteReconcilesThroughTheSharedSeam(t *testing.T) {
 
 	store := newFakeResourceStore(t)
 	inventory := &stubPaneInventory{uids: exitReconcileFixtureLiveExcept("pan-alpha-codex")}
-	if err := runDeadAgentPaneSweep(context.Background(), inventory, store.store()); err != nil {
-		t.Fatalf("runDeadAgentPaneSweep: %v", err)
+	if _, err := reconcileLifecycle(context.Background(), lifecycleDirtyEvent{}, inventory, store.store()); err != nil {
+		t.Fatalf("reconcileLifecycle: %v", err)
 	}
 	agent, _ := store.registry.Agent("agt-alpha-codex")
 	if agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {

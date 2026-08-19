@@ -69,6 +69,12 @@ type lifecycleReconcileResult struct {
 	transactions int
 	// skipped states why the pass declined to do anything, empty when it ran.
 	skipped string
+	// unobserved separates the one skip a caller must not read as convergence
+	// from the two it may. "Nothing left to reconcile" is a converged answer; an
+	// exact-host observation that could not be taken is not an answer at all, and
+	// a trigger that continued past it would rewrite the registry from a machine
+	// nobody could see.
+	unobserved bool
 }
 
 // changed counts the projections that altered the registry.
@@ -206,6 +212,7 @@ func reconcileLifecycle(
 	live, err := inventory.LivePaneUIDs(ctx)
 	if err != nil {
 		result.skipped = "the exact-host observation could not be taken: " + event.describe()
+		result.unobserved = true
 		return result, nil
 	}
 	registry, err := store.load()
@@ -233,6 +240,7 @@ func reconcileLifecycle(
 		result.projected = nil
 		result.transactions = 0
 		result.skipped = "the locked exact-host observation could not be taken: " + event.describe()
+		result.unobserved = true
 		return result, nil
 	}
 	if err != nil {

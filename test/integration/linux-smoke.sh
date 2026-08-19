@@ -134,20 +134,48 @@ if [[ -s "$fake_tmux_log" ]]; then
   exit 1
 fi
 
-# Generated keybindings enter the saved-default split handler through the
-# hidden post-`ai` retirement bridge. Exercise that built-binary boundary so a
+# Generated keybindings enter the saved-default split through the hidden
+# post-`ai` retirement bridge, and that bridge now produces a canonical create
+# intent rather than a raw split. Exercise the built-binary boundary so a
 # route/catalog refactor cannot leave the popup functional while launch is a
-# no-op. Shell mode keeps the fixture independent of provider binaries.
+# no-op -- and so the bridge cannot quietly regain a runtime-only split.
+#
+# The fixture resolves no managed Project, which is exactly what makes the
+# assertion sharp: the canonical route refuses with exit 2 naming `--project`
+# and issues no tmux command at all. A bridge that still called `split-window`
+# would exit 0 and log one. Shell mode keeps the fixture independent of provider
+# binaries.
 mkdir -p "$XDG_CONFIG_HOME/projmux"
 printf 'shell\n' >"$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
-PROJMUX_FAKE_MUX_LOG="$fake_tmux_log" \
-  PATH="$fake_mux_dir:$PATH" \
-  TMUX="fake" \
-  TMUX_SPLIT_TARGET_PANE="%7" \
-  TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
-  SHELL="/bin/sh" \
-  "$bin" internal agent-pane launch-default down
-smoke_assert_file_contains "$fake_tmux_log" "split-window -v -t %7"
+: >"$fake_tmux_log"
+set +e
+launch_default_output="$(
+  PROJMUX_FAKE_MUX_LOG="$fake_tmux_log" \
+    PATH="$fake_mux_dir:$PATH" \
+    TMUX="fake" \
+    TMUX_SPLIT_TARGET_PANE="%7" \
+    TMUX_SPLIT_CONTEXT_DIR="$smoke_root" \
+    XDG_STATE_HOME="$PROJMUX_SMOKE_WORKDIR/launch-default-state" \
+    SHELL="/bin/sh" \
+    "$bin" internal agent-pane launch-default down 2>"$PROJMUX_SMOKE_WORKDIR/launch-default.err"
+)"
+launch_default_status=$?
+set -e
+if [[ "$launch_default_status" != "2" ]]; then
+  echo "the saved-default split bridge exited $launch_default_status, want the canonical create refusal 2" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/launch-default.err" >&2 || true
+  exit 1
+fi
+if [[ -n "$launch_default_output" ]]; then
+  echo "the saved-default split bridge wrote to stdout: $launch_default_output" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/launch-default.err" "pass --project <ref>"
+if [[ -s "$fake_tmux_log" ]]; then
+  echo "the saved-default split bridge issued tmux commands instead of a canonical create intent:" >&2
+  cat "$fake_tmux_log" >&2
+  exit 1
+fi
 printf 'selective\n' >"$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
 
 "$bin" doctor --json >"$PROJMUX_SMOKE_WORKDIR/doctor.json"

@@ -41,16 +41,6 @@ type NewWindowOptions struct {
 	Command  []string
 }
 
-// SplitWindowOptions describes a `split-window` command.
-type SplitWindowOptions struct {
-	Detached     bool
-	ReturnPaneID bool
-	Direction    string
-	Target       string
-	Cwd          string
-	Command      []string
-}
-
 // SetHookOptions describes a `set-hook` command.
 type SetHookOptions struct {
 	Global  bool
@@ -80,11 +70,6 @@ type ShowOptionOptions struct {
 	Option    string
 }
 
-const (
-	SplitRight = "right"
-	SplitDown  = "down"
-)
-
 // NewSession creates a tmux session and optionally returns the first pane id.
 func NewSession(ctx context.Context, opts NewSessionOptions) (string, error) {
 	return DefaultRunner().NewSession(ctx, opts)
@@ -93,11 +78,6 @@ func NewSession(ctx context.Context, opts NewSessionOptions) (string, error) {
 // NewWindow creates a tmux window.
 func NewWindow(ctx context.Context, opts NewWindowOptions) error {
 	return DefaultRunner().NewWindow(ctx, opts)
-}
-
-// SplitWindow creates a tmux pane split and optionally returns the new pane id.
-func SplitWindow(ctx context.Context, opts SplitWindowOptions) (string, error) {
-	return DefaultRunner().SplitWindow(ctx, opts)
 }
 
 // SetHook installs, appends, or unsets a tmux hook.
@@ -239,29 +219,6 @@ func (r Runner) NewWindow(ctx context.Context, opts NewWindowOptions) error {
 	return r.Run(ctx, args...)
 }
 
-// SplitWindow creates a tmux pane split and optionally returns the new pane id.
-func (r Runner) SplitWindow(ctx context.Context, opts SplitWindowOptions) (string, error) {
-	args := []string{"split-window"}
-	if opts.Detached {
-		args = append(args, "-d")
-	}
-	if opts.ReturnPaneID {
-		args = append(args, "-P", "-F", TmuxFormat("pane_id"))
-	}
-	if flag := splitDirectionFlag(opts.Direction); flag != "" {
-		args = append(args, flag)
-	}
-	args = appendPaneTargetArgs(args, opts.Target)
-	if cwd := strings.TrimSpace(opts.Cwd); cwd != "" {
-		args = append(args, "-c", cwd)
-	}
-	args = append(args, opts.Command...)
-	if opts.ReturnPaneID {
-		return r.ReadTrimmed(ctx, args...)
-	}
-	return "", r.Run(ctx, args...)
-}
-
 // SetHook installs, appends, or unsets a tmux hook.
 func (r Runner) SetHook(ctx context.Context, opts SetHookOptions) error {
 	args := []string{"set-hook"}
@@ -325,17 +282,6 @@ func sortedEnvKeys(env map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func splitDirectionFlag(direction string) string {
-	switch strings.TrimSpace(direction) {
-	case SplitRight, "horizontal", "-h":
-		return "-h"
-	case SplitDown, "vertical", "-v":
-		return "-v"
-	default:
-		return ""
-	}
 }
 
 func hookFlags(opts SetHookOptions) string {

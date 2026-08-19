@@ -940,20 +940,60 @@ Binding reapply and adoption:
   step, or that step would stamp `MissingRuntime` on a Window this same pass
   just reattached.
 
-Managed runtime binding convergence:
+Lifecycle trigger convergence:
 
-- Binding repair has two explicit mutation boundaries. A normal
-  `projmux config apply --socket <name>` first completes config preflight and a
-  successful `source-file`, then runs the existing registry reconciler against
-  that same exact `tmux -L <name>` server. The app-generated config also owns
-  synchronous `after-new-window` and `after-split-window` hooks. Each hook
-  expands tmux's absolute `#{socket_path}` and passes it to hidden internal
-  plumbing that routes every reconciler read and mirror write through
-  `tmux -S <absolute-path>`. Neither path falls back to the default socket or
-  inherited `$TMUX`.
-- The lifecycle hooks are synchronous so a newly bindable Window or Pane has a
+- Every mutation and lifecycle producer reaches **one** entrypoint. A producer
+  states a reason from a closed set (`config-apply`, `runtime-created`,
+  `runtime-exited`) and one exact tmux server; it does not choose which stages
+  run or in what order. `projmux config apply --socket <name>` reaches it after
+  config preflight and a successful `source-file`; the generated config's
+  `after-new-window`, `after-split-window`, `pane-exited`, and `after-kill-pane`
+  hooks reach it through the hidden `internal tmux converge` route, which is the
+  only lifecycle route there is.
+- The two exit hooks are in both generated configs; the two creation hooks are
+  app-config only, and that asymmetry is the adoption boundary rather than an
+  oversight. A convergence caused by a *new* runtime object mints and rebinds, so
+  it adopts an unmarked window inside a managed enclosure. On the app-owned server
+  every session is projmux's own and there is nothing to adopt by accident; the
+  standalone snippet is sourced from the operator's `~/.tmux.conf` and therefore
+  runs on every server they start, where a raw `new-window` in a session projmux
+  does not own has to stay an unmanaged runtime object that only the Runtime
+  diagnostics surface shows.
+- A hook states that something on one exact server may have changed and nothing
+  more. There is no pane id and no generation on a trigger: `after-kill-pane`
+  fires with an empty `#{hook_pane}`, so a field for the pane that died would be
+  a field the most common producer has to invent. Every hook expands tmux's own
+  absolute `#{socket_path}` and `#{session_id}`, so neither the route nor the
+  convergence it drives falls back to the default socket or inherited `$TMUX`.
+- One convergence pass is one locked reconciliation followed by an exit-half
+  reobservation. The reconciliation imports the live sessions it can attribute,
+  reapplies the bindings it can prove, projects the lifecycle of every managed
+  Pane whose runtime object died, and records why a Window or Pane lost one --
+  all inside one registry transaction against one observation taken inside the
+  lock. The projection has to run *after* the binding steps of the same pass:
+  those steps mirror the uids the observation is diffed against, so an exit stage
+  placed first would file an unknown termination against every Pane the pass was
+  on its way to binding.
+- At most one worker converges one exact server at a time, held as an advisory
+  whole-file lease under `<state>/projmux/controller/`. Not because two would
+  corrupt anything -- the registry's own lock prevents that -- but because both
+  pane-exit hooks fire on every pane exit in every session, and a fleet of
+  workers contending for one registry lock is how a burst becomes lock-attempt
+  exhaustion instead of a convergence. A producer that loses the lease records
+  its dirty event and exits successfully; the holder has not acknowledged that
+  event yet, so it runs a further pass for it. The lease is `flock` rather than a
+  timestamped lockfile so a worker that is killed or panics leaves nothing to
+  break.
+- The pass repeats until one of them writes nothing. That final no-op pass is the
+  reobservation: a write that landed and did not converge -- a second client
+  racing the same repair, a hook that rewrote an option back -- is exactly what a
+  report claiming success must not hide. The loop is bounded; stopping early is
+  safe in a way a lost event is not, because convergence is derived from the
+  machine rather than from the event log.
+- The creation hooks stay synchronous so a newly bindable Window or Pane has a
   registry binding before the creating tmux command returns and before the next
-  implicit read can run. Mirror writes use `set-option` and `rename-window`, not
+  implicit read can run; the exit hooks stay backgrounded so closing a pane never
+  waits on convergence. Mirror writes use `set-option` and `rename-window`, not
   creation commands, so they cannot recursively fire either creation hook.
 - A canonical resource create already owns the registry transaction while it
   issues `new-window` or `split-window`. It therefore installs a private,
@@ -988,6 +1028,40 @@ Managed runtime binding convergence:
   registry schema. It does not add persistent Project scope, matching by name,
   cwd, or a new ordinal heuristic, uid merge/reassignment, pruning, or forced
   adoption. The Project scope remains derived from the active binding on read.
+- There is no daemon and no auto-start. A trigger never resumes an Agent, never
+  materializes an offline resource, and never adopts or deletes an unmanaged
+  runtime object. Read verbs start no controller at all: `get`, `describe`, and
+  implicit active-target resolution neither converge nor open a registry
+  transaction, and they leave no controller event or lease behind.
+
+Projmux split UI:
+
+- The default `ai-split-right/down` binding, the `Alt-7` provider picker, the
+  resume picker, and the provider and shell direct actions all produce a
+  canonical create intent -- which provider, which side, and for a resume which
+  conversation -- and hand it to the same `create` route a typed command reaches.
+  The provider and shell branches render the exact argv an operator would type,
+  so a UI action and a typed command cannot disagree about what `--placement
+  down` means.
+- Only the materializer runs `split-window`. Before this convergence the saved
+  default and both pickers descended into a legacy split that called tmux
+  directly, so a pane opened from the UI was a runtime object the Registry had
+  never heard of: no uid, no owner Window, no Agent row, and a Main UI row only
+  once something else happened to reconcile. A raw unmanaged split now exists
+  only where the operator makes one -- typing `tmux split-window`, or tmux's own
+  pane-context-menu entries.
+- The saved split mode is the one piece of hidden state the split UI reads, which
+  is why the canonical `create agent` route refuses to read it: a canonical route
+  whose result depends on state the operator cannot see in the argv is not
+  canonical. A saved mode that names no launch opens the picker; a saved provider
+  that Settings has since disabled fails clearly, before the intent exists, with
+  zero Registry and zero tmux mutations.
+- The resume picker joins a conversation the machine already has by reaching the
+  same Agent allocation with the provider's *resume* argv substituted for its
+  fresh-start argv. It is not `agent resume`: that verb rebinds an existing
+  Registry Agent and must never fall through to a fresh conversation, while this
+  interactive path may, because the operator picked a row and has already been
+  told it could not be resumed.
 
 Command-scoped controller kernel:
 

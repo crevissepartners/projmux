@@ -335,3 +335,135 @@ func (k *resourceControllerKernel) loadRegistry() (coremetadata.Registry, error)
 	}
 	return load()
 }
+
+// The trigger half of the kernel: one producer, one sequence, one report.
+//
+// Everything above this point is the kernel's vocabulary -- observe, plan,
+// authorize, guard, reobserve. What was missing is a single place that runs them
+// in the contractual order, because the order lived inside one command's
+// reporting body and every other producer of the same drift had to reimplement
+// some of it. `internal tmux reconcile-bindings` ran the Registry half and wrote
+// through the reconciler's own mirror; the pane-exit sweep ran the lifecycle
+// projection alone; `config apply` ran the first and not the second. Three
+// producers, three sequences, one machine.
+//
+// converge below is that sequence, and it is the only body that mutates on a
+// trigger's behalf. A producer supplies a target and a reason; it does not get
+// to choose which stages run or in what order.
+
+// controllerRun is what one convergence pass did, in enough detail for a report
+// to be rendered from it without re-deriving anything.
+type controllerRun struct {
+	graph  resourcegraph.Graph
+	socket string
+	// plan is the plan as rebuilt and committed under the Registry lock. On a
+	// failure before the lock it is the zero plan, which is what makes "nothing
+	// was planned" distinguishable from "nothing was found".
+	plan       resourceReconcilePlan
+	authorized controller.Plan
+	// completed names the stages that finished, in order.
+	completed []string
+	// registryChanged reports whether the Registry commit wrote bytes.
+	registryChanged bool
+	// executed counts the authorized tmux writes that ran.
+	executed int
+	// reobserved is the post-execute replan. It is nil when the pass changed
+	// nothing, because a reobservation could then only restate the observation
+	// the pass already took.
+	reobserved *controllerReobservation
+}
+
+// changed reports whether this pass wrote anything at all.
+func (r controllerRun) changed() bool {
+	return r.registryChanged || r.executed > 0
+}
+
+// controllerRunError tags a convergence failure with the stage that produced it
+// and carries the partial run, so a caller can report exactly how far the
+// sequence got instead of guessing from the error text.
+type controllerRunError struct {
+	stage string
+	err   error
+	run   controllerRun
+}
+
+func (e *controllerRunError) Error() string {
+	return "controller convergence failed at " + e.stage + ": " + e.err.Error()
+}
+
+func (e *controllerRunError) Unwrap() error { return e.err }
+
+// converge runs the six contractual stages against one exact server.
+//
+// The observation is taken once, before the Registry lock, and the plan is
+// authorized against it twice: once as observed and once as rebuilt under the
+// lock. Re-observing between those two would produce a plan whose guards
+// describe a machine nobody looked at, and the guards are the only reason a
+// recycled handle cannot redirect a write.
+func (k *resourceControllerKernel) converge(ctx context.Context) (controllerRun, error) {
+	if k == nil {
+		return controllerRun{}, errors.New("resource controller kernel is not configured")
+	}
+	if k.store == nil || k.store.updateConvergent == nil {
+		return controllerRun{}, errors.New("resource controller write store is not configured")
+	}
+	var run controllerRun
+	snapshot, err := k.loadRegistry()
+	if err != nil {
+		return run, &controllerRunError{stage: "registry read", err: MapMetadataError(err), run: run}
+	}
+	run.graph = resourcegraph.Resolve(snapshot, k.observe(ctx))
+	run.socket, _ = k.socketPath(ctx)
+	run.completed = []string{"exact socket observed: " + run.graph.Transport.String()}
+
+	failedStage := ""
+	_, registryChanged, updateErr := k.store.updateConvergent(func(working *coremetadata.Registry) error {
+		currentPlan, err := k.planner.build(ctx, working.Clone())
+		if err != nil {
+			failedStage = "locked plan"
+			return err
+		}
+		run.authorized = k.authorize(run.graph, &currentPlan)
+		run.plan = currentPlan
+		run.completed = append(run.completed, "plan rechecked under Registry lock")
+		*working = run.plan.registry.Clone()
+		return nil
+	})
+	if updateErr != nil {
+		if failedStage == "" {
+			failedStage = "registry commit"
+		}
+		return run, &controllerRunError{stage: failedStage, err: MapMetadataError(updateErr), run: run}
+	}
+	run.registryChanged = registryChanged
+	registryStage := "Registry commit"
+	if !registryChanged {
+		registryStage += " (no-op)"
+	}
+	run.completed = append(run.completed, registryStage)
+	for _, item := range run.plan.items {
+		if item.registry {
+			run.completed = append(run.completed, item.Key)
+		}
+	}
+
+	writes := run.authorized.Writes()
+	if err := k.guardPlan(ctx, run.socket, writes); err != nil {
+		return run, &controllerRunError{stage: "tmux prevalidation", err: err, run: run}
+	}
+	run.completed = append(run.completed, "tmux targets prevalidated")
+	routed := explicitTmuxRunner{runner: k.runner, target: k.target}
+	for _, write := range writes {
+		if _, err := routed.Run(ctx, "tmux", write.Args...); err != nil {
+			return run, &controllerRunError{stage: write.Key, err: err, run: run}
+		}
+		run.executed++
+		run.completed = append(run.completed, write.Key)
+	}
+	if run.changed() {
+		reobserved := k.reobserve(ctx)
+		run.reobserved = &reobserved
+		run.completed = append(run.completed, controllerReobserveStage(reobserved))
+	}
+	return run, nil
+}

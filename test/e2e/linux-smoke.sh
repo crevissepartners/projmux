@@ -2341,10 +2341,89 @@ binding_tmux set-option -wq -t "$lifecycle_window" @projmux_window_uid "$lifecyc
 # fake tmux call log for zero set-option/rename calls.
 cp "$binding_registry" "$binding_root/registry.before-repeat-hook"
 binding_registry_stat="$(stat -c '%i:%s:%y' "$binding_registry")"
-binding_pmx internal tmux reconcile-bindings --socket-path "$binding_socket_path" --session "$binding_session"
+binding_pmx internal tmux converge --socket-path "$binding_socket_path" --session "$binding_session" \
+  --reason runtime-created 2>"$binding_root/converge-repeat.err"
+smoke_assert_file_contains "$binding_root/converge-repeat.err" "converged=true"
 cmp "$binding_root/registry.before-repeat-hook" "$binding_registry"
 if [[ "$(stat -c '%i:%s:%y' "$binding_registry")" != "$binding_registry_stat" ]]; then
   echo "repeat lifecycle convergence rewrote byte-identical registry content" >&2
+  exit 1
+fi
+
+# A hook burst is the load the lifecycle triggers are actually built for: both
+# pane-exit hooks fire on every pane exit in every session and both creation
+# hooks fire on every window and split, so many producers can arrive while one
+# convergence is mid-flight. Every one of them must exit 0, at most one may
+# converge, and the registry must end byte-identical to the converged state --
+# with no `acquire lock: exhausted` anywhere, which is the failure mode a fleet
+# of concurrent workers contending for the one registry lock produces.
+cp "$binding_registry" "$binding_root/registry.before-burst"
+binding_burst_pids=()
+for binding_burst_index in 1 2 3 4 5 6 7 8; do
+  binding_pmx internal tmux converge --socket-path "$binding_socket_path" \
+    --session "$binding_session" --reason runtime-exited \
+    >"$binding_root/burst-$binding_burst_index.out" 2>"$binding_root/burst-$binding_burst_index.err" &
+  binding_burst_pids+=("$!")
+done
+binding_burst_failed=0
+for binding_burst_pid in "${binding_burst_pids[@]}"; do
+  if ! wait "$binding_burst_pid"; then
+    binding_burst_failed=1
+  fi
+done
+if [[ "$binding_burst_failed" != "0" ]]; then
+  echo "a hook burst producer exited non-zero" >&2
+  cat "$binding_root"/burst-*.err >&2 || true
+  exit 1
+fi
+binding_burst_deferred=0
+binding_burst_converged=0
+for binding_burst_index in 1 2 3 4 5 6 7 8; do
+  if [[ -s "$binding_root/burst-$binding_burst_index.out" ]]; then
+    echo "burst producer $binding_burst_index wrote to stdout" >&2
+    cat "$binding_root/burst-$binding_burst_index.out" >&2
+    exit 1
+  fi
+  if grep -q "exhausted" "$binding_root/burst-$binding_burst_index.err"; then
+    echo "a hook burst exhausted the registry lock" >&2
+    cat "$binding_root/burst-$binding_burst_index.err" >&2
+    exit 1
+  fi
+  if grep -q "another controller worker holds" "$binding_root/burst-$binding_burst_index.err"; then
+    binding_burst_deferred=$((binding_burst_deferred + 1))
+  fi
+  if grep -q "converged=true" "$binding_root/burst-$binding_burst_index.err"; then
+    binding_burst_converged=$((binding_burst_converged + 1))
+  fi
+done
+if [[ "$binding_burst_deferred" == "0" ]]; then
+  echo "a burst of 8 producers coalesced none of them onto one worker" >&2
+  cat "$binding_root"/burst-*.err >&2 || true
+  exit 1
+fi
+if [[ "$binding_burst_converged" == "0" ]]; then
+  echo "a burst of 8 producers reported no convergence" >&2
+  cat "$binding_root"/burst-*.err >&2 || true
+  exit 1
+fi
+if ! cmp -s "$binding_root/registry.before-burst" "$binding_registry"; then
+  echo "a hook burst over an already-converged server rewrote the registry" >&2
+  exit 1
+fi
+echo ">> controller trigger burst: 8 producers, $binding_burst_deferred coalesced, $binding_burst_converged converged"
+
+# A read verb must not start a controller. `get` is the widest read the UI runs,
+# and after it the registry is byte-identical and no controller event or lease
+# exists for this server.
+rm -rf "$binding_root/state/projmux/controller"
+binding_pmx get panes -A -o uid >"$binding_root/read-isolation.out"
+if ! cmp -s "$binding_root/registry.before-burst" "$binding_registry"; then
+  echo "a read verb mutated the registry" >&2
+  exit 1
+fi
+if [[ -d "$binding_root/state/projmux/controller" ]]; then
+  echo "a read verb started a controller worker" >&2
+  ls -la "$binding_root/state/projmux/controller" >&2
   exit 1
 fi
 
@@ -2869,6 +2948,26 @@ fi
 # permits the exact Registry-only Window cascade. A byte-identical dry-run and
 # the live foreign socket prove the destructive exception stays narrow.
 delete_tmux kill-server
+# Killing the server fires both pane-exit hooks for every pane it held, and the
+# generated hooks background their convergence. Those convergences are the last
+# legitimate writers of this registry, so the byte-identity check below has to
+# start from a settled file rather than from whatever the file held mid-flight.
+# Stability is the honest signal: two identical reads a beat apart mean no worker
+# is still landing a pass.
+delete_settled=0
+cp "$delete_registry" "$delete_root/registry.settle-probe"
+for _ in {1..100}; do
+  sleep 0.05
+  if cmp -s "$delete_root/registry.settle-probe" "$delete_registry"; then
+    delete_settled=1
+    break
+  fi
+  cp "$delete_registry" "$delete_root/registry.settle-probe"
+done
+if [[ "$delete_settled" != "1" ]]; then
+  echo "hook-driven convergence never settled after kill-server" >&2
+  exit 1
+fi
 cp "$delete_registry" "$delete_root/registry.before-no-server-dry-run"
 delete_pmx_delete window "uid:$delete_sibling_uid" --project "uid:$delete_alpha_project_uid" --dry-run >"$delete_root/no-server-dry-run.out"
 cmp "$delete_root/registry.before-no-server-dry-run" "$delete_registry"
@@ -4771,11 +4870,34 @@ if [[ -z "$exitrec_project_uid" ]]; then
   echo "exit reconciliation e2e import left the Project uid empty" >&2
   exit 1
 fi
-if ! exitrec_tmux show-hooks -g | grep -q "release-dead-agent-panes"; then
-  echo "the generated config installed no pane-exit hook, so hook-driven convergence cannot be observed" >&2
+if ! exitrec_tmux show-hooks -g | grep -q "internal tmux converge --socket-path"; then
+  echo "the generated config installed no controller trigger, so hook-driven convergence cannot be observed" >&2
   exitrec_tmux show-hooks -g >&2
   exit 1
 fi
+# All four lifecycle hooks reach the one entrypoint, and none of them retains a
+# route of its own. This is the trigger inventory as the live server holds it,
+# which is a stronger statement than the same assertion over rendered text: it
+# also proves `apply` sourced them.
+# `pane-exited` is a window-scoped hook in current tmux, so `show-hooks -g` does
+# not list it while it lists `after-kill-pane`. Reading both tables is what makes
+# this the whole live trigger inventory rather than the half of it that happens to
+# be server-global.
+exitrec_hooks="$(exitrec_tmux show-hooks -g; exitrec_tmux show-hooks -gw)"
+for exitrec_hook in pane-exited after-kill-pane after-new-window after-split-window; do
+  if ! printf '%s\n' "$exitrec_hooks" | grep -q "^$exitrec_hook.*internal tmux converge --socket-path"; then
+    echo "hook $exitrec_hook does not reach the controller entrypoint" >&2
+    printf '%s\n' "$exitrec_hooks" >&2
+    exit 1
+  fi
+done
+for exitrec_retired in release-dead-agent-panes reconcile-bindings; do
+  if printf '%s\n' "$exitrec_hooks" | grep -q "$exitrec_retired"; then
+    echo "a live hook still invokes the retired $exitrec_retired route" >&2
+    printf '%s\n' "$exitrec_hooks" >&2
+    exit 1
+  fi
+done
 
 # Read helpers. One document per observation, parsed out of a file, so a failed
 # read is a visible empty document rather than a swallowed pipeline status.

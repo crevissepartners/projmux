@@ -74,7 +74,7 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 // server on the command line.
 //
 // The guard below is about the mutation contract, not about the flag: the
-// hidden `reconcile-bindings` spelling stays lifecycle plumbing, and no route
+// hidden `converge` spelling stays lifecycle plumbing, and no route
 // may pick up an exact-server *repair* surface by accident. `reconcile` owns
 // that repair. `get` and `runtime` are here for the read half -- the Runtime
 // diagnostics escape hatch observes one exact server and writes nothing -- and
@@ -94,11 +94,11 @@ func TestManagedBindingConvergenceStaysHiddenBehindPublicResourceRepair(t *testi
 
 	walkRoutes(Routes(), func(path []string, route Route) {
 		publicRepair := len(path) > 0 && slices.Contains(exactTransportRoots, path[0])
-		if route.Name == "reconcile-bindings" || slices.Contains(route.Usage, "--socket-path") && !publicRepair {
+		if route.Name == "converge" || slices.Contains(route.Usage, "--socket-path") && !publicRepair {
 			t.Fatalf("binding convergence leaked into command catalog at %q: %#v", strings.Join(path, " "), route)
 		}
 		for _, usage := range route.Usage {
-			if strings.Contains(usage, "reconcile-bindings") || strings.Contains(usage, "--socket-path") && !publicRepair {
+			if strings.Contains(usage, "converge") || strings.Contains(usage, "--socket-path") && !publicRepair {
 				t.Fatalf("binding convergence leaked into command catalog usage at %q: %q", strings.Join(path, " "), usage)
 			}
 		}

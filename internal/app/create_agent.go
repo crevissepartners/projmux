@@ -65,6 +65,18 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	if err != nil {
 		return err
 	}
+	return c.createAgent(spelling, provider, flags, shape, stdout, stderr)
+}
+
+// createAgent is the shared body of every canonical Agent create.
+//
+// It is separate from the argv half because two producers reach it: the public
+// `create agent` spellings above, and the Projmux split UI, whose resume
+// selection is the same allocation and the same materialization with one
+// substitution -- the provider's resume argv instead of its fresh-start argv.
+// Sharing the body is what keeps the split UI from becoming a second definition
+// of what creating an Agent means.
+func (c *createCommand) createAgent(spelling, provider string, flags resourceCreateFlags, shape resourceCreateShape, stdout, stderr io.Writer) error {
 	if c.agents == nil {
 		return errors.New("create agent: the provider launcher is not configured")
 	}
@@ -113,7 +125,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 		// The launch is constructed before anything is allocated. A missing
 		// provider binary is the most likely failure on this route, and it has
 		// to land while the operation still owns nothing.
-		title, launchArgv, err := c.agents.PlanAgentLaunch(provider, workspace, flags.payload)
+		title, launchArgv, err := c.planAgentPaneLaunch(provider, workspace, flags)
 		if err != nil {
 			return err
 		}
@@ -206,7 +218,7 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 			// the statusbar, the attention tracker, and the notification
 			// pipeline. They are applied after the pane exists and before the
 			// result is reported.
-			c.agents.BindManagedAgentPane(paneID, provider, workspace.CWD, title)
+			c.bindAgentPane(paneID, provider, workspace.CWD, title, flags)
 			// Canonical Agent topic authority starts empty. The shared legacy
 			// binder seeds its display title as a compatibility topic, so remove
 			// that seed through the transaction's exact routed runner before the
@@ -299,4 +311,38 @@ func (c *createCommand) resolveCreateProvider(spelling, shortcutProvider string,
 			spelling, strings.TrimSpace(flags.provider)))
 	}
 	return shortcutProvider, nil
+}
+
+// planAgentPaneLaunch builds the provider launch of one canonical Agent create.
+//
+// The two branches are two different launches, not two spellings of one. A fresh
+// create appends the operator's payload as the provider's initial task; a resume
+// joins a conversation the provider already has and takes no payload at all --
+// the conversation id is the provider's own resume option, not an operand. There
+// is deliberately no fallback from the second to the first: a resume that
+// silently started a new conversation would lose the context the operator picked
+// the row for.
+func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetadata.AgentWorkspace, flags resourceCreateFlags) (string, []string, error) {
+	conversation := strings.TrimSpace(flags.resumeConversation)
+	if conversation == "" {
+		return c.agents.PlanAgentLaunch(provider, workspace, flags.payload)
+	}
+	if c.resumes == nil {
+		return "", nil, errors.New("create agent: the provider resume launcher is not configured")
+	}
+	return c.resumes.PlanAgentResume(provider, workspace, conversation)
+}
+
+// bindAgentPane applies the managed-agent pane options.
+//
+// A resumed Pane additionally carries the conversation id in the live routing
+// index from the moment the pane exists, which is what lets the provider's first
+// hook event be attributed to this pane instead of having to wait for the
+// provider to report the conversation itself.
+func (c *createCommand) bindAgentPane(paneID, provider, contextDir, title string, flags resourceCreateFlags) {
+	if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" && c.resumes != nil {
+		c.resumes.BindResumedAgentPane(paneID, provider, contextDir, title, conversation)
+		return
+	}
+	c.agents.BindManagedAgentPane(paneID, provider, contextDir, title)
 }

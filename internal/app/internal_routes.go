@@ -109,7 +109,7 @@ func (c *internalCommand) runAgentPane(args []string, stdout, stderr io.Writer) 
 	}
 	switch args[0] {
 	case "launch-default":
-		return forwardRawArgv(c.ai, "internal agent-pane launch-default", "ai", []string{"split"}, args[1:], stdout, stderr)
+		return forwardRawArgv(c.ai, "internal agent-pane launch-default", "ai", []string{"launch-default"}, args[1:], stdout, stderr)
 	case "picker":
 		return forwardRawArgv(c.ai, "internal agent-pane picker", "ai", []string{"picker"}, args[1:], stdout, stderr)
 	default:
