@@ -20,7 +20,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -377,7 +376,12 @@ func (c *tmuxCommand) runReleaseDeadAgentPanes(args []string, stderr io.Writer) 
 	if store == nil {
 		store = newResourceStore()
 	}
-	return runDeadAgentPaneSweep(context.Background(), intmetadata.NewMirror(c.runner), store)
+	// A zero target routes the observation through the inherited client, which is
+	// the absolute socket in $TMUX. That is what this hook has always done and is
+	// the exact-host rule for an in-tmux invocation; naming the seam here keeps it
+	// from quietly acquiring a default socket later.
+	return runDeadAgentPaneSweep(context.Background(),
+		lifecycleInventory(c.runner, explicitTmuxTarget{}), store)
 }
 
 // runReconcileBindings is the hidden generated-lifecycle mutation boundary.

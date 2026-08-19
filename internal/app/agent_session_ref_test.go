@@ -570,8 +570,8 @@ func TestGetAgentsSurfacesTheConversationPointer(t *testing.T) {
 		t.Fatalf("get agents: %v (stderr=%s)", err, stderr)
 	}
 	// The conversation pointer is the SESSION column of the columnar read.
-	const want = "DISPLAY NAME  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION               AGE\n" +
-		"codex         codex  live    unknown      alpha    main    codex:codex-thread-1  2d\n"
+	const want = "DISPLAY NAME  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION               TERMINATION  AGE\n" +
+		"codex         codex  live    unknown      alpha    main    codex:codex-thread-1               2d\n"
 	if stdout != want {
 		t.Fatalf("get agents = %q, want %q", stdout, want)
 	}
@@ -584,7 +584,7 @@ func TestGetAgentsSurfacesTheConversationPointer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get agents --project beta: %v", err)
 	}
-	if beta != "DISPLAY NAME  NAME   STATUS   INTERACTION  PROJECT  WINDOW  SESSION  AGE\ncodex         codex  offline  unknown      beta     main             2d\n" {
+	if beta != "DISPLAY NAME  NAME   STATUS   INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE\ncodex         codex  offline  unknown      beta     main                          2d\n" {
 		t.Fatalf("an Agent with no session ref rendered %q", beta)
 	}
 

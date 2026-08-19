@@ -125,18 +125,18 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 		},
 		{
 			kind: "panes",
-			want: "DISPLAY NAME  NAME        STATUS   PROJECT  WINDOW  AGENT  AGE\n" +
-				"zsh           zsh         live     alpha    main           2d\n" +
-				"log           log         live     alpha    main           2d\n" +
-				"codex-pane    codex-pane  live     alpha    main    codex  2d\n" +
-				"zsh           zsh         live     alpha    review         2d\n" +
-				"zsh           zsh         offline  beta     main           2d\n",
+			want: "DISPLAY NAME  NAME        STATUS   PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+				"zsh           zsh         live     alpha    main                        2d\n" +
+				"log           log         live     alpha    main                        2d\n" +
+				"codex-pane    codex-pane  live     alpha    main    codex               2d\n" +
+				"zsh           zsh         live     alpha    review                      2d\n" +
+				"zsh           zsh         offline  beta     main                        2d\n",
 		},
 		{
 			kind: "agents",
-			want: "DISPLAY NAME  NAME   STATUS   INTERACTION  PROJECT  WINDOW  SESSION               AGE\n" +
-				"codex         codex  live     unknown      alpha    main    codex:codex-thread-1  2d\n" +
-				"codex         codex  offline  unknown      beta     main                          2d\n",
+			want: "DISPLAY NAME  NAME   STATUS   INTERACTION  PROJECT  WINDOW  SESSION               TERMINATION  AGE\n" +
+				"codex         codex  live     unknown      alpha    main    codex:codex-thread-1               2d\n" +
+				"codex         codex  offline  unknown      beta     main                                       2d\n",
 		},
 	} {
 		t.Run(test.kind, func(t *testing.T) {
@@ -231,8 +231,8 @@ func TestResourceTableColumnsAreTheCanonicalContract(t *testing.T) {
 	}{
 		{coremetadata.KindProject, []string{"DISPLAY NAME", "NAME", "STATUS", "AGE"}},
 		{coremetadata.KindWindow, []string{"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "AGE"}},
-		{coremetadata.KindPane, []string{"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "AGE"}},
-		{coremetadata.KindAgent, []string{"DISPLAY NAME", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "AGE"}},
+		{coremetadata.KindPane, []string{"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "TERMINATION", "AGE"}},
+		{coremetadata.KindAgent, []string{"DISPLAY NAME", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "TERMINATION", "AGE"}},
 	} {
 		got := resourceTableColumns[test.kind]
 		if strings.Join(got, ",") != strings.Join(test.want, ",") {
@@ -315,7 +315,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p3", Name: "빌드로그", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "알파", Window: "review"}},
 			},
-			want: "DISPLAY NAME  NAME      STATUS   PROJECT  WINDOW  AGENT  AGE\n" +
+			want: "DISPLAY NAME  NAME      STATUS   PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
 				"쉘            쉘        live     알파     메인\n" +
 				"log           log       offline  alpha    main\n" +
 				"빌드로그      빌드로그  live     알파     review\n",
@@ -341,7 +341,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p2", Name: "zsh", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "DISPLAY NAME  NAME    STATUS   PROJECT  WINDOW  AGENT  AGE\n" +
+			want: "DISPLAY NAME  NAME    STATUS   PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
 				"orphan        orphan  offline\n" +
 				"zsh           zsh     live     alpha    main\n",
 		},
@@ -358,7 +358,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p2", Name: "zsh", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "DISPLAY NAME  NAME        STATUS  PROJECT  WINDOW  AGENT  AGE\n" +
+			want: "DISPLAY NAME  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
 				"codex-pane    codex-pane  live    alpha    main    codex\n" +
 				"zsh           zsh         live    alpha    main\n",
 		},
@@ -369,7 +369,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindAgent, UID: "a1", Name: "codex", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "DISPLAY NAME  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION  AGE\n" +
+			want: "DISPLAY NAME  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE\n" +
 				"codex         codex  live    unknown      alpha    main\n",
 		},
 		{
@@ -512,11 +512,11 @@ func TestGetListWithHangulNamesStaysAligned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get panes error = %v (stderr %q)", err, stderr)
 	}
-	const want = "DISPLAY NAME  NAME        STATUS  PROJECT  WINDOW  AGENT  AGE\n" +
-		"쉘 화면       쉘          live    알파     메인           2d\n" +
-		"log           log         live    알파     메인           2d\n" +
-		"codex-pane    codex-pane  live    알파     메인    codex  2d\n" +
-		"zsh           zsh         live    알파     review         2d\n"
+	const want = "DISPLAY NAME  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+		"쉘 화면       쉘          live    알파     메인                        2d\n" +
+		"log           log         live    알파     메인                        2d\n" +
+		"codex-pane    codex-pane  live    알파     메인    codex               2d\n" +
+		"zsh           zsh         live    알파     review                      2d\n"
 	if stdout != want {
 		t.Fatalf("get panes stdout =\n%q\nwant\n%q", stdout, want)
 	}

@@ -202,9 +202,14 @@ Root lifecycle:
 Agent lifecycle:
 
 - The phase set is exactly `Pending`, `Running`, `Offline`, `Failed`. A normal
-  managed-Pane exit or an explicit pane deletion resolves to `Offline`; a launch
-  failure or an abnormal exit resolves to `Failed`. The Agent survives its Pane
-  as a resumable resource.
+  managed-Pane exit, an explicit pane deletion, and a disappearance no receipt
+  explains all resolve to `Offline`; a launch failure or an abnormal exit
+  resolves to `Failed`. The Agent survives its Pane as a resumable resource.
+- `Offline` for an unexplained disappearance rather than `Failed` is a deliberate
+  asymmetry. The phase is what an operator reads to decide whether to resume, and
+  an unproven `Failed` is worse for that decision than an honest `Offline`; the
+  fact that the answer is unproven is carried by `status.lastTermination`, where
+  it can be read without being mistaken for a diagnosis.
 
 Termination evidence transport:
 
@@ -261,8 +266,7 @@ Termination evidence transport:
   withdraws the receipt again, scoped by the operation id so it can only remove
   what it wrote; a partial delete that really did kill something keeps the
   evidence that explains it.
-- Nothing here consumes a receipt. Turning evidence into an Agent phase or a
-  Pane release is a separate concern with its own review.
+- Exit reconciliation is what consumes a receipt; see below.
 - The supervisor resolves its state paths from the pane's own inherited
   environment, which is the tmux **server's** environment rather than the
   environment of the CLI call that created the pane. That is the correct
@@ -275,15 +279,98 @@ Termination evidence transport:
   behaves exactly as it did before supervision existed. An absent receipt is the
   input that resolves to `unknown`; it is never read as a normal exit.
 - A managed process that dies before the create transaction that launched it
-  commits is a real edge the shipped dead-managed-Pane sweep already owns: that
-  sweep runs inside the next mutation's transaction and can retire the Pane
-  before the supervisor's receipt arrives. The receipt is then refused as stale,
-  which is the correct outcome -- the Pane it describes is gone -- and the Agent
-  is left Offline by the sweep rather than by invented evidence.
+  commits is a real edge exit reconciliation owns: the reconciliation runs inside
+  the next mutation's transaction and can retire the Pane before the supervisor's
+  receipt arrives. The receipt is then refused as stale, which is the correct
+  outcome -- the Pane it describes is gone -- and the Agent converges on
+  `Offline` with `unknown` evidence rather than on invented evidence.
 - A Pane **adopted** from a runtime object created for another reason -- the
   first pane a `new-session` brings with it -- carries no generation until it is
   relaunched. Adoption is not supervision: the process was already running, so
   there is nothing to have launched it with.
+
+Exit reconciliation and lifecycle projection:
+
+- A **lifecycle dirty event** is one exact-host statement that a managed runtime
+  object's lifecycle may have changed: the tmux server to re-observe plus, when
+  the producer can honestly say, the Pane uid and the activation generation. Both
+  narrowings are optional and neither is a claim. The widest legal event -- this
+  host, no pane, no generation -- is what the pane-exit hooks produce, because
+  tmux fires `after-kill-pane` with an empty `#{hook_pane}` and a producer that
+  pretended to know the pane would be inventing the one field that matters.
+- The event is advisory. The reconciliation re-observes the **final** snapshot of
+  that same exact host and re-reads the registry, so a stale event, a duplicate
+  event, and an event for a pane that has since come back all converge on the
+  same state as no event at all.
+- The observation is the same mirrored-uid read (`list-panes -a -F
+  '#{@projmux_pane_uid}...'`) the reconciler and the active-target fallback
+  already share, routed through the event's exact target: an explicit `-L/-S`
+  addresses that server only, and a zero target routes through the inherited
+  client, which is the absolute socket in `$TMUX`. There is no default-socket
+  fallback -- a reconciliation that summed two servers could never report a death
+  at all, and a sibling server carrying the same `%N` handles or the same
+  mirrored uid receives zero calls.
+- The transition is derived from the receipt the Pane already stores. `intentional`
+  and `normal` land the Agent in `Offline`, `abnormal` lands it in `Failed`, and a
+  Pane with no receipt for its current generation lands it in `Offline` with
+  `unknown`. Each of the four gets its own `status.reason` clause, because the
+  phase collapses four kinds of proof into two values and the reason is what
+  separates them again.
+- An absence with no receipt **records** an `unknown` one, with
+  `source: reconcile`. That is what makes the reconciliation idempotent: a second
+  pass finds the same document already stored, recording it is a no-op, and the
+  registry is left byte-identical. An absence with no stored value would be
+  re-projected on every pane exit in every session, forever.
+- `source: reconcile` and `classification: unknown` may only appear together.
+  Unknown is a statement that nothing was observed, and letting a supervisor that
+  read a wait status or a control action that stated its intent file one would let
+  either of them erase evidence with it.
+- An Agent's **current** managed Pane is released: the Agent takes the phase the
+  evidence implies, drops `status.paneRef`, keeps `status.sessionRef`, and keeps
+  the receipt mirrored onto itself -- which is the only place that evidence can
+  survive, because releasing the Pane deletes the Pane resource. An Agent-owned
+  Pane the Agent no longer binds, which is what a resume leaves behind, receives
+  the evidence and nothing else.
+- A **shell** Pane's runtime loss never deletes the logical Pane. Runtime loss is
+  not a statement about desired topology: the resource keeps its existence, gains
+  a `MissingRuntime` condition, and gains the evidence, so it reads as offline for
+  a stated reason. Only a canonical `delete` removes the desired Pane.
+- The closed Agent transition table stays the authority. An Agent that may not
+  reach the implied phase keeps its phase, its `paneRef`, and its managed Pane;
+  only the evidence is recorded. A refused transition is not a reason to discard
+  what was observed.
+- Cost is measured in transactions. The projection set is computed against a
+  read-only snapshot and the write lock is taken only when something is
+  outstanding -- unrecorded evidence, or an Agent still bound to a dead Pane that
+  can still move -- so a reconciled disappearance costs zero transactions on every
+  later pass. Inside the lock the host is re-observed and the set recomputed,
+  because the registry may have gained a freshly created Agent while the event
+  waited, and applying the pre-lock observation to that newer registry would
+  release the new Agent and delete its still-live Pane.
+- It fails closed. An observation that could not be taken is indistinguishable
+  from one that found nothing, and reading it as empty would file an `unknown`
+  termination against every managed Pane on a machine whose tmux server simply is
+  not up. It is also not an error: the reconciliation rides along inside other
+  operations and must never fail them.
+- Ordering: a supervisor writes its receipt before its own process exits, so the
+  receipt is durable before tmux tears the pane down. Whichever trigger then
+  reaches the reconciliation first, the transition is derived from the same
+  durable receipt and the same fresh observation, and the final Agent is identical.
+  A receipt that is still in flight when the absence is observed is the
+  immediate-exit race: it converges on `unknown` and the late receipt is refused
+  as stale, which leaves the current binding untouched rather than resurrecting
+  it.
+- The reconciliation performs no runtime call beyond that one observation. It
+  never resumes an Agent, starts an offline resource, materializes a replacement
+  Pane, deletes an unmanaged object, or adopts one. An observation is not an
+  activation authority.
+- `get pane|agent` renders the stored receipt in a `TERMINATION` column --
+  `<classification>/<source>` with the exit status when one was read, plus a
+  relative age -- and `describe pane|agent` renders the classification, source,
+  observed instant, exit code or signal, Pane ref, generation, and operation id as
+  their own rows. The Registry-first navigation carries the same receipt on its
+  Pane and Agent rows. All three are pure projections: a read verb never consumes
+  a receipt, advances a phase, or writes to the registry.
 
 Agent provider session ref:
 

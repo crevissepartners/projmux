@@ -17,12 +17,21 @@ const (
 	AgentExitAbnormal AgentExit = "abnormal"
 	// AgentExitLaunchFailure is a failure to launch. It resolves to Failed.
 	AgentExitLaunchFailure AgentExit = "launch-failure"
+	// AgentExitUnknown is a managed-Pane disappearance no receipt explains. It
+	// resolves to Offline.
+	//
+	// Offline rather than Failed is a deliberate asymmetry. The phase is what an
+	// operator reads to decide whether to resume, and an unproven Failed is
+	// worse for that decision than an honest Offline: the evidence that the
+	// answer is unproven is carried by status.lastTermination, where it can be
+	// read without being mistaken for a diagnosis.
+	AgentExitUnknown AgentExit = "unknown"
 )
 
 // Phase maps an exit classification onto the resulting Agent phase.
 func (e AgentExit) Phase() (AgentPhase, bool) {
 	switch e {
-	case AgentExitNormal, AgentExitDeleted:
+	case AgentExitNormal, AgentExitDeleted, AgentExitUnknown:
 		return PhaseOffline, true
 	case AgentExitAbnormal, AgentExitLaunchFailure:
 		return PhaseFailed, true

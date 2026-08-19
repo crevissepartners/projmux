@@ -231,10 +231,14 @@ func (r *registryReconciler) reconcileGuarded(
 
 // observeRuntime is the runtime-observation step of one reconciliation pass.
 //
-// It reads the live tmux inventory once and puts it to two uses: recording why
-// a Window or Pane lost its runtime object, and releasing every Agent whose
-// managed Pane died. Both are inventory diffs against the same snapshot, so the
-// two can never disagree about which panes are still bound.
+// It reads the live tmux inventory once and puts it to two uses: projecting the
+// lifecycle of every managed Pane whose runtime object died, and recording why a
+// Window or Pane lost that object. Both are inventory diffs against the same
+// snapshot, so the two can never disagree about which panes are still bound.
+//
+// The projection runs first and shares its whole transition body with the
+// standalone one-shot in lifecycle_reconcile.go, so a mutation route and a
+// pane-exit hook cannot classify the same death differently.
 //
 // This is what makes convergence hook-free. The pane-exit hooks are an
 // optimization for the read verbs, which never reconcile; with every hook
@@ -251,7 +255,7 @@ func (r *registryReconciler) reconcileGuarded(
 func (r *registryReconciler) observeRuntime(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator) {
 	panes, paneErr := r.mirror.LivePaneUIDs(ctx)
 	if paneErr == nil {
-		releaseDeadAgentPanes(working, mutator, panes)
+		projectTerminations(working, mutator, lifecycleProjectionTargets(*working, panes, lifecycleDirtyEvent{}))
 	}
 	windows, windowErr := r.mirror.LiveWindowUIDs(ctx)
 	if paneErr != nil || windowErr != nil {
@@ -713,120 +717,25 @@ func (r *registryReconciler) refreshSessionProjections(working *coremetadata.Reg
 	return nil
 }
 
-// deadAgentPaneReason is the status.reason a swept Agent carries. It records
-// what was observed and nothing about why, because nothing about why is
-// observable: the pane-exit hooks fire after tmux has torn the pane struct
-// down, so #{pane_dead_status} and #{pane_dead_signal} are empty for a clean
-// exit, a non-zero exit, and a SIGKILL alike. They are populated only under
-// `remain-on-exit on`, and that option changes pane lifecycle and layout.
-const deadAgentPaneReason = "managed pane is no longer live"
-
-// livePaneInventory is the mirrored-uid inventory the dead-pane sweep diffs the
-// registry against.
+// livePaneInventory is the mirrored-uid inventory the lifecycle projection
+// diffs the registry against.
 type livePaneInventory interface {
 	LivePaneUIDs(ctx context.Context) (map[string]bool, error)
 }
 
-// deadAgentPaneUIDs returns the uid of every Agent whose managed Pane is no
-// longer bound to a live tmux pane, in registry order.
-//
-// This is an inventory diff rather than an event handler, and it has to be:
-// `after-kill-pane` fires with an empty #{hook_pane}, so no hook can name the
-// pane that died. Being a diff is also what makes a migration step unnecessary
-// for paneRefs that have been dangling since before this code existed -- the
-// first pass resolves them and the second finds nothing left to do.
-func deadAgentPaneUIDs(registry coremetadata.Registry, live map[string]bool) []string {
-	var uids []string
-	for _, agent := range registry.Agents {
-		paneUID := strings.TrimSpace(agent.Status.PaneRef)
-		if paneUID == "" || live[paneUID] {
-			continue
-		}
-		// The closed transition table is never widened here. An Agent that may
-		// not reach Offline is skipped, not forced.
-		if !coremetadata.CanTransitionAgent(agent.Status.Phase, coremetadata.PhaseOffline) {
-			continue
-		}
-		uids = append(uids, agent.Metadata.UID)
-	}
-	return uids
-}
-
-// releaseDeadAgentPanes is the one sweep both trigger paths share. It moves
-// every Agent whose managed Pane died to Offline and clears its paneRef,
-// returning how many it released.
-//
-// Every swept death is classified AgentExitNormal, so the Agent lands in
-// Offline and stays resumable. Failed is deliberately never inferred: tmux
-// reports no exit status at hook time (see deadAgentPaneReason), so an
-// abnormal classification here would be a guess, and a guessed Failed is worse
-// than an accurate Offline for a phase the operator reads to decide whether to
-// resume. status.sessionRef is untouched -- ReleaseAgentPane never clears it --
-// so a released Agent still knows which provider conversation it belongs to.
-func releaseDeadAgentPanes(working *coremetadata.Registry, mutator coremetadata.Mutator, live map[string]bool) int {
-	released := 0
-	for _, uid := range deadAgentPaneUIDs(*working, live) {
-		if _, err := mutator.ReleaseAgentPane(working, uid, coremetadata.AgentExitNormal, deadAgentPaneReason); err != nil {
-			// The sweep is maintenance riding along inside somebody else's
-			// transaction. One Agent that cannot be released must not fail the
-			// operation that happened to trigger it.
-			continue
-		}
-		released++
-	}
-	return released
-}
-
-// runDeadAgentPaneSweep runs the sweep outside a reconciliation pass. It is what
-// the two tmux pane-exit hooks invoke.
+// runDeadAgentPaneSweep runs the exit reconciliation outside a reconciliation
+// pass. It is what the two tmux pane-exit hooks invoke.
 //
 // The hook is not an optimization. registryReconciler.reconcile runs only on the
 // mutation routes; the read verbs load read-only and never reconcile, so without
 // a hook `projmux describe agent X` right after closing its pane would still
 // print Phase: Running.
 //
-// Because that hook fires on every pane exit in every session, the common case
-// -- nothing died that the registry owns -- must cost nothing. The inventory is
-// read first, the release set is computed against a read-only snapshot, and the
-// locked write transaction is opened only when there is something to release.
-// The sweep then re-reads the live inventory inside the lock before it reruns
-// the release decision. Both halves matter: the Registry may gain a freshly
-// created Agent while this pane-exit hook is waiting for the transaction, and
-// applying the pre-lock inventory to that newer Registry would immediately
-// release the new Agent and delete its still-live managed Pane resource.
+// The event it builds is the widest legal one -- this host, no pane, no
+// generation -- because tmux fires `after-kill-pane` with an empty
+// `#{hook_pane}` and there is nothing narrower to honestly say. Narrowing is the
+// producer's option, never its obligation; see lifecycleDirtyEvent.
 func runDeadAgentPaneSweep(ctx context.Context, inventory livePaneInventory, store *resourceStore) error {
-	if inventory == nil {
-		return errors.New("release dead agent panes: the tmux pane inventory is not configured")
-	}
-	if store == nil || store.load == nil || store.update == nil || store.mutator == nil {
-		return errors.New("release dead agent panes: the resource registry store is not configured")
-	}
-	live, err := inventory.LivePaneUIDs(ctx)
-	if err != nil {
-		// Fail closed, exactly as the reconciler path does.
-		return nil
-	}
-	registry, err := store.load()
-	if err != nil {
-		return MapMetadataError(err)
-	}
-	if len(deadAgentPaneUIDs(registry, live)) == 0 {
-		return nil
-	}
-	var inventoryFailed bool
-	_, err = store.update(func(working *coremetadata.Registry) error {
-		fresh, inventoryErr := inventory.LivePaneUIDs(ctx)
-		if inventoryErr != nil {
-			// Abort the write transaction and preserve every Agent. The caller
-			// treats this exactly like the preflight inventory failure below.
-			inventoryFailed = true
-			return inventoryErr
-		}
-		releaseDeadAgentPanes(working, store.mutator(), fresh)
-		return nil
-	})
-	if inventoryFailed {
-		return nil
-	}
-	return MapMetadataError(err)
+	_, err := reconcileLifecycle(ctx, lifecycleDirtyEvent{}, inventory, store)
+	return err
 }

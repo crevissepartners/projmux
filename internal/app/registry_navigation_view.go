@@ -28,18 +28,29 @@ type registryNavigationView struct {
 // appearing or disappearing underneath it.
 func registryNavigationRowValue(row registryview.Row) string { return row.ID }
 
-var registryNavigationColumns = []string{"KIND", "NAME", "STATUS", "ACTIONS", "RUNTIME", "UID"}
+var registryNavigationColumns = []string{"KIND", "NAME", "STATUS", "TERMINATION", "ACTIONS", "RUNTIME", "UID"}
 
 func registryNavigationRow(row registryview.Row) []string {
 	return []string{
 		runtimeCell(registryNavigationIndent(row) + string(row.Kind)),
 		runtimeCell(registryNavigationName(row)),
 		runtimeCell(string(row.Status)),
+		runtimeCell(row.Termination.Summary()),
 		runtimeCell(registryNavigationActionList(row)),
 		runtimeCell(registryNavigationRuntimeCell(row)),
 		runtimeCell(row.UID),
 	}
 }
+
+// The TERMINATION column sits immediately right of STATUS because it is the
+// answer to the question STATUS raises. A Registry-first list shows a row for
+// every managed resource whether or not a runtime object mirrors it, so `offline`
+// is the most common thing an operator reads there -- and until now the list
+// could not say whether an offline Agent was closed on purpose, exited cleanly,
+// crashed, or simply vanished.
+//
+// The cell is the stored receipt and nothing else. This view opens no transaction
+// and takes no observation of its own; see registryview.Row.Termination.
 
 // registryNavigationIndent renders the owner chain as leading depth.
 //

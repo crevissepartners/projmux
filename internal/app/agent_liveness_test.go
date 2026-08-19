@@ -88,6 +88,24 @@ func livenessTestMutator() coremetadata.Mutator {
 	return coremetadata.Mutator{Now: func() time.Time { return resourceFixtureClock }}
 }
 
+// projectLifecycle applies the shared exit-reconciliation transition to registry
+// against one mirrored-uid observation and returns how many projections changed
+// it.
+//
+// It is the same two calls both production trigger paths make -- select the
+// absent Panes, project each one -- so a test that drives this drives exactly
+// what the reconciler and the pane-exit hook drive.
+func projectLifecycle(registry *coremetadata.Registry, mutator coremetadata.Mutator, live map[string]bool) int {
+	changed := 0
+	for _, projection := range projectTerminations(registry, mutator,
+		lifecycleProjectionTargets(*registry, live, lifecycleDirtyEvent{})) {
+		if projection.Changed {
+			changed++
+		}
+	}
+	return changed
+}
+
 // livenessRegistry builds a one-Agent registry whose Agent owns one managed
 // Pane, in the given starting phase.
 func livenessRegistry(phase coremetadata.AgentPhase, sessionRef *coremetadata.AgentSessionRef) coremetadata.Registry {
@@ -137,7 +155,7 @@ func TestADeadManagedPaneReleasesItsAgentAndKeepsTheConversationPointer(t *testi
 
 	// The machine mirrors some other Pane, so this Agent's managed Pane is the
 	// one that is absent rather than the inventory being empty.
-	released := releaseDeadAgentPanes(&registry, livenessTestMutator(), map[string]bool{"pan-somebody-else": true})
+	released := projectLifecycle(&registry, livenessTestMutator(), map[string]bool{"pan-somebody-else": true})
 	if released != 1 {
 		t.Fatalf("released = %d, want 1", released)
 	}
@@ -152,8 +170,18 @@ func TestADeadManagedPaneReleasesItsAgentAndKeepsTheConversationPointer(t *testi
 	if agent.Status.PaneRef != "" {
 		t.Fatalf("paneRef = %q, want it cleared", agent.Status.PaneRef)
 	}
-	if agent.Status.Reason != deadAgentPaneReason {
-		t.Fatalf("reason = %q, want %q", agent.Status.Reason, deadAgentPaneReason)
+	if agent.Status.Reason != coremetadata.TerminationReasonUnknown {
+		t.Fatalf("reason = %q, want %q", agent.Status.Reason, coremetadata.TerminationReasonUnknown)
+	}
+	// The Agent keeps the evidence its Pane resource carried, which is the only
+	// place it can survive: releasing the Agent deletes that Pane.
+	receipt := agent.Status.LastTermination
+	if receipt == nil {
+		t.Fatal("a released Agent carries no termination evidence at all")
+	}
+	if receipt.Classification != coremetadata.TerminationUnknown ||
+		receipt.Source != coremetadata.TerminationSourceReconcile {
+		t.Fatalf("evidence = %+v, want an unknown receipt from the reconciler", receipt)
 	}
 	if agent.Status.SessionRef != ref {
 		t.Fatalf("sessionRef = %+v, want the observed ref preserved verbatim", agent.Status.SessionRef)
@@ -163,14 +191,20 @@ func TestADeadManagedPaneReleasesItsAgentAndKeepsTheConversationPointer(t *testi
 	}
 }
 
-// TestTheSweepNeverForcesATransitionTheTableForbids pins that the closed Agent
-// lifecycle table stays the authority.
+// TestTheProjectionNeverForcesATransitionTheTableForbids pins that the closed
+// Agent lifecycle table stays the authority.
 //
 // Every real phase can legally reach Offline today, so the interesting row is
-// the last one: a phase the table does not know about is skipped rather than
-// overwritten. That is the difference between a sweep that respects the table
-// and a sweep that writes Offline because it decided the pane was gone.
-func TestTheSweepNeverForcesATransitionTheTableForbids(t *testing.T) {
+// the last one: a phase the table does not know about keeps its phase, its
+// paneRef, and its managed Pane. That is the difference between a projection
+// that respects the table and one that writes Offline because it decided the
+// pane was gone.
+//
+// A refused transition still records the evidence. The two are different
+// statements -- "here is what was observed" and "here is the phase that implies"
+// -- and refusing the second is not a reason to discard the first, which is the
+// only record an operator has of why an Agent in an unmovable phase is offline.
+func TestTheProjectionNeverForcesATransitionTheTableForbids(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
@@ -189,28 +223,34 @@ func TestTheSweepNeverForcesATransitionTheTableForbids(t *testing.T) {
 			registry := livenessRegistry(test.phase, nil)
 			permitted := coremetadata.CanTransitionAgent(test.phase, coremetadata.PhaseOffline)
 
-			selected := deadAgentPaneUIDs(registry, nil)
-			if permitted != (len(selected) == 1) {
-				t.Fatalf("selected %v for phase %q, but CanTransitionAgent(%q, Offline) = %v",
-					selected, test.phase, test.phase, permitted)
+			// The dead Pane is always selected: unrecorded evidence is itself
+			// outstanding work, whatever the Agent's phase allows.
+			selected := lifecycleProjectionTargets(registry, nil, lifecycleDirtyEvent{})
+			if len(selected) != 1 || selected[0].PaneUID != "pan-managed" {
+				t.Fatalf("selected %+v, want exactly the dead managed Pane", selected)
 			}
 
-			released := releaseDeadAgentPanes(&registry, livenessTestMutator(), nil)
+			if changed := projectLifecycle(&registry, livenessTestMutator(), nil); changed != 1 {
+				t.Fatalf("changed = %d, want the projection to record its evidence once", changed)
+			}
 			agent, _ := registry.Agent("agt-codex")
 			if !permitted {
-				if released != 0 {
-					t.Fatalf("released = %d for a forbidden transition, want 0", released)
-				}
 				if agent.Status.Phase != test.phase || agent.Status.PaneRef != "pan-managed" {
 					t.Fatalf("a forbidden transition still mutated the Agent: %+v", agent.Status)
 				}
-				if _, ok := registry.Pane("pan-managed"); !ok {
+				pane, ok := registry.Pane("pan-managed")
+				if !ok {
 					t.Fatal("a forbidden transition still deleted the managed Pane")
 				}
+				if pane.Status.LastTermination == nil {
+					t.Fatal("a forbidden transition discarded the evidence it observed")
+				}
+				// A second pass has nothing left: the evidence is stored and the
+				// transition is still forbidden.
+				if remaining := lifecycleProjectionTargets(registry, nil, lifecycleDirtyEvent{}); len(remaining) != 0 {
+					t.Fatalf("remaining = %+v, want a forbidden transition to stop being re-projected", remaining)
+				}
 				return
-			}
-			if released != 1 {
-				t.Fatalf("released = %d, want 1", released)
 			}
 			if agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
 				t.Fatalf("status = %+v, want Offline with no paneRef", agent.Status)
@@ -229,10 +269,10 @@ func TestAnAgentWithNoManagedPaneIsNotSwept(t *testing.T) {
 	registry.Agents[0].Status.PaneRef = "   "
 	registry.Panes = nil
 
-	if uids := deadAgentPaneUIDs(registry, nil); len(uids) != 0 {
-		t.Fatalf("deadAgentPaneUIDs = %v, want none: an Agent without a managed Pane has nothing to release", uids)
+	if inputs := lifecycleProjectionTargets(registry, nil, lifecycleDirtyEvent{}); len(inputs) != 0 {
+		t.Fatalf("targets = %+v, want none: an Agent without a managed Pane has no Pane to project", inputs)
 	}
-	if released := releaseDeadAgentPanes(&registry, livenessTestMutator(), nil); released != 0 {
+	if released := projectLifecycle(&registry, livenessTestMutator(), nil); released != 0 {
 		t.Fatalf("released = %d, want 0", released)
 	}
 	if reason := registry.Agents[0].Status.Reason; reason != "" {
@@ -253,7 +293,13 @@ func TestALiveManagedPaneCostsTheRegistryNothing(t *testing.T) {
 
 	store := newFakeResourceStore(t)
 	before := store.snapshot()
-	inventory := &stubPaneInventory{uids: map[string]bool{"pan-alpha-codex": true, "pan-alpha-zsh": true}}
+	// Every managed Pane in the fixture is mirrored. An observation that is
+	// missing one is a death, not a no-op, so the whole set has to be present
+	// for this to be the negative case it claims to be.
+	inventory := &stubPaneInventory{uids: map[string]bool{
+		"pan-alpha-zsh": true, "pan-alpha-log": true, "pan-alpha-codex": true,
+		"pan-alpha-review": true, "pan-beta-zsh": true,
+	}}
 
 	if err := runDeadAgentPaneSweep(context.Background(), inventory, store.store()); err != nil {
 		t.Fatalf("runDeadAgentPaneSweep: %v", err)
@@ -304,9 +350,12 @@ func TestASweptDeathOpensExactlyOneWriteTransaction(t *testing.T) {
 	t.Parallel()
 
 	store := newFakeResourceStore(t)
-	// pan-alpha-codex, the fixture's only Agent-managed Pane, is deliberately
-	// absent from the inventory.
-	inventory := &stubPaneInventory{uids: map[string]bool{"pan-alpha-zsh": true}}
+	// pan-alpha-codex, the fixture's only Agent-managed Pane, is the one Pane
+	// deliberately absent from the inventory.
+	inventory := &stubPaneInventory{uids: map[string]bool{
+		"pan-alpha-zsh": true, "pan-alpha-log": true,
+		"pan-alpha-review": true, "pan-beta-zsh": true,
+	}}
 
 	if err := runDeadAgentPaneSweep(context.Background(), inventory, store.store()); err != nil {
 		t.Fatalf("runDeadAgentPaneSweep: %v", err)
@@ -708,7 +757,7 @@ func TestExplicitPaneDeletionStillOfflinesItsAgent(t *testing.T) {
 		t.Fatalf("reason = %q, want the explicit-deletion reason %q; the liveness sweep must not have taken this path over",
 			agent.Status.Reason, coremetadata.AgentExitDeleted)
 	}
-	if agent.Status.Reason == deadAgentPaneReason {
-		t.Fatal("an explicit deletion is recorded as a swept death")
+	if agent.Status.Reason == coremetadata.TerminationReasonUnknown {
+		t.Fatal("an explicit deletion is recorded as an unexplained disappearance")
 	}
 }

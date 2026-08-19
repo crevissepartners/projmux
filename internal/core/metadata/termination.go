@@ -3,6 +3,7 @@ package metadata
 import (
 	"crypto/rand"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,12 +44,23 @@ const (
 	// TerminationSourceControlAction is a canonical control-plane lifecycle
 	// action recording its own intent before it mutates anything live.
 	TerminationSourceControlAction TerminationSource = "control-action"
+	// TerminationSourceReconcile is the exit reconciliation pass reporting that
+	// it re-observed the exact host, found a managed runtime object gone, and
+	// found no receipt that explains it.
+	//
+	// It is the only source that may claim TerminationUnknown, and unknown is
+	// the only thing it may claim. That pairing is what keeps "nobody proved
+	// anything" from being writable by the two sources that *do* observe
+	// something: a supervisor that reaped a child and a control action that
+	// stated its intent both know more than this, and a build that let either
+	// of them file an unknown receipt could erase real evidence with it.
+	TerminationSourceReconcile TerminationSource = "reconcile"
 )
 
 // ValidTerminationSource reports whether source is in the closed set.
 func ValidTerminationSource(source TerminationSource) bool {
 	switch source {
-	case TerminationSourceSupervisor, TerminationSourceControlAction:
+	case TerminationSourceSupervisor, TerminationSourceControlAction, TerminationSourceReconcile:
 		return true
 	default:
 		return false
@@ -78,12 +90,37 @@ const (
 	// TerminationAbnormal is an observed non-zero exit status or a death by
 	// signal.
 	TerminationAbnormal TerminationClassification = "abnormal"
-	// TerminationUnknown is an explicitly evidence-free record. Nothing in
-	// this phase writes it; it exists so a later consumer has a vocabulary for
-	// "the process is gone and no receipt explains why" that is a value rather
-	// than an absence being re-read as normality.
+	// TerminationUnknown is an explicitly evidence-free record: the runtime
+	// object is gone and no receipt explains why.
+	//
+	// It is a value rather than an absence precisely so that an absence is
+	// never re-read as normality. Only TerminationSourceReconcile may write it,
+	// and writing it is what makes the reconciliation idempotent: the second
+	// pass over the same disappearance finds the same document already stored
+	// and changes nothing.
 	TerminationUnknown TerminationClassification = "unknown"
 )
+
+// validTerminationPairing reports whether one source may claim one
+// classification.
+//
+// Two pairings are refused, and they are the two that would let a writer claim
+// knowledge it does not have. Intentional is a statement about an operator's
+// purpose, so only a canonical control action may make it. Unknown is a
+// statement that nothing was observed, so only the reconciliation pass -- which
+// observes exactly that -- may make it, and it may make nothing else.
+func validTerminationPairing(source TerminationSource, classification TerminationClassification) bool {
+	switch {
+	case classification == TerminationIntentional:
+		return source == TerminationSourceControlAction
+	case classification == TerminationUnknown:
+		return source == TerminationSourceReconcile
+	case source == TerminationSourceReconcile:
+		return false
+	default:
+		return true
+	}
+}
 
 // ValidTerminationClassification reports whether classification is in the
 // closed set.
@@ -109,6 +146,28 @@ func ClassifyProcessExit(exitCode int, signal string) TerminationClassification 
 		return TerminationNormal
 	}
 	return TerminationAbnormal
+}
+
+// Summary renders one stored receipt as a single compact operator-facing
+// clause: the classification, the provenance that produced it, and the wait
+// status when one was actually read.
+//
+// It carries no timestamp. Every surface that renders this already dates it in
+// the unit that surface uses -- describe prints the absolute UTC instant, the
+// columnar reads print a relative age -- and a clause that embedded one form
+// would force the other surface to strip it back out.
+func (t *TerminationEvidence) Summary() string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	out := string(t.Classification) + "/" + string(t.Source)
+	switch {
+	case t.Signal != "":
+		out += " signal=" + t.Signal
+	case t.ExitCode != nil:
+		out += " exit=" + strconv.Itoa(*t.ExitCode)
+	}
+	return out
 }
 
 // PaneActivation binds one Pane materialization to an opaque generation.
@@ -302,9 +361,9 @@ func (m Mutator) RecordTermination(reg *Registry, receipt TerminationEvidence) (
 	if !ValidTerminationClassification(receipt.Classification) {
 		return TerminationOutcome{}, inputErr(op, ErrInvalidRegistry, "unsupported termination classification %q", string(receipt.Classification))
 	}
-	if receipt.Classification == TerminationIntentional && receipt.Source != TerminationSourceControlAction {
+	if !validTerminationPairing(receipt.Source, receipt.Classification) {
 		return TerminationOutcome{}, inputErr(op, ErrInvalidRegistry,
-			"only a canonical control action may record intentional termination, got source %q", string(receipt.Source))
+			"source %q may not record %q termination", string(receipt.Source), string(receipt.Classification))
 	}
 	paneUID := strings.TrimSpace(receipt.PaneUID)
 	if paneUID == "" {
