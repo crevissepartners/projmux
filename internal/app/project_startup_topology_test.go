@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -63,6 +64,13 @@ func newProjectStartupTopologyFixture(t *testing.T) (*registryProjectTopologyMat
 	}, "/bin/zsh", "op-startup-fixture"); err != nil {
 		t.Fatal(err)
 	}
+	// The shared startup fixture stays shell-only for the same reason the
+	// reconcile one does: Agent replay has its own fixtures, so every parity
+	// assertion here keeps measuring the Window/shell-Pane behavior it did
+	// before Agents entered the plan.
+	if err := mutator.DeleteAgent(&store.registry, "agt-beta-codex"); err != nil {
+		t.Fatal(err)
+	}
 	server := newFakeTmux()
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00projmux": server}}
 	sessions := &fakeSessionMaterializer{tmux: server}
@@ -79,7 +87,9 @@ func newProjectStartupTopologyFixture(t *testing.T) (*registryProjectTopologyMat
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 			return &materializer{runner: exact, mirror: intmetadata.NewMirror(exact), sessions: sessions, warn: warn}
 		},
-		warn: io.Discard,
+		warn:    io.Discard,
+		agents:  newFakeTopologyAgentLauncher(),
+		notices: &bytes.Buffer{},
 	}
 	return activation, store, server, root, logs
 }
@@ -408,5 +418,63 @@ func TestNewSwitchCommandWiresExactSocketTopologyActivation(t *testing.T) {
 	}
 	if activation.resources == nil || activation.runner == nil {
 		t.Fatalf("activation is not fully wired: %+v", activation)
+	}
+}
+
+// TestClosedProjectStartupReplaysStoredAgents is acceptance 1 at the startup
+// boundary: the `Project topology` row brings saved Agents back into their own
+// managed Panes on the exact app socket, resumes the one whose Registry
+// `status.sessionRef` names a conversation, and discloses the one it could not.
+func TestClosedProjectStartupReplaysStoredAgents(t *testing.T) {
+	activation, store, server, root, _ := newProjectStartupTopologyFixture(t)
+	notices := activation.notices.(*bytes.Buffer)
+	resumed := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+		name: "claude", provider: "claude", cwd: root, ref: claudeConversationRef("conv-startup"),
+	})
+	fresh := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "codex", provider: "codex", cwd: root})
+
+	materialized, err := activation.MaterializeProjectTopology(context.Background(), root, "beta")
+	if err != nil || !materialized {
+		t.Fatalf("MaterializeProjectTopology() = %t, %v; want true, nil", materialized, err)
+	}
+	for _, agentUID := range []string{resumed.Metadata.UID, fresh.Metadata.UID} {
+		agent, ok := store.registry.Agent(agentUID)
+		if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef == "" {
+			t.Fatalf("closed Project startup left agent %s unmanaged: %+v", agentUID, agent)
+		}
+		if !slices.ContainsFunc(server.session("beta").windows[0].panes, func(p *fakeTmuxPane) bool {
+			return p.opts[tmuxopts.PaneUID] == agent.Status.PaneRef
+		}) {
+			t.Fatalf("agent %s managed Pane never reached tmux:\n%s", agentUID, server.state())
+		}
+	}
+	if !server.argvContains("--resume") || !server.argvContains("conv-startup") {
+		t.Fatalf("startup did not resume the stored conversation:\n%#v", server.calls)
+	}
+	if !strings.Contains(notices.String(), "agent/main/codex starts a new conversation instead of resuming") {
+		t.Fatalf("startup never told the operator which Agent was not resumed: %q", notices.String())
+	}
+	if strings.Contains(notices.String(), "agent/main/claude") {
+		t.Fatalf("a resumed Agent was reported as unresumed: %q", notices.String())
+	}
+}
+
+// TestApplicationGraphWiresTopologyAgentReplay keeps the production wiring
+// honest on both surfaces. A nil launcher would silently restore the shell-only
+// restore while the picker copy kept promising Agents.
+func TestApplicationGraphWiresTopologyAgentReplay(t *testing.T) {
+	app := New()
+	if app.reconcile == nil || app.reconcile.agents == nil {
+		t.Fatal("reconcile resources --materialize-project has no Agent launch seam")
+	}
+	topology, ok := app.switcher.projectTopology.(*registryProjectTopologyMaterializer)
+	if !ok {
+		t.Fatalf("switcher.projectTopology = %T, want the Registry topology activation", app.switcher.projectTopology)
+	}
+	if topology.agents == nil {
+		t.Fatal("closed-Project startup has no Agent launch seam")
+	}
+	if topology.notices == nil {
+		t.Fatal("closed-Project startup has nowhere to disclose an unresumed Agent")
 	}
 }

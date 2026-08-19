@@ -160,6 +160,12 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	ai.operationalDiagnostics = aiOperationalDiagnostics
 	ai.producer = newAttentionNotifyProducer(notifyFocusDiagnostics)
 	switcher := newSwitchCommand(recorder)
+	// Closed-Project startup replays stored Agents through the same
+	// provider-launch seam every other Agent route uses. Injecting it here keeps
+	// the materializer's constructor free of the AI command graph.
+	if topology, ok := switcher.projectTopology.(*registryProjectTopologyMaterializer); ok {
+		topology.agents = ai
+	}
 	windowCmd := newWindowCommand(recorder)
 	recentWindowCmd := windowCmd.recent
 	switcher.sessionStateDiagnostics = sessionStateDiagnostics
@@ -207,6 +213,10 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// Public resource repair is wired beside the resource command graph rather
 	// than lifecycle/AI tmux wiring so those independent seams can rebase cleanly.
 	reconcileCmd := newResourceReconcileCommand(tmuxCmd)
+	// Explicit topology materialization replays stored Agents, so it consumes
+	// the same narrow provider-launch seam `create agent` and `agent resume`
+	// hold. There is no second launch builder anywhere in the topology engine.
+	reconcileCmd.agents = ai
 	// Canonical verb-to-kind routes. The registry-backed kinds own their own
 	// handler; the kinds whose behavior already exists forward raw argv to the
 	// current handler, so the canonical spelling is a parity alias rather than a

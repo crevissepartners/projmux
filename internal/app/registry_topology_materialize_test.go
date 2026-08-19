@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"slices"
@@ -43,11 +42,19 @@ func newTopologyMaterializeFixtureWithSessions(t *testing.T) (*resourceReconcile
 	}, "/bin/zsh", "op-topology-fixture"); err != nil {
 		t.Fatal(err)
 	}
+	// The shared fixture Project is deliberately shell-only. Agent replay has
+	// its own fixtures in registry_topology_agents_test.go, so every parity
+	// assertion in this file keeps measuring exactly the Window/shell-Pane
+	// behavior it measured before Agents entered the plan.
+	if err := mutator.DeleteAgent(&store.registry, "agt-beta-codex"); err != nil {
+		t.Fatal(err)
+	}
 	server := newFakeTmux()
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00topology": server}}
 	sessions := &fakeSessionMaterializer{tmux: server}
 	command := &resourceReconcileCommand{
 		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
+		agents:         newFakeTopologyAgentLauncher(),
 		newReconciler:  reconcileFixtureReconciler(root, "beta"),
 		newOperationID: func() (string, error) { return "op-topology", nil },
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
@@ -249,23 +256,6 @@ func TestRegistryTopologyMaterializationSocketPathRepairsLiveSubsetAndIsolatesSi
 			t.Fatalf("live partial escaped exact -S route: %v", call)
 		}
 	}
-}
-
-func TestRegistryTopologyMaterializationNeverPlansAgentOwnedPane(t *testing.T) {
-	command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
-	beforeAgent, _ := store.registry.Agent("agt-beta-codex")
-	out, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(out, beforeAgent.Metadata.UID) || server.argvContains("codex") {
-		t.Fatalf("Offline Agent entered topology plan or process argv:\n%s", out)
-	}
-	afterAgent, _ := store.registry.Agent("agt-beta-codex")
-	if beforeAgent.Status.Phase != afterAgent.Status.Phase {
-		t.Fatalf("Agent phase changed %s -> %s", beforeAgent.Status.Phase, afterAgent.Status.Phase)
-	}
-	_ = context.Background() // keep this test explicit about the process-free seam.
 }
 
 func TestRegistryTopologyMaterializationRawLossVersusCanonicalDelete(t *testing.T) {
@@ -642,7 +632,8 @@ func TestRegistryTopologyMaterializationInvalidCWDAndForeignSessionRefuse(t *tes
 func TestRegistryTopologyMaterializationRefusesAgentPrimaryAndZeroWindows(t *testing.T) {
 	t.Run("Agent-owned primary", func(t *testing.T) {
 		command, store, server, _, root, _ := newTopologyMaterializeFixture(t)
-		managed, err := store.mutator().AttachAgentPane(&store.registry, "agt-beta-codex", coremetadata.BootstrapPane{
+		agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "codex", provider: "codex", cwd: root})
+		managed, err := store.mutator().AttachAgentPane(&store.registry, agent.Metadata.UID, coremetadata.BootstrapPane{
 			Name: "managed", CWD: root,
 		}, "op-agent-primary")
 		if err != nil {

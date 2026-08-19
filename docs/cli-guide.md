@@ -1696,8 +1696,8 @@ human configuration work should prefer `config render` and `config apply`.
   tmux default shell when set, otherwise `/bin/sh`. `shell` starts or attaches
   the app session directly after resolving the target app session name and
   startup directory. Alt-1 sidebar project open defaults to `Project topology`,
-  which materializes the Project's Registry Windows and Window-owned shell Panes
-  before the client moves; the Session State `Sidebar startup picker` opt-in
+  which materializes the Project's Registry Windows, Window-owned shell Panes,
+  and Agents before the client moves; the Session State `Sidebar startup picker` opt-in
   shows `Latest snapshot`, `Named snapshot`, and `Project topology` before
   starting a closed project session. `Latest snapshot` is auto-saved; named
   snapshots are fixed until the user saves or replaces them. A directory with no

@@ -24,6 +24,10 @@ type resourceReconcileCommand struct {
 	newOperationID  func() (string, error)
 	newGeneration   func() (string, error)
 	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
+	// agents is the provider-launch seam the Agent half of an explicit topology
+	// materialization consumes. It is the same object `create agent` and
+	// `agent resume` hold; this route never builds a provider launch of its own.
+	agents topologyAgentLauncher
 	// registry is the sibling recovery boundary. `reconcile` dispatches to it
 	// rather than owning recovery here: the resource planner needs a loadable
 	// Registry as its input, and recovery is what runs when that input is the
@@ -122,6 +126,7 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 		newReconciler:      c.newReconciler,
 		materializeProject: firstRepeatedValue(opts.materializeProjects),
 		exactTarget:        target,
+		agents:             c.agents,
 	}
 	ctx := context.Background()
 	// Explicit topology materialization keeps its own engine. It activates
@@ -130,7 +135,7 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 	// or break the materializer.
 	if planner.materializeProject != "" {
 		if opts.dryRun {
-			return c.runDryRun(ctx, planner, reportTarget, opts, stdout)
+			return c.runDryRun(ctx, planner, reportTarget, opts, stdout, stderr)
 		}
 		return c.runMaterializeExecute(ctx, planner, target, reportTarget, opts, stdout, stderr)
 	}
@@ -213,7 +218,7 @@ func (c *resourceReconcileCommand) resolveTarget(opts resourceReconcileOptions) 
 	return target, nil
 }
 
-func (c *resourceReconcileCommand) runDryRun(ctx context.Context, planner resourceReconcilePlanner, target resourceReconcileTarget, opts resourceReconcileOptions, stdout io.Writer) error {
+func (c *resourceReconcileCommand) runDryRun(ctx context.Context, planner resourceReconcilePlanner, target resourceReconcileTarget, opts resourceReconcileOptions, stdout, stderr io.Writer) error {
 	load := c.resources.snapshot
 	if load == nil {
 		load = c.resources.load
@@ -228,6 +233,9 @@ func (c *resourceReconcileCommand) runDryRun(ctx context.Context, planner resour
 	plan, err := planner.build(ctx, registry)
 	if err != nil {
 		return fmt.Errorf("plan resource reconciliation: %w", err)
+	}
+	if plan.refusedItems() == 0 {
+		plan.materialization.writeNotices(stderr)
 	}
 	report := reportForDryRun(plan, target, retryResourceReconcileProject(target, planner.materializeProject))
 	return writeResourceReconcileReport(stdout, opts.output, report)

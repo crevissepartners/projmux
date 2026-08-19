@@ -41,7 +41,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"(no candidate pins)":                          "settings.text.no_candidate_pins",
 	"closed Project startup: use Project topology": "settings.desc.closed_startup_topology",
 	"closed Project startup: ask for Snapshot or Project topology":               "settings.desc.closed_startup_ask",
-	"restore every saved Window and shell Pane":                                  "settings.desc.closed_startup_topology_action",
+	"restore every saved Window, shell Pane, and Agent":                          "settings.desc.closed_startup_topology_action",
 	"ask whether to restore a Snapshot or materialize the Project topology":      "settings.desc.closed_startup_ask_action",
 	"Notification queue HUD and its icon":                                        "settings.desc.notifications_hud",
 	"focused Pane cwd segment and its icon":                                      "settings.desc.working_directory",
