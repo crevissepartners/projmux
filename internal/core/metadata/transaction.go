@@ -78,6 +78,14 @@ func (r *Registry) removeCreated(ref createdRef) {
 				return
 			}
 		}
+	case KindControlSession:
+		for i := range r.ControlSessions {
+			if r.ControlSessions[i].Metadata.UID == ref.UID {
+				r.ControlSessions = slices.Delete(r.ControlSessions, i, i+1)
+				r.releaseNames(ref.UID)
+				return
+			}
+		}
 	case KindWindow:
 		for i := range r.Windows {
 			if r.Windows[i].Metadata.UID == ref.UID {

@@ -44,6 +44,21 @@ type shellCommand struct {
 	goos         func() string
 	nativeKeys   func() bool
 	now          func() time.Time
+	// controlSession builds the control-session convergence pass over this
+	// invocation's tmux runner and configured shell.
+	//
+	// It is a factory rather than a value because the pass needs the resolved
+	// shell path, which is a per-invocation lookup, and because a nil field must
+	// disable the whole pass: a unit test that only measures the attach argv has
+	// no tmux server to observe, and the control marker is not what it is
+	// measuring. A nil pass degrades to exactly the pre-marker behavior.
+	controlSession func(runner tmuxRunner, shell string) controlSessionPass
+}
+
+// controlSessionPass is the narrow seam `shell` drives the control-session
+// convergence through. See internal/app/control_session.go for the contract.
+type controlSessionPass interface {
+	converge(ctx context.Context, socketName, sessionName string) (controlSessionConvergence, error)
 }
 
 type shellUpdateSkipState struct {
@@ -74,6 +89,9 @@ func newShellCommand(update *updateCommand, recorders ...*diagnostics.LifecycleR
 		goos:         func() string { return runtime.GOOS },
 		nativeKeys:   platformkeys.Available,
 		now:          time.Now,
+		controlSession: func(runner tmuxRunner, shell string) controlSessionPass {
+			return newControlSessionConverger(runner, shell)
+		},
 	}
 }
 
@@ -128,6 +146,13 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if target.CWD != "" {
 		runArgs = append(runArgs, "-c", target.CWD)
 	}
+	if err := c.prepareControlSession(context.Background(), socketName, config, target); err != nil {
+		// A control session that could not be converged is not a reason to deny
+		// the operator a shell. The attach below is byte-identical to the
+		// pre-marker one, so the failure degrades to the old behavior -- Home
+		// with no marker and no mirrored identity -- rather than to no terminal.
+		_, _ = fmt.Fprint(stderr, controlSessionWarning(target.SessionName, err))
+	}
 	if c.shouldStartNativeKeyBroker() {
 		if err := c.start(context.Background(), binaryPath, "internal", "key-broker", "--socket", socketName); err != nil {
 			_, _ = fmt.Fprintf(stderr, "warning: start native macOS keybindings: %v\n", err)
@@ -140,12 +165,163 @@ func (c *shellCommand) executeShellSession(ctx context.Context, socketName, sess
 	_ = socketName
 	_ = sessionName
 	if c.diagnostics != nil {
-		// `shell` explicitly opens the app session. tmux's atomic `new-session
-		// -A` may provision internally, but preflighting that race would make
-		// ownership less truthful. Keep the closed outer lifecycle as attach.
+		// `shell` explicitly opens the app session, and attach is now the
+		// literally correct attribution rather than a compromise.
+		//
+		// This used to read "tmux's atomic `new-session -A` may provision
+		// internally, but preflighting that race would make ownership less
+		// truthful". prepareControlSession now owns provisioning for the
+		// app-session target -- it has to, because there is no other moment at
+		// which the control role marker and the Window/Pane identity mirror can be
+		// written onto a brand-new Home -- so for that target the session already
+		// exists by the time the argv below runs and `new-session -A` really is a
+		// pure attach. Owning the provision is what removed the race the old note
+		// was hedging against.
+		//
+		// A Project-default target still gets no preflight, so there `new-session
+		// -A` may genuinely provision. Attach remains the right mark for it for
+		// the original reason: the closed outer lifecycle is what the operator
+		// asked for, and splitting one mark by target would report two different
+		// lifecycles for one argv.
 		c.diagnostics.Mark(diagnostics.OperationSessionAttach)
 	}
 	return c.run(ctx, command, args...)
+}
+
+// prepareControlSession writes the control marker and Home's Window/Pane
+// identity mirror before the client attaches.
+//
+// Two things make the timing work, and both are the reason this is a preflight
+// rather than something layered onto the attach itself:
+//
+//   - The preflight provisions the session detached, so the brand-new-Home case
+//     has a session to write options onto at all, and it moves no client. It is
+//     idempotent: an already-live Home is probed and left exactly as it was
+//     found, which is what makes the already-live backfill a re-entry with no
+//     restart and no delete. The attach that follows is unchanged --
+//     `new-session -A` on a session that now exists is a pure attach -- so the
+//     foreground argv, its lifecycle attribution, and its failure surface are all
+//     identical to before.
+//   - The pass runs only for the app-session target. `resolveShellTarget` sets
+//     ProjectDefault when the session it resolved is a Project's session, and a
+//     session whose ownership goes to a Project must never carry the control
+//     role: it is a Project's runtime projection, and marking it would give one
+//     tmux session two mutually exclusive attributions.
+func (c *shellCommand) prepareControlSession(ctx context.Context, socketName, configPath string, target shellTarget) error {
+	if target.ProjectDefault || c.controlSession == nil {
+		return nil
+	}
+	pass := c.controlSession(c.tmuxRunner, c.defaultShell())
+	if pass == nil {
+		return nil
+	}
+	if err := c.provisionAppSession(ctx, socketName, configPath, target); err != nil {
+		return err
+	}
+	_, err := pass.converge(ctx, socketName, target.SessionName)
+	return err
+}
+
+// provisionAppSession creates the app session detached, or does nothing when it
+// already exists.
+//
+// It is deliberately `has-session` followed by a bare `new-session -d`, and NOT
+// the `new-session -A -d` the foreground attach uses with `-A`. Measured on tmux:
+// with `-A` and an existing session, `new-session` becomes an attach and `-d`
+// does not suppress it -- outside a terminal it fails with "open terminal
+// failed: not a terminal", and inside one it would seize the client here instead
+// of at the attach below. Either way the marker would never be written, which is
+// precisely the already-live backfill this preflight exists for.
+//
+// The `-f <config>` is carried on the creating call so a server this preflight
+// starts is started with the generated app config -- the same config the
+// foreground attach names. The two must agree about which server they mean and
+// how it was configured, or the `@projmux_app` marker the converger checks would
+// be missing on the server the attach joins.
+//
+// A session that appears between the probe and the create is a benign race: tmux
+// answers "duplicate session", which means the postcondition this function owes
+// its caller already holds.
+func (c *shellCommand) provisionAppSession(ctx context.Context, socketName, configPath string, target shellTarget) error {
+	if c.tmuxRunner == nil {
+		return errors.New("shell tmux runner is not configured")
+	}
+	exists, err := c.appSessionExists(ctx, socketName, configPath, target.SessionName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	args := []string{"-L", socketName, "-f", configPath, "new-session", "-d", "-s", target.SessionName}
+	if target.CWD != "" {
+		args = append(args, "-c", target.CWD)
+	}
+	if _, err := c.tmuxRunner.Run(ctx, "tmux", args...); err != nil {
+		if tmuxDuplicateSession(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// appSessionExists probes one exact socket for the app session.
+//
+// An absent server is an absent session rather than a failure: `projmux shell`
+// starting the server is the ordinary first-terminal case, and reporting it as an
+// error would refuse the entry it exists to perform.
+func (c *shellCommand) appSessionExists(ctx context.Context, socketName, configPath, sessionName string) (bool, error) {
+	_, err := c.tmuxRunner.Run(ctx, "tmux", "-L", socketName, "-f", configPath, "has-session", "-t", sessionName)
+	if err == nil {
+		return true, nil
+	}
+	if tmuxSessionAbsent(err) || tmuxServerUnreachable(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// tmuxSessionAbsent recognizes the stderr signatures tmux uses when the session
+// or the server it was asked about is not there. It is the classification
+// tmuxSessionExists has always applied, factored out so the two callers cannot
+// disagree about what "absent" looks like.
+func tmuxSessionAbsent(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "can't find session") ||
+		strings.Contains(message, "no server running") ||
+		strings.Contains(message, "can't find server")
+}
+
+// tmuxServerUnreachable recognizes the *socket-level* answer, which is a
+// different sentence from the ones above and is the one measured on tmux 3.5a
+// when the socket file itself does not exist yet: `error connecting to
+// <path> (No such file or directory)`.
+//
+// It is deliberately a separate predicate rather than another clause inside
+// tmuxSessionAbsent. Only the app-session preflight may read this as "absent",
+// because starting the server is exactly what it is about to do; a caller asking
+// whether a session exists on a server it does not own must keep reporting the
+// unreachable socket as a failure.
+func tmuxServerUnreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "failed to connect to server") ||
+		(strings.Contains(message, "error connecting to ") && strings.Contains(message, "(no such file or directory)"))
+}
+
+// tmuxDuplicateSession recognizes the answer tmux gives when the session this
+// preflight was about to create already exists.
+func tmuxDuplicateSession(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate session")
 }
 
 type shellTarget struct {
@@ -219,8 +395,7 @@ func tmuxSessionExists(ctx context.Context, runner tmuxRunner, sessionName strin
 	if err == nil {
 		return true, nil
 	}
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") || strings.Contains(msg, "can't find server") {
+	if tmuxSessionAbsent(err) {
 		return false, nil
 	}
 	return false, err

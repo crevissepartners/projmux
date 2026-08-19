@@ -154,6 +154,9 @@ func (r *Registry) rebuildMissingReservations() {
 	for _, project := range r.Projects {
 		add("", KindProject, project.Metadata.Name, project.Metadata.UID)
 	}
+	for _, control := range r.ControlSessions {
+		add("", KindControlSession, control.Metadata.Name, control.Metadata.UID)
+	}
 	for _, window := range r.Windows {
 		add(window.Metadata.OwnerUID(), KindWindow, window.Metadata.Name, window.Metadata.UID)
 	}
@@ -174,6 +177,11 @@ func (r Registry) normalized() Registry {
 		r.Projects[i].APIVersion = APIVersion
 		r.Projects[i].Kind = KindProject
 		r.Projects[i].Metadata.CreatedAt = r.Projects[i].Metadata.CreatedAt.UTC()
+	}
+	for i := range r.ControlSessions {
+		r.ControlSessions[i].APIVersion = APIVersion
+		r.ControlSessions[i].Kind = KindControlSession
+		r.ControlSessions[i].Metadata.CreatedAt = r.ControlSessions[i].Metadata.CreatedAt.UTC()
 	}
 	for i := range r.Windows {
 		r.Windows[i].APIVersion = APIVersion
