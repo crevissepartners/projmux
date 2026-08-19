@@ -228,6 +228,23 @@ Every create is **detached**: no create moves the client. Use `focus pane` or
 inherited exact socket inside tmux; outside tmux an explicit `--project` is
 required before anything live is touched.
 
+#### Splits started from a popup
+
+The split UI's own pickers (`M-7`, `M-4`/`C-r`, the pane context menu, and the
+default split key when the saved mode is `selective` or `resume`) run inside a
+`display-popup`. tmux exports `$TMUX` to a popup job and deliberately exports no
+`$TMUX_PANE`, because a popup is not a pane — so the picker has no inherited
+target of its own while still knowing, from the keypress that opened it, which
+pane the operator was in. That pane travels on the create intent as an explicit
+anchor and resolves Project, Window and split anchor through the same identity
+mirror a pane-hosted invocation reads.
+
+The anchor is something the split UI hands to `create`, never something `create`
+reads from the environment. `$TMUX_SPLIT_TARGET_PANE` is not a scope override:
+typing `projmux create pane --placement right` inside a popup is still an
+invocation with no target and still refuses with the `--project` usage error
+above, and no read, rename, or delete verb consults it.
+
 ### Rename and rebind live convergence
 
 `rename project|window|pane` commits the selected Registry `metadata.name` and

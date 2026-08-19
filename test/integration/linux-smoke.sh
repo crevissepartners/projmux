@@ -86,7 +86,10 @@ bin="$PROJMUX_SMOKE_BIN"
 # which is exactly what a `run-shell` child would see if the generated binding
 # ever stopped carrying `#{pane_id}`. The command must exit 2 naming --project
 # and must issue no tmux command at all -- not even a probe of the server it
-# inherited. The positive pane-id propagation runs against a real tmux server in
+# inherited. `$TMUX_SPLIT_TARGET_PANE` is set here on purpose: a popup's origin
+# pane is an anchor the split UI states on its create intent and never an
+# ambient scope, so a *typed* create inside that same runtime keeps refusing and
+# keeps probing nothing. The positive pane-id propagation runs against a real tmux server in
 # the e2e smoke, which is the only place a resource-backed create can be
 # observed end to end.
 fake_mux_dir="$PROJMUX_SMOKE_WORKDIR/fake-mux"
@@ -112,6 +115,7 @@ fake_tmux_output="$(
   PROJMUX_FAKE_MUX_LOG="$fake_tmux_log" \
     PATH="$fake_mux_dir:$PATH" \
     TMUX="fake" \
+    TMUX_SPLIT_TARGET_PANE="%7" \
     XDG_STATE_HOME="$PROJMUX_SMOKE_WORKDIR/create-no-scope-state" \
     SHELL="/bin/sh" \
     "$bin" create pane -o pane-id --placement right 2>"$PROJMUX_SMOKE_WORKDIR/create-no-scope.err"
@@ -140,11 +144,18 @@ fi
 # route/catalog refactor cannot leave the popup functional while launch is a
 # no-op -- and so the bridge cannot quietly regain a runtime-only split.
 #
-# The fixture resolves no managed Project, which is exactly what makes the
-# assertion sharp: the canonical route refuses with exit 2 naming `--project`
-# and issues no tmux command at all. A bridge that still called `split-window`
-# would exit 0 and log one. Shell mode keeps the fixture independent of provider
-# binaries.
+# `$TMUX` with `$TMUX_SPLIT_TARGET_PANE` and no `$TMUX_PANE` is the popup
+# runtime: `display-popup -E` exports the first two and never the third, so the
+# origin pane the keypress carried is the only target this invocation has. The
+# bridge must therefore reach create with that pane as an explicit anchor, which
+# is observable here as the read-only identity probe of `%7`.
+#
+# The fixture's fake pane mirrors no Projmux identity, which is what keeps the
+# assertion sharp on both sides: the anchor is used, and an anchor that resolves
+# nothing still refuses with exit 2 naming `--project` and mutates nothing. A
+# bridge that called `split-window` would exit 0 and log one; a bridge that lost
+# the anchor would log no probe at all. Shell mode keeps the fixture independent
+# of provider binaries.
 mkdir -p "$XDG_CONFIG_HOME/projmux"
 printf 'shell\n' >"$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
 : >"$fake_tmux_log"
@@ -171,8 +182,16 @@ if [[ -n "$launch_default_output" ]]; then
   exit 1
 fi
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/launch-default.err" "pass --project <ref>"
-if [[ -s "$fake_tmux_log" ]]; then
-  echo "the saved-default split bridge issued tmux commands instead of a canonical create intent:" >&2
+# The anchor reached create: the scope resolution reads the origin pane's
+# mirrored Window uid off `%7` rather than probing the server for a focused pane.
+smoke_assert_file_contains "$fake_tmux_log" "display-message -p -t %7 -F #{@projmux_window_uid}"
+if grep -qE '(^| )(split-window|new-window|new-session|kill-pane|kill-window|set-option|send-keys)( |$)' "$fake_tmux_log"; then
+  echo "the saved-default split bridge mutated tmux instead of refusing:" >&2
+  cat "$fake_tmux_log" >&2
+  exit 1
+fi
+if grep -qvE '^display-message ' "$fake_tmux_log"; then
+  echo "the saved-default split bridge issued something other than the read-only anchor probes:" >&2
   cat "$fake_tmux_log" >&2
   exit 1
 fi

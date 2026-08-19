@@ -45,7 +45,12 @@ import (
 //     still succeeds against a running server and silently targets the
 //     most-recently-used session, which would pick a wrong target. The pane id
 //     comes from $TMUX_PANE and is passed as an explicit `-t`, and $TMUX must
-//     also be set so a leaked $TMUX_PANE cannot address a different server.
+//     also be set so a leaked $TMUX_PANE cannot address a different server. A
+//     caller that runs inside the client but not inside a pane -- a tmux popup
+//     job, which gets $TMUX and no $TMUX_PANE -- may state its target instead of
+//     inheriting one; see anchoredActiveTargetLookup, which keeps the $TMUX half
+//     of this rule and takes the pane from the caller rather than the
+//     environment.
 //  4. An active target that maps onto no registry resource is a refusal, never a
 //     fallthrough. See activeTargetError.
 //
@@ -96,20 +101,68 @@ func tmuxActiveTargetLookup(getenv func(string) string, mirror intmetadata.Mirro
 		if paneID == "" || strings.TrimSpace(getenv("TMUX")) == "" {
 			return activeTargetObserver{}, false
 		}
-		read := func(resolve func(context.Context, string) (string, error)) func() string {
-			return func() string {
-				value, err := resolve(context.Background(), paneID)
-				if err != nil {
-					return ""
-				}
-				return strings.TrimSpace(value)
-			}
+		return newActiveTargetObserver(paneID, mirror), true
+	}
+}
+
+// defaultAnchoredActiveTargetLookup is the production seam of an invocation
+// whose anchor pane is explicit rather than inherited. See
+// anchoredActiveTargetLookup.
+func defaultAnchoredActiveTargetLookup(paneID string) activeTargetLookup {
+	return anchoredActiveTargetLookup(paneID, os.Getenv, intmetadata.NewMirror(inttmux.ExecRunner{}))
+}
+
+// anchoredActiveTargetLookup observes an explicitly named pane instead of the
+// inherited $TMUX_PANE.
+//
+// It exists for exactly one shape of invocation: a job that runs inside the
+// tmux client but not inside the pane it acts on. A tmux popup is that job --
+// `display-popup -E` inherits $TMUX and deliberately exports no $TMUX_PANE,
+// because the popup is not a pane -- so the split UI running in a popup has no
+// inherited target at all while still knowing, from the keypress that opened
+// it, exactly which pane the operator was in.
+//
+// The two edges are the reason this is a separate constructor rather than a
+// fallback inside tmuxActiveTargetLookup:
+//
+//  1. The anchor is passed in, never read from the environment here. Promoting
+//     $TMUX_SPLIT_TARGET_PANE to an implicit target every verb consults would
+//     make one popup's origin pane a global scope override; the caller that
+//     owns the anchor is the only one that may supply it.
+//  2. $TMUX must still be set, for the same reason edge 3 of the contract above
+//     requires it: an anchor that leaked into a process outside any client
+//     would otherwise address a pane on a server this invocation never
+//     inherited.
+func anchoredActiveTargetLookup(paneID string, getenv func(string) string, mirror intmetadata.Mirror) activeTargetLookup {
+	anchor := strings.TrimSpace(paneID)
+	return func() (activeTargetObserver, bool) {
+		if getenv == nil || anchor == "" {
+			return activeTargetObserver{}, false
 		}
-		return activeTargetObserver{
-			paneID:    paneID,
-			paneUID:   read(mirror.ResolvePaneUID),
-			windowUID: read(mirror.ResolveWindowUID),
-		}, true
+		if strings.TrimSpace(getenv("TMUX")) == "" {
+			return activeTargetObserver{}, false
+		}
+		return newActiveTargetObserver(anchor, mirror), true
+	}
+}
+
+// newActiveTargetObserver builds the lazy identity reads of one tmux pane
+// target. The two uid reads stay independent so a route only pays for the option
+// its own kind needs.
+func newActiveTargetObserver(paneID string, mirror intmetadata.Mirror) activeTargetObserver {
+	read := func(resolve func(context.Context, string) (string, error)) func() string {
+		return func() string {
+			value, err := resolve(context.Background(), paneID)
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(value)
+		}
+	}
+	return activeTargetObserver{
+		paneID:    paneID,
+		paneUID:   read(mirror.ResolvePaneUID),
+		windowUID: read(mirror.ResolveWindowUID),
 	}
 }
 

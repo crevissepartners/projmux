@@ -908,10 +908,12 @@ type keyBindingActionSemantics struct {
 
 const (
 	// keyBindingAnchorCurrentPaneSplitTarget is the exact anchor an interactive
-	// right/down action passes. The shipped handler resolves it in
-	// aiCommand.resolveTargetPane: an explicit TMUX_SPLIT_TARGET_PANE when the
-	// launch came from a popup, otherwise `display-message -p -F '#{pane_id}'`
-	// read at press time. Both spellings are the raw `%N` transport id, so this
+	// right/down action passes. A launch that came from a popup resolves it in
+	// aiCommand.splitOriginPane -- the explicit TMUX_SPLIT_TARGET_PANE the popup
+	// carries, which the create intent then states as its anchor because a popup
+	// job has no $TMUX_PANE to inherit. A launch that runs in the pane it splits
+	// states no anchor and create reads `#{pane_id}` from the inherited
+	// $TMUX_PANE at press time. Both spellings are the raw `%N` transport id, so this
 	// row says `%N` and never says uid -- no `metadata.uid` is read anywhere on
 	// that path, and calling a raw pane id a uid is exactly the Pane vocabulary
 	// mixing the resource contract forbids. What the row does assert is the
