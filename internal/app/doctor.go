@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
@@ -33,6 +34,11 @@ type doctorCommand struct {
 	runtimeProbe           func() doctorRuntimeProbe
 	resolveGeneratedConfig func() (string, error)
 	readGeneratedConfig    func(string, int64) ([]byte, error)
+	// readRegistry is the zero-write Registry read the invariant audit plans
+	// from. It is the snapshot read rather than the ordinary load so running
+	// diagnostics on a machine that never created a Project does not create the
+	// state directory as a side effect.
+	readRegistry func() (coremetadata.Registry, error)
 }
 
 func newDoctorCommand() *doctorCommand {
@@ -53,6 +59,7 @@ func newDoctorCommand() *doctorCommand {
 	c.runtimeProbe = defaultDoctorRuntimeProbe
 	c.resolveGeneratedConfig = func() (string, error) { return doctorGeneratedConfigPath(c.getenv, os.UserHomeDir) }
 	c.readGeneratedConfig = doctorReadRegularFileBounded
+	c.readRegistry = snapshotResourceRegistry
 	return c
 }
 
@@ -115,6 +122,7 @@ type doctorReport struct {
 	SessionStatePrune    string                               `json:"session_state_prune"`
 	Runtime              []doctorFinding                      `json:"runtime"`
 	Logs                 []doctorFinding                      `json:"logs"`
+	RegistryInvariants   []doctorFinding                      `json:"registry_invariants"`
 }
 
 const doctorSchemaVersion = 2
@@ -130,6 +138,7 @@ const (
 	doctorSectionIntegrations doctorSection = "integrations"
 	doctorSectionSessionState doctorSection = "session-state"
 	doctorSectionLogs         doctorSection = "logs"
+	doctorSectionRegistry     doctorSection = "registry"
 )
 
 var doctorSections = []doctorSection{
@@ -138,6 +147,7 @@ var doctorSections = []doctorSection{
 	doctorSectionIntegrations,
 	doctorSectionSessionState,
 	doctorSectionLogs,
+	doctorSectionRegistry,
 }
 
 func doctorDeps() []doctorDep {
@@ -157,7 +167,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
-	sectionName := fs.String("section", "", "filter diagnostics: deps|runtime|integrations|session-state|logs")
+	sectionName := fs.String("section", "", "filter diagnostics: deps|runtime|integrations|session-state|logs|registry")
 	verbose := fs.Bool("verbose", false, "include successful checks and full detail in the text report")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -170,7 +180,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	section, ok := parseDoctorSection(*sectionName)
 	if !ok {
-		return usageError("doctor --section must be one of deps, runtime, integrations, session-state, or logs")
+		return usageError("doctor --section must be one of deps, runtime, integrations, session-state, logs, or registry")
 	}
 
 	report := c.evaluateReport(section)
@@ -239,6 +249,9 @@ func (c *doctorCommand) evaluateReport(section doctorSection) doctorReport {
 	}
 	if section == doctorSectionAll || section == doctorSectionLogs {
 		report.Logs = c.evaluateLogFindings()
+	}
+	if section == doctorSectionAll || section == doctorSectionRegistry {
+		report.RegistryInvariants = c.evaluateRegistryInvariants()
 	}
 	return report
 }
@@ -353,6 +366,9 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 	if section == doctorSectionAll || section == doctorSectionLogs {
 		writeDoctorFindingsText(&buf, "Logs", report.Logs, verbose)
 	}
+	if section == doctorSectionAll || section == doctorSectionRegistry {
+		writeDoctorRegistryInvariantsText(&buf, report.RegistryInvariants, verbose)
+	}
 	_, err := w.Write(buf.Bytes())
 	return err
 }
@@ -376,6 +392,37 @@ func writeDoctorFindingsText(buf *bytes.Buffer, title string, findings []doctorF
 			fmt.Fprintf(buf, "; safe codes: %s", diagnosticsCodesText(finding.SafeCodes))
 		}
 		fmt.Fprintf(buf, "; remediation: %s\n", finding.Remediation)
+	}
+}
+
+// writeDoctorRegistryInvariantsText renders the Registry materialization
+// invariant section.
+//
+// It does not reuse writeDoctorFindingsText for one reason: that renderer hides
+// info findings unless --verbose, and the zero case is the whole point of this
+// section. A clean audit that printed nothing would be indistinguishable from a
+// section that never ran, which is the silence C-1 Failure.Detection exists to
+// end. Refusal reasons are the opposite: they quote stored absolute paths, so
+// they follow the report's established rule that path detail is --verbose only.
+func writeDoctorRegistryInvariantsText(buf *bytes.Buffer, findings []doctorFinding, verbose bool) {
+	buf.WriteString("\nRegistry materialization invariants\n")
+	counts := map[doctorFindingSeverity]int{}
+	for _, finding := range findings {
+		counts[finding.Severity]++
+	}
+	fmt.Fprintf(buf, "  Summary: %d info, %d warning, %d error.\n", counts[doctorSeverityInfo], counts[doctorSeverityWarning], counts[doctorSeverityError])
+	for _, finding := range findings {
+		fmt.Fprintf(buf, "  [%-7s] %s", finding.Severity, finding.Code)
+		if finding.Count > 0 {
+			fmt.Fprintf(buf, "; count: %d", finding.Count)
+		}
+		fmt.Fprintf(buf, "; remediation: %s\n", finding.Remediation)
+		if !verbose {
+			continue
+		}
+		for _, detail := range finding.Details {
+			fmt.Fprintf(buf, "             reason: %s\n", detail)
+		}
 	}
 }
 
@@ -586,6 +633,7 @@ type doctorJSONReport struct {
 	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
 	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
 	Logs                 *[]doctorFinding                      `json:"logs,omitempty"`
+	RegistryInvariants   *[]doctorFinding                      `json:"registry_invariants,omitempty"`
 }
 
 func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) error {
@@ -607,6 +655,9 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 	}
 	if section == doctorSectionAll || section == doctorSectionLogs {
 		out.Logs = &report.Logs
+	}
+	if section == doctorSectionAll || section == doctorSectionRegistry {
+		out.RegistryInvariants = &report.RegistryInvariants
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

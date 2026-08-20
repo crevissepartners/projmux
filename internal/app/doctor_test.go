@@ -15,6 +15,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 )
@@ -49,6 +50,7 @@ func newStubDoctorCommand(host string, present map[string]bool) *doctorCommand {
 		return filepath.Join("/projmux-doctor-missing-fixture", "config", "projmux", "tmux.conf"), nil
 	}
 	c.readGeneratedConfig = doctorReadRegularFileBounded
+	c.readRegistry = func() (coremetadata.Registry, error) { return coremetadata.NewRegistry(), nil }
 	return c
 }
 
@@ -106,6 +108,7 @@ func TestDoctorSectionJSONProjectsOneTypedInventory(t *testing.T) {
 		{section: "session-state", field: "session_state_resume"},
 		{section: "runtime", field: "runtime"},
 		{section: "logs", field: "logs"},
+		{section: "registry", field: "registry_invariants"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.section, func(t *testing.T) {
@@ -123,7 +126,7 @@ func TestDoctorSectionJSONProjectsOneTypedInventory(t *testing.T) {
 			if _, ok := root[tc.field]; !ok {
 				t.Fatalf("section JSON = %s, want %q", stdout.String(), tc.field)
 			}
-			for _, forbidden := range []string{"dependencies", "ai_notify_integrations", "session_state_resume", "session_state_prune", "runtime", "logs"} {
+			for _, forbidden := range []string{"dependencies", "ai_notify_integrations", "session_state_resume", "session_state_prune", "runtime", "logs", "registry_invariants"} {
 				if forbidden != tc.field && !(tc.section == "session-state" && forbidden == "session_state_prune") {
 					if _, ok := root[forbidden]; ok {
 						t.Fatalf("section %s leaked %q: %s", tc.section, forbidden, stdout.String())
@@ -200,6 +203,10 @@ func TestDoctorSectionCollectsOnlySelectedInventory(t *testing.T) {
 		cmd.lookPath = func(string) (string, error) { t.Fatal("dependency inventory evaluated"); return "", nil }
 		cmd.aiDiagnostics = func() []doctorAINotifyIntegration { t.Fatal("integration inventory evaluated"); return nil }
 		cmd.resumeDiagnostics = func() []doctorSessionStateResumeDiagnostic { t.Fatal("session inventory evaluated"); return nil }
+		cmd.readRegistry = func() (coremetadata.Registry, error) {
+			t.Fatal("registry invariant audit evaluated")
+			return coremetadata.Registry{}, nil
+		}
 		if err := cmd.Run([]string{"--section", section}, io.Discard, io.Discard); err != nil {
 			t.Fatalf("Run(--section %s) error = %v", section, err)
 		}
@@ -313,7 +320,7 @@ func TestDoctorSectionRejectsUnknownValue(t *testing.T) {
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{})
 	err := cmd.Run([]string{"--section", "future"}, io.Discard, io.Discard)
-	if err == nil || !IsUsageError(err) || err.Error() != "doctor --section must be one of deps, runtime, integrations, session-state, or logs" {
+	if err == nil || !IsUsageError(err) || err.Error() != "doctor --section must be one of deps, runtime, integrations, session-state, logs, or registry" {
 		t.Fatalf("Run() error = %#v, want exact section UsageError", err)
 	}
 }
@@ -1004,6 +1011,7 @@ func newStubDoctorCommandWithVersions(host string, present map[string]bool, vers
 			return name + " 1.2.3"
 		},
 		aiDiagnostics: func() []doctorAINotifyIntegration { return nil },
+		readRegistry:  func() (coremetadata.Registry, error) { return coremetadata.NewRegistry(), nil },
 	}
 }
 

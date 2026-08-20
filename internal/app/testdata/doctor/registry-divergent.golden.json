@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "registry_invariants": [
+    {
+      "severity": "info",
+      "code": "registry.materialize.audited",
+      "remediation": "none",
+      "count": 2
+    },
+    {
+      "severity": "error",
+      "code": "registry.materialize.fatal.project",
+      "remediation": "inspect-registry-topology",
+      "count": 1
+    },
+    {
+      "severity": "warning",
+      "code": "registry.materialize.skipped.window",
+      "remediation": "inspect-registry-topology",
+      "count": 1
+    }
+  ]
+}

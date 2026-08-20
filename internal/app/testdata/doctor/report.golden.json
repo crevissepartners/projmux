@@ -65,5 +65,17 @@
       "code": "logs.recent-errors.none",
       "remediation": "none"
     }
+  ],
+  "registry_invariants": [
+    {
+      "severity": "info",
+      "code": "registry.materialize.audited",
+      "remediation": "none"
+    },
+    {
+      "severity": "info",
+      "code": "registry.materialize.clean",
+      "remediation": "none"
+    }
   ]
 }

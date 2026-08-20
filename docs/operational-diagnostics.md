@@ -198,6 +198,51 @@ the source. Windows ACL privacy is reported as unverified because `os.FileMode`
 cannot prove it; a separate finding preserves the metadata-only writability
 result, and Doctor does not modify ACLs.
 
+### Registry materialization invariant audit
+
+`projmux doctor --section registry` reports the admission difference between
+what the Registry writer accepts and what activation can rebuild.
+`Registry.Validate` and the materialization planner do not share a
+precondition: a Window that owns no shell Pane carries an empty
+`spec.primaryPaneRef`, which validation accepts explicitly and which activation
+cannot build a Window from. That difference set is reachable through ordinary
+use, so it needs a detection surface of its own.
+
+The verdict is the consumer predicate itself, not a maintained list of suspect
+shapes. Every Registry Project is planned through the shipped topology planner
+with no observed sessions, and the refusals that offline plan records *are* the
+difference. Nothing in the audit re-decides which stored topology can be
+materialized, so the section cannot drift away from the route it describes.
+
+The section is read-only in the strongest available sense. The Registry read is
+the zero-write snapshot read, so running diagnostics on a machine that never
+created a Project neither creates nor repairs the state directory, and the tmux
+runner handed to the planner refuses every call instead of reaching a server.
+The audit never writes, repairs, or migrates a Registry; repairing a stored
+topology the materializer cannot build is a separate, explicitly requested
+operation.
+
+Findings use the shared severity/code/remediation/count shape:
+
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `registry.materialize.audited` | info | `count` is the number of Projects planned. Always emitted. |
+| `registry.materialize.clean` | info | The difference set is empty. Emitted explicitly, and printed without `--verbose`, because a silent clean audit is indistinguishable from a section that never ran. |
+| `registry.materialize.unavailable` | warning | The Registry could not be read; nothing was planned. |
+| `registry.materialize.fatal.<kind>` | error | `count` stored resources of that kind are refused in a way that stops the whole Project from activating. |
+| `registry.materialize.skipped.<kind>` | warning | `count` stored resources of that kind are refused as single items; the Project still opens without them. |
+
+`<kind>` is one of `project`, `window`, `pane`, `agent`, or `other`.
+`fatal` and `skipped` are read off the planner's own refusal split rather than
+re-decided here.
+
+The refusal reasons are the planner's own wording and are rendered only under
+`--verbose`, following the report's rule that path-bearing detail is opt-in: a
+stale-cwd reason quotes a stored absolute path. Those reasons are never
+serialized in any format. The support report therefore carries the same codes,
+kinds, and counts as the text report and no reason wording at all, rather than
+relying on the redaction allowlist to hash a private path out of an archive.
+
 ## Storage and retention
 
 The path is
