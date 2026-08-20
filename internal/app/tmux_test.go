@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2034,20 +2035,43 @@ func TestTmuxPrintConfigBindsPaneContextMenu(t *testing.T) {
 		// (`ai picker` directly would fail: run-shell has no TMUX env, so the
 		// picker cannot resolve its context cwd).
 		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
-		// Stock split items (stock names + key shortcuts).
-		"\"Horizontal Split\" h { split-window -h }",
-		"\"Vertical Split\" v { split-window -v }",
+		// Stock names and shortcuts now state managed menu intents with the exact
+		// clicked pane instead of mutating tmux directly.
+		`"Horizontal Split" h { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}" }`,
+		`"Vertical Split" v { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-down #{pane_id}" }`,
 		// A few more stock items with their dim/toggle format conditions.
 		"\"#{?#{>:#{window_panes},1},,-}Swap Up\" u { swap-pane -U }",
 		"\"#{?#{>:#{window_panes},1},,-}Swap Down\" d { swap-pane -D }",
-		"\"Kill\" X { kill-pane }",
-		"\"Respawn\" R { respawn-pane -k }",
+		`"Kill" X { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} kill #{pane_id}" }`,
 		"\"#{?pane_marked,Unmark,Mark}\" m { select-pane -m }",
 		"\"#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}\" z { resize-pane -Z }",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
 		}
+	}
+}
+
+func TestGeneratedPaneMenuOmitsRawTmuxMutationVerbsAndRespawn(t *testing.T) {
+	t.Parallel()
+
+	menu := strings.Join(tmuxPaneContextMenuBindings("/tmp/projmux"), "\n")
+	for _, literal := range []string{"split-window", "kill-pane", "Respawn", "respawn-pane"} {
+		if count := strings.Count(menu, literal); count != 0 {
+			t.Fatalf("generated pane-menu contains %d %q literal(s), want 0: %s", count, literal, menu)
+		}
+	}
+}
+
+func TestGeneratedPaneMenuGolden(t *testing.T) {
+	t.Parallel()
+
+	want := []string{
+		"unbind-key -q -n MouseDown3Pane",
+		`bind-key -n MouseDown3Pane if-shell -F -t = "#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}" { select-pane -t = ; send-keys -M } { display-menu -T "#[align=centre]#{pane_index} (#{pane_id})" -t = -x M -y M "AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} ai-split-resume-right" } '' "Horizontal Split" h { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}" } "Vertical Split" v { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-down #{pane_id}" } '' "#{?#{>:#{window_panes},1},,-}Swap Up" u { swap-pane -U } "#{?#{>:#{window_panes},1},,-}Swap Down" d { swap-pane -D } '' "Kill" X { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} kill #{pane_id}" } "#{?pane_marked,Unmark,Mark}" m { select-pane -m } "#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}" z { resize-pane -Z } }`,
+	}
+	if got := tmuxPaneContextMenuBindings("/tmp/proj mux/bin/projmux"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("generated pane-menu config changed\n--- got ---\n%s\n--- want ---\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 
@@ -2107,12 +2131,100 @@ func TestTmuxPrintAppConfigBindsPaneContextMenu(t *testing.T) {
 		"bind-key -n MouseDown3Pane if-shell -F -t = ",
 		"display-menu -T \"#[align=centre]#{pane_index} (#{pane_id})\" -t = -x M -y M",
 		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
-		"\"Horizontal Split\" h { split-window -h }",
-		"\"Vertical Split\" v { split-window -v }",
+		`"Horizontal Split" h { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}" }`,
+		`"Vertical Split" v { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-down #{pane_id}" }`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-app-config output = %q, want substring %q", output, want)
 		}
+	}
+}
+
+func TestTmuxPaneMenuRoutesSplitAndKillThroughCanonicalIntents(t *testing.T) {
+	t.Parallel()
+
+	creator := &recordingPaneCreator{}
+	for _, test := range []struct {
+		action string
+		want   agentPaneIntent
+	}{
+		{action: "split-right", want: agentPaneIntent{placement: "right", anchorPaneID: "%17"}},
+		{action: "split-down", want: agentPaneIntent{placement: "down", anchorPaneID: "%17"}},
+	} {
+		t.Run(test.action, func(t *testing.T) {
+			creator.intents = nil
+			cmd := &tmuxCommand{runner: &recordingTmuxRunner{}, paneMenuCreate: creator.createFromIntent}
+			if err := cmd.Run([]string{"pane-menu", "--client", "/dev/pts/7", test.action, "%17"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if got := creator.intents; !reflect.DeepEqual(got, []agentPaneIntent{test.want}) {
+				t.Fatalf("intents = %#v, want %#v", got, []agentPaneIntent{test.want})
+			}
+		})
+	}
+
+	var deleted []string
+	runner := &recordingTmuxRunner{}
+	cmd := &tmuxCommand{
+		runner: runner,
+		paneMenuDelete: func(anchor string, stdout, _ io.Writer) error {
+			deleted = append(deleted, anchor)
+			_, _ = io.WriteString(stdout, "delete pane: deleting 1 pane and 0 descendant resources\npane/log uid=pan-log\n")
+			return nil
+		},
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"pane-menu", "--client", "/dev/pts/7", "kill", "%19"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !reflect.DeepEqual(deleted, []string{"%19"}) {
+		t.Fatalf("delete anchors = %v, want [%%19]", deleted)
+	}
+	if !strings.Contains(stdout.String(), "pane/log uid=pan-log") {
+		t.Fatalf("canonical delete result was not preserved: %q", stdout.String())
+	}
+	wantDisplay := recordedTmuxCall{name: "tmux", args: []string{
+		"display-message", "-c", "/dev/pts/7", "-d", "10000",
+		"projmux delete pane: deleting 1 pane and 0 descendant resources",
+	}}
+	if !reflect.DeepEqual(runner.calls, []recordedTmuxCall{wantDisplay}) {
+		t.Fatalf("tmux calls = %#v, want client-visible canonical delete result %#v", runner.calls, wantDisplay)
+	}
+}
+
+func TestTmuxPaneMenuFailuresRemainVisibleWithoutFallbackMutation(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		action     string
+		createErr  error
+		deleteErr  error
+		wantReason string
+	}{
+		{name: "split", action: "split-right", createErr: errors.New("injected managed create refusal"), wantReason: "injected managed create refusal"},
+		{name: "kill", action: "kill", deleteErr: errors.New("injected canonical delete refusal"), wantReason: "injected canonical delete refusal"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &recordingTmuxRunner{}
+			cmd := &tmuxCommand{
+				runner: runner,
+				paneMenuCreate: func(agentPaneIntent, io.Writer, io.Writer) error {
+					return test.createErr
+				},
+				paneMenuDelete: func(string, io.Writer, io.Writer) error {
+					return test.deleteErr
+				},
+			}
+			if err := cmd.Run([]string{"pane-menu", "--client", "/dev/pts/8", test.action, "%21"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("a displayed managed refusal escaped as an invisible exit code: %v", err)
+			}
+			if len(runner.calls) != 1 || runner.calls[0].name != "tmux" ||
+				!containsAll(runner.calls[0].args, []string{"display-message", "-c", "/dev/pts/8"}) ||
+				!strings.Contains(runner.calls[0].args[len(runner.calls[0].args)-1], test.wantReason) {
+				t.Fatalf("failure was not shown to the exact client: calls=%#v want reason %q", runner.calls, test.wantReason)
+			}
+		})
 	}
 }
 
@@ -3275,6 +3387,10 @@ func TestTmuxCommandRejectsInvalidUsage(t *testing.T) {
 		{name: "popup-sessions extra args", args: []string{"popup-sessions", "extra"}, want: "tmux popup-sessions accepts no arguments"},
 		{name: "missing popup-toggle mode", args: []string{"popup-toggle"}, want: "tmux popup-toggle requires exactly 1 argument"},
 		{name: "unknown popup-toggle mode", args: []string{"popup-toggle", "nope"}, want: "unknown tmux popup-toggle mode: nope"},
+		{name: "missing pane-menu args", args: []string{"pane-menu"}, want: "tmux pane-menu requires --client"},
+		{name: "malformed pane-menu pane", args: []string{"pane-menu", "--client", "/dev/pts/1", "kill", "active"}, want: "tmux pane-menu requires --client"},
+		{name: "unknown pane-menu action", args: []string{"pane-menu", "--client", "/dev/pts/1", "replace", "%1"}, want: "unknown tmux pane-menu action: replace"},
+		{name: "removed pane-menu respawn action", args: []string{"pane-menu", "--client", "/dev/pts/1", "respawn", "%1"}, want: "unknown tmux pane-menu action: respawn"},
 		{name: "missing rename-pane args", args: []string{"rename-pane", "%1"}, want: "tmux rename-pane requires <pane> <label>"},
 	}
 
