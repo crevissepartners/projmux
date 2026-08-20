@@ -75,12 +75,13 @@ type resourceReconcileReport struct {
 	// to be. It is reported because the same Registry produces the same managed
 	// rows on both, and an operator debugging a refusal needs to know which
 	// host answered.
-	HostMode        string                  `json:"hostMode,omitempty"`
-	Outcome         string                  `json:"outcome"`
-	Counts          resourceReconcileCounts `json:"counts"`
-	Items           []resourceReconcileItem `json:"items"`
-	CompletedStages []string                `json:"completedStages"`
-	RemainingDrift  []resourceReconcileItem `json:"remainingDrift"`
+	HostMode         string                          `json:"hostMode,omitempty"`
+	Outcome          string                          `json:"outcome"`
+	Counts           resourceReconcileCounts         `json:"counts"`
+	DivergenceCounts []resourcegraph.DivergenceCount `json:"divergenceCounts"`
+	Items            []resourceReconcileItem         `json:"items"`
+	CompletedStages  []string                        `json:"completedStages"`
+	RemainingDrift   []resourceReconcileItem         `json:"remainingDrift"`
 	// Policy is the subset of the controller's authority table this run
 	// exercised. It is what turns "nothing was started" from a claim into
 	// evidence.
@@ -362,6 +363,7 @@ func (c *resourceReconcileCommand) replanAfterFailure(ctx context.Context, plann
 
 func reportForDryRun(plan resourceReconcilePlan, target resourceReconcileTarget, retry string) resourceReconcileReport {
 	report := resourceReconcileReport{Target: target, DryRun: true, Outcome: "planned", Items: clonePlanItems(plan.items), Retry: retry}
+	report.DivergenceCounts = resourcePlanDivergenceCounts(plan.items)
 	report.Counts.Changed = plan.safeItems()
 	report.Counts.Failed = plan.refusedItems()
 	if len(plan.items) == 0 {
@@ -401,7 +403,7 @@ func reportForExecute(plan resourceReconcilePlan, target resourceReconcileTarget
 	}
 	return resourceReconcileReport{
 		Target: target, Outcome: outcome, Counts: resourceReconcileCounts{Changed: changed, NoOp: noOp, Failed: failed},
-		Items: items, CompletedStages: completed, RemainingDrift: remaining, Retry: retry,
+		DivergenceCounts: resourcePlanDivergenceCounts(items), Items: items, CompletedStages: completed, RemainingDrift: remaining, Retry: retry,
 	}
 }
 
@@ -433,8 +435,16 @@ func reportForFailure(plan, remaining resourceReconcilePlan, target resourceReco
 	}
 	return resourceReconcileReport{
 		Target: target, Outcome: "failed", Counts: resourceReconcileCounts{Changed: changed, Failed: 1}, Items: items,
-		CompletedStages: completed, RemainingDrift: remainingItems, Retry: retry, Error: errorText,
+		DivergenceCounts: resourcePlanDivergenceCounts(items), CompletedStages: completed, RemainingDrift: remainingItems, Retry: retry, Error: errorText,
 	}
+}
+
+func resourcePlanDivergenceCounts(items []resourceReconcileItem) []resourcegraph.DivergenceCount {
+	classified := make([]resourcegraph.DivergenceItem, 0, len(items))
+	for _, item := range items {
+		classified = append(classified, resourcegraph.DivergenceItem{Key: item.Key, Divergence: item.Divergence, Reason: item.Reason})
+	}
+	return resourcegraph.CountDivergences(classified)
 }
 
 func clonePlanItems(items []resourceReconcileItem) []resourceReconcileItem {
@@ -470,6 +480,14 @@ func writeResourceReconcileReport(w io.Writer, output string, report resourceRec
 		report.Target.Flag, report.Target.Value, reconcileReportMode(report), report.Outcome,
 		report.Counts.Changed, report.Counts.NoOp, report.Counts.Failed); err != nil {
 		return err
+	}
+	if _, err := fmt.Fprintln(w, "divergence counts:"); err != nil {
+		return err
+	}
+	for _, count := range report.DivergenceCounts {
+		if _, err := fmt.Fprintf(w, "- %s=%d\n", count.Divergence, count.Count); err != nil {
+			return err
+		}
 	}
 	if len(report.Items) > 0 {
 		if _, err := fmt.Fprintln(w, "items:"); err != nil {
@@ -514,7 +532,7 @@ func writeResourceReconcileReport(w io.Writer, output string, report resourceRec
 }
 
 func formatResourceReconcileItem(item resourceReconcileItem) string {
-	line := fmt.Sprintf("- %s [%s] %s %s %s", item.Outcome, item.Drift, item.Surface, item.Action, item.Target)
+	line := fmt.Sprintf("- %s [%s] %s %s %s [%s]", item.Outcome, item.Drift, item.Surface, item.Action, item.Target, item.Divergence)
 	if item.Field != "" {
 		line += " " + item.Field
 	}

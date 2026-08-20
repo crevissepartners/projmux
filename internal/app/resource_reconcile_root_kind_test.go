@@ -120,9 +120,8 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 	},
 	{
 		File: "internal/app/resource_controller.go", Func: "graphHasOfflineRow",
-		Source: "Graph", Verdict: rootKindGap,
-		Owner: "internal/core/resourcegraph",
-		Why:   "reads resourcegraph.Graph, which models no ControlSession root at all, so a control-owned Window's offline row has no root to hang from",
+		Source: "Graph", Verdict: rootKindBoth,
+		Why: "checks offline rows beneath both graph root kinds",
 	},
 	{
 		File: "internal/app/resource_reconcile_plan.go", Func: "resourceRegistryProjectGraph",
@@ -165,10 +164,9 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "sums Project usage rows for the Project view",
 	},
 	{
-		File: "internal/app/sessions_registry.go", Func: "sessionsCommand.attributeSessions",
-		Source: "Graph", Verdict: rootKindGap,
-		Owner: "internal/core/resourcegraph",
-		Why:   "attributes live sessions to graph roots; the graph carries no ControlSession node, so Home attributes to nothing",
+		File: "internal/app/sessions_registry.go", Func: "attributeSessionSummaries",
+		Source: "Graph", Verdict: rootKindBoth,
+		Why: "attributes exact session bindings through both graph root kinds while keeping Home out of Project rows",
 	},
 	{
 		File: "internal/core/metadata/agent.go", Func: "Mutator.DeleteProject",
@@ -232,27 +230,28 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 	},
 	{
 		File: "internal/core/registryview/view.go", Func: "builder.projects",
-		Source: "Graph", Verdict: rootKindGap,
-		Owner: "internal/core/resourcegraph",
-		Why:   "builds sidebar root rows from graph.Projects; Home's chrome row is drawn outside the Registry projection entirely",
+		Source: "Graph", Verdict: rootKindBoth,
+		Why: "projects both root graphs while Home's user-facing row remains sidebar chrome",
 	},
 	{
 		File: "internal/core/resourcegraph/graph.go", Func: "newResolver",
-		Source: "Registry", Verdict: rootKindGap,
-		Owner: "internal/core/resourcegraph",
-		Why:   "kindByUID indexes Project, Window, Pane, Agent; a ControlSession uid resolves to no kind",
+		Source: "Registry", Verdict: rootKindBoth,
+		Why: "indexes both Registry root kinds before resolving exact claims",
+	},
+	{
+		File: "internal/core/resourcegraph/divergence.go", Func: "ClassifyDivergences",
+		Source: "Graph", Verdict: rootKindBoth,
+		Why: "classifies divergence rows rooted beneath both Registry root kinds",
 	},
 	{
 		File: "internal/core/resourcegraph/resolve.go", Func: "resolver.buildRegistryNodes",
-		Source: "Registry", Verdict: rootKindGap,
-		Owner: "internal/core/resourcegraph",
-		Why:   "emits a node for every Registry row except a ControlSession, so a control-owned Window reports ProjectUID pointing at a root that is not there",
+		Source: "Registry", Verdict: rootKindBoth,
+		Why: "emits nodes for both roots and carries root kind/uid through descendants",
 	},
 	{
 		File: "internal/core/runtimediag/report.go", Func: "newIndex",
-		Source: "Graph", Verdict: rootKindGap,
-		Owner: "internal/core/resourcegraph",
-		Why:   "indexes graph roots for the runtime diagnostic; inherits the graph's missing control root",
+		Source: "Graph", Verdict: rootKindBoth,
+		Why: "indexes both graph roots so a managed Home session resolves to its ControlSession identity",
 	},
 }
 
@@ -386,16 +385,16 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 		counts[site.Verdict]++
 	}
 	for verdict, want := range map[rootKindVerdict]int{
-		rootKindBoth:        8,
+		rootKindBoth:        15,
 		rootKindPaired:      2,
 		rootKindProjectOnly: 19,
-		rootKindGap:         6,
+		rootKindGap:         0,
 	} {
 		if counts[verdict] != want {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 35; got != want {
+	if got, want := len(rootKindProjectionSites), 36; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

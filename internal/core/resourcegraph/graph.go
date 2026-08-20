@@ -126,9 +126,22 @@ type ProjectNode struct {
 	Runtime     *RuntimeRef          `json:"runtime,omitempty"`
 }
 
+// ControlSessionNode is one Registry ControlSession with its runtime overlay.
+//
+// A control session is a root, not a Project: it has no filesystem root and is
+// bound by its exact spec.session plus the trusted control-role marker.
+type ControlSessionNode struct {
+	ControlSession coremetadata.ControlSession `json:"controlSession"`
+	Class          Class                       `json:"class"`
+	Status         Status                      `json:"status"`
+	Runtime        *RuntimeRef                 `json:"runtime,omitempty"`
+}
+
 // WindowNode is one Registry Window with its runtime overlay and resolved owner.
 type WindowNode struct {
 	Window      coremetadata.Window `json:"window"`
+	RootKind    coremetadata.Kind   `json:"rootKind,omitempty"`
+	RootUID     string              `json:"rootUID,omitempty"`
 	ProjectUID  string              `json:"projectUID,omitempty"`
 	Class       Class               `json:"class"`
 	Status      Status              `json:"status"`
@@ -143,6 +156,8 @@ type PaneNode struct {
 	Pane        coremetadata.Pane `json:"pane"`
 	AgentUID    string            `json:"agentUID,omitempty"`
 	WindowUID   string            `json:"windowUID,omitempty"`
+	RootKind    coremetadata.Kind `json:"rootKind,omitempty"`
+	RootUID     string            `json:"rootUID,omitempty"`
 	ProjectUID  string            `json:"projectUID,omitempty"`
 	Class       Class             `json:"class"`
 	Status      Status            `json:"status"`
@@ -159,6 +174,8 @@ type PaneNode struct {
 type AgentNode struct {
 	Agent       coremetadata.Agent `json:"agent"`
 	WindowUID   string             `json:"windowUID,omitempty"`
+	RootKind    coremetadata.Kind  `json:"rootKind,omitempty"`
+	RootUID     string             `json:"rootUID,omitempty"`
 	ProjectUID  string             `json:"projectUID,omitempty"`
 	PaneUID     string             `json:"paneUID,omitempty"`
 	Class       Class              `json:"class"`
@@ -191,15 +208,16 @@ type RuntimeNode struct {
 // Graph is the resolved read model: Registry rows with a runtime overlay, every
 // observed runtime object with an attribution, and the reasons for both.
 type Graph struct {
-	Transport   Transport        `json:"transport"`
-	HostMode    HostMode         `json:"hostMode"`
-	Unavailable []Unavailability `json:"unavailable,omitempty"`
-	Projects    []ProjectNode    `json:"projects,omitempty"`
-	Windows     []WindowNode     `json:"windows,omitempty"`
-	Panes       []PaneNode       `json:"panes,omitempty"`
-	Agents      []AgentNode      `json:"agents,omitempty"`
-	Runtime     []RuntimeNode    `json:"runtime,omitempty"`
-	Conflicts   []Conflict       `json:"conflicts,omitempty"`
+	Transport       Transport            `json:"transport"`
+	HostMode        HostMode             `json:"hostMode"`
+	Unavailable     []Unavailability     `json:"unavailable,omitempty"`
+	Projects        []ProjectNode        `json:"projects,omitempty"`
+	ControlSessions []ControlSessionNode `json:"controlSessions,omitempty"`
+	Windows         []WindowNode         `json:"windows,omitempty"`
+	Panes           []PaneNode           `json:"panes,omitempty"`
+	Agents          []AgentNode          `json:"agents,omitempty"`
+	Runtime         []RuntimeNode        `json:"runtime,omitempty"`
+	Conflicts       []Conflict           `json:"conflicts,omitempty"`
 }
 
 // RuntimeOfClass returns the observed objects with class, in graph order.
@@ -255,12 +273,13 @@ type resolver struct {
 	managedSession map[string]bool
 	managedWindow  map[string]bool
 
-	projects  []ProjectNode
-	windows   []WindowNode
-	panes     []PaneNode
-	agents    []AgentNode
-	runtime   []RuntimeNode
-	conflicts []Conflict
+	projects        []ProjectNode
+	controlSessions []ControlSessionNode
+	windows         []WindowNode
+	panes           []PaneNode
+	agents          []AgentNode
+	runtime         []RuntimeNode
+	conflicts       []Conflict
 }
 
 func newResolver(registry coremetadata.Registry, inventory Inventory) *resolver {
@@ -286,6 +305,9 @@ func newResolver(registry coremetadata.Registry, inventory Inventory) *resolver 
 	}
 	for _, project := range r.registry.Projects {
 		r.kindByUID[project.Metadata.UID] = coremetadata.KindProject
+	}
+	for _, control := range r.registry.ControlSessions {
+		r.kindByUID[control.Metadata.UID] = coremetadata.KindControlSession
 	}
 	for _, window := range r.registry.Windows {
 		r.kindByUID[window.Metadata.UID] = coremetadata.KindWindow

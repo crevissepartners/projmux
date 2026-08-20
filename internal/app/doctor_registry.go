@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
@@ -185,6 +186,29 @@ func (c *doctorCommand) evaluateRegistryInvariants() []doctorFinding {
 		})
 	}
 	return findings
+}
+
+// evaluateRegistryDivergences projects the Registry against the doctor's
+// deliberately offline inventory onto the closed D1-D6 count vocabulary.
+// Reasons remain inside the classifier; this projection contains counts only
+// so the support report can carry it without paths or identifiers.
+func (c *doctorCommand) evaluateRegistryDivergences() []resourcegraph.DivergenceCount {
+	read := c.readRegistry
+	if read == nil {
+		read = snapshotResourceRegistry
+	}
+	registry, err := read()
+	if err != nil {
+		return resourcegraph.CountDivergences(nil)
+	}
+	items := resourcegraph.ClassifyDivergences(registry, resourcegraph.Inventory{
+		Transport: resourcegraph.Transport{
+			Kind: resourcegraph.TransportSocketName, Value: defaultAppSocket,
+			Source: resourcegraph.TransportSourceSocketName,
+		},
+		HostMode: resourcegraph.HostModeAppOwned,
+	})
+	return resourcegraph.CountDivergences(items)
 }
 
 func doctorRegistryUnavailableFinding() doctorFinding {

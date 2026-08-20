@@ -175,6 +175,11 @@ func graphHasOfflineRow(graph resourcegraph.Graph) bool {
 			return true
 		}
 	}
+	for _, node := range graph.ControlSessions {
+		if node.Runtime == nil {
+			return true
+		}
+	}
 	for _, node := range graph.Windows {
 		if node.Runtime == nil {
 			return true

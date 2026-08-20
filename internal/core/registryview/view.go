@@ -22,6 +22,10 @@ const (
 	// SectionProjects holds the Registry resources: Projects and, beneath
 	// each, its Windows, shell Panes, and Agents.
 	SectionProjects Section = "projects"
+	// SectionControl holds the Registry graph rooted at the app control
+	// session. The Projects picker does not render this section; Home remains
+	// its synthetic chrome row while the read model preserves exact ownership.
+	SectionControl Section = "control"
 	// SectionUnregistered holds discovered filesystem roots that no Registry
 	// Project claims. They are bootstrap candidates, never managed rows.
 	SectionUnregistered Section = "unregistered"
@@ -33,12 +37,13 @@ const (
 type RowKind string
 
 const (
-	RowKindProject     RowKind = "project"
-	RowKindWindow      RowKind = "window"
-	RowKindPane        RowKind = "pane"
-	RowKindAgent       RowKind = "agent"
-	RowKindCandidate   RowKind = "candidate"
-	RowKindRuntimeLink RowKind = "runtime-link"
+	RowKindProject        RowKind = "project"
+	RowKindControlSession RowKind = "control-session"
+	RowKindWindow         RowKind = "window"
+	RowKindPane           RowKind = "pane"
+	RowKindAgent          RowKind = "agent"
+	RowKindCandidate      RowKind = "candidate"
+	RowKindRuntimeLink    RowKind = "runtime-link"
 )
 
 // Action is the closed set of things the primary navigation may offer on a row.
@@ -311,6 +316,66 @@ func (b *builder) projects() {
 			Reason:      statusReason(project.Status, project.MissingRoot),
 		})
 		b.windows(project, projectID)
+	}
+	for _, control := range b.graph.ControlSessions {
+		controlID := rowID(control.ControlSession.Metadata.UID)
+		b.rows = append(b.rows, Row{
+			Section: SectionControl, Kind: RowKindControlSession, ID: controlID,
+			UID: control.ControlSession.Metadata.UID, Name: control.ControlSession.Metadata.Name,
+			DisplayName: displayName(control.ControlSession.Metadata), SessionName: control.ControlSession.Spec.Session,
+			Status: control.Status, Runtime: control.Runtime, Reason: statusReason(control.Status, false),
+		})
+		b.controlWindows(control.ControlSession.Metadata.UID, controlID)
+	}
+}
+
+func (b *builder) controlWindows(controlUID, controlID string) {
+	for _, window := range b.graph.Windows {
+		if window.RootKind != coremetadata.KindControlSession || window.RootUID != controlUID {
+			continue
+		}
+		windowID := rowID(window.Window.Metadata.UID)
+		b.rows = append(b.rows, Row{
+			Section: SectionControl, Kind: RowKindWindow, ID: windowID, UID: window.Window.Metadata.UID,
+			ParentID: controlID, Depth: 1, Name: window.Window.Metadata.Name,
+			DisplayName: window.Window.DisplayName(), Status: window.Status, Runtime: window.Runtime,
+			Reason: statusReason(window.Status, false),
+		})
+		b.controlWindowPanes(window.Window.Metadata.UID, windowID)
+	}
+}
+
+func (b *builder) controlWindowPanes(windowUID, windowID string) {
+	for _, pane := range b.graph.Panes {
+		if pane.WindowUID != windowUID || pane.AgentUID != "" {
+			continue
+		}
+		row := b.paneRow(pane, windowID, 2, "")
+		row.Section = SectionControl
+		row.Actions = nil
+		b.rows = append(b.rows, row)
+	}
+	for _, agent := range b.graph.Agents {
+		if agent.WindowUID != windowUID {
+			continue
+		}
+		agentID := rowID(agent.Agent.Metadata.UID)
+		b.rows = append(b.rows, Row{
+			Section: SectionControl, Kind: RowKindAgent, ID: agentID, UID: agent.Agent.Metadata.UID,
+			ParentID: windowID, Depth: 2, Name: agent.Agent.Metadata.Name,
+			DisplayName: displayName(agent.Agent.Metadata), Provider: agent.Agent.Spec.Provider,
+			Phase: string(agent.Agent.Status.Phase), Status: agent.Status, Runtime: agent.Runtime,
+			Reason: statusReason(agent.Status, false), Termination: agent.Agent.Status.LastTermination.Clone(),
+		})
+		for _, pane := range b.graph.Panes {
+			if pane.AgentUID != agent.Agent.Metadata.UID {
+				continue
+			}
+			row := b.paneRow(pane, agentID, 3, "")
+			row.Section = SectionControl
+			row.Actions = nil
+			b.rows = append(b.rows, row)
+		}
 	}
 }
 

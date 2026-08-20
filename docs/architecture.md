@@ -220,6 +220,21 @@ handles, is maintained as an executable table in
 source on every test run, so a traversal added or moved fails until it is
 classified.
 
+Divergence taxonomy:
+
+Reconciliation uses one closed, additive classification for every plan and
+refusal item. The item's human-readable `reason` remains separate from its
+machine-readable `divergence` label: `D1-unrealized` is declared Registry state
+with no realization, `D2-unattributed` is observed state with no exact resource
+attribution, `D3-orphan-mirror` is a runtime mirror whose uid is absent from the
+Registry, `D4-contamination` is a conflicting Registry identity or contradictory
+exact evidence, `D5-drift` is a bound resource whose declared and observed
+fields differ, and `D6-unknown` is the fail-closed remainder. This taxonomy does
+not replace the resolver's managed/control/ephemeral/recoverable/unattributed/
+foreign/conflict runtime classes or the reconciler's missing/stale/foreign drift
+vocabulary. Doctor and dry-run reports expose counts for all six labels;
+support reports expose those counts but redact item reasons and identifiers.
+
 Identity and naming:
 
 - `metadata.uid` is opaque, immutable, and independent of tmux lifecycle. It
