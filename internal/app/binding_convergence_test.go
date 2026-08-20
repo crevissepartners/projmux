@@ -212,8 +212,9 @@ func TestGeneratedLifecycleTriggersConvergeOnOneEntrypoint(t *testing.T) {
 	// runs on every server the operator starts, where a raw `new-window` in a
 	// session projmux does not own must stay unmanaged.
 	hooks := map[string]controllerTriggerReason{
-		"pane-exited":     controllerTriggerRuntimeExited,
-		"after-kill-pane": controllerTriggerRuntimeExited,
+		"pane-exited":     controllerTriggerPaneExited,
+		"after-kill-pane": controllerTriggerPaneKilled,
+		"window-unlinked": controllerTriggerWindowUnlinked,
 	}
 	appOnlyHooks := map[string]controllerTriggerReason{
 		"after-new-window":   controllerTriggerRuntimeCreated,
@@ -253,7 +254,7 @@ func TestGeneratedLifecycleTriggersConvergeOnOneEntrypoint(t *testing.T) {
 			// must not race the binding write. The exit boundary stays
 			// backgrounded so closing a pane never waits on convergence.
 			background := strings.Contains(line, "run-shell -b")
-			if want := reason == controllerTriggerRuntimeExited; background != want {
+			if want := reason == controllerTriggerPaneExited || reason == controllerTriggerPaneKilled || reason == controllerTriggerWindowUnlinked; background != want {
 				t.Fatalf("%s %s hook backgrounded = %t, want %t: %s", name, hook, background, want, line)
 			}
 		}

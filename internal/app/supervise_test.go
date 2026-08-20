@@ -27,17 +27,28 @@ func activatePaneFixture(t *testing.T, store *fakeResourceStore, paneUID, agentU
 	}
 }
 
-func newTestSuperviseCommand(store *fakeResourceStore, outcome processOutcome, runErr error) (*superviseCommand, *[]string) {
+func newTestSuperviseCommand(t *testing.T, store *fakeResourceStore, outcome processOutcome, runErr error) (*superviseCommand, *[]string) {
+	t.Helper()
 	var started []string
 	cmd := &superviseCommand{
-		store: store.store(),
-		now:   func() time.Time { return resourceFixtureClock },
+		store:   store.store(),
+		journal: terminationJournal{path: filepath.Join(t.TempDir(), terminationJournalFile)},
+		now:     func() time.Time { return resourceFixtureClock },
 		run: func(argv []string, argv0 string) (processOutcome, error) {
 			started = append(started, strings.Join(append([]string{argv0}, argv...), " "))
 			return outcome, runErr
 		},
 	}
 	return cmd, &started
+}
+
+func readTestTerminationJournal(t *testing.T, cmd *superviseCommand) []coremetadata.TerminationEvidence {
+	t.Helper()
+	receipts, err := cmd.journal.read()
+	if err != nil {
+		t.Fatalf("read termination journal: %v", err)
+	}
+	return receipts
 }
 
 // TestSuperviseArgvTerminatesItsOwnFlags proves an operator payload can never
@@ -62,7 +73,7 @@ func TestSuperviseArgvTerminatesItsOwnFlags(t *testing.T) {
 	// lookalike flags.
 	store := newFakeResourceStore(t)
 	activatePaneFixture(t, store, "pan-alpha-log", "", "gen-1")
-	cmd, started := newTestSuperviseCommand(store, processOutcome{ExitCode: 0}, nil)
+	cmd, started := newTestSuperviseCommand(t, store, processOutcome{ExitCode: 0}, nil)
 	err := cmd.Run(argv[3:], nil, nil)
 	var coded superviseExitError
 	if !errors.As(err, &coded) || coded.ExitCode() != 0 {
@@ -98,17 +109,17 @@ func TestSuperviseRecordsTheObservedWaitStatus(t *testing.T) {
 			t.Parallel()
 			store := newFakeResourceStore(t)
 			activatePaneFixture(t, store, "pan-alpha-log", "", "gen-exact")
-			cmd, _ := newTestSuperviseCommand(store, test.outcome, nil)
+			cmd, _ := newTestSuperviseCommand(t, store, test.outcome, nil)
 			err := cmd.Run([]string{"--pane-uid", "pan-alpha-log", "--generation", "gen-exact", "--", "sleep", "1"}, nil, nil)
 			var coded superviseExitError
 			if !errors.As(err, &coded) || coded.ExitCode() != test.wantExit {
 				t.Fatalf("supervise exit = %v, want status %d", err, test.wantExit)
 			}
-			pane, ok := store.registry.Pane("pan-alpha-log")
-			if !ok || pane.Status.LastTermination == nil {
-				t.Fatalf("no receipt was recorded:\n%s", store.snapshot())
+			receipts := readTestTerminationJournal(t, cmd)
+			if len(receipts) != 1 {
+				t.Fatalf("journal receipts = %#v, want exactly one", receipts)
 			}
-			receipt := pane.Status.LastTermination
+			receipt := &receipts[0]
 			if receipt.Source != coremetadata.TerminationSourceSupervisor || receipt.Classification != test.want {
 				t.Fatalf("receipt = %#v, want %q from the supervisor", receipt, test.want)
 			}
@@ -137,10 +148,8 @@ func TestSuperviseKeepsThePaneStatusWhenTheReceiptCannotBeWritten(t *testing.T) 
 
 	store := newFakeResourceStore(t)
 	activatePaneFixture(t, store, "pan-alpha-log", "", "gen-exact")
-	cmd, _ := newTestSuperviseCommand(store, processOutcome{ExitCode: 5}, nil)
-	cmd.store.update = func(func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
-		return coremetadata.Registry{}, errors.New("injected registry failure")
-	}
+	cmd, _ := newTestSuperviseCommand(t, store, processOutcome{ExitCode: 5}, nil)
+	cmd.journal.path = t.TempDir()
 	var warnings strings.Builder
 	cmd.warn = &warnings
 
@@ -149,7 +158,7 @@ func TestSuperviseKeepsThePaneStatusWhenTheReceiptCannotBeWritten(t *testing.T) 
 	if !errors.As(err, &coded) || coded.ExitCode() != 5 {
 		t.Fatalf("supervise exit = %v, want the child's own status", err)
 	}
-	if !strings.Contains(warnings.String(), "injected registry failure") {
+	if !strings.Contains(warnings.String(), "append termination receipt") {
 		t.Fatalf("warnings = %q, want the lost write reported", warnings.String())
 	}
 	if pane, _ := store.registry.Pane("pan-alpha-log"); pane.Status.LastTermination != nil {
@@ -157,14 +166,14 @@ func TestSuperviseKeepsThePaneStatusWhenTheReceiptCannotBeWritten(t *testing.T) 
 	}
 }
 
-// TestSuperviseReportsAStaleReceiptWithoutFailingThePane covers a receipt that
-// arrives after the binding it names is gone.
-func TestSuperviseReportsAStaleReceiptWithoutFailingThePane(t *testing.T) {
+// TestSupervisorPrewriteDefersGenerationValidationToConvergence covers a
+// receipt that arrives after the binding it names is gone.
+func TestSupervisorPrewriteDefersGenerationValidationToConvergence(t *testing.T) {
 	t.Parallel()
 
 	store := newFakeResourceStore(t)
 	activatePaneFixture(t, store, "pan-alpha-log", "", "gen-current")
-	cmd, _ := newTestSuperviseCommand(store, processOutcome{ExitCode: 0}, nil)
+	cmd, _ := newTestSuperviseCommand(t, store, processOutcome{ExitCode: 0}, nil)
 	var warnings strings.Builder
 	cmd.warn = &warnings
 
@@ -173,8 +182,11 @@ func TestSuperviseReportsAStaleReceiptWithoutFailingThePane(t *testing.T) {
 	if !errors.As(err, &coded) || coded.ExitCode() != 0 {
 		t.Fatalf("supervise exit = %v", err)
 	}
-	if !strings.Contains(warnings.String(), "not applied") {
-		t.Fatalf("warnings = %q, want the stale receipt reported", warnings.String())
+	if warnings.Len() != 0 {
+		t.Fatalf("warnings = %q, want lock-free prewrite to defer the guard", warnings.String())
+	}
+	if receipts := readTestTerminationJournal(t, cmd); len(receipts) != 1 || receipts[0].Generation != "gen-replaced" {
+		t.Fatalf("journal receipts = %#v, want the offered generation", receipts)
 	}
 	if pane, _ := store.registry.Pane("pan-alpha-log"); pane.Status.LastTermination != nil {
 		t.Fatalf("a stale receipt was stored: %#v", pane.Status.LastTermination)
@@ -192,7 +204,7 @@ func TestSuperviseRefusesAnUnidentifiedLaunch(t *testing.T) {
 		{"--pane-uid", "pan-alpha-log", "--", "sleep", "1"},
 		{"--pane-uid", "pan-alpha-log", "--generation", "gen-1"},
 	} {
-		cmd, started := newTestSuperviseCommand(store, processOutcome{}, nil)
+		cmd, started := newTestSuperviseCommand(t, store, processOutcome{}, nil)
 		err := cmd.Run(args, nil, &strings.Builder{})
 		if err == nil || !IsUsageError(err) {
 			t.Fatalf("supervise %v error = %v, want a usage refusal", args, err)
@@ -210,7 +222,7 @@ func TestSuperviseReportsALaunchFailureRatherThanATermination(t *testing.T) {
 
 	store := newFakeResourceStore(t)
 	activatePaneFixture(t, store, "pan-alpha-log", "", "gen-exact")
-	cmd, _ := newTestSuperviseCommand(store, processOutcome{}, errors.New("exec format error"))
+	cmd, _ := newTestSuperviseCommand(t, store, processOutcome{}, errors.New("exec format error"))
 	err := cmd.Run([]string{"--pane-uid", "pan-alpha-log", "--generation", "gen-exact", "--", "/nope"}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "exec format error") {
 		t.Fatalf("launch failure = %v", err)
@@ -313,15 +325,15 @@ func TestSuperviseRouteIsReachableThroughTheInternalNamespace(t *testing.T) {
 
 	store := newFakeResourceStore(t)
 	activatePaneFixture(t, store, "pan-alpha-log", "", "gen-exact")
-	supervise, _ := newTestSuperviseCommand(store, processOutcome{ExitCode: 0}, nil)
+	supervise, _ := newTestSuperviseCommand(t, store, processOutcome{ExitCode: 0}, nil)
 	internal := &internalCommand{supervise: supervise}
 	err := internal.Run([]string{"supervise", "--pane-uid", "pan-alpha-log", "--generation", "gen-exact", "--", "sleep", "1"}, nil, nil)
 	var coded superviseExitError
 	if !errors.As(err, &coded) {
 		t.Fatalf("internal supervise = %v", err)
 	}
-	if pane, _ := store.registry.Pane("pan-alpha-log"); pane.Status.LastTermination == nil {
-		t.Fatal("the namespaced route recorded no receipt")
+	if receipts := readTestTerminationJournal(t, supervise); len(receipts) != 1 {
+		t.Fatalf("the namespaced route journaled %#v, want one receipt", receipts)
 	}
 }
 

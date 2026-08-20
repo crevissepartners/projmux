@@ -69,7 +69,7 @@ func ValidTerminationSource(source TerminationSource) bool {
 
 // TerminationClassification is the closed evidence vocabulary.
 //
-// The four values are not a severity ladder, they are four different *kinds of
+// The five values are not a severity ladder, they are five different *kinds of
 // proof*. Intentional means a canonical control action said so in writing
 // before it acted. Normal and Abnormal mean a supervisor actually reaped the
 // child and read its wait status. Unknown means nothing proved anything, and it
@@ -87,6 +87,12 @@ const (
 	// finished a batch produce byte-identical wait statuses, so promoting
 	// exit 0 to "intentional" would invent evidence nobody produced.
 	TerminationNormal TerminationClassification = "normal"
+	// TerminationKilled is an observed external hangup. It says the managed
+	// process was killed from outside its own exit path, but it deliberately
+	// says nothing about whose intent caused that kill. A matching canonical
+	// control-action receipt remains the only authority that can say
+	// intentional.
+	TerminationKilled TerminationClassification = "killed"
 	// TerminationAbnormal is an observed non-zero exit status or a death by
 	// signal.
 	TerminationAbnormal TerminationClassification = "abnormal"
@@ -110,23 +116,31 @@ const (
 // statement that nothing was observed, so only the reconciliation pass -- which
 // observes exactly that -- may make it, and it may make nothing else.
 func validTerminationPairing(source TerminationSource, classification TerminationClassification) bool {
-	switch {
-	case classification == TerminationIntentional:
-		return source == TerminationSourceControlAction
-	case classification == TerminationUnknown:
-		return source == TerminationSourceReconcile
-	case source == TerminationSourceReconcile:
-		return false
+	switch source {
+	case TerminationSourceControlAction:
+		return classification == TerminationIntentional
+	case TerminationSourceSupervisor:
+		return classification == TerminationNormal || classification == TerminationAbnormal || classification == TerminationKilled
+	case TerminationSourceReconcile:
+		return classification == TerminationUnknown
 	default:
+		return false
+	}
+}
+
+func validTerminationEvidenceShape(receipt TerminationEvidence) bool {
+	if receipt.Classification != TerminationKilled {
 		return true
 	}
+	return receipt.Source == TerminationSourceSupervisor && receipt.ExitCode == nil &&
+		strings.EqualFold(strings.TrimSpace(receipt.Signal), "HUP")
 }
 
 // ValidTerminationClassification reports whether classification is in the
 // closed set.
 func ValidTerminationClassification(classification TerminationClassification) bool {
 	switch classification {
-	case TerminationIntentional, TerminationNormal, TerminationAbnormal, TerminationUnknown:
+	case TerminationIntentional, TerminationNormal, TerminationKilled, TerminationAbnormal, TerminationUnknown:
 		return true
 	default:
 		return false
@@ -139,6 +153,9 @@ func ValidTerminationClassification(classification TerminationClassification) bo
 // child is abnormal regardless of the code the platform reports alongside it,
 // and exit status 0 is the only normal outcome.
 func ClassifyProcessExit(exitCode int, signal string) TerminationClassification {
+	if strings.EqualFold(strings.TrimSpace(signal), "HUP") {
+		return TerminationKilled
+	}
 	if strings.TrimSpace(signal) != "" {
 		return TerminationAbnormal
 	}
@@ -341,7 +358,9 @@ func staleTermination(format string, args ...any) TerminationOutcome {
 //   - the named Pane must still exist;
 //   - the receipt's generation must be the Pane's *current* generation;
 //   - a receipt naming an Agent must name the Agent that owns the Pane, and
-//     that Agent's current pane binding must still be this Pane;
+//     that Agent's current pane binding must still be this Pane, except that a
+//     same-generation supervisor receipt may refine the reconcile/unknown
+//     evidence that already cleared this exact binding;
 //   - a receipt the registry already stores verbatim changes nothing;
 //   - recorded intent is sticky for its generation.
 //
@@ -364,6 +383,10 @@ func (m Mutator) RecordTermination(reg *Registry, receipt TerminationEvidence) (
 	if !validTerminationPairing(receipt.Source, receipt.Classification) {
 		return TerminationOutcome{}, inputErr(op, ErrInvalidRegistry,
 			"source %q may not record %q termination", string(receipt.Source), string(receipt.Classification))
+	}
+	if !validTerminationEvidenceShape(receipt) {
+		return TerminationOutcome{}, inputErr(op, ErrInvalidRegistry,
+			"killed termination requires a supervisor SIGHUP wait status")
 	}
 	paneUID := strings.TrimSpace(receipt.PaneUID)
 	if paneUID == "" {
@@ -394,7 +417,7 @@ func (m Mutator) RecordTermination(reg *Registry, receipt TerminationEvidence) (
 		if !ok {
 			return staleTermination("agent %q is not in the registry", receipt.AgentUID), nil
 		}
-		if found.Status.PaneRef != paneUID {
+		if found.Status.PaneRef != paneUID && !mayRefineProjectedUnknown(*pane, *found, receipt) {
 			return staleTermination("agent %s no longer binds pane %s", receipt.AgentUID, paneUID), nil
 		}
 		agent = found
@@ -425,6 +448,25 @@ func (m Mutator) RecordTermination(reg *Registry, receipt TerminationEvidence) (
 	}
 	reg.UpdatedAt = now
 	return TerminationOutcome{Applied: true}, nil
+}
+
+// mayRefineProjectedUnknown admits only the narrow async ordering where an
+// absence pass ran before the supervisor's journal append became visible. It
+// cannot admit a receipt from a resumed process: that Agent has a non-empty
+// PaneRef to its new materialization. Ownership and activation generation have
+// already been checked by RecordTermination before this predicate runs.
+func mayRefineProjectedUnknown(pane Pane, agent Agent, receipt TerminationEvidence) bool {
+	if receipt.Source != TerminationSourceSupervisor || agent.Status.PaneRef != "" {
+		return false
+	}
+	paneReceipt := pane.Status.LastTermination
+	agentReceipt := agent.Status.LastTermination
+	return paneReceipt != nil && agentReceipt != nil &&
+		paneReceipt.Source == TerminationSourceReconcile && paneReceipt.Classification == TerminationUnknown &&
+		agentReceipt.Source == TerminationSourceReconcile && agentReceipt.Classification == TerminationUnknown &&
+		paneReceipt.PaneUID == receipt.PaneUID && agentReceipt.PaneUID == receipt.PaneUID &&
+		paneReceipt.AgentUID == receipt.AgentUID && agentReceipt.AgentUID == receipt.AgentUID &&
+		paneReceipt.Generation == receipt.Generation && agentReceipt.Generation == receipt.Generation
 }
 
 // ObservePaneActivationRuntime records the exact tmux handle one activation

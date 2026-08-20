@@ -2347,6 +2347,14 @@ termination_sibling_tmux() {
 
 termination_tmux new-session -d -s evidence -n main -c "$termination_root/work/evidence" sleep 600
 termination_tmux set-option -t evidence -q @projmux_project_path "$termination_root/work/evidence"
+# Phase 6 transports supervisor receipts through the generated lifecycle hook:
+# the supervisor appends without taking the Registry lock, then pane-exited runs
+# controller convergence to absorb that journal row. Source the same generated
+# config the installed server uses onto this exact isolated server; without it
+# this fixture would exercise only the old direct-Registry transport.
+termination_tmux source-file "$PROJMUX_SMOKE_WORKDIR/projmux.conf"
+(termination_tmux show-hooks -g; termination_tmux show-hooks -gw) >"$termination_root/pane-exited-hook.txt"
+smoke_assert_file_contains "$termination_root/pane-exited-hook.txt" "reason pane-exited"
 termination_sibling_tmux new-session -d -s sibling -n main sleep 600
 termination_sibling_tmux set-option -gq @projmux_termination_sentinel untouched
 
@@ -2422,9 +2430,13 @@ termination_activation_generation() {
 }
 
 termination_await_receipt() {
-  local pane_uid="$1"
+  local pane_uid="$1" want_class="$2"
   for _ in $(seq 1 200); do
-    if [[ -n "$(termination_receipt_field "$pane_uid" classification)" ]]; then
+    # A runtime-created pass can briefly record reconcile/unknown before the
+    # supervisor's append becomes visible. Phase 6 explicitly refines that
+    # same-generation evidence, so wait for the expected settled class rather
+    # than accepting the first non-empty observation.
+    if [[ "$(termination_receipt_field "$pane_uid" classification)" == "$want_class" ]]; then
       return 0
     fi
     sleep 0.05
@@ -2447,7 +2459,7 @@ termination_case() {
     echo "termination case $label created no Pane" >&2
     exit 1
   fi
-  termination_await_receipt "$pane_uid"
+  termination_await_receipt "$pane_uid" "$want_class"
   local got_class got_code got_signal got_source got_generation activation
   got_class="$(termination_receipt_field "$pane_uid" classification)"
   got_code="$(termination_receipt_field "$pane_uid" exitCode)"
@@ -2657,9 +2669,10 @@ echo ">> lifecycle smoke root=$PROJMUX_SMOKE_WORKDIR actual_socket=$PROJMUX_SMOK
 
 # --- exit reconciliation and lifecycle projection ---------------------------
 #
-# Phase 8's block above proved a receipt is *recorded*. This one proves it is
-# *consumed*: a receipt plus one exact runtime absence become an Agent phase, a
-# released binding, and a preserved shell Pane, in one transition.
+# The Phase 6 block above proves hook-driven recording. This older explicit
+# reconciliation surface proves the same receipt is consumed without granting
+# observation deletion authority: a receipt plus runtime absence become Agent
+# status and a released binding while every logical Pane row is preserved.
 #
 # Everything runs on run-unique sockets under a run-unique root, with a sibling
 # server carrying the same mirrored Pane uid so containment is an assertion
@@ -2824,13 +2837,14 @@ exitrec_reconcile() {
   exitrec_pmx reconcile resources --socket "$1" -o json >"$exitrec_root/reconcile-run.json"
 }
 
-# A managed Agent whose child ends a different way each time. The Agent uid is
-# read out of the Registry before the child is gone, so the assertion never races
-# the pane's own disappearance.
+# A managed Agent whose child ends a different way each time. The short delay
+# deliberately lets create commit the Agent binding before the provider exits;
+# this block tests termination consumption, not rollback of a create whose child
+# vanished inside its own transaction.
 exitrec_agent_case() {
   local label="$1" provider="$2" want_phase="$3" want_class="$4" script="$5"
   local agent_uid pane_ref got_phase got_class got_source got_reason
-  printf '%s\n' "$script" >"$exitrec_root/stub-script"
+  printf 'sleep 0.5\n%s\n' "$script" >"$exitrec_root/stub-script"
   agent_uid="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
     create agent --provider "$provider" --project evidence -o uid)"
   if [[ -z "$agent_uid" ]]; then
@@ -2872,20 +2886,23 @@ exitrec_agent_case() {
     cat "$exitrec_root/doc.json" >&2
     exit 1
   fi
-  case " $want_class " in
-    *" $got_class "*) ;;
-    *)
-      echo "exit reconciliation case $label classification=$got_class, want one of [$want_class]" >&2
-      cat "$exitrec_root/doc.json" >&2
-      exit 1
-      ;;
-  esac
+  if [[ "$got_class" != "$want_class" || "$got_source" != "supervisor" ]]; then
+    echo "exit reconciliation case $label evidence=$got_class/$got_source, want $want_class/supervisor" >&2
+    cat "$exitrec_root/doc.json" >&2
+    exit 1
+  fi
   if [[ -n "$(exitrec_field paneRef)" ]]; then
     echo "exit reconciliation case $label left paneRef=$(exitrec_field paneRef) bound to a dead pane" >&2
     exit 1
   fi
-  if exitrec_doc_exists pane "$pane_ref"; then
-    echo "exit reconciliation case $label kept the released managed Pane resource $pane_ref" >&2
+  if ! exitrec_doc_exists pane "$pane_ref"; then
+    echo "exit reconciliation case $label deleted the managed Pane resource $pane_ref" >&2
+    exit 1
+  fi
+  if [[ "$(exitrec_termination_field classification)" != "$want_class" ||
+        "$(exitrec_termination_field source)" != "supervisor" ]]; then
+    echo "exit reconciliation case $label Pane evidence did not preserve $want_class/supervisor" >&2
+    cat "$exitrec_root/doc.json" >&2
     exit 1
   fi
   if [[ -z "$got_reason" ]]; then
@@ -2909,11 +2926,9 @@ exitrec_agent_case clean-exit claude Offline normal 'exit 0'
 exitrec_agent_case failed-exit codex Failed abnormal 'exit 42'
 exitrec_agent_case signal-death antigravity Failed abnormal 'kill -TERM $$; sleep 30'
 
-# An external kill is a death projmux did not ask for. The supervisor may or may
-# not survive long enough to reap and record: `kill-pane` signals the whole
-# process group. Both outcomes are correct and neither invents intent, so the
-# assertion is over the honest set -- the phase is decided from whatever evidence
-# existed, and it is never `normal` and never `intentional`.
+# Direct `tmux kill-pane` is external kill evidence, never control intent. The
+# supervisor reaps SIGHUP and the append journal converges to killed/supervisor;
+# the Agent releases its binding while the logical Pane row remains queryable.
 printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
 exitrec_external_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
   create agent --provider claude --project evidence -o uid)"
@@ -2926,28 +2941,44 @@ if [[ -z "$exitrec_external_pane_id" ]]; then
   exit 1
 fi
 exitrec_tmux "$exitrec_socket" kill-pane -t "$exitrec_external_pane_id"
-exitrec_reconcile "$exitrec_socket"
-exitrec_doc agent "$exitrec_external_agent"
-case "$(exitrec_field phase)" in
-  Offline|Failed) ;;
-  *)
-    echo "an external kill left phase=$(exitrec_field phase), want Offline or Failed" >&2
-    cat "$exitrec_root/doc.json" >&2
-    exit 1
-    ;;
-esac
-case "$(exitrec_termination_field classification)" in
-  abnormal|unknown) ;;
-  *)
-    echo "an external kill was classified $(exitrec_termination_field classification), want abnormal or unknown" >&2
-    cat "$exitrec_root/doc.json" >&2
-    exit 1
-    ;;
-esac
+for _ in $(seq 1 100); do
+  exitrec_reconcile "$exitrec_socket"
+  exitrec_doc agent "$exitrec_external_agent"
+  if [[ "$(exitrec_termination_field classification)" == "killed" &&
+        "$(exitrec_termination_field source)" == "supervisor" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$(exitrec_field phase)" != "Offline" ||
+      "$(exitrec_termination_field classification)" != "killed" ||
+      "$(exitrec_termination_field source)" != "supervisor" ]]; then
+  echo "an external kill recorded phase=$(exitrec_field phase) evidence=$(exitrec_termination_field classification)/$(exitrec_termination_field source), want Offline killed/supervisor" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
 if [[ -n "$(exitrec_field paneRef)" ]]; then
   echo "an external kill left the Agent bound to its dead pane" >&2
   exit 1
 fi
+if ! exitrec_doc_exists pane "$exitrec_external_pane"; then
+  echo "an external kill deleted the logical Pane $exitrec_external_pane" >&2
+  exit 1
+fi
+if [[ "$(exitrec_termination_field classification)" != "killed" ||
+      "$(exitrec_termination_field source)" != "supervisor" ]]; then
+  echo "an external kill Pane evidence is not killed/supervisor" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+exitrec_external_before="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
+exitrec_reconcile "$exitrec_socket"
+exitrec_external_after="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
+if [[ "$exitrec_external_before" != "$exitrec_external_after" ]]; then
+  echo "an external kill rewrote the registry on a repeat pass" >&2
+  exit 1
+fi
+exitrec_doc agent "$exitrec_external_agent"
 echo ">> exit reconciliation external kill agent=$exitrec_external_agent phase=$(exitrec_field phase) class=$(exitrec_termination_field classification)"
 
 # A supervisor killed with SIGKILL writes no receipt at all. The absence must
@@ -2993,7 +3024,7 @@ echo ">> exit reconciliation supervisor SIGKILL agent=$exitrec_sigkill_agent cla
 # MissingRuntime condition and the evidence -- offline for a stated reason
 # instead of silently absent.
 exitrec_shell_pane="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
-  create pane --project evidence -o uid -- sh -c 'exit 0')"
+  create pane --project evidence -o uid -- sh -c 'sleep 0.5; exit 0')"
 for _ in $(seq 1 100); do
   exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
     | grep -qx "$exitrec_shell_pane" || break
@@ -3060,7 +3091,7 @@ exitrec_restart_case() {
   # change, because the same pass honestly projects the Project session as no
   # longer live. And evidence may well appear, because `kill-server` SIGHUPs the
   # panes and a supervisor that survives long enough reaps its child and records a
-  # real `abnormal signal=HUP` receipt -- which is the transport working, not the
+  # real `killed signal=HUP` receipt -- which is the transport working, not the
   # reconciliation guessing. The precise fail-closed property is that nothing with
   # `source: reconcile` was filed against an unreadable host.
   exitrec_pmx reconcile resources --socket "$socket" -o json \
@@ -3084,14 +3115,15 @@ exitrec_restart_case() {
     exit 1
   fi
   exitrec_doc pane "$pane_uid"
-  # A supervisor that got its SIGHUP written down leaves `abnormal`; one that went
-  # with the server leaves nothing for the restarted, honestly-empty observation to
-  # find, and that converges on `unknown`. Both are correct and neither is
-  # `normal`, which would claim a clean exit nobody observed.
+  # A supervisor that got its SIGHUP written down leaves `killed`; one that went
+  # with the whole server can leave no receipt at all. A separately completed
+  # honestly-empty observation may record `unknown`. Whole-server receipt-free
+  # recovery is explicitly outside this slice (kill-window is asserted on its
+  # own path), so all three are honest here; normal/intentional are not.
   case "$(exitrec_termination_field classification)" in
-    abnormal|unknown) ;;
+    ""|killed|unknown) ;;
     *)
-      echo "restart case $label classified the lost server as '$(exitrec_termination_field classification)', want abnormal or unknown" >&2
+      echo "restart case $label classified the lost server as '$(exitrec_termination_field classification)', want empty, killed, or unknown" >&2
       cat "$exitrec_root/doc.json" >&2
       exit 1
       ;;

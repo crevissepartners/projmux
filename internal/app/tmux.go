@@ -392,6 +392,8 @@ func (c *tmuxCommand) runConverge(args []string, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	socketPath := fs.String("socket-path", "", "absolute tmux socket path")
 	session := fs.String("session", "", "tmux hook session")
+	hookPane := fs.String("hook-pane", "", "exact tmux #{hook_pane} for pane-exited")
+	hookWindow := fs.String("hook-window", "", "exact tmux #{hook_window} for window-unlinked")
 	reason := fs.String("reason", "", "trigger reason: "+strings.Join(controllerTriggerReasonSpellings(), ", "))
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -407,8 +409,28 @@ func (c *tmuxCommand) runConverge(args []string, stderr io.Writer) error {
 	if err != nil {
 		return usageError(err.Error())
 	}
+	pane := strings.TrimSpace(*hookPane)
+	window := strings.TrimSpace(*hookWindow)
+	switch parsed {
+	case controllerTriggerPaneExited:
+		if !validTmuxHookHandle(pane, '%') || window != "" {
+			return usageError("pane-exited requires exact --hook-pane %N and no --hook-window")
+		}
+	case controllerTriggerPaneKilled:
+		if pane != "" || window != "" {
+			return usageError("pane-killed does not accept hook handles")
+		}
+	case controllerTriggerWindowUnlinked:
+		if !validTmuxHookHandle(window, '@') || pane != "" {
+			return usageError("window-unlinked requires exact --hook-window @N and no --hook-pane")
+		}
+	default:
+		if pane != "" || window != "" {
+			return usageError("this controller trigger reason does not accept hook handles")
+		}
+	}
 	outcome, err := c.trigger(context.Background(), controllerTrigger{
-		reason: parsed, target: target, session: *session,
+		reason: parsed, target: target, session: *session, hookPane: pane, hookWindow: window,
 	})
 	if err != nil {
 		return err
@@ -420,6 +442,14 @@ func (c *tmuxCommand) runConverge(args []string, stderr io.Writer) error {
 	// behind another worker, or deferred to a live create.
 	_, err = fmt.Fprintln(stderr, "projmux: controller "+outcome.describe())
 	return err
+}
+
+func validTmuxHookHandle(raw string, prefix byte) bool {
+	if len(raw) < 2 || raw[0] != prefix {
+		return false
+	}
+	_, err := strconv.ParseUint(raw[1:], 10, 64)
+	return err == nil
 }
 
 // trigger routes one producer through the single controller entrypoint.
@@ -2142,8 +2172,9 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 		"set-hook -g pane-focus-out "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention arm #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g pane-focus-in "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id} >/dev/null 2>&1 || true")),
-		"set-hook -g pane-exited "+tmuxConfigQuote(tmuxPaneExitHookBody(bin)),
-		"set-hook -g after-kill-pane "+tmuxConfigQuote(tmuxPaneExitHookBody(bin)),
+		"set-hook -g pane-exited "+tmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneExited)),
+		"set-hook -g after-kill-pane "+tmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneKilled)),
+		"set-hook -g window-unlinked "+tmuxConfigQuote(tmuxWindowUnlinkedHookBody(bin)),
 	)
 	lines = append(lines, tmuxRecentWindowRecordHookLines(bin)...)
 	lines = append(lines,
@@ -2173,22 +2204,25 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// tmuxPaneExitHookBody is the shared body of the two pane-exit hooks.
+// tmuxPaneExitHookBody is the shared layout half of the two pane-exit hooks.
 //
-// Both hooks have to run both halves. `pane-exited` covers a child process that
-// ended; `after-kill-pane` covers `tmux kill-pane` and the pane close key, and
-// it fires with an empty #{hook_pane}, so neither hook can name the pane that
-// died. That is why the second half states only the exact server and lets the
-// controller re-derive the rest rather than passing a pane the hook cannot know.
+// Their controller reasons deliberately differ. `pane-exited` carries exact
+// #{hook_pane} and narrows lifecycle projection to that activation. The
+// after-kill hook cannot name the Pane and therefore retains full reobservation.
 //
 // The rebalance half is unchanged, still first, and still independently
 // `|| true`-guarded: pane layout must not depend on whether convergence
 // succeeded, and convergence must still run when there was no layout to
 // rebalance.
-func tmuxPaneExitHookBody(bin string) string {
+func tmuxPaneExitHookBody(bin string, reason controllerTriggerReason) string {
 	return "run-shell -b " + tmuxConfigQuote(
 		"sleep 0.05; "+bin+" internal tmux rebalance-panes >/dev/null 2>&1 || true; "+
-			controllerTriggerHookCommand(bin, controllerTriggerRuntimeExited)+" >/dev/null 2>&1 || true")
+			controllerTriggerHookCommand(bin, reason)+" >/dev/null 2>&1 || true")
+}
+
+func tmuxWindowUnlinkedHookBody(bin string) string {
+	return "run-shell -b " + tmuxConfigQuote(
+		"sleep 0.05; "+controllerTriggerHookCommand(bin, controllerTriggerWindowUnlinked)+" >/dev/null 2>&1 || true")
 }
 
 // controllerTriggerHookCommand renders the one trigger invocation every
@@ -2200,8 +2234,15 @@ func tmuxPaneExitHookBody(bin string) string {
 // create-operation lease. Naming them in one function is what keeps a new hook
 // from acquiring a different notion of which server it is talking about.
 func controllerTriggerHookCommand(bin string, reason controllerTriggerReason) string {
-	return bin + " internal tmux converge --socket-path '#{socket_path}'" +
+	command := bin + " internal tmux converge --socket-path '#{socket_path}'" +
 		" --session '#{session_id}' --reason " + string(reason)
+	switch reason {
+	case controllerTriggerPaneExited:
+		command += " --hook-pane '#{hook_pane}'"
+	case controllerTriggerWindowUnlinked:
+		command += " --hook-window '#{hook_window}'"
+	}
+	return command
 }
 
 // tmuxRuntimeCreatedHookBody is synchronous on purpose: after-new-window and

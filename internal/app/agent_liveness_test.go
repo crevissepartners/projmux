@@ -174,8 +174,8 @@ func TestADeadManagedPaneReleasesItsAgentAndKeepsTheConversationPointer(t *testi
 	if agent.Status.Reason != coremetadata.TerminationReasonUnknown {
 		t.Fatalf("reason = %q, want %q", agent.Status.Reason, coremetadata.TerminationReasonUnknown)
 	}
-	// The Agent keeps the evidence its Pane resource carried, which is the only
-	// place it can survive: releasing the Agent deletes that Pane.
+	// The Agent and preserved Pane carry the same evidence; observation changes
+	// status and never substitutes for canonical row deletion.
 	receipt := agent.Status.LastTermination
 	if receipt == nil {
 		t.Fatal("a released Agent carries no termination evidence at all")
@@ -187,8 +187,8 @@ func TestADeadManagedPaneReleasesItsAgentAndKeepsTheConversationPointer(t *testi
 	if agent.Status.SessionRef != ref {
 		t.Fatalf("sessionRef = %+v, want the observed ref preserved verbatim", agent.Status.SessionRef)
 	}
-	if _, ok := registry.Pane("pan-managed"); ok {
-		t.Fatal("the managed Pane outlived the tmux pane it was bound to")
+	if pane, ok := registry.Pane("pan-managed"); !ok || pane.Status.LastTermination == nil {
+		t.Fatal("the managed Pane row or its termination evidence was lost")
 	}
 }
 
@@ -372,8 +372,8 @@ func TestASweptDeathOpensExactlyOneWriteTransaction(t *testing.T) {
 	if agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
 		t.Fatalf("status = %+v, want Offline with no paneRef", agent.Status)
 	}
-	if _, ok := store.registry.Pane("pan-alpha-codex"); ok {
-		t.Fatal("the managed Pane survived the sweep")
+	if pane, ok := store.registry.Pane("pan-alpha-codex"); !ok || pane.Status.LastTermination == nil {
+		t.Fatal("the status-only sweep lost the managed Pane row or evidence")
 	}
 }
 
@@ -534,8 +534,8 @@ func TestReconciliationReleasesAnAgentWhoseManagedPaneIsGone(t *testing.T) {
 	if agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
 		t.Fatalf("status = %+v, want reconciliation to have released the Agent", agent.Status)
 	}
-	if _, ok := store.registry.Pane("pan-alpha-codex"); ok {
-		t.Fatal("the dangling managed Pane survived reconciliation")
+	if pane, ok := store.registry.Pane("pan-alpha-codex"); !ok || pane.Status.LastTermination == nil {
+		t.Fatal("reconciliation lost the status-only Pane row or evidence")
 	}
 }
 
@@ -665,7 +665,7 @@ func TestTheHiddenTmuxRouteConvergesTheExactHost(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := cmd.Run([]string{"converge", "--socket-path", socket, "--session", "alpha", "--reason", "runtime-exited"},
+	if err := cmd.Run([]string{"converge", "--socket-path", socket, "--session", "alpha", "--reason", "pane-killed"},
 		&stdout, &stderr); err != nil {
 		t.Fatalf("converge error = %v (stderr %q)", err, stderr.String())
 	}
@@ -692,7 +692,7 @@ func TestTheHiddenTmuxRouteTakesNoPositionalArguments(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "managed.sock")
 	cmd := &tmuxCommand{runner: newFakeTmux(), triggerRunner: &recordingTriggering{}}
 	var stderr bytes.Buffer
-	err := cmd.Run([]string{"converge", "--socket-path", socket, "--reason", "runtime-exited", "%3"},
+	err := cmd.Run([]string{"converge", "--socket-path", socket, "--reason", "pane-killed", "%3"},
 		&bytes.Buffer{}, &stderr)
 	if err == nil {
 		t.Fatal("the route accepted a pane argument")
@@ -718,10 +718,10 @@ func TestBothPaneExitHooksRebalanceThenConverge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	const body = "sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true; " +
-		"'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' " +
-		"--session '#{session_id}' --reason runtime-exited >/dev/null 2>&1 || true"
-	for _, hook := range []string{"pane-exited", "after-kill-pane"} {
+	for hook, reason := range map[string]string{"pane-exited": "pane-exited --hook-pane '#{hook_pane}'", "after-kill-pane": "pane-killed"} {
+		body := "sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true; " +
+			"'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' " +
+			"--session '#{session_id}' --reason " + reason + " >/dev/null 2>&1 || true"
 		line := hookLine(t, stdout.String(), hook)
 		if !strings.Contains(line, body) {
 			t.Fatalf("%s hook = %q, want it to run %q", hook, line, body)

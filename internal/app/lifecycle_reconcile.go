@@ -39,11 +39,23 @@ type lifecycleDirtyEvent struct {
 	target explicitTmuxTarget
 	// paneUID narrows the event to one Pane. Empty means the whole host.
 	paneUID string
+	// runtimePaneID is the exact #{hook_pane} supplied by pane-exited. It is
+	// matched only against the activation handle projmux stored when that
+	// generation was materialized; no name, cwd, or pane order participates.
+	runtimePaneID string
+	// runtimeWindowID is the exact #{hook_window} evidence supplied by
+	// window-unlinked. It identifies the triggering tmux event for diagnostics;
+	// because the dead window no longer exposes its Registry uid, the hook keeps
+	// whole-host fresh reobservation rather than persisting a runtime mapping.
+	runtimeWindowID string
 	// generation narrows the event to one materialization of that Pane. A
 	// generation the Pane no longer holds projects nothing, so a receipt or an
 	// absence belonging to a process a resume has already replaced cannot move
 	// the current binding.
 	generation string
+	// receipts is the lock-free supervisor prewrite snapshot to absorb inside
+	// the same Registry transaction, before absence projection consumes it.
+	receipts []coremetadata.TerminationEvidence
 }
 
 // describe renders the event for a diagnostic line.
@@ -51,6 +63,12 @@ func (e lifecycleDirtyEvent) describe() string {
 	out := "socket=" + e.target.label()
 	if pane := strings.TrimSpace(e.paneUID); pane != "" {
 		out += " pane=" + pane
+	}
+	if pane := strings.TrimSpace(e.runtimePaneID); pane != "" {
+		out += " hook-pane=" + pane
+	}
+	if window := strings.TrimSpace(e.runtimeWindowID); window != "" {
+		out += " hook-window=" + window
 	}
 	if generation := strings.TrimSpace(e.generation); generation != "" {
 		out += " generation=" + generation
@@ -67,6 +85,10 @@ func (e lifecycleDirtyEvent) describe() string {
 type lifecycleReconcileResult struct {
 	projected    []coremetadata.TerminationProjection
 	transactions int
+	// receiptsChanged reports journal evidence absorbed independently of a
+	// lifecycle projection. A late supervisor refinement is a real write and
+	// therefore requires the controller's following no-op verification pass.
+	receiptsChanged bool
 	// skipped states why the pass declined to do anything, empty when it ran.
 	skipped string
 	// unobserved separates the one skip a caller must not read as convergence
@@ -84,6 +106,9 @@ func (r lifecycleReconcileResult) changed() int {
 		if projection.Changed {
 			count++
 		}
+	}
+	if r.receiptsChanged {
+		count++
 	}
 	return count
 }
@@ -118,10 +143,14 @@ func lifecycleInventory(runner tmuxCommandRunner, target explicitTmuxTarget) liv
 // session, forever, and change nothing each time.
 func lifecycleProjectionTargets(registry coremetadata.Registry, live map[string]bool, event lifecycleDirtyEvent) []coremetadata.TerminationProjectionInput {
 	narrowed := strings.TrimSpace(event.paneUID)
+	runtimePane := strings.TrimSpace(event.runtimePaneID)
 	var out []coremetadata.TerminationProjectionInput
 	for i := range registry.Panes {
 		paneUID := registry.Panes[i].Metadata.UID
 		if narrowed != "" && paneUID != narrowed {
+			continue
+		}
+		if runtimePane != "" && registry.Panes[i].Status.Activation.RuntimeID != runtimePane {
 			continue
 		}
 		if live[paneUID] {
@@ -219,7 +248,8 @@ func reconcileLifecycle(
 	if err != nil {
 		return result, MapMetadataError(err)
 	}
-	if len(lifecycleProjectionTargets(registry, live, event)) == 0 {
+	if len(lifecycleProjectionTargets(registry, live, event)) == 0 &&
+		!terminationReceiptsNeedAbsorption(registry, store.mutator(), event.receipts) {
 		result.skipped = "nothing left to reconcile: " + event.describe()
 		return result, nil
 	}
@@ -232,6 +262,11 @@ func reconcileLifecycle(
 			observationFailed = true
 			return observeErr
 		}
+		absorbed, err := absorbTerminationReceipts(working, mutator, event.receipts)
+		if err != nil {
+			return err
+		}
+		result.receiptsChanged = absorbed
 		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, fresh, event))
 		return nil
 	})

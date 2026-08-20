@@ -146,7 +146,7 @@ func recordIntent(t *testing.T, registry *Registry, paneUID, agentUID, operation
 
 // TestTheClassificationMatrixConvergesDeterministically is acceptance criterion
 // 1: every producer of a managed-process death lands the Agent in exactly one
-// phase, with a reason that names which of the four kinds of evidence produced
+// phase, with a reason that names which of the five kinds of evidence produced
 // it.
 //
 // The phases collapse four classifications into two values on purpose, so the
@@ -163,6 +163,15 @@ func TestTheClassificationMatrixConvergesDeterministically(t *testing.T) {
 		wantPhase          AgentPhase
 		wantReason         string
 	}{
+		{
+			name: "an external hangup is killed, never intentional",
+			record: func(t *testing.T, registry *Registry) {
+				recordSupervisorExit(t, registry, lifecyclePaneUID, lifecycleAgentUID, 0, "HUP")
+			},
+			wantClassification: TerminationKilled,
+			wantPhase:          PhaseOffline,
+			wantReason:         TerminationReasonKilled,
+		},
 		{
 			name: "an explicit control action is intentional",
 			record: func(t *testing.T, registry *Registry) {
@@ -227,8 +236,8 @@ func TestTheClassificationMatrixConvergesDeterministically(t *testing.T) {
 			if projection.Phase != test.wantPhase {
 				t.Fatalf("phase = %q, want %q", projection.Phase, test.wantPhase)
 			}
-			if projection.PaneRetained {
-				t.Fatal("an Agent's current managed Pane was retained instead of released")
+			if !projection.PaneRetained {
+				t.Fatal("hook-driven termination claimed canonical Pane deletion authority")
 			}
 
 			agent, ok := registry.Agent(lifecycleAgentUID)
@@ -258,8 +267,8 @@ func TestTheClassificationMatrixConvergesDeterministically(t *testing.T) {
 			if receipt.ObservedAt.IsZero() {
 				t.Fatal("the stored evidence carries no observation instant")
 			}
-			if _, ok := registry.Pane(lifecyclePaneUID); ok {
-				t.Fatal("the released managed Pane resource survived")
+			if pane, ok := registry.Pane(lifecyclePaneUID); !ok || pane.Status.LastTermination == nil {
+				t.Fatal("hook-driven termination failed to preserve the Pane row and evidence")
 			}
 			if err := registry.Validate(); err != nil {
 				t.Fatalf("the projected registry does not validate: %v", err)
@@ -274,12 +283,12 @@ func TestTheClassificationMatrixConvergesDeterministically(t *testing.T) {
 // durable before tmux tears the pane down. What varies is which trigger reaches
 // the reconciler first, and the reconciler re-reads both the registry and the
 // host at transition time -- so a receipt-then-absence delivery and an
-// absence-then-late-receipt delivery must not produce different Agents.
+// absence-then-late-receipt delivery must preserve the same row boundary.
 //
-// The late receipt itself is refused rather than applied, and that is the
-// correct half of the story: by then the Pane resource is gone, and a receipt
-// naming a deleted Pane must not resurrect a binding. The assertion is that the
-// state it would have written is the state already there.
+// A same-generation late supervisor receipt refines the temporary unknown
+// evidence and its already-unbound Agent disposition. A resumed Agent is still
+// excluded by the non-empty paneRef guard; this case is the exact binding the
+// absence pass itself released.
 func TestBothEventOrdersReachTheSameFinalState(t *testing.T) {
 	t.Parallel()
 
@@ -292,61 +301,75 @@ func TestBothEventOrdersReachTheSameFinalState(t *testing.T) {
 
 	absenceFirst := lifecycleFixture(t)
 	// The absence is observed while the receipt is still in flight, so the
-	// receipt has to land after the Pane resource is already gone.
+	// receipt lands after status projection released the Agent binding. The Pane
+	// row remains as the generation-safe refinement target.
 	if _, err := lifecycleMutator().ProjectTermination(absenceFirst,
 		TerminationProjectionInput{PaneUID: lifecyclePaneUID, ObservedAt: lifecycleClock}); err != nil {
 		t.Fatalf("absence-first projection: %v", err)
 	}
-	outcome, err := lifecycleMutator().RecordTermination(absenceFirst, TerminationEvidence{
+	lateReceipt := TerminationEvidence{
 		Source:         TerminationSourceSupervisor,
 		Classification: TerminationAbnormal,
 		ObservedAt:     lifecycleClock,
 		PaneUID:        lifecyclePaneUID,
 		AgentUID:       lifecycleAgentUID,
 		Generation:     lifecycleGeneration,
-	})
+		ExitCode:       exitCode(42),
+	}
+	outcome, err := lifecycleMutator().RecordTermination(absenceFirst, lateReceipt)
 	if err != nil {
 		t.Fatalf("late RecordTermination: %v", err)
 	}
-	if outcome.Applied || !outcome.Stale {
-		t.Fatalf("late receipt outcome = %+v, want it refused as stale with the Pane gone", outcome)
+	if !outcome.Applied || outcome.Stale {
+		t.Fatalf("late receipt outcome = %+v, want same-generation refinement applied", outcome)
+	}
+	refined, err := lifecycleMutator().ProjectTermination(absenceFirst,
+		TerminationProjectionInput{PaneUID: lifecyclePaneUID, ObservedAt: lifecycleClock})
+	if err != nil {
+		t.Fatalf("late refinement projection: %v", err)
+	}
+	if !refined.Changed || refined.Classification != TerminationAbnormal || refined.Phase != PhaseFailed {
+		t.Fatalf("late refinement = %+v, want abnormal Failed", refined)
 	}
 
-	// The two orders differ in exactly one respect, and it is the one the
-	// delegation contract names: an absence observed before its receipt landed
-	// converges on unknown rather than on the abnormal exit nobody had written
-	// yet. Both are Offline-or-Failed decisions taken from the evidence that
-	// existed, both are stable, and neither invents intent.
-	receiptAgent, _ := receiptFirst.Agent(lifecycleAgentUID)
-	absenceAgent, _ := absenceFirst.Agent(lifecycleAgentUID)
-	if receiptAgent.Status.PaneRef != "" || absenceAgent.Status.PaneRef != "" {
-		t.Fatalf("paneRef = %q / %q, want both released",
-			receiptAgent.Status.PaneRef, absenceAgent.Status.PaneRef)
-	}
-	if _, ok := receiptFirst.Pane(lifecyclePaneUID); ok {
-		t.Fatal("receipt-first left the managed Pane resource behind")
-	}
-	if _, ok := absenceFirst.Pane(lifecyclePaneUID); ok {
-		t.Fatal("absence-first left the managed Pane resource behind")
-	}
-	if receiptAgent.Status.SessionRef == nil || absenceAgent.Status.SessionRef == nil {
-		t.Fatal("an order lost the conversation pointer")
-	}
-
-	// A *durable* receipt, whichever trigger fires first, is order-independent in
-	// the strong sense: the same final Agent, byte for byte.
-	sameOrderA := lifecycleFixture(t)
-	recordSupervisorExit(t, sameOrderA, lifecyclePaneUID, lifecycleAgentUID, 42, "")
-	sameOrderB := lifecycleFixture(t)
-	recordSupervisorExit(t, sameOrderB, lifecyclePaneUID, lifecycleAgentUID, 42, "")
-	for _, registry := range []*Registry{sameOrderA, sameOrderB} {
-		if _, err := lifecycleMutator().ProjectTermination(registry,
-			TerminationProjectionInput{PaneUID: lifecyclePaneUID, ObservedAt: lifecycleClock}); err != nil {
-			t.Fatalf("ProjectTermination: %v", err)
+	for label, registry := range map[string]*Registry{"receipt-first": receiptFirst, "absence-first": absenceFirst} {
+		agent, _ := registry.Agent(lifecycleAgentUID)
+		pane, ok := registry.Pane(lifecyclePaneUID)
+		if !ok || pane.Status.LastTermination == nil {
+			t.Fatalf("%s deleted the Pane row or its evidence", label)
+		}
+		if agent.Status.PaneRef != "" || agent.Status.Phase != PhaseFailed ||
+			agent.Status.Reason != TerminationReasonAbnormal || agent.Status.SessionRef == nil {
+			t.Fatalf("%s Agent status = %+v, want released Failed/abnormal with session", label, agent.Status)
+		}
+		for owner, evidence := range map[string]*TerminationEvidence{
+			"Pane": pane.Status.LastTermination, "Agent": agent.Status.LastTermination,
+		} {
+			if evidence == nil || evidence.Source != TerminationSourceSupervisor ||
+				evidence.Classification != TerminationAbnormal || evidence.ExitCode == nil || *evidence.ExitCode != 42 {
+				t.Fatalf("%s %s evidence = %+v, want abnormal/supervisor exit=42", label, owner, evidence)
+			}
+		}
+		if err := registry.Validate(); err != nil {
+			t.Fatalf("%s registry invalid: %v", label, err)
 		}
 	}
-	if !reflect.DeepEqual(sameOrderA.Normalize(), sameOrderB.Normalize()) {
-		t.Fatal("two deliveries of the same durable receipt produced different registries")
+	if !reflect.DeepEqual(receiptFirst.Normalize(), absenceFirst.Normalize()) {
+		t.Fatal("receipt-first and absence-first did not converge byte-for-byte")
+	}
+
+	settled := absenceFirst.Clone().Normalize()
+	duplicate, err := lifecycleMutator().RecordTermination(absenceFirst, lateReceipt)
+	if err != nil || duplicate.Applied || (!duplicate.Duplicate && !duplicate.Stale) {
+		t.Fatalf("repeat receipt = %+v, %v; want guarded no-op", duplicate, err)
+	}
+	repeat, err := lifecycleMutator().ProjectTermination(absenceFirst,
+		TerminationProjectionInput{PaneUID: lifecyclePaneUID, ObservedAt: lifecycleClock})
+	if err != nil || repeat.Changed {
+		t.Fatalf("repeat projection = %+v, %v; want no-op", repeat, err)
+	}
+	if !reflect.DeepEqual(absenceFirst.Normalize(), settled) {
+		t.Fatal("repeat receipt/projection changed the settled registry")
 	}
 }
 
@@ -646,10 +669,12 @@ func TestOnlyTheReconcilerMayClaimUnknown(t *testing.T) {
 		{"a control action may not record unknown", TerminationSourceControlAction, TerminationUnknown, false},
 		{"the reconciler may not record normal", TerminationSourceReconcile, TerminationNormal, false},
 		{"the reconciler may not record abnormal", TerminationSourceReconcile, TerminationAbnormal, false},
+		{"the reconciler may not record killed", TerminationSourceReconcile, TerminationKilled, false},
 		{"the reconciler may not record intentional", TerminationSourceReconcile, TerminationIntentional, false},
 		{"a control action still records intentional", TerminationSourceControlAction, TerminationIntentional, true},
 		{"a supervisor still records normal", TerminationSourceSupervisor, TerminationNormal, true},
 		{"a supervisor still records abnormal", TerminationSourceSupervisor, TerminationAbnormal, true},
+		{"a control action may not record normal", TerminationSourceControlAction, TerminationNormal, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -705,6 +730,13 @@ func TestTheSummaryRendersEveryEvidenceShape(t *testing.T) {
 	}{
 		{name: "no receipt renders nothing", receipt: nil, want: ""},
 		{name: "an empty receipt renders nothing", receipt: &TerminationEvidence{}, want: ""},
+		{
+			name: "an external kill renders its signal",
+			receipt: &TerminationEvidence{
+				Source: TerminationSourceSupervisor, Classification: TerminationKilled, Signal: "HUP",
+			},
+			want: "killed/supervisor signal=HUP",
+		},
 		{
 			name:    "an intentional receipt names its control action",
 			receipt: &TerminationEvidence{Source: TerminationSourceControlAction, Classification: TerminationIntentional},
@@ -778,8 +810,9 @@ func TestTheProjectionNeverStartsAnything(t *testing.T) {
 	if agent.Status.Phase != PhaseOffline || agent.Status.PaneRef != "" {
 		t.Fatalf("agent status = %+v, want it left Offline and unbound", agent.Status)
 	}
-	if len(registry.PanesOf(lifecycleAgentUID)) != 0 {
-		t.Fatal("the projection materialized a replacement Pane for an Offline Agent")
+	panes := registry.PanesOf(lifecycleAgentUID)
+	if len(panes) != 1 || panes[0].Metadata.UID != lifecyclePaneUID {
+		t.Fatalf("projection changed the preserved Pane row: %+v", panes)
 	}
 }
 

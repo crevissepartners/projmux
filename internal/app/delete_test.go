@@ -339,12 +339,14 @@ func TestDeleteOfflineWindowDryRunAndExecutionAreRegistryOnly(t *testing.T) {
 	}
 
 	beforeRepeat := store.snapshot()
+	transactionsBeforeRepeat := store.transactions
 	stdout, _, err = runRoute(t, cmd, "window", "uid:win-alpha-main", "--project", "uid:prj-alpha", "--yes")
 	if err == nil || !strings.Contains(err.Error(), "matched no windows") {
 		t.Fatalf("repeat offline delete error = %v", err)
 	}
-	if stdout != "" || store.snapshot() != beforeRepeat || len(runtime.killed) != 0 {
-		t.Fatalf("repeat offline delete changed state: stdout=%q killed=%v", stdout, runtime.killed)
+	if stdout != "" || store.snapshot() != beforeRepeat || len(runtime.killed) != 0 || store.transactions != transactionsBeforeRepeat {
+		t.Fatalf("repeat offline delete changed state: stdout=%q killed=%v transactions=%d->%d",
+			stdout, runtime.killed, transactionsBeforeRepeat, store.transactions)
 	}
 }
 

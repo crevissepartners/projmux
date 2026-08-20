@@ -39,6 +39,10 @@ func (s superviseSpec) valid() bool {
 // the registry guard would refuse anyway.
 type superviseCommand struct {
 	store *resourceStore
+	// journal is the lock-free prewrite transport. The Registry store remains
+	// on the command only as a compatibility test seam; a dying supervisor must
+	// never enter it.
+	journal terminationJournal
 	// run executes the child and returns its reaped outcome. Production wires
 	// the platform implementation; tests replace it.
 	run  func(argv []string, argv0 string) (processOutcome, error)
@@ -47,7 +51,8 @@ type superviseCommand struct {
 }
 
 func newSuperviseCommand() *superviseCommand {
-	return &superviseCommand{store: newResourceStore(), run: runSupervisedChild, now: time.Now}
+	journal, _ := newTerminationJournal(nil, nil)
+	return &superviseCommand{store: newResourceStore(), journal: journal, run: runSupervisedChild, now: time.Now}
 }
 
 // processOutcome is one reaped child's wait status.
@@ -127,14 +132,14 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 	return superviseExitError{code: outcome.exitStatus()}
 }
 
-// recordOutcome writes the observed receipt, best effort.
+// recordOutcome appends the observed receipt, best effort.
 //
 // A failure here is deliberately not propagated. The supervisor's contract to
 // the operator is that the pane behaves exactly as it did before supervision
 // existed; a registry that is locked, read-only, or gone must not change the
-// status the pane reports. The cost of the lost write is an absent receipt,
-// and an absent receipt is exactly the input a later consumer resolves as
-// `unknown` -- never as a normal exit.
+// status the pane reports. This prewrite never opens the Registry or waits on
+// its lock; the next controller convergence absorbs it under the ordinary
+// Registry transaction before it projects the observed absence.
 func (c *superviseCommand) recordOutcome(spec superviseSpec, outcome processOutcome, stderr io.Writer) {
 	receipt := coremetadata.TerminationEvidence{
 		Source:         coremetadata.TerminationSourceSupervisor,
@@ -151,21 +156,17 @@ func (c *superviseCommand) recordOutcome(spec superviseSpec, outcome processOutc
 		code := outcome.ExitCode
 		receipt.ExitCode = &code
 	}
-	if c.store == nil || c.store.update == nil || c.store.mutator == nil {
-		c.diagnose(stderr, "no registry store is configured")
-		return
-	}
-	var result coremetadata.TerminationOutcome
-	if _, err := c.store.update(func(working *coremetadata.Registry) error {
+	journal := c.journal
+	if strings.TrimSpace(journal.path) == "" {
 		var err error
-		result, err = c.store.mutator().RecordTermination(working, receipt)
-		return err
-	}); err != nil {
-		c.diagnose(stderr, "record termination receipt: %v", err)
-		return
+		journal, err = newTerminationJournal(nil, nil)
+		if err != nil {
+			c.diagnose(stderr, "resolve termination journal: %v", err)
+			return
+		}
 	}
-	if !result.Applied && result.Reason != "" {
-		c.diagnose(stderr, "termination receipt was not applied: %s", result.Reason)
+	if err := journal.append(receipt); err != nil {
+		c.diagnose(stderr, "append termination receipt: %v", err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -47,10 +48,10 @@ import (
 
 // controllerTriggerReason names the producer of one dirty event.
 //
-// It is a closed set, and it exists for diagnostics rather than for dispatch:
-// nothing below branches on it. That is the point of the trigger contract -- a
-// producer that could select its own stages would be a fourth convergence
-// definition wearing the entrypoint's name.
+// It is a closed set. The worker uses it only to choose the safe observation
+// scope: pane-exited may use its exact hook Pane, while kill and coalesced paths
+// must re-observe the whole host. A reason never supplies a termination
+// classification or bypasses the shared convergence body.
 type controllerTriggerReason string
 
 const (
@@ -61,8 +62,17 @@ const (
 	// controllerTriggerRuntimeCreated is tmux's after-new-window and
 	// after-split-window.
 	controllerTriggerRuntimeCreated controllerTriggerReason = "runtime-created"
-	// controllerTriggerRuntimeExited is tmux's pane-exited and after-kill-pane.
-	controllerTriggerRuntimeExited controllerTriggerReason = "runtime-exited"
+	// controllerTriggerPaneExited is tmux's pane-exited. It carries exact
+	// #{hook_pane} evidence and reobserves only that activation handle.
+	controllerTriggerPaneExited controllerTriggerReason = "pane-exited"
+	// controllerTriggerPaneKilled is tmux's after-kill-pane. That hook cannot
+	// name the dead Pane, so it retains the whole-host reobservation.
+	controllerTriggerPaneKilled controllerTriggerReason = "pane-killed"
+	// controllerTriggerWindowUnlinked is tmux's window-unlinked. A standalone
+	// firing with exact #{hook_window} is explicit Window termination evidence;
+	// the absence pass remains whole-host because the dead window no longer has
+	// a queryable Registry mirror.
+	controllerTriggerWindowUnlinked controllerTriggerReason = "window-unlinked"
 )
 
 // controllerTriggerReasons returns the closed reason set in declaration order.
@@ -72,7 +82,9 @@ func controllerTriggerReasons() []controllerTriggerReason {
 	return []controllerTriggerReason{
 		controllerTriggerConfigApply,
 		controllerTriggerRuntimeCreated,
-		controllerTriggerRuntimeExited,
+		controllerTriggerPaneExited,
+		controllerTriggerPaneKilled,
+		controllerTriggerWindowUnlinked,
 	}
 }
 
@@ -91,11 +103,10 @@ func parseControllerTriggerReason(raw string) (controllerTriggerReason, error) {
 // controllerTrigger is one producer's statement that an exact server may have
 // moved.
 //
-// It carries no claim about what changed. There is no pane id and no generation
-// here on purpose: `after-kill-pane` fires with an empty `#{hook_pane}`, so a
-// field for the pane that died would be a field the most common producer has to
-// invent, and every consumer would then have to decide how much to trust it. The
-// worker re-derives the whole answer from a fresh observation instead.
+// It carries no claim about the resulting Registry state. Exact hook handles
+// are event evidence when tmux supplies them; after-kill-pane supplies none, and
+// a coalesced worker discards narrow evidence and re-derives the answer from a
+// whole-host fresh observation.
 type controllerTrigger struct {
 	reason controllerTriggerReason
 	// target is the exact server. There is no zero value and no fallback to the
@@ -105,12 +116,32 @@ type controllerTrigger struct {
 	// session is the hook's `#{session_id}`, which carries the create-operation
 	// lease. It is empty for apply, which is not caused by a create.
 	session string
+	// hookPane and hookWindow are exact stable tmux handles supplied by the
+	// corresponding hook. They are evidence, never selector guesses.
+	hookPane   string
+	hookWindow string
+	// fullReobserve is set internally once this worker coalesces another event.
+	// It is sticky for the rest of the worker, including its verification pass.
+	fullReobserve bool
+}
+
+func (t controllerTrigger) widened() controllerTrigger {
+	t.hookPane = ""
+	t.hookWindow = ""
+	t.fullReobserve = true
+	return t
 }
 
 func (t controllerTrigger) describe() string {
 	out := string(t.reason) + " socket=" + t.target.label()
 	if session := strings.TrimSpace(t.session); session != "" {
 		out += " session=" + session
+	}
+	if pane := strings.TrimSpace(t.hookPane); pane != "" {
+		out += " hook-pane=" + pane
+	}
+	if window := strings.TrimSpace(t.hookWindow); window != "" {
+		out += " hook-window=" + window
 	}
 	return out
 }
@@ -161,6 +192,11 @@ func (o controllerTriggerOutcome) describe() string {
 // worker would have reached on pass nine.
 const controllerTriggerMaxPasses = 8
 
+const (
+	terminationReceiptWaitTimeout = 750 * time.Millisecond
+	terminationReceiptPoll        = 25 * time.Millisecond
+)
+
 // controllerTriggering is the one convergence entrypoint as its callers see it.
 //
 // It exists so a route can be tested for what it hands the controller -- the
@@ -176,6 +212,9 @@ type controllerTriggerRunner struct {
 	runner tmuxCommandRunner
 	store  *resourceStore
 	events controllerEventLog
+	// receipts is the append-only supervisor prewrite journal. It is read
+	// outside the Registry transaction and absorbed before lifecycle projection.
+	receipts terminationJournal
 	// newReconciler is the binding-convergence seam. Tests install a scripted
 	// reconciler; production builds the real one against the routed runner.
 	newReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler
@@ -193,8 +232,14 @@ type controllerTriggerRunner struct {
 	// below; a test installs one so the loop's own behavior -- coalescing, the
 	// repeat that proves convergence, the bound -- is observable without a
 	// reconciliation in the way.
-	pass      func(context.Context, explicitTmuxTarget) (controllerPassResult, error)
+	pass      func(context.Context, controllerTrigger) (controllerPassResult, error)
 	maxPasses int
+	// Receipt wait tunables are test seams for the bounded kill race. Production
+	// uses the constants above; beforeReceiptWait only observes that waiting has
+	// begun and is nil outside deterministic tests.
+	receiptWaitTimeout time.Duration
+	receiptPoll        time.Duration
+	beforeReceiptWait  func()
 }
 
 var _ controllerTriggering = (*controllerTriggerRunner)(nil)
@@ -206,10 +251,15 @@ func newControllerTriggerRunner(runner tmuxCommandRunner, store *resourceStore,
 	if err != nil {
 		return nil, err
 	}
+	receipts, err := newTerminationJournal(homeDir, lookupEnv)
+	if err != nil {
+		return nil, err
+	}
 	return &controllerTriggerRunner{
 		runner:         runner,
 		store:          store,
 		events:         events,
+		receipts:       receipts,
 		newReconciler:  newReconciler,
 		newOperationID: newCreateOperationID,
 	}, nil
@@ -274,17 +324,23 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 	if maxPasses <= 0 {
 		maxPasses = controllerTriggerMaxPasses
 	}
+	passTrigger := trigger
 	for range maxPasses {
 		drained, err := r.events.drain(trigger.target)
 		if err != nil {
 			return outcome, err
 		}
 		outcome.events += drained
-		body := r.pass
-		if body == nil {
-			body = r.converge
+		if drained > 1 {
+			passTrigger = passTrigger.widened()
 		}
-		pass, err := body(ctx, trigger.target)
+		body := r.pass
+		var pass controllerPassResult
+		if body == nil {
+			pass, err = r.converge(ctx, passTrigger)
+		} else {
+			pass, err = body(ctx, passTrigger)
+		}
 		if err != nil {
 			return outcome, err
 		}
@@ -305,6 +361,12 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 		pending, err := r.events.pending(trigger.target)
 		if err != nil {
 			return outcome, err
+		}
+		if pending {
+			// The pass cannot know which semantics an event arriving behind it
+			// carried because drain intentionally acknowledges only before work.
+			// Widen once and keep it widened through the final no-op verification.
+			passTrigger = passTrigger.widened()
 		}
 		// Converged means this pass wrote nothing and nobody has asked for
 		// another look. Either half alone is not evidence: a no-op pass with a
@@ -369,8 +431,41 @@ func (r controllerPassResult) changed() bool {
 // is byte-equal to the stored one writes no bytes and reports false, which is
 // what makes the repeat pass in run cheap enough to serve as the whole trigger's
 // reobservation.
-func (r *controllerTriggerRunner) converge(ctx context.Context, target explicitTmuxTarget) (controllerPassResult, error) {
+func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controllerTrigger) (controllerPassResult, error) {
 	var pass controllerPassResult
+	target := trigger.target
+	receipts, err := r.receipts.read()
+	if err != nil {
+		return pass, err
+	}
+	if trigger.reason == controllerTriggerPaneKilled || trigger.reason == controllerTriggerWindowUnlinked || trigger.fullReobserve {
+		receipts, err = r.awaitKillTerminationReceipts(ctx, trigger, receipts)
+		if err != nil {
+			return pass, err
+		}
+	}
+	if !trigger.fullReobserve && (trigger.reason == controllerTriggerPaneExited || trigger.reason == controllerTriggerWindowUnlinked) {
+		observe := r.observe
+		if observe == nil {
+			observe = func(target explicitTmuxTarget) livePaneInventory {
+				return lifecycleInventory(r.runner, target)
+			}
+		}
+		exits, err := reconcileLifecycle(ctx, lifecycleDirtyEvent{
+			target:        target,
+			runtimePaneID: trigger.hookPane, runtimeWindowID: trigger.hookWindow,
+			receipts: receipts,
+		}, observe(target), r.store)
+		if err != nil {
+			return pass, err
+		}
+		if exits.unobserved {
+			pass.unobserved = exits.skipped
+			return pass, nil
+		}
+		pass.residualExits = exits.changed()
+		return pass, nil
+	}
 	routed := explicitTmuxRunner{runner: r.runner, target: target}
 	newReconciler := r.newReconciler
 	if newReconciler == nil {
@@ -386,6 +481,9 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, target explicitT
 		return pass, err
 	}
 	rebound, err := r.store.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if _, err := absorbTerminationReceipts(working, mutator, receipts); err != nil {
+			return err
+		}
 		return reconciler.reconcile(ctx, working, mutator, operationID)
 	})
 	if err != nil {
@@ -399,7 +497,9 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, target explicitT
 			return lifecycleInventory(r.runner, target)
 		}
 	}
-	exits, err := reconcileLifecycle(ctx, lifecycleDirtyEvent{target: target}, observe(target), r.store)
+	exits, err := reconcileLifecycle(ctx, lifecycleDirtyEvent{
+		target: target, runtimeWindowID: trigger.hookWindow, receipts: receipts,
+	}, observe(target), r.store)
 	if err != nil {
 		return pass, err
 	}
@@ -409,6 +509,101 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, target explicitT
 	}
 	pass.residualExits = exits.changed()
 	return pass, nil
+}
+
+// awaitKillTerminationReceipts closes the tmux kill/reap race without taking
+// the Registry lock. after-kill-pane and window-unlinked can run before the
+// surviving supervisor has reaped SIGHUP and appended its receipt; projecting
+// unknown immediately would then settle the event with no later wakeup. Only a
+// newly absent managed activation with no applicable supervisor/control receipt
+// waits, and the wait is bounded. Voluntary exact pane-exited never enters here.
+func (r *controllerTriggerRunner) awaitKillTerminationReceipts(ctx context.Context, trigger controllerTrigger,
+	receipts []coremetadata.TerminationEvidence) ([]coremetadata.TerminationEvidence, error) {
+	observe := r.observe
+	if observe == nil {
+		observe = func(target explicitTmuxTarget) livePaneInventory {
+			return lifecycleInventory(r.runner, target)
+		}
+	}
+	live, err := observe(trigger.target).LivePaneUIDs(ctx)
+	if err != nil {
+		// The ordinary convergence pass owns fail-closed reporting. An unreadable
+		// host is not evidence of an absent activation and therefore never waits.
+		return receipts, nil
+	}
+	registry, err := r.store.load()
+	if err != nil {
+		return nil, MapMetadataError(err)
+	}
+	needsWait := func(snapshot []coremetadata.TerminationEvidence) bool {
+		candidate := registry.Clone()
+		_, _ = absorbTerminationReceipts(&candidate, r.store.mutator(), snapshot)
+		for i := range candidate.Panes {
+			pane := &candidate.Panes[i]
+			if live[pane.Metadata.UID] || strings.TrimSpace(pane.Status.Activation.Generation) == "" {
+				continue
+			}
+			stored := pane.Status.LastTermination
+			if stored != nil && stored.Generation == pane.Status.Activation.Generation {
+				if stored.Source == coremetadata.TerminationSourceSupervisor ||
+					stored.Classification == coremetadata.TerminationIntentional {
+					continue
+				}
+				// A racing runtime-created pass may already have settled the
+				// absence as reconcile/unknown. On a kill trigger that is still a
+				// provisional answer worth the same bounded supervisor wait.
+				if stored.Source == coremetadata.TerminationSourceReconcile &&
+					stored.Classification == coremetadata.TerminationUnknown {
+					return true
+				}
+			}
+			if coremetadata.NeedsTerminationProjection(candidate, pane.Metadata.UID) {
+				return true
+			}
+		}
+		return false
+	}
+	if !needsWait(receipts) {
+		return receipts, nil
+	}
+	if r.beforeReceiptWait != nil {
+		r.beforeReceiptWait()
+	}
+	timeout := r.receiptWaitTimeout
+	if timeout <= 0 {
+		timeout = terminationReceiptWaitTimeout
+	}
+	poll := r.receiptPoll
+	if poll <= 0 {
+		poll = terminationReceiptPoll
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return receipts, ctx.Err()
+		case <-ticker.C:
+			fresh, readErr := r.receipts.read()
+			if readErr != nil {
+				return nil, readErr
+			}
+			receipts = fresh
+			if !needsWait(receipts) {
+				return receipts, nil
+			}
+		case <-timer.C:
+			// One final lock-free read closes the boundary with an append racing
+			// the timeout tick; absence after this remains bounded unknown.
+			fresh, readErr := r.receipts.read()
+			if readErr != nil {
+				return nil, readErr
+			}
+			return fresh, nil
+		}
+	}
 }
 
 // controllerTriggerReasonSpellings renders the closed reason set for a help
