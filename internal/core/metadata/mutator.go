@@ -334,7 +334,43 @@ func (m Mutator) addPaneTx(txn *Transaction, reg *Registry, op, ownerUID string,
 	}
 	reg.Panes = append(reg.Panes, pane)
 	txn.record(KindPane, paneUID)
+	reg.adoptPrimaryPaneRef(ownerUID, ownerKind, paneUID)
 	return pane, nil
+}
+
+// adoptPrimaryPaneRef gives a Window its primaryPaneRef back when this Pane is
+// the first one it owns again.
+//
+// Validate states the rule as a pair: a Window with no owned Pane carries an
+// empty primaryPaneRef, and a Window that owns one carries a resolvable ref.
+// Deleting a Window's last Pane empties the ref by design, so the very next Pane
+// added under that Window has to reclaim it or the registry the caller just wrote
+// is one Validate rejects -- and it is rejected on the *next* write, not this one,
+// which turns a legal `delete pane` followed by a legal `create pane` into a
+// registry nothing can mutate any more.
+//
+// A Pane owned by an Agent counts, because Validate counts it: windowPaneUIDs is
+// transitive through the Window's Agents. Adoption is strictly a repair of the
+// empty case and never re-points a Window that already has a resolvable primary.
+func (r *Registry) adoptPrimaryPaneRef(ownerUID string, ownerKind Kind, paneUID string) {
+	windowUID := ownerUID
+	if ownerKind == KindAgent {
+		agent, ok := r.Agent(ownerUID)
+		if !ok {
+			return
+		}
+		windowUID = agent.Metadata.OwnerUID()
+	}
+	for i := range r.Windows {
+		if r.Windows[i].Metadata.UID != windowUID {
+			continue
+		}
+		if strings.TrimSpace(r.Windows[i].Spec.PrimaryPaneRef) != "" {
+			return
+		}
+		r.Windows[i].Spec.PrimaryPaneRef = paneUID
+		return
+	}
 }
 
 // AddPane creates one offline shell Pane inside an existing Window.
