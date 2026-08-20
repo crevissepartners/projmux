@@ -188,19 +188,32 @@ func planRegistryTopology(
 		}
 		work.primary = *primary
 		eligible := registry.PanesOf(window.Metadata.UID)
+		// A stored Pane whose cwd is gone is one item of the desired topology, not
+		// a verdict on the Project. It is refused here and left out of the plan, so
+		// the tmux pass never tries to open a directory that does not exist and the
+		// Window still comes back with the Panes that can be built. A refused
+		// *primary* is different: the Window is created from its primary Pane's
+		// cwd, so that one takes the Window with it.
+		refusedPanes := map[string]bool{}
 		for _, pane := range eligible {
 			if pane.Spec.Role != coremetadata.PaneRoleShell {
 				continue
 			}
 			if reason := validateMaterializeDirectory(materializePaneCWD(project, pane), "Pane cwd"); reason != "" {
 				plan.refuse(coremetadata.KindPane, pane.Metadata.Name, reason)
+				refusedPanes[pane.Metadata.UID] = true
 			}
+		}
+		if refusedPanes[work.primary.Metadata.UID] {
+			plan.refuse(coremetadata.KindWindow, window.Metadata.Name,
+				"the Window's primary Pane cwd cannot be materialized, so the Window has no cwd to be created from")
+			continue
 		}
 		if work.liveID == "" {
 			work.create = true
 			plan.addItem(wi+1, coremetadata.KindWindow, window.Metadata.Name, window.Metadata.UID, "materialize")
 			for pi, pane := range eligible {
-				if pane.Spec.Role != coremetadata.PaneRoleShell {
+				if pane.Spec.Role != coremetadata.PaneRoleShell || refusedPanes[pane.Metadata.UID] {
 					continue
 				}
 				work.panes = append(work.panes, registryTopologyPanePlan{pane: pane, create: true})
@@ -244,7 +257,7 @@ func planRegistryTopology(
 			}
 		}
 		for pi, pane := range eligible {
-			if pane.Spec.Role != coremetadata.PaneRoleShell {
+			if pane.Spec.Role != coremetadata.PaneRoleShell || refusedPanes[pane.Metadata.UID] {
 				continue
 			}
 			paneWork := registryTopologyPanePlan{pane: pane}
@@ -381,6 +394,63 @@ func (p *registryTopologyPlan) writeNotices(w io.Writer) {
 	for _, notice := range p.notices {
 		fmt.Fprintln(w, notice)
 	}
+	for _, notice := range p.skipNotices() {
+		fmt.Fprintln(w, notice)
+	}
+}
+
+// refusalScope splits one plan's refusals into the ones that end the pass and the
+// ones the pass can skip.
+//
+// A refused Project is the pass. There is no partial answer to "this Project's
+// identity, root, or session projection is wrong", and every item below it was
+// planned against that answer.
+//
+// A refused Window or Pane is one item of the stored topology. Ending the whole
+// activation because one stored item cannot be built is what made a single
+// deleted worktree directory, or one Window that had only ever hosted Agents,
+// fatal to everything else the Project had. The kernel this plan feeds already
+// states the rule the other way round: a refusal is a recorded outcome with a
+// stated reason, not an error.
+//
+// The split is restricted to an offline activation on purpose. Once a live
+// session claims the Project, a refusal is a statement about runtime objects the
+// operator is using right now, and the ownership guards are the only thing
+// keeping this pass out of somebody else's window. That case keeps the
+// all-or-nothing contract it shipped with.
+func (p *registryTopologyPlan) refusalScope() (fatal, skipped []resourceReconcileItem) {
+	if p == nil {
+		return nil, nil
+	}
+	for _, item := range p.items {
+		if !item.refused {
+			continue
+		}
+		if p.sessionLive || item.Kind == string(coremetadata.KindProject) {
+			fatal = append(fatal, item)
+			continue
+		}
+		skipped = append(skipped, item)
+	}
+	return fatal, skipped
+}
+
+// skipNotices renders the operator disclosure for every stored item this pass
+// leaves out.
+//
+// It is derived from the plan rather than accumulated while planning, so a
+// refusal cannot be recorded as a plan item and then quietly fail to be
+// disclosed: the two come from one source. An activation that dropped part of the
+// stored topology in silence would be indistinguishable from one that restored
+// all of it.
+func (p *registryTopologyPlan) skipNotices() []string {
+	_, skipped := p.refusalScope()
+	out := make([]string, 0, len(skipped))
+	for _, item := range skipped {
+		out = append(out, fmt.Sprintf("projmux: %s/%s was not restored: %s",
+			strings.ToLower(item.Kind), item.Target, item.Reason))
+	}
+	return out
 }
 
 func (p *registryTopologyPlan) hasRefusal() bool {
@@ -480,10 +550,17 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 		}
 		outcome.plan = current
 		outcome.completed = append(outcome.completed, "plan rechecked under Registry lock")
-		if current.refusedItems() != 0 {
+		fatal, skipped := current.materialization.refusalScope()
+		if current.materialization == nil && current.refusedItems() != 0 {
 			outcome.failedStage = "topology prevalidation"
 			return fmt.Errorf("selected Project topology contains %d refused item(s)", current.refusedItems())
 		}
+		if len(fatal) != 0 {
+			outcome.failedStage = "topology prevalidation"
+			return fmt.Errorf("selected Project topology contains %d refused item(s) that end the activation: %s",
+				len(fatal), describeRefusedItems(fatal))
+		}
+		_ = skipped
 		// The Agent disclosures describe what this pass is about to do, so they
 		// are written only once the pass is going to happen. A refused plan
 		// materializes nothing, and "this Agent starts a new conversation" would
@@ -1045,4 +1122,15 @@ func executeRegistryTopology(
 	// Startup runs only after every created object carries its exact uid, so a
 	// synchronous startup mutation cannot escape the transaction unnoticed.
 	return runtime.finalizeSessionStartup(ctx, created, plan.sessionName, plan.project.Spec.Root, ledger)
+}
+
+// describeRefusedItems renders refused items for one error line. The reasons are
+// the plan's own, so the message an operator sees names the exact stored item and
+// why it was refused rather than a count they then have to go and look up.
+func describeRefusedItems(items []resourceReconcileItem) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		parts = append(parts, fmt.Sprintf("%s %s (%s)", strings.ToLower(item.Kind), item.Target, item.Reason))
+	}
+	return strings.Join(parts, "; ")
 }
