@@ -19,6 +19,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
@@ -123,6 +124,7 @@ type doctorReport struct {
 	Runtime              []doctorFinding                      `json:"runtime"`
 	Logs                 []doctorFinding                      `json:"logs"`
 	RegistryInvariants   []doctorFinding                      `json:"registry_invariants"`
+	RegistryDivergences  []resourcegraph.DivergenceCount      `json:"registry_divergences"`
 }
 
 const doctorSchemaVersion = 2
@@ -252,6 +254,7 @@ func (c *doctorCommand) evaluateReport(section doctorSection) doctorReport {
 	}
 	if section == doctorSectionAll || section == doctorSectionRegistry {
 		report.RegistryInvariants = c.evaluateRegistryInvariants()
+		report.RegistryDivergences = c.evaluateRegistryDivergences()
 	}
 	return report
 }
@@ -367,7 +370,7 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 		writeDoctorFindingsText(&buf, "Logs", report.Logs, verbose)
 	}
 	if section == doctorSectionAll || section == doctorSectionRegistry {
-		writeDoctorRegistryInvariantsText(&buf, report.RegistryInvariants, verbose)
+		writeDoctorRegistryInvariantsText(&buf, report.RegistryInvariants, report.RegistryDivergences, verbose)
 	}
 	_, err := w.Write(buf.Bytes())
 	return err
@@ -404,13 +407,18 @@ func writeDoctorFindingsText(buf *bytes.Buffer, title string, findings []doctorF
 // section that never ran, which is the silence C-1 Failure.Detection exists to
 // end. Refusal reasons are the opposite: they quote stored absolute paths, so
 // they follow the report's established rule that path detail is --verbose only.
-func writeDoctorRegistryInvariantsText(buf *bytes.Buffer, findings []doctorFinding, verbose bool) {
+func writeDoctorRegistryInvariantsText(buf *bytes.Buffer, findings []doctorFinding, divergences []resourcegraph.DivergenceCount, verbose bool) {
 	buf.WriteString("\nRegistry materialization invariants\n")
 	counts := map[doctorFindingSeverity]int{}
 	for _, finding := range findings {
 		counts[finding.Severity]++
 	}
 	fmt.Fprintf(buf, "  Summary: %d info, %d warning, %d error.\n", counts[doctorSeverityInfo], counts[doctorSeverityWarning], counts[doctorSeverityError])
+	buf.WriteString("  Divergence counts:")
+	for _, count := range divergences {
+		fmt.Fprintf(buf, " %s=%d", count.Divergence, count.Count)
+	}
+	buf.WriteString("\n")
 	for _, finding := range findings {
 		fmt.Fprintf(buf, "  [%-7s] %s", finding.Severity, finding.Code)
 		if finding.Count > 0 {
@@ -634,6 +642,7 @@ type doctorJSONReport struct {
 	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
 	Logs                 *[]doctorFinding                      `json:"logs,omitempty"`
 	RegistryInvariants   *[]doctorFinding                      `json:"registry_invariants,omitempty"`
+	RegistryDivergences  *[]resourcegraph.DivergenceCount      `json:"registry_divergences,omitempty"`
 }
 
 func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) error {
@@ -658,6 +667,7 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 	}
 	if section == doctorSectionAll || section == doctorSectionRegistry {
 		out.RegistryInvariants = &report.RegistryInvariants
+		out.RegistryDivergences = &report.RegistryDivergences
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

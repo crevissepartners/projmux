@@ -10,6 +10,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -25,20 +26,21 @@ const (
 )
 
 type resourceReconcileItem struct {
-	Key      string            `json:"key"`
-	Drift    resourceDriftKind `json:"drift"`
-	Surface  string            `json:"surface"`
-	Action   string            `json:"action"`
-	Kind     string            `json:"kind,omitempty"`
-	Target   string            `json:"target"`
-	Field    string            `json:"field,omitempty"`
-	Before   string            `json:"before,omitempty"`
-	After    string            `json:"after,omitempty"`
-	Outcome  string            `json:"outcome"`
-	Reason   string            `json:"reason,omitempty"`
-	tmuxArgs []string
-	refused  bool
-	registry bool
+	Key        string                   `json:"key"`
+	Drift      resourceDriftKind        `json:"drift"`
+	Surface    string                   `json:"surface"`
+	Action     string                   `json:"action"`
+	Kind       string                   `json:"kind,omitempty"`
+	Target     string                   `json:"target"`
+	Field      string                   `json:"field,omitempty"`
+	Before     string                   `json:"before,omitempty"`
+	After      string                   `json:"after,omitempty"`
+	Outcome    string                   `json:"outcome"`
+	Reason     string                   `json:"reason,omitempty"`
+	Divergence resourcegraph.Divergence `json:"divergence"`
+	tmuxArgs   []string
+	refused    bool
+	registry   bool
 }
 
 // planResourceAgentProjections compares Registry Agent authority with the exact
@@ -189,6 +191,9 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 	if p.materializeProject != "" {
 		requireMaterializeSession(topology, p.materializeSession)
 		items := slices.Clone(topology.items)
+		if err := validateResourcePlanItems(items); err != nil {
+			return resourceReconcilePlan{}, err
+		}
 		return resourceReconcilePlan{registry: before.Clone(), items: items, materialization: topology}, nil
 	}
 	reconciler.refusedSessions = refusedResourceProjectSessions(before, projectSessions, reconciler)
@@ -230,7 +235,22 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 	items = append(items, resourceProjectForeignItems(before, projectSessions, reconciler)...)
 	items = append(items, recorder.foreignItems(before, reconciler)...)
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Key < items[j].Key })
+	if err := validateResourcePlanItems(items); err != nil {
+		return resourceReconcilePlan{}, err
+	}
 	return resourceReconcilePlan{registry: after, items: items, writes: slices.Clone(recorder.writes)}, nil
+}
+
+func validateResourcePlanItems(items []resourceReconcileItem) error {
+	for _, item := range items {
+		if !item.Divergence.Valid() {
+			return fmt.Errorf("resource plan item %q has no divergence classification", item.Key)
+		}
+		if strings.TrimSpace(item.Reason) == "" {
+			return fmt.Errorf("resource plan item %q has no reason", item.Key)
+		}
+	}
+	return nil
 }
 
 // scopeResourceRegistry isolates the authoritative graphs safely attributable
@@ -660,6 +680,12 @@ func resourceProjectForeignItems(registry coremetadata.Registry, sessions []obse
 			Key: "tmux:refuse:project:" + session.id, Drift: resourceDriftForeign, Surface: "tmux", Action: "refuse",
 			Kind: string(coremetadata.KindProject), Target: session.id, Field: tmuxopts.ProjectUIDSession,
 			Before: session.uid, Outcome: "refused", Reason: reason, refused: true,
+			Divergence: func() resourcegraph.Divergence {
+				if _, ok := registry.Project(session.uid); !ok && session.uid != "" {
+					return resourcegraph.DivergenceOrphanMirror
+				}
+				return resourcegraph.DivergenceContaminated
+			}(),
 		})
 	}
 	return items
@@ -762,14 +788,24 @@ func registryReconcileItems(before, after coremetadata.Registry, normalize resou
 		}
 		uid := normalize.value(record.uid)
 		items = append(items, resourceReconcileItem{
-			Key:      "registry:" + action + ":" + strings.ToLower(string(record.kind)) + ":" + target,
-			Drift:    drift,
-			Surface:  "registry",
-			Action:   action,
-			Kind:     string(record.kind),
-			Target:   target,
-			After:    "uid:" + uid,
-			Outcome:  "planned",
+			Key:     "registry:" + action + ":" + strings.ToLower(string(record.kind)) + ":" + target,
+			Drift:   drift,
+			Surface: "registry",
+			Action:  action,
+			Kind:    string(record.kind),
+			Target:  target,
+			After:   "uid:" + uid,
+			Outcome: "planned",
+			Reason:  "Registry reconciliation changes stored state to match the exact observed object",
+			Divergence: func() resourcegraph.Divergence {
+				if !existed {
+					return resourcegraph.DivergenceUnattributed
+				}
+				if resourceBecameOrphan(previous.value, record.value) {
+					return resourcegraph.DivergenceUnrealized
+				}
+				return resourcegraph.DivergenceDrifted
+			}(),
 			registry: true,
 		})
 	}
@@ -1075,16 +1111,27 @@ func (r *resourcePlanTmuxRunner) planItems(before coremetadata.Registry, normali
 			kind = "Pane"
 		}
 		items = append(items, resourceReconcileItem{
-			Key:      write.itemKey(),
-			Drift:    drift,
-			Surface:  "tmux",
-			Action:   action,
-			Kind:     kind,
-			Target:   write.target,
-			Field:    write.field,
-			Before:   normalize.value(write.before),
-			After:    normalize.value(write.after),
-			Outcome:  "planned",
+			Key:     write.itemKey(),
+			Drift:   drift,
+			Surface: "tmux",
+			Action:  action,
+			Kind:    kind,
+			Target:  write.target,
+			Field:   write.field,
+			Before:  normalize.value(write.before),
+			After:   normalize.value(write.after),
+			Outcome: "planned",
+			Reason:  "Registry authority differs from the live tmux projection",
+			Divergence: func() resourcegraph.Divergence {
+				switch drift {
+				case resourceDriftMissing:
+					return resourcegraph.DivergenceUnattributed
+				case resourceDriftForeign:
+					return resourcegraph.DivergenceOrphanMirror
+				default:
+					return resourcegraph.DivergenceDrifted
+				}
+			}(),
 			tmuxArgs: slices.Clone(write.args),
 		})
 	}
@@ -1150,6 +1197,12 @@ func (r *resourcePlanTmuxRunner) foreignItems(registry coremetadata.Registry, re
 			Before:  uid,
 			Outcome: "refused",
 			Reason:  reason,
+			Divergence: func() resourcegraph.Divergence {
+				if !known[uid] {
+					return resourcegraph.DivergenceOrphanMirror
+				}
+				return resourcegraph.DivergenceContaminated
+			}(),
 			refused: true,
 		})
 	}

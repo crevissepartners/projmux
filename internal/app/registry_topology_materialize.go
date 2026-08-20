@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -82,15 +83,15 @@ func planRegistryTopology(
 	plan := &registryTopologyPlan{project: project}
 	plan.sessionName = materializeSessionName(project, reconciler)
 	if plan.sessionName == "" {
-		plan.refuse(coremetadata.KindProject, project.Metadata.Name, "status.session.name and the configured persistent session name are both empty")
+		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindProject, project.Metadata.Name, "status.session.name and the configured persistent session name are both empty")
 		return plan, nil
 	}
 	if reason := validateMaterializeDirectory(project.Spec.Root, "Project root"); reason != "" {
-		plan.refuse(coremetadata.KindProject, project.Metadata.Name, reason)
+		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindProject, project.Metadata.Name, reason)
 		return plan, nil
 	}
 	if condition, ok := project.HasCondition(coremetadata.ConditionMissingRoot); ok && condition.Status == coremetadata.ConditionTrue {
-		plan.refuse(coremetadata.KindProject, project.Metadata.Name, "Project carries a MissingRoot condition")
+		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindProject, project.Metadata.Name, "Project carries a MissingRoot condition")
 		return plan, nil
 	}
 
@@ -103,23 +104,23 @@ func planRegistryTopology(
 			continue
 		}
 		if target != nil {
-			plan.refuse(coremetadata.KindProject, project.Metadata.Name, "multiple live sessions claim the selected Project")
+			plan.refuse(resourcegraph.DivergenceContaminated, coremetadata.KindProject, project.Metadata.Name, "multiple live sessions claim the selected Project")
 			return plan, nil
 		}
 		if session.uid != "" && session.uid != project.Metadata.UID {
-			plan.refuse(coremetadata.KindProject, project.Metadata.Name, "the expected session name carries a foreign Project uid")
+			plan.refuse(resourcegraph.DivergenceContaminated, coremetadata.KindProject, project.Metadata.Name, "the expected session name carries a foreign Project uid")
 			return plan, nil
 		}
 		if session.uid == "" {
-			plan.refuse(coremetadata.KindProject, project.Metadata.Name, "live session lacks the selected Project's exact uid binding")
+			plan.refuse(resourcegraph.DivergenceUnattributed, coremetadata.KindProject, project.Metadata.Name, "live session lacks the selected Project's exact uid binding")
 			return plan, nil
 		}
 		if claimsUID && session.name != plan.sessionName {
-			plan.refuse(coremetadata.KindProject, project.Metadata.Name, "the Project uid is live under a different session name")
+			plan.refuse(resourcegraph.DivergenceDrifted, coremetadata.KindProject, project.Metadata.Name, "the Project uid is live under a different session name")
 			return plan, nil
 		}
 		if session.root != "" && filepath.Clean(session.root) != filepath.Clean(project.Spec.Root) {
-			plan.refuse(coremetadata.KindProject, project.Metadata.Name, "the live session carries a foreign Project root")
+			plan.refuse(resourcegraph.DivergenceDrifted, coremetadata.KindProject, project.Metadata.Name, "the live session carries a foreign Project root")
 			return plan, nil
 		}
 		target = &session
@@ -127,7 +128,7 @@ func planRegistryTopology(
 	if target == nil {
 		plan.addItem(0, coremetadata.KindProject, project.Metadata.Name, project.Metadata.UID, "materialize")
 		if exactTarget.flag == "-S" {
-			plan.refuse(coremetadata.KindProject, project.Metadata.Name,
+			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindProject, project.Metadata.Name,
 				"offline Project session creation via --socket-path cannot preserve exact name-only PROJMUX_SOCKET hook re-entry")
 		}
 	} else {
@@ -136,7 +137,7 @@ func planRegistryTopology(
 
 	windows := registry.WindowsOf(project.Metadata.UID)
 	if len(windows) == 0 {
-		plan.refuse(coremetadata.KindProject, project.Metadata.Name, "selected Project has no Registry Window topology")
+		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindProject, project.Metadata.Name, "selected Project has no Registry Window topology")
 		return plan, nil
 	}
 	var liveWindows []observedTopologyWindow
@@ -156,17 +157,21 @@ func planRegistryTopology(
 	windowClaims := map[string]int{}
 	for _, live := range liveWindows {
 		if live.uid == "" {
-			plan.refuse(coremetadata.KindWindow, live.id, "uid-less live Window cannot be heuristically adopted")
+			plan.refuse(resourcegraph.DivergenceUnattributed, coremetadata.KindWindow, live.id, "uid-less live Window cannot be heuristically adopted")
 			continue
 		}
 		windowClaims[live.uid]++
 		if _, ok := knownWindows[live.uid]; !ok {
-			plan.refuse(coremetadata.KindWindow, live.id, "live Window uid is not owned by the selected Project")
+			divergence := resourcegraph.DivergenceOrphanMirror
+			if _, exists := registry.Window(live.uid); exists {
+				divergence = resourcegraph.DivergenceContaminated
+			}
+			plan.refuse(divergence, coremetadata.KindWindow, live.id, "live Window uid is not owned by the selected Project")
 		}
 	}
 	for uid, count := range windowClaims {
 		if count > 1 {
-			plan.refuse(coremetadata.KindWindow, uid, "multiple live Windows claim one Registry uid")
+			plan.refuse(resourcegraph.DivergenceContaminated, coremetadata.KindWindow, uid, "multiple live Windows claim one Registry uid")
 		}
 	}
 	if plan.hasRefusal() {
@@ -183,7 +188,7 @@ func planRegistryTopology(
 		}
 		primary, ok := registry.Pane(strings.TrimSpace(window.Spec.PrimaryPaneRef))
 		if !ok || primary.Spec.Role != coremetadata.PaneRoleShell || primary.Metadata.OwnerUID() != window.Metadata.UID {
-			plan.refuse(coremetadata.KindWindow, window.Metadata.Name, "spec.primaryPaneRef must resolve to a Window-owned shell Pane")
+			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "spec.primaryPaneRef must resolve to a Window-owned shell Pane")
 			continue
 		}
 		work.primary = *primary
@@ -200,12 +205,12 @@ func planRegistryTopology(
 				continue
 			}
 			if reason := validateMaterializeDirectory(materializePaneCWD(project, pane), "Pane cwd"); reason != "" {
-				plan.refuse(coremetadata.KindPane, pane.Metadata.Name, reason)
+				plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindPane, pane.Metadata.Name, reason)
 				refusedPanes[pane.Metadata.UID] = true
 			}
 		}
 		if refusedPanes[work.primary.Metadata.UID] {
-			plan.refuse(coremetadata.KindWindow, window.Metadata.Name,
+			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
 				"the Window's primary Pane cwd cannot be materialized, so the Window has no cwd to be created from")
 			continue
 		}
@@ -248,12 +253,16 @@ func planRegistryTopology(
 			}
 			claims[live.uid]++
 			if _, ok := knownPanes[live.uid]; !ok {
-				plan.refuse(coremetadata.KindPane, live.id, "live Pane uid has the wrong owner or is absent from the selected Window graph")
+				divergence := resourcegraph.DivergenceOrphanMirror
+				if _, exists := registry.Pane(live.uid); exists {
+					divergence = resourcegraph.DivergenceContaminated
+				}
+				plan.refuse(divergence, coremetadata.KindPane, live.id, "live Pane uid has the wrong owner or is absent from the selected Window graph")
 			}
 		}
 		for uid, count := range claims {
 			if count > 1 {
-				plan.refuse(coremetadata.KindPane, uid, "multiple live Panes claim one Registry uid")
+				plan.refuse(resourcegraph.DivergenceContaminated, coremetadata.KindPane, uid, "multiple live Panes claim one Registry uid")
 			}
 		}
 		for pi, pane := range eligible {
@@ -274,7 +283,7 @@ func planRegistryTopology(
 			work.panes = append(work.panes, paneWork)
 		}
 		if len(unclaimed) != 0 {
-			plan.refuse(coremetadata.KindPane, work.liveID, "pre-existing uid-less live Pane cannot be heuristically adopted")
+			plan.refuse(resourcegraph.DivergenceUnattributed, coremetadata.KindPane, work.liveID, "pre-existing uid-less live Pane cannot be heuristically adopted")
 		}
 		primaryLive := false
 		shellAnchorLive := false
@@ -288,7 +297,7 @@ func planRegistryTopology(
 			}
 		}
 		if !primaryLive && !shellAnchorLive {
-			plan.refuse(coremetadata.KindWindow, window.Metadata.Name, "missing primary Pane has no exact-bound Window-owned shell anchor")
+			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "missing primary Pane has no exact-bound Window-owned shell anchor")
 		}
 		work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, livePanes, launcher)
 		plan.windows = append(plan.windows, work)
@@ -361,14 +370,17 @@ func (p *registryTopologyPlan) addItem(order int, kind coremetadata.Kind, target
 		Key:   fmt.Sprintf("tmux:materialize:%06d:%s:%s", order, strings.ToLower(string(kind)), uid),
 		Drift: resourceDriftMissing, Surface: "tmux", Action: action, Kind: string(kind), Target: target,
 		After: "uid:" + uid, Outcome: "planned",
+		Reason:     "Registry resource has no materialized runtime object",
+		Divergence: resourcegraph.DivergenceUnrealized,
 	})
 }
 
-func (p *registryTopologyPlan) refuse(kind coremetadata.Kind, target, reason string) {
+func (p *registryTopologyPlan) refuse(divergence resourcegraph.Divergence, kind coremetadata.Kind, target, reason string) {
 	p.items = append(p.items, resourceReconcileItem{
 		Key:   "tmux:materialize:refuse:" + strings.ToLower(string(kind)) + ":" + target,
 		Drift: resourceDriftForeign, Surface: "tmux", Action: "refuse", Kind: string(kind), Target: target,
 		Outcome: "refused", Reason: reason, refused: true,
+		Divergence: divergence,
 	})
 }
 
@@ -608,7 +620,7 @@ func requireMaterializeSession(plan *registryTopologyPlan, sessionName string) {
 	if plan == nil || sessionName == "" || plan.sessionName == sessionName {
 		return
 	}
-	plan.refuse(coremetadata.KindProject, plan.project.Metadata.Name,
+	plan.refuse(resourcegraph.DivergenceDrifted, coremetadata.KindProject, plan.project.Metadata.Name,
 		fmt.Sprintf("Registry projects session %q but this activation opens session %q", plan.sessionName, sessionName))
 }
 

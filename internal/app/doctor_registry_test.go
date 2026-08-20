@@ -18,6 +18,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 )
 
@@ -457,19 +458,24 @@ func TestSupportReportCarriesRegistryInvariantCountsWithoutReasonsOrPaths(t *tes
 	cmd.doctor.readRegistry = func() (coremetadata.Registry, error) { return registry, nil }
 
 	want := cmd.doctor.evaluateRegistryInvariants()
+	wantDivergences := cmd.doctor.evaluateRegistryDivergences()
 	output := filepath.Join(t.TempDir(), "report.tar.gz")
 	if err := cmd.Run([]string{"report", "--output", output}, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	entries, archiveText := readSupportArchive(t, output)
 	var doctorReport struct {
-		RegistryInvariants []doctorFinding `json:"registry_invariants"`
+		RegistryInvariants  []doctorFinding                 `json:"registry_invariants"`
+		RegistryDivergences []resourcegraph.DivergenceCount `json:"registry_divergences"`
 	}
 	if err := json.Unmarshal(entries["doctor.json"], &doctorReport); err != nil {
 		t.Fatal(err)
 	}
 	if len(doctorReport.RegistryInvariants) != len(want) {
 		t.Fatalf("archive registry findings = %#v, want %#v", doctorReport.RegistryInvariants, want)
+	}
+	if !slices.Equal(doctorReport.RegistryDivergences, wantDivergences) || len(doctorReport.RegistryDivergences) != 6 {
+		t.Fatalf("archive divergence counts = %#v, want count-only %#v", doctorReport.RegistryDivergences, wantDivergences)
 	}
 	for i, got := range doctorReport.RegistryInvariants {
 		if got.Code != want[i].Code || got.Count != want[i].Count || got.Severity != want[i].Severity || got.Remediation != want[i].Remediation {

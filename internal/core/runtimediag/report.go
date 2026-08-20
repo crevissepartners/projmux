@@ -249,6 +249,13 @@ func newIndex(graph resourcegraph.Graph) *index {
 			Name: project.Project.Metadata.Name,
 		}
 	}
+	for _, control := range graph.ControlSessions {
+		idx.resource[control.ControlSession.Metadata.UID] = Resource{
+			Kind: string(coremetadata.KindControlSession),
+			UID:  control.ControlSession.Metadata.UID,
+			Name: control.ControlSession.Metadata.Name,
+		}
+	}
 	for _, window := range graph.Windows {
 		idx.resource[window.Window.Metadata.UID] = Resource{
 			Kind: string(coremetadata.KindWindow),

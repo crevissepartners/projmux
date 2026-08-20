@@ -12,5 +12,31 @@
       "code": "registry.materialize.clean",
       "remediation": "none"
     }
+  ],
+  "registry_divergences": [
+    {
+      "divergence": "D1-unrealized",
+      "count": 5
+    },
+    {
+      "divergence": "D2-unattributed",
+      "count": 0
+    },
+    {
+      "divergence": "D3-orphan-mirror",
+      "count": 0
+    },
+    {
+      "divergence": "D4-contamination",
+      "count": 0
+    },
+    {
+      "divergence": "D5-drift",
+      "count": 0
+    },
+    {
+      "divergence": "D6-unknown",
+      "count": 0
+    }
   ]
 }

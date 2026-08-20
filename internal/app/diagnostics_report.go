@@ -20,6 +20,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -208,6 +209,10 @@ func supportDoctorSafeStringValues() map[string]map[string]bool {
 		"code":        {},
 		"remediation": {},
 		"safe_codes":  {},
+		"divergence":  {},
+	}
+	for _, divergence := range resourcegraph.Divergences() {
+		values["divergence"][string(divergence)] = true
 	}
 	for _, code := range doctorFindingCodeInventory {
 		values["code"][code] = true

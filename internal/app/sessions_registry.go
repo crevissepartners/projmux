@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -29,6 +30,7 @@ const sessionsRuntimeSentinel = "__projmux_sessions_runtime__"
 
 // managedSessionAttribution is one resolved answer about one observed session.
 type managedSessionAttribution struct {
+	ResourceKind string
 	// ResourceUID is the Registry Project uid this session projects.
 	ResourceUID string
 	// ResourceName is that Project's stable name.
@@ -67,10 +69,21 @@ func (c *sessionsCommand) attributeSessions(ctx context.Context, summaries []int
 		out.managed = summaries
 		return out
 	}
-	out.resolved = true
-	names := map[string]string{}
+	return attributeSessionSummaries(graph, summaries)
+}
+
+func attributeSessionSummaries(graph resourcegraph.Graph, summaries []inttmux.RecentSessionSummary) sessionsAttribution {
+	out := sessionsAttribution{byID: map[string]managedSessionAttribution{}, resolved: true}
+	roots := map[string]managedSessionAttribution{}
 	for _, project := range graph.Projects {
-		names[project.Project.Metadata.UID] = project.Project.Metadata.Name
+		roots[project.Project.Metadata.UID] = managedSessionAttribution{
+			ResourceKind: string(project.Project.Kind), ResourceUID: project.Project.Metadata.UID, ResourceName: project.Project.Metadata.Name,
+		}
+	}
+	for _, control := range graph.ControlSessions {
+		roots[control.ControlSession.Metadata.UID] = managedSessionAttribution{
+			ResourceKind: string(control.ControlSession.Kind), ResourceUID: control.ControlSession.Metadata.UID, ResourceName: control.ControlSession.Metadata.Name,
+		}
 	}
 	class := map[string]resourcegraph.RuntimeNode{}
 	for _, node := range graph.Runtime {
@@ -92,10 +105,16 @@ func (c *sessionsCommand) attributeSessions(ctx context.Context, summaries []int
 			out.withheld = addWithheldClass(out.withheld, node.Class)
 			continue
 		}
-		out.byID[id] = managedSessionAttribution{
-			ResourceUID:  node.ResourceUID,
-			ResourceName: names[node.ResourceUID],
+		root, ok := roots[node.ResourceUID]
+		if !ok {
+			out.withheld = addWithheldClass(out.withheld, resourcegraph.ClassConflict)
+			continue
 		}
+		if root.ResourceKind == string(coremetadata.KindControlSession) {
+			out.withheld = addWithheldClass(out.withheld, resourcegraph.ClassControl)
+			continue
+		}
+		out.byID[id] = root
 		out.managed = append(out.managed, summary)
 	}
 	return out

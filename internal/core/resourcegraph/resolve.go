@@ -18,9 +18,37 @@ import (
 // The kinds are processed outermost first so a conflict is reported against the
 // outermost object involved.
 func (r *resolver) resolveClaims() {
+	registeredControls := map[string]bool{}
+	for _, session := range r.inventory.Sessions {
+		if !session.isControlSession(r.inventory.HostMode) {
+			continue
+		}
+		control, ok := r.registry.ControlSessionBySession(session.Name)
+		if !ok {
+			continue
+		}
+		registeredControls[session.ID] = true
+		ref := r.sessionRef(session)
+		if strings.TrimSpace(session.ProjectUID) != "" {
+			detail := fmt.Sprintf("live control session %s also mirrors Registry identity %s", session.ID, session.ProjectUID)
+			r.conflicts = append(r.conflicts, Conflict{
+				Kind: ObjectSession, UID: control.Metadata.UID, Reason: ConflictOwnerMismatch,
+				Detail: detail, Targets: []string{session.ID},
+			})
+			r.conflictedUID[control.Metadata.UID] = true
+			if _, known := r.kindByUID[session.ProjectUID]; known {
+				r.conflictedUID[session.ProjectUID] = true
+			}
+			r.classify(session.ID, ClassConflict, "", detail)
+			continue
+		}
+		r.bind(control.Metadata.UID, ref)
+		r.managedSession[session.ID] = true
+	}
+
 	sessionClaims := map[string][]Session{}
 	for _, session := range r.inventory.Sessions {
-		if session.ProjectUID == "" {
+		if session.ProjectUID == "" || registeredControls[session.ID] {
 			continue
 		}
 		sessionClaims[session.ProjectUID] = append(sessionClaims[session.ProjectUID], session)
@@ -83,8 +111,8 @@ func (r *resolver) resolveClaims() {
 			continue
 		}
 		pane, _ := r.registry.Pane(uid)
-		windowUID, projectUID := r.paneOwnerChain(*pane)
-		if detail, contradicted := r.paneContainmentContradiction(claimants[0], windowUID, projectUID); contradicted {
+		windowUID, _, rootUID := r.paneOwnerChain(*pane)
+		if detail, contradicted := r.paneContainmentContradiction(claimants[0], windowUID, rootUID); contradicted {
 			r.reject(ObjectPane, uid, ConflictOwnerMismatch, detail, refs)
 			continue
 		}
@@ -159,19 +187,29 @@ func (r *resolver) classify(id string, class Class, resourceUID, reason string) 
 // -- says nothing about ownership, and the window's own uid is still exact
 // evidence of its identity. Only a session that names a *different* Project
 // refuses the binding, which is what keeps a cross-Project match impossible.
-func (r *resolver) windowContainmentContradiction(window Window, projectUID string) (string, bool) {
+func (r *resolver) windowContainmentContradiction(window Window, rootUID string) (string, bool) {
 	session, known := r.sessionByID[window.SessionID]
-	if !known || session.ProjectUID == "" || session.ProjectUID == projectUID {
+	if !known {
 		return "", false
 	}
-	return fmt.Sprintf("live window %s is in a session mirroring project %s but the Registry owns it under project %s",
-		window.ID, session.ProjectUID, projectUID), true
+	if bound := r.runtimeResource[session.ID]; bound != "" {
+		if bound == rootUID {
+			return "", false
+		}
+		return fmt.Sprintf("live window %s is in a session bound to root %s but the Registry owns it under root %s",
+			window.ID, bound, rootUID), true
+	}
+	if session.ProjectUID == "" {
+		return "", false
+	}
+	return fmt.Sprintf("live window %s is in a session mirroring root %s but the Registry owns it under root %s",
+		window.ID, session.ProjectUID, rootUID), true
 }
 
 // paneContainmentContradiction reports whether the window or session holding a
 // claiming pane names a different owner than the Registry does. The same
 // absent-versus-contradicting rule as windows applies at both levels.
-func (r *resolver) paneContainmentContradiction(pane Pane, windowUID, projectUID string) (string, bool) {
+func (r *resolver) paneContainmentContradiction(pane Pane, windowUID, rootUID string) (string, bool) {
 	if windowUID == "" {
 		// A Pane whose ownerRef chain does not reach a Window cannot be verified
 		// against tmux containment at all. Registry validation refuses that shape
@@ -190,9 +228,16 @@ func (r *resolver) paneContainmentContradiction(pane Pane, windowUID, projectUID
 			pane.ID, window.UID, windowUID), true
 	}
 	session, sessionKnown := r.sessionByID[window.SessionID]
-	if sessionKnown && session.ProjectUID != "" && projectUID != "" && session.ProjectUID != projectUID {
-		return fmt.Sprintf("live pane %s is in a session mirroring project %s but the Registry owns it under project %s",
-			pane.ID, session.ProjectUID, projectUID), true
+	if sessionKnown {
+		bound := r.runtimeResource[session.ID]
+		if bound != "" && rootUID != "" && bound != rootUID {
+			return fmt.Sprintf("live pane %s is in a session bound to root %s but the Registry owns it under root %s",
+				pane.ID, bound, rootUID), true
+		}
+		if bound == "" && session.ProjectUID != "" && rootUID != "" && session.ProjectUID != rootUID {
+			return fmt.Sprintf("live pane %s is in a session mirroring root %s but the Registry owns it under root %s",
+				pane.ID, session.ProjectUID, rootUID), true
+		}
 	}
 	return "", false
 }
@@ -203,10 +248,10 @@ func (r *resolver) paneContainmentContradiction(pane Pane, windowUID, projectUID
 // managed, and tmux can only testify to Window containment. Resolving the
 // Agent's own Window here is what lets an Agent-owned pane be verified against
 // the same evidence a shell pane is.
-func (r *resolver) paneOwnerChain(pane coremetadata.Pane) (windowUID, projectUID string) {
+func (r *resolver) paneOwnerChain(pane coremetadata.Pane) (windowUID string, rootKind coremetadata.Kind, rootUID string) {
 	owner := pane.Metadata.OwnerRef
 	if owner == nil {
-		return "", ""
+		return "", "", ""
 	}
 	switch owner.Kind {
 	case coremetadata.KindWindow:
@@ -217,12 +262,15 @@ func (r *resolver) paneOwnerChain(pane coremetadata.Pane) (windowUID, projectUID
 		}
 	}
 	if windowUID == "" {
-		return "", ""
+		return "", "", ""
 	}
 	if window, ok := r.registry.Window(windowUID); ok {
-		projectUID = window.Metadata.OwnerUID()
+		rootUID = window.Metadata.OwnerUID()
+		if window.Metadata.OwnerRef != nil {
+			rootKind = window.Metadata.OwnerRef.Kind
+		}
 	}
-	return windowUID, projectUID
+	return windowUID, rootKind, rootUID
 }
 
 func (r *resolver) sessionRef(session Session) RuntimeRef {
@@ -256,13 +304,33 @@ func (r *resolver) buildRegistryNodes() {
 			Runtime:     ref,
 		})
 	}
+	for _, control := range r.registry.ControlSessions {
+		uid := control.Metadata.UID
+		ref := r.boundRef(uid)
+		r.controlSessions = append(r.controlSessions, ControlSessionNode{
+			ControlSession: control,
+			Class:          r.rowClass(uid),
+			Status:         r.status(false, ref, ScopeSessions),
+			Runtime:        ref,
+		})
+	}
 	for _, window := range r.registry.Windows {
 		uid := window.Metadata.UID
-		projectUID := window.Metadata.OwnerUID()
+		rootUID := window.Metadata.OwnerUID()
+		rootKind := coremetadata.Kind("")
+		if window.Metadata.OwnerRef != nil {
+			rootKind = window.Metadata.OwnerRef.Kind
+		}
+		projectUID := ""
+		if rootKind == coremetadata.KindProject {
+			projectUID = rootUID
+		}
 		missingRoot := r.projectMissingRootByUID(projectUID)
 		ref := r.boundRef(uid)
 		r.windows = append(r.windows, WindowNode{
 			Window:      window,
+			RootKind:    rootKind,
+			RootUID:     rootUID,
 			ProjectUID:  projectUID,
 			Class:       r.rowClass(uid),
 			Status:      r.status(missingRoot, ref, ScopeWindows),
@@ -272,7 +340,11 @@ func (r *resolver) buildRegistryNodes() {
 	}
 	for _, pane := range r.registry.Panes {
 		uid := pane.Metadata.UID
-		windowUID, projectUID := r.paneOwnerChain(pane)
+		windowUID, rootKind, rootUID := r.paneOwnerChain(pane)
+		projectUID := ""
+		if rootKind == coremetadata.KindProject {
+			projectUID = rootUID
+		}
 		agentUID := ""
 		if owner := pane.Metadata.OwnerRef; owner != nil && owner.Kind == coremetadata.KindAgent {
 			agentUID = owner.UID
@@ -283,6 +355,8 @@ func (r *resolver) buildRegistryNodes() {
 			Pane:        pane,
 			AgentUID:    agentUID,
 			WindowUID:   windowUID,
+			RootKind:    rootKind,
+			RootUID:     rootUID,
 			ProjectUID:  projectUID,
 			Class:       r.rowClass(uid),
 			Status:      r.status(missingRoot, ref, ScopePanes),
@@ -292,9 +366,17 @@ func (r *resolver) buildRegistryNodes() {
 	}
 	for _, agent := range r.registry.Agents {
 		windowUID := agent.Metadata.OwnerUID()
+		rootKind := coremetadata.Kind("")
+		rootUID := ""
 		projectUID := ""
 		if window, ok := r.registry.Window(windowUID); ok {
-			projectUID = window.Metadata.OwnerUID()
+			rootUID = window.Metadata.OwnerUID()
+			if window.Metadata.OwnerRef != nil {
+				rootKind = window.Metadata.OwnerRef.Kind
+			}
+			if rootKind == coremetadata.KindProject {
+				projectUID = rootUID
+			}
 		}
 		missingRoot := r.projectMissingRootByUID(projectUID)
 		paneUID := strings.TrimSpace(agent.Status.PaneRef)
@@ -314,6 +396,8 @@ func (r *resolver) buildRegistryNodes() {
 		r.agents = append(r.agents, AgentNode{
 			Agent:       agent,
 			WindowUID:   windowUID,
+			RootKind:    rootKind,
+			RootUID:     rootUID,
 			ProjectUID:  projectUID,
 			PaneUID:     paneUID,
 			Class:       r.rowClass(agent.Metadata.UID),
@@ -485,15 +569,16 @@ func (r *resolver) graph() Graph {
 		return strings.Compare(string(a.Reason), string(b.Reason))
 	})
 	return Graph{
-		Transport:   r.inventory.Transport,
-		HostMode:    r.inventory.HostMode,
-		Unavailable: slices.Clone(r.inventory.Unavailable),
-		Projects:    r.projects,
-		Windows:     r.windows,
-		Panes:       r.panes,
-		Agents:      r.agents,
-		Runtime:     runtime,
-		Conflicts:   conflicts,
+		Transport:       r.inventory.Transport,
+		HostMode:        r.inventory.HostMode,
+		Unavailable:     slices.Clone(r.inventory.Unavailable),
+		Projects:        r.projects,
+		ControlSessions: r.controlSessions,
+		Windows:         r.windows,
+		Panes:           r.panes,
+		Agents:          r.agents,
+		Runtime:         runtime,
+		Conflicts:       conflicts,
 	}
 }
 

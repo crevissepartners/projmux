@@ -26,5 +26,6 @@ Logs
 
 Registry materialization invariants
   Summary: 2 info, 0 warning, 0 error.
+  Divergence counts: D1-unrealized=0 D2-unattributed=0 D3-orphan-mirror=0 D4-contamination=0 D5-drift=0 D6-unknown=0
   [info   ] registry.materialize.audited; remediation: none
   [info   ] registry.materialize.clean; remediation: none
