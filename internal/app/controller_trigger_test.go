@@ -30,6 +30,8 @@ type triggerFixture struct {
 	target explicitTmuxTarget
 	// passes records the target of every convergence body invocation.
 	passes []explicitTmuxTarget
+	// triggers records the scope handed to each convergence body invocation.
+	triggers []controllerTrigger
 	// results is consumed one entry per pass; the last entry repeats.
 	results []controllerPassResult
 	// beforePass runs at the top of each pass, which is where a test injects a
@@ -49,12 +51,13 @@ func newTriggerFixture(t *testing.T, results ...controllerPassResult) *triggerFi
 		runner: &routedTmuxRunner{},
 		store:  (&fakeResourceStore{registry: coremetadata.Registry{}, now: resourceFixtureClock}).store(),
 		events: controllerEventLog{dir: t.TempDir()},
-		pass: func(_ context.Context, target explicitTmuxTarget) (controllerPassResult, error) {
+		pass: func(_ context.Context, trigger controllerTrigger) (controllerPassResult, error) {
 			index := len(fixture.passes)
 			if fixture.beforePass != nil {
 				fixture.beforePass(index + 1)
 			}
-			fixture.passes = append(fixture.passes, target)
+			fixture.passes = append(fixture.passes, trigger.target)
+			fixture.triggers = append(fixture.triggers, trigger)
 			if fixture.err != nil {
 				return controllerPassResult{}, fixture.err
 			}
@@ -88,7 +91,7 @@ func TestOneProducerConvergesOnceAndProvesIt(t *testing.T) {
 	t.Parallel()
 
 	fixture := newTriggerFixture(t)
-	outcome := fixture.run(t, controllerTriggerRuntimeExited)
+	outcome := fixture.run(t, controllerTriggerPaneKilled)
 
 	if outcome.passes != 1 || outcome.changed != 0 || outcome.events != 1 || !outcome.converged {
 		t.Fatalf("outcome = %s, want one no-op pass over one event, converged", outcome.describe())
@@ -138,7 +141,7 @@ func TestABurstOfProducersCostsOneWorker(t *testing.T) {
 		}
 		for range 3 {
 			second, err := fixture.runner.run(context.Background(), controllerTrigger{
-				reason: controllerTriggerRuntimeExited, target: fixture.target,
+				reason: controllerTriggerPaneKilled, target: fixture.target,
 			})
 			if err != nil {
 				t.Fatalf("concurrent producer: %v", err)
@@ -163,6 +166,51 @@ func TestABurstOfProducersCostsOneWorker(t *testing.T) {
 	}
 }
 
+// TestPaneKilledCoalescedBehindExactPaneExitWidensEveryLaterPass prevents a
+// narrow lease holder from acknowledging a broader kill event without ever
+// observing the rest of the host. Once the pending event is visible, both its
+// changing pass and the final no-op verification stay broad.
+func TestPaneKilledCoalescedBehindExactPaneExitWidensEveryLaterPass(t *testing.T) {
+	t.Parallel()
+
+	fixture := newTriggerFixture(t,
+		controllerPassResult{},
+		controllerPassResult{rebound: true},
+		controllerPassResult{},
+	)
+	fixture.beforePass = func(pass int) {
+		if pass != 1 {
+			return
+		}
+		coalesced, err := fixture.runner.run(context.Background(), controllerTrigger{
+			reason: controllerTriggerPaneKilled, target: fixture.target,
+		})
+		if err != nil {
+			t.Fatalf("coalesced pane-killed: %v", err)
+		}
+		if coalesced.passes != 0 || coalesced.deferred == "" {
+			t.Fatalf("coalesced pane-killed = %s, want lease deferral", coalesced.describe())
+		}
+	}
+	outcome, err := fixture.runner.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerPaneExited, target: fixture.target, hookPane: "%9",
+	})
+	if err != nil {
+		t.Fatalf("pane-exited worker: %v", err)
+	}
+	if outcome.passes != 3 || outcome.events != 2 || !outcome.converged {
+		t.Fatalf("outcome = %s, want exact pass, broad changing pass, broad verification", outcome.describe())
+	}
+	if len(fixture.triggers) != 3 || fixture.triggers[0].fullReobserve || fixture.triggers[0].hookPane != "%9" {
+		t.Fatalf("first pass trigger = %+v, want exact %%9", fixture.triggers)
+	}
+	for pass, trigger := range fixture.triggers[1:] {
+		if !trigger.fullReobserve || trigger.hookPane != "" || trigger.hookWindow != "" {
+			t.Fatalf("later pass %d trigger = %+v, want sticky whole-host scope", pass+2, trigger)
+		}
+	}
+}
+
 // TestTheCoalescingLoopIsBounded keeps a producer that marks faster than a pass
 // completes from pinning a worker forever.
 //
@@ -175,11 +223,11 @@ func TestTheCoalescingLoopIsBounded(t *testing.T) {
 	fixture := newTriggerFixture(t)
 	fixture.runner.maxPasses = 3
 	fixture.beforePass = func(int) {
-		if err := fixture.runner.events.mark(fixture.target, controllerTriggerRuntimeExited); err != nil {
+		if err := fixture.runner.events.mark(fixture.target, controllerTriggerPaneKilled); err != nil {
 			t.Fatalf("mark: %v", err)
 		}
 	}
-	outcome := fixture.run(t, controllerTriggerRuntimeExited)
+	outcome := fixture.run(t, controllerTriggerPaneKilled)
 
 	if outcome.passes != 3 {
 		t.Fatalf("passes = %d, want the configured bound of 3", outcome.passes)
@@ -200,7 +248,7 @@ func TestAnUnverifiableHostStopsWithoutClaimingConvergence(t *testing.T) {
 	t.Parallel()
 
 	fixture := newTriggerFixture(t, controllerPassResult{unobserved: "the exact-host observation could not be taken"})
-	outcome := fixture.run(t, controllerTriggerRuntimeExited)
+	outcome := fixture.run(t, controllerTriggerPaneKilled)
 
 	if outcome.passes != 1 || outcome.converged {
 		t.Fatalf("outcome = %s, want one pass and no convergence claim", outcome.describe())
@@ -272,7 +320,7 @@ func TestTheEventLogKeepsSiblingServersApart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := log.mark(primary, controllerTriggerRuntimeExited); err != nil {
+	if err := log.mark(primary, controllerTriggerPaneKilled); err != nil {
 		t.Fatalf("mark primary: %v", err)
 	}
 	if err := log.mark(primary, controllerTriggerRuntimeCreated); err != nil {
@@ -339,8 +387,8 @@ func TestTheTriggerRefusesAnythingButOneExactServerAndOneDeclaredReason(t *testi
 
 	fixture := newTriggerFixture(t)
 	for _, trigger := range []controllerTrigger{
-		{reason: controllerTriggerRuntimeExited},
-		{reason: controllerTriggerRuntimeExited, target: explicitTmuxTarget{flag: "-L"}},
+		{reason: controllerTriggerPaneKilled},
+		{reason: controllerTriggerPaneKilled, target: explicitTmuxTarget{flag: "-L"}},
 		{target: fixture.target},
 		{reason: controllerTriggerReason("made-up"), target: fixture.target},
 	} {
@@ -365,7 +413,9 @@ func TestTheReasonSetIsClosedAndShared(t *testing.T) {
 	want := []controllerTriggerReason{
 		controllerTriggerConfigApply,
 		controllerTriggerRuntimeCreated,
-		controllerTriggerRuntimeExited,
+		controllerTriggerPaneExited,
+		controllerTriggerPaneKilled,
+		controllerTriggerWindowUnlinked,
 	}
 	if !reflect.DeepEqual(reasons, want) {
 		t.Fatalf("reasons = %v, want %v", reasons, want)
@@ -398,7 +448,7 @@ func TestAConvergenceErrorReachesTheProducer(t *testing.T) {
 	fixture := newTriggerFixture(t)
 	fixture.err = errors.New("registry lock exhausted")
 	_, err := fixture.runner.run(context.Background(), controllerTrigger{
-		reason: controllerTriggerRuntimeExited, target: fixture.target,
+		reason: controllerTriggerPaneKilled, target: fixture.target,
 	})
 	if err == nil || !strings.Contains(err.Error(), "registry lock exhausted") {
 		t.Fatalf("err = %v, want the convergence failure", err)

@@ -232,6 +232,9 @@ func validateTermination(op, subject string, receipt *TerminationEvidence) error
 		return stateErr(op, ErrInvalidRegistry, "%s records %q termination from source %q",
 			subject, receipt.Classification, receipt.Source)
 	}
+	if !validTerminationEvidenceShape(*receipt) {
+		return stateErr(op, ErrInvalidRegistry, "%s records killed termination without a supervisor SIGHUP wait status", subject)
+	}
 	if strings.TrimSpace(receipt.PaneUID) == "" {
 		return stateErr(op, ErrInvalidRegistry, "%s has a termination receipt naming no pane", subject)
 	}

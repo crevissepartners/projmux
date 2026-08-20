@@ -32,6 +32,9 @@ const (
 	TerminationReasonIntentional = "managed pane was ended by a control action"
 	// TerminationReasonNormal is a supervised exit status 0.
 	TerminationReasonNormal = "managed process exited with status 0"
+	// TerminationReasonKilled is an externally requested hangup with no paired
+	// canonical control-action receipt.
+	TerminationReasonKilled = "managed process was killed externally"
 	// TerminationReasonAbnormal is a supervised non-zero exit or a signal.
 	TerminationReasonAbnormal = "managed process exited abnormally"
 	// TerminationReasonUnknown is an absence no receipt explains.
@@ -67,6 +70,8 @@ func DispositionFor(classification TerminationClassification) TerminationDisposi
 		return TerminationDisposition{Exit: AgentExitDeleted, Reason: TerminationReasonIntentional}
 	case TerminationNormal:
 		return TerminationDisposition{Exit: AgentExitNormal, Reason: TerminationReasonNormal}
+	case TerminationKilled:
+		return TerminationDisposition{Exit: AgentExitUnknown, Reason: TerminationReasonKilled}
 	case TerminationAbnormal:
 		return TerminationDisposition{Exit: AgentExitAbnormal, Reason: TerminationReasonAbnormal}
 	default:
@@ -116,9 +121,10 @@ type TerminationProjection struct {
 //     object going away is not a statement about desired topology, and deleting
 //     the resource here would make a crashed shell indistinguishable from one
 //     the operator asked to remove.
-//   - an Agent's *current* managed Pane is released: the Agent moves to the
-//     phase the evidence implies, drops status.paneRef, and keeps
-//     status.sessionRef, so it stays resumable into the same conversation.
+//   - an Agent's *current* managed Pane is unbound by status only: the Agent
+//     moves to the phase the evidence implies, drops status.paneRef, and keeps
+//     both status.sessionRef and the Pane row. Runtime observation is evidence
+//     of disappearance, not canonical delete authority.
 //   - an Agent-owned Pane the Agent no longer binds is evidence only. The Agent
 //     has since been relaunched onto another Pane, and touching it here would
 //     apply a dead process's exit to a live one.
@@ -180,6 +186,26 @@ func (m Mutator) ProjectTermination(reg *Registry, in TerminationProjectionInput
 	agent, bound := boundAgentFor(reg, *pane)
 	if !bound {
 		out.PaneRetained = true
+		if released, refinable := releasedAgentForTerminationRefinement(reg, *pane); refinable {
+			phase, _ := disposition.Exit.Phase()
+			if released.Status.Phase != phase || released.Status.Reason != disposition.Reason {
+				if !CanTransitionAgent(released.Status.Phase, phase) {
+					out.Reason = "agent " + released.Metadata.UID + " cannot refine from " +
+						string(released.Status.Phase) + " to " + string(phase)
+					if out.Changed {
+						reg.UpdatedAt = observedAt
+					}
+					return out, nil
+				}
+				transitioned, err := m.TransitionAgent(reg, released.Metadata.UID, phase, disposition.Reason)
+				if err != nil {
+					return TerminationProjection{}, err
+				}
+				out.AgentUID = transitioned.Metadata.UID
+				out.Phase = transitioned.Status.Phase
+				out.Changed = true
+			}
+		}
 		if out.Changed {
 			reg.UpdatedAt = observedAt
 		}
@@ -198,12 +224,13 @@ func (m Mutator) ProjectTermination(reg *Registry, in TerminationProjectionInput
 		}
 		return out, nil
 	}
-	released, err := m.ReleaseAgentPane(reg, agent.Metadata.UID, disposition.Exit, disposition.Reason)
+	released, err := m.TransitionAgent(reg, agent.Metadata.UID, phase, disposition.Reason)
 	if err != nil {
 		return TerminationProjection{}, err
 	}
 	out.AgentUID = released.Metadata.UID
 	out.Phase = released.Status.Phase
+	out.PaneRetained = true
 	out.Changed = true
 	return out, nil
 }
@@ -270,6 +297,28 @@ func boundAgentFor(reg *Registry, pane Pane) (*Agent, bool) {
 	return agent, true
 }
 
+// releasedAgentForTerminationRefinement recognizes only the terminal half of
+// the fast-exit ordering: the Agent has no current Pane binding, and both the
+// Pane and Agent carry the same supervisor evidence for this exact activation.
+// A resumed Agent has a non-empty PaneRef and is therefore never returned.
+func releasedAgentForTerminationRefinement(reg *Registry, pane Pane) (*Agent, bool) {
+	owner := pane.Metadata.OwnerRef
+	if owner == nil || owner.Kind != KindAgent {
+		return nil, false
+	}
+	agent, ok := reg.Agent(owner.UID)
+	if !ok || agent.Status.PaneRef != "" {
+		return nil, false
+	}
+	paneReceipt := pane.Status.LastTermination
+	agentReceipt := agent.Status.LastTermination
+	if paneReceipt == nil || agentReceipt == nil || paneReceipt.Source != TerminationSourceSupervisor ||
+		paneReceipt.Generation != pane.Status.Activation.Generation || !sameEvidence(paneReceipt, agentReceipt) {
+		return nil, false
+	}
+	return agent, true
+}
+
 // NeedsTerminationProjection reports whether one absent Pane still has work
 // left for the projection.
 //
@@ -293,7 +342,14 @@ func NeedsTerminationProjection(reg Registry, paneUID string) bool {
 	}
 	agent, bound := boundAgentFor(&reg, *pane)
 	if !bound {
-		return false
+		released, refinable := releasedAgentForTerminationRefinement(&reg, *pane)
+		if !refinable {
+			return false
+		}
+		disposition := DispositionFor(stored.Classification)
+		phase, _ := disposition.Exit.Phase()
+		return (released.Status.Phase != phase || released.Status.Reason != disposition.Reason) &&
+			CanTransitionAgent(released.Status.Phase, phase)
 	}
 	phase, _ := DispositionFor(stored.Classification).Exit.Phase()
 	return CanTransitionAgent(agent.Status.Phase, phase)

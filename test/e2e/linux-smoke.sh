@@ -2361,7 +2361,7 @@ cp "$binding_registry" "$binding_root/registry.before-burst"
 binding_burst_pids=()
 for binding_burst_index in 1 2 3 4 5 6 7 8; do
   binding_pmx internal tmux converge --socket-path "$binding_socket_path" \
-    --session "$binding_session" --reason runtime-exited \
+    --session "$binding_session" --reason pane-killed \
     >"$binding_root/burst-$binding_burst_index.out" 2>"$binding_root/burst-$binding_burst_index.err" &
   binding_burst_pids+=("$!")
 done
@@ -5433,8 +5433,8 @@ exitrec_cleanup() {
 trap 'exitrec_cleanup; smoke_cleanup_env' EXIT
 
 # Install the generated config on the exact socket. This is what puts the
-# `pane-exited` and `after-kill-pane` hooks in place; every convergence below is
-# driven by them and by nothing this script runs.
+# `pane-exited`, `after-kill-pane`, and `window-unlinked` hooks in place; every
+# hook-only convergence below is driven by them and by nothing this script runs.
 exitrec_pmx internal tmux apply --bin "$bin" \
   --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
   >"$exitrec_root/apply.out"
@@ -5449,16 +5449,16 @@ if ! exitrec_tmux show-hooks -g | grep -q "internal tmux converge --socket-path"
   exitrec_tmux show-hooks -g >&2
   exit 1
 fi
-# All four lifecycle hooks reach the one entrypoint, and none of them retains a
+# All five lifecycle hooks reach the one entrypoint, and none of them retains a
 # route of its own. This is the trigger inventory as the live server holds it,
 # which is a stronger statement than the same assertion over rendered text: it
 # also proves `apply` sourced them.
-# `pane-exited` is a window-scoped hook in current tmux, so `show-hooks -g` does
-# not list it while it lists `after-kill-pane`. Reading both tables is what makes
-# this the whole live trigger inventory rather than the half of it that happens to
-# be server-global.
+# `pane-exited` and `window-unlinked` are window-scoped hooks in current tmux, so
+# `show-hooks -g` may omit them while listing `after-kill-pane`. Reading both
+# tables makes this the whole live trigger inventory rather than the half that
+# happens to be server-global.
 exitrec_hooks="$(exitrec_tmux show-hooks -g; exitrec_tmux show-hooks -gw)"
-for exitrec_hook in pane-exited after-kill-pane after-new-window after-split-window; do
+for exitrec_hook in pane-exited after-kill-pane window-unlinked after-new-window after-split-window; do
   if ! printf '%s\n' "$exitrec_hooks" | grep -q "^$exitrec_hook.*internal tmux converge --socket-path"; then
     echo "hook $exitrec_hook does not reach the controller entrypoint" >&2
     printf '%s\n' "$exitrec_hooks" >&2
@@ -5509,7 +5509,7 @@ exitrec_await_phase() {
 }
 
 # 1. A provider that exits non-zero converges to Failed on the hook alone.
-printf '%s\n' 'exit 42' >"$exitrec_root/stub-script"
+printf 'sleep 0.5\n%s\n' 'exit 42' >"$exitrec_root/stub-script"
 exitrec_failed_agent="$(exitrec_live_pmx create agent --provider codex \
   --project "uid:$exitrec_project_uid" -o uid)"
 if [[ -z "$exitrec_failed_agent" ]]; then
@@ -5531,7 +5531,7 @@ echo ">> exit reconciliation e2e hook-driven failure agent=$exitrec_failed_agent
 # 2. A provider that exits 0 converges to Offline, not Failed, and keeps its
 # conversation pointer if one was ever reported. Exit 0 is `normal`, never
 # `intentional`.
-printf '%s\n' 'exit 0' >"$exitrec_root/stub-script"
+printf 'sleep 0.5\n%s\n' 'exit 0' >"$exitrec_root/stub-script"
 exitrec_clean_agent="$(exitrec_live_pmx create agent --provider claude \
   --project "uid:$exitrec_project_uid" -o uid)"
 exitrec_await_phase agent "$exitrec_clean_agent" Offline
@@ -5572,9 +5572,10 @@ if [[ "$(sha256sum "$exitrec_registry" | cut -d' ' -f1)" != "$exitrec_read_befor
 fi
 echo ">> exit reconciliation e2e read projection write-free"
 
-# 4. Whole-server loss, then restart on the same socket. The reconciliation after
-# the restart converges the logical graph and starts nothing: an observation is
-# not an activation authority.
+# 4. Whole-server loss, then restart on the same socket. Receipt-free recovery
+# ordering is explicitly outside this slice; the stable contract here is that no
+# evidence invents normal/intentional, the Pane row survives, and reconciliation
+# starts nothing because observation is not activation authority.
 exitrec_shell_pane="$(exitrec_live_pmx create pane --project "uid:$exitrec_project_uid" -o uid -- sleep 600)"
 exitrec_settle_registry
 env -u TMUX -u TMUX_PANE tmux -S "$exitrec_socket_path" kill-server >/dev/null 2>&1 || true
@@ -5593,9 +5594,9 @@ if [[ -z "$(cat "$exitrec_root/doc.json")" ]]; then
   exit 1
 fi
 case "$(exitrec_termination_field classification)" in
-  abnormal|unknown) ;;
+  ""|killed|unknown) ;;
   *)
-    echo "the restarted host classified the lost pane as '$(exitrec_termination_field classification)', want abnormal or unknown" >&2
+    echo "the restarted host classified the lost pane as '$(exitrec_termination_field classification)', want empty, killed, or unknown" >&2
     cat "$exitrec_root/doc.json" >&2
     exit 1
     ;;

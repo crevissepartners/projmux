@@ -39,6 +39,14 @@ var forwardedSupervisorSignals = []os.Signal{
 // control works and `#{pane_current_command}` keeps naming the child rather
 // than the supervisor. Nothing rewrites argv, cwd, or the environment.
 func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
+	return runSupervisedChildWithSignalSource(argv, argv0, nil)
+}
+
+// runSupervisedChildWithSignalSource is the test seam for signals delivered to
+// the pane supervisor. A nil source installs the process-wide signal relay used
+// in production; tests can supply a private channel without signalling the Go
+// test process itself.
+func runSupervisedChildWithSignalSource(argv []string, argv0 string, suppliedSignals <-chan os.Signal) (processOutcome, error) {
 	if len(argv) == 0 {
 		return processOutcome{}, errors.New("no command to supervise")
 	}
@@ -55,20 +63,33 @@ func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
 		return processOutcome{}, err
 	}
 
-	signals := make(chan os.Signal, 8)
-	signal.Notify(signals, forwardedSupervisorSignals...)
+	signals := suppliedSignals
+	var ownedSignals chan os.Signal
+	if signals == nil {
+		ownedSignals = make(chan os.Signal, 8)
+		signals = ownedSignals
+		signal.Notify(ownedSignals, forwardedSupervisorSignals...)
+	}
 	done := make(chan struct{})
+	relayDone := make(chan struct{})
+	relayedHUP := false
 	go func() {
+		defer close(relayDone)
 		for {
 			select {
-			case received := <-signals:
+			case received, open := <-signals:
+				if !open {
+					return
+				}
 				sig, ok := received.(syscall.Signal)
 				if !ok || cmd.Process == nil {
 					continue
 				}
 				// Negative pid addresses the child's process group, which is
 				// where a job-control-aware child put its own children.
-				_ = syscall.Kill(-cmd.Process.Pid, sig)
+				if err := syscall.Kill(-cmd.Process.Pid, sig); err == nil && sig == syscall.SIGHUP {
+					relayedHUP = true
+				}
 			case <-done:
 				return
 			}
@@ -76,8 +97,11 @@ func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
 	}()
 
 	waitErr := cmd.Wait()
+	if ownedSignals != nil {
+		signal.Stop(ownedSignals)
+	}
 	close(done)
-	signal.Stop(signals)
+	<-relayDone
 
 	if waitErr != nil {
 		var exitErr *exec.ExitError
@@ -87,6 +111,13 @@ func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
 	}
 	if cmd.ProcessState == nil {
 		return processOutcome{}, fmt.Errorf("supervised process %s produced no wait status", argv[0])
+	}
+	// Some interactive providers catch the relayed HUP and translate it into a
+	// conventional 128+SIGHUP exit code. The wait status alone then looks like
+	// a voluntary exit 129. Preserve the stronger evidence that this supervisor
+	// actually delivered HUP; never infer HUP from the numeric exit code itself.
+	if relayedHUP {
+		return processOutcome{Signal: signalName(syscall.SIGHUP), SignalNumber: int(syscall.SIGHUP)}, nil
 	}
 	return outcomeFromWaitStatus(cmd.ProcessState.Sys()), nil
 }

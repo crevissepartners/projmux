@@ -1447,8 +1447,11 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id} >/dev/null 2>&1 || true",
 		"set-hook -g pane-exited",
 		"sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true; " +
-			"'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --session '#{session_id}' --reason runtime-exited >/dev/null 2>&1 || true",
+			"'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --session '#{session_id}' --reason pane-exited --hook-pane '#{hook_pane}' >/dev/null 2>&1 || true",
 		"set-hook -g after-kill-pane",
+		"--reason pane-killed",
+		"set-hook -g window-unlinked",
+		"--reason window-unlinked --hook-window '#{hook_window}'",
 		"'/tmp/proj mux/bin/projmux' attention window #{window_id}",
 		"set-hook -g after-select-window",
 		"set-hook -g client-session-changed",

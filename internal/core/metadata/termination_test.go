@@ -54,6 +54,7 @@ func TestClassifyProcessExitNeverPromotesExitZeroToIntent(t *testing.T) {
 	}{
 		{name: "clean exit is normal, not intentional", code: 0, want: TerminationNormal},
 		{name: "non-zero exit is abnormal", code: 3, want: TerminationAbnormal},
+		{name: "SIGHUP is external kill evidence", code: 0, signal: "HUP", want: TerminationKilled},
 		{name: "signal is abnormal", code: 0, signal: "TERM", want: TerminationAbnormal},
 		{name: "signal wins over a reported code", code: 0, signal: "KILL", want: TerminationAbnormal},
 	} {
@@ -61,6 +62,38 @@ func TestClassifyProcessExitNeverPromotesExitZeroToIntent(t *testing.T) {
 			t.Parallel()
 			if got := ClassifyProcessExit(test.code, test.signal); got != test.want {
 				t.Fatalf("ClassifyProcessExit(%d, %q) = %q, want %q", test.code, test.signal, got, test.want)
+			}
+		})
+	}
+}
+
+// TestTerminationPairingRejectsUnentitledClaims is the negative half of the
+// closed evidence vocabulary: every source owns only the claims it can prove.
+func TestTerminationPairingRejectsUnentitledClaims(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name           string
+		source         TerminationSource
+		classification TerminationClassification
+	}{
+		{"supervisor cannot claim intent", TerminationSourceSupervisor, TerminationIntentional},
+		{"supervisor cannot claim unknown", TerminationSourceSupervisor, TerminationUnknown},
+		{"control action cannot claim killed", TerminationSourceControlAction, TerminationKilled},
+		{"control action cannot claim normal", TerminationSourceControlAction, TerminationNormal},
+		{"reconcile cannot claim killed", TerminationSourceReconcile, TerminationKilled},
+		{"reconcile cannot claim abnormal", TerminationSourceReconcile, TerminationAbnormal},
+		{"supervisor TERM cannot claim killed", TerminationSourceSupervisor, TerminationKilled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m, reg, paneUID, _, _ := terminationFixture(t)
+			_, err := m.RecordTermination(reg, TerminationEvidence{
+				Source: test.source, Classification: test.classification,
+				PaneUID: paneUID, Generation: "gen-shell-1",
+			})
+			if err == nil || !errors.Is(err, ErrInvalidRegistry) {
+				t.Fatalf("RecordTermination(%q, %q) error = %v, want ErrInvalidRegistry",
+					test.source, test.classification, err)
 			}
 		})
 	}
@@ -192,6 +225,38 @@ func TestReceiptForTheWrongOwnerChangesNothing(t *testing.T) {
 				t.Fatalf("a stale receipt mutated the registry")
 			}
 		})
+	}
+}
+
+func TestLateSupervisorRefinementNeverFollowsAResumedBinding(t *testing.T) {
+	t.Parallel()
+
+	m, reg, _, agentUID, agentPane := terminationFixture(t)
+	projection, err := m.ProjectTermination(reg, TerminationProjectionInput{PaneUID: agentPane})
+	if err != nil || projection.Classification != TerminationUnknown {
+		t.Fatalf("initial unknown projection = %+v, %v", projection, err)
+	}
+	agent, _ := reg.Agent(agentUID)
+	agent.Status.PaneRef = "pane-resumed"
+	outcome, err := m.RecordTermination(reg, TerminationEvidence{
+		Source: TerminationSourceSupervisor, Classification: TerminationNormal,
+		PaneUID: agentPane, AgentUID: agentUID, Generation: "gen-agent-1", ExitCode: exitCode(0),
+	})
+	if err != nil {
+		t.Fatalf("late receipt: %v", err)
+	}
+	if outcome.Applied || !outcome.Stale || !strings.Contains(outcome.Reason, "no longer binds") {
+		t.Fatalf("outcome = %+v, want resumed-binding stale refusal", outcome)
+	}
+	pane, _ := reg.Pane(agentPane)
+	if pane.Status.LastTermination == nil || pane.Status.LastTermination.Classification != TerminationUnknown {
+		t.Fatalf("superseded Pane evidence = %+v, want original unknown", pane.Status.LastTermination)
+	}
+	agent, _ = reg.Agent(agentUID)
+	if agent.Status.PaneRef != "pane-resumed" || agent.Status.Phase != PhaseOffline ||
+		agent.Status.Reason != TerminationReasonUnknown || agent.Status.LastTermination == nil ||
+		agent.Status.LastTermination.Classification != TerminationUnknown {
+		t.Fatalf("resumed Agent changed after stale receipt: %+v", agent.Status)
 	}
 }
 
