@@ -181,6 +181,45 @@ Resources and ownership:
   with no tmux involvement, so Project and Window metadata stays queryable
   while tmux is down.
 
+Home and root kinds:
+
+This is the one place that answers "what is Home". The word names three
+different things and they are not interchangeable.
+
+- **The Home tmux session is a `ControlSession` root, and it is not a Project.**
+  `projmux shell` opens it, the convergence pass marks it
+  `@projmux_session_role=control` on an `@projmux_app=1` server, and
+  `BindControlSession` records it as a Registry root that owns Windows and
+  Panes. It has **no path**: `ControlSessionSpec` holds `spec.session`, the
+  exact tmux session name, and has no field that could hold a root. `$HOME` is
+  therefore never a Project root, never a managed root, never a rebind target,
+  and never returned by `ProjectByRoot`, and no route registers it as one.
+- **`$HOME` the directory is a discovery candidate like any other.** If
+  filesystem discovery offers it, it is an unregistered bootstrap candidate. It
+  becomes a Project only if an operator explicitly opens it, and doing so
+  creates an ordinary Project that has nothing to do with the ControlSession.
+- **The sidebar Home chrome row is neither of the above.** It is a synthesized
+  navigation row for the operator's own root: it carries no uid, no
+  `resourceRef`, and no managed identity, it is not a reconcile or create
+  target, and it disappears entirely when discovery does not offer `$HOME`. It
+  leads the Projects list because it is where the surface starts from, not
+  because it is a member of what the surface orders. Home's *Windows and Panes*,
+  by contrast, are managed rows -- they are owned by the ControlSession root --
+  while the Home session row itself stays classified `control` with no
+  `resourceRef`. See *Registry-first primary navigation* below for the row-level detail.
+
+The consequence for every consumer is one rule: **the Registry has two root
+kinds and a projection that walks roots has to walk both.** A traversal that
+reads `registry.Projects` as if it were the whole root set will drop, refuse,
+or fail to report whatever a ControlSession owns. Kind-scoped reads are still
+fine and are the common case -- a Project root path, a Project session claim, a
+Project pin -- but they are scoped on purpose, not by omission. The classified
+list of every root traversal in the tree, and which of the two kinds each one
+handles, is maintained as an executable table in
+`internal/app/resource_reconcile_root_kind_test.go`; it is re-derived from the
+source on every test run, so a traversal added or moved fails until it is
+classified.
+
 Identity and naming:
 
 - `metadata.uid` is opaque, immutable, and independent of tmux lifecycle. It
@@ -1215,7 +1254,9 @@ Registry-first primary navigation:
   one that is already a Project root is dropped rather than listed twice with a
   second set of actions. Opening a candidate is the explicit gesture that
   registers it -- see the authority split below.
-- Home is chrome, not a Project, and the two senses of "Home" stay separate. The
+- Home is chrome, not a Project, and the three senses of "Home" stay separate;
+  *Home and root kinds* under the resource metadata model is the canonical
+  statement and this row-level detail follows from it. The
   Home *control session* is never a managed row: the tmux session itself is app
   control runtime with no `resourceRef`, the only evidence that a session is one
   is the exact `@projmux_session_role` value the graph reads, and a session named
