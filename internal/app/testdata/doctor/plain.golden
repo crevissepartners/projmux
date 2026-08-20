@@ -23,3 +23,8 @@ Logs
   [warning] logs.state.missing; remediation: inspect-state-permissions
   [warning] logs.directory.missing; remediation: inspect-log-permissions
   [warning] logs.journal.missing; remediation: inspect-operational-journal
+
+Registry materialization invariants
+  Summary: 2 info, 0 warning, 0 error.
+  [info   ] registry.materialize.audited; remediation: none
+  [info   ] registry.materialize.clean; remediation: none

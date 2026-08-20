@@ -23,7 +23,7 @@ const (
 	doctorSeverityError   doctorFindingSeverity = "error"
 )
 
-var doctorFindingCodeInventory = []string{
+var doctorFindingCodeInventory = append([]string{
 	"runtime.backend.tmux", "runtime.backend.unknown",
 	"runtime.socket.reachable", "runtime.socket.unreachable", "runtime.socket.probe-failed",
 	"runtime.config.generated-current", "runtime.config.generated-missing", "runtime.config.generated-unreadable", "runtime.config.generated-invalid",
@@ -32,12 +32,12 @@ var doctorFindingCodeInventory = []string{
 	"logs.directory.ready", "logs.directory.missing", "logs.directory.unreadable", "logs.directory.unsafe-type", "logs.directory.insecure-permissions", "logs.directory.privacy-unverified", "logs.directory.not-writable", "logs.directory.unresolved",
 	"logs.journal.ready", "logs.journal.missing", "logs.journal.unreadable", "logs.journal.unsafe-type", "logs.journal.insecure-permissions", "logs.journal.privacy-unverified", "logs.journal.not-writable", "logs.journal.unavailable", "logs.journal.malformed",
 	"logs.recent-errors.none", "logs.recent-errors.present", "logs.recent-errors.bounded", "logs.recent-errors.unavailable",
-}
+}, doctorRegistryAuditCodeInventory...)
 
 var doctorFindingRemediationInventory = []string{
 	doctorRemediationNone, doctorRemediationInspectState, doctorRemediationInspectLogs,
 	doctorRemediationInspectJournal, doctorRemediationRunTmuxApply, doctorRemediationStartRuntime,
-	doctorRemediationInspectRuntimeLogs,
+	doctorRemediationInspectRuntimeLogs, doctorRemediationInspectRegistryTopology,
 }
 
 type doctorFinding struct {
@@ -46,6 +46,12 @@ type doctorFinding struct {
 	Remediation string                `json:"remediation"`
 	Count       int                   `json:"count,omitempty"`
 	SafeCodes   []diagnostics.Code    `json:"safe_codes,omitempty"`
+	// Details are operator-terminal-only lines. They are never serialized, in
+	// any format, on purpose: a stored refusal reason quotes the Registry's own
+	// absolute paths, and the support report must not depend on a redaction
+	// allowlist happening to hash a field to keep a private path out of an
+	// archive the operator is about to hand to somebody else.
+	Details []string `json:"-"`
 }
 
 const (
@@ -56,6 +62,10 @@ const (
 	doctorRemediationRunTmuxApply       = "run-projmux-tmux-apply"
 	doctorRemediationStartRuntime       = "start-projmux-runtime"
 	doctorRemediationInspectRuntimeLogs = "inspect-operational-errors"
+	// doctorRemediationInspectRegistryTopology is guidance, not repair. The
+	// invariant audit is read-only by contract; repairing a stored topology the
+	// materializer cannot build is a separate, explicitly requested route.
+	doctorRemediationInspectRegistryTopology = "inspect-registry-topology"
 )
 
 type doctorRuntimeProbe struct {
