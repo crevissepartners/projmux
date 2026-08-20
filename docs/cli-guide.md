@@ -245,6 +245,25 @@ typing `projmux create pane --placement right` inside a popup is still an
 invocation with no target and still refuses with the `--project` usage error
 above, and no read, rename, or delete verb consults it.
 
+#### Managed pane context menu
+
+The generated `MouseDown3Pane` menu treats its Horizontal Split, Vertical
+Split, and Kill entries as Projmux resource actions. Both splits pass the exact
+clicked pane through the popup-origin anchor above and reach the same canonical
+`create pane` materializer as the CLI, so the new pane receives a Registry uid.
+Kill resolves that anchor's mirrored uid and reaches canonical `delete pane`,
+including its printed delete result. The menu never falls back to a raw tmux
+mutation when either route refuses. The reason is displayed on the exact client
+that opened the menu instead of being lost as a `run-shell` exit code.
+
+tmux Respawn has no equivalent in the current resource model: it preserves the
+same pane handle, layout, Registry uid, and original command, while canonical
+delete plus create removes that identity and creates another one (and may end
+the Window or Project session when it deletes the last pane). The generated
+menu therefore omits Respawn entirely and does not expose a refusal handler or
+invent a replace operation. User-authored tmux bindings remain outside this
+managed-menu contract.
+
 ### Rename and rebind live convergence
 
 `rename project|window|pane` commits the selected Registry `metadata.name` and

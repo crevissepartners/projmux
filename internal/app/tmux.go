@@ -19,6 +19,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
@@ -66,6 +67,9 @@ type tmuxRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
+type paneMenuCreateFunc func(agentPaneIntent, io.Writer, io.Writer) error
+type paneMenuDeleteFunc func(string, io.Writer, io.Writer) error
+
 type tmuxCommand struct {
 	diagnostics             *diagnostics.LifecycleRecorder
 	sessionStateDiagnostics *diagnostics.SessionStateRecorder
@@ -99,6 +103,12 @@ type tmuxCommand struct {
 	// bindingReconciler replaces only construction in tests; production still
 	// uses the one registryReconciler implementation.
 	bindingReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler
+	// paneMenuCreate and paneMenuDelete are adapters onto the canonical resource
+	// routes. They are fields only so failure-injection tests can stop before the
+	// real Registry and tmux mutations; production installs no second planner or
+	// mutator here.
+	paneMenuCreate paneMenuCreateFunc
+	paneMenuDelete paneMenuDeleteFunc
 }
 
 func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
@@ -118,6 +128,10 @@ func newTmuxCommand(recorders ...*diagnostics.LifecycleRecorder) *tmuxCommand {
 		popupOptions:  defaultPopupPreviewOptions,
 		switchPopup:   defaultPopupSwitchOptions,
 		sessionsPopup: defaultPopupSessionsOptions,
+		paneMenuCreate: func(intent agentPaneIntent, stdout, stderr io.Writer) error {
+			return newCreateCommand().createFromIntent(intent, stdout, stderr)
+		},
+		paneMenuDelete: deletePaneThroughCanonicalRoute,
 	}
 	if len(recorders) > 0 {
 		cmd.diagnostics = recorders[0]
@@ -149,6 +163,8 @@ func (c *tmuxCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runPopupSessions(fs.Args()[1:], stderr)
 	case "popup-toggle":
 		return c.runPopupToggle(fs.Args()[1:], stderr)
+	case "pane-menu":
+		return c.runPaneMenuAction(fs.Args()[1:], stdout, stderr)
 	case "rebalance-panes":
 		return c.runRebalancePanes(fs.Args()[1:], stderr)
 	case "converge":
@@ -452,6 +468,116 @@ func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
 		return fmt.Errorf("set tmux pane label: %w", err)
 	}
 	return nil
+}
+
+// runPaneMenuAction is the managed boundary behind MouseDown3Pane. The menu
+// states only an action, the exact pane the click targeted, and the client that
+// must see a result. Creation delegates to createFromIntent so the #700 popup
+// origin anchor stays the one definition of Project/Window/Pane scope. Kill
+// delegates to delete pane after that same anchor resolves its exact uid.
+func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("tmux pane-menu", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	client := fs.String("client", "", "exact tmux client that receives the action result")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 || strings.TrimSpace(*client) == "" || exactTmuxHandle(fs.Arg(1), "%") == "" {
+		printTmuxUsage(stderr)
+		return errors.New("tmux pane-menu requires --client <key> <split-right|split-down|kill> <%pane>")
+	}
+
+	action := strings.TrimSpace(fs.Arg(0))
+	paneID := exactTmuxHandle(fs.Arg(1), "%")
+	var actionOut bytes.Buffer
+	var actionErr bytes.Buffer
+	var err error
+	switch action {
+	case "split-right":
+		if c.paneMenuCreate == nil {
+			err = errors.New("canonical create pane route is not configured")
+		} else {
+			err = c.paneMenuCreate(agentPaneIntent{placement: "right", anchorPaneID: paneID}, &actionOut, &actionErr)
+		}
+	case "split-down":
+		if c.paneMenuCreate == nil {
+			err = errors.New("canonical create pane route is not configured")
+		} else {
+			err = c.paneMenuCreate(agentPaneIntent{placement: "down", anchorPaneID: paneID}, &actionOut, &actionErr)
+		}
+	case "kill":
+		if c.paneMenuDelete == nil {
+			err = errors.New("canonical delete pane route is not configured")
+		} else {
+			err = c.paneMenuDelete(paneID, &actionOut, &actionErr)
+		}
+	default:
+		printTmuxUsage(stderr)
+		return fmt.Errorf("unknown tmux pane-menu action: %s", action)
+	}
+
+	if err != nil {
+		return c.displayPaneMenuMessage(strings.TrimSpace(*client), "projmux "+paneMenuActionLabel(action)+" failed: "+err.Error())
+	}
+	result := actionOut.String()
+	if _, copyErr := io.WriteString(stdout, result); copyErr != nil {
+		return copyErr
+	}
+	// A canonical delete has a durable, human-readable result. Preserve its
+	// first summary line on the client before the clicked pane disappears.
+	if action == "kill" {
+		summary := firstPaneMenuResultLine(result)
+		if summary == "" {
+			summary = "delete pane completed"
+		}
+		return c.displayPaneMenuMessage(strings.TrimSpace(*client), "projmux "+summary)
+	}
+	return nil
+}
+
+func deletePaneThroughCanonicalRoute(anchorPaneID string, stdout, stderr io.Writer) error {
+	command := newDeleteCommand()
+	registry, err := command.store.load()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	ref, resolved, err := activeTargetRef(defaultAnchoredActiveTargetLookup(anchorPaneID), coremetadata.KindPane, registry)
+	if err != nil {
+		return err
+	}
+	if !resolved {
+		return errors.New("delete pane: exact menu origin did not resolve inside a tmux client; nothing was changed")
+	}
+	return command.Run([]string{"pane", "--yes", ref.Raw}, stdout, stderr)
+}
+
+func (c *tmuxCommand) displayPaneMenuMessage(client, message string) error {
+	if c.runner == nil {
+		return fmt.Errorf("%s; display the pane-menu result: tmux runner is not configured", message)
+	}
+	message = strings.Join(strings.Fields(message), " ")
+	if _, err := c.runner.Run(context.Background(), "tmux", "display-message", "-c", client, "-d", "10000", message); err != nil {
+		return fmt.Errorf("%s; display the pane-menu result to client %q: %w", message, client, err)
+	}
+	return nil
+}
+
+func paneMenuActionLabel(action string) string {
+	switch action {
+	case "split-right":
+		return "Horizontal Split"
+	case "split-down":
+		return "Vertical Split"
+	case "kill":
+		return "Kill"
+	default:
+		return action
+	}
+}
+
+func firstPaneMenuResultLine(result string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(result), "\n")
+	return strings.TrimSpace(line)
 }
 
 func (c *tmuxCommand) runPopupPreview(args []string, stderr io.Writer) error {
@@ -1188,6 +1314,7 @@ func printTmuxUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux internal tmux popup-switch")
 	fmt.Fprintln(w, "  projmux internal tmux popup-sessions")
 	fmt.Fprintln(w, "  projmux internal tmux popup-toggle [--client <key>] <session-popup|sessionizer|sessionizer-sidebar|notify-sidebar|recent-windows|resource-inspector|ai-split-picker-right|ai-split-picker-down|ai-split-resume-right|ai-split-resume-down|ai-split-settings>")
+	_, _ = io.WriteString(w, "  projmux internal tmux pane-menu --client <key> <split-right|split-down|kill> <%pane>\n")
 	fmt.Fprintln(w, "  projmux internal tmux rebalance-panes")
 	fmt.Fprintln(w, "  projmux internal tmux rename-pane <pane> <label>")
 	fmt.Fprintln(w, "  projmux internal tmux print-config [--bin <path>]")
@@ -2322,9 +2449,11 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 // deterministically.
 //
 // The menu reconstructs the useful subset of tmux 3.4's stock pane menu
-// (split, swap, kill, respawn, mark, zoom — with tmux's stock key shortcuts
-// and dim conditions) and adds a projmux `AI Resume Picker` entry at the top
-// that opens the resume picker through the same `tmux popup-toggle
+// (split, swap, kill, mark, zoom — with tmux's stock key shortcuts and dim
+// conditions) and adds a projmux `AI Resume Picker` entry at the top. Split and
+// Kill state managed intents instead of tmux mutations. Respawn is omitted
+// because the resource model has no managed intent that preserves its identity
+// contract. The AI entry opens the resume picker through the same `tmux popup-toggle
 // ai-split-resume-right` entrypoint as the C-r keybinding. Calling `ai picker`
 // directly does not work here: tmux `run-shell` executes without the TMUX env
 // of a pane shell, so `resolveContextDir` cannot resolve a cwd and the picker
@@ -2348,6 +2477,10 @@ func tmuxPaneContextMenuBindings(binaryPath string) []string {
 		TmuxKind: tmuxBindingPopupToggle,
 		TmuxBody: "ai-split-resume-right",
 	})
+	bin := tmuxShellQuote(binaryPath)
+	managedAction := func(action string) string {
+		return "run-shell " + tmuxConfigQuote(bin+" internal tmux pane-menu --client #{client_tty} "+action+" #{pane_id}")
+	}
 	// Guard + title + dim conditions mirror tmux 3.4 key-bindings.c: swap
 	// entries are dimmed (`-` prefix) in single-pane windows, Mark/Unmark and
 	// Zoom/Unzoom toggle with pane/window state.
@@ -2357,14 +2490,13 @@ func tmuxPaneContextMenuBindings(binaryPath string) []string {
 		"{ display-menu -T " + tmuxConfigQuote("#[align=centre]#{pane_index} (#{pane_id})") + " -t = -x M -y M " +
 		tmuxConfigQuote("AI Resume Picker") + " a { select-pane -t = ; " + resumeAction + " } " +
 		"'' " +
-		tmuxConfigQuote("Horizontal Split") + " h { split-window -h } " +
-		tmuxConfigQuote("Vertical Split") + " v { split-window -v } " +
+		tmuxConfigQuote("Horizontal Split") + " h { " + managedAction("split-right") + " } " +
+		tmuxConfigQuote("Vertical Split") + " v { " + managedAction("split-down") + " } " +
 		"'' " +
 		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Up") + " u { swap-pane -U } " +
 		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}Swap Down") + " d { swap-pane -D } " +
 		"'' " +
-		tmuxConfigQuote("Kill") + " X { kill-pane } " +
-		tmuxConfigQuote("Respawn") + " R { respawn-pane -k } " +
+		tmuxConfigQuote("Kill") + " X { " + managedAction("kill") + " } " +
 		tmuxConfigQuote("#{?pane_marked,Unmark,Mark}") + " m { select-pane -m } " +
 		tmuxConfigQuote("#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}") + " z { resize-pane -Z } }"
 	return []string{

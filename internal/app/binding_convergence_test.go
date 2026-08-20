@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -223,13 +224,9 @@ func TestGeneratedLifecycleTriggersConvergeOnOneEntrypoint(t *testing.T) {
 		"standalone": tmuxStandaloneConfig("/opt/projmux", config.StatusbarDecorationOff),
 	} {
 		expected := map[string]controllerTriggerReason{}
-		for hook, reason := range hooks {
-			expected[hook] = reason
-		}
+		maps.Copy(expected, hooks)
 		if name == "app" {
-			for hook, reason := range appOnlyHooks {
-				expected[hook] = reason
-			}
+			maps.Copy(expected, appOnlyHooks)
 		} else {
 			for hook := range appOnlyHooks {
 				if strings.Contains(config, "set-hook -g "+hook+" ") {

@@ -5617,3 +5617,189 @@ fi
 exitrec_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> exit reconciliation e2e passed: socket=$exitrec_socket path=$exitrec_socket_path other-path=$exitrec_other_socket_path project=$exitrec_project_uid cleanup=validated-exact-sockets"
+
+# Declarative contract stabilization Phase 5: audit the generated
+# MouseDown3Pane binding, then select the same managed actions through a real
+# tmux display-menu on an attached client. Every command in this block strips
+# the caller's tmux identity and names a run-local TMUX_TMPDIR plus one unique
+# socket. Cleanup uses only the queried exact socket path, after proving that
+# path is inside this smoke root.
+menu_root="$PROJMUX_SMOKE_WORKDIR/pane-menu"
+menu_socket="pane-menu-e2e-$$-$RANDOM"
+menu_session="work-alpha"
+menu_config="$menu_root/config/projmux/tmux.conf"
+menu_client_log="$menu_root/client.log"
+menu_client_input="$menu_root/client.in"
+mkdir -p "$menu_root"/{home,cache,config,runtime,state,tmux,work/alpha}
+chmod 0700 "$menu_root/runtime"
+
+menu_env=(
+  env -u TMUX -u TMUX_PANE -u PROJMUX_SMOKE_TMUX_SOCKET
+  HOME="$menu_root/home"
+  XDG_CACHE_HOME="$menu_root/cache"
+  XDG_CONFIG_HOME="$menu_root/config"
+  XDG_RUNTIME_DIR="$menu_root/runtime"
+  XDG_STATE_HOME="$menu_root/state"
+  TMUX_TMPDIR="$menu_root/tmux"
+  PROJMUX_MANAGED_ROOTS="$menu_root/work"
+  SHELL=/bin/bash
+  PATH="$PATH"
+)
+menu_tmux() { "${menu_env[@]}" tmux -L "$menu_socket" "$@"; }
+menu_pmx() { "${menu_env[@]}" "$bin" "$@"; }
+
+menu_client_pid=""
+menu_socket_path=""
+menu_cleanup_done=0
+menu_cleanup() {
+  if [[ "$menu_cleanup_done" == "1" ]]; then
+    return
+  fi
+  menu_cleanup_done=1
+  if [[ -n "$menu_socket_path" ]]; then
+    case "$menu_socket_path" in
+      "$menu_root"/tmux/*) ;;
+      *)
+        echo "refusing pane-menu cleanup outside smoke root: $menu_socket_path" >&2
+        return 1
+        ;;
+    esac
+    "${menu_env[@]}" tmux -S "$menu_socket_path" kill-server >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$menu_client_pid" ]]; then
+    wait "$menu_client_pid" 2>/dev/null || true
+  fi
+}
+trap 'menu_cleanup; smoke_cleanup_env' EXIT
+
+menu_tmux new-session -d -s "$menu_session" -c "$menu_root/work/alpha" sleep 600
+menu_origin_pane="$(menu_tmux display-message -p -t "$menu_session:0.0" '#{pane_id}')"
+menu_socket_path="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{socket_path}')"
+case "$menu_socket_path" in
+  "$menu_root"/tmux/*) ;;
+  *)
+    echo "pane-menu socket escaped smoke root: $menu_socket_path" >&2
+    exit 1
+    ;;
+esac
+
+menu_project_uid="$(menu_pmx create project --root "$menu_root/work/alpha" -o uid)"
+menu_pmx config apply --bin "$bin" --config "$menu_config" --socket "$menu_socket" >"$menu_root/apply.out"
+menu_pmx reconcile resources --socket "$menu_socket" >"$menu_root/reconcile.out"
+if [[ -z "$(menu_tmux show-options -pqv -t "$menu_origin_pane" @projmux_pane_uid)" ]]; then
+  echo "pane-menu fixture origin was not reconciled as a managed Pane" >&2
+  exit 1
+fi
+menu_binding="$(menu_tmux list-keys -T root MouseDown3Pane)"
+smoke_assert_output_contains "$menu_binding" "internal tmux pane-menu --client"
+for menu_raw_verb in split-window kill-pane respawn-pane; do
+  if [[ "$menu_binding" == *"$menu_raw_verb"* ]]; then
+    echo "generated MouseDown3Pane binding retained raw $menu_raw_verb" >&2
+    exit 1
+  fi
+done
+if [[ "$menu_binding" == *Respawn* ]]; then
+  echo "generated MouseDown3Pane binding retained Respawn menu text" >&2
+  exit 1
+fi
+# The generated client-attached welcome popup is asynchronous and would race
+# this fixture for the first mouse event. It is outside this menu-route slice;
+# keep the generated MouseDown3Pane binding exact and suppress only that popup.
+menu_tmux set-hook -gu client-attached
+
+mkfifo "$menu_client_input"
+exec 6<>"$menu_client_input"
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE -u PROJMUX_SMOKE_TMUX_SOCKET HOME='$menu_root/home' XDG_CACHE_HOME='$menu_root/cache' XDG_CONFIG_HOME='$menu_root/config' XDG_RUNTIME_DIR='$menu_root/runtime' XDG_STATE_HOME='$menu_root/state' TMUX_TMPDIR='$menu_root/tmux' PROJMUX_MANAGED_ROOTS='$menu_root/work' SHELL=/bin/bash PATH='$PATH' tmux -S '$menu_socket_path' attach-session -t '$menu_session'" \
+  "$menu_client_log" <"$menu_client_input" >/dev/null 2>&1 &
+menu_client_pid=$!
+smoke_wait_for "attached pane-menu tmux client" sh -c \
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$menu_root/tmux' tmux -L '$menu_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+menu_client="$(menu_tmux list-clients -F '#{client_name}' | head -n 1)"
+menu_tmux switch-client -c "$menu_client" -t "$menu_origin_pane"
+if [[ "$(menu_tmux display-message -p -c "$menu_client" '#{pane_id}')" != "$menu_origin_pane" ]] ||
+  [[ "$(menu_tmux display-message -p -c "$menu_client" '#{socket_path}')" != "$menu_socket_path" ]]; then
+  echo "pane-menu client did not attach to the exact origin pane and socket" >&2
+  exit 1
+fi
+
+menu_select_item() {
+  local pane="$1"
+  local key="$2"
+  local menu_display_pid menu_log_offset
+  menu_log_offset="$(stat -c %s "$menu_client_log")"
+  menu_tmux display-menu -c "$menu_client" -T '#[align=centre]managed pane menu e2e' -t "$pane" -x 1 -y 1 \
+    "Horizontal Split" h "run-shell \"'$bin' internal tmux pane-menu --client '$menu_client' split-right '$pane'\"" \
+    "Vertical Split" v "run-shell \"'$bin' internal tmux pane-menu --client '$menu_client' split-down '$pane'\"" \
+    "Kill" X "run-shell \"'$bin' internal tmux pane-menu --client '$menu_client' kill '$pane'\"" &
+  menu_display_pid=$!
+  smoke_wait_for "MouseDown3Pane menu for $pane" sh -c \
+    "tail -c +$((menu_log_offset + 1)) '$menu_client_log' | grep -aFq 'managed pane menu e2e'"
+  printf '%s' "$key" >&6
+  wait "$menu_display_pid"
+}
+
+menu_wait_for_pane_count() {
+  [[ "$(menu_tmux list-panes -t "$menu_session:0" -F '#{pane_id}' | wc -l)" == "$1" ]]
+}
+menu_new_pane_except() {
+  local excluded="$1"
+  menu_tmux list-panes -t "$menu_session:0" -F '#{pane_id}' | grep -Fvx "$excluded" | tail -n 1
+}
+menu_pane_is_managed() {
+  local pane="$1"
+  local uid
+  uid="$(menu_tmux show-options -pqv -t "$pane" @projmux_pane_uid 2>/dev/null || true)"
+  [[ -n "$uid" ]] && menu_pmx get panes -o uid | grep -Fxq "$uid"
+}
+
+# Horizontal Split: a real right-click menu selection reaches managed create.
+menu_select_item "$menu_origin_pane" h
+smoke_wait_for "managed Horizontal Split" menu_wait_for_pane_count 2
+menu_horizontal_pane="$(menu_new_pane_except "$menu_origin_pane")"
+smoke_wait_for "Horizontal Split Registry identity" menu_pane_is_managed "$menu_horizontal_pane"
+menu_horizontal_uid="$(menu_tmux show-options -pqv -t "$menu_horizontal_pane" @projmux_pane_uid)"
+if [[ -z "$menu_horizontal_uid" ]] || ! menu_pmx get panes -o uid | grep -Fxq "$menu_horizontal_uid"; then
+  echo "Horizontal Split did not create a Registry-backed Pane: pane=$menu_horizontal_pane uid=$menu_horizontal_uid" >&2
+  exit 1
+fi
+
+# Kill: target the new pane and select the stock X shortcut.
+menu_kill_log_offset="$(stat -c %s "$menu_client_log")"
+menu_select_item "$menu_horizontal_pane" X
+smoke_wait_for "canonical pane-menu Kill" menu_wait_for_pane_count 1
+if menu_pmx get panes -o uid | grep -Fxq "$menu_horizontal_uid"; then
+  echo "pane-menu Kill left Registry Pane $menu_horizontal_uid" >&2
+  exit 1
+fi
+smoke_wait_for "client-visible canonical delete result" sh -c \
+  "tail -c +$((menu_kill_log_offset + 1)) '$menu_client_log' | grep -aFq 'delete pane: deleting 1 pane'"
+
+# Vertical Split reaches the other placement through the same exact anchor.
+menu_select_item "$menu_origin_pane" v
+smoke_wait_for "managed Vertical Split" menu_wait_for_pane_count 2
+menu_vertical_pane="$(menu_new_pane_except "$menu_origin_pane")"
+smoke_wait_for "Vertical Split Registry identity" menu_pane_is_managed "$menu_vertical_pane"
+menu_vertical_uid="$(menu_tmux show-options -pqv -t "$menu_vertical_pane" @projmux_pane_uid)"
+if [[ -z "$menu_vertical_uid" ]] || ! menu_pmx get panes -o uid | grep -Fxq "$menu_vertical_uid"; then
+  echo "Vertical Split did not create a Registry-backed Pane: pane=$menu_vertical_pane uid=$menu_vertical_uid" >&2
+  exit 1
+fi
+
+# Remove the Vertical Split through the same canonical Kill so cleanup starts
+# from the original managed pane only.
+menu_select_item "$menu_vertical_pane" X
+smoke_wait_for "canonical cleanup Kill" menu_wait_for_pane_count 1
+if menu_pmx get panes -o uid | grep -Fxq "$menu_vertical_uid"; then
+  echo "pane-menu cleanup Kill left Registry Pane $menu_vertical_uid" >&2
+  exit 1
+fi
+
+menu_cleanup_target="$menu_socket_path"
+menu_cleanup
+if "${menu_env[@]}" tmux -S "$menu_cleanup_target" list-sessions >/dev/null 2>&1; then
+  echo "pane-menu exact socket cleanup left a live server at $menu_cleanup_target" >&2
+  exit 1
+fi
+trap smoke_cleanup_env EXIT
+echo ">> managed pane-menu e2e passed: pane=$menu_origin_pane project=$menu_project_uid socket=$menu_socket path=$menu_socket_path cleanup=$menu_cleanup_target inherited=unset"
