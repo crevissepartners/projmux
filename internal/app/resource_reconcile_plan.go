@@ -698,9 +698,24 @@ type registryResourceRecord struct {
 	value any
 }
 
+// registryResourceRecords is the flat record projection of a whole Registry:
+// every resource of every kind, root kinds included.
+//
+// Both root kinds are here because both of its consumers ask a whole-Registry
+// question. registryUIDSet asks "is this uid a resource projmux owns", and a
+// ControlSession uid that answered "no" would make its own live objects read as
+// foreign drift. registryReconcileItems asks "what changed between these two
+// registries", and a root the projection cannot see is a root whose appearance
+// or change the plan silently reports as nothing at all. Leaving one kind out
+// is the C-5 defect in its exact general form -- a projection that reads the
+// Registry as if Project were the only root.
 func registryResourceRecords(registry coremetadata.Registry) []registryResourceRecord {
-	out := make([]registryResourceRecord, 0, len(registry.Projects)+len(registry.Windows)+len(registry.Panes)+len(registry.Agents))
+	out := make([]registryResourceRecord, 0,
+		len(registry.Projects)+len(registry.ControlSessions)+len(registry.Windows)+len(registry.Panes)+len(registry.Agents))
 	for _, resource := range registry.Projects {
+		out = append(out, registryResourceRecord{kind: resource.Kind, uid: resource.Metadata.UID, name: resource.Metadata.Name, value: resource})
+	}
+	for _, resource := range registry.ControlSessions {
 		out = append(out, registryResourceRecord{kind: resource.Kind, uid: resource.Metadata.UID, name: resource.Metadata.Name, value: resource})
 	}
 	for _, resource := range registry.Windows {
