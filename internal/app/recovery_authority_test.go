@@ -287,7 +287,7 @@ func TestIncident20260820ExactD3AutomaticallyRunsL8WhileL7RequiresApproval(t *te
 	}
 }
 
-func TestPublicReconcileReportsOneAutomaticL8ItemPerIncidentObject(t *testing.T) {
+func TestPublicReconcileD3L8PreservesAuthoritativeRegistryAndAllowsFollowUpWrite(t *testing.T) {
 	registry, server, root := incident20260820RecoveryFixture(t)
 	store := &fakeResourceStore{registry: registry, dirs: map[string]bool{root: true}, now: resourceFixtureClock}
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00incident-report": server}}
@@ -295,6 +295,7 @@ func TestPublicReconcileReportsOneAutomaticL8ItemPerIncidentObject(t *testing.T)
 		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
 		newReconciler: reconcileFixtureReconciler(root, "alpha"),
 	}
+	registryBefore := store.registry.Clone()
 	stdout, _, err := runReconcile(t, command, "resources", "--socket", "incident-report", "-o", "json")
 	if err != nil {
 		t.Fatalf("incident reconcile: %v\n%s", err, stdout)
@@ -309,6 +310,43 @@ func TestPublicReconcileReportsOneAutomaticL8ItemPerIncidentObject(t *testing.T)
 	}
 	if count != 2 {
 		t.Fatalf("reported automatic L8 items = %d, want 2\n%s", count, stdout)
+	}
+	if !reflect.DeepEqual(store.registry, registryBefore) || store.writes != 0 {
+		t.Fatalf("automatic L8 changed the authoritative Registry graph: writes=%d\n--- got ---\n%+v\n--- want ---\n%+v", store.writes, store.registry, registryBefore)
+	}
+	preserved, ok := store.registry.Agent("agt-alpha-codex")
+	if !ok || preserved.Status.SessionRef == nil || preserved.Status.SessionRef.Codex == nil ||
+		preserved.Status.SessionRef.Codex.SessionID != "sentinel-session" ||
+		preserved.Status.SessionRef.Codex.ThreadID != "sentinel-thread" {
+		t.Fatalf("automatic L8 changed the conversation pointer: %+v", preserved)
+	}
+	if got, want := []int{len(store.registry.Projects), len(store.registry.Windows), len(store.registry.Panes), len(store.registry.Agents), len(store.registry.NameReservations)},
+		[]int{1, 1, 2, 1, len(registryBefore.NameReservations)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("authoritative Registry graph counts = %v, want %v", got, want)
+	}
+	for _, pane := range server.sessions[0].windows[0].panes[2:] {
+		for _, field := range []string{tmuxopts.PaneUID, tmuxopts.AgentSessionIDPane, tmuxopts.AgentThreadIDPane} {
+			if got := pane.opts[field]; got != "" {
+				t.Fatalf("public L8 left %s on %s as %q", field, pane.id, got)
+			}
+		}
+		if pane.opts[tmuxopts.AgentProviderPane] != "codex" || pane.opts[tmuxopts.AgentTopicPane] != "preserved topic" {
+			t.Fatalf("public L8 erased non-routing runtime data on %s: %+v", pane.id, pane.opts)
+		}
+	}
+
+	// Recovery must leave the Registry write path usable. Exercise the same
+	// locked production mutation seam after the public reconcile boundary.
+	const paneUID = "pan-alpha-zsh"
+	err = command.resources.mutate(coremetadata.KindPane, []string{paneUID}, func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		_, renameErr := mutator.RenamePane(working, paneUID, "after-recovery")
+		return renameErr
+	})
+	if err != nil {
+		t.Fatalf("follow-up Registry write after automatic L8: %v", err)
+	}
+	if pane, ok := store.registry.Pane(paneUID); !ok || pane.Metadata.Name != "after-recovery" {
+		t.Fatalf("follow-up Registry write did not land: %+v", pane)
 	}
 }
 

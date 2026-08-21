@@ -159,10 +159,10 @@ func TestResourceStructuredMetricColumnsStayAlignedAcrossKnownAndUnknownRows(t *
 			if locale == i18n.Locale("ko-KR") {
 				memoryLabel, countLabel = "메모리", "PANE"
 			}
-			memoryByte := strings.Index(metric, memoryLabel)
-			countByte := strings.Index(metric, countLabel)
-			memory := projmuxpicker.VisibleLen(metric[:memoryByte])
-			count := projmuxpicker.VisibleLen(metric[:countByte])
+			memoryPrefix, _, _ := strings.Cut(metric, memoryLabel)
+			countPrefix, _, _ := strings.Cut(metric, countLabel)
+			memory := projmuxpicker.VisibleLen(memoryPrefix)
+			count := projmuxpicker.VisibleLen(countPrefix)
 			if index == 0 {
 				wantCPU, wantMemory, wantCount = cpu, memory, count
 				continue

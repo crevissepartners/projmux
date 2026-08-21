@@ -355,12 +355,10 @@ func mergeScopedResourceRegistry(before, scopedBefore, scopedAfter coremetadata.
 		if !reconciler.refusedSessions[session.name] {
 			continue
 		}
-		// A D3 descendant quarantines its containing session for this planner
-		// pass, but the quarantine is not a second D4 divergence. The exact D3
-		// runtime items own reporting and L8 recovery.
-		if reconciler.refusedSessionDivergence[session.name] == resourcegraph.DivergenceOrphanMirror {
-			continue
-		}
+		// Every refused session is diagnostic-only, so preserve its entire
+		// authoritative Registry graph. In the D3 descendant case the quarantine
+		// is not a second D4 divergence; the exact runtime items own reporting and
+		// L8 recovery.
 		if project, ok := resourceProjectForSession(scopedBefore, session, reconciler); ok {
 			delete(removeProjects, project.Metadata.UID)
 		}
