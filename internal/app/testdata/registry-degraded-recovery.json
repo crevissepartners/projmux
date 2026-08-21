@@ -1,0 +1,27 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-21T00:00:00Z",
+  "projects": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {
+        "uid": "project-readable",
+        "name": "readable",
+        "createdAt": "2026-08-21T00:00:00Z"
+      },
+      "spec": {
+        "root": "/fixture/readable"
+      },
+      "status": {}
+    }
+  ],
+  "nameReservations": [
+    {
+      "kind": "Project",
+      "name": "readable",
+      "uid": "project-readable"
+    }
+  ]
+}

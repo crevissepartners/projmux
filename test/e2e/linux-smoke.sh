@@ -1347,7 +1347,9 @@ if [[ "$(ctx list-windows -t legacy-alpha -F '#{window_name}' | grep -cx review)
   exit 1
 fi
 
-# 6. A stale primaryPaneRef is exit 2 with zero mutations and zero stdout.
+# 6. A stale primaryPaneRef puts the persisted Registry in degraded mode: the
+#    ordinary create is exit 1 with exact repair guidance, zero mutations, and
+#    zero stdout.
 cp "$create_registry" "$create_root/registry.intact"
 # The registry is written with MarshalIndent, so every primaryPaneRef sits alone
 # on its own line and the substitution cannot reach any other field.
@@ -1362,8 +1364,8 @@ set +e
 pmx create pane --project alpha --window review >"$create_root/stale.out" 2>"$create_root/stale.err"
 stale_status=$?
 set -e
-if [[ "$stale_status" != "2" ]]; then
-  echo "stale primaryPaneRef exit = $stale_status, want 2" >&2
+if [[ "$stale_status" != "1" ]]; then
+  echo "stale primaryPaneRef exit = $stale_status, want degraded-mode exit 1" >&2
   cat "$create_root/stale.err" >&2 || true
   exit 1
 fi
@@ -1380,6 +1382,8 @@ if [[ "$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)" != "$stale_
   exit 1
 fi
 smoke_assert_file_contains "$create_root/stale.err" "primaryPaneRef"
+smoke_assert_file_contains "$create_root/stale.err" "resource registry is in degraded mode"
+smoke_assert_file_contains "$create_root/stale.err" "run exactly: projmux reconcile registry --dry-run"
 cp "$create_root/registry.intact" "$create_registry"
 
 # 7. A tmux failure after the Window exists rolls the operation back to exactly

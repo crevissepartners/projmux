@@ -93,7 +93,7 @@ func loadResourceRegistry() (coremetadata.Registry, error) {
 	if err != nil {
 		return coremetadata.Registry{}, fmt.Errorf("resolve projmux state paths: %w", err)
 	}
-	return intmetadata.NewDefaultStore(paths).LoadReadOnly()
+	return intmetadata.NewDefaultStore(paths).LoadDegradedReadOnly()
 }
 
 // snapshotResourceRegistry is the stricter read required by a reconciliation

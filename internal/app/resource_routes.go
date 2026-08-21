@@ -21,10 +21,14 @@ import (
 )
 
 // resourceStore is the shared registry seam of the canonical verb-to-kind
-// routes. Reads go through LoadReadOnly so a route that resolves nothing never
-// materializes <state>/projmux/metadata/; writes go through the store's locked
-// read -> mutate -> validate -> atomic replace transaction, so a mutation that
-// fails validation leaves the file byte-identical.
+// routes. Reads explicitly opt into LoadDegradedReadOnly so a route that
+// resolves nothing never materializes <state>/projmux/metadata/ and a decodable
+// invalid graph remains inspectable; ordinary low-level Store loads keep their
+// graph guard. Writes first pass the store's lock-free degraded-mode gate and
+// then use its locked read -> mutate -> validate -> atomic replace transaction.
+// A damaged Registry therefore keeps reads and explicit registry repair
+// available while every ordinary mutation is refused before the normal write
+// lock with an exact recovery-plan command.
 type resourceStore struct {
 	load             func() (coremetadata.Registry, error)
 	snapshot         func() (coremetadata.Registry, error)
