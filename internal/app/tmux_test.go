@@ -1027,6 +1027,7 @@ func TestAppRunTmuxPopupToggleOpensWideAIPicker(t *testing.T) {
 		"-B",
 		"-d", "/tmp/work tree",
 		"-e", "PROJMUX_NATIVE_LAUNCH_KEY=alt-7",
+		"-e", "PROJMUX_POPUP_TARGET_CLIENT=/dev/pts/projmux-test-ai-picker",
 		"-e", "TMUX_SPLIT_CONTEXT_DIR=/tmp/work tree",
 		"-e", "TMUX_SPLIT_TARGET_PANE=%1",
 		"-w", "96",
@@ -2151,8 +2152,8 @@ func TestTmuxPaneMenuRoutesSplitAndKillThroughCanonicalIntents(t *testing.T) {
 		action string
 		want   agentPaneIntent
 	}{
-		{action: "split-right", want: agentPaneIntent{placement: "right", anchorPaneID: "%17"}},
-		{action: "split-down", want: agentPaneIntent{placement: "down", anchorPaneID: "%17"}},
+		{action: "split-right", want: agentPaneIntent{producer: canonicalProducerPaneMenu, placement: "right", anchorPaneID: "%17"}},
+		{action: "split-down", want: agentPaneIntent{producer: canonicalProducerPaneMenu, placement: "down", anchorPaneID: "%17"}},
 	} {
 		t.Run(test.action, func(t *testing.T) {
 			creator.intents = nil
@@ -2212,7 +2213,10 @@ func TestTmuxPaneMenuFailuresRemainVisibleWithoutFallbackMutation(t *testing.T) 
 			runner := &recordingTmuxRunner{}
 			cmd := &tmuxCommand{
 				runner: runner,
-				paneMenuCreate: func(agentPaneIntent, io.Writer, io.Writer) error {
+				paneMenuCreate: func(_ agentPaneIntent, _ io.Writer, stderr io.Writer) error {
+					if test.name == "split" {
+						_, _ = io.WriteString(stderr, "exact action stderr detail")
+					}
 					return test.createErr
 				},
 				paneMenuDelete: func(string, io.Writer, io.Writer) error {
@@ -2226,6 +2230,9 @@ func TestTmuxPaneMenuFailuresRemainVisibleWithoutFallbackMutation(t *testing.T) 
 				!containsAll(runner.calls[0].args, []string{"display-message", "-c", "/dev/pts/8"}) ||
 				!strings.Contains(runner.calls[0].args[len(runner.calls[0].args)-1], test.wantReason) {
 				t.Fatalf("failure was not shown to the exact client: calls=%#v want reason %q", runner.calls, test.wantReason)
+			}
+			if test.name == "split" && !strings.Contains(runner.calls[0].args[len(runner.calls[0].args)-1], "exact action stderr detail") {
+				t.Fatalf("pane-menu dropped action stderr: calls=%#v", runner.calls)
 			}
 		})
 	}

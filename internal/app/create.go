@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -226,6 +227,10 @@ func requireCanonicalProvider(spelling, raw string) (string, error) {
 // never heard of, which is why a pane opened from the picker existed in the Main
 // UI only until something reconciled.
 type agentPaneIntent struct {
+	// producer is the closed UI boundary that stated this intent. It is not
+	// presentation metadata: the producer x root-kind table is executable, so a
+	// new UI path cannot silently inherit authority it never classified.
+	producer canonicalCreateProducer
 	// provider is empty for a plain shell Pane. A shell surface is a Pane and not
 	// an Agent, so an empty provider selects a different kind rather than a
 	// default one.
@@ -244,6 +249,37 @@ type agentPaneIntent struct {
 	// producer that runs in the anchor pane, which is the case create resolves
 	// exactly as it does for a typed invocation.
 	anchorPaneID string
+	// targetClient is the exact tmux client that originated an asynchronous UI
+	// action. It is diagnostic routing only and never identity evidence.
+	targetClient string
+}
+
+// canonicalCreateProducer is the closed set of UI producers allowed to create
+// a managed descendant from an exact Pane origin. Public `create` is not a
+// member: its omitted scope remains Project-only and follows the typed command
+// contract in resolveCreateScope.
+type canonicalCreateProducer string
+
+const (
+	canonicalProducerPaneMenu       canonicalCreateProducer = "pane-menu"
+	canonicalProducerSavedDefault   canonicalCreateProducer = "saved-default"
+	canonicalProducerProviderPicker canonicalCreateProducer = "provider-picker"
+	canonicalProducerResumePicker   canonicalCreateProducer = "resume-picker"
+	canonicalProducerDirectProvider canonicalCreateProducer = "direct-provider"
+	canonicalProducerDirectShell    canonicalCreateProducer = "direct-shell"
+)
+
+var canonicalCreateProducers = []canonicalCreateProducer{
+	canonicalProducerPaneMenu,
+	canonicalProducerSavedDefault,
+	canonicalProducerProviderPicker,
+	canonicalProducerResumePicker,
+	canonicalProducerDirectProvider,
+	canonicalProducerDirectShell,
+}
+
+func (p canonicalCreateProducer) valid() bool {
+	return slices.Contains(canonicalCreateProducers, p)
 }
 
 // canonicalPaneCreator is the seam the split UI hands its intents to.
@@ -267,38 +303,50 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	anchored := c.withAnchorPane(intent.anchorPaneID)
-	if conversation == "" {
-		return anchored.Run(argv, stdout, stderr)
+	if !intent.producer.valid() {
+		return usageError("canonical create intent has no classified producer; nothing was created")
 	}
-	// A resume cannot be spelled: `create` has no public `--resume`, and adding
-	// one would widen the public surface for what is an interactive selection. It
-	// reaches the shared Agent body through the same parser instead, so every
-	// refusal the typed spelling has still applies.
+	if provider != "" {
+		if c.agents == nil {
+			return errors.New("create agent: the provider launcher is not configured")
+		}
+		if err := c.agents.RequireAgentEnabled(provider); err != nil {
+			return err
+		}
+	}
+	scope, err := c.resolveCanonicalIntentScope(intent)
+	if err != nil {
+		return err
+	}
+	if provider == "" {
+		return visibleCanonicalCreateError(c.createCanonicalIntentPane(scope, intent, stdout))
+	}
+	// A resume cannot be spelled: `create` has no public `--resume`. The intent
+	// route still parses the exact public argv before attaching its private
+	// conversation field, so placement and provider validation remain shared.
 	shape := resourceCreateShape{split: true, provider: true}
-	flags, err := parseResourceCreateFlags(canonicalCreateAgent, argv[len(argv)-2:], stderr, shape)
+	flags, err := parseResourceCreateFlags(canonicalCreateAgent, argv[1:], stderr, shape)
 	if err != nil {
 		return err
 	}
 	flags.resumeConversation = conversation
-	return anchored.createAgent(canonicalCreateAgent, provider, flags, shape, stdout, stderr)
+	return visibleCanonicalCreateError(c.createCanonicalIntentAgent(scope, intent, provider, flags, stdout))
 }
 
-// withAnchorPane returns the create command one anchored intent runs as.
-//
-// The anchor replaces the invocation's active target for this create and for
-// nothing else, which is why it is a copy rather than a mutation: the same
-// process serves several bindings, and an anchor that outlived one intent would
-// be exactly the implicit global scope the contract refuses. An empty anchor
-// returns the receiver unchanged, so a producer that already runs in its anchor
-// pane keeps resolving through the inherited $TMUX_PANE.
-func (c *createCommand) withAnchorPane(paneID string) *createCommand {
-	if c == nil || strings.TrimSpace(paneID) == "" || c.anchorTarget == nil {
-		return c
+// visibleCanonicalCreateError prevents a subprocess ExitCode from escaping a
+// UI create. cmd/projmux deliberately suppresses its default stderr print for
+// such errors because subprocess-owning commands are expected to have printed;
+// canonical create owns the diagnostic instead, so it preserves the exact text
+// on a plain error that the originating popup/client can display.
+func visibleCanonicalCreateError(err error) error {
+	if err == nil {
+		return nil
 	}
-	anchored := *c
-	anchored.activeTarget = c.anchorTarget(paneID)
-	return &anchored
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return errors.New(err.Error())
+	}
+	return err
 }
 
 // canonicalArgv renders one intent as the argv an operator would type, and

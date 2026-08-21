@@ -527,13 +527,13 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 		if c.paneMenuCreate == nil {
 			err = errors.New("canonical create pane route is not configured")
 		} else {
-			err = c.paneMenuCreate(agentPaneIntent{placement: "right", anchorPaneID: paneID}, &actionOut, &actionErr)
+			err = c.paneMenuCreate(agentPaneIntent{producer: canonicalProducerPaneMenu, placement: "right", anchorPaneID: paneID}, &actionOut, &actionErr)
 		}
 	case "split-down":
 		if c.paneMenuCreate == nil {
 			err = errors.New("canonical create pane route is not configured")
 		} else {
-			err = c.paneMenuCreate(agentPaneIntent{placement: "down", anchorPaneID: paneID}, &actionOut, &actionErr)
+			err = c.paneMenuCreate(agentPaneIntent{producer: canonicalProducerPaneMenu, placement: "down", anchorPaneID: paneID}, &actionOut, &actionErr)
 		}
 	case "kill":
 		if c.paneMenuDelete == nil {
@@ -547,7 +547,11 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 	}
 
 	if err != nil {
-		return c.displayPaneMenuMessage(strings.TrimSpace(*client), "projmux "+paneMenuActionLabel(action)+" failed: "+err.Error())
+		reason := strings.TrimSpace(err.Error())
+		if detail := strings.TrimSpace(actionErr.String()); detail != "" && !strings.Contains(reason, detail) {
+			reason += ": " + detail
+		}
+		return c.displayPaneMenuMessage(strings.TrimSpace(*client), "projmux "+paneMenuActionLabel(action)+" failed: "+reason)
 	}
 	result := actionOut.String()
 	if _, copyErr := io.WriteString(stdout, result); copyErr != nil {
@@ -1587,6 +1591,7 @@ func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker stri
 		options.Height = popupSize(ctx.ClientHeight, 45, 20)
 		cwd = ctx.ContextDir
 		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
+		env[canonicalCreateTargetClientEnv] = ctx.TargetClient
 		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
 		commandArgs = []string{"internal", "agent-pane", "picker", "--inside", mode.Direction}
 	case "ai-split-resume-right", "ai-split-resume-down":
@@ -1594,6 +1599,7 @@ func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker stri
 		options.Height = popupSize(ctx.ClientHeight, 55, 24)
 		cwd = ctx.ContextDir
 		env["TMUX_SPLIT_TARGET_PANE"] = ctx.OriginPane
+		env[canonicalCreateTargetClientEnv] = ctx.TargetClient
 		env["TMUX_SPLIT_CONTEXT_DIR"] = ctx.ContextDir
 		commandArgs = []string{"internal", "agent-pane", "picker", "--resume", "--inside", mode.Direction}
 	case "ai-split-settings":

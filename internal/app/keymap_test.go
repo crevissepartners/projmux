@@ -603,12 +603,12 @@ func TestKeyBindingCatalogPhase0UserBindableCoverage(t *testing.T) {
 		"last-pane":             "last-pane",
 		"ai-split-right":        "internal agent-pane launch-default right",
 		"ai-split-down":         "internal agent-pane launch-default down",
-		"ai-split-codex-right":  "create codex --placement right",
-		"ai-split-codex-down":   "create codex --placement down",
-		"ai-split-claude-right": "create claude --placement right",
-		"ai-split-claude-down":  "create claude --placement down",
-		"ai-split-shell-right":  "create pane --placement right",
-		"ai-split-shell-down":   "create pane --placement down",
+		"ai-split-codex-right":  "internal agent-pane launch-provider codex right",
+		"ai-split-codex-down":   "internal agent-pane launch-provider codex down",
+		"ai-split-claude-right": "internal agent-pane launch-provider claude right",
+		"ai-split-claude-down":  "internal agent-pane launch-provider claude down",
+		"ai-split-shell-right":  "internal agent-pane launch-shell right",
+		"ai-split-shell-down":   "internal agent-pane launch-shell down",
 	}
 	for id, body := range cases {
 		action, ok := keyBindingActionByID(catalog, id)

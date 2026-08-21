@@ -1170,6 +1170,14 @@ Lifecycle trigger convergence:
 
 Projmux split UI:
 
+- Every split producer carries the exact popup origin as a typed canonical
+  create intent. The origin must resolve through the mirrored Pane uid to its
+  owner Window uid and then to exactly one Project or ControlSession uid; those
+  Phase 11 declaration, root, role, Window, and Pane mirrors are the complete
+  identity evidence. A ControlSession Pane's cwd is launch workspace only and
+  never participates in root identity. If the origin disappears or its owner
+  chain conflicts, canonical create performs no Registry or tmux write and
+  projects the exact refusal to the originating tmux client.
 - The default `ai-split-right/down` binding, the `Alt-7` provider picker, the
   resume picker, and the provider and shell direct actions all produce a
   canonical create intent -- which provider, which side, and for a resume which

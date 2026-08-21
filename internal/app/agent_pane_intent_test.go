@@ -80,10 +80,10 @@ func TestSavedDefaultSplitStatesOneCanonicalIntent(t *testing.T) {
 		want      *agentPaneIntent
 		popup     string
 	}{
-		{mode: aiModeCodex, direction: "right", want: &agentPaneIntent{provider: aiModeCodex, placement: "right"}},
-		{mode: aiModeClaude, direction: "down", want: &agentPaneIntent{provider: aiModeClaude, placement: "down"}},
-		{mode: aiModeAntigravity, direction: "right", want: &agentPaneIntent{provider: aiModeAntigravity, placement: "right"}},
-		{mode: aiModeShell, direction: "down", want: &agentPaneIntent{placement: "down"}},
+		{mode: aiModeCodex, direction: "right", want: &agentPaneIntent{producer: canonicalProducerSavedDefault, provider: aiModeCodex, placement: "right"}},
+		{mode: aiModeClaude, direction: "down", want: &agentPaneIntent{producer: canonicalProducerSavedDefault, provider: aiModeClaude, placement: "down"}},
+		{mode: aiModeAntigravity, direction: "right", want: &agentPaneIntent{producer: canonicalProducerSavedDefault, provider: aiModeAntigravity, placement: "right"}},
+		{mode: aiModeShell, direction: "down", want: &agentPaneIntent{producer: canonicalProducerSavedDefault, placement: "down"}},
 		{mode: aiModeSelective, direction: "right", popup: "ai-split-picker-right"},
 		{mode: aiModeResume, direction: "down", popup: "ai-split-resume-down"},
 	}
@@ -181,10 +181,10 @@ func TestPickerSelectionStatesOneCanonicalIntent(t *testing.T) {
 		direction string
 		want      []agentPaneIntent
 	}{
-		{selection: aiModeCodex, direction: "right", want: []agentPaneIntent{{provider: aiModeCodex, placement: "right"}}},
-		{selection: aiModeClaude, direction: "down", want: []agentPaneIntent{{provider: aiModeClaude, placement: "down"}}},
-		{selection: aiModeAntigravity, direction: "right", want: []agentPaneIntent{{provider: aiModeAntigravity, placement: "right"}}},
-		{selection: aiModeShell, direction: "down", want: []agentPaneIntent{{placement: "down"}}},
+		{selection: aiModeCodex, direction: "right", want: []agentPaneIntent{{producer: canonicalProducerProviderPicker, provider: aiModeCodex, placement: "right"}}},
+		{selection: aiModeClaude, direction: "down", want: []agentPaneIntent{{producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "down"}}},
+		{selection: aiModeAntigravity, direction: "right", want: []agentPaneIntent{{producer: canonicalProducerProviderPicker, provider: aiModeAntigravity, placement: "right"}}},
+		{selection: aiModeShell, direction: "down", want: []agentPaneIntent{{producer: canonicalProducerProviderPicker, placement: "down"}}},
 		{selection: "", direction: "right", want: nil},
 	}
 	for _, tt := range tests {
@@ -216,7 +216,7 @@ func TestPickerShellFlagStatesAPaneIntent(t *testing.T) {
 	if err := cmd.Run([]string{"picker", "--shell", "--inside", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("picker --shell error = %v", err)
 	}
-	if want := []agentPaneIntent{{placement: "right"}}; !reflect.DeepEqual(creator.intents, want) {
+	if want := []agentPaneIntent{{producer: canonicalProducerDirectShell, placement: "right"}}; !reflect.DeepEqual(creator.intents, want) {
 		t.Fatalf("intents = %+v, want %+v", creator.intents, want)
 	}
 }
@@ -268,7 +268,7 @@ func TestResumeSelectionStatesAResumedIntentWithTheProviderNormalizedID(t *testi
 			}, "right"); err != nil {
 				t.Fatalf("runSelectedResumeSession error = %v", err)
 			}
-			want := []agentPaneIntent{{provider: tt.provider, placement: "right", conversationID: tt.want}}
+			want := []agentPaneIntent{{producer: canonicalProducerResumePicker, provider: tt.provider, placement: "right", conversationID: tt.want}}
 			if !reflect.DeepEqual(creator.intents, want) {
 				t.Fatalf("intents = %+v, want %+v", creator.intents, want)
 			}
@@ -292,7 +292,7 @@ func TestResumeSelectionWithAnUnusableIDFallsBackToAFreshIntent(t *testing.T) {
 	}, "down"); err != nil {
 		t.Fatalf("runSelectedResumeSession error = %v", err)
 	}
-	want := []agentPaneIntent{{provider: aiModeClaude, placement: "down"}}
+	want := []agentPaneIntent{{producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "down"}}
 	if !reflect.DeepEqual(creator.intents, want) {
 		t.Fatalf("intents = %+v, want a fresh %+v", creator.intents, want)
 	}
@@ -304,7 +304,7 @@ func TestResumeSelectionWithAnUnusableIDFallsBackToAFreshIntent(t *testing.T) {
 // produces no pane. A missing create route says so instead.
 func TestAnUnwiredCreateRouteFailsInsteadOfCreatingNothing(t *testing.T) {
 	cmd := testAICommand(t.TempDir())
-	if err := cmd.createShellPane("right"); err == nil {
+	if err := cmd.createShellPane(canonicalProducerDirectShell, "right"); err == nil {
 		t.Fatal("an unwired create route silently succeeded")
 	}
 }
@@ -471,6 +471,7 @@ func TestTheResumeIntentReachesTheSharedAgentBodyWithTheConversation(t *testing.
 	create := &createCommand{agents: launcher, resumes: launcher}
 
 	err := create.createFromIntent(agentPaneIntent{
+		producer: canonicalProducerResumePicker,
 		provider: aiModeCodex, placement: "right", conversationID: "conv-7",
 	}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {

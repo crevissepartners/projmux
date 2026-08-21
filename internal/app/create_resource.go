@@ -1170,6 +1170,9 @@ func (c *createCommand) transact(op createOperation, guards ...createPreReconcil
 				if selected.Name != "" && identity.Name != "" && selected.Name != identity.Name {
 					return liveSessionIdentity{}, fmt.Errorf("create: ownership guards selected different tmux sessions %q and %q", selected.Name, identity.Name)
 				}
+				if selected.ID != "" && identity.ID != "" && selected.ID != identity.ID {
+					return liveSessionIdentity{}, fmt.Errorf("create: ownership guards selected different tmux session ids %q and %q", selected.ID, identity.ID)
+				}
 				if identity.Name != "" {
 					selected = identity
 				}
