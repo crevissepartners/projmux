@@ -35,7 +35,10 @@ type fakeAgentLauncher struct {
 	// activation controls the bounded initial-task acknowledgement.
 	activationAcknowledged bool
 	activationErr          error
+	activationDelay        time.Duration
 	activationPanes        []string
+	activationTimeouts     []time.Duration
+	activationBeforeReturn func()
 }
 
 func TestInitialTaskUnconfirmedIsDiagnosticAndNeverPersistsPrompt(t *testing.T) {
@@ -169,11 +172,22 @@ func (f *fakeAgentLauncher) PlanAgentLaunch(provider string, workspace coremetad
 	return provider + ":launch", argv, nil
 }
 
-func (f *fakeAgentLauncher) AwaitAgentActivation(_ context.Context, _ tmuxCommandRunner, paneID string, _ time.Duration) (bool, string, error) {
+func (f *fakeAgentLauncher) AwaitAgentActivation(_ context.Context, _ tmuxCommandRunner, paneID string, timeout time.Duration) (bool, string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.activationPanes = append(f.activationPanes, paneID)
-	return f.activationAcknowledged, "fake-provider-hook", f.activationErr
+	f.activationTimeouts = append(f.activationTimeouts, timeout)
+	delay := f.activationDelay
+	acknowledged := f.activationAcknowledged
+	err := f.activationErr
+	beforeReturn := f.activationBeforeReturn
+	f.mu.Unlock()
+	if beforeReturn != nil {
+		beforeReturn()
+	}
+	if delay > timeout {
+		return false, "fake-provider-hook", nil
+	}
+	return acknowledged, "fake-provider-hook", err
 }
 
 func (f *fakeAgentLauncher) BindManagedAgentPane(paneID, provider, _, title string) {

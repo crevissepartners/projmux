@@ -129,26 +129,50 @@ func (c *aiCommand) persistAgentSessionRef(paneID string, obs coremetadata.Agent
 // canonical authority without treating a shell pane or stale binding as an
 // Agent.
 func (c *aiCommand) managedAgentForPane(paneID string) (coremetadata.Agent, bool, error) {
+	binding, ok, err := c.managedAgentBindingForPane(paneID)
+	return binding.agent, ok, err
+}
+
+// managedAgentBinding is the exact evidence a provider-hook observation is
+// allowed to refine. Pane uid alone is durable across resume/replacement; the
+// activation generation names the one materialization that emitted the hook.
+type managedAgentBinding struct {
+	agent      coremetadata.Agent
+	paneUID    string
+	generation string
+	runtimeID  string
+}
+
+func (c *aiCommand) managedAgentBindingForPane(paneID string) (managedAgentBinding, bool, error) {
 	if c == nil || c.loadRegistry == nil || strings.TrimSpace(paneID) == "" {
-		return coremetadata.Agent{}, false, nil
+		return managedAgentBinding{}, false, nil
 	}
 	registry, err := c.loadRegistry()
 	if err != nil {
-		return coremetadata.Agent{}, false, err
+		return managedAgentBinding{}, false, err
 	}
 	if len(registry.Agents) == 0 {
-		return coremetadata.Agent{}, false, nil
+		return managedAgentBinding{}, false, nil
 	}
 	paneUID := c.readTmuxPaneOption(paneID, tmuxopts.PaneUID)
 	agentUID, ok := agentUIDForPaneUID(registry, paneUID)
 	if !ok {
-		return coremetadata.Agent{}, false, nil
+		return managedAgentBinding{}, false, nil
 	}
 	agent, ok := registry.Agent(agentUID)
 	if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != paneUID {
-		return coremetadata.Agent{}, false, nil
+		return managedAgentBinding{}, false, nil
 	}
-	return agent.Clone(), true, nil
+	pane, ok := registry.Pane(paneUID)
+	if !ok {
+		return managedAgentBinding{}, false, nil
+	}
+	return managedAgentBinding{
+		agent:      agent.Clone(),
+		paneUID:    paneUID,
+		generation: pane.Status.Activation.Generation,
+		runtimeID:  pane.Status.Activation.RuntimeID,
+	}, true, nil
 }
 
 // resourceOwnedPane is the fail-closed watcher gate. Any Pane carrying resource
@@ -186,10 +210,11 @@ func (c *aiCommand) persistManagedAgentTopic(paneID, topic string) (coremetadata
 }
 
 func (c *aiCommand) persistManagedAgentInteraction(paneID string, kind coremetadata.AgentInteractionKind, source string) (coremetadata.Agent, bool, error) {
-	agent, ok, err := c.managedAgentForPane(paneID)
+	binding, ok, err := c.managedAgentBindingForPane(paneID)
 	if err != nil || !ok {
-		return agent, ok, err
+		return binding.agent, ok, err
 	}
+	agent := binding.agent
 	if c.updateRegistry == nil {
 		return coremetadata.Agent{}, true, fmt.Errorf("agent registry mutation is not configured")
 	}
@@ -209,7 +234,14 @@ func (c *aiCommand) persistManagedAgentInteraction(paneID string, kind coremetad
 			sessionUnchanged = agent.Status.SessionRef.SameConversation(candidate)
 		}
 	}
-	activationNeedsAck := agent.Status.Activation.State == coremetadata.ActivationPending && kind != coremetadata.InteractionUnknown && kind != coremetadata.InteractionIdle
+	emittedPaneUID := strings.TrimSpace(c.env(internalActivationPaneUIDEnv))
+	emittedGeneration := strings.TrimSpace(c.env(internalActivationGenerationEnv))
+	activationNeedsAck := strings.TrimSpace(binding.generation) != "" &&
+		binding.runtimeID == strings.TrimSpace(paneID) &&
+		emittedPaneUID == binding.paneUID && emittedGeneration == binding.generation &&
+		source == string(coremetadata.InteractionSourceProviderHook) &&
+		(agent.Status.Activation.State == coremetadata.ActivationPending || agent.Status.Activation.State == coremetadata.ActivationUnconfirmed) &&
+		kind != coremetadata.InteractionUnknown && kind != coremetadata.InteractionIdle
 	if sessionUnchanged && !activationNeedsAck && current.Kind == kind && current.Source == source && clock().Sub(current.ObservedAt) < time.Second {
 		return agent, true, nil
 	}
@@ -218,6 +250,14 @@ func (c *aiCommand) persistManagedAgentInteraction(paneID string, kind coremetad
 		current, ok := working.Agent(agent.Metadata.UID)
 		if !ok || current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != agent.Status.PaneRef {
 			return fmt.Errorf("managed Agent binding changed before interaction commit")
+		}
+		if activationNeedsAck {
+			currentPane, ok := working.Pane(binding.paneUID)
+			if !ok || currentPane.Status.Activation.Generation != binding.generation ||
+				currentPane.Status.Activation.AgentUID != agent.Metadata.UID ||
+				currentPane.Status.Activation.RuntimeID != strings.TrimSpace(paneID) {
+				return fmt.Errorf("managed Agent activation generation changed before interaction commit")
+			}
 		}
 		if hasObservation {
 			if _, _, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, obs); err != nil {
@@ -228,7 +268,9 @@ func (c *aiCommand) persistManagedAgentInteraction(paneID string, kind coremetad
 		if err != nil {
 			return err
 		}
-		if current.Status.Activation.State == coremetadata.ActivationPending && kind != coremetadata.InteractionUnknown && kind != coremetadata.InteractionIdle {
+		if activationNeedsAck && source == string(coremetadata.InteractionSourceProviderHook) &&
+			(current.Status.Activation.State == coremetadata.ActivationPending || current.Status.Activation.State == coremetadata.ActivationUnconfirmed) &&
+			kind != coremetadata.InteractionUnknown && kind != coremetadata.InteractionIdle {
 			updated, err = mutator.SetAgentActivation(working, agent.Metadata.UID, coremetadata.ActivationAcknowledged, source, "")
 			if err != nil {
 				return err

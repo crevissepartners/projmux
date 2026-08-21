@@ -15,6 +15,13 @@ import (
 // canonicalCreateAgent is the spelling the provider shortcuts normalize onto.
 const canonicalCreateAgent = "create agent"
 
+// agentActivationConfirmationDeadline is the documented bounded window in
+// which an initial-task provider hook can turn a create into ordinary success.
+// It intentionally exceeds the old two-second probe without becoming an
+// unbounded wait; hooks that arrive later still refine the preserved resource
+// through the generation-guarded ingest path.
+const agentActivationConfirmationDeadline = 5 * time.Second
+
 // agentWork is one allocated Agent plus its managed Pane, waiting for the
 // runtime phase to give the Pane a live tmux binding.
 type agentWork struct {
@@ -229,7 +236,13 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				}
 			}
 			if len(flags.payload) > 0 {
-				activationTargets = append(activationTargets, agentActivationTarget{agentUID: work.agent.Metadata.UID, agentName: work.agent.Metadata.Name, paneID: paneID})
+				activationTargets = append(activationTargets, agentActivationTarget{
+					agentUID:   work.agent.Metadata.UID,
+					agentName:  work.agent.Metadata.Name,
+					paneUID:    work.pane.Metadata.UID,
+					paneID:     paneID,
+					generation: work.activation.Generation,
+				})
 			}
 			results = append(results, createResult{
 				kind: coremetadata.KindAgent,
@@ -254,9 +267,11 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 }
 
 type agentActivationTarget struct {
-	agentUID  string
-	agentName string
-	paneID    string
+	agentUID   string
+	agentName  string
+	paneUID    string
+	paneID     string
+	generation string
 }
 
 func activationStateForPayload(payload []string) coremetadata.AgentActivationState {
@@ -269,7 +284,7 @@ func activationStateForPayload(payload []string) coremetadata.AgentActivationSta
 func (c *createCommand) confirmAgentActivations(targets []agentActivationTarget) error {
 	var diagnostics []error
 	for _, target := range targets {
-		acknowledged, _, err := c.agents.AwaitAgentActivation(context.Background(), c.runtime.runner, target.paneID, 2*time.Second)
+		acknowledged, _, err := c.agents.AwaitAgentActivation(context.Background(), c.runtime.runner, target.paneID, agentActivationConfirmationDeadline)
 		source := string(coremetadata.InteractionSourceProviderHook)
 		state := coremetadata.ActivationAcknowledged
 		reason := ""
@@ -281,18 +296,46 @@ func (c *createCommand) confirmAgentActivations(targets []agentActivationTarget)
 				reason = coremetadata.ActivationReasonTimedOut
 			}
 		}
+		var committed coremetadata.Agent
 		if _, updateErr := c.store.update(func(registry *coremetadata.Registry) error {
-			_, setErr := c.store.mutator().SetAgentActivation(registry, target.agentUID, state, source, reason)
+			agentUID, generation, bound := exactAgentActivationBinding(*registry, target.paneUID, target.paneID)
+			if !bound || agentUID != target.agentUID || generation != target.generation {
+				return fmt.Errorf("create agent: activation binding changed for uid:%s Pane %s", target.agentUID, target.paneID)
+			}
+			updated, setErr := c.store.mutator().SetAgentActivation(registry, target.agentUID, state, source, reason)
+			committed = updated.Clone()
 			return setErr
 		}); updateErr != nil {
 			diagnostics = append(diagnostics, MapMetadataError(updateErr))
 			continue
 		}
-		if state == coremetadata.ActivationUnconfirmed {
+		// A provider hook may commit after Await's final read but before the
+		// timeout writer takes the Registry lock. SetAgentActivation is monotonic,
+		// so inspect the committed authority instead of the stale local decision.
+		if committed.Status.Activation.State == coremetadata.ActivationUnconfirmed {
 			diagnostics = append(diagnostics, fmt.Errorf("create agent: agent/%s uid:%s has live managed Pane %s but initial task activation was not confirmed: %s; retry the task through the provider or clean up with `projmux delete agent uid:%s --yes`", target.agentName, target.agentUID, target.paneID, reason, target.agentUID))
 		}
 	}
 	return errors.Join(diagnostics...)
+}
+
+type agentLaunchOutcomeRow struct {
+	Outcome    string
+	RC         string
+	Stdout     string
+	Resources  string
+	Activation string
+	Diagnostic string
+}
+
+// agentLaunchOutcomeTable is the closed command-result contract. String values
+// make empty output and absent diagnostics printable rather than ambiguous
+// blank cells in docs, tests, or support output.
+var agentLaunchOutcomeTable = []agentLaunchOutcomeRow{
+	{Outcome: "pre-runtime failure", RC: "nonzero", Stdout: "empty", Resources: "none", Activation: "not created", Diagnostic: "bounded refusal/failure"},
+	{Outcome: "created+acknowledged", RC: "0", Stdout: "exact %N one line", Resources: "preserved", Activation: string(coremetadata.ActivationAcknowledged), Diagnostic: "none"},
+	{Outcome: "created+unconfirmed", RC: "nonzero", Stdout: "empty", Resources: "preserved", Activation: string(coremetadata.ActivationUnconfirmed), Diagnostic: "exact Agent UID, live Pane, retry/delete remediation"},
+	{Outcome: "delayed acknowledgement", RC: "0", Stdout: "exact %N one line", Resources: "preserved", Activation: string(coremetadata.ActivationAcknowledged), Diagnostic: "none"},
 }
 
 // resolveCreateProvider fixes the provider of one canonical Agent create.

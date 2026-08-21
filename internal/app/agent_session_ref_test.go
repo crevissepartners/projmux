@@ -62,6 +62,14 @@ func newSessionRefHarness(t *testing.T, provider string) *sessionRefHarness {
 	if err != nil {
 		t.Fatalf("attach agent pane: %v", err)
 	}
+	if _, err := mutator.RecordPaneActivation(registry, pane.Metadata.UID, coremetadata.PaneActivationOptions{
+		Generation: "gen-session-ref", AgentUID: agent.Metadata.UID, OperationID: "op-3",
+	}); err != nil {
+		t.Fatalf("record pane activation: %v", err)
+	}
+	if _, err := mutator.ObservePaneActivationRuntime(registry, pane.Metadata.UID, "gen-session-ref", "%7"); err != nil {
+		t.Fatalf("observe pane activation runtime: %v", err)
+	}
 
 	h := &sessionRefHarness{registry: registry, agentUID: agent.Metadata.UID, paneUID: pane.Metadata.UID}
 	home := t.TempDir()
@@ -74,6 +82,10 @@ func newSessionRefHarness(t *testing.T, provider string) *sessionRefHarness {
 				// Ingest attributes the event to the inherited pane, which is the
 				// production path a provider hook runs through.
 				return "%7"
+			case internalActivationPaneUIDEnv:
+				return pane.Metadata.UID
+			case internalActivationGenerationEnv:
+				return "gen-session-ref"
 			default:
 				return ""
 			}

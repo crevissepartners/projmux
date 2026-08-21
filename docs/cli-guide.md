@@ -338,8 +338,10 @@ owner Project root from `get`/`describe`, and a successful resume persists that
 normalized effective workspace without changing Window Project ownership.
 
 When `create agent -- <initial-prompt>` is used, normal resource creation and
-provider activation are distinct. Projmux waits for bounded hook/lifecycle
-metadata only; it never captures pane content or stores the prompt. If
+provider activation are distinct. Projmux waits up to five seconds for exact
+provider-hook metadata only; it never captures pane content or stores the
+prompt. An acknowledgement inside that deadline, including one later than two
+seconds, returns success and the requested exact `%N` output. If
 activation cannot be confirmed, the command exits nonzero while naming the
 exact Agent UID and Pane plus safe provider retry and `delete agent ... --yes`
 cleanup options. The live resources remain explicit and retryable rather than
@@ -347,7 +349,13 @@ being reported as an ordinary success.
 
 Activation metadata is bounded to provider-hook provenance and fixed
 acknowledged/timed-out/failed diagnostics. Provider error strings and initial
-prompt text are never stored. Resource-backed Agent create and resume do not
+prompt text are never stored. `pending` can become `unconfirmed` and a later
+exact hook can refine either state to `acknowledged`; acknowledged never moves
+backward. Late refinement must quote the same Agent, Pane uid, activation
+generation, and recorded live `%N`, so a hook from a replaced materialization
+cannot acknowledge its replacement. Codex and Claude initial payloads use the
+same acknowledgement and result contract; provider-specific prompt content is
+not evidence. Resource-backed Agent create and resume do not
 start the legacy title/content watcher; that watcher remains only for legacy
 non-resource panes and exits before reading title or capture content if resource
 identity appears.

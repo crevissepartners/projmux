@@ -18,6 +18,17 @@ import (
 // on Windows never depended on the process-group behavior the POSIX build
 // preserves.
 func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
+	return runSupervisedChildWithEnvironment(argv, argv0, nil)
+}
+
+func runSupervisedChildWithActivation(argv []string, argv0 string, spec superviseSpec) (processOutcome, error) {
+	return runSupervisedChildWithEnvironment(argv, argv0, []string{
+		internalActivationPaneUIDEnv + "=" + spec.PaneUID,
+		internalActivationGenerationEnv + "=" + spec.Generation,
+	})
+}
+
+func runSupervisedChildWithEnvironment(argv []string, argv0 string, environment []string) (processOutcome, error) {
 	if len(argv) == 0 {
 		return processOutcome{}, errors.New("no command to supervise")
 	}
@@ -28,6 +39,9 @@ func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if len(environment) > 0 {
+		cmd.Env = append(os.Environ(), environment...)
+	}
 	if err := cmd.Start(); err != nil {
 		return processOutcome{}, err
 	}

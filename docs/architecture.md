@@ -313,9 +313,13 @@ Termination evidence transport:
   a pipe -- puts it in its own process group, and makes that group the
   terminal's foreground group, so job control works and
   `#{pane_current_command}` keeps naming the child. argv, cwd, and the
-  environment are untouched. tmux-side signals aimed at the pane process are
-  relayed to the child's group, because the pane pid and the child pid used to
-  be the same process. The foreground handoff is attempted and retried without
+  inherited environment are untouched except for two private `PMX_INTERNAL_*`
+  capability values carrying this Pane uid and activation generation to the
+  provider's own hook children. They are not public `PROJMUX_*` hook API and
+  are accepted only together with the Registry binding and exact recorded `%N`
+  runtime handle. tmux-side signals aimed at the pane process are relayed to
+  the child's group, because the pane pid and the child pid used to be the same
+  process. The foreground handoff is attempted and retried without
   it rather than probed for: there is no portable way to ask "is fd 0 my
   controlling terminal" without an ioctl, and a start that fails forks no
   surviving child.

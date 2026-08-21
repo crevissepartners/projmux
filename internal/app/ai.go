@@ -1776,19 +1776,28 @@ func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommand
 	if paneUID == "" {
 		return false, "provider-hook", errors.New("managed Pane carries no resource identity")
 	}
+	initial, loadErr := c.loadRegistry()
+	if loadErr != nil {
+		return false, "provider-hook", fmt.Errorf("read Agent activation authority: %w", loadErr)
+	}
+	agentUID, generation, ok := exactAgentActivationBinding(initial, paneUID, strings.TrimSpace(paneID))
+	if !ok {
+		return false, "provider-hook", errors.New("managed Pane carries no exact Agent activation binding")
+	}
 	deadline := c.nowTime().Add(timeout)
 	for {
 		registry, loadErr := c.loadRegistry()
 		if loadErr != nil {
 			return false, "provider-hook", fmt.Errorf("read Agent activation authority: %w", loadErr)
 		}
-		if agentUID, ok := agentUIDForPaneUID(registry, paneUID); ok {
-			agent, present := registry.Agent(agentUID)
-			if present && agent.Status.Phase == coremetadata.PhaseRunning && agent.Status.PaneRef == paneUID &&
-				agent.Status.Activation.State == coremetadata.ActivationAcknowledged &&
-				agent.Status.Activation.Source == string(coremetadata.InteractionSourceProviderHook) {
-				return true, "provider-hook", nil
-			}
+		currentAgentUID, currentGeneration, bound := exactAgentActivationBinding(registry, paneUID, strings.TrimSpace(paneID))
+		if !bound || currentAgentUID != agentUID || currentGeneration != generation {
+			return false, "provider-hook", errors.New("managed Agent activation binding changed while awaiting acknowledgement")
+		}
+		agent, present := registry.Agent(agentUID)
+		if present && agent.Status.Activation.State == coremetadata.ActivationAcknowledged &&
+			agent.Status.Activation.Source == string(coremetadata.InteractionSourceProviderHook) {
+			return true, "provider-hook", nil
 		}
 		if err := ctx.Err(); err != nil {
 			return false, "provider-hook", err
@@ -1798,6 +1807,25 @@ func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommand
 		}
 		c.sleepFor(50 * time.Millisecond)
 	}
+}
+
+// exactAgentActivationBinding returns the one Agent→Pane materialization a
+// provider acknowledgement may refine. Pane uid is durable and therefore not
+// enough by itself; the generation changes on resume/replacement.
+func exactAgentActivationBinding(registry coremetadata.Registry, paneUID, runtimeID string) (string, string, bool) {
+	pane, ok := registry.Pane(paneUID)
+	if !ok || strings.TrimSpace(pane.Status.Activation.Generation) == "" ||
+		strings.TrimSpace(pane.Status.Activation.AgentUID) == "" ||
+		strings.TrimSpace(pane.Status.Activation.RuntimeID) == "" ||
+		pane.Status.Activation.RuntimeID != strings.TrimSpace(runtimeID) {
+		return "", "", false
+	}
+	agentUID := pane.Status.Activation.AgentUID
+	agent, ok := registry.Agent(agentUID)
+	if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != paneUID {
+		return "", "", false
+	}
+	return agentUID, pane.Status.Activation.Generation, true
 }
 
 func (c *aiCommand) nowTime() time.Time {
