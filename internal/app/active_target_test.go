@@ -80,6 +80,58 @@ func newTestListGetCommandWithActiveTarget(t *testing.T, store *fakeResourceStor
 	return cmd
 }
 
+func addControlReadRoot(t *testing.T, store *fakeResourceStore) {
+	t.Helper()
+	owner := func(kind coremetadata.Kind, uid string) *coremetadata.OwnerRef {
+		return &coremetadata.OwnerRef{Kind: kind, UID: uid}
+	}
+	store.registry.ControlSessions = append(store.registry.ControlSessions, coremetadata.ControlSession{
+		APIVersion: coremetadata.APIVersion,
+		Kind:       coremetadata.KindControlSession,
+		Metadata:   coremetadata.ObjectMeta{UID: "ctl-home", Name: "home", DisplayName: "Home", CreatedAt: resourceFixtureClock},
+		Spec:       coremetadata.ControlSessionSpec{Session: "home"},
+	})
+	store.registry.Windows = append(store.registry.Windows, coremetadata.Window{
+		APIVersion: coremetadata.APIVersion,
+		Kind:       coremetadata.KindWindow,
+		Metadata:   coremetadata.ObjectMeta{UID: "win-home", Name: "home", OwnerRef: owner(coremetadata.KindControlSession, "ctl-home"), CreatedAt: resourceFixtureClock},
+		Spec:       coremetadata.WindowSpec{PrimaryPaneRef: "pan-home-shell"},
+	})
+	store.registry.Panes = append(store.registry.Panes,
+		coremetadata.Pane{
+			APIVersion: coremetadata.APIVersion,
+			Kind:       coremetadata.KindPane,
+			Metadata:   coremetadata.ObjectMeta{UID: "pan-home-shell", Name: "shell", OwnerRef: owner(coremetadata.KindWindow, "win-home"), CreatedAt: resourceFixtureClock},
+			Spec:       coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell},
+		},
+		coremetadata.Pane{
+			APIVersion: coremetadata.APIVersion,
+			Kind:       coremetadata.KindPane,
+			Metadata:   coremetadata.ObjectMeta{UID: "pan-home-agent", Name: "codex-pane", OwnerRef: owner(coremetadata.KindAgent, "agt-home"), CreatedAt: resourceFixtureClock},
+			Spec:       coremetadata.PaneSpec{Role: coremetadata.PaneRoleAgent},
+		},
+	)
+	store.registry.Agents = append(store.registry.Agents, coremetadata.Agent{
+		APIVersion: coremetadata.APIVersion,
+		Kind:       coremetadata.KindAgent,
+		Metadata:   coremetadata.ObjectMeta{UID: "agt-home", Name: "codex", OwnerRef: owner(coremetadata.KindWindow, "win-home"), CreatedAt: resourceFixtureClock},
+		Spec:       coremetadata.AgentSpec{Provider: "codex"},
+		Status: coremetadata.AgentStatus{
+			Phase: coremetadata.PhaseRunning, PaneRef: "pan-home-agent", LastTransitionAt: resourceFixtureClock,
+		},
+	})
+	store.registry.NameReservations = append(store.registry.NameReservations,
+		coremetadata.NameReservation{Kind: coremetadata.KindControlSession, Name: "home", UID: "ctl-home"},
+		coremetadata.NameReservation{Scope: "ctl-home", Kind: coremetadata.KindWindow, Name: "home", UID: "win-home"},
+		coremetadata.NameReservation{Scope: "win-home", Kind: coremetadata.KindPane, Name: "shell", UID: "pan-home-shell"},
+		coremetadata.NameReservation{Scope: "win-home", Kind: coremetadata.KindAgent, Name: "codex", UID: "agt-home"},
+		coremetadata.NameReservation{Scope: "agt-home", Kind: coremetadata.KindPane, Name: "codex-pane", UID: "pan-home-agent"},
+	)
+	if err := store.registry.Validate(); err != nil {
+		t.Fatalf("control read fixture is invalid: %v", err)
+	}
+}
+
 // TestPluralReadsUseTheActiveProjectDefault pins the namespace-like Project
 // boundary for the three registry plural reads, including the explicit global
 // escape and the outside-tmux compatibility path.
@@ -142,6 +194,167 @@ func TestPluralReadsUseTheActiveProjectDefault(t *testing.T) {
 	}
 }
 
+// TestPluralReadContextSelectorMatrix closes the Project/ControlSession/
+// foreign/outside x selector contract for all three plural Registry reads.
+// Exact sets are asserted rather than membership so an implicit global fallback
+// cannot hide behind the expected descendant rows.
+func TestPluralReadContextSelectorMatrix(t *testing.T) {
+	t.Parallel()
+
+	type kindCase struct {
+		kind            string
+		projectDefault  string
+		controlDefault  string
+		uidArgs         []string
+		uidSet          string
+		explicitProject string
+		wholeSet        string
+	}
+	kinds := []kindCase{
+		{
+			kind: "windows", projectDefault: "win-alpha-main\nwin-alpha-review\n", controlDefault: "win-home\n",
+			uidArgs: []string{"--window", "uid:win-beta-main"}, uidSet: "win-beta-main\n",
+			explicitProject: "win-beta-main\n", wholeSet: "win-alpha-main\nwin-alpha-review\nwin-beta-main\nwin-home\n",
+		},
+		{
+			kind: "panes", projectDefault: "pan-alpha-zsh\npan-alpha-log\npan-alpha-codex\npan-alpha-review\n", controlDefault: "pan-home-shell\npan-home-agent\n",
+			uidArgs: []string{"--pane", "uid:pan-beta-zsh"}, uidSet: "pan-beta-zsh\n",
+			explicitProject: "pan-beta-zsh\n", wholeSet: "pan-alpha-zsh\npan-alpha-log\npan-alpha-codex\npan-alpha-review\npan-beta-zsh\npan-home-shell\npan-home-agent\n",
+		},
+		{
+			kind: "agents", projectDefault: "agt-alpha-codex\n", controlDefault: "agt-home\n",
+			uidArgs: []string{"--window", "uid:win-beta-main"}, uidSet: "agt-beta-codex\n",
+			explicitProject: "agt-beta-codex\n", wholeSet: "agt-alpha-codex\nagt-beta-codex\nagt-home\n",
+		},
+	}
+
+	type contextCase struct {
+		name   string
+		active func() *recordedActiveTarget
+	}
+	contexts := []contextCase{
+		{name: "Project", active: func() *recordedActiveTarget { return insideTmux("pan-alpha-zsh", "win-alpha-main") }},
+		{name: "ControlSession", active: func() *recordedActiveTarget { return insideTmux("pan-home-shell", "win-home") }},
+		{name: "foreign", active: func() *recordedActiveTarget { return insideTmux("", "win-foreign") }},
+		{name: "outside", active: outsideTmux},
+	}
+
+	for _, kind := range kinds {
+		t.Run(kind.kind, func(t *testing.T) {
+			t.Parallel()
+			for _, context := range contexts {
+				t.Run(context.name, func(t *testing.T) {
+					t.Parallel()
+
+					run := func(args ...string) (string, string, error, int) {
+						store := newFakeResourceStore(t)
+						addControlReadRoot(t, store)
+						active := context.active()
+						stdout, stderr, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active),
+							append([]string{kind.kind}, args...)...)
+						return stdout, stderr, err, active.calls
+					}
+
+					stdout, stderr, err, calls := run("-o", "uid")
+					switch context.name {
+					case "Project":
+						assertPluralReadMatrixResult(t, stdout, stderr, err, kind.projectDefault, calls, 1)
+					case "ControlSession":
+						assertPluralReadMatrixResult(t, stdout, stderr, err, kind.controlDefault, calls, 1)
+					case "foreign":
+						if err == nil || !IsUsageError(err) || stdout != "" || stderr != "" || calls != 1 ||
+							!strings.Contains(err.Error(), "active managed-root scope is undecidable") {
+							t.Fatalf("foreign omitted = stdout %q stderr %q err %v calls %d", stdout, stderr, err, calls)
+						}
+					case "outside":
+						assertPluralReadMatrixResult(t, stdout, stderr, err, kind.wholeSet, calls, 1)
+					}
+
+					stdout, stderr, err, calls = run("--project", "beta", "-o", "uid")
+					assertPluralReadMatrixResult(t, stdout, stderr, err, kind.explicitProject, calls, 0)
+
+					for _, spelling := range []string{"--all-projects", "-A"} {
+						stdout, stderr, err, calls = run(spelling, "-o", "uid")
+						assertPluralReadMatrixResult(t, stdout, stderr, err, kind.wholeSet, calls, 0)
+					}
+
+					stdout, stderr, err, calls = run(append(kind.uidArgs, "-o", "uid")...)
+					assertPluralReadMatrixResult(t, stdout, stderr, err, kind.uidSet, calls, 0)
+				})
+			}
+		})
+	}
+}
+
+func assertPluralReadMatrixResult(t *testing.T, stdout, stderr string, err error, want string, calls, wantCalls int) {
+	t.Helper()
+	if err != nil || stdout != want || stderr != "" || calls != wantCalls {
+		t.Fatalf("plural read = stdout %q stderr %q err %v calls %d, want stdout %q stderr empty err nil calls %d",
+			stdout, stderr, err, calls, want, wantCalls)
+	}
+}
+
+// TestPluralReadExplicitUIDKeepsGlobalAuthority pins the public UID selector
+// priority Phase 13 must not reinterpret. An opaque uid bypasses active-root
+// observation in every context, including a foreign Pane, and resolves against
+// the whole Registry. This is deliberately different from a name selector,
+// whose ambiguity boundary remains the invocation-derived root.
+func TestPluralReadExplicitUIDKeepsGlobalAuthority(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		active func() *recordedActiveTarget
+	}{
+		{name: "Project context", active: func() *recordedActiveTarget { return insideTmux("pan-alpha-zsh", "win-alpha-main") }},
+		{name: "ControlSession context", active: func() *recordedActiveTarget { return insideTmux("pan-home-shell", "win-home") }},
+		{name: "foreign context", active: func() *recordedActiveTarget { return insideTmux("", "win-foreign") }},
+		{name: "outside context", active: outsideTmux},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			addControlReadRoot(t, store)
+			active := test.active()
+			stdout, stderr, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active),
+				"panes", "--pane", "uid:pan-beta-zsh", "-o", "uid")
+			assertPluralReadMatrixResult(t, stdout, stderr, err, "pan-beta-zsh\n", active.calls, 0)
+		})
+	}
+}
+
+func TestPluralReadNameSelectorKeepsActiveRootScope(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		active  func() *recordedActiveTarget
+		want    string
+		refusal bool
+	}{
+		{name: "Project name stays in Project", active: func() *recordedActiveTarget { return insideTmux("pan-alpha-zsh", "win-alpha-main") }, want: "pan-alpha-zsh\npan-alpha-review\n"},
+		{name: "ControlSession name cannot cross into Project", active: func() *recordedActiveTarget { return insideTmux("pan-home-shell", "win-home") }},
+		{name: "foreign name still refuses", active: func() *recordedActiveTarget { return insideTmux("", "win-foreign") }, refusal: true},
+		{name: "outside name stays whole Registry", active: outsideTmux, want: "pan-alpha-zsh\npan-alpha-review\npan-beta-zsh\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			addControlReadRoot(t, store)
+			active := test.active()
+			stdout, stderr, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active),
+				"panes", "--pane", "zsh", "-o", "uid")
+			if test.refusal {
+				if err == nil || !IsUsageError(err) || stdout != "" || stderr != "" || active.calls != 1 {
+					t.Fatalf("name refusal = stdout %q stderr %q err %v calls %d", stdout, stderr, err, active.calls)
+				}
+				return
+			}
+			assertPluralReadMatrixResult(t, stdout, stderr, err, test.want, active.calls, 1)
+		})
+	}
+}
+
 // TestPluralReadProjectScopeBoundaries covers the refusal and compatibility
 // edges around the default without changing any explicitly selected query.
 func TestPluralReadProjectScopeBoundaries(t *testing.T) {
@@ -178,7 +391,7 @@ func TestPluralReadProjectScopeBoundaries(t *testing.T) {
 		name  string
 		owner *coremetadata.OwnerRef
 	}{
-		{name: "active Window has no Project owner"},
+		{name: "active Window has no managed root owner"},
 		{name: "active Window names a missing Project", owner: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-missing"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -191,7 +404,7 @@ func TestPluralReadProjectScopeBoundaries(t *testing.T) {
 			window.Metadata.OwnerRef = test.owner
 			active := insideTmux("pan-alpha-zsh", "win-alpha-main")
 			stdout, _, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active), "panes", "-o", "uid")
-			if err == nil || !IsUsageError(err) || stdout != "" || !strings.Contains(err.Error(), "has no owning Project in the registry") {
+			if err == nil || !IsUsageError(err) || stdout != "" || !strings.Contains(err.Error(), "has no owning Project or ControlSession in the registry") {
 				t.Fatalf("broken owner chain stdout=%q error=%v", stdout, err)
 			}
 		})

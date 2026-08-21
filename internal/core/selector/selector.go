@@ -81,16 +81,29 @@ func flagNameFor(kind metadata.Kind) string {
 // from the positional resource ref of an Agent route.
 type Query struct {
 	Project *Ref
-	// DefaultProject is an invocation-derived Project scope used only when the
-	// operator did not pass --project. It is kept separate from Project so
+	// DefaultRoot is an invocation-derived managed-root scope used only when
+	// the operator did not pass --project. It is kept separate from Project so
 	// explicit selector rendering and compatibility stay truthful. The shared
-	// windowScope seam is the only place that chooses explicit Project,
-	// invocation default, or the whole registry.
-	DefaultProject *Ref
-	Windows        []Ref
-	Panes          []Ref
-	Agents         []Ref
-	Labels         []Label
+	// windowScope seam is the only place that chooses an explicit Project, an
+	// invocation-derived Project or ControlSession root, or the whole registry.
+	//
+	// The root is always an exact uid observed through a Registry owner chain;
+	// there is intentionally no public ControlSession selector grammar.
+	DefaultRoot *RootScope
+	Windows     []Ref
+	Panes       []Ref
+	Agents      []Ref
+	Labels      []Label
+}
+
+// RootScope is one exact, invocation-derived Registry root.
+//
+// It is not a selector occurrence: users cannot spell a ControlSession scope,
+// and a root name is never inferred. Keeping the kind beside the uid prevents
+// a ControlSession from being flattened into the Project-only public grammar.
+type RootScope struct {
+	Kind metadata.Kind
+	UID  string
 }
 
 // Stage names one recorded resolution step.
@@ -396,22 +409,49 @@ func (r *Resolver) selectedWindows(q Query) ([]metadata.Window, error) {
 	return dedupe(windows, func(window metadata.Window) string { return window.Metadata.UID }), nil
 }
 
-// windowScope is the single Project-scope decision for Window, Pane, and Agent
-// queries. An explicit --project wins; otherwise an invocation-derived default
-// narrows the read; with neither, the whole registry remains visible.
+// windowScope is the single root-scope decision for Window, Pane, and Agent
+// queries. An explicit --project wins; otherwise an invocation-derived Project
+// or ControlSession root narrows the read; with neither, the whole registry
+// remains visible.
 func (r *Resolver) windowScope(q Query) ([]metadata.Window, error) {
-	projectRef := q.Project
-	if projectRef == nil {
-		projectRef = q.DefaultProject
+	if q.Project != nil {
+		project, err := r.ResolveProject(*q.Project)
+		if err != nil {
+			return nil, err
+		}
+		return r.windowsOwnedBy(metadata.KindProject, project.UID), nil
 	}
-	if projectRef == nil {
+	if q.DefaultRoot == nil {
 		return r.registry.Windows, nil
 	}
-	project, err := r.ResolveProject(*projectRef)
-	if err != nil {
-		return nil, err
+
+	root := *q.DefaultRoot
+	switch root.Kind {
+	case metadata.KindProject:
+		if _, ok := r.registry.Project(root.UID); !ok {
+			return nil, inputErr("resolve window scope", "default Project uid %q is not in the registry", root.UID)
+		}
+	case metadata.KindControlSession:
+		if _, ok := r.registry.ControlSession(root.UID); !ok {
+			return nil, inputErr("resolve window scope", "default ControlSession uid %q is not in the registry", root.UID)
+		}
+	default:
+		return nil, inputErr("resolve window scope", "default root kind %q is not Project or ControlSession", root.Kind)
 	}
-	return r.registry.WindowsOf(project.UID), nil
+	return r.windowsOwnedBy(root.Kind, root.UID), nil
+}
+
+// windowsOwnedBy keeps root-kind equality explicit instead of relying on uid
+// uniqueness alone. That makes the owner chain itself the scope authority.
+func (r *Resolver) windowsOwnedBy(kind metadata.Kind, uid string) []metadata.Window {
+	windows := make([]metadata.Window, 0)
+	for _, window := range r.registry.Windows {
+		owner := window.Metadata.OwnerRef
+		if owner != nil && owner.Kind == kind && owner.UID == uid {
+			windows = append(windows, window)
+		}
+	}
+	return windows
 }
 
 // runPipeline is the single implementation of the fixed three-stage order.

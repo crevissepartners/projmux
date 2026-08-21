@@ -57,24 +57,26 @@ func TestResolveProjectsIsAListReadOverTheWholeRegistry(t *testing.T) {
 	}
 }
 
-// TestWindowScopeChoosesExplicitThenDefaultThenGlobal pins the one seam that
-// decides Project scope for every Window, Pane, and Agent query. The derived
-// default never scopes Project listings themselves.
-func TestWindowScopeChoosesExplicitThenDefaultThenGlobal(t *testing.T) {
+// TestWindowScopeChoosesExplicitProjectThenDefaultRootThenGlobal pins the one
+// seam that decides root scope for every Window, Pane, and Agent query. The
+// derived default never scopes Project listings themselves.
+func TestWindowScopeChoosesExplicitProjectThenDefaultRootThenGlobal(t *testing.T) {
 	t.Parallel()
 
-	resolver := New(standardRegistry(t))
-	alpha := refFor(t, metadata.KindProject, "alpha")
+	resolver := New(registryWithControlReadRoot(t))
 	beta := refFor(t, metadata.KindProject, "beta")
+	alphaRoot := &RootScope{Kind: metadata.KindProject, UID: "prj-alpha"}
+	controlRoot := &RootScope{Kind: metadata.KindControlSession, UID: "ctl-home"}
 
 	for _, test := range []struct {
 		name  string
 		query Query
 		want  []string
 	}{
-		{name: "no Project input keeps the global Window scope", want: []string{"win-alpha-main", "win-alpha-review", "win-beta-main", "win-gone-main"}},
-		{name: "an invocation default narrows to its Project", query: Query{DefaultProject: alpha}, want: []string{"win-alpha-main", "win-alpha-review"}},
-		{name: "an explicit Project wins over the invocation default", query: Query{Project: beta, DefaultProject: alpha}, want: []string{"win-beta-main"}},
+		{name: "no root input keeps the global Window scope", want: []string{"win-alpha-main", "win-alpha-review", "win-beta-main", "win-gone-main", "win-home"}},
+		{name: "an invocation default narrows to its Project", query: Query{DefaultRoot: alphaRoot}, want: []string{"win-alpha-main", "win-alpha-review"}},
+		{name: "an invocation default narrows to its ControlSession", query: Query{DefaultRoot: controlRoot}, want: []string{"win-home"}},
+		{name: "an explicit Project wins over a ControlSession default", query: Query{Project: beta, DefaultRoot: controlRoot}, want: []string{"win-beta-main"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -88,13 +90,82 @@ func TestWindowScopeChoosesExplicitThenDefaultThenGlobal(t *testing.T) {
 		})
 	}
 
-	projects, err := resolver.ResolveProjects(Query{DefaultProject: alpha})
+	projects, err := resolver.ResolveProjects(Query{DefaultRoot: controlRoot})
 	if err != nil {
 		t.Fatalf("ResolveProjects: %v", err)
 	}
 	if got, want := projects.UIDs(), fixtureProjectUIDs(t); !reflect.DeepEqual(got, want) {
 		t.Fatalf("the Window default leaked into Project scope: got %v, want %v", got, want)
 	}
+
+	panes, err := resolver.ResolvePanes(Query{DefaultRoot: controlRoot})
+	if err != nil {
+		t.Fatalf("ResolvePanes: %v", err)
+	}
+	if got, want := panes.UIDs(), []string{"pan-home-shell", "pan-home-agent"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ControlSession Pane scope = %v, want %v", got, want)
+	}
+	agents, err := resolver.ResolveAgents(Query{DefaultRoot: controlRoot})
+	if err != nil {
+		t.Fatalf("ResolveAgents: %v", err)
+	}
+	if got, want := agents.UIDs(), []string{"agt-home"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ControlSession Agent scope = %v, want %v", got, want)
+	}
+}
+
+func registryWithControlReadRoot(t *testing.T) metadata.Registry {
+	t.Helper()
+	registry := standardRegistry(t)
+	owner := func(kind metadata.Kind, uid string) *metadata.OwnerRef {
+		return &metadata.OwnerRef{Kind: kind, UID: uid}
+	}
+	registry.ControlSessions = append(registry.ControlSessions, metadata.ControlSession{
+		APIVersion: metadata.APIVersion,
+		Kind:       metadata.KindControlSession,
+		Metadata:   metadata.ObjectMeta{UID: "ctl-home", Name: "home", DisplayName: "Home", CreatedAt: fixtureClock},
+		Spec:       metadata.ControlSessionSpec{Session: "home"},
+	})
+	registry.Windows = append(registry.Windows, metadata.Window{
+		APIVersion: metadata.APIVersion,
+		Kind:       metadata.KindWindow,
+		Metadata:   metadata.ObjectMeta{UID: "win-home", Name: "home", OwnerRef: owner(metadata.KindControlSession, "ctl-home"), CreatedAt: fixtureClock},
+		Spec:       metadata.WindowSpec{PrimaryPaneRef: "pan-home-shell"},
+	})
+	registry.Panes = append(registry.Panes,
+		metadata.Pane{
+			APIVersion: metadata.APIVersion,
+			Kind:       metadata.KindPane,
+			Metadata:   metadata.ObjectMeta{UID: "pan-home-shell", Name: "shell", OwnerRef: owner(metadata.KindWindow, "win-home"), CreatedAt: fixtureClock},
+			Spec:       metadata.PaneSpec{Role: metadata.PaneRoleShell},
+		},
+		metadata.Pane{
+			APIVersion: metadata.APIVersion,
+			Kind:       metadata.KindPane,
+			Metadata:   metadata.ObjectMeta{UID: "pan-home-agent", Name: "codex-pane", OwnerRef: owner(metadata.KindAgent, "agt-home"), CreatedAt: fixtureClock},
+			Spec:       metadata.PaneSpec{Role: metadata.PaneRoleAgent},
+		},
+	)
+	registry.Agents = append(registry.Agents, metadata.Agent{
+		APIVersion: metadata.APIVersion,
+		Kind:       metadata.KindAgent,
+		Metadata:   metadata.ObjectMeta{UID: "agt-home", Name: "codex", OwnerRef: owner(metadata.KindWindow, "win-home"), CreatedAt: fixtureClock},
+		Spec:       metadata.AgentSpec{Provider: "codex"},
+		Status: metadata.AgentStatus{
+			Phase: metadata.PhaseRunning, PaneRef: "pan-home-agent", LastTransitionAt: fixtureClock,
+		},
+	})
+	registry.NameReservations = append(registry.NameReservations,
+		metadata.NameReservation{Kind: metadata.KindControlSession, Name: "home", UID: "ctl-home"},
+		metadata.NameReservation{Scope: "ctl-home", Kind: metadata.KindWindow, Name: "home", UID: "win-home"},
+		metadata.NameReservation{Scope: "win-home", Kind: metadata.KindPane, Name: "shell", UID: "pan-home-shell"},
+		metadata.NameReservation{Scope: "win-home", Kind: metadata.KindAgent, Name: "codex", UID: "agt-home"},
+		metadata.NameReservation{Scope: "agt-home", Kind: metadata.KindPane, Name: "codex-pane", UID: "pan-home-agent"},
+	)
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("control read fixture is invalid: %v", err)
+	}
+	return registry
 }
 
 // TestResolveAgentsIsWindowScoped pins the Agent pipeline: Agent names are unique

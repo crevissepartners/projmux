@@ -178,22 +178,23 @@ type resourceQueryFlags struct {
 	// spelling restore the pre-containment code path exactly rather than
 	// approximate it.
 	wholeSetFlag string
-	// defaultProjectScope opts a plural registry read into the active-derived
-	// Project default. The active resolver supplies only the Project uid; the
-	// selector package's windowScope remains the single place that chooses
-	// explicit Project, derived default, or whole-registry scope.
-	defaultProjectScope bool
-	// allProjects is the explicit escape hatch from defaultProjectScope. It is
+	// defaultRootScope opts a plural registry read into the active-derived
+	// managed-root default. The active resolver supplies the exact Project or
+	// ControlSession kind and uid; the selector package's windowScope remains
+	// the single place that chooses explicit Project, derived root, or
+	// whole-registry scope.
+	defaultRootScope bool
+	// allProjects is the explicit escape hatch from defaultRootScope. It is
 	// registered only by get windows|panes|agents.
 	allProjects bool
 	// projectNamespaceScope opts a singular route into the active-derived
 	// Project namespace of an explicit reference; see active_project_scope.go.
 	//
-	// It is orthogonal to defaultProjectScope, which covers the plural reads:
+	// It is orthogonal to defaultRootScope, which covers the plural reads:
 	// this one fires only when the invocation *did* carry a selector, that one
-	// only on a list route. Both hand the same DefaultProject to the same
-	// windowScope seam, so the search universe of `describe window zsh` and of
-	// `get windows` is one rule with one implementation.
+	// only on a list route. Both hand an invocation default to the same
+	// windowScope seam; the singular namespace remains Project-only while the
+	// plural default accepts either managed root kind.
 	projectNamespaceScope bool
 	// scopes records the scope-flag spellings register actually installed, which
 	// differ per kind: a Window route has no --pane, an Agent route has neither
@@ -384,8 +385,8 @@ func (f *resourceQueryFlags) resolveQuery(registry coremetadata.Registry, query 
 // target first. The declared cardinality is untouched by that: the fallback
 // contributes exactly one uid occurrence and the same Enforce call still decides
 // whether the cell is satisfied. A plural read never receives an implicit
-// target occurrence; its optional defaultProjectScope narrows only the enclosing
-// Project universe and keeps the 0..N inventory meaning inside that scope.
+// target occurrence; its optional defaultRootScope narrows only the enclosing
+// managed-root universe and keeps the 0..N inventory meaning inside that scope.
 //
 // A selector that *was* given takes the other branch: an optional
 // projectNamespaceScope narrows the same enclosing Project universe around the
@@ -404,14 +405,14 @@ func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry cor
 	if err != nil {
 		return selector.Resolution{}, err
 	}
-	if f.defaultProjectScope {
-		if !f.allProjects && query.Project == nil {
-			ref, resolved, err := activeTargetRef(f.active, coremetadata.KindProject, registry)
+	if f.defaultRootScope {
+		if !f.allProjects && query.Project == nil && !queryHasUIDSelector(query) {
+			root, resolved, err := activeRootScope(f.active, registry)
 			if err != nil {
 				return selector.Resolution{}, err
 			}
 			if resolved {
-				query.DefaultProject = &ref
+				query.DefaultRoot = &root
 			}
 		}
 	}
@@ -433,7 +434,7 @@ func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry cor
 			return selector.Resolution{}, err
 		}
 		if resolved {
-			query.DefaultProject = &ref
+			query.DefaultRoot = &selector.RootScope{Kind: coremetadata.KindProject, UID: ref.UID}
 		}
 	}
 	resolution, err := f.resolveQuery(registry, query)
@@ -445,6 +446,25 @@ func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry cor
 		return selector.Resolution{}, err
 	}
 	return resolution, nil
+}
+
+// queryHasUIDSelector reports whether an operator supplied an opaque uid on
+// any scope occurrence this route parsed. Uids are registry-global authority:
+// unlike names, they never need an active root to disambiguate, so consulting
+// the invocation default would both narrow their meaning and make a foreign
+// tmux context capable of refusing an otherwise exact selector.
+func queryHasUIDSelector(query selector.Query) bool {
+	if query.Project != nil && query.Project.IsUID() {
+		return true
+	}
+	for _, refs := range [][]selector.Ref{query.Windows, query.Panes, query.Agents} {
+		for _, ref := range refs {
+			if ref.IsUID() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // emptySelectorRefusal is the containment refusal of a route that declared a

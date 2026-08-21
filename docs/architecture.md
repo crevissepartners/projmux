@@ -1643,32 +1643,42 @@ Selector and the implicit active target:
   `rebind project`. Any reference, scope flag, or label keeps picking the target
   itself; the destructive routes are unaffected. `create` reads the same seam
   under its own rule, described below.
-- Project is the namespace-like default scope of both the plural registry reads
-  `get windows|panes|agents` and an **explicit singular reference** on
-  `describe window|pane|agent` and `rename window|pane`. When `--project` is
-  absent inside tmux, the active Window uid mirror and its registry owner chain
-  derive a Project on every invocation. This narrows the Window universe only;
-  it never chooses one Window, Pane, or Agent for the operator, so a same-named
-  pair inside the one Project stays the ordinary bounded exact-one ambiguity and
-  a `uid:` reference outside the scope is a no-match rather than a cross-Project
-  hit. `get projects`, `describe|rename project`, `delete`, `rebind`,
-  `agent resume`, and `rename agent` are outside that scope, and notifications
-  and snapshots belong to separate stores, so all of them remain global.
+- The plural registry reads `get windows|panes|agents` use the active Window's
+  exact Registry owner as their default managed root. A Project-owned Window
+  exposes only that Project's descendants; a ControlSession-owned Window (the
+  Home control surface) exposes only that ControlSession's descendants. Name
+  and label selectors continue to filter inside that default root. An explicit
+  `uid:` selector is already opaque Registry-global authority, so it bypasses
+  active-root observation and narrowing, including from a foreign tmux Pane.
+  An in-tmux Window with no exact existing Project or ControlSession owner is a
+  usage refusal with zero stdout only when no explicit Project, whole-set, or
+  uid authority bypasses the default; it never silently falls back.
+- An **explicit singular reference** on `describe window|pane|agent` and
+  `rename window|pane` remains Project-namespaced. When `--project` is absent
+  inside a managed Project, the active Window uid mirror and its registry owner
+  chain derive the Project. This narrows the Window universe only; it never
+  chooses one Window, Pane, or Agent for the operator, so a same-named pair
+  inside the one Project stays the ordinary bounded exact-one ambiguity and a
+  `uid:` reference outside the scope is a no-match rather than a cross-Project
+  hit. Phase 13 did not extend this singular namespace to ControlSession.
+  `get projects`, `describe|rename project`, `delete`, `rebind`, `agent resume`,
+  and `rename agent` are outside that scope, and notifications and snapshots
+  belong to separate stores, so all of them remain global.
 - `--all-projects` is the explicit registry-wide escape for those three reads.
   It is deliberately different from destructive `delete --all`, whose existing
   whole-registry compatibility meaning is unchanged. A bare `--all` is not a
   read flag. Explicit `--project` keeps its prior result and cannot be combined
   with `--all-projects`.
-- Outside tmux, an omitted Project scope keeps the historical whole-registry
+- Outside tmux, an omitted root scope keeps the historical whole-registry
   inventory and its ambiguity, for a plural read and for a reference alike.
-  Inside tmux, a missing Window binding or broken Project owner chain is a usage
-  refusal with zero stdout, never a silent global fallback. The selector
+  Inside tmux, a missing Window binding or broken managed-root owner chain is a
+  usage refusal with zero stdout, never a silent global fallback. The selector
   engine's `windowScope` is the single choice point for explicit Project,
-  active-derived default, or global scope, shared by Window, Pane, and Agent
-  resolution; the plural default and the reference namespace fill the same
-  `Query.DefaultProject` and differ only in which invocations opt in -- an empty
-  selector for the first, a non-empty one for the second, which is why the two
-  can never blend an implicit target into an explicit scope.
+  active-derived Project/ControlSession root, or global scope, shared by Window,
+  Pane, and Agent resolution. The plural default and the Project-only singular
+  namespace both fill `Query.DefaultRoot`; only the former can carry a
+  ControlSession kind. The default is consulted only after ruling out explicit
+  `--project`, `--all-projects`/`-A`, and any applicable `uid:` occurrence.
 - There is **no sentinel value token**. `current` and `active` pass
   `ValidateName`, so `--pane current` would shadow a resource that legitimately
   carries that name. Omission is the only spelling. If an explicit one is ever
@@ -1681,8 +1691,9 @@ Selector and the implicit active target:
   select a wrong target.
 - Only two options are read: `@projmux_pane_uid` on the active pane and
   `@projmux_window_uid` on its window (window-scoped options resolve through a
-  pane target). Every ancestor above them comes from `ownerRef` — the Project is
-  the owner of the active Window, the Agent is the owner of the active Pane.
+  pane target). Every ancestor above them comes from `ownerRef` — the Project or
+  ControlSession is the owner of the active Window, and the Agent is the owner
+  of the active Pane.
   The session-scoped `@projmux_project_uid` is **not** consulted: it is
   measurably empty on live sessions, so trusting it would refuse targets the
   owner chain resolves.
