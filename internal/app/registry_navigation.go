@@ -117,6 +117,11 @@ const (
 	navActionRuntime      = "__projmux_nav_runtime__"
 )
 
+type nestedRuntimeCommand interface {
+	rawArgvCommand
+	nestedNativeArgvCommand
+}
+
 // registryNavigationCommand renders the Registry hierarchy of one Project.
 //
 // It is entered from a primary picker and it lists what the Registry says
@@ -136,7 +141,7 @@ type registryNavigationCommand struct {
 	focus   rawArgvCommand
 	attach  rawArgvCommand
 	agent   rawArgvCommand
-	runtime rawArgvCommand
+	runtime nestedRuntimeCommand
 }
 
 func newRegistryNavigationCommand(runner tmuxCommandRunner) *registryNavigationCommand {
@@ -293,7 +298,7 @@ func (c *registryNavigationCommand) runRuntime(stdout, stderr io.Writer) error {
 	if c.runtime == nil {
 		return errors.New("registry navigation: the runtime diagnostics handler is not configured")
 	}
-	return c.runtime.Run([]string{"diagnostics"}, stdout, stderr)
+	return c.runtime.RunNested([]string{"diagnostics"}, stdout, stderr)
 }
 
 func (c *registryNavigationCommand) insideTmux() bool {

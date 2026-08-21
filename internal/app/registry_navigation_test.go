@@ -205,6 +205,11 @@ func (c *navigationArgvRecorder) Run(args []string, _, _ io.Writer) error {
 	return nil
 }
 
+func (c *navigationArgvRecorder) RunNested(args []string, _, _ io.Writer) error {
+	c.calls = append(c.calls, slices.Clone(args))
+	return nil
+}
+
 // scriptedNavigationPicker returns a picker runner that answers each successive
 // Run with the next scripted value and records the options it was given.
 type scriptedNavigationPicker struct {

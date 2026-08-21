@@ -5065,19 +5065,19 @@ echo ">> Runtime diagnostics e2e passed: socket=$rtd_socket path=$rtd_socket_pat
 # its own -L name, the real #{socket_path} is queried and proven to sit inside the
 # smoke root, and only that exact socket is killed.
 # ---------------------------------------------------------------------------
-nav_root="$PROJMUX_SMOKE_WORKDIR/registry-navigation-e2e"
-nav_socket="projmux-registry-nav-$$-$RANDOM"
-nav_other_socket="projmux-registry-nav-other-$$-$RANDOM"
+nav_root="$PROJMUX_SMOKE_WORKDIR/n"
+nav_socket="n-$$"
+nav_other_socket="o-$$"
 nav_session="nav-alpha"
 nav_beta_session="nav-beta"
 nav_driver="home"
-mkdir -p "$nav_root/tmux" "$nav_root/state" "$nav_root/config" "$nav_root/home" \
+mkdir -p "$nav_root/t" "$nav_root/state" "$nav_root/config" "$nav_root/home" \
   "$nav_root/runtime" "$nav_root/nav/alpha" "$nav_root/nav/beta"
 chmod 0700 "$nav_root/runtime"
 nav_real_tmux="$(command -v tmux)"
 
-nav_tmux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$nav_root/tmux" "$nav_real_tmux" -L "$nav_socket" "$@"; }
-nav_other_tmux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$nav_root/tmux" "$nav_real_tmux" -L "$nav_other_socket" "$@"; }
+nav_tmux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$nav_root/t" "$nav_real_tmux" -L "$nav_socket" "$@"; }
+nav_other_tmux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$nav_root/t" "$nav_real_tmux" -L "$nav_other_socket" "$@"; }
 nav_pmx() {
   env -u TMUX -u TMUX_PANE \
     HOME="$nav_root/home" \
@@ -5085,7 +5085,7 @@ nav_pmx() {
     XDG_STATE_HOME="$nav_root/state" \
     XDG_RUNTIME_DIR="$nav_root/runtime" \
     PROJMUX_MANAGED_ROOTS="$nav_root/nav" \
-    TMUX_TMPDIR="$nav_root/tmux" \
+    TMUX_TMPDIR="$nav_root/t" \
     SHELL=/bin/sh \
     "$bin" "$@"
 }
@@ -5120,7 +5120,7 @@ done
 nav_cleanup() {
   local socket actual
   for socket in "$nav_socket" "$nav_other_socket"; do
-    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$nav_root/tmux" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$nav_root/t" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
     if [[ -z "$actual" ]]; then
       continue
     fi
@@ -5186,7 +5186,7 @@ nav_client_input="$nav_root/driver-client.in"
 mkfifo "$nav_client_input"
 exec 8<>"$nav_client_input"
 TERM=xterm-256color script -qefc \
-  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$nav_root/tmux' tmux -L '$nav_socket' attach-session -t '$nav_driver'" \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$nav_root/t' tmux -L '$nav_socket' attach-session -t '$nav_driver'" \
   "$nav_client_log" <"$nav_client_input" >/dev/null 2>&1 &
 nav_client_pid=$!
 
@@ -5205,18 +5205,20 @@ nav_wait_for() {
 }
 
 nav_wait_for "attached registry navigation client" sh -c \
-  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$nav_root/tmux' tmux -L '$nav_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$nav_root/t' tmux -L '$nav_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
 nav_client="$(nav_tmux list-clients -F '#{client_name}' | head -n 1)"
 nav_client_is_on_driver() {
   [[ "$(nav_tmux display-message -p -c "$nav_client" '#{session_name}' 2>/dev/null || true)" == "$nav_driver" ]]
 }
 # One 80x24 popup run of the Projects sidebar, rendered through the exact
-# inherited socket the client is attached to.
+# inherited socket the client is attached to. This isolated case uses a short
+# root and socket name so the complete path remains observable in the nested
+# Runtime header without changing the viewport assumptions below.
 nav_open_projects() {
   local offset_var="$1"
   printf -v "$offset_var" '%s' "$(stat -c %s "$nav_client_log")"
   nav_tmux display-popup -c "$nav_client" -T "Projects E2E" -w 80 -h 24 -E \
-    "env -u TMUX_PANE HOME='$nav_root/home' XDG_CONFIG_HOME='$nav_root/config' XDG_STATE_HOME='$nav_root/state' XDG_RUNTIME_DIR='$nav_root/runtime' PROJMUX_MANAGED_ROOTS='$nav_root/nav' TMUX_TMPDIR='$nav_root/tmux' TMUX='$nav_socket_path,$nav_socket_pid,0' SHELL=/bin/sh '$bin' switch --ui=sidebar" &
+    "env -u TMUX_PANE HOME='$nav_root/home' XDG_CONFIG_HOME='$nav_root/config' XDG_STATE_HOME='$nav_root/state' XDG_RUNTIME_DIR='$nav_root/runtime' PROJMUX_MANAGED_ROOTS='$nav_root/nav' TMUX_TMPDIR='$nav_root/t' TMUX='$nav_socket_path,$nav_socket_pid,0' SHELL=/bin/sh '$bin' switch --ui=sidebar" &
   nav_popup_pid=$!
 }
 
@@ -5240,14 +5242,41 @@ nav_wait_for "Runtime link control tally" nav_runtime_filter_has "control 1"
 nav_wait_for "Runtime link ephemeral tally" nav_runtime_filter_has "ephemeral 1"
 nav_wait_for "Runtime link recoverable tally" nav_runtime_filter_has "recoverable 1"
 
-nav_runtime_clear_offset="$(stat -c %s "$nav_client_log")"
-printf '\025' >&8
-nav_runtime_clear_has_home() {
-  tail -c +$((nav_runtime_clear_offset + 1)) "$nav_client_log" | grep -aF "home" >/dev/null &&
-    tail -c +$((nav_runtime_clear_offset + 1)) "$nav_client_log" | grep -aF "~" >/dev/null
+# Entering Runtime is an in-process native-surface transition: switch owns the
+# package-global theme section and diagnostics inherits it. This is the exact
+# path that used to erase the outer popup and deadlock while trying to reacquire
+# the same non-reentrant mutex.
+nav_snapshot >"$nav_root/runtime-transition.before"
+cp "$nav_registry" "$nav_root/runtime-transition-registry.before"
+nav_runtime_enter_offset="$(stat -c %s "$nav_client_log")"
+printf '\r' >&8
+nav_runtime_enter_has() {
+  tail -c +$((nav_runtime_enter_offset + 1)) "$nav_client_log" | grep -aF "$1" >/dev/null
 }
-nav_wait_for "Home root after clearing the Runtime filter" nav_runtime_clear_has_home
-nav_wait_for "Runtime filter clear return to the driver session" nav_client_is_on_driver
+nav_wait_for "nested Runtime diagnostics title" nav_runtime_enter_has "Runtime diagnostics"
+nav_wait_for "nested Runtime diagnostics exact host" nav_runtime_enter_has "host app-owned"
+nav_wait_for "nested Runtime diagnostics exact transport" \
+  nav_runtime_enter_has "transport tmux -S $nav_socket_path"
+nav_wait_for "nested Runtime diagnostics footer" nav_runtime_enter_has "Enter: actions"
+
+# Escape closes diagnostics and therefore the outer switch invocation. Prove
+# completion with the exact popup process and the attached client's unchanged
+# target, then compare both the exact server and sibling before reopening the
+# Projects surface for the remaining navigation assertions.
+printf '\033' >&8
+nav_wait_for "nested Runtime diagnostics popup exit" sh -c "! kill -0 '$nav_popup_pid' 2>/dev/null"
+wait "$nav_popup_pid" || true
+nav_wait_for "nested Runtime diagnostics return to driver" nav_client_is_on_driver
+nav_snapshot >"$nav_root/runtime-transition.after"
+cmp "$nav_root/runtime-transition.before" "$nav_root/runtime-transition.after"
+cmp "$nav_root/runtime-transition-registry.before" "$nav_registry"
+if [[ "$(nav_other_tmux show-options -gqv @projmux_nav_sentinel):$(nav_other_tmux list-windows -a -F '#{session_name}:#{window_name}')" != "$nav_other_before" ]]; then
+  echo "switch -> Runtime touched the sibling socket" >&2
+  exit 1
+fi
+
+nav_open_projects nav_popup_offset
+nav_wait_for "Projects sidebar after nested Runtime exit" nav_screen_has "Projects"
 
 # The managed row is reached through the list's own filter rather than by
 # assuming a viewport. An 80x24 popup shows three cards at a time, so a row's

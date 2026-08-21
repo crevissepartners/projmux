@@ -70,6 +70,17 @@ func newRuntimeDiagnosticsCommand(runner tmuxCommandRunner) *runtimeDiagnosticsC
 
 // Run opens the diagnostics picker for one exact server.
 func (c *runtimeDiagnosticsCommand) Run(args []string, stdout, stderr io.Writer) error {
+	return c.run(args, stdout, stderr, nativeUIThemeOwned)
+}
+
+// RunNested opens diagnostics inside an outer native surface. The caller owns
+// the package-global theme apply/render/restore section, so this child must not
+// reacquire the non-reentrant nativeUIThemeMu.
+func (c *runtimeDiagnosticsCommand) RunNested(args []string, stdout, stderr io.Writer) error {
+	return c.run(args, stdout, stderr, nativeUIThemeInherited)
+}
+
+func (c *runtimeDiagnosticsCommand) run(args []string, stdout, stderr io.Writer, themeOwnership nativeUIThemeOwnership) error {
 	fs := flag.NewFlagSet("runtime diagnostics", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { printRuntimeDiagnosticsUsage(stderr) }
@@ -99,7 +110,7 @@ func (c *runtimeDiagnosticsCommand) Run(args []string, stdout, stderr io.Writer)
 		return errors.New("native picker is not configured")
 	}
 
-	defer applyNativeUIThemeFromConfig(c.homeDir, c.lookupEnv, "")()
+	defer applyNativeUIThemeForOwnership(themeOwnership, c.homeDir, c.lookupEnv, "")()
 	locale := appLocale(c.homeDir, c.lookupEnv)
 
 	transport, err := c.reader.transport(request)

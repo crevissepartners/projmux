@@ -31,6 +31,21 @@ import (
 // parallel Run; the one repaint test mutates them deliberately under this lock.
 var nativeUIThemeMu sync.Mutex
 
+// nativeUIThemeOwnership states whether a native surface is the outer command
+// boundary that owns the package-global apply/render/restore section, or an
+// in-process child rendered while that section is already active.
+//
+// sync.Mutex is deliberately not made reentrant. Nested surfaces must inherit
+// their caller's theme ownership so the same process acquires this lock once,
+// while standalone command entry points continue to serialize all global role
+// mutations.
+type nativeUIThemeOwnership uint8
+
+const (
+	nativeUIThemeOwned nativeUIThemeOwnership = iota
+	nativeUIThemeInherited
+)
+
 // appAIBadge* are the AI badge role escapes shared by recent_window.go (and
 // kept congruent with the switch renderer). They default to fallback literals.
 var (
@@ -139,6 +154,16 @@ func applyNativeUIThemeFromConfig(homeDir func() (string, error), lookupEnv func
 		resetNativeUIThemeLocked()
 		nativeUIThemeMu.Unlock()
 	}
+}
+
+// applyNativeUIThemeForOwnership applies the theme only at the outer command
+// boundary. An in-process child inherits the already-applied package globals
+// and therefore neither locks nor restores them.
+func applyNativeUIThemeForOwnership(ownership nativeUIThemeOwnership, homeDir func() (string, error), lookupEnv func(string) string, projectPath string) (restore func()) {
+	if ownership == nativeUIThemeInherited {
+		return func() {}
+	}
+	return applyNativeUIThemeFromConfig(homeDir, lookupEnv, projectPath)
 }
 
 func applyNativeUIThemeLocked(effective theme.EffectiveTheme) {

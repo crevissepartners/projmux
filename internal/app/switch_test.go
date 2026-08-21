@@ -3342,6 +3342,38 @@ func TestSwitchCommandSettingsSubcommandRunsSettingsMenu(t *testing.T) {
 	}
 }
 
+// TestSwitchSettingsSelectionStaysInsideOuterNativeThemeOwner pins the Settings
+// audit: unlike Runtime, this menu is rendered directly by switchCommand and
+// therefore does not enter a second command-level theme boundary.
+func TestSwitchSettingsSelectionStaysInsideOuterNativeThemeOwner(t *testing.T) {
+	t.Parallel()
+
+	runner, native := scriptedPicker(t, []pickerStep{
+		{reply: intpickercompat.Result{Value: switchSettingsSentinel}},
+		{observe: func(options intpickercompat.Options) {
+			if got, want := options.UI, "settings"; got != want {
+				t.Fatalf("nested picker UI = %q, want %q", got, want)
+			}
+		}},
+	})
+	cmd := &switchCommand{
+		discover:     func(candidates.Inputs) ([]string, error) { return []string{"/tmp/app"}, nil },
+		pinStore:     func() (switchPinStore, error) { return newStubPinStore(), nil },
+		runner:       runner,
+		nativePicker: native,
+		sessions:     &capturingSwitchSessionExecutor{},
+		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
+		validate:     func(string) error { return nil },
+		homeDir:      func() (string, error) { return "/home/tester", nil },
+		workingDir:   func() (string, error) { return "/tmp", nil },
+		lookupEnv:    func(string) string { return "" },
+	}
+
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func TestSwitchCommandSettingsMenuAddCurrentPin(t *testing.T) {
 	t.Parallel()
 
