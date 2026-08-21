@@ -13,6 +13,21 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
+func TestSupervisedProviderExportsExactActivationEvidenceToHooks(t *testing.T) {
+	t.Parallel()
+	spec := superviseSpec{PaneUID: "pane-exact", Generation: "gen-exact"}
+	outcome, err := runSupervisedChildWithActivation([]string{
+		"sh", "-c",
+		`test "$` + internalActivationPaneUIDEnv + `" = pane-exact && test "$` + internalActivationGenerationEnv + `" = gen-exact`,
+	}, "", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.ExitCode != 0 || outcome.Signal != "" {
+		t.Fatalf("activation evidence child outcome = %+v", outcome)
+	}
+}
+
 func TestRunSupervisedChildRetainsRelayedHUPEvidenceWhenChildExits129(t *testing.T) {
 	shell, err := exec.LookPath("sh")
 	if err != nil {

@@ -37,9 +37,18 @@ var forwardedSupervisorSignals = []os.Signal{
 // so it is interactive in exactly the way it was before, and it is placed in
 // its own process group that is made the terminal's foreground group, so job
 // control works and `#{pane_current_command}` keeps naming the child rather
-// than the supervisor. Nothing rewrites argv, cwd, or the environment.
+// than the supervisor. Nothing rewrites argv or cwd; the activation-aware
+// production entry point adds only the two private hook-evidence variables.
 func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
 	return runSupervisedChildWithSignalSource(argv, argv0, nil)
+}
+
+func runSupervisedChildWithActivation(argv []string, argv0 string, spec superviseSpec) (processOutcome, error) {
+	env := []string{
+		internalActivationPaneUIDEnv + "=" + spec.PaneUID,
+		internalActivationGenerationEnv + "=" + spec.Generation,
+	}
+	return runSupervisedChildWithEnvironment(argv, argv0, env, nil)
 }
 
 // runSupervisedChildWithSignalSource is the test seam for signals delivered to
@@ -47,6 +56,10 @@ func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
 // in production; tests can supply a private channel without signalling the Go
 // test process itself.
 func runSupervisedChildWithSignalSource(argv []string, argv0 string, suppliedSignals <-chan os.Signal) (processOutcome, error) {
+	return runSupervisedChildWithEnvironment(argv, argv0, nil, suppliedSignals)
+}
+
+func runSupervisedChildWithEnvironment(argv []string, argv0 string, environment []string, suppliedSignals <-chan os.Signal) (processOutcome, error) {
 	if len(argv) == 0 {
 		return processOutcome{}, errors.New("no command to supervise")
 	}
@@ -55,9 +68,9 @@ func runSupervisedChildWithSignalSource(argv []string, argv0 string, suppliedSig
 	// ioctl, and asking the kernel by doing the thing is both cheaper and more
 	// honest than a probe that could disagree with the real attempt. A failed
 	// start forks no surviving child: the runtime reaps it before returning.
-	cmd, err := startSupervisedChild(argv, argv0, true)
+	cmd, err := startSupervisedChild(argv, argv0, environment, true)
 	if err != nil {
-		cmd, err = startSupervisedChild(argv, argv0, false)
+		cmd, err = startSupervisedChild(argv, argv0, environment, false)
 	}
 	if err != nil {
 		return processOutcome{}, err
@@ -124,7 +137,7 @@ func runSupervisedChildWithSignalSource(argv []string, argv0 string, suppliedSig
 
 // startSupervisedChild builds and starts one child, optionally handing it the
 // terminal's foreground process group.
-func startSupervisedChild(argv []string, argv0 string, foreground bool) (*exec.Cmd, error) {
+func startSupervisedChild(argv []string, argv0 string, environment []string, foreground bool) (*exec.Cmd, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if argv0 != "" {
 		cmd.Args[0] = argv0
@@ -132,6 +145,9 @@ func startSupervisedChild(argv []string, argv0 string, foreground bool) (*exec.C
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if len(environment) > 0 {
+		cmd.Env = append(os.Environ(), environment...)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if foreground {
 		// Ctty is a descriptor number in the *child*, and the child's fd 0 is

@@ -11,6 +11,15 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
+// These process-private variables bind provider hooks to the materialization
+// that emitted them. They are intentionally not PROJMUX_* public hook API:
+// providers merely inherit them from the internal supervisor and hook ingest
+// consumes them as capability evidence.
+const (
+	internalActivationPaneUIDEnv    = "PMX_INTERNAL_ACTIVATION_PANE_UID"
+	internalActivationGenerationEnv = "PMX_INTERNAL_ACTIVATION_GENERATION"
+)
+
 // superviseSpec is the identity one supervised launch quotes back when its
 // child stops.
 //
@@ -45,14 +54,18 @@ type superviseCommand struct {
 	journal terminationJournal
 	// run executes the child and returns its reaped outcome. Production wires
 	// the platform implementation; tests replace it.
-	run  func(argv []string, argv0 string) (processOutcome, error)
-	now  func() time.Time
-	warn io.Writer
+	run func(argv []string, argv0 string) (processOutcome, error)
+	// runActivation is the production runner. The legacy-shaped run seam stays
+	// for focused tests; when present, this one exports exact generation
+	// evidence only to the supervised provider process and its hook children.
+	runActivation func(argv []string, argv0 string, spec superviseSpec) (processOutcome, error)
+	now           func() time.Time
+	warn          io.Writer
 }
 
 func newSuperviseCommand() *superviseCommand {
 	journal, _ := newTerminationJournal(nil, nil)
-	return &superviseCommand{store: newResourceStore(), journal: journal, run: runSupervisedChild, now: time.Now}
+	return &superviseCommand{store: newResourceStore(), journal: journal, run: runSupervisedChild, runActivation: runSupervisedChildWithActivation, now: time.Now}
 }
 
 // processOutcome is one reaped child's wait status.
@@ -116,11 +129,19 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if !spec.valid() {
 		return usageError("internal supervise requires --pane-uid and --generation")
 	}
-	if c.run == nil {
+	if c.run == nil && c.runActivation == nil {
 		return errors.New("internal supervise: no process supervisor is configured")
 	}
 
-	outcome, err := c.run(child, strings.TrimSpace(*argv0))
+	var (
+		outcome processOutcome
+		err     error
+	)
+	if c.runActivation != nil {
+		outcome, err = c.runActivation(child, strings.TrimSpace(*argv0), spec)
+	} else {
+		outcome, err = c.run(child, strings.TrimSpace(*argv0))
+	}
 	if err != nil {
 		// The child never started. That is a launch failure, not a
 		// termination: no process of this generation ever ran, so there is no

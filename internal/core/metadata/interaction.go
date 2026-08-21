@@ -104,8 +104,34 @@ func (m Mutator) SetAgentActivation(reg *Registry, agentUID string, state AgentA
 	if !ValidAgentActivationReason(reason) {
 		return Agent{}, inputErr(op, ErrInvalidPhase, "unsupported activation reason %q", reason)
 	}
+	// Activation is a refinement lattice, not a freely assignable status field.
+	// A timeout may make pending evidence unconfirmed, and an exact provider hook
+	// may later refine either pending or unconfirmed to acknowledged. Nothing may
+	// move acknowledged backwards: in particular, the timeout writer racing a
+	// provider hook must become a no-op instead of erasing stronger evidence.
+	current := agent.Status.Activation.State
+	if current == "" {
+		current = ActivationNotRequested
+	}
+	if !validAgentActivationTransition(current, state) {
+		return agent.Clone(), nil
+	}
 	now := m.clock()().UTC()
 	agent.Status.Activation = AgentActivation{State: state, ObservedAt: now, Source: source, Reason: reason}
 	reg.UpdatedAt = now
 	return agent.Clone(), nil
+}
+
+func validAgentActivationTransition(from, to AgentActivationState) bool {
+	if from == to {
+		return true
+	}
+	switch from {
+	case ActivationPending:
+		return to == ActivationUnconfirmed || to == ActivationAcknowledged
+	case ActivationUnconfirmed:
+		return to == ActivationAcknowledged
+	default:
+		return false
+	}
 }
