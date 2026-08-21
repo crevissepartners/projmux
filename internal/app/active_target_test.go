@@ -246,16 +246,16 @@ func TestPluralReadContextSelectorMatrix(t *testing.T) {
 				t.Run(context.name, func(t *testing.T) {
 					t.Parallel()
 
-					run := func(args ...string) (string, string, error, int) {
+					run := func(args ...string) (string, string, int, error) {
 						store := newFakeResourceStore(t)
 						addControlReadRoot(t, store)
 						active := context.active()
 						stdout, stderr, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active),
 							append([]string{kind.kind}, args...)...)
-						return stdout, stderr, err, active.calls
+						return stdout, stderr, active.calls, err
 					}
 
-					stdout, stderr, err, calls := run("-o", "uid")
+					stdout, stderr, calls, err := run("-o", "uid")
 					switch context.name {
 					case "Project":
 						assertPluralReadMatrixResult(t, stdout, stderr, err, kind.projectDefault, calls, 1)
@@ -270,15 +270,15 @@ func TestPluralReadContextSelectorMatrix(t *testing.T) {
 						assertPluralReadMatrixResult(t, stdout, stderr, err, kind.wholeSet, calls, 1)
 					}
 
-					stdout, stderr, err, calls = run("--project", "beta", "-o", "uid")
+					stdout, stderr, calls, err = run("--project", "beta", "-o", "uid")
 					assertPluralReadMatrixResult(t, stdout, stderr, err, kind.explicitProject, calls, 0)
 
 					for _, spelling := range []string{"--all-projects", "-A"} {
-						stdout, stderr, err, calls = run(spelling, "-o", "uid")
+						stdout, stderr, calls, err = run(spelling, "-o", "uid")
 						assertPluralReadMatrixResult(t, stdout, stderr, err, kind.wholeSet, calls, 0)
 					}
 
-					stdout, stderr, err, calls = run(append(kind.uidArgs, "-o", "uid")...)
+					stdout, stderr, calls, err = run(append(kind.uidArgs, "-o", "uid")...)
 					assertPluralReadMatrixResult(t, stdout, stderr, err, kind.uidSet, calls, 0)
 				})
 			}
