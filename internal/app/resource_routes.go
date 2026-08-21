@@ -196,6 +196,12 @@ type resourceQueryFlags struct {
 	// windowScope seam; the singular namespace remains Project-only while the
 	// plural default accepts either managed root kind.
 	projectNamespaceScope bool
+	// managedRootNamespaceScope is the Phase 14 counterpart used by generic
+	// mutations. An explicit name/label reference inside tmux is narrowed to the
+	// exact Project or ControlSession that owns the active Window. It never adds
+	// a public ControlSession selector and never changes explicit --project or
+	// outside-tmux behavior.
+	managedRootNamespaceScope bool
 	// scopes records the scope-flag spellings register actually installed, which
 	// differ per kind: a Window route has no --pane, an Agent route has neither
 	// --pane nor an --agent. Refusal text is built from this rather than from a
@@ -435,6 +441,15 @@ func (f *resourceQueryFlags) resolve(verb selector.Verb, list bool, registry cor
 		}
 		if resolved {
 			query.DefaultRoot = &selector.RootScope{Kind: coremetadata.KindProject, UID: ref.UID}
+		}
+	}
+	if f.managedRootNamespaceScope && !f.selectorIsEmpty() && query.Project == nil {
+		root, resolved, err := activeManagedRootNamespaceScope(f.active, registry)
+		if err != nil {
+			return selector.Resolution{}, err
+		}
+		if resolved {
+			query.DefaultRoot = &root
 		}
 	}
 	resolution, err := f.resolveQuery(registry, query)

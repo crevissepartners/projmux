@@ -63,6 +63,35 @@ func TestWindowDeleteRuntimePreflightExactBindingAndSessionImpact(t *testing.T) 
 	}
 }
 
+func TestWindowDeleteRuntimePreservesControlSessionRootAuthority(t *testing.T) {
+	runtime, _, _ := newWindowRuntimeFixture(t,
+		liveInventoryRow("$3", "home", "@20", "", "win-home"))
+	store := newFakeResourceStore(t)
+	addControlReadRoot(t, store)
+	registry := store.registry
+
+	live, err := runtime.preflight(context.Background(), registry, deleteWindowRuntimePlan("win-home"))
+	if err != nil {
+		t.Fatalf("control-owned Window preflight: %v", err)
+	}
+	if len(live.Targets) != 1 {
+		t.Fatalf("control-owned live plan = %#v", live)
+	}
+	target := live.Targets[0]
+	if target.RootKind != coremetadata.KindControlSession || target.RootUID != "ctl-home" ||
+		target.SessionName != "home" || !target.EndsSession {
+		t.Fatalf("control-owned target lost root authority: %#v", target)
+	}
+
+	runtime, _, _ = newWindowRuntimeFixture(t,
+		liveInventoryRow("$3", "home", "@20", "prj-alpha", "win-home"))
+	_, err = runtime.preflight(context.Background(), registry, deleteWindowRuntimePlan("win-home"))
+	if err == nil || !strings.Contains(err.Error(), "ControlSession owner scope") ||
+		!strings.Contains(err.Error(), "conflicting Project uid") || strings.Contains(err.Error(), "foreign Project") {
+		t.Fatalf("control mirror conflict diagnostic = %v", err)
+	}
+}
+
 func TestWindowDeleteRuntimePreflightAllowsExplicitOfflineWindow(t *testing.T) {
 	runtime, runner, registry := newWindowRuntimeFixture(t,
 		liveInventoryRow("$1", "alpha", "@11", "prj-alpha", "win-alpha-review")+
@@ -200,7 +229,7 @@ func TestWindowDeleteRuntimeAllowsAbsentOptionalProjectMirror(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preflight with absent optional Project mirror error = %v", err)
 	}
-	if len(live.Targets) != 1 || live.Targets[0].ProjectUID != "prj-alpha" {
+	if len(live.Targets) != 1 || live.Targets[0].RootKind != coremetadata.KindProject || live.Targets[0].RootUID != "prj-alpha" {
 		t.Fatalf("live plan = %#v", live)
 	}
 }

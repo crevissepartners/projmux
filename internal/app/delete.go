@@ -306,10 +306,10 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 		prompt := fmt.Sprintf("%s will remove %d %s and %d descendant resources",
 			spelling, len(plan.Targets), strings.ToLower(string(kind))+plural(len(plan.Targets)), plan.Cascades())
 		if kind == coremetadata.KindWindow {
-			prompt += fmt.Sprintf(", kill %d exact live tmux Window%s, and end %d Project session%s",
+			prompt += fmt.Sprintf(", kill %d exact live tmux Window%s, and end %d managed root session%s",
 				len(livePlan.Targets), plural(len(livePlan.Targets)), livePlan.endsSessions(), plural(livePlan.endsSessions()))
 		} else {
-			prompt += fmt.Sprintf(", kill %d exact live tmux Pane%s, end %d Window%s, and end %d Project session%s",
+			prompt += fmt.Sprintf(", kill %d exact live tmux Pane%s, end %d Window%s, and end %d managed root session%s",
 				len(panePlan.Targets), plural(len(panePlan.Targets)), panePlan.endsWindows(), plural(panePlan.endsWindows()),
 				panePlan.endsSessions(), plural(panePlan.endsSessions()))
 		}
@@ -582,8 +582,8 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 				} else if selfQueued {
 					impact = "will end after this result is flushed"
 				}
-				fmt.Fprintf(&b, "  live cascade %s Project session %s because its last live Window is deleted\n",
-					impact, liveTarget.SessionName)
+				fmt.Fprintf(&b, "  live cascade %s %s session %s because its last live Window is deleted\n",
+					impact, liveTarget.RootKind, liveTarget.SessionName)
 			}
 		}
 		if plan.Kind == coremetadata.KindWindow && !windowLive {
@@ -622,8 +622,8 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 				} else if selfQueued {
 					impact = "will end after this result is flushed"
 				}
-				fmt.Fprintf(&b, "  live cascade %s Project session %s because its last live Window is deleted\n",
-					impact, liveTarget.SessionName)
+				fmt.Fprintf(&b, "  live cascade %s %s session %s because its last live Window is deleted\n",
+					impact, liveTarget.RootKind, liveTarget.SessionName)
 			}
 		}
 	}

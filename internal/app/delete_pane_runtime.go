@@ -38,7 +38,8 @@ type paneLiveDeleteTarget struct {
 	WindowID    string
 	SessionID   string
 	SessionName string
-	ProjectUID  string
+	RootKind    coremetadata.Kind
+	RootUID     string
 	EndsWindow  bool
 	EndsSession bool
 	Self        bool
@@ -51,9 +52,9 @@ type paneLiveDeletePlan struct {
 func (p paneLiveDeletePlan) signature() string {
 	var b strings.Builder
 	for _, target := range p.Targets {
-		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s,%s,%t,%t,%t;", target.ResourceUID,
+		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%t,%t,%t;", target.ResourceUID,
 			target.PaneUID, target.PaneID, target.WindowUID, target.WindowID,
-			target.SessionID, target.SessionName, target.ProjectUID,
+			target.SessionID, target.SessionName, target.RootKind, target.RootUID,
 			target.EndsWindow, target.EndsSession, target.Self)
 	}
 	return b.String()
@@ -188,32 +189,31 @@ func plannedPaneDeletes(plan deletePlan) []plannedPaneDelete {
 	return out
 }
 
-func paneRegistryAncestry(registry coremetadata.Registry, paneUID string) (coremetadata.Pane, coremetadata.Window, coremetadata.Project, error) {
+func paneRegistryAncestry(registry coremetadata.Registry, paneUID string) (coremetadata.Pane, coremetadata.Window, deleteRootOwner, error) {
 	pane, ok := registry.Pane(paneUID)
 	if !ok {
-		return coremetadata.Pane{}, coremetadata.Window{}, coremetadata.Project{},
+		return coremetadata.Pane{}, coremetadata.Window{}, deleteRootOwner{},
 			fmt.Errorf("registry Pane uid %q disappeared during live preflight", paneUID)
 	}
 	windowUID := pane.Metadata.OwnerUID()
 	if pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
 		agent, ok := registry.Agent(windowUID)
 		if !ok {
-			return coremetadata.Pane{}, coremetadata.Window{}, coremetadata.Project{},
+			return coremetadata.Pane{}, coremetadata.Window{}, deleteRootOwner{},
 				fmt.Errorf("registry Pane uid %q has no owning Agent %q", paneUID, windowUID)
 		}
 		windowUID = agent.Metadata.OwnerUID()
 	}
 	window, ok := registry.Window(windowUID)
 	if !ok {
-		return coremetadata.Pane{}, coremetadata.Window{}, coremetadata.Project{},
+		return coremetadata.Pane{}, coremetadata.Window{}, deleteRootOwner{},
 			fmt.Errorf("registry Pane uid %q has no owning Window %q", paneUID, windowUID)
 	}
-	project, ok := registry.Project(window.Metadata.OwnerUID())
-	if !ok {
-		return coremetadata.Pane{}, coremetadata.Window{}, coremetadata.Project{},
-			fmt.Errorf("registry Window uid %q has no owning Project %q", windowUID, window.Metadata.OwnerUID())
+	root, err := deleteRootForWindow(registry, *window)
+	if err != nil {
+		return coremetadata.Pane{}, coremetadata.Window{}, deleteRootOwner{}, err
 	}
-	return *pane, *window, *project, nil
+	return *pane, *window, root, nil
 }
 
 func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremetadata.Registry, plan deletePlan) (paneLiveDeletePlan, error) {
@@ -260,7 +260,7 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 
 	live := paneLiveDeletePlan{}
 	for _, target := range planned {
-		_, window, project, ancestryErr := paneRegistryAncestry(registry, target.paneUID)
+		_, window, root, ancestryErr := paneRegistryAncestry(registry, target.paneUID)
 		if ancestryErr != nil {
 			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: %w", strings.ToLower(string(plan.Kind)), ancestryErr)
 		}
@@ -286,17 +286,9 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: registry Window uid %q has %d live tmux Window mirrors on -L %s while resolving Pane uid %q; exact owner is ambiguous and nothing was changed",
 				strings.ToLower(string(plan.Kind)), window.Metadata.UID, mirrors, r.target.value, target.paneUID)
 		}
-		if row.projectUID != "" && row.projectUID != project.Metadata.UID {
-			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: live tmux Pane %s mirrors registry uid %q under foreign Project uid %q, want %q; nothing was changed",
-				strings.ToLower(string(plan.Kind)), row.paneID, target.paneUID, row.projectUID, project.Metadata.UID)
-		}
-		if project.Status.Session == nil || strings.TrimSpace(project.Status.Session.Name) == "" {
-			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: owning Project uid %q has no registry session projection for live tmux Pane %s; nothing was changed",
-				strings.ToLower(string(plan.Kind)), project.Metadata.UID, row.paneID)
-		}
-		if want := strings.TrimSpace(project.Status.Session.Name); row.sessionName != want {
-			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: live tmux Pane %s is in stale session %q, registry Project uid %q projects session %q; nothing was changed",
-				strings.ToLower(string(plan.Kind)), row.paneID, row.sessionName, project.Metadata.UID, want)
+		spelling := "delete " + strings.ToLower(string(plan.Kind))
+		if err := root.validateLiveSession(spelling, "Pane", row.paneID, target.paneUID, row.projectUID, row.sessionName); err != nil {
+			return paneLiveDeletePlan{}, err
 		}
 		if plan.Implicit && row.paneID != currentPaneID {
 			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: implicit active registry uid %q mirrors live Pane %s but the exact caller is in %s; nothing was changed",
@@ -305,7 +297,7 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 		live.Targets = append(live.Targets, paneLiveDeleteTarget{
 			ResourceUID: target.resourceUID, PaneUID: target.paneUID, PaneID: row.paneID,
 			WindowUID: window.Metadata.UID, WindowID: row.windowID,
-			SessionID: row.sessionID, SessionName: row.sessionName, ProjectUID: project.Metadata.UID,
+			SessionID: row.sessionID, SessionName: row.sessionName, RootKind: root.Kind, RootUID: root.UID,
 			Self: row.paneID == currentPaneID && currentSocket != "",
 		})
 	}

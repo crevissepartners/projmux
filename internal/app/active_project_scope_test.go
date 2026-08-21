@@ -132,9 +132,8 @@ func TestSingularProjectNamespacePrecedence(t *testing.T) {
 		}
 	})
 
-	// describe project has no enclosing Project, and rename agent is
-	// deliberately outside the applied matrix. Both must reach the resolver
-	// with no default at all, so neither may consult tmux.
+	// Project resources have no enclosing managed root. These routes must reach
+	// the resolver with no default at all, so neither may consult tmux.
 	for _, test := range []struct {
 		name string
 		run  func(*testing.T, *fakeResourceStore, *recordedActiveTarget) (string, error)
@@ -149,12 +148,12 @@ func TestSingularProjectNamespacePrecedence(t *testing.T) {
 			want: "prj-alpha\n",
 		},
 		{
-			name: "rename agent stays global",
+			name: "rename project keeps the whole registry",
 			run: func(t *testing.T, store *fakeResourceStore, active *recordedActiveTarget) (string, error) {
-				stdout, _, err := runRoute(t, newTestRenameCommandWithActiveTarget(store, active), "agent", "codex", "--name", "renamed")
+				stdout, _, err := runRoute(t, newTestRenameCommandWithActiveTarget(store, active), "project", "alpha", "--name", "renamed")
 				return stdout, err
 			},
-			want: "",
+			want: "project/renamed status=live\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -162,14 +161,7 @@ func TestSingularProjectNamespacePrecedence(t *testing.T) {
 			store := newFakeResourceStore(t)
 			inside := insideTmux("pan-alpha-zsh", "win-alpha-main")
 			stdout, err := test.run(t, store, inside)
-			if test.want == "" {
-				if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "matched 2 agents") {
-					t.Fatalf("%s = stdout %q err %v, want the whole-registry ambiguity", test.name, stdout, err)
-				}
-				if store.writes != 0 {
-					t.Fatalf("%s wrote %d times", test.name, store.writes)
-				}
-			} else if err != nil || stdout != test.want {
+			if err != nil || stdout != test.want {
 				t.Fatalf("%s = stdout %q err %v, want %q", test.name, stdout, err, test.want)
 			}
 			if inside.calls != 0 {
