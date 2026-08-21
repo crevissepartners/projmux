@@ -423,18 +423,32 @@ user/global preference in this release.
 
 Settings > AI includes a read-only `Codex control plane` row. It reports one of
 `App Server`, `Hook fallback`, or `Unavailable`, together with a closed reason,
-endpoint kind, connection state, and a sanitized version when initialization
-returned one. `projmux doctor --section integrations` and explicit support
-reports expose the same bounded fields without socket paths, prompts, tokens,
-or response payloads.
+endpoint kind, connection state, lifecycle outcome/reason, and a sanitized
+version when initialization returned one. Read-only surfaces report
+`not-attempted/read-only`. `projmux doctor --section integrations` and explicit
+support reports expose the same bounded fields without socket paths, prompts,
+tokens, process output, or response payloads.
 
 There is no app-server source setting or environment override. Authority is a
 capability result, not a preference: Projmux probes the existing local control
 socket through `codex app-server proxy` with a short timeout and otherwise keeps
-the current hook behavior. Projmux does not bootstrap, start, stop, restart, or
-reconfigure the Codex daemon and does not manage Codex authentication. Existing
-`ai-hook-actions.json` values remain the hook fallback policy and are neither
-rewritten nor reinterpreted as native app-server policy.
+the current hook behavior. Doctor, Settings, and support reports never start or
+otherwise mutate the daemon.
+
+The Codex integration has a lifecycle seam for later native features. Only an
+actual native user action may use it, and only an exact missing or
+connection-refused default control socket is eligible. That path invokes the
+official idempotent `codex app-server daemon start` command at most once per
+in-flight process decision, then retries proxy initialization with a bounded
+backoff. Phase 1 does not route Agent create/resume, usage, catalog, model, or
+review behavior through that seam, so their current hook, rollout, and CLI
+results are unchanged.
+
+Projmux does not install, bootstrap, restart, stop, or reconfigure the Codex
+daemon, does not stop the shared daemon when Projmux exits, and does not manage
+Codex authentication. There is no custom socket or remote-control setting.
+Existing `ai-hook-actions.json` values remain the hook fallback policy and are
+neither rewritten nor reinterpreted as native app-server policy.
 
 ## AI Resume Picker
 

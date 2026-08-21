@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -31,12 +35,13 @@ func (s *commandStream) Close() error {
 // local app-server control socket through Codex's stdio proxy. It never starts,
 // restarts, configures, logs into, or otherwise mutates the daemon.
 func ProbeDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool) Health {
-	return probeProxy(ctx, timeout, projmuxVersion, hookAvailable, exec.LookPath, func(ctx context.Context) *exec.Cmd {
+	health := probeProxy(ctx, timeout, projmuxVersion, hookAvailable, exec.LookPath, func(ctx context.Context) *exec.Cmd {
 		return exec.CommandContext(ctx, "codex", "app-server", "proxy")
-	})
+	}, defaultDaemonNotRunning)
+	return withLifecycle(health, LifecycleNotAttempted, LifecycleReasonReadOnly)
 }
 
-func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool, lookPath func(string) (string, error), command func(context.Context) *exec.Cmd) Health {
+func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool, lookPath func(string) (string, error), command func(context.Context) *exec.Cmd, daemonNotRunning func() bool) Health {
 	if timeout <= 0 {
 		timeout = DefaultProbeTimeout
 	}
@@ -69,6 +74,8 @@ func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion strin
 			return Decide(AvailabilityTimeout, ReasonTimeout, "", EndpointStdioProxy, ConnectionTimedOut, hookAvailable)
 		case errors.Is(upgradeErr, ErrProtocol):
 			return Decide(AvailabilityProtocolError, ReasonProtocolError, "", EndpointStdioProxy, ConnectionProtocolErr, hookAvailable)
+		case daemonNotRunning != nil && daemonNotRunning():
+			return Decide(AvailabilityUnavailable, ReasonDaemonNotRunning, "", EndpointStdioProxy, ConnectionDisconnected, hookAvailable)
 		default:
 			return Decide(AvailabilityUnavailable, ReasonEndpointUnavailable, "", EndpointStdioProxy, ConnectionDisconnected, hookAvailable)
 		}
@@ -89,4 +96,47 @@ func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion strin
 	default:
 		return Decide(AvailabilityUnavailable, ReasonEndpointUnavailable, "", EndpointStdioProxy, ConnectionDisconnected, hookAvailable)
 	}
+}
+
+// defaultDaemonNotRunning classifies only the two closed local socket states
+// that official Codex treats as an absent daemon: the default control socket
+// does not exist, or a stale Unix socket refuses connections. Generic proxy
+// failures are intentionally not start-eligible.
+func defaultDaemonNotRunning() bool {
+	socketPath, ok := defaultControlSocketPath()
+	if !ok {
+		return false
+	}
+	return daemonNotRunningAt(socketPath, os.Lstat, net.DialTimeout)
+}
+
+func daemonNotRunningAt(socketPath string, lstat func(string) (os.FileInfo, error), dial func(string, string, time.Duration) (net.Conn, error)) bool {
+	info, err := lstat(socketPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return false
+	}
+	conn, err := dial("unix", socketPath, 25*time.Millisecond)
+	if err == nil {
+		_ = conn.Close()
+		return false
+	}
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT)
+}
+
+func defaultControlSocketPath() (string, bool) {
+	codexHome := os.Getenv("CODEX_HOME")
+	if codexHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", false
+		}
+		codexHome = filepath.Join(home, ".codex")
+	}
+	if !filepath.IsAbs(codexHome) {
+		return "", false
+	}
+	return filepath.Join(codexHome, "app-server-control", "app-server-control.sock"), true
 }

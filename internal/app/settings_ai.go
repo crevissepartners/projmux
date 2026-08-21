@@ -448,6 +448,9 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 		if health.Version != "" {
 			detail += " - " + health.Version
 		}
+		if health.Lifecycle != "" {
+			detail += fmt.Sprintf(" - %s/%s", health.Lifecycle, health.LifecycleReason)
+		}
 		entries = append(entries, intpickercompat.Entry{
 			Label:     c.rowLabelInfo("Codex control plane", detail, "read-only capability health"),
 			Value:     settingsNoopValue,

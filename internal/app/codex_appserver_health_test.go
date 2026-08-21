@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -10,8 +11,10 @@ import (
 
 func TestDoctorAndSupportReportProjectSecretFreeCodexAppServerHealth(t *testing.T) {
 	doctor := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "git": true, "stty": true})
-	doctor.appServerHealth = func(hookAvailable bool) codexappserver.Health {
-		return codexappserver.Decide(
+	var triggers []codexappserver.TriggerKind
+	doctor.appServerHealth = func(trigger codexappserver.TriggerKind, hookAvailable bool) codexappserver.Health {
+		triggers = append(triggers, trigger)
+		health := codexappserver.Decide(
 			codexappserver.AvailabilityUnsupported,
 			codexappserver.ReasonUnsupported,
 			"codex-cli/0.149.0",
@@ -19,6 +22,9 @@ func TestDoctorAndSupportReportProjectSecretFreeCodexAppServerHealth(t *testing.
 			codexappserver.ConnectionDisconnected,
 			hookAvailable,
 		)
+		health.Lifecycle = codexappserver.LifecycleNotAttempted
+		health.LifecycleReason = codexappserver.LifecycleReasonReadOnly
+		return health
 	}
 	doctor.aiDiagnostics = func() []doctorAINotifyIntegration {
 		enabled := true
@@ -29,11 +35,14 @@ func TestDoctorAndSupportReportProjectSecretFreeCodexAppServerHealth(t *testing.
 		}}
 	}
 	report := doctor.evaluateReport(doctorSectionIntegrations)
+	if !reflect.DeepEqual(triggers, []codexappserver.TriggerKind{codexappserver.TriggerDoctor}) {
+		t.Fatalf("doctor triggers = %#v", triggers)
+	}
 	var text bytes.Buffer
 	if err := writeDoctorText(&text, report, doctorSectionIntegrations, true); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Codex app-server", "Hook fallback", "unsupported", "stdio-proxy", "codex-cli/0.149.0"} {
+	for _, want := range []string{"Codex app-server", "Hook fallback", "unsupported", "stdio-proxy", "codex-cli/0.149.0", "not-attempted/read-only"} {
 		if !strings.Contains(text.String(), want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, text.String())
 		}
@@ -45,7 +54,10 @@ func TestDoctorAndSupportReportProjectSecretFreeCodexAppServerHealth(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"source": "hook-fallback"`, `"reason": "unsupported"`, `"version": "codex-cli/0.149.0"`} {
+	if !reflect.DeepEqual(triggers, []codexappserver.TriggerKind{codexappserver.TriggerDoctor, codexappserver.TriggerSupportReport}) {
+		t.Fatalf("doctor/support triggers = %#v", triggers)
+	}
+	for _, want := range []string{`"source": "hook-fallback"`, `"reason": "unsupported"`, `"version": "codex-cli/0.149.0"`, `"lifecycle_outcome": "not-attempted"`, `"lifecycle_reason": "read-only"`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("support doctor JSON missing %q:\n%s", want, data)
 		}
@@ -64,7 +76,7 @@ func TestSettingsCodexAppServerHealthIsReadOnlyStateRow(t *testing.T) {
 		homeDir:   func() (string, error) { return home, nil },
 		lookupEnv: func(string) string { return "" },
 		appServerHealth: func(hookAvailable bool) codexappserver.Health {
-			return codexappserver.Decide(
+			health := codexappserver.Decide(
 				codexappserver.AvailabilityTimeout,
 				codexappserver.ReasonTimeout,
 				"",
@@ -72,6 +84,9 @@ func TestSettingsCodexAppServerHealthIsReadOnlyStateRow(t *testing.T) {
 				codexappserver.ConnectionTimedOut,
 				hookAvailable,
 			)
+			health.Lifecycle = codexappserver.LifecycleNotAttempted
+			health.LifecycleReason = codexappserver.LifecycleReasonReadOnly
+			return health
 		},
 		aiNotifyDiagnostics: func() []doctorAINotifyIntegration {
 			enabled := true
@@ -92,7 +107,7 @@ func TestSettingsCodexAppServerHealthIsReadOnlyStateRow(t *testing.T) {
 		if entry.Value != settingsNoopValue {
 			t.Fatalf("health row value = %q, want read-only noop", entry.Value)
 		}
-		for _, want := range []string{"Hook fallback", "timed-out", "timeout"} {
+		for _, want := range []string{"Hook fallback", "timed-out", "timeout", "not-attempted/read-only"} {
 			if !strings.Contains(entry.Label, want) {
 				t.Fatalf("health row missing %q: %s", want, entry.Label)
 			}
