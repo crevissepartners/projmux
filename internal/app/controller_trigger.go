@@ -160,7 +160,7 @@ type controllerTriggerOutcome struct {
 	deferred string
 	// passes counts the convergence passes this worker ran.
 	passes int
-	// changed counts the passes that wrote registry bytes.
+	// changed counts passes that executed Registry or tmux convergence writes.
 	changed int
 	// events counts the dirty events this worker acknowledged, including its
 	// own. A value above one is coalescing: that many producers cost one worker.
@@ -173,6 +173,9 @@ type controllerTriggerOutcome struct {
 	// a different answer from both "converged" and "deferred": work happened and
 	// nobody can say whether it was enough.
 	unverified string
+	// refused is an exact declarative-plan reason. A refusal performs zero
+	// writes and is neither convergence nor an execution error.
+	refused string
 }
 
 func (o controllerTriggerOutcome) describe() string {
@@ -183,6 +186,9 @@ func (o controllerTriggerOutcome) describe() string {
 		o.reason, o.passes, o.changed, o.events, o.converged)
 	if o.unverified != "" {
 		out += " unverified: " + o.unverified
+	}
+	if o.refused != "" {
+		out += " refused: " + o.refused
 	}
 	return out
 }
@@ -349,6 +355,10 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 			return outcome, err
 		}
 		outcome.passes++
+		if pass.refused != "" {
+			outcome.refused = pass.refused
+			return outcome, nil
+		}
 		changed := pass.changed()
 		if changed {
 			outcome.changed++
@@ -397,26 +407,34 @@ type controllerPassResult struct {
 	// to be zero, and a nonzero value is the signal worth surfacing: it means the
 	// two halves of one pass disagreed about what the machine holds.
 	residualExits int
+	// controlRoot reports that config apply converged the declared Home control
+	// target before generic binding reconciliation.
+	controlRoot bool
+	refused     string
 }
 
 func (r controllerPassResult) changed() bool {
-	return r.rebound || r.residualExits > 0
+	return r.rebound || r.residualExits > 0 || r.controlRoot
 }
 
 // converge runs one convergence pass against one exact server.
 //
-// Two stages, in this order, and the order is the whole reason a single
+// Three stages, in this order, and the order is the whole reason a single
 // entrypoint is worth having:
 //
-//  1. The binding reconciliation. It imports the live sessions it can attribute,
+//  1. Control-target convergence. An exact config declaration may create the
+//     Home identity; lifecycle triggers may repair only identities the Registry
+//     already knows. A contradictory claimant refuses the entire pass before
+//     generic reconciliation can write.
+//  2. The binding reconciliation. It imports the live sessions it can attribute,
 //     reapplies the bindings it can prove, projects the lifecycle of every
 //     managed Pane whose runtime object died, and records why a Window or Pane
 //     lost one -- all inside one registry transaction, against one observation
 //     taken inside the lock.
-//  2. The exit-half reobservation. It re-observes the same exact host and asks
+//  3. The exit-half reobservation. It re-observes the same exact host and asks
 //     whether any managed Pane still has a lifecycle transition left.
 //
-// Stage 1 contains the lifecycle projection rather than stage 2 supplying it, and
+// Stage 2 contains the lifecycle projection rather than stage 3 supplying it, and
 // that is not an accident of where the code lives. The projection has to run
 // *after* the binding steps of the same pass: those steps are what mirror a
 // Window's and a Pane's uid onto their tmux objects, so a projection taken before
@@ -425,7 +443,7 @@ func (r controllerPassResult) changed() bool {
 // was imported. Any ordering that puts an exit stage first files an unknown
 // termination against every Pane the pass was on its way to binding.
 //
-// So stage 2 is verification, not work. Its pre-lock filter finds nothing left to
+// So stage 3 is verification, not work. Its pre-lock filter finds nothing left to
 // project in the ordinary case and returns without opening a transaction, which
 // is what makes it cheap enough to run on every trigger; the one tmux read it
 // costs is the fail-closed check the pass needs anyway. A nonzero
@@ -438,6 +456,17 @@ func (r controllerPassResult) changed() bool {
 func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controllerTrigger) (controllerPassResult, error) {
 	var pass controllerPassResult
 	target := trigger.target
+	if r.runner != nil {
+		control, err := r.convergeControlTargets(ctx, target, trigger.reason == controllerTriggerConfigApply)
+		if err != nil {
+			return pass, err
+		}
+		if control.skipped != "" {
+			pass.refused = string(control.skipped)
+			return pass, nil
+		}
+		pass.controlRoot = control.changed
+	}
 	receipts, err := r.receipts.read()
 	if err != nil {
 		return pass, err
@@ -525,6 +554,69 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 	}
 	pass.residualExits = exits.changed()
 	return pass, nil
+}
+
+// convergeControlTargets continuously repairs every live exact
+// ControlSession identity already present in the Registry. Config apply adds
+// the canonical Home declaration, which is the one authority allowed to mint a
+// missing root; hook triggers may only continue identities the Registry already
+// records.
+func (r *controllerTriggerRunner) convergeControlTargets(ctx context.Context, target explicitTmuxTarget, declareHome bool) (controlSessionConvergence, error) {
+	routed := explicitTmuxRunner{runner: r.runner, target: target}
+	out, err := routed.Run(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		if tmuxSessionAbsent(err) || tmuxServerUnreachable(err) {
+			return controlSessionConvergence{}, nil
+		}
+		return controlSessionConvergence{}, fmt.Errorf("observe declared control target %q: %w", defaultAppSession, err)
+	}
+	live := map[string]bool{}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			live[name] = true
+		}
+	}
+	registry, err := r.store.load()
+	if err != nil {
+		return controlSessionConvergence{}, err
+	}
+	declared := map[string]bool{}
+	if declareHome {
+		declared[defaultAppSession] = true
+	}
+	sessions := make([]string, 0, len(registry.ControlSessions)+1)
+	for _, record := range registryResourceRecords(registry) {
+		control, ok := record.value.(coremetadata.ControlSession)
+		if !ok {
+			continue
+		}
+		sessions = append(sessions, control.Spec.Session)
+	}
+	if declareHome {
+		sessions = append(sessions, defaultAppSession)
+	}
+	slices.Sort(sessions)
+	sessions = slices.Compact(sessions)
+	converger := newControlSessionConverger(r.runner, "")
+	converger.resources = r.store
+	var aggregate controlSessionConvergence
+	for _, session := range sessions {
+		if !live[session] {
+			continue
+		}
+		result, convergeErr := converger.convergeTargetWithEvidence(ctx, target, session, declared[session])
+		if convergeErr != nil {
+			return aggregate, convergeErr
+		}
+		if result.skipped != "" {
+			return result, nil
+		}
+		aggregate.changed = aggregate.changed || result.changed
+		aggregate.writes += result.writes
+		aggregate.windows += result.windows
+		aggregate.panes += result.panes
+	}
+	return aggregate, nil
 }
 
 // runLockedAutomaticMirrorRecovery is the production L8 boundary. Runtime is

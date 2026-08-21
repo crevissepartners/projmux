@@ -163,6 +163,16 @@ Resources and ownership:
   `@projmux_session_role` must be exactly `control`. `@projmux_ephemeral=1`
   together with a control role fails closed on both sides -- the reader refuses
   the pair and the writer refuses to produce it.
+- Control identity is one declarative controller plan, not an install-time
+  migration. The canonical shell lifecycle declares one exact socket/session;
+  `config apply` declares the canonical Home target on the exact `-L` server it
+  just reloaded; and later lifecycle triggers may continue only an exact
+  ControlSession identity already stored in the Registry. For those inputs the
+  root, control role, and every Window/Pane uid owner-chain mirror converge from
+  any partial state, and a second pass performs no Registry or tmux write.
+  Foreign or duplicate claimants and any Project uid claim refuse the whole
+  plan before its first write. Session-name resemblance, cwd, commands,
+  display names, and the app marker by itself are never promotion evidence.
 - ControlSession names share the registry-wide scope with Project names but not
   a reservation slot, because `nameReservations` is keyed by kind as well as
   scope. A Project named `home` and a ControlSession named `home` coexist.

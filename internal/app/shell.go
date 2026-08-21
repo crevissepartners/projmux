@@ -218,8 +218,14 @@ func (c *shellCommand) prepareControlSession(ctx context.Context, socketName, co
 	if err := c.provisionAppSession(ctx, socketName, configPath, target); err != nil {
 		return err
 	}
-	_, err := pass.converge(ctx, socketName, target.SessionName)
-	return err
+	result, err := pass.converge(ctx, socketName, target.SessionName)
+	if err != nil {
+		return err
+	}
+	if result.skipped != "" {
+		return fmt.Errorf("declarative control target refused: %s", result.skipped)
+	}
+	return nil
 }
 
 // provisionAppSession creates the app session detached, or does nothing when it

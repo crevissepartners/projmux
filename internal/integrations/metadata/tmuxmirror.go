@@ -96,7 +96,7 @@ func (m Mirror) RebindProject(ctx context.Context, sessionName, root string) err
 // ControlSessionMarkers is the writer-side evidence about one exact session on
 // one exact server, read before any control marker is written.
 //
-// Both fields are refusals waiting to happen, not capabilities:
+// These fields are refusals waiting to happen, not capabilities:
 //
 //   - AppOwned is `@projmux_app == "1"` on the server. Writing a control role
 //     onto a server projmux did not start would let projmux claim a role on the
@@ -111,6 +111,12 @@ func (m Mirror) RebindProject(ctx context.Context, sessionName, root string) err
 type ControlSessionMarkers struct {
 	AppOwned  bool
 	Ephemeral bool
+	// Role is the exact current session-role value. An empty value is repairable;
+	// every non-control value is contradictory evidence and is refused.
+	Role string
+	// ProjectUID is the mutually exclusive Project identity claim on this exact
+	// session. Control convergence never clears or overwrites it.
+	ProjectUID string
 }
 
 // ControlSessionEligible reports whether this session may carry the control
@@ -119,8 +125,9 @@ func (c ControlSessionMarkers) ControlSessionEligible() bool {
 	return c.AppOwned && !c.Ephemeral
 }
 
-// ObserveControlSessionMarkers reads the two facts that decide whether a session
-// may be marked as the control session. It performs no writes.
+// ObserveControlSessionMarkers reads the ownership and identity facts that
+// decide whether a session may be marked as the control session. It performs no
+// writes.
 //
 // An unset option is an observation, not a failure, exactly as it is for the
 // resolved-graph host read: tmux answers a read of a never-set user option with
@@ -141,9 +148,24 @@ func (m Mirror) ObserveControlSessionMarkers(ctx context.Context, sessionName st
 	if err != nil {
 		return ControlSessionMarkers{}, fmt.Errorf("metadata: read session ephemeral marker: %w", err)
 	}
+	identity, err := m.run(ctx, "display-message", "-p", "-t", sessionName, "-F", tmuxFormat(
+		"#{"+tmuxopts.SessionRole+"}",
+		"#{"+tmuxopts.ProjectUIDSession+"}",
+	))
+	if err != nil {
+		return ControlSessionMarkers{}, fmt.Errorf("metadata: read control session identity claims: %w", err)
+	}
+	fields := parseRows(string(identity), 2)
+	var role, projectUID string
+	if len(fields) == 1 {
+		role = strings.TrimSpace(fields[0][0])
+		projectUID = strings.TrimSpace(fields[0][1])
+	}
 	return ControlSessionMarkers{
-		AppOwned:  strings.TrimSpace(string(app)) == resourcegraph.AppOwnedMarker,
-		Ephemeral: strings.TrimSpace(string(ephemeral)) == resourcegraph.EphemeralMarker,
+		AppOwned:   strings.TrimSpace(string(app)) == resourcegraph.AppOwnedMarker,
+		Ephemeral:  strings.TrimSpace(string(ephemeral)) == resourcegraph.EphemeralMarker,
+		Role:       role,
+		ProjectUID: projectUID,
 	}, nil
 }
 
@@ -152,8 +174,8 @@ func (m Mirror) ObserveControlSessionMarkers(ctx context.Context, sessionName st
 // It names one `-t <session>` target and never a pattern, a group, or `-g`. That
 // is the whole of contract row 4's "config apply must not mutate unrelated
 // sessions in bulk": there is no spelling of this call that can reach a second
-// session. Repeating it converges, because tmux set-option with the same value
-// is a no-op the reader cannot distinguish from the first write.
+// session. The declarative controller calls it only when the marker is missing,
+// so a converged second pass performs no tmux write.
 func (m Mirror) MirrorControlSessionRole(ctx context.Context, sessionName string) error {
 	if strings.TrimSpace(sessionName) == "" {
 		return fmt.Errorf("metadata: session name is required to mirror the control session role")

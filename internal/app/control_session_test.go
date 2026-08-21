@@ -37,6 +37,28 @@ func controlSessionFixture(t *testing.T) (*controlSessionConverger, *fakeResourc
 	return converger, store, server, runner
 }
 
+// controlClaimBetweenPlansRunner installs a foreign Project claim immediately
+// before the second app-marker read. The first read is preflight; the second
+// must happen inside the Registry transaction before its plan can authorize a
+// bind or any tmux mirror write.
+type controlClaimBetweenPlansRunner struct {
+	delegate    tmuxCommandRunner
+	server      *fakeTmux
+	markerReads int
+}
+
+func (r *controlClaimBetweenPlansRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if name == "tmux" && slices.Contains(args, tmuxopts.AppGlobal) {
+		r.markerReads++
+		if r.markerReads == 2 {
+			r.server.mu.Lock()
+			r.server.session("home").opts[tmuxopts.ProjectUIDSession] = "project-race"
+			r.server.mu.Unlock()
+		}
+	}
+	return r.delegate.Run(ctx, name, args...)
+}
+
 func TestControlSessionConvergeBackfillsALiveHome(t *testing.T) {
 	converger, store, server, runner := controlSessionFixture(t)
 
@@ -146,6 +168,9 @@ func TestControlSessionConvergeIsIdempotent(t *testing.T) {
 	if second.changed {
 		t.Fatal("second converge() wrote the registry; an already-converged pass must be a byte no-op")
 	}
+	if second.writes != 0 {
+		t.Fatalf("second converge() writes = %d, want zero Registry and tmux writes", second.writes)
+	}
 	if store.writes != writesAfterFirst {
 		t.Fatalf("registry writes = %d, want %d after a converged repeat", store.writes, writesAfterFirst)
 	}
@@ -156,20 +181,134 @@ func TestControlSessionConvergeIsIdempotent(t *testing.T) {
 		t.Fatal("a repeat pass re-identified the Window or Pane")
 	}
 
-	// A rebound object already carries the exact uid, so the repeat pass spends
-	// no tmux write on the identity mirror. Only the role marker is rewritten,
-	// and rewriting it to the same value is what tmux makes a no-op.
+	// A rebound object and exact role already carry the complete desired state,
+	// so the repeat pass spends no tmux write at all.
 	for _, call := range runner.calls {
 		if call.args[0] != "set-option" {
 			continue
 		}
-		if slices.Contains(call.args, tmuxopts.WindowUID) || slices.Contains(call.args, tmuxopts.PaneUID) {
-			t.Fatalf("the repeat pass re-mirrored an already-bound uid: %v", call.args)
-		}
+		t.Fatalf("the repeat pass issued a tmux write: %v", call.args)
 	}
 	session := server.session("home")
 	if got, want := session.opts[tmuxopts.SessionRole], resourcegraph.ControlSessionRole; got != want {
 		t.Fatalf("%s = %q, want %q after the repeat pass", tmuxopts.SessionRole, got, want)
+	}
+}
+
+func TestControlSessionConvergeReobservesForeignClaimantInsideRegistryLock(t *testing.T) {
+	converger, store, server, routed := controlSessionFixture(t)
+	tracing := &controlClaimBetweenPlansRunner{delegate: routed, server: server}
+	converger.runner = tracing
+	before := store.snapshot()
+
+	result, err := converger.converge(context.Background(), controlFixtureSocket, "home")
+	if err != nil {
+		t.Fatalf("converge() error = %v", err)
+	}
+	wantReason := `declared control target carries foreign Project uid claimant "project-race"`
+	if got := string(result.skipped); got != wantReason {
+		t.Fatalf("converge() skipped = %q, want %q", got, wantReason)
+	}
+	if tracing.markerReads != 2 {
+		t.Fatalf("app-marker observations = %d, want preflight plus locked reobservation", tracing.markerReads)
+	}
+	if got := store.snapshot(); got != before {
+		t.Fatalf("Registry changed across locked refusal\n--- before ---\n%s--- after ---\n%s", before, got)
+	}
+	if store.writes != 0 {
+		t.Fatalf("locked refusal wrote Registry %d times", store.writes)
+	}
+	for _, call := range routed.calls {
+		if len(call.args) > 0 && call.args[0] == "set-option" {
+			t.Fatalf("locked refusal wrote tmux: %v", call.args)
+		}
+	}
+}
+
+func TestConfigApplyDeclarationConvergesAlreadyLiveHome(t *testing.T) {
+	converger, store, server, _ := controlSessionFixture(t)
+	runner := &controllerTriggerRunner{runner: converger.runner, store: store.store()}
+	target, err := tmuxSocketNameTarget(controlFixtureSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := runner.convergeControlTargets(context.Background(), target, true)
+	if err != nil {
+		t.Fatalf("config-apply control convergence: %v", err)
+	}
+	if !first.changed || first.skipped != "" {
+		t.Fatalf("first = %+v, want live Home convergence", first)
+	}
+	if got := server.session("home").opts[tmuxopts.SessionRole]; got != resourcegraph.ControlSessionRole {
+		t.Fatalf("role = %q, want control", got)
+	}
+	second, err := runner.convergeControlTargets(context.Background(), target, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.changed || second.writes != 0 || second.skipped != "" {
+		t.Fatalf("second = %+v, want zero-write convergence", second)
+	}
+}
+
+func TestControlSessionInstalledHomePartialStateSmokeMatrix(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		arrange func(t *testing.T, converger *controlSessionConverger, store *fakeResourceStore, server *fakeTmux)
+	}{
+		{
+			name: "root only missing",
+			arrange: func(_ *testing.T, _ *controlSessionConverger, _ *fakeResourceStore, server *fakeTmux) {
+				session := server.session("home")
+				session.opts[tmuxopts.SessionRole] = resourcegraph.ControlSessionRole
+				session.windows[0].opts[tmuxopts.WindowUID] = "win-interrupted"
+				session.windows[0].panes[0].opts[tmuxopts.PaneUID] = "pan-interrupted"
+			},
+		},
+		{
+			name: "mirrors only missing",
+			arrange: func(t *testing.T, converger *controlSessionConverger, _ *fakeResourceStore, server *fakeTmux) {
+				if _, err := converger.converge(context.Background(), controlFixtureSocket, "home"); err != nil {
+					t.Fatal(err)
+				}
+				delete(server.session("home").windows[0].opts, tmuxopts.WindowUID)
+				delete(server.session("home").windows[0].panes[0].opts, tmuxopts.PaneUID)
+			},
+		},
+		{name: "root role and mirrors all missing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			converger, store, server, runner := controlSessionFixture(t)
+			if test.arrange != nil {
+				test.arrange(t, converger, store, server)
+			}
+			first, err := converger.converge(context.Background(), controlFixtureSocket, "home")
+			if err != nil || first.skipped != "" {
+				t.Fatalf("first = %+v, %v", first, err)
+			}
+			control := store.registry.ControlSessions[0]
+			window := store.registry.WindowsOf(control.Metadata.UID)[0]
+			panes := store.registry.PanesOf(window.Metadata.UID)
+			if len(panes) != 1 {
+				t.Fatalf("control window panes = %d, want 1", len(panes))
+			}
+			live := server.session("home")
+			if live.opts[tmuxopts.SessionRole] != resourcegraph.ControlSessionRole ||
+				live.windows[0].opts[tmuxopts.WindowUID] != window.Metadata.UID ||
+				live.windows[0].panes[0].opts[tmuxopts.PaneUID] != panes[0].Metadata.UID {
+				t.Fatalf("first pass did not converge exact owner chain")
+			}
+			runner.calls = nil
+			second, err := converger.converge(context.Background(), controlFixtureSocket, "home")
+			if err != nil || second.changed || second.writes != 0 || second.skipped != "" {
+				t.Fatalf("second = %+v, %v, want zero-write", second, err)
+			}
+			for _, call := range runner.calls {
+				if len(call.args) > 0 && call.args[0] == "set-option" {
+					t.Fatalf("second pass wrote tmux: %v", call.args)
+				}
+			}
+		})
 	}
 }
 
@@ -234,7 +373,7 @@ func TestControlSessionConvergeRequiresAnExplicitSocket(t *testing.T) {
 	}
 }
 
-func TestControlSessionConvergeLeavesForeignScopedWindowsAlone(t *testing.T) {
+func TestControlSessionConvergeRefusesForeignScopedWindowsWithZeroWrites(t *testing.T) {
 	converger, store, server, _ := controlSessionFixture(t)
 	// A second app-owned session with a Project-owned Window sitting inside the
 	// control session's window list is not something the observation can produce,
@@ -245,8 +384,12 @@ func TestControlSessionConvergeLeavesForeignScopedWindowsAlone(t *testing.T) {
 	projectWindowUID := store.registry.Windows[0].Metadata.UID
 	server.session("home").windows[0].opts[tmuxopts.WindowUID] = projectWindowUID
 
-	if _, err := converger.converge(context.Background(), controlFixtureSocket, "home"); err != nil {
+	result, err := converger.converge(context.Background(), controlFixtureSocket, "home")
+	if err != nil {
 		t.Fatalf("converge() error = %v", err)
+	}
+	if !strings.Contains(string(result.skipped), "conflicts with Project owner") {
+		t.Fatalf("converge() skipped = %q, want exact Project-owner conflict", result.skipped)
 	}
 	window, ok := store.registry.Window(projectWindowUID)
 	if !ok {
@@ -255,13 +398,15 @@ func TestControlSessionConvergeLeavesForeignScopedWindowsAlone(t *testing.T) {
 	if owner := window.Metadata.OwnerRef; owner == nil || owner.Kind != coremetadata.KindProject {
 		t.Fatalf("project window ownerRef = %+v, want it untouched under its Project", owner)
 	}
-	// The control session itself is still created: the refusal is about the one
-	// live window, not about the session's identity.
-	if got, want := len(store.registry.ControlSessions), 1; got != want {
+	// A refusal is all-or-nothing: it cannot create even the root or role.
+	if got, want := len(store.registry.ControlSessions), 0; got != want {
 		t.Fatalf("len(ControlSessions) = %d, want %d", got, want)
 	}
-	if got := server.session("home").opts[tmuxopts.SessionRole]; got != resourcegraph.ControlSessionRole {
-		t.Fatalf("%s = %q, want the control role", tmuxopts.SessionRole, got)
+	if got := server.session("home").opts[tmuxopts.SessionRole]; got != "" {
+		t.Fatalf("%s = %q, want zero-write refusal", tmuxopts.SessionRole, got)
+	}
+	if store.writes != 0 {
+		t.Fatalf("refusal wrote Registry %d times", store.writes)
 	}
 }
 
