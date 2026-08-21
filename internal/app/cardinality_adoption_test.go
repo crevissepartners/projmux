@@ -51,6 +51,7 @@ var canonicalRouteCardinalities = []routeCardinality{
 	{"delete pane", selector.Target{Verb: selector.VerbDelete, Kind: coremetadata.KindPane}, selector.CardinalityAtLeastOne},
 	{"delete agent", selector.Target{Verb: selector.VerbDelete, Kind: coremetadata.KindAgent}, selector.CardinalityAtLeastOne},
 	{"agent resume", selector.Target{Verb: selector.VerbResume, Kind: coremetadata.KindAgent}, selector.CardinalityExactOne},
+	{"agent review", selector.Target{Verb: selector.VerbReview, Kind: coremetadata.KindAgent}, selector.CardinalityExactOne},
 	// The resource-backed create routes resolve three cells: the Project scope
 	// they create below, the parent Windows they fan out over, and the anchor
 	// Pane they split inside each of those Windows.

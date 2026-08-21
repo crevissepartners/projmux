@@ -372,6 +372,13 @@ func (c *createCommand) resolveCreateProvider(spelling, shortcutProvider string,
 func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetadata.AgentWorkspace, flags resourceCreateFlags) (string, []string, error) {
 	conversation := strings.TrimSpace(flags.resumeConversation)
 	if conversation == "" {
+		if flags.codexCapability != nil {
+			launcher, ok := c.agents.(codexCapabilityAgentLauncher)
+			if !ok {
+				return "", nil, errors.New("create agent: Codex capability launch is not configured")
+			}
+			return launcher.PlanAgentLaunchWithCapability(provider, workspace, flags.payload, *flags.codexCapability)
+		}
 		return c.agents.PlanAgentLaunch(provider, workspace, flags.payload)
 	}
 	if c.resumes == nil {

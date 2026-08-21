@@ -65,6 +65,7 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
 projmux agent integrate <provider> [--dry-run]
 projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
 ```
@@ -76,10 +77,11 @@ Subcommands:
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent to a new managed Pane |
+| [`projmux agent review`](#projmux-agent-review) | Start a native review on an exact-bound Codex Agent |
 | [`projmux agent integrate`](#projmux-agent-integrate) | Install or remove provider hook integrations |
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent integrate`, `projmux agent usage`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`
 
 ### `projmux agent status`
 
@@ -104,6 +106,14 @@ Rebind an Offline or Failed Agent to a new managed Pane
 
 ```
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+```
+
+### `projmux agent review`
+
+Start a native review on an exact-bound Codex Agent
+
+```
+projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
 ```
 
 ### `projmux agent integrate`

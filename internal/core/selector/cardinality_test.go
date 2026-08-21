@@ -43,6 +43,7 @@ func TestCardinalityMatrixPinsTheContractCells(t *testing.T) {
 		// invocation that resolves nothing is a usage error rather than a
 		// success that created nothing.
 		{target: Target{Verb: VerbCreate, Kind: metadata.KindAgent}, want: CardinalityAtLeastOne},
+		{target: Target{Verb: VerbReview, Kind: metadata.KindAgent}, want: CardinalityExactOne},
 
 		// delete fans out.
 		{target: Target{Verb: VerbDelete, Kind: metadata.KindAgent}, want: CardinalityAtLeastOne},
