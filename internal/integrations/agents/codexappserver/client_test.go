@@ -3,6 +3,7 @@ package codexappserver
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -359,5 +360,48 @@ func TestNotificationRouteAndCloseShareChannelLifetimeGuard(t *testing.T) {
 		go func() { defer wg.Done(); _ = client.routeFrame(frame) }()
 		go func() { defer wg.Done(); client.fail(ErrDisconnected) }()
 		wg.Wait()
+	}
+}
+
+func TestWebSocketFrameLengthHeaderBoundaries(t *testing.T) {
+	tests := []struct {
+		length       int
+		wantMarker   byte
+		wantExtended uint64
+		wantErr      bool
+	}{
+		{length: 125, wantMarker: 0x80 | 125},
+		{length: 126, wantMarker: 0x80 | 126, wantExtended: 126},
+		{length: 65535, wantMarker: 0x80 | 126, wantExtended: 65535},
+		{length: 65536, wantMarker: 0x80 | 127, wantExtended: 65536},
+		{length: maxFrameBytes, wantMarker: 0x80 | 127, wantExtended: maxFrameBytes},
+		{length: maxFrameBytes + 1, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprint(tt.length), func(t *testing.T) {
+			header, err := websocketFrameLengthHeader(tt.length)
+			if tt.wantErr {
+				if !errors.Is(err, ErrProtocol) {
+					t.Fatalf("websocketFrameLengthHeader(%d) error = %v, want protocol error", tt.length, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if header[0] != tt.wantMarker {
+				t.Fatalf("websocketFrameLengthHeader(%d) marker = %#x, want %#x", tt.length, header[0], tt.wantMarker)
+			}
+			switch header[0] & 0x7f {
+			case 126:
+				if got := uint64(binary.BigEndian.Uint16(header[1:])); got != tt.wantExtended {
+					t.Fatalf("websocketFrameLengthHeader(%d) extended = %d, want %d", tt.length, got, tt.wantExtended)
+				}
+			case 127:
+				if got := binary.BigEndian.Uint64(header[1:]); got != tt.wantExtended {
+					t.Fatalf("websocketFrameLengthHeader(%d) extended = %d, want %d", tt.length, got, tt.wantExtended)
+				}
+			}
+		})
 	}
 }

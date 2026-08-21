@@ -194,8 +194,9 @@ func (s *websocketStream) readMessage() ([]byte, byte, error) {
 }
 
 func (s *websocketStream) writeFrame(opcode byte, payload []byte) error {
-	if len(payload) > maxFrameBytes {
-		return fmt.Errorf("%w: websocket frame too large", ErrProtocol)
+	lengthHeader, err := websocketFrameLengthHeader(len(payload))
+	if err != nil {
+		return err
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -204,14 +205,7 @@ func (s *websocketStream) writeFrame(opcode byte, payload []byte) error {
 		return fmt.Errorf("%w: create websocket mask", ErrProtocol)
 	}
 	header := []byte{0x80 | opcode}
-	switch {
-	case len(payload) <= 125:
-		header = append(header, 0x80|byte(len(payload)))
-	case len(payload) <= 65535:
-		header = append(header, 0x80|126, byte(len(payload)>>8), byte(len(payload)))
-	default:
-		header = append(header, 0x80|127, 0, 0, 0, 0, byte(len(payload)>>24), byte(len(payload)>>16), byte(len(payload)>>8), byte(len(payload)))
-	}
+	header = append(header, lengthHeader...)
 	header = append(header, mask[:]...)
 	masked := make([]byte, len(payload))
 	for i := range payload {
@@ -224,4 +218,22 @@ func (s *websocketStream) writeFrame(opcode byte, payload []byte) error {
 		return ErrDisconnected
 	}
 	return nil
+}
+
+func websocketFrameLengthHeader(length int) ([]byte, error) {
+	if length < 0 || length > maxFrameBytes {
+		return nil, fmt.Errorf("%w: websocket frame too large", ErrProtocol)
+	}
+	switch {
+	case length <= 125:
+		return []byte{0x80 | byte(length)}, nil // #nosec G115 -- length is validated in the 0..125 branch.
+	case length <= 65535:
+		var extended [2]byte
+		binary.BigEndian.PutUint16(extended[:], uint16(length)) // #nosec G115 -- length is validated in the 126..65535 branch.
+		return append([]byte{0x80 | 126}, extended[:]...), nil
+	default:
+		var extended [8]byte
+		binary.BigEndian.PutUint64(extended[:], uint64(length)) // #nosec G115 -- length is non-negative and bounded by maxFrameBytes.
+		return append([]byte{0x80 | 127}, extended[:]...), nil
+	}
 }
