@@ -206,6 +206,51 @@ func TestSwitchRuntimeSelectionOpensTheEscapeHatch(t *testing.T) {
 	}
 }
 
+// TestSwitchRuntimeSelectionRendersDiagnostics exercises the production
+// in-process chain rather than stopping at an argv recorder: switch owns the
+// native theme section, runtime forwards inherited ownership, and diagnostics
+// renders the exact inherited host immediately.
+func TestSwitchRuntimeSelectionRendersDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	inherited := "/tmp/fake-tmux/primary,123,0"
+	command, _ := switchRegistryFixture(t, inherited, []string{"/src/gamma"}, switchRuntimeSentinel)
+	diagnostics, picker, primary, sibling, _ := runtimePickerFixture(t, "1", nil)
+	diagnostics.reader.lookupEnv = func(name string) string {
+		if name == "TMUX" {
+			return inherited
+		}
+		return ""
+	}
+	diagnostics.lookupEnv = diagnostics.reader.lookupEnv
+	command.navigation.runtime = &runtimeCommand{diagnostics: diagnostics}
+
+	before := primary.state()
+	if err := command.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(picker.rendered) != 1 {
+		t.Fatalf("runtime diagnostics rendered %d pickers, want 1", len(picker.rendered))
+	}
+	options := picker.rendered[0]
+	if got, want := options.Title, "Runtime diagnostics"; got != want {
+		t.Fatalf("runtime title = %q, want %q", got, want)
+	}
+	if !strings.Contains(options.Footer, "Enter: actions") {
+		t.Fatalf("runtime footer = %q, want actions guidance", options.Footer)
+	}
+	labels := strings.Join(pickerLabels(options), "\n")
+	if !strings.Contains(labels, "host app-owned  transport tmux -S /tmp/fake-tmux/primary") {
+		t.Fatalf("runtime picker omitted the exact inherited host:\n%s", labels)
+	}
+	if primary.state() != before {
+		t.Fatalf("switch -> Runtime mutated the exact host:\n--- before ---\n%s\n--- after ---\n%s", before, primary.state())
+	}
+	if len(sibling.calls) != 0 {
+		t.Fatalf("switch -> Runtime contacted the sibling host: %v", sibling.calls)
+	}
+}
+
 // TestSwitchHierarchyKeyOpensTheSelectedProject pins the dedicated key: it
 // resolves the selected row's Project and opens the read-only hierarchy.
 func TestSwitchHierarchyKeyOpensTheSelectedProject(t *testing.T) {

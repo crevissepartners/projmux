@@ -51,8 +51,9 @@ func runtimePickerFixture(t *testing.T, host string, answers []intpicker.Result)
 	sibling := runtimeFixtureServer(host)
 	sibling.socketPath = "/tmp/fake-tmux/sibling"
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{
-		"-L\x00primary": primary,
-		"-L\x00sibling": sibling,
+		"-L\x00primary":                primary,
+		"-L\x00sibling":                sibling,
+		"-S\x00/tmp/fake-tmux/primary": primary,
 	}}
 	registry := runtimeFixtureRegistry()
 	picker := &scriptedRuntimePicker{answers: answers}

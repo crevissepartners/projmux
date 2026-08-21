@@ -41,6 +41,17 @@ func newRuntimeCommand() *runtimeCommand {
 
 // Run dispatches one `runtime <subcommand>` invocation.
 func (c *runtimeCommand) Run(args []string, stdout, stderr io.Writer) error {
+	return c.run(args, stdout, stderr, false)
+}
+
+// RunNested dispatches a runtime surface inside an outer native command. Only
+// diagnostics is a nested native surface today; keeping this distinct from Run
+// makes theme ownership explicit across the namespace forwarder.
+func (c *runtimeCommand) RunNested(args []string, stdout, stderr io.Writer) error {
+	return c.run(args, stdout, stderr, true)
+}
+
+func (c *runtimeCommand) run(args []string, stdout, stderr io.Writer, nested bool) error {
 	if len(args) == 0 {
 		return usageError(fmt.Sprintf("runtime requires a subcommand: %s", strings.Join(runtimeSubcommands, ", ")))
 	}
@@ -49,6 +60,9 @@ func (c *runtimeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "sessions":
 		return forwardRawArgv(c.sessions, "runtime sessions", "sessions", nil, rest, stdout, stderr)
 	case "diagnostics":
+		if nested {
+			return forwardNestedNativeArgv(c.diagnostics, "runtime diagnostics", "runtime diagnostics", rest, stdout, stderr)
+		}
 		return forwardRawArgv(c.diagnostics, "runtime diagnostics", "runtime diagnostics", nil, rest, stdout, stderr)
 	case "attach":
 		return forwardRawArgv(c.attach, "runtime attach", "attach", []string{"auto"}, rest, stdout, stderr)
@@ -62,6 +76,21 @@ func (c *runtimeCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return usageError(fmt.Sprintf("runtime %s is not available; this release implements: %s",
 			args[0], strings.Join(runtimeSubcommands, ", ")))
 	}
+}
+
+type nestedNativeArgvCommand interface {
+	RunNested(args []string, stdout, stderr io.Writer) error
+}
+
+func forwardNestedNativeArgv(target rawArgvCommand, spelling, route string, args []string, stdout, stderr io.Writer) error {
+	if target == nil {
+		return fmt.Errorf("%s: the %s handler is not configured", spelling, route)
+	}
+	nested, ok := target.(nestedNativeArgvCommand)
+	if !ok {
+		return fmt.Errorf("%s: the %s handler does not declare nested native theme ownership", spelling, route)
+	}
+	return nested.RunNested(args, stdout, stderr)
 }
 
 // forwardRawArgv prefixes the current spelling's leading tokens and hands the
