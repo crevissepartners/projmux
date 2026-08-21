@@ -66,7 +66,7 @@ func TestActivationAcknowledgementReadsOnlyCommittedProviderHookAuthority(t *tes
 	agent.Status.Activation = coremetadata.AgentActivation{State: coremetadata.ActivationPending}
 	runner := &activationAuthorityRunner{paneUID: h.paneUID}
 
-	acknowledged, source, err := h.cmd.AwaitAgentActivation(context.Background(), runner, "%7", 0)
+	acknowledged, source, err := h.cmd.AwaitAgentActivation(context.Background(), runner, "%7", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestActivationAcknowledgementReadsOnlyCommittedProviderHookAuthority(t *tes
 
 	h.ingest(t, []string{"codex-hook"},
 		`{"hook_event_name":"UserPromptSubmit","thread_id":"codex-thread-1","session_id":"codex-session-1","cwd":"/src/app"}`)
-	acknowledged, source, err = h.cmd.AwaitAgentActivation(context.Background(), runner, "%7", 0)
+	acknowledged, source, err = h.cmd.AwaitAgentActivation(context.Background(), runner, "%7", 0, 0)
 	if err != nil || !acknowledged || source != string(coremetadata.InteractionSourceProviderHook) {
 		t.Fatalf("committed provider acknowledgement=%v source=%q err=%v", acknowledged, source, err)
 	}

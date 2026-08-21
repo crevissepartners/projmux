@@ -291,7 +291,17 @@ func (c *aiCommand) applyAIStatusQueueOnly(state, paneID string, notifyIn attent
 	return c.applyAIStatusInternalWithSource(state, paneID, notifyIn, true, false, string(coremetadata.InteractionSourceProviderHook), true)
 }
 
+func (c *aiCommand) applyAIStatusQueueOnlyWithoutActivation(state, paneID string, notifyIn attentionNotifyInput) error {
+	notifyIn.SuppressHooks = true
+	return c.applyAIStatusInternalWithActivationPolicy(state, paneID, notifyIn, true, false,
+		string(coremetadata.InteractionSourceProviderHook), true, false)
+}
+
 func (c *aiCommand) applyAIStatusInternalWithSource(state, paneID string, notifyIn attentionNotifyInput, dispatchQueue, dispatchDesktop bool, source string, persist bool) error {
+	return c.applyAIStatusInternalWithActivationPolicy(state, paneID, notifyIn, dispatchQueue, dispatchDesktop, source, persist, true)
+}
+
+func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID string, notifyIn attentionNotifyInput, dispatchQueue, dispatchDesktop bool, source string, persist, activationEligible bool) error {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
 		return nil
@@ -306,7 +316,7 @@ func (c *aiCommand) applyAIStatusInternalWithSource(state, paneID string, notify
 	kind := semanticInteractionForAIStatus(state, badgeKind)
 	managed := false
 	if persist {
-		committed, isManaged, err := c.persistManagedAgentInteraction(paneID, kind, source)
+		committed, isManaged, err := c.persistManagedAgentInteractionWithActivationPolicy(paneID, kind, source, activationEligible)
 		if err != nil {
 			if errors.Is(err, errManagedAgentObservationIgnored) {
 				return nil
@@ -1758,10 +1768,12 @@ func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.Agen
 	return plan.title, plan.commandArgs, nil
 }
 
-// AwaitAgentActivation waits only for the provider-hook acknowledgement already
-// committed to Agent authority. It does not inspect pane_title, capture-pane,
-// semantic tmux presentation, or provider conversation content.
-func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommandRunner, paneID string, timeout time.Duration) (bool, string, error) {
+// AwaitAgentActivation waits only for exact provider-hook evidence committed to
+// Agent authority. SessionStart keeps the Agent pending but opens a separately
+// bounded acknowledgement window; only the initial-task hook acknowledges. It
+// does not inspect pane_title, capture-pane, semantic tmux presentation, or
+// provider conversation content.
+func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommandRunner, paneID string, startupTimeout, acknowledgementTimeout time.Duration) (bool, string, error) {
 	if runner == nil {
 		return false, "provider-hook", errors.New("agent activation observer is not configured")
 	}
@@ -1784,7 +1796,8 @@ func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommand
 	if !ok {
 		return false, "provider-hook", errors.New("managed Pane carries no exact Agent activation binding")
 	}
-	deadline := c.nowTime().Add(timeout)
+	startupDeadline := c.nowTime().Add(startupTimeout)
+	var acknowledgementDeadline time.Time
 	for {
 		registry, loadErr := c.loadRegistry()
 		if loadErr != nil {
@@ -1799,10 +1812,21 @@ func (c *aiCommand) AwaitAgentActivation(ctx context.Context, runner tmuxCommand
 			agent.Status.Activation.Source == string(coremetadata.InteractionSourceProviderHook) {
 			return true, "provider-hook", nil
 		}
+		if acknowledgementDeadline.IsZero() && present &&
+			agent.Status.Activation.State == coremetadata.ActivationPending &&
+			agent.Status.Activation.Source == string(coremetadata.InteractionSourceProviderHook) &&
+			!agent.Status.Activation.ObservedAt.IsZero() {
+			// The Registry timestamp is the provider's exact SessionStart commit,
+			// not the observer's later poll, so polling cannot silently extend the
+			// five-second acknowledgement budget.
+			acknowledgementDeadline = agent.Status.Activation.ObservedAt.Add(acknowledgementTimeout)
+		}
 		if err := ctx.Err(); err != nil {
 			return false, "provider-hook", err
 		}
-		if !c.nowTime().Before(deadline) {
+		now := c.nowTime()
+		if (!acknowledgementDeadline.IsZero() && !now.Before(acknowledgementDeadline)) ||
+			(acknowledgementDeadline.IsZero() && !now.Before(startupDeadline)) {
 			return false, "provider-hook", nil
 		}
 		c.sleepFor(50 * time.Millisecond)

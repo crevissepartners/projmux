@@ -15,12 +15,15 @@ import (
 // canonicalCreateAgent is the spelling the provider shortcuts normalize onto.
 const canonicalCreateAgent = "create agent"
 
-// agentActivationConfirmationDeadline is the documented bounded window in
-// which an initial-task provider hook can turn a create into ordinary success.
-// It intentionally exceeds the old two-second probe without becoming an
-// unbounded wait; hooks that arrive later still refine the preserved resource
-// through the generation-guarded ingest path.
-const agentActivationConfirmationDeadline = 8 * time.Second
+// Provider startup and initial-task acknowledgement are separate bounded
+// stages. Exact SessionStart evidence opens the acknowledgement window; it does
+// not itself acknowledge the task. Keeping each bound at five seconds lets a
+// provider spend startup time before a delayed hook without turning one larger
+// timeout into the contract.
+const (
+	agentActivationStartupDeadline         = 5 * time.Second
+	agentActivationAcknowledgementDeadline = 5 * time.Second
+)
 
 // agentWork is one allocated Agent plus its managed Pane, waiting for the
 // runtime phase to give the Pane a live tmux binding.
@@ -284,7 +287,8 @@ func activationStateForPayload(payload []string) coremetadata.AgentActivationSta
 func (c *createCommand) confirmAgentActivations(targets []agentActivationTarget) error {
 	var diagnostics []error
 	for _, target := range targets {
-		acknowledged, _, err := c.agents.AwaitAgentActivation(context.Background(), c.runtime.runner, target.paneID, agentActivationConfirmationDeadline)
+		acknowledged, _, err := c.agents.AwaitAgentActivation(context.Background(), c.runtime.runner, target.paneID,
+			agentActivationStartupDeadline, agentActivationAcknowledgementDeadline)
 		source := string(coremetadata.InteractionSourceProviderHook)
 		state := coremetadata.ActivationAcknowledged
 		reason := ""

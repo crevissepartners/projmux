@@ -1,13 +1,17 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -55,10 +59,11 @@ func TestDelayedProviderActivationReturnsValidatedPaneHandle(t *testing.T) {
 			store := newFakeResourceStore(t)
 			tmux := newFakeTmux()
 			create, launcher := newTestAgentCreateCommand(t, store, tmux)
-			// Installed Claude can spend roughly three seconds reaching the
-			// initial-task hook before the provider's own delayed acknowledgement.
-			// Model evidence arriving beyond the old five-second command bound.
-			launcher.activationDelay = 6 * time.Second
+			// Installed providers can spend roughly three seconds reaching
+			// SessionStart before the initial-task hook itself is delayed. The
+			// total exceeds five seconds while each contract stage stays bounded.
+			launcher.activationStartupDelay = 3 * time.Second
+			launcher.activationDelay = 2100 * time.Millisecond
 
 			stdout, _, err := runRoute(t, create,
 				"agent", "--provider", provider, "--project", "uid:prj-alpha",
@@ -66,11 +71,16 @@ func TestDelayedProviderActivationReturnsValidatedPaneHandle(t *testing.T) {
 			if err != nil {
 				t.Fatalf("delayed acknowledged create: %v", err)
 			}
-			if len(launcher.activationTimeouts) != 1 || launcher.activationTimeouts[0] != agentActivationConfirmationDeadline {
-				t.Fatalf("activation deadline = %v, want %v", launcher.activationTimeouts, agentActivationConfirmationDeadline)
+			if len(launcher.startupTimeouts) != 1 || launcher.startupTimeouts[0] != agentActivationStartupDeadline {
+				t.Fatalf("startup deadline = %v, want %v", launcher.startupTimeouts, agentActivationStartupDeadline)
 			}
-			if launcher.activationDelay <= 5*time.Second || launcher.activationDelay >= agentActivationConfirmationDeadline {
-				t.Fatalf("fixture delay %v is not beyond the old deadline and within the corrected bounded deadline", launcher.activationDelay)
+			if len(launcher.activationTimeouts) != 1 || launcher.activationTimeouts[0] != agentActivationAcknowledgementDeadline {
+				t.Fatalf("acknowledgement deadline = %v, want %v", launcher.activationTimeouts, agentActivationAcknowledgementDeadline)
+			}
+			if launcher.activationDelay <= 2*time.Second || launcher.activationDelay >= agentActivationAcknowledgementDeadline ||
+				launcher.activationStartupDelay+launcher.activationDelay <= 5*time.Second {
+				t.Fatalf("fixture startup/delay = %v/%v, want >2s acknowledgement and >5s total within independent bounds",
+					launcher.activationStartupDelay, launcher.activationDelay)
 			}
 			if !regexp.MustCompile(`^%[0-9]+\n$`).MatchString(stdout) {
 				t.Fatalf("stdout = %q, want one exact %%N line", stdout)
@@ -82,6 +92,187 @@ func TestDelayedProviderActivationReturnsValidatedPaneHandle(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExactProviderStartupOpensIndependentAcknowledgementWindow(t *testing.T) {
+	for _, provider := range []string{aiModeCodex, aiModeClaude} {
+		t.Run(provider, func(t *testing.T) {
+			h := newSessionRefHarness(t, provider)
+			agent, _ := h.registry.Agent(h.agentUID)
+			agent.Status.Activation = coremetadata.AgentActivation{State: coremetadata.ActivationPending}
+			runner := &activationAuthorityRunner{paneUID: h.paneUID}
+			now := sessionRefObservedAt
+			h.cmd.now = func() time.Time { return now }
+			startupObserved := false
+			acknowledgementObserved := false
+			h.cmd.sleep = func(d time.Duration) {
+				now = now.Add(d)
+				elapsed := now.Sub(sessionRefObservedAt)
+				if !startupObserved && elapsed >= 3*time.Second {
+					startupObserved = true
+					h.ingest(t, []string{provider + "-hook"}, providerStartupPayload(provider))
+					activation := h.agent(t).Status.Activation
+					if activation.State != coremetadata.ActivationPending ||
+						activation.Source != string(coremetadata.InteractionSourceProviderHook) {
+						t.Fatalf("SessionStart activation = %+v, want exact pending readiness", activation)
+					}
+				}
+				if startupObserved && !acknowledgementObserved && elapsed >= 5100*time.Millisecond {
+					acknowledgementObserved = true
+					h.ingest(t, []string{provider + "-hook"}, providerPromptPayload(provider))
+				}
+			}
+
+			acknowledged, source, err := h.cmd.AwaitAgentActivation(context.Background(), runner, "%7",
+				agentActivationStartupDeadline, agentActivationAcknowledgementDeadline)
+			if err != nil || !acknowledged || source != string(coremetadata.InteractionSourceProviderHook) {
+				t.Fatalf("staged activation acknowledged=%t source=%q err=%v", acknowledged, source, err)
+			}
+			if elapsed := now.Sub(sessionRefObservedAt); elapsed <= agentActivationAcknowledgementDeadline || elapsed >= agentActivationStartupDeadline+agentActivationAcknowledgementDeadline {
+				t.Fatalf("total staged wait = %v, want >5s and <10s", elapsed)
+			}
+		})
+	}
+}
+
+func TestCodexSessionStartRuntimeNotifyPreservesQueueWithoutAcknowledging(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeCodex)
+	agent, _ := h.registry.Agent(h.agentUID)
+	agent.Status.Activation = coremetadata.AgentActivation{State: coremetadata.ActivationPending}
+	home, err := h.cmd.homeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := config.DefaultPaths(filepath.Join(home, ".config"), filepath.Join(home, ".local", "state"))
+	if err := config.SaveAIHookActionsFile(paths.AIHookActionsFile(), config.AIHookActionsFile{
+		Version: 1,
+		Providers: map[string]config.AIHookProviderActions{
+			aiHookProviderCodex: {Events: map[string]string{"SessionStart": aiHookActionNotify}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.cmd.readFile = os.ReadFile
+	bindingRead := h.cmd.readCommand
+	notifyRead := codexHookIngestReadCommand("%7")
+	h.cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if out, err := bindingRead(ctx, name, args...); err == nil {
+			return out, nil
+		}
+		return notifyRead(ctx, name, args...)
+	}
+	queue := &stubNotifyStore{}
+	h.cmd.producer = &storeAttentionNotifyProducer{store: queue, ttl: time.Minute}
+
+	h.ingest(t, []string{"codex-hook"}, providerStartupPayload(aiModeCodex))
+	if len(queue.pushed) != 1 {
+		t.Fatalf("SessionStart queue pushes = %d, want 1: %#v", len(queue.pushed), queue.pushed)
+	}
+	if got := queue.pushed[0].Metadata["event"]; got != "SessionStart" {
+		t.Fatalf("SessionStart queue event = %q, want SessionStart", got)
+	}
+	activation := h.agent(t).Status.Activation
+	if activation.State != coremetadata.ActivationPending ||
+		activation.Source != string(coremetadata.InteractionSourceProviderHook) || activation.ObservedAt.IsZero() {
+		t.Fatalf("runtime-notify SessionStart activation = %+v, want pending readiness", activation)
+	}
+
+	h.ingest(t, []string{"codex-hook"}, providerPromptPayload(aiModeCodex))
+	activation = h.agent(t).Status.Activation
+	if activation.State != coremetadata.ActivationAcknowledged ||
+		activation.Source != string(coremetadata.InteractionSourceProviderHook) {
+		t.Fatalf("exact UserPromptSubmit activation = %+v, want acknowledged", activation)
+	}
+}
+
+func TestWrongProviderSessionStartCannotOpenReadiness(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeCodex)
+	agent, _ := h.registry.Agent(h.agentUID)
+	agent.Status.Activation = coremetadata.AgentActivation{State: coremetadata.ActivationPending}
+
+	h.ingest(t, []string{"claude-hook"}, providerStartupPayload(aiModeClaude))
+	activation := h.agent(t).Status.Activation
+	if activation.State != coremetadata.ActivationPending || activation.Source != "" || !activation.ObservedAt.IsZero() {
+		t.Fatalf("wrong-provider SessionStart opened readiness: %+v", activation)
+	}
+}
+
+func TestActivationStartupAndAcknowledgementStagesAreIndependentlyBounded(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		startupAt      time.Duration
+		wantTotalBound time.Duration
+	}{
+		{name: "provider never starts", wantTotalBound: agentActivationStartupDeadline},
+		{name: "provider starts but never acknowledges", startupAt: 3 * time.Second, wantTotalBound: 8 * time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newSessionRefHarness(t, aiModeClaude)
+			agent, _ := h.registry.Agent(h.agentUID)
+			agent.Status.Activation = coremetadata.AgentActivation{State: coremetadata.ActivationPending}
+			runner := &activationAuthorityRunner{paneUID: h.paneUID}
+			now := sessionRefObservedAt
+			h.cmd.now = func() time.Time { return now }
+			startupObserved := false
+			duplicateStartupObserved := false
+			h.cmd.sleep = func(d time.Duration) {
+				now = now.Add(d)
+				if test.startupAt > 0 && !startupObserved && now.Sub(sessionRefObservedAt) >= test.startupAt {
+					startupObserved = true
+					h.ingest(t, []string{"claude-hook"}, providerStartupPayload(aiModeClaude))
+				}
+				if startupObserved && !duplicateStartupObserved && now.Sub(sessionRefObservedAt) >= test.startupAt+time.Second {
+					duplicateStartupObserved = true
+					h.ingest(t, []string{"claude-hook"}, providerStartupPayload(aiModeClaude))
+				}
+			}
+
+			acknowledged, _, err := h.cmd.AwaitAgentActivation(context.Background(), runner, "%7",
+				agentActivationStartupDeadline, agentActivationAcknowledgementDeadline)
+			if err != nil || acknowledged {
+				t.Fatalf("bounded wait acknowledged=%t err=%v", acknowledged, err)
+			}
+			if elapsed := now.Sub(sessionRefObservedAt); elapsed != test.wantTotalBound {
+				t.Fatalf("bounded wait = %v, want %v", elapsed, test.wantTotalBound)
+			}
+		})
+	}
+}
+
+func TestStaleGenerationSessionStartCannotOpenAcknowledgementWindow(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeCodex)
+	agent, _ := h.registry.Agent(h.agentUID)
+	agent.Status.Activation = coremetadata.AgentActivation{State: coremetadata.ActivationPending}
+	mutator := coremetadata.Mutator{Now: func() time.Time { return sessionRefObservedAt }}
+	if _, err := mutator.RecordPaneActivation(h.registry, h.paneUID, coremetadata.PaneActivationOptions{
+		Generation: "gen-replacement", AgentUID: h.agentUID, OperationID: "op-replacement",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mutator.ObservePaneActivationRuntime(h.registry, h.paneUID, "gen-replacement", "%7"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The hook still carries gen-session-ref from the replaced provider process.
+	h.ingest(t, []string{"codex-hook"}, providerStartupPayload(aiModeCodex))
+	activation := h.agent(t).Status.Activation
+	if activation.State != coremetadata.ActivationPending || activation.Source != "" || !activation.ObservedAt.IsZero() {
+		t.Fatalf("stale SessionStart opened acknowledgement window: %+v", activation)
+	}
+}
+
+func providerStartupPayload(provider string) string {
+	if provider == aiModeClaude {
+		return `{"hook_event_name":"SessionStart","session_id":"claude-session-1","cwd":"/src/app"}`
+	}
+	return `{"hook_event_name":"SessionStart","thread_id":"codex-thread-1","session_id":"codex-session-1","cwd":"/src/app"}`
+}
+
+func providerPromptPayload(provider string) string {
+	if provider == aiModeClaude {
+		return `{"hook_event_name":"UserPromptSubmit","session_id":"claude-session-1","cwd":"/src/app"}`
+	}
+	return `{"hook_event_name":"UserPromptSubmit","thread_id":"codex-thread-1","session_id":"codex-session-1","cwd":"/src/app"}`
 }
 
 func TestActivationAcknowledgementWinsTheTimeoutRace(t *testing.T) {
@@ -141,8 +332,8 @@ func TestLateActivationRefinesOnlyTheSameBindingGeneration(t *testing.T) {
 	// The hook inherited the generation of the process that was replaced. Even
 	// though the durable Pane uid, Agent uid and raw %N are all reused, that
 	// evidence cannot acknowledge the replacement.
-	if _, managed, err := h.cmd.persistManagedAgentInteraction("%7", coremetadata.InteractionInProgress,
-		string(coremetadata.InteractionSourceProviderHook)); err != nil || !managed {
+	if _, managed, err := h.cmd.persistManagedAgentInteractionWithActivationPolicy("%7", coremetadata.InteractionInProgress,
+		string(coremetadata.InteractionSourceProviderHook), true); err != nil || !managed {
 		t.Fatalf("stale hook projection managed=%t err=%v", managed, err)
 	}
 	if got := h.agent(t).Status.Activation.State; got != coremetadata.ActivationUnconfirmed {
@@ -163,8 +354,8 @@ func TestLateActivationRefinesOnlyTheSameBindingGeneration(t *testing.T) {
 	}
 	pane, _ := h.registry.Pane(h.paneUID)
 	pane.Status.Activation.RuntimeID = "%99"
-	if _, managed, err := h.cmd.persistManagedAgentInteraction("%7", coremetadata.InteractionInProgress,
-		string(coremetadata.InteractionSourceProviderHook)); err != nil || !managed {
+	if _, managed, err := h.cmd.persistManagedAgentInteractionWithActivationPolicy("%7", coremetadata.InteractionInProgress,
+		string(coremetadata.InteractionSourceProviderHook), true); err != nil || !managed {
 		t.Fatalf("wrong-runtime hook projection managed=%t err=%v", managed, err)
 	}
 	if got := h.agent(t).Status.Activation.State; got != coremetadata.ActivationUnconfirmed {
@@ -172,8 +363,8 @@ func TestLateActivationRefinesOnlyTheSameBindingGeneration(t *testing.T) {
 	}
 
 	pane.Status.Activation.RuntimeID = "%7"
-	if _, managed, err := h.cmd.persistManagedAgentInteraction("%7", coremetadata.InteractionInProgress,
-		string(coremetadata.InteractionSourceProviderHook)); err != nil || !managed {
+	if _, managed, err := h.cmd.persistManagedAgentInteractionWithActivationPolicy("%7", coremetadata.InteractionInProgress,
+		string(coremetadata.InteractionSourceProviderHook), true); err != nil || !managed {
 		t.Fatalf("exact hook projection managed=%t err=%v", managed, err)
 	}
 	if got := h.agent(t).Status.Activation.State; got != coremetadata.ActivationAcknowledged {

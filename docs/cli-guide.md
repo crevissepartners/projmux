@@ -338,12 +338,15 @@ owner Project root from `get`/`describe`, and a successful resume persists that
 normalized effective workspace without changing Window Project ownership.
 
 When `create agent -- <initial-prompt>` is used, normal resource creation and
-provider activation are distinct. Projmux waits up to eight seconds for exact
-provider-hook metadata only; the bounded window includes provider startup before
-the initial-task hook as well as a delayed acknowledgement, and it never captures
-pane content or stores the prompt. An acknowledgement inside that deadline,
-including one later than two seconds, returns success and the requested exact
-`%N` output. If
+provider activation are distinct. Projmux first waits up to five seconds for an
+exact provider `SessionStart`; that readiness evidence leaves activation
+`pending` and opens an independent five-second initial-task acknowledgement
+window. A `UserPromptSubmit` acknowledgement may also arrive directly before
+the readiness observer sees `SessionStart`. The two stages are independently
+bounded, so provider startup plus an acknowledgement later than two seconds may
+take more than five but never more than ten seconds. Neither stage captures pane
+content or stores the prompt. Acknowledgement returns success and the requested
+exact `%N` output. If
 activation cannot be confirmed, the command exits nonzero while naming the
 exact Agent UID and Pane plus safe provider retry and `delete agent ... --yes`
 cleanup options. The live resources remain explicit and retryable rather than

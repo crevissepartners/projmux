@@ -503,7 +503,7 @@ func (r *recordingAgentLauncher) PlanAgentLaunch(string, coremetadata.AgentWorks
 
 func (r *recordingAgentLauncher) BindManagedAgentPane(string, string, string, string) {}
 
-func (r *recordingAgentLauncher) AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration) (bool, string, error) {
+func (r *recordingAgentLauncher) AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error) {
 	return false, "", nil
 }
 
