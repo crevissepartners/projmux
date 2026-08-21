@@ -1,0 +1,21 @@
+{
+  "rows": [
+    {
+      "model": "codex",
+      "window": "5h",
+      "bucket": "codex",
+      "pct": 73,
+      "resets_at": "2026-08-22T06:43:19Z",
+      "updated_at": "2026-08-22T10:00:00Z",
+      "source": "app-server",
+      "rate_limit": {
+        "limit_id": "codex",
+        "label": "General",
+        "slot": "primary",
+        "cadence_minutes": 300
+      }
+    }
+  ],
+  "warnings": [],
+  "hard_failure": false
+}

@@ -1,0 +1,24 @@
+{
+  "rows": [
+    {
+      "model": "codex",
+      "window": "weekly",
+      "bucket": "codex",
+      "pct": 7,
+      "resets_at": "2026-08-22T06:31:40Z",
+      "updated_at": "2026-08-22T10:00:00Z",
+      "source": "app-server",
+      "rate_limit": {
+        "bucket_key": "codex",
+        "limit_id": "codex",
+        "label": "General",
+        "slot": "secondary",
+        "cadence_minutes": 10080
+      }
+    }
+  ],
+  "warnings": [
+    "bucket 1 primary: invalid usedPercent"
+  ],
+  "hard_failure": false
+}

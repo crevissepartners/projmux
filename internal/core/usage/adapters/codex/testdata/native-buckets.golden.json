@@ -1,0 +1,38 @@
+{
+  "rows": [
+    {
+      "model": "codex",
+      "window": "quota",
+      "bucket": "alternate/primary",
+      "pct": 44,
+      "resets_at": "2026-08-22T06:31:40Z",
+      "updated_at": "2026-08-22T10:00:00Z",
+      "source": "app-server",
+      "rate_limit": {
+        "bucket_key": "alternate",
+        "limit_id": "alt",
+        "label": "Alternate",
+        "slot": "primary",
+        "cadence_minutes": 1440
+      }
+    },
+    {
+      "model": "codex",
+      "window": "5h",
+      "bucket": "codex",
+      "pct": 12,
+      "resets_at": "2026-08-22T06:30:00Z",
+      "updated_at": "2026-08-22T10:00:00Z",
+      "source": "app-server",
+      "rate_limit": {
+        "bucket_key": "codex",
+        "limit_id": "codex",
+        "label": "General",
+        "slot": "primary",
+        "cadence_minutes": 300
+      }
+    }
+  ],
+  "warnings": [],
+  "hard_failure": false
+}

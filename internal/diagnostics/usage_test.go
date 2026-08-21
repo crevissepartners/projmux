@@ -58,6 +58,42 @@ func TestUsageRecorderClosedOutcomeTable(t *testing.T) {
 	}
 }
 
+func TestUsageRecorderClosedSourceFallbackAndStaleReasons(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		source     UsageSource
+		failure    UsageFailure
+		wantLevel  string
+		wantResult string
+		wantKind   string
+	}{
+		{"rollout unsupported", UsageSourceRollout, UsageFailureAppServerUnsupported, "info", "success", ""},
+		{"rollout api key", UsageSourceRollout, UsageFailureAccountUnsupported, "info", "success", ""},
+		{"last known good disconnect", UsageSourceLastKnownGood, UsageFailureAppServerDisconnected, "error", "error", "runtime"},
+		{"last known good timeout", UsageSourceLastKnownGood, UsageFailureAppServerTimeout, "error", "error", "runtime"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			writer := &recordingEventWriter{}
+			recorder := NewUsageRecorder(writer, "usage-provenance", "0.10.0", MuxBackend())
+			recorder.RecordCollectOutcome(ProviderCodex, test.source, test.failure, time.Now())
+			events := writer.snapshot()
+			if len(events) != 1 {
+				t.Fatalf("events = %#v", events)
+			}
+			event := events[0]
+			if event.Source != string(test.source) || event.Failure != string(test.failure) ||
+				event.Level != test.wantLevel || event.Result != test.wantResult || event.Kind != test.wantKind {
+				t.Fatalf("source-aware event = %#v", event)
+			}
+			if _, err := sanitizeEvent(event, "/private/home"); err != nil {
+				t.Fatalf("closed usage event rejected: %v", err)
+			}
+		})
+	}
+}
+
 // TestUsageEventShapeRejectsUnsafeVariants pins the closed schema: anything
 // outside the (provider, failure) tuple, or a severity that does not match the
 // failure class, is refused before it can be written.

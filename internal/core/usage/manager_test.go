@@ -727,6 +727,100 @@ func TestForceCollectBypassesBackoffAndThrottle(t *testing.T) {
 	}
 }
 
+func TestApplySnapshotsReplacesOneModelPreservesStateAndThrottlesCollector(t *testing.T) {
+	t.Parallel()
+
+	now := mustTime(t, "2026-08-22T10:00:00Z")
+	dir := t.TempDir()
+	store := NewStore(dir)
+	priorCodex := Snapshot{
+		Model: "codex", Window: Window5h, Pct: 11,
+		UpdatedAt: now.Add(-time.Minute), Source: SourceRollout,
+	}
+	priorClaude := Snapshot{
+		Model: "claude", Window: WindowWeekly, Pct: 22,
+		UpdatedAt: now.Add(-time.Minute),
+	}
+	backoff := BackoffState{Until: now.Add(time.Hour), Consecutive: 3}
+	if err := store.SaveState(State{
+		Snapshots: []Snapshot{priorCodex, priorClaude},
+		LastCollect: map[string]time.Time{
+			"codex":  now.Add(-time.Minute),
+			"claude": now.Add(-time.Minute),
+		},
+		Backoff: map[string]BackoffState{"claude": backoff},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	codexAdapter := &countingAdapter{name: "codex"}
+	registry := NewRegistry()
+	if err := registry.Register(codexAdapter); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(registry, store, func() time.Time { return now })
+	fresh := Snapshot{
+		Model: " CoDeX ", Window: Window5h, Pct: 73,
+		Source: SourceAppServer,
+	}
+	rows, err := manager.ApplySnapshots(" CoDeX ", []Snapshot{fresh})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Model != "claude" || rows[1].Model != "codex" || rows[1].Pct != 73 {
+		t.Fatalf("ApplySnapshots rows = %#v, want preserved claude plus fresh codex", rows)
+	}
+	if !rows[1].UpdatedAt.Equal(now) {
+		t.Fatalf("fresh UpdatedAt = %v, want %v", rows[1].UpdatedAt, now)
+	}
+
+	state, err := store.LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.LastCollect["codex"].Equal(now) || !state.LastCollect["claude"].Equal(now.Add(-time.Minute)) {
+		t.Fatalf("last_collect = %#v, want only codex advanced", state.LastCollect)
+	}
+	if got := state.Backoff["claude"]; !got.Until.Equal(backoff.Until) || got.Consecutive != backoff.Consecutive {
+		t.Fatalf("claude backoff = %#v, want %#v", got, backoff)
+	}
+	ran, err := manager.MaybeCollect(context.Background(), 30*time.Second)
+	if err != nil || ran || codexAdapter.Calls() != 0 {
+		t.Fatalf("MaybeCollect after event = ran %v err %v calls %d, want throttled zero-call", ran, err, codexAdapter.Calls())
+	}
+}
+
+func TestApplySnapshotsRejectsMixedModelBatchWithoutChangingLastKnownGood(t *testing.T) {
+	t.Parallel()
+
+	now := mustTime(t, "2026-08-22T10:00:00Z")
+	dir := t.TempDir()
+	store := NewStore(dir)
+	prior := State{
+		Snapshots:   []Snapshot{{Model: "codex", Window: Window5h, Pct: 21, Source: SourceAppServer}},
+		LastCollect: map[string]time.Time{"codex": now.Add(-time.Minute)},
+	}
+	if err := store.SaveState(prior); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(NewRegistry(), store, func() time.Time { return now })
+	_, err := manager.ApplySnapshots("codex", []Snapshot{
+		{Model: "codex", Window: Window5h, Pct: 73, Source: SourceAppServer},
+		{Model: "claude", Window: WindowWeekly, Pct: 44},
+	})
+	if err == nil {
+		t.Fatal("ApplySnapshots mixed-model batch error = nil")
+	}
+	state, loadErr := store.LoadState()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if len(state.Snapshots) != 1 || state.Snapshots[0].Pct != 21 ||
+		!state.LastCollect["codex"].Equal(prior.LastCollect["codex"]) {
+		t.Fatalf("state after rejected event = %#v, want last-known-good unchanged", state)
+	}
+}
+
 func TestStoreMigratesLegacyLastCollectString(t *testing.T) {
 	t.Parallel()
 

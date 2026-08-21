@@ -1,8 +1,9 @@
 // Package codex implements an authoritative usage Adapter for the Codex CLI.
 //
-// Source of truth: the `rate_limits` payload embedded in `event_msg` /
-// `token_count` records inside the latest rollout JSONL under
-// `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl`. The schema:
+// Native account/rateLimits is primary. The `rate_limits` payload embedded in
+// the latest rollout JSONL under ~/.codex/sessions is retained as the single
+// bounded fallback when native account data is unavailable or unsupported.
+// Its schema is:
 //
 //	{
 //	  "limit_id": "codex",
@@ -13,14 +14,7 @@
 //
 // Windows are classified semantically by `window_minutes`: 300 is the
 // 5-hour window and 10080 is the weekly window, regardless of which slot
-// contains them. `resets_at` is a unix timestamp (seconds, UTC). Compared
-// to the v0 JSONL token-counting implementation, this approach is:
-//
-//   - Server-authoritative: numbers match what `codex` itself shows.
-//   - Cross-machine: usage on another box is reflected as soon as that
-//     box's last turn lands in a rollout file synced via Dropbox/etc.
-//   - Drift-free: no local accumulation.
-//
+// contains them. `resets_at` is a unix timestamp (seconds, UTC).
 // The adapter walks rollouts newest-first (by mtime, NOT filename — they
 // happen to correlate but are not guaranteed to) until it finds a line
 // containing `rate_limits`. Files older than `scanWindow` are skipped to
@@ -38,6 +32,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/usage"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 // Name is the adapter's registered identifier.
@@ -53,14 +48,28 @@ type Adapter struct {
 	homeDir      func() (string, error)
 	now          func() time.Time
 	rootOverride string
+	native       nativeTransport
 }
 
-// New returns an Adapter that reads from $HOME/.codex/sessions.
+// New returns an Adapter that prefers the native Codex app-server account
+// rate-limit API and uses the newest rollout only as one bounded fallback.
 func New() *Adapter {
-	return &Adapter{homeDir: os.UserHomeDir, now: time.Now}
+	return &Adapter{homeDir: os.UserHomeDir, now: time.Now, native: defaultNativeTransport()}
 }
 
-// NewWithRoot is intended for tests.
+// NewReadOnly returns the automatic HUD collector. It probes and reads an
+// already-running app-server but preserves Phase 1's authority boundary by
+// never starting the daemon from a status-line refresh.
+func NewReadOnly() *Adapter {
+	return &Adapter{
+		homeDir: os.UserHomeDir,
+		now:     time.Now,
+		native:  defaultNativeTransportForTrigger(codexappserver.TriggerDoctor),
+	}
+}
+
+// NewWithRoot is intended for rollout-parser tests. It deliberately disables
+// the native lane so fixtures never inspect or start the installed Codex.
 func NewWithRoot(root string) *Adapter {
 	return &Adapter{homeDir: os.UserHomeDir, now: time.Now, rootOverride: root}
 }
@@ -72,7 +81,7 @@ func (a *Adapter) Name() string { return Name }
 // `rate_limits` payload, and returns its supported window Snapshots.
 // Best-effort: missing tree → nil snapshots, no rollout with rate_limits
 // → nil snapshots.
-func (a *Adapter) Collect(ctx context.Context) ([]usage.Snapshot, error) {
+func (a *Adapter) collectRollout(ctx context.Context) ([]usage.Snapshot, error) {
 	root, err := a.resolveRoot()
 	if err != nil {
 		return nil, nil

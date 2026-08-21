@@ -352,7 +352,7 @@ func TestNotificationRouteAndCloseShareChannelLifetimeGuard(t *testing.T) {
 	for range 1000 {
 		client := &Client{
 			pending: make(map[int64]chan response),
-			events:  make(chan notification, 1),
+			events:  make(chan Notification, 1),
 			done:    make(chan struct{}),
 		}
 		var wg sync.WaitGroup

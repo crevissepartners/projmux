@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -75,6 +76,56 @@ func (m *Manager) ForceCollect(ctx context.Context) ([]Snapshot, error) {
 	return m.collect(ctx, 0, true)
 }
 
+// ApplySnapshots commits one already-normalized adapter event through the
+// same replace/store contract as Collect. It deliberately advances that
+// adapter's last-collect timestamp: a fresh event is authoritative account
+// state and must suppress a second network/fallback source decision in the
+// same refresh. Callers must supply exactly one model and a non-empty batch.
+func (m *Manager) ApplySnapshots(model string, snapshots []Snapshot) ([]Snapshot, error) {
+	if m == nil {
+		return nil, errors.New("usage: nil manager")
+	}
+	if m.store == nil {
+		return nil, errors.New("usage: nil store")
+	}
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" || len(snapshots) == 0 {
+		return nil, errors.New("usage: event snapshot batch requires one model and at least one row")
+	}
+	now := m.now().UTC()
+	fresh := make([]Snapshot, len(snapshots))
+	for i, snapshot := range snapshots {
+		if strings.ToLower(strings.TrimSpace(snapshot.Model)) != model {
+			return nil, fmt.Errorf("usage: event snapshot model mismatch at row %d", i+1)
+		}
+		snapshot.Model = model
+		if snapshot.UpdatedAt.IsZero() {
+			snapshot.UpdatedAt = now
+		}
+		fresh[i] = snapshot
+	}
+	state, err := m.store.LoadState()
+	if err != nil {
+		return nil, err
+	}
+	if state.LastCollect == nil {
+		state.LastCollect = map[string]time.Time{}
+	}
+	merged := make([]Snapshot, 0, len(state.Snapshots)+len(fresh))
+	merged = append(merged, fresh...)
+	for _, snapshot := range state.Snapshots {
+		if strings.ToLower(strings.TrimSpace(snapshot.Model)) != model {
+			merged = append(merged, snapshot)
+		}
+	}
+	state.Snapshots = merged
+	state.LastCollect[model] = now
+	if err := m.store.SaveState(state); err != nil {
+		return nil, err
+	}
+	return SortedSnapshots(merged), nil
+}
+
 // collect is the shared implementation. perAdapterFloor is the minimum
 // time-since-last-collect required for an adapter to be invoked; a value
 // of 0 disables the floor and runs every adapter. Adapters that
@@ -120,6 +171,7 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 
 	merged := make([]Snapshot, 0, len(priorState.Snapshots))
 	freshModels := map[string]bool{}
+	staleByModel := map[string]SnapshotReason{}
 	var errs []error
 
 	adapters := m.registry.All()
@@ -159,6 +211,11 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 		snaps, err := adapter.Collect(ctx)
 		if err != nil {
 			errs = append(errs, &AdapterError{Model: name, Err: err})
+			if len(snaps) == 0 {
+				if reason := SnapshotStaleReason(err); reason != "" {
+					staleByModel[name] = reason
+				}
+			}
 		}
 		// Stamp UpdatedAt so the renderer can show "as of" without callers
 		// having to thread the clock through every adapter.
@@ -195,6 +252,11 @@ func (m *Manager) collect(ctx context.Context, perAdapterFloor time.Duration, fo
 	for model, rows := range priorByModel {
 		if freshModels[model] {
 			continue
+		}
+		if reason := staleByModel[model]; reason != "" {
+			for i := range rows {
+				rows[i].StaleReason = reason
+			}
 		}
 		merged = append(merged, rows...)
 	}

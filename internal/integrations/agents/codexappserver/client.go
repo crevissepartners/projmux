@@ -43,7 +43,7 @@ type Client struct {
 	mu      sync.Mutex
 	nextID  int64
 	pending map[int64]chan response
-	events  chan notification
+	events  chan Notification
 	done    chan struct{}
 	err     error
 	once    sync.Once
@@ -56,12 +56,18 @@ func NewClient(stream readWriteCloser) *Client {
 		stream:  stream,
 		nextID:  1,
 		pending: make(map[int64]chan response),
-		events:  make(chan notification, notificationBacklog),
+		events:  make(chan Notification, notificationBacklog),
 		done:    make(chan struct{}),
 	}
 	go c.readLoop()
 	return c
 }
+
+// Notifications returns the bounded typed notification stream for this
+// initialized connection. Params contains only the method payload bytes; a
+// capability consumer must decode and immediately project them into its own
+// safe domain type rather than persisting the raw payload.
+func (c *Client) Notifications() <-chan Notification { return c.events }
 
 // Initialize performs the required single initialize/initialized handshake.
 func (c *Client) Initialize(ctx context.Context, version string) (string, error) {
@@ -221,7 +227,7 @@ func (c *Client) routeFrame(frame []byte) error {
 		return fmt.Errorf("%w: malformed JSON", ErrProtocol)
 	}
 	if envelope.Method != "" && len(envelope.ID) == 0 {
-		event := notification{Method: envelope.Method, Params: append(json.RawMessage(nil), envelope.Params...)}
+		event := Notification{Method: envelope.Method, Params: append(json.RawMessage(nil), envelope.Params...)}
 		c.mu.Lock()
 		if c.err != nil {
 			err := c.err

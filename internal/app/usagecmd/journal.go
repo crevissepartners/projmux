@@ -25,12 +25,19 @@ import (
 //
 // Journal writes are best-effort and intentionally have no return value —
 // a failing journal must not change the result of the usage command.
-func (c *Command) recordCollectDiagnostics(collectErr error, started time.Time) {
-	if c == nil || collectErr == nil {
+func (c *Command) recordCollectDiagnostics(collectErr error, snapshots []usage.Snapshot, started time.Time) {
+	if c == nil {
 		return
 	}
 	adapterErrs := usage.AdapterErrors(collectErr)
-	if len(adapterErrs) == 0 {
+	hasFallback := false
+	for _, snapshot := range snapshots {
+		if snapshot.FallbackReason != "" {
+			hasFallback = true
+			break
+		}
+	}
+	if len(adapterErrs) == 0 && !hasFallback {
 		return
 	}
 	journal := c.usageJournal()
@@ -39,10 +46,71 @@ func (c *Command) recordCollectDiagnostics(collectErr error, started time.Time) 
 	}
 	for _, adapterErr := range adapterErrs {
 		failure := diagnostics.UsageFailureCollect
+		source := diagnostics.UsageSource("")
 		if adapterErr.Partial() {
 			failure = diagnostics.UsageFailureRowsSkipped
 		}
-		journal.RecordCollectFailure(usageDiagnosticsProvider(adapterErr.Model), failure, started)
+		if snapshot, ok := usageDiagnosticSnapshot(snapshots, adapterErr.Model); ok {
+			if adapterErr.Partial() {
+				source = usageDiagnosticsSource(snapshot.Source)
+			}
+			if snapshot.StaleReason != "" {
+				source = diagnostics.UsageSourceLastKnownGood
+				failure = usageDiagnosticsReason(snapshot.StaleReason)
+			}
+		}
+		journal.RecordCollectOutcome(usageDiagnosticsProvider(adapterErr.Model), source, failure, started)
+	}
+	seenFallback := map[string]bool{}
+	for _, snapshot := range snapshots {
+		model := strings.ToLower(strings.TrimSpace(snapshot.Model))
+		if snapshot.FallbackReason == "" || snapshot.StaleReason != "" || seenFallback[model] {
+			continue
+		}
+		seenFallback[model] = true
+		journal.RecordCollectOutcome(
+			usageDiagnosticsProvider(model), diagnostics.UsageSourceRollout,
+			usageDiagnosticsReason(snapshot.FallbackReason), started,
+		)
+	}
+}
+
+func usageDiagnosticSnapshot(snapshots []usage.Snapshot, model string) (usage.Snapshot, bool) {
+	for _, snapshot := range snapshots {
+		if strings.EqualFold(strings.TrimSpace(snapshot.Model), strings.TrimSpace(model)) {
+			return snapshot, true
+		}
+	}
+	return usage.Snapshot{}, false
+}
+
+func usageDiagnosticsSource(source usage.SnapshotSource) diagnostics.UsageSource {
+	switch source {
+	case usage.SourceAppServer:
+		return diagnostics.UsageSourceAppServer
+	case usage.SourceRollout:
+		return diagnostics.UsageSourceRollout
+	default:
+		return ""
+	}
+}
+
+func usageDiagnosticsReason(reason usage.SnapshotReason) diagnostics.UsageFailure {
+	switch reason {
+	case usage.ReasonAppServerUnavailable:
+		return diagnostics.UsageFailureAppServerUnavailable
+	case usage.ReasonAppServerUnsupported:
+		return diagnostics.UsageFailureAppServerUnsupported
+	case usage.ReasonAccountUnsupported:
+		return diagnostics.UsageFailureAccountUnsupported
+	case usage.ReasonAppServerTimeout:
+		return diagnostics.UsageFailureAppServerTimeout
+	case usage.ReasonAppServerProtocol:
+		return diagnostics.UsageFailureAppServerProtocol
+	case usage.ReasonAppServerDisconnected:
+		return diagnostics.UsageFailureAppServerDisconnected
+	default:
+		return diagnostics.UsageFailureCollect
 	}
 }
 

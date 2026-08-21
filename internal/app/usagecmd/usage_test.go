@@ -3,6 +3,7 @@ package usagecmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
@@ -31,6 +32,167 @@ func installedCacheFixture(now time.Time) []usage.Snapshot {
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 42, ResetsAt: now.Add(6 * 24 * time.Hour), UpdatedAt: now},
 		{Model: "claude", Window: usage.WindowQuota, Bucket: "group-redacted-model", Pct: 73, ResetsAt: now.Add(2 * 24 * time.Hour), UpdatedAt: now, NamedQuota: &usage.NamedQuota{Kind: "kind-redacted", Group: "group-redacted-model", Severity: "severity-redacted", IsActive: true, Scope: &usage.NamedQuotaScope{Model: &usage.NamedQuotaModel{ID: &modelID, DisplayName: "Model Redacted Alpha"}}}},
 		{Model: "codex", Window: usage.WindowWeekly, Pct: 12, ResetsAt: now.Add(6 * 24 * time.Hour), UpdatedAt: now},
+	}
+}
+
+func TestCodexNativeUsageJSONTableAndHUDShareValueSourceAndReasons(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	label := "General Codex"
+	limitID := "codex"
+	cadence := int64(300)
+	rows := []usage.Snapshot{
+		{
+			Model: "codex", Window: usage.Window5h, Bucket: "alternate", Pct: 88,
+			ResetsAt: time.Unix(1787380200, 0).UTC(), UpdatedAt: now,
+			Source: usage.SourceAppServer,
+			RateLimit: &usage.RateLimitMetadata{
+				BucketKey: "alternate", LimitID: &limitID, Label: &label,
+				Slot: "primary", CadenceMinutes: &cadence,
+			},
+		},
+		{
+			Model: "codex", Window: usage.Window5h, Bucket: "codex", Pct: 12,
+			ResetsAt: time.Unix(1787380300, 0).UTC(), UpdatedAt: now,
+			Source: usage.SourceAppServer,
+			RateLimit: &usage.RateLimitMetadata{
+				BucketKey: "codex", LimitID: &limitID, Label: &label,
+				Slot: "primary", CadenceMinutes: &cadence,
+			},
+		},
+	}
+
+	var jsonOut bytes.Buffer
+	if err := writeUsageJSON(&jsonOut, rows, usage.State{}, now); err != nil {
+		t.Fatal(err)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal(jsonOut.Bytes(), &decoded); err != nil {
+		t.Fatalf("public JSON shape changed from array: %v\n%s", err, jsonOut.String())
+	}
+	if len(decoded) != 2 || decoded[0]["source"] != "app-server" {
+		t.Fatalf("JSON provenance = %#v", decoded)
+	}
+	rateLimit, ok := decoded[0]["rate_limit"].(map[string]any)
+	if !ok || rateLimit["label"] != label {
+		t.Fatalf("JSON label metadata = %#v", decoded[0]["rate_limit"])
+	}
+
+	var table bytes.Buffer
+	if err := writeUsageTable(&table, rows, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"SOURCE", "REASON", "app-server", "5h/codex · General Codex", "12%"} {
+		if !strings.Contains(table.String(), want) {
+			t.Fatalf("usage table missing %q:\n%s", want, table.String())
+		}
+	}
+
+	hud := formatStatusUsage(rows, 0, now)
+	for _, want := range []string{"Codex[app-server]", "12%"} {
+		if !strings.Contains(hud, want) {
+			t.Fatalf("HUD missing %q: %q", want, hud)
+		}
+	}
+	if strings.Contains(hud, "88%") {
+		t.Fatalf("HUD selected non-canonical bucket: %q", hud)
+	}
+}
+
+func TestCodexFallbackAndLastKnownGoodReasonsRemainVisible(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	fallback := usage.Snapshot{
+		Model: "codex", Window: usage.Window5h, Pct: 17,
+		UpdatedAt: now, Source: usage.SourceRollout,
+		FallbackReason: usage.ReasonAppServerUnsupported,
+	}
+	if got := formatStatusUsage([]usage.Snapshot{fallback}, 0, now); !strings.Contains(got, "rollout/fallback:app-server-unsupported") {
+		t.Fatalf("fallback HUD = %q", got)
+	}
+	stale := fallback
+	stale.StaleReason = usage.ReasonAppServerDisconnected
+	if got := formatStatusUsage([]usage.Snapshot{stale}, 0, now); !strings.Contains(got, "rollout/stale:app-server-disconnected") {
+		t.Fatalf("last-known-good HUD = %q", got)
+	}
+
+	var table bytes.Buffer
+	if err := writeUsageTable(&table, []usage.Snapshot{stale}, now); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(table.String(), "app-server-disconnected") {
+		t.Fatalf("last-known-good table = %q", table.String())
+	}
+}
+
+func TestCommandCodexJSONAndStatusHUDSelectSameCanonicalNativeRow(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	native := &stubAdapter{name: "codex", snaps: []usage.Snapshot{
+		{
+			Model: "codex", Window: usage.Window5h, Bucket: "alternate", Pct: 88,
+			UpdatedAt: now, Source: usage.SourceAppServer,
+		},
+		{
+			Model: "codex", Window: usage.Window5h, Bucket: "codex", Pct: 12,
+			UpdatedAt: now, Source: usage.SourceAppServer,
+		},
+	}}
+	registry := usage.NewRegistry()
+	if err := registry.Register(native); err != nil {
+		t.Fatal(err)
+	}
+	manager := usage.NewManager(registry, usage.NewStore(t.TempDir()), func() time.Time { return now })
+	command := New(func() time.Time { return now })
+	command.managerFn = func([]string) (*usage.Manager, error) { return manager, nil }
+	command.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentCodex}, nil
+	}
+	isolatedHome := t.TempDir()
+	command.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return isolatedHome
+		case "XDG_CONFIG_HOME":
+			return filepath.Join(isolatedHome, "config")
+		case "XDG_STATE_HOME":
+			return filepath.Join(isolatedHome, "state")
+		default:
+			return ""
+		}
+	}
+
+	var jsonOut, jsonErr bytes.Buffer
+	if err := command.Run([]string{"--model", "codex", "--json"}, &jsonOut, &jsonErr); err != nil {
+		t.Fatal(err)
+	}
+	var rows []usage.Snapshot
+	if err := json.Unmarshal(jsonOut.Bytes(), &rows); err != nil {
+		t.Fatalf("command JSON no longer decodes as snapshot array: %v\n%s", err, jsonOut.String())
+	}
+	var canonical usage.Snapshot
+	for _, row := range rows {
+		if row.Bucket == "codex" && row.Window == usage.Window5h {
+			canonical = row
+			break
+		}
+	}
+	if canonical.Pct != 12 || canonical.Source != usage.SourceAppServer {
+		t.Fatalf("canonical CLI row = %#v", canonical)
+	}
+
+	var hudOut, hudErr bytes.Buffer
+	if err := command.RunStatus(nil, &hudOut, &hudErr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(hudOut.String(), "Codex[app-server]") || !strings.Contains(hudOut.String(), "12%") {
+		t.Fatalf("status HUD disagrees with CLI canonical row: %q", hudOut.String())
+	}
+	if strings.Contains(hudOut.String(), "88%") {
+		t.Fatalf("status HUD selected another bucket: %q", hudOut.String())
+	}
+	if native.collectCalls != 1 {
+		t.Fatalf("HUD bypassed Manager throttle: collect calls = %d", native.collectCalls)
 	}
 }
 

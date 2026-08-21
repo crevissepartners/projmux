@@ -165,6 +165,45 @@ func TestUsageSuccessfulCollectProducesNoJournalRows(t *testing.T) {
 	}
 }
 
+func TestCodexFallbackAndLastKnownGoodDiagnosticsExposeClosedSourceReason(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	fallback := usage.Snapshot{
+		Model: "codex", Window: usage.Window5h, Pct: 19, UpdatedAt: now,
+		Source: usage.SourceRollout, FallbackReason: usage.ReasonAppServerUnsupported,
+	}
+	h := newJournalHarness(t, &stubAdapter{name: "codex", snaps: []usage.Snapshot{fallback}})
+	h.run("--model", "codex")
+	rows := h.tail(10)
+	if len(rows) != 1 || rows[0].Source != string(diagnostics.UsageSourceRollout) ||
+		rows[0].Failure != string(diagnostics.UsageFailureAppServerUnsupported) {
+		t.Fatalf("fallback diagnostics = %#v", rows)
+	}
+
+	stale := fallback
+	stale.StaleReason = usage.ReasonAppServerDisconnected
+	h.cmd.recordCollectDiagnostics(
+		&usage.AdapterError{Model: "codex", Err: &usage.StaleReasonError{
+			Reason: usage.ReasonAppServerDisconnected,
+			Err:    errors.New("private transport detail"),
+		}},
+		[]usage.Snapshot{stale}, now,
+	)
+	rows = h.tail(10)
+	if len(rows) != 2 || rows[1].Source != string(diagnostics.UsageSourceLastKnownGood) ||
+		rows[1].Failure != string(diagnostics.UsageFailureAppServerDisconnected) ||
+		rows[1].Level != "error" {
+		t.Fatalf("last-known-good diagnostics = %#v", rows)
+	}
+	raw, err := os.ReadFile(h.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("private")) || bytes.Contains(raw, []byte("transport detail")) {
+		t.Fatalf("diagnostics leaked error text: %s", raw)
+	}
+}
+
 // TestUsageRepeatedIdenticalFailuresAreSuppressed proves the bounded journal
 // cannot be flooded by a persistent failure inside one process run, while a
 // genuinely different (provider, failure) tuple still gets its own row.
