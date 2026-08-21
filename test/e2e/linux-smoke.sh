@@ -6323,6 +6323,174 @@ p12_popup internal agent-pane launch-shell down >"$p12_root/shell.out"
 p12_assert_managed_create "Home shell split" "$p12_before_panes" "$p12_before_agents" 0
 p12_shell_uid="$p12_last_pane_uid"
 
+# Declarative contract stabilization Phase 13: add a sibling Project and one
+# foreign tmux Pane to the same isolated server, then close the plural-read
+# context x selector matrix through the built binary. The ControlSession rows
+# are the real Home chain declared above; no fixture-only Registry edit is used.
+mkdir -p "$p12_root/project"
+p12_inside() {
+  local pane="$1"
+  shift
+  "${p12_env[@]}" \
+    TMUX="$p12_socket_path,$p12_server_pid,0" \
+    TMUX_PANE="$pane" \
+    "$bin" "$@"
+}
+
+p12_project_uid="$(p12_pmx create project --root "$p12_root/project" --name phase13-project -o uid)"
+p12_project_window_uid="$(
+  p12_inside "$p12_origin_pane" create window \
+    --project "uid:$p12_project_uid" \
+    --name phase13-project-window \
+    -o uid -- sleep 600
+)"
+p12_project_origin_pane="$(
+  p12_tmux list-panes -a -F '#{pane_id} #{@projmux_window_uid}' |
+    awk -v uid="$p12_project_window_uid" '$2 == uid { print $1 }'
+)"
+p12_project_origin_uid="$(p12_tmux show-options -pqv -t "$p12_project_origin_pane" @projmux_pane_uid)"
+if [[ -z "$p12_project_uid" || -z "$p12_project_window_uid" || -z "$p12_project_origin_pane" ||
+  -z "$p12_project_origin_uid" ]] ||
+  [[ "$(printf '%s\n' "$p12_project_origin_pane" | grep -c .)" != "1" ]]; then
+  echo "Phase 13 canonical Project fixture did not resolve one exact Project/Window/Pane chain" >&2
+  exit 1
+fi
+
+p12_project_agent_pane="$(
+  p12_inside "$p12_project_origin_pane" create codex \
+    --project "uid:$p12_project_uid" \
+    --window "uid:$p12_project_window_uid" \
+    -o pane-id
+)"
+p12_project_agent_pane_uid="$(p12_tmux show-options -pqv -t "$p12_project_agent_pane" @projmux_pane_uid)"
+p12_project_agent_uid="$(p12_pmx get agents --project "uid:$p12_project_uid" -o uid)"
+if [[ -z "$p12_project_agent_pane_uid" || -z "$p12_project_agent_uid" ]] ||
+  [[ "$(printf '%s\n' "$p12_project_agent_uid" | grep -c .)" != "1" ]]; then
+  echo "Phase 13 Project fixture did not create exactly one managed Agent" >&2
+  exit 1
+fi
+
+p12_tmux new-session -d -s phase13-foreign -c "$p12_root" sleep 600
+p12_foreign_pane="$(p12_tmux display-message -p -t phase13-foreign:0.0 '#{pane_id}')"
+if [[ -n "$(p12_tmux show-options -wqv -t "$p12_foreign_pane" @projmux_window_uid)" ]]; then
+  echo "Phase 13 foreign fixture unexpectedly carries a managed Window uid" >&2
+  exit 1
+fi
+
+p13_context_run() {
+  local context="$1"
+  shift
+  case "$context" in
+    project) p12_inside "$p12_project_origin_pane" "$@" ;;
+    control) p12_inside "$p12_origin_pane" "$@" ;;
+    foreign) p12_inside "$p12_foreign_pane" "$@" ;;
+    outside) p12_pmx "$@" ;;
+    *) echo "unknown Phase 13 read context: $context" >&2; return 1 ;;
+  esac
+}
+
+p13_case=0
+p13_assert_success() {
+  local label="$1"
+  local want="$2"
+  local context="$3"
+  shift 3
+  local raw actual status err
+  p13_case=$((p13_case + 1))
+  err="$p12_root/phase13-matrix-$p13_case.err"
+  set +e
+  raw="$(p13_context_run "$context" "$@" 2>"$err")"
+  status=$?
+  set -e
+  actual="$(printf '%s\n' "$raw" | sort)"
+  if [[ "$status" != "0" || -s "$err" || "$actual" != "$want" ]]; then
+    echo "Phase 13 $label: status=$status actual=[$actual] want=[$want]" >&2
+    cat "$err" >&2 || true
+    exit 1
+  fi
+}
+
+p13_assert_refusal() {
+  local label="$1"
+  local context="$2"
+  shift 2
+  local raw status err
+  p13_case=$((p13_case + 1))
+  err="$p12_root/phase13-matrix-$p13_case.err"
+  set +e
+  raw="$(p13_context_run "$context" "$@" 2>"$err")"
+  status=$?
+  set -e
+  if [[ "$status" != "2" || -n "$raw" ]]; then
+    echo "Phase 13 $label did not refuse with status 2 and zero stdout: status=$status stdout=[$raw]" >&2
+    cat "$err" >&2 || true
+    exit 1
+  fi
+  smoke_assert_file_contains "$err" "active managed-root scope is undecidable"
+  smoke_assert_file_contains "$err" "all-projects"
+}
+
+for p13_kind in windows panes agents; do
+  case "$p13_kind" in
+    windows)
+      p13_control_want="$(p12_pmx get windows --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
+      p13_project_want="$(p12_pmx get windows --project "uid:$p12_project_uid" -o uid | sort)"
+      p13_uid_args=(--window "uid:$p12_project_window_uid")
+      p13_uid_want="$p12_project_window_uid"
+      p13_control_count=1
+      p13_project_count=2
+      ;;
+    panes)
+      p13_control_want="$(p12_pmx get panes --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
+      p13_project_want="$(p12_pmx get panes --project "uid:$p12_project_uid" -o uid | sort)"
+      p13_uid_args=(--pane "uid:$p12_project_origin_uid")
+      p13_uid_want="$p12_project_origin_uid"
+      p13_control_count=5
+      p13_project_count=3
+      ;;
+    agents)
+      p13_control_want="$(p12_pmx get agents --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
+      p13_project_want="$(p12_pmx get agents --project "uid:$p12_project_uid" -o uid | sort)"
+      p13_uid_args=(--window "uid:$p12_project_window_uid")
+      p13_uid_want="$p12_project_agent_uid"
+      p13_control_count=3
+      p13_project_count=1
+      ;;
+  esac
+  if [[ "$(printf '%s\n' "$p13_control_want" | grep -c .)" != "$p13_control_count" ]] ||
+    [[ "$(printf '%s\n' "$p13_project_want" | grep -c .)" != "$p13_project_count" ]]; then
+    echo "Phase 13 $p13_kind root fixtures do not have the expected exact cardinalities" >&2
+    exit 1
+  fi
+  p13_global_want="$(printf '%s\n%s\n' "$p13_control_want" "$p13_project_want" | sort)"
+
+  for p13_context in project control foreign outside; do
+    case "$p13_context" in
+      project) p13_omitted_want="$p13_project_want" ;;
+      control) p13_omitted_want="$p13_control_want" ;;
+      foreign)
+        p13_assert_refusal "$p13_kind foreign omitted" "$p13_context" \
+          get "$p13_kind" -o uid
+        ;;
+      outside) p13_omitted_want="$p13_global_want" ;;
+    esac
+    if [[ "$p13_context" != "foreign" ]]; then
+      p13_assert_success "$p13_kind $p13_context omitted" "$p13_omitted_want" "$p13_context" \
+        get "$p13_kind" -o uid
+    fi
+
+    p13_assert_success "$p13_kind $p13_context explicit Project" "$p13_project_want" "$p13_context" \
+      get "$p13_kind" --project "uid:$p12_project_uid" -o uid
+    p13_assert_success "$p13_kind $p13_context --all-projects" "$p13_global_want" "$p13_context" \
+      get "$p13_kind" --all-projects -o uid
+    p13_assert_success "$p13_kind $p13_context -A" "$p13_global_want" "$p13_context" \
+      get "$p13_kind" -A -o uid
+
+    p13_assert_success "$p13_kind $p13_context global uid selector" "$p13_uid_want" "$p13_context" \
+      get "$p13_kind" "${p13_uid_args[@]}" -o uid
+  done
+done
+
 if [[ ! -s "$p12_registry" ]]; then
   echo "Phase 12 Home producers left no Registry" >&2
   exit 1
@@ -6333,4 +6501,4 @@ if "${p12_env[@]}" tmux -S "$p12_cleanup_target" list-sessions >/dev/null 2>&1; 
   exit 1
 fi
 trap smoke_cleanup_env EXIT
-echo ">> ControlSession canonical create e2e passed: control=$p12_control_uid window=$p12_window_uid origin=$p12_origin_uid provider=$p12_provider_uid resume=$p12_resume_uid default=$p12_default_uid shell=$p12_shell_uid socket=$p12_socket path=$p12_socket_path cleanup=$p12_cleanup_target inherited=unset"
+echo ">> ControlSession create/read-scope e2e passed: control=$p12_control_uid window=$p12_window_uid origin=$p12_origin_uid provider=$p12_provider_uid resume=$p12_resume_uid default=$p12_default_uid shell=$p12_shell_uid project=$p12_project_uid project-window=$p12_project_window_uid foreign=$p12_foreign_pane matrix=$p13_case socket=$p12_socket path=$p12_socket_path cleanup=$p12_cleanup_target inherited=unset"

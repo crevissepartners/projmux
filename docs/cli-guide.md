@@ -139,13 +139,34 @@ and `@projmux_window_uid` on its window — and derives every ancestor from
 registry `ownerRef`. The session-scoped `@projmux_project_uid` is deliberately
 not consulted.
 
+### Plural read scope: the active managed root
+
+Inside tmux, selector-omitted `get windows|panes|agents` derives one exact
+managed root from the active Window's Registry `ownerRef`:
+
+- a Project-owned Window lists only that Project's descendants;
+- a ControlSession-owned Window, including Home, lists only that
+  ControlSession's descendants;
+- a missing Window mirror, a foreign Window uid, or a Window without one exact
+  existing Project or ControlSession owner is exit `2` with zero stdout. It
+  never falls through to the whole Registry.
+
+The default narrows the Window universe and does not pick a target. Name and
+label selectors keep their existing meaning inside that root. An applicable
+explicit `uid:` occurrence is opaque Registry-global authority: like explicit
+`--project`/`-p` and `--all-projects`/`-A`, it bypasses active-target observation
+entirely, including from a foreign tmux Pane. The two whole-set spellings retain
+their existing meaning and include ControlSession descendants. Outside tmux, an
+omitted root keeps the historical whole-Registry inventory without probing a
+default server.
+
 ### Reference scope: the active Project namespace
 
 A `metadata.name` is unique inside its owner scope, never across the registry: a
 Window name is unique inside its Project, a Pane name inside its Window or
-Agent, an Agent name inside its Window. So inside tmux a reference is resolved
-inside the Project that owns the active Window, which is the same universe
-`get windows|panes|agents` already reads:
+Agent, an Agent name inside its Window. So inside a managed Project a reference
+is resolved inside the Project that owns the active Window, which is the same
+universe the plural reads use in that context:
 
 ```
 projmux describe window zsh    # the Window named zsh in *this* Project

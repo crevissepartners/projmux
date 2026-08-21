@@ -17,9 +17,9 @@ import (
 //
 // Inside a tmux client, a singular invocation that carries no selector resolves
 // the resource the operator is looking at instead of the whole registry. The
-// Window/Pane/Agent reads consume only its Project ancestor as a default
-// enclosing scope, never as an individual target -- for the plural reads and,
-// per active_project_scope.go, for a singular reference too. The contract has
+// Window/Pane/Agent plural reads consume its managed-root ancestor as a default
+// enclosing scope, never as an individual target. A singular reference remains
+// Project-namespaced per active_project_scope.go. The contract has
 // four deliberate edges, each of which is a decision rather than an
 // implementation detail:
 //
@@ -57,7 +57,7 @@ import (
 // Ancestors are derived from registry ownership rather than from more tmux
 // options on purpose: `@projmux_project_uid` is measurably empty on live
 // sessions, while `@projmux_window_uid` resolves from a pane target, so the
-// Project of the active target is the owner of the active Window.
+// managed root of the active target is the owner of the active Window.
 
 // activeTargetObserver reads the Projmux identity mirror off the tmux target the
 // current invocation is running in.
@@ -200,6 +200,59 @@ func activeTargetRef(lookup activeTargetLookup, kind coremetadata.Kind, registry
 	}
 }
 
+// activeRootScope resolves the exact managed root that owns the active Window.
+//
+// Project and ControlSession are peers here: both are Registry roots and both
+// own Windows. The public selector grammar remains Project-only; this value is
+// an invocation default derived from the Window's exact ownerRef, not a new
+// user-spellable ControlSession selector.
+//
+// The three outcomes match activeTargetRef: a resolved root, the intentional
+// outside-tmux compatibility path, or an in-tmux refusal. In particular an
+// unknown Window or a Window without one existing managed root never falls
+// through to the whole Registry.
+func activeRootScope(lookup activeTargetLookup, registry coremetadata.Registry) (selector.RootScope, bool, error) {
+	if lookup == nil {
+		return selector.RootScope{}, false, nil
+	}
+	observer, inside := lookup()
+	if !inside {
+		return selector.RootScope{}, false, nil
+	}
+
+	window, detail := observer.activeWindow(registry)
+	if window == nil {
+		return selector.RootScope{}, false, activeRootScopeError(detail)
+	}
+	owner := window.Metadata.OwnerRef
+	if owner == nil {
+		return selector.RootScope{}, false, activeRootScopeError(observer.noManagedRootOwnerDetail(window))
+	}
+	switch owner.Kind {
+	case coremetadata.KindProject:
+		if _, ok := registry.Project(owner.UID); !ok {
+			return selector.RootScope{}, false, activeRootScopeError(observer.noManagedRootOwnerDetail(window))
+		}
+	case coremetadata.KindControlSession:
+		if _, ok := registry.ControlSession(owner.UID); !ok {
+			return selector.RootScope{}, false, activeRootScopeError(observer.noManagedRootOwnerDetail(window))
+		}
+	default:
+		return selector.RootScope{}, false, activeRootScopeError(observer.noManagedRootOwnerDetail(window))
+	}
+	return selector.RootScope{Kind: owner.Kind, UID: owner.UID}, true, nil
+}
+
+// activeRootScopeError keeps a failed in-tmux root derivation distinct from an
+// intentional outside-tmux whole-Registry read.
+func activeRootScopeError(detail string) error {
+	return &selector.SelectorError{
+		Op: "resolve managed root scope",
+		Detail: detail + "; the active managed-root scope is undecidable, so nothing was selected -- " +
+			"pass --project <ref> to name a Project or --all-projects to request the whole registry",
+	}
+}
+
 // activeUID is the observation half of the seam, shared by the implicit target
 // above and by the Project namespace default in active_project_scope.go.
 //
@@ -286,6 +339,11 @@ func (o activeTargetObserver) uidFor(kind coremetadata.Kind, registry coremetada
 
 func (o activeTargetObserver) noProjectOwnerDetail(window *coremetadata.Window) string {
 	return fmt.Sprintf("the active tmux pane %s resolves to window %q, which has no owning Project in the registry",
+		o.paneID, window.Metadata.Name)
+}
+
+func (o activeTargetObserver) noManagedRootOwnerDetail(window *coremetadata.Window) string {
+	return fmt.Sprintf("the active tmux pane %s resolves to window %q, which has no owning Project or ControlSession in the registry",
 		o.paneID, window.Metadata.Name)
 }
 

@@ -53,7 +53,7 @@ type getCommand struct {
 	// everything projmux does not own.
 	runtimeDiag *runtimeDiagnosticsReader
 	// activeTarget is the active-derived seam shared by the singular Pane
-	// fallback and the plural Window/Pane/Agent Project default; see
+	// fallback and the plural Window/Pane/Agent managed-root default; see
 	// active_target.go. It is deliberately unrelated to `--current`: see
 	// runPane.
 	activeTarget activeTargetLookup
@@ -151,11 +151,11 @@ func (c *getCommand) runList(token string, args []string, stdout, stderr io.Writ
 	flags.register(fs)
 	if kind == coremetadata.KindWindow || kind == coremetadata.KindPane || kind == coremetadata.KindAgent {
 		flags.active = c.activeTarget
-		flags.defaultProjectScope = true
+		flags.defaultRootScope = true
 		fs.BoolVar(&flags.allProjects, "all-projects", false,
-			"list resources across every Project instead of the active Project")
+			"list resources across the whole Registry instead of the active managed root")
 		fs.BoolVar(&flags.allProjects, "A", false,
-			"list resources across every Project instead of the active Project (alias of --all-projects)")
+			"list resources across the whole Registry instead of the active managed root (alias of --all-projects)")
 	}
 	flags.registerOutput(fs)
 	if err := fs.Parse(args); err != nil {

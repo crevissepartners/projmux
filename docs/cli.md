@@ -656,9 +656,9 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux get projects`](#projmux-get-projects) | List Project resources |
-| [`projmux get windows`](#projmux-get-windows) | List Window resources; inside tmux defaults to the active Project, and --all-projects lists every Project |
-| [`projmux get panes`](#projmux-get-panes) | List Pane resources; inside tmux defaults to the active Project, and --all-projects lists every Project |
-| [`projmux get agents`](#projmux-get-agents) | List Agent resources; inside tmux defaults to the active Project, and --all-projects lists every Project |
+| [`projmux get windows`](#projmux-get-windows) | List Window resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get panes`](#projmux-get-panes) | List Pane resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get agents`](#projmux-get-agents) | List Agent resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
 | [`projmux get runtime`](#projmux-get-runtime) | List every tmux Session, Window, and Pane on one exact server with its attribution |
 | [`projmux get notifications`](#projmux-get-notifications) | List pending notification rows |
 | [`projmux get snapshots`](#projmux-get-snapshots) | List saved session snapshots |
@@ -680,7 +680,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get windows`
 
-List Window resources; inside tmux defaults to the active Project, and --all-projects lists every Project
+List Window resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 ```
 projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
@@ -692,7 +692,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get panes`
 
-List Pane resources; inside tmux defaults to the active Project, and --all-projects lists every Project
+List Pane resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 ```
 projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
@@ -702,7 +702,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get agents`
 
-List Agent resources; inside tmux defaults to the active Project, and --all-projects lists every Project
+List Agent resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 ```
 projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]

@@ -21,7 +21,7 @@ import (
 // from the implicit active target in active_target.go:
 //
 //  1. It narrows, it never selects. The Project fills selector.Query's
-//     DefaultProject and nothing else, so the ref the operator typed is still
+//     DefaultRoot and nothing else, so the ref the operator typed is still
 //     the only thing that picks a resource. The active Window and the active
 //     Pane are not pushed down into the query, and two same-named resources
 //     inside the one Project stay the ordinary bounded exact-one ambiguity.
@@ -85,7 +85,7 @@ func activeProjectScopeError(detail string) error {
 // matrix: the kinds whose universe a Project actually encloses.
 //
 // Project is absent because a Project has no enclosing Project -- the selector
-// engine's ResolveProjects never consults DefaultProject, so setting one would
+// engine's ResolveProjects never consults DefaultRoot, so setting one would
 // be a silent no-op that reads like a contract. Which verbs opt in is the other
 // half, decided where each route builds its flags.
 func singularProjectNamespaceKind(kind coremetadata.Kind) bool {

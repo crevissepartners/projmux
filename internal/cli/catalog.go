@@ -603,17 +603,17 @@ var routes = []Route{
 		Children: []Route{
 			{Name: "projects", Summary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: readProjectionCatalog},
 			{
-				Name: "windows", Summary: "List Window resources; inside tmux defaults to the active Project, and --all-projects lists every Project",
+				Name: "windows", Summary: "List Window resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Aliases: []string{"window"}, Usage: []string{"projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
 				Canonical: []string{"get windows"}, Outputs: readProjectionCatalog,
 			},
 			{
-				Name: "panes", Summary: "List Pane resources; inside tmux defaults to the active Project, and --all-projects lists every Project",
+				Name: "panes", Summary: "List Pane resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Usage:     []string{"projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
 				Canonical: []string{"get panes"}, Outputs: readProjectionCatalog,
 			},
 			{
-				Name: "agents", Summary: "List Agent resources; inside tmux defaults to the active Project, and --all-projects lists every Project",
+				Name: "agents", Summary: "List Agent resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Aliases: []string{"agent"}, Usage: []string{"projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
 				Canonical: []string{"get agents"}, Outputs: readProjectionCatalog,
 			},
