@@ -6173,7 +6173,7 @@ chmod 0700 "$p12_root/runtime"
 
 for p12_provider in claude codex antigravity; do
   printf '%s\n' '#!/bin/sh' \
-    'printf "%s\\n" "$0 $*" >> "$PROJMUX_PHASE12_AGENT_ARGV"' \
+    "printf '%s\\n' \"\$0 \$*\" >> \"\$PROJMUX_PHASE12_AGENT_ARGV\"" \
     'exec sleep 600' >"$p12_root/bin/$p12_provider"
   chmod 0755 "$p12_root/bin/$p12_provider"
 done
@@ -6282,7 +6282,6 @@ p12_assert_managed_create() {
     echo "$label Pane was not mirrored below the exact Home Window" >&2
     exit 1
   fi
-  p12_last_pane="$pane"
   p12_last_pane_uid="$pane_uid"
 }
 
