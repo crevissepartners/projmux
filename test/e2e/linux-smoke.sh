@@ -6210,6 +6210,19 @@ menu_pane_is_managed() {
   uid="$(menu_tmux show-options -pqv -t "$pane" @projmux_pane_uid 2>/dev/null || true)"
   [[ -n "$uid" ]] && menu_pmx get panes -o uid | grep -Fxq "$uid"
 }
+menu_delete_converged() {
+  local uid="$1"
+  local log_offset="$2"
+  local expected_pane_count="$3"
+  local registry_uids pane_count
+  tail -c "+$((log_offset + 1))" "$menu_client_log" | grep -aFq 'delete pane: deleting 1 pane' || return 1
+  registry_uids="$(menu_pmx get panes -o uid)" || return 1
+  if printf '%s\n' "$registry_uids" | grep -Fxq "$uid"; then
+    return 1
+  fi
+  pane_count="$(menu_tmux list-panes -t "$menu_session:0" -F '#{pane_id}' | wc -l)" || return 1
+  [[ "$pane_count" == "$expected_pane_count" ]]
+}
 
 # Horizontal Split: a real right-click menu selection reaches managed create.
 menu_select_item "$menu_origin_pane" h
@@ -6225,13 +6238,8 @@ fi
 # Kill: target the new pane and select the stock X shortcut.
 menu_kill_log_offset="$(stat -c %s "$menu_client_log")"
 menu_select_item "$menu_horizontal_pane" X
-smoke_wait_for "canonical pane-menu Kill" menu_wait_for_pane_count 1
-if menu_pmx get panes -o uid | grep -Fxq "$menu_horizontal_uid"; then
-  echo "pane-menu Kill left Registry Pane $menu_horizontal_uid" >&2
-  exit 1
-fi
-smoke_wait_for "client-visible canonical delete result" sh -c \
-  "tail -c +$((menu_kill_log_offset + 1)) '$menu_client_log' | grep -aFq 'delete pane: deleting 1 pane'"
+smoke_wait_for "canonical Horizontal Kill completion and Registry convergence" \
+  menu_delete_converged "$menu_horizontal_uid" "$menu_kill_log_offset" 1
 
 # Vertical Split reaches the other placement through the same exact anchor.
 menu_select_item "$menu_origin_pane" v
@@ -6246,12 +6254,10 @@ fi
 
 # Remove the Vertical Split through the same canonical Kill so cleanup starts
 # from the original managed pane only.
+menu_kill_log_offset="$(stat -c %s "$menu_client_log")"
 menu_select_item "$menu_vertical_pane" X
-smoke_wait_for "canonical cleanup Kill" menu_wait_for_pane_count 1
-if menu_pmx get panes -o uid | grep -Fxq "$menu_vertical_uid"; then
-  echo "pane-menu cleanup Kill left Registry Pane $menu_vertical_uid" >&2
-  exit 1
-fi
+smoke_wait_for "canonical Vertical Kill completion and Registry convergence" \
+  menu_delete_converged "$menu_vertical_uid" "$menu_kill_log_offset" 1
 
 menu_cleanup_target="$menu_socket_path"
 menu_cleanup
