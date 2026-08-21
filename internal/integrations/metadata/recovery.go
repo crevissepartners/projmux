@@ -81,6 +81,54 @@ var ErrRecoverySourceNotFound = errors.New("registry recovery source does not ex
 // looked at.
 var ErrRecoveryRaced = errors.New("registry recovery inputs changed before the restore")
 
+// ErrRegistryDegraded marks an ordinary mutation refused because the live
+// Registry is not a state the normal read -> mutate -> full-validate
+// transaction can safely build on. Read-only and registry-recovery routes stay
+// available; the exact next command deliberately plans rather than selects a
+// source, because source selection belongs to the operator.
+var ErrRegistryDegraded = errors.New("resource registry is in degraded mode")
+
+// RegistryRecoveryPlanCommand is the exact no-write command every degraded
+// mutation refusal gives the operator. It is intentionally a plan command: the
+// recovery route may rank verified copies for display, but it never turns that
+// ranking into an automatic restore decision.
+const RegistryRecoveryPlanCommand = "projmux reconcile registry --dry-run"
+
+// DegradedMode is the mutation gate derived from one recovery inspection.
+// Active is false only for a valid Registry and legitimate first use.
+type DegradedMode struct {
+	Active bool
+	State  RegistryState
+	Reason string
+	Next   string
+	// Cause preserves the pre-existing typed metadata failure for callers that
+	// use errors.Is while adding the degraded-mode remediation around it.
+	Cause error
+}
+
+// Error converts an active decision into the actionable error ordinary write
+// routes return. The classification and remediation wrap the validation detail
+// so a raw graph-validation failure is never the entire user-visible message.
+func (m DegradedMode) Error() error {
+	if !m.Active {
+		return nil
+	}
+	reason := strings.TrimSpace(m.Reason)
+	if reason == "" {
+		reason = "the registry cannot safely serve as mutation authority"
+	}
+	next := strings.TrimSpace(m.Next)
+	if next == "" {
+		next = RegistryRecoveryPlanCommand
+	}
+	if m.Cause != nil {
+		return fmt.Errorf("metadata: %w (%s): %s: %w; ordinary mutations are disabled while read, diagnostic, and repair routes remain available; run exactly: %s",
+			ErrRegistryDegraded, m.State, reason, m.Cause, next)
+	}
+	return fmt.Errorf("metadata: %w (%s): %s; ordinary mutations are disabled while read, diagnostic, and repair routes remain available; run exactly: %s",
+		ErrRegistryDegraded, m.State, reason, next)
+}
+
 // RegistryState is the classification of one registry-shaped file.
 type RegistryState string
 
@@ -180,6 +228,30 @@ type RecoveryInspection struct {
 	Retention int              `json:"retention"`
 	Current   RegistryFileInfo `json:"current"`
 	Sources   []RecoverySource `json:"sources"`
+}
+
+// DegradedMode classifies the live Registry for the ordinary-mutation gate.
+// The table is deliberately closed over RegistryState: valid and first-use are
+// the only states from which a normal mutation may begin. Every damaged,
+// unsupported, lost, or unreadable state stays inspectable and repairable but
+// cannot be used as mutation authority.
+func (i RecoveryInspection) DegradedMode() DegradedMode {
+	mode := DegradedMode{State: i.Current.State}
+	switch i.Current.State {
+	case RegistryStateValid, RegistryStateFirstUse:
+		return mode
+	case RegistryStateMissing, RegistryStateEmpty, RegistryStateMalformed,
+		RegistryStateSchemaTooNew, RegistryStateInvalid, RegistryStateUnreadable:
+		mode.Active = true
+		mode.Reason = i.Current.Detail
+		mode.Next = RegistryRecoveryPlanCommand
+		return mode
+	default:
+		mode.Active = true
+		mode.Reason = fmt.Sprintf("registry state %q is not recognized by this build", i.Current.State)
+		mode.Next = RegistryRecoveryPlanCommand
+		return mode
+	}
 }
 
 // EligibleSources returns the candidates a restore could publish, in the same
@@ -518,7 +590,7 @@ type RestoreResult struct {
 
 // RestoreFrom publishes one verified source over the live registry.
 //
-// The sequence is: verify the source with no lock held, take the cross-process
+// The sequence is: verify the source with no lock held, take the recovery-only
 // lock, re-read and re-verify the source, read the current bytes, enforce both
 // operator guards, no-op out if the bytes already match, preserve the current
 // bytes, stage the source bytes, re-verify the staged file, publish the
@@ -551,8 +623,8 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 	}
 
 	var result RestoreResult
-	err = s.withLock(func() error {
-		// Re-verify under the lock. Between the pre-lock verification and here
+	err = s.withRecoveryLock(func() error {
+		// Re-verify under the recovery lock. Between the pre-lock verification and here
 		// the file could have been replaced by something this build must not
 		// publish, so the classification is redone rather than trusted.
 		relocked, lockedBytes, err := verifyRecoverySource(source, s.migrations, req.ExpectSourceChecksum)
@@ -601,8 +673,9 @@ func (s *Store) currentForRestore() (RegistryFileInfo, []byte) {
 	return info, data
 }
 
-// publishRestore performs the mutating half. It is only reached with the lock
-// held, a verified source, and a decision that the bytes actually differ.
+// publishRestore performs the mutating half. It is only reached with the
+// recovery lock held, a verified source, and a decision that the bytes actually
+// differ. It never acquires or waits for the ordinary mutation lock.
 func (s *Store) publishRestore(source string, sourceBytes, currentBytes []byte, current RegistryFileInfo, result *RestoreResult) error {
 	dir := filepath.Dir(s.path)
 	if err := localstate.EnsurePrivateDir(dir); err != nil {

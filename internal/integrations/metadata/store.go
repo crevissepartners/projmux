@@ -107,10 +107,11 @@ type storeHooks struct {
 
 // Store persists one resource registry file behind a cross-process lock.
 type Store struct {
-	path        string
-	lockPath    string
-	markerPath  string
-	recoveryDir string
+	path           string
+	lockPath       string
+	repairLockPath string
+	markerPath     string
+	recoveryDir    string
 	// retention is the number of recovery copies kept after a semantic write.
 	retention int
 	clock     func() time.Time
@@ -129,12 +130,13 @@ type Store struct {
 func NewStore(path string) *Store {
 	dir := filepath.Dir(path)
 	return &Store{
-		path:        path,
-		lockPath:    path + lockFileSuffix,
-		markerPath:  filepath.Join(dir, markerFileName),
-		recoveryDir: filepath.Join(dir, recoveryDirName),
-		retention:   defaultRecoveryRetention,
-		clock:       time.Now,
+		path:           path,
+		lockPath:       path + lockFileSuffix,
+		repairLockPath: path + ".repair" + lockFileSuffix,
+		markerPath:     filepath.Join(dir, markerFileName),
+		recoveryDir:    filepath.Join(dir, recoveryDirName),
+		retention:      defaultRecoveryRetention,
+		clock:          time.Now,
 		// #nosec G404 -- lock retry jitter is scheduling noise, not a secret;
 		// this matches the notify and recent-window store lock jitter.
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -201,6 +203,14 @@ func DirExists(path string) (bool, error) {
 // A registry that is gone or empty while the initialized marker exists fails
 // with ErrRegistryStateLost rather than answering the empty first-use registry.
 func (s *Store) Load() (coremetadata.Registry, error) {
+	return s.load(true)
+}
+
+// load reads through the normal lock and optionally applies the whole-graph
+// read guard. Ordinary low-level loads validate. The only caller that opts out
+// is LoadDegradedReadOnly, the explicit app read seam used while repair is
+// needed.
+func (s *Store) load(validate bool) (coremetadata.Registry, error) {
 	if s == nil {
 		return coremetadata.NewRegistry(), nil
 	}
@@ -209,6 +219,11 @@ func (s *Store) Load() (coremetadata.Registry, error) {
 		registry, _, _, err := s.read()
 		if err != nil {
 			return err
+		}
+		if validate {
+			if err := registry.Validate(); err != nil {
+				return err
+			}
 		}
 		out = registry
 		return nil
@@ -254,6 +269,31 @@ func (s *Store) LoadReadOnly() (coremetadata.Registry, error) {
 	return s.Load()
 }
 
+// LoadDegradedReadOnly is the explicit app-facing read gate for a Registry that
+// decodes but fails whole-graph validation. It preserves the no-state-on-first-
+// use behavior of LoadReadOnly, refuses malformed/unsupported/lost bytes, and
+// opts out only from the final graph guard so read-only resource projections
+// remain available while ordinary mutations are disabled.
+func (s *Store) LoadDegradedReadOnly() (coremetadata.Registry, error) {
+	if s == nil {
+		return coremetadata.NewRegistry(), nil
+	}
+	if _, err := os.Stat(s.path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			initialized, markerErr := s.initialized()
+			if markerErr != nil {
+				return coremetadata.Registry{}, markerErr
+			}
+			if initialized {
+				return coremetadata.Registry{}, s.stateLossError("missing")
+			}
+			return coremetadata.NewRegistry(), nil
+		}
+		return coremetadata.Registry{}, fmt.Errorf("metadata: stat registry %s: %w", s.path, err)
+	}
+	return s.load(false)
+}
+
 // LoadSnapshot reads an atomic Registry snapshot without taking the lock or
 // repairing permissions. Writers use atomic replace, so the result is either
 // the complete prior or next envelope and the read performs zero writes.
@@ -275,11 +315,17 @@ func (s *Store) Update(fn func(*coremetadata.Registry) error) (coremetadata.Regi
 	if s == nil {
 		return coremetadata.Registry{}, errors.New("metadata: nil registry store")
 	}
+	if err := s.refuseDegradedMutation(); err != nil {
+		return coremetadata.Registry{}, err
+	}
 	var out coremetadata.Registry
 	err := s.withLock(func() error {
 		registry, onDiskVersion, existed, err := s.read()
 		if err != nil {
-			return err
+			return s.mapDegradedMutationError(err)
+		}
+		if err := registry.Validate(); err != nil {
+			return s.mapDegradedMutationError(err)
 		}
 		working := registry.Clone()
 		if err := fn(&working); err != nil {
@@ -316,12 +362,18 @@ func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremet
 	if s == nil {
 		return coremetadata.Registry{}, false, errors.New("metadata: nil registry store")
 	}
+	if err := s.refuseDegradedMutation(); err != nil {
+		return coremetadata.Registry{}, false, err
+	}
 	var out coremetadata.Registry
 	changed := false
 	err := s.withLock(func() error {
 		registry, onDiskVersion, existed, err := s.read()
 		if err != nil {
-			return err
+			return s.mapDegradedMutationError(err)
+		}
+		if err := registry.Validate(); err != nil {
+			return s.mapDegradedMutationError(err)
 		}
 		working := registry.Clone()
 		if err := fn(&working); err != nil {
@@ -367,11 +419,14 @@ func (s *Store) Migrate() (MigrationResult, error) {
 	if s == nil {
 		return MigrationResult{}, errors.New("metadata: nil registry store")
 	}
+	if err := s.refuseDegradedMutation(); err != nil {
+		return MigrationResult{}, err
+	}
 	var out MigrationResult
 	err := s.withLock(func() error {
 		registry, onDiskVersion, existed, err := s.read()
 		if err != nil {
-			return err
+			return s.mapDegradedMutationError(err)
 		}
 		out.FromVersion = onDiskVersion
 		if !existed || onDiskVersion == coremetadata.SchemaVersion {
@@ -483,6 +538,44 @@ func (s *Store) initialized() (bool, error) {
 func (s *Store) stateLossError(state string) error {
 	return fmt.Errorf("metadata: %w: %s records a completed registry write but %s is %s; restore a verified copy from %s, or remove the marker to accept an empty registry",
 		ErrRegistryStateLost, s.markerPath, s.path, state, s.recoveryDir)
+}
+
+// refuseDegradedMutation is the lock-free gate in front of every ordinary
+// write. It keeps a damaged Registry from waiting behind (or entering) the
+// normal mutation transaction and turns the content classification into one
+// actionable recovery instruction.
+func (s *Store) refuseDegradedMutation() error {
+	inspection, err := s.InspectRecovery()
+	if err != nil {
+		return err
+	}
+	mode := inspection.DegradedMode()
+	if !mode.Active {
+		return nil
+	}
+	registry, _, _, readErr := s.readWithoutRepair()
+	if readErr != nil {
+		mode.Cause = readErr
+	} else {
+		mode.Cause = registry.Validate()
+	}
+	return mode.Error()
+}
+
+// mapDegradedMutationError closes the race between the lock-free gate and the
+// locked read. If the Registry changed into a degraded state in that window,
+// the mutation still returns the same actionable refusal instead of exposing a
+// bare decode, schema, or graph-validation error.
+func (s *Store) mapDegradedMutationError(fallback error) error {
+	inspection, err := s.InspectRecovery()
+	if err == nil {
+		mode := inspection.DegradedMode()
+		mode.Cause = fallback
+		if degraded := mode.Error(); degraded != nil {
+			return degraded
+		}
+	}
+	return fallback
 }
 
 func (s *Store) write(registry coremetadata.Registry, migrating bool) error {
@@ -955,6 +1048,61 @@ func (s *Store) withLock(fn func() error) error {
 		_ = os.Remove(s.lockPath)
 	}()
 	return fn()
+}
+
+// withRecoveryLock serializes explicit recovery operations without sharing the
+// ordinary registry write lock. That separation is what keeps a stale or
+// blocked normal writer from disabling the only route able to replace an
+// invalid Registry. Recovery still has its own lock and source/current/staged
+// verification; it is a distinct transaction, not a validation bypass.
+func (s *Store) withRecoveryLock(fn func() error) error {
+	if err := localstate.EnsurePrivateDir(filepath.Dir(s.repairLockPath)); err != nil {
+		return fmt.Errorf("metadata: create recovery lock dir: %w", err)
+	}
+	if err := s.acquireRecoveryLock(); err != nil {
+		return err
+	}
+	defer func() {
+		_ = os.Remove(s.repairLockPath)
+	}()
+	return fn()
+}
+
+func (s *Store) acquireRecoveryLock() error {
+	delay := defaultLockBaseDelay
+	for range defaultLockMaxAttempts {
+		f, err := os.OpenFile(s.repairLockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, localstate.PrivateFileMode)
+		if err == nil {
+			_, _ = fmt.Fprintf(f, "pid=%d\n", os.Getpid())
+			_ = f.Close()
+			return nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("metadata: acquire recovery lock: %w", err)
+		}
+		if s.tryBreakStaleRecoveryLock() {
+			continue
+		}
+		time.Sleep(delay + s.lockJitter())
+		if delay < defaultLockMaxDelay {
+			delay *= 2
+			if delay > defaultLockMaxDelay {
+				delay = defaultLockMaxDelay
+			}
+		}
+	}
+	return fmt.Errorf("metadata: acquire recovery lock: exhausted %d attempts on %s", defaultLockMaxAttempts, s.repairLockPath)
+}
+
+func (s *Store) tryBreakStaleRecoveryLock() bool {
+	info, err := os.Stat(s.repairLockPath)
+	if err != nil {
+		return false
+	}
+	if s.clock().Sub(info.ModTime()) < defaultLockStaleAfter {
+		return false
+	}
+	return os.Remove(s.repairLockPath) == nil
 }
 
 func (s *Store) acquireLock() error {

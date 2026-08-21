@@ -795,6 +795,29 @@ func TestLoadReadOnlyReadsAnExistingRegistryAndStillFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDegradedReadRequiresExplicitOptIn(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	invalid := fmt.Sprintf(`{"apiVersion":%q,"schemaVersion":%d,"panes":[{"apiVersion":%q,"kind":"Pane","metadata":{"uid":"pane-orphan","name":"zsh","ownerRef":{"kind":"Window","uid":"window-missing"}},"spec":{"role":"shell"}}]}`,
+		coremetadata.APIVersion, coremetadata.SchemaVersion, coremetadata.APIVersion)
+	writeRegistryFile(t, store, invalid)
+
+	if _, err := store.Load(); !errors.Is(err, coremetadata.ErrInvalidRegistry) {
+		t.Fatalf("ordinary Load error = %v, want ErrInvalidRegistry", err)
+	}
+	if _, err := store.LoadReadOnly(); !errors.Is(err, coremetadata.ErrInvalidRegistry) {
+		t.Fatalf("ordinary LoadReadOnly error = %v, want ErrInvalidRegistry", err)
+	}
+	registry, err := store.LoadDegradedReadOnly()
+	if err != nil {
+		t.Fatalf("explicit degraded read: %v", err)
+	}
+	if len(registry.Panes) != 1 || registry.Panes[0].Metadata.UID != "pane-orphan" {
+		t.Fatalf("degraded read Registry = %+v", registry)
+	}
+}
+
 func TestLoadSnapshotReadsExistingRegistryWithoutLockOrPermissionRepair(t *testing.T) {
 	t.Parallel()
 
@@ -1143,11 +1166,11 @@ func TestSemanticWritesKeepTheLastVerifiedBytesInBoundedRecoveryCopies(t *testin
 	assertNoStagedGarbage(t, store)
 }
 
-// TestARecoveryCopyIsOnlyTakenForVerifiedPriorBytes keeps unusable bytes out of
-// the recovery set. A file that decodes but violates the model is not something
-// an operator could safely restore, and refusing to replace it would strand the
-// store instead of repairing it.
-func TestARecoveryCopyIsOnlyTakenForVerifiedPriorBytes(t *testing.T) {
+// TestOrdinaryUpdateCannotReplaceAnInvalidRegistry keeps repair authority out
+// of the normal mutation transaction. Invalid prior bytes are not safe recovery
+// history, and replacing them is reserved for RestoreFrom's explicitly selected
+// and independently verified source.
+func TestOrdinaryUpdateCannotReplaceAnInvalidRegistry(t *testing.T) {
 	t.Parallel()
 
 	store := testStore(t)
@@ -1155,16 +1178,26 @@ func TestARecoveryCopyIsOnlyTakenForVerifiedPriorBytes(t *testing.T) {
 	invalid := fmt.Sprintf(`{"apiVersion":%q,"schemaVersion":%d,"panes":[{"apiVersion":%q,"kind":"Pane","metadata":{"uid":"pane-orphan","name":"zsh","ownerRef":{"kind":"Window","uid":"window-missing"}},"spec":{"role":"shell"}}]}`,
 		coremetadata.APIVersion, coremetadata.SchemaVersion, coremetadata.APIVersion)
 	writeRegistryFile(t, store, invalid)
+	registryBefore := readFile(t, store.Path())
 	before := recoveryCopies(t, store)
 
-	// The write has to be one that repairs the file rather than one that builds
-	// on it: Update validates the whole working registry, so an invalid document
-	// can only be replaced wholesale.
-	if _, err := store.Update(func(registry *coremetadata.Registry) error {
+	called := false
+	_, err := store.Update(func(registry *coremetadata.Registry) error {
+		called = true
 		*registry = coremetadata.NewRegistry()
 		return nil
-	}); err != nil {
-		t.Fatalf("replace the invalid registry: %v", err)
+	})
+	if !errors.Is(err, ErrRegistryDegraded) || !errors.Is(err, coremetadata.ErrInvalidRegistry) {
+		t.Fatalf("ordinary replacement error = %v, want degraded ErrInvalidRegistry", err)
+	}
+	if called {
+		t.Fatal("ordinary Update invoked its callback against an invalid Registry")
+	}
+	if !strings.Contains(err.Error(), RegistryRecoveryPlanCommand) {
+		t.Fatalf("degraded refusal %q does not name the exact recovery plan command", err)
+	}
+	if got := readFile(t, store.Path()); got != registryBefore {
+		t.Fatal("ordinary Update replaced invalid Registry bytes")
 	}
 
 	if got := recoveryCopies(t, store); len(got) != len(before) {

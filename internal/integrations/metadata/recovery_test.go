@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
@@ -53,6 +54,47 @@ func seedRecoveryStore(t *testing.T, writes int) (*Store, []string) {
 		}
 	}
 	return store, replaced
+}
+
+func TestDegradedModeEntersOnlyForAnIllegalRegistry(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		state RegistryState
+		want  bool
+	}{
+		{state: RegistryStateFirstUse, want: false},
+		{state: RegistryStateValid, want: false},
+		{state: RegistryStateMissing, want: true},
+		{state: RegistryStateEmpty, want: true},
+		{state: RegistryStateMalformed, want: true},
+		{state: RegistryStateSchemaTooNew, want: true},
+		{state: RegistryStateInvalid, want: true},
+		{state: RegistryStateUnreadable, want: true},
+	}
+	for _, tt := range cases {
+		t.Run(string(tt.state), func(t *testing.T) {
+			inspection := RecoveryInspection{Current: RegistryFileInfo{
+				State: tt.state, Detail: "classified fixture reason",
+			}}
+			mode := inspection.DegradedMode()
+			if mode.Active != tt.want {
+				t.Fatalf("state %q degraded = %t, want %t", tt.state, mode.Active, tt.want)
+			}
+			if !tt.want {
+				if err := mode.Error(); err != nil {
+					t.Fatalf("healthy state %q produced error %v", tt.state, err)
+				}
+				return
+			}
+			if mode.Next != RegistryRecoveryPlanCommand {
+				t.Fatalf("state %q next = %q", tt.state, mode.Next)
+			}
+			if err := mode.Error(); !errors.Is(err, ErrRegistryDegraded) {
+				t.Fatalf("state %q error = %v, want ErrRegistryDegraded", tt.state, err)
+			}
+		})
+	}
 }
 
 // stateFingerprint captures everything a zero-write claim has to cover: which
@@ -394,6 +436,72 @@ func TestARestoreIsByteSemanticAndRepeatsAsANoOp(t *testing.T) {
 	}
 	if _, err := os.Stat(store.lockPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a repeat restore left the lock behind: %v", err)
+	}
+}
+
+// TestRepairDoesNotReuseOrdinaryWriteLockOrValidation is the negative contract
+// between the two mutation paths. A deliberately held ordinary lock and a
+// failing ordinary staged-validation hook cannot delay or disable recovery;
+// RestoreFrom still performs its own source and staged graph verification.
+func TestRepairDoesNotReuseOrdinaryWriteLockOrValidation(t *testing.T) {
+	t.Parallel()
+
+	store, _ := seedRecoveryStore(t, 1)
+	inspection, err := store.InspectRecovery()
+	if err != nil {
+		t.Fatalf("inspect recovery source: %v", err)
+	}
+	source := inspection.EligibleSources()[0]
+	writeRegistryFile(t, store, `{"apiVersion":"projmux.io/v1alpha1","schemaVersion":1,"panes":[{"apiVersion":"projmux.io/v1alpha1","kind":"Pane","metadata":{"uid":"pane-orphan","name":"zsh","ownerRef":{"kind":"Window","uid":"window-missing"}},"spec":{"role":"shell"}}]}`)
+
+	if err := os.WriteFile(store.lockPath, []byte("ordinary writer intentionally held\n"), 0o600); err != nil {
+		t.Fatalf("hold ordinary lock: %v", err)
+	}
+	defer os.Remove(store.lockPath)
+	ordinaryValidationCalled := false
+	store.hooks.validateStaged = func(string) error {
+		ordinaryValidationCalled = true
+		return errors.New("ordinary staged validation must not run")
+	}
+
+	type restoreOutcome struct {
+		result RestoreResult
+		err    error
+	}
+	done := make(chan restoreOutcome, 1)
+	go func() {
+		result, err := store.RestoreFrom(RestoreRequest{
+			SourcePath:           source.Path,
+			ExpectSourceChecksum: source.Checksum,
+		})
+		done <- restoreOutcome{result: result, err: err}
+	}()
+	select {
+	case outcome := <-done:
+		if outcome.err != nil {
+			t.Fatalf("repair while ordinary lock held: %v", outcome.err)
+		}
+		if !outcome.result.Changed {
+			t.Fatal("repair reported no change over the invalid Registry")
+		}
+	case <-time.After(750 * time.Millisecond):
+		t.Fatal("repair waited for the ordinary registry write lock")
+	}
+	if ordinaryValidationCalled {
+		t.Fatal("repair reused the ordinary staged-validation hook")
+	}
+	if _, err := os.Stat(store.lockPath); err != nil {
+		t.Fatalf("repair removed or replaced the ordinary writer lock: %v", err)
+	}
+	if _, err := os.Stat(store.repairLockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repair left its recovery lock behind: %v", err)
+	}
+	registry, err := store.LoadSnapshot()
+	if err != nil {
+		t.Fatalf("read repaired Registry: %v", err)
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("repair published an invalid Registry: %v", err)
 	}
 }
 

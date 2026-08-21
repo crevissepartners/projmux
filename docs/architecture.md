@@ -568,8 +568,10 @@ Agent resume:
 Registry file and schema:
 
 - The registry lives at `<state>/projmux/metadata/registry.json` (0600 below a
-  0700 directory) behind an `O_CREATE|O_EXCL` lock file with bounded retry and
-  stale-lock breaking, matching the notify queue and recent-windows stores.
+  0700 directory). Ordinary mutations use an `O_CREATE|O_EXCL` lock file with
+  bounded retry and stale-lock breaking, matching the notify queue and
+  recent-windows stores. Explicit Registry repair uses its own recovery lock;
+  see the recovery boundary below.
 - The envelope carries `schemaVersion: 1`. **v1 is the first envelope projmux
   has ever written, and no migration step ships today**, so the current version
   is the only version the registry accepts.
@@ -615,17 +617,19 @@ Durable recovery envelope:
   `LoadReadOnly` short-circuit that must not materialize
   `<state>/projmux/metadata/` for an operator who has never registered a
   resource. Once the marker exists, the same content-free registry is
-  `ErrRegistryStateLost` on **every** route, reads and mutations alike. Answering
-  an empty registry there would hide the loss of every uid, name reservation, and
-  offline resource, and the next mutation would mint a second identity domain on
-  top of it. A registry written before the marker existed is ordinary state, not
-  a loss, and gains the marker on its next write.
+  `ErrRegistryStateLost` on ordinary loads and mutations. Recovery inspection
+  still classifies the missing or empty state and stays available to the repair
+  route. Answering an empty registry there would hide the loss of every uid,
+  name reservation, and offline resource, and the next mutation would mint a
+  second identity domain on top of it. A registry written before the marker
+  existed is ordinary state, not a loss, and gains the marker on its next write.
 - **Rolling recovery copies.** A same-version semantic write copies the bytes it
   is about to replace to `recovery/registry-<stamp>-<seq>.json` before the
   replace. Only *verified* bytes are copied: an absent, empty, or
-  structurally invalid prior file yields no copy, and an invalid one does not
-  block the write that repairs it. Retention keeps the newest five and removes
-  the rest deterministically — names sort chronologically, and the sequence
+  structurally invalid prior file yields no copy. An invalid Registry blocks
+  every ordinary write; only the separately validated, explicitly sourced
+  recovery route may replace it. Retention keeps the newest five and removes the
+  rest deterministically — names sort chronologically, and the sequence
   continues past the newest name rather than reusing one retention freed. A
   migration keeps its own versioned `.bak` instead, so it never spends a
   recovery slot on bytes that already have a backup.
@@ -659,6 +663,28 @@ Durable recovery envelope:
   property of a write; selecting one and putting it back is an operator decision,
   so it lives in the recovery boundary below rather than in the write path.
 
+Degraded Registry mode:
+
+- `valid` and a legitimate `first-use` are the only states from which an
+  ordinary mutation may begin. Missing or empty state after initialization,
+  malformed JSON, unsupported/newer schema, an invalid resource graph, and an
+  unreadable Registry enter degraded mode. This is a command-scoped
+  classification, not a sticky process flag: a successful repair makes the next
+  mutation healthy again.
+- Ordinary writes classify before entering the normal mutation lock and repeat
+  the graph guard after acquiring it. A degraded refusal wraps the existing
+  typed cause, states that ordinary mutations are disabled, and ends with the
+  exact no-write next command: `projmux reconcile registry --dry-run`. It never
+  leaves a raw validation error as the whole diagnosis and never chooses a
+  recovery source for the operator.
+- Public resource reads explicitly opt into the degraded decode path, so a
+  decodable invalid graph remains available without weakening ordinary
+  low-level Store loads. Recovery inspection can
+  diagnose even malformed, missing, empty, unsupported, or graph-invalid bytes.
+  `projmux reconcile registry` is the only write allowed to replace degraded
+  Registry bytes. Other reconcile, create, rename, rebind, delete, lifecycle,
+  and convergence writes stay on the ordinary gate.
+
 Registry recovery boundary (`projmux reconcile registry`):
 
 - **Two operations with deliberately different powers.** Planning classifies the
@@ -667,6 +693,13 @@ Registry recovery boundary (`projmux reconcile registry`):
   publishes exactly one source the operator named. There is no "just fix it"
   mode: which copy is the truth is a judgment about which mutations were wanted,
   and the command never makes it.
+- **A separate repair transaction.** Restore serializes on
+  `registry.json.repair.lock`, never acquires or waits for the ordinary
+  `registry.json.lock`, and therefore remains available when a failed or stale
+  ordinary writer holds that lock. This is not a validation bypass: the operator
+  must name one source; the source is classified and graph-validated before and
+  under the recovery lock; the staged bytes are classified and graph-validated
+  again; and source/current checksums are rechecked immediately before publish.
 - **Classification, not authority.** A plan reports the current registry and each
   candidate as `valid`, `first-use`, `missing`, `empty`, `malformed`,
   `schema-too-new`, `invalid`, or `unreadable`, with a `sha256:` digest of the
@@ -691,8 +724,8 @@ Registry recovery boundary (`projmux reconcile registry`):
   the automatic write history and never grows without bound.
 - **Race guards.** `--expect-source-checksum` and `--expect-current-checksum` tie
   a restore to the plan it was read from, and the preview prints the exact guarded
-  command. Underneath, the source is re-read and re-verified under the store lock,
-  the staged copy is re-validated, and both inputs are re-hashed immediately
+  command. Underneath, the source is re-read and re-verified under the recovery
+  lock, the staged copy is re-validated, and both inputs are re-hashed immediately
   before the single rename. Anything that moved refuses with the registry
   byte-identical and tells the operator to re-run the preview.
 - **A repeat restore is a byte no-op.** Bytes already equal to the source mean no

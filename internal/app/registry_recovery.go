@@ -34,6 +34,8 @@ import (
 //     command never picks a copy, because which copy is the truth is an operator
 //     judgment about which mutations were wanted. The plan prints the exact
 //     guarded command for the source it would suggest, and the operator runs it.
+//     Restore serializes on the Store's recovery-only lock, never the ordinary
+//     mutation lock, and retains its own source, staged, and checksum guards.
 //  3. The live tmux mirror is a diagnostic, never a source. When no verified
 //     copy exists, the route reports what identity the exact server can still
 //     testify to and, beside it, an explicit list of what no mirror can return.
