@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
@@ -23,43 +26,38 @@ import (
 // Four properties are contractual, and each is a decision rather than an
 // implementation detail:
 //
-//  1. It runs from the canonical `projmux shell` lifecycle only, and only for the
-//     app-session target. A session whose ownership goes to a Project target is
-//     not a control session and never gets the marker; see resolveShellTarget's
-//     ProjectDefault flag. No read verb reaches this code, so no read verb can
-//     write the marker.
-//  2. Both facts the reader requires are verified before anything is written:
-//     the server carries `@projmux_app=1`, and the exact session does not carry
-//     `@projmux_ephemeral=1`. A server projmux did not start gets no marker,
-//     because a marker no reader will trust is just litter left on someone
-//     else's tmux; an ephemeral session gets none either, because ephemeral
-//     grants nothing and the resolver fails closed on the pair -- so the writer
-//     must never be what produces it.
+//  1. It runs from exact app lifecycle/config declarations and from existing
+//     ControlSession identities only. A session whose ownership goes to a
+//     Project target is not a control session and never gets the marker. No read
+//     verb reaches this code, so no read verb can write the marker.
+//  2. Every live ownership and identity claim is verified before anything is
+//     written: the server carries `@projmux_app=1`, the exact session is not
+//     ephemeral, and neither a Project uid nor a foreign role claims it. A
+//     marker no reader will trust is just litter left on someone else's tmux;
+//     contradictory identity is a refusal, never permission to rewrite it.
 //  3. Every tmux call is routed through the one explicit `-L <socket>` target the
 //     invocation was given. There is no unprefixed tmux call here, so this pass
 //     can never mark a session on the default server or on a sibling socket, and
 //     every write names one `-t <session>` target rather than a pattern or `-g`.
 //  4. It converges. A brand-new Home and an already-live Home take the same path,
 //     the registry commit goes through the store's convergent writer, and a
-//     second pass over an already-converged Home performs zero registry byte
-//     writes and re-writes only tmux options whose value it would set to what
-//     they already hold.
+//     second pass over an already-converged Home performs zero Registry and tmux
+//     writes.
 
 // controlSessionSkip states why a convergence pass declined to do anything.
 //
-// A skip is not an error and must never fail the lifecycle entry it runs inside:
-// `projmux shell` exists to give the operator a shell, and a server projmux does
-// not own is a perfectly ordinary thing to refuse to mark. The reason is carried
-// so a diagnostic can say which refusal fired instead of reporting silence.
+// A skip is not an execution error: shell must still attach and config apply's
+// successful source-file reload must stay successful. The reason is carried so
+// their public diagnostics say which refusal fired instead of reporting silence.
 type controlSessionSkip string
 
 const (
 	// controlSessionSkipNotAppOwned is a server carrying no @projmux_app=1.
-	controlSessionSkipNotAppOwned controlSessionSkip = "the tmux server is not app-owned (@projmux_app is not 1)"
+	controlSessionSkipNotAppOwned controlSessionSkip = "declared control target is not app-owned (@projmux_app is not 1)"
 	// controlSessionSkipEphemeral is a session carrying @projmux_ephemeral=1.
 	// Ephemeral grants nothing, and control plus ephemeral is the pair the
 	// resolved graph fails closed on.
-	controlSessionSkipEphemeral controlSessionSkip = "the session is marked ephemeral (@projmux_ephemeral=1), which grants nothing"
+	controlSessionSkipEphemeral controlSessionSkip = "declared control target is ephemeral (@projmux_ephemeral=1)"
 )
 
 // controlSessionConvergence reports what one pass did.
@@ -68,9 +66,13 @@ type controlSessionConvergence struct {
 	skipped controlSessionSkip
 	// controlUID is the ControlSession the pass settled on, empty when skipped.
 	controlUID string
-	// changed reports whether the registry commit wrote bytes. A converged
-	// repeat pass reports false, which is the idempotence property.
+	// changed reports whether this pass executed any Registry or tmux plan
+	// write. A converged repeat pass reports false, which is the idempotence
+	// property.
 	changed bool
+	// writes counts declarative Registry/tmux plan items executed. It is zero on
+	// a converged second pass and on every refusal.
+	writes int
 	// windows and panes count the objects the pass bound, created or not.
 	windows int
 	panes   int
@@ -119,27 +121,50 @@ func (c *controlSessionConverger) converge(ctx context.Context, socketName, sess
 	if err != nil {
 		return controlSessionConvergence{}, err
 	}
+	return c.convergeTarget(ctx, target, sessionName)
+}
+
+// convergeTarget is shared by shell lifecycle and config-apply. The caller has
+// already declared both coordinates; there is no inherited/default socket
+// fallback and no session-name inference inside this method.
+func (c *controlSessionConverger) convergeTarget(ctx context.Context, target explicitTmuxTarget, sessionName string) (controlSessionConvergence, error) {
+	return c.convergeTargetWithEvidence(ctx, target, sessionName, true)
+}
+
+func (c *controlSessionConverger) convergeTargetWithEvidence(ctx context.Context, target explicitTmuxTarget, sessionName string, declared bool) (controlSessionConvergence, error) {
+	if c == nil || c.runner == nil {
+		return controlSessionConvergence{}, errors.New("control session convergence requires a tmux runner")
+	}
+	if target.flag == "" || strings.TrimSpace(target.value) == "" || strings.TrimSpace(sessionName) == "" {
+		return controlSessionConvergence{}, errors.New("control session convergence requires an exact tmux target and session declaration")
+	}
 	mirror := intmetadata.NewMirror(explicitTmuxRunner{runner: c.runner, target: target})
 
 	markers, err := mirror.ObserveControlSessionMarkers(ctx, sessionName)
 	if err != nil {
 		return controlSessionConvergence{}, err
 	}
-	switch {
-	case !markers.AppOwned:
-		return controlSessionConvergence{skipped: controlSessionSkipNotAppOwned}, nil
-	case markers.Ephemeral:
-		return controlSessionConvergence{skipped: controlSessionSkipEphemeral}, nil
-	}
-
 	observed, targets, err := mirror.ObserveControlSession(ctx, sessionName)
 	if err != nil {
 		return controlSessionConvergence{}, err
 	}
-	runtime, err := observeMirroredUIDs(ctx, mirror)
+	registryBefore, err := c.resources.load()
 	if err != nil {
 		return controlSessionConvergence{}, err
 	}
+	plan := controller.PlanControlTargetConvergence(controlTargetControllerState(target, sessionName, declared, markers, registryBefore, observed, targets))
+	if plan.Refused() {
+		return controlSessionConvergence{skipped: controlSessionSkip(plan.Reason)}, nil
+	}
+	if plan.Converged() {
+		control, _ := registryBefore.ControlSessionBySession(sessionName)
+		uid := ""
+		if control != nil {
+			uid = control.Metadata.UID
+		}
+		return controlSessionConvergence{controlUID: uid}, nil
+	}
+
 	operationID, err := c.operationID()
 	if err != nil {
 		return controlSessionConvergence{}, err
@@ -148,12 +173,43 @@ func (c *controlSessionConverger) converge(ctx context.Context, socketName, sess
 	var binding coremetadata.ControlSessionBinding
 	var registry coremetadata.Registry
 	changed, err := c.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		// The preflight above avoids opening a Registry transaction for a refusal
+		// or a converged target. Once a write is needed, none of its live evidence
+		// authorizes the transaction: another actor can claim the exact session or
+		// one of its descendants while this worker waits for the Registry lock.
+		// Re-read every marker, object and mirror while holding that lock, then
+		// derive both the plan and binding from that one guarded observation.
+		lockedMarkers, err := mirror.ObserveControlSessionMarkers(ctx, sessionName)
+		if err != nil {
+			return err
+		}
+		lockedObserved, lockedTargets, err := mirror.ObserveControlSession(ctx, sessionName)
+		if err != nil {
+			return err
+		}
+		lockedRuntime, err := observeMirroredUIDs(ctx, mirror)
+		if err != nil {
+			return err
+		}
+		lockedPlan := controller.PlanControlTargetConvergence(controlTargetControllerState(target, sessionName, declared, lockedMarkers, *working, lockedObserved, lockedTargets))
+		if lockedPlan.Refused() {
+			return controlTargetRefusal{reason: lockedPlan.Reason}
+		}
+		plan = lockedPlan
+		targets = lockedTargets
+		if !controlPlanNeedsBinding(plan) {
+			registry = working.Clone()
+			if control, ok := working.ControlSessionBySession(sessionName); ok {
+				binding.ControlSession = control.Clone()
+			}
+			return nil
+		}
 		// The matcher is built inside the callback because the convergent writer
 		// may run it more than once, and a matcher carries the claims of exactly
 		// one pass. Reusing one across attempts would leave every candidate
 		// claimed and turn the second attempt into a mint-everything pass.
-		binder := coremetadata.NewBindingMatcher(runtime)
-		result, err := mutator.BindControlSession(working, observed, c.shell, operationID, binder)
+		binder := coremetadata.NewBindingMatcher(lockedRuntime)
+		result, err := mutator.BindControlSession(working, lockedObserved, c.shell, operationID, binder)
 		if err != nil {
 			return err
 		}
@@ -162,21 +218,128 @@ func (c *controlSessionConverger) converge(ctx context.Context, socketName, sess
 		return nil
 	})
 	if err != nil {
+		var refusal controlTargetRefusal
+		if errors.As(err, &refusal) {
+			return controlSessionConvergence{skipped: controlSessionSkip(refusal.reason)}, nil
+		}
 		return controlSessionConvergence{}, err
 	}
 
-	if err := mirror.MirrorControlSessionRole(ctx, sessionName); err != nil {
+	writes := 0
+	if controlPlanHas(plan, controller.ControlEnsureRole) {
+		if err := mirror.MirrorControlSessionRole(ctx, sessionName); err != nil {
+			return controlSessionConvergence{}, err
+		}
+		writes++
+	}
+	mirrored, err := mirrorControlSessionIdentity(ctx, mirror, registry, binding, targets)
+	if err != nil {
 		return controlSessionConvergence{}, err
 	}
-	if err := mirrorControlSessionIdentity(ctx, mirror, registry, binding, targets); err != nil {
-		return controlSessionConvergence{}, err
+	writes += mirrored
+	if changed {
+		writes++
 	}
 	return controlSessionConvergence{
 		controlUID: binding.ControlSession.Metadata.UID,
-		changed:    changed,
+		changed:    writes > 0,
+		writes:     writes,
 		windows:    len(binding.Windows),
 		panes:      len(binding.Panes),
 	}, nil
+}
+
+type controlTargetRefusal struct{ reason string }
+
+func (e controlTargetRefusal) Error() string { return e.reason }
+
+func controlPlanHas(plan controller.ControlTargetPlan, step controller.ControlTargetStep) bool {
+	return slices.ContainsFunc(plan.Actions, func(action controller.ControlTargetAction) bool { return action.Step == step })
+}
+
+func controlPlanNeedsBinding(plan controller.ControlTargetPlan) bool {
+	return controlPlanHas(plan, controller.ControlEnsureRoot) ||
+		controlPlanHas(plan, controller.ControlEnsureWindowMirror) ||
+		controlPlanHas(plan, controller.ControlEnsurePaneMirror)
+}
+
+func controlTargetControllerState(target explicitTmuxTarget, sessionName string, declared bool, markers intmetadata.ControlSessionMarkers,
+	registry coremetadata.Registry, observed coremetadata.ControlSessionObservation, targets intmetadata.LegacyTargets,
+) controller.ControlTargetState {
+	state := controller.ControlTargetState{
+		Declaration: controller.ControlTargetDeclaration{Transport: controllerTransport(target), Session: sessionName, Declared: declared},
+		AppOwned:    markers.AppOwned, Ephemeral: markers.Ephemeral, Role: markers.Role, ProjectUID: markers.ProjectUID,
+	}
+	for _, project := range registry.Projects {
+		if project.Metadata.UID == markers.ProjectUID {
+			state.ProjectKnown = true
+			break
+		}
+	}
+	for _, control := range registry.ControlSessions {
+		if control.Spec.Session == sessionName {
+			state.RootUIDs = append(state.RootUIDs, control.Metadata.UID)
+		}
+	}
+	for wi, window := range observed.Windows {
+		handle := ""
+		if wi < len(targets.Windows) {
+			handle = targets.Windows[wi]
+		}
+		claim := controller.ControlWindowClaim{ControlMirrorClaim: controlWindowClaim(registry, handle, window.UID)}
+		for pi, pane := range window.Panes {
+			paneHandle := ""
+			if wi < len(targets.Panes) && pi < len(targets.Panes[wi]) {
+				paneHandle = targets.Panes[wi][pi]
+			}
+			claim.Panes = append(claim.Panes, controlPaneClaim(registry, paneHandle, pane.UID))
+		}
+		state.Windows = append(state.Windows, claim)
+	}
+	return state
+}
+
+func controlWindowClaim(registry coremetadata.Registry, handle, uid string) controller.ControlMirrorClaim {
+	claim := controller.ControlMirrorClaim{Handle: handle, UID: strings.TrimSpace(uid)}
+	window, ok := registry.Window(claim.UID)
+	if !ok {
+		return claim
+	}
+	claim.Known = true
+	if owner := window.Metadata.OwnerRef; owner != nil {
+		claim.RootKind, claim.RootUID = string(owner.Kind), owner.UID
+	}
+	return claim
+}
+
+func controlPaneClaim(registry coremetadata.Registry, handle, uid string) controller.ControlMirrorClaim {
+	claim := controller.ControlMirrorClaim{Handle: handle, UID: strings.TrimSpace(uid)}
+	pane, ok := registry.Pane(claim.UID)
+	if !ok {
+		return claim
+	}
+	claim.Known = true
+	owner := pane.Metadata.OwnerRef
+	if owner == nil {
+		return claim
+	}
+	var window *coremetadata.Window
+	switch owner.Kind {
+	case coremetadata.KindWindow:
+		window, _ = registry.Window(owner.UID)
+	case coremetadata.KindAgent:
+		if agent, exists := registry.Agent(owner.UID); exists && agent.Metadata.OwnerRef != nil {
+			window, _ = registry.Window(agent.Metadata.OwnerRef.UID)
+		}
+	}
+	if window == nil {
+		return claim
+	}
+	claim.WindowUID = window.Metadata.UID
+	if root := window.Metadata.OwnerRef; root != nil {
+		claim.RootKind, claim.RootUID = string(root.Kind), root.UID
+	}
+	return claim
 }
 
 func (c *controlSessionConverger) operationID() (string, error) {
@@ -221,7 +384,8 @@ func mirrorControlSessionIdentity(
 	registry coremetadata.Registry,
 	binding coremetadata.ControlSessionBinding,
 	targets intmetadata.LegacyTargets,
-) error {
+) (int, error) {
+	writes := 0
 	for _, bound := range binding.Windows {
 		if bound.Origin == coremetadata.ImportRebound {
 			continue
@@ -234,8 +398,9 @@ func mirrorControlSessionIdentity(
 			continue
 		}
 		if err := mirror.MirrorWindow(ctx, targets.Windows[bound.SourceIndex], *window); err != nil {
-			return err
+			return writes, err
 		}
+		writes++
 	}
 	for _, bound := range binding.Panes {
 		if bound.Origin == coremetadata.ImportRebound {
@@ -253,10 +418,11 @@ func mirrorControlSessionIdentity(
 			continue
 		}
 		if err := mirror.MirrorPane(ctx, row[bound.PaneIndex], *pane); err != nil {
-			return err
+			return writes, err
 		}
+		writes++
 	}
-	return nil
+	return writes, nil
 }
 
 // controlSessionWarning renders the one-line diagnostic a failed convergence

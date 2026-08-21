@@ -85,6 +85,7 @@ func bindingFixtureReconciler(root string) func(tmuxCommandRunner, sessionLister
 type recordingTriggering struct {
 	triggers []controllerTrigger
 	err      error
+	refused  string
 }
 
 func (r *recordingTriggering) run(_ context.Context, trigger controllerTrigger) (controllerTriggerOutcome, error) {
@@ -92,7 +93,9 @@ func (r *recordingTriggering) run(_ context.Context, trigger controllerTrigger) 
 	if r.err != nil {
 		return controllerTriggerOutcome{reason: trigger.reason}, r.err
 	}
-	return controllerTriggerOutcome{reason: trigger.reason, passes: 1, converged: true}, nil
+	return controllerTriggerOutcome{
+		reason: trigger.reason, passes: 1, converged: r.refused == "", refused: r.refused,
+	}, nil
 }
 
 func (r *recordingTriggering) targets() []explicitTmuxTarget {
@@ -458,5 +461,53 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	}
 	if len(recorder.triggers) != 0 || len(runner.calls) != 0 {
 		t.Fatalf("failed preflight touched live state: triggers=%v calls=%v", recorder.triggers, runner.calls)
+	}
+}
+
+func TestPublicConfigApplySurfacesExactControlTargetRefusal(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	runner := &recordingTmuxRunner{}
+	wantReason := `declared control target carries foreign Project uid claimant "project-other"`
+	recorder := &recordingTriggering{refused: wantReason}
+	tmux := &tmuxCommand{
+		executable: func() (string, error) { return "/tmp/projmux", nil },
+		homeDir:    func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			switch name {
+			case "XDG_CONFIG_HOME":
+				return filepath.Join(home, ".config")
+			case "XDG_STATE_HOME":
+				return filepath.Join(home, ".state")
+			default:
+				return ""
+			}
+		},
+		readFile:      os.ReadFile,
+		writeFile:     os.WriteFile,
+		runner:        runner,
+		triggerRunner: recorder,
+	}
+	var stdout, stderr bytes.Buffer
+	public := &configCommand{tmux: tmux}
+	if err := public.Run([]string{"apply", "--config", filepath.Join(home, "tmux.conf"), "--socket", "isolated"}, &stdout, &stderr); err != nil {
+		t.Fatalf("config apply error = %v; stderr=%q", err, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), wantReason) {
+		t.Fatalf("config apply stderr = %q, want exact refusal %q", stderr.String(), wantReason)
+	}
+	if !strings.Contains(stdout.String(), "reloaded tmux server -L isolated") {
+		t.Fatalf("config apply stdout = %q, want successful source-file reload", stdout.String())
+	}
+	if len(recorder.triggers) != 1 || recorder.triggers[0].reason != controllerTriggerConfigApply {
+		t.Fatalf("config apply triggers = %+v, want one config-apply", recorder.triggers)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, tmuxopts.SessionRole) ||
+			slices.Contains(call.args, tmuxopts.WindowUID) ||
+			slices.Contains(call.args, tmuxopts.PaneUID) {
+			t.Fatalf("refused config apply issued a control write: %v", call.args)
+		}
 	}
 }

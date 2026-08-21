@@ -1239,10 +1239,17 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	if targetErr != nil {
 		return rollbackManagedIngest(targetErr)
 	}
-	if _, err := c.trigger(ctx, controllerTrigger{
+	outcome, err := c.trigger(ctx, controllerTrigger{
 		reason: controllerTriggerConfigApply, target: target,
-	}); err != nil {
+	})
+	if err != nil {
 		return rollbackManagedIngest(fmt.Errorf("converge managed runtime bindings on -L %s: %w", socketName, err))
+	}
+	// A declarative refusal intentionally keeps source-file success and performs
+	// zero control writes. It is still part of the public apply result: silently
+	// discarding it would tell the operator that reload also converged identity.
+	if outcome.refused != "" {
+		fmt.Fprintln(stderr, "projmux: controller "+outcome.describe())
 	}
 
 	count := 0

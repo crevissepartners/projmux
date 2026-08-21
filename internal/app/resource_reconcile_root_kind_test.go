@@ -74,6 +74,11 @@ type rootKindProjectionSite struct {
 // exhaustiveness test re-sorts anyway, so the order here is for reading.
 var rootKindProjectionSites = []rootKindProjectionSite{
 	{
+		File: "internal/app/control_session.go", Func: "controlTargetControllerState",
+		Source: "Registry", Verdict: rootKindBoth,
+		Why: "builds one declared control-target plan from exact ControlSession claimants and explicitly classifies any mirrored Project uid as a conflict",
+	},
+	{
 		File: "internal/app/agent_workspace.go", Func: "resolveAgentWorkspaceFor",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "resolves an Agent workspace against Project roots; a ControlSession has no root to offer",
@@ -385,7 +390,7 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 		counts[site.Verdict]++
 	}
 	for verdict, want := range map[rootKindVerdict]int{
-		rootKindBoth:        15,
+		rootKindBoth:        16,
 		rootKindPaired:      2,
 		rootKindProjectOnly: 19,
 		rootKindGap:         0,
@@ -394,7 +399,7 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 36; got != want {
+	if got, want := len(rootKindProjectionSites), 37; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {
