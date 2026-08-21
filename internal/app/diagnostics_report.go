@@ -22,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -200,16 +201,21 @@ func supportDoctorSafeStringValues() map[string]map[string]bool {
 			string(doctorAINotifyStatusInstalled): true, string(doctorAINotifyStatusConflict): true,
 			"available": true, "unavailable": true,
 		},
-		"provider_id": {},
-		"agent":       {},
-		"confidence":  {"high": true, "medium": true, "low": true, "none": true},
-		"name":        {"tmux": true, "git": true, "stty": true, "tmux bell fallback": true},
-		"id":          {"tmux-bell": true},
-		"severity":    {string(doctorSeverityInfo): true, string(doctorSeverityWarning): true, string(doctorSeverityError): true},
-		"code":        {},
-		"remediation": {},
-		"safe_codes":  {},
-		"divergence":  {},
+		"source":           {"app-server": true, "hook-fallback": true, "unavailable": true},
+		"availability":     {"available": true, "unsupported": true, "unavailable": true, "timeout": true, "protocol-error": true},
+		"reason":           {"none": true, "executable-missing": true, "endpoint-unavailable": true, "unsupported": true, "timeout": true, "protocol-error": true, "disconnected": true, "hook-unavailable": true},
+		"endpoint_kind":    {"stdio": true, "stdio-proxy": true},
+		"connection_state": {"disconnected": true, "connecting": true, "ready": true, "timed-out": true, "protocol-error": true},
+		"provider_id":      {},
+		"agent":            {},
+		"confidence":       {"high": true, "medium": true, "low": true, "none": true},
+		"name":             {"tmux": true, "git": true, "stty": true, "tmux bell fallback": true},
+		"id":               {"tmux-bell": true},
+		"severity":         {string(doctorSeverityInfo): true, string(doctorSeverityWarning): true, string(doctorSeverityError): true},
+		"code":             {},
+		"remediation":      {},
+		"safe_codes":       {},
+		"divergence":       {},
 	}
 	for _, divergence := range resourcegraph.Divergences() {
 		values["divergence"][string(divergence)] = true
@@ -241,7 +247,7 @@ func redactDoctorJSON(value any, key string) {
 				continue
 			}
 			if text, ok := child.(string); ok && text != "" {
-				if !doctorSafeStringValues[childKey][text] {
+				if !doctorSafeStringValues[childKey][text] && !(key == "codex_app_server" && childKey == "version" && codexappserver.IsSafeDiagnosticVersion(text)) {
 					typed[childKey] = supportHash(childKey, text)
 				}
 			} else {

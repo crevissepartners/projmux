@@ -13,10 +13,12 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/platformkeys"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	"github.com/crevissepartners/projmux/internal/version"
 )
 
 type settingsCommand struct {
@@ -40,6 +42,7 @@ type settingsCommand struct {
 	nativeKeyCaptureGrace    time.Duration
 	physicalCaptureAvailable func() bool
 	aiNotifyDiagnostics      func() []doctorAINotifyIntegration
+	appServerHealth          func(hookAvailable bool) codexappserver.Health
 	// resourceRegistry is the read-only Registry projection the Project surfaces
 	// display. It is a seam so a fixture can declare one instead of reaching for
 	// whatever Registry the host machine has.
@@ -70,6 +73,9 @@ func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCo
 		nativeKeyCapture:       platformkeys.CaptureModifiedChord,
 		preferNativeKeyCapture: platformkeys.Available,
 		nativeKeyCaptureGrace:  100 * time.Millisecond,
+		appServerHealth: func(hookAvailable bool) codexappserver.Health {
+			return codexappserver.ProbeDefaultProxy(context.Background(), codexappserver.DefaultProbeTimeout, version.String(), hookAvailable)
+		},
 	}
 	// The concrete commands satisfy the settings role interfaces structurally.
 	// Guard the nil pointers so the `c.<dep> == nil` checks keep their

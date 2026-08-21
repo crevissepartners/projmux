@@ -21,6 +21,8 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/version"
 )
 
 type doctorCommand struct {
@@ -30,6 +32,7 @@ type doctorCommand struct {
 	commandVersion         func(name string) string
 	aiDiagnostics          func() []doctorAINotifyIntegration
 	resumeDiagnostics      func() []doctorSessionStateResumeDiagnostic
+	appServerHealth        func(hookAvailable bool) codexappserver.Health
 	readRuntimeHealth      func(diagnostics.ReadOnlyStore) (diagnostics.RuntimeHealth, error)
 	resolveOperationsPath  func() (string, error)
 	runtimeProbe           func() doctorRuntimeProbe
@@ -55,6 +58,9 @@ func newDoctorCommand() *doctorCommand {
 		return doctorAINotifyDiagnostics(newAICommand())
 	}
 	c.resumeDiagnostics = doctorSessionStateResumeDiagnostics
+	c.appServerHealth = func(hookAvailable bool) codexappserver.Health {
+		return codexappserver.ProbeDefaultProxy(context.Background(), codexappserver.DefaultProbeTimeout, version.String(), hookAvailable)
+	}
 	c.readRuntimeHealth = diagnostics.ReadRuntimeHealth
 	c.resolveOperationsPath = func() (string, error) { return diagnostics.DefaultPath(c.getenv, os.UserHomeDir) }
 	c.runtimeProbe = defaultDoctorRuntimeProbe
@@ -119,6 +125,7 @@ type doctorReport struct {
 	SchemaVersion        int                                  `json:"schema_version"`
 	Dependencies         []doctorResult                       `json:"dependencies"`
 	AINotifyIntegrations []doctorAINotifyIntegration          `json:"ai_notify_integrations"`
+	CodexAppServer       *codexappserver.Health               `json:"codex_app_server,omitempty"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    string                               `json:"session_state_prune"`
 	Runtime              []doctorFinding                      `json:"runtime"`
@@ -241,6 +248,10 @@ func (c *doctorCommand) evaluateReport(section doctorSection) doctorReport {
 	}
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
 		report.AINotifyIntegrations = c.evaluateAINotifyIntegrations()
+		if c.appServerHealth != nil {
+			health := c.appServerHealth(codexHookFallbackAvailable(report.AINotifyIntegrations))
+			report.CodexAppServer = &health
+		}
 	}
 	if section == doctorSectionAll || section == doctorSectionSessionState {
 		report.SessionStateResume = c.evaluateSessionStateResume()
@@ -362,6 +373,7 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 	}
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
 		writeDoctorIntegrationsText(&buf, report.AINotifyIntegrations, verbose)
+		writeDoctorAppServerText(&buf, report.CodexAppServer)
 	}
 	if section == doctorSectionAll || section == doctorSectionSessionState {
 		writeDoctorSessionStateText(&buf, report, verbose)
@@ -374,6 +386,19 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 	}
 	_, err := w.Write(buf.Bytes())
 	return err
+}
+
+func writeDoctorAppServerText(buf *bytes.Buffer, health *codexappserver.Health) {
+	if health == nil {
+		return
+	}
+	buf.WriteString("\nCodex app-server\n")
+	fmt.Fprintf(buf, "  Source: %s; availability: %s; reason: %s; endpoint: %s; connection: %s",
+		health.Source.Label(), health.Availability, health.Reason, health.Endpoint, health.Connection)
+	if health.Version != "" {
+		fmt.Fprintf(buf, "; version: %s", health.Version)
+	}
+	buf.WriteString("\n")
 }
 
 func writeDoctorFindingsText(buf *bytes.Buffer, title string, findings []doctorFinding, verbose bool) {
@@ -637,6 +662,7 @@ type doctorJSONReport struct {
 	SchemaVersion        int                                   `json:"schema_version"`
 	Dependencies         *[]doctorResult                       `json:"dependencies,omitempty"`
 	AINotifyIntegrations *[]doctorAINotifyIntegration          `json:"ai_notify_integrations,omitempty"`
+	CodexAppServer       *codexappserver.Health                `json:"codex_app_server,omitempty"`
 	SessionStateResume   *[]doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
 	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
@@ -652,6 +678,7 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 	}
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
 		out.AINotifyIntegrations = &report.AINotifyIntegrations
+		out.CodexAppServer = report.CodexAppServer
 	}
 	if (section == doctorSectionAll && len(report.SessionStateResume) > 0) || section == doctorSectionSessionState {
 		out.SessionStateResume = &report.SessionStateResume

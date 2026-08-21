@@ -39,6 +39,30 @@ Responsibilities:
 - parse command output
 - convert failures into typed errors
 
+#### Codex app-server compatibility bridge
+
+`internal/integrations/agents/codexappserver` is a Codex-only vertical slice.
+It owns the headerless JSON-RPC request, response, and notification wire types,
+the newline-delimited direct-stdio framing limit, request IDs,
+initialize/initialized handshake, local cancellation, and connection
+replacement. The local proxy transport performs the required HTTP Upgrade and
+bounded RFC6455 WebSocket framing (including masked client frames) before
+carrying those JSON-RPC messages. Core metadata and UI packages receive only
+its closed, content-free health result; they do not import app-server request
+or event types.
+
+The compatibility probe runs the fixed read-only bridge `codex app-server
+proxy` against an already-running local control socket and sends only
+`initialize` plus `initialized`. It never starts or restarts the daemon, changes
+Codex configuration, performs login, or accepts a remote WebSocket URL. The
+local RFC6455 hop is only the proxy's required connection to the already-running
+local socket; remote WebSocket transport remains excluded. A successful
+handshake selects `App Server`; unsupported, unavailable, timeout, and protocol
+errors select the existing `Hook fallback` for current behavior. No existing
+Agent create/resume, hook, catalog, or usage consumer uses the native source in
+this phase. Settings displays this decision as a read-only state row; it is not
+a user-selectable authority.
+
 ### 3. UI orchestration
 Picker data is modeled independently from row rendering. The app builds
 backend-neutral `picker.Item` values (`Title`, `Value`, `SearchText`,

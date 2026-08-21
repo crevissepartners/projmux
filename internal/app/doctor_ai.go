@@ -258,6 +258,22 @@ func withProviderDiagnosticMetadata(diag doctorAINotifyIntegration, provider aip
 	return diag
 }
 
+// codexHookFallbackAvailable projects the existing hook diagnostic into the
+// compatibility bridge's closed fallback decision. Only an enabled, fully
+// installed Codex hook is treated as available; stale, missing, conflicted, or
+// skipped integrations need operator repair before they can be an authority.
+func codexHookFallbackAvailable(diagnostics []doctorAINotifyIntegration) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.ProviderID != string(aiprovider.Codex) {
+			continue
+		}
+		return diagnostic.ProviderEnabled != nil &&
+			*diagnostic.ProviderEnabled &&
+			diagnostic.Status == doctorAINotifyStatusInstalled
+	}
+	return false
+}
+
 func appendDiagnosticGuidance(existing, extra string) string {
 	existing = strings.TrimSpace(existing)
 	extra = strings.TrimSpace(extra)
