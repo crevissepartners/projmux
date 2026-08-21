@@ -456,6 +456,7 @@ func (r *resolver) buildRuntimeNodes() {
 		r.runtime = append(r.runtime, RuntimeNode{
 			Ref: r.paneRef(pane), Class: class, UID: pane.UID,
 			ResourceUID: r.runtimeResource[pane.ID], ContainerID: pane.WindowID, Reason: reason,
+			AgentSessionID: pane.AgentSessionID, AgentThreadID: pane.AgentThreadID,
 		})
 	}
 }

@@ -120,6 +120,10 @@ type BindingMatcher struct {
 	// historical mint-and-rebind behavior; explicit reconciliation reports the
 	// drift and leaves the object untouched instead.
 	refuseForeign bool
+	// refuseUnattributed is the approved-D3 import mode: a live object must
+	// carry the exact orphan uid being approved. A blank D2 object is never a
+	// candidate, even in the same session.
+	refuseUnattributed bool
 }
 
 // DeletedPaneMirrorPrefix marks a live Pane whose Registry resource was
@@ -144,6 +148,12 @@ func NewBindingMatcher(runtime RuntimeObservation) *BindingMatcher {
 // invitation to mint a replacement identity.
 func NewRepairBindingMatcher(runtime RuntimeObservation) *BindingMatcher {
 	return &BindingMatcher{runtime: runtime, claimed: map[string]bool{}, refuseForeign: true}
+}
+
+// NewApprovedOrphanBindingMatcher permits only an exact unknown mirrored uid
+// to reach AdoptionForeign. Blank D2 objects remain refused.
+func NewApprovedOrphanBindingMatcher(runtime RuntimeObservation) *BindingMatcher {
+	return &BindingMatcher{runtime: runtime, claimed: map[string]bool{}, refuseUnattributed: true}
 }
 
 // Claim marks a registry uid as paired for the rest of the pass.
@@ -261,6 +271,9 @@ func (b *BindingMatcher) match(
 	boundElsewhere map[string]bool,
 ) AdoptionMatch {
 	observedUID = strings.TrimSpace(observedUID)
+	if observedUID == "" && b.refuseUnattributed {
+		return AdoptionMatch{Kind: AdoptionRefused}
+	}
 	if observedUID != "" {
 		switch {
 		case !known(observedUID):

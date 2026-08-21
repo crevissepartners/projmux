@@ -31,6 +31,13 @@ type Candidate struct {
 	Before, After string
 	// Args is the exact tmux argv without a transport prefix.
 	Args []string
+	// Recovery fields are mandatory for recovery intents. Keeping them on the
+	// candidate makes an off-table producer fail closed in this one gate.
+	Divergence resourcegraph.Divergence
+	Trigger    RecoveryTrigger
+	Level      RecoveryLevel
+	LossCount  int
+	Approved   bool
 }
 
 const reasonUnobserved = "planned write names a tmux handle the exact-socket observation does not contain"
@@ -77,7 +84,20 @@ func Authorize(handles Handles, fields GuardFields, grant Grant, candidates []Ca
 		// close.
 		action.Target, action.Class, action.Scope = handle.ID, handle.Class, handle.Kind
 		verdict := Decide(candidate.Intent, handle.Subject(grant))
-		action.Authority, action.Reason = verdict.Authority, verdict.Reason
+		if candidate.Level.Valid() {
+			recovery := AuthorizeRecovery(candidate.Divergence, candidate.Trigger, candidate.Level, candidate.Approved, candidate.LossCount)
+			action.Divergence, action.RecoveryLevel = candidate.Divergence, candidate.Level
+			action.LossKind, action.LossCount = recovery.LossKind, recovery.LossCount
+			allowed := recovery.Decision == RecoveryAllowAutomatic || recovery.Decision == RecoveryAllowApproved
+			if allowed && handle.Class == resourcegraph.ClassRecoverable {
+				verdict.Authority, action.Authority = AuthorityAllow, AuthorityAllow
+			} else {
+				verdict.Authority, action.Authority = AuthorityRefuse, AuthorityRefuse
+			}
+			verdict.Reason, action.Reason = recovery.Reason, recovery.Reason
+		} else {
+			action.Authority, action.Reason = verdict.Authority, verdict.Reason
+		}
 		if key := verdictKey(verdict); !seen[key] {
 			seen[key] = true
 			policy = append(policy, verdict)
@@ -90,6 +110,9 @@ func Authorize(handles Handles, fields GuardFields, grant Grant, candidates []Ca
 				continue
 			}
 			action.Guards = handle.Guards(fields)
+			if candidate.Level.Valid() && candidate.Field != "" {
+				action.Guards = append(action.Guards, Guard{Field: candidate.Field, Expect: candidate.Before})
+			}
 		}
 		actions = append(actions, action)
 	}

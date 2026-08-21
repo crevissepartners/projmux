@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -506,6 +507,11 @@ type topologyMaterializeRun struct {
 	// different audiences: startup discards rollback diagnostics and must still
 	// tell the operator which Agents did not rejoin their conversation.
 	notices io.Writer
+	// recoveryTrigger is the closed authority-table trigger. The public
+	// materialize flag is an explicitly approved reconcile; startup is the
+	// distinct Project-open automatic cell.
+	recoveryTrigger  controller.RecoveryTrigger
+	recoveryApproved bool
 }
 
 // topologyMaterializeOutcome is the bookkeeping a caller needs to report. The
@@ -562,6 +568,10 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 		}
 		outcome.plan = current
 		outcome.completed = append(outcome.completed, "plan rechecked under Registry lock")
+		if err := r.authorizeRecovery(&current); err != nil {
+			outcome.failedStage = "recovery authority"
+			return err
+		}
 		fatal, skipped := current.materialization.refusalScope()
 		if current.materialization == nil && current.refusedItems() != 0 {
 			outcome.failedStage = "topology prevalidation"
@@ -607,6 +617,58 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 	return outcome, nil
 }
 
+// authorizeRecovery is the single production gate for topology actions. It
+// evaluates the actual locked plan, so neither a stale preview nor a caller's
+// label can grant authority to objects that are about to be materialized or
+// skipped.
+func (r topologyMaterializeRun) authorizeRecovery(plan *resourceReconcilePlan) error {
+	if plan == nil || plan.materialization == nil || !r.recoveryTrigger.Valid() {
+		return fmt.Errorf("topology recovery trigger %q is outside the closed authority table", r.recoveryTrigger)
+	}
+	type request struct {
+		divergence resourcegraph.Divergence
+		level      controller.RecoveryLevel
+		count      int
+	}
+	requests := map[string]*request{}
+	add := func(divergence resourcegraph.Divergence, level controller.RecoveryLevel) {
+		key := string(divergence) + "\x00" + string(level)
+		if requests[key] == nil {
+			requests[key] = &request{divergence: divergence, level: level}
+		}
+		requests[key].count++
+	}
+	for _, item := range plan.materialization.items {
+		if !item.refused && item.Action == "materialize" {
+			add(item.Divergence, controller.RecoveryMaterialize)
+		}
+	}
+	_, skipped := plan.materialization.refusalScope()
+	for _, item := range skipped {
+		add(item.Divergence, controller.RecoverySkipItem)
+	}
+	for _, request := range requests {
+		verdict := controller.AuthorizeRecovery(request.divergence, r.recoveryTrigger, request.level, r.recoveryApproved, request.count)
+		allowed := verdict.Decision == controller.RecoveryAllowAutomatic ||
+			(r.recoveryApproved && verdict.Decision == controller.RecoveryAllowApproved)
+		if !allowed {
+			return fmt.Errorf("%s %s recovery refused: %s", request.divergence, request.level, verdict.Reason)
+		}
+		for i := range plan.items {
+			item := &plan.items[i]
+			if item.Divergence != request.divergence {
+				continue
+			}
+			matchesMaterialize := request.level == controller.RecoveryMaterialize && !item.refused && item.Action == "materialize"
+			matchesSkip := request.level == controller.RecoverySkipItem && item.refused
+			if matchesMaterialize || matchesSkip {
+				item.LossKind, item.LossCount = verdict.LossKind, verdict.LossCount
+			}
+		}
+	}
+	return nil
+}
+
 // requireMaterializeSession pins one activation's exact session name onto the
 // plan.
 //
@@ -636,14 +698,16 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 		return errors.New("resource topology materialization write store is not configured")
 	}
 	run := topologyMaterializeRun{
-		resources:       c.resources,
-		runner:          c.runner,
-		target:          target,
-		newOperationID:  c.newOperationID,
-		newGeneration:   c.newGeneration,
-		newMaterializer: c.newMaterializer,
-		agents:          c.agents,
-		notices:         stderr,
+		resources:        c.resources,
+		runner:           c.runner,
+		target:           target,
+		newOperationID:   c.newOperationID,
+		newGeneration:    c.newGeneration,
+		newMaterializer:  c.newMaterializer,
+		agents:           c.agents,
+		notices:          stderr,
+		recoveryTrigger:  controller.RecoveryExplicit,
+		recoveryApproved: true,
 	}
 	retry := retryResourceReconcileProject(reportTarget, planner.materializeProject)
 	outcome, runErr := run.execute(ctx, planner, stderr)

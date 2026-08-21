@@ -88,6 +88,11 @@ type Pane struct {
 	// launched as an agent pane; it is not an Agent uid, because no tmux option
 	// carries one.
 	AgentProvider string `json:"agentProvider,omitempty"`
+	// AgentSessionID and AgentThreadID are live routing indexes. They are
+	// observed only so L8 can guard their exact removal; neither is resource
+	// identity or a Registry conversation pointer.
+	AgentSessionID string `json:"agentSessionID,omitempty"`
+	AgentThreadID  string `json:"agentThreadID,omitempty"`
 	// Title is the tmux pane_title, a display source only.
 	Title string `json:"title,omitempty"`
 }

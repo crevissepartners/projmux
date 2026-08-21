@@ -200,7 +200,9 @@ type RuntimeNode struct {
 	// off an object that was refused.
 	ResourceUID string `json:"resourceUID,omitempty"`
 	// ContainerID is the stable tmux id of the enclosing object.
-	ContainerID string `json:"containerID,omitempty"`
+	ContainerID    string `json:"containerID,omitempty"`
+	AgentSessionID string `json:"agentSessionID,omitempty"`
+	AgentThreadID  string `json:"agentThreadID,omitempty"`
 	// Reason states why this class, in one clause.
 	Reason string `json:"reason,omitempty"`
 }

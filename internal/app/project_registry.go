@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
@@ -71,6 +72,10 @@ type registryReconciler struct {
 	// observes a foreign or ambiguous Project binding. Lifecycle reconciliation
 	// leaves it nil and retains its existing behavior.
 	refusedSessions map[string]bool
+	// refusedSessionDivergence carries the classifier result that caused the
+	// quarantine. Reporting reads this value instead of inferring a second D4
+	// wrapper from a string key.
+	refusedSessionDivergence map[string]resourcegraph.Divergence
 	// exactProjects is populated only by the public repair planner. It carries
 	// a known Registry Project UID already mirrored on a live session so a
 	// stale project-path anchor after rebind can be repaired without treating
@@ -78,7 +83,8 @@ type registryReconciler struct {
 	exactProjects map[string]string
 	// targetLiveOnly keeps the public exact-socket repair scoped to resources
 	// observed on that server.
-	targetLiveOnly bool
+	targetLiveOnly       bool
+	approvedOrphanImport bool
 }
 
 func newRegistryReconciler(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
@@ -96,6 +102,10 @@ func newRegistryReconciler(runner tmuxCommandRunner, sessions sessionLister) *re
 		observeLegacy: mirror.ObserveLegacySessionTargets,
 		mirror:        mirror,
 		shell:         configuredShell(os.Getenv),
+		// Every production caller is an automatic/default recovery path unless
+		// it explicitly opts into the approved D3 matcher. D2 import therefore
+		// starts closed even for create-time convergence.
+		refuseForeign: true,
 		sessionNameFor: func(root string) string {
 			return namer.SessionName(root)
 		},
@@ -206,6 +216,9 @@ func (r *registryReconciler) reconcileGuarded(
 	if r.refuseForeign {
 		binder = coremetadata.NewRepairBindingMatcher(runtime)
 	}
+	if r.approvedOrphanImport {
+		binder = coremetadata.NewApprovedOrphanBindingMatcher(runtime)
+	}
 
 	unresolved, err := r.importLiveSessions(ctx, working, mutator, operationID, reconcileLive, binder)
 	if err != nil {
@@ -312,7 +325,7 @@ func (r *registryReconciler) importLiveSessions(
 			continue
 		}
 		if projectUID := r.exactProjects[name]; projectUID != "" {
-			if resourceSessionHasUnsafeBinding(*working, projectUID, legacy) {
+			if r.sessionBindingRefused(*working, projectUID, legacy) {
 				r.refusedSessions[name] = true
 				continue
 			}
@@ -324,7 +337,7 @@ func (r *registryReconciler) importLiveSessions(
 			if project, ok := working.ProjectByRoot(legacy.Root); ok {
 				projectUID = project.Metadata.UID
 			}
-			if resourceSessionHasUnsafeBinding(*working, projectUID, legacy) {
+			if r.sessionBindingRefused(*working, projectUID, legacy) {
 				r.refusedSessions[name] = true
 				continue
 			}
@@ -332,6 +345,16 @@ func (r *registryReconciler) importLiveSessions(
 		if strings.TrimSpace(legacy.Root) == "" {
 			unresolved = append(unresolved, observedSession{name: name, legacy: legacy, targets: targets})
 			continue
+		}
+		if r.refuseForeign {
+			// D2 is L0 for every automatic/default trigger. Even a legacy
+			// project-path anchor is not approval to create Registry identity;
+			// automatic repair may only rebind rows the Registry already owns.
+			_, exists := working.ProjectByRoot(legacy.Root)
+			if !r.approvedOrphanImport || !exists {
+				unresolved = append(unresolved, observedSession{name: name, legacy: legacy, targets: targets})
+				continue
+			}
 		}
 		result, err := mutator.ImportLegacySession(working, legacy, r.shell, operationID, binder)
 		if err != nil {
@@ -405,7 +428,7 @@ func (r *registryReconciler) reapplyUnresolvedBindings(
 		if projectUID == "" {
 			continue
 		}
-		if r.refuseForeign && resourceSessionHasUnsafeBinding(*working, projectUID, session.legacy) {
+		if r.refuseForeign && r.sessionBindingRefused(*working, projectUID, session.legacy) {
 			r.refusedSessions[session.name] = true
 			continue
 		}
@@ -413,22 +436,32 @@ func (r *registryReconciler) reapplyUnresolvedBindings(
 	}
 }
 
-// resourceSessionHasUnsafeBinding is the public repair containment gate. One
-// foreign or ambiguous uid makes the whole live session diagnostic-only so an
-// ordinal adoption later in the same session cannot slide onto the wrong
-// Registry object after the refused row.
-func resourceSessionHasUnsafeBinding(registry coremetadata.Registry, projectUID string, legacy coremetadata.LegacySession) bool {
+func (r *registryReconciler) sessionBindingRefused(registry coremetadata.Registry, projectUID string, legacy coremetadata.LegacySession) bool {
+	divergence := resourceSessionBindingDivergence(registry, projectUID, legacy)
+	if divergence != "" {
+		if r.refusedSessionDivergence == nil {
+			r.refusedSessionDivergence = map[string]resourcegraph.Divergence{}
+		}
+		r.refusedSessionDivergence[legacy.Session] = divergence
+	}
+	return divergence != "" && !(r.approvedOrphanImport && divergence == resourcegraph.DivergenceOrphanMirror)
+}
+
+func resourceSessionBindingDivergence(registry coremetadata.Registry, projectUID string, legacy coremetadata.LegacySession) resourcegraph.Divergence {
 	seen := map[string]bool{}
+	orphan := false
 	for _, liveWindow := range legacy.Windows {
 		windowUID := strings.TrimSpace(liveWindow.UID)
 		if windowUID != "" {
 			if seen[windowUID] {
-				return true
+				return resourcegraph.DivergenceContaminated
 			}
 			seen[windowUID] = true
 			window, ok := registry.Window(windowUID)
-			if !ok || projectUID == "" || window.Metadata.OwnerUID() != projectUID {
-				return true
+			if !ok {
+				orphan = true
+			} else if projectUID == "" || window.Metadata.OwnerUID() != projectUID {
+				return resourcegraph.DivergenceContaminated
 			}
 		}
 		for _, livePane := range liveWindow.Panes {
@@ -437,12 +470,13 @@ func resourceSessionHasUnsafeBinding(registry coremetadata.Registry, projectUID 
 				continue
 			}
 			if strings.HasPrefix(paneUID, coremetadata.DeletedPaneMirrorPrefix) || seen[paneUID] {
-				return true
+				return resourcegraph.DivergenceContaminated
 			}
 			seen[paneUID] = true
 			pane, ok := registry.Pane(paneUID)
 			if !ok {
-				return true
+				orphan = true
+				continue
 			}
 			ownerUID := pane.Metadata.OwnerUID()
 			if ownerUID == windowUID && windowUID != "" {
@@ -450,11 +484,14 @@ func resourceSessionHasUnsafeBinding(registry coremetadata.Registry, projectUID 
 			}
 			agent, ok := registry.Agent(ownerUID)
 			if windowUID == "" || !ok || agent.Metadata.OwnerUID() != windowUID {
-				return true
+				return resourcegraph.DivergenceContaminated
 			}
 		}
 	}
-	return false
+	if orphan {
+		return resourcegraph.DivergenceOrphanMirror
+	}
+	return ""
 }
 
 // projectsBySessionName maps a live tmux session name onto the one Project that
@@ -630,6 +667,12 @@ func (r *registryReconciler) paneBindingFor(
 		return match.UID, match.Kind != coremetadata.AdoptionRebind, true
 	}
 	if match.Kind == coremetadata.AdoptionRefused {
+		return "", false, false
+	}
+	// Automatic convergence never creates identity for a D2 unattributed live
+	// pane. In repair mode, both an empty mirror and a D3 mirror just discarded
+	// at L8 stay runtime-only until a separately approved import route is used.
+	if r.refuseForeign && !(r.approvedOrphanImport && match.Kind == coremetadata.AdoptionForeign) {
 		return "", false, false
 	}
 	pane, err := mutator.ImportOrphanPane(registry, windowUID, legacyPane, operationID)

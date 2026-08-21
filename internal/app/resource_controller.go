@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/controller"
@@ -57,10 +58,12 @@ type controllerReobservation struct {
 
 // resourceControllerKernel orchestrates one command against one exact server.
 type resourceControllerKernel struct {
-	target  explicitTmuxTarget
-	runner  tmuxCommandRunner
-	store   *resourceStore
-	planner resourceReconcilePlanner
+	target               explicitTmuxTarget
+	runner               tmuxCommandRunner
+	store                *resourceStore
+	planner              resourceReconcilePlanner
+	trigger              controller.RecoveryTrigger
+	approvedOrphanImport bool
 	// observe takes one bounded inventory of the exact server. It is injectable
 	// so a test can state a machine state instead of scripting tmux output.
 	observe func(ctx context.Context) resourcegraph.Inventory
@@ -81,7 +84,7 @@ var controllerGuardFields = controller.GuardFields{
 }
 
 func newResourceControllerKernel(runner tmuxCommandRunner, store *resourceStore, planner resourceReconcilePlanner, target explicitTmuxTarget) *resourceControllerKernel {
-	kernel := &resourceControllerKernel{target: target, runner: runner, store: store, planner: planner}
+	kernel := &resourceControllerKernel{target: target, runner: runner, store: store, planner: planner, trigger: controller.RecoveryExplicit}
 	routed := explicitTmuxRunner{runner: runner, target: target}
 	transport := controllerTransport(target)
 	kernel.observe = func(ctx context.Context) resourcegraph.Inventory {
@@ -132,14 +135,74 @@ type controllerPass struct {
 // as candidates rather than as commands, so every one of them is answered by the
 // policy table before anything can run it.
 func (k *resourceControllerKernel) plan(ctx context.Context, registry coremetadata.Registry) (controllerPass, error) {
+	if !k.trigger.Valid() {
+		return controllerPass{}, fmt.Errorf("resource controller recovery trigger %q is outside the closed table", k.trigger)
+	}
+	if k.trigger == controller.RecoveryExplicit {
+		if err := requireAutomaticRecoveryPaths("explicit-mirror-repair", "explicit-status-projection", "explicit-orphan-mirror-discard"); err != nil {
+			return controllerPass{}, err
+		}
+	}
 	inventory := k.observe(ctx)
 	graph := resourcegraph.Resolve(registry, inventory)
+	approvedImport, err := k.authorizeApprovedOrphanImport(graph)
+	if err != nil {
+		return controllerPass{}, err
+	}
 	registryPlan, err := k.planner.build(ctx, registry)
 	if err != nil {
 		return controllerPass{}, err
 	}
+	if approvedImport != nil {
+		markApprovedD3Import(&registryPlan, graph, *approvedImport)
+	}
 	plan := k.authorize(graph, &registryPlan)
 	return controllerPass{graph: graph, registry: registryPlan, plan: plan}, nil
+}
+
+func (k *resourceControllerKernel) authorizeApprovedOrphanImport(graph resourcegraph.Graph) (*controller.RecoveryVerdict, error) {
+	if !k.approvedOrphanImport {
+		return nil, nil
+	}
+	count := len(graph.RuntimeOfClass(resourcegraph.ClassRecoverable))
+	verdict := controller.AuthorizeRecovery(
+		resourcegraph.DivergenceOrphanMirror,
+		controller.RecoveryExplicit,
+		controller.RecoveryImport,
+		true,
+		count,
+	)
+	if verdict.Decision != controller.RecoveryAllowApproved {
+		return nil, fmt.Errorf("approved orphan import is outside the recovery authority table: %s", verdict.Reason)
+	}
+	return &verdict, nil
+}
+
+func markApprovedD3Import(plan *resourceReconcilePlan, graph resourcegraph.Graph, verdict controller.RecoveryVerdict) {
+	recoverable := map[string]bool{}
+	for _, node := range graph.RuntimeOfClass(resourcegraph.ClassRecoverable) {
+		recoverable[node.Ref.ID] = true
+	}
+	writeKeys := map[string]bool{}
+	for _, write := range plan.writes {
+		if recoverable[write.target] {
+			writeKeys[write.itemKey()] = true
+		}
+	}
+	for i := range plan.items {
+		item := &plan.items[i]
+		createdIdentity := item.Surface == "registry" && item.Action == "create" &&
+			(item.Kind == string(coremetadata.KindWindow) || item.Kind == string(coremetadata.KindPane) || item.Kind == string(coremetadata.KindAgent))
+		if !createdIdentity && !writeKeys[item.Key] {
+			continue
+		}
+		item.Divergence = resourcegraph.DivergenceOrphanMirror
+		item.LossKind, item.LossCount = verdict.LossKind, verdict.LossCount
+		item.Reason = verdict.Reason
+	}
+	plan.items = slices.DeleteFunc(plan.items, func(item resourceReconcileItem) bool {
+		return item.Action == "refuse" && item.Divergence == resourcegraph.DivergenceOrphanMirror && recoverable[item.Target]
+	})
 }
 
 // authorize applies the policy to one Registry-side plan and folds the verdicts
@@ -158,11 +221,127 @@ func (k *resourceControllerKernel) authorize(graph resourcegraph.Graph, registry
 	// selection is the grant, and it is the only reason an unmarked object on a
 	// standalone host is repairable here.
 	grant := controller.Grant{OperatorTargeted: true}
-	actions, policy := controller.Authorize(handles, controllerGuardFields, grant, controllerCandidates(*registryPlan))
+	candidates := controllerCandidates(*registryPlan, k.approvedOrphanImport)
+	if !k.approvedOrphanImport {
+		candidates = append(candidates, controllerRecoveryCandidates(graph, k.trigger)...)
+	}
+	actions, policy := controller.Authorize(handles, controllerGuardFields, grant, candidates)
 	policy = append(policy, controller.Exercised(handles, grant, graphHasOfflineRow(graph))...)
 	plan := controller.NewPlan(graph.Transport, graph.HostMode, actions, policy)
+	projectRecoveryActions(registryPlan, plan.Actions, graph)
+	if k.trigger == controller.RecoveryExplicit && !k.approvedOrphanImport {
+		addApprovedD3ImportCommand(registryPlan, graph, k.target)
+	}
 	applyPolicy(registryPlan, plan.Actions)
 	return plan
+}
+
+func addApprovedD3ImportCommand(plan *resourceReconcilePlan, graph resourcegraph.Graph, target explicitTmuxTarget) {
+	count := len(graph.RuntimeOfClass(resourcegraph.ClassRecoverable))
+	if count == 0 {
+		return
+	}
+	flag := "--socket"
+	if target.flag == "-S" {
+		flag = "--socket-path"
+	}
+	command := "projmux reconcile resources " + flag + " " + shellQuote(target.value) + " --import-orphan-mirrors --yes"
+	verdict := controller.AuthorizeRecovery(resourcegraph.DivergenceOrphanMirror, controller.RecoveryExplicit, controller.RecoveryImport, false, count)
+	plan.items = append(plan.items, resourceReconcileItem{
+		Key: "recovery:approved:d3-import", Drift: resourceDriftOrphan, Surface: "registry",
+		Action: string(controller.RecoveryImport), Kind: "Recovery", Target: fmt.Sprintf("%d exact D3 object(s)", count),
+		Outcome: "approval-required", Reason: verdict.Reason, Divergence: resourcegraph.DivergenceOrphanMirror,
+		ApprovalCommand: command, LossKind: verdict.LossKind, LossCount: verdict.LossCount,
+	})
+	sort.SliceStable(plan.items, func(i, j int) bool { return plan.items[i].Key < plan.items[j].Key })
+}
+
+// projectRecoveryActions makes automatic L8 visible without counting its
+// three Pane option unsets as three divergence objects. The uid action is the
+// one item; its reason states that the two routing indexes are part of the same
+// object-scoped discard.
+func projectRecoveryActions(registryPlan *resourceReconcilePlan, actions []controller.Action, _ resourcegraph.Graph) {
+	recovered := map[string]bool{}
+	for _, action := range actions {
+		if action.RecoveryLevel == controller.RecoveryDiscardMirror && action.Divergence == resourcegraph.DivergenceOrphanMirror {
+			recovered[action.Target] = true
+		}
+	}
+	registryPlan.items = slices.DeleteFunc(registryPlan.items, func(item resourceReconcileItem) bool {
+		if item.Divergence == resourcegraph.DivergenceOrphanMirror && recovered[item.Target] {
+			return true
+		}
+		return false
+	})
+	for _, action := range actions {
+		identityField := action.Field == tmuxopts.ProjectUIDSession || action.Field == tmuxopts.WindowUID || action.Field == tmuxopts.PaneUID
+		if action.RecoveryLevel != controller.RecoveryDiscardMirror || !identityField {
+			continue
+		}
+		item := resourceReconcileItem{
+			Key: action.Key, Drift: resourceDriftOrphan, Surface: "tmux", Action: string(controller.RecoveryDiscardMirror),
+			Kind: action.Kind, Target: action.Target, Field: action.Field, Before: action.Before,
+			Outcome: "planned", Reason: "discard orphan uid mirror and any live conversation routing indexes",
+			Divergence: action.Divergence, LossKind: action.LossKind, LossCount: action.LossCount,
+		}
+		if action.Refused() {
+			item.Outcome, item.Reason, item.refused = "refused", action.Reason, true
+		}
+		registryPlan.items = append(registryPlan.items, item)
+	}
+	sort.SliceStable(registryPlan.items, func(i, j int) bool { return registryPlan.items[i].Key < registryPlan.items[j].Key })
+}
+
+// controllerRecoveryCandidates is the only automatic recovery-action producer.
+// It emits an action only after the exact D3 classifier has labelled the live
+// object recoverable, and every action carries its trigger and L8 cell into the
+// controller's closed authority gate.
+func controllerRecoveryCandidates(graph resourcegraph.Graph, trigger controller.RecoveryTrigger) []controller.Candidate {
+	orphans := graph.RuntimeOfClass(resourcegraph.ClassRecoverable)
+	out := make([]controller.Candidate, 0, len(orphans)*3)
+	for _, node := range orphans {
+		var fields []string
+		scopeArgs := []string{}
+		switch node.Ref.Kind {
+		case resourcegraph.ObjectSession:
+			fields = []string{tmuxopts.ProjectUIDSession}
+		case resourcegraph.ObjectWindow:
+			fields = []string{tmuxopts.WindowUID}
+			scopeArgs = []string{"-w"}
+		case resourcegraph.ObjectPane:
+			// Provider and topic are user-visible runtime metadata. L8 removes
+			// only the Pane uid and the two live conversation routing indexes;
+			// Registry Agent status.sessionRef is not a tmux option and is never
+			// touched here.
+			fields = []string{tmuxopts.PaneUID, tmuxopts.AgentSessionIDPane, tmuxopts.AgentThreadIDPane}
+			scopeArgs = []string{"-p"}
+		default:
+			continue
+		}
+		for _, field := range fields {
+			before := node.UID
+			switch field {
+			case tmuxopts.AgentSessionIDPane:
+				before = node.AgentSessionID
+			case tmuxopts.AgentThreadIDPane:
+				before = node.AgentThreadID
+			}
+			if field != tmuxopts.ProjectUIDSession && field != tmuxopts.WindowUID && field != tmuxopts.PaneUID && before == "" {
+				continue
+			}
+			args := []string{"set-option"}
+			args = append(args, scopeArgs...)
+			args = append(args, "-u", "-t", node.Ref.ID, field)
+			out = append(out, controller.Candidate{
+				Key:    fmt.Sprintf("recovery/%s/%s/%s", node.Ref.Kind, node.Ref.ID, field),
+				Intent: controller.IntentDiscardMirror, Kind: string(node.Ref.Kind), Target: node.Ref.ID,
+				Field: field, Before: before, Args: args,
+				Divergence: resourcegraph.DivergenceOrphanMirror, Trigger: trigger,
+				Level: controller.RecoveryDiscardMirror, LossCount: len(orphans),
+			})
+		}
+	}
+	return out
 }
 
 // graphHasOfflineRow reports whether any Registry row resolved without a live
@@ -205,7 +384,11 @@ func graphHasOfflineRow(graph resourcegraph.Graph) bool {
 // binding repair whatever produced it, and a write that sets a name, a root, or
 // an Agent projection is a mirror repair -- so a future producer cannot obtain a
 // weaker verdict by describing the same write differently.
-func controllerCandidates(plan resourceReconcilePlan) []controller.Candidate {
+func controllerCandidates(plan resourceReconcilePlan, approved bool) []controller.Candidate {
+	items := map[string]resourceReconcileItem{}
+	for _, item := range plan.items {
+		items[item.Key] = item
+	}
 	out := make([]controller.Candidate, 0, len(plan.writes))
 	for _, write := range plan.writes {
 		intent := controller.IntentRepairMirror
@@ -213,11 +396,19 @@ func controllerCandidates(plan resourceReconcilePlan) []controller.Candidate {
 		case tmuxopts.ProjectUIDSession, tmuxopts.WindowUID, tmuxopts.PaneUID:
 			intent = controller.IntentRepairBinding
 		}
-		out = append(out, controller.Candidate{
+		candidate := controller.Candidate{
 			Key: write.itemKey(), Intent: intent, Kind: plannedWriteKind(write),
 			Target: write.target, Field: write.field, Before: write.before, After: write.after,
 			Args: write.args,
-		})
+		}
+		if item := items[candidate.Key]; approved && item.Divergence == resourcegraph.DivergenceOrphanMirror {
+			candidate.Divergence = resourcegraph.DivergenceOrphanMirror
+			candidate.Trigger = controller.RecoveryExplicit
+			candidate.Level = controller.RecoveryImport
+			candidate.LossCount = item.LossCount
+			candidate.Approved = true
+		}
+		out = append(out, candidate)
 	}
 	return out
 }
@@ -417,18 +608,33 @@ func (k *resourceControllerKernel) converge(ctx context.Context) (controllerRun,
 	if err != nil {
 		return run, &controllerRunError{stage: "registry read", err: MapMetadataError(err), run: run}
 	}
-	run.graph = resourcegraph.Resolve(snapshot, k.observe(ctx))
+	inventory := k.observe(ctx)
+	run.graph = resourcegraph.Resolve(snapshot, inventory)
 	run.socket, _ = k.socketPath(ctx)
 	run.completed = []string{"exact socket observed: " + run.graph.Transport.String()}
 
 	failedStage := ""
 	_, registryChanged, updateErr := k.store.updateConvergent(func(working *coremetadata.Registry) error {
+		// Resolve the same bounded runtime observation against the Registry bytes
+		// protected by this lock. If another writer claimed an orphan between the
+		// preview and this transaction, the locked graph is Managed and neither
+		// automatic L8 nor approved L7 may act on stale D3 evidence.
+		lockedGraph := resourcegraph.Resolve(working.Clone(), inventory)
+		approvedImport, authorityErr := k.authorizeApprovedOrphanImport(lockedGraph)
+		if authorityErr != nil {
+			failedStage = "recovery authority"
+			return authorityErr
+		}
 		currentPlan, err := k.planner.build(ctx, working.Clone())
 		if err != nil {
 			failedStage = "locked plan"
 			return err
 		}
-		run.authorized = k.authorize(run.graph, &currentPlan)
+		if approvedImport != nil {
+			markApprovedD3Import(&currentPlan, lockedGraph, *approvedImport)
+		}
+		run.graph = lockedGraph
+		run.authorized = k.authorize(lockedGraph, &currentPlan)
 		run.plan = currentPlan
 		run.completed = append(run.completed, "plan rechecked under Registry lock")
 		*working = run.plan.registry.Clone()
