@@ -421,7 +421,7 @@ func TestGeneratedKeyBindingsCarryTheExactPaneIntoCreate(t *testing.T) {
 		}
 		runProjmux++
 		body := renderTmuxBindingBody("/usr/local/bin/projmux", action)
-		want := `run-shell "TMUX_PANE=#{pane_id} '/usr/local/bin/projmux' ` + action.TmuxBody + `"`
+		want := `run-shell "TMUX_PANE=#{pane_id} PROJMUX_POPUP_TARGET_CLIENT=#{client_tty} '/usr/local/bin/projmux' ` + action.TmuxBody + `"`
 		if body != want {
 			t.Fatalf("action %s rendered\n  %s\nwant\n  %s", action.ID, body, want)
 		}
@@ -430,11 +430,11 @@ func TestGeneratedKeyBindingsCarryTheExactPaneIntoCreate(t *testing.T) {
 		t.Fatal("no run-projmux bindings in the catalog; the assertion above proves nothing")
 	}
 
-	// The three create bindings are the ones whose meaning depends on it.
+	// The three direct split bindings are the ones whose meaning depends on it.
 	creates := map[string]string{
-		"ai-split-codex-right": "create codex --placement right",
-		"ai-split-claude-down": "create claude --placement down",
-		"ai-split-shell-right": "create pane --placement right",
+		"ai-split-codex-right": "internal agent-pane launch-provider codex right",
+		"ai-split-claude-down": "internal agent-pane launch-provider claude down",
+		"ai-split-shell-right": "internal agent-pane launch-shell right",
 	}
 	for _, action := range defaultKeyBindingCatalog() {
 		want, ok := creates[action.ID]
@@ -442,7 +442,7 @@ func TestGeneratedKeyBindingsCarryTheExactPaneIntoCreate(t *testing.T) {
 			continue
 		}
 		if action.TmuxBody != want {
-			t.Fatalf("binding %s runs %q, want the resource create %q", action.ID, action.TmuxBody, want)
+			t.Fatalf("binding %s runs %q, want the canonical intent producer %q", action.ID, action.TmuxBody, want)
 		}
 		delete(creates, action.ID)
 	}

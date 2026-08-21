@@ -196,11 +196,12 @@ fi
 # is observable here as the read-only identity probe of `%7`.
 #
 # The fixture's fake pane mirrors no Projmux identity, which is what keeps the
-# assertion sharp on both sides: the anchor is used, and an anchor that resolves
-# nothing still refuses with exit 2 naming `--project` and mutates nothing. A
-# bridge that called `split-window` would exit 0 and log one; a bridge that lost
-# the anchor would log no probe at all. Shell mode keeps the fixture independent
-# of provider binaries.
+# assertion sharp on both sides: the anchor is used, and the canonical intent
+# requires its exact Pane mirror before it will inspect the Window/root chain.
+# The missing Pane uid therefore refuses with the exact origin-loss reason,
+# exit 2, and no mutation. A bridge that called `split-window` would exit 0 and
+# log one; a bridge that lost the anchor would log no probe at all. Shell mode
+# keeps the fixture independent of provider binaries.
 mkdir -p "$XDG_CONFIG_HOME/projmux"
 printf 'shell\n' >"$XDG_CONFIG_HOME/projmux/tmux-ai-split-mode"
 : >"$fake_tmux_log"
@@ -226,10 +227,15 @@ if [[ -n "$launch_default_output" ]]; then
   echo "the saved-default split bridge wrote to stdout: $launch_default_output" >&2
   exit 1
 fi
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/launch-default.err" "pass --project <ref>"
-# The anchor reached create: the scope resolution reads the origin pane's
-# mirrored Window uid off `%7` rather than probing the server for a focused pane.
-smoke_assert_file_contains "$fake_tmux_log" "display-message -p -t %7 -F #{@projmux_window_uid}"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/launch-default.err" "carries no @projmux_pane_uid; the exact UI origin was lost"
+# The anchor reached create: canonical scope resolution reads the exact Pane uid
+# off `%7` and stops there when that first owner-chain link is absent.
+smoke_assert_file_contains "$fake_tmux_log" "display-message -p -t %7 -F #{@projmux_pane_uid}"
+if grep -Fq "@projmux_window_uid" "$fake_tmux_log"; then
+  echo "the saved-default split bridge probed a Window after the exact Pane origin was lost:" >&2
+  cat "$fake_tmux_log" >&2
+  exit 1
+fi
 if grep -qE '(^| )(split-window|new-window|new-session|kill-pane|kill-window|set-option|send-keys)( |$)' "$fake_tmux_log"; then
   echo "the saved-default split bridge mutated tmux instead of refusing:" >&2
   cat "$fake_tmux_log" >&2

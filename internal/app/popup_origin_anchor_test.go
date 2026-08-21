@@ -70,24 +70,24 @@ func TestPopupOriginAnchorResolvesTheCreateScopeWithNoInheritedPane(t *testing.T
 		{
 			name:        "a popup with no origin pane has no target at all",
 			insideTmux:  true,
-			wantRefusal: "this invocation is not inside a tmux client",
+			wantRefusal: "no exact tmux Pane",
 		},
 		{
 			name:        "whitespace is not a pane id",
 			insideTmux:  true,
 			anchor:      "   ",
-			wantRefusal: "this invocation is not inside a tmux client",
+			wantRefusal: "no exact tmux Pane",
 		},
 		{
 			name:        "an anchor that leaked outside a client addresses no server",
 			anchor:      "origin",
-			wantRefusal: "this invocation is not inside a tmux client",
+			wantRefusal: "no exact tmux Pane",
 		},
 		{
 			name:        "an anchor carrying no managed identity is not adopted",
 			insideTmux:  true,
 			anchor:      "%404",
-			wantRefusal: "carries no " + tmuxopts.WindowUID,
+			wantRefusal: "carries no " + tmuxopts.PaneUID,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -110,7 +110,7 @@ func TestPopupOriginAnchorResolvesTheCreateScopeWithNoInheritedPane(t *testing.T
 			registryBefore := store.snapshot()
 
 			err := create.createFromIntent(
-				agentPaneIntent{placement: "right", anchorPaneID: anchor},
+				agentPaneIntent{producer: canonicalProducerProviderPicker, placement: "right", anchorPaneID: anchor},
 				&bytes.Buffer{}, &bytes.Buffer{})
 
 			if test.wantRefusal != "" {
@@ -120,7 +120,7 @@ func TestPopupOriginAnchorResolvesTheCreateScopeWithNoInheritedPane(t *testing.T
 				if !IsUsageError(err) {
 					t.Fatalf("error = %v, want a usage error so exit 2 keeps meaning invalid input", err)
 				}
-				for _, want := range []string{"--project", test.wantRefusal} {
+				for _, want := range []string{"nothing was created", test.wantRefusal} {
 					if !strings.Contains(err.Error(), want) {
 						t.Fatalf("error = %q, want it to mention %q", err, want)
 					}
@@ -211,25 +211,27 @@ func TestEveryPopupSplitActionCarriesTheOriginPane(t *testing.T) {
 	}{
 		{
 			name: "provider row",
-			run:  func(c *aiCommand) error { return c.createAgentPane(aiModeCodex, "right") },
-			want: agentPaneIntent{provider: aiModeCodex, placement: "right"},
+			run: func(c *aiCommand) error {
+				return c.createAgentPane(canonicalProducerProviderPicker, aiModeCodex, "right")
+			},
+			want: agentPaneIntent{producer: canonicalProducerProviderPicker, provider: aiModeCodex, placement: "right"},
 		},
 		{
 			name: "shell row",
-			run:  func(c *aiCommand) error { return c.createShellPane("down") },
-			want: agentPaneIntent{placement: "down"},
+			run:  func(c *aiCommand) error { return c.createShellPane(canonicalProducerProviderPicker, "down") },
+			want: agentPaneIntent{producer: canonicalProducerProviderPicker, placement: "down"},
 		},
 		{
 			name: "resume row",
 			run: func(c *aiCommand) error {
-				return c.createResumedAgentPane(aiModeClaude, "right", "conv-7")
+				return c.createResumedAgentPane(canonicalProducerResumePicker, aiModeClaude, "right", "conv-7")
 			},
-			want: agentPaneIntent{provider: aiModeClaude, placement: "right", conversationID: "conv-7"},
+			want: agentPaneIntent{producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "right", conversationID: "conv-7"},
 		},
 		{
 			name: "the resume picker's new row",
 			run:  func(c *aiCommand) error { return c.runAgentPickerSelection("right") },
-			want: agentPaneIntent{provider: aiModeCodex, placement: "right"},
+			want: agentPaneIntent{producer: canonicalProducerProviderPicker, provider: aiModeCodex, placement: "right"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -270,7 +272,7 @@ func TestAPaneHostedSplitStatesNoAnchor(t *testing.T) {
 	if err := cmd.Run([]string{"launch-default", "right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("launch-default right error = %v", err)
 	}
-	want := []agentPaneIntent{{provider: aiModeCodex, placement: "right"}}
+	want := []agentPaneIntent{{producer: canonicalProducerSavedDefault, provider: aiModeCodex, placement: "right"}}
 	if !reflect.DeepEqual(creator.intents, want) {
 		t.Fatalf("intents = %+v, want %+v", creator.intents, want)
 	}

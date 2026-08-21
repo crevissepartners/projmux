@@ -6154,3 +6154,184 @@ if "${menu_env[@]}" tmux -S "$menu_cleanup_target" list-sessions >/dev/null 2>&1
 fi
 trap smoke_cleanup_env EXIT
 echo ">> managed pane-menu e2e passed: pane=$menu_origin_pane project=$menu_project_uid socket=$menu_socket path=$menu_socket_path cleanup=$menu_cleanup_target inherited=unset"
+
+# Declarative contract stabilization Phase 12: drive the four Home popup
+# terminal paths through the built binary on an exact, config-apply-declared
+# ControlSession. The scripted native picker is still the production picker;
+# line mode only replaces terminal key decoding so this smoke can select rows
+# deterministically. Every invocation strips inherited TMUX/TMUX_PANE and then
+# supplies the popup's exact socket and origin Pane explicitly.
+p12_root="$PROJMUX_SMOKE_WORKDIR/control-root-create"
+p12_socket="control-root-create-e2e-$$-$RANDOM"
+p12_session="home"
+p12_config="$p12_root/config/projmux/tmux.conf"
+p12_registry="$p12_root/state/projmux/metadata/registry.json"
+p12_agent_argv="$p12_root/agent-argv.log"
+mkdir -p "$p12_root"/{home,bin,cache,config,runtime,state,tmux,workspace} \
+  "$p12_root/home/.codex/sessions/2026/08/21"
+chmod 0700 "$p12_root/runtime"
+
+for p12_provider in claude codex antigravity; do
+  printf '%s\n' '#!/bin/sh' \
+    'printf "%s\\n" "$0 $*" >> "$PROJMUX_PHASE12_AGENT_ARGV"' \
+    'exec sleep 600' >"$p12_root/bin/$p12_provider"
+  chmod 0755 "$p12_root/bin/$p12_provider"
+done
+
+p12_env=(
+  env -u TMUX -u TMUX_PANE -u PROJMUX_SMOKE_TMUX_SOCKET
+  HOME="$p12_root/home"
+  XDG_CACHE_HOME="$p12_root/cache"
+  XDG_CONFIG_HOME="$p12_root/config"
+  XDG_RUNTIME_DIR="$p12_root/runtime"
+  XDG_STATE_HOME="$p12_root/state"
+  TMUX_TMPDIR="$p12_root/tmux"
+  PROJMUX_PHASE12_AGENT_ARGV="$p12_agent_argv"
+  SHELL=/bin/bash
+  PATH="$p12_root/bin:$PATH"
+)
+p12_tmux() { "${p12_env[@]}" tmux -L "$p12_socket" "$@"; }
+p12_pmx() { "${p12_env[@]}" "$bin" "$@"; }
+
+p12_socket_path=""
+p12_cleanup_target=""
+p12_cleanup_done=0
+p12_cleanup() {
+  if [[ "$p12_cleanup_done" == "1" ]]; then
+    return
+  fi
+  p12_cleanup_done=1
+  if [[ -n "$p12_cleanup_target" ]]; then
+    case "$p12_cleanup_target" in
+      "$p12_root"/tmux/*) ;;
+      *)
+        echo "refusing Phase 12 ControlSession cleanup outside smoke root: $p12_cleanup_target" >&2
+        return 1
+        ;;
+    esac
+    "${p12_env[@]}" tmux -S "$p12_cleanup_target" kill-server >/dev/null 2>&1 || true
+  fi
+}
+trap 'p12_cleanup; smoke_cleanup_env' EXIT
+
+p12_tmux new-session -d -s "$p12_session" -c "$p12_root/workspace" sleep 600
+p12_origin_pane="$(p12_tmux display-message -p -t "$p12_session:0.0" '#{pane_id}')"
+p12_socket_path="$(p12_tmux display-message -p -t "$p12_origin_pane" '#{socket_path}')"
+p12_server_pid="$(p12_tmux display-message -p -t "$p12_origin_pane" '#{pid}')"
+case "$p12_socket_path" in
+  "$p12_root"/tmux/*) p12_cleanup_target="$p12_socket_path" ;;
+  *)
+    echo "Phase 12 ControlSession socket escaped smoke root: $p12_socket_path" >&2
+    exit 1
+    ;;
+esac
+
+p12_pmx config apply --bin "$bin" --config "$p12_config" --socket "$p12_socket" >"$p12_root/apply.out"
+p12_control_uid="$(sed -n '/"controlSessions"/,/"windows"/ s/.*"uid": "\([^"]*\)".*/\1/p' "$p12_registry" | head -n 1)"
+p12_window_uid="$(p12_tmux show-options -wqv -t "$p12_origin_pane" @projmux_window_uid)"
+p12_origin_uid="$(p12_tmux show-options -pqv -t "$p12_origin_pane" @projmux_pane_uid)"
+if [[ -z "$p12_control_uid" || -z "$p12_window_uid" || -z "$p12_origin_uid" ]] ||
+  [[ "$(p12_tmux show-options -qv -t "$p12_session" @projmux_session_role)" != "control" ]]; then
+  echo "config apply did not declare the exact Home ControlSession/Window/Pane chain" >&2
+  exit 1
+fi
+
+p12_popup() {
+  "${p12_env[@]}" \
+    TMUX="$p12_socket_path,$p12_server_pid,0" \
+    TMUX_SPLIT_TARGET_PANE="$p12_origin_pane" \
+    PROJMUX_NATIVE_TTY_FALLBACK=0 \
+    PROJMUX_NATIVE_LINE_MODE=1 \
+    "$bin" "$@"
+}
+p12_pane_count() { p12_tmux list-panes -t "$p12_session:0" -F '#{pane_id}' | wc -l; }
+p12_agent_count() { p12_popup get agents --all-projects -o uid 2>/dev/null | grep -c . || true; }
+p12_new_pane() {
+  p12_tmux list-panes -t "$p12_session:0" -F '#{pane_id}' | grep -Fvx "$p12_origin_pane" | sort -t% -k2,2n | tail -n 1
+}
+p12_assert_managed_create() {
+  local label="$1"
+  local before_panes="$2"
+  local before_agents="$3"
+  local want_agent="$4"
+  local pane pane_uid pane_json agents_json
+  if [[ "$(p12_pane_count)" != "$((before_panes + 1))" ]]; then
+    echo "$label did not add exactly one Home Pane" >&2
+    exit 1
+  fi
+  pane="$(p12_new_pane)"
+  pane_uid="$(p12_tmux show-options -pqv -t "$pane" @projmux_pane_uid)"
+  if [[ -z "$pane_uid" ]]; then
+    echo "$label created a Pane without a managed uid" >&2
+    exit 1
+  fi
+  pane_json="$(p12_popup get pane --pane "uid:$pane_uid" -o json)"
+  smoke_assert_output_contains "$pane_json" "$pane_uid"
+  agents_json="$(p12_popup get agents --all-projects -o json)"
+  if [[ "$want_agent" == "1" ]]; then
+    if [[ "$(p12_agent_count)" != "$((before_agents + 1))" ]]; then
+      echo "$label did not add exactly one managed Agent" >&2
+      exit 1
+    fi
+    smoke_assert_output_contains "$agents_json" "$p12_window_uid"
+  elif [[ "$(p12_agent_count)" != "$before_agents" ]]; then
+    echo "$label shell split unexpectedly added an Agent" >&2
+    exit 1
+  fi
+  if [[ "$(p12_tmux display-message -p -t "$pane" '#{@projmux_window_uid}')" != "$p12_window_uid" ]]; then
+    echo "$label Pane was not mirrored below the exact Home Window" >&2
+    exit 1
+  fi
+  p12_last_pane="$pane"
+  p12_last_pane_uid="$pane_uid"
+}
+
+# Provider picker: filter to codex, then select the one remaining production
+# row. The resulting process is a harmless run-local provider shim.
+p12_before_panes="$(p12_pane_count)"
+p12_before_agents="$(p12_agent_count)"
+printf 'codex\n1\n' | p12_popup internal agent-pane picker --inside right >"$p12_root/provider-picker.out"
+p12_assert_managed_create "Home provider picker" "$p12_before_panes" "$p12_before_agents" 1
+p12_provider_uid="$p12_last_pane_uid"
+
+# Resume picker: one real Codex rollout row for the Home Pane cwd, selected via
+# the same production picker. The provider shim records the exact resume argv.
+p12_resume_id="019f0000-0000-7000-8000-000000001212"
+printf '%s\n' \
+  "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$p12_resume_id\",\"cwd\":\"$p12_root/workspace\",\"git_branch\":\"fix/control-root-canonical-create\"}}" \
+  '{"type":"event_msg","payload":{"message":"Phase 12 Home resume"}}' \
+  >"$p12_root/home/.codex/sessions/2026/08/21/rollout-phase12.jsonl"
+p12_before_panes="$(p12_pane_count)"
+p12_before_agents="$(p12_agent_count)"
+printf '2\n' | p12_popup internal agent-pane picker --inside --resume down >"$p12_root/resume-picker.out"
+p12_assert_managed_create "Home resume picker" "$p12_before_panes" "$p12_before_agents" 1
+p12_resume_uid="$p12_last_pane_uid"
+smoke_assert_file_contains "$p12_agent_argv" "resume $p12_resume_id"
+
+# Saved default and direct shell use the same exact popup origin but exercise
+# the two non-picker producers.
+mkdir -p "$p12_root/config/projmux"
+printf 'codex\n' >"$p12_root/config/projmux/tmux-ai-split-mode"
+p12_before_panes="$(p12_pane_count)"
+p12_before_agents="$(p12_agent_count)"
+p12_popup internal agent-pane launch-default right >"$p12_root/default.out"
+p12_assert_managed_create "Home saved default" "$p12_before_panes" "$p12_before_agents" 1
+p12_default_uid="$p12_last_pane_uid"
+
+p12_before_panes="$(p12_pane_count)"
+p12_before_agents="$(p12_agent_count)"
+p12_popup internal agent-pane launch-shell down >"$p12_root/shell.out"
+p12_assert_managed_create "Home shell split" "$p12_before_panes" "$p12_before_agents" 0
+p12_shell_uid="$p12_last_pane_uid"
+
+if [[ ! -s "$p12_registry" ]]; then
+  echo "Phase 12 Home producers left no Registry" >&2
+  exit 1
+fi
+p12_cleanup
+if "${p12_env[@]}" tmux -S "$p12_cleanup_target" list-sessions >/dev/null 2>&1; then
+  echo "Phase 12 exact socket cleanup left a live server at $p12_cleanup_target" >&2
+  exit 1
+fi
+trap smoke_cleanup_env EXIT
+echo ">> ControlSession canonical create e2e passed: control=$p12_control_uid window=$p12_window_uid origin=$p12_origin_uid provider=$p12_provider_uid resume=$p12_resume_uid default=$p12_default_uid shell=$p12_shell_uid socket=$p12_socket path=$p12_socket_path cleanup=$p12_cleanup_target inherited=unset"

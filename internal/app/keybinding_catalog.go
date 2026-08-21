@@ -52,7 +52,7 @@ const (
 
 // tmuxPaneEnvPrefix carries the exact pane a key binding was pressed in into
 // the projmux process run-shell spawns. See renderTmuxBindingBody.
-const tmuxPaneEnvPrefix = "TMUX_PANE=#{pane_id} "
+const tmuxPaneEnvPrefix = "TMUX_PANE=#{pane_id} " + canonicalCreateTargetClientEnv + "=#{client_tty} "
 
 // keyBindingAction is the in-app source of truth for built-in key actions.
 // Terminal init adapters and tmux config rendering derive their concrete
@@ -368,7 +368,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "create codex --placement right",
+			TmuxBody:       "internal agent-pane launch-provider codex right",
 			PlainBindOrder: 82,
 		},
 		{
@@ -379,7 +379,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "create codex --placement down",
+			TmuxBody:       "internal agent-pane launch-provider codex down",
 			PlainBindOrder: 83,
 		},
 		{
@@ -390,7 +390,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "create claude --placement right",
+			TmuxBody:       "internal agent-pane launch-provider claude right",
 			PlainBindOrder: 84,
 		},
 		{
@@ -401,7 +401,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "create claude --placement down",
+			TmuxBody:       "internal agent-pane launch-provider claude down",
 			PlainBindOrder: 85,
 		},
 		{
@@ -412,7 +412,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "create pane --placement right",
+			TmuxBody:       "internal agent-pane launch-shell right",
 			PlainBindOrder: 86,
 		},
 		{
@@ -423,7 +423,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			TmuxKind:       tmuxBindingRunProjmux,
-			TmuxBody:       "create pane --placement down",
+			TmuxBody:       "internal agent-pane launch-shell down",
 			PlainBindOrder: 87,
 		},
 		{

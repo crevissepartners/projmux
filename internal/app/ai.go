@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -60,6 +61,8 @@ const (
 	aiPaneResumeSourceOption    = "@projmux_ai_resume_source"
 	aiPaneTranscriptPathOption  = "@projmux_ai_transcript_path"
 	aiPaneResumeUpdatedAtOption = "@projmux_ai_resume_updated_at"
+
+	canonicalCreateTargetClientEnv = "PROJMUX_POPUP_TARGET_CLIENT"
 
 	aiBadgeKindInProgress       = aibadge.InProgress
 	aiBadgeKindApprovalRequired = aibadge.ApprovalRequired
@@ -183,6 +186,10 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "launch-default":
 		return c.runLaunchDefault(args[1:], stderr)
+	case "launch-provider":
+		return c.runDirectProvider(args[1:], stderr)
+	case "launch-shell":
+		return c.runDirectShell(args[1:], stderr)
 	case "picker":
 		return c.runPicker(args[1:], stderr)
 	case "settings":
@@ -206,6 +213,33 @@ func (c *aiCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printAIUsage(stderr)
 		return fmt.Errorf("unknown ai subcommand: %s", args[0])
 	}
+}
+
+func (c *aiCommand) runDirectProvider(args []string, stderr io.Writer) error {
+	if len(args) != 2 {
+		printAIUsage(stderr)
+		return usageError("internal agent-pane launch-provider requires <provider> <right|down>")
+	}
+	direction, err := parseAISplitDirection(args[1:], "internal agent-pane launch-provider", stderr)
+	if err != nil {
+		return err
+	}
+	provider, err := requireCanonicalProvider(canonicalCreateAgent, args[0])
+	if err != nil {
+		return err
+	}
+	if err := c.requireAIAgentEnabled(provider, aiSplitLaunchCanonical); err != nil {
+		return err
+	}
+	return c.createAgentPane(canonicalProducerDirectProvider, provider, direction)
+}
+
+func (c *aiCommand) runDirectShell(args []string, stderr io.Writer) error {
+	direction, err := parseAISplitDirection(args, "internal agent-pane launch-shell", stderr)
+	if err != nil {
+		return err
+	}
+	return c.createShellPane(canonicalProducerDirectShell, direction)
 }
 
 func (c *aiCommand) runStatus(args []string, stderr io.Writer) error {
@@ -846,9 +880,9 @@ func (c *aiCommand) runLaunchDefault(args []string, stderr io.Writer) error {
 		if err := c.requireAIAgentEnabled(mode, aiSplitLaunchDefault); err != nil {
 			return err
 		}
-		return c.createAgentPane(mode, direction)
+		return c.createAgentPane(canonicalProducerSavedDefault, mode, direction)
 	case aiModeShell:
-		return c.createShellPane(direction)
+		return c.createShellPane(canonicalProducerSavedDefault, direction)
 	case aiModeResume:
 		return c.openResumePickerToggle(direction)
 	default:
@@ -877,7 +911,7 @@ func (c *aiCommand) runPicker(args []string, stderr io.Writer) error {
 		return errors.New("ai picker cannot combine --shell and --resume")
 	}
 	if *shellOnly {
-		return c.createShellPane(direction)
+		return c.createShellPane(canonicalProducerDirectShell, direction)
 	}
 	if *resumeOnly {
 		return c.runResumePicker(direction)
@@ -907,9 +941,9 @@ func (c *aiCommand) runAgentPickerSelection(direction string) error {
 		if err := c.requireAIAgentEnabled(mode, aiSplitLaunchPicker); err != nil {
 			return err
 		}
-		return c.createAgentPane(mode, direction)
+		return c.createAgentPane(canonicalProducerProviderPicker, mode, direction)
 	case aiModeShell:
-		return c.createShellPane(direction)
+		return c.createShellPane(canonicalProducerProviderPicker, direction)
 	default:
 		return nil
 	}
@@ -927,22 +961,22 @@ func (c *aiCommand) runAgentPickerSelection(direction string) error {
 // answered once, by create.
 
 // createAgentPane opens a provider Agent beside the current Pane.
-func (c *aiCommand) createAgentPane(mode, direction string) error {
-	return c.createPaneFromIntent(agentPaneIntent{provider: mode, placement: direction})
+func (c *aiCommand) createAgentPane(producer canonicalCreateProducer, mode, direction string) error {
+	return c.createPaneFromIntent(agentPaneIntent{producer: producer, provider: mode, placement: direction})
 }
 
 // createShellPane opens a plain shell Pane beside the current Pane. A shell
 // surface is a Pane and not an Agent, which is why this is a different intent
 // rather than a provider named "shell".
-func (c *aiCommand) createShellPane(direction string) error {
-	return c.createPaneFromIntent(agentPaneIntent{placement: direction})
+func (c *aiCommand) createShellPane(producer canonicalCreateProducer, direction string) error {
+	return c.createPaneFromIntent(agentPaneIntent{producer: producer, placement: direction})
 }
 
 // createResumedAgentPane opens a provider Agent that joins an existing
 // conversation instead of starting a new one.
-func (c *aiCommand) createResumedAgentPane(mode, direction, conversationID string) error {
+func (c *aiCommand) createResumedAgentPane(producer canonicalCreateProducer, mode, direction, conversationID string) error {
 	return c.createPaneFromIntent(agentPaneIntent{
-		provider: mode, placement: direction, conversationID: conversationID,
+		producer: producer, provider: mode, placement: direction, conversationID: conversationID,
 	})
 }
 
@@ -962,19 +996,31 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 	// there is no origin env and the anchor stays empty, which is create's
 	// inherited-target path unchanged.
 	intent.anchorPaneID = c.splitOriginPane()
-	stdout, stderr := c.splitUIWriters()
-	return c.panes.createFromIntent(intent, stdout, stderr)
+	intent.targetClient = c.splitOriginClient()
+	var diagnostics bytes.Buffer
+	err := c.panes.createFromIntent(intent, io.Discard, &diagnostics)
+	if err == nil {
+		if diagnostics.Len() != 0 {
+			_, _ = diagnostics.WriteTo(os.Stderr)
+		}
+		return nil
+	}
+	reason := canonicalCreateFailureReason(err, diagnostics.String())
+	if intent.targetClient != "" {
+		if displayErr := c.run("tmux", "display-message", "-c", intent.targetClient, "-d", "10000", reason); displayErr != nil {
+			return fmt.Errorf("%s; display canonical create failure to client %q: %v", reason, intent.targetClient, displayErr)
+		}
+	}
+	return err
 }
 
-// splitUIWriters are where a UI-driven create reports.
-//
-// stdout is discarded: the split UI's result is the pane the operator can see,
-// and the create route's `agent/<name> created` line would otherwise be printed
-// into whatever pane or popup happened to invoke the binding. Diagnostics still
-// go to stderr, which is where the generated bindings already send anything worth
-// keeping.
-func (c *aiCommand) splitUIWriters() (io.Writer, io.Writer) {
-	return io.Discard, os.Stderr
+func canonicalCreateFailureReason(err error, diagnostics string) string {
+	reason := strings.TrimSpace(err.Error())
+	diagnostics = strings.TrimSpace(diagnostics)
+	if diagnostics != "" && !strings.Contains(reason, diagnostics) {
+		reason += ": " + diagnostics
+	}
+	return "projmux create failed: " + strings.Join(strings.Fields(reason), " ")
 }
 
 func (c *aiCommand) runSettings(args []string, stdout, stderr io.Writer) error {
@@ -1380,9 +1426,9 @@ func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direct
 	resumeArgv, err := resumeArgsForAgent(mode, selection.resumeID)
 	if err != nil {
 		_ = c.displayMessage(fmt.Sprintf("Could not resume %s session: %v; launching new session", mode, err))
-		return c.createAgentPane(mode, direction)
+		return c.createAgentPane(canonicalProducerResumePicker, mode, direction)
 	}
-	return c.createResumedAgentPane(mode, direction, resumeArgv[len(resumeArgv)-1])
+	return c.createResumedAgentPane(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1])
 }
 
 func resumeArgsForAgent(mode, resumeID string) ([]string, error) {
@@ -1896,6 +1942,10 @@ func (c *aiCommand) splitOriginPane() string {
 		return resolved
 	}
 	return pane
+}
+
+func (c *aiCommand) splitOriginClient() string {
+	return strings.TrimSpace(c.env(canonicalCreateTargetClientEnv))
 }
 
 func (c *aiCommand) resolveTargetPane() string {
