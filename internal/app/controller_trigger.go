@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
@@ -472,6 +476,18 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 		newReconciler = newRegistryReconciler
 	}
 	reconciler := newReconciler(routed, inttmux.NewClient(routed))
+	// Hook convergence is an automatic recovery trigger. Clear exact D3
+	// orphan mirrors through the same closed L8 authority cell used by public
+	// reconcile before the legacy binding walk sees them; then keep D2/D3
+	// import disabled in that walk.
+	recovered, err := runLockedAutomaticMirrorRecovery(ctx, r.store, r.runner, target, controller.RecoveryHookConverge)
+	if err != nil {
+		return pass, err
+	}
+	reconciler.refuseForeign = true
+	if err := requireAutomaticRecoveryPaths("hook-mirror-repair", "hook-status-projection"); err != nil {
+		return pass, err
+	}
 	newOperationID := r.newOperationID
 	if newOperationID == nil {
 		newOperationID = newCreateOperationID
@@ -489,7 +505,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 	if err != nil {
 		return pass, err
 	}
-	pass.rebound = rebound
+	pass.rebound = rebound || recovered > 0
 
 	observe := r.observe
 	if observe == nil {
@@ -509,6 +525,77 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 	}
 	pass.residualExits = exits.changed()
 	return pass, nil
+}
+
+// runLockedAutomaticMirrorRecovery is the production L8 boundary. Runtime is
+// observed and classified while the Registry lock protects the exact Registry
+// bytes used by the classifier. The callback never changes those bytes, so the
+// convergent store remains a Registry-write no-op.
+func runLockedAutomaticMirrorRecovery(ctx context.Context, store *resourceStore, runner tmuxCommandRunner,
+	target explicitTmuxTarget, trigger controller.RecoveryTrigger) (int, error) {
+	if store == nil || store.updateConvergent == nil {
+		return 0, errors.New("automatic recovery write store is not configured")
+	}
+	recovered := 0
+	_, _, err := store.updateConvergent(func(working *coremetadata.Registry) error {
+		before := working.Clone()
+		var recoveryErr error
+		recovered, recoveryErr = runAutomaticMirrorRecovery(ctx, runner, target, working.Clone(), trigger)
+		if recoveryErr != nil {
+			return recoveryErr
+		}
+		return verifyAutomaticRecoveryRegistryUnchanged(before, *working)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return recovered, nil
+}
+
+func verifyAutomaticRecoveryRegistryUnchanged(before, after coremetadata.Registry) error {
+	if !reflect.DeepEqual(before, after) {
+		return errors.New("automatic L8 changed Registry bytes")
+	}
+	return nil
+}
+
+func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, target explicitTmuxTarget,
+	registry coremetadata.Registry, trigger controller.RecoveryTrigger) (int, error) {
+	if !trigger.Valid() {
+		return 0, fmt.Errorf("automatic recovery trigger %q is outside the closed authority table", trigger)
+	}
+	pathName := map[controller.RecoveryTrigger]string{
+		controller.RecoveryHookConverge: "hook-orphan-mirror-discard",
+		controller.RecoveryExplicit:     "explicit-orphan-mirror-discard",
+		controller.RecoveryProjectOpen:  "project-open-orphan-mirror-discard",
+	}[trigger]
+	if err := requireAutomaticRecoveryPaths(pathName); err != nil {
+		return 0, err
+	}
+	transport := controllerTransport(target)
+	inventory := intmetadata.NewInventoryObserver(runner, transport).Observe(ctx)
+	graph := resourcegraph.Resolve(registry, inventory)
+	candidates := controllerRecoveryCandidates(graph, trigger)
+	if len(candidates) == 0 {
+		return 0, nil
+	}
+	handles := controller.IndexHandles(graph)
+	actions, _ := controller.Authorize(handles, controllerGuardFields, controller.Grant{}, candidates)
+	plan := controller.NewPlan(graph.Transport, graph.HostMode, actions, nil)
+	for _, action := range plan.Refusals() {
+		return 0, fmt.Errorf("automatic recovery refused %s: %s", action.Key, action.Reason)
+	}
+	kernel := &resourceControllerKernel{target: target, runner: runner}
+	if err := kernel.guardPlan(ctx, "", plan.Writes()); err != nil {
+		return 0, err
+	}
+	routed := explicitTmuxRunner{runner: runner, target: target}
+	for _, action := range plan.Writes() {
+		if _, err := routed.Run(ctx, "tmux", action.Args...); err != nil {
+			return 0, fmt.Errorf("execute automatic recovery %s: %w", action.Key, err)
+		}
+	}
+	return len(graph.RuntimeOfClass(resourcegraph.ClassRecoverable)), nil
 }
 
 // awaitKillTerminationReceipts closes the tmux kill/reap race without taking

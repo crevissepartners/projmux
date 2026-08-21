@@ -29,11 +29,15 @@ const (
 	IntentImport Intent = "import"
 	// IntentDelete removes a runtime object.
 	IntentDelete Intent = "delete"
+	// IntentDiscardMirror removes transport identity that names no Registry
+	// resource. It is recovery L8, not deletion: the runtime object and every
+	// Registry row remain.
+	IntentDiscardMirror Intent = "discard-mirror"
 )
 
 // Intents returns the closed intent set in declaration order.
 func Intents() []Intent {
-	return []Intent{IntentRepairBinding, IntentRepairMirror, IntentStart, IntentImport, IntentDelete}
+	return []Intent{IntentRepairBinding, IntentRepairMirror, IntentStart, IntentImport, IntentDelete, IntentDiscardMirror}
 }
 
 // Repairs reports whether intent is one of the two convergence intents.
@@ -107,9 +111,10 @@ type Verdict struct {
 func (v Verdict) Allowed() bool { return v.Authority == AuthorityAllow }
 
 const (
-	reasonNeverStart  = "this kernel never starts an offline resource; runtime activation belongs to an explicit create, open, or materialize"
-	reasonNeverImport = "this kernel never adopts a runtime object into the Registry; managed identity comes from the Registry, never from the machine"
-	reasonNeverDelete = "this kernel never deletes a runtime object; a missing runtime object is not a desired deletion"
+	reasonNeverStart   = "this kernel never starts an offline resource; runtime activation belongs to an explicit create, open, or materialize"
+	reasonNeverImport  = "this kernel never adopts a runtime object into the Registry; managed identity comes from the Registry, never from the machine"
+	reasonNeverDelete  = "this kernel never deletes a runtime object; a missing runtime object is not a desired deletion"
+	reasonRecoveryGate = "recovery intent requires a classified trigger and level from the closed recovery authority table"
 
 	reasonManaged = "Registry resource bound to this handle by exact uid evidence"
 	// An unmarked object inside projmux's own runtime world carries no
@@ -149,6 +154,9 @@ func Decide(intent Intent, subject Subject) Verdict {
 		return verdict
 	case IntentDelete:
 		verdict.Reason = reasonNeverDelete
+		return verdict
+	case IntentDiscardMirror:
+		verdict.Reason = reasonRecoveryGate
 		return verdict
 	}
 	switch subject.Class {

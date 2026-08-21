@@ -97,8 +97,12 @@ func Classify(args []string) CommandClass {
 		return CommandClass{}
 	}
 	args = normalizeCanonicalCompatibility(args)
-	if strings.TrimSpace(args[0]) == internalNamespaceToken {
-		return Classify(stripInternalNamespace(args[1:]))
+	internal := strings.TrimSpace(args[0]) == internalNamespaceToken
+	if internal {
+		args = stripInternalNamespace(args[1:])
+		if len(args) == 0 {
+			return CommandClass{}
+		}
 	}
 	command := strings.TrimSpace(args[0])
 	if command == "--version" || command == "-version" {
@@ -127,6 +131,14 @@ func Classify(args []string) CommandClass {
 	}
 	if command == "prune" && out.Subcommand == "session-state" && len(args) > 2 {
 		out.StateChanging = args[2] == "delete"
+	}
+	// Generated lifecycle hooks invoke this hidden convergence route
+	// automatically. Successful automatic work is zero-volume in the top-level
+	// journal; failures still pass through RecordOutcome's error branch. Keep
+	// the non-internal spelling state-changing so this exception cannot suppress
+	// an operator-invoked mutation.
+	if internal && command == "tmux" && out.Subcommand == "converge" {
+		out.StateChanging = false
 	}
 	if command == "ai" && out.Subcommand == "topic" && len(args) > 2 {
 		out.StateChanging = args[2] == "set" || args[2] == "clear"

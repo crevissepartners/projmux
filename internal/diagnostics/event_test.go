@@ -59,6 +59,8 @@ func TestClassifyAllowlistAndStatePolicy(t *testing.T) {
 		{name: "notify list read only", args: []string{"notify", "list", "--json"}, want: CommandClass{Command: "notify", Subcommand: "list"}},
 		{name: "notify push changes state", args: []string{"notify", "push", "--text", "private"}, want: CommandClass{Command: "notify", Subcommand: "push", StateChanging: true}},
 		{name: "agent hook ingest automatic success read only", args: []string{"internal", "agent-hook", "ingest", "secret-provider"}, want: CommandClass{Command: "ai", Subcommand: "ingest"}},
+		{name: "generated controller converge success is automatic", args: []string{"internal", "tmux", "converge", "--socket-path", "/private/socket", "--reason", "runtime-exited"}, want: CommandClass{Command: "tmux", Subcommand: "converge"}},
+		{name: "non-internal controller converge remains changing", args: []string{"tmux", "converge", "--socket-path", "/private/socket", "--reason", "runtime-exited"}, want: CommandClass{Command: "tmux", Subcommand: "converge", StateChanging: true}},
 		{name: "topic get read only", args: []string{"ai", "topic", "get", "--pane", "%1"}, want: CommandClass{Command: "ai", Subcommand: "topic"}},
 		{name: "topic set changes state", args: []string{"ai", "topic", "set", "private topic"}, want: CommandClass{Command: "ai", Subcommand: "topic", StateChanging: true}},
 		{name: "update check writes cache", args: []string{"update", "check"}, want: CommandClass{Command: "update", Subcommand: "check", StateChanging: true}},

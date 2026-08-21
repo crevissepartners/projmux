@@ -178,22 +178,35 @@ func (o *InventoryObserver) observe(ctx context.Context) resourcegraph.Inventory
 	panes, err := runner.Run(ctx, "tmux", "list-panes", "-a", "-F", tmuxFormat(
 		"#{pane_id}", "#{window_id}",
 		"#{"+tmuxopts.PaneUID+"}", "#{"+tmuxopts.PaneName+"}",
-		"#{"+tmuxopts.AgentProviderPane+"}", "#{pane_title}"))
+		"#{"+tmuxopts.AgentProviderPane+"}", "#{pane_title}",
+		"#{"+tmuxopts.AgentSessionIDPane+"}", "#{"+tmuxopts.AgentThreadIDPane+"}"))
 	if err != nil {
 		inventory = inventory.MarkUnavailable(resourcegraph.ScopePanes,
 			"tmux panes could not be listed: "+err.Error())
 	} else {
-		for _, row := range parseRows(string(panes), 6) {
+		rows := parseRows(string(panes), 8)
+		// Older test adapters and compatibility observers may still return the
+		// pre-L8 six-field row. Treat the two routing indexes as absent without
+		// weakening production: the production format above always requests all
+		// eight in the same bounded list query.
+		if len(rows) == 0 && strings.TrimSpace(string(panes)) != "" {
+			for _, row := range parseRows(string(panes), 6) {
+				rows = append(rows, append(row, "", ""))
+			}
+		}
+		for _, row := range rows {
 			if row[0] == "" {
 				continue
 			}
 			inventory.Panes = append(inventory.Panes, resourcegraph.Pane{
-				ID:            row[0],
-				WindowID:      row[1],
-				UID:           strings.TrimSpace(row[2]),
-				MirroredName:  row[3],
-				AgentProvider: strings.TrimSpace(row[4]),
-				Title:         row[5],
+				ID:             row[0],
+				WindowID:       row[1],
+				UID:            strings.TrimSpace(row[2]),
+				MirroredName:   row[3],
+				AgentProvider:  strings.TrimSpace(row[4]),
+				Title:          row[5],
+				AgentSessionID: strings.TrimSpace(row[6]),
+				AgentThreadID:  strings.TrimSpace(row[7]),
 			})
 		}
 	}

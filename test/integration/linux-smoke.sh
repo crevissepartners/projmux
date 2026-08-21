@@ -16,6 +16,45 @@ PROJMUX_RUNTIME_APP_STARTED=0
 PROJMUX_RUNTIME_GUEST_STARTED=0
 PROJMUX_RUNTIME_SIBLING_STARTED=0
 PROJMUX_DISCOVERY_STARTED=0
+integration_await_server_gone() {
+  local actual="$1" label="$2"
+  for _ in $(seq 1 200); do
+    if ! env -u TMUX -u TMUX_PANE tmux -S "$actual" list-sessions >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "integration cleanup left $label server live at $actual" >&2
+  return 1
+}
+
+integration_background_routes() {
+  ps -eo pid=,args= | PROJMUX_ROUTE_BIN="${PROJMUX_SMOKE_BIN:-}" awk '
+    ENVIRON["PROJMUX_ROUTE_BIN"] != "" && index($0, ENVIRON["PROJMUX_ROUTE_BIN"]) > 0 { print }'
+}
+
+integration_await_background_routes() {
+  if [[ -z "${PROJMUX_SMOKE_BIN:-}" ]]; then
+    return 0
+  fi
+  local routes quiet_samples=0
+  for _ in $(seq 1 200); do
+    routes="$(integration_background_routes)"
+    if [[ -z "$routes" ]]; then
+      quiet_samples=$((quiet_samples + 1))
+      if [[ "$quiet_samples" == "10" ]]; then
+        return 0
+      fi
+    else
+      quiet_samples=0
+    fi
+    sleep 0.05
+  done
+  echo "integration cleanup still has isolated background routes:" >&2
+  integration_background_routes >&2
+  return 1
+}
+
 cleanup_reconcile_socket() {
   local started="$1"
   local socket="$2"
@@ -38,6 +77,7 @@ cleanup_reconcile_socket() {
     return 1
   fi
   env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+  integration_await_server_gone "$actual" "$socket"
 }
 integration_cleanup() {
 	cleanup_reconcile_socket "${PROJMUX_RECONCILE_PRIMARY_STARTED:-0}" "${PROJMUX_RECONCILE_PRIMARY_SOCKET:-}" "${PROJMUX_RECONCILE_PRIMARY_ACTUAL:-}" "${PROJMUX_RECONCILE_SESSION:-}"
@@ -68,9 +108,14 @@ integration_cleanup() {
       return 1
     fi
 		env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-server >/dev/null 2>&1 || true
+		integration_await_server_gone "$PROJMUX_SMOKE_TMUX_ACTUAL" "$PROJMUX_SMOKE_TMUX_SOCKET"
 		PROJMUX_SMOKE_TMUX_STARTED=0
   fi
   if [[ -n "${PROJMUX_SMOKE_WORKDIR:-}" ]]; then
+    # Generated tmux hooks are background routes. Killing every exact isolated
+    # server above closes their producer side; require a full quiet window with
+    # no fixture-binary process before deleting the root those routes write.
+    integration_await_background_routes
     rm -rf -- "$PROJMUX_SMOKE_WORKDIR"
   fi
 }
@@ -1437,8 +1482,78 @@ resource_tmux_snapshot() {
   env -u TMUX -u TMUX_PANE tmux -L "$socket" list-panes -a -F '#{pane_id}\037#{@projmux_pane_uid}\037#{@projmux_pane_label}'
 }
 
+# Registry authority converges parent before child: Project identity makes the
+# Window authoritative on the next observation, and Window identity does the
+# same for Pane. Keep every public report, require the first pass to change, and
+# cap Project -> Window -> Pane -> no-op at four passes.
+bounded_resource_reconcile_to_noop() {
+  local report_prefix="$1"
+  shift
+  local pass report
+  for pass in 1 2 3 4; do
+    if [[ "$pass" == "1" ]]; then
+      report="$report_prefix.json"
+    else
+      report="$report_prefix-pass-$pass.json"
+    fi
+    "$@" >"$report"
+    if grep -Fq '"outcome": "changed"' "$report"; then
+      continue
+    fi
+    if grep -Fq '"outcome": "no-op"' "$report"; then
+      if [[ "$pass" == "1" ]]; then
+        echo "bounded resource reconcile made no initial progress: $report" >&2
+        cat "$report" >&2
+        return 1
+      fi
+      smoke_assert_file_contains "$report" '"items": []'
+      return 0
+    fi
+    echo "bounded resource reconcile reported neither changed nor no-op: $report" >&2
+    cat "$report" >&2
+    return 1
+  done
+  echo "resource reconciliation did not converge within four public passes: $report_prefix" >&2
+  cat "$report" >&2
+  return 1
+}
+
 resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-primary.before"
 resource_tmux_snapshot "$PROJMUX_RECONCILE_SECONDARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-secondary.before"
+# An anchored live topology with no Registry authority is D2. Phase 8 closes all
+# three automatic triggers at L0 for D2, so even a dry-run reports no recovery
+# work and writes neither the Registry nor either exact tmux server.
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile resources --dry-run --socket "$PROJMUX_RECONCILE_PRIMARY_SOCKET" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/reconcile-d2-dry-run.json"
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile resources --dry-run --socket "$PROJMUX_RECONCILE_PRIMARY_SOCKET" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/reconcile-d2-dry-run-repeat.json"
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-d2-dry-run.json" "$PROJMUX_SMOKE_WORKDIR/reconcile-d2-dry-run-repeat.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-d2-dry-run.json" '"outcome": "no-op"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-d2-dry-run.json" '"items": []'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-d2-dry-run.json" '"tmuxFlag": "-L"'
+if [[ -e "$reconcile_state/projmux/metadata/registry.json" ]]; then
+  echo "D2 resource reconcile dry-run created a Registry" >&2
+  exit 1
+fi
+resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-d2-dry-run"
+resource_tmux_snapshot "$PROJMUX_RECONCILE_SECONDARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-secondary.after-d2-dry-run"
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.before" "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-d2-dry-run"
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-secondary.before" "$PROJMUX_SMOKE_WORKDIR/reconcile-secondary.after-d2-dry-run"
+
+# Seed managed identity through the explicit Registry-first route. The existing
+# missing-mirror flow below now repairs only this authoritative Project.
+PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" create project --root "$reconcile_root" --name "$PROJMUX_RECONCILE_SESSION" \
+  >"$PROJMUX_SMOKE_WORKDIR/reconcile-register.out"
+registry_path="$reconcile_state/projmux/metadata/registry.json"
+if [[ ! -s "$registry_path" ]]; then
+  echo "explicit reconcile fixture registration did not create a Registry" >&2
+  exit 1
+fi
+cp "$registry_path" "$PROJMUX_SMOKE_WORKDIR/reconcile-registry.after-register"
+
 PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
   "$bin" reconcile resources --dry-run --socket "$PROJMUX_RECONCILE_PRIMARY_SOCKET" -o json \
   >"$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run.json"
@@ -1448,18 +1563,14 @@ PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
 cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run.json" "$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run-repeat.json"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run.json" '"drift": "missing"'
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-dry-run.json" '"tmuxFlag": "-L"'
-if [[ -e "$reconcile_state/projmux/metadata/registry.json" ]]; then
-  echo "resource reconcile dry-run created a Registry" >&2
-  exit 1
-fi
+cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-registry.after-register" "$registry_path"
 resource_tmux_snapshot "$PROJMUX_RECONCILE_PRIMARY_SOCKET" >"$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-dry-run"
 cmp "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.before" "$PROJMUX_SMOKE_WORKDIR/reconcile-primary.after-dry-run"
 
-PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
-  "$bin" reconcile resources --socket "$PROJMUX_RECONCILE_PRIMARY_SOCKET" -o json \
-  >"$PROJMUX_SMOKE_WORKDIR/reconcile-execute.json"
+bounded_resource_reconcile_to_noop "$PROJMUX_SMOKE_WORKDIR/reconcile-execute" \
+  env PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" \
+  "$bin" reconcile resources --socket "$PROJMUX_RECONCILE_PRIMARY_SOCKET" -o json
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/reconcile-execute.json" '"outcome": "changed"'
-registry_path="$reconcile_state/projmux/metadata/registry.json"
 if [[ ! -s "$registry_path" ]]; then
   echo "resource reconcile execute did not commit the Registry" >&2
   exit 1
@@ -1599,9 +1710,14 @@ done
 # that must never be read.
 runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" set-option -g -q @projmux_app 1
 
+# Register the Project explicitly; the anchored live D2 topology is not an
+# automatic import source under the Phase 8 authority table.
 PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
-  "$bin" reconcile resources --socket "$PROJMUX_RUNTIME_APP_SOCKET" -o json \
-  >"$PROJMUX_SMOKE_WORKDIR/runtime-seed-reconcile.json"
+  "$bin" create project --root "$runtime_root" --name "$PROJMUX_RUNTIME_SESSION" \
+  >"$PROJMUX_SMOKE_WORKDIR/runtime-seed-register.out"
+bounded_resource_reconcile_to_noop "$PROJMUX_SMOKE_WORKDIR/runtime-seed-reconcile" \
+  env PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  "$bin" reconcile resources --socket "$PROJMUX_RUNTIME_APP_SOCKET" -o json
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-seed-reconcile.json" '"outcome": "changed"'
 runtime_registry="$runtime_state/projmux/metadata/registry.json"
 runtime_project_uid="$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" show-options -t "$PROJMUX_RUNTIME_SESSION" -qv @projmux_project_uid)"
@@ -2323,6 +2439,7 @@ echo ">> discovery/pin authority split home=$discovery_home scan_root=$discovery
 termination_root="$PROJMUX_SMOKE_WORKDIR/termination"
 termination_socket="projmux-termination-$$-$RANDOM"
 termination_sibling_socket="projmux-termination-sibling-$$-$RANDOM"
+termination_session="work-evidence"
 mkdir -p "$termination_root/state" "$termination_root/config" "$termination_root/tmux" "$termination_root/work/evidence"
 chmod 0700 "$termination_root/tmux"
 termination_real_tmux="$(command -v tmux)"
@@ -2345,8 +2462,8 @@ termination_sibling_tmux() {
     "$termination_real_tmux" -L "$termination_sibling_socket" "$@"
 }
 
-termination_tmux new-session -d -s evidence -n main -c "$termination_root/work/evidence" sleep 600
-termination_tmux set-option -t evidence -q @projmux_project_path "$termination_root/work/evidence"
+termination_tmux new-session -d -s "$termination_session" -n main -c "$termination_root/work/evidence" sleep 600
+termination_tmux set-option -t "$termination_session" -q @projmux_project_path "$termination_root/work/evidence"
 # Phase 6 transports supervisor receipts through the generated lifecycle hook:
 # the supervisor appends without taking the Registry lock, then pane-exited runs
 # controller convergence to absorb that journal row. Source the same generated
@@ -2358,7 +2475,7 @@ smoke_assert_file_contains "$termination_root/pane-exited-hook.txt" "reason pane
 termination_sibling_tmux new-session -d -s sibling -n main sleep 600
 termination_sibling_tmux set-option -gq @projmux_termination_sentinel untouched
 
-termination_socket_path="$(termination_tmux display-message -p -t evidence '#{socket_path}')"
+termination_socket_path="$(termination_tmux display-message -p -t "$termination_session" '#{socket_path}')"
 termination_sibling_path="$(termination_sibling_tmux display-message -p -t sibling '#{socket_path}')"
 for termination_candidate in "$termination_socket_path" "$termination_sibling_path"; do
   case "$termination_candidate" in
@@ -2369,7 +2486,12 @@ for termination_candidate in "$termination_socket_path" "$termination_sibling_pa
       ;;
   esac
 done
-termination_server_pid="$(termination_tmux display-message -p -t evidence '#{pid}')"
+termination_server_pid="$(termination_tmux display-message -p -t "$termination_session" '#{pid}')"
+termination_session_id="$(termination_tmux display-message -p -t "$termination_session" '#{session_id}')"
+if [[ "$termination_session_id" != \$* ]]; then
+  echo "termination fixture has invalid exact tmux session id: $termination_session_id" >&2
+  exit 1
+fi
 
 termination_cleanup() {
   local actual
@@ -2409,7 +2531,10 @@ termination_pmx_inside() {
     "$bin" "$@"
 }
 
-termination_pmx reconcile resources --socket "$termination_socket" -o json >"$termination_root/reconcile.json"
+termination_pmx create project --root "$termination_root/work/evidence" --name evidence \
+  >"$termination_root/register-project.out"
+bounded_resource_reconcile_to_noop "$termination_root/reconcile" \
+  termination_pmx reconcile resources --socket "$termination_socket" -o json
 smoke_assert_file_contains "$termination_root/reconcile.json" '"outcome": "changed"'
 
 # The receipt is read back through the shipped route rather than out of the
@@ -2427,6 +2552,55 @@ termination_activation_generation() {
     | sed -n '/"activation"/,/^[[:space:]]*}/p' \
     | sed -n 's/^[[:space:]]*"generation": "\([^"]*\)".*/\1/p' \
     | head -n 1
+}
+
+termination_activation_runtime_id() {
+  termination_pmx describe pane "uid:$1" -o json \
+    | sed -n '/"activation"/,/^[[:space:]]*}/p' \
+    | sed -n 's/^[[:space:]]*"runtimeID": "\([^"]*\)".*/\1/p' \
+    | head -n 1
+}
+
+# A pane-exited hook and the supervisor prewrite begin from the same process
+# death. The Phase 8 recovery prelude makes it possible for that hook pass to
+# observe absence before the lock-free receipt append is durable. Wait for the
+# exact supervisor row, then replay the shipped hidden pane-exited route with the
+# same exact socket/session/runtime handles. The existing assertions below still
+# require the exact supervisor classification, wait status, source, and
+# activation generation.
+termination_await_journal_receipt() {
+  local pane_uid="$1" want_class="$2"
+  local journal="$termination_root/state/projmux/termination-receipts.jsonl"
+  for _ in $(seq 1 200); do
+    if [[ -s "$journal" ]] && awk \
+      -v pane="\"paneUID\":\"$pane_uid\"" \
+      -v classification="\"classification\":\"$want_class\"" \
+      -v source='"source":"supervisor"' \
+      'index($0, pane) && index($0, classification) && index($0, source) { found = 1 } END { exit !found }' \
+      "$journal"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "no durable supervisor journal receipt was recorded for $pane_uid" >&2
+  [[ ! -e "$journal" ]] || tail -n 20 "$journal" >&2
+  exit 1
+}
+
+termination_replay_pane_exited_hook() {
+  local pane_uid="$1" want_class="$2" runtime_id="$3" report_label="$4"
+  if [[ "$runtime_id" != %* ]]; then
+    echo "Pane $pane_uid has invalid activation runtimeID '$runtime_id'" >&2
+    exit 1
+  fi
+  termination_await_journal_receipt "$pane_uid" "$want_class"
+  termination_pmx internal tmux converge \
+    --socket-path "$termination_socket_path" \
+    --session "$termination_session_id" \
+    --reason pane-exited \
+    --hook-pane "$runtime_id" \
+    >"$termination_root/receipt-converge-$report_label.out" \
+    2>"$termination_root/receipt-converge-$report_label.err"
 }
 
 termination_await_receipt() {
@@ -2453,12 +2627,14 @@ termination_await_receipt() {
 termination_case() {
   local label="$1" want_class="$2" want_code="$3" want_signal="$4"
   shift 4
-  local pane_uid
+  local pane_uid runtime_id
   pane_uid="$(termination_pmx_inside create pane --project evidence -o uid -- "$@")"
   if [[ -z "$pane_uid" ]]; then
     echo "termination case $label created no Pane" >&2
     exit 1
   fi
+  runtime_id="$(termination_activation_runtime_id "$pane_uid")"
+  termination_replay_pane_exited_hook "$pane_uid" "$want_class" "$runtime_id" "$label"
   termination_await_receipt "$pane_uid" "$want_class"
   local got_class got_code got_signal got_source got_generation activation
   got_class="$(termination_receipt_field "$pane_uid" classification)"
@@ -2539,7 +2715,7 @@ termination_provider_case() {
   # dead-managed-Pane sweep can retire the Pane inside that same transaction --
   # and this block is about the receipt, not about that race.
   printf 'sleep 0.5\n%s\n' "$script" >"$termination_root/stub-script"
-  local agent_uid pane_ref got_class got_code got_signal got_source got_generation activation
+  local agent_uid pane_ref got_class got_code got_signal got_source got_generation activation runtime_id
   agent_uid="$(termination_pmx_provider create agent --project evidence --provider "$provider" -o uid)"
   if [[ -z "$agent_uid" ]]; then
     echo "termination provider case $provider created no Agent" >&2
@@ -2560,6 +2736,8 @@ termination_provider_case() {
     termination_pmx describe pane "uid:$pane_ref" -o json >&2 || true
     exit 1
   fi
+  runtime_id="$(termination_activation_runtime_id "$pane_ref")"
+  termination_replay_pane_exited_hook "$pane_ref" "$want_class" "$runtime_id" "provider-$provider"
   for _ in $(seq 1 200); do
     termination_agent_json "$agent_uid"
     if [[ -n "$(termination_agent_field classification)" ]]; then
@@ -2682,6 +2860,8 @@ exitrec_root="$PROJMUX_SMOKE_WORKDIR/exit-reconcile"
 exitrec_socket="projmux-exitrec-$$-$RANDOM"
 exitrec_standalone_socket="projmux-exitrec-standalone-$$-$RANDOM"
 exitrec_sibling_socket="projmux-exitrec-sibling-$$-$RANDOM"
+exitrec_session="work-evidence"
+exitrec_standalone_session="work-standalone"
 mkdir -p "$exitrec_root/state" "$exitrec_root/config" "$exitrec_root/tmux" \
   "$exitrec_root/bin" "$exitrec_root/work/evidence" "$exitrec_root/work/standalone"
 chmod 0700 "$exitrec_root/tmux"
@@ -2722,19 +2902,19 @@ PROVIDER_STUB
   chmod 0755 "$exitrec_root/bin/$exitrec_provider"
 done
 
-exitrec_tmux "$exitrec_socket" new-session -d -s evidence -n main \
+exitrec_tmux "$exitrec_socket" new-session -d -s "$exitrec_session" -n main \
   -c "$exitrec_root/work/evidence" sleep 600
-exitrec_tmux "$exitrec_socket" set-option -t evidence -q @projmux_project_path \
+exitrec_tmux "$exitrec_socket" set-option -t "$exitrec_session" -q @projmux_project_path \
   "$exitrec_root/work/evidence"
-exitrec_tmux "$exitrec_standalone_socket" new-session -d -s standalone -n main \
+exitrec_tmux "$exitrec_standalone_socket" new-session -d -s "$exitrec_standalone_session" -n main \
   -c "$exitrec_root/work/standalone" sleep 600
-exitrec_tmux "$exitrec_standalone_socket" set-option -t standalone -q @projmux_project_path \
+exitrec_tmux "$exitrec_standalone_socket" set-option -t "$exitrec_standalone_session" -q @projmux_project_path \
   "$exitrec_root/work/standalone"
 exitrec_sibling_tmux new-session -d -s sibling -n main sleep 600
 exitrec_sibling_tmux set-option -gq @projmux_exitrec_sentinel untouched
 
-exitrec_socket_path="$(exitrec_tmux "$exitrec_socket" display-message -p -t evidence '#{socket_path}')"
-exitrec_standalone_path="$(exitrec_tmux "$exitrec_standalone_socket" display-message -p -t standalone '#{socket_path}')"
+exitrec_socket_path="$(exitrec_tmux "$exitrec_socket" display-message -p -t "$exitrec_session" '#{socket_path}')"
+exitrec_standalone_path="$(exitrec_tmux "$exitrec_standalone_socket" display-message -p -t "$exitrec_standalone_session" '#{socket_path}')"
 exitrec_sibling_path="$(exitrec_sibling_tmux display-message -p -t sibling '#{socket_path}')"
 for exitrec_candidate in "$exitrec_socket_path" "$exitrec_standalone_path" "$exitrec_sibling_path"; do
   case "$exitrec_candidate" in
@@ -2745,8 +2925,8 @@ for exitrec_candidate in "$exitrec_socket_path" "$exitrec_standalone_path" "$exi
       ;;
   esac
 done
-exitrec_server_pid="$(exitrec_tmux "$exitrec_socket" display-message -p -t evidence '#{pid}')"
-exitrec_standalone_pid="$(exitrec_tmux "$exitrec_standalone_socket" display-message -p -t standalone '#{pid}')"
+exitrec_server_pid="$(exitrec_tmux "$exitrec_socket" display-message -p -t "$exitrec_session" '#{pid}')"
+exitrec_standalone_pid="$(exitrec_tmux "$exitrec_standalone_socket" display-message -p -t "$exitrec_standalone_session" '#{pid}')"
 
 # Cleanup kills the exact `#{socket_path}` each server reported, and only when it
 # is under this run's root. A bare `kill-server` or a cleanup that trusted
@@ -2799,10 +2979,15 @@ exitrec_pmx_inside() {
     "$bin" "$@"
 }
 
-exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json >"$exitrec_root/reconcile.json"
+exitrec_pmx create project --root "$exitrec_root/work/evidence" --name evidence \
+  >"$exitrec_root/register-evidence.out"
+bounded_resource_reconcile_to_noop "$exitrec_root/reconcile" \
+  exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json
 smoke_assert_file_contains "$exitrec_root/reconcile.json" '"outcome": "changed"'
-exitrec_pmx reconcile resources --socket "$exitrec_standalone_socket" -o json \
-  >"$exitrec_root/reconcile-standalone.json"
+exitrec_pmx create project --root "$exitrec_root/work/standalone" --name standalone \
+  >"$exitrec_root/register-standalone.out"
+bounded_resource_reconcile_to_noop "$exitrec_root/reconcile-standalone" \
+  exitrec_pmx reconcile resources --socket "$exitrec_standalone_socket" -o json
 smoke_assert_file_contains "$exitrec_root/reconcile-standalone.json" '"outcome": "changed"'
 
 # One document per observation, parsed out of a file, so a failed read is a
@@ -3140,6 +3325,7 @@ exitrec_restart_case() {
   echo ">> exit reconciliation restart $label pane=$pane_uid class=$(exitrec_termination_field classification) no-autostart"
 }
 
+# Final arguments remain Registry Project selectors, not tmux session names.
 exitrec_restart_case app-owned "$exitrec_socket" "$exitrec_socket_path" \
   "$exitrec_server_pid" evidence
 exitrec_restart_case standalone "$exitrec_standalone_socket" "$exitrec_standalone_path" \

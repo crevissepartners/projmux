@@ -746,7 +746,7 @@ PROJMUX_REAL_TMUX_TEST=1 go test ./internal/integrations/tmux \
 # ---------------------------------------------------------------------------
 # Detached Project runtime materialization and Window/Pane create.
 #
-# The registry file, the legacy naming migration, and the detached split have
+# The registry file, pre-v2 runtime binding convergence, and the detached split have
 # never run against a real tmux server in production, so this block does all
 # three end to end on a dedicated exact socket.
 #
@@ -760,7 +760,8 @@ create_root="$PROJMUX_SMOKE_WORKDIR/create-e2e"
 # socket. TMUX_TMPDIR keeps this exact name isolated below the smoke root.
 create_socket="projmux"
 create_foreign_socket="projmux-create-foreign-$$-$RANDOM"
-mkdir -p "$create_root/tt" "$create_root/state" "$create_root/config" "$create_root/work/alpha" "$create_root/work/beta"
+mkdir -p "$create_root/tt" "$create_root/state" "$create_root/config" \
+  "$create_root/legacy/alpha" "$create_root/legacy/sibling" "$create_root/work/beta"
 create_real_tmux="$(command -v tmux)"
 
 ctx() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$create_root/tt" "$create_real_tmux" -L "$create_socket" "$@"; }
@@ -785,7 +786,7 @@ pmx() {
     TMUX_TMPDIR="$create_root/tt" \
     XDG_STATE_HOME="$create_root/state" \
     XDG_CONFIG_HOME="$create_root/config" \
-    PROJMUX_MANAGED_ROOTS="$create_root/work" \
+    PROJMUX_MANAGED_ROOTS="$create_root/legacy:$create_root/work" \
     SHELL=/bin/sh \
     "$bin" "$@"
 }
@@ -796,17 +797,30 @@ if [[ -e "$create_registry" ]]; then
   exit 1
 fi
 
-# A pre-v2 session for the legacy naming migration: window_name, automatic
+# A pre-v2 session for explicit Registry convergence: window_name, automatic
 # rename, a user pane label, and a raw pane title must never become the stable
 # Window metadata.name. window_name is retained as displayName.
-ctx new-session -d -s legacy-alpha -c "$create_root/work/alpha" sleep 600
-ctx set-option -t legacy-alpha -q @projmux_project_path "$create_root/work/alpha"
+ctx new-session -d -s legacy-alpha -c "$create_root/legacy/alpha" sleep 600
+ctx set-option -t legacy-alpha -q @projmux_project_path "$create_root/legacy/alpha"
+legacy_window_name_expected="pre-v2-display-sentinel"
+ctx set-option -w -t legacy-alpha:0 automatic-rename-format "$legacy_window_name_expected"
 ctx set-option -w -t legacy-alpha:0 automatic-rename on
 legacy_pane="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
 legacy_window_id="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
 ctx set-option -p -t "$legacy_pane" @projmux_pane_label "buildlog"
 ctx select-pane -T "raw title must not win" -t "$legacy_pane"
-legacy_window_name_before="$(ctx display-message -p -t "$legacy_window_id" '#{window_name}')"
+legacy_window_name_before=""
+for _ in $(seq 1 200); do
+  legacy_window_name_before="$(ctx display-message -p -t "$legacy_window_id" '#{window_name}')"
+  if [[ "$legacy_window_name_before" == "$legacy_window_name_expected" ]]; then
+    break
+  fi
+  sleep 0.01
+done
+if [[ "$legacy_window_name_before" != "$legacy_window_name_expected" ]]; then
+  echo "pre-v2 automatic rename did not settle on $legacy_window_name_expected: $legacy_window_name_before" >&2
+  exit 1
+fi
 cfx new-session -d -s foreign-agent -c "$create_root/work/beta" sleep 600
 foreign_agent_pane="$(cfx display-message -p -t foreign-agent '#{pane_id}')"
 cfx select-pane -T codex -t "$foreign_agent_pane"
@@ -860,9 +874,18 @@ create_cleanup() {
 }
 trap 'create_cleanup; smoke_cleanup_env' EXIT
 
-# 0. The explicit Project bootstrap. A directory under the discovery root is a
-# candidate until something registers it, so `beta` is registered by name here
-# rather than appearing as a side effect of the first create below.
+# 0. D2 is L0 even when the live session carries the old project-path anchor.
+# The explicit bootstrap then establishes authority for both Projects; alpha's
+# managed-root projection intentionally remains `legacy-alpha`, preserving this
+# fixture's existing runtime name while removing the automatic-import premise.
+pmx reconcile resources --socket "$create_socket" --dry-run -o json >"$create_root/alpha-d2.json"
+smoke_assert_file_contains "$create_root/alpha-d2.json" '"outcome": "no-op"'
+if [[ -e "$create_registry" ]]; then
+  echo "D2 e2e reconcile created a Registry before explicit authority" >&2
+  exit 1
+fi
+pmx create project --root "$create_root/legacy/alpha" --name alpha >"$create_root/register-alpha.out"
+smoke_assert_file_contains "$create_root/register-alpha.out" "project/alpha created"
 pmx create project --root "$create_root/work/beta" >"$create_root/register-beta.out"
 smoke_assert_file_contains "$create_root/register-beta.out" "project/beta created"
 if [[ ! -f "$create_registry" ]]; then
@@ -873,10 +896,40 @@ if [[ "$(stat -c '%a' "$create_registry")" != "600" ]]; then
   echo "registry mode = $(stat -c '%a' "$create_registry"), want 600" >&2
   exit 1
 fi
-# Its siblings under the same discovery root stay unregistered.
+# Siblings under either discovery root stay unregistered.
 pmx get projects -o json >"$create_root/projects-after-bootstrap.json"
-if grep -Fq "$create_root/work/alpha" "$create_root/projects-after-bootstrap.json"; then
-  echo "the explicit bootstrap also registered the sibling candidate alpha" >&2
+if grep -Fq "$create_root/legacy/sibling" "$create_root/projects-after-bootstrap.json"; then
+  echo "the explicit bootstrap also registered an alpha sibling candidate" >&2
+  exit 1
+fi
+
+alpha_window_name="$(pmx get windows --project alpha -o name)"
+if [[ -z "$alpha_window_name" ]] || [[ "$(printf '%s\n' "$alpha_window_name" | wc -l)" != "1" ]]; then
+  echo "explicit alpha bootstrap did not create exactly one authoritative Window: $alpha_window_name" >&2
+  exit 1
+fi
+alpha_converged=0
+for alpha_pass in 1 2 3 4; do
+  pmx reconcile resources --socket "$create_socket" -o json >"$create_root/alpha-converge-$alpha_pass.json"
+  if grep -Fq '"outcome": "changed"' "$create_root/alpha-converge-$alpha_pass.json"; then
+    continue
+  fi
+  if grep -Fq '"outcome": "no-op"' "$create_root/alpha-converge-$alpha_pass.json"; then
+    if [[ "$alpha_pass" == "1" ]]; then
+      echo "explicit alpha authority made no initial convergence progress" >&2
+      cat "$create_root/alpha-converge-$alpha_pass.json" >&2
+      exit 1
+    fi
+    smoke_assert_file_contains "$create_root/alpha-converge-$alpha_pass.json" '"items": []'
+    alpha_converged=1
+    break
+  fi
+  echo "explicit alpha convergence reported neither changed nor no-op on pass $alpha_pass" >&2
+  cat "$create_root/alpha-converge-$alpha_pass.json" >&2
+  exit 1
+done
+if [[ "$alpha_converged" != "1" ]]; then
+  echo "explicit alpha authority did not converge within four public passes" >&2
   exit 1
 fi
 
@@ -948,7 +1001,7 @@ for phase0_identity in blank foreign; do
   ctx set-option -p -t "$phase0_pane" -q @phase0_pane_sentinel "$phase0_identity"
   if [[ "$phase0_identity" == foreign ]]; then
     ctx set-option -t "$phase0_session" -q @projmux_project_uid prj-foreign
-    ctx set-option -t "$phase0_session" -q @projmux_project_path "$create_root/work/alpha"
+    ctx set-option -t "$phase0_session" -q @projmux_project_path "$create_root/legacy/alpha"
   fi
   cp "$create_registry" "$create_root/phase0-$phase0_identity.registry"
   ctx show-options -t "$phase0_session" >"$create_root/phase0-$phase0_identity.session-options"
@@ -979,35 +1032,39 @@ for phase0_identity in blank foreign; do
   ctx kill-session -t "$phase0_session"
 done
 
-# 3. The legacy migration allocated a stable Window name independently of every
-#    runtime attribute, retained window_name as displayName, turned
-#    automatic-rename off, and mirrored the allocated uids back.
+# 3. Explicit Registry authority keeps its stable Window name independent of
+#    every runtime attribute. The managed rebind path (not D2 import) projects
+#    window_name as displayName, turns automatic-rename off, and mirrors the
+#    allocated uids back.
 legacy_window_name="$(ctx display-message -p -t legacy-alpha:0 '#{window_name}')"
 if [[ "$legacy_window_name" != "$legacy_window_name_before" ]]; then
-  echo "legacy migration runtime display = $legacy_window_name, want preserved $legacy_window_name_before" >&2
+  echo "explicit authority runtime display = $legacy_window_name, want preserved $legacy_window_name_before" >&2
   exit 1
 fi
 if [[ "$(ctx show-options -wqv -t legacy-alpha:0 automatic-rename)" != "off" ]]; then
-  echo "legacy migration left automatic-rename on for a managed Window" >&2
+  echo "explicit authority left automatic-rename on for a managed Window" >&2
   exit 1
 fi
 if [[ -z "$(ctx display-message -p -t legacy-alpha:0 '#{@projmux_window_uid}')" ]]; then
-  echo "legacy migration did not mirror the Window uid" >&2
+  echo "explicit authority did not mirror the Window uid" >&2
   exit 1
 fi
 if [[ -z "$(ctx display-message -p -t "$legacy_pane" '#{@projmux_pane_uid}')" ]]; then
-  echo "legacy migration did not mirror the Pane uid" >&2
+  echo "explicit authority did not mirror the Pane uid" >&2
   exit 1
 fi
 pmx get windows --project alpha -o name >"$create_root/alpha-windows.out"
-smoke_assert_file_contains "$create_root/alpha-windows.out" "window"
-if [[ "$legacy_window_name_before" == "window" ]]; then
+smoke_assert_file_contains "$create_root/alpha-windows.out" "$alpha_window_name"
+if [[ "$legacy_window_name_before" == "$alpha_window_name" ]]; then
   echo "legacy Window display fixture did not differ from its stable name" >&2
   exit 1
 fi
 pmx get windows --project alpha >"$create_root/alpha-windows-table.out"
-smoke_assert_file_contains "$create_root/alpha-windows-table.out" "DISPLAY NAME  NAME"
-if ! awk -v display="$legacy_window_name_before" '
+# Tabular spacing expands when the display sentinel is wider than the header;
+# the parser below locates the stable NAME column from the header instead of
+# assuming the minimum two-space gap.
+smoke_assert_file_contains "$create_root/alpha-windows-table.out" "DISPLAY NAME"
+if ! awk -v display="$legacy_window_name_before" -v stable="$alpha_window_name" '
   NR == 1 {
     name_column = index($0, "  NAME  ") + 2
     next
@@ -1017,7 +1074,7 @@ if ! awk -v display="$legacy_window_name_before" '
     sub(/[[:space:]]+$/, "", display_cell)
     name_cell = substr($0, name_column)
     sub(/[[:space:]].*$/, "", name_cell)
-    found = display_cell == display && name_cell == "window"
+    found = display_cell == display && name_cell == stable
   }
   END { exit !found }
 ' "$create_root/alpha-windows-table.out"; then
@@ -1025,7 +1082,7 @@ if ! awk -v display="$legacy_window_name_before" '
   cat "$create_root/alpha-windows-table.out" >&2
   exit 1
 fi
-pmx describe window window -p alpha >"$create_root/alpha-window.describe"
+pmx describe window "$alpha_window_name" -p alpha >"$create_root/alpha-window.describe"
 smoke_assert_file_contains "$create_root/alpha-window.describe" "DisplayName:"
 smoke_assert_file_contains "$create_root/alpha-window.describe" "$legacy_window_name_before"
 
@@ -1038,9 +1095,8 @@ smoke_assert_file_contains "$create_root/short-focus.json" '"ok":true'
 smoke_assert_file_contains "$create_root/short-focus.json" '"dispatch":"notify-only"'
 smoke_assert_file_contains "$create_root/short-focus.json" "legacy-alpha:$legacy_window_id.$legacy_pane"
 
-# Lifecycle create deliberately does not auto-claim an unrelated blank legacy
-# session. The explicit repair route establishes its exact Project ownership
-# before subsequent creates select it.
+# The explicit repair route is now a convergent repeat over already-established
+# Registry authority before subsequent creates select it.
 pmx reconcile resources --socket "$create_socket" -o json >"$create_root/alpha-reconcile.json"
 if [[ -z "$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)" ]]; then
   echo "explicit resource reconcile did not establish legacy-alpha Project ownership" >&2
@@ -1051,7 +1107,7 @@ fi
 # tmux 3.4 reports one @N/%N row for every session that links the Window. A
 # pre-existing linked Window must remain one handle with an owner set, while a
 # newly returned @N/%N is still uniquely attributable to legacy-alpha.
-ctx new-session -d -s linked-observer -c "$create_root/work/alpha" sleep 600
+ctx new-session -d -s linked-observer -c "$create_root/legacy/alpha" sleep 600
 ctx link-window -s "$legacy_window_id" -t linked-observer:
 linked_window_uid_before="$(ctx show-options -wqv -t "$legacy_window_id" @projmux_window_uid)"
 linked_pane_uid_before="$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)"
@@ -1112,8 +1168,8 @@ create_active_window_before="$(ctx display-message -p -t legacy-alpha '#{window_
 create_active_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
 create_panes_before="$(ctx list-panes -t "$legacy_window_id" -F '#{pane_id}' | wc -l)"
 
-run_in_pane right create pane --project alpha --window window --placement right -o pane-id
-run_in_pane down create pane --project alpha --window window --placement down -o pane-id
+run_in_pane right create pane --project alpha --window "$alpha_window_name" --placement right -o pane-id
+run_in_pane down create pane --project alpha --window "$alpha_window_name" --placement down -o pane-id
 for label in right down; do
   if [[ "$(cat "$create_markers/$label.code")" != "0" ]]; then
     echo "create pane --placement $label exited $(cat "$create_markers/$label.code")" >&2
@@ -1336,7 +1392,7 @@ env PROJMUX_CREATE_FAIL_SPLIT=1 \
   TMUX_TMPDIR="$create_root/tt" \
   XDG_STATE_HOME="$create_root/state" \
   XDG_CONFIG_HOME="$create_root/config" \
-  PROJMUX_MANAGED_ROOTS="$create_root/work" \
+  PROJMUX_MANAGED_ROOTS="$create_root/legacy:$create_root/work" \
   SHELL=/bin/sh \
   env -u TMUX -u TMUX_PANE "$bin" create pane --project alpha --window rollback --create-window \
   >"$create_root/rollback.out" 2>"$create_root/rollback.err"
@@ -1403,7 +1459,7 @@ pmx_agent() {
     TMUX_TMPDIR="$create_root/tt" \
     XDG_STATE_HOME="$create_root/state" \
     XDG_CONFIG_HOME="$create_root/config" \
-    PROJMUX_MANAGED_ROOTS="$create_root/work" \
+    PROJMUX_MANAGED_ROOTS="$create_root/legacy:$create_root/work" \
     SHELL=/bin/bash \
     "$bin" "$@"
 }
@@ -1416,7 +1472,7 @@ pmx_agent_live() {
     TMUX_TMPDIR="$create_root/tt" \
     XDG_STATE_HOME="$create_root/state" \
     XDG_CONFIG_HOME="$create_root/config" \
-    PROJMUX_MANAGED_ROOTS="$create_root/work" \
+    PROJMUX_MANAGED_ROOTS="$create_root/legacy:$create_root/work" \
     SHELL=/bin/bash \
     "$bin" "$@"
 }
@@ -1431,7 +1487,7 @@ pmx_agent_hook_at() {
     TMUX_TMPDIR="$create_root/tt" \
     XDG_STATE_HOME="$create_root/state" \
     XDG_CONFIG_HOME="$create_root/config" \
-    PROJMUX_MANAGED_ROOTS="$create_root/work" \
+    PROJMUX_MANAGED_ROOTS="$create_root/legacy:$create_root/work" \
     SHELL=/bin/bash \
     "$bin" "$@"
 }
@@ -1439,7 +1495,7 @@ pmx_agent_hook_at() {
 agent_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
 agent_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
 
-pmx_agent create agent --provider codex -p alpha -w window -o pane-id \
+pmx_agent create agent --provider codex -p alpha -w "$alpha_window_name" -o pane-id \
   >"$create_root/agent.out" 2>"$create_root/agent.err"
 agent_pane="$(tr -d '[:space:]' <"$create_root/agent.out")"
 if [[ ! "$agent_pane" =~ ^%[0-9]+$ ]]; then
@@ -1453,7 +1509,7 @@ for _ in {1..200}; do
   [[ -s "$create_root/agent-launch.log" ]] && break
   sleep 0.05
 done
-if ! grep -Fq "cwd=$create_root/work/alpha" "$create_root/agent-launch.log"; then
+if ! grep -Fq "cwd=$create_root/legacy/alpha" "$create_root/agent-launch.log"; then
   echo "the provider stub did not launch in the project root" >&2
   cat "$create_root/agent-launch.log" >&2 || true
   exit 1
@@ -1487,7 +1543,7 @@ fi
 
 # 9. The shortcut normalizes onto the same route, and a second create allocates a
 #    new Agent instead of reusing the first.
-pmx_agent create codex -p alpha -w window -o name >"$create_root/agent-second.out"
+pmx_agent create codex -p alpha -w "$alpha_window_name" -o name >"$create_root/agent-second.out"
 if [[ "$(tr -d '[:space:]' <"$create_root/agent-second.out")" != "codex-1" ]]; then
   echo "the second Agent name = $(cat "$create_root/agent-second.out"), want codex-1" >&2
   exit 1
@@ -1503,7 +1559,7 @@ done
 
 # 10. The payload after -- reaches the provider and never the naming.
 : >"$create_root/agent-launch.log"
-pmx_agent create agent --provider codex -p alpha -w window -o name \
+pmx_agent create agent --provider codex -p alpha -w "$alpha_window_name" -o name \
   -- -p payload-project -w payload-window --topic "release triage" >"$create_root/agent-payload.out"
 if [[ "$(tr -d '[:space:]' <"$create_root/agent-payload.out")" != "codex-2" ]]; then
   echo "a payload changed the Agent name: $(cat "$create_root/agent-payload.out")" >&2
@@ -1513,7 +1569,7 @@ for _ in {1..200}; do
   [[ -s "$create_root/agent-launch.log" ]] && break
   sleep 0.05
 done
-if ! grep -Fq -- "args=-C $create_root/work/alpha -p payload-project -w payload-window --topic release triage" "$create_root/agent-launch.log"; then
+if ! grep -Fq -- "args=-C $create_root/legacy/alpha -p payload-project -w payload-window --topic release triage" "$create_root/agent-launch.log"; then
   echo "the payload did not reach the provider:" >&2
   cat "$create_root/agent-launch.log" >&2 || true
   exit 1
@@ -1522,7 +1578,7 @@ fi
 # 11. A missing provider is exit 2 with zero mutations and zero stdout.
 agent_registry_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
 set +e
-pmx_agent create agent --project alpha --window window \
+pmx_agent create agent --project alpha --window "$alpha_window_name" \
   >"$create_root/agent-noprovider.out" 2>"$create_root/agent-noprovider.err"
 agent_noprovider_status=$?
 set -e
@@ -1545,7 +1601,7 @@ smoke_assert_file_contains "$create_root/agent-noprovider.err" "requires --provi
 #     implicit suffix and no new pane.
 agent_panes_before="$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)"
 set +e
-pmx_agent create agent --provider codex --project alpha --window window --name codex \
+pmx_agent create agent --provider codex --project alpha --window "$alpha_window_name" --name codex \
   >"$create_root/agent-collide.out" 2>"$create_root/agent-collide.err"
 agent_collide_status=$?
 set -e
@@ -1615,8 +1671,8 @@ fi
 # Drive each provider through the sole canonical ingress on the exact inherited
 # pane. The live projections prove the provider-specific event paths still
 # share their pre-retirement payload/state behavior.
-claude_hook_pane="$(ctx split-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/work/alpha" sleep 600)"
-printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"phase6-claude","cwd":"'"$create_root"'/work/alpha"}' |
+claude_hook_pane="$(ctx split-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/legacy/alpha" sleep 600)"
+printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"phase6-claude","cwd":"'"$create_root"'/legacy/alpha"}' |
   pmx_agent_hook_at "$claude_hook_pane" internal agent-hook ingest claude-hook >"$create_root/agent-claude-ingest.out"
 if [[ -s "$create_root/agent-claude-ingest.out" ]] ||
   [[ "$(ctx show-options -pqv -t "$claude_hook_pane" @projmux_ai_agent)" != claude ]] ||
@@ -1624,8 +1680,8 @@ if [[ -s "$create_root/agent-claude-ingest.out" ]] ||
   echo "canonical Claude hook ingest lost its state projection parity" >&2
   exit 1
 fi
-antigravity_hook_pane="$(ctx split-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/work/alpha" sleep 600)"
-printf '%s' '{"conversationId":"phase6-antigravity","workspacePaths":["'"$create_root"'/work/alpha"]}' |
+antigravity_hook_pane="$(ctx split-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/legacy/alpha" sleep 600)"
+printf '%s' '{"conversationId":"phase6-antigravity","workspacePaths":["'"$create_root"'/legacy/alpha"]}' |
   pmx_agent_hook_at "$antigravity_hook_pane" internal agent-hook ingest antigravity-hook --event PreInvocation \
     >"$create_root/agent-antigravity-ingest.out"
 smoke_assert_file_contains "$create_root/agent-antigravity-ingest.out" '{}'
@@ -1637,7 +1693,7 @@ fi
 
 # Seed the durable Codex conversation through the same canonical ingress, then
 # take the Agent offline, change its Registry-only topic, and resume it.
-printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"phase6-thread","session_id":"phase6-session","turn_id":"phase6-turn","cwd":"'"$create_root"'/work/alpha"}' |
+printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"phase6-thread","session_id":"phase6-session","turn_id":"phase6-turn","cwd":"'"$create_root"'/legacy/alpha"}' |
   pmx_agent_live internal agent-hook ingest codex-hook
 pmx_agent_live delete pane "uid:$agent_pane_uid" --yes
 pmx_agent_live agent topic set "offline resume topic" "uid:$agent_uid"
@@ -1703,9 +1759,9 @@ smoke_assert_file_contains "$create_root/agent-reconcile-repeat.json" '"outcome"
 # Cross-Project workspace changes the worker launch only; ownership stays in the
 # explicitly selected alpha Window and only caller-provided roots reach argv.
 : >"$create_root/agent-launch.log"
-cross_agent_name="$(pmx_agent create agent --provider codex --project alpha --window window \
-  --cwd "$create_root/work/beta" --add-dir "$create_root/work/alpha" -o name)"
-smoke_assert_file_contains "$create_root/agent-launch.log" "args=-C $create_root/work/beta --add-dir $create_root/work/alpha"
+cross_agent_name="$(pmx_agent create agent --provider codex --project alpha --window "$alpha_window_name" \
+  --cwd "$create_root/work/beta" --add-dir "$create_root/legacy/alpha" -o name)"
+smoke_assert_file_contains "$create_root/agent-launch.log" "args=-C $create_root/work/beta --add-dir $create_root/legacy/alpha"
 if ! pmx_agent get agents --project alpha -o name | grep -qx "$cross_agent_name" ||
   pmx_agent get agents --project beta -o name | grep -qx "$cross_agent_name"; then
   echo "cross-Project workspace changed Agent ownership" >&2
@@ -1767,7 +1823,7 @@ for _ in {1..200}; do
   [[ -s "$create_root/agent-launch.log" ]] && break
   sleep 0.05
 done
-if ! grep -Fq "cwd=$create_root/work/alpha" "$create_root/agent-launch.log"; then
+if ! grep -Fq "cwd=$create_root/legacy/alpha" "$create_root/agent-launch.log"; then
   echo "the implicit-scope create did not launch the provider in the derived Project root" >&2
   cat "$create_root/agent-launch.log" >&2 || true
   exit 1
@@ -1810,7 +1866,7 @@ fi
 # 16. A pane whose Window carries no managed identity is unattributed. It is a
 #     refusal with zero mutations on the very server the command is running in;
 #     nothing is adopted by proximity.
-unattributed_pane="$(ctx new-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/work/alpha" sleep 600)"
+unattributed_pane="$(ctx new-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/legacy/alpha" sleep 600)"
 if [[ -n "$(ctx display-message -p -t "$unattributed_pane" '#{@projmux_window_uid}')" ]]; then
   echo "the unattributed fixture window carries a managed uid" >&2
   exit 1
@@ -1855,7 +1911,7 @@ env HOME="$agent_home" \
   TMUX_TMPDIR="$create_root/tt" \
   XDG_STATE_HOME="$create_root/state" \
   XDG_CONFIG_HOME="$create_root/config" \
-  PROJMUX_MANAGED_ROOTS="$create_root/work" \
+  PROJMUX_MANAGED_ROOTS="$create_root/legacy:$create_root/work" \
   SHELL=/bin/bash \
   "$bin" create pane -o pane-id \
   >"$create_root/foreign-create.out" 2>"$create_root/foreign-create.err"
@@ -1894,14 +1950,43 @@ create_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> create e2e passed: socket=$create_socket path=$create_socket_path"
 
+# Explicit Registry authority converges Project -> Window -> Pane. Every
+# fixture below keeps each public report and must reach a no-op within that
+# three-level walk plus one confirming pass.
+e2e_bounded_reconcile_to_noop() {
+  local report_prefix="$1"
+  shift
+  local pass report
+  for pass in 1 2 3 4; do
+    report="$report_prefix-$pass.json"
+    "$@" >"$report"
+    if grep -Fq '"outcome": "changed"' "$report"; then
+      continue
+    fi
+    if grep -Fq '"outcome": "no-op"' "$report"; then
+      if [[ "$pass" == "1" ]]; then
+        echo "explicit authority made no initial progress: $report" >&2
+        return 1
+      fi
+      smoke_assert_file_contains "$report" '"items": []'
+      return 0
+    fi
+    echo "resource reconcile reported neither changed nor no-op: $report" >&2
+    cat "$report" >&2
+    return 1
+  done
+  echo "resource reconcile did not converge within four passes: $report_prefix" >&2
+  return 1
+}
+
 # Managed runtime binding convergence runs on its own two exact sockets. Every
 # client call strips inherited TMUX/TMUX_PANE; only the implicit reads below
 # receive a synthetic client identity after the binding has already converged.
 binding_root="$PROJMUX_SMOKE_WORKDIR/managed-binding-phase3"
 binding_socket="projmux-binding-$RANDOM-$$"
 binding_second_socket="projmux-binding-second-$RANDOM-$$"
-binding_session="managed-binding"
-binding_beta_session="managed-binding-beta"
+binding_session="work-alpha"
+binding_beta_session="work-beta"
 mkdir -p \
   "$binding_root/home" \
   "$binding_root/config" \
@@ -1998,14 +2083,29 @@ binding_cleanup() {
 trap 'binding_cleanup; smoke_cleanup_env' EXIT
 
 binding_second_before="$(binding_second_tmux show-options -gqv @projmux_phase3_sentinel):$(binding_second_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}')"
+binding_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' >"$binding_root/d2.before"
+binding_pmx reconcile resources --socket "$binding_socket" --dry-run -o json >"$binding_root/d2.json"
+smoke_assert_file_contains "$binding_root/d2.json" '"outcome": "no-op"'
+if [[ -e "$binding_root/state/projmux/metadata/registry.json" ]]; then
+  echo "managed binding D2 dry-run created a Registry" >&2
+  exit 1
+fi
+binding_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' >"$binding_root/d2.after"
+cmp "$binding_root/d2.before" "$binding_root/d2.after"
+if [[ "$(binding_second_tmux show-options -gqv @projmux_phase3_sentinel):$(binding_second_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}')" != "$binding_second_before" ]]; then
+  echo "managed binding D2 dry-run touched the second socket" >&2
+  exit 1
+fi
+binding_pmx create project --root "$binding_root/work/alpha" --name alpha >"$binding_root/register-alpha.out"
+binding_pmx create project --root "$binding_root/work/beta" --name beta >"$binding_root/register-beta.out"
 binding_config="$binding_root/config/projmux/tmux.conf"
 binding_pmx internal tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
   >"$binding_root/first-apply.out"
 smoke_assert_file_contains "$binding_root/first-apply.out" "reloaded tmux server -L $binding_socket"
-# The lifecycle apply imports legacy Window/Pane topology but deliberately does
-# not turn blank Project session identity into create ownership. Establish that
-# ownership through the explicit exact-socket repair route before create tests.
-binding_pmx reconcile resources --socket "$binding_socket" -o json >"$binding_root/first-reconcile.json"
+# The apply observes D2 but imports nothing. Explicit authority is repaired in
+# parent-before-child order on the exact primary socket.
+e2e_bounded_reconcile_to_noop "$binding_root/first-reconcile" \
+  binding_pmx reconcile resources --socket "$binding_socket" -o json
 
 binding_window="$(binding_tmux display-message -p -t "$binding_session:0" '#{window_id}')"
 binding_pane="$(binding_tmux display-message -p -t "$binding_session:0.0" '#{pane_id}')"
@@ -2054,43 +2154,78 @@ if [[ "$(stat -c '%i:%s:%y' "$binding_config")" != "$binding_config_stat" ]]; th
   exit 1
 fi
 
-# The generated hooks are synchronous. Therefore these options must be visible
-# immediately after new-window/split-window returns, without a polling loop.
-lifecycle_window="$(
-  binding_tmux new-window -d -t "$binding_session:" -n lifecycle -c "$binding_root/work/alpha" \
+# The generated hooks are synchronous, but raw tmux creation is still D2 and
+# therefore L0. Prove both hooks return without minting identity or changing
+# Registry authority, then remove the raw objects before building the managed
+# lifecycle fixture through canonical creates.
+cp "$binding_registry" "$binding_root/registry.before-raw-hooks"
+raw_lifecycle_window="$(
+  binding_tmux new-window -d -t "$binding_session:" -n raw-lifecycle -c "$binding_root/work/alpha" \
     -P -F '#{window_id}' sleep 600
 )"
-lifecycle_window_uid="$(binding_tmux show-options -wqv -t "$lifecycle_window" @projmux_window_uid)"
+raw_lifecycle_initial_pane="$(binding_tmux display-message -p -t "$raw_lifecycle_window" '#{pane_id}')"
+if [[ -n "$(binding_tmux show-options -wqv -t "$raw_lifecycle_window" @projmux_window_uid)" ]] ||
+  [[ -n "$(binding_tmux show-options -pqv -t "$raw_lifecycle_initial_pane" @projmux_pane_uid)" ]]; then
+  echo "after-new-window automatically bound a raw D2 Window/Pane" >&2
+  exit 1
+fi
+cmp "$binding_root/registry.before-raw-hooks" "$binding_registry"
+
+raw_lifecycle_split_pane="$(
+  binding_tmux split-window -d -t "$raw_lifecycle_initial_pane" -c "$binding_root/work/alpha" \
+    -P -F '#{pane_id}' sleep 600
+)"
+if [[ -n "$(binding_tmux show-options -pqv -t "$raw_lifecycle_split_pane" @projmux_pane_uid)" ]]; then
+  echo "after-split-window automatically bound a raw D2 Pane" >&2
+  exit 1
+fi
+cmp "$binding_root/registry.before-raw-hooks" "$binding_registry"
+binding_tmux kill-window -t "$raw_lifecycle_window"
+cmp "$binding_root/registry.before-raw-hooks" "$binding_registry"
+
+binding_server_pid="$(binding_tmux display-message -p -t "$binding_pane" '#{pid}')"
+binding_inside_pane="$binding_pane"
+binding_inside_pmx() {
+  env \
+    HOME="$binding_root/home" \
+    XDG_CONFIG_HOME="$binding_root/config" \
+    XDG_STATE_HOME="$binding_root/state" \
+    XDG_RUNTIME_DIR="$binding_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$binding_root/work" \
+    TMUX_TMPDIR="$binding_root/tmux" \
+    TMUX="$binding_socket_path,$binding_server_pid,0" \
+    TMUX_PANE="$binding_inside_pane" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
+binding_inside_pmx create window --project alpha --name lifecycle >"$binding_root/create-lifecycle-window.out"
+lifecycle_window_uid="$(binding_inside_pmx describe window lifecycle -p alpha -o uid | tr -d '[:space:]')"
+lifecycle_window="$(
+  binding_tmux list-windows -a -F '#{window_id}|#{@projmux_window_uid}' |
+    awk -F '|' -v uid="$lifecycle_window_uid" '$2 == uid { print $1 }'
+)"
 lifecycle_initial_pane="$(binding_tmux display-message -p -t "$lifecycle_window" '#{pane_id}')"
 lifecycle_initial_pane_uid="$(binding_tmux show-options -pqv -t "$lifecycle_initial_pane" @projmux_pane_uid)"
-if [[ -z "$lifecycle_window_uid" ]] || [[ -z "$lifecycle_initial_pane_uid" ]]; then
-  echo "after-new-window returned before its Window/Pane binding converged" >&2
+if [[ -z "$lifecycle_window" ]] || [[ -z "$lifecycle_window_uid" ]] || [[ -z "$lifecycle_initial_pane_uid" ]]; then
+  echo "canonical create window left its managed Window/Pane identity empty" >&2
   exit 1
 fi
 
 lifecycle_split_pane="$(
-  binding_tmux split-window -d -t "$lifecycle_initial_pane" -c "$binding_root/work/alpha" \
-    -P -F '#{pane_id}' sleep 600
+  binding_inside_pmx create pane --project alpha --window "uid:$lifecycle_window_uid" \
+    -o pane-id -- sleep 600
 )"
 lifecycle_split_uid="$(binding_tmux show-options -pqv -t "$lifecycle_split_pane" @projmux_pane_uid)"
 if [[ -z "$lifecycle_split_uid" ]]; then
-  echo "after-split-window returned before its Pane binding converged" >&2
+  echo "canonical create pane left its managed Pane identity empty" >&2
   exit 1
 fi
+binding_inside_pane="$lifecycle_split_pane"
 
-# The immediately following selector-omitted read resolves that exact Pane.
-binding_server_pid="$(binding_tmux display-message -p -t "$lifecycle_split_pane" '#{pid}')"
-env \
-  HOME="$binding_root/home" \
-  XDG_CONFIG_HOME="$binding_root/config" \
-  XDG_STATE_HOME="$binding_root/state" \
-  XDG_RUNTIME_DIR="$binding_root/runtime" \
-  PROJMUX_MANAGED_ROOTS="$binding_root/work" \
-  TMUX_TMPDIR="$binding_root/tmux" \
-  TMUX="$binding_socket_path,$binding_server_pid,0" \
-  TMUX_PANE="$lifecycle_split_pane" \
-  SHELL=/bin/sh \
-  "$bin" describe pane -o uid >"$binding_root/implicit-read.out"
+# The immediately following selector-omitted read resolves that exact managed
+# Pane through the inherited exact-socket client context.
+binding_inside_pmx describe pane -o uid >"$binding_root/implicit-read.out"
 if [[ "$(tr -d '[:space:]' <"$binding_root/implicit-read.out")" != "$lifecycle_split_uid" ]]; then
   echo "implicit read did not resolve the synchronously bound Pane" >&2
   cat "$binding_root/implicit-read.out" >&2
@@ -2101,19 +2236,6 @@ fi
 # synthetic client sits in alpha: its default Pane and Window inventories must
 # exclude beta, while --all-projects and the outside-tmux compatibility path
 # must include both. Project inventory itself remains global.
-binding_inside_pmx() {
-  env \
-    HOME="$binding_root/home" \
-    XDG_CONFIG_HOME="$binding_root/config" \
-    XDG_STATE_HOME="$binding_root/state" \
-    XDG_RUNTIME_DIR="$binding_root/runtime" \
-    PROJMUX_MANAGED_ROOTS="$binding_root/work" \
-    TMUX_TMPDIR="$binding_root/tmux" \
-    TMUX="$binding_socket_path,$binding_server_pid,0" \
-    TMUX_PANE="$lifecycle_split_pane" \
-    SHELL=/bin/sh \
-    "$bin" "$@"
-}
 
 # Canonical create holds the metadata transaction while tmux runs synchronous
 # creation hooks. The session-scoped lease must prevent self-deadlock without
@@ -2527,15 +2649,15 @@ delete_pmx() {
     "$bin" "$@"
 }
 
-delete_tmux new-session -d -s delete-alpha -n primary -c "$delete_root/work/alpha" sleep 600
-delete_tmux set-option -t delete-alpha -q @projmux_project_path "$delete_root/work/alpha"
-delete_tmux new-window -d -t delete-alpha: -n sibling -c "$delete_root/work/alpha" sleep 600
-delete_tmux new-session -d -s delete-beta -n only -c "$delete_root/work/beta" sleep 600
-delete_tmux set-option -t delete-beta -q @projmux_project_path "$delete_root/work/beta"
+delete_tmux new-session -d -s work-alpha -n primary -c "$delete_root/work/alpha" sleep 600
+delete_tmux set-option -t work-alpha -q @projmux_project_path "$delete_root/work/alpha"
+delete_tmux new-window -d -t work-alpha: -n sibling -c "$delete_root/work/alpha" sleep 600
+delete_tmux new-session -d -s work-beta -n only -c "$delete_root/work/beta" sleep 600
+delete_tmux set-option -t work-beta -q @projmux_project_path "$delete_root/work/beta"
 delete_other_tmux new-session -d -s foreign-delete -n untouched sleep 600
 delete_other_tmux set-option -gq @projmux_delete_sentinel untouched
 
-delete_socket_path="$(delete_tmux display-message -p -t delete-alpha '#{socket_path}')"
+delete_socket_path="$(delete_tmux display-message -p -t work-alpha '#{socket_path}')"
 delete_other_socket_path="$(delete_other_tmux display-message -p -t foreign-delete '#{socket_path}')"
 case "$delete_socket_path" in
   "$delete_root"/*) ;;
@@ -2582,16 +2704,27 @@ delete_cleanup() {
 trap 'delete_cleanup; smoke_cleanup_env' EXIT
 
 delete_config="$delete_root/config/projmux/tmux.conf"
+delete_pmx reconcile resources --socket "$delete_socket" --dry-run -o json >"$delete_root/d2.json"
+smoke_assert_file_contains "$delete_root/d2.json" '"outcome": "no-op"'
+if [[ -e "$delete_root/state/projmux/metadata/registry.json" ]]; then
+  echo "delete D2 dry-run created a Registry" >&2
+  exit 1
+fi
+delete_pmx create project --root "$delete_root/work/alpha" --name alpha >"$delete_root/register-alpha.out"
+delete_pmx create project --root "$delete_root/work/beta" --name beta >"$delete_root/register-beta.out"
 delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" \
   >"$delete_root/apply.out"
 smoke_assert_file_contains "$delete_root/apply.out" "reloaded tmux server -L $delete_socket"
-# Creation must not auto-import a blank legacy Project session. Exercise the
-# canonical explicit repair route before the later create/delete parity cases.
-delete_pmx reconcile resources --socket "$delete_socket" -o json >"$delete_root/reconcile.out"
+# Bind the explicitly registered default topology, then replace the raw sibling
+# with a canonically created managed Window used by the delete parity cases.
+e2e_bounded_reconcile_to_noop "$delete_root/reconcile" \
+  delete_pmx reconcile resources --socket "$delete_socket" -o json
+delete_tmux kill-window -t work-alpha:sibling
+delete_pmx create window --project alpha --name sibling >"$delete_root/create-sibling.out"
 
-delete_primary="$(delete_tmux display-message -p -t delete-alpha:primary '#{window_id}')"
-delete_sibling="$(delete_tmux display-message -p -t delete-alpha:sibling '#{window_id}')"
-delete_beta="$(delete_tmux display-message -p -t delete-beta:only '#{window_id}')"
+delete_primary="$(delete_tmux display-message -p -t work-alpha:primary '#{window_id}')"
+delete_sibling="$(delete_tmux display-message -p -t work-alpha:sibling '#{window_id}')"
+delete_beta="$(delete_tmux display-message -p -t work-beta:only '#{window_id}')"
 delete_primary_uid="$(delete_tmux show-options -wqv -t "$delete_primary" @projmux_window_uid)"
 delete_sibling_uid="$(delete_tmux show-options -wqv -t "$delete_sibling" @projmux_window_uid)"
 delete_beta_uid="$(delete_tmux show-options -wqv -t "$delete_beta" @projmux_window_uid)"
@@ -2608,8 +2741,8 @@ fi
 # scope would show up as a different answer to identical argv. They are
 # deliberately read-only -- no resource is created, renamed, or removed -- so
 # the delete fixture this block owns is unchanged.
-delete_server_pid="$(delete_tmux display-message -p -t delete-alpha:primary '#{pid}')"
-delete_primary_pane="$(delete_tmux display-message -p -t delete-alpha:primary '#{pane_id}')"
+delete_server_pid="$(delete_tmux display-message -p -t work-alpha:primary '#{pid}')"
+delete_primary_pane="$(delete_tmux display-message -p -t work-alpha:primary '#{pane_id}')"
 delete_pmx_inside() {
   env \
     HOME="$delete_root/home" \
@@ -2625,8 +2758,8 @@ delete_pmx_inside() {
     "$bin" "$@"
 }
 
-# The legacy import allocates a stable Window metadata.name independently of
-# the tmux window_name, so the references are read back from the Registry
+# Explicit registration allocates stable Window metadata.name independently of
+# tmux window_name, so the references are read back from the Registry
 # rather than assumed from the session layout above.
 delete_primary_name="$(delete_pmx describe window "uid:$delete_primary_uid" -o name | tr -d '[:space:]')"
 delete_beta_name="$(delete_pmx describe window "uid:$delete_beta_uid" -o name | tr -d '[:space:]')"
@@ -2696,13 +2829,13 @@ smoke_assert_file_contains "$delete_root/external.out" "live killed tmux window 
 # The only beta Window explicitly predicts and then causes the Project session
 # to end; alpha remains live and untouched.
 delete_pmx_delete window "uid:$delete_beta_uid" --dry-run >"$delete_root/last-dry-run.out"
-smoke_assert_file_contains "$delete_root/last-dry-run.out" "live cascade would end Project session delete-beta"
+smoke_assert_file_contains "$delete_root/last-dry-run.out" "live cascade would end Project session work-beta"
 delete_pmx_delete window "uid:$delete_beta_uid" --yes >"$delete_root/last.out"
-if delete_tmux has-session -t delete-beta 2>/dev/null; then
-  echo "last-Window delete left delete-beta session live" >&2
+if delete_tmux has-session -t work-beta 2>/dev/null; then
+  echo "last-Window delete left work-beta session live" >&2
   exit 1
 fi
-smoke_assert_file_contains "$delete_root/last.out" "live cascade ended Project session delete-beta"
+smoke_assert_file_contains "$delete_root/last.out" "live cascade ended Project session work-beta"
 
 # A managed runner Window invokes implicit delete from inside itself. There is
 # intentionally no post-command marker: a correct implementation flushes the
@@ -2711,7 +2844,7 @@ smoke_assert_file_contains "$delete_root/last.out" "live cascade ended Project s
 self_script="$delete_root/self-delete.sh"
 cat >"$self_script" <<SELF_DELETE
 #!/usr/bin/env bash
-sleep 0.25
+while [[ ! -e $(printf %q "$delete_root/self-start") ]]; do sleep 0.01; done
 HOME=$(printf %q "$delete_root/home") \
 XDG_CONFIG_HOME=$(printf %q "$delete_root/config") \
 XDG_STATE_HOME=$(printf %q "$delete_root/state") \
@@ -2723,12 +2856,19 @@ SHELL=/bin/sh \
 $(printf %q "$bin") delete window --socket $(printf %q "$delete_socket") --yes >$(printf %q "$delete_root/self.out") 2>$(printf %q "$delete_root/self.err")
 SELF_DELETE
 chmod 0755 "$self_script"
-self_window="$(delete_tmux new-window -d -t delete-alpha: -n self-delete -c "$delete_root/work/alpha" -P -F '#{window_id}' "$self_script")"
-self_uid="$(delete_tmux show-options -wqv -t "$self_window" @projmux_window_uid)"
-if [[ -z "$self_uid" ]]; then
-  echo "self-target Window was not synchronously bound" >&2
+self_uid="$(
+  delete_pmx create window --project "uid:$delete_alpha_project_uid" --name self-delete \
+    -o uid -- "$self_script"
+)"
+self_window="$(
+  delete_tmux list-windows -a -F '#{window_id}|#{@projmux_window_uid}' |
+    awk -F '|' -v uid="$self_uid" '$2 == uid { print $1 }'
+)"
+if [[ -z "$self_uid" ]] || [[ -z "$self_window" ]]; then
+  echo "canonical self-target Window create left its identity empty" >&2
   exit 1
 fi
+touch "$delete_root/self-start"
 for _ in {1..200}; do
   if [[ -s "$delete_root/self.out" ]] && \
     [[ "$(delete_tmux display-message -p -t "$self_window" '#{window_id}' 2>/dev/null || true)" != "$self_window" ]]; then
@@ -2830,8 +2970,13 @@ fi
 # containment around the Registry-only path. The pane-exited lifecycle may
 # already retire the Agent's dead managed Pane before this command; the unit
 # cascade fixture separately pins the full Agent-owned Pane case.
-delete_offline_window="$(delete_tmux new-window -d -t delete-alpha: -n offline-delete -c "$delete_root/work/alpha" -P -F '#{window_id}' sleep 600)"
-delete_offline_window_uid="$(delete_tmux show-options -wqv -t "$delete_offline_window" @projmux_window_uid)"
+delete_offline_window_uid="$(
+  delete_pmx create window --project "uid:$delete_alpha_project_uid" --name offline-delete -o uid -- sleep 600
+)"
+delete_offline_window="$(
+  delete_tmux list-windows -a -F '#{window_id}|#{@projmux_window_uid}' |
+    awk -F '|' -v uid="$delete_offline_window_uid" '$2 == uid { print $1 }'
+)"
 delete_offline_shell="$(delete_tmux display-message -p -t "$delete_offline_window" '#{pane_id}')"
 delete_offline_shell_uid="$(delete_tmux show-options -pqv -t "$delete_offline_shell" @projmux_pane_uid)"
 delete_offline_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_offline_window_uid" -o pane-id)"
@@ -2899,7 +3044,13 @@ smoke_assert_file_contains "$delete_root/offline-repeat.err" "matched no windows
 
 # Deleting the sole Pane predicts and causes both implicit Window and session
 # teardown. A following reconciliation must not mint the deleted Pane back.
-delete_last_window="$(delete_tmux new-window -d -t delete-alpha: -n pane-last -c "$delete_root/work/alpha" -P -F '#{window_id}' sleep 600)"
+delete_last_window_uid="$(
+  delete_pmx create window --project "uid:$delete_alpha_project_uid" --name pane-last -o uid -- sleep 600
+)"
+delete_last_window="$(
+  delete_tmux list-windows -a -F '#{window_id}|#{@projmux_window_uid}' |
+    awk -F '|' -v uid="$delete_last_window_uid" '$2 == uid { print $1 }'
+)"
 delete_last_pane="$(delete_tmux display-message -p -t "$delete_last_window" '#{pane_id}')"
 delete_last_pane_uid="$(delete_tmux show-options -pqv -t "$delete_last_pane" @projmux_pane_uid)"
 echo ">> delete last Pane Window target pane=$delete_last_pane uid=$delete_last_pane_uid window=$delete_last_window"
@@ -2911,24 +3062,30 @@ if [[ "$(delete_tmux display-message -p -t "$delete_last_window" '#{window_id}' 
   exit 1
 fi
 
-# A fresh one-Window Project makes the same last-Pane cascade end the complete
-# session, which must be visible before mutation and in the durable result.
-delete_tmux new-session -d -s delete-gamma -n only -c "$delete_root/work/gamma" sleep 600
-delete_tmux set-option -t delete-gamma -q @projmux_project_path "$delete_root/work/gamma"
+# A freshly and explicitly registered one-Window Project makes the same
+# last-Pane cascade end the complete session, which must be visible before
+# mutation and in the durable result. Its raw canonical session remains D2
+# until registration; the bounded repair then establishes managed identity.
+mkdir -p "$delete_root/work/gamma"
+delete_tmux new-session -d -s work-gamma -n only -c "$delete_root/work/gamma" sleep 600
+delete_tmux set-option -t work-gamma -q @projmux_project_path "$delete_root/work/gamma"
+delete_pmx create project --root "$delete_root/work/gamma" --name gamma >"$delete_root/register-gamma.out"
 delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-gamma.out"
-delete_gamma_pane="$(delete_tmux display-message -p -t delete-gamma:only '#{pane_id}')"
+e2e_bounded_reconcile_to_noop "$delete_root/reconcile-gamma" \
+  delete_pmx reconcile resources --socket "$delete_socket" -o json
+delete_gamma_pane="$(delete_tmux display-message -p -t work-gamma:only '#{pane_id}')"
 delete_gamma_pane_uid="$(delete_tmux show-options -pqv -t "$delete_gamma_pane" @projmux_pane_uid)"
 delete_gamma_window="$(delete_tmux display-message -p -t "$delete_gamma_pane" '#{window_id}')"
-echo ">> delete last Pane session target pane=$delete_gamma_pane uid=$delete_gamma_pane_uid window=$delete_gamma_window session=delete-gamma"
+echo ">> delete last Pane session target pane=$delete_gamma_pane uid=$delete_gamma_pane_uid window=$delete_gamma_window session=work-gamma"
 delete_pmx_delete pane "uid:$delete_gamma_pane_uid" --dry-run >"$delete_root/pane-session-last-dry-run.out"
 smoke_assert_file_contains "$delete_root/pane-session-last-dry-run.out" "live cascade would end Window $delete_gamma_window because its last live Pane is deleted"
-smoke_assert_file_contains "$delete_root/pane-session-last-dry-run.out" "live cascade would end Project session delete-gamma because its last live Window is deleted"
+smoke_assert_file_contains "$delete_root/pane-session-last-dry-run.out" "live cascade would end Project session work-gamma because its last live Window is deleted"
 delete_pmx_delete pane "uid:$delete_gamma_pane_uid" --yes >"$delete_root/pane-session-last.out"
-if delete_tmux has-session -t delete-gamma 2>/dev/null; then
-  echo "last-Pane delete left delete-gamma session live" >&2
+if delete_tmux has-session -t work-gamma 2>/dev/null; then
+  echo "last-Pane delete left work-gamma session live" >&2
   exit 1
 fi
-smoke_assert_file_contains "$delete_root/pane-session-last.out" "live cascade ended Project session delete-gamma"
+smoke_assert_file_contains "$delete_root/pane-session-last.out" "live cascade ended Project session work-gamma"
 
 delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-after-pane-delete.out"
 delete_pmx get panes --all-projects -o uid >"$delete_root/panes.after-reconcile"
@@ -2952,16 +3109,22 @@ delete_tmux kill-server
 # generated hooks background their convergence. Those convergences are the last
 # legitimate writers of this registry, so the byte-identity check below has to
 # start from a settled file rather than from whatever the file held mid-flight.
-# Stability is the honest signal: two identical reads a beat apart mean no worker
-# is still landing a pass.
+# Stability is the honest signal: ten identical 50ms observations establish a
+# 500ms quiet window in which no worker is still landing a pass.
 delete_settled=0
+delete_stable_samples=0
 cp "$delete_registry" "$delete_root/registry.settle-probe"
-for _ in {1..100}; do
+for _ in {1..200}; do
   sleep 0.05
   if cmp -s "$delete_root/registry.settle-probe" "$delete_registry"; then
-    delete_settled=1
-    break
+    delete_stable_samples=$((delete_stable_samples + 1))
+    if [[ "$delete_stable_samples" == "10" ]]; then
+      delete_settled=1
+      break
+    fi
+    continue
   fi
+  delete_stable_samples=0
   cp "$delete_registry" "$delete_root/registry.settle-probe"
 done
 if [[ "$delete_settled" != "1" ]]; then
@@ -3023,7 +3186,7 @@ echo ">> delete Window/Pane/Agent e2e passed: socket=$delete_socket path=$delete
 rename_root="$PROJMUX_SMOKE_WORKDIR/rename-rebind-phase5"
 rename_socket="projmux-rename-$RANDOM-$$"
 rename_other_socket="projmux-rename-other-$RANDOM-$$"
-rename_session="rename-alpha"
+rename_session="work-alpha"
 mkdir -p \
   "$rename_root/home" \
   "$rename_root/config" \
@@ -3111,8 +3274,16 @@ rename_cleanup() {
 trap 'rename_cleanup; smoke_cleanup_env' EXIT
 
 rename_config="$rename_root/config/projmux/tmux.conf"
+rename_base_pmx reconcile resources --socket "$rename_socket" --dry-run -o json >"$rename_root/d2.json"
+smoke_assert_file_contains "$rename_root/d2.json" '"outcome": "no-op"'
+if [[ -e "$rename_root/state/projmux/metadata/registry.json" ]]; then
+  echo "rename/rebind D2 dry-run created a Registry" >&2
+  exit 1
+fi
+rename_base_pmx create project --root "$rename_root/work/alpha" --name alpha >"$rename_root/register-alpha.out"
 rename_base_pmx internal tmux apply --bin "$bin" --config "$rename_config" --socket "$rename_socket" >"$rename_root/apply.out"
-rename_base_pmx reconcile resources --socket "$rename_socket" >"$rename_root/initial-reconcile.out"
+e2e_bounded_reconcile_to_noop "$rename_root/initial-reconcile" \
+  rename_base_pmx reconcile resources --socket "$rename_socket" -o json
 rename_project_uid="$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_uid)"
 rename_window="$(rename_tmux display-message -p -t "$rename_session:0" '#{window_id}')"
 rename_window_uid="$(rename_tmux show-options -wqv -t "$rename_window" @projmux_window_uid)"
@@ -3262,7 +3433,7 @@ echo ">> rename/rebind e2e passed: socket=$rename_socket path=$rename_socket_pat
 topology_root="$PROJMUX_SMOKE_WORKDIR/registry-topology"
 topology_socket="projmux-topology-$RANDOM-$$"
 topology_other_socket="projmux-topology-other-$RANDOM-$$"
-topology_session="topology-alpha"
+topology_session="work-alpha"
 mkdir -p \
   "$topology_root/home" \
   "$topology_root/config" \
@@ -3404,12 +3575,20 @@ topology_cleanup() {
 }
 trap 'topology_cleanup; smoke_cleanup_env' EXIT
 
+topology_pmx reconcile resources --socket "$topology_socket" --dry-run -o json >"$topology_root/d2.json"
+smoke_assert_file_contains "$topology_root/d2.json" '"outcome": "no-op"'
+if [[ -e "$topology_root/state/projmux/metadata/registry.json" ]]; then
+  echo "topology D2 dry-run created a Registry" >&2
+  exit 1
+fi
+topology_pmx create project --root "$topology_root/work/alpha" --name alpha >"$topology_root/register-alpha.out"
 topology_pmx internal tmux apply --bin "$bin" --config "$topology_root/config/projmux/tmux.conf" --socket "$topology_socket" >"$topology_root/apply.out"
-topology_pmx reconcile resources --socket "$topology_socket" >"$topology_root/import.out"
+e2e_bounded_reconcile_to_noop "$topology_root/import" \
+  topology_pmx reconcile resources --socket "$topology_socket" -o json
 
 topology_project_uid="$(topology_tmux show-options -qv -t "$topology_session" @projmux_project_uid)"
 if [[ -z "$topology_project_uid" ]]; then
-  echo "topology e2e import left the Project uid empty" >&2
+  echo "topology e2e explicit authority left the Project uid empty" >&2
   exit 1
 fi
 topology_live_pmx create window --project "uid:$topology_project_uid" --name review >"$topology_root/create-window.out"
@@ -3492,14 +3671,19 @@ topology_registry="$topology_root/state/projmux/metadata/registry.json"
 # not wait on. Every "the Registry did not change" assertion below therefore
 # snapshots the file only once those writes have settled.
 topology_settle_registry() {
-  local previous="" current
-  for _ in $(seq 1 100); do
+  local previous="" current stable_samples=0
+  for _ in $(seq 1 200); do
     current="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
     if [[ -n "$previous" && "$current" == "$previous" ]]; then
-      return 0
+      stable_samples=$((stable_samples + 1))
+      if [[ "$stable_samples" == "10" ]]; then
+        return 0
+      fi
+    else
+      stable_samples=0
     fi
     previous="$current"
-    sleep 0.1
+    sleep 0.05
   done
   echo "the Registry never settled after a live pane was killed" >&2
   exit 1
@@ -3816,12 +4000,20 @@ startup_cleanup() {
 }
 trap 'startup_cleanup; smoke_cleanup_env' EXIT
 
+startup_pmx reconcile resources --socket "$startup_socket" --dry-run -o json >"$startup_root/d2.json"
+smoke_assert_file_contains "$startup_root/d2.json" '"outcome": "no-op"'
+if [[ -e "$startup_root/state/projmux/metadata/registry.json" ]]; then
+  echo "startup D2 dry-run created a Registry" >&2
+  exit 1
+fi
+startup_pmx create project --root "$startup_root/work/alpha" --name alpha >"$startup_root/register-alpha.out"
 startup_pmx internal tmux apply --bin "$bin" --config "$startup_root/config/projmux/tmux.conf" --socket "$startup_socket" >"$startup_root/apply.out"
-startup_pmx reconcile resources --socket "$startup_socket" >"$startup_root/import.out"
+e2e_bounded_reconcile_to_noop "$startup_root/import" \
+  startup_pmx reconcile resources --socket "$startup_socket" -o json
 
 startup_project_uid="$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)"
 if [[ -z "$startup_project_uid" ]]; then
-  echo "startup e2e import left the Project uid empty" >&2
+  echo "startup e2e explicit authority left the Project uid empty" >&2
   exit 1
 fi
 # The stored command is a one-time name seed. A startup that executed it would
@@ -4449,7 +4641,7 @@ echo ">> First-open Project identity mirror e2e passed: socket=$fopen_socket pat
 rtd_root="$PROJMUX_SMOKE_WORKDIR/runtime-diagnostics-e2e"
 rtd_socket="projmux-runtime-diag-$$-$RANDOM"
 rtd_other_socket="projmux-runtime-diag-other-$$-$RANDOM"
-rtd_session="runtime-alpha"
+rtd_session="work-alpha"
 rtd_driver="runtime-driver"
 mkdir -p "$rtd_root/tmux" "$rtd_root/state" "$rtd_root/config" "$rtd_root/home" \
   "$rtd_root/runtime" "$rtd_root/work/alpha"
@@ -4511,10 +4703,18 @@ rtd_tmux set-option -g -q @projmux_app 1
 # writing, not projmux, and leaving it on would make the zero-write comparison
 # below fail the moment a client attaches and a shell starts.
 rtd_tmux set-option -g -q automatic-rename off
-rtd_pmx reconcile resources --socket "$rtd_socket" >"$rtd_root/import.out"
+rtd_pmx reconcile resources --socket "$rtd_socket" --dry-run -o json >"$rtd_root/d2.json"
+smoke_assert_file_contains "$rtd_root/d2.json" '"outcome": "no-op"'
+if [[ -e "$rtd_root/state/projmux/metadata/registry.json" ]]; then
+  echo "runtime diagnostics D2 dry-run created a Registry" >&2
+  exit 1
+fi
+rtd_pmx create project --root "$rtd_root/work/alpha" --name alpha >"$rtd_root/register-alpha.out"
+e2e_bounded_reconcile_to_noop "$rtd_root/import" \
+  rtd_pmx reconcile resources --socket "$rtd_socket" -o json
 rtd_project_uid="$(rtd_tmux show-options -t "$rtd_session" -qv @projmux_project_uid)"
 if [[ -z "$rtd_project_uid" ]]; then
-  echo "runtime diagnostics e2e import left the Project uid empty" >&2
+  echo "runtime diagnostics e2e explicit authority left the Project uid empty" >&2
   exit 1
 fi
 
@@ -4707,9 +4907,9 @@ nav_socket="projmux-registry-nav-$$-$RANDOM"
 nav_other_socket="projmux-registry-nav-other-$$-$RANDOM"
 nav_session="nav-alpha"
 nav_beta_session="nav-beta"
-nav_driver="nav-driver"
+nav_driver="home"
 mkdir -p "$nav_root/tmux" "$nav_root/state" "$nav_root/config" "$nav_root/home" \
-  "$nav_root/runtime" "$nav_root/work/alpha" "$nav_root/work/beta"
+  "$nav_root/runtime" "$nav_root/nav/alpha" "$nav_root/nav/beta"
 chmod 0700 "$nav_root/runtime"
 nav_real_tmux="$(command -v tmux)"
 
@@ -4721,20 +4921,23 @@ nav_pmx() {
     XDG_CONFIG_HOME="$nav_root/config" \
     XDG_STATE_HOME="$nav_root/state" \
     XDG_RUNTIME_DIR="$nav_root/runtime" \
-    PROJMUX_MANAGED_ROOTS="$nav_root/work" \
+    PROJMUX_MANAGED_ROOTS="$nav_root/nav" \
     TMUX_TMPDIR="$nav_root/tmux" \
     SHELL=/bin/sh \
     "$bin" "$@"
 }
 
-nav_tmux new-session -d -s "$nav_session" -c "$nav_root/work/alpha" sleep 600
-nav_tmux set-option -t "$nav_session" -q @projmux_project_path "$nav_root/work/alpha"
+nav_tmux new-session -d -s "$nav_session" -c "$nav_root/nav/alpha" sleep 600
+nav_tmux set-option -t "$nav_session" -q @projmux_project_path "$nav_root/nav/alpha"
 # A second managed Project, imported in the same reconcile so the Registry holds
 # both in a known slice order. Only one of them is live at a time later, which is
 # what makes the presentation tiers observable at all.
-nav_tmux new-session -d -s "$nav_beta_session" -c "$nav_root/work/beta" sleep 600
-nav_tmux set-option -t "$nav_beta_session" -q @projmux_project_path "$nav_root/work/beta"
-nav_tmux new-session -d -s "$nav_driver" -c "$nav_root" bash --noprofile --norc
+nav_tmux new-session -d -s "$nav_beta_session" -c "$nav_root/nav/beta" sleep 600
+nav_tmux set-option -t "$nav_beta_session" -q @projmux_project_path "$nav_root/nav/beta"
+# The attached origin is the canonical Home target. Clearing a Project filter
+# therefore exercises the real Home preview return without a fixture-only tmux
+# switch; `nav-home` below remains the separate control-role runtime object.
+nav_tmux new-session -d -s "$nav_driver" -c "$nav_root/home" bash --noprofile --norc
 nav_other_tmux new-session -d -s untouched -c "$nav_root" sleep 600
 nav_other_tmux set-option -gq @projmux_nav_sentinel unchanged
 
@@ -4770,12 +4973,21 @@ nav_tmux set-option -g -q @projmux_app 1
 # tmux renames a window to its foreground command on its own. That is tmux
 # writing, not projmux, and it would break the zero-write comparison below.
 nav_tmux set-option -g -q automatic-rename off
-nav_pmx reconcile resources --socket "$nav_socket" >"$nav_root/import.out"
+nav_pmx reconcile resources --socket "$nav_socket" --dry-run -o json >"$nav_root/d2.json"
+smoke_assert_file_contains "$nav_root/d2.json" '"outcome": "no-op"'
+if [[ -e "$nav_root/state/projmux/metadata/registry.json" ]]; then
+  echo "registry navigation D2 dry-run created a Registry" >&2
+  exit 1
+fi
+nav_pmx create project --root "$nav_root/nav/alpha" --name alpha >"$nav_root/register-alpha.out"
+nav_pmx create project --root "$nav_root/nav/beta" --name beta >"$nav_root/register-beta.out"
+e2e_bounded_reconcile_to_noop "$nav_root/import" \
+  nav_pmx reconcile resources --socket "$nav_socket" -o json
 nav_project_uid="$(nav_tmux show-options -t "$nav_session" -qv @projmux_project_uid)"
 nav_beta_uid="$(nav_tmux show-options -t "$nav_beta_session" -qv @projmux_project_uid)"
 for nav_uid in "$nav_project_uid" "$nav_beta_uid"; do
   if [[ -z "$nav_uid" ]]; then
-    echo "registry navigation e2e import left a Project uid empty" >&2
+    echo "registry navigation e2e explicit authority left a Project uid empty" >&2
     exit 1
   fi
 done
@@ -4832,14 +5044,16 @@ nav_wait_for() {
 nav_wait_for "attached registry navigation client" sh -c \
   "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$nav_root/tmux' tmux -L '$nav_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
 nav_client="$(nav_tmux list-clients -F '#{client_name}' | head -n 1)"
-
+nav_client_is_on_driver() {
+  [[ "$(nav_tmux display-message -p -c "$nav_client" '#{session_name}' 2>/dev/null || true)" == "$nav_driver" ]]
+}
 # One 80x24 popup run of the Projects sidebar, rendered through the exact
 # inherited socket the client is attached to.
 nav_open_projects() {
   local offset_var="$1"
   printf -v "$offset_var" '%s' "$(stat -c %s "$nav_client_log")"
   nav_tmux display-popup -c "$nav_client" -T "Projects E2E" -w 80 -h 24 -E \
-    "env -u TMUX_PANE HOME='$nav_root/home' XDG_CONFIG_HOME='$nav_root/config' XDG_STATE_HOME='$nav_root/state' XDG_RUNTIME_DIR='$nav_root/runtime' PROJMUX_MANAGED_ROOTS='$nav_root/work' TMUX_TMPDIR='$nav_root/tmux' TMUX='$nav_socket_path,$nav_socket_pid,0' SHELL=/bin/sh '$bin' switch --ui=sidebar" &
+    "env -u TMUX_PANE HOME='$nav_root/home' XDG_CONFIG_HOME='$nav_root/config' XDG_STATE_HOME='$nav_root/state' XDG_RUNTIME_DIR='$nav_root/runtime' PROJMUX_MANAGED_ROOTS='$nav_root/nav' TMUX_TMPDIR='$nav_root/tmux' TMUX='$nav_socket_path,$nav_socket_pid,0' SHELL=/bin/sh '$bin' switch --ui=sidebar" &
   nav_popup_pid=$!
 }
 
@@ -4850,11 +5064,27 @@ nav_screen_has() {
 nav_wait_for "Projects sidebar" nav_screen_has "Projects"
 # The Runtime link is a row of the Projects list, and it says what it leads to.
 # The tally is the observation that the runtime-only objects on this server are
-# present and reachable while being absent from the managed rows.
-nav_wait_for "Runtime link row" nav_screen_has "Runtime -"
-nav_wait_for "Runtime link control tally" nav_screen_has "control 1"
-nav_wait_for "Runtime link ephemeral tally" nav_screen_has "ephemeral 1"
-nav_wait_for "Runtime link recoverable tally" nav_screen_has "recoverable 1"
+# present and reachable while being absent from the managed rows. Filter to the
+# row so this evidence is independent of how many Home preview lines fit in the
+# fixed 80x24 viewport.
+nav_runtime_filter_offset="$(stat -c %s "$nav_client_log")"
+printf 'Runtime' >&8
+nav_runtime_filter_has() {
+  tail -c +$((nav_runtime_filter_offset + 1)) "$nav_client_log" | grep -aF "$1" >/dev/null
+}
+nav_wait_for "Runtime link row" nav_runtime_filter_has "Runtime -"
+nav_wait_for "Runtime link control tally" nav_runtime_filter_has "control 1"
+nav_wait_for "Runtime link ephemeral tally" nav_runtime_filter_has "ephemeral 1"
+nav_wait_for "Runtime link recoverable tally" nav_runtime_filter_has "recoverable 1"
+
+nav_runtime_clear_offset="$(stat -c %s "$nav_client_log")"
+printf '\025' >&8
+nav_runtime_clear_has_home() {
+  tail -c +$((nav_runtime_clear_offset + 1)) "$nav_client_log" | grep -aF "home" >/dev/null &&
+    tail -c +$((nav_runtime_clear_offset + 1)) "$nav_client_log" | grep -aF "~" >/dev/null
+}
+nav_wait_for "Home root after clearing the Runtime filter" nav_runtime_clear_has_home
+nav_wait_for "Runtime filter clear return to the driver session" nav_client_is_on_driver
 
 # The managed row is reached through the list's own filter rather than by
 # assuming a viewport. An 80x24 popup shows three cards at a time, so a row's
@@ -4868,7 +5098,7 @@ nav_filter_has() {
 # The needle is the row's own path line rather than the name, because the search
 # field echoes whatever was typed: only the card can put the Project root on the
 # screen.
-nav_wait_for "managed Project row" nav_filter_has "work/alpha"
+nav_wait_for "managed Project row" nav_filter_has "nav/alpha"
 
 # The dedicated key opens the read-only Registry hierarchy of the selected
 # Project: its Window, its shell Pane, and their live status. This surface is the
@@ -4892,11 +5122,28 @@ for nav_absent in nav-home nav-scratch handmade phantom; do
     exit 1
   fi
 done
+nav_root_return_offset="$(stat -c %s "$nav_client_log")"
 printf '\003' >&8
+nav_root_return_has() {
+  tail -c +$((nav_root_return_offset + 1)) "$nav_client_log" | grep -aF "$1" >/dev/null
+}
+nav_wait_for "Projects root after closing the resources hierarchy" \
+  nav_root_return_has "Alt-P: pin project"
+# The root picker intentionally retains its `alpha` filter. Clear it through
+# the picker input so Home becomes the selected root row and its preview
+# restores the attached origin before the outer cancel is delivered.
+nav_home_return_offset="$(stat -c %s "$nav_client_log")"
+printf '\025' >&8
+nav_home_return_has() {
+  tail -c +$((nav_home_return_offset + 1)) "$nav_client_log" | grep -aF "home" >/dev/null &&
+    tail -c +$((nav_home_return_offset + 1)) "$nav_client_log" | grep -aF "~" >/dev/null
+}
+nav_wait_for "Home root selection after clearing the Projects filter" nav_home_return_has
+nav_wait_for "Home preview return to the driver session" nav_client_is_on_driver
 printf '\003' >&8
 nav_wait_for "Projects popup exit" sh -c "! kill -0 '$nav_popup_pid' 2>/dev/null"
 wait "$nav_popup_pid" || true
-
+nav_wait_for "Projects sidebar return to the driver session" nav_client_is_on_driver
 # The presentation order of the managed rows.
 #
 # Order is a property of the list, so it is read out of a real pane instead of a
@@ -4917,7 +5164,7 @@ nav_order_session="nav-order"
 nav_order_pane=""
 nav_open_order_pane() {
   nav_order_pane="$(nav_tmux new-session -d -s "$nav_order_session" -x 100 -y 40 -P -F '#{pane_id}' -c "$nav_root/home" \
-    "env HOME='$nav_root/home' XDG_CONFIG_HOME='$nav_root/config' XDG_STATE_HOME='$nav_root/state' XDG_RUNTIME_DIR='$nav_root/runtime' PROJMUX_MANAGED_ROOTS='$nav_root/work' TMUX_TMPDIR='$nav_root/tmux' SHELL=/bin/sh '$bin' switch --ui=sidebar")"
+    "env HOME='$nav_root/home' XDG_CONFIG_HOME='$nav_root/config' XDG_STATE_HOME='$nav_root/state' XDG_RUNTIME_DIR='$nav_root/runtime' PROJMUX_MANAGED_ROOTS='$nav_root/nav' TMUX_TMPDIR='$nav_root/tmux' SHELL=/bin/sh '$bin' switch --ui=sidebar")"
 }
 nav_close_order_pane() {
   nav_tmux kill-session -t "=$nav_order_session" >/dev/null 2>&1 || true
@@ -4925,8 +5172,8 @@ nav_close_order_pane() {
 }
 nav_order_sequence() {
   nav_tmux capture-pane -p -t "$nav_order_pane" 2>/dev/null \
-    | grep -aoE 'work/(alpha|beta)' \
-    | sed -e 's|work/||' \
+    | grep -aoE 'nav/(alpha|beta)' \
+    | sed -e 's|nav/||' \
     | awk '!seen[$0]++' \
     | tr '\n' ' ' \
     | sed -e 's/ *$//'
@@ -4945,12 +5192,12 @@ nav_home_row_leads() {
   nav_tmux capture-pane -p -t "$nav_order_pane" 2>/dev/null | awk '
     { line = $0
       if (!home && index(line, "~") > 0 && index(line, "/") == 0) { home = NR }
-      if (!project && (index(line, "work/alpha") > 0 || index(line, "work/beta") > 0)) { project = NR } }
+      if (!project && (index(line, "nav/alpha") > 0 || index(line, "nav/beta") > 0)) { project = NR } }
     END { exit !(home && project && home < project) }'
 }
 nav_registry_project_order() {
   grep -a '"root":' "$nav_registry" \
-    | sed -e 's|.*/work/||' -e 's|".*||' \
+    | sed -e 's|.*/nav/||' -e 's|".*||' \
     | tr '\n' ' ' \
     | sed -e 's/ *$//'
 }
@@ -4985,7 +5232,7 @@ printf 'alpha' >&8
 nav_offline_filter_has() {
   tail -c +$((nav_offline_filter_offset + 1)) "$nav_client_log" | grep -aFq "$1"
 }
-nav_wait_for "offline Project row" nav_offline_filter_has "work/alpha"
+nav_wait_for "offline Project row" nav_offline_filter_has "nav/alpha"
 nav_offline_offset="$(stat -c %s "$nav_client_log")"
 printf '\022' >&8
 nav_offline_has() {
@@ -4994,10 +5241,37 @@ nav_offline_has() {
 nav_wait_for "offline hierarchy" nav_offline_has "Projects > Resources"
 nav_wait_for "offline hierarchy row" nav_offline_has "offline"
 nav_wait_for "offline start action" nav_offline_has "start"
+nav_offline_root_return_offset="$(stat -c %s "$nav_client_log")"
 printf '\003' >&8
+nav_offline_root_return_has() {
+  tail -c +$((nav_offline_root_return_offset + 1)) "$nav_client_log" | grep -aF "$1" >/dev/null
+}
+nav_wait_for "Projects root after closing the offline resources hierarchy" \
+  nav_offline_root_return_has "Alt-P: pin project"
+# fzf may retain the already-rendered Home cells when `alpha` is cleared, so a
+# fresh log slice is not guaranteed to contain their bytes. First transition
+# through an acknowledged no-match query; clearing that query must repopulate
+# and newly render the Home row/path before the outer picker is cancelled.
+nav_offline_no_match_offset="$(stat -c %s "$nav_client_log")"
+printf '__phase8_no_match__' >&8
+nav_offline_no_match_has() {
+  tail -c +$((nav_offline_no_match_offset + 1)) "$nav_client_log" |
+    grep -aF "__phase8_no_match__" >/dev/null
+}
+nav_wait_for "offline Projects no-match query" nav_offline_no_match_has
+nav_offline_home_return_offset="$(stat -c %s "$nav_client_log")"
+printf '\025' >&8
+nav_offline_home_return_has() {
+  tail -c +$((nav_offline_home_return_offset + 1)) "$nav_client_log" | grep -aF "home" >/dev/null &&
+    tail -c +$((nav_offline_home_return_offset + 1)) "$nav_client_log" | grep -aF "~" >/dev/null
+}
+nav_wait_for "Home root selection after clearing the offline Projects filter" \
+  nav_offline_home_return_has
+nav_wait_for "offline Home preview return to the driver session" nav_client_is_on_driver
 printf '\003' >&8
 nav_wait_for "offline Projects popup exit" sh -c "! kill -0 '$nav_popup_pid' 2>/dev/null"
 wait "$nav_popup_pid" || true
+nav_wait_for "offline Projects sidebar return to the driver session" nav_client_is_on_driver
 
 # The closed Project is still a row and it is now behind the one that is still
 # live. Nothing about the Registry changed -- its slice order is the same file --
@@ -5315,7 +5589,7 @@ echo ">> discovery/pin authority e2e passed: socket=$disc_socket path=$disc_sock
 exitrec_root="$PROJMUX_SMOKE_WORKDIR/exit-reconciliation"
 exitrec_socket="projmux-exitrec-$RANDOM-$$"
 exitrec_other_socket="projmux-exitrec-other-$RANDOM-$$"
-exitrec_session="exitrec-alpha"
+exitrec_session="work-alpha"
 mkdir -p \
   "$exitrec_root/home" \
   "$exitrec_root/config" \
@@ -5435,13 +5709,21 @@ trap 'exitrec_cleanup; smoke_cleanup_env' EXIT
 # Install the generated config on the exact socket. This is what puts the
 # `pane-exited`, `after-kill-pane`, and `window-unlinked` hooks in place; every
 # hook-only convergence below is driven by them and by nothing this script runs.
+exitrec_pmx reconcile resources --socket "$exitrec_socket" --dry-run -o json >"$exitrec_root/d2.json"
+smoke_assert_file_contains "$exitrec_root/d2.json" '"outcome": "no-op"'
+if [[ -e "$exitrec_root/state/projmux/metadata/registry.json" ]]; then
+  echo "exit reconciliation D2 dry-run created a Registry" >&2
+  exit 1
+fi
+exitrec_pmx create project --root "$exitrec_root/work/alpha" --name alpha >"$exitrec_root/register-alpha.out"
 exitrec_pmx internal tmux apply --bin "$bin" \
   --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
   >"$exitrec_root/apply.out"
-exitrec_pmx reconcile resources --socket "$exitrec_socket" >"$exitrec_root/import.out"
+e2e_bounded_reconcile_to_noop "$exitrec_root/import" \
+  exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json
 exitrec_project_uid="$(exitrec_tmux show-options -qv -t "$exitrec_session" @projmux_project_uid)"
 if [[ -z "$exitrec_project_uid" ]]; then
-  echo "exit reconciliation e2e import left the Project uid empty" >&2
+  echo "exit reconciliation e2e explicit authority left the Project uid empty" >&2
   exit 1
 fi
 if ! exitrec_tmux show-hooks -g | grep -q "internal tmux converge --socket-path"; then
@@ -5545,14 +5827,19 @@ echo ">> exit reconciliation e2e hook-driven clean exit agent=$exitrec_clean_age
 # 3. The read surfaces project what the hook stored, and write nothing.
 exitrec_registry="$exitrec_root/state/projmux/metadata/registry.json"
 exitrec_settle_registry() {
-  local previous="" current
-  for _ in $(seq 1 150); do
+  local previous="" current stable_samples=0
+  for _ in $(seq 1 300); do
     current="$(sha256sum "$exitrec_registry" | cut -d' ' -f1)"
     if [[ -n "$previous" && "$current" == "$previous" ]]; then
-      return 0
+      stable_samples=$((stable_samples + 1))
+      if [[ "$stable_samples" == "10" ]]; then
+        return 0
+      fi
+    else
+      stable_samples=0
     fi
     previous="$current"
-    sleep 0.2
+    sleep 0.05
   done
   echo "the Registry never settled after the pane-exit hooks fired" >&2
   exit 1
@@ -5684,9 +5971,16 @@ case "$menu_socket_path" in
     ;;
 esac
 
+menu_pmx reconcile resources --socket "$menu_socket" --dry-run -o json >"$menu_root/d2.json"
+smoke_assert_file_contains "$menu_root/d2.json" '"outcome": "no-op"'
+if [[ -e "$menu_root/state/projmux/metadata/registry.json" ]]; then
+  echo "pane-menu D2 dry-run created a Registry" >&2
+  exit 1
+fi
 menu_project_uid="$(menu_pmx create project --root "$menu_root/work/alpha" -o uid)"
 menu_pmx config apply --bin "$bin" --config "$menu_config" --socket "$menu_socket" >"$menu_root/apply.out"
-menu_pmx reconcile resources --socket "$menu_socket" >"$menu_root/reconcile.out"
+e2e_bounded_reconcile_to_noop "$menu_root/reconcile" \
+  menu_pmx reconcile resources --socket "$menu_socket" -o json
 if [[ -z "$(menu_tmux show-options -pqv -t "$menu_origin_pane" @projmux_pane_uid)" ]]; then
   echo "pane-menu fixture origin was not reconciled as a managed Pane" >&2
   exit 1

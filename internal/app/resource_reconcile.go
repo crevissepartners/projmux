@@ -54,6 +54,8 @@ type resourceReconcileOptions struct {
 	socket              string
 	socketPath          string
 	materializeProjects repeatedFlag
+	importOrphanMirrors bool
+	yes                 bool
 }
 
 type resourceReconcileTarget struct {
@@ -122,12 +124,13 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 		reportTarget.Mode = "socket-path"
 	}
 	planner := resourceReconcilePlanner{
-		reader:             explicitTmuxRunner{runner: c.runner, target: target},
-		store:              c.resources,
-		newReconciler:      c.newReconciler,
-		materializeProject: firstRepeatedValue(opts.materializeProjects),
-		exactTarget:        target,
-		agents:             c.agents,
+		reader:               explicitTmuxRunner{runner: c.runner, target: target},
+		store:                c.resources,
+		newReconciler:        c.newReconciler,
+		materializeProject:   firstRepeatedValue(opts.materializeProjects),
+		exactTarget:          target,
+		agents:               c.agents,
+		approvedOrphanImport: opts.importOrphanMirrors,
 	}
 	ctx := context.Background()
 	// Explicit topology materialization keeps its own engine. It activates
@@ -141,6 +144,7 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 		return c.runMaterializeExecute(ctx, planner, target, reportTarget, opts, stdout, stderr)
 	}
 	kernel := newResourceControllerKernel(c.runner, c.resources, planner, target)
+	kernel.approvedOrphanImport = opts.importOrphanMirrors
 	if opts.dryRun {
 		return c.runControllerDryRun(ctx, kernel, reportTarget, opts, stdout)
 	}
@@ -157,6 +161,8 @@ func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceRec
 	fs.StringVar(&opts.socket, "socket", "", "exact tmux socket name (tmux -L)")
 	fs.StringVar(&opts.socketPath, "socket-path", "", "exact absolute tmux socket path (tmux -S)")
 	fs.Var(&opts.materializeProjects, "materialize-project", "materialize one exact Project by name or uid:<uid>")
+	fs.BoolVar(&opts.importOrphanMirrors, "import-orphan-mirrors", false, "import exact D3 orphan mirrors at approved L7")
+	fs.BoolVar(&opts.yes, "yes", false, "confirm the disclosed recovery loss")
 	if err := fs.Parse(args); err != nil {
 		return resourceReconcileOptions{}, err
 	}
@@ -172,6 +178,12 @@ func parseResourceReconcileOptions(args []string, stderr io.Writer) (resourceRec
 	}
 	if len(opts.materializeProjects) > 1 {
 		return resourceReconcileOptions{}, usageError("reconcile resources accepts exactly one --materialize-project occurrence")
+	}
+	if opts.importOrphanMirrors && !opts.dryRun && !opts.yes {
+		return resourceReconcileOptions{}, usageError("reconcile resources --import-orphan-mirrors requires --yes after reviewing --dry-run loss kind/count")
+	}
+	if opts.yes && !opts.importOrphanMirrors {
+		return resourceReconcileOptions{}, usageError("reconcile resources --yes requires --import-orphan-mirrors")
 	}
 	// A present-but-blank selector must not silently degrade into the broad
 	// default reconcile. The caller asked for one scoped Project; an empty
@@ -542,6 +554,12 @@ func formatResourceReconcileItem(item resourceReconcileItem) string {
 	if item.Reason != "" {
 		line += " (" + item.Reason + ")"
 	}
+	if item.LossKind != "" {
+		line += fmt.Sprintf(" loss-kind=%s loss-count=%d", item.LossKind, item.LossCount)
+	}
+	if item.ApprovalCommand != "" {
+		line += " approve-with=" + item.ApprovalCommand
+	}
 	return line
 }
 
@@ -560,5 +578,5 @@ func displayPlanValue(value string) string {
 }
 
 func printResourceReconcileUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]")
+	fmt.Fprintln(w, "usage: projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--import-orphan-mirrors --yes] [--socket <name> | --socket-path <absolute>] [-o json]")
 }

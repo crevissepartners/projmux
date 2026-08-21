@@ -177,6 +177,20 @@ func newReconcileFixture(t *testing.T, socketFlag, socketValue string) (*resourc
 	session := server.addSession("alpha")
 	session.opts[inttmux.ProjectPathSessionOption] = root
 	store := &fakeResourceStore{registry: coremetadata.NewRegistry(), dirs: map[string]bool{root: true}, now: resourceFixtureClock}
+	// Most reconciliation tests exercise repair of Registry-owned identity, not
+	// legacy import. Seed that authority explicitly in the fixture; the public
+	// command must no longer turn this live D2 topology into Registry rows.
+	_, err := store.mutator().ImportLegacySession(&store.registry, coremetadata.LegacySession{
+		Session: "alpha",
+		Root:    root,
+		Windows: []coremetadata.LegacyWindow{{
+			Name:  session.windows[0].name,
+			Panes: []coremetadata.LegacyPane{{Command: "zsh", CWD: root}},
+		}},
+	}, "/bin/zsh", "op-fixture-authority", coremetadata.NewBindingMatcher(coremetadata.RuntimeObservation{}))
+	if err != nil {
+		t.Fatalf("seed authoritative reconcile fixture: %v", err)
+	}
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{socketFlag + "\x00" + socketValue: server}}
 	command := &resourceReconcileCommand{
 		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
@@ -218,7 +232,7 @@ func TestResourceReconcileDryRunIsDeterministicAndByteStable(t *testing.T) {
 	if first != second {
 		t.Fatalf("dry-run output changed across identical plans:\n--- first ---\n%s\n--- second ---\n%s", first, second)
 	}
-	for _, want := range []string{`"drift": "missing"`, `"surface": "registry"`, `"surface": "tmux"`, `"after": "uid:<allocated-project-1>"`, `"tmuxFlag": "-L"`} {
+	for _, want := range []string{`"drift": "missing"`, `"surface": "tmux"`, `"after": "project-test-1"`, `"tmuxFlag": "-L"`} {
 		if !strings.Contains(first, want) {
 			t.Fatalf("dry-run JSON missing %q:\n%s", want, first)
 		}
@@ -386,7 +400,7 @@ func TestResourceReconcileExecuteConvergesOneSocketAndRepeatsNoop(t *testing.T) 
 	if err != nil || stderr != "" {
 		t.Fatalf("execute error=%v stderr=%q\n%s", err, stderr, first)
 	}
-	if !strings.Contains(first, `"outcome": "changed"`) || store.writes != 1 {
+	if !strings.Contains(first, `"outcome": "changed"`) || store.writes != 0 {
 		t.Fatalf("execute result/writes mismatch: writes=%d\n%s", store.writes, first)
 	}
 	session := primary.session("alpha")
@@ -411,12 +425,12 @@ func TestResourceReconcileExecuteConvergesOneSocketAndRepeatsNoop(t *testing.T) 
 	if !strings.Contains(second, `"outcome": "no-op"`) || !strings.Contains(second, `"noOp": 1`) {
 		t.Fatalf("repeat was not a no-op:\n%s", second)
 	}
-	if store.writes != 1 || tmuxMutationCallCount(primary) != 0 {
+	if store.writes != 0 || tmuxMutationCallCount(primary) != 0 {
 		t.Fatalf("repeat mutated state: Registry writes=%d tmux mutations=%d", store.writes, tmuxMutationCallCount(primary))
 	}
 }
 
-func TestResourceReconcileBlankOrphanPaneKeepsInitialGuardThroughOverlay(t *testing.T) {
+func TestResourceReconcileBlankD2PaneRemainsUnattributed(t *testing.T) {
 	t.Parallel()
 
 	command, store, primary, _, _ := newReconcileFixture(t, "-L", "primary")
@@ -432,11 +446,11 @@ func TestResourceReconcileBlankOrphanPaneKeepsInitialGuardThroughOverlay(t *test
 	if err != nil || stderr != "" {
 		t.Fatalf("blank orphan reconcile error=%v stderr=%q\n%s", err, stderr, first)
 	}
-	if raw.opts[tmuxopts.PaneUID] == "" {
-		t.Fatalf("blank orphan Pane %s did not receive its exact Registry mirror", raw.id)
+	if raw.opts[tmuxopts.PaneUID] != "" {
+		t.Fatalf("blank D2 Pane %s received Registry identity %q", raw.id, raw.opts[tmuxopts.PaneUID])
 	}
-	if !strings.Contains(first, `"outcome": "changed"`) {
-		t.Fatalf("blank orphan reconcile report:\n%s", first)
+	if !strings.Contains(first, `"outcome": "no-op"`) {
+		t.Fatalf("blank D2 reconcile report:\n%s", first)
 	}
 
 	primary.calls = nil
@@ -444,12 +458,12 @@ func TestResourceReconcileBlankOrphanPaneKeepsInitialGuardThroughOverlay(t *test
 	if err != nil || stderr != "" || !strings.Contains(repeat, `"outcome": "no-op"`) || tmuxMutationCallCount(primary) != 0 {
 		t.Fatalf("blank orphan repeat error=%v stderr=%q mutations=%d\n%s", err, stderr, tmuxMutationCallCount(primary), repeat)
 	}
-	if store.writes != 2 {
-		t.Fatalf("Registry writes = %d, want seed + orphan only", store.writes)
+	if store.writes != 0 {
+		t.Fatalf("Registry writes = %d, want no D2 import", store.writes)
 	}
 }
 
-func TestResourceReconcileBlankOrphanPaneGuardRejectsForeignClaimAfterPlanning(t *testing.T) {
+func TestApprovedD3ModeStillPlansNoBlankD2Import(t *testing.T) {
 	t.Parallel()
 
 	command, store, primary, _, _ := newReconcileFixture(t, "-L", "primary")
@@ -459,6 +473,7 @@ func TestResourceReconcileBlankOrphanPaneGuardRejectsForeignClaimAfterPlanning(t
 	raw := newFakeTmuxPane(primary.mint("%"))
 	raw.opts[aiPaneAgentOption] = "antigravity"
 	primary.session("alpha").windows[0].panes = append(primary.session("alpha").windows[0].panes, raw)
+	primary.calls = nil
 
 	target, err := tmuxSocketNameTarget("primary")
 	if err != nil {
@@ -469,35 +484,19 @@ func TestResourceReconcileBlankOrphanPaneGuardRejectsForeignClaimAfterPlanning(t
 		store:         command.resources,
 		newReconciler: command.newReconciler,
 	}
+	planner.approvedOrphanImport = true
 	registryBefore, writesBefore := store.snapshot(), store.writes
 	plan, err := planner.build(context.Background(), store.registry.Clone())
 	if err != nil {
 		t.Fatalf("plan blank orphan: %v", err)
 	}
-	guardFound := false
 	for _, write := range plan.writes {
 		if write.target == raw.id && write.field == tmuxopts.PaneUID {
-			guardFound = true
-			if write.guardBefore != "" {
-				t.Fatalf("blank orphan guard = %q, want preserved initial blank", write.guardBefore)
-			}
+			t.Fatalf("approved D3 mode planned blank D2 import: %+v", write)
 		}
 	}
-	if !guardFound {
-		t.Fatalf("plan contains no Pane UID mirror for blank orphan %s: %#v", raw.id, plan.writes)
-	}
-
-	raw.opts[tmuxopts.PaneUID] = "foreign-pane"
-	primary.calls = nil
-	err = validateResourcePlanWrites(context.Background(), explicitTmuxRunner{runner: command.runner, target: target}, plan.writes)
-	if err == nil || !strings.Contains(err.Error(), "changed before repair") {
-		t.Fatalf("foreign post-plan Pane claim was not rejected: %v", err)
-	}
-	if got := raw.opts[tmuxopts.PaneUID]; got != "foreign-pane" {
-		t.Fatalf("foreign Pane uid = %q, want preserved", got)
-	}
 	if store.snapshot() != registryBefore || store.writes != writesBefore || tmuxMutationCallCount(primary) != 0 {
-		t.Fatalf("failed prevalidation mutated state: Registry writes=%d want=%d tmux mutations=%d", store.writes, writesBefore, tmuxMutationCallCount(primary))
+		t.Fatalf("D2 planning mutated state: Registry writes=%d want=%d tmux mutations=%d", store.writes, writesBefore, tmuxMutationCallCount(primary))
 	}
 }
 
@@ -605,8 +604,14 @@ func TestResourceReconcileRefusesForeignAndAmbiguousBindings(t *testing.T) {
 			t.Fatalf("negative report missing %q:\n%s", want, stdout)
 		}
 	}
-	if got := server.state(); got != before || tmuxMutationCallCount(server) != 0 {
-		t.Fatalf("foreign session was mutated:\n--- got ---\n%s\n--- want ---\n%s", got, before)
+	if got := session.opts[tmuxopts.ProjectUIDSession]; got != "" {
+		t.Fatalf("automatic D3 L8 did not clear foreign Project mirror: %q", got)
+	}
+	if session.windows[0].opts[tmuxopts.WindowUID] != "win-foreign" || session.windows[1].opts[tmuxopts.WindowUID] != "win-foreign" {
+		t.Fatalf("D4 Window claims changed: %s", server.state())
+	}
+	if got := server.state(); got == before || tmuxMutationCallCount(server) != 1 {
+		t.Fatalf("expected only D3 Project L8 mutation:\n--- got ---\n%s\n--- before ---\n%s", got, before)
 	}
 }
 
@@ -643,25 +648,25 @@ func TestResourceReconcileRefusesDuplicateUIDLessProjectClaims(t *testing.T) {
 	}
 }
 
-func TestResourceReconcileForeignProjectDoesNotRecoverMissingRegistryState(t *testing.T) {
+func TestResourceReconcileForeignProjectRunsAutomaticL8WithoutRegistryLoss(t *testing.T) {
 	t.Parallel()
 
 	command, store, server, _, _ := newReconcileFixture(t, "-L", "primary")
 	session := server.session("alpha")
 	session.opts[tmuxopts.ProjectUIDSession] = "prj-foreign"
-	before := server.state()
+	registryBefore := store.snapshot()
 	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
-	if err == nil {
-		t.Fatal("foreign Project execute unexpectedly succeeded")
+	if err != nil {
+		t.Fatalf("foreign Project L8 failed: %v\n%s", err, stdout)
 	}
-	if !strings.Contains(stdout, `"kind": "Project"`) || !strings.Contains(stdout, `"outcome": "refused"`) {
-		t.Fatalf("foreign Project refusal missing:\n%s", stdout)
+	if !strings.Contains(stdout, `"action": "L8-discard-mirror"`) {
+		t.Fatalf("foreign Project L8 missing:\n%s", stdout)
 	}
-	if len(store.registry.Projects) != 0 || store.writes != 0 {
-		t.Fatalf("foreign Project triggered Registry state-loss recovery: writes=%d snapshot=%s", store.writes, store.snapshot())
+	if store.snapshot() != registryBefore || store.writes != 0 {
+		t.Fatalf("automatic L8 changed Registry: writes=%d snapshot=%s", store.writes, store.snapshot())
 	}
-	if got := server.state(); got != before || tmuxMutationCallCount(server) != 0 {
-		t.Fatalf("foreign Project session was mutated:\n--- got ---\n%s\n--- want ---\n%s", got, before)
+	if got := session.opts[tmuxopts.ProjectUIDSession]; got != "" {
+		t.Fatalf("foreign Project mirror survived L8: %q", got)
 	}
 }
 
@@ -744,7 +749,7 @@ func TestResourceReconcileTmuxFailureLeavesRetryableRegistryAuthority(t *testing
 	if err == nil {
 		t.Fatal("injected tmux failure unexpectedly succeeded")
 	}
-	if store.writes != 1 || len(store.registry.Projects) != 1 || len(store.registry.Windows) != 1 || len(store.registry.Panes) != 1 {
+	if store.writes != 0 || len(store.registry.Projects) != 1 || len(store.registry.Windows) != 1 || len(store.registry.Panes) != 1 {
 		t.Fatalf("Registry authority was not committed before tmux failure: writes=%d snapshot=%s", store.writes, store.snapshot())
 	}
 	for _, want := range []string{`"outcome": "failed"`, `"completedStages"`, `"remainingDrift"`, `"retry": "projmux reconcile resources --socket 'primary'"`} {

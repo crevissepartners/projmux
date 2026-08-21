@@ -76,7 +76,11 @@ type Action struct {
 	// Args is the exact tmux argv, tmux surface only, without the transport
 	// prefix. The executor adds the prefix, so no action can name its own
 	// server.
-	Args []string `json:"-"`
+	Args          []string                 `json:"-"`
+	Divergence    resourcegraph.Divergence `json:"divergence,omitempty"`
+	RecoveryLevel RecoveryLevel            `json:"recoveryLevel,omitempty"`
+	LossKind      string                   `json:"lossKind,omitempty"`
+	LossCount     int                      `json:"lossCount,omitempty"`
 }
 
 // Allowed reports whether this action will be executed if its guards hold.

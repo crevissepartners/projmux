@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
+	"github.com/crevissepartners/projmux/internal/core/controller"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -735,6 +736,12 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 	if err != nil || !ok {
 		return false, err
 	}
+	if err := requireAutomaticRecoveryPaths("project-open-materialize", "project-open-skip-item"); err != nil {
+		return false, err
+	}
+	if _, err := runLockedAutomaticMirrorRecovery(ctx, m.resources, m.runner, m.target, controller.RecoveryProjectOpen); err != nil {
+		return false, err
+	}
 	planner := resourceReconcilePlanner{
 		reader:             explicitTmuxRunner{runner: m.runner, target: m.target},
 		store:              m.resources,
@@ -753,6 +760,7 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		newMaterializer: m.newMaterializer,
 		agents:          m.agents,
 		notices:         m.notices,
+		recoveryTrigger: controller.RecoveryProjectOpen,
 	}
 	warn := m.warn
 	if warn == nil {

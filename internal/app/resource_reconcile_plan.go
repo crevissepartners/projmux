@@ -26,21 +26,24 @@ const (
 )
 
 type resourceReconcileItem struct {
-	Key        string                   `json:"key"`
-	Drift      resourceDriftKind        `json:"drift"`
-	Surface    string                   `json:"surface"`
-	Action     string                   `json:"action"`
-	Kind       string                   `json:"kind,omitempty"`
-	Target     string                   `json:"target"`
-	Field      string                   `json:"field,omitempty"`
-	Before     string                   `json:"before,omitempty"`
-	After      string                   `json:"after,omitempty"`
-	Outcome    string                   `json:"outcome"`
-	Reason     string                   `json:"reason,omitempty"`
-	Divergence resourcegraph.Divergence `json:"divergence"`
-	tmuxArgs   []string
-	refused    bool
-	registry   bool
+	Key             string                   `json:"key"`
+	Drift           resourceDriftKind        `json:"drift"`
+	Surface         string                   `json:"surface"`
+	Action          string                   `json:"action"`
+	Kind            string                   `json:"kind,omitempty"`
+	Target          string                   `json:"target"`
+	Field           string                   `json:"field,omitempty"`
+	Before          string                   `json:"before,omitempty"`
+	After           string                   `json:"after,omitempty"`
+	Outcome         string                   `json:"outcome"`
+	Reason          string                   `json:"reason,omitempty"`
+	Divergence      resourcegraph.Divergence `json:"divergence"`
+	ApprovalCommand string                   `json:"approvalCommand,omitempty"`
+	LossKind        string                   `json:"lossKind,omitempty"`
+	LossCount       int                      `json:"lossCount,omitempty"`
+	tmuxArgs        []string
+	refused         bool
+	registry        bool
 }
 
 // planResourceAgentProjections compares Registry Agent authority with the exact
@@ -158,7 +161,8 @@ type resourceReconcilePlanner struct {
 	// agents is the provider-launch seam the Agent half of a materialization
 	// plan consumes. It is read-only at plan time: it builds argv and applies
 	// the Settings gate, and creates nothing.
-	agents topologyAgentLauncher
+	agents               topologyAgentLauncher
+	approvedOrphanImport bool
 }
 
 func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata.Registry) (resourceReconcilePlan, error) {
@@ -174,6 +178,7 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 	reconciler := newReconciler(recorder, sessions)
 	reconciler.refuseForeign = true
 	reconciler.targetLiveOnly = true
+	reconciler.approvedOrphanImport = p.approvedOrphanImport
 	projectSessions, err := observeResourceProjectSessions(ctx, recorder)
 	if err != nil {
 		if p.materializeProject == "" || !isMissingTmuxServer(err) {
@@ -348,6 +353,12 @@ func mergeScopedResourceRegistry(before, scopedBefore, scopedAfter coremetadata.
 	activeAfter := resourceProjectUIDsForSessions(scopedAfter, sessions, reconciler)
 	for _, session := range sessions {
 		if !reconciler.refusedSessions[session.name] {
+			continue
+		}
+		// A D3 descendant quarantines its containing session for this planner
+		// pass, but the quarantine is not a second D4 divergence. The exact D3
+		// runtime items own reporting and L8 recovery.
+		if reconciler.refusedSessionDivergence[session.name] == resourcegraph.DivergenceOrphanMirror {
 			continue
 		}
 		if project, ok := resourceProjectForSession(scopedBefore, session, reconciler); ok {
@@ -664,6 +675,9 @@ func resourceProjectForeignItems(registry coremetadata.Registry, sessions []obse
 	var items []resourceReconcileItem
 	for _, session := range sessions {
 		if !reconciler.refusedSessions[session.name] {
+			continue
+		}
+		if reconciler.refusedSessionDivergence[session.name] == resourcegraph.DivergenceOrphanMirror {
 			continue
 		}
 		reason := "live session carries a Project uid outside its exact Registry identity"
@@ -1125,7 +1139,11 @@ func (r *resourcePlanTmuxRunner) planItems(before coremetadata.Registry, normali
 			Divergence: func() resourcegraph.Divergence {
 				switch drift {
 				case resourceDriftMissing:
-					return resourcegraph.DivergenceUnattributed
+					// The Registry row already exists and the planner is
+					// projecting that authority back to its exact runtime
+					// object. A missing mirror is D5 drift, not D2 runtime
+					// identity with no Registry attribution.
+					return resourcegraph.DivergenceDrifted
 				case resourceDriftForeign:
 					return resourcegraph.DivergenceOrphanMirror
 				default:

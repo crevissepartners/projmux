@@ -463,6 +463,7 @@ func TestRecordOutcomeAutomaticHookAndPollSuccessZeroErrorOne(t *testing.T) {
 		{name: "attention window", args: []string{"attention", "window", "@1"}},
 		{name: "session state autosave", args: []string{"internal", "tmux", "autosave-session-state", "--quiet"}},
 		{name: "recent window record", args: []string{"window", "record"}},
+		{name: "generated controller converge", args: []string{"internal", "tmux", "converge", "--socket-path", "/private/socket", "--session", "$1", "--reason", "runtime-exited"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
