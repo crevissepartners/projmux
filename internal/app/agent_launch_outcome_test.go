@@ -55,7 +55,10 @@ func TestDelayedProviderActivationReturnsValidatedPaneHandle(t *testing.T) {
 			store := newFakeResourceStore(t)
 			tmux := newFakeTmux()
 			create, launcher := newTestAgentCreateCommand(t, store, tmux)
-			launcher.activationDelay = 2500 * time.Millisecond
+			// Installed Claude can spend roughly three seconds reaching the
+			// initial-task hook before the provider's own delayed acknowledgement.
+			// Model evidence arriving beyond the old five-second command bound.
+			launcher.activationDelay = 6 * time.Second
 
 			stdout, _, err := runRoute(t, create,
 				"agent", "--provider", provider, "--project", "uid:prj-alpha",
@@ -66,8 +69,8 @@ func TestDelayedProviderActivationReturnsValidatedPaneHandle(t *testing.T) {
 			if len(launcher.activationTimeouts) != 1 || launcher.activationTimeouts[0] != agentActivationConfirmationDeadline {
 				t.Fatalf("activation deadline = %v, want %v", launcher.activationTimeouts, agentActivationConfirmationDeadline)
 			}
-			if launcher.activationDelay <= 2*time.Second || launcher.activationDelay >= agentActivationConfirmationDeadline {
-				t.Fatalf("fixture delay %v is not between old probe and bounded deadline", launcher.activationDelay)
+			if launcher.activationDelay <= 5*time.Second || launcher.activationDelay >= agentActivationConfirmationDeadline {
+				t.Fatalf("fixture delay %v is not beyond the old deadline and within the corrected bounded deadline", launcher.activationDelay)
 			}
 			if !regexp.MustCompile(`^%[0-9]+\n$`).MatchString(stdout) {
 				t.Fatalf("stdout = %q, want one exact %%N line", stdout)
