@@ -2042,6 +2042,7 @@ binding_second_tmux set-option -gq @projmux_phase3_sentinel unchanged
 
 binding_socket_path="$(binding_tmux display-message -p -t "$binding_session" '#{socket_path}')"
 binding_second_socket_path="$(binding_second_tmux display-message -p -t untouched '#{socket_path}')"
+binding_session_id="$(binding_tmux display-message -p -t "$binding_session" '#{session_id}')"
 for actual in "$binding_socket_path" "$binding_second_socket_path"; do
   case "$actual" in
     "$binding_root"/*) ;;
@@ -2053,32 +2054,68 @@ for actual in "$binding_socket_path" "$binding_second_socket_path"; do
 done
 echo ">> managed binding e2e sockets primary=$binding_socket_path second=$binding_second_socket_path"
 
+binding_await_server_gone() {
+  local actual="$1" label="$2"
+  for _ in $(seq 1 200); do
+    if ! env -u TMUX -u TMUX_PANE tmux -S "$actual" list-sessions >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "managed binding cleanup left $label server live at $actual" >&2
+  return 1
+}
+
+binding_background_routes() {
+  ps -eo pid=,args= | PROJMUX_ROUTE_BIN="$bin" awk '
+    index($0, ENVIRON["PROJMUX_ROUTE_BIN"]) > 0 { print }'
+}
+
+binding_await_background_routes() {
+  local routes quiet_samples=0
+  for _ in $(seq 1 200); do
+    routes="$(binding_background_routes)"
+    if [[ -z "$routes" ]]; then
+      quiet_samples=$((quiet_samples + 1))
+      if [[ "$quiet_samples" == "10" ]]; then
+        return 0
+      fi
+    else
+      quiet_samples=0
+    fi
+    sleep 0.05
+  done
+  echo "managed binding cleanup still has isolated background routes:" >&2
+  binding_background_routes >&2
+  return 1
+}
+
 binding_cleanup() {
-  local socket actual
-  for socket in "$binding_socket" "$binding_second_socket"; do
-    actual="$(
-      env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$binding_root/tmux" \
-        tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true
-    )"
-    if [[ -z "$actual" ]]; then
-      continue
+  local actual hook label
+  for actual in "$binding_socket_path" "$binding_second_socket_path"; do
+    label="$binding_socket"
+    if [[ "$actual" == "$binding_second_socket_path" ]]; then
+      label="$binding_second_socket"
     fi
     case "$actual" in
       "$binding_root"/*)
         # The app config owns background pane-exit/focus hooks. Disable them on
         # this exact server before kill-server so no detached helper races the
         # smoke root cleanup by recreating state after the server is gone.
-        local hook
-        for hook in pane-exited after-kill-pane pane-focus-out pane-focus-in after-select-pane after-select-window client-session-changed; do
+        for hook in pane-exited after-kill-pane window-unlinked pane-focus-out pane-focus-in after-select-pane after-select-window client-session-changed; do
           env -u TMUX -u TMUX_PANE tmux -S "$actual" set-hook -gu "$hook" >/dev/null 2>&1 || true
         done
         env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+        binding_await_server_gone "$actual" "$label"
         ;;
       *)
         echo "refusing managed binding e2e cleanup outside the smoke root: $actual" >&2
         ;;
     esac
   done
+  # pane-exit and supervisor routes may outlive the server process briefly.
+  # Require a quiet window before the outer cleanup removes their state root.
+  binding_await_background_routes
 }
 trap 'binding_cleanup; smoke_cleanup_env' EXIT
 
@@ -2463,8 +2500,23 @@ binding_tmux set-option -wq -t "$lifecycle_window" @projmux_window_uid "$lifecyc
 # fake tmux call log for zero set-option/rename calls.
 cp "$binding_registry" "$binding_root/registry.before-repeat-hook"
 binding_registry_stat="$(stat -c '%i:%s:%y' "$binding_registry")"
-binding_pmx internal tmux converge --socket-path "$binding_socket_path" --session "$binding_session" \
-  --reason runtime-created 2>"$binding_root/converge-repeat.err"
+binding_repeat_converged=0
+: >"$binding_root/converge-repeat.attempts.err"
+for _ in $(seq 1 100); do
+  binding_pmx internal tmux converge --socket-path "$binding_socket_path" --session "$binding_session_id" \
+    --reason runtime-created 2>"$binding_root/converge-repeat.err"
+  cat "$binding_root/converge-repeat.err" >>"$binding_root/converge-repeat.attempts.err"
+  if grep -Fq "converged=true" "$binding_root/converge-repeat.err"; then
+    binding_repeat_converged=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$binding_repeat_converged" != "1" ]]; then
+  echo "repeat lifecycle convergence never acquired the coalesced worker lease" >&2
+  cat "$binding_root/converge-repeat.attempts.err" >&2
+  exit 1
+fi
 smoke_assert_file_contains "$binding_root/converge-repeat.err" "converged=true"
 cmp "$binding_root/registry.before-repeat-hook" "$binding_registry"
 if [[ "$(stat -c '%i:%s:%y' "$binding_registry")" != "$binding_registry_stat" ]]; then
