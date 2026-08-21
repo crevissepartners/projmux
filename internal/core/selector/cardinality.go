@@ -41,6 +41,7 @@ const (
 	// target set exactly like the shared verbs, so it belongs in this matrix
 	// instead of re-deciding its own cardinality inside the handler.
 	VerbResume Verb = "resume"
+	VerbReview Verb = "review"
 	VerbStatus Verb = "status"
 	VerbTopic  Verb = "topic"
 )
@@ -134,6 +135,7 @@ var matrix = map[Target]Cardinality{
 	// falls back to a focus target: rebinding the wrong conversation is worse
 	// than refusing an ambiguous reference.
 	{Verb: VerbResume, Kind: metadata.KindAgent}: CardinalityExactOne,
+	{Verb: VerbReview, Kind: metadata.KindAgent}: CardinalityExactOne,
 
 	// delete fans out over every resolved target.
 	//

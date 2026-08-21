@@ -22,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
+	corecap "github.com/crevissepartners/projmux/internal/core/aicapability"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
@@ -30,11 +31,13 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	"github.com/crevissepartners/projmux/internal/version"
 )
 
 const (
@@ -74,6 +77,12 @@ type aiCommandRunner interface {
 	Run(options intpickercompat.Options) (intpickercompat.Result, error)
 }
 
+type codexCapabilitySession interface {
+	Snapshot() corecap.Snapshot
+	Refresh(context.Context) (corecap.Snapshot, error)
+	Close() error
+}
+
 type aiCommand struct {
 	runner                     aiCommandRunner
 	nativePicker               intpicker.Runner
@@ -93,6 +102,10 @@ type aiCommand struct {
 	events                     notifyQueueRefreshEvents
 	notifyDiagnostics          *diagnostics.NotifyFocusRecorder
 	operationalDiagnostics     *diagnostics.AIRecorder
+	openCodexCapabilitySession func(context.Context) (codexCapabilitySession, error)
+	codexCapabilityCache       *corecap.Cache
+	codexCapabilitySessionMu   sync.Mutex
+	codexCapabilitySession     codexCapabilitySession
 	notifyDeliveryOwnsTopLevel bool
 	// loadRegistry and updateRegistry are the resource registry seam the hook
 	// ingest path uses to persist the provider session ref onto the Agent. Both
@@ -127,6 +140,10 @@ func newAICommand() *aiCommand {
 		now:          time.Now,
 		sleep:        time.Sleep,
 		producer:     newAttentionNotifyProducer(),
+		openCodexCapabilitySession: func(ctx context.Context) (codexCapabilitySession, error) {
+			return codexappserver.OpenDefaultCapabilitySession(ctx, version.String())
+		},
+		codexCapabilityCache: &corecap.Cache{},
 		// The read is the zero-side-effect LoadReadOnly path and the write is
 		// the store's locked read -> mutate -> validate -> atomic replace
 		// transaction, so ingest can never create or corrupt the registry.
@@ -947,7 +964,23 @@ func (c *aiCommand) runAgentPickerSelection(direction string) error {
 
 	mode := normalizeAIMode(result.Value)
 	switch mode {
-	case aiModeClaude, aiModeCodex, aiModeAntigravity:
+	case aiModeCodex:
+		if err := c.requireAIAgentEnabled(mode, aiSplitLaunchPicker); err != nil {
+			return err
+		}
+		selection, dynamic, err := c.runCodexCapabilityPicker()
+		if err != nil {
+			return err
+		}
+		if dynamic {
+			if strings.TrimSpace(selection.ModelID) == "" {
+				return nil
+			}
+			defer c.discardCodexCapabilitySession(selection.Epoch)
+			return c.createCodexCapabilityAgentPane(canonicalProducerProviderPicker, direction, selection)
+		}
+		return c.createAgentPane(canonicalProducerProviderPicker, mode, direction)
+	case aiModeClaude, aiModeAntigravity:
 		if err := c.requireAIAgentEnabled(mode, aiSplitLaunchPicker); err != nil {
 			return err
 		}
@@ -957,6 +990,144 @@ func (c *aiCommand) runAgentPickerSelection(direction string) error {
 	default:
 		return nil
 	}
+}
+
+const codexCapabilityPickerTimeout = 20 * time.Second
+
+// runCodexCapabilityPicker adds a dynamic second step only when the current
+// app-server supplies a non-empty visible model/effort catalog. Discovery
+// failure returns dynamic=false, preserving the existing static Codex launch.
+func (c *aiCommand) runCodexCapabilityPicker() (corecap.Selection, bool, error) {
+	if c.openCodexCapabilitySession == nil || c.nativePicker == nil {
+		return corecap.Selection{}, false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), codexCapabilityPickerTimeout)
+	defer cancel()
+	session, err := c.openCodexCapabilitySession(ctx)
+	if err != nil || session == nil {
+		c.replaceCodexCapabilitySession(nil)
+		if c.codexCapabilityCache != nil {
+			c.codexCapabilityCache.Invalidate()
+		}
+		return corecap.Selection{}, false, nil
+	}
+	snapshot := session.Snapshot()
+	if !snapshot.Epoch.Valid() {
+		_ = session.Close()
+		c.replaceCodexCapabilitySession(nil)
+		if c.codexCapabilityCache != nil {
+			c.codexCapabilityCache.Invalidate()
+		}
+		return corecap.Selection{}, false, nil
+	}
+	cache := c.codexCapabilityCache
+	if cache == nil {
+		cache = &corecap.Cache{}
+		c.codexCapabilityCache = cache
+	}
+	cache.Replace(snapshot)
+	c.replaceCodexCapabilitySession(session)
+	rows, selections := codexCapabilityRows(appLocale(c.homeDir, c.lookupEnv), snapshot)
+	if len(rows) == 0 {
+		c.discardCodexCapabilitySession(snapshot.Epoch)
+		return corecap.Selection{}, false, nil
+	}
+	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, c.themedPickerOptions(intpickercompat.Options{
+		UI:         "ai-codex-capability-picker",
+		Entries:    rows,
+		Title:      "Codex Launch - Model and effort",
+		Prompt:     "Codex > ",
+		Footer:     projmuxFooter("Choose a model and supported reasoning effort."),
+		ExpectKeys: []string{"enter"},
+		Bindings:   pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, "ai-codex-capability-picker", "esc", "ctrl-c", "ctrl-alt-s"),
+	}))
+	if err != nil {
+		c.discardCodexCapabilitySession(snapshot.Epoch)
+		if isNoSelectionExit(err) {
+			return corecap.Selection{}, true, nil
+		}
+		return corecap.Selection{}, true, fmt.Errorf("run Codex capability picker: %w", err)
+	}
+	if result.Key != "enter" || result.Value == "" {
+		c.discardCodexCapabilitySession(snapshot.Epoch)
+		return corecap.Selection{}, true, nil
+	}
+	selection, ok := selections[result.Value]
+	if !ok {
+		c.discardCodexCapabilitySession(snapshot.Epoch)
+		return corecap.Selection{}, true, corecap.ErrStaleSelection
+	}
+	if _, err := cache.Validate(selection); err != nil {
+		c.discardCodexCapabilitySession(snapshot.Epoch)
+		return corecap.Selection{}, true, err
+	}
+	return selection, true, nil
+}
+
+func (c *aiCommand) replaceCodexCapabilitySession(session codexCapabilitySession) {
+	c.codexCapabilitySessionMu.Lock()
+	old := c.codexCapabilitySession
+	c.codexCapabilitySession = session
+	c.codexCapabilitySessionMu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+}
+
+func (c *aiCommand) discardCodexCapabilitySession(epoch corecap.Epoch) {
+	c.codexCapabilitySessionMu.Lock()
+	session := c.codexCapabilitySession
+	if session != nil && session.Snapshot().Epoch == epoch {
+		c.codexCapabilitySession = nil
+	} else {
+		session = nil
+	}
+	c.codexCapabilitySessionMu.Unlock()
+	if session != nil {
+		_ = session.Close()
+	}
+}
+
+func (c *aiCommand) takeCodexCapabilitySession(epoch corecap.Epoch) codexCapabilitySession {
+	c.codexCapabilitySessionMu.Lock()
+	defer c.codexCapabilitySessionMu.Unlock()
+	session := c.codexCapabilitySession
+	if session == nil || session.Snapshot().Epoch != epoch {
+		return nil
+	}
+	c.codexCapabilitySession = nil
+	return session
+}
+
+func codexCapabilityRows(locale i18n.Locale, snapshot corecap.Snapshot) ([]intpickercompat.Entry, map[string]corecap.Selection) {
+	rows := []intpickercompat.Entry{}
+	selections := map[string]corecap.Selection{}
+	defaultMarker := localizeUIText(locale, "[DEFAULT]")
+	unspecifiedModality := localizeUIText(locale, "unspecified modality")
+	personality := localizeUIText(locale, "personality")
+	for modelIndex, model := range snapshot.Models {
+		for effortIndex, effort := range model.Efforts {
+			value := fmt.Sprintf("capability:%d:%d", modelIndex, effortIndex)
+			marker := ""
+			if model.Default && effort == model.DefaultEffort {
+				marker = " " + defaultMarker
+			}
+			features := strings.Join(model.InputModalities, "+")
+			if features == "" {
+				features = unspecifiedModality
+			}
+			if model.SupportsPersonality {
+				features += ", " + personality
+			}
+			rows = append(rows, intpickercompat.Entry{
+				Label:     fmt.Sprintf("%-24s %-10s %s%s", model.DisplayName, effort, features, marker),
+				Value:     value,
+				SearchKey: strings.Join([]string{model.ID, model.LaunchName, model.DisplayName, effort, features}, " "),
+			})
+			selections[value] = corecap.Selection{Epoch: snapshot.Epoch, ModelID: model.ID, LaunchName: model.LaunchName, Effort: effort}
+		}
+	}
+	return rows, selections
 }
 
 // The split UI's three terminal actions.
@@ -973,6 +1144,12 @@ func (c *aiCommand) runAgentPickerSelection(direction string) error {
 // createAgentPane opens a provider Agent beside the current Pane.
 func (c *aiCommand) createAgentPane(producer canonicalCreateProducer, mode, direction string) error {
 	return c.createPaneFromIntent(agentPaneIntent{producer: producer, provider: mode, placement: direction})
+}
+
+func (c *aiCommand) createCodexCapabilityAgentPane(producer canonicalCreateProducer, direction string, selection corecap.Selection) error {
+	return c.createPaneFromIntent(agentPaneIntent{
+		producer: producer, provider: aiModeCodex, placement: direction, codexCapability: &selection,
+	})
 }
 
 // createShellPane opens a plain shell Pane beside the current Pane. A shell
@@ -1766,6 +1943,57 @@ func (c *aiCommand) PlanAgentLaunch(provider string, workspace coremetadata.Agen
 		return "", nil, err
 	}
 	return plan.title, plan.commandArgs, nil
+}
+
+// PlanAgentLaunchWithCapability is the narrow optional launch seam used only by
+// the Codex picker. Other providers and static Codex launches stay unchanged.
+func (c *aiCommand) PlanAgentLaunchWithCapability(provider string, workspace coremetadata.AgentWorkspace, payload []string, selection corecap.Selection) (title string, argv []string, err error) {
+	if normalizeAIMode(provider) != aiModeCodex {
+		return "", nil, fmt.Errorf("provider %q does not accept Codex capabilities", provider)
+	}
+	if c.codexCapabilityCache == nil {
+		return "", nil, corecap.ErrStaleSelection
+	}
+	session := c.takeCodexCapabilitySession(selection.Epoch)
+	if session == nil {
+		c.codexCapabilityCache.Invalidate()
+		return "", nil, corecap.ErrStaleSelection
+	}
+	defer session.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), codexCapabilityPickerTimeout)
+	defer cancel()
+	refreshed, err := session.Refresh(ctx)
+	if err != nil {
+		c.codexCapabilityCache.Invalidate()
+		return "", nil, fmt.Errorf("%w: refresh current Codex model capabilities: %v", corecap.ErrStaleSelection, err)
+	}
+	c.codexCapabilityCache.Replace(refreshed)
+	if _, err := c.codexCapabilityCache.Validate(selection); err != nil {
+		return "", nil, err
+	}
+	extra, err := providerLaunchArgs(provider, workspace, payload)
+	if err != nil {
+		return "", nil, err
+	}
+	extra, err = codexCapabilityLaunchArgs(selection, extra)
+	if err != nil {
+		return "", nil, err
+	}
+	plan, err := c.planAgentLaunch(provider, workspace.CWD, extra, nil, "")
+	if err != nil {
+		return "", nil, err
+	}
+	return plan.title, plan.commandArgs, nil
+}
+
+func codexCapabilityLaunchArgs(selection corecap.Selection, base []string) ([]string, error) {
+	model := strings.TrimSpace(selection.LaunchName)
+	effort := strings.TrimSpace(selection.Effort)
+	if model == "" || effort == "" {
+		return nil, corecap.ErrStaleSelection
+	}
+	out := []string{"--model", model, "--config", "model_reasoning_effort=" + strconv.Quote(effort)}
+	return append(out, base...), nil
 }
 
 // AwaitAgentActivation waits only for exact provider-hook evidence committed to

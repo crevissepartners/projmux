@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	corecap "github.com/crevissepartners/projmux/internal/core/aicapability"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -52,6 +53,10 @@ type agentLauncher interface {
 	// never reads pane content and runs after the create transaction releases
 	// the Registry lock.
 	AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error)
+}
+
+type codexCapabilityAgentLauncher interface {
+	PlanAgentLaunchWithCapability(provider string, workspace coremetadata.AgentWorkspace, payload []string, selection corecap.Selection) (title string, argv []string, err error)
 }
 
 // createCommand implements the canonical `create` verb.
@@ -243,6 +248,9 @@ type agentPaneIntent struct {
 	// conversationID joins a provider conversation the machine already has
 	// instead of starting a new one. It requires a provider.
 	conversationID string
+	// codexCapability is a connection/version-bound picker selection. It is a
+	// private UI intent field, not a public create flag or persisted config.
+	codexCapability *corecap.Selection
 	// anchorPaneID states the origin pane this split hangs off, for the one
 	// producer that cannot let create infer it: a tmux popup inherits $TMUX but
 	// no $TMUX_PANE, so the picker running inside one has no target of its own
@@ -331,6 +339,7 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 		return err
 	}
 	flags.resumeConversation = conversation
+	flags.codexCapability = intent.codexCapability
 	return visibleCanonicalCreateError(c.createCanonicalIntentAgent(scope, intent, provider, flags, stdout))
 }
 

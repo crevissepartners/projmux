@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
+	corecap "github.com/crevissepartners/projmux/internal/core/aicapability"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -63,6 +64,7 @@ type resourceCreateFlags struct {
 	// verb, which is `agent resume`'s job for a Registry Agent and this field's
 	// job for a conversation the picker found on disk.
 	resumeConversation string
+	codexCapability    *corecap.Selection
 }
 
 // resourceCreateShape selects which optional flag groups a resource-backed

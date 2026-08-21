@@ -182,10 +182,11 @@ var routes = []Route{
 			"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]",
 			"projmux agent topic set <text> [<agent-ref>] [--agent <ref>]",
 			"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...",
+			"projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]",
 			"projmux agent integrate <provider> [--dry-run]",
 			"projmux agent usage [--model <name>] [--window <name>] [--json] [--force]",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent integrate", "agent usage"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent review", "agent integrate", "agent usage"},
 		Children: []Route{
 			{Name: "status", Summary: "Read or set semantic Agent interaction independently of lifecycle", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Name: "topic", Summary: "Read, set, or clear one exact Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -201,6 +202,7 @@ var routes = []Route{
 				Usage:     []string{"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."},
 				Canonical: []string{"agent resume"},
 			},
+			{Name: "review", Summary: "Start a native review on an exact-bound Codex Agent", Usage: []string{"projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]"}, Canonical: []string{"agent review"}},
 			{Name: "integrate", Summary: "Install or remove provider hook integrations", Usage: []string{"projmux agent integrate <provider> [--dry-run]"}, Canonical: []string{"agent integrate"}},
 			{
 				Name:      "usage",
