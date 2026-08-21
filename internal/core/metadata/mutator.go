@@ -218,6 +218,10 @@ func (m Mutator) registerProjectTx(txn *Transaction, reg *Registry, root string,
 		result.Windows = append(result.Windows, window)
 		result.Panes = append(result.Panes, panes...)
 	}
+	if len(result.Windows) > 0 {
+		stored, _ := reg.Project(projectUID)
+		stored.Spec.PrimaryWindowRef = result.Windows[0].Metadata.UID
+	}
 
 	stored, _ := reg.Project(projectUID)
 	result.Project = stored.Clone()
@@ -349,20 +353,15 @@ func (m Mutator) addPaneTx(txn *Transaction, reg *Registry, op, ownerUID string,
 // which turns a legal `delete pane` followed by a legal `create pane` into a
 // registry nothing can mutate any more.
 //
-// A Pane owned by an Agent counts, because Validate counts it: windowPaneUIDs is
-// transitive through the Window's Agents. Adoption is strictly a repair of the
-// empty case and never re-points a Window that already has a resolvable primary.
+// Agent-owned Panes never count: the primary anchor is exactly a Window-owned
+// role=shell Pane. Adoption is strictly a repair of the empty case and never
+// re-points a Window that already has a resolvable primary.
 func (r *Registry) adoptPrimaryPaneRef(ownerUID string, ownerKind Kind, paneUID string) {
-	windowUID := ownerUID
-	if ownerKind == KindAgent {
-		agent, ok := r.Agent(ownerUID)
-		if !ok {
-			return
-		}
-		windowUID = agent.Metadata.OwnerUID()
+	if ownerKind != KindWindow {
+		return
 	}
 	for i := range r.Windows {
-		if r.Windows[i].Metadata.UID != windowUID {
+		if r.Windows[i].Metadata.UID != ownerUID {
 			continue
 		}
 		if strings.TrimSpace(r.Windows[i].Spec.PrimaryPaneRef) != "" {

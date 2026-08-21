@@ -412,7 +412,7 @@ func runtimeBindingRegistry(t *testing.T, root string) coremetadata.Registry {
 	registry.Projects = []coremetadata.Project{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 		Metadata: meta("prj-alpha", filepath.Base(root), nil),
-		Spec:     coremetadata.ProjectSpec{Root: root},
+		Spec:     coremetadata.ProjectSpec{Root: root, PrimaryWindowRef: "win-alpha"},
 		Status: coremetadata.ProjectStatus{
 			Session: &coremetadata.SessionProjection{Name: filepath.Base(root), Live: true},
 		},

@@ -165,17 +165,16 @@ func TestTopologyPlanKeepsProjectOpenableWithAgentOnlyWindow(t *testing.T) {
 	if planned := pbtPlannedWindows(plan); !slices.Contains(planned, healthy.Metadata.Name) {
 		t.Fatalf("planned windows = %v, want the healthy Window %q to still be built", planned, healthy.Metadata.Name)
 	}
-	if len(skipped) != 1 || !strings.Contains(skipped[0].Reason, "primaryPaneRef") {
-		t.Fatalf("skipped = %v, want exactly the Agent-only Window with a stated reason", pbtRender(skipped))
+	if len(skipped) != 0 {
+		t.Fatalf("last-shell repair left materialize skips: %v", pbtRender(skipped))
 	}
-	if !slices.ContainsFunc(plan.skipNotices(), func(n string) bool { return strings.Contains(n, "was not restored") }) {
-		t.Fatalf("skip notices = %v, want the skipped Window disclosed to the operator", plan.skipNotices())
+	if notices := plan.skipNotices(); len(notices) != 0 {
+		t.Fatalf("last-shell repair left skip notices: %v", notices)
 	}
 }
 
-// TestTopologyPlanKeepsProjectOpenableWithoutPanes pins the same state one step
-// further on: the Agent's Pane is released too, so the Window owns nothing and
-// carries an empty primaryPaneRef, which Validate accepts explicitly.
+// TestTopologyPlanKeepsProjectOpenableWithoutPanes pins the last-shell repair
+// after the Agent Pane is released: the Window receives a replacement shell.
 func TestTopologyPlanKeepsProjectOpenableWithoutPanes(t *testing.T) {
 	root := t.TempDir()
 	registry, project, mutator := pbtProject(t, root)
@@ -205,8 +204,11 @@ func TestTopologyPlanKeepsProjectOpenableWithoutPanes(t *testing.T) {
 		t.Fatalf("registry the product wrote is invalid: %v", err)
 	}
 	stored, _ := registry.Window(window.Metadata.UID)
-	if strings.TrimSpace(stored.Spec.PrimaryPaneRef) != "" {
-		t.Fatalf("primaryPaneRef = %q, want empty for a Window that owns no Pane", stored.Spec.PrimaryPaneRef)
+	if strings.TrimSpace(stored.Spec.PrimaryPaneRef) == "" {
+		t.Fatal("last-shell repair left primaryPaneRef empty")
+	}
+	if panes := registry.PanesOf(window.Metadata.UID); len(panes) != 1 || panes[0].Metadata.UID != stored.Spec.PrimaryPaneRef || panes[0].Spec.Role != coremetadata.PaneRoleShell {
+		t.Fatalf("replacement shell chain = %+v", panes)
 	}
 
 	plan := pbtPlan(t, *registry, project)

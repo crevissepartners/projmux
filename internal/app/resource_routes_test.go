@@ -25,6 +25,28 @@ var resourceFixtureClock = time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)
 // resources instead of moving this clock.
 var resourceFixtureReadClock = resourceFixtureClock.Add(50*time.Hour + 30*time.Minute)
 
+func addFixtureCanonicalShell(registry *coremetadata.Registry, projectUID, windowUID, paneUID, cwd string) {
+	project, ok := registry.Project(projectUID)
+	if !ok {
+		panic("fixture Project does not exist: " + projectUID)
+	}
+	project.Spec.PrimaryWindowRef = windowUID
+	registry.Windows = append(registry.Windows, coremetadata.Window{
+		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
+		Metadata: coremetadata.ObjectMeta{UID: windowUID, Name: "main", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: projectUID}, CreatedAt: resourceFixtureClock},
+		Spec:     coremetadata.WindowSpec{PrimaryPaneRef: paneUID},
+	})
+	registry.Panes = append(registry.Panes, coremetadata.Pane{
+		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
+		Metadata: coremetadata.ObjectMeta{UID: paneUID, Name: "shell", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindWindow, UID: windowUID}, CreatedAt: resourceFixtureClock},
+		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: cwd},
+	})
+	registry.NameReservations = append(registry.NameReservations,
+		coremetadata.NameReservation{Scope: projectUID, Kind: coremetadata.KindWindow, Name: "main", UID: windowUID},
+		coremetadata.NameReservation{Scope: windowUID, Kind: coremetadata.KindPane, Name: "shell", UID: paneUID},
+	)
+}
+
 // resourceFixtureRegistry is the shared fixture of the canonical verb-to-kind
 // routes.
 //
@@ -56,19 +78,19 @@ func resourceFixtureRegistry(t *testing.T) coremetadata.Registry {
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 			Metadata: meta("prj-alpha", "alpha", "projmux", nil, nil),
-			Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha"},
+			Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha", PrimaryWindowRef: "win-alpha-main"},
 			Status:   coremetadata.ProjectStatus{Session: &coremetadata.SessionProjection{Name: "alpha", Live: true}},
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 			Metadata: meta("prj-beta", "beta", "projmux", nil, nil),
-			Spec:     coremetadata.ProjectSpec{Root: "/srv/beta"},
+			Spec:     coremetadata.ProjectSpec{Root: "/srv/beta", PrimaryWindowRef: "win-beta-main"},
 			Status:   coremetadata.ProjectStatus{Session: &coremetadata.SessionProjection{Name: "beta", Live: false}},
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 			Metadata: meta("prj-gone", "gone", "gone", nil, nil),
-			Spec:     coremetadata.ProjectSpec{Root: "/srv/gone"},
+			Spec:     coremetadata.ProjectSpec{Root: "/srv/gone", PrimaryWindowRef: "win-gone-main"},
 			Status: coremetadata.ProjectStatus{Conditions: []coremetadata.Condition{{
 				Type:             coremetadata.ConditionMissingRoot,
 				Status:           coremetadata.ConditionTrue,
@@ -99,10 +121,16 @@ func resourceFixtureRegistry(t *testing.T) coremetadata.Registry {
 			Metadata: meta("win-beta-main", "main", "", ownedBy(coremetadata.KindProject, "prj-beta"), nil),
 			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-beta-zsh"},
 		},
+		{
+			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
+			Metadata: meta("win-gone-main", "main", "", ownedBy(coremetadata.KindProject, "prj-gone"), nil),
+			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-gone-zsh"},
+		},
 	}
 	reserve("prj-alpha", coremetadata.KindWindow, "main", "win-alpha-main")
 	reserve("prj-alpha", coremetadata.KindWindow, "review", "win-alpha-review")
 	reserve("prj-beta", coremetadata.KindWindow, "main", "win-beta-main")
+	reserve("prj-gone", coremetadata.KindWindow, "main", "win-gone-main")
 
 	registry.Panes = []coremetadata.Pane{
 		{
@@ -130,12 +158,18 @@ func resourceFixtureRegistry(t *testing.T) coremetadata.Registry {
 			Metadata: meta("pan-beta-zsh", "zsh", "zsh", ownedBy(coremetadata.KindWindow, "win-beta-main"), map[string]string{"role": "shell"}),
 			Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: "/srv/beta"},
 		},
+		{
+			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
+			Metadata: meta("pan-gone-zsh", "zsh", "zsh", ownedBy(coremetadata.KindWindow, "win-gone-main"), map[string]string{"role": "shell"}),
+			Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: "/srv/gone"},
+		},
 	}
 	reserve("win-alpha-main", coremetadata.KindPane, "zsh", "pan-alpha-zsh")
 	reserve("win-alpha-main", coremetadata.KindPane, "log", "pan-alpha-log")
 	reserve("agt-alpha-codex", coremetadata.KindPane, "codex-pane", "pan-alpha-codex")
 	reserve("win-alpha-review", coremetadata.KindPane, "zsh", "pan-alpha-review")
 	reserve("win-beta-main", coremetadata.KindPane, "zsh", "pan-beta-zsh")
+	reserve("win-gone-main", coremetadata.KindPane, "zsh", "pan-gone-zsh")
 
 	registry.Agents = []coremetadata.Agent{
 		{
@@ -344,7 +378,7 @@ func TestGetReadFamilyResolvesEveryKindWithListCardinality(t *testing.T) {
 		{
 			name: "windows across the whole registry keep the duplicate name",
 			args: []string{"windows", "-o", "uid"},
-			want: "win-alpha-main\nwin-alpha-review\nwin-beta-main\n",
+			want: "win-alpha-main\nwin-alpha-review\nwin-beta-main\nwin-gone-main\n",
 		},
 		{
 			name: "panes include the agent managed pane of the window scope",

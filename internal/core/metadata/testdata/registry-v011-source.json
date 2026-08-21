@@ -1,0 +1,10 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 1,
+  "updatedAt": "2026-06-11T00:00:00Z",
+  "projects": [{"apiVersion":"projmux.io/v1alpha1","kind":"Project","metadata":{"uid":"proj-v011","name":"v011","createdAt":"2026-06-11T00:00:00Z"},"spec":{"root":"/tmp"},"status":{"session":{"name":"v011","live":false}}}],
+  "windows": [{"apiVersion":"projmux.io/v1alpha1","kind":"Window","metadata":{"uid":"win-v011","name":"agents","ownerRef":{"kind":"Project","uid":"proj-v011"},"createdAt":"2026-06-11T00:00:00Z"},"spec":{"primaryPaneRef":"pane-agent-v011"}}],
+  "panes": [{"apiVersion":"projmux.io/v1alpha1","kind":"Pane","metadata":{"uid":"pane-agent-v011","name":"codex-pane","ownerRef":{"kind":"Agent","uid":"agent-v011"},"createdAt":"2026-06-11T00:00:00Z"},"spec":{"role":"agent","cwd":"/tmp","command":"codex"},"status":{}}],
+  "agents": [{"apiVersion":"projmux.io/v1alpha1","kind":"Agent","metadata":{"uid":"agent-v011","name":"codex","ownerRef":{"kind":"Window","uid":"win-v011"},"createdAt":"2026-06-11T00:00:00Z"},"spec":{"provider":"codex"},"status":{"phase":"Offline","sessionRef":{"provider":"codex","observedAt":"2026-06-11T00:00:00Z","codex":{"threadId":"thread-v011","sessionId":"session-v011"}},"lastTransitionAt":"2026-06-11T00:00:00Z"}}],
+  "nameReservations": [{"kind":"Project","name":"v011","uid":"proj-v011"},{"scope":"proj-v011","kind":"Window","name":"agents","uid":"win-v011"},{"scope":"agent-v011","kind":"Pane","name":"codex-pane","uid":"pane-agent-v011"},{"scope":"win-v011","kind":"Agent","name":"codex","uid":"agent-v011"}]
+}

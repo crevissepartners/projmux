@@ -1,9 +1,8 @@
 package metadata
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -123,17 +122,14 @@ const preSessionRefRegistry = `{
 }
 `
 
-// TestARegistryWrittenWithoutASessionRefLoadsUnchanged is acceptance criterion 3
-// at the store layer. The Agent session ref is additive inside schemaVersion 1,
-// so an existing file must load through the ordinary current-version path with
-// no migration, no backup, and no rewrite of a single byte.
-func TestARegistryWrittenWithoutASessionRefLoadsUnchanged(t *testing.T) {
+// TestARegistryWrittenWithoutASessionRefMigratesWithoutInventingThePointer is
+// the session-pointer preservation half of the v1 -> v2 repair.
+func TestARegistryWrittenWithoutASessionRefMigratesWithoutInventingThePointer(t *testing.T) {
 	t.Parallel()
 
 	store := testStore(t)
 	writeRegistryFile(t, store, preSessionRefRegistry)
 	before := readFile(t, store.Path())
-	beforeDigest := digestOf(before)
 
 	registry, err := store.Load()
 	if err != nil {
@@ -151,13 +147,18 @@ func TestARegistryWrittenWithoutASessionRefLoadsUnchanged(t *testing.T) {
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("a pre-field registry must validate: %v", err)
 	}
-
-	// Load must not migrate, quarantine, back up, or rewrite.
-	if after := readFile(t, store.Path()); after != before || digestOf(after) != beforeDigest {
-		t.Fatalf("Load rewrote the registry file:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	if registry.SchemaVersion != coremetadata.SchemaVersion || registry.Projects[0].Spec.PrimaryWindowRef != "window-01" {
+		t.Fatalf("migrated envelope/anchor = %d/%q", registry.SchemaVersion, registry.Projects[0].Spec.PrimaryWindowRef)
 	}
-	if names := dirListing(t, dirOf(store.Path())); len(names) != 1 || names[0] != "registry.json" {
-		t.Fatalf("Load left %v beside the registry, want only registry.json", names)
+
+	// The normal locked Load durably migrates once and retains the v1 bytes.
+	afterFirst := readFile(t, store.Path())
+	if afterFirst == before {
+		t.Fatal("Load did not durably migrate the v1 registry")
+	}
+	names := dirListing(t, dirOf(store.Path()))
+	if !slices.ContainsFunc(names, func(name string) bool { return strings.Contains(name, ".v1.") && strings.HasSuffix(name, ".bak") }) {
+		t.Fatalf("Load left %v beside the registry, want the versioned v1 backup", names)
 	}
 
 	result, err := store.Migrate()
@@ -165,10 +166,10 @@ func TestARegistryWrittenWithoutASessionRefLoadsUnchanged(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	if result.Migrated {
-		t.Fatal("an additive status field must not trigger a migration")
+		t.Fatal("the second migration pass must be a no-op")
 	}
-	if after := readFile(t, store.Path()); after != before {
-		t.Fatal("Migrate rewrote a current-version registry")
+	if after := readFile(t, store.Path()); after != afterFirst {
+		t.Fatal("the second migration pass rewrote the current-version registry")
 	}
 }
 
@@ -223,11 +224,6 @@ func TestRecordingASessionRefOnAPreFieldRegistryOnlyAddsThatKey(t *testing.T) {
 	if got := reloaded.Agents[0].Status.SessionRef.Summary(); got != "codex:codex-thread-1" {
 		t.Fatalf("reloaded session ref = %q", got)
 	}
-}
-
-func digestOf(contents string) string {
-	sum := md5.Sum([]byte(contents)) //nolint:gosec // content digest for a test equality assertion, not a security primitive
-	return hex.EncodeToString(sum[:])
 }
 
 func dirOf(path string) string {

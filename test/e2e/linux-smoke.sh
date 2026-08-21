@@ -2785,7 +2785,8 @@ delete_primary_uid="$(delete_tmux show-options -wqv -t "$delete_primary" @projmu
 delete_sibling_uid="$(delete_tmux show-options -wqv -t "$delete_sibling" @projmux_window_uid)"
 delete_beta_uid="$(delete_tmux show-options -wqv -t "$delete_beta" @projmux_window_uid)"
 delete_alpha_project_uid="$(delete_pmx describe project alpha -o uid)"
-if [[ -z "$delete_primary_uid" || -z "$delete_sibling_uid" || -z "$delete_beta_uid" || -z "$delete_alpha_project_uid" ]]; then
+delete_beta_project_uid="$(delete_pmx describe project beta -o uid)"
+if [[ -z "$delete_primary_uid" || -z "$delete_sibling_uid" || -z "$delete_beta_uid" || -z "$delete_alpha_project_uid" || -z "$delete_beta_project_uid" ]]; then
   echo "delete Window e2e apply left an identity mirror empty" >&2
   exit 1
 fi
@@ -2883,7 +2884,14 @@ smoke_assert_file_contains "$delete_root/projects.after-external" "$delete_alpha
 smoke_assert_file_contains "$delete_root/external.out" "live killed tmux window $delete_primary"
 
 # The only beta Window explicitly predicts and then causes the Project session
-# to end; alpha remains live and untouched.
+# to end. Schema v2 keeps beta as a valid offline Project by replacing the
+# exact requested Window with one minimum Window/shell chain; alpha remains
+# byte-semantically untouched at the resource-identity boundary.
+{
+  delete_pmx get windows --project "uid:$delete_alpha_project_uid" -o uid
+  delete_pmx get panes --project "uid:$delete_alpha_project_uid" -o uid
+  delete_pmx get agents --project "uid:$delete_alpha_project_uid" -o uid
+} | sort >"$delete_root/alpha-graph.before-beta-delete"
 delete_pmx_delete window "uid:$delete_beta_uid" --dry-run >"$delete_root/last-dry-run.out"
 smoke_assert_file_contains "$delete_root/last-dry-run.out" "live cascade would end Project session work-beta"
 delete_pmx_delete window "uid:$delete_beta_uid" --yes >"$delete_root/last.out"
@@ -2892,6 +2900,43 @@ if delete_tmux has-session -t work-beta 2>/dev/null; then
   exit 1
 fi
 smoke_assert_file_contains "$delete_root/last.out" "live cascade ended Project session work-beta"
+if grep -Fq "retryable drift" "$delete_root/last.out"; then
+  echo "last-Window delete reported retryable drift after a successful replacement" >&2
+  exit 1
+fi
+delete_pmx get windows --project "uid:$delete_beta_project_uid" -o uid >"$delete_root/beta-windows.after-last-delete"
+delete_beta_replacement_uid="$(tr -d '[:space:]' <"$delete_root/beta-windows.after-last-delete")"
+if [[ -z "$delete_beta_replacement_uid" || "$delete_beta_replacement_uid" == "$delete_beta_uid" ]] || \
+  [[ "$(wc -l <"$delete_root/beta-windows.after-last-delete" | tr -d '[:space:]')" != "1" ]]; then
+  echo "last-Window delete did not replace exactly $delete_beta_uid with one new Window: $delete_beta_replacement_uid" >&2
+  exit 1
+fi
+delete_pmx describe project "uid:$delete_beta_project_uid" -o json >"$delete_root/beta-project.after-last-delete.json"
+delete_pmx describe window "uid:$delete_beta_replacement_uid" --project "uid:$delete_beta_project_uid" -o json \
+  >"$delete_root/beta-window.after-last-delete.json"
+delete_pmx get panes --project "uid:$delete_beta_project_uid" --window "uid:$delete_beta_replacement_uid" -o uid \
+  >"$delete_root/beta-panes.after-last-delete"
+delete_beta_replacement_pane_uid="$(tr -d '[:space:]' <"$delete_root/beta-panes.after-last-delete")"
+if [[ -z "$delete_beta_replacement_pane_uid" ]] || \
+  [[ "$(wc -l <"$delete_root/beta-panes.after-last-delete" | tr -d '[:space:]')" != "1" ]]; then
+  echo "last-Window replacement does not own exactly one shell Pane" >&2
+  exit 1
+fi
+delete_pmx describe pane "uid:$delete_beta_replacement_pane_uid" --project "uid:$delete_beta_project_uid" \
+  --window "uid:$delete_beta_replacement_uid" -o json >"$delete_root/beta-pane.after-last-delete.json"
+smoke_assert_file_contains "$delete_root/beta-project.after-last-delete.json" "\"primaryWindowRef\": \"$delete_beta_replacement_uid\""
+smoke_assert_file_contains "$delete_root/beta-window.after-last-delete.json" "\"primaryPaneRef\": \"$delete_beta_replacement_pane_uid\""
+smoke_assert_file_contains "$delete_root/beta-pane.after-last-delete.json" '"role": "shell"'
+if grep -Fqx "$delete_beta_uid" "$delete_root/beta-windows.after-last-delete"; then
+  echo "last-Window replacement retained requested Registry uid $delete_beta_uid" >&2
+  exit 1
+fi
+{
+  delete_pmx get windows --project "uid:$delete_alpha_project_uid" -o uid
+  delete_pmx get panes --project "uid:$delete_alpha_project_uid" -o uid
+  delete_pmx get agents --project "uid:$delete_alpha_project_uid" -o uid
+} | sort >"$delete_root/alpha-graph.after-beta-delete"
+cmp "$delete_root/alpha-graph.before-beta-delete" "$delete_root/alpha-graph.after-beta-delete"
 
 # A managed runner Window invokes implicit delete from inside itself. There is
 # intentionally no post-command marker: a correct implementation flushes the
@@ -3966,6 +4011,9 @@ fi
 if [[ "\${1:-}" == "-L" || "\${1:-}" == "-S" ]]; then
   exec $(printf %q "$startup_real_tmux") "\$@"
 fi
+if [[ "\${1:-}" == "display-message" ]]; then
+  printf '%s\n' "\$*" >>$(printf %q "$startup_root/display-messages.log")
+fi
 exec $(printf %q "$startup_real_tmux") -L $(printf %q "$startup_socket") "\$@"
 STARTUP_TMUX_SHIM
 chmod 0755 "$startup_root/bin/tmux"
@@ -4247,6 +4295,16 @@ if [[ -z "$startup_agent_pane_uid" ]] ||
   exit 1
 fi
 
+# Seed a real latest snapshot while the Project session is current. The
+# fail-closed `new` attempt below must retain these exact source bytes.
+startup_live_pmx create snapshot >"$startup_root/create-latest-snapshot.out"
+smoke_assert_file_contains "$startup_root/create-latest-snapshot.out" "saved session snapshot: $startup_session"
+startup_latest_snapshot="$startup_root/state/projmux/sessions/$startup_session.json"
+if [[ ! -s "$startup_latest_snapshot" ]]; then
+  echo "startup e2e did not seed the latest snapshot" >&2
+  exit 1
+fi
+
 # 2. A failed preflight must not move the client. The Project root is taken away,
 # so the plan is refused before the first create and the client stays put.
 startup_tmux switch-client -c "$startup_client" -t "$startup_driver"
@@ -4271,66 +4329,115 @@ if [[ "$(startup_tmux display-message -p -c "$startup_client" '#{session_name}')
 fi
 mv "$startup_project-withdrawn" "$startup_project"
 
-# 3. The `new` row force-prunes and starts clean.
+# 3. The `new` row fails closed until Phase 15 supplies the canonical
+# Project-start projection.
 #
-# The Project still declares the whole stored topology and one Agent whose
-# conversation pointer was resumed a moment ago, so "started fresh" is only
-# distinguishable from "restored" if the Registry really is emptied of that
-# Project's Window/Pane/Agent records first.
+# `switch sidebar-open` is a UI continuation: it reports an open failure through
+# `display-message`, reopens/resumes the sidebar, and exits successfully. The
+# exact Phase 3 boundary is therefore the status message plus an unchanged
+# Registry/runtime graph and retained latest snapshot, not a nonzero transport
+# exit.
 startup_registry="$startup_root/state/projmux/metadata/registry.json"
-startup_registry_before="$(sha256sum "$startup_registry" | cut -d' ' -f1)"
 startup_agents_before="$(startup_live_pmx get agents --project "uid:$startup_project_uid" -o uid 2>/dev/null | grep -c . || true)"
 if [[ "$startup_agents_before" != "1" ]]; then
   echo "fresh start fixture expected exactly one stored Agent, got $startup_agents_before" >&2
   exit 1
 fi
+
+# Complete every Registry-backed observation before pinning the exact source
+# bytes. In particular, the live Agent read above can reconcile its terminal
+# state after the previously killed Project session.
+startup_pmx describe project "uid:$startup_project_uid" -o json >"$startup_root/project.before-new.json"
+startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort >"$startup_root/windows.before-new.uids"
+startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort >"$startup_root/panes.before-new.uids"
+startup_pmx get agents --project "uid:$startup_project_uid" -o uid | sort >"$startup_root/agents.before-new.uids"
+startup_primary_window_before="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$startup_root/project.before-new.json" | head -n 1)"
+if [[ -z "$startup_primary_window_before" ]]; then
+  echo "fresh start fixture has no canonical Project Window anchor" >&2
+  exit 1
+fi
+startup_pmx describe window "uid:$startup_primary_window_before" --project "uid:$startup_project_uid" -o json \
+  >"$startup_root/primary-window.before-new.json"
+startup_primary_pane_before="$(sed -n 's/.*"primaryPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/primary-window.before-new.json" | head -n 1)"
+if [[ -z "$startup_primary_pane_before" ]]; then
+  echo "fresh start fixture has no canonical shell Pane anchor" >&2
+  exit 1
+fi
+startup_pmx describe pane "uid:$startup_primary_pane_before" --project "uid:$startup_project_uid" \
+  --window "uid:$startup_primary_window_before" -o json >"$startup_root/primary-pane.before-new.json"
+smoke_assert_file_contains "$startup_root/primary-pane.before-new.json" '"role": "shell"'
+cp "$startup_registry" "$startup_root/registry.before-new.json"
+cp "$startup_latest_snapshot" "$startup_root/latest-snapshot.before-new.json"
+{
+  startup_tmux list-sessions -F 'session:#{session_id}:#{session_name}:#{@projmux_project_uid}'
+  startup_tmux list-windows -a -F 'window:#{session_id}:#{window_id}:#{window_name}:#{@projmux_window_uid}'
+  startup_tmux list-panes -a -F 'pane:#{session_id}:#{window_id}:#{pane_id}:#{@projmux_pane_uid}'
+} | sort >"$startup_root/runtime.before-new"
+: >"$startup_root/display-messages.log"
 : >"$startup_agent_argv"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session'" Enter
 startup_wait_for "fresh start open" test -s "$startup_root/open-new.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
-  echo "fresh start open failed" >&2
+  echo "fresh-start sidebar continuation did not resume after its expected refusal" >&2
   cat "$startup_root/open-new.err" >&2 || true
   exit 1
 fi
-if [[ "$(sha256sum "$startup_registry" | cut -d' ' -f1)" == "$startup_registry_before" ]]; then
-  echo "fresh start did not write the Registry at all" >&2
+startup_expected_new_message='display-message Project open error: project fresh start: schema v2 requires Project.spec.primaryWindowRef; canonical Project-start projection is not available until Phase 15; nothing was deleted'
+startup_wait_for "the exact Phase 3/Phase 15 fresh-start refusal" \
+  grep -Fqx "$startup_expected_new_message" "$startup_root/display-messages.log"
+
+startup_pmx describe project "uid:$startup_project_uid" -o json >"$startup_root/project.after-new.json"
+startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort >"$startup_root/windows.after-new.uids"
+startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort >"$startup_root/panes.after-new.uids"
+startup_pmx get agents --project "uid:$startup_project_uid" -o uid | sort >"$startup_root/agents.after-new.uids"
+startup_primary_window_after="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$startup_root/project.after-new.json" | head -n 1)"
+if [[ -z "$startup_primary_window_after" ]]; then
+  echo "rejected fresh start cleared the Project Window anchor" >&2
   exit 1
 fi
+startup_pmx describe window "uid:$startup_primary_window_after" --project "uid:$startup_project_uid" -o json \
+  >"$startup_root/primary-window.after-new.json"
+startup_primary_pane_after="$(sed -n 's/.*"primaryPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/primary-window.after-new.json" | head -n 1)"
+if [[ -z "$startup_primary_pane_after" ]]; then
+  echo "rejected fresh start cleared the shell Pane anchor" >&2
+  exit 1
+fi
+startup_pmx describe pane "uid:$startup_primary_pane_after" --project "uid:$startup_project_uid" \
+  --window "uid:$startup_primary_window_after" -o json >"$startup_root/primary-pane.after-new.json"
+cmp "$startup_root/registry.before-new.json" "$startup_registry"
+cmp "$startup_root/latest-snapshot.before-new.json" "$startup_latest_snapshot"
 for kind in windows panes agents; do
-  startup_remaining="$(startup_live_pmx get "$kind" --project "uid:$startup_project_uid" -o uid 2>/dev/null | grep -c . || true)"
-  if [[ "$startup_remaining" != "0" ]]; then
-    echo "fresh start left $startup_remaining stored $kind behind" >&2
-    startup_live_pmx get "$kind" --project "uid:$startup_project_uid" -o json >&2 || true
-    exit 1
-  fi
+  cmp "$startup_root/$kind.before-new.uids" "$startup_root/$kind.after-new.uids"
 done
-# The Project itself, its registration, and its managed root all survive.
-if ! startup_pmx get projects -o uid | grep -Fqx "$startup_project_uid"; then
-  echo "fresh start deregistered the Project" >&2
+if [[ "$startup_primary_window_after" != "$startup_primary_window_before" ]] || \
+  [[ "$startup_primary_pane_after" != "$startup_primary_pane_before" ]]; then
+  echo "rejected fresh start changed the canonical Project shell anchor" >&2
   exit 1
 fi
-if [[ ! -d "$startup_project" ]]; then
-  echo "fresh start removed the managed root" >&2
-  exit 1
-fi
-# The runtime is one fresh Window with one shell Pane, and no Agent was replayed
-# because no Agent record remained to replay.
-startup_wait_for "the fresh Project session" sh -c \
-  "env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' has-session -t '$startup_session' 2>/dev/null"
-startup_fresh_windows="$(startup_tmux list-windows -t "$startup_session" -F '#{window_id}' | grep -c .)"
-startup_fresh_panes="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}' | grep -c .)"
-if [[ "$startup_fresh_windows" != "1" ]] || [[ "$startup_fresh_panes" != "1" ]]; then
-  echo "fresh start did not come up as a single Window with a single shell Pane" >&2
-  startup_tmux list-panes -s -t "$startup_session" -F '#{window_id}:#{pane_id}:#{pane_start_command}' >&2 || true
+smoke_assert_file_contains "$startup_root/primary-pane.after-new.json" '"role": "shell"'
+{
+  startup_tmux list-sessions -F 'session:#{session_id}:#{session_name}:#{@projmux_project_uid}'
+  startup_tmux list-windows -a -F 'window:#{session_id}:#{window_id}:#{window_name}:#{@projmux_window_uid}'
+  startup_tmux list-panes -a -F 'pane:#{session_id}:#{window_id}:#{pane_id}:#{@projmux_pane_uid}'
+} | sort >"$startup_root/runtime.after-new"
+cmp "$startup_root/runtime.before-new" "$startup_root/runtime.after-new"
+if startup_tmux has-session -t "$startup_session" 2>/dev/null; then
+  echo "rejected fresh start created the Project session" >&2
   exit 1
 fi
 if [[ -s "$startup_agent_argv" ]]; then
-  echo "fresh start launched a provider even though no Agent record remained" >&2
+  echo "rejected fresh start launched a provider" >&2
   cat "$startup_agent_argv" >&2 || true
   exit 1
 fi
-startup_wait_for "client moved to the freshly started Project session" sh -c \
-  "test \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -c '$startup_client' '#{session_name}' 2>/dev/null)\" = '$startup_session'"
+if [[ "$(startup_tmux display-message -p -c "$startup_client" '#{session_name}')" != "$startup_driver" ]]; then
+  echo "rejected fresh start moved the client" >&2
+  exit 1
+fi
+if [[ ! -d "$startup_project" ]]; then
+  echo "rejected fresh start removed the managed root" >&2
+  exit 1
+fi
 
 startup_other_after="$(startup_other_tmux show-options -gqv @projmux_startup_sentinel):$(startup_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
 if [[ "$startup_other_after" != "$startup_other_before" ]]; then

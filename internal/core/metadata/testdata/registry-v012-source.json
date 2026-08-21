@@ -1,0 +1,10 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-12T00:00:00Z",
+  "projects": [{"apiVersion":"projmux.io/v1alpha1","kind":"Project","metadata":{"uid":"proj-v012","name":"v012","createdAt":"2026-07-12T00:00:00Z"},"spec":{"root":"/tmp","primaryWindowRef":"win-v012-main"},"status":{"session":{"name":"v012","live":false}}}],
+  "windows": [{"apiVersion":"projmux.io/v1alpha1","kind":"Window","metadata":{"uid":"win-v012-main","name":"main","ownerRef":{"kind":"Project","uid":"proj-v012"},"createdAt":"2026-07-12T00:00:00Z"},"spec":{"primaryPaneRef":"pane-v012-main"}},{"apiVersion":"projmux.io/v1alpha1","kind":"Window","metadata":{"uid":"win-v012-agent","name":"agent-only","ownerRef":{"kind":"Project","uid":"proj-v012"},"createdAt":"2026-07-12T00:00:00Z"},"spec":{"primaryPaneRef":""}}],
+  "panes": [{"apiVersion":"projmux.io/v1alpha1","kind":"Pane","metadata":{"uid":"pane-v012-main","name":"shell","ownerRef":{"kind":"Window","uid":"win-v012-main"},"createdAt":"2026-07-12T00:00:00Z"},"spec":{"role":"shell","cwd":"/projmux-missing-v012-worktree","command":"zsh"},"status":{}}],
+  "agents": [{"apiVersion":"projmux.io/v1alpha1","kind":"Agent","metadata":{"uid":"agent-v012","name":"claude","ownerRef":{"kind":"Window","uid":"win-v012-agent"},"createdAt":"2026-07-12T00:00:00Z"},"spec":{"provider":"claude"},"status":{"phase":"Offline","sessionRef":{"provider":"claude","observedAt":"2026-07-12T00:00:00Z","claude":{"sessionId":"session-v012","transcriptPath":"/tmp/session-v012.jsonl"}},"lastTransitionAt":"2026-07-12T00:00:00Z"}}],
+  "nameReservations": [{"kind":"Project","name":"v012","uid":"proj-v012"},{"scope":"proj-v012","kind":"Window","name":"main","uid":"win-v012-main"},{"scope":"proj-v012","kind":"Window","name":"agent-only","uid":"win-v012-agent"},{"scope":"win-v012-main","kind":"Pane","name":"shell","uid":"pane-v012-main"},{"scope":"win-v012-agent","kind":"Agent","name":"claude","uid":"agent-v012"}]
+}

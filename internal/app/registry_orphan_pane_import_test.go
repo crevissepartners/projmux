@@ -260,6 +260,7 @@ func TestOrphanPaneRegistrationRulesAndRefusals(t *testing.T) {
 				registry.NameReservations = append(registry.NameReservations, coremetadata.NameReservation{
 					Kind: coremetadata.KindProject, Name: "twin", UID: "prj-twin",
 				})
+				addFixtureCanonicalShell(registry, "prj-twin", "win-twin", "pan-twin", filepath.Join(root, "twin"))
 			},
 			wantRegistered: 0,
 		},
@@ -349,7 +350,7 @@ func TestOrphanPaneRegistrationNeverCrossesAProjectBoundary(t *testing.T) {
 	registry.Projects = append(registry.Projects, coremetadata.Project{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 		Metadata: coremetadata.ObjectMeta{UID: "prj-beta", Name: "beta", CreatedAt: resourceFixtureClock},
-		Spec:     coremetadata.ProjectSpec{Root: betaRoot},
+		Spec:     coremetadata.ProjectSpec{Root: betaRoot, PrimaryWindowRef: "win-beta"},
 		Status: coremetadata.ProjectStatus{
 			Session: &coremetadata.SessionProjection{Name: "repos-beta"},
 		},

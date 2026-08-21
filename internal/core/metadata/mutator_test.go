@@ -578,7 +578,7 @@ func assertNoRuntimeCondition(t *testing.T, reg Registry, windowUID, paneUID str
 // wire-compatibility decision behind `status,omitzero` on Window.
 //
 // A Window with no condition must serialize exactly as it did before the field
-// existed, so the addition stays inside schemaVersion 1 and an already-installed
+// existed, so the addition stayed inside schemaVersion 1 and an already-installed
 // build never sees a key it did not expect.
 func TestWindowStatusRoundTripsWithoutChangingAPreObservationRegistry(t *testing.T) {
 	t.Parallel()

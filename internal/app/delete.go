@@ -353,6 +353,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 		if current := buildDeletePlan(*working, kind, resolution).signature(); current != approved {
 			return fmt.Errorf("%s: the cascade plan changed between preflight and execution; nothing was deleted", spelling)
 		}
+		var preparedWindowDelete *coremetadata.Registry
 		if kind == coremetadata.KindWindow {
 			currentLive, err := c.windows.preflight(context.Background(), *working, plan)
 			if err != nil {
@@ -361,6 +362,20 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 			if currentLive.signature() != approvedLive {
 				return fmt.Errorf("%s: the exact live cascade changed between preflight and execution; nothing was deleted", spelling)
 			}
+			// Prepare and validate the complete Registry result before touching
+			// tmux. Deleting a Project's last Window may mint its replacement
+			// anchor; a uid/name failure must therefore happen while every exact
+			// live target is still intact, never after its kill.
+			candidate := working.Clone()
+			for _, uid := range resolution.UIDs() {
+				if err := deleteResource(&candidate, mutator, kind, uid); err != nil {
+					return err
+				}
+			}
+			if err := candidate.Validate(); err != nil {
+				return err
+			}
+			preparedWindowDelete = &candidate
 			// A self-target cannot synchronously kill its own Window: tmux tears
 			// down the caller's pty before the registry transaction can commit or
 			// the result can be written. Its exact kill is queued only after the
@@ -399,9 +414,13 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 				}
 			}
 		}
-		for _, uid := range resolution.UIDs() {
-			if err := deleteResource(working, mutator, kind, uid); err != nil {
-				return err
+		if preparedWindowDelete != nil {
+			*working = *preparedWindowDelete
+		} else {
+			for _, uid := range resolution.UIDs() {
+				if err := deleteResource(working, mutator, kind, uid); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

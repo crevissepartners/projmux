@@ -20,6 +20,7 @@ package metadata
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,14 +96,15 @@ var ErrRegistryPermission = errors.New("resource registry is not readable")
 // registry has not been touched yet, so a test can prove the prior bytes
 // survive a failure at each step of the envelope.
 type storeHooks struct {
-	afterBackup       func() error
-	afterTempWrite    func() error
-	validateStaged    func(path string) error
-	afterRecoveryCopy func() error
-	afterMarker       func() error
-	beforeRename      func() error
-	syncFile          func(*os.File) error
-	syncDir           func(string) error
+	afterBackup          func() error
+	afterMigrationReport func() error
+	afterTempWrite       func() error
+	validateStaged       func(path string) error
+	afterRecoveryCopy    func() error
+	afterMarker          func() error
+	beforeRename         func() error
+	syncFile             func(*os.File) error
+	syncDir              func(string) error
 }
 
 // Store persists one resource registry file behind a cross-process lock.
@@ -118,11 +120,12 @@ type Store struct {
 	rngMu     sync.Mutex
 	rng       *rand.Rand
 	hooks     storeHooks
-	// migrations overrides the schema migration set. It is nil in production,
-	// which means the (currently empty) production set; the migration
-	// atomicity tests register a step here so the write sequence can be
-	// exercised without shipping a migration.
+	// migrations starts as a private copy of the production migration set and
+	// may be extended by integration tests with older fixture steps.
 	migrations coremetadata.MigrationSet
+	// migrationEnv supplies the pure migration algorithm with adapter-owned
+	// filesystem observation and opaque uid minting.
+	migrationEnv coremetadata.MigrationEnvironment
 }
 
 // NewStore builds a registry store for an explicit file path. Tests pass a
@@ -137,9 +140,14 @@ func NewStore(path string) *Store {
 		recoveryDir:    filepath.Join(dir, recoveryDirName),
 		retention:      defaultRecoveryRetention,
 		clock:          time.Now,
+		migrations:     coremetadata.ProductionMigrationSet(),
 		// #nosec G404 -- lock retry jitter is scheduling noise, not a secret;
 		// this matches the notify and recent-window store lock jitter.
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
+		migrationEnv: coremetadata.MigrationEnvironment{
+			DirectoryExists: DirExists,
+			NewUID:          coremetadata.NewUID,
+		},
 	}
 }
 
@@ -195,14 +203,25 @@ func DirExists(path string) (bool, error) {
 	return info.IsDir(), nil
 }
 
-// Load reads the registry without writing anything.
+// Load reads the registry and atomically persists a known older schema before
+// returning it. The first v1 read therefore chooses opaque repair identities
+// exactly once; a second pass writes zero bytes.
 //
 // A newer-than-supported schemaVersion and malformed JSON both fail closed: an
-// error is returned and the file is left byte-identical. A known older schema
-// is migrated in memory only; the durable migration happens on the next write.
+// error is returned and the file is left byte-identical. Explicit read-only
+// entrypoints migrate a known older schema in memory only.
 // A registry that is gone or empty while the initialized marker exists fails
 // with ErrRegistryStateLost rather than answering the empty first-use registry.
 func (s *Store) Load() (coremetadata.Registry, error) {
+	registry, _, err := s.LoadWithMigrationResult()
+	return registry, err
+}
+
+// LoadWithMigrationResult is Load with the same backup/report paths and repair
+// detail that the first migration also publishes durably beside the backup.
+// Later reads are correctly reported as no-ops while the durable sidecar stays
+// available to operators that did not predict which call would migrate first.
+func (s *Store) LoadWithMigrationResult() (coremetadata.Registry, MigrationResult, error) {
 	return s.load(true)
 }
 
@@ -210,28 +229,40 @@ func (s *Store) Load() (coremetadata.Registry, error) {
 // read guard. Ordinary low-level loads validate. The only caller that opts out
 // is LoadDegradedReadOnly, the explicit app read seam used while repair is
 // needed.
-func (s *Store) load(validate bool) (coremetadata.Registry, error) {
+func (s *Store) load(validate bool) (coremetadata.Registry, MigrationResult, error) {
 	if s == nil {
-		return coremetadata.NewRegistry(), nil
+		return coremetadata.NewRegistry(), MigrationResult{}, nil
 	}
 	var out coremetadata.Registry
+	var migration MigrationResult
 	err := s.withLock(func() error {
-		registry, _, _, err := s.read()
+		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return err
 		}
+		migration.FromVersion = onDiskVersion
+		migration.Report = report
 		if validate {
 			if err := registry.Validate(); err != nil {
 				return err
 			}
 		}
+		if existed && onDiskVersion != coremetadata.SchemaVersion {
+			backup, reportPath, err := s.writeMigratedRegistry(registry, onDiskVersion, report)
+			if err != nil {
+				return err
+			}
+			migration.BackupPath = backup
+			migration.ReportPath = reportPath
+			migration.Migrated = true
+		}
 		out = registry
 		return nil
 	})
 	if err != nil {
-		return coremetadata.Registry{}, err
+		return coremetadata.Registry{}, MigrationResult{}, err
 	}
-	return out, nil
+	return out, migration, nil
 }
 
 // LoadReadOnly reads the registry without creating anything at all.
@@ -266,7 +297,14 @@ func (s *Store) LoadReadOnly() (coremetadata.Registry, error) {
 		}
 		return coremetadata.Registry{}, fmt.Errorf("metadata: stat registry %s: %w", s.path, err)
 	}
-	return s.Load()
+	registry, _, _, err := s.readWithoutRepair()
+	if err != nil {
+		return coremetadata.Registry{}, err
+	}
+	if err := registry.Validate(); err != nil {
+		return coremetadata.Registry{}, err
+	}
+	return registry, nil
 }
 
 // LoadDegradedReadOnly is the explicit app-facing read gate for a Registry that
@@ -291,7 +329,8 @@ func (s *Store) LoadDegradedReadOnly() (coremetadata.Registry, error) {
 		}
 		return coremetadata.Registry{}, fmt.Errorf("metadata: stat registry %s: %w", s.path, err)
 	}
-	return s.load(false)
+	registry, _, _, err := s.readWithoutRepair()
+	return registry, err
 }
 
 // LoadSnapshot reads an atomic Registry snapshot without taking the lock or
@@ -320,7 +359,7 @@ func (s *Store) Update(fn func(*coremetadata.Registry) error) (coremetadata.Regi
 	}
 	var out coremetadata.Registry
 	err := s.withLock(func() error {
-		registry, onDiskVersion, existed, err := s.read()
+		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
 		}
@@ -336,7 +375,7 @@ func (s *Store) Update(fn func(*coremetadata.Registry) error) (coremetadata.Regi
 			return err
 		}
 		migrating := existed && onDiskVersion != coremetadata.SchemaVersion
-		if err := s.write(working, migrating); err != nil {
+		if err := s.write(working, migrating, onDiskVersion, report); err != nil {
 			return err
 		}
 		out = working
@@ -368,7 +407,7 @@ func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremet
 	var out coremetadata.Registry
 	changed := false
 	err := s.withLock(func() error {
-		registry, onDiskVersion, existed, err := s.read()
+		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
 		}
@@ -388,7 +427,7 @@ func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremet
 			return nil
 		}
 		migrating := existed && onDiskVersion != coremetadata.SchemaVersion
-		if err := s.write(working, migrating); err != nil {
+		if err := s.write(working, migrating, onDiskVersion, report); err != nil {
 			return err
 		}
 		out = working
@@ -409,6 +448,12 @@ type MigrationResult struct {
 	Migrated bool
 	// BackupPath is the copy of the pre-migration file, when one was taken.
 	BackupPath string
+	// ReportPath is the durable private evidence sidecar adjacent to BackupPath.
+	// It includes the exact backup checksum/path and repair/loss detail.
+	ReportPath string
+	// Report is the deterministic repair and information-loss report for the
+	// migration. It is empty for a no-op.
+	Report coremetadata.MigrationReport
 }
 
 // Migrate performs the durable schema migration: backup, temp write, validate,
@@ -419,30 +464,28 @@ func (s *Store) Migrate() (MigrationResult, error) {
 	if s == nil {
 		return MigrationResult{}, errors.New("metadata: nil registry store")
 	}
-	if err := s.refuseDegradedMutation(); err != nil {
-		return MigrationResult{}, err
-	}
 	var out MigrationResult
 	err := s.withLock(func() error {
-		registry, onDiskVersion, existed, err := s.read()
+		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
-			return s.mapDegradedMutationError(err)
+			return err
 		}
 		out.FromVersion = onDiskVersion
+		out.Report = report
+		if existed {
+			if err := registry.Validate(); err != nil {
+				return err
+			}
+		}
 		if !existed || onDiskVersion == coremetadata.SchemaVersion {
 			return nil
 		}
-		if err := registry.Validate(); err != nil {
-			return err
-		}
-		backup, err := s.backup(onDiskVersion)
+		backup, reportPath, err := s.writeMigratedRegistry(registry, onDiskVersion, report)
 		if err != nil {
 			return err
 		}
 		out.BackupPath = backup
-		if err := s.writeAfterBackup(registry, false); err != nil {
-			return err
-		}
+		out.ReportPath = reportPath
 		out.Migrated = true
 		return nil
 	})
@@ -452,52 +495,56 @@ func (s *Store) Migrate() (MigrationResult, error) {
 	return out, nil
 }
 
-// read loads, classifies, and (in memory) migrates the registry file. It
-// returns the registry, the schemaVersion found on disk, and whether the file
-// existed with content.
-func (s *Store) read() (coremetadata.Registry, int, bool, error) {
+func (s *Store) readWithReport() (coremetadata.Registry, int, bool, coremetadata.MigrationReport, error) {
 	localstate.RepairPrivateFile(s.path)
-	return s.readWithoutRepair()
+	return s.readWithoutRepairWithReport()
 }
 
 func (s *Store) readWithoutRepair() (coremetadata.Registry, int, bool, error) {
+	registry, version, existed, _, err := s.readWithoutRepairWithReport()
+	return registry, version, existed, err
+}
+
+func (s *Store) readWithoutRepairWithReport() (coremetadata.Registry, int, bool, coremetadata.MigrationReport, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return s.absentRegistry("missing")
+			registry, version, existed, absentErr := s.absentRegistry("missing")
+			return registry, version, existed, coremetadata.MigrationReport{}, absentErr
 		}
 		if errors.Is(err, fs.ErrPermission) {
-			return coremetadata.Registry{}, 0, true, fmt.Errorf("metadata: read registry %s: %w: %w", s.path, ErrRegistryPermission, err)
+			return coremetadata.Registry{}, 0, true, coremetadata.MigrationReport{}, fmt.Errorf("metadata: read registry %s: %w: %w", s.path, ErrRegistryPermission, err)
 		}
-		return coremetadata.Registry{}, 0, false, fmt.Errorf("metadata: read registry %s: %w", s.path, err)
+		return coremetadata.Registry{}, 0, false, coremetadata.MigrationReport{}, fmt.Errorf("metadata: read registry %s: %w", s.path, err)
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
-		return s.absentRegistry("empty")
+		registry, version, existed, absentErr := s.absentRegistry("empty")
+		return registry, version, existed, coremetadata.MigrationReport{}, absentErr
 	}
 
 	var envelope struct {
 		SchemaVersion int `json:"schemaVersion"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return coremetadata.Registry{}, 0, true, fmt.Errorf("%w %s: %w", ErrMalformedRegistry, s.path, err)
+		return coremetadata.Registry{}, 0, true, coremetadata.MigrationReport{}, fmt.Errorf("%w %s: %w", ErrMalformedRegistry, s.path, err)
 	}
 	// Classify before decoding the body so an unknown envelope is refused
 	// without this build reinterpreting fields it does not understand. An
 	// absent schemaVersion decodes as 0, which is unknown rather than
 	// pre-release, so it is refused here too.
 	if _, err := coremetadata.ClassifySchemaVersionWith(s.migrations, envelope.SchemaVersion); err != nil {
-		return coremetadata.Registry{}, envelope.SchemaVersion, true, fmt.Errorf("metadata: %s: %w", s.path, err)
+		return coremetadata.Registry{}, envelope.SchemaVersion, true, coremetadata.MigrationReport{}, fmt.Errorf("metadata: %s: %w", s.path, err)
 	}
 
 	var registry coremetadata.Registry
 	if err := json.Unmarshal(data, &registry); err != nil {
-		return coremetadata.Registry{}, envelope.SchemaVersion, true, fmt.Errorf("%w %s: %w", ErrMalformedRegistry, s.path, err)
+		return coremetadata.Registry{}, envelope.SchemaVersion, true, coremetadata.MigrationReport{}, fmt.Errorf("%w %s: %w", ErrMalformedRegistry, s.path, err)
 	}
-	migrated, _, err := coremetadata.MigrateRegistryWith(s.migrations, registry)
+	migrated, _, report, err := coremetadata.MigrateRegistryWithEnvironment(s.migrations, registry, s.migrationEnv)
 	if err != nil {
-		return coremetadata.Registry{}, envelope.SchemaVersion, true, fmt.Errorf("metadata: %s: %w", s.path, err)
+		return coremetadata.Registry{}, envelope.SchemaVersion, true, report, fmt.Errorf("metadata: %s: %w", s.path, err)
 	}
-	return migrated, envelope.SchemaVersion, true, nil
+	return migrated, envelope.SchemaVersion, true, report, nil
 }
 
 // absentRegistry answers the two ways registry.json can carry no content. Which
@@ -578,15 +625,88 @@ func (s *Store) mapDegradedMutationError(fallback error) error {
 	return fallback
 }
 
-func (s *Store) write(registry coremetadata.Registry, migrating bool) error {
+func (s *Store) write(registry coremetadata.Registry, migrating bool, onDiskVersion int, report coremetadata.MigrationReport) error {
 	if migrating {
-		if _, err := s.backup(0); err != nil {
-			return err
+		_, _, err := s.writeMigratedRegistry(registry, onDiskVersion, report)
+		return err
+	}
+	return s.writeAfterBackup(registry, true)
+}
+
+const migrationReportSuffix = ".migration-report.json"
+
+// migrationEvidence is the durable operator record adjacent to one exact
+// versioned backup. It is deliberately outside recoveryDir and its retention
+// policy: the backup and its report remain an inseparable audit pair.
+type migrationEvidence struct {
+	EvidenceVersion      int                            `json:"evidenceVersion"`
+	BackupPath           string                         `json:"backupPath"`
+	BackupSHA256         string                         `json:"backupSha256"`
+	FromVersion          int                            `json:"fromVersion"`
+	ToVersion            int                            `json:"toVersion"`
+	RepairCount          int                            `json:"repairCount"`
+	InformationLossCount int                            `json:"informationLossCount"`
+	Repairs              []coremetadata.MigrationRepair `json:"repairs"`
+}
+
+func (s *Store) writeMigratedRegistry(registry coremetadata.Registry, onDiskVersion int, report coremetadata.MigrationReport) (string, string, error) {
+	backupPath, err := s.backup(onDiskVersion)
+	if err != nil {
+		return "", "", err
+	}
+	reportPath, err := s.writeMigrationEvidence(backupPath, report)
+	if err != nil {
+		return "", "", err
+	}
+	removeReport := true
+	defer func() {
+		if removeReport {
+			_ = os.Remove(reportPath)
+			_ = s.syncDir(filepath.Dir(reportPath))
+		}
+	}()
+	if s.hooks.afterMigrationReport != nil {
+		if err := s.hooks.afterMigrationReport(); err != nil {
+			return "", "", err
 		}
 	}
-	// A migration already copied the pre-migration bytes to its own versioned
-	// backup, so it does not also take a same-version recovery copy.
-	return s.writeAfterBackup(registry, !migrating)
+	// The versioned backup already preserves the prior bytes, so a migration
+	// does not also take a same-version rolling recovery copy.
+	if err := s.writeAfterBackup(registry, false); err != nil {
+		return "", "", err
+	}
+	removeReport = false
+	return backupPath, reportPath, nil
+}
+
+func (s *Store) writeMigrationEvidence(backupPath string, report coremetadata.MigrationReport) (string, error) {
+	// #nosec G304 -- backupPath is returned by backup from the Store's own
+	// registry path plus a generated version/timestamp suffix.
+	backup, err := os.ReadFile(backupPath)
+	if err != nil {
+		return "", fmt.Errorf("metadata: read migration backup for evidence %s: %w", backupPath, err)
+	}
+	digest := sha256.Sum256(backup)
+	evidence := migrationEvidence{
+		EvidenceVersion:      1,
+		BackupPath:           backupPath,
+		BackupSHA256:         fmt.Sprintf("%x", digest),
+		FromVersion:          report.FromVersion,
+		ToVersion:            report.ToVersion,
+		RepairCount:          len(report.Repairs),
+		InformationLossCount: report.InformationLossCount(),
+		Repairs:              report.Repairs,
+	}
+	data, err := json.MarshalIndent(evidence, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("metadata: encode migration evidence: %w", err)
+	}
+	data = append(data, '\n')
+	reportPath := backupPath + migrationReportSuffix
+	if err := s.writePrivateFile(reportPath, data); err != nil {
+		return "", fmt.Errorf("metadata: write migration evidence %s: %w", reportPath, err)
+	}
+	return reportPath, nil
 }
 
 // writeAfterBackup performs the durable envelope sequence: stage -> fsync ->

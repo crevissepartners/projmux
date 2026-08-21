@@ -214,12 +214,12 @@ func TestPluralReadContextSelectorMatrix(t *testing.T) {
 		{
 			kind: "windows", projectDefault: "win-alpha-main\nwin-alpha-review\n", controlDefault: "win-home\n",
 			uidArgs: []string{"--window", "uid:win-beta-main"}, uidSet: "win-beta-main\n",
-			explicitProject: "win-beta-main\n", wholeSet: "win-alpha-main\nwin-alpha-review\nwin-beta-main\nwin-home\n",
+			explicitProject: "win-beta-main\n", wholeSet: "win-alpha-main\nwin-alpha-review\nwin-beta-main\nwin-gone-main\nwin-home\n",
 		},
 		{
 			kind: "panes", projectDefault: "pan-alpha-zsh\npan-alpha-log\npan-alpha-codex\npan-alpha-review\n", controlDefault: "pan-home-shell\npan-home-agent\n",
 			uidArgs: []string{"--pane", "uid:pan-beta-zsh"}, uidSet: "pan-beta-zsh\n",
-			explicitProject: "pan-beta-zsh\n", wholeSet: "pan-alpha-zsh\npan-alpha-log\npan-alpha-codex\npan-alpha-review\npan-beta-zsh\npan-home-shell\npan-home-agent\n",
+			explicitProject: "pan-beta-zsh\n", wholeSet: "pan-alpha-zsh\npan-alpha-log\npan-alpha-codex\npan-alpha-review\npan-beta-zsh\npan-gone-zsh\npan-home-shell\npan-home-agent\n",
 		},
 		{
 			kind: "agents", projectDefault: "agt-alpha-codex\n", controlDefault: "agt-home\n",
@@ -335,7 +335,7 @@ func TestPluralReadNameSelectorKeepsActiveRootScope(t *testing.T) {
 		{name: "Project name stays in Project", active: func() *recordedActiveTarget { return insideTmux("pan-alpha-zsh", "win-alpha-main") }, want: "pan-alpha-zsh\npan-alpha-review\n"},
 		{name: "ControlSession name cannot cross into Project", active: func() *recordedActiveTarget { return insideTmux("pan-home-shell", "win-home") }},
 		{name: "foreign name still refuses", active: func() *recordedActiveTarget { return insideTmux("", "win-foreign") }, refusal: true},
-		{name: "outside name stays whole Registry", active: outsideTmux, want: "pan-alpha-zsh\npan-alpha-review\npan-beta-zsh\n"},
+		{name: "outside name stays whole Registry", active: outsideTmux, want: "pan-alpha-zsh\npan-alpha-review\npan-beta-zsh\npan-gone-zsh\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -429,7 +429,7 @@ func TestPluralReadProjectScopeBoundaries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("all-projects with selectors: %v", err)
 		}
-		if stdout != "pan-alpha-zsh\npan-beta-zsh\n" || active.calls != 0 {
+		if stdout != "pan-alpha-zsh\npan-beta-zsh\npan-gone-zsh\n" || active.calls != 0 {
 			t.Fatalf("all-projects with selectors stdout=%q active calls=%d", stdout, active.calls)
 		}
 	})
@@ -1085,7 +1085,7 @@ func TestOutsideTmuxTheEmptySelectorKeepsThePreFallbackFailure(t *testing.T) {
 				stdout, _, err := runRoute(t, newTestDescribeCommandWithActiveTarget(t, store, active), "pane")
 				return stdout, err
 			},
-			want: "resolve pane: the current selector matched 5 panes, want exactly one",
+			want: "resolve pane: the current selector matched 6 panes, want exactly one",
 		},
 		{
 			name: "describe window",
@@ -1093,7 +1093,7 @@ func TestOutsideTmuxTheEmptySelectorKeepsThePreFallbackFailure(t *testing.T) {
 				stdout, _, err := runRoute(t, newTestDescribeCommandWithActiveTarget(t, store, active), "window")
 				return stdout, err
 			},
-			want: "resolve window: the current selector matched 3 windows, want exactly one",
+			want: "resolve window: the current selector matched 4 windows, want exactly one",
 		},
 		{
 			name: "describe project",
@@ -1117,7 +1117,7 @@ func TestOutsideTmuxTheEmptySelectorKeepsThePreFallbackFailure(t *testing.T) {
 				stdout, _, err := runRoute(t, newTestRenameCommandWithActiveTarget(store, active), "pane", "--name", "x")
 				return stdout, err
 			},
-			want: "resolve pane: the current selector matched 5 panes, want exactly one",
+			want: "resolve pane: the current selector matched 6 panes, want exactly one",
 		},
 		{
 			name: "rebind project",
@@ -1134,7 +1134,7 @@ func TestOutsideTmuxTheEmptySelectorKeepsThePreFallbackFailure(t *testing.T) {
 				stdout, _, err := runRoute(t, cmd, "pane")
 				return stdout, err
 			},
-			want: "resolve pane: the current selector matched 5 panes, want exactly one",
+			want: "resolve pane: the current selector matched 6 panes, want exactly one",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

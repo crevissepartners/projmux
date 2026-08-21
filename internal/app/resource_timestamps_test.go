@@ -100,10 +100,22 @@ func ageFixtureRegistry(t *testing.T, created time.Time) coremetadata.Registry {
 		APIVersion: coremetadata.APIVersion,
 		Kind:       coremetadata.KindProject,
 		Metadata:   coremetadata.ObjectMeta{UID: "prj-alpha", Name: "alpha", CreatedAt: created},
-		Spec:       coremetadata.ProjectSpec{Root: "/srv/alpha"},
+		Spec:       coremetadata.ProjectSpec{Root: "/srv/alpha", PrimaryWindowRef: "win-alpha"},
+	}}
+	registry.Windows = []coremetadata.Window{{
+		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
+		Metadata: coremetadata.ObjectMeta{UID: "win-alpha", Name: "main", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-alpha"}, CreatedAt: created},
+		Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-alpha"},
+	}}
+	registry.Panes = []coremetadata.Pane{{
+		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
+		Metadata: coremetadata.ObjectMeta{UID: "pan-alpha", Name: "shell", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindWindow, UID: "win-alpha"}, CreatedAt: created},
+		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: "/srv/alpha"},
 	}}
 	registry.NameReservations = []coremetadata.NameReservation{
 		{Kind: coremetadata.KindProject, Name: "alpha", UID: "prj-alpha"},
+		{Scope: "prj-alpha", Kind: coremetadata.KindWindow, Name: "main", UID: "win-alpha"},
+		{Scope: "win-alpha", Kind: coremetadata.KindPane, Name: "shell", UID: "pan-alpha"},
 	}
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("age fixture is not a valid registry: %v", err)

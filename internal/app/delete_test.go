@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -459,6 +460,43 @@ func registryUIDs(registry coremetadata.Registry) map[string]bool {
 	return out
 }
 
+func projectGraphSnapshot(t *testing.T, registry coremetadata.Registry, projectUID string) string {
+	t.Helper()
+	project, ok := registry.Project(projectUID)
+	if !ok {
+		t.Fatalf("project %q does not exist", projectUID)
+	}
+	graph := coremetadata.NewRegistry()
+	graph.Projects = append(graph.Projects, project.Clone())
+	owned := map[string]bool{projectUID: true}
+	for _, window := range registry.WindowsOf(projectUID) {
+		graph.Windows = append(graph.Windows, window.Clone())
+		owned[window.Metadata.UID] = true
+		for _, pane := range registry.PanesOf(window.Metadata.UID) {
+			graph.Panes = append(graph.Panes, pane.Clone())
+			owned[pane.Metadata.UID] = true
+		}
+		for _, agent := range registry.AgentsOf(window.Metadata.UID) {
+			graph.Agents = append(graph.Agents, agent.Clone())
+			owned[agent.Metadata.UID] = true
+			for _, pane := range registry.PanesOf(agent.Metadata.UID) {
+				graph.Panes = append(graph.Panes, pane.Clone())
+				owned[pane.Metadata.UID] = true
+			}
+		}
+	}
+	for _, reservation := range registry.NameReservations {
+		if owned[reservation.UID] {
+			graph.NameReservations = append(graph.NameReservations, reservation)
+		}
+	}
+	data, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatalf("encode Project graph: %v", err)
+	}
+	return string(data)
+}
+
 // TestDeleteCascadeRemovesExactlyTheDescendantPlan is the cascade table.
 //
 // Each case names both what must disappear and what must survive, because the
@@ -854,7 +892,7 @@ func TestDeleteAbortsWhenTheCascadePlanChangesBeforeExecution(t *testing.T) {
 
 // deleteFixturePopulation is the whole-registry blast radius of the shared
 // fixture, per kind. It is what an omitted selector used to address.
-var deleteFixturePopulation = map[string]int{"window": 3, "pane": 5, "agent": 2}
+var deleteFixturePopulation = map[string]int{"window": 4, "pane": 6, "agent": 2}
 
 // TestDeleteEmptySelectorInsideTmuxTargetsOnlyTheActiveResource is acceptance
 // criterion 1.
@@ -1341,6 +1379,67 @@ func TestDeleteWindowKillsExactLiveTargetBeforeStoreCommitAndPreservesSibling(t 
 	}
 	if !strings.Contains(stdout, "live killed tmux window @10 session=alpha") || strings.Contains(stdout, "last live Window") {
 		t.Fatalf("two-Window result = %q", stdout)
+	}
+}
+
+func TestDeleteLastProjectWindowKillsExactTargetAndMintsAValidOfflineReplacement(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixtureWindowDeleteRuntime()
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows = runtime
+	alphaBefore := projectGraphSnapshot(t, store.registry, "prj-alpha")
+
+	stdout, _, err := runRoute(t, cmd, "window", "uid:win-beta-main", "--yes")
+	if err != nil {
+		t.Fatalf("delete last Project Window: %v", err)
+	}
+	if len(runtime.killed) != 1 || runtime.killed[0].UID != "win-beta-main" {
+		t.Fatalf("exact live kills = %+v", runtime.killed)
+	}
+	if _, ok := store.registry.Window("win-beta-main"); ok {
+		t.Fatal("requested Window survived")
+	}
+	beta, _ := store.registry.Project("prj-beta")
+	windows := store.registry.WindowsOf("prj-beta")
+	if len(windows) != 1 || windows[0].Metadata.UID == "win-beta-main" || beta.Spec.PrimaryWindowRef != windows[0].Metadata.UID {
+		t.Fatalf("replacement chain root = project:%+v windows:%+v", beta, windows)
+	}
+	primary, ok := store.registry.Pane(windows[0].Spec.PrimaryPaneRef)
+	if !ok || primary.Metadata.OwnerUID() != windows[0].Metadata.UID || primary.Spec.Role != coremetadata.PaneRoleShell {
+		t.Fatalf("replacement shell = %+v under window %+v", primary, windows[0])
+	}
+	if err := store.registry.Validate(); err != nil {
+		t.Fatalf("post-delete Registry invalid: %v", err)
+	}
+	if after := projectGraphSnapshot(t, store.registry, "prj-alpha"); after != alphaBefore {
+		t.Fatalf("delete changed unrelated alpha graph:\n--- before ---\n%s\n--- after ---\n%s", alphaBefore, after)
+	}
+	if !strings.Contains(stdout, "live cascade ended Project session beta") {
+		t.Fatalf("last-Window result = %q", stdout)
+	}
+}
+
+func TestDeleteLastProjectWindowPrevalidatesReplacementBeforeLiveKill(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixtureWindowDeleteRuntime()
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows = runtime
+	before := store.snapshot()
+	mutator := store.mutator()
+	mutator.NewUID = func(coremetadata.Kind) (string, error) {
+		return "", errors.New("injected replacement uid failure")
+	}
+	cmd.store.mutator = func() coremetadata.Mutator { return mutator }
+
+	stdout, _, err := runRoute(t, cmd, "window", "uid:win-beta-main", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "injected replacement uid failure") {
+		t.Fatalf("prevalidation error = %v", err)
+	}
+	if stdout != "" || len(runtime.killed) != 0 || len(runtime.queued) != 0 {
+		t.Fatalf("failed replacement touched live state: stdout=%q killed=%+v queued=%+v", stdout, runtime.killed, runtime.queued)
+	}
+	if after := store.snapshot(); after != before {
+		t.Fatalf("failed replacement changed Registry:\n--- before ---\n%s\n--- after ---\n%s", before, after)
 	}
 }
 

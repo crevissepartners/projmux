@@ -39,7 +39,7 @@ func controlOwnerFixtureRegistry(control bool) coremetadata.Registry {
 	registry.Projects = []coremetadata.Project{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 		Metadata: meta("prj-alpha", "alpha", nil),
-		Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha"},
+		Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha", PrimaryWindowRef: "win-alpha-main"},
 		Status:   coremetadata.ProjectStatus{Session: &coremetadata.SessionProjection{Name: "alpha", Live: true}},
 	}}
 	reserve("", coremetadata.KindProject, "alpha", "prj-alpha")

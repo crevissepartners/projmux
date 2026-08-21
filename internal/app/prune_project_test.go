@@ -219,12 +219,27 @@ func TestPruneProjectCandidateListingIsBounded(t *testing.T) {
 		store.registry.Projects = append(store.registry.Projects, coremetadata.Project{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 			Metadata: coremetadata.ObjectMeta{UID: uid, Name: name, CreatedAt: resourceFixtureClock},
-			Spec:     coremetadata.ProjectSpec{Root: "/srv/" + name},
+			Spec:     coremetadata.ProjectSpec{Root: "/srv/" + name, PrimaryWindowRef: "win-" + name},
 			Status:   coremetadata.ProjectStatus{Conditions: []coremetadata.Condition{missing}},
 		})
 		store.registry.NameReservations = append(store.registry.NameReservations, coremetadata.NameReservation{
 			Kind: coremetadata.KindProject, Name: name, UID: uid,
 		})
+		windowUID, paneUID := "win-"+name, "pan-"+name
+		store.registry.Windows = append(store.registry.Windows, coremetadata.Window{
+			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
+			Metadata: coremetadata.ObjectMeta{UID: windowUID, Name: "main", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: uid}, CreatedAt: resourceFixtureClock},
+			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: paneUID},
+		})
+		store.registry.Panes = append(store.registry.Panes, coremetadata.Pane{
+			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
+			Metadata: coremetadata.ObjectMeta{UID: paneUID, Name: "shell", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindWindow, UID: windowUID}, CreatedAt: resourceFixtureClock},
+			Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: "/srv/" + name},
+		})
+		store.registry.NameReservations = append(store.registry.NameReservations,
+			coremetadata.NameReservation{Scope: uid, Kind: coremetadata.KindWindow, Name: "main", UID: windowUID},
+			coremetadata.NameReservation{Scope: windowUID, Kind: coremetadata.KindPane, Name: "shell", UID: paneUID},
+		)
 	}
 	if err := store.registry.Validate(); err != nil {
 		t.Fatalf("bounded fixture is invalid: %v", err)

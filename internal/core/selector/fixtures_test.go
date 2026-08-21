@@ -125,22 +125,41 @@ func (b *builder) paneLessAgent(agentUID, agentName, windowUID string, phase met
 	b.reserve(windowUID, metadata.KindAgent, agentName, agentUID)
 }
 
-// build derives primaryPaneRef for every Window and validates the result.
+// build derives the schema-v2 canonical Project/Window shell anchors and
+// validates the result.
 func (b *builder) build() metadata.Registry {
 	b.t.Helper()
 	for i := range b.registry.Windows {
 		window := &b.registry.Windows[i]
-		owners := map[string]bool{window.Metadata.UID: true}
-		for _, agent := range b.registry.Agents {
-			if agent.Metadata.OwnerUID() == window.Metadata.UID {
-				owners[agent.Metadata.UID] = true
-			}
-		}
 		for _, pane := range b.registry.Panes {
-			if owners[pane.Metadata.OwnerUID()] {
+			if pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == metadata.KindWindow &&
+				pane.Metadata.OwnerRef.UID == window.Metadata.UID && pane.Spec.Role == metadata.PaneRoleShell {
 				window.Spec.PrimaryPaneRef = pane.Metadata.UID
 				break
 			}
+		}
+		if window.Spec.PrimaryPaneRef == "" {
+			uid := "pan-anchor-" + window.Metadata.UID
+			b.shellPane(uid, "shell-anchor", "", window.Metadata.UID, "", nil)
+			window.Spec.PrimaryPaneRef = uid
+		}
+	}
+	for i := range b.registry.Projects {
+		project := &b.registry.Projects[i]
+		for _, window := range b.registry.Windows {
+			if window.Metadata.OwnerRef != nil && window.Metadata.OwnerRef.Kind == metadata.KindProject && window.Metadata.OwnerRef.UID == project.Metadata.UID {
+				project.Spec.PrimaryWindowRef = window.Metadata.UID
+				break
+			}
+		}
+		if project.Spec.PrimaryWindowRef == "" {
+			windowUID := "win-anchor-" + project.Metadata.UID
+			paneUID := "pan-anchor-" + project.Metadata.UID
+			b.window(windowUID, "window-anchor", project.Metadata.UID, nil)
+			b.shellPane(paneUID, "shell-anchor", "", windowUID, project.Spec.Root, nil)
+			project.Spec.PrimaryWindowRef = windowUID
+			window, _ := b.registry.Window(windowUID)
+			window.Spec.PrimaryPaneRef = paneUID
 		}
 	}
 	if err := b.registry.Validate(); err != nil {

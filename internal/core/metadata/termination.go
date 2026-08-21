@@ -213,8 +213,8 @@ func (a PaneActivation) IsZero() bool {
 // It is a pointer field with omitempty everywhere it is stored, which is the
 // entire read-compatibility story: a registry written before this field existed
 // decodes to nil, a nil value re-encodes to an absent key, and the document
-// round-trips byte-identically. It is additive inside schemaVersion 1 and needs
-// no migration step -- bumping the envelope would make every already installed
+// round-trips byte-identically. It was additive inside schemaVersion 1 and needed
+// no migration step -- bumping the envelope would have made every already installed
 // build reject the file fail-closed with ErrSchemaTooNew.
 //
 // It carries no command text, no pane content, and no provider conversation

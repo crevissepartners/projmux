@@ -522,7 +522,10 @@ func classifyRegistryBytes(info *RegistryFileInfo, data []byte, migrations corem
 		info.Detail = fmt.Sprintf("%s does not decode into a registry: %v", info.Path, err)
 		return
 	}
-	migrated, _, err := coremetadata.MigrateRegistryWith(migrations, registry)
+	migrated, _, _, err := coremetadata.MigrateRegistryWithEnvironment(migrations, registry, coremetadata.MigrationEnvironment{
+		DirectoryExists: DirExists,
+		NewUID:          coremetadata.NewUID,
+	})
 	if err != nil {
 		info.State = RegistryStateInvalid
 		info.Detail = fmt.Sprintf("%s cannot be migrated to the current schema: %v", info.Path, err)

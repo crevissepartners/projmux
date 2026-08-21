@@ -165,7 +165,7 @@ func TestSelectorCardinalityFailureReachesExitCodeTwoWithNoStdout(t *testing.T) 
 	registry.Projects = []coremetadata.Project{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 		Metadata: coremetadata.ObjectMeta{UID: "prj-1", Name: "alpha"},
-		Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha"},
+		Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha", PrimaryWindowRef: "win-1"},
 	}}
 	registry.NameReservations = []coremetadata.NameReservation{
 		{Kind: coremetadata.KindProject, Name: "alpha", UID: "prj-1"},

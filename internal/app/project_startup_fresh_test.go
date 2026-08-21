@@ -219,11 +219,11 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 			wantKept:    []string{"prj-alpha", "prj-beta", "prj-gone", "win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "pan-alpha-log", "pan-alpha-codex", "pan-alpha-review", "agt-alpha-codex"},
 		},
 		{
-			name:        "project that declares no topology",
+			name:        "project with the minimum canonical topology",
 			root:        "/srv/gone",
-			wantWindows: 0, wantPanes: 0, wantAgents: 0, wantRefs: 0,
-			wantCounts:  "Window 0 / Pane 0 / Agent 0",
-			wantRemoved: nil,
+			wantWindows: 1, wantPanes: 1, wantAgents: 0, wantRefs: 0,
+			wantCounts:  "Window 1 / Pane 1 / Agent 0",
+			wantRemoved: []string{"win-gone-main", "pan-gone-zsh"},
 			wantKept:    []string{"prj-alpha", "prj-beta", "prj-gone", "win-alpha-main", "win-alpha-review", "win-beta-main", "agt-alpha-codex", "agt-beta-codex"},
 		},
 		{
@@ -260,10 +260,10 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 			}
 
 			before := store.snapshot()
-			if err := starter.PruneProjectFreshStart(context.Background(), tc.root, plan); err != nil {
-				t.Fatalf("PruneProjectFreshStart() error = %v", err)
-			}
 			if len(tc.wantRemoved) == 0 {
+				if err := starter.PruneProjectFreshStart(context.Background(), tc.root, plan); err != nil {
+					t.Fatalf("empty PruneProjectFreshStart() error = %v", err)
+				}
 				if store.writes != 0 || store.transactions != 0 {
 					t.Fatalf("an empty prune opened a transaction: transactions=%d writes=%d", store.transactions, store.writes)
 				}
@@ -272,23 +272,11 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 				}
 				return
 			}
-			for _, uid := range tc.wantRemoved {
-				if freshStartRegistryHasUID(store.registry, uid) {
-					t.Fatalf("prune left %s behind:\n%s", uid, store.snapshot())
-				}
+			if err := starter.PruneProjectFreshStart(context.Background(), tc.root, plan); err == nil || !strings.Contains(err.Error(), "primaryWindowRef") {
+				t.Fatalf("v2 fresh-start prune error = %v, want canonical-anchor rejection", err)
 			}
-			for _, uid := range tc.wantKept {
-				if !freshStartRegistryHasUID(store.registry, uid) {
-					t.Fatalf("prune removed %s, which is out of scope:\n%s", uid, store.snapshot())
-				}
-			}
-			// The prune must converge: replanning the same root now finds nothing.
-			replan, err := starter.PlanProjectFreshStart(tc.root)
-			if err != nil {
-				t.Fatalf("replan error = %v", err)
-			}
-			if !replan.Empty() {
-				t.Fatalf("replan after prune = %+v, want an empty plan", replan)
+			if store.writes != 0 || store.snapshot() != before {
+				t.Fatalf("rejected fresh-start prune changed Registry: writes=%d\nbefore %s\nafter  %s", store.writes, before, store.snapshot())
 			}
 		})
 	}
@@ -327,8 +315,12 @@ func TestProjectFreshStartNeverReachesAControlSession(t *testing.T) {
 	if plan.Windows != 2 || plan.Panes != 4 || plan.Agents != 1 {
 		t.Fatalf("plan = %+v, want the Project's own Window 2 / Pane 4 / Agent 1 only", plan)
 	}
-	if err := starter.PruneProjectFreshStart(context.Background(), "/srv/alpha", plan); err != nil {
-		t.Fatalf("PruneProjectFreshStart() error = %v", err)
+	before := store.snapshot()
+	if err := starter.PruneProjectFreshStart(context.Background(), "/srv/alpha", plan); err == nil || !strings.Contains(err.Error(), "primaryWindowRef") {
+		t.Fatalf("PruneProjectFreshStart() error = %v, want canonical-anchor rejection", err)
+	}
+	if store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("rejected fresh start changed Registry: writes=%d", store.writes)
 	}
 	for _, uid := range []string{"ctl-home", "win-ctl-home", "pan-ctl-home"} {
 		if !freshStartRegistryHasUID(store.registry, uid) && !freshStartRegistryHasControlSession(store.registry, uid) {
@@ -555,64 +547,43 @@ func freshStartSwitchFixture(t *testing.T, steps []pickerStep) (
 	return cmd, store, executor, tmux, reporter, stateStore
 }
 
-// TestSwitchProjectStartupNewApprovedPrunesDiscardsThenStartsFresh is the
-// approve path end to end: the latest snapshot is discarded, the Registry
-// topology is pruned, the Project comes up through the shipped single-Window
-// bootstrap because no desired topology is left to materialize, and the operator
-// is told that nothing was resumed.
-func TestSwitchProjectStartupNewApprovedPrunesDiscardsThenStartsFresh(t *testing.T) {
+// TestSwitchProjectStartupNewFailsClosedUntilCanonicalFreshStartShips pins the
+// Phase 3/Phase 15 boundary: the old prune-to-zero transaction cannot commit a
+// schema-v2 Project without a canonical shell anchor.
+func TestSwitchProjectStartupNewFailsClosedUntilCanonicalFreshStartShips(t *testing.T) {
 	cmd, store, executor, tmux, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupNewConfirmValue}},
 	})
 	topology := cmd.projectTopology.(*fakeProjectTopologyMaterializer)
-
-	if err := cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
+	before := store.snapshot()
+	snapshotPath, err := stateStore.Path("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotBefore, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatalf("read latest snapshot before rejected open: %v", err)
 	}
 
-	// The Registry half: every Window, Pane, and Agent of prj-alpha is gone and
-	// nothing else moved.
-	for _, uid := range []string{"win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "pan-alpha-log", "pan-alpha-codex", "pan-alpha-review", "agt-alpha-codex"} {
-		if freshStartRegistryHasUID(store.registry, uid) {
-			t.Fatalf("approved fresh start left %s in the Registry:\n%s", uid, store.snapshot())
-		}
+	if err := cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha"); err == nil || !strings.Contains(err.Error(), "primaryWindowRef") {
+		t.Fatalf("openProjectTarget() error = %v, want canonical-anchor rejection", err)
 	}
-	for _, uid := range []string{"prj-alpha", "prj-beta", "win-beta-main", "pan-beta-zsh", "agt-beta-codex"} {
-		if !freshStartRegistryHasUID(store.registry, uid) {
-			t.Fatalf("approved fresh start removed out-of-scope %s:\n%s", uid, store.snapshot())
-		}
+	if store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("rejected new-mode start changed Registry: writes=%d", store.writes)
 	}
-	if store.writes != 1 {
-		t.Fatalf("approved fresh start wrote the Registry %d time(s), want exactly one prune transaction", store.writes)
+	if _, err := stateStore.Summary("alpha"); err != nil {
+		t.Fatalf("rejected fresh start removed the latest snapshot: %v", err)
 	}
-
-	// The snapshot half: the latest snapshot is gone.
-	if _, err := stateStore.Summary("alpha"); err == nil {
-		t.Fatal("approved fresh start kept the latest snapshot")
+	snapshotAfter, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatalf("read latest snapshot after rejected open: %v", err)
 	}
-
-	// The start half: the topology engine was consulted and found nothing, so the
-	// shipped ensure bootstrap built the single fresh Window and shell Pane.
-	if got, want := topology.calls, []string{"topology:/srv/alpha:alpha"}; !equalStrings(got, want) {
-		t.Fatalf("topology calls = %q, want %q", got, want)
+	if !bytes.Equal(snapshotAfter, snapshotBefore) {
+		t.Fatalf("rejected fresh start changed latest snapshot bytes:\nbefore=%s\nafter=%s", snapshotBefore, snapshotAfter)
 	}
-	if got, want := executor.calls, []string{"authorize:/srv/alpha", "ensure:alpha", "open:alpha"}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want %q", got, want)
-	}
-
-	// The report half: "nothing was resumed" is stated as a result.
-	if !reporter.contains("deleted Window 2 / Pane 4 / Agent 1") {
-		t.Fatalf("operator was not told what was deleted: %q", reporter.messages)
-	}
-	if !reporter.contains("discarded the latest snapshot") {
-		t.Fatalf("operator was not told the snapshot was discarded: %q", reporter.messages)
-	}
-	if !reporter.contains("no Agent record remained, so nothing was resumed") {
-		t.Fatalf("the empty replay was not reported as a normal result: %q", reporter.messages)
-	}
-	if len(tmux.calls) != 0 {
-		t.Fatalf("fresh start issued tmux commands of its own: %#v", tmux.calls)
+	if len(topology.calls) != 0 || !equalStrings(executor.calls, []string{"authorize:/srv/alpha"}) || len(tmux.calls) != 0 || len(reporter.messages) != 0 {
+		t.Fatalf("rejected fresh start crossed the authorization-only boundary: topology=%v executor=%v tmux=%v notices=%v", topology.calls, executor.calls, tmux.calls, reporter.messages)
 	}
 }
 
@@ -803,7 +774,7 @@ func TestProjectFreshStartKeepsNamedSnapshots(t *testing.T) {
 // TestSwitchSidebarOpenAcceptsTheNewMode covers the re-exec transport: the
 // approved `new` decision survives the `switch sidebar-open --mode new` hop the
 // sidebar route launches.
-func TestSwitchSidebarOpenAcceptsTheNewMode(t *testing.T) {
+func TestSwitchSidebarOpenNewModeFailsClosedOnCanonicalAnchor(t *testing.T) {
 	home := t.TempDir()
 	store := freshStartFixtureStore(t)
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
@@ -827,14 +798,15 @@ func TestSwitchSidebarOpenAcceptsTheNewMode(t *testing.T) {
 		startupNotices:    reporter,
 	}
 
-	if err := cmd.runSidebarOpen([]string{"--path", "/srv/alpha", "--session", "alpha", "--mode", projectStartupValueNew}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runSidebarOpen() error = %v", err)
+	before := store.snapshot()
+	if err := cmd.runSidebarOpen([]string{"--path", "/srv/alpha", "--session", "alpha", "--mode", projectStartupValueNew}, &bytes.Buffer{}); err == nil {
+		t.Fatal("runSidebarOpen() unexpectedly succeeded")
 	}
-	if freshStartRegistryHasUID(store.registry, "win-alpha-main") {
-		t.Fatalf("--mode new did not prune:\n%s", store.snapshot())
+	if store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("rejected --mode new changed Registry: writes=%d", store.writes)
 	}
-	if got, want := executor.calls, []string{"authorize:/srv/alpha", "ensure:alpha", "open:alpha"}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want %q", got, want)
+	if !equalStrings(executor.calls, []string{"authorize:/srv/alpha"}) {
+		t.Fatalf("rejected --mode new crossed the authorization-only boundary: %v", executor.calls)
 	}
 }
 

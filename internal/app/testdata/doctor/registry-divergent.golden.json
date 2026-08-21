@@ -12,18 +12,12 @@
       "code": "registry.materialize.fatal.project",
       "remediation": "inspect-registry-topology",
       "count": 1
-    },
-    {
-      "severity": "warning",
-      "code": "registry.materialize.skipped.window",
-      "remediation": "inspect-registry-topology",
-      "count": 1
     }
   ],
   "registry_divergences": [
     {
       "divergence": "D1-unrealized",
-      "count": 9
+      "count": 10
     },
     {
       "divergence": "D2-unattributed",

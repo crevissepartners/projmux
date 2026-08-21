@@ -59,10 +59,9 @@ func auditRegisterProject(t *testing.T, registry *coremetadata.Registry, mutator
 	return *project
 }
 
-// auditDecayedWindow reproduces the 2026-08-20 field structure: a Window whose
-// shell Pane is gone, whose Agents no longer hold a Pane, and whose
-// `spec.primaryPaneRef` is therefore the empty string that Validate accepts and
-// the materializer cannot build a Window from.
+// auditDecayedWindow proves a current-schema delete cannot reproduce the
+// 2026-08-20 field structure: deleting the last shell installs a new bare
+// canonical shell and keeps the Window materializable.
 func auditDecayedWindow(t *testing.T, registry *coremetadata.Registry, mutator coremetadata.Mutator, project coremetadata.Project, agents int) coremetadata.Window {
 	t.Helper()
 	window := registry.WindowsOf(project.Metadata.UID)[0]
@@ -89,19 +88,17 @@ func auditDecayedWindow(t *testing.T, registry *coremetadata.Registry, mutator c
 	if !ok {
 		t.Fatalf("decayed Window disappeared")
 	}
-	if strings.TrimSpace(stored.Spec.PrimaryPaneRef) != "" {
-		t.Fatalf("primaryPaneRef = %q, want the empty value Validate accepts", stored.Spec.PrimaryPaneRef)
+	if strings.TrimSpace(stored.Spec.PrimaryPaneRef) == "" {
+		t.Fatal("last-shell deletion left primaryPaneRef empty")
 	}
-	if panes := registry.PanesOf(window.Metadata.UID); len(panes) != 0 {
-		t.Fatalf("decayed Window owns %d Panes, want 0", len(panes))
+	if panes := registry.PanesOf(window.Metadata.UID); len(panes) != 1 || panes[0].Metadata.UID != stored.Spec.PrimaryPaneRef || panes[0].Spec.Role != coremetadata.PaneRoleShell {
+		t.Fatalf("replacement shell chain = %+v", panes)
 	}
 	return *stored
 }
 
-// auditFixture is the divergent Registry the section is measured against: one
-// Project that still opens but has lost one Window to the empty-primaryPaneRef
-// invariant, and one Project whose root is gone so the Project itself is
-// refused.
+// auditFixture carries one repaired Project and one Project whose root is gone,
+// so only the runtime root condition remains a materialize refusal.
 func auditFixture(t *testing.T) (coremetadata.Registry, string) {
 	t.Helper()
 	live := t.TempDir()
@@ -170,12 +167,8 @@ func TestDoctorRegistryInvariantAuditReportsTheFieldFailureStructure(t *testing.
 	if _, ok := auditFinding(findings, doctorRegistryCodeClean); ok {
 		t.Fatalf("divergent Registry reported clean: %#v", findings)
 	}
-	window, ok := auditFinding(findings, doctorRegistryRefusalCode("skipped", "window"))
-	if !ok || window.Count != 1 || window.Severity != doctorSeverityWarning {
-		t.Fatalf("window finding = %#v, want one skipped Window", window)
-	}
-	if len(window.Details) != 1 || !strings.Contains(window.Details[0], "primaryPaneRef") {
-		t.Fatalf("window reasons = %v, want the stated primaryPaneRef refusal", window.Details)
+	if window, ok := auditFinding(findings, doctorRegistryRefusalCode("skipped", "window")); ok {
+		t.Fatalf("repaired Window still produced a skip finding: %#v", window)
 	}
 	project, ok := auditFinding(findings, doctorRegistryRefusalCode("fatal", "project"))
 	if !ok || project.Count != 1 || project.Severity != doctorSeverityError {
@@ -188,7 +181,6 @@ func TestDoctorRegistryInvariantAuditReportsTheFieldFailureStructure(t *testing.
 	}
 	for _, want := range []string{
 		"Registry materialization invariants",
-		"registry.materialize.skipped.window; count: 1",
 		"registry.materialize.fatal.project; count: 1",
 		"remediation: " + doctorRemediationInspectRegistryTopology,
 	} {
@@ -204,7 +196,7 @@ func TestDoctorRegistryInvariantAuditReportsTheFieldFailureStructure(t *testing.
 	if err := cmd.Run([]string{"--section", "registry", "--verbose"}, &verbose, io.Discard); err != nil {
 		t.Fatalf("Run(--section registry --verbose) error = %v", err)
 	}
-	if !strings.Contains(verbose.String(), "reason: ") || !strings.Contains(verbose.String(), "primaryPaneRef") {
+	if !strings.Contains(verbose.String(), "reason: ") || !strings.Contains(verbose.String(), goneRoot) {
 		t.Fatalf("verbose registry text omitted the stated reasons:\n%s", verbose.String())
 	}
 }
@@ -490,7 +482,7 @@ func TestSupportReportCarriesRegistryInvariantCountsWithoutReasonsOrPaths(t *tes
 			t.Fatalf("support archive leaked refusal detail %q:\n%s", reason, entries["doctor.json"])
 		}
 	}
-	for _, safe := range []string{`"code": "registry.materialize.skipped.window"`, `"code": "registry.materialize.fatal.project"`, `"count": 1`} {
+	for _, safe := range []string{`"code": "registry.materialize.fatal.project"`, `"count": 1`} {
 		if !bytes.Contains(entries["doctor.json"], []byte(safe)) {
 			t.Fatalf("support archive lost safe audit value %q:\n%s", safe, entries["doctor.json"])
 		}

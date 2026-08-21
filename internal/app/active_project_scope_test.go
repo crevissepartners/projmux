@@ -32,11 +32,11 @@ func TestSingularReferenceResolvesInsideTheActiveProject(t *testing.T) {
 		}{
 			{
 				name: "window", args: []string{"window", "main", "-o", "uid"},
-				wantUID: "win-alpha-main", globalWant: "matched 2 windows",
+				wantUID: "win-alpha-main", globalWant: "matched 3 windows",
 			},
 			{
 				name: "pane", args: []string{"pane", "zsh", "-w", "main", "-o", "uid"},
-				wantUID: "pan-alpha-zsh", globalWant: "matched 2 panes",
+				wantUID: "pan-alpha-zsh", globalWant: "matched 3 panes",
 			},
 			{
 				name: "agent", args: []string{"agent", "codex", "-o", "uid"},
@@ -188,11 +188,11 @@ func TestSingularProjectNamespaceNarrowsWithoutSelecting(t *testing.T) {
 	}{
 		{
 			name: "positional name", args: []string{"pane", "zsh"},
-			wantInside: "matched 2 panes", wantGlobal: "matched 3 panes",
+			wantInside: "matched 2 panes", wantGlobal: "matched 4 panes",
 		},
 		{
 			name: "label selector", args: []string{"pane", "--selector", "role=shell"},
-			wantInside: "matched 2 panes", wantGlobal: "matched 3 panes",
+			wantInside: "matched 2 panes", wantGlobal: "matched 4 panes",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
