@@ -20,7 +20,7 @@ const canonicalCreateAgent = "create agent"
 // It intentionally exceeds the old two-second probe without becoming an
 // unbounded wait; hooks that arrive later still refine the preserved resource
 // through the generation-guarded ingest path.
-const agentActivationConfirmationDeadline = 5 * time.Second
+const agentActivationConfirmationDeadline = 8 * time.Second
 
 // agentWork is one allocated Agent plus its managed Pane, waiting for the
 // runtime phase to give the Pane a live tmux binding.
