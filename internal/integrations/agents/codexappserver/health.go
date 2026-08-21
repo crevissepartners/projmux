@@ -47,6 +47,7 @@ type Reason string
 const (
 	ReasonNone                Reason = "none"
 	ReasonExecutableMissing   Reason = "executable-missing"
+	ReasonDaemonNotRunning    Reason = "daemon-not-running"
 	ReasonEndpointUnavailable Reason = "endpoint-unavailable"
 	ReasonUnsupported         Reason = "unsupported"
 	ReasonTimeout             Reason = "timeout"
@@ -76,16 +77,20 @@ const (
 
 // Health is safe to render in Doctor, Settings, and support reports.
 type Health struct {
-	Source       Source          `json:"source"`
-	Availability Availability    `json:"availability"`
-	Reason       Reason          `json:"reason"`
-	Version      string          `json:"version,omitempty"`
-	Endpoint     EndpointKind    `json:"endpoint_kind"`
-	Connection   ConnectionState `json:"connection_state"`
+	Source          Source           `json:"source"`
+	Availability    Availability     `json:"availability"`
+	Reason          Reason           `json:"reason"`
+	Version         string           `json:"version,omitempty"`
+	Endpoint        EndpointKind     `json:"endpoint_kind"`
+	Connection      ConnectionState  `json:"connection_state"`
+	Lifecycle       LifecycleOutcome `json:"lifecycle_outcome,omitempty"`
+	LifecycleReason LifecycleReason  `json:"lifecycle_reason,omitempty"`
+	probeReason     Reason
 }
 
 // Decide applies the bounded primary/fallback policy to one probe result.
 func Decide(availability Availability, reason Reason, version string, endpoint EndpointKind, connection ConnectionState, hookAvailable bool) Health {
+	probeReason := reason
 	source := SourceAppServer
 	if availability != AvailabilityAvailable {
 		source = SourceHookFallback
@@ -101,6 +106,7 @@ func Decide(availability Availability, reason Reason, version string, endpoint E
 		Version:      safeVersion(version),
 		Endpoint:     endpoint,
 		Connection:   connection,
+		probeReason:  probeReason,
 	}
 }
 

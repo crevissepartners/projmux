@@ -74,7 +74,8 @@ func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCo
 		preferNativeKeyCapture: platformkeys.Available,
 		nativeKeyCaptureGrace:  100 * time.Millisecond,
 		appServerHealth: func(hookAvailable bool) codexappserver.Health {
-			return codexappserver.ProbeDefaultProxy(context.Background(), codexappserver.DefaultProbeTimeout, version.String(), hookAvailable)
+			health, _ := codexappserver.EnsureDefaultProxyReady(context.Background(), codexappserver.TriggerSettings, version.String(), hookAvailable)
+			return health
 		},
 	}
 	// The concrete commands satisfy the settings role interfaces structurally.

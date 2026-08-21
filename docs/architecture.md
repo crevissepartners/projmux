@@ -39,7 +39,7 @@ Responsibilities:
 - parse command output
 - convert failures into typed errors
 
-#### Codex app-server compatibility bridge
+#### Codex app-server compatibility and lifecycle bridge
 
 `internal/integrations/agents/codexappserver` is a Codex-only vertical slice.
 It owns the headerless JSON-RPC request, response, and notification wire types,
@@ -52,16 +52,26 @@ its closed, content-free health result; they do not import app-server request
 or event types.
 
 The compatibility probe runs the fixed read-only bridge `codex app-server
-proxy` against an already-running local control socket and sends only
-`initialize` plus `initialized`. It never starts or restarts the daemon, changes
-Codex configuration, performs login, or accepts a remote WebSocket URL. The
-local RFC6455 hop is only the proxy's required connection to the already-running
-local socket; remote WebSocket transport remains excluded. A successful
-handshake selects `App Server`; unsupported, unavailable, timeout, and protocol
-errors select the existing `Hook fallback` for current behavior. No existing
-Agent create/resume, hook, catalog, or usage consumer uses the native source in
-this phase. Settings displays this decision as a read-only state row; it is not
-a user-selectable authority.
+proxy` against the local control socket and sends only `initialize` plus
+`initialized`. Doctor, Settings, and support-report triggers remain probe-only
+and never mutate daemon state. A future native user-action trigger may enter the
+lifecycle seam, but only the exact closed `daemon-not-running` classification
+(the official local socket is missing or refuses a local connection) may invoke
+the installed CLI's idempotent `codex app-server daemon start`, at most once for
+the shared in-flight attempt in this process. The start and readiness retry are
+bounded, each caller can cancel its own wait, and readiness must still complete
+the proxy initialize handshake. All other executable, timeout, unsupported,
+protocol, and endpoint failures stay on the existing fallback without a start
+attempt.
+
+The bridge discards command output and reports only closed, content-free health
+and lifecycle reasons; prompts, tokens, paths, and process output do not cross
+the integration boundary. It does not install, bootstrap, restart, or stop the
+daemon, change Codex configuration, perform login, manage a custom socket, or
+accept remote WebSocket control. Projmux shutdown does not stop the shared
+daemon. No existing Agent create/resume, hook, review, catalog, model, or usage
+consumer uses the native source in this phase. Settings displays the decision
+as a read-only state row; it is not a user-selectable authority.
 
 ### 3. UI orchestration
 Picker data is modeled independently from row rendering. The app builds

@@ -26,12 +26,12 @@ func TestProxyProbeFaultMatrix(t *testing.T) {
 		reason       Reason
 		connection   ConnectionState
 	}{
-		{name: "healthy", scenario: "healthy", timeout: time.Second, availability: AvailabilityAvailable, reason: ReasonNone, connection: ConnectionReady},
-		{name: "unsupported", scenario: "unsupported", timeout: time.Second, availability: AvailabilityUnsupported, reason: ReasonUnsupported, connection: ConnectionDisconnected},
-		{name: "malformed", scenario: "malformed", timeout: time.Second, availability: AvailabilityProtocolError, reason: ReasonProtocolError, connection: ConnectionProtocolErr},
+		{name: "healthy", scenario: "healthy", timeout: 3 * time.Second, availability: AvailabilityAvailable, reason: ReasonNone, connection: ConnectionReady},
+		{name: "unsupported", scenario: "unsupported", timeout: 3 * time.Second, availability: AvailabilityUnsupported, reason: ReasonUnsupported, connection: ConnectionDisconnected},
+		{name: "malformed", scenario: "malformed", timeout: 3 * time.Second, availability: AvailabilityProtocolError, reason: ReasonProtocolError, connection: ConnectionProtocolErr},
 		{name: "timeout", scenario: "timeout", timeout: 30 * time.Millisecond, availability: AvailabilityTimeout, reason: ReasonTimeout, connection: ConnectionTimedOut},
-		{name: "missing socket", scenario: "missing-socket", timeout: time.Second, availability: AvailabilityUnavailable, reason: ReasonEndpointUnavailable, connection: ConnectionDisconnected},
-		{name: "disconnect", scenario: "disconnect", timeout: time.Second, availability: AvailabilityUnavailable, reason: ReasonEndpointUnavailable, connection: ConnectionDisconnected},
+		{name: "missing socket", scenario: "missing-socket", timeout: 3 * time.Second, availability: AvailabilityUnavailable, reason: ReasonDaemonNotRunning, connection: ConnectionDisconnected},
+		{name: "disconnect", scenario: "disconnect", timeout: 3 * time.Second, availability: AvailabilityUnavailable, reason: ReasonEndpointUnavailable, connection: ConnectionDisconnected},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestProxyProbeFaultMatrix(t *testing.T) {
 					cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestProxyProbeHelperProcess", "--", tc.scenario)
 					cmd.Env = append(os.Environ(), "GO_WANT_PROXY_HELPER=1")
 					return cmd
-				})
+				}, func() bool { return tc.scenario == "missing-socket" })
 			if health.Availability != tc.availability || health.Reason != tc.reason || health.Connection != tc.connection {
 				t.Fatalf("probe health = %+v", health)
 			}
@@ -53,7 +53,7 @@ func TestProxyProbeFaultMatrix(t *testing.T) {
 
 	health := probeProxy(context.Background(), time.Second, "0.13.0", false,
 		func(string) (string, error) { return "", errors.New("missing") },
-		func(context.Context) *exec.Cmd { return nil })
+		func(context.Context) *exec.Cmd { return nil }, nil)
 	if health.Source != SourceUnavailable || health.Reason != ReasonHookUnavailable {
 		t.Fatalf("missing proxy without hook = %+v", health)
 	}

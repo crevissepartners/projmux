@@ -32,7 +32,7 @@ type doctorCommand struct {
 	commandVersion         func(name string) string
 	aiDiagnostics          func() []doctorAINotifyIntegration
 	resumeDiagnostics      func() []doctorSessionStateResumeDiagnostic
-	appServerHealth        func(hookAvailable bool) codexappserver.Health
+	appServerHealth        func(trigger codexappserver.TriggerKind, hookAvailable bool) codexappserver.Health
 	readRuntimeHealth      func(diagnostics.ReadOnlyStore) (diagnostics.RuntimeHealth, error)
 	resolveOperationsPath  func() (string, error)
 	runtimeProbe           func() doctorRuntimeProbe
@@ -58,8 +58,9 @@ func newDoctorCommand() *doctorCommand {
 		return doctorAINotifyDiagnostics(newAICommand())
 	}
 	c.resumeDiagnostics = doctorSessionStateResumeDiagnostics
-	c.appServerHealth = func(hookAvailable bool) codexappserver.Health {
-		return codexappserver.ProbeDefaultProxy(context.Background(), codexappserver.DefaultProbeTimeout, version.String(), hookAvailable)
+	c.appServerHealth = func(trigger codexappserver.TriggerKind, hookAvailable bool) codexappserver.Health {
+		health, _ := codexappserver.EnsureDefaultProxyReady(context.Background(), trigger, version.String(), hookAvailable)
+		return health
 	}
 	c.readRuntimeHealth = diagnostics.ReadRuntimeHealth
 	c.resolveOperationsPath = func() (string, error) { return diagnostics.DefaultPath(c.getenv, os.UserHomeDir) }
@@ -242,6 +243,10 @@ func doctorRemovedFlag(args []string) string {
 }
 
 func (c *doctorCommand) evaluateReport(section doctorSection) doctorReport {
+	return c.evaluateReportForTrigger(section, codexappserver.TriggerDoctor)
+}
+
+func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger codexappserver.TriggerKind) doctorReport {
 	report := doctorReport{SchemaVersion: doctorSchemaVersion}
 	if section == doctorSectionAll || section == doctorSectionDeps {
 		report.Dependencies = c.evaluate()
@@ -249,7 +254,7 @@ func (c *doctorCommand) evaluateReport(section doctorSection) doctorReport {
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
 		report.AINotifyIntegrations = c.evaluateAINotifyIntegrations()
 		if c.appServerHealth != nil {
-			health := c.appServerHealth(codexHookFallbackAvailable(report.AINotifyIntegrations))
+			health := c.appServerHealth(trigger, codexHookFallbackAvailable(report.AINotifyIntegrations))
 			report.CodexAppServer = &health
 		}
 	}
@@ -397,6 +402,9 @@ func writeDoctorAppServerText(buf *bytes.Buffer, health *codexappserver.Health) 
 		health.Source.Label(), health.Availability, health.Reason, health.Endpoint, health.Connection)
 	if health.Version != "" {
 		fmt.Fprintf(buf, "; version: %s", health.Version)
+	}
+	if health.Lifecycle != "" {
+		fmt.Fprintf(buf, "; lifecycle: %s/%s", health.Lifecycle, health.LifecycleReason)
 	}
 	buf.WriteString("\n")
 }

@@ -178,7 +178,7 @@ func (c *diagnosticsCommand) supportDoctorJSON() ([]byte, error) {
 	if doctor == nil {
 		doctor = newDoctorCommand()
 	}
-	report := doctor.evaluateReport(doctorSectionAll)
+	report := doctor.evaluateReportForTrigger(doctorSectionAll, codexappserver.TriggerSupportReport)
 	var raw bytes.Buffer
 	if err := writeDoctorJSON(&raw, report, doctorSectionAll); err != nil {
 		return nil, err
@@ -201,21 +201,31 @@ func supportDoctorSafeStringValues() map[string]map[string]bool {
 			string(doctorAINotifyStatusInstalled): true, string(doctorAINotifyStatusConflict): true,
 			"available": true, "unavailable": true,
 		},
-		"source":           {"app-server": true, "hook-fallback": true, "unavailable": true},
-		"availability":     {"available": true, "unsupported": true, "unavailable": true, "timeout": true, "protocol-error": true},
-		"reason":           {"none": true, "executable-missing": true, "endpoint-unavailable": true, "unsupported": true, "timeout": true, "protocol-error": true, "disconnected": true, "hook-unavailable": true},
-		"endpoint_kind":    {"stdio": true, "stdio-proxy": true},
-		"connection_state": {"disconnected": true, "connecting": true, "ready": true, "timed-out": true, "protocol-error": true},
-		"provider_id":      {},
-		"agent":            {},
-		"confidence":       {"high": true, "medium": true, "low": true, "none": true},
-		"name":             {"tmux": true, "git": true, "stty": true, "tmux bell fallback": true},
-		"id":               {"tmux-bell": true},
-		"severity":         {string(doctorSeverityInfo): true, string(doctorSeverityWarning): true, string(doctorSeverityError): true},
-		"code":             {},
-		"remediation":      {},
-		"safe_codes":       {},
-		"divergence":       {},
+		"source":            {"app-server": true, "hook-fallback": true, "unavailable": true},
+		"availability":      {"available": true, "unsupported": true, "unavailable": true, "timeout": true, "protocol-error": true},
+		"reason":            {"none": true, "executable-missing": true, "daemon-not-running": true, "endpoint-unavailable": true, "unsupported": true, "timeout": true, "protocol-error": true, "disconnected": true, "hook-unavailable": true},
+		"endpoint_kind":     {"stdio": true, "stdio-proxy": true},
+		"connection_state":  {"disconnected": true, "connecting": true, "ready": true, "timed-out": true, "protocol-error": true},
+		"lifecycle_outcome": {"already-running": true, "started": true, "start-failed": true, "not-attempted": true},
+		"lifecycle_reason": {
+			"read-only": true, "already-ready": true, "ready-after-start": true,
+			"probe-executable-missing": true, "probe-timeout": true, "probe-unsupported": true,
+			"probe-protocol-error": true, "probe-endpoint-error": true, "probe-unavailable": true,
+			"start-executable-missing": true, "start-nonzero": true, "start-timeout": true,
+			"readiness-executable-missing": true, "readiness-socket-unavailable": true,
+			"readiness-timeout": true, "readiness-unsupported": true,
+			"readiness-protocol-error": true, "readiness-endpoint-error": true,
+		},
+		"provider_id": {},
+		"agent":       {},
+		"confidence":  {"high": true, "medium": true, "low": true, "none": true},
+		"name":        {"tmux": true, "git": true, "stty": true, "tmux bell fallback": true},
+		"id":          {"tmux-bell": true},
+		"severity":    {string(doctorSeverityInfo): true, string(doctorSeverityWarning): true, string(doctorSeverityError): true},
+		"code":        {},
+		"remediation": {},
+		"safe_codes":  {},
+		"divergence":  {},
 	}
 	for _, divergence := range resourcegraph.Divergences() {
 		values["divergence"][string(divergence)] = true
