@@ -240,7 +240,7 @@ func TestEveryCanonicalRouteCardinalityIsEnforcedAtTheRoute(t *testing.T) {
 		{
 			spelling: "delete pane empty",
 			run: func(t *testing.T, store *fakeResourceStore) error {
-				_, _, err := runRoute(t, newTestDeleteCommand(store, false, false, nil), "pane", "--project", "gone", "--yes")
+				_, _, err := runRoute(t, newTestDeleteCommand(store, false, false, nil), "pane", "--project", "nosuch", "--yes")
 				return err
 			},
 			wantFail: true,

@@ -12,7 +12,7 @@ const APIVersion = "projmux.io/v1alpha1"
 
 // SchemaVersion is the current registry envelope version. A registry file
 // carrying a higher value is rejected fail-closed; see schema.go.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // Kind is the closed set of Projmux resource kinds. A persistent tmux Session
 // is intentionally absent: it is a 1:1 runtime projection of a Project stored
@@ -190,9 +190,11 @@ type Project struct {
 	Status     ProjectStatus `json:"status"`
 }
 
-// ProjectSpec holds the absolute filesystem root the Project is bound to.
+// ProjectSpec holds the absolute filesystem root the Project is bound to and
+// the exact Window that owns its canonical shell Pane.
 type ProjectSpec struct {
-	Root string `json:"root"`
+	Root             string `json:"root"`
+	PrimaryWindowRef string `json:"primaryWindowRef"`
 }
 
 // ProjectStatus carries the runtime session projection and observed conditions.
@@ -245,7 +247,7 @@ type ControlSessionSpec struct {
 //
 // It is `omitzero` for the same read-compatibility reason WindowStatus is: a
 // control session that has never carried a condition serializes without the
-// key, so the block stays additive inside schemaVersion 1.
+// key, so the block was additive when introduced in schemaVersion 1.
 type ControlSessionStatus struct {
 	Conditions []Condition `json:"conditions,omitempty"`
 }
@@ -295,7 +297,7 @@ type WindowSpec struct {
 //
 // The field is `omitzero` rather than `omitempty` so a Window that has never
 // carried a condition serializes byte-identically to a registry written before
-// this field existed. That keeps the addition inside schemaVersion 1: an older
+// this field existed. That kept the addition inside schemaVersion 1: an older
 // build reading a newer file simply ignores a key it does not know, and a
 // newer build reading an older file decodes the absent key to the zero value.
 type WindowStatus struct {
@@ -519,8 +521,8 @@ func (a AgentActivation) IsZero() bool {
 // SessionRef is an optional pointer with omitempty. That is the whole
 // read-compatibility story for registry files written before it existed: an
 // absent key decodes to nil, a nil ref re-encodes to an absent key, and the
-// document round-trips byte-identically. It is additive inside schemaVersion 1
-// and needs no migration step — bumping the envelope would make every already
+// document round-trips byte-identically. It was additive inside schemaVersion 1
+// and needed no migration step — bumping the envelope would have made every already
 // installed build reject the file fail-closed with ErrSchemaTooNew, which is a
 // hard downgrade break bought for nothing.
 //

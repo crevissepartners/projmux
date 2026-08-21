@@ -252,12 +252,12 @@ func (m Mutator) TransitionAgent(reg *Registry, agentUID string, phase AgentPhas
 	return agent.Clone(), nil
 }
 
-// firstWindowPaneUID returns the first surviving Pane transitively owned by a
-// Window in registry insertion order, or "" when the Window has no Panes left.
+// firstWindowPaneUID returns the first surviving Window-owned shell Pane in
+// registry insertion order, or "" when the Window has no shell anchor left.
 func (r *Registry) firstWindowPaneUID(windowUID string) string {
-	owned := r.windowPaneUIDs(windowUID)
 	for _, pane := range r.Panes {
-		if owned[pane.Metadata.UID] {
+		if pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == KindWindow &&
+			pane.Metadata.OwnerRef.UID == windowUID && pane.Spec.Role == PaneRoleShell {
 			return pane.Metadata.UID
 		}
 	}
@@ -310,7 +310,23 @@ func (m Mutator) DeletePane(reg *Registry, paneUID string) error {
 		ownerKind = pane.Metadata.OwnerRef.Kind
 	}
 	now := m.clock()().UTC()
+	replaceShell := ownerKind == KindWindow && pane.Spec.Role == PaneRoleShell && reg.firstWindowPaneUID(ownerUID) == paneUID
+	before := reg.Clone()
 	reg.deletePane(paneUID)
+	if replaceShell && reg.firstWindowPaneUID(ownerUID) == "" {
+		cwd := ""
+		if window, ok := reg.Window(ownerUID); ok {
+			if project, ok := reg.Project(window.Metadata.OwnerUID()); ok {
+				cwd = project.Spec.Root
+			}
+		}
+		txn := m.Begin(reg, "replace-deleted-primary-shell")
+		if _, err := m.addPaneTx(txn, reg, op, ownerUID, KindWindow, PaneRoleShell, "", FallbackPaneNameBase, "", cwd, nil, now); err != nil {
+			*reg = before
+			return err
+		}
+		txn.Commit()
+	}
 	if ownerKind == KindAgent {
 		if agent, ok := reg.Agent(ownerUID); ok && agent.Status.Phase == PhaseRunning {
 			agent.Status.Phase = PhaseOffline
@@ -343,15 +359,26 @@ func (m Mutator) DeleteAgent(reg *Registry, agentUID string) error {
 	return nil
 }
 
-// DeleteWindow removes a Window and every descendant Pane and Agent.
+// DeleteWindow removes a Window and every descendant Pane and Agent. When it
+// removes a Project's last valid Window, it creates the minimum replacement
+// Window/shell chain so the Project remains a valid schema-v2 resource.
 func (m Mutator) DeleteWindow(reg *Registry, windowUID string) error {
+	return m.deleteWindow(reg, windowUID, true)
+}
+
+func (m Mutator) deleteWindow(reg *Registry, windowUID string, preserveProjectAnchor bool) error {
 	const op = "delete window"
 
-	if _, ok := reg.Window(windowUID); !ok {
+	window, ok := reg.Window(windowUID)
+	if !ok {
 		return stateErr(op, ErrNotFound, "window %q does not exist", windowUID)
 	}
+	target := window.Clone()
+	before := reg.Clone()
+	now := m.clock()().UTC()
 	for _, agent := range reg.AgentsOf(windowUID) {
 		if err := m.DeleteAgent(reg, agent.Metadata.UID); err != nil {
+			*reg = before
 			return err
 		}
 	}
@@ -365,7 +392,30 @@ func (m Mutator) DeleteWindow(reg *Registry, windowUID string) error {
 		}
 	}
 	reg.releaseNames(windowUID)
-	reg.UpdatedAt = m.clock()().UTC()
+	if preserveProjectAnchor && target.Metadata.OwnerRef != nil && target.Metadata.OwnerRef.Kind == KindProject {
+		if project, ok := reg.Project(target.Metadata.OwnerRef.UID); ok && project.Spec.PrimaryWindowRef == windowUID {
+			project.Spec.PrimaryWindowRef = ""
+			for _, candidate := range reg.WindowsOf(project.Metadata.UID) {
+				if validWindowPrimary(reg, candidate) {
+					project.Spec.PrimaryWindowRef = candidate.Metadata.UID
+					break
+				}
+			}
+			if project.Spec.PrimaryWindowRef == "" {
+				txn := m.Begin(reg, "replace-deleted-primary-window")
+				replacement, _, err := m.addWindowTx(txn, reg, op, project.Metadata.UID, BootstrapWindow{}, "", project.Spec.Root, now)
+				if err != nil {
+					txn.Rollback()
+					*reg = before
+					return err
+				}
+				project, _ = reg.Project(project.Metadata.UID)
+				project.Spec.PrimaryWindowRef = replacement.Metadata.UID
+				txn.Commit()
+			}
+		}
+	}
+	reg.UpdatedAt = now
 	return nil
 }
 
@@ -377,7 +427,7 @@ func (m Mutator) DeleteProject(reg *Registry, projectUID string) error {
 		return stateErr(op, ErrNotFound, "project %q does not exist", projectUID)
 	}
 	for _, window := range reg.WindowsOf(projectUID) {
-		if err := m.DeleteWindow(reg, window.Metadata.UID); err != nil {
+		if err := m.deleteWindow(reg, window.Metadata.UID, false); err != nil {
 			return err
 		}
 	}

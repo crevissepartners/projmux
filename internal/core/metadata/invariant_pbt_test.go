@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -48,9 +49,9 @@ func pbtRegistryOver(t *testing.T, root string) (*Registry, Project, Mutator) {
 }
 
 // TestDeletedLastPaneThenCreateKeepsRegistryValid pins the exact pair of legal
-// commands that produced an unwritable registry in the field: deleting a Window's
-// last Pane empties primaryPaneRef by design, and the next Pane added under that
-// Window has to reclaim it.
+// commands that produced an unwritable registry in the field. Deleting a
+// Window's last shell immediately creates a replacement bare shell, so every
+// committed state retains the v2 anchor invariant.
 func TestDeletedLastPaneThenCreateKeepsRegistryValid(t *testing.T) {
 	root := t.TempDir()
 	registry, project, mutator := pbtRegistryOver(t, root)
@@ -61,11 +62,11 @@ func TestDeletedLastPaneThenCreateKeepsRegistryValid(t *testing.T) {
 		t.Fatalf("delete last pane: %v", err)
 	}
 	stored, _ := registry.Window(window.Metadata.UID)
-	if stored.Spec.PrimaryPaneRef != "" {
-		t.Fatalf("primaryPaneRef = %q, want empty once the Window owns no Pane", stored.Spec.PrimaryPaneRef)
+	if stored.Spec.PrimaryPaneRef == "" || stored.Spec.PrimaryPaneRef == first.Metadata.UID {
+		t.Fatalf("primaryPaneRef = %q, want a new bare-shell replacement", stored.Spec.PrimaryPaneRef)
 	}
 	if err := registry.Validate(); err != nil {
-		t.Fatalf("a Window with no Pane must stay valid: %v", err)
+		t.Fatalf("the replacement bare shell must stay valid: %v", err)
 	}
 
 	added, err := mutator.AddPane(registry, window.Metadata.UID, BootstrapPane{}, "sh", "pbt-add")
@@ -76,15 +77,14 @@ func TestDeletedLastPaneThenCreateKeepsRegistryValid(t *testing.T) {
 		t.Fatalf("AddPane committed a registry Validate rejects: %v", err)
 	}
 	stored, _ = registry.Window(window.Metadata.UID)
-	if stored.Spec.PrimaryPaneRef != added.Metadata.UID {
-		t.Fatalf("primaryPaneRef = %q, want the returning Pane %q", stored.Spec.PrimaryPaneRef, added.Metadata.UID)
+	if stored.Spec.PrimaryPaneRef == added.Metadata.UID {
+		t.Fatalf("primaryPaneRef moved to later Pane %q; the replacement anchor must remain stable", added.Metadata.UID)
 	}
 }
 
-// TestAgentPaneReclaimsPrimaryPaneRef pins the same rule for the Agent half.
-// Validate counts a Pane owned by one of the Window's Agents as a Pane the Window
-// owns, so attaching one to an empty Window has to reclaim primaryPaneRef too.
-func TestAgentPaneReclaimsPrimaryPaneRef(t *testing.T) {
+// TestAgentPaneNeverReclaimsPrimaryPaneRef pins the owner/role boundary: an
+// Agent Pane cannot replace the Window-owned shell anchor.
+func TestAgentPaneNeverReclaimsPrimaryPaneRef(t *testing.T) {
 	root := t.TempDir()
 	registry, project, mutator := pbtRegistryOver(t, root)
 
@@ -105,8 +105,85 @@ func TestAgentPaneReclaimsPrimaryPaneRef(t *testing.T) {
 		t.Fatalf("AttachAgentPane committed a registry Validate rejects: %v", err)
 	}
 	stored, _ := registry.Window(window.Metadata.UID)
-	if stored.Spec.PrimaryPaneRef != pane.Metadata.UID {
-		t.Fatalf("primaryPaneRef = %q, want the Agent's Pane %q", stored.Spec.PrimaryPaneRef, pane.Metadata.UID)
+	if stored.Spec.PrimaryPaneRef == pane.Metadata.UID {
+		t.Fatalf("primaryPaneRef moved to Agent Pane %q", pane.Metadata.UID)
+	}
+	primary, ok := registry.Pane(stored.Spec.PrimaryPaneRef)
+	if !ok || primary.Spec.Role != PaneRoleShell || primary.Metadata.OwnerUID() != window.Metadata.UID {
+		t.Fatalf("primaryPaneRef = %q, want the replacement Window-owned shell", stored.Spec.PrimaryPaneRef)
+	}
+}
+
+func TestDeletedLastWindowGetsAMinimumReplacementChainAtomically(t *testing.T) {
+	root := t.TempDir()
+	registry, project, mutator := pbtRegistryOver(t, root)
+	deleted := registry.WindowsOf(project.Metadata.UID)[0]
+	deletedPane := registry.PanesOf(deleted.Metadata.UID)[0]
+
+	if err := mutator.DeleteWindow(registry, deleted.Metadata.UID); err != nil {
+		t.Fatalf("delete last Window: %v", err)
+	}
+	if _, ok := registry.Window(deleted.Metadata.UID); ok {
+		t.Fatalf("requested Window %q survived", deleted.Metadata.UID)
+	}
+	if _, ok := registry.Pane(deletedPane.Metadata.UID); ok {
+		t.Fatalf("requested Window descendant %q survived", deletedPane.Metadata.UID)
+	}
+	windows := registry.WindowsOf(project.Metadata.UID)
+	if len(windows) != 1 || windows[0].Metadata.UID == deleted.Metadata.UID {
+		t.Fatalf("replacement Windows = %+v", windows)
+	}
+	storedProject, _ := registry.Project(project.Metadata.UID)
+	if storedProject.Spec.PrimaryWindowRef != windows[0].Metadata.UID {
+		t.Fatalf("primaryWindowRef = %q, want replacement %q", storedProject.Spec.PrimaryWindowRef, windows[0].Metadata.UID)
+	}
+	primary, ok := registry.Pane(windows[0].Spec.PrimaryPaneRef)
+	if !ok || primary.Metadata.OwnerUID() != windows[0].Metadata.UID || primary.Spec.Role != PaneRoleShell || primary.Spec.CWD != root {
+		t.Fatalf("replacement shell chain = window:%+v pane:%+v", windows[0], primary)
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("replacement chain invalid: %v", err)
+	}
+}
+
+func TestDeletePrimaryWindowReanchorsToAValidSiblingWithoutCreatingAnother(t *testing.T) {
+	root := t.TempDir()
+	registry, project, mutator := pbtRegistryOver(t, root)
+	deleted := registry.WindowsOf(project.Metadata.UID)[0]
+	sibling, _, err := mutator.AddWindow(registry, project.Metadata.UID, BootstrapWindow{}, "sh", "pbt-sibling")
+	if err != nil {
+		t.Fatalf("add sibling: %v", err)
+	}
+	siblingPrimary := sibling.Spec.PrimaryPaneRef
+
+	if err := mutator.DeleteWindow(registry, deleted.Metadata.UID); err != nil {
+		t.Fatalf("delete primary Window: %v", err)
+	}
+	windows := registry.WindowsOf(project.Metadata.UID)
+	if len(windows) != 1 || windows[0].Metadata.UID != sibling.Metadata.UID {
+		t.Fatalf("Windows after reanchor = %+v, want only existing sibling", windows)
+	}
+	storedProject, _ := registry.Project(project.Metadata.UID)
+	if storedProject.Spec.PrimaryWindowRef != sibling.Metadata.UID || windows[0].Spec.PrimaryPaneRef != siblingPrimary {
+		t.Fatalf("existing sibling chain was not preserved: project=%+v window=%+v", storedProject, windows[0])
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("reanchored Registry invalid: %v", err)
+	}
+}
+
+func TestLastWindowReplacementFailureRollsBackTheExactRegistry(t *testing.T) {
+	root := t.TempDir()
+	registry, project, mutator := pbtRegistryOver(t, root)
+	window := registry.WindowsOf(project.Metadata.UID)[0]
+	before := mustJSON(t, *registry)
+	mutator.NewUID = func(Kind) (string, error) { return "", errors.New("injected uid failure") }
+
+	if err := mutator.DeleteWindow(registry, window.Metadata.UID); err == nil || err.Error() != "injected uid failure" {
+		t.Fatalf("DeleteWindow = %v, want injected uid failure", err)
+	}
+	if after := mustJSON(t, *registry); after != before {
+		t.Fatalf("failed replacement changed Registry:\n--- before ---\n%s\n--- after ---\n%s", before, after)
 	}
 }
 
@@ -132,7 +209,7 @@ func FuzzMutatorNeverCommitsInvalidRegistry(f *testing.F) {
 				break
 			}
 			window := windows[int(op)%len(windows)]
-			switch op % 6 {
+			switch op % 7 {
 			case 0:
 				_, _ = mutator.AddPane(registry, window.Metadata.UID, BootstrapPane{}, "sh", fmt.Sprintf("pbt-pane-%d", step))
 			case 1:
@@ -156,6 +233,8 @@ func FuzzMutatorNeverCommitsInvalidRegistry(f *testing.F) {
 				if agents := registry.AgentsOf(window.Metadata.UID); len(agents) > 0 {
 					_ = mutator.DeleteAgent(registry, agents[0].Metadata.UID)
 				}
+			case 6:
+				_ = mutator.DeleteWindow(registry, window.Metadata.UID)
 			}
 			if err := registry.Validate(); err != nil {
 				t.Fatalf("step %d (op %d) committed a registry Validate rejects: %v", step, op, err)

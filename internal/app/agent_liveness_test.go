@@ -299,7 +299,7 @@ func TestALiveManagedPaneCostsTheRegistryNothing(t *testing.T) {
 	// for this to be the negative case it claims to be.
 	inventory := &stubPaneInventory{uids: map[string]bool{
 		"pan-alpha-zsh": true, "pan-alpha-log": true, "pan-alpha-codex": true,
-		"pan-alpha-review": true, "pan-beta-zsh": true,
+		"pan-alpha-review": true, "pan-beta-zsh": true, "pan-gone-zsh": true,
 	}}
 
 	if _, err := reconcileLifecycle(context.Background(), lifecycleDirtyEvent{}, inventory, store.store()); err != nil {

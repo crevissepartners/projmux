@@ -231,6 +231,14 @@ func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op strin
 			return ImportResult{}, err
 		}
 	}
+	if project, ok := reg.Project(projectUID); ok && strings.TrimSpace(project.Spec.PrimaryWindowRef) == "" {
+		for _, window := range reg.WindowsOf(projectUID) {
+			if validWindowPrimary(reg, window) {
+				project.Spec.PrimaryWindowRef = window.Metadata.UID
+				break
+			}
+		}
+	}
 
 	project, _ := reg.Project(projectUID)
 	result.Project = project.Clone()
@@ -311,22 +319,23 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 		Origin:                  origin,
 	})
 
-	primaryPaneRef := ""
 	for pi, legacyPane := range legacyPanes {
-		paneUID, err := m.bindLegacyPaneTx(txn, reg, op, windowUID, root, defaultShell, windowIndex, pi, legacyPane, now, result, binder)
+		_, err := m.bindLegacyPaneTx(txn, reg, op, windowUID, root, defaultShell, windowIndex, pi, legacyPane, now, result, binder)
 		if err != nil {
 			return err
 		}
-		if paneUID != "" && primaryPaneRef == "" {
-			primaryPaneRef = paneUID
-		}
 	}
 
-	// Only ever fills a gap. An adopted Window already names its primary Pane,
-	// and overwriting that from a tmux pane order the operator may have
-	// rearranged would be a rename by another route.
 	stored, _ := reg.Window(windowUID)
-	if strings.TrimSpace(stored.Spec.PrimaryPaneRef) == "" {
+	if !validWindowPrimary(reg, *stored) {
+		primaryPaneRef := firstWindowOwnedShellUID(reg, windowUID)
+		if primaryPaneRef == "" {
+			pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", FallbackPaneNameBase, "", root, nil, now)
+			if err != nil {
+				return err
+			}
+			primaryPaneRef = pane.Metadata.UID
+		}
 		stored.Spec.PrimaryPaneRef = primaryPaneRef
 	}
 	// Existing identity is deliberately untouched. The runtime-owned spelling

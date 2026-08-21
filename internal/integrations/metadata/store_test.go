@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -105,7 +106,7 @@ func TestUpdateConvergentSkipsTheAtomicWriteForAnUnchangedRegistry(t *testing.T)
 
 const newerSchemaRegistry = `{
   "apiVersion": "projmux.io/v2",
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "updatedAt": "2026-08-15T09:30:00Z",
   "projects": [
     {
@@ -313,11 +314,10 @@ const unversionedRegistry = `{
 // version into the store's private set, so the generic machinery and the
 // atomic write sequence can be exercised without shipping a migration.
 func withOlderEnvelopeStep(store *Store) {
-	store.migrations = coremetadata.MigrationSet{
-		0: func(reg *coremetadata.Registry) error {
-			reg.SchemaVersion = coremetadata.SchemaVersion
-			return nil
-		},
+	store.migrations = coremetadata.ProductionMigrationSet()
+	store.migrations[0] = func(reg *coremetadata.Registry, _ coremetadata.MigrationEnvironment, _ *coremetadata.MigrationReport) error {
+		reg.SchemaVersion = 1
+		return nil
 	}
 }
 
@@ -331,6 +331,9 @@ func TestSchemaMigrationIsAtomicAndAFailedStepLeavesTheOriginalState(t *testing.
 	}{
 		{name: "failure right after the backup", hooks: func(s *Store) {
 			s.hooks.afterBackup = func() error { return boom }
+		}},
+		{name: "failure after the migration report", hooks: func(s *Store) {
+			s.hooks.afterMigrationReport = func() error { return boom }
 		}},
 		{name: "failure after the staged temp write", hooks: func(s *Store) {
 			s.hooks.afterTempWrite = func() error { return boom }
@@ -360,9 +363,13 @@ func TestSchemaMigrationIsAtomicAndAFailedStepLeavesTheOriginalState(t *testing.
 				if strings.Contains(name, ".tmp-") {
 					t.Fatalf("a failed migration leaked a staged temp file: %q", name)
 				}
+				if strings.HasSuffix(name, migrationReportSuffix) {
+					t.Fatalf("a failed migration published operator evidence: %q", name)
+				}
 			}
 			// The original file must still be readable at its older envelope,
 			// so a retry can migrate it cleanly.
+			store.hooks = storeHooks{}
 			registry, err := store.Load()
 			if err != nil {
 				t.Fatalf("reload after a failed migration: %v", err)
@@ -422,6 +429,136 @@ func TestSuccessfulSchemaMigrationBacksUpTheOriginalAndReplacesItAtomically(t *t
 	}
 	if second.Migrated || second.BackupPath != "" {
 		t.Fatalf("re-migration = %+v, want a no-op", second)
+	}
+}
+
+func TestEveryFirstMigratorLeavesDurableV012RepairAndLossEvidenceOnce(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("../../core/metadata/testdata/registry-v012-source.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		run  func(*Store) (coremetadata.Registry, MigrationResult, error)
+	}{
+		{name: "normal Load", run: func(store *Store) (coremetadata.Registry, MigrationResult, error) {
+			registry, err := store.Load()
+			return registry, MigrationResult{}, err
+		}},
+		{name: "Update", run: func(store *Store) (coremetadata.Registry, MigrationResult, error) {
+			registry, err := store.Update(func(*coremetadata.Registry) error { return nil })
+			return registry, MigrationResult{}, err
+		}},
+		{name: "UpdateConvergent", run: func(store *Store) (coremetadata.Registry, MigrationResult, error) {
+			registry, changed, err := store.UpdateConvergent(func(*coremetadata.Registry) error { return nil })
+			if err == nil && !changed {
+				return coremetadata.Registry{}, MigrationResult{}, errors.New("first convergent migration reported no write")
+			}
+			return registry, MigrationResult{}, err
+		}},
+		{name: "Migrate", run: func(store *Store) (coremetadata.Registry, MigrationResult, error) {
+			result, err := store.Migrate()
+			if err != nil {
+				return coremetadata.Registry{}, result, err
+			}
+			registry, err := store.LoadReadOnly()
+			return registry, result, err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := testStore(t)
+			writeRegistryFile(t, store, string(source))
+
+			registry, result, err := tt.run(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := registry.Validate(); err != nil {
+				t.Fatalf("migrated Registry: %v", err)
+			}
+			reportPath, evidence := requireSingleMigrationEvidence(t, store, source)
+			if result.Migrated && (result.BackupPath != evidence.BackupPath || result.ReportPath != reportPath) {
+				t.Fatalf("returned evidence = %+v, durable evidence = %s / %+v", result, reportPath, evidence)
+			}
+
+			registryBefore := fileFingerprint(t, store.Path())
+			reportBefore := fileFingerprint(t, reportPath)
+			listingBefore := dirListing(t, filepath.Dir(store.Path()))
+			second, err := store.Migrate()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if second.Migrated || second.BackupPath != "" || second.ReportPath != "" || len(second.Report.Repairs) != 0 {
+				t.Fatalf("second pass = %+v, want no-op", second)
+			}
+			if fileFingerprint(t, store.Path()) != registryBefore || fileFingerprint(t, reportPath) != reportBefore ||
+				!reflect.DeepEqual(dirListing(t, filepath.Dir(store.Path())), listingBefore) {
+				t.Fatal("second migration pass changed Registry, evidence, or directory entries")
+			}
+		})
+	}
+}
+
+func requireSingleMigrationEvidence(t *testing.T, store *Store, source []byte) (string, migrationEvidence) {
+	t.Helper()
+	var reportPaths []string
+	for _, name := range dirListing(t, filepath.Dir(store.Path())) {
+		if strings.HasSuffix(name, migrationReportSuffix) {
+			reportPaths = append(reportPaths, filepath.Join(filepath.Dir(store.Path()), name))
+		}
+	}
+	if len(reportPaths) != 1 {
+		t.Fatalf("migration report paths = %v, want exactly one", reportPaths)
+	}
+	var evidence migrationEvidence
+	if err := json.Unmarshal([]byte(readFile(t, reportPaths[0])), &evidence); err != nil {
+		t.Fatalf("decode migration evidence: %v", err)
+	}
+	digest := sha256.Sum256(source)
+	if evidence.EvidenceVersion != 1 || evidence.FromVersion != 1 || evidence.ToVersion != 2 ||
+		evidence.RepairCount != 3 || evidence.InformationLossCount != 1 ||
+		evidence.BackupSHA256 != fmt.Sprintf("%x", digest) || readFile(t, evidence.BackupPath) != string(source) {
+		t.Fatalf("migration evidence = %+v", evidence)
+	}
+	encoded := readFile(t, reportPaths[0])
+	for _, detail := range []string{"downgrade-missing-cwd", "create-bare-shell", `"informationLoss": true`} {
+		if !strings.Contains(encoded, detail) {
+			t.Fatalf("migration evidence omitted %q:\n%s", detail, encoded)
+		}
+	}
+	return reportPaths[0], evidence
+}
+
+func TestMigrateRejectsAnInvalidCurrentRegistryWithZeroWrite(t *testing.T) {
+	t.Parallel()
+	store := testStore(t)
+	invalid := fmt.Sprintf(`{
+  "apiVersion": %q,
+  "schemaVersion": %d,
+  "projects": [{
+    "apiVersion": %q,
+    "kind": "Project",
+    "metadata": {"uid": "project-invalid", "name": "invalid"},
+    "spec": {"root": "/src/invalid"},
+    "status": {}
+  }]
+}
+`, coremetadata.APIVersion, coremetadata.SchemaVersion, coremetadata.APIVersion)
+	writeRegistryFile(t, store, invalid)
+	before := readFile(t, store.Path())
+	listingBefore := dirListing(t, filepath.Dir(store.Path()))
+
+	if result, err := store.Migrate(); !errors.Is(err, coremetadata.ErrInvalidRegistry) {
+		t.Fatalf("Migrate = %+v, %v, want ErrInvalidRegistry", result, err)
+	}
+	if after := readFile(t, store.Path()); after != before {
+		t.Fatalf("invalid current Registry changed:\n--- got ---\n%s\n--- want ---\n%s", after, before)
+	}
+	if listingAfter := dirListing(t, filepath.Dir(store.Path())); !reflect.DeepEqual(listingAfter, listingBefore) {
+		t.Fatalf("invalid current migration changed directory: %v -> %v", listingBefore, listingAfter)
 	}
 }
 

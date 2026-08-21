@@ -210,10 +210,17 @@ Resources and ownership:
   `status` block holds observed conditions only; live/offline is derived from a
   live tmux observation at read time. See *Runtime observation and resource
   status* below.
-- Every Window owns an initial Pane and stores its uid in
-  `spec.primaryPaneRef`. Project registration creates this topology **offline**,
-  with no tmux involvement, so Project and Window metadata stays queryable
-  while tmux is down.
+- Every Project stores one exact canonical shell anchor:
+  `Project.spec.primaryWindowRef` resolves to a Project-owned Window whose
+  `Window.spec.primaryPaneRef` resolves to a directly Window-owned
+  `Pane.spec.role=shell`. Project registration creates this topology
+  **offline**, with no tmux involvement, so Project and Window metadata stays
+  queryable while tmux is down. An Agent-owned Pane is never a shell anchor.
+  Canonical deletion preserves the same invariant: deleting the primary Window
+  reanchors to the first existing valid sibling, while deleting the last valid
+  Window mints one minimum offline Window/shell chain with new opaque uids. The
+  requested Window and all descendants are still removed exactly; Project
+  deletion bypasses replacement because it removes the owning root itself.
 
 Home and root kinds:
 
@@ -610,9 +617,8 @@ Registry file and schema:
   bounded retry and stale-lock breaking, matching the notify queue and
   recent-windows stores. Explicit Registry repair uses its own recovery lock;
   see the recovery boundary below.
-- The envelope carries `schemaVersion: 1`. **v1 is the first envelope projmux
-  has ever written, and no migration step ships today**, so the current version
-  is the only version the registry accepts.
+- The envelope carries `schemaVersion: 2`. Version 1 is the first Registry
+  envelope projmux wrote and is the only older version this build migrates.
 - Everything else fails closed: the file is refused as unreadable and **no
   write happens at all** — no rewrite, no backup, no staged temp file. This
   covers a **newer** schemaVersion (which would destroy state a newer build
@@ -626,14 +632,43 @@ Registry file and schema:
   registry yet" case **only before the first successful write**; see the durable
   envelope below. Only a file with actual content and no usable `schemaVersion`
   is refused as unknown.
-- The migration machinery is generic and version-indexed, ready for the first
-  real schema bump: a registered older step is applied with backup → temp
-  write → validate → atomic replace, so an interrupted or failing migration
-  leaves either the original file or the fully migrated file, never a partial
-  one. Downgrade writes are unsupported. Because production registers no step,
-  that path is proven by tests that register one into a private migration set
-  (`MigrationSet`, `ClassifySchemaVersionWith`, `MigrateRegistryWith`, and the
-  store's private migration override) rather than by shipping a migration.
+- A normal locked `Load` of v1 runs the production 1 → 2 migration, validates
+  the repaired graph, writes the versioned backup, and publishes the v2 bytes
+  through the existing temp-file atomic replace. A failed repair leaves the v1
+  source bytes unchanged. Every successful first migrator (`Load`, `Update`,
+  `UpdateConvergent`, or explicit `Migrate`) also atomically publishes a 0600
+  `<exact-backup>.migration-report.json` beside the versioned backup before the
+  Registry replace. That durable evidence records the exact absolute backup
+  path, SHA-256 of its byte-identical v1 contents, version pair, repair/loss
+  counts, and every repair detail. It is outside rolling recovery retention.
+  A failed migration removes any staged/published report before returning while
+  leaving the source bytes unchanged. `LoadWithMigrationResult` and `Migrate`
+  additionally return both exact paths from the same locked transaction. A
+  second pass sees v2 and writes neither Registry, backup, nor report bytes. An
+  existing invalid v2 document is validated and refused byte-identically even
+  when explicit `Migrate` has no version step to run.
+  Explicit read-only inspection migrates only its returned in-memory view and
+  never publishes it.
+- The v1 repair is deterministic over Registry order apart from injected opaque
+  uid generation. It preserves every existing uid, ownerRef, reserved name, and
+  Agent conversation/session pointer. A valid Project anchor is never
+  reselected. Otherwise it selects the first valid Project-owned Window and
+  direct shell-Pane chain; a Window with no valid direct shell promotes its
+  first direct shell or receives one bare shell, and a Project with no Window
+  receives the minimum Window/Pane chain. A non-empty shell cwd that no longer
+  names a directory is downgraded to the Project root. Every repair is recorded
+  in `MigrationReport`; replaced declared fields are separately marked as
+  information loss, while created Window/Pane resources are additive repair.
+  Production and golden tests call the same pure repair algorithm with injected
+  directory-existence and uid adapters.
+- The canonical anchor is a schema-v2 write invariant. Until the separately
+  planned Project-start projection lands, the legacy `New` startup path's
+  prune-to-zero transaction fails validation and commits zero Registry bytes.
+  The Registry verdict precedes snapshot deletion, so that rejection also
+  preserves the latest snapshot byte-for-byte and performs no tmux mutation.
+  This fail-closed ordering is not Phase 3 authority to redesign Project start.
+- Downgrade writes remain unsupported. Unversioned, malformed, and future
+  envelopes still fail closed before backup, staging, or replace.
 - **Field spelling:** the registry file intentionally uses the resource-model
   camelCase spelling (`apiVersion`, `schemaVersion`, `metadata`, `displayName`,
   `ownerRef`, `primaryPaneRef`, `spec`, `status`) rather than the snake_case

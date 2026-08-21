@@ -37,7 +37,7 @@ func lifecycleFixture(t *testing.T) *Registry {
 	registry.Projects = []Project{{
 		APIVersion: APIVersion, Kind: KindProject,
 		Metadata: ObjectMeta{UID: "prj-alpha", Name: "alpha", CreatedAt: lifecycleClock},
-		Spec:     ProjectSpec{Root: "/srv/alpha"},
+		Spec:     ProjectSpec{Root: "/srv/alpha", PrimaryWindowRef: "win-main"},
 	}}
 	registry.Windows = []Window{{
 		APIVersion: APIVersion, Kind: KindWindow,

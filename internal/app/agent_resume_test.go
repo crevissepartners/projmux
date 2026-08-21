@@ -200,44 +200,6 @@ func addFixtureAgent(t *testing.T, store *fakeResourceStore, uid, name, windowUI
 	}
 }
 
-// addFixtureWindow appends one more Window to the fixture registry, optionally
-// with an initial Pane that becomes its primaryPaneRef.
-func addFixtureWindow(t *testing.T, store *fakeResourceStore, projectUID, windowUID, name, paneUID string) {
-	t.Helper()
-	window := coremetadata.Window{
-		APIVersion: coremetadata.APIVersion,
-		Kind:       coremetadata.KindWindow,
-		Metadata: coremetadata.ObjectMeta{
-			UID: windowUID, Name: name,
-			OwnerRef:  &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: projectUID},
-			CreatedAt: resourceFixtureClock,
-		},
-	}
-	if paneUID != "" {
-		window.Spec.PrimaryPaneRef = paneUID
-		store.registry.Panes = append(store.registry.Panes, coremetadata.Pane{
-			APIVersion: coremetadata.APIVersion,
-			Kind:       coremetadata.KindPane,
-			Metadata: coremetadata.ObjectMeta{
-				UID: paneUID, Name: "zsh",
-				OwnerRef:  &coremetadata.OwnerRef{Kind: coremetadata.KindWindow, UID: windowUID},
-				CreatedAt: resourceFixtureClock,
-			},
-			Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell},
-		})
-		store.registry.NameReservations = append(store.registry.NameReservations, coremetadata.NameReservation{
-			Scope: windowUID, Kind: coremetadata.KindPane, Name: "zsh", UID: paneUID,
-		})
-	}
-	store.registry.Windows = append(store.registry.Windows, window)
-	store.registry.NameReservations = append(store.registry.NameReservations, coremetadata.NameReservation{
-		Scope: projectUID, Kind: coremetadata.KindWindow, Name: name, UID: windowUID,
-	})
-	if err := store.registry.Validate(); err != nil {
-		t.Fatalf("fixture registry invalid after adding window %q: %v", windowUID, err)
-	}
-}
-
 // TestAgentResumeRebindsTheExistingAgentToANewManagedPane is acceptance
 // criterion 1.
 //
@@ -456,24 +418,12 @@ func TestAgentResumeFailuresStartNoConversationAtAll(t *testing.T) {
 		{
 			name: "a Project whose root disappeared is refused before any tmux call",
 			prepare: func(t *testing.T, store *fakeResourceStore, _ *fakeResumeLauncher) {
-				addFixtureWindow(t, store, "prj-gone", "win-gone-main", "main", "pan-gone-zsh")
 				addFixtureAgent(t, store, "agt-gone-codex", "codex", "win-gone-main",
 					coremetadata.PhaseOffline, resumeFixtureRef(resourceFixtureClock))
 			},
 			args:      []string{"resume", "uid:agt-gone-codex"},
 			wantUsage: true,
 			want:      "carries a MissingRoot condition",
-		},
-		{
-			name: "a Window with no anchor Pane has nothing to split",
-			prepare: func(t *testing.T, store *fakeResourceStore, _ *fakeResumeLauncher) {
-				addFixtureWindow(t, store, "prj-beta", "win-beta-empty", "empty", "")
-				addFixtureAgent(t, store, "agt-empty-codex", "codex", "win-beta-empty",
-					coremetadata.PhaseOffline, resumeFixtureRef(resourceFixtureClock))
-			},
-			args:      []string{"resume", "uid:agt-empty-codex"},
-			wantUsage: true,
-			want:      "has no spec.primaryPaneRef",
 		},
 		{
 			name:      "an ambiguous reference is still refused rather than guessed",

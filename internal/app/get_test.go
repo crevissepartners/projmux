@@ -50,13 +50,13 @@ func getFixtureRegistry(t *testing.T) coremetadata.Registry {
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 			Metadata: meta("prj-alpha", "alpha", "projmux", nil, nil),
-			Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha"},
+			Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha", PrimaryWindowRef: "win-alpha-main"},
 			Status:   coremetadata.ProjectStatus{Session: &coremetadata.SessionProjection{Name: "alpha", Live: true}},
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 			Metadata: meta("prj-beta", "beta", "projmux", nil, nil),
-			Spec:     coremetadata.ProjectSpec{Root: "/srv/beta"},
+			Spec:     coremetadata.ProjectSpec{Root: "/srv/beta", PrimaryWindowRef: "win-beta-main"},
 			Status:   coremetadata.ProjectStatus{Session: &coremetadata.SessionProjection{Name: "beta", Live: false}},
 		},
 	}

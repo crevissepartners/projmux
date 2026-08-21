@@ -1,0 +1,9 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 1,
+  "updatedAt": "2026-05-10T00:00:00Z",
+  "projects": [{"apiVersion":"projmux.io/v1alpha1","kind":"Project","metadata":{"uid":"proj-v010","name":"v010","createdAt":"2026-05-10T00:00:00Z"},"spec":{"root":"/tmp"},"status":{"session":{"name":"v010","live":false}}}],
+  "windows": [{"apiVersion":"projmux.io/v1alpha1","kind":"Window","metadata":{"uid":"win-v010","name":"shell","ownerRef":{"kind":"Project","uid":"proj-v010"},"createdAt":"2026-05-10T00:00:00Z"},"spec":{"primaryPaneRef":"pane-v010"}}],
+  "panes": [{"apiVersion":"projmux.io/v1alpha1","kind":"Pane","metadata":{"uid":"pane-v010","name":"shell","ownerRef":{"kind":"Window","uid":"win-v010"},"createdAt":"2026-05-10T00:00:00Z"},"spec":{"role":"shell","cwd":"/tmp"},"status":{}}],
+  "nameReservations": [{"kind":"Project","name":"v010","uid":"proj-v010"},{"scope":"proj-v010","kind":"Window","name":"shell","uid":"win-v010"},{"scope":"win-v010","kind":"Pane","name":"shell","uid":"pane-v010"}]
+}

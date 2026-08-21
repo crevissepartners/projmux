@@ -118,19 +118,21 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 		},
 		{
 			kind: "windows",
-			want: "DISPLAY NAME  NAME    STATUS   PROJECT  AGE\n" +
-				"editor        main    live     alpha    2d\n" +
-				"review        review  live     alpha    2d\n" +
-				"main          main    offline  beta     2d\n",
+			want: "DISPLAY NAME  NAME    STATUS        PROJECT  AGE\n" +
+				"editor        main    live          alpha    2d\n" +
+				"review        review  live          alpha    2d\n" +
+				"main          main    offline       beta     2d\n" +
+				"main          main    missing-root  gone     2d\n",
 		},
 		{
 			kind: "panes",
-			want: "DISPLAY NAME  NAME        STATUS   PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-				"zsh           zsh         live     alpha    main                        2d\n" +
-				"log           log         live     alpha    main                        2d\n" +
-				"codex-pane    codex-pane  live     alpha    main    codex               2d\n" +
-				"zsh           zsh         live     alpha    review                      2d\n" +
-				"zsh           zsh         offline  beta     main                        2d\n",
+			want: "DISPLAY NAME  NAME        STATUS        PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+				"zsh           zsh         live          alpha    main                        2d\n" +
+				"log           log         live          alpha    main                        2d\n" +
+				"codex-pane    codex-pane  live          alpha    main    codex               2d\n" +
+				"zsh           zsh         live          alpha    review                      2d\n" +
+				"zsh           zsh         offline       beta     main                        2d\n" +
+				"zsh           zsh         missing-root  gone     main                        2d\n",
 		},
 		{
 			kind: "agents",
@@ -577,7 +579,7 @@ func TestGetListZeroRowsEmitsNothingAndSucceeds(t *testing.T) {
 	for _, args := range [][]string{
 		{"agents", "--project", "gone"},
 		{"windows", "--project", "alpha", "--selector", "role=nosuch"},
-		{"panes", "--project", "gone"},
+		{"panes", "--project", "alpha", "--selector", "role=nosuch"},
 		{"projects", "--selector", "role=nosuch"},
 	} {
 		store := newFakeResourceStore(t)

@@ -239,7 +239,11 @@ func projectFreshStartResolution(registry coremetadata.Registry, projectUID stri
 	return resolution
 }
 
-// PruneProjectFreshStart removes the approved cascade in one transaction.
+// PruneProjectFreshStart remains fail-closed until the separately planned
+// Project-start projection can replace the deleted graph with its intended
+// startup topology. Canonical Window delete now preserves the v2 anchor by
+// adding a minimum replacement, which is correct for delete but is not
+// authorization to turn this legacy prune-to-zero path into Phase 15.
 //
 // An empty plan opens no transaction at all, which is what keeps `new` on an
 // unregistered directory a pure start rather than a Registry write.
@@ -251,7 +255,7 @@ func (s *registryProjectFreshStarter) PruneProjectFreshStart(_ context.Context, 
 		return errors.New("project fresh start: resource registry store is not configured")
 	}
 	root = strings.TrimSpace(root)
-	return s.resources.mutate(coremetadata.KindWindow, plan.WindowUIDs, func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+	return s.resources.mutate(coremetadata.KindWindow, plan.WindowUIDs, func(working *coremetadata.Registry, _ coremetadata.Mutator) error {
 		project, ok := working.ProjectByRoot(root)
 		if !ok || project.Metadata.UID != plan.ProjectUID {
 			return fmt.Errorf("project fresh start: %q no longer declares Project %s; nothing was deleted", root, plan.ProjectUID)
@@ -260,12 +264,7 @@ func (s *registryProjectFreshStarter) PruneProjectFreshStart(_ context.Context, 
 		if current.signature != plan.signature {
 			return errors.New("project fresh start: the cascade plan changed between the confirmation and execution; nothing was deleted")
 		}
-		for _, uid := range plan.WindowUIDs {
-			if err := deleteResource(working, mutator, coremetadata.KindWindow, uid); err != nil {
-				return err
-			}
-		}
-		return nil
+		return errors.New("project fresh start: schema v2 requires Project.spec.primaryWindowRef; canonical Project-start projection is not available until Phase 15; nothing was deleted")
 	})
 }
 
@@ -337,14 +336,16 @@ func (c *switchCommand) planProjectFreshStart(sessionName, target string) (proje
 	return plan, nil
 }
 
-// startProjectFresh is the `new` row's execution: discard the latest snapshot,
-// prune the Registry topology, verify the prune, then start.
+// startProjectFresh is the `new` row's execution: preflight and prune the
+// Registry topology, discard the latest snapshot, verify the prune, then start.
 //
-// The order is the order the row advertises. The snapshot goes first because it
-// is the cheap half: a snapshot delete that fails leaves every Registry record
-// intact and the whole operation retryable, while the reverse order could leave a
-// pruned Project still offering a `Latest snapshot` row that restores the state
-// the operator just asked to be rid of.
+// Registry authority goes first because schema v2 can reject the legacy
+// prune-to-zero transaction until Phase 15 supplies a replacement Project-start
+// projection. A rejected prune must retain the latest snapshot as well as the
+// Registry and tmux runtime; deleting it before that verdict would turn a
+// fail-closed open into partial data loss. This is C-7 failure atomicity for
+// the current rejection, not a claim that the future multi-store success path
+// is atomic; Phase 15 owns that design.
 // The bootstrap value travels through untouched. The `new` row prunes a Project
 // the Registry already declares topology for, so in practice it is never the open
 // that minted the Project -- but the mirror decision stays in the one place that
@@ -354,17 +355,17 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 	if err != nil {
 		return err
 	}
+	if c.projectFreshStart != nil {
+		if err := c.projectFreshStart.PruneProjectFreshStart(ctx, target, plan); err != nil {
+			return err
+		}
+	}
 	if plan.LatestSnapshot {
 		store, err := c.projectStartupSessionStateStore()
 		if err != nil {
 			return err
 		}
 		if err := store.Delete(sessionName); err != nil {
-			return err
-		}
-	}
-	if c.projectFreshStart != nil {
-		if err := c.projectFreshStart.PruneProjectFreshStart(ctx, target, plan); err != nil {
 			return err
 		}
 	}

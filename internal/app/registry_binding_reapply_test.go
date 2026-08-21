@@ -55,7 +55,7 @@ func driftedRegistry(t *testing.T, root string) coremetadata.Registry {
 	registry.Projects = []coremetadata.Project{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 		Metadata: meta("prj-alpha", filepath.Base(root), nil),
-		Spec:     coremetadata.ProjectSpec{Root: root},
+		Spec:     coremetadata.ProjectSpec{Root: root, PrimaryWindowRef: "win-first"},
 		// Live is stored false on purpose. The session is plainly live -- it is
 		// in the inventory reconcile just read -- and nothing in the adoption
 		// path may consult this bool to decide otherwise.
@@ -295,6 +295,7 @@ func TestBindingReapplyRefusesEverySessionItCannotResolveToExactlyOneProject(t *
 				registry.NameReservations = append(registry.NameReservations, coremetadata.NameReservation{
 					Kind: coremetadata.KindProject, Name: "twin", UID: "prj-twin",
 				})
+				addFixtureCanonicalShell(registry, "prj-twin", "win-twin", "pan-twin", filepath.Join(root, "twin"))
 			},
 		},
 	}
@@ -358,7 +359,7 @@ func TestBindingReapplyNeverMovesAnObjectBetweenProjects(t *testing.T) {
 	registry.Projects = append(registry.Projects, coremetadata.Project{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 		Metadata: coremetadata.ObjectMeta{UID: "prj-beta", Name: "beta", CreatedAt: resourceFixtureClock},
-		Spec:     coremetadata.ProjectSpec{Root: betaRoot},
+		Spec:     coremetadata.ProjectSpec{Root: betaRoot, PrimaryWindowRef: "win-beta"},
 		Status: coremetadata.ProjectStatus{
 			Session: &coremetadata.SessionProjection{Name: "repos-beta"},
 		},

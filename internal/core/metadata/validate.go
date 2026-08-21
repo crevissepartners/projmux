@@ -196,18 +196,29 @@ func (r Registry) Validate() error {
 	}
 
 	for _, window := range r.Windows {
-		owned := r.windowPaneUIDs(window.Metadata.UID)
-		if window.Spec.PrimaryPaneRef == "" {
-			if len(owned) > 0 {
-				return stateErr(op, ErrInvalidRegistry, "window %q has panes but no primaryPaneRef", window.Metadata.Name)
-			}
-			continue
+		if strings.TrimSpace(window.Spec.PrimaryPaneRef) == "" {
+			return stateErr(op, ErrInvalidRegistry, "window %q has no primaryPaneRef", window.Metadata.Name)
 		}
-		if _, ok := r.Pane(window.Spec.PrimaryPaneRef); !ok {
+		primary, ok := r.Pane(window.Spec.PrimaryPaneRef)
+		if !ok {
 			return stateErr(op, ErrInvalidRegistry, "window %q primaryPaneRef %q does not exist", window.Metadata.Name, window.Spec.PrimaryPaneRef)
 		}
-		if !owned[window.Spec.PrimaryPaneRef] {
-			return stateErr(op, ErrInvalidRegistry, "window %q primaryPaneRef %q is not owned by the window or one of its agents", window.Metadata.Name, window.Spec.PrimaryPaneRef)
+		if primary.Metadata.OwnerRef == nil || primary.Metadata.OwnerRef.Kind != KindWindow ||
+			primary.Metadata.OwnerRef.UID != window.Metadata.UID || primary.Spec.Role != PaneRoleShell {
+			return stateErr(op, ErrInvalidRegistry, "window %q primaryPaneRef %q is not a Window-owned shell Pane", window.Metadata.Name, window.Spec.PrimaryPaneRef)
+		}
+	}
+
+	for _, project := range r.Projects {
+		if strings.TrimSpace(project.Spec.PrimaryWindowRef) == "" {
+			return stateErr(op, ErrInvalidRegistry, "project %q has no primaryWindowRef", project.Metadata.Name)
+		}
+		window, ok := r.Window(project.Spec.PrimaryWindowRef)
+		if !ok {
+			return stateErr(op, ErrInvalidRegistry, "project %q primaryWindowRef %q does not exist", project.Metadata.Name, project.Spec.PrimaryWindowRef)
+		}
+		if window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != KindProject || window.Metadata.OwnerRef.UID != project.Metadata.UID {
+			return stateErr(op, ErrInvalidRegistry, "project %q primaryWindowRef %q is not owned by the Project", project.Metadata.Name, project.Spec.PrimaryWindowRef)
 		}
 	}
 
@@ -239,24 +250,6 @@ func validateTermination(op, subject string, receipt *TerminationEvidence) error
 		return stateErr(op, ErrInvalidRegistry, "%s has a termination receipt naming no pane", subject)
 	}
 	return nil
-}
-
-// windowPaneUIDs returns every Pane uid transitively owned by a Window: its
-// own shell Panes plus the managed Panes of the Agents it owns.
-func (r Registry) windowPaneUIDs(windowUID string) map[string]bool {
-	owners := map[string]bool{windowUID: true}
-	for _, agent := range r.Agents {
-		if agent.Metadata.OwnerUID() == windowUID {
-			owners[agent.Metadata.UID] = true
-		}
-	}
-	out := map[string]bool{}
-	for _, pane := range r.Panes {
-		if owners[pane.Metadata.OwnerUID()] {
-			out[pane.Metadata.UID] = true
-		}
-	}
-	return out
 }
 
 // requireOwner enforces that meta names an existing owner of one of wantKinds.

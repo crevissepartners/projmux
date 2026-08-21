@@ -216,13 +216,15 @@ func ownershipFixture(t *testing.T, ownerKind Kind) Registry {
 		APIVersion: APIVersion,
 		Kind:       KindProject,
 		Metadata:   ObjectMeta{UID: "proj-01", Name: "project", CreatedAt: fixedNow},
-		Spec:       ProjectSpec{Root: "/tmp/projmux-ownership"},
+		Spec:       ProjectSpec{Root: "/tmp/projmux-ownership", PrimaryWindowRef: "win-01"},
 	}}
 	reg.NameReservations = []NameReservation{{Kind: KindProject, Name: "project", UID: "proj-01"}}
 
 	ownerUID := "proj-01"
 	if ownerKind == controlSessionKindToken {
 		ownerUID = "ctl-01"
+		reg.Projects = nil
+		reg.NameReservations = nil
 		reg.ControlSessions = []ControlSession{{
 			APIVersion: APIVersion,
 			Kind:       controlSessionKindToken,
@@ -472,13 +474,12 @@ func TestControlSessionAndProjectMayShareAName(t *testing.T) {
 	}
 }
 
-// TestPrePhase0RegistryReadsWithNoMigration is the no-migration parity proof.
+// TestPrePhase0RegistryMigratesToTheCanonicalProjectAnchor is the v1 parity
+// proof for the additive ControlSession field plus the v2 anchor repair.
 //
 // The document below is exactly what a build without control sessions writes. It
-// must classify as current, validate, and round-trip byte-identically: adding
-// `controlSessions` is additive inside schemaVersion 1, and productionMigrations
-// stays empty.
-func TestPrePhase0RegistryReadsWithNoMigration(t *testing.T) {
+// It must classify as a known migration and must not invent a control session.
+func TestPrePhase0RegistryMigratesToTheCanonicalProjectAnchor(t *testing.T) {
 	const document = `{
   "apiVersion": "projmux.io/v1alpha1",
   "schemaVersion": 1,
@@ -524,8 +525,8 @@ func TestPrePhase0RegistryReadsWithNoMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClassifySchemaVersion(%d) error = %v", reg.SchemaVersion, err)
 	}
-	if action != SchemaCurrent {
-		t.Fatalf("ClassifySchemaVersion(%d) = %v, want %v: schemaVersion must stay 1", reg.SchemaVersion, action, SchemaCurrent)
+	if action != SchemaMigrate {
+		t.Fatalf("ClassifySchemaVersion(%d) = %v, want %v", reg.SchemaVersion, action, SchemaMigrate)
 	}
 	if reg.ControlSessions != nil {
 		t.Fatalf("ControlSessions decoded to %+v, want nil for an absent key", reg.ControlSessions)
@@ -534,14 +535,16 @@ func TestPrePhase0RegistryReadsWithNoMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrateRegistry() error = %v", err)
 	}
-	if ran {
-		t.Fatal("MigrateRegistry() ran a step; productionMigrations must stay empty")
+	if !ran {
+		t.Fatal("MigrateRegistry() did not run the v1 -> v2 repair")
 	}
 	if err := migrated.Validate(); err != nil {
 		t.Fatalf("Validate() = %v", err)
 	}
-	// Re-encoding must not introduce the new key, or an older build reading the
-	// file back would see a document it never wrote.
+	if migrated.Projects[0].Spec.PrimaryWindowRef != "win-01" {
+		t.Fatalf("primaryWindowRef = %q, want win-01", migrated.Projects[0].Spec.PrimaryWindowRef)
+	}
+	// The additive ControlSession key still stays absent when there are none.
 	encoded, err := json.Marshal(migrated)
 	if err != nil {
 		t.Fatalf("encode: %v", err)

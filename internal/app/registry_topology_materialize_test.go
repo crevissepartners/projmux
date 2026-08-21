@@ -648,13 +648,30 @@ func TestRegistryTopologyMaterializationRefusesAgentPrimaryAndZeroWindows(t *tes
 	})
 	t.Run("zero Windows", func(t *testing.T) {
 		command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
-		for _, window := range slices.Clone(store.registry.Windows) {
-			if window.Metadata.OwnerUID() == "prj-beta" {
-				if err := store.mutator().DeleteWindow(&store.registry, window.Metadata.UID); err != nil {
-					t.Fatal(err)
-				}
+		// This is deliberately an invalid-v2 diagnostic fixture. Canonical
+		// DeleteWindow must preserve the Project anchor, so bypass the mutator
+		// when testing materialization's refusal of a damaged Registry.
+		removed := map[string]bool{}
+		for _, window := range store.registry.WindowsOf("prj-beta") {
+			removed[window.Metadata.UID] = true
+			for _, agent := range store.registry.AgentsOf(window.Metadata.UID) {
+				removed[agent.Metadata.UID] = true
 			}
 		}
+		store.registry.Windows = slices.DeleteFunc(store.registry.Windows, func(window coremetadata.Window) bool {
+			return removed[window.Metadata.UID]
+		})
+		store.registry.Agents = slices.DeleteFunc(store.registry.Agents, func(agent coremetadata.Agent) bool {
+			return removed[agent.Metadata.UID]
+		})
+		store.registry.Panes = slices.DeleteFunc(store.registry.Panes, func(pane coremetadata.Pane) bool {
+			return removed[pane.Metadata.OwnerUID()]
+		})
+		store.registry.NameReservations = slices.DeleteFunc(store.registry.NameReservations, func(reservation coremetadata.NameReservation) bool {
+			return removed[reservation.UID] || removed[reservation.Scope]
+		})
+		project, _ := store.registry.Project("prj-beta")
+		project.Spec.PrimaryWindowRef = ""
 		out, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
 		if err == nil || !strings.Contains(out, "no Registry Window topology") || len(server.sessions) != 0 {
 			t.Fatalf("zero-Window Project created orphan topology: err=%v\n%s", err, out)

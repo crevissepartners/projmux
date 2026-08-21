@@ -1,6 +1,6 @@
 {
   "apiVersion": "projmux.io/v1alpha1",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "updatedAt": "2026-08-14T00:00:00Z",
   "projects": [
     {
@@ -13,7 +13,8 @@
         "createdAt": "2026-08-14T00:00:00Z"
       },
       "spec": {
-        "root": "/src/projmux"
+        "root": "/src/projmux",
+        "primaryWindowRef": "window-01"
       },
       "status": {}
     }
