@@ -64,11 +64,11 @@ func TestWindowDeleteRuntimePreflightExactBindingAndSessionImpact(t *testing.T) 
 }
 
 func TestWindowDeleteRuntimePreservesControlSessionRootAuthority(t *testing.T) {
-	runtime, _, registry := newWindowRuntimeFixture(t,
+	runtime, _, _ := newWindowRuntimeFixture(t,
 		liveInventoryRow("$3", "home", "@20", "", "win-home"))
 	store := newFakeResourceStore(t)
 	addControlReadRoot(t, store)
-	registry = store.registry
+	registry := store.registry
 
 	live, err := runtime.preflight(context.Background(), registry, deleteWindowRuntimePlan("win-home"))
 	if err != nil {
@@ -83,9 +83,8 @@ func TestWindowDeleteRuntimePreservesControlSessionRootAuthority(t *testing.T) {
 		t.Fatalf("control-owned target lost root authority: %#v", target)
 	}
 
-	runtime, _, registry = newWindowRuntimeFixture(t,
+	runtime, _, _ = newWindowRuntimeFixture(t,
 		liveInventoryRow("$3", "home", "@20", "prj-alpha", "win-home"))
-	registry = store.registry
 	_, err = runtime.preflight(context.Background(), registry, deleteWindowRuntimePlan("win-home"))
 	if err == nil || !strings.Contains(err.Error(), "ControlSession owner scope") ||
 		!strings.Contains(err.Error(), "conflicting Project uid") || strings.Contains(err.Error(), "foreign Project") {
