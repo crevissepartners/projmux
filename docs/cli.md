@@ -608,8 +608,8 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux focus project`](#projmux-focus-project) | Move the current client to an already-live Project; never materializes |
-| [`projmux focus window`](#projmux-focus-window) | Move the current client to an already-live Window; never materializes |
-| [`projmux focus pane`](#projmux-focus-pane) | Move the current client to an already-live Pane; never materializes |
+| [`projmux focus window`](#projmux-focus-window) | Move the current client to an already-live Window in an exact live root session; never materializes |
+| [`projmux focus pane`](#projmux-focus-pane) | Move the current client to an already-live Pane in an exact live root session; never materializes |
 
 Canonical spelling: `projmux focus project`, `projmux focus window`, `projmux focus pane`
 
@@ -623,7 +623,7 @@ projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]
 
 ### `projmux focus window`
 
-Move the current client to an already-live Window; never materializes
+Move the current client to an already-live Window in an exact live root session; never materializes
 
 ```
 projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]
@@ -631,7 +631,7 @@ projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--cli
 
 ### `projmux focus pane`
 
-Move the current client to an already-live Pane; never materializes
+Move the current client to an already-live Pane in an exact live root session; never materializes
 
 ```
 projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]
@@ -1031,9 +1031,9 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux rename project`](#projmux-rename-project) | Rename a Projmux Project resource; with no selector inside tmux, the active Project |
-| [`projmux rename window`](#projmux-rename-window) | Rename a Projmux Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window |
-| [`projmux rename pane`](#projmux-rename-pane) | Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane; does not change tmux pane_title |
-| [`projmux rename agent`](#projmux-rename-agent) | Rename an Agent stable resource name without changing its topic, provider, or managed Pane |
+| [`projmux rename window`](#projmux-rename-window) | Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window |
+| [`projmux rename pane`](#projmux-rename-pane) | Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title |
+| [`projmux rename agent`](#projmux-rename-agent) | Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane |
 
 Canonical spelling: `projmux rename project`, `projmux rename window`, `projmux rename pane`, `projmux rename agent`
 
@@ -1049,7 +1049,7 @@ Aliases: `projects`
 
 ### `projmux rename window`
 
-Rename a Projmux Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window
+Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window
 
 ```
 projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]
@@ -1059,7 +1059,7 @@ Aliases: `windows`
 
 ### `projmux rename pane`
 
-Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane; does not change tmux pane_title
+Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title
 
 ```
 projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
@@ -1069,7 +1069,7 @@ Aliases: `panes`
 
 ### `projmux rename agent`
 
-Rename an Agent stable resource name without changing its topic, provider, or managed Pane
+Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane
 
 ```
 projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...

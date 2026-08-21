@@ -88,6 +88,40 @@ func TestPaneDeleteRuntimePreflightPinsSiblingAgentAndImplicitCascades(t *testin
 	}
 }
 
+func TestPaneDeleteRuntimePreservesControlSessionOwnerChain(t *testing.T) {
+	store := newFakeResourceStore(t)
+	addControlReadRoot(t, store)
+	inventory := livePaneInventoryRow("$3", "home", "@20", "%40", "", "win-home", "pan-home-shell") +
+		livePaneInventoryRow("$3", "home", "@20", "%41", "", "win-home", "pan-home-agent")
+	runtime, _, _ := newPaneRuntimeFixture(t, inventory)
+
+	for _, row := range []struct {
+		name string
+		kind coremetadata.Kind
+		uid  string
+		pane string
+	}{
+		{name: "shell Pane", kind: coremetadata.KindPane, uid: "pan-home-shell", pane: "pan-home-shell"},
+		{name: "Agent", kind: coremetadata.KindAgent, uid: "agt-home", pane: "pan-home-agent"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			live, err := runtime.preflight(context.Background(), store.registry,
+				panePlanFor(t, store.registry, row.kind, row.uid))
+			if err != nil {
+				t.Fatalf("control-owned %s preflight: %v", row.name, err)
+			}
+			if len(live.Targets) != 1 {
+				t.Fatalf("control-owned %s plan = %#v", row.name, live)
+			}
+			target := live.Targets[0]
+			if target.PaneUID != row.pane || target.RootKind != coremetadata.KindControlSession ||
+				target.RootUID != "ctl-home" || target.SessionName != "home" {
+				t.Fatalf("control-owned %s lost owner chain: %#v", row.name, target)
+			}
+		})
+	}
+}
+
 func TestPaneDeleteRuntimeFailsClosedOnMissingDuplicateForeignAndStaleMirrors(t *testing.T) {
 	base := livePaneInventoryRow("$1", "alpha", "@10", "%30", "prj-alpha", "win-alpha-main", "pan-alpha-zsh")
 	for _, test := range []struct {
@@ -143,7 +177,7 @@ func TestNamedLastPaneRuntimeCascadeForcesConfirmation(t *testing.T) {
 	if err == nil || len(prompts) != 1 {
 		t.Fatalf("interactive named last-Pane refusal err=%v prompts=%v", err, prompts)
 	}
-	for _, want := range []string{"kill 1 exact live tmux Pane", "end 1 Window", "end 1 Project session"} {
+	for _, want := range []string{"kill 1 exact live tmux Pane", "end 1 Window", "end 1 managed root session"} {
 		if !strings.Contains(prompts[0], want) {
 			t.Fatalf("last-Pane prompt = %q, want %q", prompts[0], want)
 		}

@@ -29,7 +29,8 @@ type windowLiveDeleteTarget struct {
 	WindowID    string
 	SessionID   string
 	SessionName string
-	ProjectUID  string
+	RootKind    coremetadata.Kind
+	RootUID     string
 	EndsSession bool
 	Self        bool
 }
@@ -41,8 +42,8 @@ type windowLiveDeletePlan struct {
 func (p windowLiveDeletePlan) signature() string {
 	var b strings.Builder
 	for _, target := range p.Targets {
-		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%t,%t;", target.UID, target.WindowID,
-			target.SessionID, target.SessionName, target.ProjectUID, target.EndsSession, target.Self)
+		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%t,%t;", target.UID, target.WindowID,
+			target.SessionID, target.SessionName, target.RootKind, target.RootUID, target.EndsSession, target.Self)
 	}
 	return b.String()
 }
@@ -188,10 +189,9 @@ func (r *tmuxWindowDeleteRuntime) preflight(ctx context.Context, registry coreme
 		if !ok {
 			return windowLiveDeletePlan{}, fmt.Errorf("delete window: registry window uid %q disappeared during live preflight", target.Match.UID)
 		}
-		ownerUID := window.Metadata.OwnerUID()
-		project, ok := registry.Project(ownerUID)
-		if !ok {
-			return windowLiveDeletePlan{}, fmt.Errorf("delete window: registry window uid %q has no owning Project %q", target.Match.UID, ownerUID)
+		root, rootErr := deleteRootForWindow(registry, *window)
+		if rootErr != nil {
+			return windowLiveDeletePlan{}, fmt.Errorf("delete window: %w", rootErr)
 		}
 		matches := byUID[target.Match.UID]
 		if len(matches) == 0 {
@@ -217,20 +217,8 @@ func (r *tmuxWindowDeleteRuntime) preflight(ctx context.Context, registry coreme
 				target.Match.UID, len(matches), r.target.value)
 		}
 		row := matches[0]
-		// ProjectUIDSession is an optional transport mirror on existing
-		// sessions. The Registry owner graph plus its exact session projection
-		// remains authoritative; when the mirror is present it must agree.
-		if row.projectUID != "" && row.projectUID != ownerUID {
-			return windowLiveDeletePlan{}, fmt.Errorf("delete window: live tmux Window %s mirrors registry uid %q under foreign Project uid %q, want %q; nothing was changed",
-				row.windowID, target.Match.UID, row.projectUID, ownerUID)
-		}
-		if project.Status.Session == nil || strings.TrimSpace(project.Status.Session.Name) == "" {
-			return windowLiveDeletePlan{}, fmt.Errorf("delete window: owning Project uid %q has no registry session projection for live tmux Window %s; nothing was changed",
-				ownerUID, row.windowID)
-		}
-		if want := strings.TrimSpace(project.Status.Session.Name); row.sessionName != want {
-			return windowLiveDeletePlan{}, fmt.Errorf("delete window: live tmux Window %s is in stale session %q, registry Project uid %q projects session %q; nothing was changed",
-				row.windowID, row.sessionName, ownerUID, want)
+		if err := root.validateLiveSession("delete window", "Window", row.windowID, target.Match.UID, row.projectUID, row.sessionName); err != nil {
+			return windowLiveDeletePlan{}, err
 		}
 		if plan.Implicit && row.windowID != currentWindowID {
 			return windowLiveDeletePlan{}, fmt.Errorf("delete window: implicit active registry uid %q mirrors live Window %s but the exact caller is in %s; nothing was changed",
@@ -238,7 +226,7 @@ func (r *tmuxWindowDeleteRuntime) preflight(ctx context.Context, registry coreme
 		}
 		live.Targets = append(live.Targets, windowLiveDeleteTarget{
 			UID: target.Match.UID, WindowID: row.windowID, SessionID: row.sessionID,
-			SessionName: row.sessionName, ProjectUID: ownerUID,
+			SessionName: row.sessionName, RootKind: root.Kind, RootUID: root.UID,
 			Self: row.windowID == currentWindowID && currentSocket != "",
 		})
 	}

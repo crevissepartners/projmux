@@ -84,14 +84,14 @@ func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetada
 	selectedByWindow := map[string]int{}
 	lastByWindow := map[string]string{}
 	windowByPane := map[string]string{}
-	projectByWindow := map[string]string{}
+	rootByWindow := map[string]string{}
 	for _, item := range planned {
-		_, window, project, err := paneRegistryAncestry(registry, item.paneUID)
+		_, window, root, err := paneRegistryAncestry(registry, item.paneUID)
 		if err != nil {
 			return paneLiveDeletePlan{}, err
 		}
 		windowByPane[item.paneUID] = window.Metadata.UID
-		projectByWindow[window.Metadata.UID] = project.Metadata.UID
+		rootByWindow[window.Metadata.UID] = root.UID
 		selectedByWindow[window.Metadata.UID]++
 		lastByWindow[window.Metadata.UID] = item.paneUID
 	}
@@ -109,19 +109,19 @@ func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetada
 	endingWindows := map[string]int{}
 	for windowUID, selected := range selectedByWindow {
 		if selected == paneCount[windowUID] {
-			endingWindows[projectByWindow[windowUID]]++
+			endingWindows[rootByWindow[windowUID]]++
 		}
 	}
 	lastEndingWindow := map[string]string{}
 	for _, item := range planned {
 		windowUID := windowByPane[item.paneUID]
 		if selectedByWindow[windowUID] == paneCount[windowUID] && lastByWindow[windowUID] == item.paneUID {
-			lastEndingWindow[projectByWindow[windowUID]] = windowUID
+			lastEndingWindow[rootByWindow[windowUID]] = windowUID
 		}
 	}
 	out := paneLiveDeletePlan{}
 	for _, item := range planned {
-		_, window, project, _ := paneRegistryAncestry(registry, item.paneUID)
+		_, window, root, _ := paneRegistryAncestry(registry, item.paneUID)
 		paneIndex := 0
 		for i := range registry.Panes {
 			if registry.Panes[i].Metadata.UID == item.paneUID {
@@ -136,25 +136,29 @@ func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetada
 				break
 			}
 		}
-		projectIndex := 0
+		rootIndex := 0
 		for i := range registry.Projects {
-			if registry.Projects[i].Metadata.UID == project.Metadata.UID {
-				projectIndex = i
+			if registry.Projects[i].Metadata.UID == root.UID {
+				rootIndex = i
 				break
 			}
 		}
-		sessionName := project.Metadata.Name
-		if project.Status.Session != nil {
-			sessionName = project.Status.Session.Name
+		if root.Kind == coremetadata.KindControlSession {
+			for i := range registry.ControlSessions {
+				if registry.ControlSessions[i].Metadata.UID == root.UID {
+					rootIndex = len(registry.Projects) + i
+					break
+				}
+			}
 		}
 		endsWindow := selectedByWindow[window.Metadata.UID] == paneCount[window.Metadata.UID] && lastByWindow[window.Metadata.UID] == item.paneUID
 		out.Targets = append(out.Targets, paneLiveDeleteTarget{
 			ResourceUID: item.resourceUID, PaneUID: item.paneUID, PaneID: fmt.Sprintf("%%%d", paneIndex+30),
 			WindowUID: window.Metadata.UID, WindowID: fmt.Sprintf("@%d", windowIndex+10),
-			SessionID: fmt.Sprintf("$%d", projectIndex+20), SessionName: sessionName, ProjectUID: project.Metadata.UID,
+			SessionID: fmt.Sprintf("$%d", rootIndex+20), SessionName: root.Session, RootKind: root.Kind, RootUID: root.UID,
 			EndsWindow: endsWindow,
-			EndsSession: endsWindow && endingWindows[project.Metadata.UID] == windowCount[project.Metadata.UID] &&
-				lastEndingWindow[project.Metadata.UID] == window.Metadata.UID,
+			EndsSession: endsWindow && endingWindows[root.UID] == windowCount[root.UID] &&
+				lastEndingWindow[root.UID] == window.Metadata.UID,
 			Self: item.paneUID == r.selfUID,
 		})
 	}
@@ -255,11 +259,7 @@ func (r *fakeWindowDeleteRuntime) preflight(_ context.Context, registry coremeta
 			continue
 		}
 		window, _ := registry.Window(target.Match.UID)
-		project, _ := registry.Project(window.Metadata.OwnerUID())
-		sessionName := project.Metadata.Name
-		if project.Status.Session != nil {
-			sessionName = project.Status.Session.Name
-		}
+		root, _ := deleteRootForWindow(registry, *window)
 		windowIndex := 0
 		for i := range registry.Windows {
 			if registry.Windows[i].Metadata.UID == target.Match.UID {
@@ -267,17 +267,25 @@ func (r *fakeWindowDeleteRuntime) preflight(_ context.Context, registry coremeta
 				break
 			}
 		}
-		projectIndex := 0
+		rootIndex := 0
 		for i := range registry.Projects {
 			if registry.Projects[i].Metadata.UID == window.Metadata.OwnerUID() {
-				projectIndex = i
+				rootIndex = i
 				break
+			}
+		}
+		if root.Kind == coremetadata.KindControlSession {
+			for i := range registry.ControlSessions {
+				if registry.ControlSessions[i].Metadata.UID == root.UID {
+					rootIndex = len(registry.Projects) + i
+					break
+				}
 			}
 		}
 		out.Targets = append(out.Targets, windowLiveDeleteTarget{
 			UID: target.Match.UID, WindowID: fmt.Sprintf("@%d", windowIndex+10),
-			SessionID: fmt.Sprintf("$%d", projectIndex+20), SessionName: sessionName,
-			ProjectUID: window.Metadata.OwnerUID(),
+			SessionID: fmt.Sprintf("$%d", rootIndex+20), SessionName: root.Session,
+			RootKind: root.Kind, RootUID: root.UID,
 			EndsSession: selectedCounts[window.Metadata.OwnerUID()] == sessionCounts[window.Metadata.OwnerUID()] &&
 				target.Match.UID == lastSelected[window.Metadata.OwnerUID()],
 			Self: target.Match.UID == r.selfUID,

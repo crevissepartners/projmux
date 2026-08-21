@@ -560,13 +560,13 @@ var routes = []Route{
 			},
 			{
 				Name:      "window",
-				Summary:   "Move the current client to an already-live Window; never materializes",
+				Summary:   "Move the current client to an already-live Window in an exact live root session; never materializes",
 				Usage:     []string{"projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]"},
 				Canonical: []string{"focus window"},
 			},
 			{
 				Name:      "pane",
-				Summary:   "Move the current client to an already-live Pane; never materializes",
+				Summary:   "Move the current client to an already-live Pane in an exact live root session; never materializes",
 				Usage:     []string{"projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]"},
 				Canonical: []string{"focus pane"},
 			},
@@ -795,9 +795,9 @@ var routes = []Route{
 		Canonical: []string{"rename project", "rename window", "rename pane", "rename agent"},
 		Children: []Route{
 			{Name: "project", Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", Aliases: []string{"projects"}, Usage: []string{"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>"}, Canonical: []string{"rename project"}},
-			{Name: "window", Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}},
-			{Name: "pane", Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}},
-			{Name: "agent", Summary: "Rename an Agent stable resource name without changing its topic, provider, or managed Pane", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename agent"}},
+			{Name: "window", Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}},
+			{Name: "pane", Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}},
+			{Name: "agent", Summary: "Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename agent"}},
 		},
 	},
 	{

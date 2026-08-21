@@ -176,10 +176,11 @@ projmux rename window zsh --name review
 projmux rename pane log --name build
 ```
 
-The applied matrix is `describe window|pane|agent` and `rename window|pane`.
-`describe project` and `rename project` are not in it — a Project has no
-enclosing Project — and neither are `delete`, `rebind`, `agent resume`, or
-`rename agent`, which keep their whole-registry meaning.
+The Project-only read matrix is `describe window|pane|agent`. Generic
+`rename window|pane|agent` uses the same narrowing rule but accepts either the
+active Project or ControlSession as the exact owner root. `describe project`
+and `rename project` are not in either matrix — a Project has no enclosing
+root — and `delete`, `rebind`, and `agent resume` keep their selector meaning.
 
 The contract:
 
@@ -198,9 +199,9 @@ The contract:
   tmux server is probed.
 - **Inside tmux a broken owner chain refuses.** A pane carrying no
   `@projmux_window_uid`, a mirrored Window uid the registry does not hold, or a
-  Window with no owning Project is exit `2` with zero bytes on stdout and zero
-  mutations. It is never a silent fallback to the whole registry, because that
-  is exactly the cross-Project match this rule exists to prevent.
+  Window with no exact existing Project or ControlSession owner is exit `2`
+  with zero bytes on stdout and zero mutations for generic rename. It is never
+  a silent fallback to the whole registry.
 
 ### Create scope
 
@@ -501,6 +502,12 @@ Registry-only: its complete Agent/Pane cascade is shown under `--dry-run`, no
 tmux object is killed, and unrelated live objects and sockets are untouched. A
 unique live mirror keeps the exact-kill path, while duplicate, foreign,
 stale-owner, inventory-failure, and revalidation-race states are refused.
+The selected Window's Registry `ownerRef` is authoritative in that preflight:
+a Project uses its `status.session` plus the optional matching Project uid
+mirror, while a ControlSession uses its exact `spec.session` and requires that
+no Project uid mirror contaminate the control session. Window, Pane, and Agent
+deletes preserve that `(root kind, root uid)` chain in the signed live plan and
+report a final-window cascade with its actual root kind.
 
 `delete window|pane|agent` names the server its live half addresses the same
 way `reconcile resources` does: `--socket <name>`, `--socket-path <absolute>`,

@@ -1653,17 +1653,21 @@ Selector and the implicit active target:
   An in-tmux Window with no exact existing Project or ControlSession owner is a
   usage refusal with zero stdout only when no explicit Project, whole-set, or
   uid authority bypasses the default; it never silently falls back.
-- An **explicit singular reference** on `describe window|pane|agent` and
-  `rename window|pane` remains Project-namespaced. When `--project` is absent
-  inside a managed Project, the active Window uid mirror and its registry owner
-  chain derive the Project. This narrows the Window universe only; it never
+- An **explicit singular reference** on `describe window|pane|agent` remains
+  Project-namespaced. Generic `rename window|pane|agent` instead derives the
+  exact Project or ControlSession that owns the active Window. When
+  `--project` is absent inside a managed Project, both families derive the
+  Project from the active Window uid mirror and Registry owner chain. This
+  narrows the Window universe only; it never
   chooses one Window, Pane, or Agent for the operator, so a same-named pair
   inside the one Project stays the ordinary bounded exact-one ambiguity and a
   `uid:` reference outside the scope is a no-match rather than a cross-Project
-  hit. Phase 13 did not extend this singular namespace to ControlSession.
-  `get projects`, `describe|rename project`, `delete`, `rebind`, `agent resume`,
-  and `rename agent` are outside that scope, and notifications and snapshots
-  belong to separate stores, so all of them remain global.
+  hit. The describe family remains the intentional Project-only difference;
+  Phase 14 extends only the generic rename family to ControlSession.
+  `get projects`, `describe|rename project`, `delete`, `rebind`, and `agent
+  resume` are outside that reference scope, and notifications and snapshots
+  belong to separate stores. Delete's exact live preflight nevertheless follows
+  either root kind through the selected descendant's owner chain.
 - `--all-projects` is the explicit registry-wide escape for those three reads.
   It is deliberately different from destructive `delete --all`, whose existing
   whole-registry compatibility meaning is unchanged. A bare `--all` is not a

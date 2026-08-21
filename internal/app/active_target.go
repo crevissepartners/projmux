@@ -220,27 +220,57 @@ func activeRootScope(lookup activeTargetLookup, registry coremetadata.Registry) 
 		return selector.RootScope{}, false, nil
 	}
 
-	window, detail := observer.activeWindow(registry)
-	if window == nil {
+	root, detail := observer.managedRoot(registry)
+	if detail != "" {
 		return selector.RootScope{}, false, activeRootScopeError(detail)
+	}
+	return root, true, nil
+}
+
+// activeManagedRootNamespaceScope resolves the same owner chain as the plural
+// read default, but its refusal describes an explicit reference and recommends
+// only flags the singular mutation actually accepts.
+func activeManagedRootNamespaceScope(lookup activeTargetLookup, registry coremetadata.Registry) (selector.RootScope, bool, error) {
+	if lookup == nil {
+		return selector.RootScope{}, false, nil
+	}
+	observer, inside := lookup()
+	if !inside {
+		return selector.RootScope{}, false, nil
+	}
+	root, detail := observer.managedRoot(registry)
+	if detail != "" {
+		return selector.RootScope{}, false, &selector.SelectorError{
+			Op: "resolve managed root namespace",
+			Detail: "a resource reference was given inside tmux and " + detail +
+				"; the active managed-root namespace is undecidable, so nothing was selected -- pass --project <ref> to name a Project scope explicitly",
+		}
+	}
+	return root, true, nil
+}
+
+func (o activeTargetObserver) managedRoot(registry coremetadata.Registry) (selector.RootScope, string) {
+	window, detail := o.activeWindow(registry)
+	if window == nil {
+		return selector.RootScope{}, detail
 	}
 	owner := window.Metadata.OwnerRef
 	if owner == nil {
-		return selector.RootScope{}, false, activeRootScopeError(observer.noManagedRootOwnerDetail(window))
+		return selector.RootScope{}, o.noManagedRootOwnerDetail(window)
 	}
 	switch owner.Kind {
 	case coremetadata.KindProject:
 		if _, ok := registry.Project(owner.UID); !ok {
-			return selector.RootScope{}, false, activeRootScopeError(observer.noManagedRootOwnerDetail(window))
+			return selector.RootScope{}, o.noManagedRootOwnerDetail(window)
 		}
 	case coremetadata.KindControlSession:
 		if _, ok := registry.ControlSession(owner.UID); !ok {
-			return selector.RootScope{}, false, activeRootScopeError(observer.noManagedRootOwnerDetail(window))
+			return selector.RootScope{}, o.noManagedRootOwnerDetail(window)
 		}
 	default:
-		return selector.RootScope{}, false, activeRootScopeError(observer.noManagedRootOwnerDetail(window))
+		return selector.RootScope{}, o.noManagedRootOwnerDetail(window)
 	}
-	return selector.RootScope{Kind: owner.Kind, UID: owner.UID}, true, nil
+	return selector.RootScope{Kind: owner.Kind, UID: owner.UID}, ""
 }
 
 // activeRootScopeError keeps a failed in-tmux root derivation distinct from an
