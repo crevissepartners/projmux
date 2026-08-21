@@ -247,7 +247,7 @@ default install catalog is based on Codex CLI 0.130.0:
 | `PostToolUse` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `PreCompact` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
 | `PostCompact` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
-| `SessionStart` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
+| `SessionStart` | marks the matched pane hook-active and writes a quiet ingest diagnostic; for an exact managed initial-task binding it records `pending` startup readiness and opens the separately bounded acknowledgement window, but never acknowledges the task; no notify queue entry is pushed |
 | `Stop` | pushes an info Codex completion row |
 
 Codex hook payload parsing accepts the common fields
@@ -437,7 +437,7 @@ default install catalog is based on Claude Code 2.1.140 and represents the
 | `Notification` | pushes a Claude notify row for response-ready, approval-required, or input-ready based on `notification_type` |
 | `UserPromptSubmit` | marks the matched pane hook-active and sets AI state to thinking/busy; no notify queue entry is pushed |
 | `UserPromptExpansion` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
-| `SessionStart` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
+| `SessionStart` | marks the matched pane hook-active and writes a quiet ingest diagnostic; for an exact managed initial-task binding it records `pending` startup readiness and opens the separately bounded acknowledgement window, but never acknowledges the task; no notify queue entry is pushed |
 | `Stop` | pushes a Claude completion row, using the last assistant transcript text when `transcript_path` is readable |
 | `StopFailure` | pushes a critical Claude error row with error type/message metadata when present |
 | `SubagentStart` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |

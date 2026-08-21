@@ -47,10 +47,11 @@ type agentLauncher interface {
 	// BindManagedAgentPane applies the managed-agent pane options without the
 	// legacy title/content watcher.
 	BindManagedAgentPane(paneID, provider, contextDir, title string)
-	// AwaitAgentActivation observes bounded provider/hook metadata only. It
+	// AwaitAgentActivation observes bounded provider/hook metadata only. Startup
+	// readiness and initial-task acknowledgement have independent bounds; it
 	// never reads pane content and runs after the create transaction releases
 	// the Registry lock.
-	AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration) (bool, string, error)
+	AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error)
 }
 
 // createCommand implements the canonical `create` verb.

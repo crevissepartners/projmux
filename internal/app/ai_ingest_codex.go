@@ -126,7 +126,22 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		}
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
-	case "PreToolUse", "PostToolUse", "PreCompact", "PostCompact", "SessionStart":
+	case "SessionStart":
+		if _, _, err := c.persistManagedAgentStartupReadiness(paneID, aiModeCodex); err != nil {
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+			return err
+		}
+		if c.shouldPushGenericCodexHookNotify(action) {
+			if err := c.pushGenericCodexHookNotifyWithoutActivation(paneID, payload); err != nil {
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+				return err
+			}
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+			return nil
+		}
+		c.quietCodexHook(paneID, payload, aiHookNoHandlerReason(action))
+		return nil
+	case "PreToolUse", "PostToolUse", "PreCompact", "PostCompact":
 		if c.shouldPushGenericCodexHookNotify(action) {
 			if err := c.pushGenericCodexHookNotify(paneID, payload); err != nil {
 				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
@@ -153,16 +168,28 @@ func (c *aiCommand) shouldPushGenericCodexHookNotify(action aiHookActionResoluti
 }
 
 func (c *aiCommand) pushGenericCodexHookNotify(paneID string, payload codexHookPayload) error {
+	return c.pushGenericCodexHookNotifyWithActivationPolicy(paneID, payload, true)
+}
+
+func (c *aiCommand) pushGenericCodexHookNotifyWithoutActivation(paneID string, payload codexHookPayload) error {
+	return c.pushGenericCodexHookNotifyWithActivationPolicy(paneID, payload, false)
+}
+
+func (c *aiCommand) pushGenericCodexHookNotifyWithActivationPolicy(paneID string, payload codexHookPayload, activationEligible bool) error {
 	c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
 	body := formatCodexGenericHookNotifyBody(payload)
-	return c.applyAIStatusQueueOnly("waiting", paneID, attentionNotifyInput{
+	notifyIn := attentionNotifyInput{
 		ID:            codexHookNotifyID(payload, "generic"),
 		Text:          body.Text,
 		Severity:      body.Severity,
 		Metadata:      mergeAINotifyBodyMetadata(payload.codexGenericHookMetadata(), body),
 		Force:         true,
 		SuppressHooks: true,
-	})
+	}
+	if !activationEligible {
+		return c.applyAIStatusQueueOnlyWithoutActivation("waiting", paneID, notifyIn)
+	}
+	return c.applyAIStatusQueueOnly("waiting", paneID, notifyIn)
 }
 
 func parseCodexHookPayload(data []byte) (codexHookPayload, error) {

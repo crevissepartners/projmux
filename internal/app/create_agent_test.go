@@ -35,8 +35,10 @@ type fakeAgentLauncher struct {
 	// activation controls the bounded initial-task acknowledgement.
 	activationAcknowledged bool
 	activationErr          error
+	activationStartupDelay time.Duration
 	activationDelay        time.Duration
 	activationPanes        []string
+	startupTimeouts        []time.Duration
 	activationTimeouts     []time.Duration
 	activationBeforeReturn func()
 }
@@ -172,10 +174,12 @@ func (f *fakeAgentLauncher) PlanAgentLaunch(provider string, workspace coremetad
 	return provider + ":launch", argv, nil
 }
 
-func (f *fakeAgentLauncher) AwaitAgentActivation(_ context.Context, _ tmuxCommandRunner, paneID string, timeout time.Duration) (bool, string, error) {
+func (f *fakeAgentLauncher) AwaitAgentActivation(_ context.Context, _ tmuxCommandRunner, paneID string, startupTimeout, acknowledgementTimeout time.Duration) (bool, string, error) {
 	f.mu.Lock()
 	f.activationPanes = append(f.activationPanes, paneID)
-	f.activationTimeouts = append(f.activationTimeouts, timeout)
+	f.startupTimeouts = append(f.startupTimeouts, startupTimeout)
+	f.activationTimeouts = append(f.activationTimeouts, acknowledgementTimeout)
+	startupDelay := f.activationStartupDelay
 	delay := f.activationDelay
 	acknowledged := f.activationAcknowledged
 	err := f.activationErr
@@ -184,7 +188,7 @@ func (f *fakeAgentLauncher) AwaitAgentActivation(_ context.Context, _ tmuxComman
 	if beforeReturn != nil {
 		beforeReturn()
 	}
-	if delay > timeout {
+	if startupDelay > startupTimeout || delay > acknowledgementTimeout {
 		return false, "fake-provider-hook", nil
 	}
 	return acknowledged, "fake-provider-hook", err

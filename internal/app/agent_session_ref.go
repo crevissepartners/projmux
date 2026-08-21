@@ -209,7 +209,66 @@ func (c *aiCommand) persistManagedAgentTopic(paneID, topic string) (coremetadata
 	return committed, true, err
 }
 
-func (c *aiCommand) persistManagedAgentInteraction(paneID string, kind coremetadata.AgentInteractionKind, source string) (coremetadata.Agent, bool, error) {
+// persistManagedAgentStartupReadiness records the exact provider SessionStart
+// observation without turning it into initial-task acknowledgement. Reusing
+// pending keeps the Registry schema stable; provider-hook source plus the first
+// observation timestamp is the one-shot boundary AwaitAgentActivation uses to
+// open its independent acknowledgement window.
+func (c *aiCommand) persistManagedAgentStartupReadiness(paneID, provider string) (coremetadata.Agent, bool, error) {
+	binding, ok, err := c.managedAgentBindingForPane(paneID)
+	if err != nil || !ok {
+		return binding.agent, ok, err
+	}
+	agent := binding.agent
+	if agent.Spec.Provider != strings.TrimSpace(provider) {
+		return agent, true, nil
+	}
+	if c.updateRegistry == nil {
+		return coremetadata.Agent{}, true, fmt.Errorf("agent registry mutation is not configured")
+	}
+	if !c.exactProviderActivationEvidence(binding, paneID) ||
+		agent.Status.Activation.State != coremetadata.ActivationPending {
+		return agent, true, nil
+	}
+
+	mutator := intmetadata.DefaultMutator()
+	mutator.Now = c.sessionRefClock()
+	var committed coremetadata.Agent
+	_, err = c.updateRegistry(func(working *coremetadata.Registry) error {
+		current, ok := working.Agent(agent.Metadata.UID)
+		if !ok || current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != binding.paneUID {
+			return fmt.Errorf("managed Agent binding changed before startup readiness commit")
+		}
+		currentPane, ok := working.Pane(binding.paneUID)
+		if !ok || currentPane.Status.Activation.Generation != binding.generation ||
+			currentPane.Status.Activation.AgentUID != agent.Metadata.UID ||
+			currentPane.Status.Activation.RuntimeID != strings.TrimSpace(paneID) {
+			return fmt.Errorf("managed Agent activation generation changed before startup readiness commit")
+		}
+		// The first exact SessionStart fixes the boundary. A duplicate hook may
+		// not slide the acknowledgement deadline forward.
+		if current.Status.Activation.State != coremetadata.ActivationPending ||
+			(current.Status.Activation.Source == string(coremetadata.InteractionSourceProviderHook) &&
+				!current.Status.Activation.ObservedAt.IsZero()) {
+			committed = current.Clone()
+			return nil
+		}
+		updated, setErr := mutator.SetAgentActivation(working, agent.Metadata.UID,
+			coremetadata.ActivationPending, string(coremetadata.InteractionSourceProviderHook), "")
+		committed = updated.Clone()
+		return setErr
+	})
+	return committed, true, err
+}
+
+func (c *aiCommand) exactProviderActivationEvidence(binding managedAgentBinding, paneID string) bool {
+	return strings.TrimSpace(binding.generation) != "" &&
+		binding.runtimeID == strings.TrimSpace(paneID) &&
+		strings.TrimSpace(c.env(internalActivationPaneUIDEnv)) == binding.paneUID &&
+		strings.TrimSpace(c.env(internalActivationGenerationEnv)) == binding.generation
+}
+
+func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID string, kind coremetadata.AgentInteractionKind, source string, activationEligible bool) (coremetadata.Agent, bool, error) {
 	binding, ok, err := c.managedAgentBindingForPane(paneID)
 	if err != nil || !ok {
 		return binding.agent, ok, err
@@ -234,11 +293,7 @@ func (c *aiCommand) persistManagedAgentInteraction(paneID string, kind coremetad
 			sessionUnchanged = agent.Status.SessionRef.SameConversation(candidate)
 		}
 	}
-	emittedPaneUID := strings.TrimSpace(c.env(internalActivationPaneUIDEnv))
-	emittedGeneration := strings.TrimSpace(c.env(internalActivationGenerationEnv))
-	activationNeedsAck := strings.TrimSpace(binding.generation) != "" &&
-		binding.runtimeID == strings.TrimSpace(paneID) &&
-		emittedPaneUID == binding.paneUID && emittedGeneration == binding.generation &&
+	activationNeedsAck := activationEligible && c.exactProviderActivationEvidence(binding, paneID) &&
 		source == string(coremetadata.InteractionSourceProviderHook) &&
 		(agent.Status.Activation.State == coremetadata.ActivationPending || agent.Status.Activation.State == coremetadata.ActivationUnconfirmed) &&
 		kind != coremetadata.InteractionUnknown && kind != coremetadata.InteractionIdle

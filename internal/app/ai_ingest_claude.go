@@ -55,6 +55,13 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 	action := c.aiHookEffectiveAction(aiHookProviderClaude, payload.EventName)
 
 	switch payload.EventName {
+	case "SessionStart":
+		if _, _, err := c.persistManagedAgentStartupReadiness(paneID, aiModeClaude); err != nil {
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", err.Error()))
+			return err
+		}
+		c.quietClaudeHook(paneID, payload, aiHookNoHandlerReason(action))
+		return nil
 	case "UserPromptSubmit":
 		return c.ingestClaudeUserPromptSubmit(paneID, payload, metadata, action)
 	case "Notification":
@@ -67,7 +74,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte) error {
 		return c.ingestClaudeStopFailure(paneID, payload, metadata, action)
 	case "SubagentStop":
 		return c.ingestClaudeSubagentStop(paneID, payload, metadata, action)
-	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "PermissionDenied", "UserPromptExpansion", "SessionStart", "SubagentStart", "PreCompact", "PostCompact", "SessionEnd", "Setup", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "InstructionsLoaded", "WorktreeCreate", "WorktreeRemove", "CwdChanged", "FileChanged":
+	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "PermissionDenied", "UserPromptExpansion", "SubagentStart", "PreCompact", "PostCompact", "SessionEnd", "Setup", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "InstructionsLoaded", "WorktreeCreate", "WorktreeRemove", "CwdChanged", "FileChanged":
 		c.quietClaudeHook(paneID, payload, aiHookNoHandlerReason(action))
 		return nil
 	case "TeammateIdle":
