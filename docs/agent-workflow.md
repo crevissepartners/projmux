@@ -26,6 +26,8 @@
 9. Prepare review notes with parity status, commands run, and remaining risks.
 
 ## Maintained Test List
+
+- `make test`: Codex native control plane Phase 0 keeps the app-server wire in `internal/integrations/agents/codexappserver` and pins the headerless JSON-RPC JSONL frame bound, monotonic request IDs, out-of-order response routing, initialize/initialized lifecycle, typed notification delivery, context-bounded request and initialized-notification writes, local cancellation with ignored late responses, and connection replacement with no goroutine leak. A fake stdio proxy matrix closes healthy, missing/disconnected, unsupported `-32601`, malformed, and timeout outcomes into exactly one of available/unsupported/unavailable/timeout/protocol-error, while Doctor, support-report redaction, and the Settings no-op state row expose only source/reason/version/endpoint-kind/connection-state. Negative source and argv audits keep daemon mutation, login, config writes, remote transport, all existing Agent/hook/resume/usage consumers, giant provider interfaces, and Settings source controls at zero.
 - `make fmt`: repository formatting for Go, shell snippets, and generated docs where applicable.
 - `make fix`: safe automatic fixes such as `go fix` and repository-approved cleanup steps.
 - `make npm-pack`: macOS-hosted local npm binary package staging and `npm pack --dry-run` for the root package plus platform packages, including native-key-adapter checks for both Darwin architectures; release staging reuses the release matrix archives.

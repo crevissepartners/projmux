@@ -425,7 +425,7 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 	if warning := c.aiDefaultModeDisabledWarning(); warning != "" {
 		defaultDesc += " - " + warning
 	}
-	return append(entries,
+	entries = append(entries,
 		intpickercompat.Entry{
 			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAI+".launch-target"), defaultDesc),
 			Value:     settingsAIDefaultMode,
@@ -442,6 +442,19 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 			SearchKey: "agent resume picker limit sessions resume_picker_limit scan depth cwd resume_scan_depth offline failed",
 		},
 	)
+	if c.appServerHealth != nil {
+		health := c.appServerHealth(codexHookFallbackAvailable(c.currentAINotifyDiagnostics()))
+		detail := fmt.Sprintf("%s - %s, %s", health.Source.Label(), health.Connection, health.Reason)
+		if health.Version != "" {
+			detail += " - " + health.Version
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     c.rowLabelInfo("Codex control plane", detail, "read-only capability health"),
+			Value:     settingsNoopValue,
+			SearchKey: "codex app server hook fallback unavailable health read only",
+		})
+	}
+	return entries
 }
 
 func (c *settingsCommand) aiResumePickerSummary() string {

@@ -156,6 +156,7 @@ var settingsNavCatalog = []settingsNavNode{
 	{ID: settingsNavAI + ".launch-target", Parent: settingsNavAI, Label: "Default launch target", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Value: settingsAIDefaultMode},
 	{ID: settingsNavAIProviders, Parent: settingsNavAI, Label: "Enabled providers", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsAIEnabledAgents},
 	{ID: settingsNavAIProviders + ".item", Parent: settingsNavAIProviders, Label: "<Provider>", Kind: settingsNavToggle, Axis: settingsAxisGlobal, Dynamic: true, Note: "Claude / Codex / Antigravity; availability and source badge"},
+	{ID: settingsNavAI + ".codex-health", Parent: settingsNavAI, Label: "Codex control plane / App Server / Hook fallback / Unavailable", Kind: settingsNavState, Axis: settingsAxisGlobal, Value: settingsNoopValue, Note: "read-only; capability selected"},
 	{ID: settingsNavAIResumePicker, Parent: settingsNavAI, Label: "Agent Resume Picker", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsAIResumePicker},
 	{ID: settingsNavAIResumePicker + ".state", Parent: settingsNavAIResumePicker, Label: "Effective behavior / Source / Eligible phases", Kind: settingsNavState, Axis: settingsAxisGlobal, Value: settingsNoopValue, Note: "Offline, Failed"},
 	{ID: settingsNavAIResumePicker + ".new-action", Parent: settingsNavAIResumePicker, Label: "New action label", Kind: settingsNavState, Axis: settingsAxisGlobal, Value: settingsNoopValue, Note: "Create New Agent"},

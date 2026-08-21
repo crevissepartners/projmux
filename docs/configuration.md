@@ -416,6 +416,23 @@ warning with the unsupported value and source.
 Project-local locale override is not part of the runtime policy. Locale is a
 user/global preference in this release.
 
+## Codex app-server health
+
+Settings > AI includes a read-only `Codex control plane` row. It reports one of
+`App Server`, `Hook fallback`, or `Unavailable`, together with a closed reason,
+endpoint kind, connection state, and a sanitized version when initialization
+returned one. `projmux doctor --section integrations` and explicit support
+reports expose the same bounded fields without socket paths, prompts, tokens,
+or response payloads.
+
+There is no app-server source setting or environment override. Authority is a
+capability result, not a preference: Projmux probes the existing local control
+socket through `codex app-server proxy` with a short timeout and otherwise keeps
+the current hook behavior. Projmux does not bootstrap, start, stop, restart, or
+reconfigure the Codex daemon and does not manage Codex authentication. Existing
+`ai-hook-actions.json` values remain the hook fallback policy and are neither
+rewritten nor reinterpreted as native app-server policy.
+
 ## AI Resume Picker
 
 The Agent resume picker lists the most recent
