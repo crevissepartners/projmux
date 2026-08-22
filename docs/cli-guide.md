@@ -1271,6 +1271,18 @@ conversation -- `claude --resume <id>`, `codex resume <id>`, or
 `projmux agent resume`, a different verb that never falls back to a fresh
 conversation.
 
+Codex rows come from one source per picker invocation. A healthy app-server is
+primary: `thread/list` is paged with opaque cursors, non-archived and explicit
+`cli`/`vscode`/`appServer` source filters, provider recency ordering, and exact
+cwd/depth filtering. Rows preserve the exact thread id plus provider name,
+branch, and runtime status; an unnamed thread uses only its short id, never its
+prompt preview. The row suffix displays native or rollout source, confidence,
+status, and any closed fallback reason. Unsupported, unavailable, protocol, or
+malformed-pagination results discard the native partial result and run the
+existing rollout scan once. Selecting a native row resumes that same thread id
+through the native lane; selecting a fallback row keeps the current CLI lane.
+Claude and Antigravity discovery and launch semantics are unchanged.
+
 `projmux agent review [<agent-ref>]` starts a native Codex review for
 uncommitted changes by default. Use exactly one of `--base <branch>`, `--commit
 <sha>`, or `--instructions <text>` to choose another review target. The action

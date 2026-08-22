@@ -1,10 +1,13 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +17,8 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -39,6 +44,18 @@ func (r *recordingPaneCreator) createFromIntent(intent agentPaneIntent, _, _ io.
 	r.intents = append(r.intents, intent)
 	return r.err
 }
+
+type appServerPickerCatalog struct{ client *codexappserver.Client }
+
+func (c *appServerPickerCatalog) List(ctx context.Context, query codexappserver.CatalogQuery) (codexappserver.CatalogPage, error) {
+	return c.client.ListCatalogThreads(ctx, query)
+}
+
+func (c *appServerPickerCatalog) Read(ctx context.Context, threadID string) (codexappserver.CatalogThread, error) {
+	return c.client.ReadCatalogThread(ctx, threadID)
+}
+
+func (c *appServerPickerCatalog) Close() error { return c.client.Close() }
 
 func intentAICommand(t *testing.T, home string) (*aiCommand, *recordingPaneCreator) {
 	t.Helper()
@@ -271,6 +288,172 @@ func TestResumeSelectionStatesAResumedIntentWithTheProviderNormalizedID(t *testi
 			want := []agentPaneIntent{{producer: canonicalProducerResumePicker, provider: tt.provider, placement: "right", conversationID: tt.want}}
 			if !reflect.DeepEqual(creator.intents, want) {
 				t.Fatalf("intents = %+v, want %+v", creator.intents, want)
+			}
+		})
+	}
+}
+
+func TestNativeResumeSelectionPreservesCatalogSourceOnIntent(t *testing.T) {
+	home := t.TempDir()
+	cmd, creator := intentAICommand(t, home)
+	id := "0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee"
+	if err := cmd.runSelectedResumeSession(aiResumeSelection{
+		agent: aiModeCodex, resumeID: id, source: aisessions.SourceCodexAppServer,
+	}, "down"); err != nil {
+		t.Fatal(err)
+	}
+	want := []agentPaneIntent{{
+		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "down",
+		conversationID: id, resumeSource: aisessions.SourceCodexAppServer,
+	}}
+	if !reflect.DeepEqual(creator.intents, want) {
+		t.Fatalf("intents=%+v want=%+v", creator.intents, want)
+	}
+}
+
+func TestNonCodexResumeSelectionDoesNotChangeIntentProvenance(t *testing.T) {
+	for _, provider := range []string{aiModeClaude, aiModeAntigravity} {
+		t.Run(provider, func(t *testing.T) {
+			home := t.TempDir()
+			cmd, creator := intentAICommand(t, home)
+			id := "0199aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee"
+			if err := cmd.runSelectedResumeSession(aiResumeSelection{
+				agent: provider, resumeID: id, source: "provider-existing-source",
+			}, "down"); err != nil {
+				t.Fatal(err)
+			}
+			if len(creator.intents) != 1 || creator.intents[0].resumeSource != "" {
+				t.Fatalf("intent=%+v, non-Codex provenance must remain unchanged", creator.intents)
+			}
+		})
+	}
+}
+
+func TestAppServerCatalogPickerPreservesListedThreadOnResumeIntent(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "repo")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	enableAgents(t, home, config.AIAgentCodex)
+
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = serverConn.Close() })
+	serverErr := make(chan error, 1)
+	id := "019f0000-0000-7000-8000-000000000041"
+	go func() {
+		line, err := bufio.NewReader(serverConn).ReadBytes('\n')
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		var request struct {
+			ID     int64  `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(line, &request); err != nil {
+			serverErr <- err
+			return
+		}
+		if request.Method != "thread/list" {
+			serverErr <- errors.New("picker did not request thread/list")
+			return
+		}
+		response := map[string]any{"id": request.ID, "result": map[string]any{
+			"data": []map[string]any{{
+				"id": id, "cwd": work, "name": "Provider title", "createdAt": int64(10),
+				"updatedAt": int64(20), "recencyAt": int64(30), "status": map[string]any{"type": "idle"},
+			}}, "nextCursor": nil,
+		}}
+		encoded, err := json.Marshal(response)
+		if err == nil {
+			_, err = serverConn.Write(append(encoded, '\n'))
+		}
+		serverErr <- err
+	}()
+
+	cmd, creator := intentAICommand(t, home)
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX_SPLIT_CONTEXT_DIR":
+			return work
+		default:
+			return ""
+		}
+	}
+	cmd.openCodexCatalog = func(context.Context) (aisessions.CodexCatalog, error) {
+		return &appServerPickerCatalog{client: codexappserver.NewClient(clientConn)}, nil
+	}
+	stubAIPickerSelection(cmd, aiResumePickerValue(aiModeCodex, id))
+	if err := cmd.runResumePicker("right"); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+	want := []agentPaneIntent{{
+		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
+		conversationID: id, resumeSource: aisessions.SourceCodexAppServer,
+	}}
+	if !reflect.DeepEqual(creator.intents, want) {
+		t.Fatalf("intents=%+v want=%+v", creator.intents, want)
+	}
+}
+
+func TestCatalogOpenFailurePickerUsesOneVisibleRolloutRowAndIntent(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		reason string
+	}{
+		{name: "unavailable", err: errors.New("socket unavailable"), reason: aisessions.ReasonAppServerUnavailable},
+		{name: "unsupported", err: codexappserver.ErrUnsupported, reason: aisessions.ReasonAppServerUnsupported},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			work := filepath.Join(home, "repo")
+			if err := os.MkdirAll(work, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			enableAgents(t, home, config.AIAgentCodex)
+			id := "019f0000-0000-7000-8000-000000000077"
+			writeCodexResumeSession(t, home, id, work, "feat/fallback", "Fallback title")
+
+			cmd, creator := intentAICommand(t, home)
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "HOME":
+					return home
+				case "TMUX_SPLIT_CONTEXT_DIR":
+					return work
+				default:
+					return ""
+				}
+			}
+			opens := 0
+			cmd.openCodexCatalog = func(context.Context) (aisessions.CodexCatalog, error) {
+				opens++
+				return nil, test.err
+			}
+			runner := &capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiResumePickerValue(aiModeCodex, id)}}
+			cmd.nativePicker = nativePickerFromCompatRunner(runner)
+			if err := cmd.runResumePicker("right"); err != nil {
+				t.Fatal(err)
+			}
+			if opens != 1 || len(runner.options.Entries) != 2 {
+				t.Fatalf("catalog opens=%d entries=%#v, want one open and new+one rollout row", opens, runner.options.Entries)
+			}
+			row := runner.options.Entries[1]
+			visible := aisessions.SourceCodexRollout + "/" + aisessions.ConfidenceMedium + "/" + test.reason
+			if !strings.Contains(row.Label, visible) || !strings.Contains(row.SearchKey, test.reason) {
+				t.Fatalf("row=%#v, want visible/searchable %q", row, visible)
+			}
+			if len(creator.intents) != 1 || creator.intents[0].conversationID != id ||
+				creator.intents[0].resumeSource != aisessions.SourceCodexRollout {
+				t.Fatalf("intents=%+v, rollout selection must stay on rollout lane", creator.intents)
 			}
 		})
 	}

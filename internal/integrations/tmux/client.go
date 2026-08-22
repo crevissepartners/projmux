@@ -14,8 +14,10 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/lifecycle"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	"github.com/crevissepartners/projmux/internal/version"
 )
 
 const SwitchTargetClientEnv = "PROJMUX_SWITCH_TARGET_CLIENT"
@@ -195,13 +197,14 @@ type startupCommandProvider interface {
 
 // Client exposes typed tmux queries used by CLI commands.
 type Client struct {
-	runner      commandRunner
-	lookupEnv   func(string) string
-	readFile    func(string) ([]byte, error)
-	postCreate  postCreateRunner
-	lifecycle   lifecycleHookRunner
-	socket      string
-	diagnostics *diagnostics.LifecycleRecorder
+	runner          commandRunner
+	lookupEnv       func(string) string
+	readFile        func(string) ([]byte, error)
+	readCodexThread func(context.Context, string) (codexappserver.CatalogThread, error)
+	postCreate      postCreateRunner
+	lifecycle       lifecycleHookRunner
+	socket          string
+	diagnostics     *diagnostics.LifecycleRecorder
 }
 
 // WithLifecycleDiagnostics attaches the process-scoped, coalescing runtime
@@ -251,6 +254,13 @@ func WithFileReader(readFile func(string) ([]byte, error)) ClientOption {
 		}
 		c.readFile = readFile
 	}
+}
+
+// WithCodexCatalogThreadReader replaces the exact thread/read validator used
+// only when Session State has a thread candidate but no authoritative bound
+// session id or persisted resume id.
+func WithCodexCatalogThreadReader(read func(context.Context, string) (codexappserver.CatalogThread, error)) ClientOption {
+	return func(c *Client) { c.readCodexThread = read }
 }
 
 // Window describes a tmux window inventory row for a session.
@@ -319,6 +329,9 @@ func NewClient(runner commandRunner, opts ...ClientOption) *Client {
 		runner:    runner,
 		lookupEnv: os.Getenv,
 		readFile:  os.ReadFile,
+		readCodexThread: func(ctx context.Context, threadID string) (codexappserver.CatalogThread, error) {
+			return codexappserver.ReadDefaultCatalogThread(ctx, version.String(), threadID)
+		},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -331,6 +344,9 @@ func newClientWithEnv(runner commandRunner, lookupEnv func(string) string, opts 
 		runner:    runner,
 		lookupEnv: lookupEnv,
 		readFile:  os.ReadFile,
+		readCodexThread: func(ctx context.Context, threadID string) (codexappserver.CatalogThread, error) {
+			return codexappserver.ReadDefaultCatalogThread(ctx, version.String(), threadID)
+		},
 	}
 	for _, opt := range opts {
 		opt(c)

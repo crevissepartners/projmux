@@ -13,6 +13,7 @@ package aisessions
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -64,12 +65,16 @@ type SessionContext struct {
 
 // SessionMeta is the Phase 1 picker input contract for a resumable AI session.
 type SessionMeta struct {
-	Agent        string
-	ResumeID     string
-	Title        string
-	LastModified time.Time
-	Context      SessionContext
-	Source       string
+	Agent         string
+	ResumeID      string
+	Title         string
+	LastModified  time.Time
+	Context       SessionContext
+	Source        string
+	Confidence    string
+	Reason        string
+	Archived      bool
+	RuntimeStatus string
 
 	// Turns is the count of user turns in the session log. Counting turns means
 	// scanning the whole log (it defeats the cheap id/cwd/title/branch early-exit
@@ -99,6 +104,10 @@ type DiscoverOptions struct {
 
 	ClaudeProjectsDir string
 	CodexSessionsDir  string
+	// OpenCodexCatalog enables the native primary for the Codex lane. Nil keeps
+	// the historical rollout-only behavior for callers that have not opted into
+	// the Phase 4 catalog port.
+	OpenCodexCatalog OpenCodexCatalog
 	// AntigravityCacheDir contains the public v1.1.12 cache indexes. Discovery
 	// reads only last_conversations.json and conversation_metadata.json.
 	AntigravityCacheDir string
@@ -127,16 +136,46 @@ type DiscoverOptions struct {
 // Discover returns resume sessions for cwd across supported agents, newest
 // first. Missing roots, malformed JSONL records, and partial files are skipped.
 func Discover(cwd string, opts DiscoverOptions) ([]SessionMeta, error) {
+	return DiscoverContext(context.Background(), cwd, opts)
+}
+
+// DiscoverContext returns one provider row set per provider. For Codex, a
+// configured native catalog is the sole source for this invocation; any open,
+// protocol, or pagination failure discards it and performs exactly one rollout
+// fallback. Native and rollout Codex rows are never merged.
+func DiscoverContext(ctx context.Context, cwd string, opts DiscoverOptions) ([]SessionMeta, error) {
+	discovery, err := DiscoverWithOutcomeContext(ctx, cwd, opts)
+	return discovery.Sessions, err
+}
+
+// DiscoverWithOutcomeContext is DiscoverContext plus the typed Codex source
+// decision, including empty native results and fallback reasons.
+func DiscoverWithOutcomeContext(ctx context.Context, cwd string, opts DiscoverOptions) (Discovery, error) {
 	cwd = cleanCWD(cwd)
 	if cwd == "" {
-		return nil, errors.New("discover ai sessions: cwd is empty")
+		return Discovery{}, errors.New("discover ai sessions: cwd is empty")
 	}
 
 	opts = opts.withDefaults()
 	depth := max(opts.Depth, 0)
 	var sessions []SessionMeta
+	outcome := CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium}
 	sessions = append(sessions, discoverClaude(cwd, opts.ClaudeProjectsDir, depth)...)
-	sessions = append(sessions, discoverCodex(cwd, opts.CodexSessionsDir, depth)...)
+	if opts.OpenCodexCatalog == nil {
+		sessions = append(sessions, discoverCodex(cwd, opts.CodexSessionsDir, depth)...)
+	} else if native, nativeErr := discoverCodexNative(ctx, cwd, depth, opts.OpenCodexCatalog); nativeErr == nil {
+		sessions = append(sessions, native...)
+		outcome = CodexCatalogOutcome{Source: CatalogSourceNative, Confidence: CatalogConfidenceHigh}
+	} else {
+		fallback := discoverCodex(cwd, opts.CodexSessionsDir, depth)
+		reason := codexCatalogFallbackReason(nativeErr)
+		for i := range fallback {
+			fallback[i].Confidence = ConfidenceMedium
+			fallback[i].Reason = string(reason)
+		}
+		sessions = append(sessions, fallback...)
+		outcome = CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium, Reason: reason}
+	}
 	sessions = append(sessions, discoverAntigravityCurrentStorage(cwd, opts.AntigravityCacheDir, opts.AntigravityConversationsDir, depth)...)
 	sessions = append(sessions, discoverAntigravityHistory(cwd, opts.AntigravityHistoryPath, depth)...)
 	sessions = dedupeByResumeID(sessions)
@@ -155,7 +194,7 @@ func Discover(cwd string, opts DiscoverOptions) ([]SessionMeta, error) {
 	if !opts.DeferTurns {
 		enrichTurns(sessions)
 	}
-	return sessions, nil
+	return Discovery{Sessions: sessions, Codex: outcome}, nil
 }
 
 // EnrichTurns fills SessionMeta.Turns for the given sessions by scanning each

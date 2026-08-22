@@ -251,6 +251,9 @@ type agentPaneIntent struct {
 	// conversationID joins a provider conversation the machine already has
 	// instead of starting a new one. It requires a provider.
 	conversationID string
+	// resumeSource is private picker provenance. A native Codex row keeps the
+	// app-server resume lane; a rollout row keeps the current CLI lane.
+	resumeSource string
 	// codexCapability is a connection/version-bound picker selection. It is a
 	// private UI intent field, not a public create flag or persisted config.
 	codexCapability *corecap.Selection
@@ -342,6 +345,7 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 		return err
 	}
 	flags.resumeConversation = conversation
+	flags.resumeSource = strings.TrimSpace(intent.resumeSource)
 	flags.codexCapability = intent.codexCapability
 	return visibleCanonicalCreateError(c.createCanonicalIntentAgent(scope, intent, provider, flags, stdout))
 }

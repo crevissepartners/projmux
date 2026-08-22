@@ -97,9 +97,15 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 // the provider's first hook fires. The durable pointer on the Agent is a
 // separate value and is not written here.
 func (c *aiCommand) BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string) {
+	c.BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversationID, "")
+}
+
+func (c *aiCommand) BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversationID, source string) {
 	c.configureAIPane(paneID, provider, contextDir, title, aiPaneResumeMetadata{
 		sessionID: conversationID,
 		resumeID:  conversationID,
+		source:    strings.TrimSpace(source),
+		updatedAt: c.nowTime().UTC(),
 	})
 }
 

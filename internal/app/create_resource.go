@@ -64,6 +64,7 @@ type resourceCreateFlags struct {
 	// verb, which is `agent resume`'s job for a Registry Agent and this field's
 	// job for a conversation the picker found on disk.
 	resumeConversation string
+	resumeSource       string
 	codexCapability    *corecap.Selection
 }
 

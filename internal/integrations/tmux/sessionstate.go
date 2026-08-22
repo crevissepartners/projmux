@@ -23,6 +23,7 @@ const (
 	sessionStateAITopicOption        = "@projmux_ai_topic"
 	sessionStateAITopicManualOption  = "@projmux_ai_topic_manual"
 	sessionStateAISessionIDOption    = "@projmux_ai_session_id"
+	sessionStateAIThreadIDOption     = "@projmux_ai_thread_id"
 	sessionStateAIResumeIDOption     = "@projmux_ai_resume_id"
 	sessionStateAIResumeSourceOption = "@projmux_ai_resume_source"
 	sessionStateAIResumeAtOption     = "@projmux_ai_resume_updated_at"
@@ -63,6 +64,7 @@ type sessionStateResumeRefreshPaneRow struct {
 	aiManaged        string
 	aiAgent          string
 	aiSessionID      string
+	aiThreadID       string
 	aiResumeID       string
 	aiTranscriptPath string
 }
@@ -225,6 +227,19 @@ func (c *Client) refreshSessionStateAIResumeMetadata(ctx context.Context, sessio
 		}
 		candidate := strings.TrimSpace(pane.aiSessionID)
 		source := "session-id"
+		// The bound session id/sessionRef is authoritative and needs no provider
+		// read. A thread-only candidate is weaker: validate its exact existence
+		// once with includeTurns=false, and never replace it with another id from
+		// read metadata.
+		if candidate == "" && isCodexSessionStateRefreshPane(pane) && strings.TrimSpace(pane.aiResumeID) == "" {
+			threadID := strings.TrimSpace(pane.aiThreadID)
+			if threadID != "" && c.readCodexThread != nil {
+				if thread, readErr := c.readCodexThread(ctx, threadID); readErr == nil && thread.ID == threadID {
+					candidate = threadID
+					source = "app-server"
+				}
+			}
+		}
 		if candidate == "" && isClaudeSessionStateRefreshPane(pane) {
 			candidate = c.claudeResumeIDFromTranscript(pane.aiTranscriptPath)
 			source = "claude-transcript"
@@ -560,6 +575,7 @@ func (c *Client) listSessionStateResumeRefreshPanes(ctx context.Context, session
 		"#{"+sessionStateAIManagedOption+"}",
 		"#{"+sessionStateAIAgentOption+"}",
 		"#{"+sessionStateAISessionIDOption+"}",
+		"#{"+sessionStateAIThreadIDOption+"}",
 		"#{"+sessionStateAIResumeIDOption+"}",
 		"#{"+sessionStateAITranscriptOption+"}",
 	))
@@ -693,8 +709,12 @@ func parseSessionStateResumeRefreshPanes(output []byte) ([]sessionStateResumeRef
 		if strings.TrimSpace(rawLine) == "" {
 			continue
 		}
-		fields := splitTmuxFields(rawLine, 7)
-		if len(fields) != 7 {
+		fields := splitTmuxFields(rawLine, 8)
+		if len(fields) == 7 {
+			// Pre-native-catalog rows had no exact thread candidate column.
+			fields = append(fields[:5], append([]string{""}, fields[5:]...)...)
+		}
+		if len(fields) != 8 {
 			return nil, fmt.Errorf("parse tmux sessionstate AI resume metadata panes: malformed row %q", rawLine)
 		}
 		panes = append(panes, sessionStateResumeRefreshPaneRow{
@@ -703,8 +723,9 @@ func parseSessionStateResumeRefreshPanes(output []byte) ([]sessionStateResumeRef
 			aiManaged:        strings.TrimSpace(fields[2]),
 			aiAgent:          strings.TrimSpace(fields[3]),
 			aiSessionID:      strings.TrimSpace(fields[4]),
-			aiResumeID:       strings.TrimSpace(fields[5]),
-			aiTranscriptPath: strings.TrimSpace(fields[6]),
+			aiThreadID:       strings.TrimSpace(fields[5]),
+			aiResumeID:       strings.TrimSpace(fields[6]),
+			aiTranscriptPath: strings.TrimSpace(fields[7]),
 		})
 	}
 	return panes, nil

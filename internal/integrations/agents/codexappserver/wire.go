@@ -7,6 +7,8 @@ const (
 	methodInitialized  = "initialized"
 	methodModelList    = "model/list"
 	methodReviewStart  = "review/start"
+	methodThreadList   = "thread/list"
+	methodThreadRead   = "thread/read"
 	methodThreadStart  = "thread/start"
 	methodThreadResume = "thread/resume"
 	methodTurnStart    = "turn/start"
@@ -108,6 +110,50 @@ type threadResumeParams struct {
 
 type threadResult struct {
 	Thread wireThread `json:"thread"`
+}
+
+type threadListParams struct {
+	Cursor        *string  `json:"cursor,omitempty"`
+	Limit         uint32   `json:"limit"`
+	SortKey       string   `json:"sortKey"`
+	SortDirection string   `json:"sortDirection"`
+	SourceKinds   []string `json:"sourceKinds"`
+	Archived      bool     `json:"archived"`
+	CWD           any      `json:"cwd,omitempty"`
+}
+
+type threadListResult struct {
+	Data       []wireCatalogThread `json:"data"`
+	NextCursor *string             `json:"nextCursor"`
+}
+
+type threadReadParams struct {
+	ThreadID     string `json:"threadId"`
+	IncludeTurns bool   `json:"includeTurns"`
+}
+
+type threadReadResult struct {
+	Thread wireCatalogThread `json:"thread"`
+}
+
+type wireCatalogThread struct {
+	ID        string           `json:"id"`
+	CWD       string           `json:"cwd"`
+	Name      *string          `json:"name"`
+	CreatedAt int64            `json:"createdAt"`
+	UpdatedAt int64            `json:"updatedAt"`
+	RecencyAt *int64           `json:"recencyAt"`
+	GitInfo   *wireGitInfo     `json:"gitInfo"`
+	Status    wireThreadStatus `json:"status"`
+}
+
+type wireGitInfo struct {
+	Branch *string `json:"branch"`
+}
+
+type wireThreadStatus struct {
+	Type        string   `json:"type"`
+	ActiveFlags []string `json:"activeFlags"`
 }
 
 type wireThread struct {

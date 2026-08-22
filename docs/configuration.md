@@ -527,6 +527,19 @@ column (`./`, `./web`, `./api`) so child-directory sessions are easy to tell
 apart. A missing or zero depth is identical to the historical behavior. Settings
 edits write the global config.
 
+Codex uses the local app-server conversation catalog as its primary source.
+Each picker invocation follows opaque `thread/list` cursors to completion with
+explicit `cli`, `vscode`, and `appServer` source kinds, non-archived filtering,
+provider recency ordering, and exact-cwd filtering at depth 0. Wider depth is a
+bounded client-side path-tree filter. Native rows use the exact thread id, the
+provider-owned name (or only a short id when unnamed), git branch, and runtime
+status; prompt preview and transcript turns are never read for titles. If the
+native catalog is unavailable, unsupported, malformed, or returns invalid
+pagination, that invocation discards all native rows and performs one rollout
+fallback. The picker annotates Codex rows with source, confidence, runtime
+status, and a closed fallback reason, so native and rollout rows are never
+silently merged.
+
 Antigravity uses the upstream v1.1.12 current-storage boundary before its
 legacy history fallback. `cache/last_conversations.json` contributes the latest
 UUID mapped to a matching workspace; `cache/conversation_metadata.json`
@@ -541,6 +554,13 @@ Live hook/session-state resume metadata is a separate high-confidence lane and
 is not a disk-picker candidate. When a disk picker selection creates a pane,
 its source is persisted so Session State preview and doctor can report medium
 confidence for DB-validated cache sources or low confidence for legacy history.
+
+Session State saves the exact bound Codex session/thread id before considering
+discovery. An existing bound session id or persisted resume id is replayed
+without an app-server read. Only a thread-only candidate is validated with
+`thread/read` and `includeTurns=false`; this validation is probe-only and never
+starts the shared daemon. Failure retains the persisted id or uses the current
+rollout fallback, and a read response can never substitute a different id.
 
 ## Environment Variables
 

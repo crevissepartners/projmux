@@ -437,6 +437,14 @@ func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetad
 // provider to report the conversation itself.
 func (c *createCommand) bindAgentPane(paneID, provider, contextDir, title string, flags resourceCreateFlags) {
 	if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" && c.resumes != nil {
+		if source := strings.TrimSpace(flags.resumeSource); source != "" {
+			if sourced, ok := c.resumes.(interface {
+				BindResumedAgentPaneWithSource(string, string, string, string, string, string)
+			}); ok {
+				sourced.BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversation, source)
+				return
+			}
+		}
 		c.resumes.BindResumedAgentPane(paneID, provider, contextDir, title, conversation)
 		return
 	}
