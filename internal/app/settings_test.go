@@ -5689,6 +5689,7 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 		tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
 		return nil
 	}
+	wireSettingsLiveTestRunner(cmd)
 	cmd.probeKeybinding = func(key probeKey, timeout time.Duration) (probeResult, error) {
 		return classifyProbeInput(key, []byte("\x1ba")), nil
 	}
@@ -5733,6 +5734,7 @@ func TestSettingsHubKeybindingsApplyOutsideTmuxShowsSkippedLiveState(t *testing.
 			return nil
 		},
 	}
+	wireSettingsLiveTestRunner(cmd)
 
 	var stdout bytes.Buffer
 	if err := cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &stdout); err != nil {
@@ -5856,6 +5858,7 @@ func TestSettingsHubKeybindingsApplyReportsLiveReloadFailure(t *testing.T) {
 			return errors.New("source-file failed")
 		},
 	}
+	wireSettingsLiveTestRunner(cmd)
 
 	var stdout bytes.Buffer
 	err := cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &stdout)
@@ -5898,6 +5901,7 @@ func TestSettingsThemeColorSetLiveAppliesInsideTmux(t *testing.T) {
 			return nil
 		},
 	}
+	wireSettingsLiveTestRunner(cmd)
 
 	var stdout bytes.Buffer
 	if err := cmd.setThemeColor(theme.TokenBackground, "#0000ff", &stdout); err != nil {
@@ -5991,6 +5995,7 @@ background = "#0000ff"
 			return nil
 		},
 	}
+	wireSettingsLiveTestRunner(cmd)
 
 	var stdout bytes.Buffer
 	if err := cmd.resetTheme(&stdout); err != nil {
@@ -6027,6 +6032,7 @@ func TestSettingsThemeColorSetReportsLiveReloadFailure(t *testing.T) {
 			return errors.New("source-file failed")
 		},
 	}
+	wireSettingsLiveTestRunner(cmd)
 
 	var stdout bytes.Buffer
 	err := cmd.setThemeColor(theme.TokenBackground, "#0000ff", &stdout)

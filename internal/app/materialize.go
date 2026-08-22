@@ -650,6 +650,12 @@ func (m *materializer) ensureSessionAt(
 	sessionName, runtimeCWD string,
 	ledger *runtimeLedger,
 ) (intmux.NewSessionResult, error) {
+	// Bind an existing invocation server to its physical socket before the
+	// printable declaration is built. A genuinely absent server remains the
+	// one create-session-only absent-before-create case.
+	if err := m.guardExactRoute(ctx, true); err != nil {
+		return intmux.NewSessionResult{}, err
+	}
 	exists, err := m.sessions.SessionExists(ctx, sessionName)
 	if err != nil {
 		return intmux.NewSessionResult{}, tmuxError("check tmux session %q: %v", sessionName, err)
@@ -1034,6 +1040,9 @@ func (m *materializer) recordErrorCreatedSession(
 func (m *materializer) markCreateOperation(ctx context.Context, sessionName string, ledger *runtimeLedger) error {
 	if ledger == nil || strings.TrimSpace(ledger.operationMarker) == "" {
 		return errors.New("materialize tmux session: create-operation lease is missing")
+	}
+	if err := m.guardExactRoute(ctx, false); err != nil {
+		return tmuxError("mark tmux session %q for create operation: %v", sessionName, err)
 	}
 	action := materializeMutationAction(mutationWriteLease,
 		m.boundMutationTarget("session", sessionName, "session:"+sessionName),

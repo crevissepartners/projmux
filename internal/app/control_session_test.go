@@ -9,6 +9,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -126,8 +127,11 @@ func TestControlSessionConvergeBackfillsALiveHome(t *testing.T) {
 		t.Fatal("converge issued no tmux calls")
 	}
 	for _, call := range runner.calls {
-		if call.flag != "-L" || call.value != controlFixtureSocket {
-			t.Fatalf("tmux call routed to %s/%s, want -L/%s: %v", call.flag, call.value, controlFixtureSocket, call.args)
+		if call.flag == "-L" && call.value == controlFixtureSocket {
+			continue
+		}
+		if call.flag != "-S" || call.value != server.socketPath {
+			t.Fatalf("tmux call routed to %s/%s, want declared -L/%s or bound -S/%s: %v", call.flag, call.value, controlFixtureSocket, server.socketPath, call.args)
 		}
 	}
 	// The role write names one exact session target: there is no `-g` and no
@@ -141,12 +145,122 @@ func TestControlSessionConvergeBackfillsALiveHome(t *testing.T) {
 		if slices.Contains(call.args, "-g") {
 			t.Fatalf("the role write used -g: %v", call.args)
 		}
-		if i := slices.Index(call.args, "-t"); i < 0 || i+1 >= len(call.args) || call.args[i+1] != "home" {
-			t.Fatalf("the role write did not name -t home: %v", call.args)
+		if i := slices.Index(call.args, "-t"); i < 0 || i+1 >= len(call.args) || call.args[i+1] != session.id {
+			t.Fatalf("the role write did not name exact -t %s: %v", session.id, call.args)
 		}
 	}
 	if roleWrites != 1 {
-		t.Fatalf("the role marker was written %d times, want exactly 1", roleWrites)
+		t.Fatalf("the role marker was written %d times, want exactly 1: %#v", roleWrites, runner.calls)
+	}
+}
+
+func TestControlSessionIdentityPlanFlattensEquivalentNestedRoutes(t *testing.T) {
+	converger, _, server, runner := controlSessionFixture(t)
+	converger.runner = explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: server.socketPath}}
+
+	result, err := converger.converge(context.Background(), controlFixtureSocket, "home")
+	if err != nil {
+		t.Fatalf("converge nested equivalent route: %v", err)
+	}
+	if !result.changed {
+		t.Fatal("nested equivalent route did not execute the identity plan")
+	}
+	if got := server.session("home").opts[tmuxopts.SessionRole]; got != resourcegraph.ControlSessionRole {
+		t.Fatalf("role marker = %q, want %q", got, resourcegraph.ControlSessionRole)
+	}
+}
+
+func TestControlSessionIdentityPlanRefusesMismatchedNestedPhysicalRoute(t *testing.T) {
+	converger, store, _, runner := controlSessionFixture(t)
+	server := runner.servers["-L\x00"+controlFixtureSocket]
+	runner.servers["-S\x00/tmp/foreign-control.sock"] = server
+	converger.runner = explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: "/tmp/foreign-control.sock"}}
+
+	_, err := converger.converge(context.Background(), controlFixtureSocket, "home")
+	if err == nil || !strings.Contains(err.Error(), "physical route disagrees") {
+		t.Fatalf("converge mismatched physical route error = %v", err)
+	}
+	if got := store.writes; got != 1 {
+		// The Registry bind commits before the runtime mirror. The exact runtime
+		// refusal leaves that retryable authority intact and performs no tmux write.
+		t.Fatalf("Registry writes = %d, want one retryable bind commit", got)
+	}
+	for _, call := range runner.calls {
+		argv := tmuxCommandArgv(call.args)
+		if len(argv) > 0 && (argv[0] == "set-option" || argv[0] == "rename-window") {
+			t.Fatalf("mismatched nested route executed a runtime write: %#v", call)
+		}
+	}
+}
+
+func TestControlSessionIdentityConvergenceNeverOverwritesForeignDescendantUID(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		seed func(*fakeTmuxSession)
+		got  func(*fakeTmuxSession) string
+		want string
+	}{
+		{name: "Window", seed: func(session *fakeTmuxSession) { session.windows[0].opts[tmuxopts.WindowUID] = "win-foreign" }, got: func(session *fakeTmuxSession) string { return session.windows[0].opts[tmuxopts.WindowUID] }, want: "Window carries a foreign UID"},
+		{name: "Pane", seed: func(session *fakeTmuxSession) { session.windows[0].panes[0].opts[tmuxopts.PaneUID] = "pan-foreign" }, got: func(session *fakeTmuxSession) string { return session.windows[0].panes[0].opts[tmuxopts.PaneUID] }, want: "Pane carries a foreign UID"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			converger, store, server, runner := controlSessionFixture(t)
+			if _, err := converger.converge(context.Background(), controlFixtureSocket, "home"); err != nil {
+				t.Fatalf("seed convergence: %v", err)
+			}
+			session := server.session("home")
+			test.seed(session)
+			runner.calls = nil
+
+			registry := store.registry.Clone()
+			control := registry.ControlSessions[0]
+			window := registry.Windows[0]
+			pane := registry.Panes[0]
+			binding := coremetadata.ControlSessionBinding{
+				ControlSession: control,
+				Windows: []coremetadata.ImportedWindow{{
+					UID:         window.Metadata.UID,
+					SourceIndex: 0,
+					Origin:      coremetadata.ImportCreated,
+				}},
+				Panes: []coremetadata.ImportedPane{{
+					UID:         pane.Metadata.UID,
+					WindowIndex: 0,
+					PaneIndex:   0,
+					Origin:      coremetadata.ImportCreated,
+				}},
+			}
+			targets := intmetadata.LegacyTargets{
+				Windows: []string{session.windows[0].id},
+				Panes:   [][]string{{session.windows[0].panes[0].id}},
+			}
+			mirror := intmetadata.NewMirror(explicitTmuxRunner{
+				runner: runner,
+				target: explicitTmuxTarget{flag: "-L", value: controlFixtureSocket},
+			})
+			_, err := executeControlSessionIdentityPlan(
+				context.Background(),
+				explicitTmuxTarget{flag: "-L", value: controlFixtureSocket},
+				"home",
+				mirror,
+				registry,
+				binding,
+				targets,
+				false,
+			)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("foreign %s identity plan error = %v, want %q", test.name, err, test.want)
+			}
+			if got := test.got(session); !strings.HasSuffix(got, "-foreign") {
+				t.Fatalf("foreign %s UID was overwritten: %q", test.name, got)
+			}
+			for _, call := range runner.calls {
+				argv := tmuxCommandArgv(call.args)
+				if len(argv) > 0 && (argv[0] == "set-option" || argv[0] == "rename-window") {
+					t.Fatalf("foreign %s UID allowed a runtime write: %#v", test.name, call)
+				}
+			}
+		})
 	}
 }
 
@@ -255,6 +369,7 @@ func TestControlSessionInstalledHomePartialStateSmokeMatrix(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		arrange func(t *testing.T, converger *controlSessionConverger, store *fakeResourceStore, server *fakeTmux)
+		wantErr string
 	}{
 		{
 			name: "root only missing",
@@ -264,6 +379,7 @@ func TestControlSessionInstalledHomePartialStateSmokeMatrix(t *testing.T) {
 				session.windows[0].opts[tmuxopts.WindowUID] = "win-interrupted"
 				session.windows[0].panes[0].opts[tmuxopts.PaneUID] = "pan-interrupted"
 			},
+			wantErr: "ControlSession Window carries a foreign UID",
 		},
 		{
 			name: "mirrors only missing",
@@ -283,6 +399,25 @@ func TestControlSessionInstalledHomePartialStateSmokeMatrix(t *testing.T) {
 				test.arrange(t, converger, store, server)
 			}
 			first, err := converger.converge(context.Background(), controlFixtureSocket, "home")
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("first = %+v, error = %v, want %q", first, err, test.wantErr)
+				}
+				live := server.session("home")
+				if got := live.windows[0].opts[tmuxopts.WindowUID]; got != "win-interrupted" {
+					t.Fatalf("foreign Window UID was overwritten: %q", got)
+				}
+				if got := live.windows[0].panes[0].opts[tmuxopts.PaneUID]; got != "pan-interrupted" {
+					t.Fatalf("foreign Pane UID was overwritten: %q", got)
+				}
+				for _, call := range runner.calls {
+					argv := tmuxCommandArgv(call.args)
+					if len(argv) > 0 && (argv[0] == "set-option" || argv[0] == "rename-window") {
+						t.Fatalf("foreign partial state reached a runtime write: %v", call.args)
+					}
+				}
+				return
+			}
 			if err != nil || first.skipped != "" {
 				t.Fatalf("first = %+v, %v", first, err)
 			}

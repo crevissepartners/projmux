@@ -19,6 +19,9 @@ import (
 // newTestReconciler builds a reconciler over an explicit root list and an
 // in-memory tmux server.
 func newTestReconciler(tmux *fakeTmux, roots []string) *registryReconciler {
+	typed := runtimeMutationMetadataMirror{runner: explicitTmuxRunner{
+		runner: tmux, target: explicitTmuxTarget{flag: "-L", value: defaultAppSocket},
+	}}
 	return &registryReconciler{
 		discoverRoots: func() ([]string, error) { return roots, nil },
 		liveSessions: func(context.Context) (map[string]bool, error) {
@@ -28,6 +31,9 @@ func newTestReconciler(tmux *fakeTmux, roots []string) *registryReconciler {
 			return coremetadata.LegacySession{}, intmetadata.LegacyTargets{}, nil
 		},
 		mirror:         intmetadata.NewMirror(tmux),
+		mirrorProject:  typed.MirrorProject,
+		mirrorWindow:   typed.MirrorWindow,
+		mirrorPane:     typed.MirrorPane,
 		shell:          "/bin/zsh",
 		sessionNameFor: filepath.Base,
 	}

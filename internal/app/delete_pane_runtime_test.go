@@ -83,6 +83,7 @@ func TestPaneDeleteDefaultRouteForgedServerRefusesBeforeFirstWrite(t *testing.T)
 	runner := &recordingTmuxRunner{outputs: map[string]string{
 		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"): path + "\n",
 		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", tmuxopts.AppGlobal):      "0\n",
+		recordedTmuxCallKey("tmux", "-S", path, "show-options", "-gqv", tmuxopts.AppGlobal):                  "0\n",
 	}}
 	runtime := &tmuxPaneDeleteRuntime{
 		runner: runner, target: explicitTmuxTarget{flag: "-L", value: defaultAppSocket}, getenv: func(string) string { return "" },
@@ -439,7 +440,7 @@ func TestPaneDeleteRuntimeRefusesNoServerAndSignsOwnerGeneration(t *testing.T) {
 
 	runner.errors = map[string]error{socketKey: errors.New("permission denied")}
 	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil ||
-		!strings.Contains(err.Error(), "inspect exact tmux socket identity") {
+		!strings.Contains(err.Error(), "reobserve exact socket identity") {
 		t.Fatalf("permission error = %v", err)
 	}
 
@@ -567,10 +568,11 @@ func TestPaneDeleteRuntimeQueueRevalidatesTombstonesAndUsesExactSocket(t *testin
 }
 
 type statefulPaneDeleteRunner struct {
-	options   map[string]string
-	failSet   map[string]error
-	failQueue map[string]error
-	calls     []recordedTmuxCall
+	options     map[string]string
+	environment map[string]string
+	failSet     map[string]error
+	failQueue   map[string]error
+	calls       []recordedTmuxCall
 }
 
 func paneSetFailureKey(paneID, value string) string { return paneID + "\x00" + value }
@@ -602,19 +604,37 @@ func (r *statefulPaneDeleteRunner) Run(_ context.Context, name string, args ...s
 			out.WriteString(livePaneInventoryRow("$1", "@10", id, uid))
 		}
 		return []byte(out.String()), nil
+	case "show-environment":
+		var out strings.Builder
+		for key, value := range r.environment {
+			fmt.Fprintf(&out, "%s=%s\n", key, value)
+		}
+		return []byte(out.String()), nil
+	case "set-environment":
+		if r.environment == nil {
+			r.environment = map[string]string{}
+		}
+		if slices.Contains(args, "-gu") {
+			delete(r.environment, args[len(args)-1])
+			return nil, nil
+		}
+		if len(args) < 6 {
+			return nil, fmt.Errorf("stateful Pane delete runner: malformed set-environment %v", args)
+		}
+		r.environment[args[4]] = args[5]
+		joined := strings.Join(args, " ")
+		for id, err := range r.failQueue {
+			if strings.Contains(joined, shellQuote(id)) {
+				return nil, err
+			}
+		}
+		return nil, nil
 	case "set-option":
 		value := args[len(args)-1]
 		if err := r.failSet[paneSetFailureKey(paneID, value)]; err != nil {
 			return nil, err
 		}
 		r.options[paneID] = value
-		return nil, nil
-	case "run-shell":
-		for id, err := range r.failQueue {
-			if strings.Contains(args[len(args)-1], shellQuote(id)) {
-				return nil, err
-			}
-		}
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("stateful Pane delete runner: unexpected command %q", command)
@@ -627,7 +647,10 @@ func statefulPaneRuntime(t *testing.T, runner tmuxCommandRunner) *tmuxPaneDelete
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &tmuxPaneDeleteRuntime{runner: runner, target: target, getenv: func(string) string { return "" }}
+	return &tmuxPaneDeleteRuntime{
+		runner: runner, target: target, getenv: func(string) string { return "" },
+		expectedSocketPath: testDeleteTarget.value, expectedLogicalSocket: defaultAppSocket,
+	}
 }
 
 func multiSelfDeleteTargets() []paneLiveDeleteTarget {

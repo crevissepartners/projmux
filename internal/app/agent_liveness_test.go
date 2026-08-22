@@ -623,10 +623,11 @@ func TestTheReconcilerSweepsAfterImportingLiveSessions(t *testing.T) {
 	// uid this pass allocated has been written onto a live pane.
 	lastMirror, lastInventory := -1, -1
 	for i, call := range tmux.calls {
+		argv := tmuxCommandArgv(call)
 		switch {
-		case call[0] == "set-option" && slices.Contains(call, tmuxopts.PaneUID):
+		case len(argv) > 0 && argv[0] == "set-option" && slices.Contains(argv, tmuxopts.PaneUID):
 			lastMirror = i
-		case call[0] == "list-panes" && slices.Contains(call, "-a"):
+		case len(argv) > 0 && argv[0] == "list-panes" && slices.Contains(argv, "-a"):
 			lastInventory = i
 		}
 	}

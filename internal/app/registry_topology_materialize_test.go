@@ -200,6 +200,7 @@ func TestRegistryTopologyMaterializationRejectsBlankSelectorValue(t *testing.T) 
 func TestRegistryTopologyMaterializationSocketPathOfflineIsHookSafetyRefusal(t *testing.T) {
 	command, store, server, runner, _, _ := newTopologyMaterializeFixture(t)
 	socketPath := t.TempDir() + "/exact.sock"
+	server.socketPath = socketPath
 	runner.servers["-S\x00"+socketPath] = server
 	preview, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket-path", socketPath, "--materialize-project", "beta", "-o", "json")
 	if err != nil {

@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -37,7 +36,10 @@ func newWindowRuntimeFixture(t *testing.T, inventory string) (*tmuxWindowDeleteR
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := &tmuxWindowDeleteRuntime{runner: runner, target: target, getenv: func(string) string { return "" }}
+	runtime := &tmuxWindowDeleteRuntime{
+		runner: runner, target: target, getenv: func(string) string { return "" },
+		expectedSocketPath: testDeleteTarget.value, expectedLogicalSocket: defaultAppSocket,
+	}
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] = testDeleteTarget.value + "\n"
 	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{@projmux_project_uid}", "#{@projmux_window_uid}")
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "list-windows", "-a", "-F", format)] = inventory
@@ -347,6 +349,9 @@ func TestWindowDeleteRuntimeQueueRevalidatesEveryMirrorBeforeQueueing(t *testing
 		{UID: "win-alpha-review", WindowID: "@11", SessionName: "alpha", SessionID: "$1"},
 	}
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "show-options", "-wqv", "-t", "@10", "@projmux_window_uid")] = "win-alpha-main\n"
+	effectFormat := tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}")
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "list-windows", "-a", "-F", effectFormat)] =
+		liveInventoryRow("$1", "@10", "win-alpha-main") + liveInventoryRow("$1", "@11", "win-alpha-review")
 	secondKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "show-options", "-wqv", "-t", "@11", "@projmux_window_uid")
 
 	for _, test := range []struct {

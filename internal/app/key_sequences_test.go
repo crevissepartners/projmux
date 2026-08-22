@@ -228,10 +228,11 @@ func TestTmuxApplyRetiresRecordedSequenceStateBeforeSourcingTheNewConfig(t *test
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
 	writeFile(t, configPath, "previous\n")
 	staleTable := keySequenceTableName([]string{"C-k"})
+	physicalSocket := "/tmp/tmux-1000/seq-socket"
 	runner := &recordingTmuxRunner{outputs: map[string]string{
-		recordedTmuxCallKey("tmux", "-L", "seq-socket", "list-sessions", "-F", "#{session_id}"):           "$0\n",
-		recordedTmuxCallKey("tmux", "-L", "seq-socket", "show-options", "-gqv", tmuxSequenceRootsOption):  "C-k\n",
-		recordedTmuxCallKey("tmux", "-L", "seq-socket", "show-options", "-gqv", tmuxSequenceTablesOption): staleTable + "\n",
+		recordedTmuxCallKey("tmux", "-S", physicalSocket, "list-sessions", "-F", "#{session_id}"):           "$0\n",
+		recordedTmuxCallKey("tmux", "-S", physicalSocket, "show-options", "-gqv", tmuxSequenceRootsOption):  "C-k\n",
+		recordedTmuxCallKey("tmux", "-S", physicalSocket, "show-options", "-gqv", tmuxSequenceTablesOption): staleTable + "\n",
 	}}
 	cmd := &tmuxCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -248,20 +249,20 @@ func TestTmuxApplyRetiresRecordedSequenceStateBeforeSourcingTheNewConfig(t *test
 
 	indexOf := func(match func([]string) bool) int {
 		for i, call := range runner.calls {
-			if match(call.args) {
+			if match(tmuxCommandArgv(call.args)) {
 				return i
 			}
 		}
 		return -1
 	}
 	unbindRoot := indexOf(func(args []string) bool {
-		return slices.Equal(args, []string{"-L", "seq-socket", "unbind-key", "-q", "-n", "C-k"})
+		return slices.Equal(args, []string{"unbind-key", "-q", "-n", "C-k"})
 	})
 	unbindTable := indexOf(func(args []string) bool {
-		return slices.Equal(args, []string{"-L", "seq-socket", "unbind-key", "-a", "-q", "-T", staleTable})
+		return slices.Equal(args, []string{"unbind-key", "-a", "-q", "-T", staleTable})
 	})
 	source := indexOf(func(args []string) bool {
-		return len(args) >= 3 && args[2] == "source-file"
+		return len(args) >= 1 && args[0] == "source-file"
 	})
 	if unbindRoot < 0 || unbindTable < 0 || source < 0 {
 		t.Fatalf("missing retire/source calls: root=%d table=%d source=%d\n%#v", unbindRoot, unbindTable, source, runner.calls)

@@ -13,10 +13,12 @@ import (
 )
 
 type metadataMirrorPlanRunner struct {
-	path, logical, projectUID, role string
-	windowUID, windowName, paneUID  string
-	options                         map[string]string
-	calls                           [][]string
+	path, logical, sessionID, sessionName, projectUID, projectName, role string
+	windowUID, windowName, paneUID                                       string
+	projectTupleReads, driftProjectTupleAt                               int
+	driftProjectName                                                     string
+	options                                                              map[string]string
+	calls                                                                [][]string
 }
 
 func (r *metadataMirrorPlanRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -55,6 +57,12 @@ func (r *metadataMirrorPlanRunner) Run(_ context.Context, name string, args ...s
 		switch {
 		case format == "#{window_name}":
 			return []byte(r.windowName + "\n"), nil
+		case strings.Contains(format, "#{session_id}") && strings.Contains(format, tmuxopts.ProjectUIDSession):
+			r.projectTupleReads++
+			if r.driftProjectTupleAt > 0 && r.projectTupleReads == r.driftProjectTupleAt {
+				r.projectName = r.driftProjectName
+			}
+			return []byte(strings.Join([]string{r.sessionID, r.sessionName, r.projectUID, r.projectName, r.role}, tmuxRowSep) + "\n"), nil
 		case strings.Contains(format, "#{window_id}") && strings.Contains(format, tmuxopts.SessionRole):
 			return []byte(strings.Join([]string{"@2", r.windowUID, r.projectUID, r.role}, tmuxRowSep) + "\n"), nil
 		case strings.Contains(format, "#{pane_id}"):
@@ -64,6 +72,10 @@ func (r *metadataMirrorPlanRunner) Run(_ context.Context, name string, args ...s
 	if len(args) >= 1 && args[0] == "set-option" {
 		option, value := args[len(args)-2], args[len(args)-1]
 		switch option {
+		case tmuxopts.ProjectUIDSession:
+			r.projectUID = value
+		case tmuxopts.ProjectNameSession:
+			r.projectName = value
 		case tmuxopts.WindowUID:
 			r.windowUID = value
 		case tmuxopts.PaneUID:
@@ -82,11 +94,78 @@ func (r *metadataMirrorPlanRunner) Run(_ context.Context, name string, args ...s
 
 func newMetadataMirrorPlanFixture() (*metadataMirrorPlanRunner, runtimeMutationMetadataMirror) {
 	runner := &metadataMirrorPlanRunner{
-		path: "/tmp/metadata-mirror.sock", logical: "metadata-mirror", projectUID: "prj-1",
+		path: "/tmp/metadata-mirror.sock", logical: "metadata-mirror",
+		sessionID: "$1", sessionName: "repo", projectUID: "prj-1",
 		options: map[string]string{},
 	}
 	target := explicitTmuxTarget{flag: "-S", value: runner.path}
 	return runner, runtimeMutationMetadataMirror{runner: explicitTmuxRunner{runner: runner, target: target}}
+}
+
+func TestTypedMetadataMirrorProjectIsOrderedGuardedAndRepeatEmpty(t *testing.T) {
+	runner, mirror := newMetadataMirrorPlanFixture()
+	runner.projectUID = ""
+	project := coremetadata.Project{Metadata: coremetadata.ObjectMeta{UID: "prj-1", Name: "repo"}}
+
+	if err := mirror.MirrorProject(context.Background(), "repo", project); err != nil {
+		t.Fatal(err)
+	}
+	var writes [][]string
+	for _, call := range runner.calls {
+		if slices.Contains(call, "set-option") {
+			writes = append(writes, call)
+		}
+	}
+	if len(writes) != 2 {
+		t.Fatalf("Project identity writes=%d, want 2: %#v", len(writes), runner.calls)
+	}
+	if got := []string{writes[0][len(writes[0])-2], writes[1][len(writes[1])-2]}; !reflect.DeepEqual(got, []string{tmuxopts.ProjectUIDSession, tmuxopts.ProjectNameSession}) {
+		t.Fatalf("Project total order = %v", got)
+	}
+
+	if err := mirror.MirrorProject(context.Background(), "repo", project); err != nil {
+		t.Fatal(err)
+	}
+	after := 0
+	for _, call := range runner.calls {
+		if slices.Contains(call, "set-option") {
+			after++
+		}
+	}
+	if after != len(writes) {
+		t.Fatalf("repeat Project mirror wrote %d actions, want zero", after-len(writes))
+	}
+}
+
+func TestTypedMetadataMirrorProjectRefusesForeignRoleAndPrewriteDrift(t *testing.T) {
+	project := coremetadata.Project{Metadata: coremetadata.ObjectMeta{UID: "prj-1", Name: "repo"}}
+	for _, test := range []struct {
+		name   string
+		mutate func(*metadataMirrorPlanRunner)
+		want   string
+	}{
+		{name: "foreign UID", mutate: func(r *metadataMirrorPlanRunner) { r.projectUID = "prj-foreign" }, want: "Project UID is foreign"},
+		{name: "non-Project role", mutate: func(r *metadataMirrorPlanRunner) { r.projectUID = ""; r.role = "control" }, want: "non-Project role"},
+		{name: "tuple drift", mutate: func(r *metadataMirrorPlanRunner) {
+			r.projectUID = ""
+			r.driftProjectTupleAt = 4
+			r.driftProjectName = "foreign-name"
+		}, want: "tuple drifted before write"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner, mirror := newMetadataMirrorPlanFixture()
+			test.mutate(runner)
+			err := mirror.MirrorProject(context.Background(), "repo", project)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("MirrorProject error = %v, want %q", err, test.want)
+			}
+			for _, call := range runner.calls {
+				if slices.Contains(call, "set-option") {
+					t.Fatalf("refused Project mirror wrote tmux: %#v", runner.calls)
+				}
+			}
+		})
+	}
 }
 
 func TestTypedMetadataMirrorWindowIsOrderedGuardedAndRepeatEmpty(t *testing.T) {
@@ -114,7 +193,7 @@ func TestTypedMetadataMirrorWindowIsOrderedGuardedAndRepeatEmpty(t *testing.T) {
 	if len(writes) != 4 || guardRows < 4 || firstWrite < guardRows {
 		t.Fatalf("typed Window sequence guards=%d firstWrite=%d writes=%#v calls=%#v", guardRows, firstWrite, writes, runner.calls)
 	}
-	if got := []string{writes[0][len(writes[0])-2], writes[1][len(writes[1])-2], writes[2][len(writes[2])-2], writes[3][2]}; !reflect.DeepEqual(got, []string{tmuxopts.AutomaticRenameWindow, tmuxopts.WindowUID, tmuxopts.WindowName, "-S"}) {
+	if got := []string{writes[0][len(writes[0])-2], writes[1][len(writes[1])-2], writes[2][len(writes[2])-2], writes[3][2]}; !reflect.DeepEqual(got, []string{tmuxopts.AutomaticRenameWindow, tmuxopts.WindowUID, tmuxopts.WindowName, "rename-window"}) {
 		t.Fatalf("Window total order = %v", got)
 	}
 	before := len(writes)

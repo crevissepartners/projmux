@@ -73,7 +73,9 @@ func TestUnmanagedRuntimeStopKillsExactStillUnownedHandle(t *testing.T) {
 	row := strings.Join([]string{"$7", "scratch", "", "", ""}, tmuxRowSep) + "\n"
 	runner := &unmanagedStopRunner{
 		appMarker: "1", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux",
-		listRows: []string{row, row},
+		// Initial selection, executor pre-reobserve, and the immediately
+		// pre-write guard must all see the same exact unowned tuple.
+		listRows: []string{row, row, row},
 	}
 	killed, err := executeUnmanagedRuntimeStop(context.Background(), runner, func(string) string { return "" }, "scratch")
 	if err != nil || !killed {
@@ -82,9 +84,14 @@ func TestUnmanagedRuntimeStopKillsExactStillUnownedHandle(t *testing.T) {
 	if got := runner.topologyWrites(); got != 1 {
 		t.Fatalf("unowned writes = %d, want one: %#v", got, runner.calls)
 	}
-	last := runner.calls[len(runner.calls)-1]
-	if !strings.Contains(strings.Join(last, " "), "kill-session -t $7") {
-		t.Fatalf("kill did not use exact observed handle: %v", last)
+	foundExactKill := false
+	for _, call := range runner.calls {
+		if strings.Contains(strings.Join(call, " "), "kill-session -t $7") {
+			foundExactKill = true
+		}
+	}
+	if !foundExactKill {
+		t.Fatalf("kill did not use exact observed handle: %v", runner.calls)
 	}
 }
 

@@ -37,12 +37,30 @@ func (r *routedTmuxRunner) Run(ctx context.Context, name string, args ...string)
 	}
 	target := args[0] + "\x00" + args[1]
 	server := r.servers[target]
+	logicalName := ""
+	if args[0] == "-L" {
+		logicalName = args[1]
+	}
+	if server == nil && args[0] == "-S" {
+		for route, candidate := range r.servers {
+			if candidate.socketPath != args[1] {
+				continue
+			}
+			if server != nil && server != candidate {
+				return nil, fmt.Errorf("multiple fake tmux servers for physical socket %q", args[1])
+			}
+			server = candidate
+			if strings.HasPrefix(route, "-L\x00") {
+				logicalName = strings.TrimPrefix(route, "-L\x00")
+			}
+		}
+	}
 	if server == nil {
 		return nil, fmt.Errorf("no fake tmux server for %q", target)
 	}
 	r.calls = append(r.calls, routedTmuxCall{flag: args[0], value: args[1], args: slices.Clone(args[2:])})
-	if args[0] == "-L" && args[2] == "show-options" && args[len(args)-1] == runtimeMutationSocketNameOption {
-		return []byte(args[1] + "\n"), nil
+	if logicalName != "" && args[2] == "show-options" && args[len(args)-1] == runtimeMutationSocketNameOption {
+		return []byte(logicalName + "\n"), nil
 	}
 	return server.Run(ctx, name, args[2:]...)
 }
@@ -74,7 +92,12 @@ func bindingFixtureReconciler(root string) func(tmuxCommandRunner, sessionLister
 			liveSessions:  sessions.ExistingSessions,
 			observeLegacy: mirror.ObserveLegacySessionTargets,
 			mirror:        mirror,
-			shell:         "/bin/zsh",
+			mirrorProject: func(context.Context, string, coremetadata.Project) error { return nil },
+			mirrorWindow:  mirror.MirrorWindow,
+			mirrorPane: func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
+				return mirror.MirrorPane(ctx, target, pane)
+			},
+			shell: "/bin/zsh",
 			sessionNameFor: func(string) string {
 				return driftedSessionName
 			},
@@ -422,7 +445,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	if err := cmd.runApply([]string{"--config", configPath, "--socket", "isolated"}, &stdout, &stderr); err != nil {
 		t.Fatalf("apply: %v; stderr=%q", err, stderr.String())
 	}
-	if want := []explicitTmuxTarget{{flag: "-L", value: "isolated"}}; !reflect.DeepEqual(recorder.targets(), want) {
+	if want := []explicitTmuxTarget{{flag: "-S", value: "/tmp/tmux-1000/isolated"}}; !reflect.DeepEqual(recorder.targets(), want) {
 		t.Fatalf("convergence targets = %+v, want %+v", recorder.targets(), want)
 	}
 	// Apply carries no hook session: it is not caused by a create, so it has no
@@ -436,8 +459,16 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	sourceIdx := slices.IndexFunc(calls, func(call recordedTmuxCall) bool {
 		return slices.Contains(call.args, "source-file")
 	})
-	if len(calls) < 3 || !reflect.DeepEqual(calls[0].args[:2], []string{"-L", "isolated"}) || sourceIdx != len(calls)-2 || !slices.Contains(calls[len(calls)-1].args, runtimeMutationSocketNameOption) {
+	markerIdx := slices.IndexFunc(calls, func(call recordedTmuxCall) bool {
+		return slices.Contains(call.args, "set-option") && slices.Contains(call.args, runtimeMutationSocketNameOption)
+	})
+	if len(calls) < 3 || !reflect.DeepEqual(calls[0].args[:2], []string{"-L", "isolated"}) || sourceIdx < 0 || markerIdx <= sourceIdx {
 		t.Fatalf("reload did not precede same-socket convergence: %+v", calls)
+	}
+	for _, call := range calls[sourceIdx:] {
+		if len(call.args) < 2 || call.args[0] != "-S" || call.args[1] != "/tmp/tmux-1000/isolated" {
+			t.Fatalf("post-bind apply call left the exact physical socket: %+v", call)
+		}
 	}
 	if configWrites != 1 {
 		t.Fatalf("first apply config writes = %d, want 1", configWrites)
@@ -453,7 +484,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	if configWrites != 1 {
 		t.Fatalf("repeat apply rewrote generated config: writes=%d", configWrites)
 	}
-	if want := []explicitTmuxTarget{{flag: "-L", value: "isolated"}}; !reflect.DeepEqual(recorder.targets(), want) {
+	if want := []explicitTmuxTarget{{flag: "-S", value: "/tmp/tmux-1000/isolated"}}; !reflect.DeepEqual(recorder.targets(), want) {
 		t.Fatalf("repeat convergence targets = %+v, want %+v", recorder.targets(), want)
 	}
 

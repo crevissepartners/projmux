@@ -162,7 +162,12 @@ func reconcileFixtureReconciler(root, sessionName string) func(tmuxCommandRunner
 			liveSessions:  sessions.ExistingSessions,
 			observeLegacy: mirror.ObserveLegacySessionTargets,
 			mirror:        mirror,
-			shell:         "/bin/zsh",
+			mirrorProject: func(context.Context, string, coremetadata.Project) error { return nil },
+			mirrorWindow:  mirror.MirrorWindow,
+			mirrorPane: func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
+				return mirror.MirrorPane(ctx, target, pane)
+			},
+			shell: "/bin/zsh",
 			sessionNameFor: func(string) string {
 				return sessionName
 			},

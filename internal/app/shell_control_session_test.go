@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // The `projmux shell` control-session lifecycle.
@@ -23,13 +25,17 @@ import (
 // recordedControlPass is a fake control-session pass that records what `shell`
 // handed it.
 type recordedControlPass struct {
-	calls  [][2]string
-	result controlSessionConvergence
-	err    error
+	calls      [][2]string
+	result     controlSessionConvergence
+	err        error
+	onConverge func()
 }
 
 func (p *recordedControlPass) converge(_ context.Context, socketName, sessionName string) (controlSessionConvergence, error) {
 	p.calls = append(p.calls, [2]string{socketName, sessionName})
+	if p.err == nil && p.onConverge != nil {
+		p.onConverge()
+	}
 	return p.result, p.err
 }
 
@@ -42,6 +48,9 @@ func shellControlFixture(t *testing.T, home string, pass *recordedControlPass) (
 	}
 	foreground := &recordingShellRunner{}
 	tmux := &scriptedShellTmuxRunner{}
+	if pass.onConverge == nil {
+		pass.onConverge = func() { tmux.identityConverged = true }
+	}
 	cmd := &shellCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv: func(name string) string {
@@ -97,8 +106,11 @@ func TestShellProvisionsAndConvergesTheControlSession(t *testing.T) {
 			createCalls = append(createCalls, call)
 		}
 	}
-	if tmux.calls[0].name != "tmux" || !reflect.DeepEqual(tmux.calls[0].args, wantProbe) {
-		t.Fatalf("probe = %s %#v, want tmux %#v", tmux.calls[0].name, tmux.calls[0].args, wantProbe)
+	probeIndex := slices.IndexFunc(tmux.calls, func(call recordedTmuxCall) bool {
+		return call.name == "tmux" && reflect.DeepEqual(call.args, wantProbe)
+	})
+	if probeIndex < 0 {
+		t.Fatalf("session probe %#v is absent from tmux calls %#v", wantProbe, tmux.calls)
 	}
 	if len(createCalls) != 1 || !slicesHas(createCalls[0].args, "-P") || !slicesHas(createCalls[0].args, "-F") || !slicesHas(createCalls[0].args, "-e") {
 		t.Fatalf("provision calls = %#v, want one atomic typed create with handles and lease", createCalls)
@@ -114,7 +126,7 @@ func TestShellProvisionsAndConvergesTheControlSession(t *testing.T) {
 		t.Fatalf("control pass calls = %#v, want %#v", pass.calls, want)
 	}
 	// The foreground attach is byte-identical to the pre-marker contract.
-	wantAttach := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "home", "-c", home}
+	wantAttach := []string{"-L", "projmux", "-f", configPath, "attach-session", "-t", "=home", "-c", home}
 	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantAttach) {
 		t.Fatalf("attach = %s %#v, want tmux %#v", foreground.name, foreground.args, wantAttach)
 	}
@@ -128,7 +140,9 @@ func TestShellConvergesAnExplicitAppSessionTarget(t *testing.T) {
 
 	home := t.TempDir()
 	pass := &recordedControlPass{}
-	cmd, foreground, _ := shellControlFixture(t, home, pass)
+	cmd, foreground, tmux := shellControlFixture(t, home, pass)
+	tmux.logicalSocket = "pmx-dev"
+	tmux.observedSocket = "/tmp/tmux-1000/pmx-dev"
 
 	if err := cmd.Run([]string{"--session", "scratch", "--socket", "pmx-dev"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -138,7 +152,7 @@ func TestShellConvergesAnExplicitAppSessionTarget(t *testing.T) {
 	if want := [][2]string{{"pmx-dev", "scratch"}}; !reflect.DeepEqual(pass.calls, want) {
 		t.Fatalf("control pass calls = %#v, want %#v", pass.calls, want)
 	}
-	if !slicesHas(foreground.args, "scratch") {
+	if !slicesHas(foreground.args, "=scratch") {
 		t.Fatalf("attach = %#v, want the explicit session", foreground.args)
 	}
 }
@@ -169,7 +183,7 @@ func TestShellDoesNotMarkAProjectDefaultSession(t *testing.T) {
 		t.Fatalf("a Project-default target issued preflight tmux calls: %#v", tmux.calls)
 	}
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-	wantAttach := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "repos-projmux", "-c", project}
+	wantAttach := []string{"-L", "projmux", "-f", configPath, "attach-session", "-t", "=repos-projmux", "-c", project}
 	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantAttach) {
 		t.Fatalf("attach = %s %#v, want tmux %#v", foreground.name, foreground.args, wantAttach)
 	}
@@ -190,7 +204,7 @@ func TestShellAttachesEvenWhenTheControlPassFails(t *testing.T) {
 		t.Fatalf("stderr = %q, want the convergence warning", stderr.String())
 	}
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-	wantAttach := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "home", "-c", home}
+	wantAttach := []string{"-L", "projmux", "-f", configPath, "attach-session", "-t", "=home", "-c", home}
 	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantAttach) {
 		t.Fatalf("attach = %s %#v, want tmux %#v", foreground.name, foreground.args, wantAttach)
 	}
@@ -204,13 +218,13 @@ func TestShellFailedProvisionRefusesFailOpenAttachCreation(t *testing.T) {
 	cmd, foreground, tmux := shellControlFixture(t, home, pass)
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
 	tmux.errors = map[string]error{
-		shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "has-session", "-t", "home"):                   errors.New("can't find session: home"),
-		shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "new-session", "-d", "-s", "home", "-c", home): errors.New("no space left on device"),
+		shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "has-session", "-t", "home"):                                  errors.New("can't find session: home"),
+		shellTmuxCallKey("tmux", "-S", "/tmp/tmux-1000/projmux", "-f", configPath, "new-session", "-d", "-s", "home", "-c", home): errors.New("no space left on device"),
 	}
 
 	var stderr bytes.Buffer
 	if err := cmd.Run(nil, &bytes.Buffer{}, &stderr); err == nil || !strings.Contains(err.Error(), "no space left on device") {
-		t.Fatalf("Run() error = %v, want fail-closed provisioning refusal", err)
+		t.Fatalf("Run() error = %v, want fail-closed provisioning refusal; tmux calls=%#v", err, tmux.calls)
 	}
 	// A provisioning failure short-circuits the pass -- there is nothing to mark
 	// -- but the attach still runs and reports tmux's own failure to the operator.
@@ -247,7 +261,7 @@ func TestShellSkipsProvisioningAnAlreadyLiveAppSession(t *testing.T) {
 		t.Fatalf("control pass calls = %#v, want %#v; an already-live Home must still backfill", pass.calls, want)
 	}
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-	wantAttach := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "home", "-c", home}
+	wantAttach := []string{"-L", "projmux", "-f", configPath, "attach-session", "-t", "=home", "-c", home}
 	if !reflect.DeepEqual(foreground.args, wantAttach) {
 		t.Fatalf("attach = %#v, want tmux %#v", foreground.args, wantAttach)
 	}
@@ -371,7 +385,7 @@ func TestControlBootstrapRefusesForgedExistingRouteBeforeCreate(t *testing.T) {
 			home := t.TempDir()
 			cmd, _, tmux := shellControlFixture(t, home, &recordedControlPass{})
 			tmux.outputs = map[string][]byte{
-				shellTmuxCallKey("tmux", "-L", "projmux", "show-options", "-gqv", tc.option): []byte(tc.value),
+				shellTmuxCallKey("tmux", "-S", "/tmp/tmux-1000/projmux", "show-options", "-gqv", tc.option): []byte(tc.value),
 			}
 			_, err := cmd.provisionAppSession(context.Background(), "projmux", filepath.Join(home, "tmux.conf"), shellTarget{SessionName: "home", CWD: home})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -493,7 +507,7 @@ func TestControlBootstrapRollbackFailureReportsOwnedResidual(t *testing.T) {
 	cmd, _, tmux := shellControlFixture(t, home, &recordedControlPass{})
 	tmux.errors = map[string]error{
 		shellTmuxCallKey("tmux", "-L", "projmux", "-f", filepath.Join(home, "tmux.conf"), "has-session", "-t", "home"): errors.New("can't find session: home"),
-		shellTmuxCallKey("tmux", "-L", "projmux", "kill-session", "-t", "$9"):                                          errors.New("rollback transport failed"),
+		shellTmuxCallKey("tmux", "-S", "/tmp/tmux-1000/projmux", "kill-session", "-t", "$9"):                           errors.New("rollback transport failed"),
 	}
 	tmux.createEffectErr = errors.New("hook failed after create")
 	tmux.leaseMatches = [][]string{{"$9", "@12", "%15", "1"}}

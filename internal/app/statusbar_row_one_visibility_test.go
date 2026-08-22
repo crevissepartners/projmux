@@ -193,7 +193,7 @@ func TestStatusbarRowOneSettingsRowsAndLiveApply(t *testing.T) {
 			case "XDG_CONFIG_HOME":
 				return configHome
 			case "TMUX":
-				return "isolated-client"
+				return "/tmp/tmux-test/projmux,1,0"
 			default:
 				return ""
 			}
@@ -203,6 +203,7 @@ func TestStatusbarRowOneSettingsRowsAndLiveApply(t *testing.T) {
 			return nil
 		},
 	}
+	wireSettingsLiveTestRunner(cmd)
 	rows := cmd.statusBarEntries()
 	for _, component := range []statusbarRowOneComponent{statusbarRowOneProject, statusbarRowOneClock, statusbarRowOneSettingsLauncher} {
 		if !hasEntryValue(rows, settingsActionPrefixHUDVisibility+string(component)+":off") {

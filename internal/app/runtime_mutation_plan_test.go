@@ -392,10 +392,37 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		"trigger.after-split-window":      "set-hook -g after-split-window",
 		"trigger.client-attached-welcome": "set-hook -g client-attached",
 	}
+	expectedArtifactCounts := map[string]map[string]int{
+		"standalone": {
+			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.after-kill-pane": 1,
+			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
+			"config.generated-statusbar": 2, "config.generated-key-sequences": 1,
+			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
+		},
+		"app": {
+			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.after-kill-pane": 1,
+			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
+			"config.generated-statusbar": 4, "config.generated-key-sequences": 2,
+			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
+		},
+		"standalone-settings-override": {
+			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.after-kill-pane": 1,
+			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
+			"config.generated-statusbar": 2, "config.generated-key-sequences": 1,
+			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
+		},
+		"app-settings-override": {
+			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.after-kill-pane": 1,
+			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
+			"config.generated-statusbar": 4, "config.generated-key-sequences": 2,
+			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
+		},
+	}
 	for kind, rendered := range configs {
 		for id, signature := range requiredArtifacts {
-			if strings.Count(rendered, signature) != 1 {
-				t.Errorf("%s generated artifact %q signature %q count=%d, want one", kind, id, signature, strings.Count(rendered, signature))
+			want := expectedArtifactCounts[kind][id]
+			if got := strings.Count(rendered, signature); got != want {
+				t.Errorf("%s generated artifact %q signature %q count=%d, want exact %d", kind, id, signature, got, want)
 			}
 		}
 		for id, signature := range appOnlyArtifacts {
@@ -849,6 +876,7 @@ func TestMaterializerDefaultRouteForgedServerRefusesBeforeFirstWrite(t *testing.
 	base := &recordingTmuxRunner{outputs: map[string]string{
 		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"): path + "\n",
 		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", tmuxopts.AppGlobal):      "0\n",
+		recordedTmuxCallKey("tmux", "-S", path, "show-options", "-gqv", tmuxopts.AppGlobal):                  "0\n",
 	}}
 	target := explicitTmuxTarget{flag: "-L", value: defaultAppSocket}
 	runtime := &materializer{
@@ -1083,6 +1111,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"control_session.go:executeControlSessionIdentityPlan":  true,
 		"runtime_metadata_mirror.go:MirrorWindow":               true,
 		"runtime_metadata_mirror.go:MirrorPane":                 true,
+		"runtime_metadata_mirror.go:MirrorProject":              true,
 	}
 	// These are semantic exemptions, keyed to one exact source function and
 	// verb. They are intentionally not a broad verb allowlist.
@@ -1101,6 +1130,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"attach.go:executeAutoAttachPlan:helper:KillSession":                              "attach.ephemeral-prune",
 		"prune.go:runEphemeral:helper:KillSession":                                        "standalone.prune",
 		"materialize.go:read:variable-argv":                                               "runtime.observation",
+		"materialize.go:equalizeSplitLayout:variable-argv":                                "runtime.observation",
 		"tmux.go:managedIngestMigrationAIForRoute:variable-argv":                          "config.migration",
 		"tmux.go:runApply:source-file":                                                    "config.apply-source",
 		"tmux.go:retireGeneratedKeySequenceState:variable-argv":                           "key-sequence.retirement",
@@ -1133,7 +1163,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"agent_interaction.go:WriteInteraction:set-option":                                "agent.presentation",
 		"attention.go:run:variable-argv":                                                  "agent.presentation",
 		"binding_convergence.go:Run:variable-argv":                                        "binding.convergence",
-		"controller_trigger.go:runAutomaticMirrorRecovery:variable-argv":                  "controller.identity",
 		"create_reentrancy.go:deferBindingConvergence:set-environment":                    "create.reentrancy",
 		"focus.go:listTargets:variable-argv":                                              "runtime.observation",
 		"focus.go:translatePaneIDToTarget:variable-argv":                                  "runtime.observation",
@@ -1184,6 +1213,8 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 	// their cited surface must remain planned and their source key is audited
 	// bidirectionally just like the app-owned runtimeMutationArgv seam.
 	plannedTypedSites := map[string]string{
+		"controller_trigger.go:runAutomaticMirrorRecovery:variable-argv":                        "controller.identity",
+		"kill.go:KillSession:helper:KillSession":                                                "manual.tagged-kill",
 		"resource_reconcile_plan.go:planResourceProjectMirrors:helper:MirrorProject":            "controller.identity",
 		"resource_reconcile_plan.go:planResourceProjectMirrors:helper:RebindProject":            "controller.identity",
 		"resource_reconcile_plan.go:planResourceBoundMirrorDrift:helper:DisableAutomaticRename": "controller.identity",
@@ -1302,10 +1333,20 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 						}
 					}
 				}
-				if ok && (selector.Sel.Name == "runMutation" || selector.Sel.Name == "runMaterializeMutation") {
+				if ok && (selector.Sel.Name == "runMutation" || selector.Sel.Name == "runMaterializeMutation" ||
+					selector.Sel.Name == "runIdentityWrites" || selector.Sel.Name == "claimRuntimeUIDForRollback" ||
+					selector.Sel.Name == "mirrorProject") {
 					usesPlanSeam = true
 				}
 				if ok && (selector.Sel.Name == "run" || selector.Sel.Name == "runCommand") {
+					beforeRaw := len(rawMutations)
+					directTmux := false
+					if len(call.Args) > 0 {
+						if executable, literal := call.Args[0].(*ast.BasicLit); literal && executable.Kind == token.STRING {
+							name, _ := strconv.Unquote(executable.Value)
+							directTmux = name == "tmux"
+						}
+					}
 					for _, argument := range call.Args {
 						literal, ok := argument.(*ast.BasicLit)
 						if !ok || literal.Kind != token.STRING {
@@ -1316,9 +1357,21 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 							rawMutations = append(rawMutations, value)
 						}
 					}
+					if directTmux && call.Ellipsis.IsValid() && len(rawMutations) == beforeRaw {
+						rawMutations = append(rawMutations, "variable-argv")
+					}
+				}
+				if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "executeUnmanagedRuntimeStop" {
+					usesPlanSeam = true
 				}
 				if ok && mutatingHelpers[selector.Sel.Name] {
-					rawMutations = append(rawMutations, "helper:"+selector.Sel.Name)
+					registryRename := false
+					if receiver, ident := selector.X.(*ast.Ident); ident {
+						registryRename = selector.Sel.Name == "RenameWindow" && receiver.Name == "mutator"
+					}
+					if !registryRename {
+						rawMutations = append(rawMutations, "helper:"+selector.Sel.Name)
+					}
 				}
 				if !ok || (selector.Sel.Name != "Run" && selector.Sel.Name != "read") {
 					return true

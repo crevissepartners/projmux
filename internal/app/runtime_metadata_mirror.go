@@ -64,6 +64,81 @@ func (m runtimeMutationMetadataMirror) exactRoute(ctx context.Context) (tmuxComm
 	return base, route, nil
 }
 
+func (m runtimeMutationMetadataMirror) MirrorProject(ctx context.Context, sessionName string, project coremetadata.Project) error {
+	runner, route, err := m.exactRoute(ctx)
+	if err != nil {
+		return err
+	}
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" || strings.TrimSpace(project.Metadata.UID) == "" {
+		return errors.New("typed metadata mirror requires a Project UID and session name")
+	}
+	exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.ProjectNameSession+"}", "#{"+tmuxopts.SessionRole+"}")
+	observeTuple := func(ctx context.Context) ([]string, error) {
+		if err := guardResolvedRuntimeMutationRoute(ctx, runner, route); err != nil {
+			return nil, err
+		}
+		out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "-F", format)
+		rows := splitTmuxRows(string(out), 5)
+		if err != nil || len(rows) != 1 || exactTmuxHandle(rows[0][0], "$") == "" || rows[0][1] != sessionName {
+			return nil, errors.New("typed metadata mirror: Project session containment is unavailable")
+		}
+		return rows[0], nil
+	}
+	initial, err := observeTuple(ctx)
+	if err != nil {
+		return err
+	}
+	if initial[2] != "" && initial[2] != project.Metadata.UID {
+		return errors.New("typed metadata mirror: Project UID is foreign")
+	}
+	if initial[4] != "" {
+		return errors.New("typed metadata mirror: Project session carries a non-Project role")
+	}
+	target := runtimeMutationTarget{Socket: "-L=" + route.socketName, PhysicalSocket: route.expectedSocketPath,
+		Kind: "session", ID: initial[0], UID: project.Metadata.UID, Parent: "project/" + project.Metadata.UID}
+	declarations := []struct{ option, value string }{
+		{tmuxopts.ProjectUIDSession, project.Metadata.UID},
+		{tmuxopts.ProjectNameSession, project.Metadata.Name},
+	}
+	steps := make([]runtimeMutationStep, 0, len(declarations))
+	for index, item := range declarations {
+		action := newRuntimeMutation(index+1, mutationWriteIdentity, target)
+		bindRuntimeMutationGuard(&action, "exact Project session tuple and prior mirrors="+strings.Join(initial, "/"))
+		action.Operands = []string{"-t", target.ID, "-q", item.option, item.value}
+		steps = append(steps, runtimeMutationStep{
+			Action: action,
+			Reobserve: func(ctx context.Context) (bool, error) {
+				current, err := observeTuple(ctx)
+				if err != nil {
+					return false, err
+				}
+				field := 2
+				if item.option == tmuxopts.ProjectNameSession {
+					field = 3
+				}
+				return current[field] == item.value, nil
+			},
+			Guard: func(ctx context.Context) error {
+				current, err := observeTuple(ctx)
+				if err != nil {
+					return err
+				}
+				if current[0] != initial[0] || current[1] != initial[1] || current[2] != initial[2] || current[3] != initial[3] || current[4] != initial[4] {
+					return errors.New("typed metadata mirror: Project session tuple drifted before write")
+				}
+				return nil
+			},
+			Apply: func(ctx context.Context) error {
+				_, err := runRuntimeMutationCommand(ctx, runner, action)
+				return err
+			},
+		})
+	}
+	return executeRuntimeMutationPlan(ctx, steps)
+}
+
 func (m runtimeMutationMetadataMirror) MirrorWindow(ctx context.Context, windowID string, window coremetadata.Window) error {
 	windowID = exactTmuxHandle(windowID, "@")
 	if windowID == "" || strings.TrimSpace(window.Metadata.UID) == "" || window.Metadata.OwnerRef == nil {

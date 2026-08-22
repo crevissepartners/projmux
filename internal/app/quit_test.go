@@ -148,7 +148,9 @@ func TestQuitCommandNonAppRuntimeIsNoop(t *testing.T) {
 func TestQuitCommandMissingRuntimeIsNoop(t *testing.T) {
 	t.Parallel()
 
-	runner := &recordingTmuxRunner{err: errors.New("no server running on /tmp/tmux-1000/projmux")}
+	runner := &recordingTmuxRunner{errors: map[string]error{
+		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"): errors.New("no server running on /tmp/tmux-1000/projmux"),
+	}}
 	cmd := &quitCommand{runner: runner}
 
 	if err := cmd.Run([]string{"--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {

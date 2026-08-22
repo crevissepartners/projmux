@@ -196,6 +196,62 @@ func (f *fakeTmux) argvContains(token string) bool {
 	})
 }
 
+// tmuxCommandArgv returns the command portion while preserving fakeTmux.calls'
+// exact route evidence. Legacy behavior tests generally care about the tmux
+// verb; Phase 10 route tests inspect the original call directly.
+func tmuxCommandArgv(call []string) []string {
+	if len(call) >= 3 && (call[0] == "-L" || call[0] == "-S") {
+		return call[2:]
+	}
+	return call
+}
+
+// settingsLiveTestRunner supplies the exact route observations required by the
+// production Settings reload boundary while preserving the narrow historical
+// test seam that records only the eventual tmux mutation.
+type settingsLiveTestRunner struct {
+	run        func(string, ...string) error
+	output     func(string, ...string) ([]byte, error)
+	socketPath string
+}
+
+func (r *settingsLiveTestRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	argv := tmuxCommandArgv(args)
+	if r.socketPath == "" {
+		switch {
+		case len(args) >= 2 && args[0] == "-S":
+			r.socketPath = args[1]
+		case len(args) >= 2 && args[0] == "-L":
+			r.socketPath = "/tmp/tmux-test/" + args[1]
+		default:
+			r.socketPath = "/tmp/tmux-test/projmux"
+		}
+	}
+	joined := strings.Join(argv, " ")
+	switch {
+	case strings.Contains(joined, "display-message -p -F #{socket_path}"):
+		return []byte(r.socketPath + "\n"), nil
+	case strings.Contains(joined, "show-options -gqv "+tmuxopts.AppGlobal):
+		return []byte("1\n"), nil
+	case strings.Contains(joined, "show-options -gqv "+runtimeMutationSocketNameOption):
+		return []byte(defaultAppSocket + "\n"), nil
+	case strings.Contains(joined, "show-options -gqv "+tmuxSequenceRootsOption),
+		strings.Contains(joined, "show-options -gqv "+tmuxSequenceTablesOption):
+		if r.output != nil {
+			return r.output(name, argv...)
+		}
+		return nil, nil
+	}
+	if r.run != nil {
+		return nil, r.run(name, argv...)
+	}
+	return nil, nil
+}
+
+func wireSettingsLiveTestRunner(cmd *settingsCommand) {
+	cmd.tmuxRunner = &settingsLiveTestRunner{run: cmd.runCommand, output: cmd.runOutput}
+}
+
 func flagValue(args []string, flag string) string {
 	for i, arg := range args {
 		if arg == flag && i+1 < len(args) {
@@ -503,13 +559,35 @@ func (f *fakeTmux) runListPanes(args []string) ([]byte, error) {
 // the @projmux_app marker is modeled; anything else reads as absent, exactly
 // like tmux's -v output for an unset user option.
 func (f *fakeTmux) runShowOptions(args []string) ([]byte, error) {
+	option := args[len(args)-1]
+	if slices.Contains(args, "-wqv") {
+		_, window := f.window(flagValue(args, "-t"))
+		if window == nil {
+			return nil, fmt.Errorf("fake tmux: show-options: no window %q", flagValue(args, "-t"))
+		}
+		return []byte(window.opts[option] + "\n"), nil
+	}
+	if slices.Contains(args, "-pqv") {
+		_, _, pane := f.pane(flagValue(args, "-t"))
+		if pane == nil {
+			return nil, fmt.Errorf("fake tmux: show-options: no pane %q", flagValue(args, "-t"))
+		}
+		return []byte(pane.opts[option] + "\n"), nil
+	}
+	if slices.Contains(args, "-qv") {
+		session := f.session(flagValue(args, "-t"))
+		if session == nil {
+			return nil, fmt.Errorf("fake tmux: show-options: no session %q", flagValue(args, "-t"))
+		}
+		return []byte(session.opts[option] + "\n"), nil
+	}
 	if !slices.Contains(args, "-gv") && !slices.Contains(args, "-gqv") {
 		return nil, fmt.Errorf("fake tmux: show-options: unsupported argv %v", args)
 	}
-	if args[len(args)-1] == tmuxopts.AppGlobal {
+	if option == tmuxopts.AppGlobal {
 		return []byte(f.appMarker + "\n"), nil
 	}
-	if args[len(args)-1] == runtimeMutationSocketNameOption {
+	if option == runtimeMutationSocketNameOption {
 		return []byte(defaultAppSocket + "\n"), nil
 	}
 	return []byte("\n"), nil
@@ -709,6 +787,8 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, fmt.Sprintf("%d", pane.height))
 		case strings.HasPrefix(token, "@"):
 			out = append(out, scopedOption(token, session, window, pane))
+		case strings.HasPrefix(token, "E:") && session != nil:
+			out = append(out, session.env[strings.TrimPrefix(token, "E:")])
 		default:
 			out = append(out, "")
 		}

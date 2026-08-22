@@ -132,18 +132,19 @@ func assertCanonicalCreateLeaseBracketsSplit(t *testing.T, calls [][]string) {
 	leaseSet, split, leaseClear := -1, -1, -1
 	leaseTarget := ""
 	for i, call := range calls {
-		if len(call) == 0 {
+		argv := tmuxCommandArgv(call)
+		if len(argv) == 0 {
 			continue
 		}
-		switch call[0] {
+		switch argv[0] {
 		case "split-window":
 			split = i
 		case "set-environment":
-			if call[len(call)-1] == createOperationEnvironment && slices.Contains(call, "-u") {
+			if argv[len(argv)-1] == createOperationEnvironment && slices.Contains(argv, "-u") {
 				leaseClear = i
-			} else if len(call) >= 2 && call[len(call)-2] == createOperationEnvironment {
+			} else if len(argv) >= 2 && argv[len(argv)-2] == createOperationEnvironment {
 				leaseSet = i
-				leaseTarget = flagValue(call, "-t")
+				leaseTarget = flagValue(argv, "-t")
 			}
 		}
 	}

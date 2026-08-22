@@ -276,17 +276,18 @@ var focusMovingCommands = []string{"switch-client", "select-window", "select-pan
 func assertNoClientMovement(t *testing.T, tmux *fakeTmux) {
 	t.Helper()
 	for _, call := range tmux.calls {
-		if len(call) == 0 {
+		argv := tmuxCommandArgv(call)
+		if len(argv) == 0 {
 			continue
 		}
 		for _, verb := range focusMovingCommands {
-			if call[0] == verb {
+			if argv[0] == verb {
 				t.Fatalf("create issued a client-moving command: %v", call)
 			}
 		}
-		if call[0] == "new-window" || call[0] == "split-window" {
-			if !containsAll(call, []string{"-d"}) {
-				t.Fatalf("%s must be detached: %v", call[0], call)
+		if argv[0] == "new-window" || argv[0] == "split-window" {
+			if !containsAll(argv, []string{"-d"}) {
+				t.Fatalf("%s must be detached: %v", argv[0], call)
 			}
 		}
 	}
@@ -573,8 +574,9 @@ func TestEveryTargetWindowAnchorsOnExactlyOnePane(t *testing.T) {
 		}
 		anchors := map[string]int{}
 		for _, call := range tmux.calls {
-			if len(call) > 0 && call[0] == "split-window" {
-				anchors[flagValue(call, "-t")]++
+			argv := tmuxCommandArgv(call)
+			if len(argv) > 0 && argv[0] == "split-window" {
+				anchors[flagValue(argv, "-t")]++
 			}
 		}
 		if len(anchors) != 2 {
@@ -600,8 +602,9 @@ func TestEveryTargetWindowAnchorsOnExactlyOnePane(t *testing.T) {
 		}
 		var split []string
 		for _, call := range tmux.calls {
-			if len(call) > 0 && call[0] == "split-window" {
-				split = append(split, flagValue(call, "-t"))
+			argv := tmuxCommandArgv(call)
+			if len(argv) > 0 && argv[0] == "split-window" {
+				split = append(split, flagValue(argv, "-t"))
 			}
 		}
 		if len(split) != 2 {
@@ -810,9 +813,10 @@ func TestCreatePlacementMapsOntoTheClosedSplitAxis(t *testing.T) {
 			}
 			var found bool
 			for _, call := range tmux.calls {
-				if len(call) > 0 && call[0] == "split-window" {
+				argv := tmuxCommandArgv(call)
+				if len(argv) > 0 && argv[0] == "split-window" {
 					found = true
-					if !containsAll(call, []string{test.wantFlag}) {
+					if !containsAll(argv, []string{test.wantFlag}) {
 						t.Fatalf("split argv = %v, want %s", call, test.wantFlag)
 					}
 				}
@@ -860,9 +864,8 @@ func TestCanonicalCreatePaneSplitIsImmediatelyEqualized(t *testing.T) {
 			}
 			anchor := flagValue(tmux.calls[splitIndex], "-t")
 			geometryIndex := firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitPaneGeometryFormat)
-			resizeIndex := firstTmuxCall(tmux.calls, geometryIndex+1, "resize-pane", test.wantAxis)
-			if geometryIndex < 0 || resizeIndex < 0 {
-				t.Fatalf("calls after split lack geometry/read resize ordering: %v", tmux.calls[splitIndex:])
+			if geometryIndex < 0 {
+				t.Fatalf("calls after split lack geometry observation: %v", tmux.calls[splitIndex:])
 			}
 			if got := flagValue(tmux.calls[geometryIndex], "-t"); got != anchor {
 				t.Fatalf("geometry target = %q, want split anchor %q", got, anchor)
@@ -872,7 +875,8 @@ func TestCanonicalCreatePaneSplitIsImmediatelyEqualized(t *testing.T) {
 				wrongAxis = "-x"
 			}
 			for _, call := range tmux.calls[geometryIndex+1:] {
-				if len(call) > 0 && call[0] == "resize-pane" && slices.Contains(call, wrongAxis) {
+				argv := tmuxCommandArgv(call)
+				if len(argv) > 0 && argv[0] == "resize-pane" && slices.Contains(argv, wrongAxis) {
 					t.Fatalf("%s create resized the cross axis: %v", test.placement, call)
 				}
 			}
@@ -892,7 +896,8 @@ func TestCanonicalCreatePaneEqualizationIsWindowLocalInFanOut(t *testing.T) {
 
 	var splitIndexes []int
 	for i, call := range tmux.calls {
-		if len(call) > 0 && call[0] == "split-window" {
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "split-window" {
 			splitIndexes = append(splitIndexes, i)
 		}
 	}
@@ -911,10 +916,11 @@ func TestCanonicalCreatePaneEqualizationIsWindowLocalInFanOut(t *testing.T) {
 			t.Fatalf("split %d did not observe its own anchor before the next split: %v", n, tmux.calls[splitIndex:end])
 		}
 		for _, call := range tmux.calls[geometryIndex+1 : end] {
-			if len(call) == 0 || call[0] != "resize-pane" {
+			argv := tmuxCommandArgv(call)
+			if len(argv) == 0 || argv[0] != "resize-pane" {
 				continue
 			}
-			_, resizedWindow, _ := tmux.pane(flagValue(call, "-t"))
+			_, resizedWindow, _ := tmux.pane(flagValue(argv, "-t"))
 			if resizedWindow != anchorWindow {
 				t.Fatalf("fan-out resized across Windows: anchor %s call %v", anchor, call)
 			}
@@ -972,7 +978,10 @@ func TestCreateWindowIsOnePaneLayoutNoOpAndEnsuredWindowSplitEqualizes(t *testin
 		t.Fatalf("ensured Window split error = %v", err)
 	}
 	splitIndex := firstTmuxCall(tmux.calls, 0, "split-window", "")
-	if splitIndex < 0 || firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitPaneGeometryFormat) < 0 || firstTmuxCall(tmux.calls, splitIndex+1, "resize-pane", "-x") < 0 {
+	// tmux's own split can already produce the exact even target sizes. The
+	// plan must still observe the scoped geometry, but repeat-empty semantics
+	// intentionally omit resize writes when that expected effect is present.
+	if splitIndex < 0 || firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitPaneGeometryFormat) < 0 {
 		t.Fatalf("ensured Window split was not equalized: %v", tmux.calls)
 	}
 }
@@ -982,10 +991,11 @@ func firstTmuxCall(calls [][]string, start int, command, token string) int {
 		return -1
 	}
 	for i := start; i < len(calls); i++ {
-		if len(calls[i]) == 0 || calls[i][0] != command {
+		argv := tmuxCommandArgv(calls[i])
+		if len(argv) == 0 || argv[0] != command {
 			continue
 		}
-		if token == "" || slices.Contains(calls[i], token) {
+		if token == "" || slices.Contains(argv, token) {
 			return i
 		}
 	}
@@ -1041,7 +1051,7 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 		var warnings bytes.Buffer
 		runtime := &materializer{
 			runner: tmux, mirror: intmetadata.NewMirror(tmux), warn: &warnings,
-			target: explicitTmuxTarget{flag: "-S", value: tmux.socketPath},
+			target: explicitTmuxTarget{flag: "-S", value: tmux.socketPath}, expectedSocketPath: tmux.socketPath,
 		}
 
 		ledger := &runtimeLedger{}
@@ -1816,8 +1826,9 @@ func TestCreatePayloadReachesTheRuntimeUnreinterpreted(t *testing.T) {
 	}
 	var command []string
 	for _, call := range tmux.calls {
-		if len(call) > 0 && call[0] == "new-window" {
-			command = trailingCommand(call)
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "new-window" {
+			command = trailingCommand(argv)
 		}
 	}
 	// The managed process supervisor prefixes the launch, and everything after

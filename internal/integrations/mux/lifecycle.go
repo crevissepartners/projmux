@@ -2,7 +2,6 @@ package mux
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strings"
 )

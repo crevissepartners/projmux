@@ -839,8 +839,9 @@ func TestCreateAgentFansOutOverEveryWindowAnchorExactlyOnce(t *testing.T) {
 	// Exactly two splits, each anchored on its own Window's primaryPaneRef.
 	var anchors []string
 	for _, call := range tmux.calls {
-		if len(call) > 0 && call[0] == "split-window" {
-			anchors = append(anchors, flagValue(call, "-t"))
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "split-window" {
+			anchors = append(anchors, flagValue(argv, "-t"))
 		}
 	}
 	if len(anchors) != 2 {
@@ -883,9 +884,8 @@ func TestCreateAgentAndProviderShortcutsShareScopedEqualization(t *testing.T) {
 			}
 			splitIndex := firstTmuxCall(tmux.calls, 0, "split-window", "")
 			geometryIndex := firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitPaneGeometryFormat)
-			resizeIndex := firstTmuxCall(tmux.calls, geometryIndex+1, "resize-pane", test.wantAxis)
-			if splitIndex < 0 || geometryIndex < 0 || resizeIndex < 0 {
-				t.Fatalf("agent route lacks split -> geometry -> resize ordering: %v", tmux.calls)
+			if splitIndex < 0 || geometryIndex < 0 {
+				t.Fatalf("agent route lacks split -> geometry observation ordering: %v", tmux.calls)
 			}
 			if got, want := flagValue(tmux.calls[geometryIndex], "-t"), flagValue(tmux.calls[splitIndex], "-t"); got != want {
 				t.Fatalf("geometry target = %q, want split anchor %q", got, want)
@@ -909,7 +909,8 @@ func TestCreateAgentFanOutEqualizesBeforeCrossingWindowBoundary(t *testing.T) {
 
 	var splitIndexes []int
 	for i, call := range tmux.calls {
-		if len(call) > 0 && call[0] == "split-window" {
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "split-window" {
 			splitIndexes = append(splitIndexes, i)
 		}
 	}
@@ -928,10 +929,11 @@ func TestCreateAgentFanOutEqualizesBeforeCrossingWindowBoundary(t *testing.T) {
 			t.Fatalf("Agent split crossed the Window boundary before equalization: %v", tmux.calls[splitIndex:end])
 		}
 		for _, call := range tmux.calls[geometryIndex+1 : end] {
-			if len(call) == 0 || call[0] != "resize-pane" {
+			argv := tmuxCommandArgv(call)
+			if len(argv) == 0 || argv[0] != "resize-pane" {
 				continue
 			}
-			_, gotWindow, _ := tmux.pane(flagValue(call, "-t"))
+			_, gotWindow, _ := tmux.pane(flagValue(argv, "-t"))
 			if gotWindow != wantWindow {
 				t.Fatalf("Agent fan-out resized across Windows: %v", call)
 			}

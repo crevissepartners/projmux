@@ -397,7 +397,7 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 			}
 		case mutationWriteIdentity:
 			switch action.Target.Kind {
-			case "session":
+			case "session", "control-session":
 				exactPrefix = "$"
 			case "window":
 				exactPrefix = "@"

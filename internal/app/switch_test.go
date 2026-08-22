@@ -2475,6 +2475,8 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 		recentSessions: []string{"tmp-app", "tmp-previous"},
 	}
 	var cleaned []string
+	stopRow := strings.Join([]string{"$7", "tmp-app", "", "", ""}, tmuxRowSep) + "\n"
+	stopRunner := &unmanagedStopRunner{appMarker: "1", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux", listRows: []string{stopRow, stopRow, stopRow}}
 
 	observe := func(o intpickercompat.Options) { gotRunnerOptions = append(gotRunnerOptions, o) }
 	runner, native := scriptedPicker(t, []pickerStep{
@@ -2489,6 +2491,8 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 		runner:       runner,
 		nativePicker: native,
 		sessions:     executor,
+		tmuxRunner:   stopRunner,
+		lookupEnv:    func(string) string { return "" },
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
 		identity: switchIdentityResolverFunc(func(path string) (string, error) {
 			switch path {
@@ -2526,8 +2530,8 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 	if !containsString(gotRunnerOptions[1].Bindings, "start:pos(2)") {
 		t.Fatalf("second runner bindings = %q, want fallback focus start:pos(2)", gotRunnerOptions[1].Bindings)
 	}
-	if got, want := executor.killSessionName, "tmp-app"; got != want {
-		t.Fatalf("kill session = %q, want %q", got, want)
+	if got := stopRunner.topologyWrites(); got != 1 {
+		t.Fatalf("typed unmanaged stop writes = %d, want 1", got)
 	}
 	if got, want := cleaned, []string{"tmp-app"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("cleaned sessions = %q, want %q", got, want)
@@ -2623,6 +2627,8 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 	executor.killHook = func(sessionName string) {
 		executor.exists[sessionName] = false
 	}
+	stopRow := strings.Join([]string{"$7", "tmp-app", "", "", ""}, tmuxRowSep) + "\n"
+	stopRunner := &unmanagedStopRunner{appMarker: "1", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux", listRows: []string{stopRow, stopRow, stopRow}}
 
 	var nativeCalls int
 	var mutateCalls int
@@ -2671,6 +2677,8 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 			return intpicker.Result{Closed: true}, nil
 		}),
 		sessions:   executor,
+		tmuxRunner: stopRunner,
+		lookupEnv:  func(string) string { return "" },
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		identity: switchIdentityResolverFunc(func(path string) (string, error) {
 			switch path {
@@ -2698,8 +2706,11 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 	if mutateCalls != 1 {
 		t.Fatalf("mutate calls = %d, want 1", mutateCalls)
 	}
-	if got, want := executor.calls, []string{"open:tmp-previous", "kill:tmp-app"}; !equalStrings(got, want) {
+	if got, want := executor.calls, []string{"open:tmp-previous"}; !equalStrings(got, want) {
 		t.Fatalf("session calls = %q, want %q", got, want)
+	}
+	if got := stopRunner.topologyWrites(); got != 1 {
+		t.Fatalf("typed unmanaged stop writes = %d, want 1", got)
 	}
 	if got, want := cmd.focusSession, "tmp-previous"; got != want {
 		t.Fatalf("focus session = %q, want %q", got, want)
@@ -2720,6 +2731,8 @@ func TestSwitchCommandPickerSidebarKillRefreshFocusesActiveSession(t *testing.T)
 	executor.killHook = func(sessionName string) {
 		executor.exists[sessionName] = false
 	}
+	stopRow := strings.Join([]string{"$7", "tmp-app", "", "", ""}, tmuxRowSep) + "\n"
+	stopRunner := &unmanagedStopRunner{appMarker: "1", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux", listRows: []string{stopRow, stopRow, stopRow}}
 
 	var focusValue string
 	cmd := &switchCommand{
@@ -2750,6 +2763,8 @@ func TestSwitchCommandPickerSidebarKillRefreshFocusesActiveSession(t *testing.T)
 			return intpicker.Result{Closed: true}, nil
 		}),
 		sessions:   executor,
+		tmuxRunner: stopRunner,
+		lookupEnv:  func(string) string { return "" },
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		identity: switchIdentityResolverFunc(func(path string) (string, error) {
 			switch path {

@@ -61,8 +61,9 @@ type registryReconciler struct {
 	mirror intmetadata.Mirror
 	// Runtime identity writes enter the shared printable mutation executor.
 	// The generic metadata adapter remains the read inventory only.
-	mirrorWindow func(context.Context, string, coremetadata.Window) error
-	mirrorPane   func(context.Context, string, string, coremetadata.Pane) error
+	mirrorProject func(context.Context, string, coremetadata.Project) error
+	mirrorWindow  func(context.Context, string, coremetadata.Window) error
+	mirrorPane    func(context.Context, string, string, coremetadata.Pane) error
 	// shell is the configured shell path; its basename seeds default Window and
 	// Pane names.
 	shell string
@@ -115,16 +116,28 @@ func newRegistryReconciler(runner tmuxCommandRunner, sessions sessionLister) *re
 		},
 	}
 	if _, recording := runner.(*resourcePlanTmuxRunner); recording {
+		// Project identity is already an explicit resource-plan item. Repeating
+		// it inside the shadow reconciler would mutate the observation used to
+		// classify D2/D3 rows and double-count the same desired write.
+		reconciler.mirrorProject = func(context.Context, string, coremetadata.Project) error { return nil }
 		reconciler.mirrorWindow = mirror.MirrorWindow
 		reconciler.mirrorPane = func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
 			return mirror.MirrorPane(ctx, target, pane)
 		}
 	} else {
 		typed := runtimeMutationMetadataMirror{runner: runner}
+		reconciler.mirrorProject = typed.MirrorProject
 		reconciler.mirrorWindow = typed.MirrorWindow
 		reconciler.mirrorPane = typed.MirrorPane
 	}
 	return reconciler
+}
+
+func (r *registryReconciler) writeProjectMirror(ctx context.Context, sessionName string, project coremetadata.Project) error {
+	if r.mirrorProject == nil {
+		return errors.New("registry reconciler: typed Project mirror executor is required")
+	}
+	return r.mirrorProject(ctx, sessionName, project)
 }
 
 func (r *registryReconciler) writeWindowMirror(ctx context.Context, target string, window coremetadata.Window) error {
@@ -398,6 +411,13 @@ func (r *registryReconciler) importLiveSessions(
 			}
 			return nil, err
 		}
+		if err := r.writeProjectMirror(ctx, name, result.Project); err != nil {
+			return nil, err
+		}
+		// The Project declaration is the exact root authority used by every
+		// descendant guard. Import already classified the observed D3 tuple and
+		// retained its exact handles above; project it before the Window/Pane
+		// stages so no descendant write is authorized by an unattributed session.
 		if err := r.mirrorImported(ctx, *working, result, targets); err != nil {
 			return nil, err
 		}
@@ -585,6 +605,10 @@ func (r *registryReconciler) reapplySessionBindings(
 	session observedSession,
 	binder *coremetadata.BindingMatcher,
 ) {
+	project, ok := registry.Project(projectUID)
+	if !ok || r.writeProjectMirror(ctx, session.name, *project) != nil {
+		return
+	}
 	for wi, legacyWindow := range session.legacy.Windows {
 		if wi >= len(session.targets.Windows) {
 			break

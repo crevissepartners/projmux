@@ -1358,16 +1358,20 @@ func (r *recordingShellRunner) run(_ context.Context, env []string, name string,
 }
 
 type scriptedShellTmuxRunner struct {
-	outputs         map[string][]byte
-	errors          map[string]error
-	calls           []recordedTmuxCall
-	onRun           func(recordedTmuxCall)
-	operationMarker string
-	createOutput    []byte
-	createEffectErr error
-	leaseMatches    [][]string
-	socketReads     []scriptedSocketRead
-	socketReadIndex int
+	outputs           map[string][]byte
+	errors            map[string]error
+	calls             []recordedTmuxCall
+	onRun             func(recordedTmuxCall)
+	operationMarker   string
+	createOutput      []byte
+	createEffectErr   error
+	created           bool
+	leaseMatches      [][]string
+	socketReads       []scriptedSocketRead
+	socketReadIndex   int
+	observedSocket    string
+	logicalSocket     string
+	identityConverged bool
 }
 
 type scriptedSocketRead struct {
@@ -1389,6 +1393,10 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 		}
 	}
 	key := shellTmuxCallKey(name, args...)
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "has-session") && r.created {
+		return nil, nil
+	}
 	if err, ok := r.errors[key]; ok {
 		return nil, err
 	}
@@ -1408,12 +1416,17 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 	if output, ok := r.outputs[shellTmuxCallKey(name, legacyArgs...)]; ok {
 		return output, nil
 	}
-	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "display-message") && strings.Contains(joined, "#{socket_path}") {
 		if r.socketReadIndex < len(r.socketReads) {
 			read := r.socketReads[r.socketReadIndex]
 			r.socketReadIndex++
+			if read.err == nil && strings.TrimSpace(string(read.output)) != "" {
+				r.observedSocket = strings.TrimSpace(string(read.output))
+			}
 			return read.output, read.err
+		}
+		if r.observedSocket != "" {
+			return []byte(r.observedSocket + "\n"), nil
 		}
 		return []byte("/tmp/tmux-1000/projmux\n"), nil
 	}
@@ -1421,12 +1434,18 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 		return []byte("1\n"), nil
 	}
 	if strings.Contains(joined, "show-options") && strings.Contains(joined, runtimeMutationSocketNameOption) {
-		return []byte("projmux\n"), nil
+		logical := r.logicalSocket
+		if logical == "" {
+			logical = "projmux"
+		}
+		return []byte(logical + "\n"), nil
 	}
 	if strings.Contains(joined, "new-session") && strings.Contains(joined, " -P ") {
 		if r.createEffectErr != nil {
+			r.created = len(r.leaseMatches) > 0
 			return r.createOutput, r.createEffectErr
 		}
+		r.created = true
 		if r.createOutput != nil {
 			return r.createOutput, nil
 		}
@@ -1434,7 +1453,11 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 	}
 	if strings.Contains(joined, "list-sessions") && strings.Contains(joined, createOperationEnvironment) {
 		var lines []string
-		for _, row := range r.leaseMatches {
+		matches := r.leaseMatches
+		if r.created && len(matches) == 0 {
+			matches = [][]string{{"$1", "@1", "%1", "1"}}
+		}
+		for _, row := range matches {
 			if len(row) == 4 {
 				lines = append(lines, strings.Join(append(append([]string(nil), row...), r.operationMarker), tmuxRowSep))
 			}
@@ -1444,14 +1467,40 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 		}
 		return []byte(strings.Join(lines, "\n") + "\n"), nil
 	}
+	if strings.Contains(joined, "list-sessions") && r.created {
+		matches := r.leaseMatches
+		if len(matches) == 0 {
+			matches = [][]string{{"$1", "@1", "%1", "1"}}
+		}
+		var sessions []string
+		for _, row := range matches {
+			if len(row) > 0 {
+				sessions = append(sessions, row[0])
+			}
+		}
+		return []byte(strings.Join(sessions, "\n") + "\n"), nil
+	}
 	if strings.Contains(joined, "display-message") && strings.Contains(joined, tmuxopts.AppGlobal) {
 		return []byte(strings.Join([]string{"$1", "@1", "%1", "1"}, tmuxRowSep) + "\n"), nil
 	}
 	if strings.Contains(joined, "display-message") && strings.Contains(joined, tmuxopts.SessionRole) {
-		return []byte(strings.Join([]string{"$1", resourcegraph.ControlSessionRole, "@1", "win-home", "%1", "pan-home"}, tmuxRowSep) + "\n"), nil
+		if r.identityConverged {
+			return []byte(strings.Join([]string{"$1", resourcegraph.ControlSessionRole, "@1", "win-home", "%1", "pan-home"}, tmuxRowSep) + "\n"), nil
+		}
+		return []byte(strings.Join([]string{"$1", "", "@1", "", "%1", ""}, tmuxRowSep) + "\n"), nil
+	}
+	argv := tmuxCommandArgv(args)
+	if len(args) >= 2 && args[0] == "-S" && len(argv) == 5 && reflect.DeepEqual(argv, []string{
+		"set-environment", "-u", "-t", "$1", createOperationEnvironment,
+	}) {
+		r.operationMarker = ""
+		return nil, nil
 	}
 	if strings.Contains(joined, "show-environment") && r.operationMarker != "" {
 		return []byte(createOperationEnvironment + "=" + r.operationMarker + "\n"), nil
+	}
+	if strings.Contains(joined, "kill-session") {
+		r.created = false
 	}
 	return nil, nil
 }

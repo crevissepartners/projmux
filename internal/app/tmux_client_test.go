@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
 func TestDefaultTmuxClientPropagatesAppSocketMetadata(t *testing.T) {
@@ -24,8 +26,8 @@ func TestDefaultTmuxClientPropagatesAppSocketMetadata(t *testing.T) {
 if [ "$1" = "has-session" ]; then
   exit 1
 fi
-if [ "$1" = "new-session" ]; then
-  printf '%%42\n'
+if [ "$1" = "list-panes" ]; then
+  printf '$1\037@2\037%%42\037v1:test-operation\n'
 fi
 `), 0o700); err != nil {
 		t.Fatal(err)
@@ -46,8 +48,16 @@ fi
 	t.Setenv("TMUX", "")
 
 	client := defaultTmuxClient()
-	if err := client.EnsureSession(context.Background(), "workspace", home); err != nil {
-		t.Fatalf("EnsureSession returned error: %v", err)
+	request, exists, err := client.PreparePersistentSessionCreate(context.Background(), "workspace", home, home, map[string]string{
+		createOperationEnvironment: "v1:test-operation",
+	})
+	if err != nil || exists {
+		t.Fatalf("PreparePersistentSessionCreate() = exists %t, err %v", exists, err)
+	}
+	if err := client.CompletePersistentSessionCreate(context.Background(), request, intmux.NewSessionResult{
+		Created: true, SessionID: "$1", WindowID: "@2", PaneID: "%42",
+	}); err != nil {
+		t.Fatalf("CompletePersistentSessionCreate returned error: %v", err)
 	}
 
 	evidence, err := os.ReadFile(evidencePath)
