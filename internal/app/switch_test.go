@@ -3471,16 +3471,6 @@ func requireSwitchEntryValueOrder(t *testing.T, entries []intpickercompat.Entry,
 	}
 }
 
-func requireSwitchNoPrimaryLayoutPresetLabels(t *testing.T, entries []intpickercompat.Entry) {
-	t.Helper()
-	for _, entry := range entries {
-		label := strings.ToLower(entry.Label)
-		if strings.Contains(label, "layout") || strings.Contains(label, "preset") {
-			t.Fatalf("entry label = %q, want snapshot-only project open labels", entry.Label)
-		}
-	}
-}
-
 // stubSwitchPinStore is an in-memory typed pin file.
 //
 // It counts writes, because "a repeated pin action writes nothing" is a contract
