@@ -53,20 +53,22 @@ var testDeleteEnvironment = map[string]string{"TMUX": "/tmp/projmux-test/isolate
 var testDeleteTarget = explicitTmuxTarget{flag: "-S", value: "/tmp/projmux-test/isolated"}
 
 type fakePaneDeleteRuntime struct {
-	preflights   int
-	killed       []paneLiveDeleteTarget
-	tombstoned   []paneLiveDeleteTarget
-	restored     []paneLiveDeleteTarget
-	queued       []paneLiveDeleteTarget
-	selfUID      string
-	preflightErr error
-	killErr      error
-	killErrs     map[string]error
-	tombstoneErr error
-	restoreErr   error
-	queueErr     error
-	killHook     func(paneLiveDeleteTarget)
-	queueHook    func([]paneLiveDeleteTarget)
+	preflights    int
+	killed        []paneLiveDeleteTarget
+	tombstoned    []paneLiveDeleteTarget
+	restored      []paneLiveDeleteTarget
+	queued        []paneLiveDeleteTarget
+	selfUID       string
+	preflightErr  error
+	killErr       error
+	killErrs      map[string]error
+	tombstoneErr  error
+	restoreErr    error
+	queueErr      error
+	killHook      func(paneLiveDeleteTarget)
+	queueHook     func([]paneLiveDeleteTarget)
+	offlineUIDs   map[string]bool
+	preflightHook func(int, *coremetadata.Registry)
 	// boundTarget records the exact server the route installed, so a test can
 	// prove the live half never routes anywhere the invocation did not name.
 	boundTarget explicitTmuxTarget
@@ -78,8 +80,30 @@ func newFixturePaneDeleteRuntime() *fakePaneDeleteRuntime { return &fakePaneDele
 
 func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetadata.Registry, plan deletePlan) (paneLiveDeletePlan, error) {
 	r.preflights++
+	if r.preflightHook != nil {
+		r.preflightHook(r.preflights, &registry)
+	}
 	if r.preflightErr != nil {
 		return paneLiveDeletePlan{}, r.preflightErr
+	}
+	authority, err := paneDeleteAuthoritySignature(registry, plan)
+	if err != nil {
+		return paneLiveDeletePlan{}, err
+	}
+	out := paneLiveDeletePlan{SocketPath: testDeleteTarget.value, Authority: authority}
+	registryOnly := map[string]bool{}
+	for _, target := range plan.Targets {
+		candidate, ok, err := registryOnlyPaneTarget(registry, plan, target)
+		if err != nil {
+			return paneLiveDeletePlan{}, err
+		}
+		if ok {
+			if (plan.Kind == coremetadata.KindPane || len(target.Descendants) > 0) && !r.offlineUIDs[target.Match.UID] {
+				continue
+			}
+			registryOnly[target.Match.UID] = true
+			out.RegistryOnly = append(out.RegistryOnly, candidate)
+		}
 	}
 	planned := plannedPaneDeletes(plan)
 	selectedByWindow := map[string]int{}
@@ -120,8 +144,13 @@ func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetada
 			lastEndingWindow[rootByWindow[windowUID]] = windowUID
 		}
 	}
-	out := paneLiveDeletePlan{}
 	for _, item := range planned {
+		if r.offlineUIDs[item.resourceUID] {
+			if registryOnly[item.resourceUID] {
+				continue
+			}
+			return paneLiveDeletePlan{}, fmt.Errorf("registry Pane uid %q has no exact live tmux Pane mirror", item.paneUID)
+		}
 		_, window, root, _ := paneRegistryAncestry(registry, item.paneUID)
 		paneIndex := 0
 		for i := range registry.Panes {
@@ -400,6 +429,248 @@ func TestDeleteOfflineWindowBindingRaceFailsClosed(t *testing.T) {
 			if stdout != "" || store.snapshot() != before || len(runtime.killed) != 0 {
 				t.Fatalf("binding race changed state: stdout=%q snapshot-changed=%t killed=%v",
 					stdout, store.snapshot() != before, runtime.killed)
+			}
+		})
+	}
+}
+
+func TestDeleteOfflinePaneAndAgentDryRunApplyRepeatAreRegistryOnly(t *testing.T) {
+	t.Run("Pane", func(t *testing.T) {
+		store := newFakeResourceStore(t)
+		markPaneMissingRuntime(t, &store.registry, "pan-alpha-log")
+		runtime := newFixturePaneDeleteRuntime()
+		runtime.offlineUIDs = map[string]bool{"pan-alpha-log": true}
+		cmd := newTestDeleteCommand(store, false, false, nil)
+		cmd.panes = runtime
+		before := store.snapshot()
+
+		preview, _, err := runRoute(t, cmd, "pane", "uid:pan-alpha-log", "--dry-run")
+		if err != nil {
+			t.Fatalf("offline Pane dry-run: %v", err)
+		}
+		wantPreview := "  registry-only would delete this Pane; no tmux Pane would be killed on socket=" + testDeleteTarget.label() +
+			" evidence=MissingRuntime owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
+		for _, want := range []string{wantPreview, "evidence=MissingRuntime", "preserving owner and siblings"} {
+			if !strings.Contains(preview, want) {
+				t.Fatalf("offline Pane preview missing %q:\n%s", want, preview)
+			}
+		}
+		if store.snapshot() != before || store.transactions != 0 || len(runtime.killed) != 0 {
+			t.Fatal("offline Pane dry-run changed Registry or runtime")
+		}
+
+		applied, _, err := runRoute(t, cmd, "pane", "uid:pan-alpha-log", "--yes")
+		if err != nil {
+			t.Fatalf("offline Pane apply: %v", err)
+		}
+		wantApplied := "  registry-only deleted this Pane; no tmux Pane was killed on socket=" + testDeleteTarget.label() +
+			" evidence=MissingRuntime owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
+		if _, ok := store.registry.Pane("pan-alpha-log"); ok || len(runtime.killed) != 0 ||
+			!strings.Contains(applied, wantApplied) {
+			t.Fatalf("offline Pane apply result killed=%#v output=%q", runtime.killed, applied)
+		}
+		for _, uid := range []string{"prj-alpha", "win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "agt-alpha-codex"} {
+			if !registryUIDs(store.registry)[uid] {
+				t.Fatalf("offline Pane delete removed sibling/owner %s", uid)
+			}
+		}
+
+		beforeRepeat := store.snapshot()
+		transactions := store.transactions
+		out, _, err := runRoute(t, cmd, "pane", "uid:pan-alpha-log", "--yes")
+		if err == nil || !strings.Contains(err.Error(), "matched no panes") || out != "" ||
+			store.snapshot() != beforeRepeat || store.transactions != transactions || len(runtime.killed) != 0 {
+			t.Fatalf("offline Pane repeat err=%v out=%q transactions=%d->%d", err, out, transactions, store.transactions)
+		}
+	})
+
+	t.Run("Agent with retained Pane", func(t *testing.T) {
+		store := newFakeResourceStore(t)
+		agent, _ := store.registry.Agent("agt-alpha-codex")
+		agent.Status.Phase = coremetadata.PhaseOffline
+		agent.Status.PaneRef = ""
+		markPaneMissingRuntime(t, &store.registry, "pan-alpha-codex")
+		runtime := newFixturePaneDeleteRuntime()
+		runtime.offlineUIDs = map[string]bool{"agt-alpha-codex": true}
+		cmd := newTestDeleteCommand(store, false, false, nil)
+		cmd.panes = runtime
+		before := store.snapshot()
+
+		preview, _, err := runRoute(t, cmd, "agent", "uid:agt-alpha-codex", "--dry-run")
+		if err != nil {
+			t.Fatalf("offline Agent dry-run: %v", err)
+		}
+		wantPreview := "  registry-only would delete this Agent; no tmux Pane would be killed on socket=" + testDeleteTarget.label() +
+			" evidence=Offline+MissingRuntime owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
+		for _, want := range []string{"cascade pane/codex-pane uid=pan-alpha-codex", wantPreview, "evidence=Offline+MissingRuntime"} {
+			if !strings.Contains(preview, want) {
+				t.Fatalf("offline Agent preview missing %q:\n%s", want, preview)
+			}
+		}
+		if store.snapshot() != before || store.transactions != 0 || len(runtime.killed) != 0 {
+			t.Fatal("offline Agent dry-run changed Registry or runtime")
+		}
+
+		applied, _, err := runRoute(t, cmd, "agent", "uid:agt-alpha-codex", "--yes")
+		if err != nil {
+			t.Fatalf("offline Agent apply: %v", err)
+		}
+		wantApplied := "  registry-only deleted this Agent; no tmux Pane was killed on socket=" + testDeleteTarget.label() +
+			" evidence=Offline+MissingRuntime owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
+		if registryUIDs(store.registry)["agt-alpha-codex"] || registryUIDs(store.registry)["pan-alpha-codex"] ||
+			len(runtime.killed) != 0 || !strings.Contains(applied, wantApplied) {
+			t.Fatalf("offline Agent apply killed=%#v output=%q", runtime.killed, applied)
+		}
+		for _, uid := range []string{"prj-alpha", "win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "pan-alpha-log"} {
+			if !registryUIDs(store.registry)[uid] {
+				t.Fatalf("offline Agent delete removed sibling/owner %s", uid)
+			}
+		}
+	})
+
+	t.Run("Agent without retained Pane", func(t *testing.T) {
+		store := newFakeResourceStore(t)
+		runtime := newFixturePaneDeleteRuntime()
+		cmd := newTestDeleteCommand(store, false, false, nil)
+		cmd.panes = runtime
+		out, _, err := runRoute(t, cmd, "agent", "uid:agt-beta-codex", "--yes")
+		if err != nil {
+			t.Fatalf("offline empty Agent apply: %v", err)
+		}
+		if registryUIDs(store.registry)["agt-beta-codex"] || len(runtime.killed) != 0 ||
+			!strings.Contains(out, "evidence=Offline") {
+			t.Fatalf("offline empty Agent apply killed=%#v output=%q", runtime.killed, out)
+		}
+	})
+}
+
+func TestDeleteOfflinePanePreservesResumedLiveAgent(t *testing.T) {
+	store := newFakeResourceStore(t)
+	oldPane, _ := store.registry.Pane("pan-alpha-codex")
+	markPaneMissingRuntime(t, &store.registry, oldPane.Metadata.UID)
+	resumed := oldPane.Clone()
+	resumed.Metadata.UID = "pan-alpha-codex-live"
+	resumed.Metadata.Name = "codex-pane-live"
+	resumed.Status.Conditions = nil
+	resumed.Status.Activation.Generation = "gen-live"
+	store.registry.Panes = append(store.registry.Panes, resumed)
+	store.registry.NameReservations = append(store.registry.NameReservations, coremetadata.NameReservation{
+		Scope: "agt-alpha-codex", Kind: coremetadata.KindPane, Name: resumed.Metadata.Name, UID: resumed.Metadata.UID,
+	})
+	agent, _ := store.registry.Agent("agt-alpha-codex")
+	agent.Status.PaneRef = resumed.Metadata.UID
+	agent.Status.Phase = coremetadata.PhaseRunning
+	if err := store.registry.Validate(); err != nil {
+		t.Fatalf("resumed Agent fixture: %v", err)
+	}
+
+	runtime := newFixturePaneDeleteRuntime()
+	runtime.offlineUIDs = map[string]bool{oldPane.Metadata.UID: true}
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.panes = runtime
+	if _, _, err := runRoute(t, cmd, "pane", "uid:"+oldPane.Metadata.UID, "--yes"); err != nil {
+		t.Fatalf("delete historic offline Pane: %v", err)
+	}
+	current, _ := store.registry.Agent("agt-alpha-codex")
+	if current.Status.Phase != coremetadata.PhaseRunning || current.Status.PaneRef != resumed.Metadata.UID ||
+		!registryUIDs(store.registry)[resumed.Metadata.UID] {
+		t.Fatalf("historic Pane delete changed live Agent: %#v", current.Status)
+	}
+}
+
+func TestDeletePaneAndAgentLockedRevalidationRaceTable(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		prepare func(*fakeResourceStore, *fakePaneDeleteRuntime)
+		run     func(int, *coremetadata.Registry, *fakePaneDeleteRuntime)
+		args    []string
+		want    string
+	}{
+		{
+			name: "zero to live",
+			prepare: func(store *fakeResourceStore, runtime *fakePaneDeleteRuntime) {
+				markPaneMissingRuntime(t, &store.registry, "pan-alpha-log")
+				runtime.offlineUIDs = map[string]bool{"pan-alpha-log": true}
+			},
+			run: func(call int, _ *coremetadata.Registry, runtime *fakePaneDeleteRuntime) {
+				if call == 2 {
+					delete(runtime.offlineUIDs, "pan-alpha-log")
+				}
+			},
+			args: []string{"pane", "uid:pan-alpha-log", "--yes"}, want: "exact live cascade changed",
+		},
+		{
+			name:    "live to zero",
+			prepare: func(_ *fakeResourceStore, runtime *fakePaneDeleteRuntime) { runtime.offlineUIDs = map[string]bool{} },
+			run: func(call int, _ *coremetadata.Registry, runtime *fakePaneDeleteRuntime) {
+				if call == 2 {
+					runtime.offlineUIDs["pan-alpha-log"] = true
+				}
+			},
+			args: []string{"pane", "uid:pan-alpha-log", "--yes"}, want: "no exact live tmux Pane mirror",
+		},
+		{
+			name: "generation changed",
+			prepare: func(store *fakeResourceStore, runtime *fakePaneDeleteRuntime) {
+				markPaneMissingRuntime(t, &store.registry, "pan-alpha-log")
+				runtime.offlineUIDs = map[string]bool{"pan-alpha-log": true}
+			},
+			run: func(call int, registry *coremetadata.Registry, _ *fakePaneDeleteRuntime) {
+				if call == 2 {
+					pane, _ := registry.Pane("pan-alpha-log")
+					pane.Status.Activation.Generation = "gen-raced"
+				}
+			},
+			args: []string{"pane", "uid:pan-alpha-log", "--yes"}, want: "exact live cascade changed",
+		},
+		{
+			name: "Agent owner changed",
+			prepare: func(store *fakeResourceStore, runtime *fakePaneDeleteRuntime) {
+				runtime.offlineUIDs = map[string]bool{}
+			},
+			run: func(call int, registry *coremetadata.Registry, _ *fakePaneDeleteRuntime) {
+				if call == 2 {
+					agent, _ := registry.Agent("agt-alpha-codex")
+					agent.Metadata.OwnerRef.UID = "win-alpha-review"
+				}
+			},
+			args: []string{"agent", "uid:agt-alpha-codex", "--yes"}, want: "exact live cascade changed",
+		},
+		{
+			name:    "duplicate mirror appeared",
+			prepare: func(_ *fakeResourceStore, _ *fakePaneDeleteRuntime) {},
+			run: func(call int, _ *coremetadata.Registry, runtime *fakePaneDeleteRuntime) {
+				if call == 2 {
+					runtime.preflightErr = errors.New("registry Pane has 2 live tmux Pane mirrors; exact target is ambiguous")
+				}
+			},
+			args: []string{"pane", "uid:pan-alpha-log", "--yes"}, want: "2 live tmux Pane mirrors",
+		},
+		{
+			name:    "foreign owner appeared",
+			prepare: func(_ *fakeResourceStore, _ *fakePaneDeleteRuntime) {},
+			run: func(call int, _ *coremetadata.Registry, runtime *fakePaneDeleteRuntime) {
+				if call == 2 {
+					runtime.preflightErr = errors.New("live Pane belongs to foreign Window uid")
+				}
+			},
+			args: []string{"pane", "uid:pan-alpha-log", "--yes"}, want: "foreign Window uid",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			runtime := newFixturePaneDeleteRuntime()
+			test.prepare(store, runtime)
+			runtime.preflightHook = func(call int, registry *coremetadata.Registry) { test.run(call, registry, runtime) }
+			cmd := newTestDeleteCommand(store, false, false, nil)
+			cmd.panes = runtime
+			before := store.snapshot()
+			out, _, err := runRoute(t, cmd, test.args...)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("race error = %v, want %q", err, test.want)
+			}
+			if out != "" || store.snapshot() != before || len(runtime.killed) != 0 || len(runtime.queued) != 0 {
+				t.Fatalf("race changed state out=%q killed=%#v queued=%#v", out, runtime.killed, runtime.queued)
 			}
 		})
 	}

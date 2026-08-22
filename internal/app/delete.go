@@ -144,6 +144,12 @@ type deleteTarget struct {
 type deletePlan struct {
 	Kind    coremetadata.Kind
 	Targets []deleteTarget
+	// ExactUID reports that every target occurrence was an explicit uid:<uid>
+	// reference. It is the only selector shape allowed to turn a durable
+	// Offline/MissingRuntime state plus a positive exact-server inventory into a
+	// Registry-only Pane or Agent delete. Names, scopes, labels, --all, and the
+	// active-target fallback keep requiring a live mirror.
+	ExactUID bool
 	// Unnamed reports that the invocation carried no selector at all, so the
 	// target set came from the active tmux target or from --all rather than from
 	// something the operator typed. It is not part of signature(): it describes
@@ -270,6 +276,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	plan := buildDeletePlan(registry, kind, resolution)
 	plan.Unnamed = implicit
 	plan.Implicit = implicit && !*all
+	plan.ExactUID = explicitUIDTargetRefs(flags.targetRefs())
 
 	target, err := resolveDeleteTarget(spelling, deleteSocketFlags{socket: *socket, socketPath: *socketPath}, c.lookupEnv)
 	if err != nil {
@@ -490,6 +497,22 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	return nil
 }
 
+// explicitUIDTargetRefs reports whether the operator named the complete target
+// set with opaque uid references. Enclosing scope flags may still be present;
+// they only constrain an already exact identity and cannot widen it.
+func explicitUIDTargetRefs(refs []string) bool {
+	if len(refs) == 0 {
+		return false
+	}
+	for _, raw := range refs {
+		ref, err := selector.ParseRef(coremetadata.KindPane, raw)
+		if err != nil || !ref.IsUID() {
+			return false
+		}
+	}
+	return true
+}
+
 // mintOperationID labels one delete's intentional termination receipt.
 func (c *deleteCommand) mintOperationID() (string, error) {
 	mint := c.newOperationID
@@ -644,6 +667,20 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 				fmt.Fprintf(&b, "  live cascade %s %s session %s because its last live Window is deleted\n",
 					impact, liveTarget.RootKind, liveTarget.SessionName)
 			}
+		}
+		for _, registryTarget := range panes.RegistryOnly {
+			if registryTarget.ResourceUID != target.Match.UID {
+				continue
+			}
+			action := "deleted"
+			liveImpact := "was killed"
+			if dryRun {
+				action = "would delete"
+				liveImpact = "would be killed"
+			}
+			fmt.Fprintf(&b, "  registry-only %s this %s; no tmux Pane %s on socket=%s evidence=%s owner-window=%s root=%s/%s preserving owner and siblings\n",
+				action, registryTarget.Kind, liveImpact, socket.label(), registryTarget.Evidence,
+				registryTarget.WindowUID, strings.ToLower(string(registryTarget.RootKind)), registryTarget.RootUID)
 		}
 	}
 	if dryRun {

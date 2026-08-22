@@ -220,6 +220,57 @@ func TestDeletingAManagedPaneMovesItsAgentOffline(t *testing.T) {
 	}
 }
 
+func TestDeletingRetainedManagedPanePreservesCurrentAgentBinding(t *testing.T) {
+	t.Parallel()
+
+	m := testMutator(dirSet{"/src/projmux": true})
+	reg := NewRegistry()
+	registered, err := registerFixture(m, &reg, "/src/projmux")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	agent, err := m.CreateAgent(&reg, registered.Windows[0].Metadata.UID, CreateAgentOptions{Provider: "codex"})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	retained, err := m.AttachAgentPane(&reg, agent.Metadata.UID, BootstrapPane{CWD: "/src/projmux"}, "op-old")
+	if err != nil {
+		t.Fatalf("attach retained pane: %v", err)
+	}
+
+	current := retained.Clone()
+	current.Metadata.UID = "pane-current-generation"
+	current.Metadata.Name = "codex-pane-current"
+	current.Status.Activation.Generation = "generation-current"
+	reg.Panes = append(reg.Panes, current)
+	reg.NameReservations = append(reg.NameReservations, NameReservation{
+		Scope: agent.Metadata.UID, Kind: KindPane, Name: current.Metadata.Name, UID: current.Metadata.UID,
+	})
+	stored, _ := reg.Agent(agent.Metadata.UID)
+	stored.Status.Phase = PhaseRunning
+	stored.Status.PaneRef = current.Metadata.UID
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("multi-generation fixture: %v", err)
+	}
+
+	if err := m.DeletePane(&reg, retained.Metadata.UID); err != nil {
+		t.Fatalf("delete retained pane: %v", err)
+	}
+	stored, ok := reg.Agent(agent.Metadata.UID)
+	if !ok || stored.Status.Phase != PhaseRunning || stored.Status.PaneRef != current.Metadata.UID {
+		t.Fatalf("current Agent binding changed: %#v", stored)
+	}
+	if _, ok := reg.Pane(current.Metadata.UID); !ok {
+		t.Fatal("current Pane generation was removed")
+	}
+	if _, ok := reg.Pane(retained.Metadata.UID); ok {
+		t.Fatal("retained Pane was not removed")
+	}
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("registry invalid after retained pane deletion: %v", err)
+	}
+}
+
 func TestAgentTransitionRejectsUnsupportedPhasesAsUsageErrors(t *testing.T) {
 	t.Parallel()
 

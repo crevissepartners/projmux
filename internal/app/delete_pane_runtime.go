@@ -46,16 +46,36 @@ type paneLiveDeleteTarget struct {
 }
 
 type paneLiveDeletePlan struct {
-	Targets []paneLiveDeleteTarget
+	Targets      []paneLiveDeleteTarget
+	RegistryOnly []paneRegistryOnlyDeleteTarget
+	SocketPath   string
+	// Authority is the exact Registry owner/generation/lifecycle signature
+	// observed together with SocketPath. Locked revalidation must reproduce it
+	// before either a live kill or a Registry-only commit is allowed.
+	Authority string
+}
+
+type paneRegistryOnlyDeleteTarget struct {
+	ResourceUID string
+	Kind        string
+	Evidence    string
+	WindowUID   string
+	RootKind    coremetadata.Kind
+	RootUID     string
 }
 
 func (p paneLiveDeletePlan) signature() string {
 	var b strings.Builder
+	fmt.Fprintf(&b, "socket=%q;authority=%q;", p.SocketPath, p.Authority)
 	for _, target := range p.Targets {
 		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%t,%t,%t;", target.ResourceUID,
 			target.PaneUID, target.PaneID, target.WindowUID, target.WindowID,
 			target.SessionID, target.SessionName, target.RootKind, target.RootUID,
 			target.EndsWindow, target.EndsSession, target.Self)
+	}
+	for _, target := range p.RegistryOnly {
+		fmt.Fprintf(&b, "registry-only,%s,%s,%s,%s,%s,%s;", target.ResourceUID,
+			target.Kind, target.Evidence, target.WindowUID, target.RootKind, target.RootUID)
 	}
 	return b.String()
 }
@@ -167,6 +187,21 @@ func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDelete
 	return rows, nil
 }
 
+func (r *tmuxPaneDeleteRuntime) exactSocketPath(ctx context.Context) (string, error) {
+	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	if err != nil {
+		if inttmux.IsNoServerFailure(err) {
+			return "", fmt.Errorf("delete pane: exact tmux socket is unavailable (no-server); absence is not Registry deletion authority and nothing was changed")
+		}
+		return "", tmuxError("delete pane: inspect exact tmux socket identity: %v", err)
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		return "", errors.New("delete pane: exact tmux socket identity is empty; absence is not Registry deletion authority and nothing was changed")
+	}
+	return path, nil
+}
+
 type plannedPaneDelete struct {
 	resourceUID string
 	paneUID     string
@@ -216,10 +251,149 @@ func paneRegistryAncestry(registry coremetadata.Registry, paneUID string) (corem
 	return *pane, *window, root, nil
 }
 
+func paneHasMissingRuntime(pane coremetadata.Pane) bool {
+	condition, ok := pane.HasCondition(coremetadata.ConditionMissingRuntime)
+	return ok && condition.Status == coremetadata.ConditionTrue && condition.Reason == coremetadata.ReasonRuntimeUnbound
+}
+
+// paneDeleteAuthoritySignature signs the exact Registry facts that make a Pane
+// or Agent delete safe. buildDeletePlan already signs the uid cascade; this
+// signs the parts that can change without changing that set: owner chain,
+// Offline/MissingRuntime evidence, current binding, and activation generation.
+func paneDeleteAuthoritySignature(registry coremetadata.Registry, plan deletePlan) (string, error) {
+	var b strings.Builder
+	writeRoot := func(window coremetadata.Window) error {
+		root, err := deleteRootForWindow(registry, window)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&b, "window=%q,window-owner=%q,root-kind=%q,root=%q,session=%q;",
+			window.Metadata.UID, window.Metadata.OwnerUID(), root.Kind, root.UID, root.Session)
+		return nil
+	}
+	writePane := func(paneUID string) error {
+		pane, window, _, err := paneRegistryAncestry(registry, paneUID)
+		if err != nil {
+			return err
+		}
+		ownerKind := coremetadata.Kind("")
+		ownerUID := ""
+		if pane.Metadata.OwnerRef != nil {
+			ownerKind = pane.Metadata.OwnerRef.Kind
+			ownerUID = pane.Metadata.OwnerRef.UID
+		}
+		fmt.Fprintf(&b, "pane=%q,pane-owner-kind=%q,pane-owner=%q,generation=%q,runtime=%q,missing=%t;",
+			pane.Metadata.UID, ownerKind, ownerUID, pane.Status.Activation.Generation,
+			pane.Status.Activation.RuntimeID, paneHasMissingRuntime(pane))
+		return writeRoot(window)
+	}
+	for _, target := range plan.Targets {
+		fmt.Fprintf(&b, "target-kind=%q,target=%q;", plan.Kind, target.Match.UID)
+		switch plan.Kind {
+		case coremetadata.KindPane:
+			if err := writePane(target.Match.UID); err != nil {
+				return "", err
+			}
+		case coremetadata.KindAgent:
+			agent, ok := registry.Agent(target.Match.UID)
+			if !ok {
+				return "", fmt.Errorf("registry Agent uid %q disappeared during live preflight", target.Match.UID)
+			}
+			ownerKind := coremetadata.Kind("")
+			ownerUID := ""
+			if agent.Metadata.OwnerRef != nil {
+				ownerKind = agent.Metadata.OwnerRef.Kind
+				ownerUID = agent.Metadata.OwnerRef.UID
+			}
+			fmt.Fprintf(&b, "agent=%q,agent-owner-kind=%q,agent-owner=%q,phase=%q,pane-ref=%q;",
+				agent.Metadata.UID, ownerKind, ownerUID, agent.Status.Phase,
+				agent.Status.PaneRef)
+			window, ok := registry.Window(ownerUID)
+			if !ok || ownerKind != coremetadata.KindWindow {
+				return "", fmt.Errorf("registry Agent uid %q has no exact owning Window %q", target.Match.UID, ownerUID)
+			}
+			if err := writeRoot(*window); err != nil {
+				return "", err
+			}
+			for _, descendant := range target.Descendants {
+				if descendant.Kind == coremetadata.KindPane {
+					if err := writePane(descendant.UID); err != nil {
+						return "", err
+					}
+				}
+			}
+		}
+	}
+	return b.String(), nil
+}
+
+func registryOnlyPaneTarget(registry coremetadata.Registry, plan deletePlan, target deleteTarget) (paneRegistryOnlyDeleteTarget, bool, error) {
+	if !plan.ExactUID {
+		return paneRegistryOnlyDeleteTarget{}, false, nil
+	}
+	switch plan.Kind {
+	case coremetadata.KindPane:
+		pane, window, root, err := paneRegistryAncestry(registry, target.Match.UID)
+		if err != nil {
+			return paneRegistryOnlyDeleteTarget{}, false, err
+		}
+		if !paneHasMissingRuntime(pane) {
+			return paneRegistryOnlyDeleteTarget{}, false, nil
+		}
+		return paneRegistryOnlyDeleteTarget{ResourceUID: target.Match.UID, Kind: "Pane", Evidence: coremetadata.ConditionMissingRuntime,
+			WindowUID: window.Metadata.UID, RootKind: root.Kind, RootUID: root.UID}, true, nil
+	case coremetadata.KindAgent:
+		agent, ok := registry.Agent(target.Match.UID)
+		if !ok {
+			return paneRegistryOnlyDeleteTarget{}, false, fmt.Errorf("registry Agent uid %q disappeared during live preflight", target.Match.UID)
+		}
+		if agent.Status.Phase != coremetadata.PhaseOffline || strings.TrimSpace(agent.Status.PaneRef) != "" {
+			return paneRegistryOnlyDeleteTarget{}, false, nil
+		}
+		window, ok := registry.Window(agent.Metadata.OwnerUID())
+		if !ok || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != coremetadata.KindWindow {
+			return paneRegistryOnlyDeleteTarget{}, false, fmt.Errorf("registry Agent uid %q has no exact owning Window %q", target.Match.UID, agent.Metadata.OwnerUID())
+		}
+		root, err := deleteRootForWindow(registry, *window)
+		if err != nil {
+			return paneRegistryOnlyDeleteTarget{}, false, err
+		}
+		for _, descendant := range target.Descendants {
+			if descendant.Kind != coremetadata.KindPane {
+				continue
+			}
+			pane, ok := registry.Pane(descendant.UID)
+			if !ok || !paneHasMissingRuntime(*pane) {
+				return paneRegistryOnlyDeleteTarget{}, false, nil
+			}
+		}
+		evidence := string(coremetadata.PhaseOffline)
+		if len(target.Descendants) > 0 {
+			evidence += "+" + coremetadata.ConditionMissingRuntime
+		}
+		return paneRegistryOnlyDeleteTarget{ResourceUID: target.Match.UID, Kind: "Agent", Evidence: evidence,
+			WindowUID: window.Metadata.UID, RootKind: root.Kind, RootUID: root.UID}, true, nil
+	default:
+		return paneRegistryOnlyDeleteTarget{}, false, fmt.Errorf("delete pane runtime: unsupported Registry-only kind %q", plan.Kind)
+	}
+}
+
 func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremetadata.Registry, plan deletePlan) (paneLiveDeletePlan, error) {
+	socketPath, err := r.exactSocketPath(ctx)
+	if err != nil {
+		return paneLiveDeletePlan{}, err
+	}
 	rows, err := r.inventory(ctx)
 	if err != nil {
 		return paneLiveDeletePlan{}, err
+	}
+	if len(rows) == 0 {
+		return paneLiveDeletePlan{}, fmt.Errorf("delete %s: exact tmux inventory on %s was empty; absence is not Registry deletion authority and nothing was changed",
+			strings.ToLower(string(plan.Kind)), r.target.label())
+	}
+	authority, err := paneDeleteAuthoritySignature(registry, plan)
+	if err != nil {
+		return paneLiveDeletePlan{}, fmt.Errorf("delete %s: %w", strings.ToLower(string(plan.Kind)), err)
 	}
 	planned := plannedPaneDeletes(plan)
 	targetUIDs := make(map[string]bool, len(planned))
@@ -258,7 +432,41 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 		return paneLiveDeletePlan{}, errors.New("delete pane: implicit active target is not attached to the exact projmux tmux socket")
 	}
 
-	live := paneLiveDeletePlan{}
+	live := paneLiveDeletePlan{SocketPath: socketPath, Authority: authority}
+	registryOnlyByResource := map[string]bool{}
+	for _, target := range plan.Targets {
+		registryOnly, ok, targetErr := registryOnlyPaneTarget(registry, plan, target)
+		if targetErr != nil {
+			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: %w", strings.ToLower(string(plan.Kind)), targetErr)
+		}
+		if ok {
+			// Lifecycle evidence makes a zero-mirror target eligible; it does not
+			// override a positive live mirror. A target already live takes the
+			// normal exact-kill path. A zero-to-live change on the locked pass
+			// changes the signed plan and is refused before mutation.
+			hasLiveMirror := false
+			for _, pane := range planned {
+				if pane.resourceUID == target.Match.UID && len(byUID[pane.paneUID]) > 0 {
+					hasLiveMirror = true
+					break
+				}
+			}
+			if hasLiveMirror {
+				continue
+			}
+			registryOnlyByResource[target.Match.UID] = true
+			live.RegistryOnly = append(live.RegistryOnly, registryOnly)
+		}
+	}
+	if plan.Kind == coremetadata.KindAgent {
+		for _, target := range plan.Targets {
+			if len(target.Descendants) == 0 && !registryOnlyByResource[target.Match.UID] {
+				agent, _ := registry.Agent(target.Match.UID)
+				return paneLiveDeletePlan{}, fmt.Errorf("delete agent: registry Agent uid %q is %s, not an exact Offline target; no live managed Pane can authorize deletion and nothing was changed",
+					target.Match.UID, agent.Status.Phase)
+			}
+		}
+	}
 	for _, target := range planned {
 		_, window, root, ancestryErr := paneRegistryAncestry(registry, target.paneUID)
 		if ancestryErr != nil {
@@ -266,6 +474,9 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 		}
 		matches := byUID[target.paneUID]
 		if len(matches) == 0 {
+			if registryOnlyByResource[target.resourceUID] {
+				continue
+			}
 			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: registry Pane uid %q has no exact live tmux Pane mirror on -L %s; nothing was changed",
 				strings.ToLower(string(plan.Kind)), target.paneUID, r.target.value)
 		}
