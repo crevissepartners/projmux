@@ -105,7 +105,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 		if newUID == nil {
 			return "", fmt.Errorf("%s: uid source is not configured", op)
 		}
-		for attempt := 0; attempt < maxSnapshotUIDAllocationAttempts; attempt++ {
+		for range maxSnapshotUIDAllocationAttempts {
 			candidate, err := newUID(kind)
 			if err != nil {
 				return "", err

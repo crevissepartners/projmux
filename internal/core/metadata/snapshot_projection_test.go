@@ -299,7 +299,7 @@ func TestSnapshotProjectionMetadataLegacyAndCollisionTable(t *testing.T) {
 		}
 		for wi := 0; wi < len(reg.WindowsOf(targetUID))+2; wi++ {
 			window := sessionstate.Window{Index: wi, Name: "duplicate", ActivePaneIndex: 0}
-			for pi := 0; pi < 4; pi++ {
+			for pi := range 4 {
 				window.Panes = append(window.Panes, sessionstate.Pane{Index: pi, Label: "duplicate", CWD: "/src/one", Recipe: sessionstate.ShellRecipe()})
 			}
 			legacy.Windows = append(legacy.Windows, window)

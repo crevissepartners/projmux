@@ -344,7 +344,7 @@ func (c *sessionStateCommand) commitSnapshotProjection(ctx context.Context, expl
 	if _, err := coremetadata.PlanSnapshotProjection(registry, project.Metadata.UID, snap, c.nowTime(), coremetadata.NewUID); err != nil {
 		return MapMetadataError(err)
 	}
-	declaredSession, exactRunner, err := c.requireClosedProjectionTarget(ctx, project)
+	declaredSession, _, err := c.requireClosedProjectionTarget(ctx, project)
 	if err != nil {
 		return err
 	}
@@ -361,14 +361,13 @@ func (c *sessionStateCommand) commitSnapshotProjection(ctx context.Context, expl
 	// Trust is interactive and may take arbitrarily long. Re-observe the exact
 	// Project identity after it returns so a session that appeared while the
 	// operator was deciding is refused before the Registry transaction opens.
-	recheckedSession, recheckedRunner, err := c.requireClosedProjectionTarget(ctx, project)
+	recheckedSession, exactRunner, err := c.requireClosedProjectionTarget(ctx, project)
 	if err != nil {
 		return err
 	}
 	if recheckedSession != declaredSession {
 		return fmt.Errorf("restore snapshot: target Project session changed from %q to %q before commit", declaredSession, recheckedSession)
 	}
-	exactRunner = recheckedRunner
 	var applied coremetadata.SnapshotProjectionPlan
 	var committedProject coremetadata.Project
 	_, err = c.resources.converge(func(working *coremetadata.Registry, _ coremetadata.Mutator) error {
