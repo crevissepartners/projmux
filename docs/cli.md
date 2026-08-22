@@ -44,7 +44,7 @@ projmux <command> [args...]
 | [`projmux rebind`](#projmux-rebind) | canonical | Rebind a Project to a new absolute root without moving files |
 | [`projmux rename`](#projmux-rename) | canonical | Rename a Projmux resource metadata.name |
 | [`projmux resources`](#projmux-resources) | shortcut | Inspect live Project, Window, and Pane CPU/RSS attribution |
-| [`projmux restore`](#projmux-restore) | canonical | Preview a saved session snapshot restore (--dry-run only in this release) |
+| [`projmux restore`](#projmux-restore) | canonical | Project a saved snapshot into one exact closed Project desired state |
 | [`projmux runtime`](#projmux-runtime) | canonical | Manage the live and ephemeral tmux runtime inventory |
 | [`projmux settings`](#projmux-settings) | shortcut | Configure projmux |
 | [`projmux setup`](#projmux-setup) | canonical | Probe terminal keys or remediate them with setup terminal |
@@ -1097,26 +1097,26 @@ projmux resources
 
 ## `projmux restore`
 
-Preview a saved session snapshot restore (--dry-run only in this release)
+Project a saved snapshot into one exact closed Project desired state
 
 ```
-projmux restore snapshot --dry-run [--session <name>]
+projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]
 ```
 
 Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux restore snapshot`](#projmux-restore-snapshot) | Preview a saved session snapshot restore; --dry-run is required |
+| [`projmux restore snapshot`](#projmux-restore-snapshot) | Project a saved snapshot into one exact closed Project desired state |
 
 Canonical spelling: `projmux restore snapshot`
 
 ### `projmux restore snapshot`
 
-Preview a saved session snapshot restore; --dry-run is required
+Project a saved snapshot into one exact closed Project desired state
 
 ```
-projmux restore snapshot --dry-run [--session <name>]
+projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]
 ```
 
 ## `projmux runtime`
@@ -1349,4 +1349,3 @@ Print the current version
 projmux version
 projmux --version
 ```
-

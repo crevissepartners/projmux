@@ -208,7 +208,7 @@ func TestSessionStateRestoreDryRunPrintsPreviewWithoutTmux(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"restore", "--dry-run", "--session", "workspace"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"preview", "--session", "workspace"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	output := stdout.String()
@@ -263,7 +263,7 @@ func TestSessionStateRestoreDryRunShowsResumeHealth(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"restore", "--dry-run", "--session", "workspace"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"preview", "--session", "workspace"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	output := stdout.String()
@@ -326,12 +326,12 @@ func TestSessionStateRestoreRejectsExecutionWithoutDryRun(t *testing.T) {
 	t.Parallel()
 
 	cmd := &sessionStateCommand{}
-	err := cmd.Run([]string{"restore", "--session", "workspace"}, &bytes.Buffer{}, &bytes.Buffer{})
+	err := cmd.Run([]string{"restore", "--session", "workspace", "--project", "uid:prj-workspace"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "only supports --dry-run") {
-		t.Fatalf("error = %v, want dry-run gate", err)
+	if !strings.Contains(err.Error(), "requires --yes") {
+		t.Fatalf("error = %v, want explicit approval gate", err)
 	}
 }
 

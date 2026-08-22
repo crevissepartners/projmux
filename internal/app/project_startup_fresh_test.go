@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -24,6 +27,92 @@ type recordingProjectStartupReporter struct {
 
 func (r *recordingProjectStartupReporter) Report(message string) {
 	r.messages = append(r.messages, message)
+}
+
+type orderedFreshStarter struct{ calls *[]string }
+
+func (s orderedFreshStarter) PlanProjectFreshStart(string) (projectFreshStartPlan, error) {
+	*s.calls = append(*s.calls, "plan")
+	return projectFreshStartPlan{}, nil
+}
+
+func (s orderedFreshStarter) PruneProjectFreshStart(context.Context, string, projectFreshStartPlan) error {
+	*s.calls = append(*s.calls, "prune")
+	return nil
+}
+
+type orderedFreshTopology struct{ calls *[]string }
+
+func (m orderedFreshTopology) MaterializeProjectTopology(context.Context, string, string) (bool, error) {
+	*m.calls = append(*m.calls, "materialize")
+	return true, nil
+}
+
+type orderedFreshSessions struct{ calls *[]string }
+
+func (s orderedFreshSessions) EnsureSession(context.Context, string, string) error {
+	*s.calls = append(*s.calls, "ensure")
+	return nil
+}
+
+func (s orderedFreshSessions) OpenSession(context.Context, string) error {
+	*s.calls = append(*s.calls, "open")
+	return nil
+}
+
+type orderedFreshReporter struct{ calls *[]string }
+
+func (r orderedFreshReporter) Report(string) { *r.calls = append(*r.calls, "notice") }
+
+func TestOpenFreshFinalClientHandoffIsLast(t *testing.T) {
+	t.Parallel()
+	var calls []string
+	cmd := &switchCommand{
+		sessions:          orderedFreshSessions{calls: &calls},
+		projectFreshStart: orderedFreshStarter{calls: &calls},
+		projectTopology:   orderedFreshTopology{calls: &calls},
+		startupNotices:    orderedFreshReporter{calls: &calls},
+	}
+	if err := cmd.startProjectFresh(context.Background(), "workspace", "/tmp/workspace", openedProjectBootstrap{}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"plan", "prune", "plan", "materialize", "notice", "open"}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("Open fresh order = %q, want %q", calls, want)
+	}
+}
+
+func TestProjectStartupBackgroundActionsUseExactClientHandoff(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{projectStartupKindTopology, projectStartupKindNew} {
+		t.Run(kind, func(t *testing.T) {
+			var starterCalls []string
+			runner := &recordingTmuxRunner{}
+			cmd := &switchCommand{
+				sessions:   &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true},
+				tmuxRunner: runner,
+				lookupEnv: func(name string) string {
+					if name == inttmux.SwitchTargetClientEnv {
+						return "/dev/pts/12"
+					}
+					return ""
+				},
+				projectTopology:   &fakeProjectTopologyMaterializer{materialized: true},
+				projectFreshStart: orderedFreshStarter{calls: &starterCalls},
+			}
+			err := cmd.authorizeAndContinueProjectOpen(context.Background(), "/tmp/workspace", "workspace", projectStartupCandidate{Kind: kind})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(runner.calls) != 1 {
+				t.Fatalf("tmux calls = %#v, want one final handoff", runner.calls)
+			}
+			want := recordedTmuxCall{name: "tmux", args: []string{"-L", "projmux", "switch-client", "-c", "/dev/pts/12", "-t", "=workspace"}}
+			if got := runner.calls[0]; !reflect.DeepEqual(got, want) {
+				t.Fatalf("final handoff = %#v, want %#v", got, want)
+			}
+		})
+	}
 }
 
 func (r *recordingProjectStartupReporter) contains(fragment string) bool {
@@ -44,10 +133,9 @@ func freshStartFixtureStore(t *testing.T) *fakeResourceStore {
 	return store
 }
 
-// TestProjectStartupRowTable is the row-addition regression guard. It pins every
-// row of the `ask`-mode startup screen -- name, description, and transport value
-// -- so the `new` row cannot be added, renamed, or reordered without this table
-// saying so, and so the four rows that already shipped cannot drift while it is.
+// TestProjectStartupRowTable pins both rows of the startup screen -- name,
+// description, and transport value -- so a third action cannot be added and
+// either of the closed two actions cannot be renamed or reordered silently.
 func TestProjectStartupRowTable(t *testing.T) {
 	t.Parallel()
 
@@ -59,39 +147,18 @@ func TestProjectStartupRowTable(t *testing.T) {
 		wantValue       string
 	}{
 		{
-			name:            "latest snapshot",
-			candidate:       projectStartupCandidate{Kind: projectStartupKindLatest, Description: "saved 2026-05-13 12:00:00 UTC, auto-saved, 1 window, 1 pane"},
-			wantName:        "Latest snapshot",
-			wantDescription: "saved 2026-05-13 12:00:00 UTC, auto-saved, 1 window, 1 pane",
-			wantValue:       "latest",
-		},
-		{
-			name:            "named snapshot",
-			candidate:       projectStartupCandidate{Kind: projectStartupKindNamed, Name: "team", Description: "team, team workspace"},
-			wantName:        "Named snapshot",
-			wantDescription: "team, team workspace",
-			wantValue:       "named:team",
-		},
-		{
-			name:            "project topology",
+			name:            "continue project",
 			candidate:       topologyProjectStartupCandidate(),
-			wantName:        "Project topology",
-			wantDescription: "restore every saved Window, shell Pane, and Agent",
-			wantValue:       "topology",
+			wantName:        "Continue project",
+			wantDescription: "open every saved Window, shell Pane, and Agent",
+			wantValue:       "continue",
 		},
 		{
-			name:            "new",
+			name:            "open fresh",
 			candidate:       newProjectStartupCandidate(),
-			wantName:        "New",
-			wantDescription: "discard the latest snapshot and every saved Window, Pane, and Agent, then start one fresh shell Window",
-			wantValue:       "new",
-		},
-		{
-			name:            "back",
-			candidate:       backProjectStartupCandidate(),
-			wantName:        "Back",
-			wantDescription: "return to projects",
-			wantValue:       settingsBackValue,
+			wantName:        "Open fresh",
+			wantDescription: "keep the canonical Project shell and remove every other saved Window, Pane, and Agent",
+			wantValue:       "fresh",
 		},
 	}
 
@@ -108,6 +175,71 @@ func TestProjectStartupRowTable(t *testing.T) {
 				t.Fatalf("value = %q, want %q", got, tc.wantValue)
 			}
 		})
+	}
+}
+
+func TestProjectStartupKoreanLocaleRendersExactTwoRowsAndFreshConfirmation(t *testing.T) {
+	t.Parallel()
+
+	locale := i18n.Locale("ko-KR")
+	candidates := []projectStartupCandidate{
+		topologyProjectStartupCandidate(locale),
+		newProjectStartupCandidate(locale),
+	}
+	if got, want := []string{candidates[0].Label, candidates[1].Label}, []string{"이어서 열기", "새로 열기"}; !slices.Equal(got, want) {
+		t.Fatalf("Korean startup row labels = %q, want %q", got, want)
+	}
+	options := projectStartupPickerOptions(candidates)
+	options.Locale = locale
+	options = localizePickerOptions(nil, nil, options)
+	if got, want := options.Header, "프로젝트 시작"; got != want {
+		t.Fatalf("Korean startup header = %q, want %q", got, want)
+	}
+	if got, want := options.Footer, "Enter: 열기  |  Esc: 프로젝트"; got != want {
+		t.Fatalf("Korean startup footer = %q, want %q", got, want)
+	}
+	if len(options.Entries) != 2 {
+		t.Fatalf("Korean startup rows = %d, want exactly 2", len(options.Entries))
+	}
+	for index, want := range []string{"이어서 열기", "새로 열기"} {
+		if !strings.Contains(options.Entries[index].Label, want) {
+			t.Fatalf("Korean startup row %d = %q, want %q", index, options.Entries[index].Label, want)
+		}
+	}
+
+	plan := projectFreshStartPlan{Windows: 1, Panes: 3, Agents: 1, AgentSessionRefs: 1}
+	var confirm intpickercompat.Options
+	_, native := scriptedPicker(t, []pickerStep{{
+		observe: func(o intpickercompat.Options) { confirm = o },
+		reply:   intpickercompat.Result{Key: "esc"},
+	}})
+	cmd := &switchCommand{
+		homeDir:      func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:    localeLookupEnv("ko_KR.UTF-8"),
+		nativePicker: native,
+	}
+	approved, err := cmd.confirmProjectFreshStart(plan)
+	if err != nil || approved {
+		t.Fatalf("confirmProjectFreshStart() = %t, %v; want false, nil", approved, err)
+	}
+	for field, value := range map[string]string{
+		"title":  confirm.Title,
+		"prompt": confirm.Prompt,
+		"header": confirm.Header,
+		"footer": confirm.Footer,
+	} {
+		if !utf8.ValidString(value) || strings.Contains(value, "Open fresh") || strings.Contains(value, "deletes") {
+			t.Fatalf("Korean fresh confirmation %s = %q", field, value)
+		}
+	}
+	for _, want := range []string{"취소", "예, 정리하고 새로 열기", "status.sessionRef"} {
+		joined := confirm.Entries[0].Label + confirm.Entries[1].Label
+		if !strings.Contains(joined, want) {
+			t.Fatalf("Korean fresh confirmation rows = %q, want %q", joined, want)
+		}
+	}
+	if got := plan.ResultMessageLocale(locale, "alpha"); !strings.Contains(got, "alpha 새로 열기 완료") || !strings.Contains(got, "기본 Project shell identity") {
+		t.Fatalf("Korean fresh result = %q", got)
 	}
 }
 
@@ -137,14 +269,14 @@ func TestProjectStartupNewRowValuePaths(t *testing.T) {
 	for _, row := range cmd.projectStartupCandidates("workspace", t.TempDir()) {
 		values = append(values, projectStartupPickerValue(row))
 	}
-	want := []string{projectStartupValueTopology, projectStartupValueNew, settingsBackValue}
+	want := []string{projectStartupValueTopology, projectStartupValueNew}
 	if !slices.Equal(values, want) {
 		t.Fatalf("snapshotless startup rows = %q, want %q", values, want)
 	}
 }
 
-// TestProjectStartupCandidateFromValueParity keeps the retired-value path and
-// every shipped value spelling intact next to the new one.
+// TestProjectStartupCandidateFromValueParity accepts only the two current
+// startup actions. Esc is picker cancellation, not a synthetic row value.
 func TestProjectStartupCandidateFromValueParity(t *testing.T) {
 	t.Parallel()
 
@@ -154,13 +286,11 @@ func TestProjectStartupCandidateFromValueParity(t *testing.T) {
 		wantName string
 		wantOK   bool
 	}{
-		{value: "latest", wantKind: projectStartupKindLatest, wantOK: true},
-		{value: "named:team", wantKind: projectStartupKindNamed, wantName: "team", wantOK: true},
-		{value: "topology", wantKind: projectStartupKindTopology, wantOK: true},
-		{value: "empty", wantKind: projectStartupKindTopology, wantOK: true},
-		{value: "new", wantKind: projectStartupKindNew, wantOK: true},
-		{value: settingsBackValue, wantKind: projectStartupKindBack, wantOK: true},
-		{value: "named:", wantOK: false},
+		{value: "continue", wantKind: projectStartupKindTopology, wantOK: true},
+		{value: "fresh", wantKind: projectStartupKindNew, wantOK: true},
+		{value: "retired-snapshot-mode", wantOK: false},
+		{value: "retired-topology-mode", wantOK: false},
+		{value: settingsBackValue, wantOK: false},
 		{value: "nonsense", wantOK: false},
 	}
 
@@ -205,25 +335,25 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 		{
 			name:        "project with windows panes and an agent",
 			root:        "/srv/alpha",
-			wantWindows: 2, wantPanes: 4, wantAgents: 1, wantRefs: 1,
-			wantCounts:  "Window 2 / Pane 4 / Agent 1",
-			wantRemoved: []string{"win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "pan-alpha-log", "pan-alpha-codex", "pan-alpha-review", "agt-alpha-codex"},
-			wantKept:    []string{"prj-alpha", "prj-beta", "prj-gone", "win-beta-main", "pan-beta-zsh", "agt-beta-codex"},
+			wantWindows: 1, wantPanes: 3, wantAgents: 1, wantRefs: 1,
+			wantCounts:  "Window 1 / Pane 3 / Agent 1",
+			wantRemoved: []string{"win-alpha-review", "pan-alpha-log", "pan-alpha-codex", "pan-alpha-review", "agt-alpha-codex"},
+			wantKept:    []string{"prj-alpha", "win-alpha-main", "pan-alpha-zsh", "prj-beta", "prj-gone", "win-beta-main", "pan-beta-zsh", "agt-beta-codex"},
 		},
 		{
 			name:        "project with one window and an offline agent",
 			root:        "/srv/beta",
-			wantWindows: 1, wantPanes: 1, wantAgents: 1, wantRefs: 0,
-			wantCounts:  "Window 1 / Pane 1 / Agent 1",
-			wantRemoved: []string{"win-beta-main", "pan-beta-zsh", "agt-beta-codex"},
-			wantKept:    []string{"prj-alpha", "prj-beta", "prj-gone", "win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "pan-alpha-log", "pan-alpha-codex", "pan-alpha-review", "agt-alpha-codex"},
+			wantWindows: 0, wantPanes: 0, wantAgents: 1, wantRefs: 0,
+			wantCounts:  "Window 0 / Pane 0 / Agent 1",
+			wantRemoved: []string{"agt-beta-codex"},
+			wantKept:    []string{"prj-alpha", "prj-beta", "prj-gone", "win-beta-main", "pan-beta-zsh", "win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "pan-alpha-log", "pan-alpha-codex", "pan-alpha-review", "agt-alpha-codex"},
 		},
 		{
 			name:        "project with the minimum canonical topology",
 			root:        "/srv/gone",
-			wantWindows: 1, wantPanes: 1, wantAgents: 0, wantRefs: 0,
-			wantCounts:  "Window 1 / Pane 1 / Agent 0",
-			wantRemoved: []string{"win-gone-main", "pan-gone-zsh"},
+			wantWindows: 0, wantPanes: 0, wantAgents: 0, wantRefs: 0,
+			wantCounts:  "Window 0 / Pane 0 / Agent 0",
+			wantRemoved: nil,
 			wantKept:    []string{"prj-alpha", "prj-beta", "prj-gone", "win-alpha-main", "win-alpha-review", "win-beta-main", "agt-alpha-codex", "agt-beta-codex"},
 		},
 		{
@@ -239,7 +369,7 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			store := freshStartFixtureStore(t)
-			starter := &registryProjectFreshStarter{resources: store.store()}
+			starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
 
 			plan, err := starter.PlanProjectFreshStart(tc.root)
 			if err != nil {
@@ -272,11 +402,25 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 				}
 				return
 			}
-			if err := starter.PruneProjectFreshStart(context.Background(), tc.root, plan); err == nil || !strings.Contains(err.Error(), "primaryWindowRef") {
-				t.Fatalf("v2 fresh-start prune error = %v, want canonical-anchor rejection", err)
+			if err := starter.PruneProjectFreshStart(context.Background(), tc.root, plan); err != nil {
+				t.Fatal(err)
 			}
-			if store.writes != 0 || store.snapshot() != before {
-				t.Fatalf("rejected fresh-start prune changed Registry: writes=%d\nbefore %s\nafter  %s", store.writes, before, store.snapshot())
+			for _, uid := range tc.wantRemoved {
+				if freshStartRegistryHasUID(store.registry, uid) {
+					t.Fatalf("Open fresh retained %s", uid)
+				}
+			}
+			for _, uid := range tc.wantKept {
+				if !freshStartRegistryHasUID(store.registry, uid) {
+					t.Fatalf("Open fresh removed %s", uid)
+				}
+			}
+			repeat, err := starter.PlanProjectFreshStart(tc.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !repeat.Empty() {
+				t.Fatalf("repeat plan=%+v", repeat)
 			}
 		})
 	}
@@ -295,16 +439,13 @@ func TestProjectFreshStartNeverReachesAControlSession(t *testing.T) {
 
 	store := freshStartFixtureStore(t)
 	addFreshStartControlSession(t, store)
-	starter := &registryProjectFreshStarter{resources: store.store()}
+	starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
 
 	// A control session owns no root, so no root resolves to it.
 	for _, root := range []string{"/srv/alpha", "$HOME", "", "home"} {
-		plan, err := starter.PlanProjectFreshStart(root)
+		_, err := starter.PlanProjectFreshStart(root)
 		if err != nil {
 			t.Fatalf("PlanProjectFreshStart(%q) error = %v", root, err)
-		}
-		if slices.Contains(plan.WindowUIDs, "win-ctl-home") {
-			t.Fatalf("fresh start for %q planned to delete the control session's Window: %+v", root, plan)
 		}
 	}
 
@@ -312,15 +453,11 @@ func TestProjectFreshStartNeverReachesAControlSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanProjectFreshStart() error = %v", err)
 	}
-	if plan.Windows != 2 || plan.Panes != 4 || plan.Agents != 1 {
-		t.Fatalf("plan = %+v, want the Project's own Window 2 / Pane 4 / Agent 1 only", plan)
+	if plan.Windows != 1 || plan.Panes != 3 || plan.Agents != 1 {
+		t.Fatalf("plan = %+v, want only non-canonical Project descendants", plan)
 	}
-	before := store.snapshot()
-	if err := starter.PruneProjectFreshStart(context.Background(), "/srv/alpha", plan); err == nil || !strings.Contains(err.Error(), "primaryWindowRef") {
-		t.Fatalf("PruneProjectFreshStart() error = %v, want canonical-anchor rejection", err)
-	}
-	if store.writes != 0 || store.snapshot() != before {
-		t.Fatalf("rejected fresh start changed Registry: writes=%d", store.writes)
+	if err := starter.PruneProjectFreshStart(context.Background(), "/srv/alpha", plan); err != nil {
+		t.Fatal(err)
 	}
 	for _, uid := range []string{"ctl-home", "win-ctl-home", "pan-ctl-home"} {
 		if !freshStartRegistryHasUID(store.registry, uid) && !freshStartRegistryHasControlSession(store.registry, uid) {
@@ -395,12 +532,11 @@ func TestProjectFreshStartConfirmationText(t *testing.T) {
 	t.Parallel()
 
 	store := freshStartFixtureStore(t)
-	starter := &registryProjectFreshStarter{resources: store.store()}
+	starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
 	plan, err := starter.PlanProjectFreshStart("/srv/alpha")
 	if err != nil {
 		t.Fatalf("PlanProjectFreshStart() error = %v", err)
 	}
-	plan.LatestSnapshot = true
 
 	var options intpickercompat.Options
 	_, native := scriptedPicker(t, []pickerStep{
@@ -420,8 +556,7 @@ func TestProjectFreshStartConfirmationText(t *testing.T) {
 	if got, want := options.UI, "project-startup-new-confirm"; got != want {
 		t.Fatalf("confirm UI = %q, want %q", got, want)
 	}
-	wantHeader := "deletes Window 2 / Pane 4 / Agent 1 and discards the latest snapshot; " +
-		"Named snapshots, the Project registration, its managed root, and its trust decision are kept"
+	wantHeader := "deletes Window 1 / Pane 3 / Agent 1; the canonical Project Window and shell Pane, snapshots, Project registration, managed root, and trust decision are kept"
 	if options.Header != wantHeader {
 		t.Fatalf("confirm header = %q, want %q", options.Header, wantHeader)
 	}
@@ -434,7 +569,7 @@ func TestProjectFreshStartConfirmationText(t *testing.T) {
 	if !strings.Contains(options.Entries[0].Label, "keep the saved state; nothing is deleted") {
 		t.Fatalf("cancel row = %q, want the no-op description", options.Entries[0].Label)
 	}
-	wantConfirmHelp := "deletes Window 2 / Pane 4 / Agent 1; " +
+	wantConfirmHelp := "deletes Window 1 / Pane 3 / Agent 1; " +
 		"the Agents' conversation pointer status.sessionRef (1 recorded) is deleted with them and cannot be recovered"
 	if got, want := options.Entries[1].Value, projectStartupNewConfirmValue; got != want {
 		t.Fatalf("second confirm row value = %q, want %q", got, want)
@@ -448,21 +583,18 @@ func TestProjectFreshStartConfirmationText(t *testing.T) {
 
 	// The no-snapshot and no-Agent variants of the same two lines.
 	empty := projectFreshStartPlan{}
-	if got, want := empty.ConfirmHeader(), "deletes Window 0 / Pane 0 / Agent 0 and there is no latest snapshot to discard; "+
-		"Named snapshots, the Project registration, its managed root, and its trust decision are kept"; got != want {
+	if got, want := empty.ConfirmHeader(), "deletes Window 0 / Pane 0 / Agent 0; the canonical Project Window and shell Pane, snapshots, Project registration, managed root, and trust decision are kept"; got != want {
 		t.Fatalf("empty plan header = %q, want %q", got, want)
 	}
 	if got, want := empty.ConfirmRowHelp(), "deletes Window 0 / Pane 0 / Agent 0; "+
 		"no Agent record remains, so no Agent conversation pointer status.sessionRef is lost"; got != want {
 		t.Fatalf("empty plan confirm help = %q, want %q", got, want)
 	}
-	if got, want := empty.ResultMessage("alpha"), "projmux: started alpha fresh: deleted Window 0 / Pane 0 / Agent 0 "+
-		"and there was no latest snapshot to discard; no Agent record remained, so nothing was resumed"; got != want {
+	if got, want := empty.ResultMessage("alpha"), "projmux: opened alpha fresh: deleted Window 0 / Pane 0 / Agent 0; the canonical Project shell identity was preserved"; got != want {
 		t.Fatalf("empty plan result = %q, want %q", got, want)
 	}
-	full := projectFreshStartPlan{Windows: 2, Panes: 4, Agents: 1, AgentSessionRefs: 1, LatestSnapshot: true}
-	if got, want := full.ResultMessage("alpha"), "projmux: started alpha fresh: deleted Window 2 / Pane 4 / Agent 1 "+
-		"and discarded the latest snapshot; no Agent record remained, so nothing was resumed"; got != want {
+	full := projectFreshStartPlan{Windows: 2, Panes: 4, Agents: 1, AgentSessionRefs: 1}
+	if got, want := full.ResultMessage("alpha"), "projmux: opened alpha fresh: deleted Window 2 / Pane 4 / Agent 1; the canonical Project shell identity was preserved"; got != want {
 		t.Fatalf("result message = %q, want %q", got, want)
 	}
 }
@@ -541,49 +673,97 @@ func freshStartSwitchFixture(t *testing.T, steps []pickerStep) (
 		runner:            runner,
 		nativePicker:      native,
 		projectTopology:   &fakeProjectTopologyMaterializer{},
-		projectFreshStart: &registryProjectFreshStarter{resources: store.store()},
+		projectFreshStart: &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}},
 		startupNotices:    reporter,
 	}
 	return cmd, store, executor, tmux, reporter, stateStore
 }
 
-// TestSwitchProjectStartupNewFailsClosedUntilCanonicalFreshStartShips pins the
-// Phase 3/Phase 15 boundary: the old prune-to-zero transaction cannot commit a
-// schema-v2 Project without a canonical shell anchor.
-func TestSwitchProjectStartupNewFailsClosedUntilCanonicalFreshStartShips(t *testing.T) {
+// TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity
+// covers the full successful fresh action.
+func TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity(t *testing.T) {
 	cmd, store, executor, tmux, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupNewConfirmValue}},
 	})
 	topology := cmd.projectTopology.(*fakeProjectTopologyMaterializer)
-	before := store.snapshot()
+	topology.materialized = true
 	snapshotPath, err := stateStore.Path("alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
 	snapshotBefore, err := os.ReadFile(snapshotPath)
 	if err != nil {
-		t.Fatalf("read latest snapshot before rejected open: %v", err)
+		t.Fatalf("read snapshot before Open fresh: %v", err)
 	}
 
-	if err := cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha"); err == nil || !strings.Contains(err.Error(), "primaryWindowRef") {
-		t.Fatalf("openProjectTarget() error = %v, want canonical-anchor rejection", err)
+	if err := cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha"); err != nil {
+		t.Fatal(err)
 	}
-	if store.writes != 0 || store.snapshot() != before {
-		t.Fatalf("rejected new-mode start changed Registry: writes=%d", store.writes)
+	if store.writes != 1 {
+		t.Fatalf("Open fresh Registry writes=%d, want one scoped commit", store.writes)
 	}
 	if _, err := stateStore.Summary("alpha"); err != nil {
-		t.Fatalf("rejected fresh start removed the latest snapshot: %v", err)
+		t.Fatalf("Open fresh removed the source snapshot: %v", err)
 	}
 	snapshotAfter, err := os.ReadFile(snapshotPath)
 	if err != nil {
-		t.Fatalf("read latest snapshot after rejected open: %v", err)
+		t.Fatalf("read snapshot after Open fresh: %v", err)
 	}
 	if !bytes.Equal(snapshotAfter, snapshotBefore) {
-		t.Fatalf("rejected fresh start changed latest snapshot bytes:\nbefore=%s\nafter=%s", snapshotBefore, snapshotAfter)
+		t.Fatalf("Open fresh changed snapshot bytes:\nbefore=%s\nafter=%s", snapshotBefore, snapshotAfter)
 	}
-	if len(topology.calls) != 0 || !equalStrings(executor.calls, []string{"authorize:/srv/alpha"}) || len(tmux.calls) != 0 || len(reporter.messages) != 0 {
-		t.Fatalf("rejected fresh start crossed the authorization-only boundary: topology=%v executor=%v tmux=%v notices=%v", topology.calls, executor.calls, tmux.calls, reporter.messages)
+	if len(topology.calls) != 1 || !equalStrings(executor.calls, []string{"authorize:/srv/alpha", "open:alpha"}) || len(tmux.calls) != 0 || len(reporter.messages) != 1 {
+		t.Fatalf("Open fresh flow: topology=%v executor=%v tmux=%v notices=%v", topology.calls, executor.calls, tmux.calls, reporter.messages)
+	}
+}
+
+func TestSwitchProjectStartupOpenFreshRefusesExactLiveProjectBeforeCommit(t *testing.T) {
+	cmd, store, executor, _, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupNewConfirmValue}},
+	})
+	server := newFakeTmux()
+	live := server.addSession("alpha-under-another-name")
+	live.opts["@projmux_project_uid"] = "prj-alpha"
+	live.opts["@projmux_project_path"] = "/srv/alpha"
+	routed := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00projmux": server}}
+	cmd.projectFreshStart.(*registryProjectFreshStarter).runner = routed
+
+	registryBefore := store.snapshot()
+	snapshotPath, err := stateStore.Path("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotBefore, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha")
+	if err == nil || !strings.Contains(err.Error(), "must be exactly closed before Open fresh") {
+		t.Fatalf("Open fresh error=%v, want exact-live Project refusal", err)
+	}
+	if store.transactions != 0 || store.writes != 0 || store.snapshot() != registryBefore {
+		t.Fatalf("exact-live refusal changed Registry: transactions=%d writes=%d", store.transactions, store.writes)
+	}
+	snapshotAfter, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(snapshotBefore, snapshotAfter) {
+		t.Fatal("exact-live refusal changed the source snapshot")
+	}
+	if len(executor.calls) != 1 || executor.calls[0] != "authorize:/srv/alpha" {
+		t.Fatalf("exact-live refusal runtime calls=%q, want trust read only", executor.calls)
+	}
+	if len(reporter.messages) != 0 {
+		t.Fatalf("exact-live precommit refusal emitted postcommit notices: %q", reporter.messages)
+	}
+	for _, call := range routed.calls {
+		if len(call.args) == 0 || call.args[0] != "list-sessions" {
+			t.Fatalf("exact-live precommit refusal issued tmux write: %#v", routed.calls)
+		}
 	}
 }
 
@@ -595,7 +775,7 @@ func TestSwitchProjectStartupNewCancelWritesNothing(t *testing.T) {
 	cmd, store, executor, tmux, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupNewCancelValue}},
-		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+		{},
 	})
 	before := store.snapshot()
 
@@ -619,7 +799,7 @@ func TestSwitchProjectStartupNewCancelWritesNothing(t *testing.T) {
 	if len(executor.calls) != 0 {
 		t.Fatalf("cancel touched the runtime: %q", executor.calls)
 	}
-	if !reporter.contains("fresh start canceled; nothing was deleted") {
+	if !reporter.contains("Open fresh canceled; nothing was changed") {
 		t.Fatalf("cancel was not reported: %q", reporter.messages)
 	}
 }
@@ -633,8 +813,7 @@ func TestSwitchProjectStartupNewCancelKeepsTheStartupRows(t *testing.T) {
 		{observe: func(o intpickercompat.Options) { first = o },
 			reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupNewCancelValue}},
-		{observe: func(o intpickercompat.Options) { second = o },
-			reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
+		{observe: func(o intpickercompat.Options) { second = o }},
 	})
 
 	_ = cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha")
@@ -662,7 +841,7 @@ func TestSwitchProjectStartupNewRefusesToStartWhileTopologyRemains(t *testing.T)
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupNewConfirmValue}},
 	})
 	cmd.projectFreshStart = &stubProjectFreshStarter{
-		plan: projectFreshStartPlan{ProjectUID: "prj-alpha", WindowUIDs: []string{"win-alpha-main"}, Windows: 1, Panes: 2, Agents: 1},
+		plan: projectFreshStartPlan{ProjectUID: "prj-alpha", Windows: 1, Panes: 2, Agents: 1},
 	}
 
 	err := cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha")
@@ -695,7 +874,7 @@ func TestProjectFreshStartRefusesADriftedPlan(t *testing.T) {
 	t.Parallel()
 
 	store := freshStartFixtureStore(t)
-	starter := &registryProjectFreshStarter{resources: store.store()}
+	starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
 	plan, err := starter.PlanProjectFreshStart("/srv/alpha")
 	if err != nil {
 		t.Fatalf("PlanProjectFreshStart() error = %v", err)
@@ -723,10 +902,8 @@ func TestProjectFreshStartRefusesADriftedPlan(t *testing.T) {
 	}
 }
 
-// TestProjectFreshStartKeepsNamedSnapshots is acceptance 5's snapshot half: the
-// `new` row discards the auto-saved snapshot and never touches the manual,
-// user-named project files.
-func TestProjectFreshStartKeepsNamedSnapshots(t *testing.T) {
+// TestProjectFreshStartKeepsEverySnapshot is the snapshot-storage boundary.
+func TestProjectFreshStartKeepsEverySnapshot(t *testing.T) {
 	home := t.TempDir()
 	project := filepath.Join(home, "workspace")
 	if err := os.MkdirAll(filepath.Join(project, ".projmux", "layouts"), 0o755); err != nil {
@@ -761,20 +938,18 @@ func TestProjectFreshStartKeepsNamedSnapshots(t *testing.T) {
 		t.Fatalf("startProjectFresh() error = %v", err)
 	}
 	if _, err := os.Stat(named); err != nil {
-		t.Fatalf("fresh start deleted the Named snapshot: %v", err)
+		t.Fatalf("fresh start deleted the manual snapshot: %v", err)
 	}
-	if _, err := stateStore.Summary("workspace"); err == nil {
-		t.Fatal("fresh start kept the latest snapshot")
+	if _, err := stateStore.Summary("workspace"); err != nil {
+		t.Fatalf("fresh start changed the latest snapshot: %v", err)
 	}
 	if _, err := os.Stat(project); err != nil {
 		t.Fatalf("fresh start removed the managed root: %v", err)
 	}
 }
 
-// TestSwitchSidebarOpenAcceptsTheNewMode covers the re-exec transport: the
-// approved `new` decision survives the `switch sidebar-open --mode new` hop the
-// sidebar route launches.
-func TestSwitchSidebarOpenNewModeFailsClosedOnCanonicalAnchor(t *testing.T) {
+// TestSwitchSidebarOpenAcceptsFreshMode covers the detached re-exec transport.
+func TestSwitchSidebarOpenAcceptsFreshMode(t *testing.T) {
 	home := t.TempDir()
 	store := freshStartFixtureStore(t)
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
@@ -794,19 +969,19 @@ func TestSwitchSidebarOpenNewModeFailsClosedOnCanonicalAnchor(t *testing.T) {
 			}
 		},
 		projectTopology:   &fakeProjectTopologyMaterializer{},
-		projectFreshStart: &registryProjectFreshStarter{resources: store.store()},
+		projectFreshStart: &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}},
 		startupNotices:    reporter,
 	}
 
-	before := store.snapshot()
-	if err := cmd.runSidebarOpen([]string{"--path", "/srv/alpha", "--session", "alpha", "--mode", projectStartupValueNew}, &bytes.Buffer{}); err == nil {
-		t.Fatal("runSidebarOpen() unexpectedly succeeded")
+	cmd.projectTopology.(*fakeProjectTopologyMaterializer).materialized = true
+	if err := cmd.runSidebarOpen([]string{"--path", "/srv/alpha", "--session", "alpha", "--mode", projectStartupValueNew}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
 	}
-	if store.writes != 0 || store.snapshot() != before {
-		t.Fatalf("rejected --mode new changed Registry: writes=%d", store.writes)
+	if store.writes != 1 {
+		t.Fatalf("--mode fresh Registry writes=%d", store.writes)
 	}
-	if !equalStrings(executor.calls, []string{"authorize:/srv/alpha"}) {
-		t.Fatalf("rejected --mode new crossed the authorization-only boundary: %v", executor.calls)
+	if !equalStrings(executor.calls, []string{"authorize:/srv/alpha", "open:alpha"}) {
+		t.Fatalf("--mode fresh calls: %v", executor.calls)
 	}
 }
 

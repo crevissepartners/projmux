@@ -1138,9 +1138,9 @@ func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
 func (c *settingsCommand) projectSidebarSummary() string {
 	startup := c.currentSidebarStartupPicker()
 	if startup.Mode.Enabled() {
-		return "closed Project startup: ask for Snapshot or Project topology"
+		return "closed Project startup: show Continue project and Open fresh"
 	}
-	return "closed Project startup: use Project topology"
+	return "closed Project startup: Continue project"
 }
 
 // runProjectSidebarSection is the Projects > Project Sidebar view.
@@ -1180,16 +1180,16 @@ func (c *settingsCommand) runProjectSidebarSection(stdout, stderr io.Writer) err
 func (c *settingsCommand) projectSidebarEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	startup := c.currentSidebarStartupPicker()
-	choice := "Use Project topology"
+	choice := "Continue project"
 	if startup.Mode.Enabled() {
-		choice = "Ask for Snapshot or Project topology"
+		choice = "Continue project / Open fresh"
 	}
 	return []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
 			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsSidebar+".closed-startup"), choice+" - "+startup.Source),
 			Value:     settingsSessionStateSidebarStartupPickerDetail,
-			SearchKey: "closed project startup snapshot topology sidebar startup picker",
+			SearchKey: "closed project startup continue open fresh sidebar startup picker",
 		},
 	}
 }

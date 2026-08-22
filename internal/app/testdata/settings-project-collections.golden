@@ -4,7 +4,7 @@ Projects
   workdir:list	▸ Additional discovery roots scan roots; scanning never registers a Project
   project:pins	▸ Pinned Projects pinned Registry Projects, by UID
   project:candidate-pins	▸ Candidate Pins pinned paths no Registry Project claims
-  projects:sidebar	▸ Project Sidebar closed Project startup: use Project topology
+  projects:sidebar	▸ Project Sidebar closed Project startup: Continue project
 Additional discovery roots
   __settings_noop__	· Effective roots 1 saved (~/.config/projmux/workdirs)
   workdir-item:/srv/work	▸ /srv/work saved
@@ -22,7 +22,7 @@ Projects
   workdir:list	▸ Additional discovery roots scan roots; scanning never registers a Project
   project:pins	▸ Pinned Projects pinned Registry Projects, by UID
   project:candidate-pins	▸ Candidate Pins pinned paths no Registry Project claims
-  projects:sidebar	▸ Project Sidebar closed Project startup: use Project topology
+  projects:sidebar	▸ Project Sidebar closed Project startup: Continue project
 Additional discovery roots
   __settings_noop__	· Effective roots 1 saved (~/.config/projmux/workdirs)
   workdir-item:C:\Users\dev\src	▸ C:\Users\dev\src saved

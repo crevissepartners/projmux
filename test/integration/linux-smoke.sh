@@ -1043,6 +1043,13 @@ if [[ -n "${PROJMUX_KILL_RACE_TARGET:-}" && "${1:-}" == "list-sessions" && "$*" 
   printf '%s\n' "$output"
   exit 0
 fi
+if [[ "${1:-}" == "-L" && "${2:-}" == "projmux" ]]; then
+  shift 2
+  exec "$PROJMUX_REAL_TMUX" -L "$PROJMUX_SMOKE_TMUX_SOCKET" "$@"
+fi
+if [[ "${1:-}" == "-L" || "${1:-}" == "-S" ]]; then
+  exec "$PROJMUX_REAL_TMUX" "$@"
+fi
 exec "$PROJMUX_REAL_TMUX" -L "$PROJMUX_SMOKE_TMUX_SOCKET" "$@"
 LIFECYCLE_TMUX
 chmod 0755 "$lifecycle_mux_dir/tmux"
@@ -1081,13 +1088,22 @@ run_inside_lifecycle() {
 }
 
 # Session State diagnostics uses the same run-unique socket and isolated XDG
-# root. Capture a real snapshot containing seeded private cwd/command/session
-# metadata, prove successful autosave stays silent, inject one quiet autosave
-# failure, replay the actual latest snapshot, then delete it canonically.
+# root. Register and materialize one exact Project, capture a real snapshot,
+# prove successful autosave stays silent, inject one quiet autosave failure,
+# mutate its desired topology, project the saved snapshot back into the closed
+# Project, then delete it canonically.
 session_state_root="$PROJMUX_SMOKE_WORKDIR/raw-session-state-project-$$"
-session_state_name="raw-session-state-$$"
 mkdir -p "$session_state_root"
-env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s "$session_state_name" -c "$session_state_root" 'sleep 300'
+session_state_project_uid="$(env -u TMUX -u TMUX_PANE PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
+  "$bin" create project --root "$session_state_root" -o uid)"
+"$bin" describe project "uid:$session_state_project_uid" -o json >"$PROJMUX_SMOKE_WORKDIR/session-state-project.json"
+session_state_name="$(sed -n '/"session": {/,/}/ s/.*"name": "\([^"]*\)".*/\1/p' \
+  "$PROJMUX_SMOKE_WORKDIR/session-state-project.json" | head -n 1)"
+if [[ -z "$session_state_name" ]]; then
+  echo "registered Session State Project has no declared session" >&2
+  exit 1
+fi
+run_inside_lifecycle switch open "$session_state_root" >"$PROJMUX_SMOKE_WORKDIR/session-state-open.out"
 session_state_pane="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t "=$session_state_name" '#{pane_id}')"
 session_state_tmux_env="$PROJMUX_SMOKE_TMUX_ACTUAL,$server_pid,0"
 
@@ -1105,6 +1121,8 @@ if [[ "$session_state_before_autosave" != "$session_state_after_autosave" ]]; th
   echo "successful autosave appended an operational event" >&2
   exit 1
 fi
+session_state_snapshot="$XDG_STATE_HOME/projmux/sessions/$session_state_name.json"
+cp "$session_state_snapshot" "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before"
 
 session_state_fail_mux="$PROJMUX_SMOKE_WORKDIR/session-state-fail-mux"
 mkdir -p "$session_state_fail_mux"
@@ -1118,13 +1136,39 @@ env PATH="$session_state_fail_mux:$PATH" \
   PROJMUX_SESSIONSTATE_AUTOSAVE=on TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
   "$bin" internal tmux autosave-session-state --quiet >"$PROJMUX_SMOKE_WORKDIR/session-state-autosave-fail.out"
 
+env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
+  TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
+  "$bin" create window --project "uid:$session_state_project_uid" --name after-save \
+  >"$PROJMUX_SMOKE_WORKDIR/session-state-mutate.out"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$session_state_name"
-run_inside_lifecycle switch sidebar-open --path "$session_state_root" --session "$session_state_name" --mode latest \
+env -u TMUX -u TMUX_PANE PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
+  "$bin" restore snapshot --session "$session_state_name" --project "uid:$session_state_project_uid" \
+  --client "$control_client" --yes \
   >"$PROJMUX_SMOKE_WORKDIR/session-state-restore.out"
 if ! env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" has-session -t "=$session_state_name" 2>/dev/null; then
-  echo "actual latest snapshot restore did not recreate $session_state_name" >&2
+  echo "snapshot Registry projection did not recreate $session_state_name" >&2
   exit 1
 fi
+if [[ "$("$bin" get windows --project "uid:$session_state_project_uid" -o uid | grep -c .)" != "1" ]]; then
+  echo "snapshot Registry projection did not remove the post-save Window" >&2
+  exit 1
+fi
+if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -c "$control_client" '#{session_name}')" != "$session_state_name" ]]; then
+  echo "snapshot Registry projection did not switch the exact client last" >&2
+  exit 1
+fi
+cmp "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before" "$session_state_snapshot"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$session_state_name"
+env -u TMUX -u TMUX_PANE PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
+  "$bin" switch sidebar-open --path "$session_state_root" --session "$session_state_name" \
+  --mode continue --client "$control_client" >"$PROJMUX_SMOKE_WORKDIR/session-state-continue.out"
+if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -c "$control_client" '#{session_name}')" != "$session_state_name" ]]; then
+  echo "Continue project did not use the exact client as its final handoff" >&2
+  exit 1
+fi
+cmp "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before" "$session_state_snapshot"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
 
 "$bin" delete snapshot --session "$session_state_name" \
@@ -1143,8 +1187,8 @@ if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.au
   echo "quiet autosave failure did not emit exactly one closed error" >&2
   exit 1
 fi
-if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.restore".*"source":"startup-latest"' "$session_state_log")" != "1" ]]; then
-  echo "actual latest restore did not emit exactly one closed outcome" >&2
+if [[ "$(grep -c '"event":"session-state.outcome".*"operation":"session-state.restore".*"source":"manual"' "$session_state_log")" != "1" ]]; then
+  echo "snapshot Registry projection did not emit exactly one closed outcome" >&2
   exit 1
 fi
 if ! grep -q '"event":"session-state.outcome".*"operation":"session-state.delete".*"source":"manual".*"item_count":1' "$session_state_log"; then
@@ -1152,8 +1196,7 @@ if ! grep -q '"event":"session-state.outcome".*"operation":"session-state.delete
   exit 1
 fi
 if grep -q '"event":"command.outcome".*"command":"session-state"' "$session_state_log" ||
-  grep -q '"event":"command.outcome".*"command":"prune","subcommand":"session-state"' "$session_state_log" ||
-  grep -q '"event":"command.outcome".*"command":"switch","subcommand":"sidebar-open"' "$session_state_log"; then
+  grep -q '"event":"command.outcome".*"command":"prune","subcommand":"session-state"' "$session_state_log"; then
   echo "owned Session State mutation emitted a duplicate generic outcome" >&2
   exit 1
 fi

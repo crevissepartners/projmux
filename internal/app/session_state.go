@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -19,24 +21,50 @@ import (
 )
 
 type sessionStateCommand struct {
-	diagnostics  *diagnostics.SessionStateRecorder
-	runner       tmuxRunner
-	nativePicker intpicker.Runner
-	lookupEnv    func(string) string
-	homeDir      func() (string, error)
-	now          func() time.Time
-	sessionStore func() (sessionstate.Store, error)
+	diagnostics     *diagnostics.SessionStateRecorder
+	runner          tmuxRunner
+	nativePicker    intpicker.Runner
+	lookupEnv       func(string) string
+	homeDir         func() (string, error)
+	now             func() time.Time
+	sessionStore    func() (sessionstate.Store, error)
+	resources       *resourceStore
+	projectTopology switchProjectTopologyMaterializer
+	projectTrust    switchProjectTrustAuthorizer
+	notices         projectStartupReporter
+	target          explicitTmuxTarget
 }
 
-func newSessionStateCommand() *sessionStateCommand {
-	return &sessionStateCommand{
-		runner:       inttmux.ExecRunner{},
-		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		lookupEnv:    os.Getenv,
-		homeDir:      os.UserHomeDir,
-		now:          time.Now,
-		sessionStore: sessionstate.NewDefaultStoreFromEnv,
+func newSessionStateCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionStateCommand {
+	target, err := tmuxSocketNameTarget(defaultAppSocket)
+	if err != nil {
+		panic(err)
 	}
+	return &sessionStateCommand{
+		runner:          inttmux.ExecRunner{},
+		nativePicker:    intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		lookupEnv:       os.Getenv,
+		homeDir:         os.UserHomeDir,
+		now:             time.Now,
+		sessionStore:    sessionstate.NewDefaultStoreFromEnv,
+		resources:       newResourceStore(),
+		projectTopology: newRegistryProjectTopologyMaterializer(),
+		projectTrust:    defaultTmuxClient(recorders...),
+		notices:         newProjectStartupNoticeSink(inttmux.ExecRunner{}),
+		target:          target,
+	}
+}
+
+func (c *sessionStateCommand) exactRunner() (tmuxRunner, error) {
+	target := c.target
+	if target.flag == "" || target.value == "" {
+		var err error
+		target, err = tmuxSocketNameTarget(defaultAppSocket)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return explicitTmuxRunner{runner: c.runner, target: target}, nil
 }
 
 // Run manages user-facing session snapshot actions.
@@ -185,11 +213,16 @@ func sessionStateDiagnosticCounts(snap sessionstate.Snapshot) diagnostics.Sessio
 	return counts
 }
 
-func (c *sessionStateCommand) runRestore(args []string, stdout, stderr io.Writer) error {
+func (c *sessionStateCommand) runRestore(args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("session-state restore", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	session := fs.String("session", "", "target session name")
+	projectRef := ""
+	fs.StringVar(&projectRef, "project", "", "exact target Project name or uid:uid")
+	fs.StringVar(&projectRef, "p", "", "exact target Project name or uid:uid")
+	client := fs.String("client", "", "exact tmux client for the final handoff")
 	dryRun := fs.Bool("dry-run", false, "preview restore actions without running tmux commands")
+	yes := fs.Bool("yes", false, "approve replacing the exact closed Project Registry subtree")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -197,11 +230,206 @@ func (c *sessionStateCommand) runRestore(args []string, stdout, stderr io.Writer
 		printSessionStateUsage(stderr)
 		return fmt.Errorf("session-state restore does not accept positional arguments")
 	}
-	if !*dryRun {
-		printSessionStateUsage(stderr)
-		return errors.New("session-state restore only supports --dry-run in this release")
+	if strings.TrimSpace(*session) == "" {
+		return errors.New("session-state restore requires an explicit --session")
 	}
-	return c.printRestorePreview(context.Background(), *session, stdout)
+	if strings.TrimSpace(projectRef) == "" {
+		return errors.New("session-state restore requires an explicit --project")
+	}
+	if *dryRun && *yes {
+		return errors.New("session-state restore accepts exactly one of --dry-run or --yes")
+	}
+	if *dryRun {
+		return c.printProjectionPreview(context.Background(), *session, projectRef, stdout)
+	}
+	if !*yes {
+		return errors.New("session-state restore requires --yes after reviewing --dry-run")
+	}
+	started := c.nowTime()
+	var counts diagnostics.SessionStateCounts
+	if store, storeErr := c.store(); storeErr == nil {
+		if snap, loadErr := store.Load(strings.TrimSpace(*session)); loadErr == nil {
+			counts = sessionStateDiagnosticCounts(snap)
+		}
+	}
+	defer func() {
+		c.diagnostics.Record(diagnostics.OperationSessionStateRestore, diagnostics.SessionStateSourceManual, started, counts, err)
+	}()
+	err = c.commitSnapshotProjection(context.Background(), *session, projectRef, *client, stdout)
+	return err
+}
+
+func (c *sessionStateCommand) resolveProjectionInputs(ctx context.Context, explicitSession, projectRaw string) (sessionstate.Snapshot, coremetadata.Registry, coremetadata.Project, error) {
+	sessionName, err := c.resolveSessionName(ctx, explicitSession)
+	if err != nil {
+		return sessionstate.Snapshot{}, coremetadata.Registry{}, coremetadata.Project{}, err
+	}
+	store, err := c.store()
+	if err != nil {
+		return sessionstate.Snapshot{}, coremetadata.Registry{}, coremetadata.Project{}, err
+	}
+	snap, err := store.Load(sessionName)
+	if err != nil {
+		return sessionstate.Snapshot{}, coremetadata.Registry{}, coremetadata.Project{}, fmt.Errorf("load session snapshot %q: %w", sessionName, err)
+	}
+	if c.resources == nil {
+		return sessionstate.Snapshot{}, coremetadata.Registry{}, coremetadata.Project{}, errors.New("restore snapshot: Registry store is not configured")
+	}
+	registry, err := c.resources.snapshot()
+	if err != nil {
+		return sessionstate.Snapshot{}, coremetadata.Registry{}, coremetadata.Project{}, MapMetadataError(err)
+	}
+	ref, err := selector.ParseRef(coremetadata.KindProject, projectRaw)
+	if err != nil {
+		return sessionstate.Snapshot{}, coremetadata.Registry{}, coremetadata.Project{}, fmt.Errorf("restore snapshot requires an explicit --project: %w", err)
+	}
+	resolution, _ := selector.New(registry).ResolveProjects(selector.Query{Project: &ref})
+	if len(resolution.Matches) != 1 {
+		return sessionstate.Snapshot{}, coremetadata.Registry{}, coremetadata.Project{}, fmt.Errorf("restore snapshot: --project %q resolves to %d Projects, want exactly one", projectRaw, len(resolution.Matches))
+	}
+	project, _ := registry.Project(resolution.Matches[0].UID)
+	return snap, registry, project.Clone(), nil
+}
+
+func (c *sessionStateCommand) printProjectionPreview(ctx context.Context, explicitSession, projectRaw string, stdout io.Writer) error {
+	snap, registry, project, err := c.resolveProjectionInputs(ctx, explicitSession, projectRaw)
+	if err != nil {
+		return err
+	}
+	plan, err := coremetadata.PlanSnapshotProjection(registry, project.Metadata.UID, snap, c.nowTime(), coremetadata.NewUID)
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	if _, _, err := c.requireClosedProjectionTarget(ctx, project); err != nil {
+		return err
+	}
+	format := localizeUIText(appLocale(c.homeDir, c.lookupEnv), "Project %s snapshot projection: replace Window %d / Pane %d / Agent %d; delete Window %d / Pane %d / Agent %d; preserve uid %d; lose conversation pointer %d; trust Project open gate pending; snapshot startup command execution 0; Registry writes 0 / tmux writes 0 / snapshot writes 0\n")
+	_, err = fmt.Fprintf(stdout, format, project.Metadata.Name, plan.ReplacedWindows, plan.ReplacedPanes, plan.ReplacedAgents, plan.DeletedWindows, plan.DeletedPanes, plan.DeletedAgents, plan.PreservedUIDs, plan.LostSessionRefs)
+	return err
+}
+
+func (c *sessionStateCommand) requireClosedProjectionTarget(ctx context.Context, project coremetadata.Project) (string, tmuxRunner, error) {
+	declaredSession := ""
+	if project.Status.Session != nil {
+		declaredSession = strings.TrimSpace(project.Status.Session.Name)
+	}
+	if declaredSession == "" {
+		return "", nil, errors.New("restore snapshot: target Project has no declared session projection")
+	}
+	if c.runner == nil {
+		return "", nil, errors.New("restore snapshot: tmux runner is not configured")
+	}
+	exactRunner, err := c.exactRunner()
+	if err != nil {
+		return "", nil, fmt.Errorf("restore snapshot: exact tmux target: %w", err)
+	}
+	// The target is closed only when no session on the exact server claims its
+	// declared name, Project UID, or canonical root.
+	if _, found, err := (&materializer{runner: exactRunner}).preflightSessionOwnership(ctx, project, declaredSession); err != nil {
+		return "", nil, fmt.Errorf("restore snapshot: target Project ownership preflight: %w", err)
+	} else if found {
+		return "", nil, fmt.Errorf("restore snapshot: target Project session %q is live; close it before replacing desired state", declaredSession)
+	}
+	return declaredSession, exactRunner, nil
+}
+
+func (c *sessionStateCommand) commitSnapshotProjection(ctx context.Context, explicitSession, projectRaw, explicitClient string, stdout io.Writer) error {
+	snap, registry, project, err := c.resolveProjectionInputs(ctx, explicitSession, projectRaw)
+	if err != nil {
+		return err
+	}
+	// Validate the complete pure projection before any trust UI or tmux
+	// observation. Invalid snapshot metadata, owner relations, and UID
+	// collisions are therefore a strict zero-write refusal at the command seam.
+	if _, err := coremetadata.PlanSnapshotProjection(registry, project.Metadata.UID, snap, c.nowTime(), coremetadata.NewUID); err != nil {
+		return MapMetadataError(err)
+	}
+	declaredSession, _, err := c.requireClosedProjectionTarget(ctx, project)
+	if err != nil {
+		return err
+	}
+	if c.projectTrust == nil {
+		return errors.New("restore snapshot: Project trust authorizer is not configured; nothing was changed")
+	}
+	trusted, err := c.projectTrust.AuthorizeProjectHooks(ctx, project.Spec.Root)
+	if err != nil {
+		return fmt.Errorf("restore snapshot: authorize Project open: %w", err)
+	}
+	if !trusted {
+		return errors.New("restore snapshot: Project trust was denied; nothing was changed")
+	}
+	// Trust is interactive and may take arbitrarily long. Re-observe the exact
+	// Project identity after it returns so a session that appeared while the
+	// operator was deciding is refused before the Registry transaction opens.
+	recheckedSession, exactRunner, err := c.requireClosedProjectionTarget(ctx, project)
+	if err != nil {
+		return err
+	}
+	if recheckedSession != declaredSession {
+		return fmt.Errorf("restore snapshot: target Project session changed from %q to %q before commit", declaredSession, recheckedSession)
+	}
+	var applied coremetadata.SnapshotProjectionPlan
+	var committedProject coremetadata.Project
+	_, err = c.resources.converge(func(working *coremetadata.Registry, _ coremetadata.Mutator) error {
+		current, ok := working.Project(project.Metadata.UID)
+		if !ok {
+			return fmt.Errorf("restore snapshot: target Project %s disappeared before commit", project.Metadata.UID)
+		}
+		currentSession := ""
+		if current.Status.Session != nil {
+			currentSession = strings.TrimSpace(current.Status.Session.Name)
+		}
+		if currentSession != declaredSession {
+			return fmt.Errorf("restore snapshot: target Project session changed from %q to %q before commit", declaredSession, currentSession)
+		}
+		if current.Spec.Root != project.Spec.Root {
+			return fmt.Errorf("restore snapshot: target Project root changed from %q to %q before commit", project.Spec.Root, current.Spec.Root)
+		}
+		plan, err := coremetadata.PlanSnapshotProjection(*working, project.Metadata.UID, snap, c.nowTime(), coremetadata.NewUID)
+		if err != nil {
+			return err
+		}
+		applied = plan
+		committedProject = current.Clone()
+		*working = plan.Desired
+		return nil
+	})
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	if c.projectTopology == nil {
+		if c.notices != nil {
+			c.notices.Report(localizeUIText(appLocale(c.homeDir, c.lookupEnv), "projmux: snapshot desired state was committed; runtime item was refused: ordinary Project materializer is not configured"))
+		}
+		return errors.New("restore snapshot: ordinary Project materializer is not configured")
+	}
+	// Desired state is already durable. Reporting is best effort so a broken
+	// output stream cannot suppress convergence or the required item notice.
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	resultFormat := localizeUIText(locale, "restored snapshot into Project %s: Window %d / Pane %d / Agent %d, preserved uid %d\n")
+	_, _ = fmt.Fprintf(stdout, resultFormat, committedProject.Metadata.Name, len(snap.Windows), statusbarSessionStatePaneCount(snap), applied.ReplacedAgents, applied.PreservedUIDs)
+	if _, err := c.projectTopology.MaterializeProjectTopology(ctx, committedProject.Spec.Root, declaredSession); err != nil {
+		if c.notices != nil {
+			noticeFormat := localizeUIText(locale, "projmux: snapshot desired state was committed; runtime item was refused: %s")
+			c.notices.Report(fmt.Sprintf(noticeFormat, err.Error()))
+		}
+		errorPrefix := localizeUIText(locale, "restore snapshot committed desired Registry; runtime materialization needs another Continue project")
+		return fmt.Errorf("%s: %w", errorPrefix, err)
+	}
+	lookup := c.lookupEnv
+	if strings.TrimSpace(explicitClient) != "" {
+		base := lookup
+		lookup = func(name string) string {
+			if name == inttmux.SwitchTargetClientEnv {
+				return strings.TrimSpace(explicitClient)
+			}
+			if base != nil {
+				return base(name)
+			}
+			return ""
+		}
+	}
+	return inttmux.NewClient(exactRunner, inttmux.WithLookupEnv(lookup)).OpenSession(ctx, declaredSession)
 }
 
 func (c *sessionStateCommand) runPreview(args []string, stdout, stderr io.Writer) error {
@@ -591,5 +819,5 @@ func printSessionStateUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux get snapshots [--session <name>]")
 	fmt.Fprintln(w, "  projmux create snapshot")
 	fmt.Fprintln(w, "  projmux delete snapshot [--session <name>]")
-	fmt.Fprintln(w, "  projmux restore snapshot --dry-run [--session <name>]")
+	fmt.Fprintln(w, "  projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]")
 }

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -13,10 +15,46 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
+
+func TestProjectStartupActionRowsAreExactlyContinueAndOpenFresh(t *testing.T) {
+	candidates := (&switchCommand{}).projectStartupCandidates("ignored", "/ignored")
+	options := projectStartupPickerOptions(candidates)
+	if len(options.Entries) != 2 {
+		t.Fatalf("startup action rows=%d, want 2: %#v", len(options.Entries), options.Entries)
+	}
+	got := []string{options.Entries[0].Value, options.Entries[1].Value}
+	want := []string{projectStartupValueTopology, projectStartupValueNew}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("startup values=%q, want %q", got, want)
+	}
+	joined := strings.ToLower(options.Entries[0].Label + options.Entries[1].Label + options.Footer)
+	for _, forbidden := range []string{"latest snapshot", "named snapshot", "project topology", "reconcile", "back row"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("startup surface exposes %q: %s", forbidden, joined)
+		}
+	}
+}
+
+func TestProjectStartupExactTwoRowGolden(t *testing.T) {
+	candidates := (&switchCommand{}).projectStartupCandidates("ignored", "/ignored")
+	options := projectStartupPickerOptions(candidates)
+	var got strings.Builder
+	fmt.Fprintf(&got, "ui=%s\nheader=%s\nfooter=%s\n", options.UI, options.Header, options.Footer)
+	for index, candidate := range candidates {
+		fmt.Fprintf(&got, "row[%d]=%s|%s|%s|%s\n", index, candidate.Kind,
+			options.Entries[index].Value, candidate.Label, candidate.Description)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "project-startup-rows.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != string(want) {
+		t.Fatalf("Project startup row golden mismatch:\ngot:\n%swant:\n%s", got.String(), want)
+	}
+}
 
 // fakeProjectTopologyMaterializer records what closed-Project activation asked
 // for without running any engine, so the switch-level ordering contract
@@ -259,7 +297,7 @@ func TestSwitchClosedProjectOpenPickerTopologyRowUsesTheSameEngine(t *testing.T)
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
 	}
-	requireSwitchEntryLabel(t, startupOptions.Entries, "Project topology")
+	requireSwitchEntryLabel(t, startupOptions.Entries, "Continue project")
 	requireSwitchEntryLabel(t, startupOptions.Entries, projectTopologyStartupDescription)
 	for _, entry := range startupOptions.Entries {
 		if strings.Contains(entry.Label, "Empty session") {
@@ -277,53 +315,6 @@ func TestSwitchClosedProjectOpenPickerTopologyRowUsesTheSameEngine(t *testing.T)
 // TestSwitchClosedProjectOpenSnapshotSelectionsNeverMixSources is acceptance 2's
 // negative half: a snapshot selection stays on the snapshot engine and performs
 // zero Registry topology activation.
-func TestSwitchClosedProjectOpenSnapshotSelectionsNeverMixSources(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
-	stateDir := filepath.Join(home, "state", "projmux", "sessions")
-	saveSwitchProjectStartupSnapshot(t, sessionstate.NewStore(stateDir), "workspace")
-
-	topology := &fakeProjectTopologyMaterializer{materialized: true}
-	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
-	runner, native := scriptedPicker(t, []pickerStep{
-		{reply: intpickercompat.Result{Value: projectStartupValueLatest}},
-	})
-	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return filepath.Join(home, "state")
-			case "XDG_CONFIG_HOME":
-				return filepath.Join(home, "config")
-			default:
-				return ""
-			}
-		},
-		runner:          runner,
-		nativePicker:    native,
-		projectTopology: topology,
-	}
-
-	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
-	}
-	if len(topology.calls) != 0 {
-		t.Fatalf("snapshot startup activated Registry topology: %q", topology.calls)
-	}
-	if got, want := executor.calls, []string{"authorize:/tmp/workspace", "restore:workspace:" + sessionstate.SourceAutosave, "open:workspace"}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want %q", got, want)
-	}
-}
-
-// TestSwitchClosedProjectOpenTopologyFailureDoesNotMoveClient is acceptance 3 at
-// the switch boundary: a failed activation surfaces the exact cause and performs
-// no open and no EnsureSession fallback, so a partially built runtime is never
-// presented as a successful start.
 func TestSwitchClosedProjectOpenTopologyFailureDoesNotMoveClient(t *testing.T) {
 	t.Parallel()
 

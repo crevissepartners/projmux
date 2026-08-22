@@ -478,19 +478,20 @@ client only after it converges; a refusal, a failed preflight, or a rolled-back
 partial leaves the client where it was and reports the exact stage. The
 activation is pinned to the session the open targets, so a Project whose
 Registry projects a different session name is refused instead of populating a
-session the open never reaches. Choosing `Latest snapshot` or `Named snapshot`
-instead stays entirely on the Session State snapshot engine. Choosing `New`
-discards the latest snapshot and prunes that Project's whole stored
-Window/Pane/Agent set through the canonical delete cascade first, after a
-confirmation that states the exact counts and the Agents' `status.sessionRef`
-loss; the Project then has no declared topology, so the open falls through to the
-single-Window, single-shell-Pane bootstrap. Reading whether a
+session the open never reaches. The closed-Project startup screen has exactly
+two actions. `Continue project` materializes the current Registry desired state.
+`Open fresh` confirms the exact prune counts, then keeps the canonical Project
+Window and Window-owned shell Pane identities while removing every other target
+Window, Pane, Agent, reservation, and conversation pointer. Snapshots remain
+byte-identical inputs and are never deleted by either action. Reading whether a
 Project declares topology is a zero-write snapshot read, so opening a directory
 that was never registered still creates no Registry state.
 
-Materialization never starts or resumes an Agent, creates an Agent-owned Pane,
-or executes `Pane.spec.command`; that field remains a one-time name seed. A
-new Window binds only its own tmux-created primary Pane. On an existing Window,
+Materialization launches or resumes declared Agents through the canonical
+provider/trust path and creates their managed Agent-owned Panes. An individual
+Agent refusal preserves the committed desired Registry and emits an item notice
+for retry. It never directly executes `Pane.spec.command`; that field remains a
+one-time name seed. A new Window binds only its own tmux-created primary Pane. On an existing Window,
 every pre-existing uid-less Pane is refused rather than adopted; foreign,
 duplicate, wrong-owner, or otherwise ambiguous UID state is refused before the
 first create. Layout uses the existing deterministic right-axis equalizer and does
@@ -1769,15 +1770,13 @@ human configuration work should prefer `config render` and `config apply`.
   generated config. The generated app config uses absolute `$SHELL` as the
   tmux default shell when set, otherwise `/bin/sh`. `shell` starts or attaches
   the app session directly after resolving the target app session name and
-  startup directory. Alt-1 sidebar project open defaults to `Project topology`,
-  which materializes the Project's Registry Windows, Window-owned shell Panes,
-  and Agents before the client moves; the Session State `Sidebar startup picker` opt-in
-  shows `Latest snapshot`, `Named snapshot`, `Project topology`, and `New` before
-  starting a closed project session. `Latest snapshot` is auto-saved; named
-  snapshots are fixed until the user saves or replaces them. `New` is the
-  destructive fresh start: it confirms the exact `Window n / Pane n / Agent n`
-  it will delete and the Agents' `status.sessionRef` loss, then discards the
-  latest snapshot, prunes those records, and starts one fresh Window. A directory with no
+  startup directory. Alt-1 sidebar project open defaults to `Continue project`,
+  which materializes the Project's Registry Windows, shell Panes, and Agents
+  before the client moves. When the startup picker is enabled it contains exactly
+  `Continue project` and `Open fresh`; Esc returns to Projects. `Open fresh`
+  confirms the exact `Window n / Pane n / Agent n` prune and conversation-pointer
+  loss, preserves the canonical Project Window and shell Pane identity, and does
+  not modify snapshots. A directory with no
   Registry Project, and a Project with no Registry Window, still start as a
   single default session.
 - `quit` — open an action picker with `Quit projmux` and `Cancel`. Selecting

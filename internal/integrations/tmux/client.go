@@ -104,7 +104,7 @@ func (e *commandError) CommandFailure() CommandFailure { return e.failure }
 // Run executes a command and returns its combined output.
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	if name == "tmux" && len(args) > 0 && (args[0] == "attach-session" || args[0] == "switch-client") {
+	if name == "tmux" && tmuxInteractiveHandoff(args) {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -118,6 +118,13 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 		return output, newCommandError(name, args, output, err)
 	}
 	return output, nil
+}
+
+func tmuxInteractiveHandoff(args []string) bool {
+	for len(args) >= 2 && (args[0] == "-L" || args[0] == "-S" || args[0] == "-f") {
+		args = args[2:]
+	}
+	return len(args) > 0 && (args[0] == "attach-session" || args[0] == "switch-client")
 }
 
 func newCommandError(name string, args []string, stderr []byte, cause error) error {
@@ -206,6 +213,13 @@ func WithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) ClientOpt
 
 // ClientOption configures optional Client behavior.
 type ClientOption func(*Client)
+
+// WithLookupEnv supplies the environment evidence used for client handoff.
+// It lets an explicit --client remain authoritative in background commands
+// whose inherited TMUX variable is intentionally absent.
+func WithLookupEnv(lookup func(string) string) ClientOption {
+	return func(c *Client) { c.lookupEnv = lookup }
+}
 
 // WithLifecycleHookRunner attaches the generic lifecycle hook runner.
 func WithLifecycleHookRunner(r *hooks.Runner) ClientOption {
@@ -911,6 +925,17 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 	command := []string{"attach-session", "-t", target}
 	action := "attach"
 	inside := c.InsideSession()
+	explicitClient := ""
+	// An explicit client is stronger evidence than the inherited TMUX
+	// environment. Sidebar continuations run in the background and may lose
+	// TMUX, but they still own this exact client and must switch it as the final
+	// handoff rather than trying to attach a new client.
+	if c.lookupEnv != nil {
+		explicitClient = strings.TrimSpace(c.lookupEnv(SwitchTargetClientEnv))
+	}
+	if explicitClient != "" {
+		inside = true
+	}
 	if inside {
 		command = c.switchClientCommand(target)
 		action = "switch"
@@ -930,7 +955,11 @@ func (c *Client) OpenSession(ctx context.Context, sessionName string) error {
 		return fmt.Errorf("%s tmux session %q: %w", action, sessionName, err)
 	}
 
-	if inside {
+	// A caller that supplies an exact client is performing a final handoff from
+	// a detached continuation. No lifecycle query or hook may follow that
+	// switch-client command; ordinary interactive opens retain the existing
+	// post-attach contract.
+	if inside && explicitClient == "" {
 		c.runPostAttach(ctx, sessionName, target)
 	}
 	return nil

@@ -272,8 +272,9 @@ arm`, `attention clear`, `attention window`, `internal tmux autosave-session-sta
 to the journal; an error from any of them still records exactly one safe error
 outcome. Explicit user mutations such as `attention toggle` retain their
 state-changing success record. Direct top-level help and explicit preview-only intents (`update
-apply --dry-run`, AI integration dry-runs, and the
-currently preview-only session restore) are also read-only. Doctor is a stricter
+apply --dry-run`, AI integration dry-runs, and snapshot projection restore with
+`--dry-run`) are also read-only. Approved snapshot projection restore is a
+state-changing operation. Doctor is a stricter
 boundary: successes and errors never append to this journal, so diagnostics do
 not make its filesystem contract self-defeating. Support report success and
 errors likewise never append; its strict reader shares the viewer's tolerant

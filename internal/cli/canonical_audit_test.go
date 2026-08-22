@@ -91,10 +91,6 @@ var canonicalTargetStateSummaries = map[string]targetStateSummary{
 		summary: "Delete a Pane resource and its live binding",
 		owner:   "runtime materialization -- the tmux call that kills the live pane",
 	},
-	"restore snapshot": {
-		summary: "Restore a saved session snapshot",
-		owner:   "session-state -- replay outside --dry-run",
-	},
 }
 
 // retiredCanonicalSummaries is the closed set of manifest strings the roadmap
