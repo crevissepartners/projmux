@@ -10,6 +10,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -36,6 +37,8 @@ func newPaneRuntimeFixture(t *testing.T, inventory string) (*tmuxPaneDeleteRunti
 		t.Fatal(err)
 	}
 	runtime := &tmuxPaneDeleteRuntime{runner: runner, target: target, getenv: func(string) string { return "" }}
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value,
+		"display-message", "-p", "-F", "#{socket_path}")] = testDeleteTarget.value + "\n"
 	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
 		"#{@projmux_project_uid}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}")
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "list-panes", "-a", "-F", format)] = inventory
@@ -52,6 +55,26 @@ func panePlanFor(t *testing.T, registry coremetadata.Registry, kind coremetadata
 		})
 	}
 	return plan
+}
+
+func exactPanePlanFor(t *testing.T, registry coremetadata.Registry, kind coremetadata.Kind, targets ...string) deletePlan {
+	t.Helper()
+	plan := panePlanFor(t, registry, kind, targets...)
+	plan.ExactUID = true
+	return plan
+}
+
+func markPaneMissingRuntime(t *testing.T, registry *coremetadata.Registry, uid string) {
+	t.Helper()
+	pane, ok := registry.Pane(uid)
+	if !ok {
+		t.Fatalf("missing Pane fixture %s", uid)
+	}
+	pane.Status.Conditions = []coremetadata.Condition{{
+		Type: coremetadata.ConditionMissingRuntime, Status: coremetadata.ConditionTrue,
+		Reason: coremetadata.ReasonRuntimeUnbound, FirstObservedAt: resourceFixtureClock,
+		LastTransitionAt: resourceFixtureClock,
+	}}
 }
 
 func TestPaneDeleteRuntimePreflightPinsSiblingAgentAndImplicitCascades(t *testing.T) {
@@ -129,7 +152,7 @@ func TestPaneDeleteRuntimeFailsClosedOnMissingDuplicateForeignAndStaleMirrors(t 
 		inventory string
 		want      string
 	}{
-		{name: "missing", inventory: "", want: "no exact live tmux Pane mirror"},
+		{name: "missing", inventory: livePaneInventoryRow("$1", "alpha", "@11", "%33", "prj-alpha", "win-alpha-review", "pan-alpha-review"), want: "no exact live tmux Pane mirror"},
 		{name: "duplicate", inventory: base + livePaneInventoryRow("$2", "alpha", "@14", "%40", "prj-alpha", "win-alpha-main", "pan-alpha-zsh"), want: "2 live tmux Pane mirrors"},
 		{name: "duplicate owning Window mirror", inventory: base + livePaneInventoryRow("$1", "alpha", "@14", "%40", "prj-alpha", "win-alpha-main", "pan-foreign"), want: "2 live tmux Window mirrors"},
 		{name: "foreign Window", inventory: livePaneInventoryRow("$1", "alpha", "@11", "%30", "prj-alpha", "win-alpha-review", "pan-alpha-zsh"), want: "foreign Window uid"},
@@ -150,6 +173,194 @@ func TestPaneDeleteRuntimeFailsClosedOnMissingDuplicateForeignAndStaleMirrors(t 
 				}
 			}
 		})
+	}
+}
+
+func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
+	sibling := livePaneInventoryRow("$1", "alpha", "@11", "%33", "prj-alpha", "win-alpha-review", "pan-alpha-review")
+
+	t.Run("MissingRuntime Pane exact uid", func(t *testing.T) {
+		runtime, _, registry := newPaneRuntimeFixture(t, sibling)
+		markPaneMissingRuntime(t, &registry, "pan-alpha-log")
+		plan, err := runtime.preflight(context.Background(), registry,
+			exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log"))
+		if err != nil {
+			t.Fatalf("registry-only Pane preflight: %v", err)
+		}
+		if len(plan.Targets) != 0 || len(plan.RegistryOnly) != 1 ||
+			plan.RegistryOnly[0].Evidence != coremetadata.ConditionMissingRuntime || plan.SocketPath != testDeleteTarget.value {
+			t.Fatalf("registry-only Pane plan = %#v", plan)
+		}
+	})
+
+	t.Run("Offline Agent with retained MissingRuntime Pane", func(t *testing.T) {
+		runtime, _, registry := newPaneRuntimeFixture(t, sibling)
+		agent, _ := registry.Agent("agt-alpha-codex")
+		agent.Status.Phase = coremetadata.PhaseOffline
+		agent.Status.PaneRef = ""
+		markPaneMissingRuntime(t, &registry, "pan-alpha-codex")
+		plan, err := runtime.preflight(context.Background(), registry,
+			exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-alpha-codex"))
+		if err != nil {
+			t.Fatalf("registry-only Agent preflight: %v", err)
+		}
+		if len(plan.Targets) != 0 || len(plan.RegistryOnly) != 1 ||
+			plan.RegistryOnly[0].Evidence != "Offline+MissingRuntime" {
+			t.Fatalf("registry-only Agent plan = %#v", plan)
+		}
+	})
+
+	t.Run("Offline Agent without retained Pane", func(t *testing.T) {
+		runtime, _, registry := newPaneRuntimeFixture(t, sibling)
+		plan, err := runtime.preflight(context.Background(), registry,
+			exactPanePlanFor(t, registry, coremetadata.KindAgent, "agt-beta-codex"))
+		if err != nil {
+			t.Fatalf("registry-only empty Agent preflight: %v", err)
+		}
+		if len(plan.Targets) != 0 || len(plan.RegistryOnly) != 1 || plan.RegistryOnly[0].Evidence != "Offline" {
+			t.Fatalf("registry-only empty Agent plan = %#v", plan)
+		}
+	})
+
+	for _, test := range []struct {
+		name      string
+		plan      func(coremetadata.Registry) deletePlan
+		prepare   func(*coremetadata.Registry)
+		want      string
+		inventory string
+	}{
+		{
+			name: "name selector cannot authorize zero mirror",
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return panePlanFor(t, reg, coremetadata.KindPane, "pan-alpha-log")
+			},
+			prepare: func(reg *coremetadata.Registry) { markPaneMissingRuntime(t, reg, "pan-alpha-log") },
+			want:    "no exact live tmux Pane mirror", inventory: sibling,
+		},
+		{
+			name: "absence without MissingRuntime",
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return exactPanePlanFor(t, reg, coremetadata.KindPane, "pan-alpha-log")
+			},
+			want: "no exact live tmux Pane mirror", inventory: sibling,
+		},
+		{
+			name: "empty inventory is not authority",
+			plan: func(reg coremetadata.Registry) deletePlan {
+				return exactPanePlanFor(t, reg, coremetadata.KindPane, "pan-alpha-log")
+			},
+			prepare: func(reg *coremetadata.Registry) { markPaneMissingRuntime(t, reg, "pan-alpha-log") },
+			want:    "absence is not Registry deletion authority", inventory: "",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime, _, registry := newPaneRuntimeFixture(t, test.inventory)
+			if test.prepare != nil {
+				test.prepare(&registry)
+			}
+			_, err := runtime.preflight(context.Background(), registry, test.plan(registry))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("preflight error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	t.Run("MissingRuntime evidence with a unique live mirror uses exact live delete", func(t *testing.T) {
+		runtime, _, registry := newPaneRuntimeFixture(t, paneRuntimeInventory())
+		markPaneMissingRuntime(t, &registry, "pan-alpha-log")
+		plan, err := runtime.preflight(context.Background(), registry,
+			exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log"))
+		if err != nil {
+			t.Fatalf("live rebound preflight: %v", err)
+		}
+		if len(plan.Targets) != 1 || len(plan.RegistryOnly) != 0 || plan.Targets[0].PaneID != "%31" {
+			t.Fatalf("live rebound plan = %#v", plan)
+		}
+	})
+}
+
+func TestPaneDeleteRuntimeRefusesNoServerAndSignsOwnerGeneration(t *testing.T) {
+	sibling := livePaneInventoryRow("$1", "alpha", "@11", "%33", "prj-alpha", "win-alpha-review", "pan-alpha-review")
+	runtime, runner, registry := newPaneRuntimeFixture(t, sibling)
+	markPaneMissingRuntime(t, &registry, "pan-alpha-log")
+	plan := exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
+	first, err := runtime.preflight(context.Background(), registry, plan)
+	if err != nil {
+		t.Fatalf("initial preflight: %v", err)
+	}
+
+	pane, _ := registry.Pane("pan-alpha-log")
+	pane.Status.Activation.Generation = "gen-replaced"
+	second, err := runtime.preflight(context.Background(), registry, plan)
+	if err != nil {
+		t.Fatalf("generation revalidation: %v", err)
+	}
+	if first.signature() == second.signature() {
+		t.Fatal("activation generation change did not change the signed plan")
+	}
+
+	pane.Status.Activation.Generation = ""
+	pane.Metadata.OwnerRef.UID = "win-alpha-review"
+	third, err := runtime.preflight(context.Background(), registry, plan)
+	if err != nil {
+		t.Fatalf("owner revalidation: %v", err)
+	}
+	if first.signature() == third.signature() {
+		t.Fatal("owner change did not change the signed plan")
+	}
+
+	socketKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value,
+		"display-message", "-p", "-F", "#{socket_path}")
+	runner.errors = map[string]error{socketKey: appTypedCommandFailure{failure: inttmux.CommandFailure{
+		Kind: inttmux.CommandFailureExit, Stderr: "no server running on " + testDeleteTarget.value,
+	}}}
+	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil ||
+		!strings.Contains(err.Error(), "unavailable (no-server)") {
+		t.Fatalf("typed no-server error = %v", err)
+	}
+
+	runner.errors = map[string]error{socketKey: errors.New("permission denied")}
+	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil ||
+		!strings.Contains(err.Error(), "inspect exact tmux socket identity") {
+		t.Fatalf("permission error = %v", err)
+	}
+
+	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
+		"#{@projmux_project_uid}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}")
+	inventoryKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "list-panes", "-a", "-F", format)
+	runner.errors = map[string]error{inventoryKey: errors.New("inventory unavailable")}
+	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil ||
+		!strings.Contains(err.Error(), "inventory exact tmux socket") {
+		t.Fatalf("inventory error = %v", err)
+	}
+}
+
+func TestPaneDeleteAuthorityUsesActivationGenerationNotTerminationReceipt(t *testing.T) {
+	registry := resourceFixtureRegistry(t)
+	plan := panePlanFor(t, registry, coremetadata.KindAgent, "agt-alpha-codex")
+	before, err := paneDeleteAuthoritySignature(registry, plan)
+	if err != nil {
+		t.Fatalf("initial authority: %v", err)
+	}
+
+	agent, _ := registry.Agent("agt-alpha-codex")
+	agent.Status.LastTermination = &coremetadata.TerminationEvidence{Generation: "receipt-written-by-delete"}
+	afterReceipt, err := paneDeleteAuthoritySignature(registry, plan)
+	if err != nil {
+		t.Fatalf("receipt authority: %v", err)
+	}
+	if afterReceipt != before {
+		t.Fatal("delete's own termination receipt changed live authority")
+	}
+
+	pane, _ := registry.Pane("pan-alpha-codex")
+	pane.Status.Activation.Generation = "replacement-materialization"
+	afterGeneration, err := paneDeleteAuthoritySignature(registry, plan)
+	if err != nil {
+		t.Fatalf("generation authority: %v", err)
+	}
+	if afterGeneration == before {
+		t.Fatal("current Pane activation generation did not change live authority")
 	}
 }
 

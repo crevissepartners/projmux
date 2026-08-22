@@ -510,6 +510,22 @@ no Project uid mirror contaminate the control session. Window, Pane, and Agent
 deletes preserve that `(root kind, root uid)` chain in the signed live plan and
 report a final-window cascade with its actual root kind.
 
+Pane and Agent Registry-only deletion is deliberately narrower. It accepts
+only an explicit exact `uid:` selector: a Pane must carry durable
+`MissingRuntime=True/RuntimeUnbound` evidence, and an Agent must be `Offline`
+with no `paneRef` (with every retained descendant Pane also marked
+`MissingRuntime`). The exact routed server must answer with a non-empty socket
+identity and a non-empty Pane inventory that proves the target has zero mirrors.
+A missing server, empty or failed inventory, unavailable or permission-denied
+transport, implicit/name/scope/`--all` selection, and duplicate or foreign
+mirrors are not absence authority and make zero writes. Dry-run and apply sign
+the same socket, owner/root chain, lifecycle evidence, Pane activation
+generation, and Agent binding; locked revalidation refuses zero-to-live,
+live-to-zero, owner, generation, duplicate, or foreign changes. A successful
+Registry-only result reports that no tmux Pane was killed, preserves the owning
+Window/root/socket and all siblings, and repeating the exact apply returns the
+ordinary no-match result.
+
 `delete window|pane|agent` names the server its live half addresses the same
 way `reconcile resources` does: `--socket <name>`, `--socket-path <absolute>`,
 or the inherited absolute `$TMUX`. Outside tmux with neither flag it refuses

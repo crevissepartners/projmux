@@ -3065,6 +3065,116 @@ if [[ "$(delete_tmux display-message -p -t "$delete_sibling_shell" '#{pane_id}')
   exit 1
 fi
 
+# Exact runtime absence plus durable lifecycle evidence authorizes only a
+# Registry-only Pane/Agent delete. Exercise the Pane while the socket is
+# app-owned, then the Agent with the app marker removed (standalone), keeping a
+# live Agent and the complete already-absent tmux inventory byte-identical.
+delete_live_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
+delete_live_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
+delete_live_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_live_agent_pane" @projmux_pane_uid)"
+delete_offline_pane="$(delete_pmx create pane --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id -- sleep 600)"
+delete_offline_pane_uid="$(delete_tmux show-options -pqv -t "$delete_offline_pane" @projmux_pane_uid)"
+if [[ "$(delete_tmux show-options -gqv @projmux_app)" != "1" ]]; then
+  echo "offline Pane fixture is not on the app-owned host" >&2
+  exit 1
+fi
+delete_tmux kill-pane -t "$delete_offline_pane"
+delete_offline_pane_ready=0
+for _ in {1..200}; do
+  if delete_pmx describe pane "uid:$delete_offline_pane_uid" -o json >"$delete_root/offline-pane.json" 2>/dev/null && \
+    grep -Fq '"type": "MissingRuntime"' "$delete_root/offline-pane.json" && \
+    grep -Fq '"reason": "RuntimeUnbound"' "$delete_root/offline-pane.json"; then
+    delete_offline_pane_ready=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$delete_offline_pane_ready" != "1" ]]; then
+  echo "raw Pane loss did not converge to durable MissingRuntime evidence" >&2
+  exit 1
+fi
+delete_offline_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
+delete_offline_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
+delete_offline_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_offline_agent_pane" @projmux_pane_uid)"
+delete_tmux kill-pane -t "$delete_offline_agent_pane"
+delete_offline_agent_ready=0
+for _ in {1..200}; do
+  if delete_pmx describe agent "uid:$delete_offline_agent_uid" -o json >"$delete_root/offline-agent.json" 2>/dev/null && \
+    delete_pmx describe pane "uid:$delete_offline_agent_pane_uid" -o json >"$delete_root/offline-agent-pane.json" 2>/dev/null && \
+    grep -Fq '"phase": "Offline"' "$delete_root/offline-agent.json" && \
+    grep -Fq '"type": "MissingRuntime"' "$delete_root/offline-agent-pane.json"; then
+    delete_offline_agent_ready=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$delete_offline_agent_ready" != "1" ]]; then
+  echo "raw Agent Pane loss did not converge to Offline/MissingRuntime evidence" >&2
+  exit 1
+fi
+delete_tmux list-panes -a -F '#{session_id}:#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort >"$delete_root/offline-pane.tmux-before"
+{
+  delete_pmx get projects -o uid
+  delete_pmx get windows --all-projects -o uid
+  delete_pmx get panes --all-projects -o uid
+  delete_pmx get agents --all-projects -o uid
+} | grep -Fvx -e "$delete_offline_pane_uid" -e "$delete_offline_agent_uid" -e "$delete_offline_agent_pane_uid" | sort >"$delete_root/offline-sibling-graph.before"
+sha256sum "$delete_root/offline-sibling-graph.before" >"$delete_root/offline-sibling-graph.before.sha256"
+cp "$delete_registry" "$delete_root/registry.before-offline-pane-dry-run"
+delete_pmx_delete pane "uid:$delete_offline_pane_uid" --dry-run >"$delete_root/offline-pane-dry-run.out"
+cmp "$delete_root/registry.before-offline-pane-dry-run" "$delete_registry"
+smoke_assert_file_contains "$delete_root/offline-pane-dry-run.out" "registry-only would delete this Pane; no tmux Pane would be killed"
+delete_pmx_delete pane "uid:$delete_offline_pane_uid" --yes >"$delete_root/offline-pane.out"
+smoke_assert_file_contains "$delete_root/offline-pane.out" "registry-only deleted this Pane; no tmux Pane was killed"
+delete_tmux list-panes -a -F '#{session_id}:#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort >"$delete_root/offline-pane.tmux-after"
+cmp "$delete_root/offline-pane.tmux-before" "$delete_root/offline-pane.tmux-after"
+if delete_pmx_delete pane "uid:$delete_offline_pane_uid" --yes >"$delete_root/offline-pane-repeat.out" 2>"$delete_root/offline-pane-repeat.err"; then
+  echo "repeat offline Pane delete unexpectedly succeeded" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$delete_root/offline-pane-repeat.err" "matched no panes"
+
+delete_tmux set-option -gqu @projmux_app
+if [[ -n "$(delete_tmux show-options -gqv @projmux_app)" ]]; then
+  echo "offline Agent fixture did not enter standalone host mode" >&2
+  exit 1
+fi
+delete_tmux list-panes -a -F '#{session_id}:#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort >"$delete_root/offline-agent.tmux-before"
+delete_pmx_delete agent "uid:$delete_offline_agent_uid" --dry-run >"$delete_root/offline-agent-dry-run.out"
+smoke_assert_file_contains "$delete_root/offline-agent-dry-run.out" "registry-only would delete this Agent; no tmux Pane would be killed"
+smoke_assert_file_contains "$delete_root/offline-agent-dry-run.out" "evidence=Offline+MissingRuntime"
+delete_pmx_delete agent "uid:$delete_offline_agent_uid" --yes >"$delete_root/offline-agent.out"
+smoke_assert_file_contains "$delete_root/offline-agent.out" "registry-only deleted this Agent; no tmux Pane was killed"
+delete_tmux list-panes -a -F '#{session_id}:#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort >"$delete_root/offline-agent.tmux-after"
+cmp "$delete_root/offline-agent.tmux-before" "$delete_root/offline-agent.tmux-after"
+delete_pmx describe agent "uid:$delete_live_agent_uid" -o json >"$delete_root/live-agent.after-offline-deletes.json"
+smoke_assert_file_contains "$delete_root/live-agent.after-offline-deletes.json" '"phase": "Running"'
+smoke_assert_file_contains "$delete_root/live-agent.after-offline-deletes.json" "\"paneRef\": \"$delete_live_agent_pane_uid\""
+{
+  delete_pmx get projects -o uid
+  delete_pmx get windows --all-projects -o uid
+  delete_pmx get panes --all-projects -o uid
+  delete_pmx get agents --all-projects -o uid
+} | sort >"$delete_root/offline-sibling-graph.after"
+sha256sum "$delete_root/offline-sibling-graph.after" >"$delete_root/offline-sibling-graph.after.sha256"
+cmp "$delete_root/offline-sibling-graph.before" "$delete_root/offline-sibling-graph.after"
+if [[ "$(cut -d ' ' -f 1 <"$delete_root/offline-sibling-graph.before.sha256")" != \
+  "$(cut -d ' ' -f 1 <"$delete_root/offline-sibling-graph.after.sha256")" ]]; then
+  echo "offline Pane/Agent delete changed the sibling Project/Window/Pane/Agent graph hash" >&2
+  exit 1
+fi
+if delete_pmx_delete agent "uid:$delete_offline_agent_uid" --yes >"$delete_root/offline-agent-repeat.out" 2>"$delete_root/offline-agent-repeat.err"; then
+  echo "repeat offline Agent delete unexpectedly succeeded" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$delete_root/offline-agent-repeat.err" "matched no agents"
+delete_tmux set-option -gq @projmux_app 1
+if grep -Fq -- "-L $delete_socket kill-pane -t $delete_offline_pane" "$delete_shim_log" || \
+  grep -Fq -- "-L $delete_socket kill-pane -t $delete_offline_agent_pane" "$delete_shim_log"; then
+  echo "offline Pane/Agent canonical delete issued raw tmux cleanup" >&2
+  exit 1
+fi
+
 # Raw runtime loss leaves desired topology in the Registry. Canonical Window
 # delete must retire that graph without issuing a tmux kill. Include a shell
 # Pane and Agent descendant, then prove dry-run, repeat, sibling, and socket
@@ -3190,7 +3300,8 @@ smoke_assert_file_contains "$delete_root/pane-session-last.out" "live cascade en
 
 delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-after-pane-delete.out"
 delete_pmx get panes --all-projects -o uid >"$delete_root/panes.after-reconcile"
-for deleted_uid in "$delete_split_uid" "$delete_agent_pane_uid" "$delete_agent_two_pane_uid" "$delete_last_pane_uid" "$delete_gamma_pane_uid"; do
+for deleted_uid in "$delete_split_uid" "$delete_agent_pane_uid" "$delete_agent_two_pane_uid" \
+  "$delete_offline_pane_uid" "$delete_offline_agent_pane_uid" "$delete_last_pane_uid" "$delete_gamma_pane_uid"; do
   if grep -Fqx "$deleted_uid" "$delete_root/panes.after-reconcile"; then
     echo "deleted Pane $deleted_uid was re-imported after reconciliation" >&2
     exit 1
@@ -3233,6 +3344,14 @@ if [[ "$delete_settled" != "1" ]]; then
   exit 1
 fi
 cp "$delete_registry" "$delete_root/registry.before-no-server-dry-run"
+if delete_pmx_delete pane "uid:$delete_sibling_shell_uid" --dry-run \
+  >"$delete_root/no-server-pane.out" 2>"$delete_root/no-server-pane.err"; then
+  echo "absent-server Pane delete incorrectly treated absence as authority" >&2
+  exit 1
+fi
+cmp "$delete_root/registry.before-no-server-dry-run" "$delete_registry"
+smoke_assert_file_contains "$delete_root/no-server-pane.err" "unavailable (no-server)"
+smoke_assert_file_contains "$delete_root/no-server-pane.err" "absence is not Registry deletion authority"
 delete_pmx_delete window "uid:$delete_sibling_uid" --project "uid:$delete_alpha_project_uid" --dry-run >"$delete_root/no-server-dry-run.out"
 cmp "$delete_root/registry.before-no-server-dry-run" "$delete_registry"
 smoke_assert_file_contains "$delete_root/no-server-dry-run.out" "registry-only would delete this Window; no tmux Window would be killed"

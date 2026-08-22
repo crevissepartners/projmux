@@ -311,6 +311,11 @@ func (m Mutator) DeletePane(reg *Registry, paneUID string) error {
 	}
 	now := m.clock()().UTC()
 	replaceShell := ownerKind == KindWindow && pane.Spec.Role == PaneRoleShell && reg.firstWindowPaneUID(ownerUID) == paneUID
+	offlineCurrentAgent := false
+	if ownerKind == KindAgent {
+		agent, ok := reg.Agent(ownerUID)
+		offlineCurrentAgent = ok && agent.Status.Phase == PhaseRunning && agent.Status.PaneRef == paneUID
+	}
 	before := reg.Clone()
 	reg.deletePane(paneUID)
 	if replaceShell && reg.firstWindowPaneUID(ownerUID) == "" {
@@ -328,7 +333,10 @@ func (m Mutator) DeletePane(reg *Registry, paneUID string) error {
 		txn.Commit()
 	}
 	if ownerKind == KindAgent {
-		if agent, ok := reg.Agent(ownerUID); ok && agent.Status.Phase == PhaseRunning {
+		// An Agent may own retained Panes from earlier materializations. Removing
+		// one of those MissingRuntime rows must not offline the Agent's current,
+		// different Pane generation.
+		if agent, ok := reg.Agent(ownerUID); ok && offlineCurrentAgent {
 			agent.Status.Phase = PhaseOffline
 			agent.Status.Reason = string(AgentExitDeleted)
 			agent.Status.LastTransitionAt = now
