@@ -124,6 +124,13 @@
     },
     {
       "rule": "G104",
+      "path": "internal/config/runtimediagnostics.go",
+      "message": "Errors unhandled",
+      "source": "tmp.Close()",
+      "max_count": 1
+    },
+    {
+      "rule": "G104",
       "path": "internal/config/statusbar.go",
       "message": "Errors unhandled",
       "source": "tmp.Close()",
@@ -439,6 +446,13 @@
     },
     {
       "rule": "G301",
+      "path": "internal/config/runtimediagnostics.go",
+      "message": "Expect directory permissions to be 0750 or less",
+      "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
+      "max_count": 1
+    },
+    {
+      "rule": "G301",
       "path": "internal/config/statusbar.go",
       "message": "Expect directory permissions to be 0750 or less",
       "source": "if err := os.MkdirAll(dir, 0o755); err != nil {",
@@ -520,6 +534,13 @@
       "message": "Expect file permissions to be 0600 or less",
       "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
       "max_count": 3
+    },
+    {
+      "rule": "G302",
+      "path": "internal/config/runtimediagnostics.go",
+      "message": "Expect file permissions to be 0600 or less",
+      "source": "if err := os.Chmod(tmpName, 0o644); err != nil {",
+      "max_count": 1
     },
     {
       "rule": "G302",
@@ -716,6 +737,13 @@
       "message": "Potential file inclusion via variable",
       "source": "content, err := os.ReadFile(path)",
       "max_count": 3
+    },
+    {
+      "rule": "G304",
+      "path": "internal/config/runtimediagnostics.go",
+      "message": "Potential file inclusion via variable",
+      "source": "content, err := os.ReadFile(path)",
+      "max_count": 1
     },
     {
       "rule": "G304",

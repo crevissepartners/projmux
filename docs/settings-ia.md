@@ -58,9 +58,19 @@ step, never a silent no-op.
     Project`, which forwards to the canonical `create project --root` route for
     that one exact path, and `Unpin candidate`, which removes the preference and
     leaves the directory alone. Nothing here adopts a path automatically.
-  - `Project Sidebar [View]` — `Closed Project startup` optionally shows exactly
-    two actions. `Continue project` materializes the Project's current Registry
-    desired state and then moves the client. `Open fresh` confirms exact counts,
+  - `Project Sidebar [View]` — holds the two Projects sidebar policies:
+    `Runtime diagnostics [Choice]` chooses `When needed` (the read-time default
+    with nothing saved) or `Always` for the sidebar's Runtime row. `When needed`
+    keeps the row for a refused runtime class or for an observation that could
+    not be taken, and withholds it otherwise; `Always` is the shipped
+    every-render behavior. The choice moves one row on one surface: the Registry
+    view still carries the complete Runtime row and class tally, the Sessions and
+    Recent Windows links are unchanged, and `projmux runtime diagnostics` and
+    `get runtime` never read it. An unrecognized saved value applies the default
+    without writing and shows an invalid source.
+    `Closed Project startup` optionally shows exactly two actions.
+    `Continue project` materializes the Project's current Registry desired state
+    and then moves the client. `Open fresh` confirms exact counts,
     preserves the canonical Project Window and shell Pane UID/recipe, and removes
     every other target descendant, reservation, and conversation pointer before
     ordinary materialization. Esc returns to Projects. Neither action deletes or

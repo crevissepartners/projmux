@@ -512,6 +512,8 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 			return errors.New("project root settings are not configured")
 		}
 		return c.switcher.executeProjdirSettingsAction(action, stdout, stderr)
+	case strings.HasPrefix(value, settingsActionPrefixRuntimeDiagnostics):
+		return c.setRuntimeDiagnosticsVisibility(strings.TrimPrefix(value, settingsActionPrefixRuntimeDiagnostics))
 	case strings.HasPrefix(value, settingsActionPrefixSessionState):
 		return c.executeSessionStateAction(strings.TrimPrefix(value, settingsActionPrefixSessionState), stdout, stderr)
 	case strings.HasPrefix(value, settingsActionPrefixStatusbar):

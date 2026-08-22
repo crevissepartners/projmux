@@ -2777,7 +2777,14 @@ func (c *switchCommand) renderRowsWithMode(ctx context.Context, ui string, candi
 	// It is offered only where the surface it leads to is wired. A picker built
 	// without the navigation seam has no Registry rows to be incomplete about
 	// and no Runtime surface to open, so a link would be a dead row.
-	if c.navigation != nil {
+	//
+	// Where it is wired, it is offered when the operator's Projects sidebar
+	// policy says so: `Always` keeps it on every render, and the default
+	// `When needed` keeps it for a refused class or an observation that could
+	// not be taken. Only the row is conditional -- the view behind it is built
+	// in full either way, so the tally the row carries and the diagnostics
+	// surface it opens are the same in both modes.
+	if c.navigation != nil && switchRuntimeRowVisible(view, currentRuntimeDiagnosticsVisibility(c.homeDir, c.lookupEnv).Mode) {
 		renderCandidates = append(renderCandidates, switchRuntimeRow(view, ui))
 	}
 	renderCandidates = append(renderCandidates, settings...)

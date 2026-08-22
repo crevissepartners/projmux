@@ -150,6 +150,7 @@ var settingsNavCatalog = []settingsNavNode{
 
 	{ID: settingsNavProjectsSidebar, Parent: settingsNavProjects, Label: "Project Sidebar", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsProjectsSidebar},
 	{ID: settingsNavProjectsSidebar + ".closed-startup", Parent: settingsNavProjectsSidebar, Label: "Closed Project startup", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Dynamic: true, Note: "Continue project / Open fresh"},
+	{ID: settingsNavProjectsSidebar + ".runtime-diagnostics", Parent: settingsNavProjectsSidebar, Label: "Runtime diagnostics", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Dynamic: true, Note: "When needed / Always"},
 
 	// AI -------------------------------------------------------------------
 	{ID: settingsNavAI, Parent: settingsNavScopeGlobal, Label: "AI", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsSectionAI},

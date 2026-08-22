@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
@@ -289,6 +290,37 @@ func switchUnregisteredPaths(view registryview.View, candidatePaths []string) []
 		out = append(out, path)
 	}
 	return out
+}
+
+// switchRuntimeRowVisible decides whether the Projects list offers its Runtime
+// link, from the saved preference and one bounded view.
+//
+// It is pure and it is the only decision: the view it is handed still carries a
+// complete Runtime row and complete counts, and the diagnostics routes never
+// consult this at all. Hiding a row is not disabling a capability.
+//
+// `Always` is the shipped behavior, kept for the operator who reads the tally as
+// a health line. `When needed` -- the read-time default -- shows the row for
+// exactly two reasons:
+//
+//   - A refused class is present. `Unattributed`, `Foreign`, `Recoverable` and
+//     `Conflict` are the classes an operator would act on, so their sum is the
+//     signal. `Control` and `Ephemeral` are deliberately not in it: the app's own
+//     control session and a scratch session are what a healthy host looks like,
+//     and counting them would put the row back on every render.
+//   - The observation could not be taken, whole or in part. No transport, or any
+//     scope the inventory marked unavailable, means the answer to "is anything
+//     wrong" is unknown -- and "I could not look" is not "nothing is here", so
+//     the escape hatch stays reachable rather than being hidden by a failure.
+func switchRuntimeRowVisible(view registryview.View, mode config.RuntimeDiagnosticsVisibility) bool {
+	if mode == config.RuntimeDiagnosticsAlways {
+		return true
+	}
+	if !view.Observed() || len(view.Unavailable) > 0 {
+		return true
+	}
+	counts := view.Runtime
+	return counts.Unattributed+counts.Foreign+counts.Recoverable+counts.Conflict > 0
 }
 
 // switchRuntimeRow renders the Runtime link as the last row of the list.
