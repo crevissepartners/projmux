@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 )
 
@@ -175,6 +176,7 @@ func TestClientSaveSessionSnapshotRefreshesAIResumeIDFromSessionIDBeforeCapture(
 			"#{@projmux_ai_managed}",
 			"#{@projmux_ai_agent}",
 			"#{@projmux_ai_session_id}",
+			"#{@projmux_ai_thread_id}",
 			"#{@projmux_ai_resume_id}",
 			"#{@projmux_ai_transcript_path}",
 		)}},
@@ -187,6 +189,97 @@ func TestClientSaveSessionSnapshotRefreshesAIResumeIDFromSessionIDBeforeCapture(
 	}
 	if len(runner.calls) < len(wantPrefix) || !reflect.DeepEqual(runner.calls[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("tmux call prefix = %#v, want %#v", runner.calls, wantPrefix)
+	}
+}
+
+func TestSessionStateBoundSessionIDWinsWithoutThreadRead(t *testing.T) {
+	now := time.Date(2026, 8, 22, 1, 2, 3, 0, time.UTC)
+	runner := &scriptedRunner{t: t, steps: []scriptedStep{
+		{output: []byte("%1\x1f/work/app\x1f1\x1fcodex\x1fthread-bound\x1fthread-candidate\x1f\x1f\n")},
+		{output: []byte{}}, {output: []byte{}}, {output: []byte{}},
+	}}
+	reads := 0
+	client := NewClient(runner, WithCodexCatalogThreadReader(func(context.Context, string) (codexappserver.CatalogThread, error) {
+		reads++
+		return codexappserver.CatalogThread{}, errors.New("must not read")
+	}))
+	if err := client.refreshSessionStateAIResumeMetadata(context.Background(), "workspace", now); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 0 {
+		t.Fatalf("thread/read calls = %d, want zero for bound session id", reads)
+	}
+	if len(runner.calls) != 4 || runner.calls[1].args[len(runner.calls[1].args)-1] != "thread-bound" {
+		t.Fatalf("calls = %#v", runner.calls)
+	}
+}
+
+func TestSessionStatePersistedResumeIDWinsWithoutThreadRead(t *testing.T) {
+	runner := &scriptedRunner{t: t, steps: []scriptedStep{
+		{output: []byte("%1\x1f/work/app\x1f1\x1fcodex\x1f\x1fthread-candidate\x1fthread-persisted\x1f\n")},
+	}}
+	reads := 0
+	client := NewClient(runner, WithCodexCatalogThreadReader(func(context.Context, string) (codexappserver.CatalogThread, error) {
+		reads++
+		return codexappserver.CatalogThread{}, errors.New("must not read")
+	}))
+	if err := client.refreshSessionStateAIResumeMetadata(context.Background(), "workspace", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 0 || len(runner.calls) != 1 {
+		t.Fatalf("reads=%d calls=%#v, persisted resume id must be replayed without validation or rewrite", reads, runner.calls)
+	}
+}
+
+func TestSessionStateThreadOnlyCandidateRequiresExactThreadRead(t *testing.T) {
+	now := time.Date(2026, 8, 22, 1, 2, 3, 0, time.UTC)
+	runner := &scriptedRunner{t: t, steps: []scriptedStep{
+		{output: []byte("%1\x1f/work/app\x1f1\x1fcodex\x1f\x1fthread-candidate\x1f\x1f\n")},
+		{output: []byte{}}, {output: []byte{}}, {output: []byte{}},
+	}}
+	var readID string
+	client := NewClient(runner, WithCodexCatalogThreadReader(func(_ context.Context, threadID string) (codexappserver.CatalogThread, error) {
+		readID = threadID
+		return codexappserver.CatalogThread{ID: threadID, CWD: "/work/app", RuntimeStatus: "idle"}, nil
+	}))
+	if err := client.refreshSessionStateAIResumeMetadata(context.Background(), "workspace", now); err != nil {
+		t.Fatal(err)
+	}
+	if readID != "thread-candidate" || len(runner.calls) != 4 ||
+		runner.calls[1].args[len(runner.calls[1].args)-1] != "thread-candidate" ||
+		runner.calls[2].args[len(runner.calls[2].args)-1] != "app-server" {
+		t.Fatalf("readID=%q calls=%#v", readID, runner.calls)
+	}
+}
+
+func TestSessionStateThreadReadNeverSwitchesCandidateIdentity(t *testing.T) {
+	runner := &scriptedRunner{t: t, steps: []scriptedStep{{output: []byte("%1\x1f/work/app\x1f1\x1fcodex\x1f\x1fthread-candidate\x1f\x1f\n")}}}
+	client := NewClient(runner, WithCodexCatalogThreadReader(func(_ context.Context, _ string) (codexappserver.CatalogThread, error) {
+		return codexappserver.CatalogThread{ID: "thread-other", CWD: "/work/app", RuntimeStatus: "idle"}, nil
+	}))
+	if err := client.refreshSessionStateAIResumeMetadata(context.Background(), "workspace", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("different read identity caused metadata writes: %#v", runner.calls)
+	}
+}
+
+func TestSessionStateThreadReadFailureWritesZeroWhenRolloutHasNoCandidate(t *testing.T) {
+	runner := &scriptedRunner{t: t, steps: []scriptedStep{{output: []byte("%1\x1f/work/missing\x1f1\x1fcodex\x1f\x1fthread-candidate\x1f\x1f\n")}}}
+	reads := 0
+	client := NewClient(runner,
+		WithFileReader(func(string) ([]byte, error) { return nil, os.ErrNotExist }),
+		WithCodexCatalogThreadReader(func(_ context.Context, threadID string) (codexappserver.CatalogThread, error) {
+			reads++
+			return codexappserver.CatalogThread{}, errors.New("app-server unavailable")
+		}),
+	)
+	if err := client.refreshSessionStateAIResumeMetadata(context.Background(), "workspace", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 1 || len(runner.calls) != 1 {
+		t.Fatalf("reads=%d calls=%#v, want one probe-only read and zero metadata writes", reads, runner.calls)
 	}
 }
 
@@ -230,6 +323,7 @@ func TestClientSaveSessionSnapshotRefreshesClaudeResumeIDFromTranscriptBeforeCap
 			"#{@projmux_ai_managed}",
 			"#{@projmux_ai_agent}",
 			"#{@projmux_ai_session_id}",
+			"#{@projmux_ai_thread_id}",
 			"#{@projmux_ai_resume_id}",
 			"#{@projmux_ai_transcript_path}",
 		)}},
@@ -285,6 +379,7 @@ func TestClientSaveSessionSnapshotRefreshesCodexResumeIDFromMatchingRolloutLog(t
 			"#{@projmux_ai_managed}",
 			"#{@projmux_ai_agent}",
 			"#{@projmux_ai_session_id}",
+			"#{@projmux_ai_thread_id}",
 			"#{@projmux_ai_resume_id}",
 			"#{@projmux_ai_transcript_path}",
 		)}},

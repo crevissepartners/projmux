@@ -73,7 +73,7 @@ func sessionStateRecipeResumeHealth(recipe sessionstate.Recipe, savedAt time.Tim
 
 func sessionStateResumeConfidence(source string) string {
 	switch strings.TrimSpace(source) {
-	case "session-id", "hook":
+	case "session-id", "hook", "app-server", aisessions.SourceCodexAppServer:
 		return "high"
 	case "claude-transcript", "codex-log", aisessions.SourceCodexRollout,
 		aisessions.SourceAntigravityLastConversation, aisessions.SourceAntigravityMetadata:

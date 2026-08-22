@@ -105,6 +105,7 @@ type aiCommand struct {
 	notifyDiagnostics          *diagnostics.NotifyFocusRecorder
 	operationalDiagnostics     *diagnostics.AIRecorder
 	openCodexCapabilitySession func(context.Context) (codexCapabilitySession, error)
+	openCodexCatalog           aisessions.OpenCodexCatalog
 	codexCapabilityCache       *corecap.Cache
 	codexCapabilitySessionMu   sync.Mutex
 	codexCapabilitySession     codexCapabilitySession
@@ -130,19 +131,20 @@ type aiCommand struct {
 
 func newAICommand() *aiCommand {
 	return &aiCommand{
-		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		executable:   resolveExecutablePath,
-		lookupEnv:    os.Getenv,
-		homeDir:      os.UserHomeDir,
-		stdin:        os.Stdin,
-		readFile:     os.ReadFile,
-		writeFile:    os.WriteFile,
-		mkdirAll:     os.MkdirAll,
-		runCommand:   runExternalCommand,
-		readCommand:  readExternalCommand,
-		now:          time.Now,
-		sleep:        time.Sleep,
-		producer:     newAttentionNotifyProducer(),
+		nativePicker:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		executable:       resolveExecutablePath,
+		lookupEnv:        os.Getenv,
+		homeDir:          os.UserHomeDir,
+		stdin:            os.Stdin,
+		readFile:         os.ReadFile,
+		writeFile:        os.WriteFile,
+		mkdirAll:         os.MkdirAll,
+		runCommand:       runExternalCommand,
+		readCommand:      readExternalCommand,
+		openCodexCatalog: aisessions.NewDefaultCodexCatalogOpener(version.String()),
+		now:              time.Now,
+		sleep:            time.Sleep,
+		producer:         newAttentionNotifyProducer(),
 		openCodexCapabilitySession: func(ctx context.Context) (codexCapabilitySession, error) {
 			return codexappserver.OpenDefaultCapabilitySession(ctx, version.String())
 		},
@@ -1197,8 +1199,12 @@ func (c *aiCommand) createShellPane(producer canonicalCreateProducer, direction 
 // createResumedAgentPane opens a provider Agent that joins an existing
 // conversation instead of starting a new one.
 func (c *aiCommand) createResumedAgentPane(producer canonicalCreateProducer, mode, direction, conversationID string) error {
+	return c.createResumedAgentPaneWithSource(producer, mode, direction, conversationID, "")
+}
+
+func (c *aiCommand) createResumedAgentPaneWithSource(producer canonicalCreateProducer, mode, direction, conversationID, source string) error {
 	return c.createPaneFromIntent(agentPaneIntent{
-		producer: producer, provider: mode, placement: direction, conversationID: conversationID,
+		producer: producer, provider: mode, placement: direction, conversationID: conversationID, resumeSource: source,
 	})
 }
 
@@ -1312,10 +1318,13 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	// Defer the turn count: discovery returns candidates fast (early-exit, no
 	// per-turn scan) so the picker renders immediately, and the turn column is
 	// filled for the displayed rows by a background pass (see runResumeSessionPicker).
-	sessions, err := aisessions.Discover(contextDir, aisessions.DiscoverOptions{
-		HomeDir:    homeDir,
-		Depth:      depth,
-		DeferTurns: true,
+	discoverCtx, cancel := context.WithTimeout(context.Background(), codexNativeThreadTimeout)
+	defer cancel()
+	sessions, err := aisessions.DiscoverContext(discoverCtx, contextDir, aisessions.DiscoverOptions{
+		HomeDir:          homeDir,
+		Depth:            depth,
+		DeferTurns:       true,
+		OpenCodexCatalog: c.openCodexCatalog,
 	})
 	if err != nil {
 		return err
@@ -1471,15 +1480,31 @@ func aiResumeSessionRow(session aisessions.SessionMeta, now time.Time, locale i1
 		extra = ansiDim(aiResumeFitCell(relCWD, aiResumeCWDCellWidth)) + " "
 	}
 	turnsCell := ansiDim(aiResumeTurnsCell(session.Turns))
+	provenance := aiResumeProvenance(session)
 
-	label := fmt.Sprintf("%s %s %s %s%s %s",
-		relTime, badge, branchCell, extra, turnsCell, title)
+	label := fmt.Sprintf("%s %s %s %s%s %s%s",
+		relTime, badge, branchCell, extra, turnsCell, title, provenance)
 
 	return intpickercompat.Entry{
 		Label:     label,
 		Value:     aiResumePickerValue(agent, resumeID),
-		SearchKey: strings.TrimSpace(strings.Join([]string{agent, title, resumeID, branch, relCWD}, " ")),
+		SearchKey: strings.TrimSpace(strings.Join([]string{agent, title, resumeID, branch, relCWD, session.Source, session.Confidence, session.Reason, session.RuntimeStatus}, " ")),
 	}
+}
+
+func aiResumeProvenance(session aisessions.SessionMeta) string {
+	confidence := strings.TrimSpace(session.Confidence)
+	if confidence == "" {
+		return ""
+	}
+	parts := []string{strings.TrimSpace(session.Source), confidence}
+	if status := strings.TrimSpace(session.RuntimeStatus); status != "" {
+		parts = append(parts, status)
+	}
+	if reason := strings.TrimSpace(session.Reason); reason != "" {
+		parts = append(parts, reason)
+	}
+	return ansiDim("  [" + strings.Join(parts, "/") + "]")
 }
 
 // aiResumeAgentBadge renders the agent tag as a tight, per-agent-coloured
@@ -1649,6 +1674,9 @@ func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direct
 	if err != nil {
 		_ = c.displayMessage(fmt.Sprintf("Could not resume %s session: %v; launching new session", mode, err))
 		return c.createAgentPane(canonicalProducerResumePicker, mode, direction)
+	}
+	if mode == aiModeCodex {
+		return c.createResumedAgentPaneWithSource(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1], selection.source)
 	}
 	return c.createResumedAgentPane(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1])
 }

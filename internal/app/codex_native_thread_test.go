@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
@@ -72,6 +73,12 @@ func (f *fakeNativePaneLauncher) BindNativeCodexPane(paneID, contextDir, title, 
 type fakeNativeResumeLauncher struct {
 	*fakeResumeLauncher
 	*fakeNativePaneLauncher
+	sources []string
+}
+
+func (f *fakeNativeResumeLauncher) BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversationID, source string) {
+	f.fakeResumeLauncher.BindResumedAgentPane(paneID, provider, contextDir, title, conversationID)
+	f.sources = append(f.sources, source)
 }
 
 func TestNativeCodexCreateBindsExactThreadAndSubmitsPromptOnce(t *testing.T) {
@@ -166,6 +173,72 @@ func TestNativeCodexResumeReusesStoredThreadAndCreatesZeroThreads(t *testing.T) 
 	pane, ok := store.registry.Pane(after.Status.PaneRef)
 	if !ok || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.ThreadID != resumeFixtureConversation || pane.Status.Activation.Codex.TurnID != "" {
 		t.Fatalf("resumed Pane native binding = %#v", pane.Status.Activation)
+	}
+}
+
+func TestNativeCatalogPickerResumeUsesExactThreadAndCreatesZeroThreads(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	id := "019f0000-0000-7000-8000-000000000041"
+	native := &fakeNativeThreadController{resumeBinding: codexappserver.ThreadBinding{ThreadID: id}}
+	panes := &fakeNativePaneLauncher{}
+	fx.create.codexNative = native
+	fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
+
+	err := fx.create.createFromIntent(agentPaneIntent{
+		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
+		conversationID: id, resumeSource: aisessions.SourceCodexAppServer, anchorPaneID: fx.originID,
+	}, ioDiscard{}, ioDiscard{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(native.creates) != 0 || len(native.resumes) != 1 || native.resumes[0].threadID != id ||
+		len(panes.plans) != 1 || panes.plans[0].threadID != id || len(panes.bound) != 1 || panes.bound[0].threadID != id {
+		t.Fatalf("creates=%+v resumes=%+v plans=%+v bound=%+v", native.creates, native.resumes, panes.plans, panes.bound)
+	}
+}
+
+func TestRolloutCatalogPickerResumeStaysOnCurrentCLILane(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	id := "019f0000-0000-7000-8000-000000000042"
+	native := &fakeNativeThreadController{resumeBinding: codexappserver.ThreadBinding{ThreadID: id}}
+	legacy := newFakeResumeLauncher()
+	fx.create.codexNative = native
+	fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
+
+	err := fx.create.createFromIntent(agentPaneIntent{
+		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
+		conversationID: id, resumeSource: aisessions.SourceCodexRollout, anchorPaneID: fx.originID,
+	}, ioDiscard{}, ioDiscard{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(native.creates) != 0 || len(native.resumes) != 0 || len(legacy.plans) != 1 || legacy.plans[0].conversationID != id {
+		t.Fatalf("native creates=%+v resumes=%+v legacy=%+v", native.creates, native.resumes, legacy.plans)
+	}
+}
+
+func TestNativeCatalogPickerResumeUnavailableFallsBackToOneCLIPlan(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	id := "019f0000-0000-7000-8000-000000000043"
+	native := &fakeNativeThreadController{resumeErr: errFakeNativeUnavailable, fallback: true}
+	legacy := newFakeResumeLauncher()
+	panes := &fakeNativePaneLauncher{}
+	launcher := &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
+	fx.create.codexNative = native
+	fx.create.resumes = launcher
+
+	err := fx.create.createFromIntent(agentPaneIntent{
+		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
+		conversationID: id, resumeSource: aisessions.SourceCodexAppServer, anchorPaneID: fx.originID,
+	}, ioDiscard{}, ioDiscard{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(native.creates) != 0 || len(native.resumes) != 1 || native.resumes[0].threadID != id ||
+		len(legacy.plans) != 1 || legacy.plans[0].conversationID != id || len(panes.plans) != 0 || len(panes.bound) != 0 ||
+		len(launcher.sources) != 1 || launcher.sources[0] != aisessions.SourceCodexRollout {
+		t.Fatalf("native=%+v legacy=%+v nativePlans=%+v nativeBindings=%+v sources=%v",
+			native.resumes, legacy.plans, panes.plans, panes.bound, launcher.sources)
 	}
 }
 

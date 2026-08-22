@@ -198,6 +198,13 @@ NewWithConfig
 NewWithRoot
 NewWithSocketName
 WithFileReader
+# Test and compatibility seams for content-free AI conversation discovery and
+# exact Session State thread validation. Production uses the context-aware
+# catalog path and the default probe-only reader; in-package tests retain the
+# background-context wrapper and injected reader without manufacturing live
+# callers for either.
+Discover
+WithCodexCatalogThreadReader
 WithSocketName
 newClientWithEnv
 RenderWindowsCommandLine

@@ -10,6 +10,8 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 // canonicalIntentScope is the typed identity carried from one UI origin into
@@ -290,6 +292,10 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 	if c.agents == nil {
 		return errors.New("create agent: the provider launcher is not configured")
 	}
+	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
+	nativeCatalogResume := provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
+		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexAppServer
+	nativePickerResume := nativeCatalogResume && c.codexNative != nil && nativeLaunchCapable
 	var result createResult
 	err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		window, ok := working.Window(scope.windowUID)
@@ -335,6 +341,37 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		if err != nil {
 			return err
 		}
+		usedNative := false
+		bindFlags := flags
+		if nativeCatalogResume && !nativePickerResume {
+			bindFlags.resumeSource = aisessions.SourceCodexRollout
+		}
+		if nativePickerResume {
+			nativeCtx, cancel := prepareNativeContext(ctx)
+			prepared, nativeErr := c.codexNative.Resume(nativeCtx, workspace, flags.resumeConversation)
+			cancel()
+			switch {
+			case nativeErr == nil:
+				if strings.TrimSpace(prepared.ThreadID) != strings.TrimSpace(flags.resumeConversation) {
+					return nativeLaunchError(canonicalCreateAgent, fmt.Errorf("%w: native resume returned a different thread", codexappserver.ErrProtocol))
+				}
+				title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(workspace, prepared.ThreadID)
+				if err != nil {
+					return nativeLaunchError(canonicalCreateAgent, err)
+				}
+				if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
+					AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID,
+					Generation: activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
+				}); err != nil {
+					return MapMetadataError(err)
+				}
+				usedNative = true
+			case nativeFallbackAllowed(c.codexNative, nativeErr):
+				bindFlags.resumeSource = aisessions.SourceCodexRollout
+			default:
+				return nativeLaunchError(canonicalCreateAgent, nativeErr)
+			}
+		}
 		if err := c.runtime.markCreateOperation(ctx, scope.sessionID, ledger); err != nil {
 			return err
 		}
@@ -353,7 +390,11 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 			return err
 		}
 		c.runtime.equalizeSplitLayout(ctx, scope.anchorPaneID, intent.placement)
-		c.bindAgentPane(paneID, provider, workspace.CWD, title, flags)
+		if usedNative {
+			nativeLauncher.BindNativeCodexPane(paneID, workspace.CWD, title, flags.resumeConversation)
+		} else {
+			c.bindAgentPane(paneID, provider, workspace.CWD, title, bindFlags)
+		}
 		for _, option := range []string{aiPaneTopicOption, aiPaneTopicManualOption} {
 			if _, err := c.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-u", "-t", paneID, option); err != nil {
 				return tmuxError("%s: clear compatibility topic projection %s on Pane %s: %v", canonicalCreateAgent, option, paneID, err)

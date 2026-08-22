@@ -619,6 +619,31 @@ func TestAIResumePickerNoSessionsDelegatesToAgentPicker(t *testing.T) {
 	}
 }
 
+func TestAIResumeNativeAndFallbackProvenanceIsVisibleAndSearchable(t *testing.T) {
+	base := aisessions.SessionMeta{Agent: aisessions.AgentCodex, ResumeID: "thread-1", Title: "Provider title"}
+	native := base
+	native.Source, native.Confidence, native.RuntimeStatus = aisessions.SourceCodexAppServer, aisessions.ConfidenceHigh, "active"
+	fallback := base
+	fallback.Source, fallback.Confidence, fallback.Reason = aisessions.SourceCodexRollout, aisessions.ConfidenceMedium, aisessions.ReasonAppServerUnavailable
+	for _, test := range []struct {
+		name string
+		row  aisessions.SessionMeta
+		want []string
+	}{
+		{"native", native, []string{"codex-app-server/high/active"}},
+		{"fallback", fallback, []string{"codex-rollout/medium/app-server-unavailable"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			row := aiResumeSessionRow(test.row, time.Time{}, i18n.FallbackLocale, "/work", 0)
+			for _, want := range test.want {
+				if !strings.Contains(row.Label, want) || !strings.Contains(row.SearchKey, strings.Split(want, "/")[0]) {
+					t.Fatalf("row=%#v want %q visible/searchable", row, want)
+				}
+			}
+		})
+	}
+}
+
 func TestAIPickerFiltersDisabledAgents(t *testing.T) {
 	home := t.TempDir()
 	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentClaude}); err != nil {
