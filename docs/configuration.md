@@ -440,9 +440,36 @@ actual native user action may use it, and only an exact missing or
 connection-refused default control socket is eligible. That path invokes the
 official idempotent `codex app-server daemon start` command at most once per
 in-flight process decision, then retries proxy initialization with a bounded
-backoff. Phase 1 does not route Agent create/resume, usage, catalog, model, or
-review behavior through that seam, so their current hook, rollout, and CLI
-results are unchanged.
+backoff. Phase 1 itself does not route Agent create/resume, usage, catalog,
+model, or review behavior through that seam.
+
+The Codex row in the provider picker now uses that readiness path to read every
+page of the current app-server `model/list`. Its second picker shows only
+visible models and their advertised reasoning efforts. The display also carries
+the advertised default, supported input modalities, and whether personality is
+supported; the boolean personality capability is not expanded into invented
+personality choices. The selected model and effort are launch-only CLI
+overrides (`--model` and `--config model_reasoning_effort=...`); Projmux never
+writes a Codex configuration file. Each normalized catalog is tied to its live
+connection and negotiated-version epoch. Projmux retains that connection from
+picker render through pre-create validation and refreshes `model/list` before
+building argv, so a disconnect or removed option invalidates the selection. If
+discovery fails, is empty, or comes from an older Codex, the existing static
+Codex launch path remains available.
+
+Picker chrome and semantic annotations such as default, unspecified modality,
+and personality support use the Projmux message catalog. Model display names,
+effort identifiers, and advertised modality tags remain exact provider data and
+are not translated.
+
+`projmux agent review` starts `review/start` only for a Running Codex Agent whose
+Registry Agent, owned Pane, activation generation, stored thread, and live Pane
+thread all match exactly. Review availability is based on the negotiated
+app-server version for that connection and is confirmed by the method call;
+Codex 0.149 does not advertise a separate review capability bit. Older versions
+or a method-not-found response are reported explicitly as unavailable. The
+initial `review/start` response is projected into Agent interaction lifecycle;
+later app-server completion notifications remain outside this phase.
 
 Projmux does not install, bootstrap, restart, stop, or reconfigure the Codex
 daemon, does not stop the shared daemon when Projmux exits, and does not manage

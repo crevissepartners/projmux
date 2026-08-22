@@ -1271,6 +1271,15 @@ conversation -- `claude --resume <id>`, `codex resume <id>`, or
 `projmux agent resume`, a different verb that never falls back to a fresh
 conversation.
 
+`projmux agent review [<agent-ref>]` starts a native Codex review for
+uncommitted changes by default. Use exactly one of `--base <branch>`, `--commit
+<sha>`, or `--instructions <text>` to choose another review target. The action
+is available only when the selected Running Codex Agent still has an exact live
+Pane/thread binding and the current app-server supports `review/start`; every
+other case reports review as unavailable without changing the Agent. This route
+projects only the initial response into interaction status. It does not claim
+the later notification-driven completion lifecycle.
+
 Live Antigravity hook/session-state resume metadata remains a separate,
 high-confidence lane; it is not enumerated from disk by the picker. Within the
 picker's disk discovery, source order is the workspace-to-latest-UUID mapping

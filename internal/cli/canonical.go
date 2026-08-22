@@ -181,6 +181,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "agent status", Summary: "Read or set Agent status state", Sources: []string{"agent"}},
 	{Spelling: "agent topic", Summary: "Read, set, or clear the Agent topic annotation", Sources: []string{"agent"}},
 	{Spelling: "agent resume", Summary: "Rebind an Offline or Failed Agent to a new managed Pane", Sources: []string{"agent"}},
+	{Spelling: "agent review", Summary: "Start a native review on an exact-bound Codex Agent", Sources: []string{"agent"}},
 	{Spelling: "agent integrate", Summary: "Install or remove provider hook integrations", Sources: []string{"agent"}},
 	{Spelling: "agent usage", Summary: "Read provider account usage quota snapshots", Sources: []string{"internal", "agent"}},
 

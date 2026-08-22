@@ -14,7 +14,7 @@ import (
 )
 
 // agentSubcommands lists the Agent domain routes, in help order.
-var agentSubcommands = []string{"status", "topic", "resume", "integrate", "usage"}
+var agentSubcommands = []string{"status", "topic", "resume", "review", "integrate", "usage"}
 
 // resumableAgentPhases is the closed set of phases `agent resume` accepts.
 var resumableAgentPhases = []coremetadata.AgentPhase{
@@ -49,7 +49,10 @@ type agentCommand struct {
 	// only part of this namespace that mutates the registry, and it is held as
 	// its own seam so the read-only resolution and phase gate above it stay
 	// testable without a runtime.
-	rebind *agentRebinder
+	rebind        *agentRebinder
+	reviews       agentReviewStarter
+	reviewBinding agentReviewBindingLookup
+	reviewTimeout time.Duration
 }
 
 func newAgentCommand() *agentCommand {
@@ -60,6 +63,9 @@ func newAgentCommand() *agentCommand {
 		mirror:           defaultAgentMutationMirror(),
 		now:              time.Now,
 		resolveWorkspace: resolveAgentWorkspaceFor,
+		reviews:          defaultCodexReviewStarter{},
+		reviewBinding:    defaultAgentReviewBindingLookup(),
+		reviewTimeout:    25 * time.Second,
 	}
 }
 
@@ -90,6 +96,8 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.usage, "agent usage", "usage", nil, rest, stdout, stderr)
 	case "resume":
 		return c.runResume(rest, stdout, stderr)
+	case "review":
+		return c.runReview(rest, stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("agent %s is not available; this release implements: %s",
 			args[0], strings.Join(agentSubcommands, ", ")))

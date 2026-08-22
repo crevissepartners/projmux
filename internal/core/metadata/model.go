@@ -437,6 +437,7 @@ const (
 	InteractionSourceManual          AgentInteractionSource = "manual"
 	InteractionSourceCompatibilityAI AgentInteractionSource = "compatibility-ai"
 	InteractionSourceProviderHook    AgentInteractionSource = "provider-hook"
+	InteractionSourceProviderControl AgentInteractionSource = "provider-control-plane"
 	InteractionSourceLifecycle       AgentInteractionSource = "lifecycle"
 )
 
@@ -445,6 +446,7 @@ func AgentInteractionSources() []AgentInteractionSource {
 		InteractionSourceManual,
 		InteractionSourceCompatibilityAI,
 		InteractionSourceProviderHook,
+		InteractionSourceProviderControl,
 		InteractionSourceLifecycle,
 	}
 }
