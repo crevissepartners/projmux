@@ -69,6 +69,109 @@ func (c *aiCommand) flushPendingAgentSessionRef(paneID string) {
 	if ok {
 		c.persistAgentSessionRef(paneID, obs)
 	}
+	if native, ok := c.takeCodexBinding(paneID); ok {
+		c.persistCodexBindingRefinement(paneID, native)
+	}
+}
+
+func (c *aiCommand) stageCodexBinding(paneID, threadID, turnID string) {
+	if c == nil || strings.TrimSpace(paneID) == "" || strings.TrimSpace(threadID) == "" {
+		return
+	}
+	c.agentObservationMu.Lock()
+	defer c.agentObservationMu.Unlock()
+	if c.pendingCodexBindings == nil {
+		c.pendingCodexBindings = map[string]coremetadata.CodexActivationObservation{}
+	}
+	c.pendingCodexBindings[paneID] = coremetadata.CodexActivationObservation{ThreadID: threadID, TurnID: turnID}
+}
+
+func (c *aiCommand) takeCodexBinding(paneID string) (coremetadata.CodexActivationObservation, bool) {
+	if c == nil {
+		return coremetadata.CodexActivationObservation{}, false
+	}
+	c.agentObservationMu.Lock()
+	defer c.agentObservationMu.Unlock()
+	obs, ok := c.pendingCodexBindings[paneID]
+	delete(c.pendingCodexBindings, paneID)
+	return obs, ok
+}
+
+// nativeCodexHookAllowed is the early, pre-tmux-write guard for a Pane whose
+// current generation already has app-server identity. Fallback generations have
+// no native binding and retain the existing hook behavior.
+func (c *aiCommand) nativeCodexHookAllowed(paneID, threadID string) (bool, string) {
+	if !c.resourceOwnedPane(paneID) {
+		return true, ""
+	}
+	binding, ok, err := c.managedAgentBindingForPane(paneID)
+	if err != nil {
+		return false, "native binding unavailable"
+	}
+	if !ok || binding.codex == nil {
+		return true, ""
+	}
+	if !c.exactProviderActivationEvidence(binding, paneID) {
+		return false, "stale activation generation"
+	}
+	if strings.TrimSpace(threadID) != binding.codex.ThreadID {
+		return false, "thread does not match native binding"
+	}
+	return true, ""
+}
+
+// routeNativeCodexHook resolves native hook identity only from the internal
+// activation envelope and the Registry's exact current Pane generation. A
+// native generation never consults cwd, title, Pane ordering, or TMUX_PANE.
+// handled=false means this is a current legacy generation and the established
+// hook matcher remains its compatibility lane.
+func (c *aiCommand) routeNativeCodexHook(threadID string) (paneID string, handled, allowed bool, reason string) {
+	paneUID := strings.TrimSpace(c.env(internalActivationPaneUIDEnv))
+	generation := strings.TrimSpace(c.env(internalActivationGenerationEnv))
+	if paneUID == "" && generation == "" {
+		return "", false, true, ""
+	}
+	if paneUID == "" || generation == "" || c.loadRegistry == nil {
+		return "", true, false, "incomplete activation identity"
+	}
+	var registry coremetadata.Registry
+	var pane *coremetadata.Pane
+	for attempt := range 11 {
+		loaded, err := c.loadRegistry()
+		if err != nil {
+			return "", true, false, "native binding unavailable"
+		}
+		registry = loaded
+		if current, ok := registry.Pane(paneUID); ok {
+			pane = current
+			break
+		}
+		if attempt < 10 {
+			// The provider can emit its first hook while the create transaction
+			// is publishing the Pane it just launched. Wait only for that exact
+			// uid to become readable; never search by cwd, title, or order.
+			c.sleepFor(25 * time.Millisecond)
+		}
+	}
+	if pane == nil {
+		return "", true, false, "stale activation Pane"
+	}
+	if pane.Status.Activation.Generation != generation || pane.Status.Activation.AgentUID == "" ||
+		strings.TrimSpace(pane.Status.Activation.RuntimeID) == "" {
+		return "", true, false, "stale activation generation"
+	}
+	agent, ok := registry.Agent(pane.Status.Activation.AgentUID)
+	if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != paneUID ||
+		pane.Metadata.OwnerUID() != agent.Metadata.UID {
+		return "", true, false, "stale Agent/Pane binding"
+	}
+	if pane.Status.Activation.Codex == nil {
+		return "", false, true, ""
+	}
+	if strings.TrimSpace(threadID) != pane.Status.Activation.Codex.ThreadID {
+		return "", true, false, "thread does not match native binding"
+	}
+	return pane.Status.Activation.RuntimeID, true, true, ""
 }
 
 func (c *aiCommand) persistAgentSessionRef(paneID string, obs coremetadata.AgentSessionObservation) {
@@ -94,6 +197,15 @@ func (c *aiCommand) persistAgentSessionRef(paneID string, obs coremetadata.Agent
 	agentUID, ok := agentUIDForPaneUID(registry, paneUID)
 	if !ok {
 		return
+	}
+	pane, _ := registry.Pane(paneUID)
+	if pane != nil && pane.Status.Activation.Codex != nil {
+		candidate, built := coremetadata.NewAgentSessionRef(obs, clock())
+		if !built || candidate.Codex == nil || candidate.Codex.ThreadID != pane.Status.Activation.Codex.ThreadID ||
+			strings.TrimSpace(c.env(internalActivationPaneUIDEnv)) != paneUID ||
+			strings.TrimSpace(c.env(internalActivationGenerationEnv)) != pane.Status.Activation.Generation {
+			return
+		}
 	}
 	// Pre-check outside the lock so an unchanged observation never opens a
 	// write transaction at all.
@@ -141,6 +253,7 @@ type managedAgentBinding struct {
 	paneUID    string
 	generation string
 	runtimeID  string
+	codex      *coremetadata.CodexActivationBinding
 }
 
 func (c *aiCommand) managedAgentBindingForPane(paneID string) (managedAgentBinding, bool, error) {
@@ -172,7 +285,30 @@ func (c *aiCommand) managedAgentBindingForPane(paneID string) (managedAgentBindi
 		paneUID:    paneUID,
 		generation: pane.Status.Activation.Generation,
 		runtimeID:  pane.Status.Activation.RuntimeID,
+		codex:      pane.Status.Activation.Codex,
 	}, true, nil
+}
+
+func (c *aiCommand) persistCodexBindingRefinement(paneID string, obs coremetadata.CodexActivationObservation) {
+	binding, ok, err := c.managedAgentBindingForPane(paneID)
+	if err != nil || !ok || binding.codex == nil || !c.exactProviderActivationEvidence(binding, paneID) || c.updateRegistry == nil {
+		return
+	}
+	obs.AgentUID = binding.agent.Metadata.UID
+	obs.PaneUID = binding.paneUID
+	obs.Generation = binding.generation
+	mutator := intmetadata.DefaultMutator()
+	mutator.Now = c.sessionRefClock()
+	_, _ = c.updateRegistry(func(working *coremetadata.Registry) error {
+		changed, err := mutator.RefineCodexActivation(working, obs)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return errAgentSessionRefNoop
+		}
+		return nil
+	})
 }
 
 // resourceOwnedPane is the fail-closed watcher gate. Any Pane carrying resource
@@ -281,6 +417,18 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 	clock := c.sessionRefClock()
 	mutator.Now = clock
 	obs, hasObservation := c.takeAgentSessionRef(paneID)
+	nativeObservation, hasNativeObservation := c.takeCodexBinding(paneID)
+	if binding.codex != nil {
+		if !c.exactProviderActivationEvidence(binding, paneID) {
+			return agent, true, errManagedAgentObservationIgnored
+		}
+		if hasObservation {
+			candidate, built := coremetadata.NewAgentSessionRef(obs, clock())
+			if !built || candidate.Codex == nil || candidate.Codex.ThreadID != binding.codex.ThreadID {
+				return agent, true, errManagedAgentObservationIgnored
+			}
+		}
+	}
 	if hasObservation {
 		if candidate, built := coremetadata.NewAgentSessionRef(obs, clock()); built && agent.Spec.Provider != "" && candidate.Provider != agent.Spec.Provider {
 			return agent, true, errManagedAgentObservationIgnored
@@ -297,7 +445,8 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 		source == string(coremetadata.InteractionSourceProviderHook) &&
 		(agent.Status.Activation.State == coremetadata.ActivationPending || agent.Status.Activation.State == coremetadata.ActivationUnconfirmed) &&
 		kind != coremetadata.InteractionUnknown && kind != coremetadata.InteractionIdle
-	if sessionUnchanged && !activationNeedsAck && current.Kind == kind && current.Source == source && clock().Sub(current.ObservedAt) < time.Second {
+	turnUnchanged := !hasNativeObservation || binding.codex == nil || strings.TrimSpace(nativeObservation.TurnID) == "" || binding.codex.TurnID == strings.TrimSpace(nativeObservation.TurnID)
+	if sessionUnchanged && turnUnchanged && !activationNeedsAck && current.Kind == kind && current.Source == source && clock().Sub(current.ObservedAt) < time.Second {
 		return agent, true, nil
 	}
 	var committed coremetadata.Agent
@@ -316,6 +465,14 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 		}
 		if hasObservation {
 			if _, _, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, obs); err != nil {
+				return err
+			}
+		}
+		if hasNativeObservation && binding.codex != nil {
+			nativeObservation.AgentUID = binding.agent.Metadata.UID
+			nativeObservation.PaneUID = binding.paneUID
+			nativeObservation.Generation = binding.generation
+			if _, err := mutator.RefineCodexActivation(working, nativeObservation); err != nil {
 				return err
 			}
 		}

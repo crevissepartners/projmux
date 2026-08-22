@@ -27,15 +27,27 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		return err
 	}
 
-	paneID := c.matchAIPane(aiPaneMatchInput{
-		CWD:       payload.CWD,
-		ThreadID:  payload.matchThreadID(),
-		SessionID: payload.SessionID,
-	})
+	paneID, nativeRouted, nativeAllowed, nativeReason := c.routeNativeCodexHook(payload.matchThreadID())
+	if nativeRouted && !nativeAllowed {
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: nativeReason, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+		return nil
+	}
+	if !nativeRouted {
+		paneID = c.matchAIPane(aiPaneMatchInput{
+			CWD:       payload.CWD,
+			ThreadID:  payload.matchThreadID(),
+			SessionID: payload.SessionID,
+		})
+	}
 	if paneID == "" {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	}
+	if allowed, reason := c.nativeCodexHookAllowed(paneID, payload.matchThreadID()); !allowed {
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: reason, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+		return nil
+	}
+	c.stageCodexBinding(paneID, payload.matchThreadID(), payload.TurnID)
 	defer c.flushPendingAgentSessionRef(paneID)
 
 	metadata := payload.codexHookMetadata()

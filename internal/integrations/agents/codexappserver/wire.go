@@ -3,10 +3,13 @@ package codexappserver
 import "encoding/json"
 
 const (
-	methodInitialize  = "initialize"
-	methodInitialized = "initialized"
-	methodModelList   = "model/list"
-	methodReviewStart = "review/start"
+	methodInitialize   = "initialize"
+	methodInitialized  = "initialized"
+	methodModelList    = "model/list"
+	methodReviewStart  = "review/start"
+	methodThreadStart  = "thread/start"
+	methodThreadResume = "thread/resume"
+	methodTurnStart    = "turn/start"
 )
 
 type wireRequest struct {
@@ -89,6 +92,41 @@ type reviewStartResult struct {
 type wireTurn struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
+}
+
+type threadStartParams struct {
+	CWD                   string   `json:"cwd,omitempty"`
+	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty"`
+}
+
+type threadResumeParams struct {
+	ThreadID              string   `json:"threadId"`
+	CWD                   string   `json:"cwd,omitempty"`
+	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty"`
+	ExcludeTurns          bool     `json:"excludeTurns"`
+}
+
+type threadResult struct {
+	Thread wireThread `json:"thread"`
+}
+
+type wireThread struct {
+	ID string `json:"id"`
+}
+
+type turnStartParams struct {
+	ThreadID            string          `json:"threadId"`
+	Input               []wireUserInput `json:"input"`
+	ClientUserMessageID string          `json:"clientUserMessageId,omitempty"`
+}
+
+type wireUserInput struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type turnStartResult struct {
+	Turn wireTurn `json:"turn"`
 }
 
 type response struct {

@@ -114,6 +114,10 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 
 	var results []createResult
 	var activationTargets []agentActivationTarget
+	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
+	prompt, nativePromptExact := nativePrompt(flags.payload)
+	nativeCandidate := provider == aiModeCodex && c.codexNative != nil && nativeLaunchCapable &&
+		flags.codexCapability == nil && nativePromptExact
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
@@ -150,6 +154,11 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		if err != nil {
 			return err
 		}
+		// A Registry transaction can roll back several target Panes, but it
+		// cannot delete app-server threads. Keep native identity atomic by using
+		// it only for the exact-one create shape; fan-out retains the current CLI
+		// contract for every target.
+		nativeEligible := nativeCandidate && len(plan.targets) == 1
 
 		// Metadata phase. Every Agent and every managed Pane is allocated before
 		// the first tmux call, so an explicit --name that collides inside a
@@ -209,8 +218,37 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			if err != nil {
 				return err
 			}
+			workTitle := title
+			workLaunchArgv := launchArgv
+			var nativeBinding coremetadata.CodexActivationBinding
+			usedNative := false
+			if nativeEligible {
+				nativeCtx, cancel := prepareNativeContext(ctx)
+				prepared, nativeErr := c.codexNative.Create(nativeCtx, workspace, prompt, work.activation.Generation)
+				cancel()
+				switch {
+				case nativeErr == nil:
+					workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(workspace, prepared.ThreadID)
+					if err != nil {
+						return nativeLaunchError(spelling, err)
+					}
+					if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
+						AgentUID: work.agent.Metadata.UID, PaneUID: work.pane.Metadata.UID,
+						Generation: work.activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
+					}); err != nil {
+						return MapMetadataError(err)
+					}
+					nativeBinding = coremetadata.CodexActivationBinding{ThreadID: prepared.ThreadID, TurnID: prepared.TurnID}
+					usedNative = true
+				case nativeFallbackAllowed(c.codexNative, nativeErr):
+					// Preserve the current CLI argv, hook acknowledgement, output, and
+					// late-refinement contract byte-for-byte.
+				default:
+					return nativeLaunchError(spelling, nativeErr)
+				}
+			}
 			paneID, err := c.runtime.splitPane(ctx, anchorPaneID, flags.placement, workspace.CWD,
-				c.runtime.supervisedLaunch(ctx, work.activation, launchArgv))
+				c.runtime.supervisedLaunch(ctx, work.activation, workLaunchArgv))
 			if paneID != "" {
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)
@@ -228,7 +266,11 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			// the statusbar, the attention tracker, and the notification
 			// pipeline. They are applied after the pane exists and before the
 			// result is reported.
-			c.bindAgentPane(paneID, provider, workspace.CWD, title, flags)
+			if usedNative {
+				nativeLauncher.BindNativeCodexPane(paneID, workspace.CWD, workTitle, nativeBinding.ThreadID)
+			} else {
+				c.bindAgentPane(paneID, provider, workspace.CWD, workTitle, flags)
+			}
 			// Canonical Agent topic authority starts empty. The shared legacy
 			// binder seeds its display title as a compatibility topic, so remove
 			// that seed through the transaction's exact routed runner before the
@@ -238,7 +280,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					return tmuxError("%s: clear compatibility topic projection %s on Pane %s: %v", spelling, option, paneID, err)
 				}
 			}
-			if len(flags.payload) > 0 {
+			if len(flags.payload) > 0 && !usedNative {
 				activationTargets = append(activationTargets, agentActivationTarget{
 					agentUID:   work.agent.Metadata.UID,
 					agentName:  work.agent.Metadata.Name,

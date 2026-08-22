@@ -122,6 +122,11 @@ func (r Registry) Validate() error {
 		if activation := pane.Status.Activation; !activation.IsZero() && strings.TrimSpace(activation.Generation) == "" {
 			return stateErr(op, ErrInvalidRegistry, "pane %q has an activation record without a generation", pane.Metadata.Name)
 		}
+		if binding := pane.Status.Activation.Codex; binding != nil {
+			if pane.Spec.Role != PaneRoleAgent || strings.TrimSpace(pane.Status.Activation.AgentUID) == "" || strings.TrimSpace(binding.ThreadID) == "" {
+				return stateErr(op, ErrInvalidRegistry, "pane %q has an invalid native Codex activation binding", pane.Metadata.Name)
+			}
+		}
 		if err := validateTermination(op, "pane "+pane.Metadata.Name, pane.Status.LastTermination); err != nil {
 			return err
 		}
@@ -154,7 +159,7 @@ func (r Registry) Validate() error {
 		default:
 			return stateErr(op, ErrInvalidRegistry, "agent %q has unsupported activation state %q", agent.Metadata.Name, agent.Status.Activation.State)
 		}
-		if source := strings.TrimSpace(agent.Status.Activation.Source); source != "" && source != string(InteractionSourceProviderHook) {
+		if source := strings.TrimSpace(agent.Status.Activation.Source); source != "" && source != string(InteractionSourceProviderHook) && source != string(InteractionSourceProviderControl) {
 			return stateErr(op, ErrInvalidRegistry, "agent %q has unsupported activation source %q", agent.Metadata.Name, source)
 		}
 		if !ValidAgentActivationReason(agent.Status.Activation.Reason) {

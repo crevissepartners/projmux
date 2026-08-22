@@ -98,7 +98,7 @@ func (m Mutator) SetAgentActivation(reg *Registry, agentUID string, state AgentA
 	}
 	source = strings.TrimSpace(source)
 	reason = strings.TrimSpace(reason)
-	if source != "" && source != string(InteractionSourceProviderHook) {
+	if source != "" && source != string(InteractionSourceProviderHook) && source != string(InteractionSourceProviderControl) {
 		return Agent{}, inputErr(op, ErrInvalidPhase, "unsupported activation source %q", source)
 	}
 	if !ValidAgentActivationReason(reason) {

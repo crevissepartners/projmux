@@ -198,13 +198,36 @@ type PaneActivation struct {
 	AgentUID    string    `json:"agentUID,omitempty"`
 	OperationID string    `json:"operationID,omitempty"`
 	StartedAt   time.Time `json:"startedAt,omitzero"`
+	// Codex is the provider-native conversation/turn observed for exactly this
+	// materialization. The durable conversation pointer remains on the Agent;
+	// this refinement is nested under the generation so replacement clears it.
+	Codex *CodexActivationBinding `json:"codex,omitempty"`
+}
+
+// CodexActivationBinding is the content-free native identity returned by the
+// local app-server. TurnID is optional for an interactive create/resume that
+// has not started a turn yet.
+type CodexActivationBinding struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId,omitempty"`
 }
 
 // IsZero lets registry documents written before activation generations existed
 // re-encode without the additive block.
 func (a PaneActivation) IsZero() bool {
 	return a.Generation == "" && a.RuntimeID == "" && a.AgentUID == "" &&
-		a.OperationID == "" && a.StartedAt.IsZero()
+		a.OperationID == "" && a.StartedAt.IsZero() && a.Codex == nil
+}
+
+// Clone returns an activation record whose provider binding cannot alias the
+// source Registry snapshot.
+func (a PaneActivation) Clone() PaneActivation {
+	out := a
+	if a.Codex != nil {
+		binding := *a.Codex
+		out.Codex = &binding
+	}
+	return out
 }
 
 // TerminationEvidence is the minimal durable record of why one managed process
