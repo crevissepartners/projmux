@@ -34,6 +34,26 @@ tmuxRetiredKeyUnbindLines
 # Operational diagnostics Phase 2 typed no-write seam. Doctor Phase 2 is the
 # planned consumer after this producer contract lands.
 ReadRuntimeHealth
+# MUST-KEEP: Runtime topology exit cascade Phase 0 pure authority, root,
+# reopen, and pin planning seam. Phases 1-3 are the planned consumers; wiring
+# these symbols into production now is intentionally excluded so this Phase
+# can close the decision contract without changing Registry/runtime behavior.
+TeardownEventKinds
+TeardownObservations
+rootDefaults
+validTeardownEventKind
+validTeardownObservation
+validOwnerChain
+observationRefusal
+DecideTeardownEvent
+AggregateTeardownEvents
+genericTeardownRefusal
+PlanProjectCascadeDelete
+projectAgentCount
+projectPreservedAssets
+DecideProjectOpen
+EqualTeardownPlans
+PlanProjectDeletion
 # `projmux://focus?...` encoder. Desktop notification delivery became a
 # two-state model in 0.11.0 (off / notify): Toasts carry no click URI and no
 # protocol handler is registered, so nothing in production emits this URI any
