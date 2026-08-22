@@ -19,6 +19,9 @@ type SnapshotProjectionPlan struct {
 	ReplacedPanes   int
 	ReplacedAgents  int
 	PreservedUIDs   int
+	DeletedWindows  int
+	DeletedPanes    int
+	DeletedAgents   int
 	LostSessionRefs int
 }
 
@@ -110,6 +113,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 	plan := SnapshotProjectionPlan{ProjectUID: target.Metadata.UID, Desired: desired, ReplacedWindows: len(oldWindows)}
 	plan.ReplacedPanes = len(owned.panes)
 	plan.ReplacedAgents = len(owned.agents)
+	preservedWindows, preservedPanes, preservedAgents := 0, 0, 0
 	for _, agent := range oldAgentByUID {
 		if agent.Status.SessionRef != nil {
 			plan.LostSessionRefs++
@@ -145,6 +149,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 		desired.putReservation(target.Metadata.UID, KindWindow, meta.Name, uid)
 		if oldWindow != nil {
 			plan.PreservedUIDs++
+			preservedWindows++
 		}
 		if uid == target.Spec.PrimaryWindowRef {
 			primaryWindowUID = uid
@@ -193,6 +198,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 				}
 				if oldPane != nil {
 					plan.PreservedUIDs++
+					preservedPanes++
 				}
 			case sessionstate.RecipeKindAgent:
 				var oldAgent *Agent
@@ -213,6 +219,13 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 						}
 					} else if sp.Metadata.OwnerKind == string(KindAgent) {
 						preferredAgent = sp.Metadata.OwnerUID
+					}
+					if candidateAgent, ok := oldAgentByUID[preferredAgent]; ok {
+						if candidateAgent.Metadata.OwnerUID() != uid {
+							return SnapshotProjectionPlan{}, inputErr(op, ErrInvalidRegistry, "snapshot Agent uid %q belongs to Window %q, not containing Window %q", preferredAgent, candidateAgent.Metadata.OwnerUID(), uid)
+						}
+						ac := candidateAgent
+						oldAgent = &ac
 					}
 				} else if agentPos < len(oldAgents) {
 					ac := oldAgents[agentPos]
@@ -252,12 +265,14 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 				desired.putReservation(agentUID, KindPane, paneMeta.Name, paneUID)
 				if oldAgent != nil {
 					plan.PreservedUIDs++
+					preservedAgents++
 					if sameProjectedConversation(oldAgent.Status.SessionRef, agent.Status.SessionRef) {
 						plan.LostSessionRefs--
 					}
 				}
 				if oldPane != nil {
 					plan.PreservedUIDs++
+					preservedPanes++
 				}
 			}
 		}
@@ -280,6 +295,10 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 			desired.Panes = append(desired.Panes, pane)
 			desired.putReservation(uid, KindPane, paneMeta.Name, paneUID)
 			firstShell = paneUID
+			if oldPane != nil {
+				plan.PreservedUIDs++
+				preservedPanes++
+			}
 		}
 		stored, _ := desired.Window(uid)
 		stored.Spec.PrimaryPaneRef = firstShell
@@ -294,6 +313,9 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 		desired.putReservation(target.Metadata.UID, KindWindow, anchorWindow.Metadata.Name, anchorWindow.Metadata.UID)
 		desired.putReservation(anchorWindow.Metadata.UID, KindPane, anchorPane.Metadata.Name, anchorPane.Metadata.UID)
 		primaryWindowUID = anchorWindow.Metadata.UID
+		plan.PreservedUIDs += 2
+		preservedWindows++
+		preservedPanes++
 	}
 	if primaryWindowUID == "" {
 		primaryWindowUID = desired.WindowsOf(target.Metadata.UID)[0].Metadata.UID
@@ -301,6 +323,9 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 	storedProject, _ := desired.Project(target.Metadata.UID)
 	storedProject.Spec.PrimaryWindowRef = primaryWindowUID
 	storedProject.Status.Session = cloneSessionProjection(target.Status.Session)
+	plan.DeletedWindows = plan.ReplacedWindows - preservedWindows
+	plan.DeletedPanes = plan.ReplacedPanes - preservedPanes
+	plan.DeletedAgents = plan.ReplacedAgents - preservedAgents
 	if err := desired.Validate(); err != nil {
 		return SnapshotProjectionPlan{}, fmt.Errorf("%s produced invalid desired Registry: %w", op, err)
 	}

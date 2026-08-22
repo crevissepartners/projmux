@@ -30,11 +30,12 @@ type sessionStateCommand struct {
 	sessionStore    func() (sessionstate.Store, error)
 	resources       *resourceStore
 	projectTopology switchProjectTopologyMaterializer
+	projectTrust    switchProjectTrustAuthorizer
 	notices         projectStartupReporter
 	target          explicitTmuxTarget
 }
 
-func newSessionStateCommand() *sessionStateCommand {
+func newSessionStateCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionStateCommand {
 	target, err := tmuxSocketNameTarget(defaultAppSocket)
 	if err != nil {
 		panic(err)
@@ -48,6 +49,7 @@ func newSessionStateCommand() *sessionStateCommand {
 		sessionStore:    sessionstate.NewDefaultStoreFromEnv,
 		resources:       newResourceStore(),
 		projectTopology: newRegistryProjectTopologyMaterializer(),
+		projectTrust:    defaultTmuxClient(recorders...),
 		notices:         newProjectStartupNoticeSink(inttmux.ExecRunner{}),
 		target:          target,
 	}
@@ -215,7 +217,9 @@ func (c *sessionStateCommand) runRestore(args []string, stdout, stderr io.Writer
 	fs := flag.NewFlagSet("session-state restore", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	session := fs.String("session", "", "target session name")
-	projectRef := fs.String("project", "", "exact target Project name or uid:uid")
+	projectRef := ""
+	fs.StringVar(&projectRef, "project", "", "exact target Project name or uid:uid")
+	fs.StringVar(&projectRef, "p", "", "exact target Project name or uid:uid")
 	client := fs.String("client", "", "exact tmux client for the final handoff")
 	dryRun := fs.Bool("dry-run", false, "preview restore actions without running tmux commands")
 	yes := fs.Bool("yes", false, "approve replacing the exact closed Project Registry subtree")
@@ -229,14 +233,14 @@ func (c *sessionStateCommand) runRestore(args []string, stdout, stderr io.Writer
 	if strings.TrimSpace(*session) == "" {
 		return errors.New("session-state restore requires an explicit --session")
 	}
-	if strings.TrimSpace(*projectRef) == "" {
+	if strings.TrimSpace(projectRef) == "" {
 		return errors.New("session-state restore requires an explicit --project")
 	}
 	if *dryRun && *yes {
 		return errors.New("session-state restore accepts exactly one of --dry-run or --yes")
 	}
 	if *dryRun {
-		return c.printProjectionPreview(context.Background(), *session, *projectRef, stdout)
+		return c.printProjectionPreview(context.Background(), *session, projectRef, stdout)
 	}
 	if !*yes {
 		return errors.New("session-state restore requires --yes after reviewing --dry-run")
@@ -251,7 +255,7 @@ func (c *sessionStateCommand) runRestore(args []string, stdout, stderr io.Writer
 	defer func() {
 		c.diagnostics.Record(diagnostics.OperationSessionStateRestore, diagnostics.SessionStateSourceManual, started, counts, err)
 	}()
-	err = c.commitSnapshotProjection(context.Background(), *session, *projectRef, *client, stdout)
+	err = c.commitSnapshotProjection(context.Background(), *session, projectRef, *client, stdout)
 	return err
 }
 
@@ -296,8 +300,43 @@ func (c *sessionStateCommand) printProjectionPreview(ctx context.Context, explic
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	_, err = fmt.Fprintf(stdout, "Project %s snapshot projection: replace Window %d / Pane %d / Agent %d; preserve uid %d; lose conversation pointer %d; Registry writes 0 / tmux writes 0 / snapshot writes 0\n", project.Metadata.Name, plan.ReplacedWindows, plan.ReplacedPanes, plan.ReplacedAgents, plan.PreservedUIDs, plan.LostSessionRefs)
+	if _, _, err := c.requireClosedProjectionTarget(ctx, project); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "Project %s snapshot projection: replace Window %d / Pane %d / Agent %d; delete Window %d / Pane %d / Agent %d; preserve uid %d; lose conversation pointer %d; trust Project open gate pending; snapshot startup command execution 0; Registry writes 0 / tmux writes 0 / snapshot writes 0\n", project.Metadata.Name, plan.ReplacedWindows, plan.ReplacedPanes, plan.ReplacedAgents, plan.DeletedWindows, plan.DeletedPanes, plan.DeletedAgents, plan.PreservedUIDs, plan.LostSessionRefs)
 	return err
+}
+
+func (c *sessionStateCommand) requireClosedProjectionTarget(ctx context.Context, project coremetadata.Project) (string, tmuxRunner, error) {
+	declaredSession := ""
+	if project.Status.Session != nil {
+		declaredSession = strings.TrimSpace(project.Status.Session.Name)
+	}
+	if declaredSession == "" {
+		return "", nil, errors.New("restore snapshot: target Project has no declared session projection")
+	}
+	if c.runner == nil {
+		return "", nil, errors.New("restore snapshot: tmux runner is not configured")
+	}
+	exactRunner, err := c.exactRunner()
+	if err != nil {
+		return "", nil, fmt.Errorf("restore snapshot: exact tmux target: %w", err)
+	}
+	// The target is closed only when no session on the exact server claims its
+	// declared name, Project UID, or canonical root.
+	if _, found, err := (&materializer{runner: exactRunner}).preflightSessionOwnership(ctx, project, declaredSession); err != nil {
+		return "", nil, fmt.Errorf("restore snapshot: target Project ownership preflight: %w", err)
+	} else if found {
+		return "", nil, fmt.Errorf("restore snapshot: target Project session %q is live; close it before replacing desired state", declaredSession)
+	}
+	live, err := inttmux.NewClient(exactRunner).SessionExists(ctx, declaredSession)
+	if err != nil {
+		return "", nil, err
+	}
+	if live {
+		return "", nil, fmt.Errorf("restore snapshot: target Project session %q is live; close it before replacing desired state", declaredSession)
+	}
+	return declaredSession, exactRunner, nil
 }
 
 func (c *sessionStateCommand) commitSnapshotProjection(ctx context.Context, explicitSession, projectRaw, explicitClient string, stdout io.Writer) error {
@@ -305,36 +344,25 @@ func (c *sessionStateCommand) commitSnapshotProjection(ctx context.Context, expl
 	if err != nil {
 		return err
 	}
-	_ = registry
-	declaredSession := ""
-	if project.Status.Session != nil {
-		declaredSession = strings.TrimSpace(project.Status.Session.Name)
+	// Validate the complete pure projection before any trust UI or tmux
+	// observation. Invalid snapshot metadata, owner relations, and UID
+	// collisions are therefore a strict zero-write refusal at the command seam.
+	if _, err := coremetadata.PlanSnapshotProjection(registry, project.Metadata.UID, snap, c.nowTime(), coremetadata.NewUID); err != nil {
+		return MapMetadataError(err)
 	}
-	if declaredSession == "" {
-		return errors.New("restore snapshot: target Project has no declared session projection")
-	}
-	if c.runner == nil {
-		return errors.New("restore snapshot: tmux runner is not configured")
-	}
-	exactRunner, err := c.exactRunner()
-	if err != nil {
-		return fmt.Errorf("restore snapshot: exact tmux target: %w", err)
-	}
-	// Prove the whole Project identity is closed, not merely that the declared
-	// session name is absent. Another live session claiming this UID or root is
-	// a pre-commit refusal; letting the ordinary materializer discover it after
-	// desired state changed would violate restore failure atomicity.
-	if _, found, err := (&materializer{runner: exactRunner}).preflightSessionOwnership(ctx, project, declaredSession); err != nil {
-		return fmt.Errorf("restore snapshot: target Project ownership preflight: %w", err)
-	} else if found {
-		return fmt.Errorf("restore snapshot: target Project session %q is live; close it before replacing desired state", declaredSession)
-	}
-	live, err := inttmux.NewClient(exactRunner).SessionExists(ctx, declaredSession)
+	declaredSession, exactRunner, err := c.requireClosedProjectionTarget(ctx, project)
 	if err != nil {
 		return err
 	}
-	if live {
-		return fmt.Errorf("restore snapshot: target Project session %q is live; close it before replacing desired state", declaredSession)
+	if c.projectTrust == nil {
+		return errors.New("restore snapshot: Project trust authorizer is not configured; nothing was changed")
+	}
+	trusted, err := c.projectTrust.AuthorizeProjectHooks(ctx, project.Spec.Root)
+	if err != nil {
+		return fmt.Errorf("restore snapshot: authorize Project open: %w", err)
+	}
+	if !trusted {
+		return errors.New("restore snapshot: Project trust was denied; nothing was changed")
 	}
 	var applied coremetadata.SnapshotProjectionPlan
 	var committedProject coremetadata.Project
@@ -780,5 +808,5 @@ func printSessionStateUsage(w io.Writer) {
 	fmt.Fprintln(w, "  projmux get snapshots [--session <name>]")
 	fmt.Fprintln(w, "  projmux create snapshot")
 	fmt.Fprintln(w, "  projmux delete snapshot [--session <name>]")
-	fmt.Fprintln(w, "  projmux restore snapshot --dry-run [--session <name>]")
+	fmt.Fprintln(w, "  projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]")
 }

@@ -149,7 +149,11 @@ func RenderReference(w io.Writer) error {
 		writeReferenceRoute(&b, []string{route.Name}, route)
 	}
 
-	_, err := io.WriteString(w, b.String())
+	// Section writers leave a blank separator after every route. Normalize the
+	// complete artifact so the final section has one newline, not a blank line
+	// at EOF, while preserving the separators between sections.
+	rendered := strings.TrimRight(b.String(), "\n") + "\n"
+	_, err := io.WriteString(w, rendered)
 	return err
 }
 

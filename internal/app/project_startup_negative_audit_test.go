@@ -5,20 +5,28 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 func TestProjectStartupRetiredPathsNegativeAudit(t *testing.T) {
 	t.Parallel()
-	files := []string{"project_startup.go", "project_startup_fresh.go", "session_state.go"}
-	for _, path := range files {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		path := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			continue
+		}
 		source, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(string(source), "RestoreSessionSnapshot(") {
-			t.Fatalf("%s retains a direct snapshot replay callsite", path)
+			t.Fatalf("%s retains a production app/CLI direct snapshot replay callsite", path)
 		}
 	}
 
@@ -86,6 +94,46 @@ func TestProjectStartupRetiredPathsNegativeAudit(t *testing.T) {
 	for name, found := range audited {
 		if !found {
 			t.Fatalf("negative audit did not find execution function %s", name)
+		}
+	}
+
+	// Snapshot startup recipes may be represented in Registry desired state,
+	// but the ordinary materializer must never turn Pane.Spec.Command into an
+	// executable argv. Project lifecycle commands remain behind the separately
+	// approved Project-open trust gate.
+	materializer, err := parser.ParseFile(token.NewFileSet(), "registry_topology_materialize.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundExecute := false
+	for _, declaration := range materializer.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "executeRegistryTopology" || fn.Body == nil {
+			continue
+		}
+		foundExecute = true
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			if selector, ok := node.(*ast.SelectorExpr); ok && selector.Sel.Name == "Command" {
+				t.Errorf("ordinary Project materializer reads stored Pane command at %s", token.NewFileSet().Position(selector.Pos()))
+			}
+			return true
+		})
+	}
+	if !foundExecute {
+		t.Fatal("negative audit did not find ordinary topology executor")
+	}
+
+	// Agents are the one executable snapshot recipe and must stay on the exact
+	// provider launch/resume interface shared with canonical Agent routes.
+	typ := reflect.TypeFor[registryProjectTopologyMaterializer]()
+	agents, ok := typ.FieldByName("agents")
+	if !ok || agents.Type != reflect.TypeFor[topologyAgentLauncher]() {
+		t.Fatalf("topology Agent field=%v, want topologyAgentLauncher", agents.Type)
+	}
+	launcher := reflect.TypeFor[topologyAgentLauncher]()
+	for _, method := range []string{"RequireAgentEnabled", "PlanAgentLaunch", "PlanAgentResume"} {
+		if _, ok := launcher.MethodByName(method); !ok {
+			t.Fatalf("canonical topology Agent launcher lost %s", method)
 		}
 	}
 }

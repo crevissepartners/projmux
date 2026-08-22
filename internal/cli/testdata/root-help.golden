@@ -21,7 +21,7 @@ Commands:
   rebind    Rebind a Project to a new absolute root without moving files
   rename    Rename a Projmux resource metadata.name
   resources Inspect live Project, Window, and Pane CPU/RSS attribution
-  restore   Preview a saved session snapshot restore (--dry-run only in this release)
+  restore   Project a saved snapshot into one exact closed Project desired state
   runtime   Manage the live and ephemeral tmux runtime inventory
   settings  Configure projmux
   setup     Probe terminal keys or remediate them with setup terminal

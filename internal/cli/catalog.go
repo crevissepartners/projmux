@@ -809,23 +809,16 @@ var routes = []Route{
 		Usage:       []string{"projmux resources"},
 	},
 	{
-		// This release ships the preview half only. The handler refuses any
-		// invocation without `--dry-run` and names the snapshot with
-		// `--session <name>` rather than positionally, so the previous synopsis
-		// -- `restore snapshot <session> [--dry-run]` -- described an
-		// invocation that exits 1 on both counts. The summary and the synopsis
-		// state the half that ships; the target-state wording stays in the
-		// canonical manifest.
 		Name:        "restore",
-		Summary:     "Preview a saved session snapshot restore (--dry-run only in this release)",
+		Summary:     "Project a saved snapshot into one exact closed Project desired state",
 		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux restore snapshot --dry-run [--session <name>]"},
+		Usage:       []string{"projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]"},
 		Canonical:   []string{"restore snapshot"},
 		Children: []Route{
 			{
 				Name:      "snapshot",
-				Summary:   "Preview a saved session snapshot restore; --dry-run is required",
-				Usage:     []string{"projmux restore snapshot --dry-run [--session <name>]"},
+				Summary:   "Project a saved snapshot into one exact closed Project desired state",
+				Usage:     []string{"projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]"},
 				Canonical: []string{"restore snapshot"},
 			},
 		},

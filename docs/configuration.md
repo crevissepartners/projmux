@@ -843,8 +843,8 @@ Manual snapshot actions are available from the CLI:
 projmux get snapshots
 projmux create snapshot
 projmux delete snapshot [--session <name>]
-projmux restore snapshot --session <snapshot-session> --project <name|uid:uid> --dry-run
-projmux restore snapshot --session <snapshot-session> --project <name|uid:uid> --yes [--client <tmux-client>]
+projmux restore snapshot --session <snapshot-session> [--project <ref> | -p <ref>] --dry-run
+projmux restore snapshot --session <snapshot-session> [--project <ref> | -p <ref>] --yes [--client <tmux-client>]
 ```
 
 `status` prints the source label (`autosave`, `layout(<name>)`, or `fresh`), the

@@ -102,6 +102,9 @@ func TestGeneratedReferenceIsDeterministic(t *testing.T) {
 	if first.String() != second.String() {
 		t.Fatal("RenderReference is not deterministic across two renders")
 	}
+	if strings.HasSuffix(first.String(), "\n\n") || !strings.HasSuffix(first.String(), "\n") {
+		t.Fatal("generated reference must end with exactly one newline")
+	}
 	for _, forbidden := range []string{repoRoot(t), os.TempDir()} {
 		if forbidden != "" && forbidden != "/" && strings.Contains(first.String(), forbidden) {
 			t.Fatalf("the generated reference embeds the host path %q", forbidden)
@@ -290,8 +293,6 @@ func TestGeneratedReferenceCarriesNoCanonicalManifestOnlySummary(t *testing.T) {
 	knownTargetStateSummaries := []string{
 		// Owned by the runtime materialization track.
 		"Delete a Pane resource and its live binding",
-		// Owned by the session-state track.
-		"Restore a saved session snapshot",
 	}
 	for _, summary := range knownTargetStateSummaries {
 		if !slices.Contains(divergent, summary) {

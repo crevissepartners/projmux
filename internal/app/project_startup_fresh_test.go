@@ -132,10 +132,9 @@ func freshStartFixtureStore(t *testing.T) *fakeResourceStore {
 	return store
 }
 
-// TestProjectStartupRowTable is the row-addition regression guard. It pins every
-// row of the `ask`-mode startup screen -- name, description, and transport value
-// -- so the `new` row cannot be added, renamed, or reordered without this table
-// saying so, and so the four rows that already shipped cannot drift while it is.
+// TestProjectStartupRowTable pins both rows of the startup screen -- name,
+// description, and transport value -- so a third action cannot be added and
+// either of the closed two actions cannot be renamed or reordered silently.
 func TestProjectStartupRowTable(t *testing.T) {
 	t.Parallel()
 

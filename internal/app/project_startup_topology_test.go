@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -33,6 +35,24 @@ func TestProjectStartupActionRowsAreExactlyContinueAndOpenFresh(t *testing.T) {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("startup surface exposes %q: %s", forbidden, joined)
 		}
+	}
+}
+
+func TestProjectStartupExactTwoRowGolden(t *testing.T) {
+	candidates := (&switchCommand{}).projectStartupCandidates("ignored", "/ignored")
+	options := projectStartupPickerOptions(candidates)
+	var got strings.Builder
+	fmt.Fprintf(&got, "ui=%s\nheader=%s\nfooter=%s\n", options.UI, options.Header, options.Footer)
+	for index, candidate := range candidates {
+		fmt.Fprintf(&got, "row[%d]=%s|%s|%s|%s\n", index, candidate.Kind,
+			options.Entries[index].Value, candidate.Label, candidate.Description)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "project-startup-rows.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != string(want) {
+		t.Fatalf("Project startup row golden mismatch:\ngot:\n%swant:\n%s", got.String(), want)
 	}
 }
 

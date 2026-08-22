@@ -7,17 +7,19 @@ the existing v1 schema and storage behavior.
 ```sh
 projmux get snapshots [--session <snapshot-session>]
 projmux create snapshot
-projmux restore snapshot --session <snapshot-session> --project <name|uid:uid> --dry-run
-projmux restore snapshot --session <snapshot-session> --project <name|uid:uid> --yes [--client /dev/pts/N]
+projmux restore snapshot --session <snapshot-session> [--project <ref> | -p <ref>] --dry-run
+projmux restore snapshot --session <snapshot-session> [--project <ref> | -p <ref>] --yes [--client /dev/pts/N]
 projmux delete snapshot --session <snapshot-session>
 ```
 
 Restore requires an exact snapshot and an exact, closed target Project. The
-dry-run validates both inputs and prints replacement, preserved-UID, and lost
-conversation-pointer counts with zero Registry, tmux, and snapshot writes.
+dry-run validates both inputs and prints replacement, deletion, preserved-UID,
+and lost-conversation-pointer counts with zero Registry, tmux, and snapshot writes.
 Snapshot Project/Window/Pane metadata is checked against the exact target owner
 chain. A UID held by another root, a cross-kind UID reuse, a Project mismatch,
-or conflicting owner metadata refuses before commit.
+or conflicting owner metadata refuses before commit. The ordinary Project-open
+trust authorization must also approve the exact target root before the Registry
+transaction begins.
 
 After `--yes`, one atomic Registry transaction replaces only the target
 Project's descendant Window/Pane/Agent graph and its descendant name

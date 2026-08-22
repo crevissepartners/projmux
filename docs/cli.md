@@ -44,7 +44,7 @@ projmux <command> [args...]
 | [`projmux rebind`](#projmux-rebind) | canonical | Rebind a Project to a new absolute root without moving files |
 | [`projmux rename`](#projmux-rename) | canonical | Rename a Projmux resource metadata.name |
 | [`projmux resources`](#projmux-resources) | shortcut | Inspect live Project, Window, and Pane CPU/RSS attribution |
-| [`projmux restore`](#projmux-restore) | canonical | Project a saved snapshot into one exact closed Registry Project |
+| [`projmux restore`](#projmux-restore) | canonical | Project a saved snapshot into one exact closed Project desired state |
 | [`projmux runtime`](#projmux-runtime) | canonical | Manage the live and ephemeral tmux runtime inventory |
 | [`projmux settings`](#projmux-settings) | shortcut | Configure projmux |
 | [`projmux setup`](#projmux-setup) | canonical | Probe terminal keys or remediate them with setup terminal |
@@ -1097,27 +1097,26 @@ projmux resources
 
 ## `projmux restore`
 
-Project a saved session snapshot into one exact closed Registry Project
+Project a saved snapshot into one exact closed Project desired state
 
 ```
-projmux restore snapshot --session <name> --project <name|uid:uid> [--dry-run | --yes] [--client <tmux-client>]
+projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]
 ```
 
 Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux restore snapshot`](#projmux-restore-snapshot) | Preview or commit a scoped desired-state projection for one exact closed Project |
+| [`projmux restore snapshot`](#projmux-restore-snapshot) | Project a saved snapshot into one exact closed Project desired state |
 
 Canonical spelling: `projmux restore snapshot`
 
 ### `projmux restore snapshot`
 
-Preview or commit a saved snapshot as desired Registry state. Commit runs the
-ordinary Project materializer and performs the explicit client handoff last.
+Project a saved snapshot into one exact closed Project desired state
 
 ```
-projmux restore snapshot --session <name> --project <name|uid:uid> [--dry-run | --yes] [--client <tmux-client>]
+projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]
 ```
 
 ## `projmux runtime`

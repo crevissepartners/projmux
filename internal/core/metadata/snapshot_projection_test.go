@@ -334,4 +334,34 @@ func TestSnapshotProjectionMetadataLegacyAndCollisionTable(t *testing.T) {
 			t.Fatal("wanted cross-kind uid refusal")
 		}
 	})
+	t.Run("agent owner window mismatch", func(t *testing.T) {
+		candidateRegistry := reg.Clone()
+		windows := candidateRegistry.WindowsOf(targetUID)
+		if len(windows) < 2 {
+			t.Fatal("fixture requires two target Windows")
+		}
+		m := testMutator(dirSet{"/src/one": true, "/src/two": true})
+		otherAgent, err := m.CreateAgent(&candidateRegistry, windows[1].Metadata.UID, CreateAgentOptions{Provider: "codex", Workspace: AgentWorkspace{CWD: "/src/one"}, OperationID: "other-window-agent"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		bad := cloneProjectionSnapshot(t, snap)
+		found := false
+		for wi := range bad.Windows {
+			for pi := range bad.Windows[wi].Panes {
+				pane := &bad.Windows[wi].Panes[pi]
+				if pane.Recipe.Kind != sessionstate.RecipeKindAgent {
+					continue
+				}
+				pane.Metadata = &sessionstate.ResourceMetadata{UID: "pan-snapshot-cross-window", Name: "agent", OwnerKind: string(KindAgent), OwnerUID: otherAgent.Metadata.UID}
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("fixture requires an Agent Pane")
+		}
+		if _, err := PlanSnapshotProjection(candidateRegistry, targetUID, bad, fixedNow, sequentialUIDs()); err == nil || !strings.Contains(err.Error(), "containing Window") {
+			t.Fatalf("error=%v, want Agent owner Window refusal", err)
+		}
+	})
 }

@@ -151,9 +151,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "delete agent", Summary: "Delete an Agent and its managed Panes", Sources: []string{"delete"}},
 	{Spelling: "delete notification", Summary: "Delete pending notification rows", Sources: []string{"delete"}},
 	{Spelling: "delete snapshot", Summary: "Delete saved session snapshots", Sources: []string{"prune", "delete"}},
-	// Only the preview half ships: the handler rejects an invocation without
-	// `--dry-run`. The actual replay is a feature the session-state track owns.
-	{Spelling: "restore snapshot", Summary: "Restore a saved session snapshot", Sources: []string{"restore"}},
+	{Spelling: "restore snapshot", Summary: "Project a saved snapshot into one exact closed Project desired state", Sources: []string{"restore"}},
 
 	// classification
 	//

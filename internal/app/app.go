@@ -191,7 +191,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		_ = notifyCmd.runReconcileWithOwnership(nil, io.Discard, io.Discard, false)
 	}
 	initCmd := newInitCommand()
-	sessionStateCmd := newSessionStateCommand()
+	sessionStateCmd := newSessionStateCommand(recorder)
 	sessionStateCmd.diagnostics = sessionStateDiagnostics
 	if topology, ok := sessionStateCmd.projectTopology.(*registryProjectTopologyMaterializer); ok {
 		topology.agents = ai

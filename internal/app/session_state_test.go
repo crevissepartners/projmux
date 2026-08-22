@@ -326,7 +326,7 @@ func TestSessionStateRestoreRejectsExecutionWithoutDryRun(t *testing.T) {
 	t.Parallel()
 
 	cmd := &sessionStateCommand{}
-	err := cmd.Run([]string{"restore", "--session", "workspace"}, &bytes.Buffer{}, &bytes.Buffer{})
+	err := cmd.Run([]string{"restore", "--session", "workspace", "--project", "uid:prj-workspace"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
