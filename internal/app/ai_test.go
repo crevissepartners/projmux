@@ -255,7 +255,7 @@ func TestAIPickerShowsKeyFooter(t *testing.T) {
 	if got := runner.options.Header; got != "" {
 		t.Fatalf("runner header = %q, want direction only in title", got)
 	}
-	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiModeClaude, aiModeAntigravity, aiModeShell}; !reflect.DeepEqual(got, want) {
+	if got, want := entryValues(runner.options.Entries), []string{aiModeCodex, aiActionCodexAdvancedLaunch, aiModeClaude, aiModeAntigravity, aiModeShell}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("runner entry order = %#v, want %#v", got, want)
 	}
 	for _, entry := range runner.options.Entries {
@@ -699,12 +699,10 @@ func TestAIPickerMarksAgentReadyWhenBinaryExistsWithoutLegacyWrapper(t *testing.
 	}
 
 	rows := cmd.agentRows()
-	if len(rows) < 2 {
-		t.Fatalf("agentRows len = %d, want at least 2", len(rows))
-	}
-	for _, row := range rows[:2] {
-		if !strings.Contains(row.Label, "[READY]") {
-			t.Fatalf("row label = %q, want READY without legacy wrapper", row.Label)
+	for _, value := range []string{aiModeCodex, aiModeClaude} {
+		row := entryWithValue(rows, value)
+		if row == nil || !strings.Contains(row.Label, "[READY]") {
+			t.Fatalf("row %q = %#v, want READY without legacy wrapper", value, row)
 		}
 	}
 }
