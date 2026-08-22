@@ -5527,6 +5527,303 @@ trap smoke_cleanup_env EXIT
 echo ">> Registry-first navigation e2e passed: socket=$nav_socket path=$nav_socket_path other-socket=$nav_other_socket other-path=$nav_other_socket_path client=$nav_client project=$nav_project_uid beta=$nav_beta_uid offline-row=preserved registry-order=\"$nav_registry_order\" live-order=\"$nav_live_order\" closed-order=\"$nav_closed_order\" writes=0 cleanup=validated-exact-sockets"
 
 # ---------------------------------------------------------------------------
+# Alt-1 contextual Runtime row.
+#
+# The Projects sidebar is a Project-switching surface, and its Runtime link is a
+# diagnostics escape hatch. `Settings > Projects > Project Sidebar > Runtime
+# diagnostics` decides whether the row is always there or only when it is needed,
+# with `When needed` the read-time default. The Registry-first navigation block
+# above already proves the needed half against a deliberately anomalous host --
+# control, ephemeral and recoverable objects are on that server, so the default
+# keeps the row and the nested Runtime entry/Esc return works there.
+#
+# This block proves the other half against a host that is exactly what the
+# Registry desires: every observed session, window and pane is managed, so the
+# default withholds the row and `Always` brings it back with its entry and Esc
+# return intact. The direct `get runtime` routes are compared across both modes
+# on the same real server, because a presentation preference must never reach a
+# diagnostics route.
+#
+# Isolation follows the four mandatory conditions: inherited TMUX/TMUX_PANE are
+# stripped from every call, the server lives under a run-unique TMUX_TMPDIR with
+# its own -L name, the real #{socket_path} is queried and proven to sit inside the
+# smoke root, and only those exact sockets are killed.
+# ---------------------------------------------------------------------------
+rtv_root="$PROJMUX_SMOKE_WORKDIR/rtv"
+rtv_socket="rtv-$$"
+rtv_other_socket="rtvo-$$"
+rtv_session="rtv-alpha"
+rtv_driver="rtv-driver"
+rtv_list_session="rtv-list"
+mkdir -p "$rtv_root/t" "$rtv_root/state" "$rtv_root/config/projmux" "$rtv_root/home" \
+  "$rtv_root/runtime" "$rtv_root/p/alpha" "$rtv_root/p/driver" "$rtv_root/p/list"
+chmod 0700 "$rtv_root/runtime"
+rtv_real_tmux="$(command -v tmux)"
+rtv_visibility_file="$rtv_root/config/projmux/runtime-diagnostics-visibility"
+
+rtv_tmux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$rtv_root/t" "$rtv_real_tmux" -L "$rtv_socket" "$@"; }
+rtv_other_tmux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$rtv_root/t" "$rtv_real_tmux" -L "$rtv_other_socket" "$@"; }
+rtv_pmx() {
+  env -u TMUX -u TMUX_PANE \
+    HOME="$rtv_root/home" \
+    XDG_CONFIG_HOME="$rtv_root/config" \
+    XDG_STATE_HOME="$rtv_root/state" \
+    XDG_RUNTIME_DIR="$rtv_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$rtv_root/p" \
+    TMUX_TMPDIR="$rtv_root/t" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+# The sidebar's own environment, shared by the popup and the list pane so the two
+# observations differ in viewport and in nothing else.
+rtv_sidebar_command="env HOME='$rtv_root/home' XDG_CONFIG_HOME='$rtv_root/config' XDG_STATE_HOME='$rtv_root/state' XDG_RUNTIME_DIR='$rtv_root/runtime' PROJMUX_MANAGED_ROOTS='$rtv_root/p' TMUX_TMPDIR='$rtv_root/t' SHELL=/bin/sh '$bin' switch --ui=sidebar"
+
+# Three managed Projects and nothing else on the server. Two of them exist so the
+# list has real rows; the third is the surface the list is rendered into, and it
+# is a Project precisely so that observing the sidebar does not create the
+# unattributed object the sidebar would then report.
+rtv_tmux new-session -d -s "$rtv_session" -c "$rtv_root/p/alpha" sleep 600
+rtv_tmux set-option -t "$rtv_session" -q @projmux_project_path "$rtv_root/p/alpha"
+rtv_tmux new-session -d -s "$rtv_driver" -c "$rtv_root/p/driver" bash --noprofile --norc
+rtv_tmux set-option -t "$rtv_driver" -q @projmux_project_path "$rtv_root/p/driver"
+rtv_tmux new-session -d -s "$rtv_list_session" -x 80 -y 40 -c "$rtv_root/p/list" sleep 600
+rtv_tmux set-option -t "$rtv_list_session" -q @projmux_project_path "$rtv_root/p/list"
+rtv_other_tmux new-session -d -s untouched -c "$rtv_root" sleep 600
+rtv_other_tmux set-option -gq @projmux_rtv_sentinel unchanged
+
+rtv_socket_path="$(rtv_tmux display-message -p -t "$rtv_session" '#{socket_path}')"
+rtv_socket_pid="$(rtv_tmux display-message -p -t "$rtv_session" '#{pid}')"
+rtv_other_socket_path="$(rtv_other_tmux display-message -p -t untouched '#{socket_path}')"
+for actual in "$rtv_socket_path" "$rtv_other_socket_path"; do
+  case "$actual" in
+    "$rtv_root"/*) ;;
+    *)
+      echo "Alt-1 Runtime visibility e2e socket escaped smoke root: $actual" >&2
+      exit 1
+      ;;
+  esac
+done
+
+rtv_cleanup() {
+  local socket actual
+  for socket in "$rtv_socket" "$rtv_other_socket"; do
+    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$rtv_root/t" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+    if [[ -z "$actual" ]]; then
+      continue
+    fi
+    case "$actual" in
+      "$rtv_root"/*) env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true ;;
+      *) echo "refusing Alt-1 Runtime visibility cleanup outside smoke root: $actual" >&2 ;;
+    esac
+  done
+}
+trap 'rtv_cleanup; smoke_cleanup_env' EXIT
+
+rtv_tmux set-option -g -q @projmux_app 1
+rtv_tmux set-option -g -q automatic-rename off
+for rtv_project in alpha driver list; do
+  rtv_pmx create project --root "$rtv_root/p/$rtv_project" --name "rtv-$rtv_project" >"$rtv_root/register-$rtv_project.out"
+done
+e2e_bounded_reconcile_to_noop "$rtv_root/import" \
+  rtv_pmx reconcile resources --socket "$rtv_socket" -o json
+
+# The fixture is only meaningful if the host really is what the Registry desires.
+# A withheld row over an anomalous host would prove nothing, so the class column
+# of every scope is checked to be `managed` before the sidebar is ever opened.
+for rtv_scope in sessions windows panes; do
+  rtv_pmx get runtime "$rtv_scope" --socket "$rtv_socket" >"$rtv_root/classes-$rtv_scope.txt"
+  rtv_classes="$(tail -n +3 "$rtv_root/classes-$rtv_scope.txt" |
+    awk '{for (i = 1; i <= NF; i++) if ($i ~ /^(managed|control|ephemeral|unattributed|foreign|recoverable|conflict)$/) { print $i; break }}' |
+    sort -u | tr '\n' ' ')"
+  if [[ "$rtv_classes" != "managed " ]]; then
+    echo "Alt-1 Runtime visibility e2e fixture is not healthy: $rtv_scope classes = $rtv_classes" >&2
+    cat "$rtv_root/classes-$rtv_scope.txt" >&2
+    exit 1
+  fi
+done
+if [[ -e "$rtv_visibility_file" ]]; then
+  echo "Alt-1 Runtime visibility e2e started with a saved preference: $rtv_visibility_file" >&2
+  exit 1
+fi
+
+rtv_registry="$rtv_root/state/projmux/metadata/registry.json"
+cp "$rtv_registry" "$rtv_root/registry.before"
+rtv_other_before="$(rtv_other_tmux show-options -gqv @projmux_rtv_sentinel):$(rtv_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+
+# The list pane is the managed Pane of the third Project. Rendering the sidebar
+# into it with `respawn-pane` keeps that exact Pane and its mirrored uid, so the
+# observation the sidebar takes of its own host stays complete and managed.
+rtv_list_pane="$(rtv_tmux list-panes -t "=$rtv_list_session" -F '#{pane_id}' | head -n 1)"
+rtv_render_list() {
+  rtv_tmux respawn-pane -k -t "$rtv_list_pane" "$rtv_sidebar_command"
+}
+rtv_stop_list() {
+  rtv_tmux respawn-pane -k -t "$rtv_list_pane" sleep 600
+}
+rtv_list_screen() {
+  rtv_tmux capture-pane -p -t "$rtv_list_pane" 2>/dev/null || true
+}
+rtv_list_ready() {
+  local screen
+  screen="$(rtv_list_screen)"
+  [[ "$screen" == *"p/alpha"* && "$screen" == *"p/driver"* && "$screen" == *"p/list"* ]]
+}
+rtv_list_has_runtime() {
+  [[ "$(rtv_list_screen)" == *"Runtime"* ]]
+}
+
+rtv_wait_for() {
+  local description="$1"
+  shift
+  for _ in {1..200}; do
+    if "$@"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for $description" >&2
+  return 1
+}
+
+# Default `When needed` on a healthy host: the Project rows are there and the
+# diagnostics row is not.
+#
+# Absence is asserted from a whole captured screen 40 rows tall rather than from a
+# scrolling 80x24 transcript, because the row is last in the list and a viewport
+# that could not have shown it would prove nothing. The `Always` half below uses
+# the same pane and the same geometry, so the difference observed is the
+# preference and not the viewport.
+rtv_render_list
+rtv_wait_for "default sidebar list pane with every managed row" rtv_list_ready
+if rtv_list_has_runtime; then
+  echo "the default Projects sidebar offered a Runtime row on a healthy host" >&2
+  rtv_list_screen >&2
+  exit 1
+fi
+rtv_list_screen >"$rtv_root/sidebar-default.txt"
+rtv_stop_list
+
+# The same host, the same pane, the same geometry, `Always` saved: the row is
+# back. Without this half the withheld row above would only prove the list was
+# short.
+printf 'always\n' >"$rtv_visibility_file"
+rtv_render_list
+rtv_wait_for "Always sidebar list pane with every managed row" rtv_list_ready
+rtv_wait_for "Always Runtime row in the list pane" rtv_list_has_runtime
+rtv_list_screen >"$rtv_root/sidebar-always.txt"
+if ! grep -aFq "nothing here that projmux does not manage" "$rtv_root/sidebar-always.txt"; then
+  echo "the Always Runtime row lost its shipped empty-state label" >&2
+  cat "$rtv_root/sidebar-always.txt" >&2
+  exit 1
+fi
+rtv_stop_list
+
+# The real attached 80x24 client. The default leads with the Project rows the
+# surface exists for; `Always` restores the row and it still enters the
+# diagnostics surface in-process and returns on Esc.
+rtv_client_log="$rtv_root/driver-client.log"
+rtv_client_input="$rtv_root/driver-client.in"
+mkfifo "$rtv_client_input"
+exec 9<>"$rtv_client_input"
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$rtv_root/t' tmux -L '$rtv_socket' attach-session -t '$rtv_driver'" \
+  "$rtv_client_log" <"$rtv_client_input" >/dev/null 2>&1 &
+rtv_client_pid=$!
+
+rtv_wait_for_client() {
+  local description="$1"
+  shift
+  for _ in {1..200}; do
+    if "$@"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for $description" >&2
+  tail -c 12000 "$rtv_client_log" >&2 || true
+  return 1
+}
+
+rtv_wait_for_client "attached Alt-1 Runtime visibility client" sh -c \
+  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$rtv_root/t' tmux -L '$rtv_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+rtv_client="$(rtv_tmux list-clients -F '#{client_name}' | head -n 1)"
+rtv_client_is_on_driver() {
+  [[ "$(rtv_tmux display-message -p -c "$rtv_client" '#{session_name}' 2>/dev/null || true)" == "$rtv_driver" ]]
+}
+rtv_open_projects() {
+  local offset_var="$1"
+  printf -v "$offset_var" '%s' "$(stat -c %s "$rtv_client_log")"
+  rtv_tmux display-popup -c "$rtv_client" -T "Alt-1 Runtime E2E" -w 80 -h 24 -E \
+    "env -u TMUX_PANE HOME='$rtv_root/home' XDG_CONFIG_HOME='$rtv_root/config' XDG_STATE_HOME='$rtv_root/state' XDG_RUNTIME_DIR='$rtv_root/runtime' PROJMUX_MANAGED_ROOTS='$rtv_root/p' TMUX_TMPDIR='$rtv_root/t' TMUX='$rtv_socket_path,$rtv_socket_pid,0' SHELL=/bin/sh '$bin' switch --ui=sidebar" &
+  rtv_popup_pid=$!
+}
+rtv_screen_has() {
+  tail -c +$((rtv_popup_offset + 1)) "$rtv_client_log" | grep -aFq "$1"
+}
+
+: >"$rtv_visibility_file"
+rm -f "$rtv_visibility_file"
+rtv_open_projects rtv_popup_offset
+rtv_wait_for_client "default 80x24 Projects sidebar" rtv_screen_has "Projects"
+rtv_wait_for_client "default 80x24 managed Project row" rtv_screen_has "$rtv_root/p/alpha"
+printf '\033' >&9
+rtv_wait_for_client "default 80x24 Projects popup exit" sh -c "! kill -0 '$rtv_popup_pid' 2>/dev/null"
+wait "$rtv_popup_pid" || true
+rtv_wait_for_client "default 80x24 Projects return to driver" rtv_client_is_on_driver
+
+printf 'always\n' >"$rtv_visibility_file"
+rtv_open_projects rtv_popup_offset
+rtv_wait_for_client "Projects sidebar under Always" rtv_screen_has "Projects"
+rtv_always_filter_offset="$(stat -c %s "$rtv_client_log")"
+printf 'Runtime' >&9
+rtv_always_filter_has() {
+  tail -c +$((rtv_always_filter_offset + 1)) "$rtv_client_log" | grep -aF "$1" >/dev/null
+}
+rtv_wait_for_client "Always Runtime row in the 80x24 client" rtv_always_filter_has "Runtime -"
+rtv_enter_offset="$(stat -c %s "$rtv_client_log")"
+printf '\r' >&9
+rtv_enter_has() {
+  tail -c +$((rtv_enter_offset + 1)) "$rtv_client_log" | grep -aF "$1" >/dev/null
+}
+rtv_wait_for_client "nested Runtime diagnostics title under Always" rtv_enter_has "Runtime diagnostics"
+rtv_wait_for_client "nested Runtime diagnostics exact host under Always" rtv_enter_has "host app-owned"
+printf '\033' >&9
+rtv_wait_for_client "Always Runtime popup exit" sh -c "! kill -0 '$rtv_popup_pid' 2>/dev/null"
+wait "$rtv_popup_pid" || true
+rtv_wait_for_client "Always Runtime return to driver" rtv_client_is_on_driver
+
+# The preference is presentation only: the direct runtime routes answer
+# byte-identically in both modes, on the same real server.
+for rtv_mode in when-needed always; do
+  printf '%s\n' "$rtv_mode" >"$rtv_visibility_file"
+  : >"$rtv_root/direct-$rtv_mode.txt"
+  for rtv_scope in sessions windows panes; do
+    rtv_pmx get runtime "$rtv_scope" --socket "$rtv_socket" >>"$rtv_root/direct-$rtv_mode.txt"
+  done
+done
+cmp "$rtv_root/direct-when-needed.txt" "$rtv_root/direct-always.txt"
+
+# Zero writes: the Registry the whole surface read is byte-identical, the sibling
+# socket never moved, and the attached client is where it started.
+cmp "$rtv_root/registry.before" "$rtv_registry"
+rtv_other_after="$(rtv_other_tmux show-options -gqv @projmux_rtv_sentinel):$(rtv_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+if [[ "$rtv_other_after" != "$rtv_other_before" ]]; then
+  echo "Alt-1 Runtime visibility touched the sibling socket" >&2
+  exit 1
+fi
+if [[ "$(rtv_tmux display-message -p -c "$rtv_client" '#{session_name}')" != "$rtv_driver" ]]; then
+  echo "Alt-1 Runtime visibility moved the attached client" >&2
+  exit 1
+fi
+
+exec 9>&-
+kill "$rtv_client_pid" >/dev/null 2>&1 || true
+wait "$rtv_client_pid" 2>/dev/null || true
+rtv_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> Alt-1 Runtime visibility e2e passed: socket=$rtv_socket path=$rtv_socket_path other-socket=$rtv_other_socket other-path=$rtv_other_socket_path client=$rtv_client list-pane=$rtv_list_pane default=withheld always=offered direct-routes=identical writes=0 cleanup=validated-exact-sockets"
+
+# ---------------------------------------------------------------------------
 # Project discovery and pin authority split.
 #
 # A discovery root full of directories used to be a Registry full of Projects:

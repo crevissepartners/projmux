@@ -163,6 +163,7 @@ var settingsEntryCatalog = map[string]settingsEntryMeta{
 	settingsNativeKeysToggle:                       settingsActionMeta("Native macOS keybindings", settingsAxisGlobal, settingsOwnerKeybindings),
 	settingsSessionStateDelete:                     settingsActionMeta("Delete snapshot", settingsAxisGlobal, settingsOwnerSessionState),
 	settingsSessionStateSidebarStartupPickerDetail: settingsNavigationMeta("Closed Project startup", settingsAxisGlobal, settingsOwnerProjectPicker),
+	settingsRuntimeDiagnosticsVisibilityDetail:     settingsNavigationMeta("Runtime diagnostics", settingsAxisGlobal, settingsOwnerProjectPicker),
 	settingsAboutUpdates:                           settingsNavigationMeta("Updates", settingsAxisGlobal, settingsOwnerAbout),
 	settingsUpdateApply:                            settingsActionMeta("Update now", settingsAxisGlobal, settingsOwnerAbout),
 	settingsUpdateCheck:                            settingsActionMeta("Check for updates", settingsAxisGlobal, settingsOwnerAbout),
@@ -199,6 +200,7 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixPinItem, settingsNavigationMeta("Pinned Projects", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixCandidatePinItem, settingsNavigationMeta("Candidate Pins", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixSessionStateSidebarStartup, settingsActionMeta("Closed Project startup", settingsAxisGlobal, settingsOwnerProjectPicker)},
+	{settingsActionPrefixRuntimeDiagnostics, settingsActionMeta("Runtime diagnostics", settingsAxisGlobal, settingsOwnerProjectPicker)},
 	{settingsActionPrefixHookAdd, settingsActionMeta("Hook maker - add", settingsAxisBoth, settingsOwnerHooks)},
 	{settingsActionPrefixHookEdit, settingsActionMeta("Hook maker - edit", settingsAxisBoth, settingsOwnerHooks)},
 	{settingsActionPrefixHookRemove, settingsActionMeta("Hook maker - remove", settingsAxisBoth, settingsOwnerHooks)},
@@ -267,13 +269,15 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 		switch value {
 		case settingsProjectAdd, settingsProjectPins, settingsProjectCandidatePins,
 			settingsProjectRootManage, settingsWorkdirAdd,
-			settingsWorkdirList, settingsProjectsSidebar, settingsSessionStateSidebarStartupPickerDetail:
+			settingsWorkdirList, settingsProjectsSidebar, settingsSessionStateSidebarStartupPickerDetail,
+			settingsRuntimeDiagnosticsVisibilityDetail:
 			return true
 		}
 		return strings.HasPrefix(value, settingsActionPrefixWorkdirItem) ||
 			strings.HasPrefix(value, settingsActionPrefixPinItem) ||
 			strings.HasPrefix(value, settingsActionPrefixCandidatePinItem) ||
-			strings.HasPrefix(value, settingsActionPrefixSessionStateSidebarStartup)
+			strings.HasPrefix(value, settingsActionPrefixSessionStateSidebarStartup) ||
+			strings.HasPrefix(value, settingsActionPrefixRuntimeDiagnostics)
 	case settingsOwnerAI:
 		return value == settingsAIDefaultMode || value == settingsAIEnabledAgents ||
 			value == settingsAIResumePicker || value == settingsAIResumePickerLimit ||
@@ -385,6 +389,11 @@ const (
 	settingsActionPrefixPinItem            = "pin-item:"
 	settingsActionPrefixCandidatePinItem   = "candidate-pin-item:"
 	settingsActionPrefixHookEvent          = "hook-event:"
+	// settingsActionPrefixRuntimeDiagnostics owns the Projects sidebar
+	// Runtime diagnostics visibility choice. It is its own spelling rather
+	// than a `sessionstate:` reuse because the preference is a sidebar
+	// presentation policy and touches no snapshot state.
+	settingsActionPrefixRuntimeDiagnostics = "runtime-diagnostics:"
 	// settingsActionPrefixSessionStateSidebarStartup keeps the shipped
 	// `sessionstate:` config/action spelling while the row itself moves under
 	// Projects > Project Sidebar. Only the destination and the label change.

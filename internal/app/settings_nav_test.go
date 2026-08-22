@@ -474,6 +474,7 @@ func settingsNavDynamicValueDeclared(value string) bool {
 		settingsActionPrefixPinItem,
 		settingsActionPrefixDesktopNotifyMode,
 		settingsActionPrefixSessionStateSidebarStartup,
+		settingsActionPrefixRuntimeDiagnostics,
 		settingsActionPrefixAINotifyDiagnostic,
 		settingsActionPrefixAINotifyCheck,
 		settingsActionPrefixAINotifyCommand,

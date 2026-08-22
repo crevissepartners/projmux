@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -1127,7 +1128,7 @@ func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
 	entries = append(entries, intpickercompat.Entry{
 		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsSidebar), c.projectSidebarSummary()),
 		Value:     settingsProjectsSidebar,
-		SearchKey: "project sidebar closed project startup snapshot topology",
+		SearchKey: "project sidebar closed project startup snapshot topology runtime diagnostics",
 	})
 	return entries
 }
@@ -1171,6 +1172,10 @@ func (c *settingsCommand) runProjectSidebarSection(stdout, stderr io.Writer) err
 			if err := c.runSidebarStartupPickerDetail(stdout, stderr); err != nil {
 				return err
 			}
+		case settingsRuntimeDiagnosticsVisibilityDetail:
+			if err := c.runProjectSidebarRuntimeDiagnosticsDetail(stdout, stderr); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unknown project sidebar action: %s", action)
 		}
@@ -1184,6 +1189,7 @@ func (c *settingsCommand) projectSidebarEntries() []intpickercompat.Entry {
 	if startup.Mode.Enabled() {
 		choice = "Continue project / Open fresh"
 	}
+	runtime := currentRuntimeDiagnosticsVisibility(c.homeDir, c.lookupEnv)
 	return []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
@@ -1191,7 +1197,83 @@ func (c *settingsCommand) projectSidebarEntries() []intpickercompat.Entry {
 			Value:     settingsSessionStateSidebarStartupPickerDetail,
 			SearchKey: "closed project startup continue open fresh sidebar startup picker",
 		},
+		{
+			Label: settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType,
+				settingsNavLabel(settingsNavProjectsSidebar+".runtime-diagnostics"),
+				runtimeDiagnosticsVisibilityChoiceLabel(runtime.Mode)+" - "+runtime.Source()),
+			Value:     settingsRuntimeDiagnosticsVisibilityDetail,
+			SearchKey: "runtime diagnostics row visibility when needed always sidebar escape hatch",
+		},
 	}
+}
+
+// runProjectSidebarRuntimeDiagnosticsDetail is the
+// Projects > Project Sidebar > Runtime diagnostics chooser.
+//
+// It changes what the Projects list shows and nothing else: no runtime object is
+// adopted, imported, reconciled or deleted, no class is recomputed, and the
+// direct `runtime diagnostics` and `get runtime` routes never read the value it
+// saves.
+func (c *settingsCommand) runProjectSidebarRuntimeDiagnosticsDetail(stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-projects-sidebar-runtime",
+			Entries:    c.runtimeDiagnosticsVisibilityEntries(currentRuntimeDiagnosticsVisibility(c.homeDir, c.lookupEnv)),
+			Title:      "Projects - Runtime diagnostics",
+			Prompt:     "Settings > Projects > Project Sidebar > Runtime diagnostics > ",
+			Footer:     projmuxFooter("Enter: apply  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch action {
+		case settingsBackValue:
+			return nil
+		case settingsNoopValue:
+			continue
+		}
+		if err := c.executeWithFeedback(action, stdout, stderr); err != nil {
+			return err
+		}
+	}
+}
+
+func (c *settingsCommand) runtimeDiagnosticsVisibilityEntries(runtime runtimeDiagnosticsVisibilityState) []intpickercompat.Entry {
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	entries := []intpickercompat.Entry{
+		settingsBackEntryLocale(locale),
+		{
+			Label: settingsLabelInfoLocale(locale, settingsNavLabel(settingsNavProjectsSidebar+".runtime-diagnostics"),
+				runtimeDiagnosticsVisibilityChoiceLabel(runtime.Mode), runtime.Source()),
+			Value: settingsNoopValue,
+		},
+	}
+	for _, item := range []struct {
+		mode config.RuntimeDiagnosticsVisibility
+		desc string
+	}{
+		{config.RuntimeDiagnosticsWhenNeeded, "show the Runtime row only for a refused class or an observation that could not be taken"},
+		{config.RuntimeDiagnosticsAlways, "show the Runtime row on every render, before Settings"},
+	} {
+		glyph := settingsGlyphInactive
+		color := settingsColorDim
+		if item.mode == runtime.Mode {
+			glyph = settingsGlyphToggle
+			color = settingsColorAdd
+		}
+		entries = append(entries, intpickercompat.Entry{
+			Label:     settingsLabelLocale(locale, glyph, color, runtimeDiagnosticsVisibilityChoiceLabel(item.mode), item.desc),
+			Value:     settingsActionPrefixRuntimeDiagnostics + string(item.mode),
+			SearchKey: "runtime diagnostics visibility when needed always",
+		})
+	}
+	return entries
 }
 
 func (c *settingsCommand) projectRootEntryLocale(locale i18n.Locale) intpickercompat.Entry {

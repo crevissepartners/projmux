@@ -1419,6 +1419,24 @@ Registry-first primary navigation:
   resource name beside the exact tmux handle their actions target. What they
   withhold is tallied by class on a Runtime link that forwards to the escape
   hatch above.
+- The Projects sidebar's Runtime link is conditional, and only the link is.
+  `Settings > Projects > Project Sidebar > Runtime diagnostics` chooses between
+  `Always`, which is the shipped behavior, and `When needed`, which is the
+  read-time default with nothing saved and no install migrated to it. `When
+  needed` offers the row when the refused classes -- `Unattributed`, `Foreign`,
+  `Recoverable`, `Conflict` -- sum above zero, or when the observation could not
+  be taken: no transport, or any scope the inventory marked unavailable. Not
+  being able to look is not the same as nothing being there, so a failed
+  observation keeps the escape hatch reachable rather than hiding it.
+  `Control` and `Ephemeral` are deliberately outside that sum: the app's own
+  control session and a scratch session are what a healthy host looks like, and
+  counting them would put the row back on every render. The decision is purely
+  presentational -- `registryview` still emits a complete Runtime row and a
+  complete class tally, a visible row carries its exact shipped label and tally,
+  the Sessions and Recent Windows links are untouched, and `projmux runtime
+  diagnostics` and `projmux get runtime ...` never read the preference. Hiding a
+  row is not disabling a capability. An unreadable or unrecognized saved value
+  resolves to `When needed` without writing anything and says so in Settings.
 - Every action forwards to a route that already owns it: `focus` for a live row,
   `attach project` for an offline Project -- the one shipped route that
   materializes one -- and `agent resume` for an Agent. Rebind and delete are
