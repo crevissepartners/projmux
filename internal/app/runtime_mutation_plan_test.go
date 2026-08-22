@@ -171,7 +171,8 @@ func TestPlanOnlyMutationProductSurfaceInventoryIsBidirectionalAndClosed(t *test
 		"pane-menu.split-right", "pane-menu.split-down", "pane-menu.kill", "pane-menu.resume", "pane-menu.swap-up",
 		"pane-menu.swap-down", "pane-menu.mark", "pane-menu.zoom", "pane-menu.mouse-forward", "shell.foreground-attach",
 		"app.quit", "attach.ensure-home", "attach.ephemeral-prune", "attach.ephemeral-create", "standalone.prune", "manual.tagged-kill", "switch.manual-kill", "sidebar.unmanaged-candidate-stop", "replay.retired-snapshot",
-		"config.apply-source", "trigger.after-new-window", "trigger.after-split-window", "trigger.after-kill-pane", "trigger.pane-exited", "trigger.window-unlinked",
+		"config.apply-source", "pane.rebalance", "trigger.after-new-window", "trigger.after-split-window",
+		"trigger.after-kill-pane", "trigger.after-kill-pane.rebalance", "trigger.pane-exited", "trigger.pane-exited.rebalance", "trigger.window-unlinked",
 		"trigger.attention-focus", "trigger.recent-window-record", "trigger.client-attached-welcome", "config.generated-statusbar", "config.generated-key-sequences",
 		"resource.rename-project", "resource.rename-window", "resource.rename-pane", "resource.rebind-project",
 		"settings.desktop-notify-option", "settings.statusbar-decoration-option", "settings.ai-badge-option",
@@ -346,7 +347,8 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		rows[row.ID] = row.Disposition
 	}
 	for _, id := range []string{
-		"trigger.attention-focus", "trigger.pane-exited", "trigger.after-kill-pane", "trigger.window-unlinked",
+		"trigger.attention-focus", "pane.rebalance", "trigger.pane-exited", "trigger.pane-exited.rebalance",
+		"trigger.after-kill-pane", "trigger.after-kill-pane.rebalance", "trigger.window-unlinked",
 		"trigger.recent-window-record", "trigger.after-new-window", "trigger.after-split-window",
 		"trigger.client-attached-welcome", "config.generated-statusbar", "config.generated-key-sequences",
 		"pane-menu.swap-up", "pane-menu.swap-down", "pane-menu.zoom",
@@ -434,6 +436,36 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 				t.Errorf("%s generated artifact %q signature %q count=%d, want %d", kind, id, signature, got, want)
 			}
 		}
+		for hook, rebalanceID := range map[string]string{
+			"pane-exited":     "trigger.pane-exited.rebalance",
+			"after-kill-pane": "trigger.after-kill-pane.rebalance",
+		} {
+			prefix := "set-hook -g " + hook + " "
+			var hookLines []string
+			for line := range strings.SplitSeq(rendered, "\n") {
+				if strings.HasPrefix(line, prefix) {
+					hookLines = append(hookLines, line)
+				}
+			}
+			if len(hookLines) != 1 || strings.Count(hookLines[0], "internal tmux rebalance-panes") != 1 {
+				t.Errorf("%s generated %s hook does not map exactly once to %s: %v", kind, hook, rebalanceID, hookLines)
+			}
+			matchedRows := 0
+			for id, disposition := range rows {
+				if id == "trigger."+hook || id == rebalanceID {
+					matchedRows++
+					if disposition != runtimeMutationSurfaceExempt {
+						t.Errorf("generated %s hook surface %q disposition=%q, want presentation/observation exemption", hook, id, disposition)
+					}
+				}
+			}
+			if matchedRows != 2 {
+				t.Errorf("generated %s hook maps %d surface rows, want exact controller+rebalance pair", hook, matchedRows)
+			}
+		}
+		if got := strings.Count(rendered, "internal tmux rebalance-panes"); got != 2 {
+			t.Errorf("%s generated config has %d rebalance handler occurrence(s), want exact pane-exited+after-kill-pane pair", kind, got)
+		}
 		for verb := range closedTmuxTopologyMutationVerbs {
 			occurrences := regexp.MustCompile(`(^|[[:space:];{}'\"])(`+regexp.QuoteMeta(verb)+`)([[:space:];{}'\"]|$)`).FindAllStringIndex(rendered, -1)
 			if len(occurrences) == 0 {
@@ -453,6 +485,120 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 				t.Errorf("%s generated config has %d %s occurrence(s), but only %d match exact closed presentation rows", kind, len(occurrences), verb, classified)
 			}
 		}
+	}
+}
+
+func TestGeneratedPaneExitHooksMapExactAllWindowRebalanceEffects(t *testing.T) {
+	rows := map[string]runtimeMutationSurface{}
+	for _, row := range runtimeMutationSurfaces {
+		rows[row.ID] = row
+	}
+	rebalance := rows["pane.rebalance"]
+	if rebalance.Disposition != runtimeMutationSurfaceExempt || rebalance.RootKinds != "all runtime classes" ||
+		!strings.Contains(rebalance.OwnerRoute, "every observed multi-Pane Window") ||
+		!strings.Contains(rebalance.Handler, "runRebalancePanes") || !strings.Contains(rebalance.Effect, "every observed multi-Pane Window") {
+		t.Fatalf("pane.rebalance does not declare its all-window presentation effect: %#v", rebalance)
+	}
+	for _, test := range []struct {
+		reason      controllerTriggerReason
+		controller  string
+		rebalanceID string
+	}{
+		{reason: controllerTriggerPaneExited, controller: "trigger.pane-exited", rebalanceID: "trigger.pane-exited.rebalance"},
+		{reason: controllerTriggerPaneKilled, controller: "trigger.after-kill-pane", rebalanceID: "trigger.after-kill-pane.rebalance"},
+	} {
+		controllerRow := rows[test.controller]
+		rebalanceRow := rows[test.rebalanceID]
+		if controllerRow.Disposition != runtimeMutationSurfaceExempt || !strings.Contains(controllerRow.Guard, "rebalance write is classified separately") {
+			t.Fatalf("controller hook half %q hides its generated presentation write: %#v", test.controller, controllerRow)
+		}
+		if rebalanceRow.Disposition != runtimeMutationSurfaceExempt || rebalanceRow.RootKinds != "all runtime classes" ||
+			!strings.Contains(rebalanceRow.OwnerRoute, "every observed multi-Pane Window") ||
+			!strings.Contains(rebalanceRow.Handler, "internal tmux rebalance-panes") {
+			t.Fatalf("generated hook rebalance row %q is not exact all-window presentation: %#v", test.rebalanceID, rebalanceRow)
+		}
+		body := tmuxPaneExitHookBody("/usr/local/bin/projmux", test.reason)
+		rebalanceAt := strings.Index(body, "internal tmux rebalance-panes")
+		controllerAt := strings.Index(body, "internal tmux converge")
+		if rebalanceAt < 0 || controllerAt < 0 || rebalanceAt >= controllerAt || strings.Count(body, "internal tmux rebalance-panes") != 1 {
+			t.Fatalf("generated %s hook does not execute one rebalance before its controller half: %s", test.reason, body)
+		}
+	}
+}
+
+func TestAIBellIntegrationOwnsRunnerLifecycleTransport(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source path")
+	}
+	root := filepath.Dir(thisFile)
+	callCounts := map[string]int{}
+	err := filepath.WalkDir(root, func(path string, item fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if item.IsDir() || strings.HasSuffix(item.Name(), "_test.go") || !strings.HasSuffix(item.Name(), ".go") {
+			return nil
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				selector, ok := call.Fun.(*ast.SelectorExpr)
+				if ok && (selector.Sel.Name == "SetHook" || selector.Sel.Name == "SetOption") {
+					callCounts[item.Name()+":"+function.Name.Name+":"+selector.Sel.Name]++
+				}
+				return true
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCalls := map[string]int{
+		"ai_integrate.go:runTmuxBellCommand:SetHook":   2,
+		"ai_integrate.go:runTmuxBellCommand:SetOption": 2,
+	}
+	if !reflect.DeepEqual(callCounts, wantCalls) {
+		t.Fatalf("SetHook/SetOption production callers = %v, want only AI integration %v", callCounts, wantCalls)
+	}
+	lifecyclePath := filepath.Join(root, "..", "integrations", "mux", "lifecycle.go")
+	lifecycle, err := os.ReadFile(lifecyclePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(lifecycle)
+	for _, name := range []string{"SetHook", "SetOption"} {
+		if regexp.MustCompile(`(?m)^func ` + name + `\(`).MatchString(text) {
+			t.Fatalf("dead package-global %s wrapper reappeared as false product-surface evidence", name)
+		}
+		if strings.Count(text, "func (r Runner) "+name+"(") != 1 {
+			t.Fatalf("Runner.%s transport count changed without audit review", name)
+		}
+	}
+	if strings.Count(text, "return r.Run(ctx, args...)") != 2 {
+		t.Fatalf("Runner SetHook/SetOption transports no longer have two exact variable-argv seams")
+	}
+	rows := map[string]runtimeMutationSurface{}
+	for _, row := range runtimeMutationSurfaces {
+		rows[row.ID] = row
+	}
+	if row := rows["ai.integrate-tmux-bell"]; row.Disposition != runtimeMutationSurfaceExempt || !strings.Contains(row.Handler, "bell option and hook") {
+		t.Fatalf("AI bell caller/transport lacks its exact semantic surface: %#v", row)
+	}
+	if row := rows["config.migration"]; strings.Contains(strings.ToLower(row.Producer+" "+row.Handler), "bell") {
+		t.Fatalf("config migration falsely claims AI bell lifecycle transport: %#v", row)
 	}
 }
 
@@ -562,6 +708,29 @@ func TestPropertyPlannedRuntimeMutationIsGuardedOrderedAndIdempotent(t *testing.
 	}
 	if len(repeat.Actions) != 0 {
 		t.Fatalf("successful reobserve/replan = %#v, want empty", repeat.Actions)
+	}
+}
+
+func TestMaterializerOptionEffectUsesTmuxCanonicalBooleanWithoutAcceptingUnknown(t *testing.T) {
+	for _, test := range []struct {
+		name, want, got string
+		observed        bool
+	}{
+		{name: "off renders zero", want: "off", got: "0", observed: true},
+		{name: "on renders one", want: "on", got: "1", observed: true},
+		{name: "different boolean", want: "off", got: "1", observed: false},
+		{name: "blank is unknown", want: "off", got: "", observed: false},
+		{name: "arbitrary value is unknown", want: "off", got: "disabled", observed: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := materializeOptionEffectObserved(tmuxopts.AutomaticRenameWindow, test.want, test.got); got != test.observed {
+				t.Fatalf("observed = %t, want %t", got, test.observed)
+			}
+		})
+	}
+	if !materializeOptionEffectObserved(tmuxopts.WindowUID, "win-1", "win-1") ||
+		materializeOptionEffectObserved(tmuxopts.WindowUID, "win-1", "win-2") {
+		t.Fatal("non-boolean option effect lost exact byte comparison")
 	}
 }
 
@@ -675,6 +844,9 @@ func TestQueuedMutationBindsPrintableRouteContainmentAndConditionalCleanup(t *te
 		if !strings.Contains(joined, want) {
 			t.Fatalf("queued typed argv = %q, want conditional exact-route fragment %q", joined, want)
 		}
+	}
+	if !strings.Contains(joined, "##{E:"+action.Queue.Marker+"}") {
+		t.Fatalf("queued typed argv = %q, want inner queue condition delayed past outer run-shell expansion", joined)
 	}
 	if strings.Contains(joined, "; 'tmux' -S '/tmp/property.sock' set-environment -gu") {
 		t.Fatalf("queued cleanup is an unconditional foreign-server write: %q", joined)
@@ -805,6 +977,28 @@ func TestPrintedPhysicalSocketIsExecutionAuthority(t *testing.T) {
 	}
 	if len(runner.calls) != 0 {
 		t.Fatalf("print/execution mismatch reached tmux: %#v", runner.calls)
+	}
+}
+
+func TestQueuedMutationEffectReobservesAbsenceAfterMarkerClearRace(t *testing.T) {
+	t.Parallel()
+
+	absenceCalls := 0
+	markerCalls := 0
+	observed, err := observeQueuedRuntimeMutationEffect(context.Background(),
+		func(context.Context) (bool, error) {
+			absenceCalls++
+			return absenceCalls == 2, nil
+		},
+		func(context.Context) (bool, error) {
+			markerCalls++
+			return false, nil
+		})
+	if err != nil || !observed {
+		t.Fatalf("completed background kill effect = %v, %v; want observed", observed, err)
+	}
+	if absenceCalls != 2 || markerCalls != 1 {
+		t.Fatalf("observations absence=%d marker=%d, want 2/1", absenceCalls, markerCalls)
 	}
 }
 
@@ -1137,11 +1331,9 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"tmux.go:restoreSidebarOriginSession:variable-argv":                               "sidebar.origin-restore",
 		"ai.go:readMux:variable-argv":                                                     "runtime.observation",
 		"ai.go:readTrimmed:variable-argv":                                                 "runtime.observation",
-		"../integrations/mux/lifecycle.go:SetHook:variable-argv":                          "config.migration",
-		"../integrations/mux/lifecycle.go:SetOption:variable-argv":                        "config.migration",
-		"../integrations/mux/lifecycle.go:SetHook:helper:SetHook":                         "ai.integrate-tmux-bell",
-		"../integrations/mux/lifecycle.go:SetOption:helper:SetOption":                     "ai.integrate-tmux-bell",
-		"../integrations/mux/lifecycle.go:NewEphemeralSession:variable-argv":              "attach.ephemeral-create",
+		"../integrations/mux/lifecycle.go:Runner.SetHook:variable-argv":                   "ai.integrate-tmux-bell",
+		"../integrations/mux/lifecycle.go:Runner.SetOption:variable-argv":                 "ai.integrate-tmux-bell",
+		"../integrations/mux/lifecycle.go:Runner.NewEphemeralSession:variable-argv":       "attach.ephemeral-create",
 		"../integrations/sessionstate/replay.go:replay:variable-argv":                     "replay.retired-snapshot",
 		"../integrations/sessionstate/replay.go:replayPaneIdentityMetadata:variable-argv": "replay.retired-snapshot",
 		"../integrations/tmux/client.go:OpenSession:variable-argv":                        "sidebar.origin-restore",
@@ -1252,6 +1444,14 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 			function, ok := declaration.(*ast.FuncDecl)
 			if !ok || function.Body == nil {
 				continue
+			}
+			sourceFunctionName := function.Name.Name
+			if name == "../integrations/mux/lifecycle.go" && function.Recv != nil {
+				for _, field := range function.Recv.List {
+					if receiver, ok := field.Type.(*ast.Ident); ok && receiver.Name == "Runner" {
+						sourceFunctionName = "Runner." + function.Name.Name
+					}
+				}
 			}
 			argvCallbacks := map[string]bool{}
 			if function.Type.Params != nil {
@@ -1397,7 +1597,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 			transportOnly := name == "../integrations/metadata/tmuxmirror.go" && function.Name.Name == "run"
 			if len(rawMutations) > 0 && !pureArgvBuilder && !transportOnly {
 				for _, verb := range rawMutations {
-					key := name + ":" + function.Name.Name + ":" + verb
+					key := name + ":" + sourceFunctionName + ":" + verb
 					if surfaceID := plannedTypedSites[key]; surfaceID != "" {
 						if got := surfaceDispositions[surfaceID]; got != runtimeMutationSurfacePlanned {
 							t.Errorf("%s cites product-surface row %q with disposition %q, want planned typed transport", key, surfaceID, got)
@@ -1415,7 +1615,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 					t.Errorf("%s:%s calls lifecycle/topology tmux verb %q outside the typed execution seam and closed semantic exemptions", name, function.Name.Name, verb)
 				}
 			}
-			key := name + ":" + function.Name.Name
+			key := name + ":" + sourceFunctionName
 			if requiredPlanSites[key] {
 				seenPlanSites[key] = true
 				if !usesPlanSeam {

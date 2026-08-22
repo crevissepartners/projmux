@@ -1517,6 +1517,8 @@ PROJMUX_RECONCILE_SECONDARY_SOCKET="projmux-reconcile-secondary-$$-$RANDOM"
 export PROJMUX_RECONCILE_SESSION PROJMUX_RECONCILE_PRIMARY_SOCKET PROJMUX_RECONCILE_SECONDARY_SOCKET
 for reconcile_socket in "$PROJMUX_RECONCILE_PRIMARY_SOCKET" "$PROJMUX_RECONCILE_SECONDARY_SOCKET"; do
   env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" new-session -d -s "$PROJMUX_RECONCILE_SESSION" -c "$reconcile_root" sleep 300
+  env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" set-option -gq @projmux_app 1
+  env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" set-option -gq @projmux_socket_name "$reconcile_socket"
   env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" set-option -t "$PROJMUX_RECONCILE_SESSION" -q @projmux_project_path "$reconcile_root"
   if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" show-options -t "$PROJMUX_RECONCILE_SESSION" -qv @projmux_project_path)" != "$reconcile_root" ]]; then
     echo "failed to seed reconcile session project path" >&2
@@ -1652,15 +1654,24 @@ PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$prima
   "$bin" rename project "uid:$primary_project_uid" --name stable-project >"$PROJMUX_SMOKE_WORKDIR/reconcile-rename-project.out"
 PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$primary_tmux_env" \
   "$bin" rename window "uid:$primary_window_uid" --name stable-window >"$PROJMUX_SMOKE_WORKDIR/reconcile-rename-window.out"
+rename_window_immediate="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -wqv -t "=$PROJMUX_RECONCILE_SESSION:0" @projmux_window_name)"
+if [[ "$rename_window_immediate" != stable-window ]]; then
+  echo "Window stable-name mirror did not converge immediately: got=$rename_window_immediate want=stable-window" >&2
+  exit 1
+fi
 PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$primary_tmux_env" \
   "$bin" rename pane "uid:$primary_pane_uid" --name stable-pane >"$PROJMUX_SMOKE_WORKDIR/reconcile-rename-pane.out"
 PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$primary_tmux_env" \
   "$bin" rebind project "uid:$primary_project_uid" --root "$PROJMUX_SMOKE_WORKDIR/reconcile-root-moved" >"$PROJMUX_SMOKE_WORKDIR/reconcile-rebind-project.out"
-if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -qv -t "$PROJMUX_RECONCILE_SESSION" @projmux_project_name)" != stable-project ]] || \
-  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -wqv -t "=$PROJMUX_RECONCILE_SESSION:0" @projmux_window_name)" != stable-window ]] || \
-  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -pqv -t "=$PROJMUX_RECONCILE_SESSION:0.0" @projmux_pane_label)" != stable-pane ]] || \
-  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -qv -t "$PROJMUX_RECONCILE_SESSION" @projmux_project_path)" != "$PROJMUX_SMOKE_WORKDIR/reconcile-root-moved" ]]; then
-  echo "rename/rebind integration mirrors did not converge" >&2
+rename_project_mirror="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -qv -t "$PROJMUX_RECONCILE_SESSION" @projmux_project_name)"
+rename_window_mirror="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -wqv -t "=$PROJMUX_RECONCILE_SESSION:0" @projmux_window_name)"
+rename_pane_mirror="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -pqv -t "=$PROJMUX_RECONCILE_SESSION:0.0" @projmux_pane_label)"
+rebind_project_mirror="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -qv -t "$PROJMUX_RECONCILE_SESSION" @projmux_project_path)"
+if [[ "$rename_project_mirror" != stable-project ]] || \
+  [[ "$rename_window_mirror" != stable-window ]] || \
+  [[ "$rename_pane_mirror" != stable-pane ]] || \
+  [[ "$rebind_project_mirror" != "$PROJMUX_SMOKE_WORKDIR/reconcile-root-moved" ]]; then
+  echo "rename/rebind integration mirrors did not converge: project=$rename_project_mirror window=$rename_window_mirror pane=$rename_pane_mirror root=$rebind_project_mirror" >&2
   exit 1
 fi
 if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" display-message -p -t "=$PROJMUX_RECONCILE_SESSION" '#{session_name}')" != "$primary_session_name_before" ]] || \

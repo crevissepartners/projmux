@@ -30,6 +30,7 @@ func (mutationExitError) ExitCode() int { return 77 }
 
 type mutationRoutingRunner struct {
 	calls       [][]string
+	stableName  string
 	windowName  string
 	logicalPath string
 }
@@ -41,6 +42,9 @@ func (r *mutationRoutingRunner) Run(_ context.Context, name string, args ...stri
 	joined := strings.Join(argv, " ")
 	if r.windowName == "" {
 		r.windowName = "Runtime Review"
+	}
+	if r.stableName == "" {
+		r.stableName = "review"
 	}
 	switch {
 	case strings.Contains(joined, "display-message -p -F #{socket_path}"):
@@ -61,9 +65,9 @@ func (r *mutationRoutingRunner) Run(_ context.Context, name string, args ...stri
 	case strings.Contains(joined, "show-options -gqv "+runtimeMutationSocketNameOption):
 		return []byte(defaultAppSocket + "\n"), nil
 	case strings.Contains(joined, "list-windows") && strings.Contains(joined, tmuxopts.ProjectUIDSession):
-		return []byte(strings.Join([]string{"@7", "win-alpha-review", "$1", "prj-alpha", "", r.windowName}, tmuxRowSep) + "\n"), nil
-	case len(argv) > 0 && argv[0] == "rename-window":
-		r.windowName = argv[len(argv)-1]
+		return []byte(strings.Join([]string{"@7", "win-alpha-review", "$1", "prj-alpha", "", r.stableName, r.windowName}, tmuxRowSep) + "\n"), nil
+	case len(argv) > 0 && argv[0] == "set-option" && slices.Contains(argv, tmuxopts.WindowName):
+		r.stableName = argv[len(argv)-1]
 		return nil, nil
 	}
 	for _, arg := range argv {
@@ -149,8 +153,8 @@ func TestRenameImmediatelyConvergesOnlyTheStableNameMirror(t *testing.T) {
 			if !reflect.DeepEqual(test.mirror.calls, test.want) {
 				t.Fatalf("mirror calls = %v, want %v", test.mirror.calls, test.want)
 			}
-			if typedRunner != nil && typedRunner.windowName != "renamed" {
-				t.Fatalf("typed Window rename effect = %q, want renamed", typedRunner.windowName)
+			if typedRunner != nil && (typedRunner.stableName != "renamed" || typedRunner.windowName != "Runtime Review") {
+				t.Fatalf("typed Window rename stable/display effects = %q/%q, want renamed/Runtime Review", typedRunner.stableName, typedRunner.windowName)
 			}
 		})
 	}

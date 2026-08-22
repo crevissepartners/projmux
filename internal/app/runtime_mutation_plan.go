@@ -211,6 +211,12 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 		clearCondition := "#{&&:" + routeCondition + "," + leaseCondition + "}"
 		deferredKill := killVerb + " -t " + action.Target.ID
 		deferredClear := "set-environment -gu " + action.Queue.Marker
+		// run-shell expands formats before starting its shell. Delay the inner
+		// if-shell conditions by one tmux expansion so exact -S/-t observation
+		// happens in the declared target context, not whichever Pane happened to
+		// be current when the background job was queued.
+		condition = strings.ReplaceAll(condition, "#", "##")
+		clearCondition = strings.ReplaceAll(clearCondition, "#", "##")
 		command := shellQuote("tmux") + " -S " + shellQuote(action.Queue.PhysicalSocket) +
 			" if-shell -F -t " + shellQuote(action.Target.ID) + " " + shellQuote(condition) + " " + shellQuote(deferredKill) + " ''; " +
 			"status=$?; " + shellQuote("tmux") + " -S " + shellQuote(action.Queue.PhysicalSocket) +
@@ -255,6 +261,34 @@ func observeRuntimeMutationQueueMarker(ctx context.Context, runner tmuxCommandRu
 		return false, err
 	}
 	return sessionEnvironmentValue(string(out), runtimeMutationQueueMarker(action)) == action.Queue.ExpectedUID, nil
+}
+
+// observeQueuedRuntimeMutationEffect closes the only valid race in a deferred
+// kill observation. The target may be present during the first inventory, then
+// the background job may kill it and clear its durable queue marker before the
+// marker read. A final absence observation distinguishes that completed effect
+// from a queue command that neither retained its marker nor killed its target.
+func observeQueuedRuntimeMutationEffect(
+	ctx context.Context,
+	observeAbsent func(context.Context) (bool, error),
+	observeMarker func(context.Context) (bool, error),
+) (bool, error) {
+	absent, err := observeAbsent(ctx)
+	if err != nil || absent {
+		return absent, err
+	}
+	queued, markerErr := observeMarker(ctx)
+	if markerErr == nil && queued {
+		return true, nil
+	}
+	absent, absentErr := observeAbsent(ctx)
+	if absentErr == nil && absent {
+		return true, nil
+	}
+	if markerErr != nil {
+		return false, markerErr
+	}
+	return false, absentErr
 }
 
 func clearRuntimeMutationQueueMarker(ctx context.Context, runner tmuxCommandRunner, action plannedRuntimeMutation) error {

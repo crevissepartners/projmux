@@ -206,6 +206,9 @@ func (c *createCommand) resolveCanonicalIntentScope(intent agentPaneIntent) (can
 		}
 		scope.sessionName = c.sessionNameFor(scope.cwd)
 	}
+	if err := c.ensureRuntimeRoute(context.Background()); err != nil {
+		return canonicalIntentScope{}, fmt.Errorf("canonical create: bind exact runtime route: %w", err)
+	}
 	runtimeSession, err := c.canonicalIntentRuntimeSession(context.Background(), scope.anchorPaneID)
 	if err != nil {
 		return canonicalIntentScope{}, err

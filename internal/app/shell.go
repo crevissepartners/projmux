@@ -311,12 +311,6 @@ func (c *shellCommand) prepareControlSession(ctx context.Context, socketName, co
 	return nil
 }
 
-func (c *shellCommand) observeControlBootstrap(ctx context.Context, socketName, sessionName string) ([]string, error) {
-	return c.observeControlBootstrapAtRoute(ctx, runtimeMutationRoute{
-		target: explicitTmuxTarget{flag: "-L", value: socketName}, socketName: socketName,
-	}, sessionName)
-}
-
 func (c *shellCommand) observeControlBootstrapAtRoute(ctx context.Context, route runtimeMutationRoute, sessionName string) ([]string, error) {
 	out, err := c.controlBootstrapRunner(route).Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "-F",
 		tmuxRowFormat("#{session_id}", "#{"+tmuxopts.SessionRole+"}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}"))

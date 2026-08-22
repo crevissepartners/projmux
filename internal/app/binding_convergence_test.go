@@ -50,8 +50,8 @@ func (r *routedTmuxRunner) Run(ctx context.Context, name string, args ...string)
 				return nil, fmt.Errorf("multiple fake tmux servers for physical socket %q", args[1])
 			}
 			server = candidate
-			if strings.HasPrefix(route, "-L\x00") {
-				logicalName = strings.TrimPrefix(route, "-L\x00")
+			if after, ok := strings.CutPrefix(route, "-L\x00"); ok {
+				logicalName = after
 			}
 		}
 	}

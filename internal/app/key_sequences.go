@@ -103,13 +103,6 @@ func tmuxSequenceStateLines(actions []keyBindingAction) []string {
 	}
 }
 
-// keySequenceRetireCommands unbinds exactly the roots and generated tables a
-// previous successful source recorded. `-q` keeps an already-absent key or
-// table a success, so a partially applied predecessor still converges.
-func keySequenceRetireCommands(socketName, roots, tables string) [][]string {
-	return keySequenceRetireCommandsWithPrefix([]string{"tmux", "-L", socketName}, roots, tables)
-}
-
 // keySequenceRetireCommandsWithPrefix lets every live apply seam consume the
 // same ordered retirement contract. The canonical config apply path supplies an
 // explicit -L socket; Settings supplies the inherited current-client routing

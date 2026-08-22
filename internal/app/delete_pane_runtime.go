@@ -204,17 +204,13 @@ func (r *tmuxPaneDeleteRuntime) mutationSteps(
 			Action: action,
 			Reobserve: func(ctx context.Context) (bool, error) {
 				if verb == mutationQueuePaneKill {
-					absent, err := r.observeMutationEffect(ctx, target, effectUID, true, attempted)
-					if err == nil && absent {
-						return true, nil
-					}
-					if err != nil {
-						return false, err
-					}
-					if err := r.guardSocketIdentity(ctx); err != nil {
-						return false, err
-					}
-					return observeRuntimeMutationQueueMarker(ctx, r.runner, action)
+					return observeQueuedRuntimeMutationEffect(ctx,
+						func(ctx context.Context) (bool, error) {
+							return r.observeMutationEffect(ctx, target, effectUID, true, attempted)
+						},
+						func(ctx context.Context) (bool, error) {
+							return observeRuntimeMutationQueueMarker(ctx, r.runner, action)
+						})
 				}
 				return r.observeMutationEffect(ctx, target, effectUID, verb == mutationKillPane, attempted)
 			},
@@ -308,7 +304,7 @@ func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDelete
 	if r.target.flag == "" || r.target.value == "" {
 		return nil, errors.New("delete pane: no exact tmux target is bound")
 	}
-	if err := r.guardSocketIdentity(ctx); err != nil {
+	if err := r.observeSocketIdentity(ctx); err != nil {
 		return nil, err
 	}
 	format := tmuxRowFormat(
@@ -346,7 +342,7 @@ func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDelete
 }
 
 func (r *tmuxPaneDeleteRuntime) exactSocketPath(ctx context.Context) (string, error) {
-	if err := r.guardSocketIdentity(ctx); err != nil {
+	if err := r.observeSocketIdentity(ctx); err != nil {
 		if inttmux.IsNoServerFailure(err) {
 			return "", fmt.Errorf("delete pane: exact tmux socket is unavailable (no-server); absence is not Registry deletion authority and nothing was changed: %w", err)
 		}
@@ -358,7 +354,12 @@ func (r *tmuxPaneDeleteRuntime) exactSocketPath(ctx context.Context) (string, er
 	return r.expectedSocketPath, nil
 }
 
-func (r *tmuxPaneDeleteRuntime) guardSocketIdentity(ctx context.Context) error {
+// observeSocketIdentity binds every read in this invocation to one immutable
+// physical socket without claiming mutation authority. Registry-only cleanup
+// of an exact durable Offline/MissingRuntime target is intentionally available
+// on a standalone tmux server, but it still requires a positive inventory from
+// this same physical socket and a second byte-identical preflight under lock.
+func (r *tmuxPaneDeleteRuntime) observeSocketIdentity(ctx context.Context) error {
 	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil {
 		// Preserve the typed no-server carrier for the expected-absence effect
@@ -379,6 +380,17 @@ func (r *tmuxPaneDeleteRuntime) guardSocketIdentity(ctx context.Context) error {
 	}
 	if observed != r.expectedSocketPath {
 		return fmt.Errorf("delete pane: exact socket drifted: observed %q, planned %q", observed, r.expectedSocketPath)
+	}
+	return nil
+}
+
+// guardSocketIdentity upgrades the immutable observation route to live tmux
+// mutation authority. Every kill, tombstone, restore, and deferred queue step
+// calls this immediately before its write; a standalone/foreign server can
+// therefore authorize only the zero-tmux-write Registry cleanup above.
+func (r *tmuxPaneDeleteRuntime) guardSocketIdentity(ctx context.Context) error {
+	if err := r.observeSocketIdentity(ctx); err != nil {
+		return err
 	}
 	if err := guardRuntimeMutationServerOwnership(ctx, r.routed(), r.target); err != nil {
 		return fmt.Errorf("delete pane: %w", err)
@@ -577,6 +589,19 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 	if err != nil {
 		return paneLiveDeletePlan{}, err
 	}
+	standaloneEligible := plan.ExactUID && len(plan.Targets) > 0
+	for _, target := range plan.Targets {
+		_, eligible, targetErr := registryOnlyPaneTarget(registry, plan, target)
+		if targetErr != nil {
+			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: %w", strings.ToLower(string(plan.Kind)), targetErr)
+		}
+		standaloneEligible = standaloneEligible && eligible
+	}
+	if !standaloneEligible {
+		if err := r.guardSocketIdentity(ctx); err != nil {
+			return paneLiveDeletePlan{}, err
+		}
+	}
 	rows, err := r.inventory(ctx)
 	if err != nil {
 		return paneLiveDeletePlan{}, err
@@ -729,6 +754,11 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 		if target.EndsWindow && !markedSession[target.SessionID] && endingWindowCount[target.SessionID] == windowCount[target.SessionID] {
 			target.EndsSession = true
 			markedSession[target.SessionID] = true
+		}
+	}
+	if len(live.Targets) > 0 {
+		if err := r.guardSocketIdentity(ctx); err != nil {
+			return paneLiveDeletePlan{}, err
 		}
 	}
 	return live, nil

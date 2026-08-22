@@ -237,6 +237,13 @@ printf '\025\r' >&9
 smoke_wait_for "cleared pane label" recorder_label_empty
 assert_recorder_identity_metadata
 
+# Settings live apply is an app-owned product surface. Move the raw command-
+# prompt transport checks above this boundary, then establish the recorder's
+# exact app/logical route through the canonical config apply path.
+"$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$recorder_socket" \
+  >"$PROJMUX_SMOKE_WORKDIR/recorder-e2e-apply.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/recorder-e2e-apply.out" "reloaded tmux server -L $recorder_socket: 1 sessions"
+
 tmux -L "$recorder_socket" display-popup -c "$recorder_client" \
 	-T "Recorder E2E" -w 72 -h 20 -E \
 	"env PROJMUX_PICKER_BACKEND=retired-value '$bin' settings" &
@@ -684,8 +691,11 @@ install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2.toml" "$XDG_CONF
 recorder_project_uid="$("$bin" create project --root "$recorder_root" --name "$recorder_session" -o uid)"
 "$bin" reconcile resources --socket "$recorder_socket" --materialize-project "uid:$recorder_project_uid" -o json \
   >"$PROJMUX_SMOKE_WORKDIR/sequence-e2e-materialize.json"
-if ! tmux -L "$recorder_socket" has-session -t "=$recorder_session" 2>/dev/null; then
-  echo "canonical sequence Project materialization created no $recorder_session Session" >&2
+recorder_session="$(tmux -L "$recorder_socket" list-sessions -F '#{session_name}|#{@projmux_project_uid}' \
+  | awk -F '|' -v uid="$recorder_project_uid" '$2 == uid { print $1 }')"
+if [[ -z "$recorder_session" || "$recorder_session" == *$'\n'* ]] || \
+  ! tmux -L "$recorder_socket" has-session -t "=$recorder_session" 2>/dev/null; then
+  echo "canonical sequence Project materialization did not yield one exact UID-bound Session: uid=$recorder_project_uid session=$recorder_session" >&2
   cat "$PROJMUX_SMOKE_WORKDIR/sequence-e2e-materialize.json" >&2
   tmux -L "$recorder_socket" list-sessions -F '#{session_id}|#{session_name}|#{@projmux_project_uid}|#{@projmux_project_path}' >&2
   exit 1
@@ -792,7 +802,11 @@ create_shim="$create_root/shim"
 mkdir -p "$create_shim"
 cat >"$create_shim/tmux" <<CREATE_SHIM
 #!/usr/bin/env bash
-if [[ "\${PROJMUX_CREATE_FAIL_SPLIT:-}" == "1" && "\${1:-}" == "split-window" ]]; then
+create_args=("\$@")
+if [[ "\${create_args[0]:-}" == "-S" || "\${create_args[0]:-}" == "-L" ]] && [[ \${#create_args[@]} -ge 2 ]]; then
+  create_args=("\${create_args[@]:2}")
+fi
+if [[ "\${PROJMUX_CREATE_FAIL_SPLIT:-}" == "1" && "\${create_args[0]:-}" == "split-window" ]]; then
   echo "injected split failure" >&2
   exit 1
 fi
@@ -865,6 +879,14 @@ case "$create_foreign_socket_path" in
     exit 1
     ;;
 esac
+
+# Every following operation is a managed product mutation. Establish the same
+# app/logical route markers instead of treating a raw tmux fixture as Projmux-
+# owned authority. This block tests synchronous create transaction boundaries,
+# so it deliberately omits the generated config's asynchronous hooks; the
+# canonical config-apply surface and those hooks are exercised by the recorder.
+ctx set-option -gq @projmux_app 1
+ctx set-option -gq @projmux_socket_name "$create_socket"
 
 create_cleanup() {
   local actual
@@ -2163,10 +2185,11 @@ binding_config="$binding_root/config/projmux/tmux.conf"
 binding_pmx internal tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
   >"$binding_root/first-apply.out"
 smoke_assert_file_contains "$binding_root/first-apply.out" "reloaded tmux server -L $binding_socket"
-# The apply observes D2 but imports nothing. Explicit authority is repaired in
-# parent-before-child order on the exact primary socket.
-e2e_bounded_reconcile_to_noop "$binding_root/first-reconcile" \
-  binding_pmx reconcile resources --socket "$binding_socket" -o json
+# Config apply reaches the controller on the exact physical route and performs
+# the parent-before-child repair. The explicit repeat must therefore be empty.
+binding_pmx reconcile resources --socket "$binding_socket" -o json >"$binding_root/first-reconcile-1.json"
+smoke_assert_file_contains "$binding_root/first-reconcile-1.json" '"outcome": "no-op"'
+smoke_assert_file_contains "$binding_root/first-reconcile-1.json" '"items": []'
 
 binding_window="$(binding_tmux display-message -p -t "$binding_session:0" '#{window_id}')"
 binding_pane="$(binding_tmux display-message -p -t "$binding_session:0.0" '#{pane_id}')"
@@ -2795,10 +2818,11 @@ delete_pmx create project --root "$delete_root/work/beta" --name beta >"$delete_
 delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" \
   >"$delete_root/apply.out"
 smoke_assert_file_contains "$delete_root/apply.out" "reloaded tmux server -L $delete_socket"
-# Bind the explicitly registered default topology, then replace the raw sibling
-# with a canonically created managed Window used by the delete parity cases.
-e2e_bounded_reconcile_to_noop "$delete_root/reconcile" \
-  delete_pmx reconcile resources --socket "$delete_socket" -o json
+# Apply binds the explicitly registered default topology. Its explicit repeat
+# is empty before the raw sibling is replaced by a canonical managed Window.
+delete_pmx reconcile resources --socket "$delete_socket" -o json >"$delete_root/reconcile-1.json"
+smoke_assert_file_contains "$delete_root/reconcile-1.json" '"outcome": "no-op"'
+smoke_assert_file_contains "$delete_root/reconcile-1.json" '"items": []'
 delete_tmux kill-window -t work-alpha:sibling
 delete_pmx create window --project alpha --name sibling >"$delete_root/create-sibling.out"
 
@@ -3306,8 +3330,9 @@ delete_tmux new-session -d -s work-gamma -n only -c "$delete_root/work/gamma" sl
 delete_tmux set-option -t work-gamma -q @projmux_project_path "$delete_root/work/gamma"
 delete_pmx create project --root "$delete_root/work/gamma" --name gamma >"$delete_root/register-gamma.out"
 delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-gamma.out"
-e2e_bounded_reconcile_to_noop "$delete_root/reconcile-gamma" \
-  delete_pmx reconcile resources --socket "$delete_socket" -o json
+delete_pmx reconcile resources --socket "$delete_socket" -o json >"$delete_root/reconcile-gamma-1.json"
+smoke_assert_file_contains "$delete_root/reconcile-gamma-1.json" '"outcome": "no-op"'
+smoke_assert_file_contains "$delete_root/reconcile-gamma-1.json" '"items": []'
 delete_gamma_pane="$(delete_tmux display-message -p -t work-gamma:only '#{pane_id}')"
 delete_gamma_pane_uid="$(delete_tmux show-options -pqv -t "$delete_gamma_pane" @projmux_pane_uid)"
 delete_gamma_window="$(delete_tmux display-message -p -t "$delete_gamma_pane" '#{window_id}')"

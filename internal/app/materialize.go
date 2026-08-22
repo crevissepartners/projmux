@@ -433,7 +433,7 @@ func (m *materializer) observeMaterializeMutationEffect(ctx context.Context, act
 		if unset {
 			return got == "", true, nil
 		}
-		return got == want, true, nil
+		return materializeOptionEffectObserved(option, want, got), true, nil
 	case mutationRenameWindow:
 		if len(action.Operands) == 0 {
 			return false, true, errors.New("rename effect operands are incomplete")
@@ -489,6 +489,26 @@ func (m *materializer) observeMaterializeMutationEffect(ctx context.Context, act
 		return true, true, nil
 	}
 	return false, false, nil
+}
+
+func materializeOptionEffectObserved(option, want, got string) bool {
+	if option != tmuxopts.AutomaticRenameWindow {
+		return got == want
+	}
+	wantValue, wantOK := exactTmuxBoolean(want)
+	gotValue, gotOK := exactTmuxBoolean(got)
+	return wantOK && gotOK && wantValue == gotValue
+}
+
+func exactTmuxBoolean(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "on", "yes", "true":
+		return true, true
+	case "0", "off", "no", "false":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func runtimeMutationOptionEffect(action plannedRuntimeMutation) (option, want string, unset bool, err error) {
@@ -781,15 +801,6 @@ func (m *materializer) writeCreatedProjectAnchor(ctx context.Context, result int
 		_, err := runRuntimeMutationCommand(ctx, m.runner, action)
 		return err
 	})
-}
-
-// separateRuntimeCWD reports whether the initial shell Pane must start somewhere
-// other than the Project root. Equal paths take the ordinary create seam so the
-// common path keeps exactly one session-create implementation.
-func separateRuntimeCWD(project coremetadata.Project, runtimeCWD string) bool {
-	runtimeCWD = strings.TrimSpace(runtimeCWD)
-	root := strings.TrimSpace(project.Spec.Root)
-	return runtimeCWD != "" && runtimeCWD != root
 }
 
 // requireOwnedSession validates the complete server-wide ownership proof for
@@ -1472,7 +1483,6 @@ func (m *materializer) equalizeSplitLayout(ctx context.Context, anchorPaneID, pl
 		func(args ...string) ([]byte, error) { return m.routedRunner().Run(ctx, "tmux", args...) })
 	steps := make([]runtimeMutationStep, 0, len(resizes))
 	for index, resize := range resizes {
-		resize := resize
 		action := materializeMutationAction(mutationWriteLayout,
 			m.boundMutationTarget("pane", resize.paneID, "layout:"+resize.paneID),
 			"exact layout inventory="+observed,

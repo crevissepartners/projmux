@@ -304,10 +304,6 @@ func WithLifecycleHookRunner(r *hooks.Runner) ClientOption {
 	}
 }
 
-func WithPersistentSessionCreator(creator PersistentSessionCreator) ClientOption {
-	return func(c *Client) { c.persistent = creator }
-}
-
 // WithSocketName records the tmux -L socket name (if any) the caller is using
 // so it can be propagated to hook scripts via PROJMUX_SOCKET. The Client
 // itself does not currently shell out with -L; this is metadata only.

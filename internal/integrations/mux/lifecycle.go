@@ -56,16 +56,6 @@ type ShowOptionOptions struct {
 	Option    string
 }
 
-// SetHook installs, appends, or unsets a tmux hook.
-func SetHook(ctx context.Context, opts SetHookOptions) error {
-	return DefaultRunner().SetHook(ctx, opts)
-}
-
-// SetOption writes or unsets a tmux option.
-func SetOption(ctx context.Context, opts SetOptionOptions) error {
-	return DefaultRunner().SetOption(ctx, opts)
-}
-
 // ShowOption reads a tmux option.
 func ShowOption(ctx context.Context, opts ShowOptionOptions) (string, error) {
 	return DefaultRunner().ShowOption(ctx, opts)

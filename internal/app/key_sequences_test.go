@@ -200,7 +200,8 @@ func TestKeySequenceGeneratedStateIsRecordedNotRetiredByTheConfig(t *testing.T) 
 
 func TestKeySequenceRetireCommandsTargetOnlyRecordedState(t *testing.T) {
 	table := keySequenceTableName([]string{"C-k"})
-	got := keySequenceRetireCommands("sock", "C-k F12", table)
+	prefix := []string{"tmux", "-L", "sock"}
+	got := keySequenceRetireCommandsWithPrefix(prefix, "C-k F12", table)
 	want := [][]string{
 		{"tmux", "-L", "sock", "unbind-key", "-q", "-n", "C-k"},
 		{"tmux", "-L", "sock", "unbind-key", "-q", "-n", "F12"},
@@ -214,7 +215,7 @@ func TestKeySequenceRetireCommandsTargetOnlyRecordedState(t *testing.T) {
 			t.Fatalf("command %d = %v, want %v", i, got[i], want[i])
 		}
 	}
-	if len(keySequenceRetireCommands("sock", "", "")) != 0 {
+	if len(keySequenceRetireCommandsWithPrefix(prefix, "", "")) != 0 {
 		t.Fatal("unrecorded state retired something")
 	}
 }

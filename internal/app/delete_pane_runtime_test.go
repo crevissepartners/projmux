@@ -398,6 +398,79 @@ func TestPaneDeleteRuntimeRegistryOnlyEvidenceTable(t *testing.T) {
 	})
 }
 
+func TestPaneDeleteStandaloneSocketAuthorizesOnlyRegistryOnlyEvidence(t *testing.T) {
+	sibling := livePaneInventoryRow("$1", "alpha", "@11", "%33", "prj-alpha", "win-alpha-review", "pan-alpha-review")
+	for _, test := range []struct {
+		name    string
+		kind    coremetadata.Kind
+		uid     string
+		prepare func(*coremetadata.Registry)
+		want    string
+	}{
+		{
+			name: "MissingRuntime Pane", kind: coremetadata.KindPane, uid: "pan-alpha-log", want: coremetadata.ConditionMissingRuntime,
+			prepare: func(registry *coremetadata.Registry) { markPaneMissingRuntime(t, registry, "pan-alpha-log") },
+		},
+		{
+			name: "Offline Agent", kind: coremetadata.KindAgent, uid: "agt-alpha-codex", want: "Offline+MissingRuntime",
+			prepare: func(registry *coremetadata.Registry) {
+				agent, _ := registry.Agent("agt-alpha-codex")
+				agent.Status.Phase = coremetadata.PhaseOffline
+				agent.Status.PaneRef = ""
+				markPaneMissingRuntime(t, registry, "pan-alpha-codex")
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime, runner, registry := newPaneRuntimeFixture(t, sibling)
+			test.prepare(&registry)
+			// If the preflight accidentally upgrades this read-only route to
+			// mutation authority, the standalone marker answer must refuse it.
+			runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value,
+				"show-options", "-gqv", tmuxopts.AppGlobal)] = "\n"
+
+			first, err := runtime.preflight(context.Background(), registry,
+				exactPanePlanFor(t, registry, test.kind, test.uid))
+			if err != nil {
+				t.Fatalf("standalone Registry-only preflight: %v", err)
+			}
+			second, err := runtime.preflight(context.Background(), registry,
+				exactPanePlanFor(t, registry, test.kind, test.uid))
+			if err != nil || second.signature() != first.signature() {
+				t.Fatalf("standalone locked reobservation = %#v, err %v; first %#v", second, err, first)
+			}
+			if len(first.Targets) != 0 || len(first.RegistryOnly) != 1 || first.RegistryOnly[0].Evidence != test.want {
+				t.Fatalf("standalone Registry-only plan = %#v", first)
+			}
+			for _, call := range runner.calls {
+				argv := tmuxCommandArgv(call.args)
+				if len(argv) > 0 && (argv[0] == "kill-pane" || argv[0] == "set-option" || argv[0] == "set-environment" || argv[0] == "run-shell") {
+					t.Fatalf("standalone Registry-only plan reached a tmux write: %#v", runner.calls)
+				}
+			}
+		})
+	}
+}
+
+func TestPaneDeleteStandaloneSocketRefusesLiveMirrorBeforeWrite(t *testing.T) {
+	runtime, runner, registry := newPaneRuntimeFixture(t, paneRuntimeInventory())
+	markPaneMissingRuntime(t, &registry, "pan-alpha-log")
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value,
+		"show-options", "-gqv", tmuxopts.AppGlobal)] = "\n"
+
+	_, err := runtime.preflight(context.Background(), registry,
+		exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log"))
+	if err == nil || !strings.Contains(err.Error(), "not app-owned") {
+		t.Fatalf("standalone live-mirror preflight error = %v, want mutation-authority refusal", err)
+	}
+	for _, call := range runner.calls {
+		argv := tmuxCommandArgv(call.args)
+		if len(argv) > 0 && (argv[0] == "kill-pane" || argv[0] == "set-option" || argv[0] == "set-environment" || argv[0] == "run-shell") {
+			t.Fatalf("standalone live-mirror refusal reached a tmux write: %#v", runner.calls)
+		}
+	}
+}
+
 func TestPaneDeleteRuntimeRefusesNoServerAndSignsOwnerGeneration(t *testing.T) {
 	sibling := livePaneInventoryRow("$1", "alpha", "@11", "%33", "prj-alpha", "win-alpha-review", "pan-alpha-review")
 	runtime, runner, registry := newPaneRuntimeFixture(t, sibling)

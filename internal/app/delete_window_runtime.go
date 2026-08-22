@@ -334,17 +334,13 @@ func (r *tmuxWindowDeleteRuntime) queueSelfKill(ctx context.Context, targets []w
 		steps = append(steps, runtimeMutationStep{
 			Action: action,
 			Reobserve: func(ctx context.Context) (bool, error) {
-				absent, err := r.observeWindowMutationEffect(ctx, target, target.UID, true, attempted)
-				if err == nil && absent {
-					return true, nil
-				}
-				if err != nil {
-					return false, err
-				}
-				if err := r.guardSocketIdentity(ctx, false); err != nil {
-					return false, err
-				}
-				return observeRuntimeMutationQueueMarker(ctx, r.runner, action)
+				return observeQueuedRuntimeMutationEffect(ctx,
+					func(ctx context.Context) (bool, error) {
+						return r.observeWindowMutationEffect(ctx, target, target.UID, true, attempted)
+					},
+					func(ctx context.Context) (bool, error) {
+						return observeRuntimeMutationQueueMarker(ctx, r.runner, action)
+					})
 			},
 			Guard: func(ctx context.Context) error {
 				if filepath.Clean(action.Target.PhysicalSocket) != filepath.Clean(r.expectedSocketPath) {

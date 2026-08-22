@@ -2004,7 +2004,7 @@ func TestClientEnsureSessionWithEnvironmentResultPreservesAtomicIdentityAndHookP
 		{output: ownershipRow},
 	}}
 	hook := &fakePostCreateRunner{}
-	client := NewClient(runner, withPostCreateRunnerInterface(hook), WithPersistentSessionCreator(testPersistentSessionCreator(runner)))
+	client := NewClient(runner, withPostCreateRunnerInterface(hook), testPersistentSessionCreatorOption(runner))
 	result, err := client.EnsureSessionWithEnvironmentResult(context.Background(), "workspace", "/tmp/projmux", map[string]string{
 		"__projmux_create_operation": "v1:7:8:op-test",
 	})
@@ -2042,7 +2042,7 @@ func TestClientEnsureSessionWithEnvironmentResultRevalidatesAfterArbitraryCallba
 			{err: exitError(t, 1)}, {output: row}, {output: row}, {},
 			{output: []byte("$70\\037@8\\037%9\\037v1:7:8:op-test\n")},
 		}}
-		client := NewClient(runner, withPostCreateRunnerInterface(&fakePostCreateRunner{}), WithPersistentSessionCreator(testPersistentSessionCreator(runner)))
+		client := NewClient(runner, withPostCreateRunnerInterface(&fakePostCreateRunner{}), testPersistentSessionCreatorOption(runner))
 		result, err := client.EnsureSessionWithEnvironmentResult(context.Background(), "workspace", "/tmp/projmux", map[string]string{
 			createOperationEnvironment: "v1:7:8:op-test",
 		})
@@ -2075,7 +2075,7 @@ func TestClientEnsureSessionWithEnvironmentResultRevalidatesAfterArbitraryCallba
 			{output: []byte("$7\\037@8\\037%90\\037v1:7:8:op-test\n")},
 		}}
 		hook := &fakeLifecycleRunner{startupCommand: "tmux tamper", startupOK: true}
-		client := NewClient(runner, withLifecycleHookRunnerInterface(hook), WithPersistentSessionCreator(testPersistentSessionCreator(runner)))
+		client := NewClient(runner, withLifecycleHookRunnerInterface(hook), testPersistentSessionCreatorOption(runner))
 		result, err := client.EnsureSessionWithEnvironmentResult(context.Background(), "workspace", "/tmp/projmux", map[string]string{
 			createOperationEnvironment: "v1:7:8:op-test",
 		})
@@ -2109,7 +2109,7 @@ func TestClientEnsureSessionWithEnvironmentResultAtSeparatesInitialPaneAndProjec
 		{output: ownershipRow},
 	}}
 	hook := &fakePostCreateRunner{}
-	client := NewClient(runner, withPostCreateRunnerInterface(hook), WithPersistentSessionCreator(testPersistentSessionCreator(runner)))
+	client := NewClient(runner, withPostCreateRunnerInterface(hook), testPersistentSessionCreatorOption(runner))
 	result, err := client.EnsureSessionWithEnvironmentResultAt(context.Background(), "workspace", "/srv/project/logs", "/srv/project", map[string]string{
 		createOperationEnvironment: "v1:7:8:op-test",
 	})
@@ -2458,9 +2458,14 @@ type scriptedRunner struct {
 	calls []commandCall
 }
 
-// testPersistentSessionCreator preserves lifecycle/hook fixture coverage while
-// production Client construction remains incapable of assembling a managed
-// new-session command. Raw argv here is test-only transport evidence.
+// testPersistentSessionCreatorOption preserves lifecycle/hook fixture coverage
+// while production Client construction remains incapable of assembling a
+// managed new-session command.
+func testPersistentSessionCreatorOption(runner commandRunner) ClientOption {
+	return func(c *Client) { c.persistent = testPersistentSessionCreator(runner) }
+}
+
+// testPersistentSessionCreator keeps raw argv as test-only transport evidence.
 func testPersistentSessionCreator(runner commandRunner) PersistentSessionCreator {
 	return func(ctx context.Context, request PersistentSessionCreateRequest) (intmux.NewSessionResult, error) {
 		format := strings.Join([]string{"#{session_id}", "#{window_id}", "#{pane_id}"}, tmuxEscapedFieldSep)

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -36,6 +37,20 @@ type canonicalRootFixture struct {
 	windowUID string
 	rootKind  coremetadata.Kind
 	rootUID   string
+}
+
+type routeBindingAssertionRunner struct {
+	t     *testing.T
+	bound *bool
+	inner tmuxCommandRunner
+}
+
+func (r routeBindingAssertionRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	r.t.Helper()
+	if !*r.bound {
+		r.t.Fatal("canonical Window producer used its materializer before binding the exact invocation route")
+	}
+	return r.inner.Run(ctx, name, args...)
 }
 
 func canonicalFixture(t *testing.T, control bool) canonicalRootFixture {
@@ -171,6 +186,25 @@ func TestCanonicalProjectIntentDerivesLiveSessionWhenStatusSessionIsNil(t *testi
 		t.Fatalf("canonical Project create with nil status.session: %v", err)
 	}
 	assertCanonicalCreateLeaseBracketsSplit(t, fx.tmux.calls)
+}
+
+func TestCanonicalWindowCreateBindsInvocationRouteBeforeRuntimeMutationObservation(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	bound := false
+	bindCalls := 0
+	fx.create.runtimeBound = false
+	fx.create.runtime.runner = routeBindingAssertionRunner{t: t, bound: &bound, inner: fx.tmux}
+	fx.create.bindRuntime = func(context.Context) error {
+		bindCalls++
+		bound = true
+		return nil
+	}
+	if err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
+		t.Fatalf("canonical Window create: %v", err)
+	}
+	if bindCalls != 1 {
+		t.Fatalf("runtime route bind calls = %d, want exactly one", bindCalls)
+	}
 }
 
 func TestCanonicalCreateRefusesSameNameRuntimeSessionReplacementBeforeLeaseWrite(t *testing.T) {

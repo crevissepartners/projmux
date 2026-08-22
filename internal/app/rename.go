@@ -198,6 +198,7 @@ type runtimeWindowRenameObservation struct {
 	sessionID  string
 	projectUID string
 	role       string
+	stableName string
 	windowName string
 }
 
@@ -234,16 +235,17 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 	observe := func(ctx context.Context) (runtimeWindowRenameObservation, bool, error) {
 		out, err := routed.Run(ctx, "tmux", "list-windows", "-a", "-F", tmuxRowFormat(
 			"#{window_id}", "#{"+tmuxopts.WindowUID+"}", "#{session_id}",
-			"#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}", "#{window_name}"))
+			"#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}",
+			"#{"+tmuxopts.WindowName+"}", "#{window_name}"))
 		if err != nil {
 			return runtimeWindowRenameObservation{}, false, err
 		}
 		var found []runtimeWindowRenameObservation
-		for _, row := range splitTmuxRows(string(out), 6) {
+		for _, row := range splitTmuxRows(string(out), 7) {
 			if row[1] != uid {
 				continue
 			}
-			found = append(found, runtimeWindowRenameObservation{windowID: row[0], sessionID: row[2], projectUID: row[3], role: row[4], windowName: row[5]})
+			found = append(found, runtimeWindowRenameObservation{windowID: row[0], sessionID: row[2], projectUID: row[3], role: row[4], stableName: row[5], windowName: row[6]})
 		}
 		if len(found) == 0 {
 			return runtimeWindowRenameObservation{}, false, nil
@@ -267,13 +269,13 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 	if !found {
 		return nil
 	}
-	action := newRuntimeMutation(1, mutationRenameWindow, runtimeMutationTarget{
+	action := newRuntimeMutation(1, mutationWriteIdentity, runtimeMutationTarget{
 		Socket: route.target.flag + "=" + route.target.value, PhysicalSocket: printableRuntimeMutationSocket(route.expectedSocketPath),
-		Kind: string(coremetadata.KindWindow), ID: observed.windowID, UID: uid,
+		Kind: string(runtimeWindow), ID: observed.windowID, UID: uid,
 		Parent: string(rootKind) + "/" + rootUID + "/" + observed.sessionID,
 	})
 	bindRuntimeMutationGuard(&action, "exact Window="+observed.windowID+";root="+string(rootKind)+"/"+rootUID)
-	action.Operands = []string{"-t", observed.windowID, name}
+	action.Operands = []string{"-w", "-t", observed.windowID, "-q", tmuxopts.WindowName, name}
 	err = executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
 		Reobserve: func(ctx context.Context) (bool, error) {
@@ -284,7 +286,7 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 			if err != nil {
 				return false, err
 			}
-			return ok && current.windowName == name, nil
+			return ok && current.stableName == name && current.windowName == observed.windowName, nil
 		},
 		Guard: func(ctx context.Context) error {
 			if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action); err != nil {
