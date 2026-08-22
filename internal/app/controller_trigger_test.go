@@ -193,7 +193,7 @@ func TestPaneKilledCoalescedBehindExactPaneExitWidensEveryLaterPass(t *testing.T
 		}
 	}
 	outcome, err := fixture.runner.run(context.Background(), controllerTrigger{
-		reason: controllerTriggerPaneExited, target: fixture.target, hookPane: "%9",
+		reason: controllerTriggerPaneExited, target: fixture.target, hookPane: "%9", hookWindow: "@4",
 	})
 	if err != nil {
 		t.Fatalf("pane-exited worker: %v", err)
@@ -201,7 +201,7 @@ func TestPaneKilledCoalescedBehindExactPaneExitWidensEveryLaterPass(t *testing.T
 	if outcome.passes != 3 || outcome.events != 2 || !outcome.converged {
 		t.Fatalf("outcome = %s, want exact pass, broad changing pass, broad verification", outcome.describe())
 	}
-	if len(fixture.triggers) != 3 || fixture.triggers[0].fullReobserve || fixture.triggers[0].hookPane != "%9" {
+	if len(fixture.triggers) != 3 || fixture.triggers[0].fullReobserve || fixture.triggers[0].hookPane != "%9" || fixture.triggers[0].hookWindow != "@4" {
 		t.Fatalf("first pass trigger = %+v, want exact %%9", fixture.triggers)
 	}
 	for pass, trigger := range fixture.triggers[1:] {

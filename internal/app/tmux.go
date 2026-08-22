@@ -393,7 +393,7 @@ func (c *tmuxCommand) runConverge(args []string, stderr io.Writer) error {
 	socketPath := fs.String("socket-path", "", "absolute tmux socket path")
 	session := fs.String("session", "", "tmux hook session")
 	hookPane := fs.String("hook-pane", "", "exact tmux #{hook_pane} for pane-exited")
-	hookWindow := fs.String("hook-window", "", "exact tmux #{hook_window} for window-unlinked")
+	hookWindow := fs.String("hook-window", "", "exact tmux event Window handle for pane-exited or window-unlinked")
 	reason := fs.String("reason", "", "trigger reason: "+strings.Join(controllerTriggerReasonSpellings(), ", "))
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -413,8 +413,8 @@ func (c *tmuxCommand) runConverge(args []string, stderr io.Writer) error {
 	window := strings.TrimSpace(*hookWindow)
 	switch parsed {
 	case controllerTriggerPaneExited:
-		if !validTmuxHookHandle(pane, '%') || window != "" {
-			return usageError("pane-exited requires exact --hook-pane %N and no --hook-window")
+		if !validTmuxHookHandle(pane, '%') || !validTmuxHookHandle(window, '@') {
+			return usageError("pane-exited requires exact --hook-pane %N and --hook-window @N")
 		}
 	case controllerTriggerPaneKilled:
 		if pane != "" || window != "" {
@@ -2220,8 +2220,10 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 // tmuxPaneExitHookBody is the shared layout half of the two pane-exit hooks.
 //
 // Their controller reasons deliberately differ. `pane-exited` carries exact
-// #{hook_pane} and narrows lifecycle projection to that activation. The
-// after-kill hook cannot name the Pane and therefore retains full reobservation.
+// #{hook_pane} and its window-scoped #{window_id}, and narrows lifecycle
+// projection to that activation. tmux leaves #{hook_window} empty for this
+// hook; that format remains reserved for window-unlinked below. The after-kill
+// hook cannot name the Pane and therefore retains full reobservation.
 //
 // The rebalance half is unchanged, still first, and still independently
 // `|| true`-guarded: pane layout must not depend on whether convergence
@@ -2251,7 +2253,7 @@ func controllerTriggerHookCommand(bin string, reason controllerTriggerReason) st
 		" --session '#{session_id}' --reason " + string(reason)
 	switch reason {
 	case controllerTriggerPaneExited:
-		command += " --hook-pane '#{hook_pane}'"
+		command += " --hook-pane '#{hook_pane}' --hook-window '#{window_id}'"
 	case controllerTriggerWindowUnlinked:
 		command += " --hook-window '#{hook_window}'"
 	}

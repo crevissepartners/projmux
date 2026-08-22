@@ -375,6 +375,144 @@ func TestProjectCascadeDeletePlanPreservesExternalAssetsAndReopensWithNewUID(t *
 	}
 }
 
+func TestPaneAgentCascadeDeletePlanRemovesOnlyTheCurrentDirectOwnerChain(t *testing.T) {
+	t.Parallel()
+
+	mutator := testMutator(dirSet{"/srv/alpha": true})
+	registry := NewRegistry()
+	registered, err := registerFixture(mutator, &registry, "/srv/alpha")
+	if err != nil {
+		t.Fatalf("register fixture: %v", err)
+	}
+	window := registered.Windows[0]
+	agent, err := mutator.CreateAgent(&registry, window.Metadata.UID,
+		CreateAgentOptions{Provider: "codex", OperationID: "create-agent"})
+	if err != nil {
+		t.Fatalf("CreateAgent: %v", err)
+	}
+	pane, err := mutator.AttachAgentPane(&registry, agent.Metadata.UID,
+		BootstrapPane{CWD: "/srv/alpha"}, "attach-agent")
+	if err != nil {
+		t.Fatalf("AttachAgentPane: %v", err)
+	}
+	if _, err := mutator.RecordPaneActivation(&registry, pane.Metadata.UID, PaneActivationOptions{
+		Generation: "gen-clean", RuntimeID: "%9", AgentUID: agent.Metadata.UID,
+	}); err != nil {
+		t.Fatalf("RecordPaneActivation: %v", err)
+	}
+	zero := 0
+	if _, err := mutator.RecordTermination(&registry, TerminationEvidence{
+		Source: TerminationSourceSupervisor, Classification: TerminationNormal,
+		PaneUID: pane.Metadata.UID, AgentUID: agent.Metadata.UID, Generation: "gen-clean", ExitCode: &zero,
+	}); err != nil {
+		t.Fatalf("RecordTermination: %v", err)
+	}
+	event := decisionEvent()
+	event.LiveSiblingPane = true
+	event.Chain.PaneUID = pane.Metadata.UID
+	event.Chain.WindowUID = window.Metadata.UID
+	event.Chain.RootUID = registered.Project.Metadata.UID
+	event.Chain.Generation = "gen-clean"
+	event.Chain.PaneHandle = "%9"
+	before := registry.Clone()
+	plan, err := PlanPaneAgentCascadeDelete(registry, event, fixedNow.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("PlanPaneAgentCascadeDelete: %v", err)
+	}
+	if !reflect.DeepEqual(registry, before) {
+		t.Fatal("pure Pane/Agent planning mutated its source Registry")
+	}
+	if !plan.Changed || plan.PaneUID != pane.Metadata.UID || plan.AgentUID != agent.Metadata.UID ||
+		plan.DeletedPanes != 1 || plan.DeletedAgents != 1 || plan.Evidence == nil ||
+		plan.Evidence.Classification != TerminationNormal {
+		t.Fatalf("Pane/Agent plan = %+v", plan)
+	}
+	if _, ok := plan.Desired.Pane(pane.Metadata.UID); ok {
+		t.Fatal("qualifying Pane remains in desired Registry")
+	}
+	if _, ok := plan.Desired.Agent(agent.Metadata.UID); ok {
+		t.Fatal("current directly owning Agent remains in desired Registry")
+	}
+	if _, ok := plan.Desired.Window(window.Metadata.UID); !ok {
+		t.Fatal("Phase 2 plan deleted the owning Window")
+	}
+	if _, ok := plan.Desired.Project(registered.Project.Metadata.UID); !ok {
+		t.Fatal("Phase 2 plan deleted the owning Project")
+	}
+	for _, sibling := range registered.Panes {
+		if _, ok := plan.Desired.Pane(sibling.Metadata.UID); !ok {
+			t.Fatalf("Phase 2 plan deleted sibling Pane %s", sibling.Metadata.UID)
+		}
+	}
+	if err := plan.Desired.Validate(); err != nil {
+		t.Fatalf("desired Registry invalid: %v", err)
+	}
+
+	resumed := before.Clone()
+	if _, err := mutator.AttachAgentPane(&resumed, agent.Metadata.UID,
+		BootstrapPane{CWD: "/srv/alpha"}, "resume-agent"); err != nil {
+		t.Fatalf("attach resumed Pane: %v", err)
+	}
+	stale, err := PlanPaneAgentCascadeDelete(resumed, event, fixedNow.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("stale PlanPaneAgentCascadeDelete: %v", err)
+	}
+	if stale.Changed || stale.Decision.Action != TeardownRefuse || stale.Decision.Reason != TeardownReasonStaleOwnerBinding {
+		t.Fatalf("resumed owner plan = %+v, want zero-write refusal", stale)
+	}
+}
+
+func TestPaneAgentCascadeDeletePlanRetainsLastWindowShellWithoutReplacement(t *testing.T) {
+	t.Parallel()
+
+	mutator := testMutator(dirSet{"/srv/alpha": true})
+	registry := NewRegistry()
+	registered, err := registerFixture(mutator, &registry, "/srv/alpha")
+	if err != nil {
+		t.Fatalf("register fixture: %v", err)
+	}
+	if len(registered.Windows) != 1 || len(registered.Panes) != 1 {
+		t.Fatalf("fixture topology = %d Windows/%d Panes, want one last shell", len(registered.Windows), len(registered.Panes))
+	}
+	window := registered.Windows[0]
+	pane := registered.Panes[0]
+	if _, err := mutator.RecordPaneActivation(&registry, pane.Metadata.UID, PaneActivationOptions{
+		Generation: "gen-last-shell", RuntimeID: "%9",
+	}); err != nil {
+		t.Fatalf("RecordPaneActivation: %v", err)
+	}
+	zero := 0
+	if _, err := mutator.RecordTermination(&registry, TerminationEvidence{
+		Source: TerminationSourceSupervisor, Classification: TerminationNormal,
+		PaneUID: pane.Metadata.UID, Generation: "gen-last-shell", ExitCode: &zero,
+	}); err != nil {
+		t.Fatalf("RecordTermination: %v", err)
+	}
+	event := decisionEvent()
+	event.Chain.PaneUID = pane.Metadata.UID
+	event.Chain.WindowUID = window.Metadata.UID
+	event.Chain.RootUID = registered.Project.Metadata.UID
+	event.Chain.Generation = "gen-last-shell"
+	event.Chain.PaneHandle = "%9"
+	event.LiveSiblingPane = false
+	before := registry.Clone()
+
+	plan, err := PlanPaneAgentCascadeDelete(registry, event, fixedNow.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("PlanPaneAgentCascadeDelete: %v", err)
+	}
+	if plan.Changed || plan.Decision.Action != TeardownRetain ||
+		plan.Decision.Reason != TeardownReasonAwaitingWindowUnlink {
+		t.Fatalf("last-Pane Phase 2 plan = %+v, want awaiting-window-unlink retain", plan)
+	}
+	if !reflect.DeepEqual(registry, before) {
+		t.Fatal("last-Pane Phase 2 planning mutated its source Registry")
+	}
+	if len(registry.Panes) != 1 || registry.Panes[0].Metadata.UID != pane.Metadata.UID {
+		t.Fatalf("last-Pane Phase 2 plan created replacement topology: %+v", registry.Panes)
+	}
+}
+
 func TestProjectOpenStateTableHasNoBlankCells(t *testing.T) {
 	t.Parallel()
 

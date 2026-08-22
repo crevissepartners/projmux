@@ -718,7 +718,7 @@ func TestBothPaneExitHooksRebalanceThenConverge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	for hook, reason := range map[string]string{"pane-exited": "pane-exited --hook-pane '#{hook_pane}'", "after-kill-pane": "pane-killed"} {
+	for hook, reason := range map[string]string{"pane-exited": "pane-exited --hook-pane '#{hook_pane}' --hook-window '#{window_id}'", "after-kill-pane": "pane-killed"} {
 		body := "sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true; " +
 			"'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' " +
 			"--session '#{session_id}' --reason " + reason + " >/dev/null 2>&1 || true"

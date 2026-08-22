@@ -343,6 +343,29 @@ and shell Pane manual attention share the existing priority reducer, while
 `dot`/`emoji`/`off`, glyphs, colors, and the Window aggregate are never stored
 in resource metadata.
 
+A clean managed process exit is topology authority only through the exact
+generated `pane-exited` hook. The supervisor must have durably journaled a
+same-generation `normal` receipt, the hook must name the exact `%N` Pane and
+`@N` Window on one socket, and fresh preflight plus locked observations must
+still resolve the same Registry owner chain. Then the Pane and its current
+directly owning Agent are removed together. Shell and Claude/Codex clean exit
+have the same result; `/exit`, pane content, prompt, history, and transcript are
+never parsed. The owning Window and all siblings remain. `abnormal`, `killed`,
+`unknown`, stale/resumed bindings, empty or unavailable inventory, permission
+failure, and foreign-host/window observations keep their diagnostic rows and
+produce no automatic delete plan.
+
+For `pane-exited`, tmux supplies that `%N` as `#{hook_pane}` and the event's
+window-scoped `@N` as `#{window_id}`; `#{hook_window}` is empty there and remains
+the separate `window-unlinked` format. This distinction provides event scope
+only and does not authorize last-Pane Window deletion.
+
+This intentionally removes `agent resume uid:<deleted-agent>` identity after a
+qualifying clean provider exit; use the provider-native conversation catalog to
+find a prior conversation. Last-Pane Window/Project cleanup and Project reopen
+semantics are not part of this boundary. Pane/Agent and the later parent/root
+cascade are released together at the planned minor lifecycle boundary.
+
 Resource-backed Agent create accepts provider-neutral `--cwd <absolute>` and
 repeatable `--add-dir <absolute>`. Explicit paths must exist, resolve without a
 symlink escape, and remain inside a registered Project tree; only Codex and

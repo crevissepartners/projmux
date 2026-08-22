@@ -2585,6 +2585,12 @@ termination_pmx create project --root "$termination_root/work/evidence" --name e
 bounded_resource_reconcile_to_noop "$termination_root/reconcile" \
   termination_pmx reconcile resources --socket "$termination_socket" -o json
 smoke_assert_file_contains "$termination_root/reconcile.json" '"outcome": "changed"'
+termination_main_window_id="$(termination_tmux list-windows -t "$termination_session" -F '#{window_id} #{@projmux_window_uid}' \
+  | awk '$2 != "" { print $1; exit }')"
+if [[ "$termination_main_window_id" != @* ]]; then
+  echo "termination fixture has no exact managed Window handle: $termination_main_window_id" >&2
+  exit 1
+fi
 
 # The receipt is read back through the shipped route rather than out of the
 # registry file, so the smoke exercises the same projection an operator sees.
@@ -2643,13 +2649,24 @@ termination_replay_pane_exited_hook() {
     exit 1
   fi
   termination_await_journal_receipt "$pane_uid" "$want_class"
-  termination_pmx internal tmux converge \
-    --socket-path "$termination_socket_path" \
-    --session "$termination_session_id" \
-    --reason pane-exited \
-    --hook-pane "$runtime_id" \
-    >"$termination_root/receipt-converge-$report_label.out" \
-    2>"$termination_root/receipt-converge-$report_label.err"
+  for _ in $(seq 1 100); do
+    termination_pmx internal tmux converge \
+      --socket-path "$termination_socket_path" \
+      --session "$termination_session_id" \
+      --reason pane-exited \
+      --hook-pane "$runtime_id" \
+      --hook-window "$termination_main_window_id" \
+      >"$termination_root/receipt-converge-$report_label.out" \
+      2>"$termination_root/receipt-converge-$report_label.err"
+    if ! grep -q "deferred: another controller worker holds" \
+      "$termination_root/receipt-converge-$report_label.err"; then
+      return
+    fi
+    sleep 0.05
+  done
+  echo "pane-exited replay stayed behind the generated hook lease for $pane_uid" >&2
+  cat "$termination_root/receipt-converge-$report_label.err" >&2
+  exit 1
 }
 
 termination_await_receipt() {
@@ -2676,14 +2693,31 @@ termination_await_receipt() {
 termination_case() {
   local label="$1" want_class="$2" want_code="$3" want_signal="$4"
   shift 4
-  local pane_uid runtime_id
+  local pane_uid runtime_id activation
   pane_uid="$(termination_pmx_inside create pane --project evidence -o uid -- "$@")"
   if [[ -z "$pane_uid" ]]; then
     echo "termination case $label created no Pane" >&2
     exit 1
   fi
   runtime_id="$(termination_activation_runtime_id "$pane_uid")"
+  activation="$(termination_activation_generation "$pane_uid")"
   termination_replay_pane_exited_hook "$pane_uid" "$want_class" "$runtime_id" "$label"
+  if [[ "$want_class" == "normal" ]]; then
+    if termination_pmx describe pane "uid:$pane_uid" -o json >"$termination_root/clean-pane-present.json" 2>/dev/null; then
+      echo "clean shell Pane $pane_uid survived exact runtime-exit cascade" >&2
+      cat "$termination_root/receipt-converge-$label.err" >&2
+      cat "$termination_root/clean-pane-present.json" >&2
+      exit 1
+    fi
+    termination_await_journal_receipt "$pane_uid" normal
+    if ! awk -v pane="\"paneUID\":\"$pane_uid\"" -v generation="\"generation\":\"$activation\"" \
+      'index($0, pane) && index($0, generation) { found = 1 } END { exit !found }' "$termination_root/state/projmux/termination-receipts.jsonl"; then
+      echo "clean shell Pane $pane_uid lost its pre-delete journal evidence" >&2
+      exit 1
+    fi
+    echo ">> termination case $label uid=$pane_uid class=normal registry=deleted journal=preserved"
+    return
+  fi
   termination_await_receipt "$pane_uid" "$want_class"
   local got_class got_code got_signal got_source got_generation activation
   got_class="$(termination_receipt_field "$pane_uid" classification)"
@@ -2787,6 +2821,16 @@ termination_provider_case() {
   fi
   runtime_id="$(termination_activation_runtime_id "$pane_ref")"
   termination_replay_pane_exited_hook "$pane_ref" "$want_class" "$runtime_id" "provider-$provider"
+  if [[ "$want_class" == "normal" ]]; then
+    if termination_pmx describe agent "uid:$agent_uid" -o json >"$termination_root/clean-agent-present.json" 2>/dev/null ||
+       termination_pmx describe pane "uid:$pane_ref" -o json >"$termination_root/clean-provider-pane-present.json" 2>/dev/null; then
+      echo "clean provider $provider left Agent/Pane Registry rows agent=$agent_uid pane=$pane_ref" >&2
+      exit 1
+    fi
+    termination_await_journal_receipt "$pane_ref" normal
+    echo ">> termination provider case $provider agent=$agent_uid pane=$pane_ref class=normal registry=deleted journal=preserved"
+    return
+  fi
   for _ in $(seq 1 200); do
     termination_agent_json "$agent_uid"
     if [[ -n "$(termination_agent_field classification)" ]]; then
@@ -2820,7 +2864,7 @@ termination_provider_case() {
 }
 
 termination_provider_case claude normal 0 "" 'exit 0'
-termination_provider_case codex abnormal 5 "" 'exit 5'
+termination_provider_case codex normal 0 "" 'exit 0'
 termination_provider_case antigravity abnormal "" TERM 'kill -TERM $$; sleep 30'
 
 # A long-lived Pane proves the supervisor really is the pane's own process and
@@ -3071,6 +3115,25 @@ exitrec_reconcile() {
   exitrec_pmx reconcile resources --socket "$1" -o json >"$exitrec_root/reconcile-run.json"
 }
 
+exitrec_await_journal_receipt() {
+  local pane_uid="$1" want_class="$2"
+  local journal="$exitrec_root/state/projmux/termination-receipts.jsonl"
+  for _ in $(seq 1 200); do
+    if [[ -s "$journal" ]] && awk \
+      -v pane="\"paneUID\":\"$pane_uid\"" \
+      -v classification="\"classification\":\"$want_class\"" \
+      -v source='"source":"supervisor"' \
+      'index($0, pane) && index($0, classification) && index($0, source) { found = 1 } END { exit !found }' \
+      "$journal"; then
+      return
+    fi
+    sleep 0.05
+  done
+  echo "exit reconciliation case recorded no $want_class/supervisor journal row for $pane_uid" >&2
+  [[ ! -e "$journal" ]] || tail -n 20 "$journal" >&2
+  exit 1
+}
+
 # A managed Agent whose child ends a different way each time. The short delay
 # deliberately lets create commit the Agent binding before the provider exits;
 # this block tests termination consumption, not rollback of a create whose child
@@ -3109,8 +3172,15 @@ exitrec_agent_case() {
     exit 1
   fi
 
-  exitrec_reconcile "$exitrec_socket"
-  exitrec_doc agent "$agent_uid"
+  exitrec_await_journal_receipt "$pane_ref" "$want_class"
+  for _ in $(seq 1 100); do
+    exitrec_reconcile "$exitrec_socket"
+    exitrec_doc agent "$agent_uid"
+    if [[ "$(exitrec_termination_field classification)" == "$want_class" ]]; then
+      break
+    fi
+    sleep 0.05
+  done
   got_phase="$(exitrec_field phase)"
   got_reason="$(exitrec_field reason)"
   got_class="$(exitrec_termination_field classification)"
@@ -3253,10 +3323,17 @@ if [[ "$(exitrec_termination_field source)" != "reconcile" ]]; then
 fi
 echo ">> exit reconciliation supervisor SIGKILL agent=$exitrec_sigkill_agent class=unknown"
 
-# A shell Pane's runtime loss keeps the logical Pane. Runtime loss is not a
-# statement about desired topology, so the resource survives with a
-# MissingRuntime condition and the evidence -- offline for a stated reason
-# instead of silently absent.
+# A shell Pane's runtime loss without the exact event keeps the logical Pane.
+# Temporarily remove only pane-exited from this contained server so this is an
+# absence test rather than a race with the qualifying Phase 2 hook, then restore
+# the generated hook verbatim before continuing.
+exitrec_pane_exited_hook="$(exitrec_tmux "$exitrec_socket" show-hooks -g pane-exited \
+  | sed -n 's/^pane-exited\[[0-9][0-9]*\] //p')"
+if [[ -z "$exitrec_pane_exited_hook" ]]; then
+  echo "exit reconciliation fixture has no pane-exited hook to isolate" >&2
+  exit 1
+fi
+exitrec_tmux "$exitrec_socket" set-hook -gu pane-exited
 exitrec_shell_pane="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
   create pane --project evidence -o uid -- sh -c 'sleep 0.5; exit 0')"
 for _ in $(seq 1 100); do
@@ -3278,6 +3355,7 @@ fi
 exitrec_pmx describe pane "uid:$exitrec_shell_pane" >"$exitrec_root/shell-pane.txt"
 smoke_assert_file_contains "$exitrec_root/shell-pane.txt" "MissingRuntime"
 smoke_assert_file_contains "$exitrec_root/shell-pane.txt" "Termination:"
+exitrec_tmux "$exitrec_socket" set-hook -g pane-exited "$exitrec_pane_exited_hook"
 echo ">> exit reconciliation shell pane preserved uid=$exitrec_shell_pane"
 
 # The read surfaces project the stored evidence and write nothing. A read that
