@@ -179,6 +179,16 @@ func describeSpecRows(resource any) [][2]string {
 		if typed.Status.DisplayTitle != "" {
 			rows = append(rows, [2]string{"DisplayTitle", typed.Status.DisplayTitle})
 		}
+		if binding := typed.Status.Activation.Codex; binding != nil {
+			rows = append(rows,
+				[2]string{"BindingSource", "native-app-server"},
+				[2]string{"BindingGeneration", typed.Status.Activation.Generation},
+				[2]string{"ThreadID", binding.ThreadID},
+			)
+			if binding.TurnID != "" {
+				rows = append(rows, [2]string{"TurnID", binding.TurnID})
+			}
+		}
 		rows = append(rows, describeTerminationRows(typed.Status.LastTermination)...)
 		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Agent:

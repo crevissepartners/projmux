@@ -344,6 +344,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		return fmt.Errorf("%s: agent/%s cannot resume %s conversation %s: %w",
 			spelling, plan.agentName, plan.provider, plan.conversationID, err)
 	}
+	nativeLauncher, nativeLaunchCapable := r.launcher.(codexNativeAgentLauncher)
 
 	for _, other := range plan.shared {
 		if _, err := fmt.Fprintf(stderr,
@@ -428,8 +429,34 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if err != nil {
 			return err
 		}
+		workTitle := title
+		workLaunchArgv := launchArgv
+		usedNative := false
+		if plan.provider == aiModeCodex && r.create.codexNative != nil && nativeLaunchCapable {
+			nativeCtx, cancel := prepareNativeContext(ctx)
+			prepared, nativeErr := r.create.codexNative.Resume(nativeCtx, workspace, plan.conversationID)
+			cancel()
+			switch {
+			case nativeErr == nil:
+				workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(workspace, prepared.ThreadID)
+				if err != nil {
+					return nativeLaunchError(spelling, err)
+				}
+				if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
+					AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, Generation: activation.Generation,
+					ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
+				}); err != nil {
+					return MapMetadataError(err)
+				}
+				usedNative = true
+			case nativeFallbackAllowed(r.create.codexNative, nativeErr):
+				// Preserve the current provider resume argv and hook refinement.
+			default:
+				return nativeLaunchError(spelling, nativeErr)
+			}
+		}
 		paneID, err := r.create.runtime.splitPane(ctx, anchorPaneID, defaultPlacement, contextDir,
-			r.create.runtime.supervisedLaunch(ctx, activation, launchArgv))
+			r.create.runtime.supervisedLaunch(ctx, activation, workLaunchArgv))
 		if paneID != "" {
 			if claimErr := r.create.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 				return errors.Join(err, claimErr)
@@ -442,7 +469,11 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if err != nil {
 			return err
 		}
-		r.launcher.BindResumedAgentPane(paneID, plan.provider, contextDir, title, plan.conversationID)
+		if usedNative {
+			nativeLauncher.BindNativeCodexPane(paneID, contextDir, workTitle, plan.conversationID)
+		} else {
+			r.launcher.BindResumedAgentPane(paneID, plan.provider, contextDir, workTitle, plan.conversationID)
+		}
 		if topic := strings.TrimSpace(plan.topic); topic != "" {
 			if _, err := r.create.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic); err != nil {
 				return tmuxError("%s: mirror stored Agent topic to resumed Pane %s: %v", spelling, paneID, err)

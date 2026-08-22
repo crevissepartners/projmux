@@ -361,6 +361,7 @@ func (p Pane) Clone() Pane {
 	out := p
 	out.Metadata = p.Metadata.Clone()
 	out.Status.Conditions = slices.Clone(p.Status.Conditions)
+	out.Status.Activation = p.Status.Activation.Clone()
 	out.Status.LastTermination = p.Status.LastTermination.Clone()
 	return out
 }

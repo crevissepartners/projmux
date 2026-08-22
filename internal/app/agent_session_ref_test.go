@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -26,9 +27,12 @@ type sessionRefHarness struct {
 	agentUID string
 	paneUID  string
 
-	tmuxCalls []string
-	updates   int
-	loads     int
+	tmuxCalls     []string
+	updates       int
+	loads         int
+	envPaneUID    string
+	envGeneration string
+	envTMUXPane   string
 }
 
 func newSessionRefHarness(t *testing.T, provider string) *sessionRefHarness {
@@ -71,7 +75,10 @@ func newSessionRefHarness(t *testing.T, provider string) *sessionRefHarness {
 		t.Fatalf("observe pane activation runtime: %v", err)
 	}
 
-	h := &sessionRefHarness{registry: registry, agentUID: agent.Metadata.UID, paneUID: pane.Metadata.UID}
+	h := &sessionRefHarness{
+		registry: registry, agentUID: agent.Metadata.UID, paneUID: pane.Metadata.UID,
+		envPaneUID: pane.Metadata.UID, envGeneration: "gen-session-ref", envTMUXPane: "%7",
+	}
 	home := t.TempDir()
 	h.cmd = &aiCommand{
 		lookupEnv: func(name string) string {
@@ -81,11 +88,11 @@ func newSessionRefHarness(t *testing.T, provider string) *sessionRefHarness {
 			case "TMUX_PANE":
 				// Ingest attributes the event to the inherited pane, which is the
 				// production path a provider hook runs through.
-				return "%7"
+				return h.envTMUXPane
 			case internalActivationPaneUIDEnv:
-				return pane.Metadata.UID
+				return h.envPaneUID
 			case internalActivationGenerationEnv:
-				return "gen-session-ref"
+				return h.envGeneration
 			default:
 				return ""
 			}
@@ -151,6 +158,88 @@ func sequentialTestUID() func(coremetadata.Kind) (string, error) {
 	return func(kind coremetadata.Kind) (string, error) {
 		counts[kind]++
 		return strings.ToLower(string(kind)) + "-0" + string(rune('0'+counts[kind])), nil
+	}
+}
+
+func seedNativeCodexBinding(t *testing.T, h *sessionRefHarness, threadID, turnID string) {
+	t.Helper()
+	agent, _ := h.registry.Agent(h.agentUID)
+	pane, _ := h.registry.Pane(h.paneUID)
+	agent.Status.SessionRef = &coremetadata.AgentSessionRef{
+		Provider: aiModeCodex, ObservedAt: sessionRefObservedAt,
+		Codex: &coremetadata.CodexSessionRef{ThreadID: threadID},
+	}
+	pane.Status.Activation.Codex = &coremetadata.CodexActivationBinding{ThreadID: threadID, TurnID: turnID}
+}
+
+func TestNativeCodexHookRejectsForeignIdentityBeforeRemapOrWrite(t *testing.T) {
+	tests := []struct {
+		name          string
+		threadID      string
+		envPaneUID    string
+		envGeneration string
+	}{
+		{name: "other thread", threadID: "thread-other"},
+		{name: "other Pane", threadID: "thread-native", envPaneUID: "pane-other"},
+		{name: "previous generation", threadID: "thread-native", envGeneration: "gen-previous"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newSessionRefHarness(t, aiModeCodex)
+			seedNativeCodexBinding(t, h, "thread-native", "turn-initial")
+			if tc.envPaneUID != "" {
+				h.envPaneUID = tc.envPaneUID
+			}
+			if tc.envGeneration != "" {
+				h.envGeneration = tc.envGeneration
+			}
+			before := h.registry.Clone()
+			h.ingest(t, []string{"codex-hook"}, `{"hook_event_name":"UserPromptSubmit","thread_id":"`+tc.threadID+`","turn_id":"turn-foreign","cwd":"/src/app"}`)
+			if h.updates != 0 {
+				t.Fatalf("Registry update transactions = %d, want zero", h.updates)
+			}
+			if !reflect.DeepEqual(before, *h.registry) {
+				t.Fatal("foreign hook mutated native Registry binding")
+			}
+			if slices.ContainsFunc(h.tmuxCalls, func(call string) bool { return strings.Contains(call, " set-option ") }) {
+				t.Fatalf("foreign hook remapped tmux state: %v", h.tmuxCalls)
+			}
+		})
+	}
+}
+
+func TestNativeCodexHookRefinesOnlyTheExactThreadTurn(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeCodex)
+	seedNativeCodexBinding(t, h, "thread-native", "turn-initial")
+	// Native routing ignores inherited TMUX_PANE and uses the exact activation
+	// runtime binding recorded for this Pane generation.
+	h.envTMUXPane = "%foreign"
+	h.ingest(t, []string{"codex-hook"}, `{"hook_event_name":"UserPromptSubmit","thread_id":"thread-native","turn_id":"turn-next","cwd":"/src/app"}`)
+	pane, _ := h.registry.Pane(h.paneUID)
+	if pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.TurnID != "turn-next" {
+		t.Fatalf("exact hook turn refinement = %#v", pane.Status.Activation.Codex)
+	}
+	if h.updates != 1 {
+		t.Fatalf("Registry update transactions = %d, want one exact refinement", h.updates)
+	}
+}
+
+func TestHookRoutingWaitsOnlyForItsExactPublishedPaneUID(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeCodex)
+	seedNativeCodexBinding(t, h, "thread-native", "turn-initial")
+	ready := h.registry.Clone()
+	h.cmd.loadRegistry = func() (coremetadata.Registry, error) {
+		h.loads++
+		if h.loads < 3 {
+			withoutPane := ready.Clone()
+			withoutPane.Panes = nil
+			return withoutPane, nil
+		}
+		return ready.Clone(), nil
+	}
+	paneID, handled, allowed, reason := h.cmd.routeNativeCodexHook("thread-native")
+	if paneID != "%7" || !handled || !allowed || reason != "" || h.loads != 3 {
+		t.Fatalf("route = (%q,%t,%t,%q) loads=%d", paneID, handled, allowed, reason, h.loads)
 	}
 }
 

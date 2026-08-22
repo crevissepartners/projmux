@@ -125,6 +125,7 @@ type aiCommand struct {
 	// events flush only the session ref at the top-level ingest return.
 	agentObservationMu      sync.Mutex
 	pendingAgentSessionRefs map[string]coremetadata.AgentSessionObservation
+	pendingCodexBindings    map[string]coremetadata.CodexActivationObservation
 }
 
 func newAICommand() *aiCommand {
@@ -2162,6 +2163,41 @@ func (c *aiCommand) RequireAgentEnabled(provider string) error {
 // pipeline. None of these calls moves a client.
 func (c *aiCommand) BindManagedAgentPane(paneID, provider, contextDir, title string) {
 	c.configureAIPane(paneID, provider, contextDir, title, aiPaneResumeMetadata{})
+}
+
+// PlanNativeCodexResume builds the TUI attachment for a thread already created
+// or resumed through the local app-server. It carries no prompt: turn/start is
+// the sole initial-prompt writer on the native lane.
+func (c *aiCommand) PlanNativeCodexResume(workspace coremetadata.AgentWorkspace, threadID string) (string, []string, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return "", nil, errors.New("native Codex thread is empty")
+	}
+	agentBin := c.findAgentBinary(aiModeCodex)
+	if agentBin == "" {
+		return "", nil, errors.New(c.missingAgentRunnerMessage(aiModeCodex))
+	}
+	workspaceArgs, err := providerLaunchArgs(aiModeCodex, workspace, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	execArgv := append([]string{agentBin}, workspaceArgs...)
+	execArgv = append(execArgv, "resume", "--remote", "unix://", threadID)
+	plan, err := c.planAgentLaunch(aiModeCodex, workspace.CWD, nil, execArgv, filepath.Dir(agentBin))
+	if err != nil {
+		return "", nil, err
+	}
+	return plan.title, plan.commandArgs, nil
+}
+
+// BindNativeCodexPane seeds the live hook routing index with the exact native
+// thread before any late hook is allowed to refine the binding.
+func (c *aiCommand) BindNativeCodexPane(paneID, contextDir, title, threadID string) {
+	threadID = strings.TrimSpace(threadID)
+	c.configureAIPane(paneID, aiModeCodex, contextDir, title, aiPaneResumeMetadata{
+		sessionID: threadID, resumeID: threadID, source: "app-server", updatedAt: c.nowTime().UTC(),
+	})
+	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneThreadIDOption, threadID)
 }
 
 func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, string, error) {

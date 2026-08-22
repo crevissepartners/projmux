@@ -92,6 +92,9 @@ type createCommand struct {
 	// what makes "a resume never falls through to a fresh conversation" a
 	// property of the type system rather than of a code review.
 	resumes agentResumeLauncher
+	// codexNative prepares exact app-server thread identity. Nil is the bounded
+	// compatibility state and leaves the current CLI/hook path unchanged.
+	codexNative codexNativeThreadController
 	// store is the locked registry file. Every resource route touches it, and
 	// the implicit-scope resolution reads it before the transaction opens.
 	store *resourceStore
