@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -43,16 +44,20 @@ type lifecycleDirtyEvent struct {
 	// matched only against the activation handle projmux stored when that
 	// generation was materialized; no name, cwd, or pane order participates.
 	runtimePaneID string
-	// runtimeWindowID is the exact #{hook_window} evidence supplied by
-	// window-unlinked. It identifies the triggering tmux event for diagnostics;
-	// because the dead window no longer exposes its Registry uid, the hook keeps
-	// whole-host fresh reobservation rather than persisting a runtime mapping.
+	// runtimeWindowID is the exact event Window handle. pane-exited supplies its
+	// window-scoped #{window_id} because tmux leaves #{hook_window} empty there;
+	// window-unlinked supplies #{hook_window}. It is never inferred from a
+	// missing Pane after the event.
 	runtimeWindowID string
 	// generation narrows the event to one materialization of that Pane. A
 	// generation the Pane no longer holds projects nothing, so a receipt or an
 	// absence belonging to a process a resume has already replaced cannot move
 	// the current binding.
 	generation string
+	// teardownKind is set only for an exact topology event that may carry
+	// automatic delete authority. Whole-host inventory diffs, pane-killed, and
+	// window-unlinked keep the zero value and can only project retained state.
+	teardownKind coremetadata.TeardownEventKind
 	// receipts is the lock-free supervisor prewrite snapshot to absorb inside
 	// the same Registry transaction, before absence projection consumes it.
 	receipts []coremetadata.TerminationEvidence
@@ -84,6 +89,7 @@ func (e lifecycleDirtyEvent) describe() string {
 // repeat reconciliation of an already-reconciled disappearance opens zero.
 type lifecycleReconcileResult struct {
 	projected    []coremetadata.TerminationProjection
+	cascaded     []coremetadata.PaneAgentCascadeDeletePlan
 	transactions int
 	// receiptsChanged reports journal evidence absorbed independently of a
 	// lifecycle projection. A late supervisor refinement is a real write and
@@ -110,7 +116,182 @@ func (r lifecycleReconcileResult) changed() int {
 	if r.receiptsChanged {
 		count++
 	}
+	count += len(r.cascaded)
 	return count
+}
+
+func paneWindowUID(registry coremetadata.Registry, pane coremetadata.Pane) (string, bool) {
+	owner := pane.Metadata.OwnerRef
+	if owner == nil {
+		return "", false
+	}
+	if owner.Kind == coremetadata.KindWindow {
+		_, ok := registry.Window(owner.UID)
+		return owner.UID, ok
+	}
+	if owner.Kind != coremetadata.KindAgent {
+		return "", false
+	}
+	agent, ok := registry.Agent(owner.UID)
+	if !ok || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != coremetadata.KindWindow {
+		return "", false
+	}
+	_, ok = registry.Window(agent.Metadata.OwnerRef.UID)
+	return agent.Metadata.OwnerRef.UID, ok
+}
+
+func exactJournalReceipt(receipts []coremetadata.TerminationEvidence, pane coremetadata.Pane) bool {
+	stored := pane.Status.LastTermination
+	if stored == nil || stored.Source != coremetadata.TerminationSourceSupervisor ||
+		stored.Classification != coremetadata.TerminationNormal || stored.Generation != pane.Status.Activation.Generation {
+		return false
+	}
+	for i := range receipts {
+		receipt := receipts[i]
+		if receipt.Source == stored.Source && receipt.Classification == stored.Classification &&
+			receipt.PaneUID == pane.Metadata.UID && receipt.AgentUID == stored.AgentUID &&
+			receipt.Generation == stored.Generation && receipt.Signal == stored.Signal &&
+			receipt.OperationID == stored.OperationID && equalOptionalInt(receipt.ExitCode, stored.ExitCode) {
+			return true
+		}
+	}
+	return false
+}
+
+func equalOptionalInt(left, right *int) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+// planExactPaneExitCascade converts only a positively observed exact
+// pane-exited event into the Phase 2 Pane/Agent desired plan. The supervisor
+// journal match is intentionally part of authority: after the resource rows
+// are deleted that bounded receipt is the durable diagnostic evidence of the
+// clean outcome.
+func planExactPaneExitCascade(
+	registry coremetadata.Registry,
+	live map[string]bool,
+	observedWindowUID string,
+	event lifecycleDirtyEvent,
+	mutator coremetadata.Mutator,
+) (coremetadata.PaneAgentCascadeDeletePlan, error) {
+	if event.teardownKind != coremetadata.TeardownEventPaneExited ||
+		strings.TrimSpace(event.runtimePaneID) == "" || strings.TrimSpace(event.runtimeWindowID) == "" ||
+		event.target.flag == "" || event.target.value == "" {
+		return coremetadata.PaneAgentCascadeDeletePlan{}, nil
+	}
+	var pane *coremetadata.Pane
+	for i := range registry.Panes {
+		candidate := &registry.Panes[i]
+		if candidate.Status.Activation.RuntimeID != strings.TrimSpace(event.runtimePaneID) {
+			continue
+		}
+		if pane != nil {
+			return coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
+				Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonConflictingOwnerFacts,
+			}}, nil
+		}
+		pane = candidate
+	}
+	if pane == nil || live[pane.Metadata.UID] {
+		return coremetadata.PaneAgentCascadeDeletePlan{}, nil
+	}
+	windowUID, ok := paneWindowUID(registry, *pane)
+	if !ok {
+		return coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
+			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonStaleOwnerBinding,
+		}}, nil
+	}
+	window, _ := registry.Window(windowUID)
+	if strings.TrimSpace(observedWindowUID) == "" || strings.TrimSpace(observedWindowUID) != windowUID {
+		return coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
+			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonForeignHost,
+		}}, nil
+	}
+	root := window.Metadata.OwnerRef
+	if root == nil || (root.Kind != coremetadata.KindProject && root.Kind != coremetadata.KindControlSession) {
+		return coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
+			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonStaleOwnerBinding,
+		}}, nil
+	}
+
+	classification := coremetadata.TerminationUnknown
+	if stored := pane.Status.LastTermination; stored != nil &&
+		stored.Generation == pane.Status.Activation.Generation &&
+		coremetadata.ValidTerminationClassification(stored.Classification) {
+		classification = stored.Classification
+	}
+	observation := coremetadata.TeardownObservationExactSocket
+	if len(live) == 0 {
+		observation = coremetadata.TeardownObservationEmpty
+	}
+	liveSiblingPane := false
+	for i := range registry.Panes {
+		sibling := registry.Panes[i]
+		if sibling.Metadata.UID == pane.Metadata.UID || !live[sibling.Metadata.UID] {
+			continue
+		}
+		if siblingWindow, exists := paneWindowUID(registry, sibling); exists && siblingWindow == windowUID {
+			liveSiblingPane = true
+			break
+		}
+	}
+	liveSiblingRootWindow := false
+	for _, siblingWindow := range registry.WindowsOf(root.UID) {
+		if siblingWindow.Metadata.UID == windowUID {
+			continue
+		}
+		for i := range registry.Panes {
+			candidate := registry.Panes[i]
+			if candidateWindow, exists := paneWindowUID(registry, candidate); exists &&
+				candidateWindow == siblingWindow.Metadata.UID && live[candidate.Metadata.UID] {
+				liveSiblingRootWindow = true
+				break
+			}
+		}
+		if liveSiblingRootWindow {
+			break
+		}
+	}
+	teardown := coremetadata.TeardownEvent{
+		Kind: event.teardownKind, Classification: classification,
+		Generation: coremetadata.TeardownGenerationCurrent, Observation: observation,
+		Chain: coremetadata.TeardownOwnerChain{
+			SocketIdentity: event.target.label(), PaneHandle: strings.TrimSpace(event.runtimePaneID),
+			WindowHandle: strings.TrimSpace(event.runtimeWindowID), PaneUID: pane.Metadata.UID,
+			WindowUID: windowUID, RootKind: root.Kind, RootUID: root.UID,
+			Generation: pane.Status.Activation.Generation,
+		},
+		LiveSiblingPane: liveSiblingPane, LiveSiblingRootWindow: liveSiblingRootWindow,
+	}
+	decision := coremetadata.DecideTeardownEvent(teardown)
+	if decision.Action == coremetadata.TeardownDeletePaneAgent && !exactJournalReceipt(event.receipts, *pane) {
+		decision.Action = coremetadata.TeardownRefuse
+		decision.Reason = coremetadata.TeardownReasonUnavailable
+		return coremetadata.PaneAgentCascadeDeletePlan{Decision: decision}, nil
+	}
+	now := time.Now
+	if mutator.Now != nil {
+		now = mutator.Now
+	}
+	return coremetadata.PlanPaneAgentCascadeDelete(registry, teardown, now().UTC())
+}
+
+type lifecycleWindowOwnerInventory interface {
+	ResolveWindowUID(context.Context, string) (string, error)
+}
+
+func lifecycleObservedWindowUID(ctx context.Context, inventory livePaneInventory, event lifecycleDirtyEvent) (string, error) {
+	if event.teardownKind != coremetadata.TeardownEventPaneExited {
+		return "", nil
+	}
+	owners, ok := inventory.(lifecycleWindowOwnerInventory)
+	if !ok {
+		return "", nil
+	}
+	return owners.ResolveWindowUID(ctx, strings.TrimSpace(event.runtimeWindowID))
 }
 
 // lifecycleInventory routes the final-snapshot observation at one exact host.
@@ -244,11 +425,23 @@ func reconcileLifecycle(
 		result.unobserved = true
 		return result, nil
 	}
+	observedWindowUID, err := lifecycleObservedWindowUID(ctx, inventory, event)
+	if err != nil {
+		result.skipped = "the exact-host owner observation could not be taken: " + event.describe()
+		result.unobserved = true
+		return result, nil
+	}
 	registry, err := store.load()
 	if err != nil {
 		return result, MapMetadataError(err)
 	}
-	if len(lifecycleProjectionTargets(registry, live, event)) == 0 &&
+	candidate := registry.Clone()
+	_, _ = absorbTerminationReceipts(&candidate, store.mutator(), event.receipts)
+	cascade, cascadeErr := planExactPaneExitCascade(candidate, live, observedWindowUID, event, store.mutator())
+	if cascadeErr != nil {
+		return result, cascadeErr
+	}
+	if !cascade.Changed && len(lifecycleProjectionTargets(registry, live, event)) == 0 &&
 		!terminationReceiptsNeedAbsorption(registry, store.mutator(), event.receipts) {
 		result.skipped = "nothing left to reconcile: " + event.describe()
 		return result, nil
@@ -262,11 +455,24 @@ func reconcileLifecycle(
 			observationFailed = true
 			return observeErr
 		}
+		freshWindowUID, observeErr := lifecycleObservedWindowUID(ctx, inventory, event)
+		if observeErr != nil {
+			observationFailed = true
+			return observeErr
+		}
 		absorbed, err := absorbTerminationReceipts(working, mutator, event.receipts)
 		if err != nil {
 			return err
 		}
 		result.receiptsChanged = absorbed
+		cascade, err := planExactPaneExitCascade(*working, fresh, freshWindowUID, event, mutator)
+		if err != nil {
+			return err
+		}
+		if cascade.Changed {
+			*working = cascade.Desired
+			result.cascaded = append(result.cascaded, cascade)
+		}
 		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, fresh, event))
 		return nil
 	})

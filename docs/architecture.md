@@ -329,10 +329,12 @@ Root lifecycle:
 
 Agent lifecycle:
 
-- The phase set is exactly `Pending`, `Running`, `Offline`, `Failed`. A normal
-  managed-Pane exit, an explicit pane deletion, and a disappearance no receipt
-  explains all resolve to `Offline`; a launch failure or an abnormal exit
-  resolves to `Failed`. The Agent survives its Pane as a resumable resource.
+- The phase set is exactly `Pending`, `Running`, `Offline`, `Failed`. An
+  abnormal exit resolves to `Failed`, while killed or unexplained disappearance
+  resolves to `Offline` and retains the Agent/Pane rows for diagnosis and
+  explicit recovery. A same-generation supervisor exit 0 paired with exact
+  `pane-exited` evidence is different: the Pane and its current directly owning
+  Agent are removed together from desired Registry topology.
 - `Offline` for an unexplained disappearance rather than `Failed` is a deliberate
   asymmetry. The phase is what an operator reads to decide whether to resume, and
   an unproven `Failed` is worse for that decision than an honest `Offline`; the
@@ -399,6 +401,11 @@ Termination evidence transport:
   what it wrote; a partial delete that really did kill something keeps the
   evidence that explains it.
 - Exit reconciliation is what consumes a receipt; see below.
+- The lock-free `termination-receipts.jsonl` row precedes a clean process exit
+  and therefore outlives a qualifying Pane/Agent Registry deletion. That bounded
+  receipt is the post-delete diagnostic: source, classification, observed time,
+  Pane/Agent uid, generation, and wait status only. No command, pane content,
+  prompt, transcript, or provider payload is recorded.
 - The supervisor resolves its state paths from the pane's own inherited
   environment, which is the tmux **server's** environment rather than the
   environment of the CLI call that created the pane. That is the correct
@@ -424,12 +431,12 @@ Termination evidence transport:
 Exit reconciliation and lifecycle projection:
 
 - A **lifecycle dirty event** is one exact-host statement that a managed runtime
-  object's lifecycle may have changed: the tmux server to re-observe plus, when
-  the producer can honestly say, the Pane uid and the activation generation. Both
-  narrowings are optional and neither is a claim. The widest legal event -- this
-  host, no pane, no generation -- is what the pane-exit hooks produce, because
-  tmux fires `after-kill-pane` with an empty `#{hook_pane}` and a producer that
-  pretended to know the pane would be inventing the one field that matters.
+  object's lifecycle may have changed. `pane-exited` carries tmux's exact
+  `#{hook_pane}` and its window-scoped `#{window_id}`; contained tmux evidence
+  shows `#{hook_window}` is empty for this hook and reserves it for
+  `window-unlinked`. `after-kill-pane` carries neither because
+  tmux leaves `#{hook_pane}` empty there. Whole-host and coalesced events remain
+  advisory projection inputs and never acquire delete authority.
 - The event is advisory. The reconciliation re-observes the **final** snapshot of
   that same exact host and re-reads the registry, so a stale event, a duplicate
   event, and an event for a pane that has since come back all converge on the
@@ -442,12 +449,12 @@ Exit reconciliation and lifecycle projection:
   fallback -- a reconciliation that summed two servers could never report a death
   at all, and a sibling server carrying the same `%N` handles or the same
   mirrored uid receives zero calls.
-- The transition is derived from the receipt the Pane already stores. `intentional`
-  and `normal` land the Agent in `Offline`, `abnormal` lands it in `Failed`, and a
-  Pane with no receipt for its current generation lands it in `Offline` with
-  `unknown`. Each of the four gets its own `status.reason` clause, because the
-  phase collapses four kinds of proof into two values and the reason is what
-  separates them again.
+- The retained-state transition is derived from the receipt the Pane already
+  stores. `abnormal` lands the Agent in `Failed`; `killed` and an evidence-free
+  disappearance land it in `Offline`. A `normal` receipt alone is still only
+  evidence. It becomes Pane/Agent delete authority only when the same controller
+  pass also has the exact hook Pane and Window, a non-empty exact-socket
+  inventory, and a current generation/owner chain.
 - An absence with no receipt **records** an `unknown` one, with
   `source: reconcile`. That is what makes the reconciliation idempotent: a second
   pass finds the same document already stored, recording it is a no-op, and the
@@ -457,16 +464,16 @@ Exit reconciliation and lifecycle projection:
   Unknown is a statement that nothing was observed, and letting a supervisor that
   read a wait status or a control action that stated its intent file one would let
   either of them erase evidence with it.
-- An Agent's **current** managed Pane is released: the Agent takes the phase the
-  evidence implies, drops `status.paneRef`, keeps `status.sessionRef`, and keeps
-  the receipt mirrored onto itself -- which is the only place that evidence can
-  survive, because releasing the Pane deletes the Pane resource. An Agent-owned
-  Pane the Agent no longer binds, which is what a resume leaves behind, receives
-  the evidence and nothing else.
-- A **shell** Pane's runtime loss never deletes the logical Pane. Runtime loss is
-  not a statement about desired topology: the resource keeps its existence, gains
-  a `MissingRuntime` condition, and gains the evidence, so it reads as offline for
-  a stated reason. Only a canonical `delete` removes the desired Pane.
+- A qualifying exact clean exit removes the Pane and, when it is the current
+  Agent-owned Pane, the directly owning Agent in the same locked Registry
+  transaction. The owning Window, Project/ControlSession, sibling Panes and
+  sibling Agents are unchanged. A shell and a provider are intentionally
+  indistinguishable here: both are supervised wait-status 0; no command or
+  `/exit` text participates.
+- Abnormal, killed, unknown, whole-host absence, missing/empty server inventory,
+  permission failure, foreign Window observation, stale generation, and an
+  Agent that now binds a resumed Pane all produce delete-plan zero. They keep the
+  retained lifecycle projection and canonical explicit Offline delete recovery.
 - The closed Agent transition table stays the authority. An Agent that may not
   reach the implied phase keeps its phase, its `paneRef`, and its managed Pane;
   only the evidence is recorded. A refused transition is not a reason to discard
@@ -485,13 +492,11 @@ Exit reconciliation and lifecycle projection:
   not up. It is also not an error: the reconciliation rides along inside other
   operations and must never fail them.
 - Ordering: a supervisor writes its receipt before its own process exits, so the
-  receipt is durable before tmux tears the pane down. Whichever trigger then
-  reaches the reconciliation first, the transition is derived from the same
-  durable receipt and the same fresh observation, and the final Agent is identical.
-  A receipt that is still in flight when the absence is observed is the
-  immediate-exit race: it converges on `unknown` and the late receipt is refused
-  as stale, which leaves the current binding untouched rather than resurrecting
-  it.
+  journal evidence is durable before tmux tears the pane down. The controller
+  absorbs it, re-resolves the exact `%N`/`@N` owner on the event socket, and then
+  repeats both inventory and owner/generation checks under the Registry lock.
+  Duplicate and permuted receipt delivery is idempotent. A late old-generation
+  receipt or a resume that wins the lock cannot follow the new binding.
 - The reconciliation performs no runtime call beyond that one observation. It
   never resumes an Agent, starts an offline resource, materializes a replacement
   Pane, deletes an unmanaged object, or adopts one. An observation is not an
@@ -1170,12 +1175,12 @@ Lifecycle trigger convergence:
   runs on every server they start, where a raw `new-window` in a session projmux
   does not own has to stay an unmanaged runtime object that only the Runtime
   diagnostics surface shows.
-- A hook states that something on one exact server may have changed and nothing
-  more. There is no pane id and no generation on a trigger: `after-kill-pane`
-  fires with an empty `#{hook_pane}`, so a field for the pane that died would be
-  a field the most common producer has to invent. Every hook expands tmux's own
-  absolute `#{socket_path}` and `#{session_id}`, so neither the route nor the
-  convergence it drives falls back to the default socket or inherited `$TMUX`.
+- A hook states that something on one exact server may have changed. Exact
+  `pane-exited` additionally carries tmux's `%N` Pane and `@N` Window handles;
+  kill and coalesced triggers deliberately carry no invented identity. Every
+  hook expands tmux's own absolute `#{socket_path}` and `#{session_id}`, so
+  neither the route nor the convergence it drives falls back to the default
+  socket or inherited `$TMUX`.
 - One convergence pass is one locked reconciliation followed by an exit-half
   reobservation. The reconciliation imports the live sessions it can attribute,
   reapplies the bindings it can prove, projects the lifecycle of every managed
@@ -1201,6 +1206,12 @@ Lifecycle trigger convergence:
   report claiming success must not hide. The loop is bounded; stopping early is
   safe in a way a lost event is not, because convergence is derived from the
   machine rather than from the event log.
+- Phase 2 stops at Pane/Agent deletion. Even when the event names the last Pane,
+  this code does not consume `window-unlinked`, delete a Window or root, alter a
+  Project uid/name reservation, or choose reopen/pin behavior. Those parent and
+  root effects are one later minor-release boundary. Until that boundary ships,
+  clean non-last Pane/Agent exits lose Registry resume identity immediately;
+  provider-native conversation catalogs are the remaining discovery surface.
 - The creation hooks stay synchronous so a newly bindable Window or Pane has a
   registry binding before the creating tmux command returns and before the next
   implicit read can run; the exit hooks stay backgrounded so closing a pane never

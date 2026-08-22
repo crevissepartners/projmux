@@ -6352,6 +6352,12 @@ if [[ -z "$exitrec_project_uid" ]]; then
   echo "exit reconciliation e2e explicit authority left the Project uid empty" >&2
   exit 1
 fi
+exitrec_window_uid="$(exitrec_tmux show-options -wqv -t "$exitrec_session" @projmux_window_uid)"
+exitrec_shell_pane="$(exitrec_tmux list-panes -t "$exitrec_session" -F '#{@projmux_pane_uid}' | head -n 1)"
+if [[ -z "$exitrec_window_uid" || -z "$exitrec_shell_pane" ]]; then
+  echo "exit reconciliation e2e canonical Window/shell has no exact Registry identity" >&2
+  exit 1
+fi
 if ! exitrec_tmux show-hooks -g | grep -q "internal tmux converge --socket-path"; then
   echo "the generated config installed no controller trigger, so hook-driven convergence cannot be observed" >&2
   exitrec_tmux show-hooks -g >&2
@@ -6416,6 +6422,20 @@ exitrec_await_phase() {
   exit 1
 }
 
+exitrec_await_absent() {
+  local kind="$1" uid="$2"
+  for _ in $(seq 1 150); do
+    exitrec_doc "$kind" "$uid"
+    if [[ ! -s "$exitrec_root/doc.json" ]]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "$kind $uid survived the exact clean pane-exit cascade" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+}
+
 # 1. A provider that exits non-zero converges to Failed on the hook alone.
 printf 'sleep 0.5\n%s\n' 'exit 42' >"$exitrec_root/stub-script"
 exitrec_failed_agent="$(exitrec_live_pmx create agent --provider codex \
@@ -6436,19 +6456,43 @@ if [[ -n "$(exitrec_field paneRef)" ]]; then
 fi
 echo ">> exit reconciliation e2e hook-driven failure agent=$exitrec_failed_agent phase=Failed class=abnormal"
 
-# 2. A provider that exits 0 converges to Offline, not Failed, and keeps its
-# conversation pointer if one was ever reported. Exit 0 is `normal`, never
-# `intentional`.
-printf 'sleep 0.5\n%s\n' 'exit 0' >"$exitrec_root/stub-script"
+# 2. A provider that exits 0 is a qualifying exact pane-exited teardown. The
+# Pane and its current directly owning Agent disappear together; the durable
+# supervisor row remains in the termination journal. The Window, its shell,
+# and the failed sibling Agent are Phase 2 siblings and remain untouched.
+printf 'sleep 1\n%s\n' 'exit 0' >"$exitrec_root/stub-script"
 exitrec_clean_agent="$(exitrec_live_pmx create agent --provider claude \
   --project "uid:$exitrec_project_uid" -o uid)"
-exitrec_await_phase agent "$exitrec_clean_agent" Offline
-if [[ "$(exitrec_termination_field classification)" != "normal" ]]; then
-  echo "the hook classified an exit 0 as $(exitrec_termination_field classification), want normal" >&2
-  cat "$exitrec_root/doc.json" >&2
+exitrec_doc agent "$exitrec_clean_agent"
+exitrec_clean_pane="$(exitrec_field paneRef)"
+if [[ -z "$exitrec_clean_pane" ]]; then
+  echo "clean provider Agent $exitrec_clean_agent exposed no current Pane before exit" >&2
   exit 1
 fi
-echo ">> exit reconciliation e2e hook-driven clean exit agent=$exitrec_clean_agent phase=Offline class=normal"
+exitrec_await_absent agent "$exitrec_clean_agent"
+exitrec_await_absent pane "$exitrec_clean_pane"
+if ! awk -v pane="\"paneUID\":\"$exitrec_clean_pane\"" -v classification='"classification":"normal"' \
+  -v source='"source":"supervisor"' \
+  'index($0, pane) && index($0, classification) && index($0, source) { found = 1 } END { exit !found }' \
+  "$exitrec_root/state/projmux/termination-receipts.jsonl"; then
+  echo "clean provider $exitrec_clean_agent lost its pre-delete normal/supervisor journal evidence" >&2
+  exit 1
+fi
+exitrec_doc agent "$exitrec_failed_agent"
+if [[ "$(exitrec_field phase)" != "Failed" ]]; then
+  echo "one-of-many clean exit changed failed sibling Agent $exitrec_failed_agent" >&2
+  exit 1
+fi
+if ! exitrec_pmx describe window "uid:$exitrec_window_uid" -o json >"$exitrec_root/window-after-clean.json"; then
+  echo "one-of-many clean exit deleted the owning Window" >&2
+  exit 1
+fi
+if ! exitrec_pmx describe pane "uid:$exitrec_shell_pane" -o json >"$exitrec_root/shell-after-clean.json" ||
+  ! exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}' | grep -qx "$exitrec_shell_pane"; then
+  echo "one-of-many clean exit deleted the sibling shell Pane/runtime" >&2
+  exit 1
+fi
+echo ">> exit reconciliation e2e hook-driven clean exit agent=$exitrec_clean_agent pane=$exitrec_clean_pane registry=deleted journal=preserved siblings=preserved"
 
 # 3. The read surfaces project what the hook stored, and write nothing.
 exitrec_registry="$exitrec_root/state/projmux/metadata/registry.json"

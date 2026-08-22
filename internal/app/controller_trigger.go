@@ -67,7 +67,8 @@ const (
 	// after-split-window.
 	controllerTriggerRuntimeCreated controllerTriggerReason = "runtime-created"
 	// controllerTriggerPaneExited is tmux's pane-exited. It carries exact
-	// #{hook_pane} evidence and reobserves only that activation handle.
+	// #{hook_pane} plus its window-scoped #{window_id}, because tmux leaves
+	// #{hook_window} empty for this hook, and reobserves only that activation.
 	controllerTriggerPaneExited controllerTriggerReason = "pane-exited"
 	// controllerTriggerPaneKilled is tmux's after-kill-pane. That hook cannot
 	// name the dead Pane, so it retains the whole-host reobservation.
@@ -471,8 +472,9 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 	if err != nil {
 		return pass, err
 	}
-	if trigger.reason == controllerTriggerPaneKilled || trigger.reason == controllerTriggerWindowUnlinked || trigger.fullReobserve {
-		receipts, err = r.awaitKillTerminationReceipts(ctx, trigger, receipts)
+	if trigger.reason == controllerTriggerPaneExited || trigger.reason == controllerTriggerPaneKilled ||
+		trigger.reason == controllerTriggerWindowUnlinked || trigger.fullReobserve {
+		receipts, err = r.awaitRuntimeExitTerminationReceipts(ctx, trigger, receipts)
 		if err != nil {
 			return pass, err
 		}
@@ -484,11 +486,15 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 				return lifecycleInventory(r.runner, target)
 			}
 		}
-		exits, err := reconcileLifecycle(ctx, lifecycleDirtyEvent{
+		dirty := lifecycleDirtyEvent{
 			target:        target,
 			runtimePaneID: trigger.hookPane, runtimeWindowID: trigger.hookWindow,
 			receipts: receipts,
-		}, observe(target), r.store)
+		}
+		if trigger.reason == controllerTriggerPaneExited {
+			dirty.teardownKind = coremetadata.TeardownEventPaneExited
+		}
+		exits, err := reconcileLifecycle(ctx, dirty, observe(target), r.store)
 		if err != nil {
 			return pass, err
 		}
@@ -690,13 +696,14 @@ func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, t
 	return len(graph.RuntimeOfClass(resourcegraph.ClassRecoverable)), nil
 }
 
-// awaitKillTerminationReceipts closes the tmux kill/reap race without taking
-// the Registry lock. after-kill-pane and window-unlinked can run before the
-// surviving supervisor has reaped SIGHUP and appended its receipt; projecting
-// unknown immediately would then settle the event with no later wakeup. Only a
-// newly absent managed activation with no applicable supervisor/control receipt
-// waits, and the wait is bounded. Voluntary exact pane-exited never enters here.
-func (r *controllerTriggerRunner) awaitKillTerminationReceipts(ctx context.Context, trigger controllerTrigger,
+// awaitRuntimeExitTerminationReceipts closes the tmux hook/reap race without
+// taking the Registry lock. pane-exited can run before a normal wait status is
+// journaled; kill and unlink hooks can likewise precede the surviving
+// supervisor's SIGHUP receipt. An exact pane-exited wait is restricted to its
+// one stored activation handle. Wider kill/unlink observations retain their
+// existing whole-host behavior. Every wait is bounded, and a receipt-free
+// timeout still projects honest unknown rather than inventing normal authority.
+func (r *controllerTriggerRunner) awaitRuntimeExitTerminationReceipts(ctx context.Context, trigger controllerTrigger,
 	receipts []coremetadata.TerminationEvidence) ([]coremetadata.TerminationEvidence, error) {
 	observe := r.observe
 	if observe == nil {
@@ -719,6 +726,10 @@ func (r *controllerTriggerRunner) awaitKillTerminationReceipts(ctx context.Conte
 		_, _ = absorbTerminationReceipts(&candidate, r.store.mutator(), snapshot)
 		for i := range candidate.Panes {
 			pane := &candidate.Panes[i]
+			if trigger.reason == controllerTriggerPaneExited &&
+				pane.Status.Activation.RuntimeID != strings.TrimSpace(trigger.hookPane) {
+				continue
+			}
 			if live[pane.Metadata.UID] || strings.TrimSpace(pane.Status.Activation.Generation) == "" {
 				continue
 			}

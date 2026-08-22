@@ -19,7 +19,7 @@ func TestLifecycleHookRoutesCarryExactPaneAndWindowEvidence(t *testing.T) {
 	recorder := &recordingTriggering{}
 	cmd := &tmuxCommand{runner: newFakeTmux(), triggerRunner: recorder}
 	for _, args := range [][]string{
-		{"--socket-path", socket, "--session", "$1", "--reason", "pane-exited", "--hook-pane", "%9"},
+		{"--socket-path", socket, "--session", "$1", "--reason", "pane-exited", "--hook-pane", "%9", "--hook-window", "@4"},
 		{"--socket-path", socket, "--session", "$1", "--reason", "pane-killed"},
 		{"--socket-path", socket, "--session", "$1", "--reason", "window-unlinked", "--hook-window", "@7"},
 	} {
@@ -27,7 +27,7 @@ func TestLifecycleHookRoutesCarryExactPaneAndWindowEvidence(t *testing.T) {
 			t.Fatalf("runConverge(%v): %v", args, err)
 		}
 	}
-	if len(recorder.triggers) != 3 || recorder.triggers[0].hookPane != "%9" ||
+	if len(recorder.triggers) != 3 || recorder.triggers[0].hookPane != "%9" || recorder.triggers[0].hookWindow != "@4" ||
 		recorder.triggers[1].hookPane != "" || recorder.triggers[1].hookWindow != "" ||
 		recorder.triggers[2].hookWindow != "@7" {
 		t.Fatalf("triggers = %+v", recorder.triggers)
@@ -316,7 +316,7 @@ func TestPaneKilledWaitsPastHookDelayForSupervisorReceipt(t *testing.T) {
 		target: explicitTmuxTarget{flag: "-S", value: "/tmp/phase6-delayed-kill.sock"},
 	}
 	started := time.Now()
-	receipts, err := runner.awaitKillTerminationReceipts(context.Background(), trigger, nil)
+	receipts, err := runner.awaitRuntimeExitTerminationReceipts(context.Background(), trigger, nil)
 	if err != nil {
 		t.Fatalf("await delayed receipt: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestPaneKilledReceiptWaitIsBoundedBeforeUnknownProjection(t *testing.T) {
 		target: explicitTmuxTarget{flag: "-S", value: "/tmp/phase6-no-receipt.sock"},
 	}
 	started := time.Now()
-	receipts, err := runner.awaitKillTerminationReceipts(context.Background(), trigger, nil)
+	receipts, err := runner.awaitRuntimeExitTerminationReceipts(context.Background(), trigger, nil)
 	elapsed := time.Since(started)
 	if err != nil || len(receipts) != 0 {
 		t.Fatalf("bounded wait receipts = %+v, %v", receipts, err)
@@ -413,7 +413,7 @@ func TestPaneKilledWaitRefinesRacingUnknownWithDelayedSupervisorReceipt(t *testi
 		reason: controllerTriggerPaneKilled,
 		target: explicitTmuxTarget{flag: "-S", value: "/tmp/phase6-racing-unknown.sock"},
 	}
-	receipts, err := runner.awaitKillTerminationReceipts(context.Background(), trigger, nil)
+	receipts, err := runner.awaitRuntimeExitTerminationReceipts(context.Background(), trigger, nil)
 	if err != nil {
 		t.Fatalf("await racing unknown refinement: %v", err)
 	}
@@ -431,7 +431,7 @@ func TestPaneKilledWaitRefinesRacingUnknownWithDelayedSupervisorReceipt(t *testi
 	}
 }
 
-func TestExactPaneExitedNeverEntersKillReceiptWait(t *testing.T) {
+func TestExactPaneExitedReceiptWaitIsBoundedBeforeUnknownProjection(t *testing.T) {
 	store := newFakeResourceStore(t)
 	activatePaneFixture(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-voluntary")
 	if _, err := store.mutator().ObservePaneActivationRuntime(&store.registry,
@@ -443,16 +443,16 @@ func TestExactPaneExitedNeverEntersKillReceiptWait(t *testing.T) {
 		observe: func(explicitTmuxTarget) livePaneInventory {
 			return &stubPaneInventory{uids: map[string]bool{}}
 		},
-		beforeReceiptWait: func() { t.Fatal("exact pane-exited entered the kill receipt wait") },
+		beforeReceiptWait: func() {}, receiptWaitTimeout: time.Millisecond, receiptPoll: 100 * time.Microsecond,
 	}
 	pass, err := runner.converge(context.Background(), controllerTrigger{
-		reason: controllerTriggerPaneExited, hookPane: "%9",
+		reason: controllerTriggerPaneExited, hookPane: "%9", hookWindow: "@4",
 		target: explicitTmuxTarget{flag: "-S", value: "/tmp/phase6-voluntary.sock"},
 	})
 	if err != nil {
 		t.Fatalf("exact pane-exited: %v", err)
 	}
 	if pass.residualExits != 1 {
-		t.Fatalf("exact pane-exited pass = %+v, want immediate exact projection", pass)
+		t.Fatalf("exact pane-exited pass = %+v, want bounded exact unknown projection", pass)
 	}
 }
