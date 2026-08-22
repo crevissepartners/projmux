@@ -341,9 +341,9 @@ func (c *settingsCommand) sessionStateAutosaveDetailEntries(autosave sessionStat
 // straight to its stored topology.
 func sidebarStartupChoiceLabel(mode config.SessionStateToggle) string {
 	if mode.Enabled() {
-		return "Ask for Snapshot or Project topology"
+		return "Continue project / Open fresh"
 	}
-	return "Use Project topology"
+	return "Continue project"
 }
 
 func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStateEffectiveToggle) []intpickercompat.Entry {
@@ -358,7 +358,7 @@ func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStat
 		mode config.SessionStateToggle
 		desc string
 	}{
-		{config.SessionStateToggleOn, "ask whether to restore a Snapshot or materialize the Project topology"},
+		{config.SessionStateToggleOn, "show Continue project and Open fresh for a closed Project"},
 		{config.SessionStateToggleOff, projectTopologyStartupDescription},
 	} {
 		glyph := settingsGlyphInactive
@@ -370,7 +370,7 @@ func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStat
 		entries = append(entries, intpickercompat.Entry{
 			Label:     c.rowLabel(glyph, color, sidebarStartupChoiceLabel(item.mode), item.desc+" - "+sidebarStartup.Source),
 			Value:     settingsActionPrefixSessionState + "sidebar-startup:" + string(item.mode),
-			SearchKey: "closed project startup snapshot topology sidebar startup picker on off",
+			SearchKey: "closed project startup continue open fresh sidebar startup picker on off",
 		})
 	}
 	return entries

@@ -1315,6 +1315,40 @@ func TestClientOpenSessionTargetsClientInsideTmux(t *testing.T) {
 	}
 }
 
+func TestClientOpenSessionExplicitClientSwitchesWhenTMUXIsUnset(t *testing.T) {
+	t.Parallel()
+	runner := &scriptedRunner{t: t, steps: []scriptedStep{{}}}
+	client := newClientWithEnv(runner, func(name string) string {
+		if name == SwitchTargetClientEnv {
+			return "/dev/pts/9"
+		}
+		return ""
+	})
+	if err := client.OpenSession(context.Background(), "workspace"); err != nil {
+		t.Fatal(err)
+	}
+	want := []commandCall{{name: "tmux", args: []string{"switch-client", "-c", "/dev/pts/9", "-t", "=workspace"}}}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls=%#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestTmuxInteractiveHandoffRecognizesExactTargetPrefix(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"attach-session", "-t", "=workspace"},
+		{"-L", "projmux", "switch-client", "-c", "/dev/pts/9", "-t", "=workspace"},
+		{"-S", "/tmp/tmux.sock", "attach-session", "-t", "=workspace"},
+	} {
+		if !tmuxInteractiveHandoff(args) {
+			t.Fatalf("tmuxInteractiveHandoff(%q) = false", args)
+		}
+	}
+	if tmuxInteractiveHandoff([]string{"-L", "projmux", "list-sessions"}) {
+		t.Fatal("list-sessions was classified as an interactive handoff")
+	}
+}
+
 func TestClientOpenSessionAttachesOutsideTmux(t *testing.T) {
 	t.Parallel()
 

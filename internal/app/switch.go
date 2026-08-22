@@ -1676,10 +1676,10 @@ func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, pl
 		return err
 	}
 	if exists {
+		c.commitSidebarPreview(ctx)
 		if err := c.openProjectSession(ctx, sessionName); err != nil {
 			return err
 		}
-		c.commitSidebarPreview(ctx)
 		return nil
 	}
 	mode := projectStartupCandidate{Kind: projectStartupKindTopology}
@@ -1726,9 +1726,6 @@ func (c *switchCommand) launchSidebarOpenContinuation(ctx context.Context, plan 
 		"--mode", strings.TrimSpace(mode.Kind),
 		"--query", strings.TrimSpace(plan.Query),
 	}
-	if strings.TrimSpace(mode.Name) != "" {
-		args = append(args, "--name", strings.TrimSpace(mode.Name))
-	}
 	if strings.TrimSpace(client) != "" {
 		args = append(args, "--client", strings.TrimSpace(client))
 	}
@@ -1757,7 +1754,6 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	target := fs.String("path", "", "project path to open")
 	sessionName := fs.String("session", "", "target session name")
 	mode := fs.String("mode", projectStartupKindTopology, "startup mode")
-	name := fs.String("name", "", "named snapshot name")
 	query := fs.String("query", "", "sidebar query to restore on deny")
 	client := fs.String("client", "", "tmux client to restore sidebar popup")
 	if err := fs.Parse(args); err != nil {
@@ -1784,12 +1780,9 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 		defer restoreLookup()
 	}
 	c.closeSidebarPopupForTrust(context.Background(), targetClient)
-	openMode := projectStartupCandidate{Kind: strings.TrimSpace(*mode), Name: strings.TrimSpace(*name)}
-	// The retired `empty` spelling is still accepted here: this route is the
-	// re-exec transport, so a continuation launched by the previous binary must
-	// resolve to the topology start it always described.
-	if openMode.Kind == "" || openMode.Kind == projectStartupValueEmpty {
-		openMode.Kind = projectStartupKindTopology
+	openMode, ok := projectStartupCandidateFromValue(strings.TrimSpace(*mode))
+	if !ok {
+		return fmt.Errorf("switch sidebar-open: unknown startup mode %q", strings.TrimSpace(*mode))
 	}
 	exists, err := c.switchSessionExists(context.Background(), openSession)
 	if err != nil {

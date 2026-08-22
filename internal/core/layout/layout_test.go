@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 )
@@ -162,41 +161,6 @@ func TestLoadArtifactRejectsFileAndDirectorySymlinks(t *testing.T) {
 	}
 }
 
-func TestToSnapshotEscapesProjectOwnedDisplayControls(t *testing.T) {
-	t.Parallel()
-
-	preset := Preset{
-		SchemaVersion: SchemaVersion,
-		Windows: []Window{{
-			Index:           0,
-			Name:            "dev\x1b]0;owned\a",
-			ActivePaneIndex: 0,
-			Panes: []Pane{{
-				Index:    0,
-				CWD:      "${PROJMUX_CWD}",
-				Agent:    "codex",
-				ResumeID: "resume",
-				Topic:    "topic\x1b[31m",
-				Recipe: sessionstate.AgentRecipe(
-					"codex",
-					"resume",
-					"topic\x1b[31m",
-				),
-			}},
-		}},
-	}
-	snap, err := ToSnapshot(preset, "workspace", t.TempDir(), time.Now())
-	if err != nil {
-		t.Fatalf("ToSnapshot() error = %v", err)
-	}
-	if got := snap.Windows[0].Name; strings.Contains(got, "\x1b") || !strings.Contains(got, `\x1b`) {
-		t.Fatalf("window name = %q, want visible escape", got)
-	}
-	if got := snap.Windows[0].Panes[0].Recipe.Topic; strings.Contains(got, "\x1b") || !strings.Contains(got, `\x1b`) {
-		t.Fatalf("agent topic = %q, want visible escape", got)
-	}
-}
-
 func TestLoadRejectsUnsupportedPlaceholder(t *testing.T) {
 	t.Parallel()
 
@@ -221,33 +185,6 @@ recipe = "shell"
 	}
 	if !errors.Is(err, ErrInvalidPreset) || !strings.Contains(err.Error(), "${HOME}") {
 		t.Fatalf("error = %v, want unsupported placeholder validation", err)
-	}
-}
-
-func TestToSnapshotInterpolatesAllowedPlaceholders(t *testing.T) {
-	t.Parallel()
-
-	preset, err := Parse(`
-schema_version = 1
-
-[[windows]]
-index = 0
-active_pane_index = 0
-
-[[windows.panes]]
-index = 0
-cwd = "${PROJMUX_CWD}/pkg"
-recipe = "shell"
-`)
-	if err != nil {
-		t.Fatalf("Parse() error = %v", err)
-	}
-	snap, err := ToSnapshot(preset, "workspace", "/repo", time.Time{})
-	if err != nil {
-		t.Fatalf("ToSnapshot() error = %v", err)
-	}
-	if got := snap.Windows[0].Panes[0].CWD; got != "/repo/pkg" {
-		t.Fatalf("CWD = %q, want interpolated project path", got)
 	}
 }
 

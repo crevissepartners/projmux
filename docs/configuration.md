@@ -92,10 +92,10 @@ request with `projmux pin project migrate`; see
 [upgrading.md](upgrading.md#pins-are-typed-and-migrate-on-request) for the
 per-line outcomes and the ambiguity refusal.
 
-## Project Named Snapshots
+## Legacy Project Layout Snapshots
 
-Project open exposes reusable restore choices as named snapshots. Older
-checkouts may already have named snapshots in the legacy storage directory:
+Older checkouts may already have named layout snapshots in the legacy storage
+directory:
 
 ```text
 <project>/.projmux/layouts/<name>.toml
@@ -104,9 +104,9 @@ checkouts may already have named snapshots in the legacy storage directory:
 The project context comes from `PROJMUX_CWD` when set, otherwise projmux walks
 upward from the current directory to the nearest `.projmux` or `.git` marker.
 Files outside that project tree are not discovered. This storage is treated as
-legacy import data for the `Named snapshot` row in Project open. New primary
-user-facing surfaces describe the restore unit as a snapshot, not as a separate
-layout or preset feature.
+legacy import data for explicit conversion and preview. Closed-Project startup
+does not expose legacy snapshot choices; current user-facing surfaces describe
+the restore unit as a snapshot, not as a separate layout or preset feature.
 
 The legacy schema is intentionally close to the session-state snapshot shape:
 
@@ -769,40 +769,30 @@ override with `inherit`, `on`, and `off`; `inherit` follows the global value,
 while `on` and `off` take precedence. Auto-save only updates the latest
 snapshot. Named snapshots are manual and are never updated by auto-save.
 
-Project open from the Alt-1 sidebar defaults to opening a closed project as its
-`Project topology`, which materializes every Registry Window, Window-owned
-shell Pane, and Agent of that project before the client moves. A replayed Agent
-rejoins the provider conversation its Registry `status.sessionRef` names; one
-with no usable ref starts a new conversation and is reported on stderr. The optional `Settings >
-Session State > Sidebar startup picker` toggle enables the native sidebar `Start
-project` step. Rows appear as `Latest snapshot`, named snapshot rows, `Project
-topology`, `New`, and `Back`. `Latest snapshot`
-is the snapshot auto-save that changes as auto-save runs; named snapshots are
-fixed snapshots. `New` discards the latest snapshot and force-prunes every
-stored Window, Pane, and Agent of that Project, then starts it as a single fresh
-Window and shell Pane; it always confirms first with the exact
-`Window n / Pane n / Agent n` counts and the Agents' `status.sessionRef` loss,
-and a cancel writes nothing. Named snapshots, the Project registration, the
-managed root, and the trust decision all survive it. Rows include saved-at date/time metadata when projmux can
-determine it. `Back` returns to the project list without creating, replaying, or
-opening a session. After the startup mode is selected, project automation trust
-is evaluated if needed. A named snapshot containing a startup `command` must
-authorize the SHA-256 of the exact layout bytes used for parse/restore, even
-when project hooks are disabled or `.projmux/config.toml` is absent. Approval
-continues the selected path and deny/cancel aborts without session create,
-snapshot replay, or startup command. The Alt-1 sidebar opens trust as the shared
-client-scoped `Trust project automation` popup
-instead of inline sidebar rows. The selected open continuation runs in a
-detached tmux job that can close the sidebar before trust without depending on
-the self-closing sidebar process to keep running. Deny/cancel refreshes the
-original sidebar query/selection context with a visible status message. Existing
-sessions switch directly without a startup picker.
+Project open from the Alt-1 sidebar defaults to `Continue project`, which
+materializes the closed Project's current Registry desired state before moving
+the client. The optional `Settings > Session State > Sidebar startup picker`
+toggle enables a native `Start project` step with exactly `Continue project` and
+`Open fresh`. `Open fresh` confirms exact `Window n / Pane n / Agent n` counts
+and conversation-pointer loss, preserves the canonical Project Window and shell
+Pane UID/recipe, and removes every other target descendant and reservation.
+Snapshot bytes remain unchanged; the Project resource keeps its UID, root,
+trust decision, and metadata. Esc returns to Projects with zero writes. After
+the startup mode is selected, project automation trust is evaluated if needed.
+The Alt-1 sidebar opens trust as the shared client-scoped `Trust project
+automation` popup instead of inline sidebar rows. The selected open
+continuation runs in a detached tmux job that can close the sidebar before trust
+without depending on the self-closing sidebar process to keep running.
+Deny/cancel refreshes the original sidebar query/selection context with a
+visible status message. Existing sessions switch directly without a startup
+picker.
 
 Default `projmux shell` no longer opens a startup picker or replays session-state
 snapshots before attach. It still derives the default app session identity and
 startup directory from the current project context when available; otherwise it
-uses the `home` target and home directory. Session-state restore selection is
-limited to the Session State sidebar startup picker.
+uses the `home` target and home directory. Snapshot restore is an explicit CLI
+operation that requires both the source session and the exact target Project;
+it is not a Project-startup choice.
 
 Settings > Session State is global settings only: global auto-save, auto-save
 interval, and storage/retention policy. Settings > Project > Session State
@@ -826,7 +816,8 @@ Manual snapshot actions are available from the CLI:
 projmux get snapshots
 projmux create snapshot
 projmux delete snapshot [--session <name>]
-projmux restore snapshot --dry-run [--session <name>]
+projmux restore snapshot --session <snapshot-session> --project <name|uid:uid> --dry-run
+projmux restore snapshot --session <snapshot-session> --project <name|uid:uid> --yes [--client <tmux-client>]
 ```
 
 `status` prints the source label (`autosave`, `layout(<name>)`, or `fresh`), the
@@ -835,8 +826,12 @@ target session. Older snapshots without a source field display as `autosave`.
 `save` captures the current tmux session immediately and intentionally bypasses
 the autosave debounce and disabled-autosave gate; it still requires a current
 tmux session. `delete` removes the target snapshot without an interactive
-confirmation. `restore --dry-run` is preview-only in this release and does not
-create sessions or send tmux commands.
+confirmation. Restore treats the snapshot as desired-state input for one exact
+closed Project, never as a global Registry replacement or tmux replay.
+`--dry-run` prints scoped projection counts with zero writes. `--yes` commits
+that target subtree atomically, runs the ordinary materializer, and performs an
+explicit client handoff last when `--client` is present. Restore never modifies
+or deletes the source snapshot.
 
 ## Decoration Mode
 

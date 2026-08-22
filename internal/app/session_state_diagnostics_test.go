@@ -2,7 +2,6 @@ package app
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
-	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 )
@@ -315,65 +313,6 @@ func TestSessionStateDiagnosticsPruneDeduplicatesAggregate(t *testing.T) {
 	}
 }
 
-type diagnosticRestoreExecutor struct {
-	*capturingSwitchSessionExecutor
-	lifecycle *diagnostics.LifecycleRecorder
-}
-
-func (e *diagnosticRestoreExecutor) RestoreSessionSnapshot(ctx context.Context, snap sessionstate.Snapshot, cwd, source string) error {
-	e.lifecycle.Mark(diagnostics.OperationSessionCreate)
-	if err := e.capturingSwitchSessionExecutor.RestoreSessionSnapshot(ctx, snap, cwd, source); err != nil {
-		e.lifecycle.SealFailure(diagnostics.OperationSessionCreate)
-		return err
-	}
-	e.lifecycle.SealSuccess()
-	return nil
-}
-
-func TestSessionStateDiagnosticsActualRestoreCoexistsWithRuntimeLifecycle(t *testing.T) {
-	writer := &appLifecycleWriter{}
-	lifecycle := diagnostics.NewLifecycleRecorder(writer, "restore-run", "0.10.0", "tmux")
-	stateHome := t.TempDir()
-	store := sessionstate.NewStore(filepath.Join(stateHome, "projmux", "sessions"))
-	snap := sessionstate.Snapshot{
-		Version: sessionstate.Version, Session: "repos-proj", DefaultCWD: "/seed/private/project", SavedAt: time.Now(),
-		Windows: []sessionstate.Window{{Index: 0, Panes: []sessionstate.Pane{{Index: 0, CWD: "/seed/private/project", Recipe: sessionstate.AgentRecipeWithResumeMetadata("codex", "raw-session-id", "topic", "hook", time.Now().Format(time.RFC3339))}}}},
-	}
-	if err := store.Save(snap); err != nil {
-		t.Fatal(err)
-	}
-	executor := &diagnosticRestoreExecutor{capturingSwitchSessionExecutor: &capturingSwitchSessionExecutor{}, lifecycle: lifecycle}
-	cmd := &switchCommand{
-		sessionStateDiagnostics: lifecycle.SessionState(), sessions: executor,
-		homeDir: func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(name string) string {
-			if name == "XDG_STATE_HOME" {
-				return stateHome
-			}
-			return ""
-		},
-	}
-	finish := lifecycle.BeginCommand()
-	err := cmd.authorizeAndContinueProjectOpen(context.Background(), "/seed/private/project", "repos-proj", projectStartupCandidate{Kind: projectStartupKindLatest})
-	finish(err)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(writer.events) != 3 {
-		t.Fatalf("events = %#v, want lifecycle pair plus session-state outcome", writer.events)
-	}
-	if writer.events[0].Event != "lifecycle.start" || writer.events[1].Event != "lifecycle.outcome" || writer.events[2].Event != "session-state.outcome" {
-		t.Fatalf("event order = %#v", writer.events)
-	}
-	restore := writer.events[2]
-	if restore.RunID != "restore-run" || restore.Source != string(diagnostics.SessionStateSourceStartupLatest) || restore.AgentRecipeCount == nil || *restore.AgentRecipeCount != 1 {
-		t.Fatalf("restore event = %#v", restore)
-	}
-	if restore.Message != "" || restore.Code != "" {
-		t.Fatalf("restore leaked metadata: %#v", restore)
-	}
-}
-
 func TestSessionStateDiagnosticsSettingsFailureIsRecordedBeforeFeedbackSwallowsIt(t *testing.T) {
 	writer := &appLifecycleWriter{}
 	lifecycle := diagnostics.NewLifecycleRecorder(writer, "settings-run", "0.10.0", "tmux")
@@ -420,72 +359,6 @@ func TestSessionStateDiagnosticsSettingsSurfaceTable(t *testing.T) {
 				t.Fatalf("events = %#v", writer.events)
 			}
 		})
-	}
-}
-
-func TestSessionStateDiagnosticsNamedRestoreAuthorizationFailure(t *testing.T) {
-	writer := &appLifecycleWriter{}
-	lifecycle := diagnostics.NewLifecycleRecorder(writer, "named-run", "0.10.0", "tmux")
-	project := t.TempDir()
-	preset := corelayout.Preset{SchemaVersion: corelayout.SchemaVersion, DefaultCWD: project, Windows: []corelayout.Window{{Name: "main", Panes: []corelayout.Pane{{CWD: project, Recipe: sessionstate.ShellRecipe()}}}}}
-	if err := corelayout.NewStore(project).Save("team", preset); err != nil {
-		t.Fatal(err)
-	}
-	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: false}
-	cmd := &switchCommand{sessionStateDiagnostics: lifecycle.SessionState(), sessions: executor, homeDir: func() (string, error) { return t.TempDir(), nil }, lookupEnv: func(string) string { return "" }}
-	err := cmd.authorizeAndContinueProjectOpen(context.Background(), project, "repos-proj", projectStartupCandidate{Kind: projectStartupKindNamed, Name: "team"})
-	if !errors.Is(err, errProjectTrustDenied) {
-		t.Fatalf("error = %v", err)
-	}
-	if len(writer.events) != 1 || writer.events[0].Source != string(diagnostics.SessionStateSourceStartupNamed) || writer.events[0].Code != string(diagnostics.CodeSessionStateRestoreFailed) {
-		t.Fatalf("events = %#v", writer.events)
-	}
-}
-
-func TestSessionStateDiagnosticsSuccessfulNamedFreshRestoreHasCountsAndNoDeleteOutcome(t *testing.T) {
-	writer := &appLifecycleWriter{}
-	lifecycle := diagnostics.NewLifecycleRecorder(writer, "named-success", "0.10.0", "tmux")
-	project := t.TempDir()
-	stateHome := t.TempDir()
-	sessionName := "repos-proj"
-	latestStore := sessionstate.NewStore(filepath.Join(stateHome, "projmux", "sessions"))
-	if err := latestStore.Save(sessionstate.Snapshot{Version: sessionstate.Version, Session: sessionName, DefaultCWD: project, SavedAt: time.Now(), Windows: []sessionstate.Window{{Panes: []sessionstate.Pane{{CWD: project, Recipe: sessionstate.ShellRecipe()}}}}}); err != nil {
-		t.Fatal(err)
-	}
-	preset := corelayout.Preset{
-		SchemaVersion: corelayout.SchemaVersion, Mode: corelayout.ModeFreshEachTime, DefaultCWD: project,
-		Windows: []corelayout.Window{
-			{Name: "shell-agent", Panes: []corelayout.Pane{{CWD: project, Recipe: sessionstate.ShellRecipe()}, {CWD: project, Agent: "codex", ResumeID: "raw-session-id", Topic: "topic", Recipe: sessionstate.AgentRecipe("codex", "raw-session-id", "topic")}}},
-			{Name: "startup", Panes: []corelayout.Pane{{CWD: project, Recipe: sessionstate.StartupRecipe("raw startup command")}}},
-		},
-	}
-	if err := corelayout.NewStore(project).Save("team", preset); err != nil {
-		t.Fatal(err)
-	}
-	executor := &capturingSwitchSessionExecutor{}
-	cmd := &switchCommand{
-		sessionStateDiagnostics: lifecycle.SessionState(), sessions: executor,
-		homeDir: func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(name string) string {
-			if name == "XDG_STATE_HOME" {
-				return stateHome
-			}
-			return ""
-		},
-	}
-	err := cmd.authorizeAndContinueProjectOpen(context.Background(), project, sessionName, projectStartupCandidate{Kind: projectStartupKindNamed, Name: "team"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := latestStore.Load(sessionName); !errors.Is(err, sessionstate.ErrNotFound) {
-		t.Fatalf("fresh cleanup Load() error = %v, want %v", err, sessionstate.ErrNotFound)
-	}
-	if len(writer.events) != 1 {
-		t.Fatalf("events = %#v, want one restore and no delete outcome", writer.events)
-	}
-	event := writer.events[0]
-	if event.Operation != string(diagnostics.OperationSessionStateRestore) || event.Source != string(diagnostics.SessionStateSourceStartupNamed) || event.WindowCount == nil || *event.WindowCount != 2 || event.PaneCount == nil || *event.PaneCount != 3 || event.ShellRecipeCount == nil || *event.ShellRecipeCount != 1 || event.AgentRecipeCount == nil || *event.AgentRecipeCount != 1 || event.StartupRecipeCount == nil || *event.StartupRecipeCount != 1 {
-		t.Fatalf("restore event = %#v", event)
 	}
 }
 

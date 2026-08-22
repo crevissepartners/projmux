@@ -8,11 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -28,6 +26,28 @@ type recordingProjectIdentityMirror struct {
 	calls        []string
 	sessionCalls [][]string
 	err          error
+}
+
+type firstOpenSessionExecutor struct {
+	tmux  *fakeTmux
+	calls []string
+}
+
+func (e *firstOpenSessionExecutor) EnsureSession(_ context.Context, sessionName, cwd string) error {
+	e.calls = append(e.calls, "ensure:"+sessionName)
+	if e.tmux.session(sessionName) == nil {
+		e.tmux.addSession(sessionName).opts[tmuxopts.ProjectPathSession] = cwd
+	}
+	return nil
+}
+
+func (e *firstOpenSessionExecutor) OpenSession(_ context.Context, sessionName string) error {
+	e.calls = append(e.calls, "open:"+sessionName)
+	return nil
+}
+
+func (e *firstOpenSessionExecutor) SessionExists(_ context.Context, sessionName string) (bool, error) {
+	return e.tmux.session(sessionName) != nil, nil
 }
 
 func (m *recordingProjectIdentityMirror) MirrorProject(_ context.Context, sessionName string, project coremetadata.Project) error {
@@ -222,86 +242,6 @@ func TestAnUnwiredFirstOpenMirrorIsANoOp(t *testing.T) {
 // deliberately does not touch it: only the shipped ensure path finishes identity.
 // Widening the mirror to the restore rows is a separate decision with its own
 // failure modes, so the guard fails if someone quietly makes it here.
-func TestASnapshotStartOfABootstrappedOpenMirrorsNothing(t *testing.T) {
-	t.Parallel()
-
-	stateHome := t.TempDir()
-	store := sessionstate.NewStore(filepath.Join(stateHome, "projmux", "sessions"))
-	if err := store.Save(sessionstate.Snapshot{
-		Version: sessionstate.Version, Session: "workspace", DefaultCWD: "/srv/work/workspace", SavedAt: time.Now(),
-		Windows: []sessionstate.Window{{Index: 0, Panes: []sessionstate.Pane{{Index: 0, CWD: "/srv/work/workspace", Recipe: sessionstate.ShellRecipe()}}}},
-	}); err != nil {
-		t.Fatalf("save snapshot: %v", err)
-	}
-
-	registrar := &fakeProjectRegistrar{uid: "proj-new", name: "workspace"}
-	executor := &capturingSwitchSessionExecutor{}
-	mirror := &recordingProjectIdentityMirror{}
-	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(name string) string {
-			if name == "XDG_STATE_HOME" {
-				return stateHome
-			}
-			return ""
-		},
-		projectRegistrar: registrar,
-		projectMirror:    mirror,
-	}
-
-	if err := cmd.authorizeAndContinueProjectOpen(context.Background(), "/srv/work/workspace", "workspace",
-		projectStartupCandidate{Kind: projectStartupKindLatest}); err != nil {
-		t.Fatalf("authorizeAndContinueProjectOpen() error = %v", err)
-	}
-	// The open did mint the Project, which is what makes this a guard rather than
-	// a tautology: the bootstrap flag is set and the snapshot row still writes
-	// nothing.
-	if got, want := registrar.calls, []string{"/srv/work/workspace"}; !equalStrings(got, want) {
-		t.Fatalf("registration calls = %q, want %q", got, want)
-	}
-	if len(mirror.calls) != 0 {
-		t.Fatalf("a snapshot start wrote %q; the snapshot rows are out of scope for the first-open mirror", mirror.calls)
-	}
-	if got, want := executor.calls, []string{"authorize:/srv/work/workspace", "restore:workspace:autosave", "open:workspace"}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want %q", got, want)
-	}
-}
-
-// firstOpenSessionExecutor stands in for inttmux.Client against the fake server.
-//
-// It does exactly what the shipped ensure path does and no more: it creates the
-// session if it is missing and writes the same `@projmux_project_path` anchor the
-// real client writes. It deliberately writes no Project identity, because the
-// whole question this Phase answers is where that identity comes from.
-type firstOpenSessionExecutor struct {
-	tmux  *fakeTmux
-	calls []string
-}
-
-func (e *firstOpenSessionExecutor) EnsureSession(_ context.Context, sessionName, cwd string) error {
-	e.calls = append(e.calls, "ensure:"+sessionName)
-	if e.tmux.session(sessionName) == nil {
-		e.tmux.addSession(sessionName).opts[tmuxopts.ProjectPathSession] = cwd
-	}
-	return nil
-}
-
-func (e *firstOpenSessionExecutor) OpenSession(_ context.Context, sessionName string) error {
-	e.calls = append(e.calls, "open:"+sessionName)
-	return nil
-}
-
-func (e *firstOpenSessionExecutor) SessionExists(_ context.Context, sessionName string) (bool, error) {
-	return e.tmux.session(sessionName) != nil, nil
-}
-
-// TestFirstOpenOfAnUnregisteredDirectoryLetsCreateOwnItsOwnSession walks the whole
-// reported path with a per-step assertion on each hop: an unregistered directory
-// is opened, that mints a Project, the ensure path mints the session, the mirror
-// finishes its identity, and `create claude` in that session derives its scope and
-// succeeds instead of refusing the session it is running in.
 func TestFirstOpenOfAnUnregisteredDirectoryLetsCreateOwnItsOwnSession(t *testing.T) {
 	t.Parallel()
 

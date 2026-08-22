@@ -7,43 +7,30 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	"github.com/crevissepartners/projmux/internal/core/controller"
-	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 const (
-	projectStartupKindLatest   = "latest"
-	projectStartupKindNamed    = "named"
-	projectStartupKindTopology = "topology"
+	projectStartupKindTopology = "continue"
 	projectStartupKindBack     = "back"
 
-	projectStartupValueLatest   = "latest"
-	projectStartupValueTopology = "topology"
-	projectStartupValueNamed    = "named:"
-
-	// projectStartupValueEmpty is the retired spelling of the non-snapshot start
-	// row. It is still accepted on the internal sidebar-open transport so a
-	// re-exec that straddles an upgrade keeps working; it resolves to the
-	// topology start, which is what the row always claimed to be doing.
-	projectStartupValueEmpty = "empty"
+	projectStartupValueTopology = "continue"
 
 	// projectTopologyStartupDescription is the one description shared by the
 	// startup picker row and the Settings choice, so the two cannot drift. It
 	// names Agents because the row restores them: a saved Agent comes back into
 	// its own Pane and, when the Registry recorded a provider session ref, into
 	// the conversation it already had.
-	projectTopologyStartupDescription = "restore every saved Window, shell Pane, and Agent"
+	projectTopologyStartupDescription = "open every saved Window, shell Pane, and Agent"
 )
 
 var errProjectStartupBack = errors.New("project startup back")
@@ -63,14 +50,6 @@ func (e errProjectTrustGate) Unwrap() error {
 
 type switchProjectTrustAuthorizer interface {
 	AuthorizeProjectHooks(ctx context.Context, cwd string) (bool, error)
-}
-
-type switchProjectLayoutTrustAuthorizer interface {
-	AuthorizeProjectLayout(ctx context.Context, cwd string, artifact corelayout.Artifact) (bool, error)
-}
-
-type switchSessionSnapshotRestorer interface {
-	RestoreSessionSnapshot(ctx context.Context, snap sessionstate.Snapshot, cwd, source string) error
 }
 
 type projectStartupCandidate struct {
@@ -99,28 +78,6 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 }
 
 func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate) (err error) {
-	started := time.Now()
-	var counts diagnostics.SessionStateCounts
-	var diagnosticSource diagnostics.SessionStateSource
-	switch mode.Kind {
-	case projectStartupKindLatest:
-		diagnosticSource = diagnostics.SessionStateSourceStartupLatest
-	case projectStartupKindNamed:
-		diagnosticSource = diagnostics.SessionStateSourceStartupNamed
-	}
-	if diagnosticSource != "" {
-		defer func() {
-			c.sessionStateDiagnostics.Record(diagnostics.OperationSessionStateRestore, diagnosticSource, started, counts, err)
-		}()
-	}
-	var layoutArtifact *corelayout.Artifact
-	if mode.Kind == projectStartupKindNamed {
-		artifact, err := corelayout.NewStore(target).LoadArtifact(mode.Name)
-		if err != nil {
-			return errProjectTrustGate{err: err}
-		}
-		layoutArtifact = &artifact
-	}
 	trusted, err := c.authorizeProjectOpen(ctx, target)
 	if err != nil {
 		return errProjectTrustGate{err: err}
@@ -128,32 +85,16 @@ func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, tar
 	if !trusted {
 		return errProjectTrustDenied
 	}
-	if layoutArtifact != nil && len(layoutArtifact.ExecutableCommands()) > 0 {
-		trusted, err := c.authorizeProjectLayout(ctx, target, *layoutArtifact)
-		if err != nil {
-			return errProjectTrustGate{err: err}
-		}
-		if !trusted {
-			return errProjectTrustDenied
-		}
-	}
 	opened, err := c.registerOpenedProjectRoot(ctx, target)
 	if err != nil {
 		return err
 	}
-	counts, err = c.continueProjectOpen(ctx, target, sessionName, mode, layoutArtifact, opened)
+	_, err = c.continueProjectOpen(ctx, target, sessionName, mode, opened)
 	return err
 }
 
-func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, layoutArtifact *corelayout.Artifact, opened openedProjectBootstrap) (diagnostics.SessionStateCounts, error) {
+func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, opened openedProjectBootstrap) (diagnostics.SessionStateCounts, error) {
 	switch mode.Kind {
-	case projectStartupKindLatest:
-		return c.restoreProjectLatestSnapshot(ctx, sessionName, target)
-	case projectStartupKindNamed:
-		if layoutArtifact == nil {
-			return diagnostics.SessionStateCounts{}, errors.New("named snapshot artifact is not prepared")
-		}
-		return c.restoreProjectNamedSnapshot(ctx, sessionName, target, *layoutArtifact)
 	case projectStartupKindNew:
 		return diagnostics.SessionStateCounts{}, c.startProjectFresh(ctx, sessionName, target, opened)
 	default:
@@ -173,14 +114,6 @@ func (c *switchCommand) authorizeProjectOpen(ctx context.Context, target string)
 	return trusted, nil
 }
 
-func (c *switchCommand) authorizeProjectLayout(ctx context.Context, target string, artifact corelayout.Artifact) (bool, error) {
-	authorizer, ok := c.sessions.(switchProjectLayoutTrustAuthorizer)
-	if !ok || authorizer == nil {
-		return false, errors.New("switch project layout trust authorizer is not configured")
-	}
-	return authorizer.AuthorizeProjectLayout(ctx, target, artifact)
-}
-
 // pickProjectStartupMode runs the startup screen and returns the approved start.
 //
 // The loop exists for exactly one row: a cancelled `new` confirmation returns the
@@ -196,7 +129,13 @@ func (c *switchCommand) pickProjectStartupMode(sessionName, target string) proje
 		}
 		result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, projectStartupPickerOptions(candidates))
 		if err != nil {
+			if isNoSelectionExit(err) {
+				return projectStartupCandidate{Kind: projectStartupKindBack}
+			}
 			return projectStartupCandidate{Kind: projectStartupKindTopology}
+		}
+		if strings.TrimSpace(result.Value) == "" {
+			return projectStartupCandidate{Kind: projectStartupKindBack}
 		}
 		candidate, ok := projectStartupCandidateFromValue(result.Value)
 		if !ok {
@@ -224,7 +163,7 @@ func (c *switchCommand) pickProjectStartupMode(sessionName, target string) proje
 //
 // Cancel is zero writes by construction: planning is the read-only snapshot read,
 // the confirmation is a picker, and neither one reaches resourceStore.mutate,
-// sessionstate.Store.Delete, or any tmux command that changes tmux state.
+// snapshot storage, or any tmux command that changes tmux state.
 func (c *switchCommand) approveProjectFreshStart(sessionName, target string) (bool, error) {
 	plan, err := c.planProjectFreshStart(sessionName, target)
 	if err != nil {
@@ -234,44 +173,7 @@ func (c *switchCommand) approveProjectFreshStart(sessionName, target string) (bo
 }
 
 func (c *switchCommand) projectStartupCandidates(sessionName, target string) []projectStartupCandidate {
-	var candidates []projectStartupCandidate
-	if store, err := c.projectStartupSessionStateStore(); err == nil {
-		if summary, err := store.Summary(sessionName); err == nil && summary.Source != sessionstate.SourceFresh {
-			candidates = append(candidates, projectStartupCandidate{
-				Kind:        projectStartupKindLatest,
-				Label:       "Latest snapshot",
-				Description: projectStartupDescription("auto-saved", summary.SavedAt, summary.WindowCount, summary.PaneCount),
-			})
-		}
-	}
-	if store := corelayout.NewStore(target); strings.TrimSpace(store.ProjectRoot) != "" {
-		if entries, _, err := store.List(); err == nil {
-			for _, entry := range entries {
-				candidates = append(candidates, projectStartupCandidate{
-					Kind:        projectStartupKindNamed,
-					Name:        entry.Name,
-					Label:       "Named snapshot",
-					Description: namedSnapshotDescription(entry),
-				})
-			}
-		}
-	}
-	// The fresh-start row is offered unconditionally, including when the Project
-	// declares nothing to prune. "Start this Project clean" is a decision about
-	// the start, not about how much saved state happens to exist, and a row that
-	// appears and disappears with the Registry would be a row the operator cannot
-	// learn. Its confirmation states the real counts, zeroes included.
-	if len(candidates) == 0 {
-		return []projectStartupCandidate{
-			topologyProjectStartupCandidate(),
-			newProjectStartupCandidate(),
-			backProjectStartupCandidate(),
-		}
-	}
-	candidates = append(candidates, topologyProjectStartupCandidate())
-	candidates = append(candidates, newProjectStartupCandidate())
-	candidates = append(candidates, backProjectStartupCandidate())
-	return candidates
+	return []projectStartupCandidate{topologyProjectStartupCandidate(), newProjectStartupCandidate()}
 }
 
 // topologyProjectStartupCandidate is the non-snapshot start row. It materializes
@@ -280,58 +182,8 @@ func (c *switchCommand) projectStartupCandidates(sessionName, target string) []p
 func topologyProjectStartupCandidate() projectStartupCandidate {
 	return projectStartupCandidate{
 		Kind:        projectStartupKindTopology,
-		Label:       "Project topology",
+		Label:       "Continue project",
 		Description: projectTopologyStartupDescription,
-	}
-}
-
-func namedSnapshotDescription(entry corelayout.Entry) string {
-	parts := []string{terminaltext.EscapeControls(entry.Name)}
-	if savedAt := namedSnapshotSavedAt(entry); !savedAt.IsZero() {
-		parts = append(parts, projectStartupSavedAtText(savedAt))
-	}
-	if strings.TrimSpace(entry.Description) != "" {
-		parts = append(parts, terminaltext.EscapeControls(strings.TrimSpace(entry.Description)))
-	}
-	parts = append(parts, sessionStateCount(entry.Windows, "window"), sessionStateCount(entry.Panes, "pane"))
-	return strings.Join(parts, ", ")
-}
-
-func namedSnapshotSavedAt(entry corelayout.Entry) time.Time {
-	if strings.TrimSpace(entry.Path) == "" {
-		return time.Time{}
-	}
-	info, err := os.Stat(entry.Path)
-	if err != nil {
-		return time.Time{}
-	}
-	return info.ModTime()
-}
-
-func projectStartupDescription(source string, savedAt time.Time, windows, panes int) string {
-	parts := []string{}
-	if savedText := projectStartupSavedAtText(savedAt); savedText != "" {
-		parts = append(parts, savedText)
-	}
-	if strings.TrimSpace(source) != "" {
-		parts = append(parts, strings.TrimSpace(source))
-	}
-	parts = append(parts, sessionStateCount(windows, "window"), sessionStateCount(panes, "pane"))
-	return strings.Join(parts, ", ")
-}
-
-func projectStartupSavedAtText(savedAt time.Time) string {
-	if savedAt.IsZero() {
-		return ""
-	}
-	return "saved " + savedAt.UTC().Format("2006-01-02 15:04:05 MST")
-}
-
-func backProjectStartupCandidate() projectStartupCandidate {
-	return projectStartupCandidate{
-		Kind:        projectStartupKindBack,
-		Label:       "Back",
-		Description: "return to projects",
 	}
 }
 
@@ -348,7 +200,7 @@ func projectStartupPickerOptions(candidates []projectStartupCandidate) intpicker
 		UI:            "project-startup",
 		Prompt:        settingsCatalogText("Start project > "),
 		Header:        settingsCatalogText("Start project"),
-		Footer:        projmuxFooter("Enter: start  |  New row: discards saved state  |  Back row: projects  |  Esc: Project topology"),
+		Footer:        "Enter: open  |  Esc: projects",
 		Entries:       entries,
 		Bindings:      settingsCloseBindings(),
 		DisableSearch: true,
@@ -357,20 +209,14 @@ func projectStartupPickerOptions(candidates []projectStartupCandidate) intpicker
 
 func projectStartupPickerLabel(candidate projectStartupCandidate) string {
 	switch candidate.Kind {
-	case projectStartupKindLatest:
-		return settingsLabel(settingsGlyphOpen, settingsColorType, "Latest snapshot", candidate.Description)
-	case projectStartupKindNamed:
-		return settingsLabel(settingsGlyphOpen, settingsColorType, "Named snapshot", candidate.Description)
 	case projectStartupKindTopology:
-		return settingsLabel(settingsGlyphOpen, settingsColorType, "Project topology", candidate.Description)
+		return settingsLabel(settingsGlyphOpen, settingsColorType, "Continue project", candidate.Description)
 	case projectStartupKindNew:
 		// The destructive glyph and color are the same pair the notify clear-all
 		// confirmation uses. This row starts a Project like the rows above it, but
 		// it is the only one that deletes anything, and it has to read that way
 		// before it is selected rather than only in the confirmation.
 		return settingsLabel(settingsGlyphRemove, settingsColorRemove, projectStartupNewLabel, candidate.Description)
-	case projectStartupKindBack:
-		return settingsLabel(settingsGlyphBack, settingsColorBack, "Back", candidate.Description)
 	default:
 		return settingsLabel(settingsGlyphInfo, settingsColorInfo, candidate.Label, candidate.Description)
 	}
@@ -378,16 +224,10 @@ func projectStartupPickerLabel(candidate projectStartupCandidate) string {
 
 func projectStartupPickerValue(candidate projectStartupCandidate) string {
 	switch candidate.Kind {
-	case projectStartupKindLatest:
-		return projectStartupValueLatest
-	case projectStartupKindNamed:
-		return projectStartupValueNamed + candidate.Name
 	case projectStartupKindTopology:
 		return projectStartupValueTopology
 	case projectStartupKindNew:
 		return projectStartupValueNew
-	case projectStartupKindBack:
-		return settingsBackValue
 	default:
 		return ""
 	}
@@ -396,90 +236,25 @@ func projectStartupPickerValue(candidate projectStartupCandidate) string {
 func projectStartupCandidateFromValue(value string) (projectStartupCandidate, bool) {
 	value = strings.TrimSpace(value)
 	switch {
-	case value == projectStartupValueLatest:
-		return projectStartupCandidate{Kind: projectStartupKindLatest}, true
-	case value == projectStartupValueTopology, value == projectStartupValueEmpty:
+	case value == projectStartupValueTopology:
 		return projectStartupCandidate{Kind: projectStartupKindTopology}, true
 	case value == projectStartupValueNew:
 		return projectStartupCandidate{Kind: projectStartupKindNew}, true
-	case value == settingsBackValue:
-		return projectStartupCandidate{Kind: projectStartupKindBack}, true
-	case strings.HasPrefix(value, projectStartupValueNamed):
-		name := strings.TrimSpace(strings.TrimPrefix(value, projectStartupValueNamed))
-		if name == "" {
-			return projectStartupCandidate{}, false
-		}
-		return projectStartupCandidate{Kind: projectStartupKindNamed, Name: name}, true
 	default:
 		return projectStartupCandidate{}, false
 	}
 }
 
-func (c *switchCommand) restoreProjectLatestSnapshot(ctx context.Context, sessionName, target string) (diagnostics.SessionStateCounts, error) {
-	store, err := c.projectStartupSessionStateStore()
-	if err != nil {
-		return diagnostics.SessionStateCounts{}, err
-	}
-	snap, err := store.Load(sessionName)
-	if err != nil {
-		return diagnostics.SessionStateCounts{}, err
-	}
-	counts := sessionStateDiagnosticCounts(snap)
-	return counts, c.restoreProjectSnapshot(ctx, snap, target, sessionstate.SourceAutosave)
-}
-
-func (c *switchCommand) restoreProjectNamedSnapshot(ctx context.Context, sessionName, target string, artifact corelayout.Artifact) (diagnostics.SessionStateCounts, error) {
-	snap, err := corelayout.ToSnapshot(artifact.Preset, sessionName, target, c.projectStartupNow())
-	if err != nil {
-		return diagnostics.SessionStateCounts{}, err
-	}
-	counts := sessionStateDiagnosticCounts(snap)
-	source := layoutPresetSource(artifact.Name, artifact.Preset)
-	if err := c.restoreProjectSnapshot(ctx, snap, target, source); err != nil {
-		return diagnostics.SessionStateCounts{}, err
-	}
-	if source == sessionstate.SourceFresh {
-		if store, err := c.projectStartupSessionStateStore(); err == nil {
-			_ = store.Delete(sessionName)
-		}
-	}
-	return counts, nil
-}
-
-func (c *switchCommand) restoreProjectSnapshot(ctx context.Context, snap sessionstate.Snapshot, target, source string) error {
-	restorer, ok := c.sessions.(switchSessionSnapshotRestorer)
-	if !ok || restorer == nil {
-		return errors.New("switch session snapshot restorer is not configured")
-	}
-	if err := restorer.RestoreSessionSnapshot(ctx, snap, target, source); err != nil {
-		return err
-	}
-	return c.openProjectSession(ctx, snap.Session)
-}
-
-// ensureAndOpenProjectSession is the shipped first-session start: create the
-// session if it is missing, finish its identity, then move the client.
-//
-// The identity mirror sits between the two on purpose. EnsureSession mints a
-// session that already carries the `@projmux_project_path` anchor it writes
-// itself, but nothing had ever written the Project uid and name onto it, so a
-// session minted by a first open looked exactly like a session projmux does not
-// own -- and the next `create` in it refused its own session as foreign. Mirroring
-// here closes the bootstrap in the same flow that opened it, using the same
-// writer every other mirror goes through.
-//
-// Order matters twice over. The mirror runs before the client move because the
-// client move is strictly last, the same rule the topology path states; and a
-// failed mirror returns without opening, because a session whose identity is half
-// written is exactly the state this exists to prevent.
-func (c *switchCommand) ensureAndOpenProjectSession(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
+// ensureProjectSession is the shipped first-session start without client
+// handoff: create the session if missing, then finish its Project identity.
+func (c *switchCommand) ensureProjectSession(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
 	if err := c.sessions.EnsureSession(ctx, sessionName, target); err != nil {
 		return fmt.Errorf("ensure tmux session %q: %w", sessionName, err)
 	}
 	if err := c.mirrorBootstrappedProjectIdentity(ctx, sessionName, opened); err != nil {
 		return err
 	}
-	return c.openProjectSession(ctx, sessionName)
+	return nil
 }
 
 // mirrorBootstrappedProjectIdentity writes the minted Project identity onto the
@@ -506,22 +281,31 @@ func (c *switchCommand) mirrorBootstrappedProjectIdentity(ctx context.Context, s
 }
 
 func (c *switchCommand) openProjectSession(ctx context.Context, sessionName string) error {
+	// A detached sidebar continuation carries an exact client but no inherited
+	// TMUX routing. Its final handoff must address the same app socket the
+	// ordinary Registry materializer just converged. Interactive/first-use opens
+	// without that explicit authority retain the existing session executor.
+	if client := c.lookupEnvValue(inttmux.SwitchTargetClientEnv); client != "" && c.tmuxRunner != nil {
+		target, err := tmuxSocketNameTarget(defaultAppSocket)
+		if err != nil {
+			return err
+		}
+		exact := explicitTmuxRunner{runner: c.tmuxRunner, target: target}
+		lookup := func(name string) string {
+			if name == inttmux.SwitchTargetClientEnv {
+				return client
+			}
+			return c.lookupEnvValue(name)
+		}
+		if err := inttmux.NewClient(exact, inttmux.WithLookupEnv(lookup)).OpenSession(ctx, sessionName); err != nil {
+			return fmt.Errorf("open tmux session %q: %w", sessionName, err)
+		}
+		return nil
+	}
 	if err := c.sessions.OpenSession(ctx, sessionName); err != nil {
 		return fmt.Errorf("open tmux session %q: %w", sessionName, err)
 	}
 	return nil
-}
-
-func (c *switchCommand) projectStartupSessionStateStore() (sessionstate.Store, error) {
-	paths, err := configPaths(c.homeDir, c.lookupEnv)
-	if err != nil {
-		return sessionstate.Store{}, err
-	}
-	return sessionstate.NewStore(paths.SessionStateDir()), nil
-}
-
-func (c *switchCommand) projectStartupNow() time.Time {
-	return time.Now()
 }
 
 // switchProjectRegistrar is the explicit Project bootstrap seam of the open flow.
@@ -572,7 +356,7 @@ type openedProjectBootstrap struct {
 // It reports whether this open is what created the Project and which Project that
 // is. Together those decide how the runtime is brought up and whose identity the
 // new session carries; see materializeAndOpenProjectTopology and
-// ensureAndOpenProjectSession.
+// ensureProjectSession.
 func (c *switchCommand) registerOpenedProjectRoot(ctx context.Context, target string) (openedProjectBootstrap, error) {
 	if c.projectRegistrar == nil {
 		return openedProjectBootstrap{}, nil
@@ -663,18 +447,25 @@ type switchProjectTopologyMaterializer interface {
 //
 // The Project itself travels with the flag because that ensure path is the only
 // route that has to finish the identity mirror itself; see
-// ensureAndOpenProjectSession.
+// ensureProjectSession.
 func (c *switchCommand) materializeAndOpenProjectTopology(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
+	if err := c.materializeProjectTopology(ctx, sessionName, target, opened); err != nil {
+		return err
+	}
+	return c.openProjectSession(ctx, sessionName)
+}
+
+func (c *switchCommand) materializeProjectTopology(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
 	if c.projectTopology != nil && !opened.bootstrapped {
 		materialized, err := c.projectTopology.MaterializeProjectTopology(ctx, target, sessionName)
 		if err != nil {
 			return fmt.Errorf("materialize Registry topology for session %q: %w", sessionName, err)
 		}
 		if materialized {
-			return c.openProjectSession(ctx, sessionName)
+			return nil
 		}
 	}
-	return c.ensureAndOpenProjectSession(ctx, sessionName, target, opened)
+	return c.ensureProjectSession(ctx, sessionName, target, opened)
 }
 
 // registryProjectTopologyMaterializer runs closed-Project activation through the

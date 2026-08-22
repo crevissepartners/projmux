@@ -5,45 +5,42 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/selector"
-	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 const (
 	// projectStartupKindNew is the fresh-start row of the closed-Project startup
-	// screen. It is the only row that deletes anything: `Project topology` means
-	// "bring back what was saved", so a row that starts clean has to be a
-	// different row with a different, observably different outcome.
-	projectStartupKindNew = "new"
+	// screen. It is the only row that deletes anything; Continue project only
+	// materializes current desired state.
+	projectStartupKindNew = "fresh"
 
 	// projectStartupValueNew is the picker/transport spelling of that row. It is
 	// also the `switch sidebar-open --mode` token, because the sidebar open is a
 	// re-exec and the operator's approved choice has to survive it.
-	projectStartupValueNew = "new"
+	projectStartupValueNew = "fresh"
 
-	// projectStartupNewLabel is the row name. It matches the value on purpose:
-	// the row is referred to as the `new` row everywhere else.
-	projectStartupNewLabel = "New"
+	// projectStartupNewLabel is the exact user-facing row name.
+	projectStartupNewLabel = "Open fresh"
 
 	// projectStartupNewDescription is the row description. The destructive-action
 	// contract requires the row itself to say what it discards, before the
 	// operator has committed to anything.
-	projectStartupNewDescription = "discard the latest snapshot and every saved Window, Pane, and Agent, then start one fresh shell Window"
+	projectStartupNewDescription = "keep the canonical Project shell and remove every other saved Window, Pane, and Agent"
 
-	projectStartupNewConfirmTitle  = "Start new: discard saved state?"
-	projectStartupNewConfirmPrompt = "Start new > "
+	projectStartupNewConfirmTitle  = "Open fresh: prune saved topology?"
+	projectStartupNewConfirmPrompt = "Open fresh > "
 	projectStartupNewConfirmFooter = "Enter: discard and start  |  Esc: cancel"
-	projectStartupNewConfirmRow    = "Yes, discard and start new"
+	projectStartupNewConfirmRow    = "Yes, prune and open fresh"
 	projectStartupNewCancelRow     = "Cancel"
 	projectStartupNewCancelHelp    = "keep the saved state; nothing is deleted"
 
 	projectStartupNewConfirmValue = "project-startup-new:confirm"
 	projectStartupNewCancelValue  = "project-startup-new:cancel"
 
-	projectStartupNewCanceledMessage = "projmux: fresh start canceled; nothing was deleted"
+	projectStartupNewCanceledMessage = "projmux: Open fresh canceled; nothing was changed"
 )
 
 // newProjectStartupCandidate is the fresh-start row.
@@ -55,7 +52,7 @@ func newProjectStartupCandidate() projectStartupCandidate {
 	}
 }
 
-// projectFreshStartPlan is the preflighted prune of one `new` start.
+// projectFreshStartPlan is the preflighted prune for Open fresh.
 //
 // It is a plan rather than a direct mutation for the same reason `delete` has
 // one: the counts the operator approves and the records the transaction removes
@@ -65,9 +62,6 @@ type projectFreshStartPlan struct {
 	// ProjectUID is empty when the exact root declares no Registry Project. That
 	// is the ordinary first-open case, not a failure: there is nothing to prune.
 	ProjectUID string
-	// WindowUIDs are the delete targets. Panes and Agents are never targets: they
-	// are removed as the canonical Window cascade's descendants.
-	WindowUIDs []string
 	Windows    int
 	Panes      int
 	Agents     int
@@ -75,16 +69,13 @@ type projectFreshStartPlan struct {
 	// durable conversation pointer status.sessionRef. Deleting the Agent is what
 	// destroys that pointer, so the confirmation names the number explicitly.
 	AgentSessionRefs int
-	// LatestSnapshot reports whether an auto-saved snapshot exists for the target
-	// session, so the confirmation can say whether one is being discarded.
-	LatestSnapshot bool
 	// signature pins the exact cascade the operator approved.
 	signature string
 }
 
 // Empty reports that the plan removes no Registry record at all.
 func (p projectFreshStartPlan) Empty() bool {
-	return len(p.WindowUIDs) == 0
+	return p.Windows == 0 && p.Panes == 0 && p.Agents == 0
 }
 
 // Counts renders the exact per-kind deletion counts. Nothing here is rounded or
@@ -95,15 +86,9 @@ func (p projectFreshStartPlan) Counts() string {
 }
 
 // ConfirmHeader is the always-visible line of the confirmation step. It states
-// the prune, the snapshot, and -- because a destructive prompt that only lists
-// losses invites the operator to assume the worst -- what survives.
+// both the exact prune and the identities and snapshot storage that survive.
 func (p projectFreshStartPlan) ConfirmHeader() string {
-	snapshot := "there is no latest snapshot to discard"
-	if p.LatestSnapshot {
-		snapshot = "discards the latest snapshot"
-	}
-	return fmt.Sprintf("deletes %s and %s; Named snapshots, the Project registration, its managed root, and its trust decision are kept",
-		p.Counts(), snapshot)
+	return fmt.Sprintf("deletes %s; the canonical Project Window and shell Pane, snapshots, Project registration, managed root, and trust decision are kept", p.Counts())
 }
 
 // ConfirmRowHelp is the description of the row that performs the deletion. It
@@ -117,22 +102,14 @@ func (p projectFreshStartPlan) ConfirmRowHelp() string {
 		p.Counts(), p.AgentSessionRefs)
 }
 
-// ResultMessage is what the operator is told once the start has happened.
-//
-// It states the "nothing was resumed" outcome as a result rather than leaving it
-// as silence. After the prune no Agent record exists, so Phase 0's replay has
-// nothing to replay -- which looks exactly like a replay that failed quietly
-// unless someone says which of the two it was.
+// ResultMessage is emitted after materialization and before the final client
+// handoff, so switch-client remains the last observable startup action.
 func (p projectFreshStartPlan) ResultMessage(sessionName string) string {
-	snapshot := "there was no latest snapshot to discard"
-	if p.LatestSnapshot {
-		snapshot = "discarded the latest snapshot"
-	}
-	return fmt.Sprintf("projmux: started %s fresh: deleted %s and %s; no Agent record remained, so nothing was resumed",
-		sessionName, p.Counts(), snapshot)
+	return fmt.Sprintf("projmux: opened %s fresh: deleted %s; the canonical Project shell identity was preserved",
+		sessionName, p.Counts())
 }
 
-// switchProjectFreshStarter is the `new` row's prune seam.
+// switchProjectFreshStarter is the Open fresh projection seam.
 //
 // Planning and pruning are separate calls because they happen at different
 // moments and, on the sidebar route, in different processes: the confirmation
@@ -144,20 +121,10 @@ type switchProjectFreshStarter interface {
 	PruneProjectFreshStart(ctx context.Context, root string, plan projectFreshStartPlan) error
 }
 
-// registryProjectFreshStarter prunes through the canonical delete cascade.
-//
-// It does not own a deletion routine. The target set is expanded by cascadeOf
-// and buildDeletePlan, every removal goes through deleteResource -> the
-// coremetadata Mutator's DeleteWindow cascade, and the plan is re-derived inside
-// resourceStore.mutate and compared against the approved signature -- the exact
-// discipline documented on deleteCommand.
-//
-// What it deliberately omits is `delete`'s live tmux half. This route runs only
-// on a closed Project: openProjectTarget reaches the startup picker only when
-// switchSessionExists reported false, so there is no live Window or Pane to
-// kill. Preflighting a live cascade that is empty by construction would add a
-// tmux round trip whose only possible answer is "nothing", and would make the
-// cancel path's zero-tmux-writes claim harder to prove rather than easier.
+// registryProjectFreshStarter projects one closed Project to its canonical
+// schema-v2 Window/shell anchor. The desired Registry is re-derived under the
+// store lock and committed atomically; snapshot storage is never consulted or
+// changed by this seam.
 type registryProjectFreshStarter struct {
 	resources *resourceStore
 }
@@ -191,62 +158,56 @@ func (s *registryProjectFreshStarter) PlanProjectFreshStart(root string) (projec
 	if !ok {
 		return projectFreshStartPlan{}, nil
 	}
+	if _, err := coremetadata.PlanOpenFresh(registry, project.Metadata.UID, time.Now()); err != nil {
+		return projectFreshStartPlan{}, MapMetadataError(err)
+	}
 	return projectFreshStartPlanFor(registry, project.Metadata.UID), nil
 }
 
 // projectFreshStartPlanFor expands one Project's Windows into the canonical
 // cascade plan and counts it per kind.
 func projectFreshStartPlanFor(registry coremetadata.Registry, projectUID string) projectFreshStartPlan {
-	resolution := projectFreshStartResolution(registry, projectUID)
-	deletion := buildDeletePlan(registry, coremetadata.KindWindow, resolution)
+	project, ok := registry.Project(projectUID)
+	if !ok {
+		return projectFreshStartPlan{}
+	}
+	anchorWindow, ok := registry.Window(project.Spec.PrimaryWindowRef)
+	if !ok {
+		return projectFreshStartPlan{ProjectUID: projectUID, signature: "invalid-anchor"}
+	}
+	anchorPane := anchorWindow.Spec.PrimaryPaneRef
 	plan := projectFreshStartPlan{
 		ProjectUID: projectUID,
-		WindowUIDs: resolution.UIDs(),
-		Windows:    len(deletion.Targets),
-		signature:  deletion.signature(),
+		signature:  "keep:" + anchorWindow.Metadata.UID + "," + anchorPane + ";",
 	}
-	for _, target := range deletion.Targets {
-		for _, descendant := range target.Descendants {
-			switch descendant.Kind {
-			case coremetadata.KindPane:
+	for _, window := range registry.WindowsOf(projectUID) {
+		if window.Metadata.UID != anchorWindow.Metadata.UID {
+			plan.Windows++
+		}
+		for _, pane := range registry.PanesOf(window.Metadata.UID) {
+			if pane.Metadata.UID != anchorPane {
 				plan.Panes++
-			case coremetadata.KindAgent:
-				plan.Agents++
-				if agent, ok := registry.Agent(descendant.UID); ok && agent.Status.SessionRef != nil {
-					plan.AgentSessionRefs++
-				}
+				plan.signature += "pane:" + pane.Metadata.UID + ";"
+			}
+		}
+		for _, agent := range registry.AgentsOf(window.Metadata.UID) {
+			plan.Agents++
+			plan.signature += "agent:" + agent.Metadata.UID + ";"
+			if agent.Status.SessionRef != nil {
+				plan.AgentSessionRefs++
+			}
+			for _, pane := range registry.PanesOf(agent.Metadata.UID) {
+				plan.Panes++
+				plan.signature += "pane:" + pane.Metadata.UID + ";"
 			}
 		}
 	}
 	return plan
 }
 
-// projectFreshStartResolution names every Window of one Project as an explicit
-// delete target, in registry order.
-//
-// This is the "force-prune" scope the owner fixed: not the offline ones, not the
-// ones whose runtime is gone, all of them. A selective variant is a different
-// row and is out of scope here.
-func projectFreshStartResolution(registry coremetadata.Registry, projectUID string) selector.Resolution {
-	resolution := selector.Resolution{Kind: coremetadata.KindWindow}
-	for _, window := range registry.WindowsOf(projectUID) {
-		resolution.Matches = append(resolution.Matches, selector.Match{
-			Kind: coremetadata.KindWindow,
-			UID:  window.Metadata.UID,
-			Name: window.Metadata.Name,
-		})
-	}
-	return resolution
-}
-
-// PruneProjectFreshStart remains fail-closed until the separately planned
-// Project-start projection can replace the deleted graph with its intended
-// startup topology. Canonical Window delete now preserves the v2 anchor by
-// adding a minimum replacement, which is correct for delete but is not
-// authorization to turn this legacy prune-to-zero path into Phase 15.
-//
-// An empty plan opens no transaction at all, which is what keeps `new` on an
-// unregistered directory a pure start rather than a Registry write.
+// PruneProjectFreshStart commits the canonical fresh projection. An empty plan
+// opens no transaction, which guarantees a second Open fresh is a Registry
+// zero-diff and keeps first-use bootstrap free of an unnecessary Registry write.
 func (s *registryProjectFreshStarter) PruneProjectFreshStart(_ context.Context, root string, plan projectFreshStartPlan) error {
 	if plan.Empty() {
 		return nil
@@ -255,7 +216,7 @@ func (s *registryProjectFreshStarter) PruneProjectFreshStart(_ context.Context, 
 		return errors.New("project fresh start: resource registry store is not configured")
 	}
 	root = strings.TrimSpace(root)
-	return s.resources.mutate(coremetadata.KindWindow, plan.WindowUIDs, func(working *coremetadata.Registry, _ coremetadata.Mutator) error {
+	_, err := s.resources.converge(func(working *coremetadata.Registry, _ coremetadata.Mutator) error {
 		project, ok := working.ProjectByRoot(root)
 		if !ok || project.Metadata.UID != plan.ProjectUID {
 			return fmt.Errorf("project fresh start: %q no longer declares Project %s; nothing was deleted", root, plan.ProjectUID)
@@ -264,11 +225,17 @@ func (s *registryProjectFreshStarter) PruneProjectFreshStart(_ context.Context, 
 		if current.signature != plan.signature {
 			return errors.New("project fresh start: the cascade plan changed between the confirmation and execution; nothing was deleted")
 		}
-		return errors.New("project fresh start: schema v2 requires Project.spec.primaryWindowRef; canonical Project-start projection is not available until Phase 15; nothing was deleted")
+		fresh, err := coremetadata.PlanOpenFresh(*working, plan.ProjectUID, time.Now())
+		if err != nil {
+			return err
+		}
+		*working = fresh.Desired
+		return nil
 	})
+	return err
 }
 
-// confirmProjectFreshStart is the destructive-action gate of the `new` row.
+// confirmProjectFreshStart is the destructive-action gate for Open fresh.
 //
 // It is a second native picker rather than a yes/no line for the same reason
 // confirmNotifySidebarClearAll is: the operator is already inside a popup picker,
@@ -325,28 +292,16 @@ func (c *switchCommand) planProjectFreshStart(sessionName, target string) (proje
 			return projectFreshStartPlan{}, err
 		}
 	}
-	// The snapshot half is decided by exactly the predicate that decides whether
-	// the `Latest snapshot` row is offered, so `new` never claims to discard a
-	// snapshot the screen above it did not offer to restore.
-	if store, err := c.projectStartupSessionStateStore(); err == nil {
-		if summary, err := store.Summary(sessionName); err == nil && summary.Source != sessionstate.SourceFresh {
-			plan.LatestSnapshot = true
-		}
-	}
 	return plan, nil
 }
 
-// startProjectFresh is the `new` row's execution: preflight and prune the
-// Registry topology, discard the latest snapshot, verify the prune, then start.
+// startProjectFresh executes Open fresh: commit the canonical projection,
+// verify it, materialize through the ordinary path, report, then switch client.
 //
-// Registry authority goes first because schema v2 can reject the legacy
-// prune-to-zero transaction until Phase 15 supplies a replacement Project-start
-// projection. A rejected prune must retain the latest snapshot as well as the
-// Registry and tmux runtime; deleting it before that verdict would turn a
-// fail-closed open into partial data loss. This is C-7 failure atomicity for
-// the current rejection, not a claim that the future multi-store success path
-// is atomic; Phase 15 owns that design.
-// The bootstrap value travels through untouched. The `new` row prunes a Project
+// Registry authority goes first. A rejected prune must retain snapshots as
+// well as the Registry and tmux runtime; Open fresh never writes snapshot
+// storage.
+// The bootstrap value travels through untouched. Open fresh prunes a Project
 // the Registry already declares topology for, so in practice it is never the open
 // that minted the Project -- but the mirror decision stays in the one place that
 // owns it rather than being re-decided here.
@@ -360,34 +315,18 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 			return err
 		}
 	}
-	if plan.LatestSnapshot {
-		store, err := c.projectStartupSessionStateStore()
-		if err != nil {
-			return err
-		}
-		if err := store.Delete(sessionName); err != nil {
-			return err
-		}
-	}
 	if err := c.verifyProjectFreshStartPruned(target); err != nil {
 		return err
 	}
-	if err := c.materializeAndOpenProjectTopology(ctx, sessionName, target, opened); err != nil {
+	if err := c.materializeProjectTopology(ctx, sessionName, target, opened); err != nil {
 		return err
 	}
 	c.reportProjectStartup(plan.ResultMessage(sessionName))
-	return nil
+	return c.openProjectSession(ctx, sessionName)
 }
 
 // verifyProjectFreshStartPruned re-reads the Registry and refuses to continue
-// while the Project still declares topology.
-//
-// Acceptance 3 -- "the Project comes up as a single fresh Window and shell Pane"
-// -- is not something this route performs; it is something it *causes* by leaving
-// desiredTopologyRef with no Window to find, so that materializeAndOpenProjectTopology
-// falls through to the shipped ensureAndOpenProjectSession bootstrap. That is a
-// consequence of state, so it is checked as state rather than assumed. A leftover
-// Window here would silently restore the topology the operator just discarded.
+// while any non-canonical target descendant remains after the atomic projection.
 func (c *switchCommand) verifyProjectFreshStartPruned(target string) error {
 	if c.projectFreshStart == nil {
 		return nil

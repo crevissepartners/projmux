@@ -149,7 +149,7 @@ var settingsNavCatalog = []settingsNavNode{
 	{ID: settingsNavProjectsCandidates + ".item.unpin", Parent: settingsNavProjectsCandidates + ".item", Label: "Unpin candidate", Kind: settingsNavConfirm, Axis: settingsAxisGlobal, Dynamic: true},
 
 	{ID: settingsNavProjectsSidebar, Parent: settingsNavProjects, Label: "Project Sidebar", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsProjectsSidebar},
-	{ID: settingsNavProjectsSidebar + ".closed-startup", Parent: settingsNavProjectsSidebar, Label: "Closed Project startup", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Dynamic: true, Note: "Use Project topology / Ask for Snapshot or Project topology"},
+	{ID: settingsNavProjectsSidebar + ".closed-startup", Parent: settingsNavProjectsSidebar, Label: "Closed Project startup", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Dynamic: true, Note: "Continue project / Open fresh"},
 
 	// AI -------------------------------------------------------------------
 	{ID: settingsNavAI, Parent: settingsNavScopeGlobal, Label: "AI", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsSectionAI},

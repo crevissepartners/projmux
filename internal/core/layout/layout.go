@@ -11,10 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/sessionstate"
-	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 )
 
 const (
@@ -584,48 +582,6 @@ func Render(p Preset) string {
 	return b.String()
 }
 
-func ToSnapshot(p Preset, session, projectRoot string, now time.Time) (sessionstate.Snapshot, error) {
-	p = p.Normalize()
-	if err := p.Validate(); err != nil {
-		return sessionstate.Snapshot{}, err
-	}
-	if now.IsZero() {
-		now = time.Now()
-	}
-	snap := sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    session,
-		DefaultCWD: expandPath(p.DefaultCWD, projectRoot, session),
-		SavedAt:    now,
-		Windows:    make([]sessionstate.Window, 0, len(p.Windows)),
-	}
-	for _, window := range p.Windows {
-		out := sessionstate.Window{
-			Index:           window.Index,
-			Name:            terminaltext.EscapeControls(window.Name),
-			Layout:          window.Layout,
-			ActivePaneIndex: window.ActivePaneIndex,
-			Panes:           make([]sessionstate.Pane, 0, len(window.Panes)),
-		}
-		for _, pane := range window.Panes {
-			recipe := pane.Recipe
-			if recipe.Kind == sessionstate.RecipeKindAgent {
-				recipe.Topic = terminaltext.EscapeControls(recipe.Topic)
-			}
-			out.Panes = append(out.Panes, sessionstate.Pane{
-				Index:  pane.Index,
-				CWD:    expandPath(pane.CWD, projectRoot, session),
-				Recipe: recipe,
-			})
-		}
-		snap.Windows = append(snap.Windows, out)
-	}
-	if err := snap.Validate(); err != nil {
-		return sessionstate.Snapshot{}, err
-	}
-	return snap, nil
-}
-
 type parserSection int
 
 const (
@@ -878,17 +834,6 @@ func portablePath(path, projectRoot string) string {
 		return "${PROJMUX_CWD}"
 	}
 	return "${PROJMUX_CWD}/" + filepath.ToSlash(rel)
-}
-
-func expandPath(path, projectRoot, session string) string {
-	path = strings.ReplaceAll(path, "${PROJMUX_SESSION}", session)
-	if path == "${PROJMUX_CWD}" {
-		return filepath.Clean(projectRoot)
-	}
-	if after, ok := strings.CutPrefix(path, "${PROJMUX_CWD}/"); ok {
-		return filepath.Join(projectRoot, filepath.FromSlash(after))
-	}
-	return path
 }
 
 func presetEntry(name, path string, preset Preset) Entry {
