@@ -291,6 +291,40 @@ func TestSnapshotProjectionMetadataLegacyAndCollisionTable(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	t.Run("legacy positional allocates duplicate names for new descendants", func(t *testing.T) {
+		legacy := sessionstate.Snapshot{
+			Version: sessionstate.Version,
+			Session: "legacy-duplicates",
+			SavedAt: fixedNow,
+		}
+		for wi := 0; wi < len(reg.WindowsOf(targetUID))+2; wi++ {
+			window := sessionstate.Window{Index: wi, Name: "duplicate", ActivePaneIndex: 0}
+			for pi := 0; pi < 4; pi++ {
+				window.Panes = append(window.Panes, sessionstate.Pane{Index: pi, Label: "duplicate", CWD: "/src/one", Recipe: sessionstate.ShellRecipe()})
+			}
+			legacy.Windows = append(legacy.Windows, window)
+		}
+		plan, err := PlanSnapshotProjection(reg, targetUID, legacy, fixedNow, sequentialUIDs())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := plan.Desired.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		windows := plan.Desired.WindowsOf(targetUID)
+		if got, want := windows[len(windows)-2].Metadata.Name, "duplicate"; got != want {
+			t.Fatalf("first new Window name=%q, want %q", got, want)
+		}
+		if got, want := windows[len(windows)-1].Metadata.Name, "duplicate-1"; got != want {
+			t.Fatalf("second new Window name=%q, want %q", got, want)
+		}
+		lastPanes := plan.Desired.PanesOf(windows[len(windows)-1].Metadata.UID)
+		for i, want := range []string{"duplicate", "duplicate-1", "duplicate-2", "duplicate-3"} {
+			if got := lastPanes[i].Metadata.Name; got != want {
+				t.Fatalf("new Pane %d name=%q, want %q", i, got, want)
+			}
+		}
+	})
 	t.Run("project mismatch", func(t *testing.T) {
 		bad := cloneProjectionSnapshot(t, snap)
 		bad.Metadata = &sessionstate.ResourceMetadata{UID: unrelatedUID, Name: "two"}

@@ -330,13 +330,6 @@ func (c *sessionStateCommand) requireClosedProjectionTarget(ctx context.Context,
 	} else if found {
 		return "", nil, fmt.Errorf("restore snapshot: target Project session %q is live; close it before replacing desired state", declaredSession)
 	}
-	live, err := inttmux.NewClient(exactRunner).SessionExists(ctx, declaredSession)
-	if err != nil {
-		return "", nil, err
-	}
-	if live {
-		return "", nil, fmt.Errorf("restore snapshot: target Project session %q is live; close it before replacing desired state", declaredSession)
-	}
 	return declaredSession, exactRunner, nil
 }
 
@@ -365,6 +358,17 @@ func (c *sessionStateCommand) commitSnapshotProjection(ctx context.Context, expl
 	if !trusted {
 		return errors.New("restore snapshot: Project trust was denied; nothing was changed")
 	}
+	// Trust is interactive and may take arbitrarily long. Re-observe the exact
+	// Project identity after it returns so a session that appeared while the
+	// operator was deciding is refused before the Registry transaction opens.
+	recheckedSession, recheckedRunner, err := c.requireClosedProjectionTarget(ctx, project)
+	if err != nil {
+		return err
+	}
+	if recheckedSession != declaredSession {
+		return fmt.Errorf("restore snapshot: target Project session changed from %q to %q before commit", declaredSession, recheckedSession)
+	}
+	exactRunner = recheckedRunner
 	var applied coremetadata.SnapshotProjectionPlan
 	var committedProject coremetadata.Project
 	_, err = c.resources.converge(func(working *coremetadata.Registry, _ coremetadata.Mutator) error {
@@ -378,6 +382,9 @@ func (c *sessionStateCommand) commitSnapshotProjection(ctx context.Context, expl
 		}
 		if currentSession != declaredSession {
 			return fmt.Errorf("restore snapshot: target Project session changed from %q to %q before commit", declaredSession, currentSession)
+		}
+		if current.Spec.Root != project.Spec.Root {
+			return fmt.Errorf("restore snapshot: target Project root changed from %q to %q before commit", project.Spec.Root, current.Spec.Root)
 		}
 		plan, err := coremetadata.PlanSnapshotProjection(*working, project.Metadata.UID, snap, c.nowTime(), coremetadata.NewUID)
 		if err != nil {

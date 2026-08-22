@@ -369,7 +369,7 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			store := freshStartFixtureStore(t)
-			starter := &registryProjectFreshStarter{resources: store.store()}
+			starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
 
 			plan, err := starter.PlanProjectFreshStart(tc.root)
 			if err != nil {
@@ -439,7 +439,7 @@ func TestProjectFreshStartNeverReachesAControlSession(t *testing.T) {
 
 	store := freshStartFixtureStore(t)
 	addFreshStartControlSession(t, store)
-	starter := &registryProjectFreshStarter{resources: store.store()}
+	starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
 
 	// A control session owns no root, so no root resolves to it.
 	for _, root := range []string{"/srv/alpha", "$HOME", "", "home"} {
@@ -532,7 +532,7 @@ func TestProjectFreshStartConfirmationText(t *testing.T) {
 	t.Parallel()
 
 	store := freshStartFixtureStore(t)
-	starter := &registryProjectFreshStarter{resources: store.store()}
+	starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
 	plan, err := starter.PlanProjectFreshStart("/srv/alpha")
 	if err != nil {
 		t.Fatalf("PlanProjectFreshStart() error = %v", err)
@@ -673,7 +673,7 @@ func freshStartSwitchFixture(t *testing.T, steps []pickerStep) (
 		runner:            runner,
 		nativePicker:      native,
 		projectTopology:   &fakeProjectTopologyMaterializer{},
-		projectFreshStart: &registryProjectFreshStarter{resources: store.store()},
+		projectFreshStart: &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}},
 		startupNotices:    reporter,
 	}
 	return cmd, store, executor, tmux, reporter, stateStore
@@ -715,6 +715,55 @@ func TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity
 	}
 	if len(topology.calls) != 1 || !equalStrings(executor.calls, []string{"authorize:/srv/alpha", "open:alpha"}) || len(tmux.calls) != 0 || len(reporter.messages) != 1 {
 		t.Fatalf("Open fresh flow: topology=%v executor=%v tmux=%v notices=%v", topology.calls, executor.calls, tmux.calls, reporter.messages)
+	}
+}
+
+func TestSwitchProjectStartupOpenFreshRefusesExactLiveProjectBeforeCommit(t *testing.T) {
+	cmd, store, executor, _, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupNewConfirmValue}},
+	})
+	server := newFakeTmux()
+	live := server.addSession("alpha-under-another-name")
+	live.opts["@projmux_project_uid"] = "prj-alpha"
+	live.opts["@projmux_project_path"] = "/srv/alpha"
+	routed := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00projmux": server}}
+	cmd.projectFreshStart.(*registryProjectFreshStarter).runner = routed
+
+	registryBefore := store.snapshot()
+	snapshotPath, err := stateStore.Path("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotBefore, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha")
+	if err == nil || !strings.Contains(err.Error(), "must be exactly closed before Open fresh") {
+		t.Fatalf("Open fresh error=%v, want exact-live Project refusal", err)
+	}
+	if store.transactions != 0 || store.writes != 0 || store.snapshot() != registryBefore {
+		t.Fatalf("exact-live refusal changed Registry: transactions=%d writes=%d", store.transactions, store.writes)
+	}
+	snapshotAfter, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(snapshotBefore, snapshotAfter) {
+		t.Fatal("exact-live refusal changed the source snapshot")
+	}
+	if len(executor.calls) != 1 || executor.calls[0] != "authorize:/srv/alpha" {
+		t.Fatalf("exact-live refusal runtime calls=%q, want trust read only", executor.calls)
+	}
+	if len(reporter.messages) != 0 {
+		t.Fatalf("exact-live precommit refusal emitted postcommit notices: %q", reporter.messages)
+	}
+	for _, call := range routed.calls {
+		if len(call.args) == 0 || call.args[0] != "list-sessions" {
+			t.Fatalf("exact-live precommit refusal issued tmux write: %#v", routed.calls)
+		}
 	}
 }
 
@@ -825,7 +874,7 @@ func TestProjectFreshStartRefusesADriftedPlan(t *testing.T) {
 	t.Parallel()
 
 	store := freshStartFixtureStore(t)
-	starter := &registryProjectFreshStarter{resources: store.store()}
+	starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
 	plan, err := starter.PlanProjectFreshStart("/srv/alpha")
 	if err != nil {
 		t.Fatalf("PlanProjectFreshStart() error = %v", err)
@@ -920,7 +969,7 @@ func TestSwitchSidebarOpenAcceptsFreshMode(t *testing.T) {
 			}
 		},
 		projectTopology:   &fakeProjectTopologyMaterializer{},
-		projectFreshStart: &registryProjectFreshStarter{resources: store.store()},
+		projectFreshStart: &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}},
 		startupNotices:    reporter,
 	}
 

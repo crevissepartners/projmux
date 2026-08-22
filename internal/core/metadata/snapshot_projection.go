@@ -9,6 +9,8 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 )
 
+const maxSnapshotUIDAllocationAttempts = 1024
+
 // SnapshotProjectionPlan is the pure, scoped replacement of one Project's
 // descendants. Desired is safe to commit as one Registry transaction.
 type SnapshotProjectionPlan struct {
@@ -90,24 +92,42 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 	}
 	mint := func(kind Kind, preferred string) (string, error) {
 		uid := strings.TrimSpace(preferred)
-		if uid == "" {
-			if newUID == nil {
-				return "", fmt.Errorf("%s: uid source is not configured", op)
+		if uid != "" {
+			if used[uid] {
+				return "", inputErr(op, ErrInvalidRegistry, "%s uid %q collides outside the target Project projection or is duplicated by the snapshot", kind, uid)
 			}
-			var err error
-			uid, err = newUID(kind)
+			if originalKind, existed := ownedKinds[uid]; existed && originalKind != kind {
+				return "", inputErr(op, ErrInvalidRegistry, "snapshot reuses target %s uid %q as %s", originalKind, uid, kind)
+			}
+			used[uid] = true
+			return uid, nil
+		}
+		if newUID == nil {
+			return "", fmt.Errorf("%s: uid source is not configured", op)
+		}
+		for attempt := 0; attempt < maxSnapshotUIDAllocationAttempts; attempt++ {
+			candidate, err := newUID(kind)
 			if err != nil {
 				return "", err
 			}
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "" {
+				return "", fmt.Errorf("%s: uid source returned an empty %s uid", op, kind)
+			}
+			if used[candidate] {
+				continue
+			}
+			// Generated identities must not consume any old target descendant uid.
+			// A later positional legacy match may still need that exact identity;
+			// reserving the whole old set keeps allocation independent of traversal
+			// order and preserves every reusable uid.
+			if _, existed := ownedKinds[candidate]; existed {
+				continue
+			}
+			used[candidate] = true
+			return candidate, nil
 		}
-		if used[uid] {
-			return "", inputErr(op, ErrInvalidRegistry, "%s uid %q collides outside the target Project projection", kind, uid)
-		}
-		if originalKind, existed := ownedKinds[uid]; existed && originalKind != kind {
-			return "", inputErr(op, ErrInvalidRegistry, "snapshot reuses target %s uid %q as %s", originalKind, uid, kind)
-		}
-		used[uid] = true
-		return uid, nil
+		return "", stateErr(op, ErrInvalidRegistry, "could not allocate a unique %s uid after %d attempts", kind, maxSnapshotUIDAllocationAttempts)
 	}
 	stamp := now.UTC()
 	plan := SnapshotProjectionPlan{ProjectUID: target.Metadata.UID, Desired: desired, ReplacedWindows: len(oldWindows)}
@@ -144,9 +164,11 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 			return SnapshotProjectionPlan{}, err
 		}
 		meta := projectedMeta(KindWindow, uid, target.Metadata.UID, sw.Name, nil, stamp, oldWindowMeta(oldWindow), sw.Metadata)
+		if err := reserveProjectedName(&desired, op, target.Metadata.UID, KindWindow, &meta, oldWindowMeta(oldWindow), sw.Metadata); err != nil {
+			return SnapshotProjectionPlan{}, err
+		}
 		window := Window{APIVersion: APIVersion, Kind: KindWindow, Metadata: meta}
 		desired.Windows = append(desired.Windows, window)
-		desired.putReservation(target.Metadata.UID, KindWindow, meta.Name, uid)
 		if oldWindow != nil {
 			plan.PreservedUIDs++
 			preservedWindows++
@@ -190,9 +212,11 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 					command = strings.TrimSpace(sp.Recipe.Command)
 				}
 				paneMeta := projectedMeta(KindPane, paneUID, uid, sp.Label, nil, stamp, oldPaneMeta(oldPane), sp.Metadata)
+				if err := reserveProjectedName(&desired, op, uid, KindPane, &paneMeta, oldPaneMeta(oldPane), sp.Metadata); err != nil {
+					return SnapshotProjectionPlan{}, err
+				}
 				pane := Pane{APIVersion: APIVersion, Kind: KindPane, Metadata: paneMeta, Spec: PaneSpec{Role: PaneRoleShell, CWD: sp.CWD, Command: command}}
 				desired.Panes = append(desired.Panes, pane)
-				desired.putReservation(uid, KindPane, paneMeta.Name, paneUID)
 				if firstShell == "" {
 					firstShell = paneUID
 				}
@@ -251,18 +275,22 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 					return SnapshotProjectionPlan{}, err
 				}
 				agentMeta := projectedMeta(KindAgent, agentUID, uid, sp.Recipe.Agent, map[string]string{"projmux.io/topic": sp.Recipe.Topic}, stamp, oldAgentMeta(oldAgent), nil)
+				if err := reserveProjectedName(&desired, op, uid, KindAgent, &agentMeta, oldAgentMeta(oldAgent), nil); err != nil {
+					return SnapshotProjectionPlan{}, err
+				}
 				agent := Agent{APIVersion: APIVersion, Kind: KindAgent, Metadata: agentMeta, Spec: AgentSpec{Provider: NormalizeProvider(sp.Recipe.Agent), Workspace: AgentWorkspace{CWD: sp.CWD}}, Status: AgentStatus{Phase: PhaseOffline, Interaction: AgentInteraction{Kind: InteractionUnknown}, Activation: AgentActivation{State: ActivationNotRequested}, LastTransitionAt: snap.SavedAt.UTC()}}
 				if sp.Recipe.ResumeID != "" {
 					agent.Status.SessionRef, _ = NewAgentSessionRef(AgentSessionObservation{Provider: sp.Recipe.Agent, SessionID: sp.Recipe.ResumeID, ThreadID: sp.Recipe.ResumeID}, snap.SavedAt.UTC())
 				}
 				paneMeta := projectedMeta(KindPane, paneUID, agentUID, sp.Label, nil, stamp, oldPaneMeta(oldPane), sp.Metadata)
 				paneMeta.OwnerRef = &OwnerRef{Kind: KindAgent, UID: agentUID}
+				if err := reserveProjectedName(&desired, op, agentUID, KindPane, &paneMeta, oldPaneMeta(oldPane), sp.Metadata); err != nil {
+					return SnapshotProjectionPlan{}, err
+				}
 				pane := Pane{APIVersion: APIVersion, Kind: KindPane, Metadata: paneMeta, Spec: PaneSpec{Role: PaneRoleAgent, CWD: sp.CWD}}
 				agent.Status.PaneRef = paneUID
 				desired.Agents = append(desired.Agents, agent)
-				desired.putReservation(uid, KindAgent, agentMeta.Name, agentUID)
 				desired.Panes = append(desired.Panes, pane)
-				desired.putReservation(agentUID, KindPane, paneMeta.Name, paneUID)
 				if oldAgent != nil {
 					plan.PreservedUIDs++
 					preservedAgents++
@@ -291,9 +319,11 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 				return SnapshotProjectionPlan{}, err
 			}
 			paneMeta := projectedMeta(KindPane, paneUID, uid, "shell", nil, stamp, oldPaneMeta(oldPane), nil)
+			if err := reserveProjectedName(&desired, op, uid, KindPane, &paneMeta, oldPaneMeta(oldPane), nil); err != nil {
+				return SnapshotProjectionPlan{}, err
+			}
 			pane := Pane{APIVersion: APIVersion, Kind: KindPane, Metadata: paneMeta, Spec: PaneSpec{Role: PaneRoleShell, CWD: target.Spec.Root}}
 			desired.Panes = append(desired.Panes, pane)
-			desired.putReservation(uid, KindPane, paneMeta.Name, paneUID)
 			firstShell = paneUID
 			if oldPane != nil {
 				plan.PreservedUIDs++
@@ -416,11 +446,11 @@ func canonicalProjectShell(r Registry, projectUID string) (Window, Pane, error) 
 	}
 	w, ok := r.Window(p.Spec.PrimaryWindowRef)
 	if !ok || w.Metadata.OwnerRef == nil || w.Metadata.OwnerRef.Kind != KindProject || w.Metadata.OwnerUID() != projectUID {
-		return Window{}, Pane{}, inputErr("open fresh", ErrInvalidRegistry, "Project %q canonical Window anchor is invalid; run registry repair", p.Metadata.Name)
+		return Window{}, Pane{}, inputErr("open fresh", ErrInvalidRegistry, "Project %q canonical Window anchor is invalid; run Phase 3 registry repair", p.Metadata.Name)
 	}
 	pane, ok := r.Pane(w.Spec.PrimaryPaneRef)
 	if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindWindow || pane.Metadata.OwnerUID() != w.Metadata.UID || pane.Spec.Role != PaneRoleShell {
-		return Window{}, Pane{}, inputErr("open fresh", ErrInvalidRegistry, "Project %q canonical shell Pane anchor is invalid; run registry repair", p.Metadata.Name)
+		return Window{}, Pane{}, inputErr("open fresh", ErrInvalidRegistry, "Project %q canonical shell Pane anchor is invalid; run Phase 3 registry repair", p.Metadata.Name)
 	}
 	wc, pc := w.Clone(), pane.Clone()
 	wc.Status = WindowStatus{}
@@ -484,6 +514,21 @@ func projectedMeta(kind Kind, uid, owner, fallback string, annotations map[strin
 	}
 	name = SanitizeNameBase(name)
 	return ObjectMeta{UID: uid, Name: name, Labels: labels, Annotations: cloneStringMap(annotations), OwnerRef: &OwnerRef{Kind: ownerKindFor(kind), UID: owner}, CreatedAt: now}
+}
+
+func reserveProjectedName(registry *Registry, op, scope string, kind Kind, meta *ObjectMeta, old *ObjectMeta, snap *sessionstate.ResourceMetadata) error {
+	if meta == nil {
+		return inputErr(op, ErrInvalidRegistry, "%s projection metadata is missing", kind)
+	}
+	if old == nil && (snap == nil || strings.TrimSpace(snap.Name) == "") {
+		name, err := registry.allocateName(op, scope, kind, meta.Name, meta.UID)
+		if err != nil {
+			return err
+		}
+		meta.Name = name
+		return nil
+	}
+	return registry.reserveExplicitName(op, scope, kind, meta.Name, meta.UID)
 }
 func ownerKindFor(kind Kind) Kind {
 	if kind == KindWindow {

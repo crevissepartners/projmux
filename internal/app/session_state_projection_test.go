@@ -47,13 +47,17 @@ func projectionRunnerWriteCalls(calls [][]string) [][]string {
 }
 
 type projectionTrustAuthorizer struct {
-	allowed bool
-	err     error
-	calls   []string
+	allowed     bool
+	err         error
+	calls       []string
+	onAuthorize func()
 }
 
 func (a *projectionTrustAuthorizer) AuthorizeProjectHooks(_ context.Context, cwd string) (bool, error) {
 	a.calls = append(a.calls, cwd)
+	if a.onAuthorize != nil {
+		a.onAuthorize()
+	}
 	if a.err != nil {
 		return false, a.err
 	}
@@ -254,6 +258,53 @@ func TestRestoreSnapshotRefusesLiveProjectIdentityBeforeCommit(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Fatal("preflight refusal changed source snapshot bytes")
+	}
+}
+
+func TestRestoreSnapshotRechecksClosedProjectAfterTrustBeforeCommit(t *testing.T) {
+	resources := newFakeResourceStore(t)
+	registryBefore := resources.registry.Clone()
+	snapshots := sessionstate.NewStore(t.TempDir())
+	snap := projectionSnapshot(t, resources.registry)
+	if err := snapshots.Save(snap); err != nil {
+		t.Fatal(err)
+	}
+	path, err := snapshots.Path("saved-beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotBefore, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newFakeTmux()
+	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00projmux": server}}
+	authorizer := &projectionTrustAuthorizer{allowed: true, onAuthorize: func() {
+		live := server.addSession("beta")
+		live.opts["@projmux_project_uid"] = "prj-beta"
+		live.opts["@projmux_project_path"] = "/srv/beta"
+	}}
+	cmd := &sessionStateCommand{
+		resources: resources.store(), sessionStore: func() (sessionstate.Store, error) { return snapshots, nil },
+		now: func() time.Time { return resourceFixtureClock.Add(time.Hour) }, runner: runner,
+		projectTopology: &fakeProjectTopologyMaterializer{materialized: true}, projectTrust: authorizer,
+	}
+	err = cmd.runRestore([]string{"--session", "saved-beta", "--project", "uid:prj-beta", "--yes"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "live; close it before replacing desired state") {
+		t.Fatalf("error=%v, want post-trust live Project refusal", err)
+	}
+	if resources.transactions != 0 || resources.writes != 0 {
+		t.Fatalf("post-trust refusal transactions=%d writes=%d", resources.transactions, resources.writes)
+	}
+	if !reflect.DeepEqual(registryBefore, resources.registry) {
+		t.Fatal("post-trust refusal changed Registry")
+	}
+	snapshotAfter, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(snapshotBefore, snapshotAfter) {
+		t.Fatal("post-trust refusal changed source snapshot")
 	}
 }
 

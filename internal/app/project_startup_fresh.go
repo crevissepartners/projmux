@@ -9,6 +9,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -148,10 +149,16 @@ type switchProjectFreshStarter interface {
 // changed by this seam.
 type registryProjectFreshStarter struct {
 	resources *resourceStore
+	runner    tmuxRunner
+	target    explicitTmuxTarget
 }
 
 func newRegistryProjectFreshStarter() *registryProjectFreshStarter {
-	return &registryProjectFreshStarter{resources: newResourceStore()}
+	target, err := tmuxSocketNameTarget(defaultAppSocket)
+	if err != nil {
+		panic(err)
+	}
+	return &registryProjectFreshStarter{resources: newResourceStore(), runner: inttmux.ExecRunner{}, target: target}
 }
 
 // PlanProjectFreshStart resolves the exact prune for one Project root.
@@ -229,7 +236,7 @@ func projectFreshStartPlanFor(registry coremetadata.Registry, projectUID string)
 // PruneProjectFreshStart commits the canonical fresh projection. An empty plan
 // opens no transaction, which guarantees a second Open fresh is a Registry
 // zero-diff and keeps first-use bootstrap free of an unnecessary Registry write.
-func (s *registryProjectFreshStarter) PruneProjectFreshStart(_ context.Context, root string, plan projectFreshStartPlan) error {
+func (s *registryProjectFreshStarter) PruneProjectFreshStart(ctx context.Context, root string, plan projectFreshStartPlan) error {
 	if plan.Empty() {
 		return nil
 	}
@@ -237,6 +244,9 @@ func (s *registryProjectFreshStarter) PruneProjectFreshStart(_ context.Context, 
 		return errors.New("project fresh start: resource registry store is not configured")
 	}
 	root = strings.TrimSpace(root)
+	if err := s.requireClosedProject(ctx, root, plan.ProjectUID); err != nil {
+		return err
+	}
 	_, err := s.resources.converge(func(working *coremetadata.Registry, _ coremetadata.Mutator) error {
 		project, ok := working.ProjectByRoot(root)
 		if !ok || project.Metadata.UID != plan.ProjectUID {
@@ -254,6 +264,45 @@ func (s *registryProjectFreshStarter) PruneProjectFreshStart(_ context.Context, 
 		return nil
 	})
 	return err
+}
+
+// requireClosedProject re-observes the exact app socket immediately before the
+// destructive Registry transaction. A same-UID or same-root session under a
+// different name is live Project identity too; the declared name alone is not
+// sufficient proof that Open fresh is safe.
+func (s *registryProjectFreshStarter) requireClosedProject(ctx context.Context, root, projectUID string) error {
+	if s.runner == nil {
+		return errors.New("project fresh start: exact tmux runner is not configured; nothing was deleted")
+	}
+	registry, err := s.resources.snapshot()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	project, ok := registry.ProjectByRoot(root)
+	if !ok || project.Metadata.UID != projectUID {
+		return fmt.Errorf("project fresh start: %q no longer declares Project %s; nothing was deleted", root, projectUID)
+	}
+	sessionName := ""
+	if project.Status.Session != nil {
+		sessionName = strings.TrimSpace(project.Status.Session.Name)
+	}
+	if sessionName == "" {
+		return errors.New("project fresh start: target Project has no declared session projection; nothing was deleted")
+	}
+	target := s.target
+	if target.flag == "" || target.value == "" {
+		target, err = tmuxSocketNameTarget(defaultAppSocket)
+		if err != nil {
+			return fmt.Errorf("project fresh start: exact tmux target: %w", err)
+		}
+	}
+	exactRunner := explicitTmuxRunner{runner: s.runner, target: target}
+	if _, found, err := (&materializer{runner: exactRunner}).preflightSessionOwnership(ctx, *project, sessionName); err != nil {
+		return fmt.Errorf("project fresh start: target Project must be exactly closed before Open fresh; nothing was deleted: %w", err)
+	} else if found {
+		return fmt.Errorf("project fresh start: target Project session %q is live; close it before Open fresh; nothing was deleted", sessionName)
+	}
+	return nil
 }
 
 // confirmProjectFreshStart is the destructive-action gate for Open fresh.
