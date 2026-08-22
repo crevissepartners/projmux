@@ -3,12 +3,14 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	corecap "github.com/crevissepartners/projmux/internal/core/aicapability"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -32,11 +34,51 @@ type capabilityPlanningPaneCreator struct {
 func (c *capabilityPlanningPaneCreator) createFromIntent(intent agentPaneIntent, _, _ io.Writer) error {
 	c.intents = append(c.intents, intent)
 	if intent.codexCapability == nil {
-		return errors.New("capability selection missing from create intent")
+		_, argv, err := c.cmd.PlanAgentLaunch(intent.provider, coremetadata.AgentWorkspace{CWD: "/repo"}, []string{"task"})
+		c.argv = argv
+		return err
 	}
 	_, argv, err := c.cmd.PlanAgentLaunchWithCapability(intent.provider, coremetadata.AgentWorkspace{CWD: "/repo"}, []string{"task"}, *intent.codexCapability)
 	c.argv = argv
 	return err
+}
+
+func TestCodexProviderPickerDefaultAndAdvancedRowsGolden(t *testing.T) {
+	t.Parallel()
+	provider, ok := aiprovider.Lookup(string(aiprovider.Codex))
+	if !ok {
+		t.Fatal("Codex provider metadata is missing")
+	}
+	cmd := testAICommand(t.TempDir())
+	tests := []struct {
+		locale       i18n.Locale
+		wantDefault  string
+		wantAdvanced string
+	}{
+		{
+			locale:       i18n.FallbackLocale,
+			wantDefault:  "codex    [MISSING] Codex default launch",
+			wantAdvanced: "codex+   [ADVANCED] Codex advanced launch (choose model and reasoning effort)",
+		},
+		{
+			locale:       i18n.Locale("ko-KR"),
+			wantDefault:  "codex    [MISSING] Codex 기본 실행",
+			wantAdvanced: "codex+   [고급] Codex 고급 실행 (모델 및 추론 강도 선택)",
+		},
+	}
+	for _, test := range tests {
+		defaultRow := cmd.agentRow(provider, test.locale)
+		advancedRow := cmd.codexAdvancedLaunchRow(test.locale)
+		if got := stripANSI(defaultRow.Label); got != test.wantDefault {
+			t.Errorf("locale %s default row = %q, want %q", test.locale, got, test.wantDefault)
+		}
+		if got := stripANSI(advancedRow.Label); got != test.wantAdvanced {
+			t.Errorf("locale %s advanced row = %q, want %q", test.locale, got, test.wantAdvanced)
+		}
+		if defaultRow.Value != aiModeCodex || advancedRow.Value != aiActionCodexAdvancedLaunch {
+			t.Errorf("locale %s actions = %q/%q, want default/advanced routing", test.locale, defaultRow.Value, advancedRow.Value)
+		}
+	}
 }
 
 func (f *fakeCodexCapabilitySession) Snapshot() corecap.Snapshot { return f.snapshot.Clone() }
@@ -106,13 +148,13 @@ func TestCodexCapabilityRowsLocalizeSemanticLabelsOnly(t *testing.T) {
 	}
 }
 
-func TestCodexProviderPickerProjectsSelectionIntoCreateArgs(t *testing.T) {
+func TestCodexAdvancedActionProjectsSelectionIntoCreateArgs(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	creator := &capabilityPlanningPaneCreator{cmd: cmd}
 	cmd.panes = creator
 	runner := &sequencingAIRunner{results: []intpickercompat.Result{
-		{Key: "enter", Value: aiModeCodex},
+		{Key: "enter", Value: aiActionCodexAdvancedLaunch},
 		{Key: "enter", Value: "capability:0:1"},
 	}}
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
@@ -148,21 +190,79 @@ func TestCodexProviderPickerProjectsSelectionIntoCreateArgs(t *testing.T) {
 	}
 }
 
-func TestCodexProviderPickerFallsBackStaticAndRejectsStaleEpoch(t *testing.T) {
-	t.Run("discovery unavailable keeps static launch", func(t *testing.T) {
-		home := t.TempDir()
-		cmd, creator := intentAICommand(t, home)
-		cmd.nativePicker = nativePickerFromCompatRunner(&capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiModeCodex}})
-		cmd.openCodexCapabilitySession = func(context.Context) (codexCapabilitySession, error) {
-			return nil, corecap.ErrUnavailable
+func TestCodexDefaultActionSkipsDiscoveryAndLaunchOverrides(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	creator := &capabilityPlanningPaneCreator{cmd: cmd}
+	cmd.panes = creator
+	cmd.nativePicker = nativePickerFromCompatRunner(&capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiModeCodex}})
+	discoveryCalls := 0
+	cmd.openCodexCapabilitySession = func(context.Context) (codexCapabilitySession, error) {
+		discoveryCalls++
+		return nil, errors.New("default launch must not discover capabilities")
+	}
+	codexPath := writeExecutable(t, filepath.Join(home, "bin", "codex"))
+	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "command" && reflect.DeepEqual(args, []string{"-v", "codex"}) {
+			return []byte(codexPath + "\n"), nil
 		}
-		if err := cmd.runAgentPickerSelection("right"); err != nil {
-			t.Fatal(err)
-		}
-		if len(creator.intents) != 1 || creator.intents[0].provider != aiModeCodex || creator.intents[0].codexCapability != nil {
-			t.Fatalf("fallback intents = %#v, want unchanged static Codex intent", creator.intents)
-		}
-	})
+		return nil, errors.New("unexpected command lookup")
+	}
+
+	if err := cmd.runAgentPickerSelection("right"); err != nil {
+		t.Fatal(err)
+	}
+	if discoveryCalls != 0 {
+		t.Fatalf("default Codex discovery calls = %d, want 0", discoveryCalls)
+	}
+	if len(creator.intents) != 1 || creator.intents[0].provider != aiModeCodex || creator.intents[0].codexCapability != nil {
+		t.Fatalf("default intents = %#v, want one canonical Codex intent without capability override", creator.intents)
+	}
+	args := execArgvTail(t, creator.argv, aiModeCodex)
+	want := []string{"-C", "/repo", "task"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("default create args = %#v, want %#v (no model or effort override)", args, want)
+	}
+}
+
+func TestCodexAdvancedDiscoveryFailureRefusesWithoutLaunchAndLeavesDefaultUsable(t *testing.T) {
+	home := t.TempDir()
+	cmd, creator := intentAICommand(t, home)
+	discoveryCalls := 0
+	cmd.openCodexCapabilitySession = func(context.Context) (codexCapabilitySession, error) {
+		discoveryCalls++
+		return nil, fmt.Errorf("%w: daemon-not-running", corecap.ErrUnavailable)
+	}
+	cmd.nativePicker = nativePickerFromCompatRunner(&capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiActionCodexAdvancedLaunch}})
+
+	err := cmd.runAgentPickerSelection("right")
+	if got, want := errString(err), "Codex advanced launch unavailable: daemon-not-running"; got != want {
+		t.Fatalf("advanced unavailable error = %q, want %q", got, want)
+	}
+	if !errors.Is(err, corecap.ErrUnavailable) {
+		t.Fatalf("advanced unavailable error = %v, want ErrUnavailable", err)
+	}
+	if discoveryCalls != 1 || len(creator.intents) != 0 {
+		t.Fatalf("advanced failure discovery/intents = %d/%#v, want 1/zero", discoveryCalls, creator.intents)
+	}
+
+	cmd.nativePicker = nativePickerFromCompatRunner(&capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiModeCodex}})
+	if err := cmd.runAgentPickerSelection("right"); err != nil {
+		t.Fatalf("separate default launch after advanced failure: %v", err)
+	}
+	if discoveryCalls != 1 || len(creator.intents) != 1 || creator.intents[0].codexCapability != nil {
+		t.Fatalf("default after failure discovery/intents = %d/%#v, want no new discovery and one default intent", discoveryCalls, creator.intents)
+	}
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func TestCodexAdvancedPickerRejectsStaleEpoch(t *testing.T) {
 
 	t.Run("connection changes while picker is open", func(t *testing.T) {
 		home := t.TempDir()
@@ -218,7 +318,7 @@ func TestCodexCapabilitySessionClosesWhenCanonicalCreateFailsBeforePlan(t *testi
 	session := &fakeCodexCapabilitySession{snapshot: testCodexCapabilitySnapshot()}
 	cmd.openCodexCapabilitySession = func(context.Context) (codexCapabilitySession, error) { return session, nil }
 	cmd.nativePicker = nativePickerFromCompatRunner(&sequencingAIRunner{results: []intpickercompat.Result{
-		{Key: "enter", Value: aiModeCodex},
+		{Key: "enter", Value: aiActionCodexAdvancedLaunch},
 		{Key: "enter", Value: "capability:0:1"},
 	}})
 

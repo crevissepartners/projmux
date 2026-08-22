@@ -48,6 +48,8 @@ const (
 	aiModeAntigravity = "antigravity"
 	aiModeShell       = "shell"
 
+	aiActionCodexAdvancedLaunch = "codex-advanced-launch"
+
 	aiResumeNewValue = "new"
 
 	aiPaneManagedOption         = "@projmux_ai_managed"
@@ -962,22 +964,27 @@ func (c *aiCommand) runAgentPickerSelection(direction string) error {
 		return nil
 	}
 
-	mode := normalizeAIMode(result.Value)
+	selected := strings.TrimSpace(result.Value)
+	if selected == aiActionCodexAdvancedLaunch {
+		if err := c.requireAIAgentEnabled(aiModeCodex, aiSplitLaunchPicker); err != nil {
+			return err
+		}
+		selection, picked, err := c.runCodexCapabilityPicker()
+		if err != nil {
+			return err
+		}
+		if !picked || strings.TrimSpace(selection.ModelID) == "" {
+			return nil
+		}
+		defer c.discardCodexCapabilitySession(selection.Epoch)
+		return c.createCodexCapabilityAgentPane(canonicalProducerProviderPicker, direction, selection)
+	}
+
+	mode := normalizeAIMode(selected)
 	switch mode {
 	case aiModeCodex:
 		if err := c.requireAIAgentEnabled(mode, aiSplitLaunchPicker); err != nil {
 			return err
-		}
-		selection, dynamic, err := c.runCodexCapabilityPicker()
-		if err != nil {
-			return err
-		}
-		if dynamic {
-			if strings.TrimSpace(selection.ModelID) == "" {
-				return nil
-			}
-			defer c.discardCodexCapabilitySession(selection.Epoch)
-			return c.createCodexCapabilityAgentPane(canonicalProducerProviderPicker, direction, selection)
 		}
 		return c.createAgentPane(canonicalProducerProviderPicker, mode, direction)
 	case aiModeClaude, aiModeAntigravity:
@@ -994,12 +1001,36 @@ func (c *aiCommand) runAgentPickerSelection(direction string) error {
 
 const codexCapabilityPickerTimeout = 20 * time.Second
 
-// runCodexCapabilityPicker adds a dynamic second step only when the current
-// app-server supplies a non-empty visible model/effort catalog. Discovery
-// failure returns dynamic=false, preserving the existing static Codex launch.
+type codexAdvancedUnavailableError struct {
+	reason string
+}
+
+func (e codexAdvancedUnavailableError) Error() string {
+	return "Codex advanced launch unavailable: " + e.reason
+}
+
+func (e codexAdvancedUnavailableError) Unwrap() error {
+	return corecap.ErrUnavailable
+}
+
+func codexAdvancedUnavailable(reason string, err error) error {
+	reason = strings.TrimSpace(reason)
+	if err != nil {
+		reason = strings.TrimSpace(err.Error())
+		reason = strings.TrimSpace(strings.TrimPrefix(reason, corecap.ErrUnavailable.Error()+":"))
+	}
+	if reason == "" {
+		reason = "capability discovery failed"
+	}
+	return codexAdvancedUnavailableError{reason: reason}
+}
+
+// runCodexCapabilityPicker is entered only through the explicit advanced
+// action. Discovery failure is therefore a refusal, not permission to replace
+// the user's selected action with a default launch.
 func (c *aiCommand) runCodexCapabilityPicker() (corecap.Selection, bool, error) {
 	if c.openCodexCapabilitySession == nil || c.nativePicker == nil {
-		return corecap.Selection{}, false, nil
+		return corecap.Selection{}, false, codexAdvancedUnavailable("capability discovery is not configured", nil)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), codexCapabilityPickerTimeout)
 	defer cancel()
@@ -1009,7 +1040,10 @@ func (c *aiCommand) runCodexCapabilityPicker() (corecap.Selection, bool, error) 
 		if c.codexCapabilityCache != nil {
 			c.codexCapabilityCache.Invalidate()
 		}
-		return corecap.Selection{}, false, nil
+		if err != nil {
+			return corecap.Selection{}, false, codexAdvancedUnavailable("", err)
+		}
+		return corecap.Selection{}, false, codexAdvancedUnavailable("capability discovery returned no session", nil)
 	}
 	snapshot := session.Snapshot()
 	if !snapshot.Epoch.Valid() {
@@ -1018,7 +1052,7 @@ func (c *aiCommand) runCodexCapabilityPicker() (corecap.Selection, bool, error) 
 		if c.codexCapabilityCache != nil {
 			c.codexCapabilityCache.Invalidate()
 		}
-		return corecap.Selection{}, false, nil
+		return corecap.Selection{}, false, codexAdvancedUnavailable("capability snapshot has no valid connection/version epoch", nil)
 	}
 	cache := c.codexCapabilityCache
 	if cache == nil {
@@ -1030,7 +1064,7 @@ func (c *aiCommand) runCodexCapabilityPicker() (corecap.Selection, bool, error) 
 	rows, selections := codexCapabilityRows(appLocale(c.homeDir, c.lookupEnv), snapshot)
 	if len(rows) == 0 {
 		c.discardCodexCapabilitySession(snapshot.Epoch)
-		return corecap.Selection{}, false, nil
+		return corecap.Selection{}, false, codexAdvancedUnavailable("no visible model and supported effort combinations", nil)
 	}
 	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, c.themedPickerOptions(intpickercompat.Options{
 		UI:         "ai-codex-capability-picker",
@@ -1711,10 +1745,14 @@ func (c *aiCommand) settingsRows() []intpickercompat.Entry {
 
 func (c *aiCommand) agentRows() []intpickercompat.Entry {
 	enabled := c.enabledAIAgents()
-	rows := make([]intpickercompat.Entry, 0, len(enabled)+2)
+	rows := make([]intpickercompat.Entry, 0, len(enabled)+3)
+	locale := c.locale()
 	for _, provider := range aiprovider.PickerEligible() {
 		if aiEnabledAgentsContains(enabled, config.AIAgentProvider(provider.ID)) {
-			rows = append(rows, c.agentRow(provider))
+			rows = append(rows, c.agentRow(provider, locale))
+			if provider.ID == aiprovider.Codex {
+				rows = append(rows, c.codexAdvancedLaunchRow(locale))
+			}
 		}
 	}
 	if len(enabled) == 0 {
@@ -1732,16 +1770,30 @@ func (c *aiCommand) agentRows() []intpickercompat.Entry {
 	return rows
 }
 
-func (c *aiCommand) agentRow(provider aiprovider.Metadata) intpickercompat.Entry {
+func (c *aiCommand) agentRow(provider aiprovider.Metadata, locale i18n.Locale) intpickercompat.Entry {
 	status := "\x1b[33m[MISSING]\x1b[0m"
 	if c.agentAvailable(string(provider.ID)) {
 		status = "\x1b[32m[READY]\x1b[0m"
 	}
 	desc := provider.DisplayName + " split"
+	if provider.ID == aiprovider.Codex {
+		desc = localizeUIText(locale, "Codex default launch")
+	}
 	return intpickercompat.Entry{
 		Label:     fmt.Sprintf("%-8s %s %s", provider.ID, status, desc),
 		Value:     string(provider.ID),
 		SearchKey: string(provider.ID) + " " + desc,
+	}
+}
+
+func (c *aiCommand) codexAdvancedLaunchRow(locale i18n.Locale) intpickercompat.Entry {
+	status := "\x1b[36m" + localizeUIText(locale, "[ADVANCED]") + "\x1b[0m"
+	desc := localizeUIText(locale, "Codex advanced launch")
+	detail := localizeUIText(locale, "choose model and reasoning effort")
+	return intpickercompat.Entry{
+		Label:     fmt.Sprintf("%-8s %s %s (\x1b[90m%s\x1b[0m)", "codex+", status, desc, detail),
+		Value:     aiActionCodexAdvancedLaunch,
+		SearchKey: strings.Join([]string{aiModeCodex, "advanced", "model", "reasoning", "effort", desc, detail}, " "),
 	}
 }
 

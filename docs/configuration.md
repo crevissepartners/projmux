@@ -443,8 +443,13 @@ in-flight process decision, then retries proxy initialization with a bounded
 backoff. Phase 1 itself does not route Agent create/resume, usage, catalog,
 model, or review behavior through that seam.
 
-The Codex row in the provider picker now uses that readiness path to read every
-page of the current app-server `model/list`. Its second picker shows only
+The default `Codex` row in the provider picker launches immediately through the
+canonical create route. It does not start or probe the app-server, call
+`model/list`, or add `--model` or `model_reasoning_effort`; the Codex process
+therefore keeps its own configured defaults.
+
+The separate `Codex advanced launch` action uses the readiness path to read
+every page of the current app-server `model/list`. Its second picker shows only
 visible models and their advertised reasoning efforts. The display also carries
 the advertised default, supported input modalities, and whether personality is
 supported; the boolean personality capability is not expanded into invented
@@ -454,8 +459,9 @@ writes a Codex configuration file. Each normalized catalog is tied to its live
 connection and negotiated-version epoch. Projmux retains that connection from
 picker render through pre-create validation and refreshes `model/list` before
 building argv, so a disconnect or removed option invalidates the selection. If
-discovery fails, is empty, or comes from an older Codex, the existing static
-Codex launch path remains available.
+advanced discovery fails, is empty, or comes from an older Codex, that action
+reports the exact unavailable reason and creates nothing; the separate default
+`Codex` row remains available.
 
 Picker chrome and semantic annotations such as default, unspecified modality,
 and personality support use the Projmux message catalog. Model display names,
