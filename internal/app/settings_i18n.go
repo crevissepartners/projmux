@@ -750,11 +750,15 @@ var uiTextKeys = map[string]i18n.Key{
 	// Breadcrumb/path and title segments surfaced by the picker-chrome audit
 	// as bypassing the catalog. Registering the static segments lets the
 	// composed path/`-`-split resolver translate the full prompt/title.
-	"AI Setting":                      "picker.ai.crumb_setting",
-	"AI Launch":                       "picker.ai.crumb_launch",
-	"AI Launch - Split direction: ":   "picker.ai.launch_split_direction_title",
-	"Codex Launch - Model and effort": "picker.ai.codex_capability_title",
-	"Codex > ":                        "picker.ai.codex_capability_prompt",
+	"AI Setting":                        "picker.ai.crumb_setting",
+	"AI Launch":                         "picker.ai.crumb_launch",
+	"AI Launch - Split direction: ":     "picker.ai.launch_split_direction_title",
+	"Codex default launch":              "picker.ai.codex_default_launch",
+	"Codex advanced launch":             "picker.ai.codex_advanced_launch",
+	"choose model and reasoning effort": "picker.ai.codex_advanced_launch_detail",
+	"[ADVANCED]":                        "picker.ai.codex_advanced_marker",
+	"Codex Launch - Model and effort":   "picker.ai.codex_capability_title",
+	"Codex > ":                          "picker.ai.codex_capability_prompt",
 	"Choose a model and supported reasoning effort.": "picker.ai.codex_capability_footer",
 	"[DEFAULT]":                                "picker.ai.codex_capability_default_marker",
 	"unspecified modality":                     "picker.ai.codex_capability_unspecified_modality",
