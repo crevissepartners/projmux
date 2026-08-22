@@ -129,6 +129,7 @@ const (
 // TeardownOwnerChain is the exact Registry chain an event claims.
 type TeardownOwnerChain struct {
 	SocketIdentity string
+	SessionHandle  string
 	PaneHandle     string
 	WindowHandle   string
 	PaneUID        string
@@ -381,6 +382,35 @@ type PaneAgentCascadeDeletePlan struct {
 	Evidence      *TerminationEvidence
 }
 
+// PaneTeardownEvidencePlan persists the exact causal half of a last-Pane
+// cascade while retaining the complete Registry graph. It performs no parent
+// deletion until the matching window-unlinked event arrives.
+type PaneTeardownEvidencePlan struct {
+	Decision TeardownDecision
+	Desired  Registry
+	Changed  bool
+	Evidence PaneTeardownEvidence
+}
+
+// WindowRootCascadeDeletePlan is the schema-valid desired Registry produced by
+// one exact pane-exited/window-unlinked pair.
+type WindowRootCascadeDeletePlan struct {
+	Decision            TeardownDecision
+	Desired             Registry
+	Changed             bool
+	PaneUID             string
+	AgentUID            string
+	WindowUID           string
+	RootKind            Kind
+	RootUID             string
+	ProjectRoot         string
+	DeletedProjects     int
+	DeletedWindows      int
+	DeletedPanes        int
+	DeletedAgents       int
+	DeletedReservations int
+}
+
 // PlanPaneAgentCascadeDelete converts one Phase 0 authority decision into a
 // schema-valid desired Registry without mutating the source document.
 //
@@ -480,6 +510,161 @@ func PlanPaneAgentCascadeDelete(registry Registry, event TeardownEvent, now time
 		PaneUID: pane.Metadata.UID, AgentUID: agentUID,
 		DeletedPanes: deletedPanes, DeletedAgents: boolCount(agentUID != ""),
 		Evidence: evidence.Clone(),
+	}, nil
+}
+
+// PlanPaneTeardownEvidence records a qualifying last-Pane pane-exited event on
+// a clone. It requires the same current owner/generation/termination proof as
+// the Phase 2 deletion plan but deliberately keeps every resource row.
+func PlanPaneTeardownEvidence(registry Registry, event TeardownEvent, now time.Time) (PaneTeardownEvidencePlan, error) {
+	const op = "plan pane teardown evidence"
+	out := PaneTeardownEvidencePlan{Decision: DecideTeardownEvent(event)}
+	if out.Decision.Action != TeardownDeletePaneAgent || event.LiveSiblingPane ||
+		out.Decision.Reason != TeardownReasonAwaitingWindowUnlink {
+		return out, nil
+	}
+	if strings.TrimSpace(event.Chain.SessionHandle) == "" {
+		out.Decision.Action = TeardownRefuse
+		out.Decision.Reason = TeardownReasonInvalidInput
+		return out, nil
+	}
+	if now.IsZero() {
+		return PaneTeardownEvidencePlan{}, inputErr(op, ErrInvalidRegistry, "plan timestamp is required")
+	}
+	if err := registry.Validate(); err != nil {
+		return PaneTeardownEvidencePlan{}, fmt.Errorf("%s source Registry: %w", op, err)
+	}
+	pane, ok := registry.Pane(strings.TrimSpace(event.Chain.PaneUID))
+	if !ok || pane.Status.Activation.Generation != strings.TrimSpace(event.Chain.Generation) ||
+		pane.Status.Activation.RuntimeID != strings.TrimSpace(event.Chain.PaneHandle) {
+		out.Decision.Action = TeardownRefuse
+		out.Decision.Reason = TeardownReasonStaleGeneration
+		return out, nil
+	}
+	windowUID, ok := paneWindowOwnerUID(registry, *pane)
+	if !ok || windowUID != strings.TrimSpace(event.Chain.WindowUID) {
+		out.Decision.Action = TeardownRefuse
+		out.Decision.Reason = TeardownReasonStaleOwnerBinding
+		return out, nil
+	}
+	window, ok := registry.Window(windowUID)
+	if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != event.Chain.RootKind ||
+		window.Metadata.OwnerRef.UID != event.Chain.RootUID {
+		out.Decision.Action = TeardownRefuse
+		out.Decision.Reason = TeardownReasonStaleOwnerBinding
+		return out, nil
+	}
+	termination := pane.Status.LastTermination
+	if termination == nil || termination.Generation != event.Chain.Generation ||
+		termination.Classification != event.Classification {
+		out.Decision.Action = TeardownRefuse
+		out.Decision.Reason = TeardownReasonStaleGeneration
+		return out, nil
+	}
+	evidence := PaneTeardownEvidence{
+		SocketIdentity:   strings.TrimSpace(event.Chain.SocketIdentity),
+		RuntimeSessionID: strings.TrimSpace(event.Chain.SessionHandle),
+		RuntimePaneID:    strings.TrimSpace(event.Chain.PaneHandle),
+		RuntimeWindowID:  strings.TrimSpace(event.Chain.WindowHandle),
+		WindowUID:        windowUID, RootKind: event.Chain.RootKind, RootUID: event.Chain.RootUID,
+		Generation: strings.TrimSpace(event.Chain.Generation), Classification: event.Classification,
+		ObservedAt: now.UTC(),
+	}
+	desired := registry.Clone()
+	stored, _ := desired.Pane(pane.Metadata.UID)
+	if stored.Status.Teardown != nil && *stored.Status.Teardown == evidence {
+		out.Desired = desired
+		out.Evidence = evidence
+		return out, nil
+	}
+	stored.Status.Teardown = evidence.Clone()
+	desired.UpdatedAt = now.UTC()
+	if err := desired.Validate(); err != nil {
+		return PaneTeardownEvidencePlan{}, fmt.Errorf("%s desired Registry: %w", op, err)
+	}
+	return PaneTeardownEvidencePlan{Decision: out.Decision, Desired: desired, Changed: true, Evidence: evidence}, nil
+}
+
+// PlanWindowRootCascadeDelete consumes one stored exact pane event together
+// with its matching window-unlinked event. The Project case removes the whole
+// Registry root; ControlSession keeps its root identity and removes only the
+// Window.
+func PlanWindowRootCascadeDelete(registry Registry, paneEvent, unlinkEvent TeardownEvent, now time.Time) (WindowRootCascadeDeletePlan, error) {
+	const op = "plan window root cascade delete"
+	decision := AggregateTeardownEvents([]TeardownEvent{paneEvent, unlinkEvent})
+	out := WindowRootCascadeDeletePlan{Decision: decision}
+	if decision.Action != TeardownDeleteWindow {
+		return out, nil
+	}
+	if now.IsZero() {
+		return WindowRootCascadeDeletePlan{}, inputErr(op, ErrInvalidRegistry, "plan timestamp is required")
+	}
+	if err := registry.Validate(); err != nil {
+		return WindowRootCascadeDeletePlan{}, fmt.Errorf("%s source Registry: %w", op, err)
+	}
+	pane, ok := registry.Pane(paneEvent.Chain.PaneUID)
+	if !ok || pane.Status.Teardown == nil {
+		out.Decision.Action = TeardownRefuse
+		out.Decision.Reason = TeardownReasonStaleGeneration
+		return out, nil
+	}
+	evidence := pane.Status.Teardown
+	if evidence.SocketIdentity != paneEvent.Chain.SocketIdentity ||
+		evidence.RuntimeSessionID != paneEvent.Chain.SessionHandle ||
+		evidence.RuntimePaneID != paneEvent.Chain.PaneHandle ||
+		evidence.RuntimeWindowID != paneEvent.Chain.WindowHandle ||
+		evidence.WindowUID != paneEvent.Chain.WindowUID || evidence.RootKind != paneEvent.Chain.RootKind ||
+		evidence.RootUID != paneEvent.Chain.RootUID || evidence.Generation != paneEvent.Chain.Generation ||
+		evidence.Classification != paneEvent.Classification {
+		out.Decision.Action = TeardownRefuse
+		out.Decision.Reason = TeardownReasonStaleOwnerBinding
+		return out, nil
+	}
+	window, ok := registry.Window(paneEvent.Chain.WindowUID)
+	if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != paneEvent.Chain.RootKind ||
+		window.Metadata.OwnerRef.UID != paneEvent.Chain.RootUID {
+		out.Decision.Action = TeardownRefuse
+		out.Decision.Reason = TeardownReasonStaleOwnerBinding
+		return out, nil
+	}
+	desired := registry.Clone()
+	mutator := Mutator{Now: func() time.Time { return now.UTC() }}
+	projectRoot := ""
+	deletedProjects := 0
+	deletedWindows := 1
+	deletedPanes := len(registry.PanesOf(window.Metadata.UID))
+	deletedAgents := len(registry.AgentsOf(window.Metadata.UID))
+	for _, agent := range registry.AgentsOf(window.Metadata.UID) {
+		deletedPanes += len(registry.PanesOf(agent.Metadata.UID))
+	}
+	reservationsBefore := len(registry.NameReservations)
+	if decision.RootAction == RootTeardownDeleteProject {
+		project, exists := registry.Project(paneEvent.Chain.RootUID)
+		if !exists {
+			out.Decision.Action = TeardownRefuse
+			out.Decision.Reason = TeardownReasonStaleOwnerBinding
+			return out, nil
+		}
+		projectRoot = project.Spec.Root
+		deletedProjects = 1
+		deletedWindows = len(registry.WindowsOf(project.Metadata.UID))
+		deletedPanes = len(registry.projectPanes(project.Metadata.UID))
+		deletedAgents = projectAgentCount(registry, project.Metadata.UID)
+		if err := mutator.DeleteProject(&desired, project.Metadata.UID); err != nil {
+			return WindowRootCascadeDeletePlan{}, err
+		}
+	} else if err := mutator.DeleteWindow(&desired, window.Metadata.UID); err != nil {
+		return WindowRootCascadeDeletePlan{}, err
+	}
+	if err := desired.Validate(); err != nil {
+		return WindowRootCascadeDeletePlan{}, fmt.Errorf("%s desired Registry: %w", op, err)
+	}
+	return WindowRootCascadeDeletePlan{
+		Decision: decision, Desired: desired, Changed: true, PaneUID: pane.Metadata.UID,
+		WindowUID: window.Metadata.UID, RootKind: paneEvent.Chain.RootKind, RootUID: paneEvent.Chain.RootUID,
+		ProjectRoot: projectRoot, DeletedProjects: deletedProjects, DeletedWindows: deletedWindows,
+		DeletedPanes: deletedPanes, DeletedAgents: deletedAgents,
+		DeletedReservations: reservationsBefore - len(desired.NameReservations),
 	}, nil
 }
 

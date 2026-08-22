@@ -848,6 +848,15 @@ func (c *createCommand) materializeWindow(
 	if mirrorErr := c.runtime.mirror.MirrorWindow(ctx, created.WindowID, work.window); mirrorErr != nil {
 		return errors.Join(err, mirrorErr)
 	}
+	if strings.TrimSpace(sessionName) != "" || strings.TrimSpace(created.WindowID) != "" {
+		projected, bindingErr := mutator.ObserveWindowRuntimeBinding(
+			working, work.window.Metadata.UID, sessionName, created.WindowID,
+		)
+		if bindingErr != nil {
+			return errors.Join(err, bindingErr)
+		}
+		work.window = projected
+	}
 	if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, work.initial.Metadata.UID, ledger); claimErr != nil {
 		return errors.Join(err, claimErr)
 	}
@@ -905,6 +914,13 @@ func (c *createCommand) ensureAnchorPane(
 			}
 			if mirrorErr := c.runtime.mirror.MirrorWindow(ctx, windowID, *window); mirrorErr != nil {
 				return "", errors.Join(err, mirrorErr)
+			}
+			if strings.TrimSpace(sessionName) != "" || strings.TrimSpace(windowID) != "" {
+				if _, bindingErr := mutator.ObserveWindowRuntimeBinding(
+					working, window.Metadata.UID, sessionName, windowID,
+				); bindingErr != nil {
+					return "", errors.Join(err, bindingErr)
+				}
 			}
 			if strings.TrimSpace(window.Spec.PrimaryPaneRef) == target.anchorUID {
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, anchor.Metadata.UID, ledger); claimErr != nil {
@@ -1016,6 +1032,15 @@ func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coreme
 	first = projected
 	if err := c.runtime.mirror.MirrorWindow(ctx, created.WindowID, first); err != nil {
 		return err
+	}
+	if strings.TrimSpace(created.SessionID) != "" || strings.TrimSpace(created.WindowID) != "" {
+		projected, err := mutator.ObserveWindowRuntimeBinding(
+			registry, first.Metadata.UID, created.SessionID, created.WindowID,
+		)
+		if err != nil {
+			return err
+		}
+		first = projected
 	}
 	primary, ok := registry.Pane(strings.TrimSpace(first.Spec.PrimaryPaneRef))
 	if !ok {

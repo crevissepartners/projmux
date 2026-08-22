@@ -19,7 +19,7 @@ func TestLifecycleHookRoutesCarryExactPaneAndWindowEvidence(t *testing.T) {
 	recorder := &recordingTriggering{}
 	cmd := &tmuxCommand{runner: newFakeTmux(), triggerRunner: recorder}
 	for _, args := range [][]string{
-		{"--socket-path", socket, "--session", "$1", "--reason", "pane-exited", "--hook-pane", "%9", "--hook-window", "@4"},
+		{"--socket-path", socket, "--reason", "pane-exited", "--hook-pane", "%9"},
 		{"--socket-path", socket, "--session", "$1", "--reason", "pane-killed"},
 		{"--socket-path", socket, "--session", "$1", "--reason", "window-unlinked", "--hook-window", "@7"},
 	} {
@@ -27,7 +27,7 @@ func TestLifecycleHookRoutesCarryExactPaneAndWindowEvidence(t *testing.T) {
 			t.Fatalf("runConverge(%v): %v", args, err)
 		}
 	}
-	if len(recorder.triggers) != 3 || recorder.triggers[0].hookPane != "%9" || recorder.triggers[0].hookWindow != "@4" ||
+	if len(recorder.triggers) != 3 || recorder.triggers[0].session != "" || recorder.triggers[0].hookPane != "%9" || recorder.triggers[0].hookWindow != "" ||
 		recorder.triggers[1].hookPane != "" || recorder.triggers[1].hookWindow != "" ||
 		recorder.triggers[2].hookWindow != "@7" {
 		t.Fatalf("triggers = %+v", recorder.triggers)

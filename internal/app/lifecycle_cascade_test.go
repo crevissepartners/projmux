@@ -8,13 +8,31 @@ import (
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/pins"
 )
 
 type exactPaneExitInventory struct {
-	uids      map[string]bool
-	windowUID string
-	err       error
-	calls     int
+	uids           map[string]bool
+	windowUID      string
+	windows        map[string]bool
+	windowSessions map[string]int
+	err            error
+	calls          int
+	hostPanes      int
+}
+
+func (i *exactPaneExitInventory) LiveWindowUIDs(context.Context) (map[string]bool, error) {
+	if i.err != nil {
+		return nil, i.err
+	}
+	return i.windows, nil
+}
+
+func (i *exactPaneExitInventory) LiveWindowSessionCounts(context.Context) (map[string]int, error) {
+	if i.err != nil {
+		return nil, i.err
+	}
+	return i.windowSessions, nil
 }
 
 func (i *exactPaneExitInventory) LivePaneUIDs(context.Context) (map[string]bool, error) {
@@ -23,6 +41,16 @@ func (i *exactPaneExitInventory) LivePaneUIDs(context.Context) (map[string]bool,
 		return nil, i.err
 	}
 	return i.uids, nil
+}
+
+func (i *exactPaneExitInventory) LivePaneCount(context.Context) (int, error) {
+	if i.err != nil {
+		return 0, i.err
+	}
+	if i.hostPanes != 0 {
+		return i.hostPanes, nil
+	}
+	return len(i.uids), nil
 }
 
 func (i *exactPaneExitInventory) ResolveWindowUID(context.Context, string) (string, error) {
@@ -46,14 +74,293 @@ func activateExactPane(t *testing.T, store *fakeResourceStore, paneUID, agentUID
 	if _, err := store.mutator().ObservePaneActivationRuntime(&store.registry, paneUID, generation, runtimeID); err != nil {
 		t.Fatalf("ObservePaneActivationRuntime: %v", err)
 	}
+	pane, ok := store.registry.Pane(paneUID)
+	if !ok {
+		t.Fatalf("Pane %q disappeared", paneUID)
+	}
+	windowUID, ok := paneWindowUID(store.registry, *pane)
+	if !ok {
+		t.Fatalf("Pane %q has no Window owner", paneUID)
+	}
+	for i := range store.registry.Windows {
+		if store.registry.Windows[i].Metadata.UID == windowUID {
+			store.registry.Windows[i].Status.RuntimeSessionID = "$1"
+			store.registry.Windows[i].Status.RuntimeID = "@4"
+			return
+		}
+	}
+	t.Fatalf("Window %q disappeared", windowUID)
 }
 
 func exactPaneExitDirty(receipts ...coremetadata.TerminationEvidence) lifecycleDirtyEvent {
 	return lifecycleDirtyEvent{
 		target:        explicitTmuxTarget{flag: "-S", value: "/tmp/phase2-exact.sock"},
-		runtimePaneID: "%9", runtimeWindowID: "@4",
-		teardownKind: coremetadata.TeardownEventPaneExited,
-		receipts:     receipts,
+		runtimePaneID: "%9",
+		teardownKind:  coremetadata.TeardownEventPaneExited,
+		receipts:      receipts,
+	}
+}
+
+type lifecyclePinStore struct {
+	set     pins.Set
+	saves   int
+	loadErr error
+	saveErr error
+}
+
+func (s *lifecyclePinStore) Path() string            { return "/tmp/phase3-pins" }
+func (s *lifecyclePinStore) Load() (pins.Set, error) { return s.set, s.loadErr }
+func (s *lifecyclePinStore) Save(set pins.Set) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	s.set = set
+	s.saves++
+	return nil
+}
+
+func renameFixtureProjectUID(t *testing.T, registry *coremetadata.Registry, oldUID, newUID string) {
+	t.Helper()
+	for i := range registry.Projects {
+		if registry.Projects[i].Metadata.UID == oldUID {
+			registry.Projects[i].Metadata.UID = newUID
+		}
+	}
+	for i := range registry.Windows {
+		owner := registry.Windows[i].Metadata.OwnerRef
+		if owner != nil && owner.Kind == coremetadata.KindProject && owner.UID == oldUID {
+			owner.UID = newUID
+		}
+	}
+	for i := range registry.NameReservations {
+		if registry.NameReservations[i].Scope == oldUID {
+			registry.NameReservations[i].Scope = newUID
+		}
+		if registry.NameReservations[i].UID == oldUID {
+			registry.NameReservations[i].UID = newUID
+		}
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("renamed fixture Project uid: %v", err)
+	}
+}
+
+func prepareLastBetaProjectCascade(t *testing.T) (*fakeResourceStore, *exactPaneExitInventory, lifecycleDirtyEvent) {
+	t.Helper()
+	store := newFakeResourceStore(t)
+	renameFixtureProjectUID(t, &store.registry, "prj-beta", "proj-beta")
+	activateExactPane(t, store, "pan-beta-zsh", "", "gen-last", "%9")
+	receipt := phase2NormalReceipt("pan-beta-zsh", "", "gen-last")
+	live := exitReconcileFixtureLiveExcept("pan-beta-zsh")
+	live["pan-gone-zsh"] = true
+	inventory := &exactPaneExitInventory{uids: live, windowUID: "win-beta-main"}
+	if _, err := reconcileLifecycle(context.Background(), exactPaneExitDirty(receipt), inventory, store.store()); err != nil {
+		t.Fatal(err)
+	}
+	inventory.windows = map[string]bool{"win-alpha-main": true, "win-alpha-review": true}
+	inventory.windowSessions = map[string]int{}
+	event := exactPaneExitDirty()
+	event.teardownKind = coremetadata.TeardownEventWindowUnlinked
+	event.runtimePaneID = ""
+	event.runtimeSessionID = "$1"
+	event.runtimeWindowID = "@4"
+	return store, inventory, event
+}
+
+func TestLastPaneThenWindowUnlinkedDeletesLastProjectGraphAndConvertsPin(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	renameFixtureProjectUID(t, &store.registry, "prj-beta", "proj-beta")
+	alphaBefore, _ := store.registry.Project("prj-alpha")
+	alphaWindowsBefore := store.registry.WindowsOf("prj-alpha")
+	alphaPanesBefore := []coremetadata.Pane{}
+	for _, window := range alphaWindowsBefore {
+		alphaPanesBefore = append(alphaPanesBefore, store.registry.PanesOf(window.Metadata.UID)...)
+	}
+	activateExactPane(t, store, "pan-beta-zsh", "", "gen-last", "%9")
+	receipt := phase2NormalReceipt("pan-beta-zsh", "", "gen-last")
+	live := exitReconcileFixtureLiveExcept("pan-beta-zsh")
+	live["pan-gone-zsh"] = true
+	inventory := &exactPaneExitInventory{uids: live, windowUID: "win-beta-main"}
+
+	pending, err := reconcileLifecycle(context.Background(), exactPaneExitDirty(receipt), inventory, store.store())
+	if err != nil {
+		t.Fatalf("record last-Pane evidence: %v", err)
+	}
+	if len(pending.pending) != 1 || pending.transactions != 1 {
+		t.Fatalf("pending result = %+v", pending)
+	}
+	if _, ok := store.registry.Project("proj-beta"); !ok {
+		t.Fatal("pane-exited deleted the Project before window-unlinked")
+	}
+
+	managed, _ := pins.ProjectPin("proj-beta")
+	other, _ := pins.CandidatePin("/srv/other")
+	pinStore := &lifecyclePinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{other, managed}}}
+	inventory.windows = map[string]bool{"win-alpha-main": true, "win-alpha-review": true}
+	inventory.windowSessions = map[string]int{}
+	unlinked := exactPaneExitDirty()
+	unlinked.teardownKind = coremetadata.TeardownEventWindowUnlinked
+	unlinked.runtimePaneID = ""
+	unlinked.runtimeSessionID = "$1"
+	unlinked.runtimeWindowID = "@4"
+	unlinked.pinStore = pinStore
+	result, err := reconcileLifecycle(context.Background(), unlinked, inventory, store.store())
+	if err != nil {
+		t.Fatalf("cascade last Project boundary: %v", err)
+	}
+	if len(result.rootCascaded) != 1 || !result.rootCascaded[0].Changed || result.transactions != 1 {
+		t.Fatalf("root cascade result = %+v", result)
+	}
+	for _, uid := range []string{"proj-beta", "win-beta-main", "pan-beta-zsh"} {
+		if _, ok := registryUIDs(store.registry)[uid]; ok {
+			t.Fatalf("deleted Project descendant %s survived", uid)
+		}
+	}
+	for _, uid := range []string{"prj-alpha", "win-alpha-main", "pan-alpha-zsh"} {
+		if _, ok := registryUIDs(store.registry)[uid]; !ok {
+			t.Fatalf("sibling resource %s was deleted", uid)
+		}
+	}
+	alphaAfter, _ := store.registry.Project("prj-alpha")
+	alphaWindowsAfter := store.registry.WindowsOf("prj-alpha")
+	alphaPanesAfter := []coremetadata.Pane{}
+	for _, window := range alphaWindowsAfter {
+		alphaPanesAfter = append(alphaPanesAfter, store.registry.PanesOf(window.Metadata.UID)...)
+	}
+	if !reflect.DeepEqual(alphaBefore, alphaAfter) || !reflect.DeepEqual(alphaWindowsBefore, alphaWindowsAfter) || !reflect.DeepEqual(alphaPanesBefore, alphaPanesAfter) {
+		t.Fatal("last-Project cascade changed the sibling Project graph")
+	}
+	if pinStore.saves != 1 || len(pinStore.set.Pins) != 2 || pinStore.set.Pins[1].Kind != pins.KindCandidate || pinStore.set.Pins[1].Value != "/srv/beta" {
+		t.Fatalf("post-delete pins = %+v, saves=%d", pinStore.set, pinStore.saves)
+	}
+	if repeat, err := reconcileLifecycle(context.Background(), unlinked, inventory, store.store()); err != nil || repeat.transactions != 0 {
+		t.Fatalf("duplicate unlink = %+v, %v", repeat, err)
+	}
+}
+
+func TestProjectCascadePinFailuresRetainRegistryAndRollbackPreference(t *testing.T) {
+	t.Parallel()
+	managed, _ := pins.ProjectPin("proj-beta")
+	other, _ := pins.CandidatePin("/srv/other")
+	initial := pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{other, managed}}
+
+	t.Run("pin save failure", func(t *testing.T) {
+		store, inventory, event := prepareLastBetaProjectCascade(t)
+		pinStore := &lifecyclePinStore{set: initial, saveErr: errors.New("pin read-only")}
+		event.pinStore = pinStore
+		before := store.snapshot()
+		if _, err := reconcileLifecycle(context.Background(), event, inventory, store.store()); err == nil {
+			t.Fatal("pin failure did not refuse the cascade")
+		}
+		if store.snapshot() != before || !reflect.DeepEqual(pinStore.set, initial) {
+			t.Fatal("pin failure changed Registry or preferences")
+		}
+	})
+
+	t.Run("Registry commit failure rolls pin back", func(t *testing.T) {
+		store, inventory, event := prepareLastBetaProjectCascade(t)
+		pinStore := &lifecyclePinStore{set: initial}
+		event.pinStore = pinStore
+		failing := store.store()
+		failing.updateConvergent = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+			working := store.registry.Clone()
+			if err := fn(&working); err != nil {
+				return coremetadata.Registry{}, false, err
+			}
+			return coremetadata.Registry{}, false, errors.New("Registry replace failed")
+		}
+		before := store.snapshot()
+		if _, err := reconcileLifecycle(context.Background(), event, inventory, failing); err == nil {
+			t.Fatal("Registry failure did not surface")
+		}
+		if store.snapshot() != before || !reflect.DeepEqual(pinStore.set, initial) || pinStore.saves != 2 {
+			t.Fatalf("rollback Registry=%t pins=%+v saves=%d", store.snapshot() == before, pinStore.set, pinStore.saves)
+		}
+	})
+}
+
+func TestWindowUnlinkedWithoutExactPendingEvidenceWritesNothing(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	before := store.snapshot()
+	live := make(map[string]bool, len(store.registry.Panes))
+	for _, pane := range store.registry.Panes {
+		live[pane.Metadata.UID] = true
+	}
+	event := exactPaneExitDirty()
+	event.teardownKind = coremetadata.TeardownEventWindowUnlinked
+	event.runtimePaneID = ""
+	event.runtimeSessionID = "$1"
+	event.runtimeWindowID = "@4"
+	result, err := reconcileLifecycle(context.Background(), event,
+		&exactPaneExitInventory{uids: live, windows: map[string]bool{}, windowSessions: map[string]int{}}, store.store())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.transactions != 0 || store.snapshot() != before {
+		t.Fatalf("unpaired window-unlinked result=%+v changed Registry", result)
+	}
+}
+
+func TestLastPaneOfNonLastProjectWindowDeletesOnlyThatWindow(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-alpha-review", "", "gen-review", "%9")
+	receipt := phase2NormalReceipt("pan-alpha-review", "", "gen-review")
+	live := exitReconcileFixtureLiveExcept("pan-alpha-review")
+	live["pan-gone-zsh"] = true
+	inventory := &exactPaneExitInventory{uids: live, windowUID: "win-alpha-review"}
+	if _, err := reconcileLifecycle(context.Background(), exactPaneExitDirty(receipt), inventory, store.store()); err != nil {
+		t.Fatal(err)
+	}
+	inventory.windows = map[string]bool{"win-alpha-main": true, "win-beta-main": true}
+	inventory.windowSessions = map[string]int{"$1": 1}
+	event := exactPaneExitDirty()
+	event.teardownKind = coremetadata.TeardownEventWindowUnlinked
+	event.runtimePaneID = ""
+	event.runtimeSessionID = "$1"
+	event.runtimeWindowID = "@4"
+	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.rootCascaded) != 1 || result.rootCascaded[0].Decision.RootAction != coremetadata.RootTeardownRetainProject {
+		t.Fatalf("non-last Window cascade = %+v", result)
+	}
+	if _, ok := store.registry.Window("win-alpha-review"); ok {
+		t.Fatal("unlinked Window survived")
+	}
+	if project, ok := store.registry.Project("prj-alpha"); !ok || project.Spec.PrimaryWindowRef != "win-alpha-main" {
+		t.Fatalf("Project root/sibling changed: %+v", project)
+	}
+}
+
+func TestUnmirroredSiblingWindowRefusesRootCascade(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-beta-zsh", "", "gen-foreign", "%9")
+	receipt := phase2NormalReceipt("pan-beta-zsh", "", "gen-foreign")
+	live := exitReconcileFixtureLiveExcept("pan-beta-zsh")
+	live["pan-gone-zsh"] = true
+	inventory := &exactPaneExitInventory{uids: live, windowUID: "win-beta-main"}
+	if _, err := reconcileLifecycle(context.Background(), exactPaneExitDirty(receipt), inventory, store.store()); err != nil {
+		t.Fatal(err)
+	}
+	before := store.snapshot()
+	inventory.windows = map[string]bool{"win-alpha-main": true}
+	inventory.windowSessions = map[string]int{"$1": 1}
+	event := exactPaneExitDirty()
+	event.teardownKind = coremetadata.TeardownEventWindowUnlinked
+	event.runtimePaneID = ""
+	event.runtimeSessionID = "$1"
+	event.runtimeWindowID = "@4"
+	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.transactions != 0 || store.snapshot() != before {
+		t.Fatalf("unmirrored sibling result=%+v changed Registry", result)
 	}
 }
 
@@ -133,7 +440,6 @@ func TestExactPaneExitNegativeAuthorityRowsProduceDeletePlanZero(t *testing.T) {
 		{name: "killed", classification: coremetadata.TerminationKilled, source: coremetadata.TerminationSourceSupervisor, live: exitReconcileFixtureLiveExcept("pan-alpha-codex"), windowUID: "win-alpha-main"},
 		{name: "unknown", classification: coremetadata.TerminationUnknown, source: coremetadata.TerminationSourceReconcile, live: exitReconcileFixtureLiveExcept("pan-alpha-codex"), windowUID: "win-alpha-main"},
 		{name: "empty inventory", classification: coremetadata.TerminationNormal, source: coremetadata.TerminationSourceSupervisor, live: map[string]bool{}, windowUID: "win-alpha-main"},
-		{name: "foreign window", classification: coremetadata.TerminationNormal, source: coremetadata.TerminationSourceSupervisor, live: exitReconcileFixtureLiveExcept("pan-alpha-codex"), windowUID: "win-alpha-review"},
 		{name: "unavailable", classification: coremetadata.TerminationNormal, source: coremetadata.TerminationSourceSupervisor, inventoryErr: errors.New("permission denied")},
 	} {
 		t.Run(test.name, func(t *testing.T) {

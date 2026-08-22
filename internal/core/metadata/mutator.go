@@ -461,6 +461,32 @@ func (m Mutator) ObserveWindowDisplayName(reg *Registry, windowUID, displayName 
 	return window.Clone(), nil
 }
 
+// ObserveWindowRuntimeBinding records the exact live tmux owner pair for one
+// managed Window. The binding is retained when a later inventory reports the
+// Window missing: teardown hooks need the last positive $N/@N observation to
+// pair pane-exited with window-unlinked without consulting current client
+// context after the Window is gone.
+func (m Mutator) ObserveWindowRuntimeBinding(reg *Registry, windowUID, sessionID, runtimeID string) (Window, error) {
+	const op = "observe window runtime binding"
+
+	window, ok := reg.Window(windowUID)
+	if !ok {
+		return Window{}, stateErr(op, ErrNotFound, "window %q does not exist", windowUID)
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	runtimeID = strings.TrimSpace(runtimeID)
+	if !validRuntimeHandle(sessionID, '$') || !validRuntimeHandle(runtimeID, '@') {
+		return Window{}, inputErr(op, ErrInvalidRegistry, "window %q requires exact $N/@N runtime handles", windowUID)
+	}
+	if window.Status.RuntimeSessionID == sessionID && window.Status.RuntimeID == runtimeID {
+		return window.Clone(), nil
+	}
+	window.Status.RuntimeSessionID = sessionID
+	window.Status.RuntimeID = runtimeID
+	reg.UpdatedAt = m.clock()().UTC()
+	return window.Clone(), nil
+}
+
 // RenameWindow sets a Window metadata.name inside its owning Project scope.
 func (m Mutator) RenameWindow(reg *Registry, windowUID, name string) (Window, error) {
 	const op = "rename window"

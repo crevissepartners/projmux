@@ -4,10 +4,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -129,13 +131,23 @@ func (l controllerEventLog) lockPath(target explicitTmuxTarget) string {
 
 // mark records one dirty event for target.
 //
-// The body is diagnostic only. Nothing reads it back to decide anything, which
-// is deliberate: the moment a worker trusted an event's contents it would be
-// acting on a claim about a machine state that has already moved on.
-func (l controllerEventLog) mark(target explicitTmuxTarget, reason controllerTriggerReason) error {
+// The body carries only the exact hook envelope. It never claims resulting
+// machine state; the lease holder re-observes the exact socket before acting.
+// Persisting these values prevents a pane-exited/window-unlinked burst from
+// widening away the two causal halves before they reach the authority kernel.
+type controllerEventRecord struct {
+	Reason     controllerTriggerReason `json:"reason"`
+	Session    string                  `json:"session,omitempty"`
+	HookPane   string                  `json:"hookPane,omitempty"`
+	HookWindow string                  `json:"hookWindow,omitempty"`
+	Retry      int                     `json:"retry,omitempty"`
+}
+
+func (l controllerEventLog) mark(trigger controllerTrigger) error {
 	if strings.TrimSpace(l.dir) == "" {
 		return errors.New("controller event log has no state directory")
 	}
+	target := trigger.target
 	if target.flag == "" || target.value == "" {
 		return errors.New("controller event log requires an explicit tmux target")
 	}
@@ -152,12 +164,44 @@ func (l controllerEventLog) mark(target explicitTmuxTarget, reason controllerTri
 		return err
 	}
 	path := filepath.Join(dir, name)
-	body := string(reason) + " " + target.label() + "\n"
-	// #nosec G306 -- PrivateFileMode is 0600; the event body is projmux's own
-	// reason label and the exact target the caller already routed to.
-	if err := os.WriteFile(path, []byte(body), localstate.PrivateFileMode); err != nil {
-		return fmt.Errorf("record controller event: %w", err)
+	body, err := json.Marshal(controllerEventRecord{
+		Reason: trigger.reason, Session: trigger.session, HookPane: trigger.hookPane,
+		HookWindow: trigger.hookWindow, Retry: trigger.retry,
+	})
+	if err != nil {
+		return fmt.Errorf("encode controller event: %w", err)
 	}
+	body = append(body, '\n')
+	// Build the record outside the queue directory, then publish it with one
+	// rename. A lease holder may drain while producers are marking; exposing the
+	// final nonce before WriteFile completes would let it observe empty or
+	// partial JSON and turn an ordinary hook burst into a decode failure.
+	tmp, err := os.CreateTemp(l.dir, "."+l.key(target)+".event-*")
+	if err != nil {
+		return fmt.Errorf("create controller event: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(localstate.PrivateFileMode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("secure controller event: %w", err)
+	}
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write controller event: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close controller event: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("publish controller event: %w", err)
+	}
+	cleanup = false
 	return nil
 }
 
@@ -168,26 +212,58 @@ func (l controllerEventLog) mark(target explicitTmuxTarget, reason controllerTri
 // arrives during a pass count as a new one: the alternative acknowledges work
 // the pass could not have seen, which is precisely the lost-wakeup this loop
 // exists to avoid.
-func (l controllerEventLog) drain(target explicitTmuxTarget) (int, error) {
+func (l controllerEventLog) drain(target explicitTmuxTarget) ([]controllerTrigger, error) {
 	dir := l.eventsDir(target)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return 0, nil
+			return nil, nil
 		}
-		return 0, fmt.Errorf("read controller events: %w", err)
+		return nil, fmt.Errorf("read controller events: %w", err)
 	}
-	drained := 0
+	drained := make([]controllerTrigger, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+		path := filepath.Join(dir, entry.Name())
+		// #nosec G304 -- path is one entry returned by ReadDir for the private,
+		// target-keyed controller queue; no caller-supplied path is accepted.
+		body, readErr := os.ReadFile(path)
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return drained, fmt.Errorf("read controller event: %w", readErr)
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return drained, fmt.Errorf("acknowledge controller event: %w", err)
 		}
-		drained++
+		if readErr != nil {
+			continue
+		}
+		var record controllerEventRecord
+		if err := json.Unmarshal(body, &record); err != nil {
+			return drained, fmt.Errorf("decode controller event: %w", err)
+		}
+		if !slices.Contains(controllerTriggerReasons(), record.Reason) {
+			return drained, fmt.Errorf("decode controller event: unknown reason %q", record.Reason)
+		}
+		drained = append(drained, controllerTrigger{
+			reason: record.Reason, target: target, session: record.Session,
+			hookPane: record.HookPane, hookWindow: record.HookWindow, retry: record.Retry,
+		})
 	}
+	sortControllerTriggers(drained)
 	return drained, nil
+}
+
+func controllerEventPriority(reason controllerTriggerReason) int {
+	switch reason {
+	case controllerTriggerPaneExited:
+		return 0
+	case controllerTriggerWindowUnlinked:
+		return 1
+	default:
+		return 2
+	}
 }
 
 // pending reports whether any event is currently recorded for target. It is a

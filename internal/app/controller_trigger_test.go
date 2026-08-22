@@ -166,6 +166,66 @@ func TestABurstOfProducersCostsOneWorker(t *testing.T) {
 	}
 }
 
+func TestWindowUnlinkedArrivingFirstIsReplayedAfterItsCausalPaneExit(t *testing.T) {
+	t.Parallel()
+
+	fixture := newTriggerFixture(t,
+		controllerPassResult{awaitingPaneExit: true},
+		controllerPassResult{rebound: true},
+		controllerPassResult{rebound: true},
+		controllerPassResult{},
+	)
+	fixture.beforePass = func(pass int) {
+		if pass != 1 {
+			return
+		}
+		if err := fixture.runner.events.mark(controllerTrigger{
+			reason: controllerTriggerPaneExited, target: fixture.target, hookPane: "%9",
+		}); err != nil {
+			t.Fatalf("coalesced pane-exited mark: %v", err)
+		}
+	}
+	outcome, err := fixture.runner.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerWindowUnlinked, target: fixture.target, session: "$1", hookWindow: "@4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.passes != 4 || outcome.events != 2 || !outcome.converged {
+		t.Fatalf("outcome = %s, want unlink, pane/unlink replay, verification", outcome.describe())
+	}
+	want := []controllerTriggerReason{
+		controllerTriggerWindowUnlinked,
+		controllerTriggerPaneExited,
+		controllerTriggerWindowUnlinked,
+		controllerTriggerWindowUnlinked,
+	}
+	for i, reason := range want {
+		if fixture.triggers[i].reason != reason {
+			t.Fatalf("pass %d reason = %s, want %s", i+1, fixture.triggers[i].reason, reason)
+		}
+	}
+}
+
+func TestStandaloneWindowUnlinkedPersistsOneBoundedCausalRetry(t *testing.T) {
+	t.Parallel()
+
+	fixture := newTriggerFixture(t, controllerPassResult{awaitingPaneExit: true})
+	outcome, err := fixture.runner.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerWindowUnlinked, target: fixture.target, session: "$1", hookWindow: "@4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.passes != 1 || outcome.events != 1 || outcome.deferred == "" || outcome.converged {
+		t.Fatalf("outcome = %s, want one deferred causal retry", outcome.describe())
+	}
+	queued, err := fixture.runner.events.drain(fixture.target)
+	if err != nil || len(queued) != 1 || queued[0].retry != 1 || queued[0].reason != controllerTriggerWindowUnlinked {
+		t.Fatalf("queued retry = %+v, err=%v", queued, err)
+	}
+}
+
 // TestPaneKilledCoalescedBehindExactPaneExitWidensEveryLaterPass prevents a
 // narrow lease holder from acknowledging a broader kill event without ever
 // observing the rest of the host. Once the pending event is visible, both its
@@ -223,7 +283,7 @@ func TestTheCoalescingLoopIsBounded(t *testing.T) {
 	fixture := newTriggerFixture(t)
 	fixture.runner.maxPasses = 3
 	fixture.beforePass = func(int) {
-		if err := fixture.runner.events.mark(fixture.target, controllerTriggerPaneKilled); err != nil {
+		if err := fixture.runner.events.mark(controllerTrigger{target: fixture.target, reason: controllerTriggerPaneKilled}); err != nil {
 			t.Fatalf("mark: %v", err)
 		}
 	}
@@ -320,10 +380,10 @@ func TestTheEventLogKeepsSiblingServersApart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := log.mark(primary, controllerTriggerPaneKilled); err != nil {
+	if err := log.mark(controllerTrigger{target: primary, reason: controllerTriggerPaneKilled}); err != nil {
 		t.Fatalf("mark primary: %v", err)
 	}
-	if err := log.mark(primary, controllerTriggerRuntimeCreated); err != nil {
+	if err := log.mark(controllerTrigger{target: primary, reason: controllerTriggerRuntimeCreated}); err != nil {
 		t.Fatalf("mark primary again: %v", err)
 	}
 	pending, err := log.pending(secondary)
@@ -334,18 +394,56 @@ func TestTheEventLogKeepsSiblingServersApart(t *testing.T) {
 		t.Fatal("an event on one server appeared on a sibling")
 	}
 	drained, err := log.drain(secondary)
-	if err != nil || drained != 0 {
-		t.Fatalf("drain secondary = %d, %v; want zero", drained, err)
+	if err != nil || len(drained) != 0 {
+		t.Fatalf("drain secondary = %d, %v; want zero", len(drained), err)
 	}
 	drained, err = log.drain(primary)
-	if err != nil || drained != 2 {
-		t.Fatalf("drain primary = %d, %v; want the two marked events", drained, err)
+	if err != nil || len(drained) != 2 {
+		t.Fatalf("drain primary = %d, %v; want the two marked events", len(drained), err)
 	}
 	// Draining is idempotent, and a never-marked server reads clean without the
 	// read creating anything.
 	drained, err = log.drain(primary)
-	if err != nil || drained != 0 {
-		t.Fatalf("repeat drain = %d, %v; want zero", drained, err)
+	if err != nil || len(drained) != 0 {
+		t.Fatalf("repeat drain = %d, %v; want zero", len(drained), err)
+	}
+}
+
+func TestControllerEventLogPreservesExactLifecycleEnvelopesInCausalOrder(t *testing.T) {
+	t.Parallel()
+
+	log := controllerEventLog{dir: t.TempDir()}
+	target, err := tmuxSocketNameTarget("phase3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := controllerTrigger{
+		reason: controllerTriggerWindowUnlinked, target: target, session: "$4",
+		hookWindow: "@7",
+	}
+	pane := controllerTrigger{
+		reason: controllerTriggerPaneExited, target: target, session: "$4",
+		hookPane: "%9", hookWindow: "@7",
+	}
+	// Mark in the adversarial order. The queue must replay the causal pane half
+	// first without widening away either envelope.
+	if err := log.mark(window); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.mark(pane); err != nil {
+		t.Fatal(err)
+	}
+	events, err := log.drain(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].reason != controllerTriggerPaneExited || events[1].reason != controllerTriggerWindowUnlinked ||
+		events[0].hookPane != "%9" || events[0].hookWindow != "@7" || events[1].hookWindow != "@7" {
+		t.Fatalf("drained lifecycle envelopes = %+v", events)
+	}
+	passes := controllerPassTriggers(events, window)
+	if len(passes) != 2 || passes[0].fullReobserve || passes[1].fullReobserve {
+		t.Fatalf("lifecycle pass envelopes were widened: %+v", passes)
 	}
 }
 
@@ -366,8 +464,8 @@ func TestAReadOnTheEventLogCreatesNothing(t *testing.T) {
 	if pending, err := log.pending(target); err != nil || pending {
 		t.Fatalf("pending = %t, %v; want a clean read", pending, err)
 	}
-	if drained, err := log.drain(target); err != nil || drained != 0 {
-		t.Fatalf("drain = %d, %v; want a clean read", drained, err)
+	if drained, err := log.drain(target); err != nil || len(drained) != 0 {
+		t.Fatalf("drain = %d, %v; want a clean read", len(drained), err)
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stat %s = %v; want the directory not to exist", dir, err)

@@ -54,7 +54,9 @@ type ControlSessionObservation struct {
 type ControlSessionWindow struct {
 	// DisplayName is the tmux window_name. It is projected onto the
 	// duplicate-allowed metadata.displayName and is never a name seed.
-	DisplayName string
+	DisplayName      string
+	RuntimeSessionID string
+	RuntimeID        string
 	// UID is the `@projmux_window_uid` the live window already carries, empty
 	// when it carries none.
 	UID string
@@ -250,6 +252,8 @@ func (m Mutator) bindControlWindowTx(txn *Transaction, reg *Registry, op, contro
 	if !ok {
 		return nil
 	}
+	window.Status.RuntimeSessionID = strings.TrimSpace(observed.RuntimeSessionID)
+	window.Status.RuntimeID = strings.TrimSpace(observed.RuntimeID)
 	result.Windows = append(result.Windows, ImportedWindow{
 		UID:                     windowUID,
 		Name:                    window.Metadata.Name,

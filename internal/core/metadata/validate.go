@@ -95,6 +95,14 @@ func (r Registry) Validate() error {
 		if err := r.requireOwner(op, KindWindow, window.Metadata, KindProject, KindControlSession); err != nil {
 			return err
 		}
+		sessionID := strings.TrimSpace(window.Status.RuntimeSessionID)
+		windowID := strings.TrimSpace(window.Status.RuntimeID)
+		if (sessionID == "") != (windowID == "") {
+			return stateErr(op, ErrInvalidRegistry, "window %q has an incomplete runtime owner binding", window.Metadata.Name)
+		}
+		if sessionID != "" && (!validRuntimeHandle(sessionID, '$') || !validRuntimeHandle(windowID, '@')) {
+			return stateErr(op, ErrInvalidRegistry, "window %q has an invalid runtime owner binding", window.Metadata.Name)
+		}
 	}
 
 	for _, pane := range r.Panes {
@@ -128,6 +136,9 @@ func (r Registry) Validate() error {
 			}
 		}
 		if err := validateTermination(op, "pane "+pane.Metadata.Name, pane.Status.LastTermination); err != nil {
+			return err
+		}
+		if err := r.validatePaneTeardown(op, pane); err != nil {
 			return err
 		}
 	}
@@ -228,6 +239,74 @@ func (r Registry) Validate() error {
 	}
 
 	return r.validateReservations(op, uids)
+}
+
+func (r Registry) validatePaneTeardown(op string, pane Pane) error {
+	evidence := pane.Status.Teardown
+	if evidence == nil {
+		return nil
+	}
+	if strings.TrimSpace(evidence.SocketIdentity) == "" ||
+		strings.TrimSpace(evidence.RuntimeSessionID) == "" ||
+		strings.TrimSpace(evidence.RuntimePaneID) == "" ||
+		strings.TrimSpace(evidence.RuntimeWindowID) == "" ||
+		strings.TrimSpace(evidence.WindowUID) == "" ||
+		strings.TrimSpace(evidence.RootUID) == "" ||
+		strings.TrimSpace(evidence.Generation) == "" || evidence.ObservedAt.IsZero() {
+		return stateErr(op, ErrInvalidRegistry, "pane %q has incomplete teardown evidence", pane.Metadata.Name)
+	}
+	if evidence.Generation != pane.Status.Activation.Generation ||
+		evidence.RuntimePaneID != pane.Status.Activation.RuntimeID {
+		return stateErr(op, ErrInvalidRegistry, "pane %q teardown evidence is stale", pane.Metadata.Name)
+	}
+	if evidence.Classification != TerminationNormal && evidence.Classification != TerminationIntentional {
+		return stateErr(op, ErrInvalidRegistry, "pane %q teardown evidence has non-causal classification %q", pane.Metadata.Name, evidence.Classification)
+	}
+	windowUID, ok := paneWindowOwnerUID(r, pane)
+	if !ok || windowUID != evidence.WindowUID {
+		return stateErr(op, ErrInvalidRegistry, "pane %q teardown evidence names a foreign Window", pane.Metadata.Name)
+	}
+	window, ok := r.Window(windowUID)
+	if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != evidence.RootKind ||
+		window.Metadata.OwnerRef.UID != evidence.RootUID {
+		return stateErr(op, ErrInvalidRegistry, "pane %q teardown evidence names a stale root", pane.Metadata.Name)
+	}
+	if window.Status.RuntimeSessionID != evidence.RuntimeSessionID || window.Status.RuntimeID != evidence.RuntimeWindowID {
+		return stateErr(op, ErrInvalidRegistry, "pane %q teardown evidence names a stale runtime Window", pane.Metadata.Name)
+	}
+	return nil
+}
+
+func validRuntimeHandle(value string, prefix byte) bool {
+	if len(value) < 2 || value[0] != prefix {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func paneWindowOwnerUID(r Registry, pane Pane) (string, bool) {
+	owner := pane.Metadata.OwnerRef
+	if owner == nil {
+		return "", false
+	}
+	if owner.Kind == KindWindow {
+		_, ok := r.Window(owner.UID)
+		return owner.UID, ok
+	}
+	if owner.Kind != KindAgent {
+		return "", false
+	}
+	agent, ok := r.Agent(owner.UID)
+	if !ok || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != KindWindow {
+		return "", false
+	}
+	_, ok = r.Window(agent.Metadata.OwnerRef.UID)
+	return agent.Metadata.OwnerRef.UID, ok
 }
 
 // validateTermination enforces the closed receipt vocabularies. A nil receipt

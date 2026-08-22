@@ -393,7 +393,7 @@ func (c *tmuxCommand) runConverge(args []string, stderr io.Writer) error {
 	socketPath := fs.String("socket-path", "", "absolute tmux socket path")
 	session := fs.String("session", "", "tmux hook session")
 	hookPane := fs.String("hook-pane", "", "exact tmux #{hook_pane} for pane-exited")
-	hookWindow := fs.String("hook-window", "", "exact tmux event Window handle for pane-exited or window-unlinked")
+	hookWindow := fs.String("hook-window", "", "exact tmux #{hook_window} for window-unlinked")
 	reason := fs.String("reason", "", "trigger reason: "+strings.Join(controllerTriggerReasonSpellings(), ", "))
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -413,16 +413,16 @@ func (c *tmuxCommand) runConverge(args []string, stderr io.Writer) error {
 	window := strings.TrimSpace(*hookWindow)
 	switch parsed {
 	case controllerTriggerPaneExited:
-		if !validTmuxHookHandle(pane, '%') || !validTmuxHookHandle(window, '@') {
-			return usageError("pane-exited requires exact --hook-pane %N and --hook-window @N")
+		if !validTmuxHookHandle(pane, '%') || window != "" || strings.TrimSpace(*session) != "" {
+			return usageError("pane-exited requires exact --hook-pane %N and no session or Window handle")
 		}
 	case controllerTriggerPaneKilled:
 		if pane != "" || window != "" {
 			return usageError("pane-killed does not accept hook handles")
 		}
 	case controllerTriggerWindowUnlinked:
-		if !validTmuxHookHandle(window, '@') || pane != "" {
-			return usageError("window-unlinked requires exact --hook-window @N and no --hook-pane")
+		if !validTmuxHookHandle(strings.TrimSpace(*session), '$') || !validTmuxHookHandle(window, '@') || pane != "" {
+			return usageError("window-unlinked requires exact --session $N and --hook-window @N with no --hook-pane")
 		}
 	default:
 		if pane != "" || window != "" {
@@ -2220,10 +2220,11 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 // tmuxPaneExitHookBody is the shared layout half of the two pane-exit hooks.
 //
 // Their controller reasons deliberately differ. `pane-exited` carries exact
-// #{hook_pane} and its window-scoped #{window_id}, and narrows lifecycle
-// projection to that activation. tmux leaves #{hook_window} empty for this
-// hook; that format remains reserved for window-unlinked below. The after-kill
-// hook cannot name the Pane and therefore retains full reobservation.
+// #{hook_pane} and narrows lifecycle projection to that activation. tmux leaves
+// #{hook_window} empty and current-context session/window formats can name a
+// surviving client, so owner handles come from the Window's stored live
+// observation. The after-kill hook cannot name the Pane and therefore retains
+// full reobservation.
 //
 // The rebalance half is unchanged, still first, and still independently
 // `|| true`-guarded: pane layout must not depend on whether convergence
@@ -2243,19 +2244,20 @@ func tmuxWindowUnlinkedHookBody(bin string) string {
 // controllerTriggerHookCommand renders the one trigger invocation every
 // generated lifecycle hook uses.
 //
-// The two formats are tmux's own and are expanded by tmux before the shell sees
-// them: `#{socket_path}` is the absolute socket of the server that fired the
-// hook, and `#{session_id}` is the stable `$N` whose environment carries the
-// create-operation lease. Naming them in one function is what keeps a new hook
-// from acquiring a different notion of which server it is talking about.
+// The formats are tmux's own and are expanded by tmux before the shell sees
+// them. `#{socket_path}` always identifies the firing server. Create hooks use
+// current `#{session_id}` for the create-operation lease; pane-exited uses only
+// `#{hook_pane}`; window-unlinked uses exact `#{hook_session}` and
+// `#{hook_window}` for the object being removed.
 func controllerTriggerHookCommand(bin string, reason controllerTriggerReason) string {
-	command := bin + " internal tmux converge --socket-path '#{socket_path}'" +
-		" --session '#{session_id}' --reason " + string(reason)
+	command := bin + " internal tmux converge --socket-path '#{socket_path}'"
 	switch reason {
 	case controllerTriggerPaneExited:
-		command += " --hook-pane '#{hook_pane}' --hook-window '#{window_id}'"
+		command += " --reason " + string(reason) + " --hook-pane '#{hook_pane}'"
 	case controllerTriggerWindowUnlinked:
-		command += " --hook-window '#{hook_window}'"
+		command += " --session '#{hook_session}' --reason " + string(reason) + " --hook-window '#{hook_window}'"
+	default:
+		command += " --session '#{session_id}' --reason " + string(reason)
 	}
 	return command
 }

@@ -35,6 +35,9 @@ type LegacyPane struct {
 // LegacyWindow is one observed pre-v2 tmux window.
 type LegacyWindow struct {
 	Name string
+	// RuntimeSessionID and RuntimeID are the exact live $N/@N owner binding.
+	RuntimeSessionID string
+	RuntimeID        string
 	// AutomaticRename is the observed window-scoped automatic-rename value.
 	AutomaticRename bool
 	// UID is the `@projmux_window_uid` the live tmux window already carries,
@@ -311,6 +314,8 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 	if !ok {
 		return nil
 	}
+	window.Status.RuntimeSessionID = strings.TrimSpace(legacyWindow.RuntimeSessionID)
+	window.Status.RuntimeID = strings.TrimSpace(legacyWindow.RuntimeID)
 	result.Windows = append(result.Windows, ImportedWindow{
 		UID:                     windowUID,
 		Name:                    window.Metadata.Name,

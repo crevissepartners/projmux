@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -67,8 +70,8 @@ const (
 	// after-split-window.
 	controllerTriggerRuntimeCreated controllerTriggerReason = "runtime-created"
 	// controllerTriggerPaneExited is tmux's pane-exited. It carries exact
-	// #{hook_pane} plus its window-scoped #{window_id}, because tmux leaves
-	// #{hook_window} empty for this hook, and reobserves only that activation.
+	// #{hook_pane}; its owner Window's exact live $N/@N binding is persisted by
+	// observation because current-context hook formats can name a survivor.
 	controllerTriggerPaneExited controllerTriggerReason = "pane-exited"
 	// controllerTriggerPaneKilled is tmux's after-kill-pane. That hook cannot
 	// name the dead Pane, so it retains the whole-host reobservation.
@@ -118,13 +121,17 @@ type controllerTrigger struct {
 	// default socket or to inherited $TMUX: a generated hook passes tmux's own
 	// expanded `#{socket_path}`, and apply passes the `-L` name it reloaded.
 	target explicitTmuxTarget
-	// session is the hook's `#{session_id}`, which carries the create-operation
-	// lease. It is empty for apply, which is not caused by a create.
+	// session is a create hook's current `#{session_id}` or window-unlinked's
+	// exact `#{hook_session}`. It is empty for apply and pane-exited.
 	session string
 	// hookPane and hookWindow are exact stable tmux handles supplied by the
 	// corresponding hook. They are evidence, never selector guesses.
 	hookPane   string
 	hookWindow string
+	// retry counts bounded event-log deferrals of an unlink that arrived before
+	// its causal pane-exited half. It is controller transport state only and
+	// never becomes Registry teardown evidence.
+	retry int
 	// fullReobserve is set internally once this worker coalesces another event.
 	// It is sticky for the rest of the worker, including its verification pass.
 	fullReobserve bool
@@ -226,6 +233,7 @@ type controllerTriggerRunner struct {
 	// receipts is the append-only supervisor prewrite journal. It is read
 	// outside the Registry transaction and absorbed before lifecycle projection.
 	receipts terminationJournal
+	pins     pinSetStore
 	// newReconciler is the binding-convergence seam. Tests install a scripted
 	// reconciler; production builds the real one against the routed runner.
 	newReconciler func(tmuxCommandRunner, sessionLister) *registryReconciler
@@ -266,11 +274,16 @@ func newControllerTriggerRunner(runner tmuxCommandRunner, store *resourceStore,
 	if err != nil {
 		return nil, err
 	}
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("resolve lifecycle pin store: %w", err)
+	}
 	return &controllerTriggerRunner{
 		runner:         runner,
 		store:          store,
 		events:         events,
 		receipts:       receipts,
+		pins:           pins.NewDefaultStore(paths),
 		newReconciler:  newReconciler,
 		newOperationID: newCreateOperationID,
 	}, nil
@@ -299,7 +312,7 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 	// caused by the create that already holds the registry lock has nothing to
 	// converge: the create is mid-transaction and will mirror its own uids, so
 	// recording an event would only guarantee a redundant pass after it commits.
-	if session := strings.TrimSpace(trigger.session); session != "" {
+	if session := strings.TrimSpace(trigger.session); session != "" && trigger.reason == controllerTriggerRuntimeCreated {
 		defers := r.deferToCreate
 		if defers == nil {
 			defers = func(ctx context.Context, target explicitTmuxTarget, session string) (bool, error) {
@@ -316,7 +329,7 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 		}
 	}
 
-	if err := r.events.mark(trigger.target, trigger.reason); err != nil {
+	if err := r.events.mark(trigger); err != nil {
 		return outcome, err
 	}
 	release, acquired, err := r.events.acquire(trigger.target)
@@ -335,36 +348,48 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 	if maxPasses <= 0 {
 		maxPasses = controllerTriggerMaxPasses
 	}
-	passTrigger := trigger
+	var carriedUnlinks []controllerTrigger
 	for range maxPasses {
 		drained, err := r.events.drain(trigger.target)
 		if err != nil {
 			return outcome, err
 		}
-		outcome.events += drained
-		if drained > 1 {
-			passTrigger = passTrigger.widened()
-		}
-		body := r.pass
-		var pass controllerPassResult
-		if body == nil {
-			pass, err = r.converge(ctx, passTrigger)
-		} else {
-			pass, err = body(ctx, passTrigger)
-		}
-		if err != nil {
-			return outcome, err
-		}
-		outcome.passes++
-		if pass.refused != "" {
-			outcome.refused = pass.refused
-			return outcome, nil
-		}
-		changed := pass.changed()
-		if changed {
-			outcome.changed++
-		}
-		if pass.unobserved != "" {
+		outcome.events += len(drained)
+		drained = append(drained, carriedUnlinks...)
+		carriedUnlinks = nil
+		sortControllerTriggers(drained)
+		batchChanged := false
+		sawPaneExit := false
+		for _, passTrigger := range controllerPassTriggers(drained, trigger) {
+			body := r.pass
+			var pass controllerPassResult
+			if body == nil {
+				pass, err = r.converge(ctx, passTrigger)
+			} else {
+				pass, err = body(ctx, passTrigger)
+			}
+			if err != nil {
+				return outcome, err
+			}
+			outcome.passes++
+			if pass.refused != "" {
+				outcome.refused = pass.refused
+				return outcome, nil
+			}
+			if passTrigger.reason == controllerTriggerPaneExited {
+				sawPaneExit = true
+			}
+			if passTrigger.reason == controllerTriggerWindowUnlinked && !passTrigger.fullReobserve && pass.awaitingPaneExit && !sawPaneExit && passTrigger.retry < 3 {
+				passTrigger.retry++
+				carriedUnlinks = append(carriedUnlinks, passTrigger)
+			}
+			if pass.changed() {
+				batchChanged = true
+				outcome.changed++
+			}
+			if pass.unobserved == "" {
+				continue
+			}
 			// The verification stage could not read the exact host, so this
 			// worker cannot claim the pass converged and must not keep looping to
 			// find out: a server that is not up will not become observable
@@ -377,22 +402,53 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 		if err != nil {
 			return outcome, err
 		}
-		if pending {
-			// The pass cannot know which semantics an event arriving behind it
-			// carried because drain intentionally acknowledges only before work.
-			// Widen once and keep it widened through the final no-op verification.
-			passTrigger = passTrigger.widened()
+		if len(carriedUnlinks) != 0 {
+			if pending {
+				continue
+			}
+			for _, unlink := range carriedUnlinks {
+				if err := r.events.mark(unlink); err != nil {
+					return outcome, err
+				}
+			}
+			outcome.deferred = "window-unlinked is awaiting its causal pane-exited event: " + carriedUnlinks[0].describe()
+			return outcome, nil
 		}
 		// Converged means this pass wrote nothing and nobody has asked for
 		// another look. Either half alone is not evidence: a no-op pass with a
 		// pending event has not seen what that event is about, and a pass that
 		// wrote has not yet proved the write landed.
-		if !changed && !pending {
+		if !batchChanged && !pending {
 			outcome.converged = true
 			return outcome, nil
 		}
 	}
 	return outcome, nil
+}
+
+func controllerPassTriggers(events []controllerTrigger, fallback controllerTrigger) []controllerTrigger {
+	if len(events) == 0 {
+		return []controllerTrigger{fallback.widened()}
+	}
+	out := make([]controllerTrigger, 0, len(events)+1)
+	generic := false
+	for _, event := range events {
+		if event.reason == controllerTriggerPaneExited || event.reason == controllerTriggerWindowUnlinked {
+			out = append(out, event)
+			continue
+		}
+		generic = true
+	}
+	if generic || len(out) == 0 {
+		out = append(out, fallback.widened())
+	}
+	return out
+}
+
+func sortControllerTriggers(events []controllerTrigger) {
+	sort.SliceStable(events, func(i, j int) bool {
+		return controllerEventPriority(events[i].reason) < controllerEventPriority(events[j].reason)
+	})
 }
 
 // controllerPassResult is what one convergence pass did.
@@ -410,8 +466,9 @@ type controllerPassResult struct {
 	residualExits int
 	// controlRoot reports that config apply converged the declared Home control
 	// target before generic binding reconciliation.
-	controlRoot bool
-	refused     string
+	controlRoot      bool
+	awaitingPaneExit bool
+	refused          string
 }
 
 func (r controllerPassResult) changed() bool {
@@ -487,12 +544,15 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 			}
 		}
 		dirty := lifecycleDirtyEvent{
-			target:        target,
-			runtimePaneID: trigger.hookPane, runtimeWindowID: trigger.hookWindow,
-			receipts: receipts,
+			target:           target,
+			runtimeSessionID: trigger.session,
+			runtimePaneID:    trigger.hookPane, runtimeWindowID: trigger.hookWindow,
+			receipts: receipts, pinStore: r.pins,
 		}
 		if trigger.reason == controllerTriggerPaneExited {
 			dirty.teardownKind = coremetadata.TeardownEventPaneExited
+		} else {
+			dirty.teardownKind = coremetadata.TeardownEventWindowUnlinked
 		}
 		exits, err := reconcileLifecycle(ctx, dirty, observe(target), r.store)
 		if err != nil {
@@ -503,6 +563,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 			return pass, nil
 		}
 		pass.residualExits = exits.changed()
+		pass.awaitingPaneExit = exits.awaitingPaneExit
 		return pass, nil
 	}
 	routed := explicitTmuxRunner{runner: r.runner, target: target}

@@ -336,15 +336,29 @@ func TestCreateWindowPersistsExactRuntimeDisplayNameBeforeLifecycleReconcile(t *
 	if created.Metadata.DisplayName != created.Metadata.Name {
 		t.Fatalf("created Window displayName = %q, want exact runtime name %q", created.Metadata.DisplayName, created.Metadata.Name)
 	}
+	session := tmux.session("beta")
+	if session == nil {
+		t.Fatal("created Window has no live beta session")
+	}
+	runtimeID := ""
+	for _, window := range session.windows {
+		if window.opts[tmuxopts.WindowUID] == created.Metadata.UID {
+			runtimeID = window.id
+			break
+		}
+	}
+	if created.Status.RuntimeSessionID != session.id || created.Status.RuntimeID != runtimeID || runtimeID == "" {
+		t.Fatalf("created Window runtime owner = %s/%s, want %s/%s", created.Status.RuntimeSessionID, created.Status.RuntimeID, session.id, runtimeID)
+	}
 
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": tmux}}
 	reconcile := &resourceReconcileCommand{
 		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
 		newReconciler: reconcileFixtureReconciler("/srv/beta", "beta"),
 	}
-	// The first public pass may refresh runtime status that the guarded create
-	// pass deliberately excluded. Once that canonical convergence completes,
-	// the exact created display projection must not cause a later drift/write.
+	// The first public pass may refresh unrelated runtime status that the guarded
+	// create pass excluded. Once that canonical convergence completes, the exact
+	// created display and owner projection must not cause a later drift/write.
 	tmux.calls = nil
 	stdout, stderr, err := runReconcile(t, reconcile, "resources", "--socket", "primary", "-o", "json")
 	if err != nil || stderr != "" {

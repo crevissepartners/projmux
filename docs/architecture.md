@@ -432,9 +432,10 @@ Exit reconciliation and lifecycle projection:
 
 - A **lifecycle dirty event** is one exact-host statement that a managed runtime
   object's lifecycle may have changed. `pane-exited` carries tmux's exact
-  `#{hook_pane}` and its window-scoped `#{window_id}`; contained tmux evidence
-  shows `#{hook_window}` is empty for this hook and reserves it for
-  `window-unlinked`. `after-kill-pane` carries neither because
+  `#{hook_pane}`. Its current-context session/window formats may already name a
+  survivor, so the owner `$N/@N` comes from the Window's last live Registry
+  observation; `window-unlinked` carries exact `#{hook_session}` and
+  `#{hook_window}` for the dead Window. `after-kill-pane` carries neither because
   tmux leaves `#{hook_pane}` empty there. Whole-host and coalesced events remain
   advisory projection inputs and never acquire delete authority.
 - The event is advisory. The reconciliation re-observes the **final** snapshot of
@@ -1206,12 +1207,19 @@ Lifecycle trigger convergence:
   report claiming success must not hide. The loop is bounded; stopping early is
   safe in a way a lost event is not, because convergence is derived from the
   machine rather than from the event log.
-- Phase 2 stops at Pane/Agent deletion. Even when the event names the last Pane,
-  this code does not consume `window-unlinked`, delete a Window or root, alter a
-  Project uid/name reservation, or choose reopen/pin behavior. Those parent and
-  root effects are one later minor-release boundary. Until that boundary ships,
-  clean non-last Pane/Agent exits lose Registry resume identity immediately;
-  provider-native conversation catalogs are the remaining discovery surface.
+- Phase 3 pairs a qualifying last-Pane `pane-exited` with the exact later
+  `window-unlinked` by socket, `$N` session, `@N` Window, `%N` Pane, Registry
+  owner chain, and activation generation. The first event stores only bounded
+  teardown evidence; the second re-observes every Window in that exact session,
+  including unmirrored siblings, before deleting anything. A non-last Project
+  Window loses only its Window subtree. The last Project Window deletes the
+  Project and all descendants/reservations, converts an exact managed pin to a
+  same-slot candidate path, and preserves the root, git/worktrees, trust, and
+  snapshot bytes. A ControlSession loses only the Window and keeps its root uid.
+  Abnormal/killed/unknown exits, stale generations, unpaired or foreign handles,
+  unavailable/empty observations, and missing-server or permission failures
+  retain the graph. No pane content, command, prompt, history, or transcript is
+  an authority input.
 - The creation hooks stay synchronous so a newly bindable Window or Pane has a
   registry binding before the creating tmux command returns and before the next
   implicit read can run; the exit hooks stay backgrounded so closing a pane never

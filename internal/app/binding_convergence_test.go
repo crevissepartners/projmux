@@ -171,8 +171,13 @@ func TestBindingConvergenceRepairsOnlyTheExplicitSocketAndThenBecomesANoop(t *te
 			t.Fatalf("pane %d uid = %q, want %q", wi, got, wantPane)
 		}
 	}
-	if got := store.snapshot(); got != registryBefore || store.writes != 0 {
-		t.Fatalf("binding-only repair rewrote registry: writes=%d\n--- got ---\n%s\n--- want ---\n%s", store.writes, got, registryBefore)
+	if got := store.snapshot(); got != registryBefore || store.writes != 1 {
+		t.Fatalf("binding repair Registry writes=%d, want one live Window handle observation\n--- got ---\n%s\n--- want topology ---\n%s", store.writes, got, registryBefore)
+	}
+	for _, window := range store.registry.Windows {
+		if window.Status.RuntimeSessionID == "" || window.Status.RuntimeID == "" {
+			t.Fatalf("Window %s has no exact live owner binding: %+v", window.Metadata.UID, window.Status)
+		}
 	}
 	if got := secondary.state(); got != secondaryBefore {
 		t.Fatalf("secondary socket changed:\n--- got ---\n%s\n--- want ---\n%s", got, secondaryBefore)
@@ -197,8 +202,8 @@ func TestBindingConvergenceRepairsOnlyTheExplicitSocketAndThenBecomesANoop(t *te
 	if got := bindingWriteCalls(primary.calls); got != 0 {
 		t.Fatalf("repeat convergence issued %d binding writes: %v", got, primary.calls)
 	}
-	if store.writes != 0 || store.snapshot() != registryBefore {
-		t.Fatalf("repeat convergence rewrote registry: writes=%d", store.writes)
+	if store.writes != 1 || store.snapshot() != registryBefore {
+		t.Fatalf("repeat convergence added a Registry write: cumulative writes=%d", store.writes)
 	}
 }
 
@@ -248,7 +253,16 @@ func TestGeneratedLifecycleTriggersConvergeOnOneEntrypoint(t *testing.T) {
 			if line == "" {
 				t.Fatalf("%s config has no %s hook", name, hook)
 			}
-			for _, want := range []string{"internal tmux converge", "--socket-path", "#{socket_path}", "--session", "#{session_id}", "--reason " + string(reason)} {
+			wants := []string{"internal tmux converge", "--socket-path", "#{socket_path}", "--reason " + string(reason)}
+			switch reason {
+			case controllerTriggerRuntimeCreated, controllerTriggerPaneKilled:
+				wants = append(wants, "--session", "#{session_id}")
+			case controllerTriggerWindowUnlinked:
+				wants = append(wants, "--session", "#{hook_session}", "--hook-window", "#{hook_window}")
+			case controllerTriggerPaneExited:
+				wants = append(wants, "--hook-pane", "#{hook_pane}")
+			}
+			for _, want := range wants {
 				if !strings.Contains(line, want) {
 					t.Fatalf("%s %s hook missing %q: %s", name, hook, want, line)
 				}

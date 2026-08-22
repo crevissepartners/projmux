@@ -574,6 +574,33 @@ func assertNoRuntimeCondition(t *testing.T, reg Registry, windowUID, paneUID str
 	}
 }
 
+func TestObserveWindowRuntimeBindingRetainsExactLastPositiveOwnerPair(t *testing.T) {
+	t.Parallel()
+
+	m := testMutator(dirSet{"/src/runtime-binding": true})
+	reg := NewRegistry()
+	if _, err := registerFixture(m, &reg, "/src/runtime-binding"); err != nil {
+		t.Fatal(err)
+	}
+	windowUID := reg.Windows[0].Metadata.UID
+	observed, err := m.ObserveWindowRuntimeBinding(&reg, windowUID, "$7", "@11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.Status.RuntimeSessionID != "$7" || observed.Status.RuntimeID != "@11" {
+		t.Fatalf("runtime binding = %+v", observed.Status)
+	}
+	before := reg.UpdatedAt
+	if _, err := m.ObserveWindowRuntimeBinding(&reg, windowUID, "$7", "@11"); err != nil || reg.UpdatedAt != before {
+		t.Fatalf("repeat binding changed Registry: updatedAt=%s want=%s err=%v", reg.UpdatedAt, before, err)
+	}
+	for _, handles := range [][2]string{{"7", "@11"}, {"$7", "11"}, {"$x", "@11"}} {
+		if _, err := m.ObserveWindowRuntimeBinding(&reg, windowUID, handles[0], handles[1]); err == nil {
+			t.Fatalf("invalid runtime binding %q/%q was accepted", handles[0], handles[1])
+		}
+	}
+}
+
 // TestWindowStatusRoundTripsWithoutChangingAPreObservationRegistry pins the
 // wire-compatibility decision behind `status,omitzero` on Window.
 //

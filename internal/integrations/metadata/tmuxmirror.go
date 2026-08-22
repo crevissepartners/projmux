@@ -206,6 +206,7 @@ func (m Mirror) ObserveControlSession(ctx context.Context, sessionName string) (
 	windowsOut, err := m.run(ctx, "list-windows", "-t", sessionName, "-F", tmuxFormat(
 		"#{window_index}",
 		"#{window_name}",
+		"#{session_id}",
 		"#{window_id}",
 		"#{"+tmuxopts.WindowUID+"}",
 	))
@@ -215,13 +216,13 @@ func (m Mirror) ObserveControlSession(ctx context.Context, sessionName string) (
 	// tmux lists windows in window_index ascending order, which is the ordinal
 	// the adoption rule pairs against.
 	indexOrder := map[string]int{}
-	for _, fields := range parseRows(string(windowsOut), 4) {
+	for _, fields := range parseRows(string(windowsOut), 5) {
 		indexOrder[fields[0]] = len(observed.Windows)
 		observed.Windows = append(observed.Windows, coremetadata.ControlSessionWindow{
-			DisplayName: fields[1],
-			UID:         strings.TrimSpace(fields[3]),
+			DisplayName: fields[1], RuntimeSessionID: fields[2], RuntimeID: fields[3],
+			UID: strings.TrimSpace(fields[4]),
 		})
-		targets.Windows = append(targets.Windows, fields[2])
+		targets.Windows = append(targets.Windows, fields[3])
 		targets.Panes = append(targets.Panes, nil)
 	}
 
@@ -413,6 +414,24 @@ func (m Mirror) LivePaneUIDs(ctx context.Context) (map[string]bool, error) {
 	return uids, nil
 }
 
+// LivePaneCount reports whether a successful exact-host observation saw any
+// Pane at all, including unmirrored control/sibling Panes. This distinguishes a
+// valid empty managed-uid set from an unavailable or truly empty server at the
+// last-Pane teardown boundary.
+func (m Mirror) LivePaneCount(ctx context.Context) (int, error) {
+	out, err := m.run(ctx, "list-panes", "-a", "-F", "#{pane_id}")
+	if err != nil {
+		return 0, fmt.Errorf("metadata: count live Panes: %w", err)
+	}
+	count := 0
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // liveWindowRows reads the (mirrored Window uid, stable tmux window id, session
 // name, window index) row of every window on the server.
 //
@@ -485,6 +504,23 @@ func (m Mirror) LiveWindowUIDs(ctx context.Context) (map[string]bool, error) {
 		}
 	}
 	return uids, nil
+}
+
+// LiveWindowSessionCounts counts every live Window by exact tmux session id.
+// Unlike LiveWindowUIDs it deliberately includes unmirrored Windows, because a
+// final-root teardown must fail closed while any sibling runtime Window remains.
+func (m Mirror) LiveWindowSessionCounts(ctx context.Context) (map[string]int, error) {
+	out, err := m.run(ctx, "list-windows", "-a", "-F", "#{session_id}")
+	if err != nil {
+		return nil, fmt.Errorf("metadata: list Window sessions: %w", err)
+	}
+	counts := map[string]int{}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		if session := strings.TrimSpace(line); session != "" {
+			counts[session]++
+		}
+	}
+	return counts, nil
 }
 
 // SessionForProjectUID scans every live session for the mirrored Project uid.
@@ -596,6 +632,7 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 		"#{window_index}",
 		"#{window_name}",
 		"#{"+tmuxopts.AutomaticRenameWindow+"}",
+		"#{session_id}",
 		"#{window_id}",
 		"#{"+tmuxopts.WindowUID+"}",
 	))
@@ -605,14 +642,15 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 	indexOrder := map[string]int{}
 	// tmux lists windows in window_index ascending order, which is the ordinal
 	// the adoption rule pairs against.
-	for _, fields := range parseRows(string(windowsOut), 5) {
+	for _, fields := range parseRows(string(windowsOut), 6) {
 		indexOrder[fields[0]] = len(legacy.Windows)
 		legacy.Windows = append(legacy.Windows, coremetadata.LegacyWindow{
-			Name:            fields[1],
-			AutomaticRename: tmuxTruthyOption(fields[2]),
-			UID:             strings.TrimSpace(fields[4]),
+			Name:             fields[1],
+			AutomaticRename:  tmuxTruthyOption(fields[2]),
+			RuntimeSessionID: fields[3], RuntimeID: fields[4],
+			UID: strings.TrimSpace(fields[5]),
 		})
-		targets.Windows = append(targets.Windows, fields[3])
+		targets.Windows = append(targets.Windows, fields[4])
 		targets.Panes = append(targets.Panes, nil)
 	}
 

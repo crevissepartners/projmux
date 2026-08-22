@@ -2622,7 +2622,9 @@ termination_activation_runtime_id() {
 # exact supervisor row, then replay the shipped hidden pane-exited route with the
 # same exact socket/session/runtime handles. The existing assertions below still
 # require the exact supervisor classification, wait status, source, and
-# activation generation.
+# activation generation. Phase 3's pane-exited envelope is deliberately
+# pane-only: adding a session or Window coordinate would reintroduce a
+# stale/current-context authority.
 termination_await_journal_receipt() {
   local pane_uid="$1" want_class="$2"
   local journal="$termination_root/state/projmux/termination-receipts.jsonl"
@@ -2652,10 +2654,8 @@ termination_replay_pane_exited_hook() {
   for _ in $(seq 1 100); do
     termination_pmx internal tmux converge \
       --socket-path "$termination_socket_path" \
-      --session "$termination_session_id" \
       --reason pane-exited \
       --hook-pane "$runtime_id" \
-      --hook-window "$termination_main_window_id" \
       >"$termination_root/receipt-converge-$report_label.out" \
       2>"$termination_root/receipt-converge-$report_label.err"
     if ! grep -q "deferred: another controller worker holds" \
@@ -3134,6 +3134,29 @@ exitrec_await_journal_receipt() {
   exit 1
 }
 
+# Reobserve the exact host through the non-causal controller route so the
+# supervisor journal is absorbed without supplying pane-exited deletion
+# authority. The public reconcile call that follows remains the explicit
+# projection/no-op surface this block measures.
+exitrec_absorb_receipts() {
+  exitrec_pmx internal tmux converge \
+    --socket-path "$exitrec_socket_path" \
+    --reason pane-killed \
+    >"$exitrec_root/absorb-receipts.out"
+}
+
+# This block tests explicit receipt projection through `reconcile resources`,
+# not hook-driven deletion (covered above and in e2e). Remove only the generated
+# pane-exited hook for the contained server before any short-lived fixture can
+# race the explicit read/write assertions, then restore it verbatim below.
+exitrec_pane_exited_hook="$(exitrec_tmux "$exitrec_socket" show-hooks -g pane-exited \
+  | sed -n 's/^pane-exited\[[0-9][0-9]*\] //p')"
+if [[ -z "$exitrec_pane_exited_hook" ]]; then
+  echo "exit reconciliation fixture has no pane-exited hook to isolate" >&2
+  exit 1
+fi
+exitrec_tmux "$exitrec_socket" set-hook -gu pane-exited
+
 # A managed Agent whose child ends a different way each time. The short delay
 # deliberately lets create commit the Agent binding before the provider exits;
 # this block tests termination consumption, not rollback of a create whose child
@@ -3173,6 +3196,7 @@ exitrec_agent_case() {
   fi
 
   exitrec_await_journal_receipt "$pane_ref" "$want_class"
+  exitrec_absorb_receipts
   for _ in $(seq 1 100); do
     exitrec_reconcile "$exitrec_socket"
     exitrec_doc agent "$agent_uid"
@@ -3245,6 +3269,8 @@ if [[ -z "$exitrec_external_pane_id" ]]; then
   exit 1
 fi
 exitrec_tmux "$exitrec_socket" kill-pane -t "$exitrec_external_pane_id"
+exitrec_await_journal_receipt "$exitrec_external_pane" killed
+exitrec_absorb_receipts
 for _ in $(seq 1 100); do
   exitrec_reconcile "$exitrec_socket"
   exitrec_doc agent "$exitrec_external_agent"
@@ -3324,16 +3350,8 @@ fi
 echo ">> exit reconciliation supervisor SIGKILL agent=$exitrec_sigkill_agent class=unknown"
 
 # A shell Pane's runtime loss without the exact event keeps the logical Pane.
-# Temporarily remove only pane-exited from this contained server so this is an
-# absence test rather than a race with the qualifying Phase 2 hook, then restore
-# the generated hook verbatim before continuing.
-exitrec_pane_exited_hook="$(exitrec_tmux "$exitrec_socket" show-hooks -g pane-exited \
-  | sed -n 's/^pane-exited\[[0-9][0-9]*\] //p')"
-if [[ -z "$exitrec_pane_exited_hook" ]]; then
-  echo "exit reconciliation fixture has no pane-exited hook to isolate" >&2
-  exit 1
-fi
-exitrec_tmux "$exitrec_socket" set-hook -gu pane-exited
+# pane-exited remains isolated from the explicit-reconcile cases above; restore
+# the generated hook verbatim after this final absence assertion.
 exitrec_shell_pane="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
   create pane --project evidence -o uid -- sh -c 'sleep 0.5; exit 0')"
 for _ in $(seq 1 100); do
@@ -3341,6 +3359,8 @@ for _ in $(seq 1 100); do
     | grep -qx "$exitrec_shell_pane" || break
   sleep 0.1
 done
+exitrec_await_journal_receipt "$exitrec_shell_pane" normal
+exitrec_absorb_receipts
 exitrec_reconcile "$exitrec_socket"
 if ! exitrec_doc_exists pane "$exitrec_shell_pane"; then
   echo "a shell Pane's runtime loss deleted the logical Pane $exitrec_shell_pane" >&2
