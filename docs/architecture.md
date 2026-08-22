@@ -1896,6 +1896,13 @@ network call.
 - **Failure preservation** — adapter failures do not erase prior
   rows. The Manager merges new snapshots over the on-disk slice, so a
   transient 429 keeps the last known good numbers visible.
+- **Codex native source selection** — the Codex adapter alone owns one
+  invocation's source decision. It normalizes native
+  `account/rateLimits/read` plus bounded sparse update events into snapshots;
+  only unavailable/unsupported/account-empty outcomes invoke the newest
+  rollout parser once. Native and rollout rows are never synthesized together.
+  Optional snapshot provenance preserves source, fallback/stale reason, and
+  native bucket label/cadence through Store and all public read surfaces.
 
 See [usage-tracking.md](usage-tracking.md) for adapter detail (token
 refresh, rollout schema).

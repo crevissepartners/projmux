@@ -75,7 +75,31 @@ floor.
 
 ### Codex (`internal/core/usage/adapters/codex`)
 
-Local rollout JSONL parser. No network calls.
+The native Codex app-server account API is primary:
+
+- An explicit `projmux agent usage` request reuses the app-server
+  ensure-ready lifecycle, then opens one initialized official stdio-proxy
+  connection and calls `account/rateLimits/read` with a bounded deadline.
+  Automatic HUD refreshes probe/read an already-running daemon but do not gain
+  daemon-start authority.
+- When `rateLimitsByLimitId` is present it is the authoritative multi-bucket
+  view; the backward-compatible `rateLimits` mirror is not duplicated. Each
+  bucket preserves its map key, nullable `limitId`, nullable `limitName`,
+  primary/secondary slot, percentage, nullable reset, and nullable cadence.
+  `300` and `10080` minutes project to `5h` and `weekly`. Missing or unknown
+  positive cadences remain lossless `quota` rows instead of disappearing.
+- `account/rateLimits/updated` is merged sparsely into the just-read native
+  snapshot during one bounded event-settle window. Null account metadata does
+  not clear a prior label or identity. The event-refreshed rows then use the
+  same Manager throttle, replace, store, and last-known-good path as a read.
+- Validation is row-level. A malformed bucket/window is dropped with a bounded,
+  field-only warning while valid siblings remain native. Native and rollout
+  rows are never combined in one invocation.
+
+When app-server is unavailable, unsupported, disconnected, timed out, or the
+account exposes no supported rate-limit bucket (including API-key-style
+accounts), the adapter invokes the existing newest-rollout collector exactly
+once without attempting login, logout, token refresh, or config writes:
 
 - Walks `${HOME}/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl`
   newest-first by mtime (NOT filename — Dropbox-synced rollouts can
@@ -99,8 +123,10 @@ Local rollout JSONL parser. No network calls.
   dropped and reported rather than projected as a genuine `0%`.
 
 Codex shares the manager's default `30s` throttle (no
-`ThrottleHinter`). It does not implement `BackoffStater` — local-only
-read.
+`ThrottleHinter`) and does not implement `BackoffStater`. A successful
+rollout fallback row records `source=rollout` plus the closed fallback reason.
+If neither lane produces rows, Manager preserves the previous source/value and
+adds a closed `stale_reason` to the last-known-good row.
 
 ### Antigravity (`internal/core/usage/adapters/antigravity`)
 
@@ -163,13 +189,17 @@ For `--model all`, calls `Manager.Collect` (or `ForceCollect` with
 Enabled agents, filters by window, and renders the tab-aligned table:
 
 ```
-MODEL        WINDOW                 PCT  RESETS_AT                 RESET_IN  STALE
+MODEL        WINDOW                 PCT  RESETS_AT                 RESET_IN  STALE  SOURCE      REASON
+codex        5h/codex · General     12%  2026-05-07T14:00:00+09:00 -         app-server
 claude       5h                     80%  2026-05-07T14:00:00+09:00 -
 antigravity  quota/gemini-weekly    6%   2026-07-06T16:50:32+09:00 560580s
 claude       quota/group-redacted · Model Redacted Alpha  38%  2031-02-03T15:05:06+09:00  -  *
 ```
 
-`STALE` is `*` when `now - UpdatedAt > 10m`. A `--json` payload returns
+`SOURCE`/`REASON` are included when source-aware rows are present. Native
+Codex rows report `app-server`; fresh rollout fallback and retained
+last-known-good rows report their closed fallback/stale reasons. `STALE` is
+`*` when `now - UpdatedAt > 10m`. A `--json` payload returns
 the `Snapshot` array; if any adapter is in backoff, the wrapper
 `{snapshots, backoff: {model: {until, consecutive}}}` is emitted
 instead. A backoff note is appended to the human table:
@@ -215,6 +245,10 @@ excluded; only its aggregate official `5h` and `weekly` rows reach the HUD.
 The Settings provider list consumes `aiprovider.UsageSupported()` order, but a
 window toggle exists only when this same projection seam declares it. A future
 provider or an opaque bucket cannot manufacture a window row.
+For native Codex multi-bucket rows, the exact `codex` bucket wins the HUD
+projection, then the legacy empty bucket, then lexical bucket order. The HUD
+source/reason annotation is copied from that same row, so its percent and
+source always match an explicit `agent usage --model codex` JSON/table row.
 
 Settings > Appearance > Status Bar > Agent Usage HUD can hide the whole HUD,
 a provider, or one supported window. Parent off states preserve child saved
@@ -250,8 +284,9 @@ The `~` / `~~` markers are the legacy stale vocabulary, carried inside the
 indicator while the age text is still rendered and glued to the label once the
 drop order has shed it. Staleness stays muted however far the segment has
 degraded: warning and critical colors are reserved for usage thresholds, not
-cache age. Codex opts out of the indicator because the rollout file is always
-near-current (no throttle gap to report).
+cache age. A healthy Codex row does not need a cosmetic age indicator, while a
+retained Codex last-known-good row opts in and also carries its exact closed
+stale reason in the HUD provenance annotation.
 
 The statusbar usage **popup**'s sync line is a different surface with a
 different meaning (last successful collect, 60s amber threshold) and is
@@ -284,10 +319,13 @@ When a collection fails, the failure is visible in three places:
    projmux diagnostics log --component usage --tail 20
    ```
 
-   The row carries the provider and a closed failure enum and nothing else:
+   The row carries the provider and closed source/failure enums and nothing else:
    `collect-failed` (whole-adapter failure, `level=error`) or `rows-skipped`
-   (partial failure, `level=info`). A successful collection writes no row at
-   all. Identical `(provider, failure)` tuples are recorded at most once per
+   (partial failure, `level=info`). Codex rollout fallback records
+   `source=rollout` plus its closed fallback reason; retained data records
+   `source=last-known-good` plus its closed stale reason. A healthy native
+   collection writes no row at all. Identical `(provider, source, failure)`
+   tuples are recorded at most once per
    process run — the same suppression the notify/focus recorder uses — so a
    repeating failure cannot flood the bounded journal. Journal writes are
    best-effort and never change what the usage command returns.

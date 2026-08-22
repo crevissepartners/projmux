@@ -24,6 +24,38 @@ func (e *AdapterError) Unwrap() error { return e.Err }
 // dropped the ones that failed validation.
 func (e *AdapterError) Partial() bool { return errors.Is(e.Err, ErrRowsSkipped) }
 
+// StaleReasonError lets an adapter attach one closed reason to a failed
+// collection without exposing the underlying transport error. Manager uses it
+// only to annotate preserved last-known-good rows; Error remains suitable for
+// the existing debug warning surface.
+type StaleReasonError struct {
+	Reason SnapshotReason
+	Err    error
+}
+
+func (e *StaleReasonError) Error() string {
+	if e == nil || e.Err == nil {
+		return "usage source unavailable"
+	}
+	return e.Err.Error()
+}
+
+func (e *StaleReasonError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// SnapshotStaleReason returns the first closed stale reason in an error tree.
+func SnapshotStaleReason(err error) SnapshotReason {
+	var reasoned *StaleReasonError
+	if errors.As(err, &reasoned) {
+		return reasoned.Reason
+	}
+	return ""
+}
+
 // AdapterErrors flattens a Manager collect result into the per-adapter
 // failures it carries, in the order the adapters ran. Collect joins every
 // adapter's failure into one error, so a caller that needs to attribute a

@@ -4,6 +4,7 @@
     "window": "weekly",
     "pct": 64,
     "resets_at": "2026-05-05T07:28:15Z",
-    "updated_at": "2026-04-30T12:00:00Z"
+    "updated_at": "2026-04-30T12:00:00Z",
+    "source": "rollout"
   }
 ]

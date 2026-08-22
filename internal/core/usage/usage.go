@@ -3,8 +3,8 @@
 // Schema v2 — authoritative usage:
 //
 // Adapters now emit Snapshots directly, sourced from authoritative,
-// server-side data (Anthropic OAuth usage API for Claude; rate_limits in
-// the latest Codex rollout JSONL for Codex). The previous bucketed token
+// server-side data (Anthropic OAuth usage API for Claude; native Codex
+// account/rateLimits with a newest-rollout fallback). The previous bucketed token
 // counting and per-model placeholder limits are gone — adapters return the
 // real used_percent and resets_at, which the HUD renders verbatim.
 //
@@ -84,6 +84,54 @@ type Snapshot struct {
 	// a named account-quota row. It is nil for canonical 5h/weekly rows and
 	// for adapters whose opaque quota source does not expose this metadata.
 	NamedQuota *NamedQuota `json:"named_quota,omitempty"`
+	// Source is the bounded collector lane that produced this row. It is
+	// optional so snapshots written before source-aware adapters remain valid.
+	Source SnapshotSource `json:"source,omitempty"`
+	// FallbackReason explains why a fresh fallback row was selected instead of
+	// the preferred source. StaleReason explains why an older row was retained
+	// as last-known-good. Both are closed, content-free values.
+	FallbackReason SnapshotReason `json:"fallback_reason,omitempty"`
+	StaleReason    SnapshotReason `json:"stale_reason,omitempty"`
+	// RateLimit preserves native Codex bucket identity, label, slot, and
+	// nullable cadence without changing the established Snapshot fields.
+	RateLimit *RateLimitMetadata `json:"rate_limit,omitempty"`
+}
+
+// SnapshotSource is the closed usage source vocabulary exposed by the cache,
+// JSON CLI, HUD, and diagnostics.
+type SnapshotSource string
+
+const (
+	SourceAppServer SnapshotSource = "app-server"
+	SourceRollout   SnapshotSource = "rollout"
+)
+
+// SnapshotReason is a secret-free reason for fallback or last-known-good.
+// Values deliberately carry no endpoint, account, credential, prompt, token,
+// path, or upstream error text.
+type SnapshotReason string
+
+const (
+	ReasonAppServerUnavailable  SnapshotReason = "app-server-unavailable"
+	ReasonAppServerUnsupported  SnapshotReason = "app-server-unsupported"
+	ReasonAccountUnsupported    SnapshotReason = "account-unsupported"
+	ReasonAppServerTimeout      SnapshotReason = "app-server-timeout"
+	ReasonAppServerProtocol     SnapshotReason = "app-server-protocol-error"
+	ReasonAppServerDisconnected SnapshotReason = "app-server-disconnected"
+)
+
+// RateLimitMetadata is the lossless native account-rate-limit identity for a
+// projected window. BucketKey is the authoritative map key when the response
+// used rateLimitsByLimitId. LimitID and Label remain pointers so JSON null is
+// distinguishable from an explicitly empty upstream string. CadenceMinutes
+// similarly preserves nullable windowDurationMins; unknown cadences remain
+// valid quota rows instead of being dropped.
+type RateLimitMetadata struct {
+	BucketKey      string  `json:"bucket_key,omitempty"`
+	LimitID        *string `json:"limit_id"`
+	Label          *string `json:"label"`
+	Slot           string  `json:"slot"`
+	CadenceMinutes *int64  `json:"cadence_minutes"`
 }
 
 // NamedQuota is the lossless metadata attached to a typed upstream quota

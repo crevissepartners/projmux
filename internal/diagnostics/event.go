@@ -196,6 +196,12 @@ var (
 	)
 	allowedUsageFailures = stringSet(
 		string(UsageFailureCollect), string(UsageFailureRowsSkipped),
+		string(UsageFailureAppServerUnavailable), string(UsageFailureAppServerUnsupported),
+		string(UsageFailureAccountUnsupported), string(UsageFailureAppServerTimeout),
+		string(UsageFailureAppServerProtocol), string(UsageFailureAppServerDisconnected),
+	)
+	allowedUsageSources = stringSet(
+		string(UsageSourceAppServer), string(UsageSourceRollout), string(UsageSourceLastKnownGood),
 	)
 	allowedResourceFailures = stringSet(
 		string(ResourceFailureSampleUnavailable), string(ResourceFailureSamplePartial), string(ResourceFailureSampleStale), string(ResourceFailureInventory),
@@ -402,7 +408,7 @@ func validateEventShape(event Event) error {
 		}
 	case "usage.collect.outcome":
 		if event.Component != "usage" || event.Command != "" || event.Subcommand != "" || event.Message != "" ||
-			event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() ||
+			event.Operation != "" || event.Code != "" || event.hasCounts() ||
 			event.Transition != "" || event.Disposition != "" || event.Category != "" || event.Route != "" ||
 			event.AIKind != "" || event.AIResult != "" || event.hasResourceFields() {
 			return fmt.Errorf("invalid usage diagnostic shape")
@@ -412,6 +418,11 @@ func validateEventShape(event Event) error {
 		}
 		if _, ok := allowedUsageFailures[event.Failure]; !ok {
 			return fmt.Errorf("invalid usage failure")
+		}
+		if event.Source != "" {
+			if _, ok := allowedUsageSources[event.Source]; !ok {
+				return fmt.Errorf("invalid usage source")
+			}
 		}
 		if !usageTupleMatches(event) {
 			return fmt.Errorf("invalid usage diagnostic tuple")

@@ -95,10 +95,3 @@ type response struct {
 	result json.RawMessage
 	err    error
 }
-
-// notification is intentionally package-private until a capability-specific
-// consumer exists. That keeps Phase 0 from inventing an unused consumer port.
-type notification struct {
-	Method string
-	Params json.RawMessage
-}

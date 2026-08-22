@@ -16,11 +16,26 @@ const (
 	UsageFailureCollect UsageFailure = "collect-failed"
 	// UsageFailureRowsSkipped is a partial failure: the adapter produced
 	// usable rows but dropped the ones that failed field validation.
-	UsageFailureRowsSkipped UsageFailure = "rows-skipped"
+	UsageFailureRowsSkipped           UsageFailure = "rows-skipped"
+	UsageFailureAppServerUnavailable  UsageFailure = "app-server-unavailable"
+	UsageFailureAppServerUnsupported  UsageFailure = "app-server-unsupported"
+	UsageFailureAccountUnsupported    UsageFailure = "account-unsupported"
+	UsageFailureAppServerTimeout      UsageFailure = "app-server-timeout"
+	UsageFailureAppServerProtocol     UsageFailure = "app-server-protocol-error"
+	UsageFailureAppServerDisconnected UsageFailure = "app-server-disconnected"
+)
+
+type UsageSource string
+
+const (
+	UsageSourceAppServer     UsageSource = "app-server"
+	UsageSourceRollout       UsageSource = "rollout"
+	UsageSourceLastKnownGood UsageSource = "last-known-good"
 )
 
 type usageEventKey struct {
 	provider Provider
+	source   UsageSource
 	failure  UsageFailure
 }
 
@@ -57,10 +72,17 @@ func NewUsageRecorder(writer EventWriter, runID, version, muxBackend string) *Us
 // RecordCollectFailure appends one usage-collection failure for provider.
 // Unknown adapter names must be projected to ProviderOther by the caller.
 func (r *UsageRecorder) RecordCollectFailure(provider Provider, failure UsageFailure, started time.Time) {
+	r.RecordCollectOutcome(provider, "", failure, started)
+}
+
+// RecordCollectOutcome records a source-aware usage anomaly. Healthy native
+// collections remain silent; callers use this for row skips, rollout fallback,
+// and last-known-good retention only.
+func (r *UsageRecorder) RecordCollectOutcome(provider Provider, source UsageSource, failure UsageFailure, started time.Time) {
 	if r == nil {
 		return
 	}
-	key := usageEventKey{provider: provider, failure: failure}
+	key := usageEventKey{provider: provider, source: source, failure: failure}
 	r.mu.Lock()
 	if r.seen == nil {
 		r.seen = make(map[usageEventKey]bool)
@@ -79,9 +101,9 @@ func (r *UsageRecorder) RecordCollectFailure(provider Provider, failure UsageFai
 	event := Event{
 		At: now.UTC().Format(time.RFC3339Nano), Level: "info", Component: "usage", Event: "usage.collect.outcome",
 		Result: "success", DurationMS: max(now.Sub(started).Milliseconds(), 0), RunID: r.runID, Version: r.version,
-		MuxBackend: r.muxBackend, Provider: string(provider), Failure: string(failure),
+		MuxBackend: r.muxBackend, Provider: string(provider), Source: string(source), Failure: string(failure),
 	}
-	if failure == UsageFailureCollect {
+	if failure == UsageFailureCollect || source == UsageSourceLastKnownGood {
 		event.Level, event.Result, event.Kind = "error", "error", "runtime"
 	}
 	if r.writer != nil {
@@ -98,7 +120,15 @@ func usageTupleMatches(event Event) bool {
 		// A partial collection still refreshed the healthy rows, so it stays
 		// an informational anomaly rather than a command-level error.
 		return event.Level == "info" && event.Result == "success" && event.Kind == ""
-	default:
-		return false
+	case UsageFailureAppServerUnavailable, UsageFailureAppServerUnsupported,
+		UsageFailureAccountUnsupported, UsageFailureAppServerTimeout,
+		UsageFailureAppServerProtocol, UsageFailureAppServerDisconnected:
+		switch UsageSource(event.Source) {
+		case UsageSourceRollout:
+			return event.Level == "info" && event.Result == "success" && event.Kind == ""
+		case UsageSourceLastKnownGood:
+			return event.Level == "error" && event.Result == "error" && event.Kind == "runtime"
+		}
 	}
+	return false
 }

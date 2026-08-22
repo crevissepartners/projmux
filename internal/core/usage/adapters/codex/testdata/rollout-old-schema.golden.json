@@ -4,13 +4,15 @@
     "window": "5h",
     "pct": 5,
     "resets_at": "2026-04-30T14:32:23Z",
-    "updated_at": "2026-04-30T12:00:00Z"
+    "updated_at": "2026-04-30T12:00:00Z",
+    "source": "rollout"
   },
   {
     "model": "codex",
     "window": "weekly",
     "pct": 12,
     "resets_at": "2026-05-05T07:28:15Z",
-    "updated_at": "2026-04-30T12:00:00Z"
+    "updated_at": "2026-04-30T12:00:00Z",
+    "source": "rollout"
   }
 ]

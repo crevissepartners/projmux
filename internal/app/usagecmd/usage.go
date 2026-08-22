@@ -34,10 +34,14 @@ import (
 // surfaces. Both share a single Manager so collect-once-render-twice stays
 // cheap.
 type Command struct {
-	managerFn       func([]string) (*usage.Manager, error)
-	enabledAgentsFn func() ([]config.AIAgentProvider, error)
-	now             func() time.Time
-	lookupEnv       func(string) string
+	managerFn               func([]string) (*usage.Manager, error)
+	enabledAgentsFn         func() ([]config.AIAgentProvider, error)
+	now                     func() time.Time
+	lookupEnv               func(string) string
+	executableFn            func() (string, error)
+	startNativeWatcherFn    func(string) error
+	watchNativeRateLimitsFn func(context.Context, func([]usage.Snapshot) error) error
+	watcherTimings          nativeWatcherTimings
 
 	// journalFn resolves the operations-journal recorder used to record
 	// usage collection failures; nil selects the default private journal.
@@ -170,7 +174,7 @@ func (c *Command) Run(args []string, stdout, stderr io.Writer) error {
 	// The warning above only exists while the user is looking at it; the
 	// journal is what makes a provider that stopped refreshing discoverable
 	// later. Best-effort: it never changes what this command returns.
-	c.recordCollectDiagnostics(collectErr, started)
+	c.recordCollectDiagnostics(collectErr, snaps, started)
 
 	// Conversation-local context fullness is diagnostic hook metadata, not
 	// account usage. Suppress legacy cached context rows before every CLI
@@ -240,6 +244,9 @@ func (c *Command) MaybeCollect(ctx context.Context) (bool, error) {
 // cache to render the HUD segment. Adapter failures during this hot path
 // are swallowed unless PROJMUX_USAGE_DEBUG is set.
 func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 1 && args[0] == nativeWatcherInternalFlag {
+		return c.runNativeWatcher()
+	}
 	fs := flag.NewFlagSet("status usage", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	maxWidth := fs.Int("max-width", 0, "truncate output to N runes (0 = no truncation)")
@@ -262,7 +269,14 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 	if len(modelScope) == 0 {
 		return nil
 	}
-	mgr, err := c.managerForScope(modelScope)
+	stateDir := ""
+	if modelScopeContains(modelScope, codexadapter.Name) {
+		if resolved, resolveErr := c.resolveStateDir(); resolveErr == nil {
+			stateDir = resolved
+			c.ensureNativeWatcher(stateDir)
+		}
+	}
+	mgr, err := c.managerForScopeReadOnly(modelScope)
 	if err != nil {
 		// Status segment must never fail loudly — silently emit nothing.
 		return nil
@@ -279,10 +293,23 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 	// investigate why the cache is stale.
 	started := time.Now()
 	var refreshErr error
+	refreshed := false
 	if *force {
 		_, refreshErr = mgr.ForceCollect(context.Background())
+		refreshed = true
 	} else {
-		_, refreshErr = mgr.MaybeCollect(context.Background(), statusRefreshThrottle)
+		accepted := false
+		if stateDir != "" {
+			accepted, refreshErr = c.applyFreshNativeEventBatch(mgr, stateDir)
+			refreshed = accepted
+		}
+		if !accepted {
+			var collected bool
+			var collectErr error
+			collected, collectErr = mgr.MaybeCollect(context.Background(), statusRefreshThrottle)
+			refreshed = refreshed || collected
+			refreshErr = errors.Join(refreshErr, collectErr)
+		}
 	}
 	if refreshErr != nil {
 		if c.env(usageDebugEnvVar) != "" {
@@ -291,7 +318,6 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 		// The status segment stays silent by contract, so the journal is the
 		// only place a repeated collection failure on this path becomes
 		// visible. Best-effort; the segment still renders from cache.
-		c.recordCollectDiagnostics(refreshErr, started)
 	}
 
 	snaps, err := mgr.LoadAll()
@@ -299,6 +325,9 @@ func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	snaps = filterSnapshotsByModels(snaps, modelScope)
+	if refreshed || refreshErr != nil {
+		c.recordCollectDiagnostics(refreshErr, snaps, started)
+	}
 
 	out := formatStatusUsageWithVisibility(snaps, *maxWidth, c.now(), c.loadHUDVisibilityPreferences())
 	if out == "" {
@@ -323,10 +352,17 @@ func (c *Command) managerForScope(modelScope []string) (*usage.Manager, error) {
 	if c.managerFn != nil {
 		return c.managerFn(modelScope)
 	}
-	return c.defaultManager(modelScope)
+	return c.defaultManager(modelScope, false)
 }
 
-func (c *Command) defaultManager(modelScope []string) (*usage.Manager, error) {
+func (c *Command) managerForScopeReadOnly(modelScope []string) (*usage.Manager, error) {
+	if c.managerFn != nil {
+		return c.managerFn(modelScope)
+	}
+	return c.defaultManager(modelScope, true)
+}
+
+func (c *Command) defaultManager(modelScope []string, readOnly bool) (*usage.Manager, error) {
 	// Resolve the state dir up front: the Antigravity adapter reads its
 	// context sidecar from the same directory the snapshot cache lives in,
 	// so it needs the resolved path at construction time.
@@ -346,7 +382,11 @@ func (c *Command) defaultManager(modelScope []string) (*usage.Manager, error) {
 				return nil, fmt.Errorf("usage: register claude adapter: %w", err)
 			}
 		case aiprovider.Codex:
-			if err := registry.Register(codexadapter.New()); err != nil {
+			adapter := codexadapter.New()
+			if readOnly {
+				adapter = codexadapter.NewReadOnly()
+			}
+			if err := registry.Register(adapter); err != nil {
 				return nil, fmt.Errorf("usage: register codex adapter: %w", err)
 			}
 		case aiprovider.Antigravity:
@@ -385,7 +425,7 @@ func (c *Command) resolveStateDir() (string, error) {
 // Used by the statusbar usage popup, which renders from cache only.
 func (c *Command) CachedState() (usage.State, []UnsupportedProvider, time.Time, error) {
 	modelScope := c.ambientModelScope()
-	mgr, err := c.managerForScope(modelScope)
+	mgr, err := c.managerForScopeReadOnly(modelScope)
 	if err != nil {
 		return usage.State{}, nil, time.Time{}, err
 	}
@@ -418,6 +458,15 @@ func (c *Command) modelScope(model string) ([]string, bool) {
 		}
 		return nil, true
 	}
+}
+
+func modelScopeContains(models []string, target string) bool {
+	for _, model := range models {
+		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Command) ambientModelScope() []string {
@@ -682,7 +731,18 @@ func writeUsageJSON(w io.Writer, snaps []usage.Snapshot, state usage.State, now 
 func writeUsageTable(w io.Writer, snaps []usage.Snapshot, now time.Time) error {
 	snaps = accountUsageSnapshots(snaps)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "MODEL\tWINDOW\tPCT\tRESETS_AT\tRESET_IN\tSTALE"); err != nil {
+	withProvenance := false
+	for _, snapshot := range snaps {
+		if snapshot.Source != "" || snapshot.FallbackReason != "" || snapshot.StaleReason != "" {
+			withProvenance = true
+			break
+		}
+	}
+	header := "MODEL\tWINDOW\tPCT\tRESETS_AT\tRESET_IN\tSTALE"
+	if withProvenance {
+		header += "\tSOURCE\tREASON"
+	}
+	if _, err := fmt.Fprintln(tw, header); err != nil {
 		return err
 	}
 	for _, s := range snaps {
@@ -698,7 +758,15 @@ func writeUsageTable(w io.Writer, snaps []usage.Snapshot, now time.Time) error {
 		if isStale(s, now) {
 			stale = "*"
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.Model, SnapshotWindowLabel(s), pct, resets, resetIn, stale); err != nil {
+		if withProvenance {
+			if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				s.Model, SnapshotWindowLabel(s), pct, resets, resetIn, stale, s.Source, SnapshotReasonLabel(s)); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			s.Model, SnapshotWindowLabel(s), pct, resets, resetIn, stale); err != nil {
 			return err
 		}
 	}
@@ -775,6 +843,9 @@ type modelDisplay struct {
 	// showAge gates the age-indicator render path. False for
 	// adapters whose data is always near-current (Codex).
 	showAge bool
+	// provenance is the exact bounded source plus optional fallback/stale
+	// reason selected for the same rows whose values this HUD renders.
+	provenance string
 }
 
 // formatStatusUsage produces the HUD-style tmux status segment.
@@ -1031,6 +1102,9 @@ func renderUsageHUD(models []modelDisplay, now time.Time, plan usageSegmentPlan)
 		var b strings.Builder
 		b.WriteString("#[fg=" + statusRoles.AccentAIFg + ",bold]")
 		b.WriteString(m.label)
+		if m.provenance != "" {
+			b.WriteString("[" + m.provenance + "]")
+		}
 		b.WriteString(statusDefaultReset)
 		b.WriteString(renderHUDAgeSuffix(m, now, plan.ageMode(i)))
 		first := true
@@ -1071,6 +1145,9 @@ func renderUsageText(models []modelDisplay, now time.Time, plan usageSegmentPlan
 		label := m.shortLabel
 		if plan.longLabels {
 			label = m.label
+		}
+		if m.provenance != "" {
+			label += "[" + m.provenance + "]"
 		}
 		text := renderTextPair(m, label, staleMarkerText(modelStaleLevel(m, now)))
 		if text != "" {
@@ -1241,6 +1318,9 @@ func PercentText(pct float64) string {
 func SnapshotWindowLabel(snapshot usage.Snapshot) string {
 	if snapshot.Window == usage.WindowQuota {
 		label := "quota/" + boundedOpaqueDisplayID(snapshot.Bucket, 24)
+		if native := snapshot.RateLimit; native != nil && native.Label != nil && *native.Label != "" {
+			label += " · " + boundedOpaqueDisplayID(*native.Label, 24)
+		}
 		if quota := snapshot.NamedQuota; quota != nil && quota.Scope != nil && quota.Scope.Model != nil {
 			label += " · " + boundedOpaqueDisplayID(quota.Scope.Model.DisplayName, 24)
 		}
@@ -1249,7 +1329,38 @@ func SnapshotWindowLabel(snapshot usage.Snapshot) string {
 		}
 		return truncateDisplayRunes(label, 72)
 	}
-	return string(snapshot.Window)
+	label := string(snapshot.Window)
+	if snapshot.Bucket != "" {
+		label += "/" + boundedOpaqueDisplayID(snapshot.Bucket, 24)
+	}
+	if native := snapshot.RateLimit; native != nil && native.Label != nil && *native.Label != "" {
+		label += " · " + boundedOpaqueDisplayID(*native.Label, 24)
+	}
+	return truncateDisplayRunes(label, 72)
+}
+
+// SnapshotReasonLabel returns the one reason relevant to the rendered row.
+// A last-known-good reason wins over the historical fallback reason because it
+// explains the row's current freshness.
+func SnapshotReasonLabel(snapshot usage.Snapshot) usage.SnapshotReason {
+	if snapshot.StaleReason != "" {
+		return snapshot.StaleReason
+	}
+	return snapshot.FallbackReason
+}
+
+func snapshotProvenanceLabel(snapshot usage.Snapshot) string {
+	if snapshot.Source == "" {
+		return ""
+	}
+	label := string(snapshot.Source)
+	if snapshot.StaleReason != "" {
+		return label + "/stale:" + string(snapshot.StaleReason)
+	}
+	if snapshot.FallbackReason != "" {
+		return label + "/fallback:" + string(snapshot.FallbackReason)
+	}
+	return label
 }
 
 func boundedOpaqueDisplayID(id string, maxRunes int) string {
@@ -1386,7 +1497,7 @@ func filterStatusProjectionByVisibility(projected []usage.Snapshot, prefs hudVis
 // providers without a declared projection, and unknown buckets stay outside.
 func projectStatusSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
 	projected := make([]usage.Snapshot, 0, len(snaps))
-	seen := make(map[string]bool)
+	direct := make(map[string]usage.Snapshot)
 	key := func(snapshot usage.Snapshot) string {
 		return strings.ToLower(strings.TrimSpace(snapshot.Model)) + "\x00" + string(snapshot.Window)
 	}
@@ -1395,9 +1506,13 @@ func projectStatusSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
 			continue
 		}
 		k := key(snapshot)
-		if seen[k] {
-			continue
+		current, exists := direct[k]
+		if !exists || preferHUDSnapshot(snapshot, current) {
+			direct[k] = snapshot
 		}
+	}
+	seen := make(map[string]bool, len(direct))
+	for k, snapshot := range direct {
 		seen[k] = true
 		projected = append(projected, snapshot)
 	}
@@ -1417,6 +1532,31 @@ func projectStatusSnapshots(snaps []usage.Snapshot) []usage.Snapshot {
 		projected = append(projected, weekly)
 	}
 	return usage.SortedSnapshots(projected)
+}
+
+// preferHUDSnapshot makes multi-bucket Codex projection deterministic. The
+// canonical codex bucket is the upstream historical view; an empty legacy
+// bucket is next, then opaque buckets sort lexically. The CLI retains every
+// bucket, so the selected HUD value/source always has one exact CLI row.
+func preferHUDSnapshot(candidate, current usage.Snapshot) bool {
+	if !strings.EqualFold(strings.TrimSpace(candidate.Model), "codex") {
+		return false
+	}
+	rank := func(bucket string) int {
+		switch bucket {
+		case "codex":
+			return 0
+		case "":
+			return 1
+		default:
+			return 2
+		}
+	}
+	candidateRank, currentRank := rank(candidate.Bucket), rank(current.Bucket)
+	if candidateRank != currentRank {
+		return candidateRank < currentRank
+	}
+	return candidate.Bucket < current.Bucket
 }
 
 // directHUDWindowSupported is the source half of the explicit projection
@@ -1459,6 +1599,7 @@ func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
 				model:      s.Model,
 				label:      ModelDisplayLabel(s.Model),
 				shortLabel: modelShortLabel(s.Model),
+				provenance: snapshotProvenanceLabel(s),
 			}
 			byModel[s.Model] = row
 			order = append(order, s.Model)
@@ -1482,11 +1623,17 @@ func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
 		if !s.UpdatedAt.IsZero() && s.UpdatedAt.After(row.lastSync) {
 			row.lastSync = s.UpdatedAt
 		}
+		if row.provenance == "" {
+			row.provenance = snapshotProvenanceLabel(s)
+		}
 		// Claude data is throttled/backoff-gated and Antigravity data is
 		// hook-driven (only refreshed when agy emits a statusline), so both
 		// can go stale — surface the age indicator. Codex reads the latest
 		// rollout every call so its age is always ~now (showAge stays false).
 		if strings.EqualFold(s.Model, "claude") || strings.EqualFold(s.Model, "antigravity") {
+			row.showAge = true
+		}
+		if s.StaleReason != "" {
 			row.showAge = true
 		}
 	}
