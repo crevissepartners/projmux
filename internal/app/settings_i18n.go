@@ -820,6 +820,26 @@ var uiTextKeys = map[string]i18n.Key{
 	"Enter: discard and start  |  Esc: cancel": "settings.footer.project_startup_new_confirm",
 	"Yes, discard and start new":               "settings.text.project_startup_new_confirm_row",
 	"keep the saved state; nothing is deleted": "settings.desc.project_startup_new_cancel",
+
+	// Codex lifecycle semantic policy copy is kept in the one shared UI text
+	// registry. Its own alignment group prevents these long descriptions from
+	// mechanically reformatting unrelated Settings entries.
+	"Native semantic policy":            "settings.text.native_semantic_policy",
+	"Codex native semantic policy":      "settings.text.codex_native_semantic_policy",
+	"Effective source":                  "settings.text.codex_effective_source",
+	"Hook fallback behavior (advanced)": "settings.text.codex_hook_fallback_advanced",
+	"State only":                        "settings.text.semantic_state_only",
+	"Quiet":                             "settings.text.semantic_quiet",
+	"Notify":                            "settings.text.semantic_notify",
+	"Approval required":                 i18n.KeyNotifyAIApprovalRequired,
+	"Response complete":                 i18n.KeyNotifyAIResponseComplete,
+	"applies to native lifecycle and hook fallback":  "settings.desc.codex_semantic_policy_sources",
+	"State only - badge only; queue and desktop off": "settings.desc.semantic_state_only",
+	"Quiet - badge, queue, and desktop off":          "settings.desc.semantic_quiet",
+	"Notify - badge, queue, and desktop on":          "settings.desc.semantic_notify",
+	"content-free runtime authority":                 "settings.desc.codex_content_free_authority",
+	"raw overrides below are preserved":              "settings.desc.codex_raw_overrides_preserved",
+	"fallback only":                                  "settings.text.codex_fallback_only",
 }
 
 // settingsTextKeys preserves the historical name for the shared registry so

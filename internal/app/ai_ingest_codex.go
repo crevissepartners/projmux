@@ -2,9 +2,12 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 )
 
@@ -43,6 +46,10 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	}
+	if authority := c.readTmuxPaneOption(paneID, aiPaneCodexAuthorityOption); codexAuthoritySuppressesHooks(authority) {
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: "provider-control-plane authority: " + authority, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+		return nil
+	}
 	if allowed, reason := c.nativeCodexHookAllowed(paneID, payload.matchThreadID()); !allowed {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: reason, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
 		return nil
@@ -69,28 +76,10 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "state", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	case "Stop":
-		if action.Action == aiHookActionQuiet {
-			c.quietCodexHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
 		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
 		body := formatCodexHookStopNotifyBody(payload)
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:        codexHookNotifyID(payload, "stop"),
-				Text:      body.Text,
-				Severity:  body.Severity,
-				Metadata:  mergeAINotifyBodyMetadata(metadata, body),
-				Force:     true,
-				BadgeKind: aiBadgeKindResponseComplete,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-			return nil
-		}
-		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
+		policy, rawOverride := c.codexHookSemanticPolicy(payload.EventName, coremetadata.InteractionResponseComplete)
+		if err := c.applyCodexHookSemanticDelivery(paneID, coremetadata.InteractionResponseComplete, policy, attentionNotifyInput{
 			ID:        codexHookNotifyID(payload, "stop"),
 			Text:      body.Text,
 			Severity:  body.Severity,
@@ -101,31 +90,14 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return err
 		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+		result, reason := codexHookSemanticLogResult(policy, rawOverride)
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: result, Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	case "PermissionRequest":
-		if action.Action == aiHookActionQuiet {
-			c.quietCodexHook(paneID, payload, aiHookQuietReason(action))
-			return nil
-		}
 		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
 		body := formatCodexHookPermissionNotifyBody(payload)
-		if action.Action == aiHookActionState {
-			if err := c.applyAIStatusStateOnly("waiting", paneID, attentionNotifyInput{
-				ID:        codexHookNotifyID(payload, "permission"),
-				Text:      body.Text,
-				Severity:  body.Severity,
-				Metadata:  mergeAINotifyBodyMetadata(metadata, body),
-				Force:     true,
-				BadgeKind: aiBadgeKindApprovalRequired,
-			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-				return err
-			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
-			return nil
-		}
-		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
+		policy, rawOverride := c.codexHookSemanticPolicy(payload.EventName, coremetadata.InteractionApprovalRequired)
+		if err := c.applyCodexHookSemanticDelivery(paneID, coremetadata.InteractionApprovalRequired, policy, attentionNotifyInput{
 			ID:        codexHookNotifyID(payload, "permission"),
 			Text:      body.Text,
 			Severity:  body.Severity,
@@ -136,7 +108,8 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return err
 		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+		result, reason := codexHookSemanticLogResult(policy, rawOverride)
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: result, Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	case "SessionStart":
 		if _, _, err := c.persistManagedAgentStartupReadiness(paneID, aiModeCodex); err != nil {
@@ -168,6 +141,101 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		c.quietCodexHook(paneID, payload, aiHookNoHandlerReason(action))
 		return nil
 	}
+}
+
+// codexHookSemanticPolicy makes the semantic event policy source-independent
+// while preserving an existing raw hook override as a fallback-only override.
+// Catalog defaults are installation/compatibility metadata, not a second
+// semantic policy store, so they deliberately do not participate here.
+func (c *aiCommand) codexHookSemanticPolicy(event string, interaction coremetadata.AgentInteractionKind) (config.AISemanticPolicy, bool) {
+	semantic := c.codexSemanticPolicyForInteraction(interaction)
+	action, overridden := c.aiHookRuntimeAction(aiHookProviderCodex, event)
+	if !overridden {
+		return semantic, false
+	}
+	return codexSemanticPolicyWithFallbackOverride(semantic, action, true), true
+}
+
+func codexSemanticPolicyWithFallbackOverride(semantic config.AISemanticPolicy, action string, overridden bool) config.AISemanticPolicy {
+	if !overridden {
+		return semantic
+	}
+	switch action {
+	case aiHookActionNotify:
+		return config.AISemanticNotify
+	case aiHookActionState:
+		return config.AISemanticStateOnly
+	case aiHookActionQuiet:
+		return config.AISemanticQuiet
+	default:
+		// Runtime loading admits only closed actions. Keep this helper closed as
+		// well so a malformed value can never silently become a new policy.
+		return semantic
+	}
+}
+
+func codexHookSemanticLogResult(policy config.AISemanticPolicy, rawOverride bool) (result, reason string) {
+	source := "semantic policy"
+	if rawOverride {
+		source = "runtime fallback override"
+	}
+	switch policy {
+	case config.AISemanticQuiet:
+		return "quiet", source + " quiet"
+	case config.AISemanticStateOnly:
+		return "state", source + " state only"
+	default:
+		return "notify", ""
+	}
+}
+
+// applyCodexHookSemanticDelivery mirrors the native lifecycle delivery intent
+// for the hook authority without routing through the legacy waiting reducer,
+// whose state-only branch intentionally retains reply attention. The hook was
+// already checked against exact activation and authority before reaching here.
+func (c *aiCommand) applyCodexHookSemanticDelivery(paneID string, interaction coremetadata.AgentInteractionKind, policy config.AISemanticPolicy, input attentionNotifyInput) error {
+	delivery := codexSemanticDeliveryFor(policy, interaction)
+	if _, _, err := c.persistManagedAgentInteractionWithActivationPolicy(paneID, delivery.RegistryInteraction, string(coremetadata.InteractionSourceProviderHook), true); err != nil {
+		if errors.Is(err, errManagedAgentObservationIgnored) {
+			return nil
+		}
+		return err
+	}
+
+	input.PaneID = paneID
+	if input.Lookup == nil {
+		input.Lookup = c.notifyLookup()
+	}
+	if !delivery.Notify {
+		store, err := c.aiNotifyStore()
+		if err != nil {
+			return err
+		}
+		if err := store.Ack(input.ID); err != nil && !errors.Is(err, notify.ErrNotFound) {
+			return err
+		}
+		c.publishNotifyQueueRefreshBestEffort()
+	}
+
+	for _, field := range []struct{ option, value string }{
+		{aiPaneStateOption, delivery.State},
+		{aiPaneBadgeKindOption, delivery.Badge},
+		{attentionStateOption, delivery.Attention},
+	} {
+		args := []string{"set-option", "-p", "-t", paneID, field.option, field.value}
+		if field.value == "" {
+			args = []string{"set-option", "-p", "-u", "-t", paneID, field.option}
+		}
+		if err := c.run("tmux", args...); err != nil {
+			return err
+		}
+	}
+	if !delivery.Notify {
+		return nil
+	}
+	_ = c.notifyAIWithInput(paneID, input)
+	c.notifyProducer().PushReplyReady(input)
+	return nil
 }
 
 func (c *aiCommand) quietCodexHook(paneID string, payload codexHookPayload, reason string) {

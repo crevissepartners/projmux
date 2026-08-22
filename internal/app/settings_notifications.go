@@ -434,6 +434,14 @@ func (c *settingsCommand) runAIHookProviderActionSection(provider string, stdout
 			if err := c.runAIHookEventActionSection(provider, event, stdout, stderr); err != nil {
 				return err
 			}
+		case strings.HasPrefix(action, settingsActionPrefixAISemanticEvent):
+			event := config.AISemanticEvent(strings.TrimPrefix(action, settingsActionPrefixAISemanticEvent))
+			if provider != aiHookProviderCodex || !validAISemanticEvent(event) {
+				return fmt.Errorf("unknown native semantic event action: %s", action)
+			}
+			if err := c.runAISemanticEventActionSection(event, stdout, stderr); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unknown AI hook provider action: %s", action)
 		}
@@ -483,6 +491,46 @@ func (c *settingsCommand) runAIHookEventActionSection(provider, event string, st
 			}
 		default:
 			return fmt.Errorf("unknown AI hook event action: %s", action)
+		}
+	}
+}
+
+func (c *settingsCommand) runAISemanticEventActionSection(event config.AISemanticEvent, stdout, stderr io.Writer) error {
+	for {
+		result, err := c.runPicker(intpickercompat.Options{
+			UI:         "settings-notifications-native-semantic-event",
+			Entries:    c.aiSemanticPolicyChoiceEntries(event),
+			Title:      codexSemanticEventTitle(c.locale(), event),
+			Prompt:     codexSemanticEventPrompt(c.locale(), event),
+			Footer:     projmuxFooter("Enter: save  |  Back row: parent "),
+			ExpectKeys: []string{"enter"},
+			Bindings:   c.settingsCloseBindings(),
+		})
+		if err != nil {
+			return err
+		}
+		action := strings.TrimSpace(result.Value)
+		if result.Key != "enter" || action == "" {
+			return errSettingsClosed
+		}
+		switch {
+		case action == settingsBackValue:
+			return nil
+		case action == settingsNoopValue:
+			continue
+		case strings.HasPrefix(action, settingsActionPrefixAISemanticSet):
+			eventValue, policyValue, ok := strings.Cut(strings.TrimPrefix(action, settingsActionPrefixAISemanticSet), ":")
+			policy := config.AISemanticPolicy(policyValue)
+			if !ok || config.AISemanticEvent(eventValue) != event || !config.ValidAISemanticPolicy(policy) {
+				return fmt.Errorf("unknown native semantic policy choice: %s", action)
+			}
+			if err := c.runSettingsMutation(settingsCatalogTextLocale(c.locale(), "Codex native semantic policy"), stdout, stderr, func(out, _ io.Writer) error {
+				return c.setAISemanticPolicy(event, policy, out)
+			}); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown native semantic event action: %s", action)
 		}
 	}
 }
@@ -1048,6 +1096,15 @@ func (c *settingsCommand) aiHookEventEntries(provider string) []intpickercompat.
 			Value: settingsNoopValue,
 		},
 	}
+	if provider == aiHookProviderCodex {
+		policies := c.currentAISemanticPolicies()
+		entries = append(entries,
+			intpickercompat.Entry{Label: c.rowLabelInfo("Effective source", c.codexLifecycleAuthoritySummary(), "content-free runtime authority"), Value: settingsNoopValue},
+			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Approval required", semanticPolicyDescription(policies.Events[config.AISemanticApprovalRequired])), Value: settingsActionPrefixAISemanticEvent + string(config.AISemanticApprovalRequired), SearchKey: "codex native approval required notify state only quiet"},
+			intpickercompat.Entry{Label: c.rowLabel(settingsGlyphOpen, settingsColorType, "Response complete", semanticPolicyDescription(policies.Events[config.AISemanticResponseComplete])), Value: settingsActionPrefixAISemanticEvent + string(config.AISemanticResponseComplete), SearchKey: "codex native response complete notify state only quiet"},
+			intpickercompat.Entry{Label: c.rowLabelInfo("Hook fallback behavior (advanced)", c.codexHookFallbackSummary(), "raw overrides below are preserved"), Value: settingsNoopValue},
+		)
+	}
 	cmd := c.aiForSettings()
 	seen := map[string]bool{}
 	if catalog, err := cmd.loadAIHookCatalog(provider); err == nil {
@@ -1064,7 +1121,7 @@ func (c *settingsCommand) aiHookEventEntries(provider string) []intpickercompat.
 				desc += " - install=false"
 			}
 			entries = append(entries, intpickercompat.Entry{
-				Label:     c.rowLabel(aiHookActionGlyph(resolution.Action), aiHookActionColor(resolution.Action), event.Name, desc),
+				Label:     c.rowLabel(aiHookActionGlyph(resolution.Action), aiHookActionColor(resolution.Action), event.Name, hookFallbackDescriptionLocale(c.locale(), provider, desc)),
 				Value:     settingsActionPrefixAIHookEvent + provider + ":" + event.Name,
 				SearchKey: strings.Join([]string{provider, event.Name, resolution.Action, resolution.Source, "quiet notify state"}, " "),
 			})
@@ -1082,7 +1139,7 @@ func (c *settingsCommand) aiHookEventEntries(provider string) []intpickercompat.
 		for _, event := range extras {
 			action := actions.Events[event]
 			entries = append(entries, intpickercompat.Entry{
-				Label:     c.rowLabel(aiHookActionGlyph(action), aiHookActionColor(action), event, action+" - runtime - install not managed"),
+				Label:     c.rowLabel(aiHookActionGlyph(action), aiHookActionColor(action), event, hookFallbackDescriptionLocale(c.locale(), provider, action+" - runtime - install not managed")),
 				Value:     settingsActionPrefixAIHookEvent + provider + ":" + event,
 				SearchKey: strings.Join([]string{provider, event, action, "runtime quiet notify state"}, " "),
 			})

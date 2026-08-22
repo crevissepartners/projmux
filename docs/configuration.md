@@ -475,13 +475,33 @@ app-server version for that connection and is confirmed by the method call;
 Codex 0.149 does not advertise a separate review capability bit. Older versions
 or a method-not-found response are reported explicitly as unavailable. The
 initial `review/start` response is projected into Agent interaction lifecycle;
-later app-server completion notifications remain outside this phase.
+the lifecycle observer described below owns later app-server terminal events.
+
+A natively created or resumed Codex Agent keeps a content-free lifecycle
+observer on its exact Agent UID, Pane UID/runtime handle, activation generation,
+and thread ID. While its initialized proxy connection and snapshot are current,
+the app server is the only attention authority: active, idle, waiting for input,
+and exact unresolved approval requests project the Agent interaction and badge.
+Only an exact successful `turn/completed` projects response-complete and queues a
+completion notification; failed and interrupted turns become idle. Disconnect
+and thread unload first invalidate the epoch and clear stale attention, then
+enable hook fallback. A reconnect starts a new epoch from `thread/read`; events
+from older epochs or other identities are ignored.
+
+`describe agent` and the Codex Agent event Settings page report the effective
+lifecycle source, a closed reason, and active/pending/inactive epoch status.
+These diagnostics never retain prompts, reasoning, output, approval reasons, or
+diff content. Settings aggregates multiple live Codex Panes as counts and says
+`mixed` when native and fallback authority coexist.
 
 Projmux does not install, bootstrap, restart, stop, or reconfigure the Codex
 daemon, does not stop the shared daemon when Projmux exits, and does not manage
 Codex authentication. There is no custom socket or remote-control setting.
-Existing `ai-hook-actions.json` values remain the hook fallback policy and are
-neither rewritten nor reinterpreted as native app-server policy.
+The semantic approval/completion policy below drives the same badge, queue, and
+desktop intent for both app-server and hook-fallback authority. Existing
+`ai-hook-actions.json` values remain byte-for-byte unchanged and, when an exact
+runtime override exists, take precedence only while hook fallback is current;
+they are never inferred or copied into the semantic policy store.
 
 ## AI Resume Picker
 
@@ -711,6 +731,21 @@ The file maps provider/event names to `notify`, `state`, or `quiet` and
 overrides catalog `action` values during ingest, including known Codex and
 Claude events. It does not change hook installation; `projmux agent integrate`
 continues to use the embedded/local catalog `install` fields.
+
+Codex native lifecycle semantics are stored separately at:
+
+```text
+${XDG_CONFIG_HOME:-$HOME/.config}/projmux/ai-semantic-policies.json
+```
+
+The two closed events are `approval_required` and `response_complete`. Each can
+be `notify` (badge + queue + desktop), `state` (badge only), or `quiet` (no
+badge, queue, or desktop). Settings labels these choices `Notify`, `State only`,
+and `Quiet`. The selected intent applies to both the app-server epoch and hook
+fallback. An explicit raw `PermissionRequest` or `Stop` runtime override takes
+precedence only during hook fallback; catalog defaults do not override this
+semantic store. Saving this file does not infer from, rewrite, or normalize the
+raw hook override file.
 
 Delivery depends on the event handler. Specialized notify handlers, such as
 Codex `PermissionRequest` and `Stop`, can write the in-app notify queue and use

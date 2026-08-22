@@ -48,8 +48,12 @@ func (f *fakeNativeThreadController) Resume(_ context.Context, workspace coremet
 func (f *fakeNativeThreadController) CanFallback(error) bool { return f.fallback }
 
 type fakeNativePaneLauncher struct {
-	plans []fakeNativePanePlan
-	bound []fakeNativePaneBinding
+	plans                     []fakeNativePanePlan
+	bound                     []fakeNativePaneBinding
+	lifecycle                 []codexLifecycleIdentity
+	lifecycleBindingCurrent   func(codexLifecycleIdentity) (registryCurrent, paneUIDCurrent bool)
+	lifecycleObservedRegistry []bool
+	lifecycleObservedPaneUID  []bool
 }
 
 type fakeNativePanePlan struct {
@@ -70,6 +74,16 @@ func (f *fakeNativePaneLauncher) BindNativeCodexPane(paneID, contextDir, title, 
 	f.bound = append(f.bound, fakeNativePaneBinding{paneID: paneID, contextDir: contextDir, title: title, threadID: threadID})
 }
 
+func (f *fakeNativePaneLauncher) startNativeCodexLifecycleObserver(identity codexLifecycleIdentity) {
+	f.lifecycle = append(f.lifecycle, identity)
+	registryCurrent, paneUIDCurrent := false, false
+	if f.lifecycleBindingCurrent != nil {
+		registryCurrent, paneUIDCurrent = f.lifecycleBindingCurrent(identity)
+	}
+	f.lifecycleObservedRegistry = append(f.lifecycleObservedRegistry, registryCurrent)
+	f.lifecycleObservedPaneUID = append(f.lifecycleObservedPaneUID, paneUIDCurrent)
+}
+
 type fakeNativeResumeLauncher struct {
 	*fakeResumeLauncher
 	*fakeNativePaneLauncher
@@ -87,6 +101,10 @@ func TestNativeCodexCreateBindsExactThreadAndSubmitsPromptOnce(t *testing.T) {
 	create, legacy := newTestAgentCreateCommand(t, store, tmux)
 	native := &fakeNativeThreadController{createBinding: codexappserver.ThreadBinding{ThreadID: "thread-native-1", TurnID: "turn-native-1"}}
 	panes := &fakeNativePaneLauncher{}
+	panes.lifecycleBindingCurrent = func(identity codexLifecycleIdentity) (bool, bool) {
+		paneUID, _ := tmux.Run(context.Background(), "tmux", "display-message", "-p", "-t", identity.RuntimeID, "-F", "#{@projmux_pane_uid}")
+		return exactCodexLifecycleBinding(store.registry, identity), strings.TrimSpace(string(paneUID)) == identity.PaneUID
+	}
 	create.codexNative = native
 	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
 
@@ -108,6 +126,9 @@ func TestNativeCodexCreateBindsExactThreadAndSubmitsPromptOnce(t *testing.T) {
 	}
 	if len(panes.plans) != 1 || panes.plans[0].threadID != "thread-native-1" || len(panes.bound) != 1 || panes.bound[0].threadID != "thread-native-1" {
 		t.Fatalf("native pane plans=%+v bindings=%+v", panes.plans, panes.bound)
+	}
+	if len(panes.lifecycle) != 1 || !slices.Equal(panes.lifecycleObservedRegistry, []bool{true}) || !slices.Equal(panes.lifecycleObservedPaneUID, []bool{true}) {
+		t.Fatalf("lifecycle startup did not observe committed exact binding: identities=%+v registry=%v paneUID=%v", panes.lifecycle, panes.lifecycleObservedRegistry, panes.lifecycleObservedPaneUID)
 	}
 	for _, call := range splitWindowCalls(tmux) {
 		joined := strings.Join(call, " ")
@@ -148,6 +169,10 @@ func TestNativeCodexResumeReusesStoredThreadAndCreatesZeroThreads(t *testing.T) 
 	agentCommand, legacy, _, _ := newTestAgentResumeCommand(t, store, tmux)
 	native := &fakeNativeThreadController{resumeBinding: codexappserver.ThreadBinding{ThreadID: resumeFixtureConversation}}
 	panes := &fakeNativePaneLauncher{}
+	panes.lifecycleBindingCurrent = func(identity codexLifecycleIdentity) (bool, bool) {
+		paneUID, _ := tmux.Run(context.Background(), "tmux", "display-message", "-p", "-t", identity.RuntimeID, "-F", "#{@projmux_pane_uid}")
+		return exactCodexLifecycleBinding(store.registry, identity), strings.TrimSpace(string(paneUID)) == identity.PaneUID
+	}
 	launcher := &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
 	agentCommand.rebind.launcher = launcher
 	agentCommand.rebind.create.codexNative = native
@@ -161,6 +186,9 @@ func TestNativeCodexResumeReusesStoredThreadAndCreatesZeroThreads(t *testing.T) 
 	}
 	if len(panes.plans) != 1 || panes.plans[0].threadID != resumeFixtureConversation || len(panes.bound) != 1 {
 		t.Fatalf("native pane plans=%+v bindings=%+v", panes.plans, panes.bound)
+	}
+	if len(panes.lifecycle) != 1 || !slices.Equal(panes.lifecycleObservedRegistry, []bool{true}) || !slices.Equal(panes.lifecycleObservedPaneUID, []bool{true}) {
+		t.Fatalf("resume lifecycle startup did not observe committed exact binding: identities=%+v registry=%v paneUID=%v", panes.lifecycle, panes.lifecycleObservedRegistry, panes.lifecycleObservedPaneUID)
 	}
 	calls := splitWindowCalls(tmux)
 	if len(calls) != 1 || !slices.ContainsFunc(calls[0], func(arg string) bool { return strings.Contains(arg, resumeFixtureConversation) }) {
@@ -285,6 +313,45 @@ func TestNativeUnavailablePreservesCurrentResumeFallback(t *testing.T) {
 		t.Fatalf("native=%+v legacy plans=%+v bindings=%+v native pane plans=%+v", native.resumes, legacy.plans, legacy.bound, panes.plans)
 	}
 	assertOnlyResumeLaunches(t, tmux, resumeFixtureConversation, 1)
+}
+
+func TestNativeLifecycleStarterIsNotCalledWhenCreateOrResumeTransactionFails(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		store := newFakeResourceStore(t)
+		tmux := newFakeTmux()
+		tmux.fail = []string{"set-option", aiPaneTopicOption}
+		create, _ := newTestAgentCreateCommand(t, store, tmux)
+		native := &fakeNativeThreadController{createBinding: codexappserver.ThreadBinding{ThreadID: "thread-native-fail", TurnID: "turn-native-fail"}}
+		panes := &fakeNativePaneLauncher{}
+		create.codexNative = native
+		create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
+
+		if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "exact prompt"); err == nil {
+			t.Fatal("native create transaction unexpectedly succeeded")
+		}
+		if len(panes.lifecycle) != 0 {
+			t.Fatalf("rolled-back create started lifecycle observer: %+v", panes.lifecycle)
+		}
+	})
+
+	t.Run("resume", func(t *testing.T) {
+		store := newFakeResourceStore(t)
+		setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
+		tmux := newFakeTmux()
+		tmux.fail = []string{"set-option", aiPaneTopicOption}
+		agentCommand, legacy, _, _ := newTestAgentResumeCommand(t, store, tmux)
+		native := &fakeNativeThreadController{resumeBinding: codexappserver.ThreadBinding{ThreadID: resumeFixtureConversation}}
+		panes := &fakeNativePaneLauncher{}
+		agentCommand.rebind.launcher = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
+		agentCommand.rebind.create.codexNative = native
+
+		if _, _, err := runRoute(t, agentCommand, "resume", "uid:agt-beta-codex"); err == nil {
+			t.Fatal("native resume transaction unexpectedly succeeded")
+		}
+		if len(panes.lifecycle) != 0 {
+			t.Fatalf("rolled-back resume started lifecycle observer: %+v", panes.lifecycle)
+		}
+	})
 }
 
 func TestIndeterminateNativeCreateRefusesASecondLaneAndWritesZero(t *testing.T) {

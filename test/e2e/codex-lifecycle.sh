@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+unset TMUX TMUX_PANE
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/test/lib/smoke.sh"
+
+smoke_setup_env
+cd "$smoke_root"
+smoke_build_binary
+bin="$PROJMUX_SMOKE_BIN"
+
+lifecycle_root="$PROJMUX_SMOKE_WORKDIR/codex-lifecycle"
+lifecycle_socket="projmux-codex-lifecycle-$$-$RANDOM"
+lifecycle_session="projects-lifecycle"
+lifecycle_project="$lifecycle_root/projects/lifecycle"
+lifecycle_shim="$lifecycle_root/shim"
+lifecycle_fixture_state="$lifecycle_root/fake-codex-state"
+lifecycle_notify_log="$lifecycle_root/desktop-notify-count"
+lifecycle_notify_hook="$lifecycle_root/desktop-notify-hook"
+lifecycle_real_tmux="$(command -v tmux)"
+lifecycle_started=0
+mkdir -p "$lifecycle_project" "$lifecycle_shim" "$lifecycle_fixture_state"
+
+# shellcheck disable=SC2016 # Expands in the generated notification hook at runtime.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'printf "1\\n" >>"${PROJMUX_FAKE_NOTIFY_LOG:?}"' >"$lifecycle_notify_hook"
+chmod 0755 "$lifecycle_notify_hook"
+export PROJMUX_NOTIFY_HOOK="$lifecycle_notify_hook"
+export PROJMUX_FAKE_NOTIFY_LOG="$lifecycle_notify_log"
+
+go build -o "$lifecycle_shim/codex" ./test/e2e/fake_codex_appserver_fixture.go
+cat >"$lifecycle_shim/tmux" <<TMUX_SHIM
+#!/usr/bin/env bash
+exec env TMUX_TMPDIR=$(printf %q "$TMUX_TMPDIR") $(printf %q "$lifecycle_real_tmux") -L $(printf %q "$lifecycle_socket") "\$@"
+TMUX_SHIM
+chmod 0755 "$lifecycle_shim/tmux"
+
+lifecycle_tmux() {
+  env -u TMUX -u TMUX_PANE "$lifecycle_real_tmux" -L "$lifecycle_socket" "$@"
+}
+
+lifecycle_pmx() {
+  env -u TMUX -u TMUX_PANE -u PMX_INTERNAL_ACTIVATION_PANE_UID -u PMX_INTERNAL_ACTIVATION_GENERATION \
+    PATH="$lifecycle_shim:$PATH" \
+    PROJMUX_FAKE_CODEX_STATE="$lifecycle_fixture_state" \
+    PROJMUX_MANAGED_ROOTS="$lifecycle_root/projects" \
+    "$bin" "$@"
+}
+
+lifecycle_background_routes() {
+  ps -eo pid=,args= | PROJMUX_ROUTE_BIN="$bin" awk '
+    index($0, ENVIRON["PROJMUX_ROUTE_BIN"] " internal agent-hook ingest codex-appserver-watch") > 0 { print }'
+}
+
+lifecycle_cleanup() {
+  local actual=""
+  if [[ "$lifecycle_started" == "1" ]]; then
+    actual="$(lifecycle_tmux display-message -p -t "$lifecycle_session" '#{socket_path}' 2>/dev/null || true)"
+    if [[ -n "$actual" ]]; then
+      case "$actual" in
+        "$PROJMUX_SMOKE_TMUX_ROOT"/*)
+          env -u TMUX -u TMUX_PANE "$lifecycle_real_tmux" -S "$actual" kill-server >/dev/null 2>&1 || true
+          ;;
+        *)
+          echo "refusing Codex lifecycle cleanup outside smoke root: $actual" >&2
+          return 1
+          ;;
+      esac
+    fi
+    lifecycle_started=0
+  fi
+  for _ in $(seq 1 200); do
+    if [[ -z "$(lifecycle_background_routes)" ]]; then
+      return 0
+    fi
+    sleep 0.025
+  done
+  echo "Codex lifecycle watcher survived exact server cleanup:" >&2
+  lifecycle_background_routes >&2
+  return 1
+}
+trap 'lifecycle_cleanup; smoke_cleanup_env' EXIT
+
+lifecycle_started=1
+lifecycle_tmux new-session -d -s "$lifecycle_session" -c "$lifecycle_project" sleep 600
+lifecycle_tmux set-option -t "$lifecycle_session" -q @projmux_project_path "$lifecycle_project"
+lifecycle_socket_path="$(lifecycle_tmux display-message -p -t "$lifecycle_session" '#{socket_path}')"
+case "$lifecycle_socket_path" in
+  "$PROJMUX_SMOKE_TMUX_ROOT"/*) ;;
+  *)
+    echo "Codex lifecycle socket escaped isolated root: $lifecycle_socket_path" >&2
+    exit 1
+    ;;
+esac
+
+lifecycle_pmx create project --root "$lifecycle_project" --name lifecycle >/dev/null
+lifecycle_pmx reconcile resources --socket "$lifecycle_socket" >/dev/null
+lifecycle_window="$(lifecycle_pmx get windows --project lifecycle -o name)"
+if [[ -z "$lifecycle_window" || "$(printf '%s\n' "$lifecycle_window" | wc -l)" != "1" ]]; then
+  echo "Codex lifecycle fixture did not resolve one managed Window: $lifecycle_window" >&2
+  exit 1
+fi
+
+lifecycle_pane="$(lifecycle_pmx create agent --provider codex --project lifecycle --window "$lifecycle_window" -o pane-id -- "phase3 lifecycle smoke")"
+if [[ ! "$lifecycle_pane" =~ ^%[0-9]+$ ]]; then
+  echo "native lifecycle create returned invalid pane: $lifecycle_pane" >&2
+  exit 1
+fi
+lifecycle_pane_uid="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_pane_uid)"
+lifecycle_generation="$(lifecycle_pmx describe pane "uid:$lifecycle_pane_uid" | awk '$1 == "BindingGeneration:" { print $2; exit }')"
+if [[ -z "$lifecycle_pane_uid" || -z "$lifecycle_generation" ]]; then
+  echo "native lifecycle fixture could not resolve exact Pane/generation identity" >&2
+  exit 1
+fi
+
+lifecycle_pmx_hook() {
+  env -u TMUX -u TMUX_PANE \
+    PATH="$lifecycle_shim:$PATH" \
+    PROJMUX_FAKE_CODEX_STATE="$lifecycle_fixture_state" \
+    PROJMUX_MANAGED_ROOTS="$lifecycle_root/projects" \
+    PMX_INTERNAL_ACTIVATION_PANE_UID="$lifecycle_pane_uid" \
+    PMX_INTERNAL_ACTIVATION_GENERATION="$lifecycle_generation" \
+    "$bin" "$@"
+}
+
+wait_lifecycle_option() {
+  local option="$1" expected="$2" label="$3" actual=""
+  for _ in $(seq 1 400); do
+    actual="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" "$option" 2>/dev/null || true)"
+    if [[ "$actual" == "$expected" ]]; then
+      return 0
+    fi
+    sleep 0.025
+  done
+  echo "timed out waiting for $label: option=$option actual=$actual expected=$expected" >&2
+  return 1
+}
+
+wait_lifecycle_gate() {
+  local gate="$1"
+  for _ in $(seq 1 400); do
+    if [[ -f "$lifecycle_fixture_state/$gate" ]]; then
+      return 0
+    fi
+    sleep 0.025
+  done
+  echo "timed out waiting for fake app-server gate: $gate" >&2
+  dump_lifecycle_diagnostics
+  return 1
+}
+
+lifecycle_queue_json() {
+  lifecycle_pmx get notifications --json
+}
+
+lifecycle_queue_count() {
+  local output=""
+  output="$(lifecycle_queue_json)" || return
+  printf '%s\n' "$output" | grep -c '^[[:space:]]*"id":' || true
+}
+
+lifecycle_desktop_count() {
+  if [[ ! -f "$lifecycle_notify_log" ]]; then
+    printf '0\n'
+    return
+  fi
+  wc -l <"$lifecycle_notify_log" | tr -d '[:space:]'
+}
+
+wait_lifecycle_count() {
+  local kind="$1" expected="$2" actual=""
+  for _ in $(seq 1 400); do
+    case "$kind" in
+      queue) actual="$(lifecycle_queue_count)" ;;
+      desktop) actual="$(lifecycle_desktop_count)" ;;
+      *) echo "unknown lifecycle count kind: $kind" >&2; return 1 ;;
+    esac
+    if [[ "$actual" == "$expected" ]]; then
+      return 0
+    fi
+    sleep 0.025
+  done
+  echo "timed out waiting for lifecycle $kind count: actual=$actual expected=$expected" >&2
+  return 1
+}
+
+assert_lifecycle_queue_exact() {
+  local expected_id="$1" expected_severity="$2" output=""
+  output="$(lifecycle_queue_json)"
+  if [[ "$(printf '%s\n' "$output" | grep -c '^[[:space:]]*"id":' || true)" != "1" ]] ||
+    ! printf '%s\n' "$output" | grep -Fq '"id": "'"$expected_id"'"' ||
+    ! printf '%s\n' "$output" | grep -Fq '"severity": "'"$expected_severity"'"'; then
+    echo "unexpected isolated lifecycle queue identity/severity" >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+}
+
+dump_lifecycle_diagnostics() {
+  echo "Codex lifecycle bounded diagnostics:" >&2
+  lifecycle_tmux display-message -p -t "$lifecycle_pane" \
+    '#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_codex_authority_epoch}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}' >&2 || true
+  local gate=""
+  for gate in auto-approved-emitted resolved-sent waiting-completion-gate completion-gate-seen first-completion-sent duplicate-completion-sent proxy-exited disconnect allow-reconnect; do
+    if [[ -f "$lifecycle_fixture_state/$gate" ]]; then
+      printf 'milestone:%s=yes\n' "$gate" >&2
+    else
+      printf 'milestone:%s=no\n' "$gate" >&2
+    fi
+  done
+  lifecycle_queue_json >&2 || true
+  tail -n 8 "$XDG_STATE_HOME/projmux/ai-ingest.log" >&2 2>/dev/null || true
+}
+
+wait_lifecycle_option @projmux_codex_authority provider-control-plane "native authority"
+wait_lifecycle_option @projmux_ai_state thinking "native active snapshot"
+epoch_one="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_codex_authority_epoch)"
+if [[ -z "$epoch_one" ]]; then
+  echo "native lifecycle epoch was empty" >&2
+  exit 1
+fi
+
+if [[ "$(lifecycle_queue_count)" != "0" || "$(lifecycle_desktop_count)" != "0" ]]; then
+  echo "native lifecycle started with non-empty notification surfaces" >&2
+  exit 1
+fi
+
+touch "$lifecycle_fixture_state/emit-auto-approved"
+wait_lifecycle_gate auto-approved-emitted
+sleep 0.2
+if [[ "$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_ai_badge_kind 2>/dev/null || true)" == "approval_required" ]] ||
+  [[ "$(lifecycle_queue_count)" != "0" ]] || [[ "$(lifecycle_desktop_count)" != "0" ]]; then
+  echo "auto-approved request projected user-visible attention" >&2
+  exit 1
+fi
+
+touch "$lifecycle_fixture_state/emit-actionable"
+wait_lifecycle_option @projmux_ai_badge_kind approval_required "exact actionable approval badge"
+wait_lifecycle_count queue 1
+wait_lifecycle_count desktop 1
+assert_lifecycle_queue_exact \
+  "ai:codex:native:approval:thread-phase3:turn-phase3:item-actionable:request-actionable" \
+  critical
+
+touch "$lifecycle_fixture_state/resolve-actionable"
+wait_lifecycle_option @projmux_ai_badge_kind in_progress "resolved approval badge clear"
+wait_lifecycle_count queue 0
+if [[ "$(lifecycle_desktop_count)" != "1" ]]; then
+  echo "resolved approval unexpectedly dispatched a desktop notification" >&2
+  exit 1
+fi
+wait_lifecycle_gate resolved-sent
+resolved_authority="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_codex_authority 2>/dev/null || true)"
+resolved_epoch="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_codex_authority_epoch 2>/dev/null || true)"
+if [[ "$resolved_authority" != "provider-control-plane" || "$resolved_epoch" != "$epoch_one" ]]; then
+  echo "resolved approval did not preserve the healthy native epoch" >&2
+  dump_lifecycle_diagnostics
+  exit 1
+fi
+
+touch "$lifecycle_fixture_state/emit-complete"
+wait_lifecycle_gate first-completion-sent
+wait_lifecycle_gate duplicate-completion-sent
+if ! wait_lifecycle_option @projmux_ai_badge_kind response_complete "native successful completion"; then
+  dump_lifecycle_diagnostics
+  exit 1
+fi
+wait_lifecycle_count queue 1
+wait_lifecycle_count desktop 2
+assert_lifecycle_queue_exact \
+  "ai:codex:native:completed:thread-phase3:turn-phase3" \
+  info
+sleep 0.2
+if [[ "$(lifecycle_queue_count)" != "1" || "$(lifecycle_desktop_count)" != "2" ]]; then
+  echo "duplicate successful completion produced duplicate notification writes" >&2
+  exit 1
+fi
+
+# A healthy app-server epoch owns every Codex hook. PermissionRequest would
+# visibly replace this badge if the fallback lane were allowed to dual-write.
+printf '%s' '{"hook_event_name":"PermissionRequest","thread_id":"thread-phase3","turn_id":"turn-phase3","cwd":"'"$lifecycle_project"'"}' |
+  lifecycle_pmx_hook internal agent-hook ingest codex-hook
+wait_lifecycle_option @projmux_ai_badge_kind response_complete "healthy epoch hook suppression"
+if [[ "$(lifecycle_queue_count)" != "1" || "$(lifecycle_desktop_count)" != "2" ]]; then
+  echo "healthy PermissionRequest hook wrote queue or desktop state" >&2
+  exit 1
+fi
+
+touch "$lifecycle_fixture_state/disconnect"
+wait_lifecycle_option @projmux_codex_authority provider-hook "ordered disconnect fallback"
+wait_lifecycle_option @projmux_ai_badge_kind "" "disconnect stale badge clear"
+
+# Only after the invalidation clear made provider-hook current may the same raw
+# hook path project a badge again.
+printf '%s' '{"hook_event_name":"Stop","thread_id":"thread-phase3","turn_id":"turn-fallback","cwd":"'"$lifecycle_project"'"}' |
+  lifecycle_pmx_hook internal agent-hook ingest codex-hook
+if ! wait_lifecycle_option @projmux_ai_badge_kind response_complete "hook fallback activation"; then
+  echo "Codex fallback ingest diagnostics:" >&2
+  tail -n 8 "$XDG_STATE_HOME/projmux/ai-ingest.log" >&2 || true
+  lifecycle_tmux display-message -p -t "$lifecycle_pane" \
+    '#{@projmux_pane_uid}|#{@projmux_ai_thread_id}|#{@projmux_codex_authority}|#{@projmux_codex_authority_epoch}|#{@projmux_codex_authority_reason}' >&2 || true
+  exit 1
+fi
+
+touch "$lifecycle_fixture_state/allow-reconnect"
+wait_lifecycle_option @projmux_codex_authority provider-control-plane "reconnected native authority"
+wait_lifecycle_option @projmux_ai_state idle "reconnect snapshot convergence"
+wait_lifecycle_option @projmux_ai_badge_kind "" "reconnect stale fallback clear"
+epoch_two="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_codex_authority_epoch)"
+if [[ -z "$epoch_two" || "$epoch_two" == "$epoch_one" ]]; then
+  echo "reconnect did not replace lifecycle epoch: first=$epoch_one second=$epoch_two" >&2
+  exit 1
+fi
+
+lifecycle_cleanup
+trap smoke_cleanup_env EXIT
+echo ">> Codex native lifecycle E2E passed: socket=$lifecycle_socket path=$lifecycle_socket_path epochs=$epoch_one,$epoch_two"

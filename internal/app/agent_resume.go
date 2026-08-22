@@ -351,6 +351,8 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			spelling, plan.agentName, plan.provider, plan.conversationID, err)
 	}
 	nativeLauncher, nativeLaunchCapable := r.launcher.(codexNativeAgentLauncher)
+	nativeLifecycle, nativeLifecycleCapable := r.launcher.(codexNativeLifecycleStarter)
+	var nativeLifecycleIdentityAfterCommit codexLifecycleIdentity
 
 	for _, other := range plan.shared {
 		if _, err := fmt.Fprintf(stderr,
@@ -438,6 +440,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		workTitle := title
 		workLaunchArgv := launchArgv
 		usedNative := false
+		nativeThreadID := ""
 		if plan.provider == aiModeCodex && r.create.codexNative != nil && nativeLaunchCapable {
 			nativeCtx, cancel := prepareNativeContext(ctx)
 			prepared, nativeErr := r.create.codexNative.Resume(nativeCtx, workspace, plan.conversationID)
@@ -454,6 +457,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 				}); err != nil {
 					return MapMetadataError(err)
 				}
+				nativeThreadID = prepared.ThreadID
 				usedNative = true
 			case nativeFallbackAllowed(r.create.codexNative, nativeErr):
 				// Preserve the current provider resume argv and hook refinement.
@@ -477,6 +481,12 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		}
 		if usedNative {
 			nativeLauncher.BindNativeCodexPane(paneID, contextDir, workTitle, plan.conversationID)
+			if nativeLifecycleCapable {
+				nativeLifecycleIdentityAfterCommit = codexLifecycleIdentity{
+					AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
+					Generation: activation.Generation, ThreadID: nativeThreadID,
+				}
+			}
 		} else {
 			r.launcher.BindResumedAgentPane(paneID, plan.provider, contextDir, workTitle, plan.conversationID)
 		}
@@ -497,6 +507,9 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		return nil
 	}, r.create.exactProjectOwnershipGuard(plan.projectUID)); err != nil {
 		return err
+	}
+	if nativeLifecycleIdentityAfterCommit.valid() {
+		nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleIdentityAfterCommit)
 	}
 
 	_, err = fmt.Fprintf(stdout, "agent/%s resumed\n", plan.agentName)
