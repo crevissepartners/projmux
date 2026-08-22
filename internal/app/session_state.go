@@ -303,7 +303,8 @@ func (c *sessionStateCommand) printProjectionPreview(ctx context.Context, explic
 	if _, _, err := c.requireClosedProjectionTarget(ctx, project); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "Project %s snapshot projection: replace Window %d / Pane %d / Agent %d; delete Window %d / Pane %d / Agent %d; preserve uid %d; lose conversation pointer %d; trust Project open gate pending; snapshot startup command execution 0; Registry writes 0 / tmux writes 0 / snapshot writes 0\n", project.Metadata.Name, plan.ReplacedWindows, plan.ReplacedPanes, plan.ReplacedAgents, plan.DeletedWindows, plan.DeletedPanes, plan.DeletedAgents, plan.PreservedUIDs, plan.LostSessionRefs)
+	format := localizeUIText(appLocale(c.homeDir, c.lookupEnv), "Project %s snapshot projection: replace Window %d / Pane %d / Agent %d; delete Window %d / Pane %d / Agent %d; preserve uid %d; lose conversation pointer %d; trust Project open gate pending; snapshot startup command execution 0; Registry writes 0 / tmux writes 0 / snapshot writes 0\n")
+	_, err = fmt.Fprintf(stdout, format, project.Metadata.Name, plan.ReplacedWindows, plan.ReplacedPanes, plan.ReplacedAgents, plan.DeletedWindows, plan.DeletedPanes, plan.DeletedAgents, plan.PreservedUIDs, plan.LostSessionRefs)
 	return err
 }
 
@@ -392,18 +393,22 @@ func (c *sessionStateCommand) commitSnapshotProjection(ctx context.Context, expl
 	}
 	if c.projectTopology == nil {
 		if c.notices != nil {
-			c.notices.Report("projmux: snapshot desired state was committed; runtime item was refused: ordinary Project materializer is not configured")
+			c.notices.Report(localizeUIText(appLocale(c.homeDir, c.lookupEnv), "projmux: snapshot desired state was committed; runtime item was refused: ordinary Project materializer is not configured"))
 		}
 		return errors.New("restore snapshot: ordinary Project materializer is not configured")
 	}
 	// Desired state is already durable. Reporting is best effort so a broken
 	// output stream cannot suppress convergence or the required item notice.
-	_, _ = fmt.Fprintf(stdout, "restored snapshot into Project %s: Window %d / Pane %d / Agent %d, preserved uid %d\n", committedProject.Metadata.Name, len(snap.Windows), statusbarSessionStatePaneCount(snap), applied.ReplacedAgents, applied.PreservedUIDs)
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	resultFormat := localizeUIText(locale, "restored snapshot into Project %s: Window %d / Pane %d / Agent %d, preserved uid %d\n")
+	_, _ = fmt.Fprintf(stdout, resultFormat, committedProject.Metadata.Name, len(snap.Windows), statusbarSessionStatePaneCount(snap), applied.ReplacedAgents, applied.PreservedUIDs)
 	if _, err := c.projectTopology.MaterializeProjectTopology(ctx, committedProject.Spec.Root, declaredSession); err != nil {
 		if c.notices != nil {
-			c.notices.Report("projmux: snapshot desired state was committed; runtime item was refused: " + err.Error())
+			noticeFormat := localizeUIText(locale, "projmux: snapshot desired state was committed; runtime item was refused: %s")
+			c.notices.Report(fmt.Sprintf(noticeFormat, err.Error()))
 		}
-		return fmt.Errorf("restore snapshot committed desired Registry; runtime materialization needs another Continue project: %w", err)
+		errorPrefix := localizeUIText(locale, "restore snapshot committed desired Registry; runtime materialization needs another Continue project")
+		return fmt.Errorf("%s: %w", errorPrefix, err)
 	}
 	lookup := c.lookupEnv
 	if strings.TrimSpace(explicitClient) != "" {

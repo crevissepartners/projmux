@@ -61,6 +61,7 @@ func render() {
 	log.Printf("Diagnostic only English phrase here")
 	_ = "PROJMUX_LOCALE"
 }
+
 `)
 
 	findings, err := i18n.AuditGoStrings([]i18n.AuditFile{{
@@ -90,6 +91,45 @@ func render() {
 	} {
 		if got[notWant] {
 			t.Fatalf("picker-chrome audit unexpectedly flagged non-chrome literal %q", notWant)
+		}
+	}
+}
+
+func TestPhase15StartupFreshAndProjectionStringsHaveKoreanCatalogEntries(t *testing.T) {
+	t.Parallel()
+
+	ko := i18n.Locale("ko-KR")
+	fallbacks := []string{
+		"Continue project",
+		"Open fresh",
+		"Continue project / Open fresh",
+		"open every saved Window, shell Pane, and Agent",
+		"keep the canonical Project shell and remove every other saved Window, Pane, and Agent",
+		"Enter: open  |  Esc: projects",
+		"Open fresh: prune saved topology?",
+		"Open fresh > ",
+		"Enter: discard and start  |  Esc: cancel",
+		"Yes, prune and open fresh",
+		"Cancel",
+		"keep the saved state; nothing is deleted",
+		"closed Project startup: show Continue project and Open fresh",
+		"closed Project startup: Continue project",
+		"show Continue project and Open fresh for a closed Project",
+		"deletes %s; the canonical Project Window and shell Pane, snapshots, Project registration, managed root, and trust decision are kept",
+		"deletes %s; no Agent record remains, so no Agent conversation pointer status.sessionRef is lost",
+		"deletes %s; the Agents' conversation pointer status.sessionRef (%d recorded) is deleted with them and cannot be recovered",
+		"projmux: opened %s fresh: deleted %s; the canonical Project shell identity was preserved",
+		"projmux: Open fresh canceled; nothing was changed",
+		"projmux: fresh start confirmation could not be shown: %s",
+		"Project %s snapshot projection: replace Window %d / Pane %d / Agent %d; delete Window %d / Pane %d / Agent %d; preserve uid %d; lose conversation pointer %d; trust Project open gate pending; snapshot startup command execution 0; Registry writes 0 / tmux writes 0 / snapshot writes 0\n",
+		"projmux: snapshot desired state was committed; runtime item was refused: ordinary Project materializer is not configured",
+		"restored snapshot into Project %s: Window %d / Pane %d / Agent %d, preserved uid %d\n",
+		"projmux: snapshot desired state was committed; runtime item was refused: %s",
+		"restore snapshot committed desired Registry; runtime materialization needs another Continue project",
+	}
+	for _, fallback := range fallbacks {
+		if got := localizeUIText(ko, fallback); got == fallback {
+			t.Errorf("Phase 15 user-facing string has no ko-KR catalog entry: %q", fallback)
 		}
 	}
 }

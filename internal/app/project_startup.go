@@ -15,6 +15,7 @@ import (
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -149,13 +150,14 @@ func (c *switchCommand) pickProjectStartupMode(sessionName, target string) proje
 			// A confirmation that could not be shown is not an approval. Falling
 			// back to the non-destructive topology start is the only outcome that
 			// cannot delete something nobody agreed to.
-			c.reportProjectStartup("projmux: fresh start confirmation could not be shown: " + err.Error())
+			format := localizeUIText(appLocale(c.homeDir, c.lookupEnv), "projmux: fresh start confirmation could not be shown: %s")
+			c.reportProjectStartup(fmt.Sprintf(format, err.Error()))
 			return projectStartupCandidate{Kind: projectStartupKindTopology}
 		}
 		if approved {
 			return candidate
 		}
-		c.reportProjectStartup(projectStartupNewCanceledMessage)
+		c.reportProjectStartup(localizeUIText(appLocale(c.homeDir, c.lookupEnv), projectStartupNewCanceledMessage))
 	}
 }
 
@@ -173,17 +175,22 @@ func (c *switchCommand) approveProjectFreshStart(sessionName, target string) (bo
 }
 
 func (c *switchCommand) projectStartupCandidates(sessionName, target string) []projectStartupCandidate {
-	return []projectStartupCandidate{topologyProjectStartupCandidate(), newProjectStartupCandidate()}
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	return []projectStartupCandidate{topologyProjectStartupCandidate(locale), newProjectStartupCandidate(locale)}
 }
 
 // topologyProjectStartupCandidate is the non-snapshot start row. It materializes
 // the Project's own Registry Window and shell Pane topology, so it is a start
 // action rather than the `Empty session` it used to advertise.
-func topologyProjectStartupCandidate() projectStartupCandidate {
+func topologyProjectStartupCandidate(locales ...i18n.Locale) projectStartupCandidate {
+	locale := settingsLocale()
+	if len(locales) > 0 {
+		locale = locales[0]
+	}
 	return projectStartupCandidate{
 		Kind:        projectStartupKindTopology,
-		Label:       "Continue project",
-		Description: projectTopologyStartupDescription,
+		Label:       localizeUIText(locale, "Continue project"),
+		Description: localizeUIText(locale, projectTopologyStartupDescription),
 	}
 }
 
@@ -210,13 +217,13 @@ func projectStartupPickerOptions(candidates []projectStartupCandidate) intpicker
 func projectStartupPickerLabel(candidate projectStartupCandidate) string {
 	switch candidate.Kind {
 	case projectStartupKindTopology:
-		return settingsLabel(settingsGlyphOpen, settingsColorType, "Continue project", candidate.Description)
+		return settingsLabel(settingsGlyphOpen, settingsColorType, candidate.Label, candidate.Description)
 	case projectStartupKindNew:
 		// The destructive glyph and color are the same pair the notify clear-all
 		// confirmation uses. This row starts a Project like the rows above it, but
 		// it is the only one that deletes anything, and it has to read that way
 		// before it is selected rather than only in the confirmation.
-		return settingsLabel(settingsGlyphRemove, settingsColorRemove, projectStartupNewLabel, candidate.Description)
+		return settingsLabel(settingsGlyphRemove, settingsColorRemove, candidate.Label, candidate.Description)
 	default:
 		return settingsLabel(settingsGlyphInfo, settingsColorInfo, candidate.Label, candidate.Description)
 	}

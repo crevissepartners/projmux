@@ -91,6 +91,34 @@ func TestRestoreSnapshotDryRunPlansExactProjectWithZeroWrites(t *testing.T) {
 	}
 }
 
+func TestRestoreSnapshotKoreanLocaleRendersProjectionResult(t *testing.T) {
+	resources := newFakeResourceStore(t)
+	snapshots := sessionstate.NewStore(t.TempDir())
+	if err := snapshots.Save(projectionSnapshot(t, resources.registry)); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &sessionStateCommand{
+		resources:    resources.store(),
+		sessionStore: func() (sessionstate.Store, error) { return snapshots, nil },
+		now:          func() time.Time { return resourceFixtureClock.Add(time.Hour) },
+		runner:       &projectionMissingSessionRunner{},
+		homeDir:      func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:    localeLookupEnv("ko_KR.UTF-8"),
+	}
+	var stdout bytes.Buffer
+	if err := cmd.runRestore([]string{"--session", "saved-beta", "--project", "uid:prj-beta", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"스냅샷 projection", "Window 1", "Registry 쓰기 0", "tmux 쓰기 0", "스냅샷 쓰기 0"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("Korean projection preview %q missing %q", stdout.String(), want)
+		}
+	}
+	if resources.writes != 0 || resources.transactions != 0 {
+		t.Fatalf("localized dry-run writes=%d transactions=%d", resources.writes, resources.transactions)
+	}
+}
+
 func TestRestoreSnapshotRequiresExplicitSourceAndTarget(t *testing.T) {
 	tests := []struct {
 		name string

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -44,11 +45,15 @@ const (
 )
 
 // newProjectStartupCandidate is the fresh-start row.
-func newProjectStartupCandidate() projectStartupCandidate {
+func newProjectStartupCandidate(locales ...i18n.Locale) projectStartupCandidate {
+	locale := settingsLocale()
+	if len(locales) > 0 {
+		locale = locales[0]
+	}
 	return projectStartupCandidate{
 		Kind:        projectStartupKindNew,
-		Label:       projectStartupNewLabel,
-		Description: projectStartupNewDescription,
+		Label:       localizeUIText(locale, projectStartupNewLabel),
+		Description: localizeUIText(locale, projectStartupNewDescription),
 	}
 }
 
@@ -88,24 +93,40 @@ func (p projectFreshStartPlan) Counts() string {
 // ConfirmHeader is the always-visible line of the confirmation step. It states
 // both the exact prune and the identities and snapshot storage that survive.
 func (p projectFreshStartPlan) ConfirmHeader() string {
-	return fmt.Sprintf("deletes %s; the canonical Project Window and shell Pane, snapshots, Project registration, managed root, and trust decision are kept", p.Counts())
+	return p.ConfirmHeaderLocale(i18n.FallbackLocale)
+}
+
+func (p projectFreshStartPlan) ConfirmHeaderLocale(locale i18n.Locale) string {
+	format := localizeUIText(locale, "deletes %s; the canonical Project Window and shell Pane, snapshots, Project registration, managed root, and trust decision are kept")
+	return fmt.Sprintf(format, p.Counts())
 }
 
 // ConfirmRowHelp is the description of the row that performs the deletion. It
 // repeats the counts so the numbers are attached to the action itself, and names
 // the conversation pointer the Agent records take with them.
 func (p projectFreshStartPlan) ConfirmRowHelp() string {
+	return p.ConfirmRowHelpLocale(i18n.FallbackLocale)
+}
+
+func (p projectFreshStartPlan) ConfirmRowHelpLocale(locale i18n.Locale) string {
 	if p.Agents == 0 {
-		return fmt.Sprintf("deletes %s; no Agent record remains, so no Agent conversation pointer status.sessionRef is lost", p.Counts())
+		format := localizeUIText(locale, "deletes %s; no Agent record remains, so no Agent conversation pointer status.sessionRef is lost")
+		return fmt.Sprintf(format, p.Counts())
 	}
-	return fmt.Sprintf("deletes %s; the Agents' conversation pointer status.sessionRef (%d recorded) is deleted with them and cannot be recovered",
+	format := localizeUIText(locale, "deletes %s; the Agents' conversation pointer status.sessionRef (%d recorded) is deleted with them and cannot be recovered")
+	return fmt.Sprintf(format,
 		p.Counts(), p.AgentSessionRefs)
 }
 
 // ResultMessage is emitted after materialization and before the final client
 // handoff, so switch-client remains the last observable startup action.
 func (p projectFreshStartPlan) ResultMessage(sessionName string) string {
-	return fmt.Sprintf("projmux: opened %s fresh: deleted %s; the canonical Project shell identity was preserved",
+	return p.ResultMessageLocale(i18n.FallbackLocale, sessionName)
+}
+
+func (p projectFreshStartPlan) ResultMessageLocale(locale i18n.Locale, sessionName string) string {
+	format := localizeUIText(locale, "projmux: opened %s fresh: deleted %s; the canonical Project shell identity was preserved")
+	return fmt.Sprintf(format,
 		sessionName, p.Counts())
 }
 
@@ -247,22 +268,24 @@ func (s *registryProjectFreshStarter) PruneProjectFreshStart(_ context.Context, 
 // finishes in a detached `run-shell -b` re-exec that has no controlling terminal,
 // so a native picker there would have nowhere to draw.
 func (c *switchCommand) confirmProjectFreshStart(plan projectFreshStartPlan) (bool, error) {
+	locale := appLocale(c.homeDir, c.lookupEnv)
 	options := intpickercompat.Options{
 		UI:            "project-startup-new-confirm",
-		Title:         settingsCatalogText(projectStartupNewConfirmTitle),
-		Prompt:        settingsCatalogText(projectStartupNewConfirmPrompt),
-		Header:        plan.ConfirmHeader(),
-		Footer:        projmuxFooter(projectStartupNewConfirmFooter),
+		Locale:        locale,
+		Title:         localizeUIText(locale, projectStartupNewConfirmTitle),
+		Prompt:        localizeUIText(locale, projectStartupNewConfirmPrompt),
+		Header:        plan.ConfirmHeaderLocale(locale),
+		Footer:        localizeUIText(locale, projectStartupNewConfirmFooter),
 		Bindings:      settingsCloseBindings(),
 		DisableSearch: true,
 		Entries: []intpickercompat.Entry{
 			{
-				Label:     settingsLabel(settingsGlyphBack, settingsColorBack, projectStartupNewCancelRow, projectStartupNewCancelHelp),
+				Label:     settingsLabel(settingsGlyphBack, settingsColorBack, localizeUIText(locale, projectStartupNewCancelRow), localizeUIText(locale, projectStartupNewCancelHelp)),
 				Value:     projectStartupNewCancelValue,
 				SearchKey: projectStartupNewCancelRow,
 			},
 			{
-				Label:     settingsLabel(settingsGlyphRemove, settingsColorRemove, projectStartupNewConfirmRow, plan.ConfirmRowHelp()),
+				Label:     settingsLabel(settingsGlyphRemove, settingsColorRemove, localizeUIText(locale, projectStartupNewConfirmRow), plan.ConfirmRowHelpLocale(locale)),
 				Value:     projectStartupNewConfirmValue,
 				SearchKey: projectStartupNewConfirmRow,
 			},
@@ -321,7 +344,7 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 	if err := c.materializeProjectTopology(ctx, sessionName, target, opened); err != nil {
 		return err
 	}
-	c.reportProjectStartup(plan.ResultMessage(sessionName))
+	c.reportProjectStartup(plan.ResultMessageLocale(appLocale(c.homeDir, c.lookupEnv), sessionName))
 	return c.openProjectSession(ctx, sessionName)
 }
 

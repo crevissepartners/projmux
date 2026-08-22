@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -174,6 +175,71 @@ func TestProjectStartupRowTable(t *testing.T) {
 				t.Fatalf("value = %q, want %q", got, tc.wantValue)
 			}
 		})
+	}
+}
+
+func TestProjectStartupKoreanLocaleRendersExactTwoRowsAndFreshConfirmation(t *testing.T) {
+	t.Parallel()
+
+	locale := i18n.Locale("ko-KR")
+	candidates := []projectStartupCandidate{
+		topologyProjectStartupCandidate(locale),
+		newProjectStartupCandidate(locale),
+	}
+	if got, want := []string{candidates[0].Label, candidates[1].Label}, []string{"이어서 열기", "새로 열기"}; !slices.Equal(got, want) {
+		t.Fatalf("Korean startup row labels = %q, want %q", got, want)
+	}
+	options := projectStartupPickerOptions(candidates)
+	options.Locale = locale
+	options = localizePickerOptions(nil, nil, options)
+	if got, want := options.Header, "프로젝트 시작"; got != want {
+		t.Fatalf("Korean startup header = %q, want %q", got, want)
+	}
+	if got, want := options.Footer, "Enter: 열기  |  Esc: 프로젝트"; got != want {
+		t.Fatalf("Korean startup footer = %q, want %q", got, want)
+	}
+	if len(options.Entries) != 2 {
+		t.Fatalf("Korean startup rows = %d, want exactly 2", len(options.Entries))
+	}
+	for index, want := range []string{"이어서 열기", "새로 열기"} {
+		if !strings.Contains(options.Entries[index].Label, want) {
+			t.Fatalf("Korean startup row %d = %q, want %q", index, options.Entries[index].Label, want)
+		}
+	}
+
+	plan := projectFreshStartPlan{Windows: 1, Panes: 3, Agents: 1, AgentSessionRefs: 1}
+	var confirm intpickercompat.Options
+	_, native := scriptedPicker(t, []pickerStep{{
+		observe: func(o intpickercompat.Options) { confirm = o },
+		reply:   intpickercompat.Result{Key: "esc"},
+	}})
+	cmd := &switchCommand{
+		homeDir:      func() (string, error) { return t.TempDir(), nil },
+		lookupEnv:    localeLookupEnv("ko_KR.UTF-8"),
+		nativePicker: native,
+	}
+	approved, err := cmd.confirmProjectFreshStart(plan)
+	if err != nil || approved {
+		t.Fatalf("confirmProjectFreshStart() = %t, %v; want false, nil", approved, err)
+	}
+	for field, value := range map[string]string{
+		"title":  confirm.Title,
+		"prompt": confirm.Prompt,
+		"header": confirm.Header,
+		"footer": confirm.Footer,
+	} {
+		if !utf8.ValidString(value) || strings.Contains(value, "Open fresh") || strings.Contains(value, "deletes") {
+			t.Fatalf("Korean fresh confirmation %s = %q", field, value)
+		}
+	}
+	for _, want := range []string{"취소", "예, 정리하고 새로 열기", "status.sessionRef"} {
+		joined := confirm.Entries[0].Label + confirm.Entries[1].Label
+		if !strings.Contains(joined, want) {
+			t.Fatalf("Korean fresh confirmation rows = %q, want %q", joined, want)
+		}
+	}
+	if got := plan.ResultMessageLocale(locale, "alpha"); !strings.Contains(got, "alpha 새로 열기 완료") || !strings.Contains(got, "기본 Project shell identity") {
+		t.Fatalf("Korean fresh result = %q", got)
 	}
 }
 
